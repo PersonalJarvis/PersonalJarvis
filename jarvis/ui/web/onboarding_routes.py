@@ -137,6 +137,7 @@ def _schedule_fresh_restart(request: Request) -> bool:
     if not callable(fn):
         return False
     try:
+        log.info("Desktop restart requested by onboarding completion")
         return bool(fn())
     except Exception:  # noqa: BLE001 — completing onboarding must never 500 here
         log.warning("post-onboarding fresh restart failed; staying up", exc_info=True)
@@ -151,6 +152,17 @@ def post_complete(request: Request) -> dict:
     st.mark_onboarding_complete(_path())
     restarting = _schedule_fresh_restart(request)
     return {"ok": True, "restarting": restarting}
+
+
+@router.post("/tour-complete")
+def post_tour_complete() -> dict:
+    """The guided tour of the real app was finished or skipped.
+
+    No restart and no desktop guard: it only records that the one-time tour
+    has been seen, exactly like the step progress route.
+    """
+    st.mark_tour_complete(_path())
+    return {"ok": True}
 
 
 __all__ = ["router"]

@@ -336,6 +336,7 @@ class WebServer:
         from .agent_accounts_routes import router as agent_accounts_router
         from .agent_chat_routes import router as agent_chat_router
         from .agent_mcp_routes import router as agent_mcp_router
+        from .agentic_ide_git_routes import router as agentic_ide_git_router
         from .agentic_ide_routes import router as agentic_ide_router
         from .antigravity_routes import router as antigravity_router
         from .board_routes import (
@@ -351,6 +352,7 @@ class WebServer:
         from .clipboard_routes import router as clipboard_router
         from .commands_routes import router as commands_router
         from .computer_use_routes import router as computer_use_router
+        from .computers_routes import router as computers_router
         from .contacts_routes import router as contacts_router
         from .control_routes import router as control_router
         from .costs_routes import router as costs_router
@@ -392,6 +394,8 @@ class WebServer:
         from .provider_routes import router as provider_router
         from .review_routes import router as review_router
         from .routine_hooks_routes import router as routine_hooks_router
+        from .app_actions_routes import router as app_actions_router
+        from .appshot_routes import router as appshot_router
         from .screen_context_routes import router as screen_context_router
         from .self_mod_routes import router as self_mod_router
         from .sessions_routes import router as sessions_router
@@ -473,7 +477,7 @@ class WebServer:
         # jarvis/ui/web/update_routes.py; refuses to self-reset a dev checkout.
         app.include_router(update_router)
         # Share-safe cross-device setup report (read-only) — names why THIS
-        # install behaves differently from another device (CLAUDE.md §3 triage).
+        # install behaves differently from another device (AGENTS.md §3 triage).
         app.include_router(setup_report_router)
         # Starter plans + the one-time "all set" readiness note.
         app.include_router(starter_plan_router)
@@ -529,6 +533,8 @@ class WebServer:
         # doing?") and promptable from Jarvis. Reuses the same PTY stack as the
         # workspace above; adds the folder picker, call-signs, transcripts, and
         # the focused coding mode.
+        # Before the IDE router, so its /{…} paths never shadow /git/….
+        app.include_router(agentic_ide_git_router)
         app.include_router(agentic_ide_router)
         # The pane-activity sweep has no bus of its own (the registry is a plain
         # holder by design); this is the one place that holds one, so the sweep
@@ -543,6 +549,8 @@ class WebServer:
         app.include_router(chat_library_router)
         # Contacts section — user-curated address book (pure file store, no Brain dep).
         app.include_router(contacts_router)
+        # Settings -> Computers: the user's own servers and local VMs over SSH.
+        app.include_router(computers_router)
         app.include_router(dictionary_router)
         # Dictation mode — hold to speak, text lands in the focused field.
         # Mounted so every action is also `jarvis api dictation <op>`, which is
@@ -563,6 +571,10 @@ class WebServer:
         # machine with no display, so `jarvis api screen-context status` is a
         # valid capability probe everywhere.
         app.include_router(screen_context_router)
+        # Appshots: the front window as conversation context, on a shortcut,
+        # a button or a spoken request. Captures through Screen Context.
+        app.include_router(app_actions_router)
+        app.include_router(appshot_router)
         # The mission deck's pictures: the last Screen-Context capture (one
         # frame, in memory, TTL) and Computer-Use frames by content hash.
         app.include_router(deck_router)
@@ -812,7 +824,7 @@ class WebServer:
             evaluator = AchievementEvaluator(db_path=db_path, bus=self.bus)
             bio_store = BioStore(db_path=db_path)
 
-            # Optional data-source paths (awareness, missions, self-mod).
+            # Optional data-source paths (missions, self-mod).
             # If the file/DB doesn't exist, the block just silently drops out
             # of the prompt — no error. Paths come from ``user_data_dir()``,
             # not relative strings, so an app restart in a different CWD
@@ -1524,18 +1536,22 @@ class WebServer:
             from jarvis.core.config import DATA_DIR
             from jarvis.memory import CORE_MEMORY_FILENAME, CoreMemory
 
+            from .error_text import LOG_HINT
+
             try:
                 mem = CoreMemory.load(DATA_DIR / CORE_MEMORY_FILENAME)
                 return {"ok": True, "data": mem.all()}
             except Exception as exc:  # noqa: BLE001
                 logger.opt(exception=exc).warning("Memory read error")
-                return {"ok": False, "error": str(exc), "data": {}}
+                return {"ok": False, "error": "memory read failed. " + LOG_HINT, "data": {}}
 
         @app.post("/api/memory/facts")
         async def add_memory_fact(payload: dict[str, Any]) -> dict[str, Any]:
             """User-driven add from the UI."""
             from jarvis.core.config import DATA_DIR
             from jarvis.memory import CORE_MEMORY_FILENAME, CoreMemory
+
+            from .error_text import LOG_HINT
 
             fact = (payload.get("fact") or "").strip()
             category = (payload.get("category") or "general").strip()
@@ -1547,13 +1563,15 @@ class WebServer:
                 return {"ok": True, "data": mem.all()}
             except Exception as exc:  # noqa: BLE001
                 logger.opt(exception=exc).warning("Memory write error")
-                return {"ok": False, "error": str(exc)}
+                return {"ok": False, "error": "memory write failed. " + LOG_HINT}
 
         @app.delete("/api/memory/facts")
         async def delete_memory_fact(payload: dict[str, Any]) -> dict[str, Any]:
             """User-driven remove from the UI."""
             from jarvis.core.config import DATA_DIR
             from jarvis.memory import CORE_MEMORY_FILENAME, CoreMemory
+
+            from .error_text import LOG_HINT
 
             fact = (payload.get("fact") or "").strip()
             category = (payload.get("category") or "general").strip()
@@ -1565,7 +1583,7 @@ class WebServer:
                 return {"ok": ok, "data": mem.all()}
             except Exception as exc:  # noqa: BLE001
                 logger.opt(exception=exc).warning("Memory delete error")
-                return {"ok": False, "error": str(exc)}
+                return {"ok": False, "error": "memory delete failed. " + LOG_HINT}
 
         @app.get("/api/terminal/shells")
         async def terminal_shells() -> dict[str, Any]:
@@ -2392,6 +2410,30 @@ class WebServer:
             "will be renewed in the background."
         )
 
+    def _schedule_appshot_shortcut(self) -> None:
+        """Arm the global appshot shortcut once the wake model has loaded.
+
+        Off the boot path (AP-26): the key reader and the hotkey backend load
+        native libraries. Headless hosts arm nothing and say so in the log.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.debug("Appshot shortcut not scheduled — no running event loop.")
+            return
+
+        async def _arm() -> None:
+            from jarvis.appshot.hotkey import start_appshot_shortcut
+            from jarvis.core import runtime_refs as _rr
+
+            await _rr.await_wake_model_ready(timeout=12.0)
+            try:
+                await start_appshot_shortcut(self.bus)
+            except Exception as exc:  # noqa: BLE001 - voice/chat work without it
+                logger.opt(exception=exc).warning("Appshot shortcut could not start")
+
+        self._appshot_shortcut_task = loop.create_task(_arm(), name="appshot-shortcut")
+
     def _schedule_realtime_transport_warm(self) -> None:
         """Pre-open the selected realtime transports off the boot path.
 
@@ -2646,6 +2688,17 @@ class WebServer:
                 logger.debug("wiki health.record_bootstrap(False) failed", exc_info=True)
         _boot_mark("wiki_integration")
 
+        # Jarvis' own self-learning loop: two bus subscriptions, nothing else
+        # at boot. Reviews run later in the background (jarvis/memory/learning).
+        try:
+            from jarvis.memory.learning.loop import start_learning
+
+            start_learning(self.cfg, self.bus)
+        except Exception as exc:  # noqa: BLE001
+            logger.opt(exception=exc).warning(
+                "Jarvis learning loop init failed — Jarvis will not learn this run"
+            )
+
         # Reconcile the derived FTS5 index after readiness. This repairs stale
         # rows after a vault switch without extending the startup critical path.
         try:
@@ -2837,8 +2890,11 @@ class WebServer:
         # browser-only install has no desktop shell to warm the realtime
         # transport for it.
         self._schedule_realtime_transport_warm()
-
+        self._schedule_appshot_shortcut()
         # Defer provisioning until the boot chain returns control to the server.
+        # Only the install is prepared here: a Chromium costs hundreds of MB,
+        # so an agent's browser launches when the agent first uses it or the
+        # person opens its view, never pre-warmed at boot.
         async def prepare_browser() -> None:
             from jarvis.society.browser import install
 
@@ -2853,14 +2909,6 @@ class WebServer:
             try:
                 install.resume_installation(data_dir)
                 install.start_install(data_dir)
-                while install.snapshot(data_dir)["running"]:  # noqa: ASYNC110 - installer exposes only snapshots
-                    await asyncio.sleep(1)
-                if install.is_installed(data_dir):
-                    runtime = self._build_society_runtime()
-                    await runtime.ensure_started()
-                    lead = await runtime.roster.get("jarvis")
-                    if lead is not None:
-                        await runtime.browser.live.ensure(lead)
             except Exception:
                 logger.debug("Browser preparation deferred after failure", exc_info=True)
 
@@ -3783,6 +3831,12 @@ class WebServer:
             lambda: _service_from_state(state),
             lambda: self.cfg,
         )
+        def _society_plugin_state() -> tuple[list[str], set[str]]:
+            from jarvis.marketplace.catalog_data import load_catalog
+            from jarvis.marketplace.connect_helpers import usable_plugin_ids
+
+            return [spec.id for spec in load_catalog().plugins], usable_plugin_ids()
+
         state.society = SocietyRuntime(
             data_dir,
             mission_manager=_manager,
@@ -3795,6 +3849,7 @@ class WebServer:
             cfg=lambda: self.cfg,
             # The island learns of a figure's new place through the app bus the
             # WebSocket forwards (SocietyCheckpointChanged).
+            plugin_state=_society_plugin_state,
             event_publish=self.bus.publish,
             app_bus=self.bus,
             task_services=lambda: (
@@ -3894,6 +3949,13 @@ class WebServer:
             self.app.state.swarm = None
         self._mic_level_sessions.clear()
         self._stop_mic_level_bridge()
+
+        try:
+            from jarvis.memory.learning.loop import stop_learning
+
+            await stop_learning()
+        except Exception as exc:  # noqa: BLE001 -- finish independent cleanup below
+            logger.opt(exception=exc).debug("Jarvis learning loop stop failed")
 
         agent_chat = getattr(self.app.state, "agent_chat", None)
         if agent_chat is not None:

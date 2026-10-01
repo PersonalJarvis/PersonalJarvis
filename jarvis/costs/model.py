@@ -42,7 +42,7 @@ SURFACE_JARVIS_VOICE = "jarvis-voice"
 #: Coding agents driven by a vendor CLI, indexed from their session logs.
 SURFACE_AGENTIC_IDE = "agentic-ide"
 #: Every model call no surface above claims: dictation polish, the wiki
-#: curator, awareness digests, the mission critic, computer-use planning,
+#: curator, the mission critic, computer-use planning,
 #: skill authoring … — read from the usage ledger (:mod:`jarvis.costs.ledger`).
 SURFACE_BACKGROUND = "background"
 

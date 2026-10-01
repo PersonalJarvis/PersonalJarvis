@@ -40,16 +40,40 @@ class FakeTaskStore:
     async def list(self, state_filter=None, *, limit: int = 100) -> list[dict]:
         return list(self.rows)
 
+    async def get(self, task_id: str) -> dict | None:
+        return next((row for row in self.rows if row["id"] == task_id), None)
+
+    async def update_state(self, task_id: str, state: str) -> None:
+        row = await self.get(task_id)
+        if row is not None:
+            row["state"] = state
+
+    async def delete(self, task_id: str) -> None:
+        self.rows = [row for row in self.rows if row["id"] != task_id]
+
 
 class FakeScheduler:
     def __init__(self, store: FakeTaskStore) -> None:
         self.store = store
         self.scheduled: list[str] = []
+        self.ran: list[str] = []
 
     async def schedule(self, spec) -> str:
         task_id = await self.store.insert(spec)
         self.scheduled.append(task_id)
         return task_id
+
+    async def pause(self, task_id: str) -> None:
+        await self.store.update_state(task_id, "paused")
+
+    async def resume(self, task_id: str) -> None:
+        await self.store.update_state(task_id, "scheduled")
+
+    async def cancel_task(self, task_id: str) -> None:
+        await self.store.update_state(task_id, "cancelled")
+
+    async def run_now(self, task_id: str) -> None:
+        self.ran.append(task_id)
 
 
 @pytest.fixture
@@ -252,3 +276,25 @@ async def test_update_keeps_the_pin_unless_the_seat_moves(agent):
         "effort": "",
         "account_id": "",
     }
+
+
+async def test_an_artifact_routine_names_the_builder(agent):
+    """ "Every day at 8, my morning briefing as an artifact": the routine's
+    prompt tells the agent to call create_artifact, which is also what opens
+    the artifact gate for that unattended turn."""
+    from jarvis.brain.artifact_gate import wants_artifact
+    from jarvis.society.routines import ARTIFACT_DELIVERY
+
+    spec = build_task_spec(
+        agent,
+        title="Morning brief",
+        prompt="Give me my morning briefing as an artifact.",
+        schedule={"kind": "every", "interval_seconds": 86400},
+    )
+    assert ARTIFACT_DELIVERY in spec.action.prompt
+    assert wants_artifact(spec.action.prompt)
+
+    plain = build_task_spec(
+        agent, title="Brief", prompt="Summarize new mail.", schedule={"kind": "every"}
+    )
+    assert ARTIFACT_DELIVERY not in plain.action.prompt

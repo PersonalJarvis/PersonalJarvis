@@ -68,22 +68,14 @@ def _write_pid_file(path: Path) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(str(os.getpid()), encoding="utf-8")
-    except OSError:
-        log.warning(
-            "Could not persist watchdog ownership marker; duplicate-start protection is limited"
-        )
+    except OSError:  # The PID marker is advisory; startup still proceeds without it.
+        pass
 
 
 def _read_pid_file(path: Path) -> int | None:
     try:
         return int(path.read_text(encoding="utf-8").strip())
-    except (FileNotFoundError, ValueError):
-        # First boot has no marker; malformed stale contents do not identify a process.
-        return None
-    except OSError:
-        log.warning(
-            "Could not read watchdog ownership marker; duplicate-start protection is limited"
-        )
+    except (OSError, ValueError):  # An unreadable marker has no trusted owner PID.
         return None
 
 
@@ -99,8 +91,7 @@ def _pid_is_live_watchdog(pid: int) -> bool:
         return False
     try:
         import psutil  # noqa: PLC0415 - optional at type-check time, required at runtime
-    except ImportError:
-        # Without the optional process probe, assume alive to avoid a duplicate start.
+    except ImportError:  # Without the optional process probe, do not claim a PID is dead.
         return True
     try:
         proc = psutil.Process(pid)
@@ -143,8 +134,7 @@ def _clear_pid_file(path: Path) -> None:
             if _read_pid_file(path) != os.getpid():
                 return
             path.unlink()
-    except OSError:
-        # Teardown is best effort; later liveness checks reject a marker for a dead PID.
+    except OSError:  # Best-effort marker cleanup must not mask shutdown.
         pass
 
 
@@ -153,8 +143,7 @@ async def _main() -> None:
         try:
             sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
             sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
-        except (AttributeError, OSError):
-            # Embedded or custom output streams may not support encoding reconfiguration.
+        except (AttributeError, OSError):  # stderr may not support reconfiguration.
             pass
 
     project_root = Path(__file__).resolve().parents[2]

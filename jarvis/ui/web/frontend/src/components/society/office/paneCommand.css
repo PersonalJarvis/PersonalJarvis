@@ -1,0 +1,81 @@
+/* A coding session's window on the office map, drawn as an Agentic IDE pane:
+   36 px title bar over the IDE's own live terminal, floating over the scene.
+   Position and size are set inline from ./paneWindow; every colour is a
+   --pane-* variable the component sets from the pane appearance tables
+   (terminalThemes.ts), so it follows light and dark panes. */
+.office-pane { position:absolute; z-index:36; display:flex; flex-direction:column; min-width:0; min-height:0; overflow:hidden; border:1px solid var(--pane-edge); border-radius:12px; background:var(--pane-ground); color:var(--pane-ink); box-shadow:0 24px 60px rgb(0 0 0 / .45), 0 4px 14px rgb(0 0 0 / .22); backdrop-filter:blur(14px); animation:office-pane-in .16s ease-out; }
+.office-pane[data-appearance="light"] { box-shadow:0 24px 60px rgb(20 18 10 / .24), 0 4px 14px rgb(20 18 10 / .12); }
+.office-pane:focus { outline:none; }
+.office-pane:focus-visible { outline:2px solid hsl(var(--ring)); outline-offset:2px; }
+.office-pane[data-gesture] { user-select:none; }
+@keyframes office-pane-in { from { opacity:0; transform:translateY(6px); } }
+@media (prefers-reduced-motion: reduce) { .office-pane { animation:none; } }
+
+/* The title bar is the window's handle: drag to move, double-click to put it back. */
+.office-pane-head { position:relative; display:flex; flex:none; align-items:center; gap:8px; height:36px; min-height:36px; padding:0 4px 0 12px; border-bottom:1px solid var(--pane-rule); background:color-mix(in srgb, var(--pane-float) 45%, transparent); cursor:grab; user-select:none; touch-action:none; }
+.office-pane[data-gesture="move"] .office-pane-head { cursor:grabbing; }
+.office-pane-dot { flex:none; width:7px; height:7px; border-radius:50%; }
+.office-pane-head h2 { flex:0 1 auto; min-width:0; margin:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; font-weight:500; color:var(--pane-ink); }
+.office-pane-meta { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; color:var(--pane-ink-muted); }
+.office-pane-actions { display:flex; flex:none; align-items:center; gap:1px; }
+.office-pane-actions button { display:inline-flex; align-items:center; justify-content:center; width:28px; height:28px; padding:0; border:0; border-radius:6px; background:none; color:var(--pane-ink-muted); cursor:pointer; }
+.office-pane-actions button svg { width:15px; height:15px; }
+.office-pane-actions button:hover:not(:disabled) { background:var(--pane-chip); color:var(--pane-ink); }
+.office-pane-actions button:focus-visible { outline:1px solid var(--pane-ink); outline-offset:-1px; }
+.office-pane-actions button:disabled { opacity:.35; cursor:default; }
+.office-pane-actions button[data-danger]:hover:not(:disabled), .office-pane-actions button[data-danger][aria-pressed="true"] { color:var(--pane-fault); }
+.office-pane-actions button[data-danger][aria-pressed="true"] { background:var(--pane-chip); }
+.office-pane-sep { width:1px; height:16px; margin:0 3px; background:var(--pane-rule); }
+
+/* The IDE's own terminal, attached to the same PTY. The box takes whatever
+   the window leaves under the title bar and the terminal fills it
+   absolutely, so xterm's canvas can never feed back into the window's size. */
+.office-pane-term { position:relative; flex:1 1 0; min-height:0; }
+.office-pane-term > * { position:absolute; inset:0; }
+
+/* An action's result floats over the terminal's foot: a line below it would
+   take rows away and resize the agent every time one appears. */
+.office-pane-status { position:absolute; z-index:2; left:12px; right:12px; bottom:10px; margin:0; padding:6px 10px; border:1px solid var(--pane-rule); border-radius:8px; background:var(--pane-float); box-shadow:0 6px 18px rgb(0 0 0 / .22); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; color:var(--pane-ink-muted); cursor:pointer; }
+.office-pane-status[data-tone="ok"] { color:var(--pane-ok); }
+.office-pane-status[data-tone="error"] { color:var(--pane-fault); white-space:normal; }
+
+/* Resize grips: 4 px strips along each edge and squares on the corners, inside
+   the window's rounded clip — thin enough to stay clear of the terminal's
+   text and scroll rail inside its padding. Only the bottom-right one is drawn. */
+.office-pane-grip { position:absolute; z-index:3; touch-action:none; }
+.office-pane-grip[data-edge="n"] { top:0; left:12px; right:12px; height:4px; cursor:ns-resize; }
+.office-pane-grip[data-edge="s"] { bottom:0; left:12px; right:12px; height:4px; cursor:ns-resize; }
+.office-pane-grip[data-edge="e"] { right:0; top:12px; bottom:12px; width:4px; cursor:ew-resize; }
+.office-pane-grip[data-edge="w"] { left:0; top:12px; bottom:12px; width:4px; cursor:ew-resize; }
+.office-pane-grip[data-edge="nw"] { top:0; left:0; width:12px; height:12px; cursor:nwse-resize; }
+.office-pane-grip[data-edge="ne"] { top:0; right:0; width:12px; height:12px; cursor:nesw-resize; }
+.office-pane-grip[data-edge="sw"] { bottom:0; left:0; width:14px; height:14px; cursor:nesw-resize; }
+.office-pane-grip[data-edge="se"] { bottom:0; right:0; width:16px; height:16px; cursor:nwse-resize; }
+.office-pane-grip[data-edge="se"]::after { content:""; position:absolute; right:4px; bottom:4px; width:8px; height:8px; opacity:.55; background:linear-gradient(135deg, transparent 0 45%, var(--pane-ink-faint) 45% 55%, transparent 55% 70%, var(--pane-ink-faint) 70% 80%, transparent 80%); }
+.office-pane:hover .office-pane-grip[data-edge="se"]::after { opacity:.9; }
+
+/* The minimal pane style (the IDE's Workspace options): the window is a tile
+   like the panes in the grid — square, a slim title row in the terminal font,
+   square controls — and while the reader works in it (keyboard focus anywhere
+   inside, the terminal included) its edge and title take the signal hue. The
+   inner half of that two-pixel edge is its own layer over everything, so the
+   title row's ground cannot dim it along the top. */
+.office-pane[data-style="minimal"] { border-radius:0; }
+.office-pane[data-style="minimal"] .office-pane-head { height:28px; min-height:28px; padding:0 2px 0 10px; gap:7px; }
+.office-pane[data-style="minimal"] .office-pane-head h2 { font-size:12px; }
+.office-pane[data-style="minimal"] .office-pane-actions button { width:24px; height:24px; border-radius:0; }
+.office-pane[data-style="minimal"] .office-pane-actions button svg { width:14px; height:14px; }
+.office-pane[data-style="minimal"] .office-pane-status { border-radius:0; }
+.office-pane[data-style="minimal"]:focus-within { border-color:var(--pane-focus); }
+.office-pane[data-style="minimal"]:focus-within::after { content:""; position:absolute; inset:0; z-index:4; pointer-events:none; box-shadow:inset 0 0 0 1px var(--pane-focus); }
+.office-pane[data-style="minimal"]:focus-within .office-pane-head h2 { color:var(--pane-focus); font-weight:600; }
+.office-pane[data-style="minimal"]:focus-visible { outline:none; }
+
+/* Mission Control's still screens of the sessions (./PaneLiveScreen). Fixed
+   height, rows absolutely placed: the grid is fitted to this box, so the text
+   can never feed back into its size. */
+.office-pane-screen { position:relative; flex:1 1 clamp(200px, 38vh, 420px); min-height:110px; margin:0 12px; cursor:zoom-in; }
+.office-pane-screen pre { position:absolute; inset:8px 0 0; margin:0; overflow:hidden; display:flex; flex-direction:column; justify-content:flex-end; color:var(--pane-ink); white-space:pre; text-shadow:none; font-variant-ligatures:none; }
+.office-pane-screen pre > div { overflow:hidden; }
+.office-pane-cursor { background:var(--pane-caret); color:var(--pane-ground); }
+.office-pane-empty { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; margin:0; font-size:12px; color:var(--pane-ink-faint); }

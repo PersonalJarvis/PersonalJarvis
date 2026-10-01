@@ -124,9 +124,8 @@ class TestSkipList:
         assert generate_ack(tool_name, {}, picker=_fresh()) is None
 
     def test_hyphenated_skip_tool_also_returns_none(self) -> None:
-        # Awareness-snapshot is registered with hyphens in ROUTER_TOOLS;
-        # normalization must catch both spellings.
-        assert generate_ack("awareness-snapshot", {}, picker=_fresh()) is None
+        # Router tools are registered with hyphens; normalization must catch
+        # both spellings.
         assert generate_ack("screen-snapshot", {}, picker=_fresh()) is None
 
     def test_fast_wiki_reads_are_skipped(self) -> None:

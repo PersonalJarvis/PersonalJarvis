@@ -36,7 +36,7 @@ from loguru import logger
 #: ``tests/unit/agentic_ide/test_ui_prefs.py`` so the two cannot drift.
 FONT_MIN = 10
 FONT_MAX = 20
-FONT_DEFAULT = 13
+FONT_DEFAULT = 15
 
 _FONT_KEY = "terminal_font_size"
 

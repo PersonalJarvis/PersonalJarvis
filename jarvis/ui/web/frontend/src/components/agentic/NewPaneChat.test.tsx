@@ -110,15 +110,12 @@ describe("the Agentic IDE's new chat", () => {
 
   it("starts the pane on the picks when the first message is sent", async () => {
     const { onOpen } = draw();
-    const input = screen.getByRole("textbox");
-    input.textContent = "read the router and tell me what it does";
-    const range = document.createRange();
-    range.selectNodeContents(input);
-    range.collapse(false);
-    const selection = document.getSelection();
-    selection?.removeAllRanges();
-    selection?.addRange(range);
-    fireEvent.input(input);
+    const composer = screen.getByRole("textbox");
+    composer.textContent = "read the router and tell me what it does";
+    fireEvent.input(composer);
+    await waitFor(() =>
+      expect((screen.getByTestId("composer-send") as HTMLButtonElement).disabled).toBe(false),
+    );
     fireEvent.click(screen.getByTestId("composer-send"));
     await waitFor(() => expect(onOpen).toHaveBeenCalledTimes(1));
     expect(onOpen.mock.calls[0][0]).toMatchObject({

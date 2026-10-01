@@ -293,8 +293,8 @@ Architecture: amd64
 Depends: libc6
 Recommends: libportaudio2
 Maintainer: Personal Jarvis contributors <https://github.com/PersonalJarvis/PersonalJarvis>
-Description: Voice-driven meta-orchestrator
- Personal Jarvis turns one spoken request into a fleet of self-checking AI
+Description: AI agent for your computer
+ Personal Jarvis coordinates desktop apps, tools, models and specialized
  agents. This package ships the self-contained desktop build; it needs no
  system Python and no pip installation.
 EOF

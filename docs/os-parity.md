@@ -1,5 +1,115 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
+## Connected computers that run Windows (2026-09-30, T3)
+
+This one is about the REMOTE side: the machine Jarvis connects to under
+Computers, whatever OS Jarvis itself runs on. Linux and macOS computers take
+the POSIX paths they always took. A Windows computer with the OpenSSH server
+runs commands in `cmd.exe` (or PowerShell as its `DefaultShell`), which runs
+no POSIX shell and mangles its own command line: every non-ASCII letter
+arrived as two U+FFFD characters, a line break ends the command, and the line
+stops at 8 191 characters. `jarvis/computers/remote_os.py` asks each computer
+once (one `echo` that sh, cmd and PowerShell answer differently) and then:
+
+| Feature | Linux / macOS computer | Windows computer |
+|---|---|---|
+| Health check and facts | POSIX probe | PowerShell probe on stdin, same sections; no load average |
+| Planting the app's key (password login) | `~/.ssh/authorized_keys` | PowerShell: `administrators_authorized_keys` for admins, ACL by SID (works on a German Windows), UTF-8 without BOM |
+| Readiness and install | tmux, git, Node, CLIs; apt/dnf/yum/apk/pacman/brew | git (Git for Windows), Node, CLIs; winget and npm; "admin" instead of root |
+| Society agent's CLI turn | `exec env … <cli>` on the command line; cancel = hang up | system prompt uploaded as a file, CLI started by a Git Bash launcher uploaded over SFTP; cancel ends the launcher's process tree with `taskkill /T` first, because hanging up ends only cmd and bash and left the CLI running (measured) |
+| Society agent's shell tool | sh in `~/jarvis-agents/<id>` | Git Bash in the same folder; PowerShell when Git for Windows is missing |
+| IDE panes | tmux session; survives app close and network loss, re-attached | no tmux: the agent runs in the SSH terminal (ConPTY) and ends with the channel; a plain terminal is PowerShell |
+| IDE folder sync, conversation copy | POSIX scripts | the same scripts in Git Bash; SFTP paths as `/C:/…` |
+| Keep working when this PC closes | offered | not offered (and refused on quit): its agents would stop with the connection |
+
+Git for Windows is the one prerequisite beyond the SSH server, and every
+feature that needs it says so in one sentence. Verified live against a
+Windows 11 Pro VM (German locale): facts, readiness, a CLI start through the
+launcher, a cancelled turn leaving no process behind, an agent shell command
+with non-ASCII output, a PowerShell pane (closing it, or the app, ends its
+program there), and a git folder sent over and brought back with an edit made
+there. Covered
+by `tests/unit/computers/test_windows_remote.py` against a scripted Windows
+SSH server. Not verified live: planting the key with a password (unit-tested
+only; the VM already had the key), a Windows computer whose `DefaultShell` is
+PowerShell (handled by prefixing `&`, unit-tested only), the winget install
+leg, and a Windows Server install without winget.
+
+## Persistent Agentic IDE terminals (2026-09-28, T3)
+
+Coding-agent panes now live in a separate PTY host process
+(`jarvis/terminal/pty_host.py`) instead of the app process, so closing, quitting
+or restarting the app detaches from the agents rather than killing them. The
+next start attaches to the host, reopens the last open workspaces in their
+saved layout, and re-joins every pane whose agent is still running (with its
+screen replayed). A reboot ends the host with everything in it; those panes
+then continue through the existing `--resume` path. Closing a pane or a
+workspace still ends its agent.
+
+One capability probe, `pty_host_client.host_available()` (a PTY backend exists
+and the build is not frozen), decides it on every OS. The host is spawned
+detached through `jarvis.ui.relauncher.spawn_detached`: on Windows with
+`DETACHED_PROCESS | CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB` (retried
+without breakaway when a parent job forbids it), on macOS and Linux with
+`start_new_session`. It owns the ConPTY / POSIX PTYs and their kill-on-close
+containers (Job Object / process group), listens on 127.0.0.1 with a random
+token handed over in the environment, and exits after 60 s with no terminal
+and no client. Where the probe fails, or the host cannot start, the registry
+keeps the in-process pool: terminals work as before and die with the app. A
+headless `python:3.11-slim` without `ptyprocess` reports the same missing-PTY
+error it always did.
+
+After a power-off the host is gone, so the next start resumes every agent that
+was running on its own conversation (each CLI's resume argument), in every
+workspace. Jarvis types nothing into any pane: Claude Code panes are resumed
+with the CLI's own `CLAUDE_CODE_RESUME_INTERRUPTED_TURN`, which finishes a
+turn the power cut interrupted (measured: killed at step 26 of 30, resumed to
+30 with nothing typed; without it the pane waited). That path is identical on
+every OS; it depends only on login autostart, which is on by default on
+Windows, macOS and Linux (and a no-op on a headless host).
+
+Which conversation a Claude pane is on is tracked the way Herdr tracks it: each
+pane is launched with `--settings` adding a `SessionStart` hook
+(`jarvis/agentic_ide/claude_session_hook.py`, stdlib only, forward-slash
+command that runs under bash or cmd) that records every conversation start,
+including `/clear`, `/resume` and compaction, so a reboot resumes the current
+one rather than the launch id (herdrdev/herdr#4059). Verified live on Windows
+with Claude Code 2.1.283; POSIX runs the same script through `sys.executable`.
+
+"Rebooted" is measured, not guessed: the host records the machine's boot time
+(`psutil.boot_time()`, all three OSes), and a host whose process is alive in
+this boot but slow to answer raises `HostUnreachable` — the app waits instead
+of resuming a second copy of each agent. Windows only: the host is started
+with `CREATE_BREAKAWAY_FROM_JOB`, and when the app's job refuses breakaway,
+through WMI `Win32_Process.Create` (verified: parent `WmiPrvSE.exe`, ConPTY
+output works); POSIX uses `start_new_session`, which no job semantics can
+override. A host that dies under a running app is replaced and its agents
+resumed the same way.
+
+Evidence: Windows verified live — the host survives its client's hard exit
+with the same PIDs and a replayed screen, and a real Claude Code pane killed
+together with its host came back `--resume`d on the same session id and
+recalled its conversation. Linux: the host process test and the client suite
+pass in `python:3.11-slim` (kernel 6.6, `ptyprocess`). macOS runs the same
+`ptyprocess` path and has not had a live run yet.
+
+## iGentic project workspaces (T3)
+
+Project ownership, workspace snapshots, eight-session ordering and addressed
+task receipts use portable Python/SQLite and the same browser UI on all three
+OSes. Terminal capability is checked through `workspace.agents.pty_available`:
+Windows retains ConPTY, Linux and macOS retain the existing POSIX backend, and
+an unavailable backend is reported without importing a new native dependency.
+ChatGPT Live and native Gemini/local voice use the same supervisor tool and
+permission boundary. There is no OS-specific routing or credential path.
+
+`tests/contract/test_workspace_orchestration.py` covers explicit and ambient
+resolution, ambiguous references, background dispatch, immutable targets and
+durable retry behavior. Native macOS desktop/PTY acceptance and real-device
+audio are not established by the portable tests. See
+[workspace architecture](igentic-workspaces.md) for the product and execution
+contract.
+
 ## Window caption (2026-09-21, T2)
 
 The desktop window is frameless on Windows, macOS and Linux. The page draws
@@ -263,7 +373,7 @@ regressions in `tests/unit/plugins/tool/test_delegate_to_agent.py`. These are
 headless tests on the available host, not evidence of native macOS/Linux or
 paid-provider voice execution.
 
-**Binding rule:** [`CLAUDE.md`](../CLAUDE.md) §3 *"OS feature parity — macOS
+**Binding rule:** [`AGENTS.md`](../AGENTS.md) §3 *"OS feature parity — macOS
 and Linux are first-class"*. Every feature ships working on Windows, macOS,
 and Linux (desktop AND headless) in the same change. A Windows-only
 implementation may land only with a capability gate, honest degradation, and
@@ -515,12 +625,16 @@ implementations, not stubs.
 |---|---|
 | Computer-Use / desktop actions (click, type, hotkey, scroll, drag, windows, apps, screenshots, UI trees) | Full per-OS backends (Win32/UIA, Quartz/AX, xdotool/AT-SPI); honest degradation on Wayland/headless/missing TCC grants |
 | On-demand Screen Context | One-shot capture is wired into the production brain on Windows, macOS, and Linux/X11; UIA/AX/AT-SPI text is source-filtered, the indicator precedes capture, and Wayland/headless/missing grants refuse honestly |
+| Appshots (front-window capture on a shortcut, button or request) | Capture, privacy and delivery are OS-neutral (Screen Context engine, `jarvis/appshot`). The both-Alt shortcut reads key state per OS: Windows `GetAsyncKeyState`, macOS `CGEventSourceKeyState` (Input Monitoring grant), Linux/X11 `XQueryKeymap`; Wayland/headless report it unavailable on the Appshots page. The flash is the PySide6 overlay where one can run. Verified live on Windows only; see `docs/appshots.md` |
 | Voice / audio (capture, playback, VAD, wake, STT, TTS, realtime) | Clean; headless disables voice honestly; WASAPI logic is inert-by-data off Windows |
 | Core (launcher, config, keyring, restart, autostart, tray, elevation, paths) | Clean; per-OS autostart (Registry / LaunchAgent / XDG `.desktop`), keyring falls back to a 0600 file on headless hosts |
 | Data / agents (wiki, contacts, telephony, sessions, missions, skills, self-mod, channels, MCP) | Clean; mission workers run on POSIX with a real process-group reaper |
 | Agent society hands (own shell, browser via browser-use, learned skills) | Shell: local subprocess in the agent's workspace on every OS (Git Bash/PowerShell/bash/sh pick as the chat's folder tools), no container by decision. Browser: browser-use lives in a managed venv under the data dir (its pins collide with the app's), installed on demand — `uv`/`venv`, a 3.11–3.13 interpreter preferred, Chromium downloaded once; headless runs need no display, so a headless Linux box runs agents' browsers; the headed login session needs a display (409 without one is the follow-up); attach mode needs a running Chrome with `--remote-debugging-port`. Learning is pure files + the brain, OS-neutral |
 | Agent society substrate (roster, typed board, scheduler, rooms, mission bridge, `/api/society`) | Clean; pure asyncio + SQLite (`data/society.db`, WAL) and FastAPI, no OS API, no GPU, no audio. Full REST parity from a headless `python:3.11-slim` (`tests/contract/test_society_substrate.py` covers messages, rename with stable agent/chat IDs, and archive). The agent sidebar's hide choice is a browser-local display preference on every desktop OS; it does not change roster state. The dynamic `jarvis api society …` CLI layer covers every route. FTS5 over knowledge summaries is optional — a SQLite without it degrades to plain reads (same class as P-05). Per-agent screens (`agent_screen`) are M6 and keep their own per-OS probes |
+
 | Typed chat on the Jarvis surface (brain runner, folder tools, approval card, CLI seats as Jarvis) | Clean; pure asyncio + SQLite, no OS API. Every CLI spawn keeps `NO_WINDOW_CREATIONFLAGS` and UTF-8 stdio. The identity for a Claude Code seat travels as a FILE under the app data dir (`jarvis_harness.write_identity_file`, removed after the turn) because Windows caps a command line at 32 767 characters; Codex and agy take it on stdin (no limit), Grok Build a compact cut on argv (`COMPACT_MAX_CHARS`). The MCP session header and the approval bridge are transport-level and OS-neutral |
+
+Persistent Society agent teams use the same SQLite and FastAPI capability on Windows, macOS, and Linux. Membership lives in `society.db`; the frontend opens two existing canonical agent chats side by side with separate socket stores. Grouping never changes agent permissions, routing, or chat history. Headless membership persistence is covered by `tests/contract/test_society_substrate.py::test_persistent_group_membership_headless`.
 
 ## Open parity gaps
 
@@ -532,8 +646,6 @@ experiences today.
 | P-29 | Low | Subscription voice | The dedicated ChatGPT-subscription voice login is an interactive browser flow, so a headless Linux host — and a graphical Linux desktop that ships no terminal emulator able to host the login for its full lifetime — can never CONNECT the profile there (an existing login still reports ready and calls work through the browser voice bridge) | `jarvis/codex_app_server.py::_login_required_state`, `_linux_login_terminal_missing`, `start_codex_subscription_login`, `jarvis/codex_auth.py::_LINUX_LOGIN_TERMINALS` | Both cases report the same `lifecycle_unavailable` truth on every surface (card, activation, voice-mode, Test), each with its own actionable reason — "run Jarvis on a desktop" or "install one of these terminals" — and never an enabled Connect button that can only produce an error toast |
 | P-24 | Medium | Dictation shortcut | The global dictation/call shortcut needs `pynput` on Linux/X11, and `pynput` hard-requires `evdev` — which is published **source-only** (verified on PyPI 2026-07-28: evdev 1.9.3 ships an sdist and no wheels) and compiles against the kernel headers. Putting it in `[full]` would break the one advertised install path on a stock `python:3.11-slim`, so it is the opt-in `[desktop-linux]` extra instead. Wayland is a separate, unfixable-by-install case: the compositor owns global shortcuts by design (the XDG `GlobalShortcuts` portal lets the *compositor* assign the keys, and no wlroots compositor implements it at all) | `pyproject.toml` (`desktop-linux`), `jarvis/platform/probes.py::has_hotkey`, `jarvis/trigger/backends/noop.py::explain_unavailable` | X11 without the extra: no global shortcut, and the log/UI now names the actual cause and the exact `pip install` that fixes it (it used to blame Wayland unconditionally). Wayland: no global shortcut at all — bind a compositor shortcut to `jarvis api dictation start`. On both, dictation still works from the Jarvis Bar, the Dictation view and the CLI, and voice still works via the wake word |
 | P-25 | Medium | Dictation insertion | Pasting the transcript into another application is blocked, silently, in three OS-specific situations: Windows UIPI when the foreground window is elevated and Jarvis is not (`SendInput` reports success and the input is discarded), macOS Secure Input while a password field is focused, and Wayland outright (no synthetic input). Detection exists for the first two; Wayland is refused up front. Two further silent failures are Windows-only in their FIX: a chord the target does not bind as "paste" (an xterm.js terminal in a Tauri/Electron app swallows Ctrl+V as `^V`), and a target that reads the clipboard late (an async WebView bridge on a busy machine) after the 120 ms restore timer had already put the previous clipboard back | `jarvis/dictation/insert.py::describe_target`, `_insert_windows_verified`, `jarvis/platform/clipboard_offer.py`, `jarvis/platform/input_isolation.py::windows_foreground_window_is_elevated`, `macos_secure_input_enabled` | All three blocks degrade to the SAME honest outcome instead of silence: the transcript is left on the clipboard, the result is reported as `clipboard_only`, and the bar plus the Dictation view say why and that Ctrl+V will paste it. **Windows** additionally offers the text with delayed rendering and watches who reads it: on a host without a clipboard watcher (no Remote Desktop client, clipboard history off — the default) a paste is proven by the target's read, silence cascades Ctrl+V → Ctrl+Shift+V → Shift+Insert → typing (line breaks as Shift+Enter), and the route is remembered per executable; on a host with a watcher the offer is blind, ONE chord goes out (never a guessed second paste) and the previous clipboard is restored after a 2 s grace only if the dictated text is still on it. **macOS / Linux X11**: plain chord + 120 ms timer restore, unchanged — no delayed-rendering equivalent exists there (NSPasteboard promises and X11 selections notify the owner too, but are a follow-up). macOS Secure Input detection is implemented but has not been verified on real hardware from this machine |
-| P-02 | Low | Awareness | Idle detection has no Wayland backend (Windows GetLastInputInfo, macOS Quartz, Linux X11 `xprintidle` all exist since 2026-07-16); Wayland exposes no global idle time without portal support | `jarvis/awareness/watchers/idle.py` | Wayland: one honest log line, watcher does not start |
-| P-03 | Low | Awareness | Window-focus watcher has no Wayland backend (Windows event hook, macOS NSWorkspace, Linux X11 polling all exist since 2026-07-16); Wayland hides the foreground window by design | `jarvis/awareness/watchers/window.py` | Wayland: one honest log line, watcher does not start |
 | P-04 | Medium | CU typing | Linux desktop Unicode text input needs the system `xdotool` binary (pip cannot install it); the pyautogui fallback used on Linux drops non-ASCII chars (umlauts, CJK, emoji) without it | `jarvis/cu/actuate/posix.py::type_text`, `jarvis/plugins/tool/type_text.py` | With `xdotool` (installer provisions it since 2026-07-15): fine. Without, the drop is now reported HONESTLY (2026-07-23): an all-non-ASCII text fails with an actionable "install xdotool" error, and a mixed text types its ASCII portion and warns that the rest was dropped — no more silent success |
 | P-05 | Low | Wiki | Wiki search hard-fails (RuntimeError with actionable apt/pysqlite3 remediation) on distros whose system SQLite lacks FTS5 | `jarvis/memory/wiki/fts_index.py:279` | `python:3.11-slim` and macOS ship FTS5 — only exotic/old distros affected; message is honest. Decision 2026-07-16: kept as honest hard error — a pysqlite3 shim would rewire seven wiki modules for an exotic audience |
 | P-07 | Low | Audio | No macOS/Linux host-API preference exists (the Windows-name-driven tables are intentionally inert off Windows — documented in-code since 2026-07-16), and headset-name heuristics are Windows-centric | `jarvis/audio/player.py`, `jarvis/audio/capture.py` | Device auto-pick falls back to OS default order — works, less clever than on Windows |
@@ -659,7 +771,7 @@ procedural draft grants no tool permission and activates no registry triggers.
 
 - Fixing a gap: remove its row (git history keeps the record).
 - Landing a new Windows-only implementation: add a row (required by
-  CLAUDE.md §3) with impact, evidence, and off-Windows behavior.
+  AGENTS.md §3) with impact, evidence, and off-Windows behavior.
 - Re-audit cadence: rerun the five-area sweep after any release that touches
   platform seams (`jarvis/platform/`, `jarvis/cu/actuate/`, `jarvis/vision/`,
   `jarvis/audio/`, `jarvis/missions/isolation/`).

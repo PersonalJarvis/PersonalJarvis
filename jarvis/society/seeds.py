@@ -84,7 +84,7 @@ _PROPOSALS: Final[tuple[tuple[str, dict[str, Any]], ...]] = (
         },
     ),
     (
-        "plugin:google-calendar",
+        "plugin:google_calendar",
         {
             "name": "Planner",
             "title": "Calendar assistant",
@@ -114,7 +114,7 @@ _PROPOSALS: Final[tuple[tuple[str, dict[str, Any]], ...]] = (
         },
     ),
     (
-        "plugin:home-assistant",
+        "plugin:home_assistant",
         {
             "name": "Home",
             "title": "Smart-home assistant",

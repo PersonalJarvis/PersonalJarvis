@@ -140,7 +140,7 @@ def test_render_failed_maps_missing_source_checkout_to_capability_phrase() -> No
 
 
 def test_git_setup_reasons_carry_spanish() -> None:
-    """CLAUDE.md §1: Spanish is an equal supported product-surface language,
+    """AGENTS.md §1: Spanish is an equal supported product-surface language,
     so every portable workspace-setup reason added here must carry an ``es``
     phrase rather than perpetuating the de/en-only gap."""
     from jarvis.missions.voice.readback import FAILURE_REASON_PHRASES

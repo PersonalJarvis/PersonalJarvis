@@ -11,6 +11,17 @@ platform through the same adapter seam.
 
 ## 1. What this is
 
+> **Appshots** (2026-09-29) are the user-facing face of this engine: a
+> global shortcut, a button and the word "appshot" take one front-window
+> capture through the service below, with a shutter effect and sound, and
+> deliver it to a running voice call or the next message. See
+> [appshots.md](appshots.md). The Settings card described in Wave 4 moved
+> onto the Appshots page as **Allow appshots**.
+> Since then the shared service shows no pre-shutter border: the appshot
+> flash right after the grab is the on-screen signal (maintainer directive
+> 2026-09-29), so the "indicator precedes the shutter" rule below applies
+> only to services built without a shutter hook.
+
 When the user says something that unambiguously asks Jarvis to *look* — "can you
 see this?", "what does that say?", "look at the error" — Jarvis takes **one**
 capture of the screen the user is actually working on, enriches it with the
@@ -67,7 +78,7 @@ handle.
 Screen Context sits in its own package, `jarvis/screen_context/`, above the
 platform seam and below the brain. It imports platform modules; nothing in
 `jarvis/platform/` imports it. That direction is the 8-layer dependency rule
-(CLAUDE.md §5) and it is what keeps the package testable without a display.
+(AGENTS.md §5) and it is what keeps the package testable without a display.
 
 ```
         voice session / bar / REST / brain tool
@@ -193,7 +204,7 @@ visual signal succeeded.
 **Ambiguity does not capture, and does not silently drop the turn either.**
 `AMBIGUOUS` produces a question, in the resolved output language, through the
 one resolver (`jarvis/core/turn_language.py`) — never a per-layer phrase table
-(CLAUDE.md §1). The user's next turn resolves it; a bare "yes" inside the
+(AGENTS.md §1). The user's next turn resolves it; a bare "yes" inside the
 confirmation window promotes the *previous* utterance to `SCREEN`.
 
 ### 3.1 Intent classification
@@ -339,7 +350,7 @@ Permission state is never cached across captures: macOS can revoke a grant while
 the app runs. The probe is one call and it is the first thing after intent.
 
 Every denial produces a message that names the exact setting to change and is
-recoverable in-app (CLAUDE.md §3) — never a stack trace, never a silent no-op.
+recoverable in-app (AGENTS.md §3) — never a stack trace, never a silent no-op.
 
 ### 4.2 Privacy rules
 
@@ -501,7 +512,7 @@ patterns on, monitor-wide denylist check, 120 s TTL, nothing on disk), and every
 key remains readable and writable through the REST surface and therefore through
 `jarvis api screen-context get-settings|put-settings`. A settings card that asks
 a non-technical user to write regular expressions before a feature works is a
-card they switch off instead of using; the CLI-first contract (CLAUDE.md §5) is
+card they switch off instead of using; the CLI-first contract (AGENTS.md §5) is
 what makes hiding it safe rather than lossy.
 
 ### Wave 5 — OCR supplement ✅ *implemented*

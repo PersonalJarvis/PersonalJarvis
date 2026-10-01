@@ -8,8 +8,7 @@ import { AuthGate } from "./components/AuthGate";
 import { installPreloadRecovery } from "./lib/preloadRecovery";
 import { POLL_MS, installBundleWatch } from "./lib/bundleWatch";
 import { browserSafeReloadDeps, reloadWhenServable } from "./lib/safeReload";
-import { prepareUiTranslations, useI18nStore, warmUiTranslations } from "./i18n";
-import { LOCALE_BOOT_ERROR } from "./i18n/coreLocales";
+import { loadUiLocale, useI18nStore } from "./i18n";
 import "./index.css";
 
 // When the frontend is rebuilt while the window is open, the old main bundle
@@ -84,6 +83,22 @@ void import("./lib/uiStallWatch").then(({ watchUiStalls }) => {
   });
 });
 
+// Tell the backend which timezone this person lives in. A voice request such
+// as "a briefing every day at 8" has no client of its own, so the routine it
+// creates is scheduled on this zone instead of the server clock.
+try {
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if (timezone) {
+    void fetch("/api/tasks/client-timezone", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ timezone }),
+    }).catch(() => undefined);
+  }
+} catch {
+  // A runtime without Intl zone data simply leaves voice routines to ask.
+}
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -103,38 +118,26 @@ const queryClient = new QueryClient({
   },
 });
 
-void prepareUiTranslations().then(() => {
+function renderApp(): void {
   ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <ThemeProvider>
-        <ViewErrorBoundary
-          viewName="App"
-          resetKey="root"
-          onRecover={() => window.location.reload()}
-        >
-          <AuthGate>
-            <App />
-          </AuthGate>
-        </ViewErrorBoundary>
-      </ThemeProvider>
-    </QueryClientProvider>
-  </React.StrictMode>,
-);
-  const warm = () => { void warmUiTranslations().catch((error: unknown) => console.warn("[i18n] optional language warmup failed", error)); };
-  if (typeof window.requestIdleCallback === "function") window.requestIdleCallback(warm);
-  else window.setTimeout(warm, 500);
-}).catch((error: unknown) => {
-  console.error("[i18n] initial language resources unavailable", error);
-  const copy = LOCALE_BOOT_ERROR[useI18nStore.getState().ui];
-  const root = document.getElementById("root")!;
-  root.className = "grid min-h-screen place-content-center gap-4 p-6 bg-background text-foreground";
-  const message = document.createElement("p");
-  message.setAttribute("role", "alert");
-  message.textContent = copy.message;
-  const retry = document.createElement("button");
-  retry.className = "rounded border border-border p-2";
-  retry.textContent = copy.retry;
-  retry.onclick = () => { void reloadWhenServable(browserSafeReloadDeps()); };
-  root.replaceChildren(message, retry);
-});
+    <React.StrictMode>
+      <QueryClientProvider client={queryClient}>
+        <ThemeProvider>
+          <ViewErrorBoundary
+            viewName="App"
+            resetKey="root"
+            onRecover={() => window.location.reload()}
+          >
+            <AuthGate>
+              <App />
+            </AuthGate>
+          </ViewErrorBoundary>
+        </ThemeProvider>
+      </QueryClientProvider>
+    </React.StrictMode>,
+  );
+}
+
+void loadUiLocale(useI18nStore.getState().ui)
+  .catch((error: unknown) => console.warn("Stored interface language could not be loaded", error))
+  .finally(renderApp);

@@ -316,6 +316,30 @@ def test_agy_model_args_respects_the_strict_pairing():
     assert agy_model_args("", "medium") == ["--effort", "medium"]
     # A suffixed id is passed through untouched (no --effort next to it).
     assert agy_model_args("gemini-3.5-flash-low", "high") == ["--model", "gemini-3.5-flash-low"]
+    # A Gemini release newer than the catalog still gets the level agy
+    # demands ("requires --effort"): the chosen one, else the default.
+    assert agy_model_args("gemini-9.9-flash", "") == [
+        "--model",
+        "gemini-9.9-flash",
+        "--effort",
+        "high",
+    ]
+    assert agy_model_args("gemini-9.9-flash", "low")[-1] == "low"
+
+
+def test_agy_new_gemini_base_model_keeps_required_effort_with_stale_catalog():
+    stale = agy_model_catalog(None)
+    assert agy_model_args("gemini-3.8-flash", "medium", stale) == [
+        "--model",
+        "gemini-3.8-flash",
+        "--effort",
+        "medium",
+    ]
+    assert agy_model_args("gemini-3.8-flash", "", stale)[-2:] == ["--effort", "high"]
+    assert agy_model_args("gemini-3.8-flash-low", "high", stale) == [
+        "--model",
+        "gemini-3.8-flash-low",
+    ]
 
 
 def test_agy_model_catalog_folds_suffixed_ids():
@@ -483,6 +507,10 @@ def test_read_codex_models_uses_the_executing_cli_not_a_foreign_cache(monkeypatc
     assert [row["id"] for row in rows] == ["future-supported-model"]
     assert calls == [(["codex-test"], {"CODEX_HOME": str(home)})]
     assert runner_cli.read_codex_models() == rows
+    # Society discovery is scoped for exec isolation. The read-only app-server
+    # must still receive only flags that its own subcommand accepts.
+    with runner_cli.cli_catalog_scope(ignore_user_config=True):
+        assert runner_cli.read_codex_models() == rows
     assert len(calls) == 1
 
 

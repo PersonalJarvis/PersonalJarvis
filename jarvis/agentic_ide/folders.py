@@ -516,8 +516,22 @@ def create_folder(parent: str | Path | None, name: str) -> tuple[FolderEntry | N
 
 
 def _git_branch(root: Path) -> str | None:
-    """Current branch from ``.git/HEAD`` — no subprocess, no git required."""
-    head = root / ".git" / "HEAD"
+    """Current branch from ``.git/HEAD`` — no subprocess, no git required.
+
+    In a linked worktree ``.git`` is a FILE (``gitdir: <path>``) pointing at the
+    worktree's own git directory, which holds its HEAD.
+    """
+    dot_git = root / ".git"
+    head = dot_git / "HEAD"
+    if dot_git.is_file():
+        try:
+            pointer = dot_git.read_text(encoding="utf-8", errors="replace").strip()
+        except OSError:  # unreadable pointer: no branch shown, like a missing HEAD
+            return None
+        if not pointer.startswith("gitdir:"):
+            return None
+        gitdir = Path(pointer[len("gitdir:") :].strip())
+        head = (gitdir if gitdir.is_absolute() else root / gitdir) / "HEAD"
     try:
         text = head.read_text(encoding="utf-8", errors="replace").strip()
     except OSError:

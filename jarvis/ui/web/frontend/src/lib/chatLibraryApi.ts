@@ -18,6 +18,8 @@ export interface ChatProject {
   name: string;
   color: string | null;
   pinned: boolean;
+  /** Manual sidebar position, set by drag and drop. Absent on an older backend. */
+  position?: number;
   archived: boolean;
   created_at: number;
   last_opened_at: number;
@@ -134,6 +136,54 @@ export async function deleteProject(projectId: string): Promise<boolean> {
     { method: "DELETE" },
   );
   return body.removed;
+}
+
+/**
+ * Open the project's folder in the OS file manager. Desktop-only: a headless
+ * backend answers 404, which surfaces as a ChatLibraryError.
+ */
+export async function revealProject(projectId: string): Promise<boolean> {
+  const body = await request<{ opened: boolean }>(
+    `/projects/${encodeURIComponent(projectId)}/reveal`,
+    { method: "POST" },
+  );
+  return body.opened;
+}
+
+/** Where a project's folder can be opened on this machine right now. */
+export interface ProjectLaunchers {
+  file_manager: boolean;
+  editors: { id: string; label: string }[];
+  remote_url: string | null;
+  remote_label: string | null;
+}
+
+export function fetchProjectLaunchers(projectId: string): Promise<ProjectLaunchers> {
+  return request<ProjectLaunchers>(`/projects/${encodeURIComponent(projectId)}/launchers`);
+}
+
+/** Open the folder in an editor from `fetchProjectLaunchers`, or `"remote"` for its web page. */
+export async function openProjectIn(projectId: string, target: string): Promise<boolean> {
+  const body = await request<{ opened: boolean }>(
+    `/projects/${encodeURIComponent(projectId)}/open-in`,
+    { method: "POST", body: JSON.stringify({ target }) },
+  );
+  return body.opened;
+}
+
+/**
+ * Persist a drag-and-drop folder order in the sidebar.
+ *
+ * `projectIds` carries the visible projects front to back. Pinning still
+ * groups first: within each section the given order wins, and a folder never
+ * leaves its section by being dragged.
+ */
+export async function reorderProjects(projectIds: string[]): Promise<ChatProject[]> {
+  const body = await request<{ projects: ChatProject[] }>("/projects/order", {
+    method: "PUT",
+    body: JSON.stringify({ project_ids: projectIds }),
+  });
+  return body.projects;
 }
 
 /** One project's chats. Called when a project is opened, never on mount. */

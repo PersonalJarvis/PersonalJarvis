@@ -15445,3 +15445,71 @@ nothing; only `sudo mdutil -E /` repairs it. The installer now proves the stall
 finishing silently on an app search cannot find. Launchpad listed the app all
 along. Guards: `tests/unit/setup/test_macos_dock.py`,
 `tests/unit/install/test_installer_flow.py`.
+
+## BUG-219: after a restart the desktop app booted an agent's stale branch — onboarding again, settings and IDE panes "gone" (HIGH, FIXED 2026-09-28)
+
+**Symptom.** The app was closed and restarted and came back on day-old code,
+walking the user through onboarding as if nothing had ever been configured.
+Every Agentic IDE workspace was closed.
+
+**Cause.** A coding agent ran `scripts/preflight.ps1` inside its own linked
+git worktree. Check 2 ran `pip install -e .` there, which repins the ONE
+editable install in the user's site-packages — the same pin the installed
+desktop app imports `jarvis` through. Nothing changed while the app kept
+running (its code was already in memory); the next launch, a day later,
+imported the worktree's branch and pinned the working directory to that
+worktree, so it read the worktree's empty `data/` folder: no setup state
+(onboarding), default settings, and the autostart shortcut rewritten to the
+worktree. The user's real `data/` was never touched.
+
+**Fix.** `preflight.ps1` detects a linked worktree (`--git-dir` differs from
+`--git-common-dir`) and leaves the shared pin alone there; its import check
+runs with the worktree root on `PYTHONPATH`, the way pytest
+(`pythonpath = ["."]`) sees it. The primary checkout still self-heals the pin.
+The rulebook's restore-trap bullet now forbids `pip install -e` from a linked
+worktree.
+
+**Recovery.** `pip install -e . --no-deps` from the primary checkout, restart
+the app; the IDE workspaces come back from `last_session.json` via
+`POST /api/agentic-ide/workspaces/{id}/restore`, each pane resuming its CLI
+session.
+
+## BUG-220: "look at my screen" / an appshot of the front window sent the model a black picture (MEDIUM, FIXED 2026-09-29)
+
+**Symptom.** Asking Jarvis to look at the window in front answered as if the
+screen were empty; the captured image of the Personal Jarvis window was one
+flat dark colour.
+
+**Cause.** Window-scoped captures use the native window-only backend
+(`jarvis.platform.window_capture.grab_window`). For some GPU-composited
+windows — WebView2 apps, the desktop app itself among them — it returns a
+frame that is a single colour (measured: every pixel luma 10) instead of
+failing, and the service handed that frame on as a successful capture.
+
+**Fix.** A window target is always the window in front, so
+`ScreenContextService._grab` grabs the window's screen rectangle first —
+exactly what the user sees. The first fix (same morning) only fell back when
+the native frame was perfectly flat; the live frame had darker anti-aliased
+corners (luma 0-13), passed as "content", and the appshot was black again.
+Native window-only capture is now used only when a visible denylisted window
+intersects the rectangle, and a blank result there (`_is_flat_frame`: the
+middle 98 % of pixels within six luma levels) is refused.
+Guard: `tests/unit/screen_context/test_blank_window_capture.py`.
+
+## BUG-221: the whole app froze — wake word, chat and every window dead, 0 % CPU (CRITICAL, FIXED 2026-09-29)
+
+**Symptom.** The wake word never fired and no view reacted; `/api/health`
+timed out while the backend process sat at 0 % CPU.
+
+**Cause.** A self-deadlock on the asyncio loop thread. `asyncio.to_thread`
+called `ThreadPoolExecutor.submit`, which holds `concurrent.futures`'
+process-wide, non-reentrant `_global_shutdown_lock`. Allocating the worker
+thread triggered a GC pass that collected a `LockedRecognizer`; its `__del__`
+handed the native recognizer to the release pool with a second `submit` —
+which waited forever for the lock its own thread already held.
+
+**Fix.** `jarvis/plugins/wake/vosk_native.py` hands dead recognizers to a
+plain daemon worker through a `queue.SimpleQueue` (documented reentrant and
+safe in destructors); `__del__` only enqueues and takes no lock. The worker is
+started in ordinary code (`LockedRecognizer.__init__`, `release_recognizer`).
+Guard: `tests/unit/plugins/wake/test_vosk_native.py::test_dropping_the_proxy_inside_an_executor_submit_does_not_deadlock`.

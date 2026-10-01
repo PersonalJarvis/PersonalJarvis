@@ -219,3 +219,38 @@ def test_test_doubles_are_not_routed_through_the_release_worker() -> None:
 
     gc.collect()
     assert died_on == [threading.current_thread().name]
+
+
+def test_dropping_the_proxy_inside_an_executor_submit_does_not_deadlock() -> None:
+    """BUG-221: the GC can run the proxy's ``__del__`` INSIDE a
+    ``ThreadPoolExecutor.submit`` (the asyncio default executor behind
+    ``asyncio.to_thread``), which holds ``concurrent.futures``' process-wide,
+    non-reentrant shutdown lock. A second ``submit`` from ``__del__`` froze the
+    event loop forever — wake word, API and every window dead. The drop must
+    finish while that lock is held by the dropping thread."""
+    import concurrent.futures.thread as cf_thread
+
+    import pytest
+
+    global_lock = getattr(cf_thread, "_global_shutdown_lock", None)
+    if global_lock is None:
+        pytest.skip("this Python has no global executor shutdown lock")
+
+    freed = threading.Event()
+
+    class KaldiRecognizer:
+        def __del__(self) -> None:
+            freed.set()
+
+    KaldiRecognizer.__module__ = "vosk"
+    finished = threading.Event()
+
+    def _drop_under_the_submit_lock() -> None:
+        wrapped = wrap_recognizer(KaldiRecognizer())
+        with global_lock:
+            del wrapped  # what a GC pass inside submit() does
+        finished.set()
+
+    threading.Thread(target=_drop_under_the_submit_lock, daemon=True).start()
+    assert finished.wait(2.0), "proxy __del__ blocked on the executor lock"
+    assert freed.wait(2.0)

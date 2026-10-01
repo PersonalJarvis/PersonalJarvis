@@ -57,7 +57,7 @@ def _morning_briefing() -> WorkflowDef:
 
     Language is NOT pinned here: the prompt asks for the configured output
     language and the speak step passes ``auto``, so the one resolver decides
-    (CLAUDE.md §1). The seed used to hardcode German for everyone.
+    (AGENTS.md §1). The seed used to hardcode German for everyone.
 
     Version 2 (BUG-212): the first seed asked for "a short, friendly morning
     announcement" and got exactly that — a greeting and a motivational

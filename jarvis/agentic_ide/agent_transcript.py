@@ -524,7 +524,7 @@ def _codex_first_user_text(session_id: str, home: Path | None) -> str | None:
 
 #: Which CLIs keep a record this module can read. Absence is not a failure — a
 #: CLI without an entry degrades to "watch the live pane", honestly and without
-#: an error (CLAUDE.md §3).
+#: an error (AGENTS.md §3).
 _READERS: dict[str, Callable[[str, Path | None], list[Turn] | None]] = {
     "claude": _claude_turns,
     "codex": _codex_turns,
@@ -1096,7 +1096,8 @@ def _codex_events(session_id: str, home: Path | None, live: bool) -> list[dict[s
                 log.text(joined, item_id, ts)
             # `developer` is the harness briefing the model — not conversation.
         elif ptype in ("function_call", "local_shell_call", "custom_tool_call"):
-            arguments = payload.get("arguments")
+            # A custom tool (apply_patch) carries its body as `input`, not `arguments`.
+            arguments = payload.get("arguments", payload.get("input"))
             if isinstance(arguments, str):
                 try:
                     arguments = json.loads(arguments)

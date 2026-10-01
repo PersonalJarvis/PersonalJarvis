@@ -37,8 +37,7 @@ def available(kind: str) -> bool:
         return True
     try:
         return find_spec(module) is not None
-    except (ModuleNotFoundError, ValueError):
-        # Missing or invalid optional modules make this source capability unavailable.
+    except (ModuleNotFoundError, ValueError):  # An unavailable optional driver is not installed.
         return False
 
 

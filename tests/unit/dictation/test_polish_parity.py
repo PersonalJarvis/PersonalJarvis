@@ -1,6 +1,6 @@
 """Cross-layer parity guards for the two vocabularies the polish pass added (AP-4).
 
-CLAUDE.md §5 asks for this test PREEMPTIVELY, before a value has drifted, because
+AGENTS.md §5 asks for this test PREEMPTIVELY, before a value has drifted, because
 the five-layer drift bug (BUG-008) has recurred four times in this repo and every
 recurrence looked different on the surface. Two vocabularies started crossing
 layers when the wording pass landed, and neither had a guard:
@@ -329,7 +329,7 @@ def test_the_language_tab_says_the_transcript_leaves_the_machine() -> None:
 
 
 def test_the_privacy_sentence_hardcodes_no_product_name() -> None:
-    """CLAUDE.md §4: a visible product name is derived from the wake word.
+    """AGENTS.md §4: a visible product name is derived from the wake word.
 
     The sentence talks about "your speech recognition" and "the model you pick"
     on purpose — naming the app would be a hardcoded brand, and naming a

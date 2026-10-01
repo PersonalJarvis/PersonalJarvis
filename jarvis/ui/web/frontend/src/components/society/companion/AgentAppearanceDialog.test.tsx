@@ -62,10 +62,16 @@ it("keeps shape customization without size or following-distance sliders", () =>
   expect(screen.getByRole("button", { name: "society.companion.shapes.cloud" })).toBeTruthy();
 });
 
-it("finds the character's actual style for older recipes without style metadata", async () => {
-  setup(false, true);
+it("saves a chosen hairstyle on the recipe without dropping its colours", async () => {
+  const { agent, fetcher } = setup();
   fireEvent.click(screen.getByRole("tab", { name: "society.companion.character" }));
   await screen.findByTestId("character-preview");
-  expect(screen.getByRole("combobox", { name: "society.create.style" }).getAttribute("data-value")).toBe("fantasy");
-  expect(screen.getByRole("combobox", { name: "society.create.base" }).getAttribute("data-value")).toBe("rogue");
+  fireEvent.click(screen.getByRole("button", { name: "society.office.hair_beanie" }));
+  expect(screen.getByRole("button", { name: "society.office.hair_beanie" }).getAttribute("aria-pressed")).toBe("true");
+  fireEvent.click(screen.getByRole("button", { name: "society.card.save" }));
+  await waitFor(() => expect(fetcher).toHaveBeenCalledOnce());
+  const [, init] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
+  const body = JSON.parse(init.body as string);
+  expect(body.avatar.hairStyle).toBe("beanie");
+  expect(body.avatar.palette).toEqual(agent.figure?.palette);
 });

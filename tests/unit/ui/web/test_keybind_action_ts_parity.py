@@ -37,7 +37,7 @@ _FRONTEND = _REPO_ROOT / "jarvis" / "ui" / "web" / "frontend" / "src"
 _HOTKEY_TS = _FRONTEND / "hooks" / "useHotkey.ts"
 _LOCALES = _FRONTEND / "i18n" / "locales"
 
-#: The locales the product ships. All of them are equal (CLAUDE.md §1) — a key
+#: The locales the product ships. All of them are equal (AGENTS.md §1) — a key
 #: that exists only in English is a bug for every other user, not a nicety.
 SUPPORTED_LOCALES = ("de", "en", "es")
 

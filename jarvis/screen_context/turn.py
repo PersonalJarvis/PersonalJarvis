@@ -71,6 +71,11 @@ def get_service(*, bus: Any | None = None) -> ScreenContextService:
             settings=settings_from_config(load_config()),
             bus=bus,
         )
+        # Every look through the shared service is an appshot to the user:
+        # the shutter effect starts at the true capture moment.
+        from jarvis.appshot.effect import on_shutter  # noqa: PLC0415
+
+        _service.set_shutter_hook(on_shutter)
     elif bus is not None:
         # REST may create the service before the conversational brain is ready.
         # Attach the one application bus later so receipts are not lost.
@@ -154,7 +159,7 @@ class TurnScreenContext:
         return self.status in ("clarify", "refused", "unavailable", "cancelled")
 
 
-def _model_note(context: ScreenContext) -> str:
+def model_note(context: ScreenContext) -> str:
     """The English preamble that rides with the image.
 
     Three jobs, all of them about not letting the model invent things:
@@ -223,19 +228,30 @@ async def screen_context_for_turn(
     service: ScreenContextService | None = None,
     force: bool = False,
     trace_id: UUID | None = None,
+    allow_pending_appshot: bool = True,
 ) -> TurnScreenContext:
     """Resolve the screen question for one conversation turn.
 
     ``locale`` must already be resolved via
     ``jarvis.core.turn_language.resolve_output_language`` — this function never
     derives a language, so a clarifying question cannot flip the conversation's
-    language mid-session (CLAUDE.md §1.3).
+    language mid-session (AGENTS.md §1.3).
+
+    An appshot waiting for the next message (``jarvis.appshot``) is this
+    turn's picture, unless the utterance asks for a fresh appshot. Automated
+    callers pass ``allow_pending_appshot=False`` so a scheduled task cannot
+    swallow the picture the user took for their own next question.
 
     Never raises. Ordinary non-visual turns return before capture infrastructure
     is initialized. Once a visual request is established, an unexpected defect
     fails closed with an honest reply so no older screen path can bypass the
     privacy policy.
     """
+    if not force and allow_pending_appshot:
+        pending = _pending_appshot(utterance)
+        if pending is not None:
+            return pending
+
     if not force:
         try:
             verdict = intent_module.classify(utterance, locale=locale)
@@ -304,11 +320,15 @@ async def screen_context_for_turn(
         if outcome.handle_id:
             svc.consume(outcome.handle_id)
 
+        from jarvis.appshot.service import record_turn_capture  # noqa: PLC0415
+
+        await record_turn_capture(context, bus=bus, trigger="voice")
+
         return TurnScreenContext(
             status="captured",
             image=context.image,
             mime=context.mime,
-            note=_model_note(context),
+            note=model_note(context),
             text=context.ui_text,
             receipt=context.describe(),
             source_hash=f"{context.captured_at_ns:x}",
@@ -326,10 +346,41 @@ async def screen_context_for_turn(
         )
 
 
+def _pending_appshot(utterance: str) -> TurnScreenContext | None:
+    """The appshot parked for this message, as a captured turn context."""
+    try:
+        from jarvis.appshot.store import get_store  # noqa: PLC0415
+
+        store = get_store()
+        if store.peek_pending() is None:
+            return None
+        if intent_module.mentions_appshot(utterance):
+            # "Take an appshot" asks for a NEW picture; the parked one is stale.
+            store.take_pending()
+            return None
+        shot = store.take_pending()
+    except Exception:  # noqa: BLE001 - a store fault means "no parked picture"
+        log.warning("screen_context: pending appshot lookup failed", exc_info=True)
+        return None
+    if shot is None:
+        return None
+    log.info("screen_context: attaching the pending appshot %s", shot.id)
+    return TurnScreenContext(
+        status="captured",
+        image=shot.image,
+        mime=shot.mime,
+        note=shot.note,
+        text=shot.ui_text,
+        receipt=f"appshot {shot.width}x{shot.height}",
+        source_hash=shot.id,
+    )
+
+
 __all__ = [
     "TurnScreenContext",
     "TurnStatus",
     "get_service",
+    "model_note",
     "reset_service",
     "screen_context_for_turn",
 ]

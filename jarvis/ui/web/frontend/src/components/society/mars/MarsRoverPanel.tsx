@@ -1,6 +1,6 @@
-import { BrandedSelect } from "@/components/ui/select";
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { BrandedSelect } from "@/components/ui/select";
 import { useT } from "@/i18n";
 import { MarsApiError } from "./api";
 import { currentRoverRide, type NavigationSnapshot } from "./navigationApi";
@@ -74,18 +74,22 @@ export function MarsRoverPanel({ agentId, active, snapshot, online }: {
       {pending.agent_id !== agentId && <p className="text-xs text-muted-foreground">{t("society.mars.rover_pending_other")}</p>}
     </div>}
     {!ride && <>
-      <label className="grid gap-1 text-sm">{t("society.mars.rover_vehicle")}
-        <BrandedSelect value={vehicleId} disabled={!enabled || !!pending} onValueChange={(selected) => setVehicleId(selected)} className="rounded border border-border bg-background p-2" ariaLabel={t("society.mars.rover_vehicle")} options={WORLD.navigation.rovers.map(row => ({ value: row.id, label: t(`society.mars.rover_vehicle_${row.id}`) }))} />
-      </label>
+      <div className="grid gap-1 text-sm"><span>{t("society.mars.rover_vehicle")}</span>
+        <BrandedSelect value={vehicleId} disabled={!enabled || !!pending} onValueChange={setVehicleId}
+          ariaLabel={t("society.mars.rover_vehicle")} className="rounded border border-border bg-background p-2"
+          options={WORLD.navigation.rovers.map((row) => ({ value: row.id, label: t(`society.mars.rover_vehicle_${row.id}`) }))} />
+      </div>
       <button type="button" disabled={!enabled || !!pending || !available} className={buttonClass} onClick={() => void send({ action: "reserve", agent_id: agentId, request_id: crypto.randomUUID(), vehicle_id: vehicleId })}>{t("society.mars.rover_reserve")}</button>
       {online && !available && <p role="status" className="text-xs">{t("society.mars.rover_unavailable")}</p>}
     </>}
     {ride && <>
       <p role="status" className="text-sm">{t(`society.mars.rover_state_${ride.state}`)}</p>
       {ride.attached && <p className="text-xs text-muted-foreground">{t("society.mars.rover_attached")}</p>}
-      <label className="grid gap-1 text-sm">{t("society.mars.rover_route")}
-        <BrandedSelect value={selectedDestination} disabled={!enabled || !!pending || !travelReady} onValueChange={(selected) => setDestination(selected)} className="rounded border border-border bg-background p-2" ariaLabel={t("society.mars.rover_route")} options={destinations.map(row => ({ value: row.id, label: t(`society.mars.rover_dock_${row.id}`) }))} />
-      </label>
+      <div className="grid gap-1 text-sm"><span>{t("society.mars.rover_route")}</span>
+        <BrandedSelect value={selectedDestination} disabled={!enabled || !!pending || !travelReady} onValueChange={setDestination}
+          ariaLabel={t("society.mars.rover_route")} className="rounded border border-border bg-background p-2"
+          options={destinations.map((row) => ({ value: row.id, label: t(`society.mars.rover_dock_${row.id}`) }))} />
+      </div>
       <div className="flex flex-wrap gap-2 text-sm">
         {ride.state === "ready_to_board" && <button type="button" disabled={!enabled || !!pending} className={buttonClass} onClick={() => action("board")}>{t("society.mars.rover_board")}</button>}
         {travelReady && <button type="button" disabled={!enabled || !!pending || !selectedDestination} className={buttonClass} onClick={() => action("travel")}>{t("society.mars.rover_travel")}</button>}

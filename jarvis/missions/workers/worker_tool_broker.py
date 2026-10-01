@@ -46,6 +46,10 @@ _FORBIDDEN_EXACT = frozenset(
     {
         "app-command",
         "app_command",
+        "find-app-action",
+        "find_app_action",
+        "run-app-action",
+        "run_app_action",
         "cli-jarvis",
         "cli-jarvisctl",
         "cli-jctl",
@@ -384,7 +388,6 @@ class _BrokerScope:
                     trace_id=trace_id,
                     origin="mission_worker",
                     user_utterance=self.task_text,
-                    rationale="Mission worker requested a supervisor-granted tool.",
                     mission_id=self.mission_id,
                     worker_id=self.worker_id,
                     config_snapshot={

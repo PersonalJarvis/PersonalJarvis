@@ -586,8 +586,10 @@ def _resolve_chain(config: JarvisConfig) -> list[tuple[str, str | None]]:
 
     # Stage 1 — override (power user)
     bio_cfg = getattr(getattr(config, "board", None), "bio", None)
+    override_entry: tuple[str, str | None] | None = None
     if bio_cfg is not None and bio_cfg.override_provider:
-        chain.append((bio_cfg.override_provider, bio_cfg.override_model or None))
+        override_entry = (bio_cfg.override_provider, bio_cfg.override_model or None)
+        chain.append(override_entry)
 
     brain_cfg = config.brain
     # Wave 4 migration / 2026-06-29 Jarvis-Agents rename: the field was
@@ -677,6 +679,38 @@ def _resolve_chain(config: JarvisConfig) -> list[tuple[str, str | None]]:
         )
         if has_reachable_alternative:
             deduped = [entry for entry in deduped if entry[0] != "claude-api"]
+
+    # The realtime voice call owns its key (user mandate 2026-09-29). While a
+    # reachable cloud family or subscription remains, families that bill it
+    # leave the chain entirely: skill drafting, bios and other background
+    # resolves never spend it. Without such an alternative they move behind
+    # the other entries but still precede the trailing keyless local tail, so
+    # a single-key install without a local server keeps a working resolve
+    # (AP-22).
+    from jarvis.brain.voice_key import bills_voice_key, without_voice_key
+
+    local_ids = {provider for provider, _ in _local_tail(config)}
+    kept = without_voice_key(
+        config,
+        deduped,
+        is_alternative=lambda provider: (
+            provider not in local_ids and _provider_reachable(config, provider)
+        ),
+        # A power-user override is a deliberate pick, not a fallback.
+        keep=[override_entry] if override_entry else (),
+    )
+    if len(kept) < len(deduped):
+        return kept
+    on_voice_key = [entry for entry in deduped if bills_voice_key(config, entry[0])]
+    if on_voice_key and len(on_voice_key) < len(deduped):
+        rest = [entry for entry in deduped if entry not in on_voice_key]
+        # Only the tail run counts: a local provider the user put first (a
+        # deliberate local primary or override) keeps its lead.
+        lead_kept = 1 if rest[0] == deduped[0] else 0
+        split = len(rest)
+        while split > lead_kept and rest[split - 1][0] in local_ids:
+            split -= 1
+        deduped = rest[:split] + on_voice_key + rest[split:]
     return deduped
 
 

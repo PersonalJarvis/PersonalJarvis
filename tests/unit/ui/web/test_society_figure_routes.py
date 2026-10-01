@@ -100,3 +100,12 @@ def test_a_figure_facing_the_wrong_way_is_refused_with_the_reason(
 def test_serving_never_leaves_the_figures_folder(client: TestClient):
     assert client.get("/api/society/figures/..%2F..%2Fjarvis.toml").status_code == 404
     assert client.get("/api/society/figures/nope.glb").status_code == 404
+
+
+def test_hostile_names_never_reach_a_file_outside(client: TestClient, tmp_path: Path):
+    outside = tmp_path / "outside.glb"
+    outside.write_bytes(b"glTF-outside")
+    for name in ("..%5Coutside.glb", "C%3Aoutside.glb", ".hidden.glb", "..glb"):
+        assert client.get(f"/api/society/figures/{name}").status_code == 404
+        assert client.delete(f"/api/society/figures/{name}").status_code == 404
+    assert outside.exists()

@@ -1048,7 +1048,7 @@ async def test_detect_demotes_a_slow_secondary_but_keeps_it_for_the_rescue(
     fake_vosk, monkeypatch
 ) -> None:
     """In the loop: a sustained over-budget stage 1 drops the sibling from the
-    streaming set (its recognizer set is rebuilt without it), yet the sibling
+    streaming set (the primary's recognizer is kept), yet the sibling
     still rescues a candidate the primary cannot verify — demotion trades
     stage-1 CPU, never the union's verify ear."""
     from jarvis.plugins.wake import vosk_kws_provider as mod
@@ -1065,9 +1065,9 @@ async def test_detect_demotes_a_slow_secondary_but_keeps_it_for_the_rescue(
     # The primary hears the candidate but its free ear contradicts it; the
     # sibling's free ear confirms. The sibling never stage-1-hits itself.
     fake_vosk["models"]["primary"].free_text = "das ist ganz anders"  # i18n-allow: test utterance
-    # The demotion (after _STAGE1_RT_WINDOW slow calls) rebuilds the primary's
-    # streaming recognizer, whose hit counter restarts — so the first hit lands
-    # AFTER the sibling was demoted, which is the case under test.
+    # The demotion fires on the _STAGE1_RT_WINDOW-th slow call; the primary's
+    # first hit lands one chunk later, AFTER the sibling was demoted, which is
+    # the case under test.
     fake_vosk["models"]["primary"].fire_after = mod._STAGE1_RT_WINDOW + 1  # noqa: SLF001
     fake_vosk["models"]["sibling"].fire_after = 10**9
     _force_slow_stage1(p, monkeypatch, rt=3.0)
@@ -1078,6 +1078,37 @@ async def test_detect_demotes_a_slow_secondary_but_keeps_it_for_the_rescue(
     assert p.stats()["stage1_models"] == 1
     assert fired == ["nova"]  # primary rejected -> demoted sibling rescued
     assert p.stats()["suppressed_confirm"] == 0
+
+
+async def test_a_demotion_mid_phrase_keeps_the_primarys_partial_decode(
+    fake_vosk, monkeypatch
+) -> None:
+    """The demotion fires when the box is busiest — usually while the user is
+    mid-call. It must drop only the sibling: rebuilding the primary's streaming
+    recognizer threw away the "Hey" it had already decoded, so the call never
+    matched and the wake was lost without a candidate (bench 2026-09-30)."""
+    from jarvis.plugins.wake import vosk_kws_provider as mod
+
+    window = mod._STAGE1_RT_WINDOW  # noqa: SLF001
+    p = VoskKwsProvider(
+        "Hey Nova",
+        model_path="primary",
+        model_paths=["primary", "sibling"],
+        keyword="nova",
+        confirm_tail_s=0.0,
+    )
+    p._ensure_model("primary")  # noqa: SLF001
+    p._ensure_model("sibling")  # noqa: SLF001
+    # The phrase completes two chunks AFTER the demotion; a rebuilt primary
+    # would need another full `window + 2` chunks and never get them.
+    fake_vosk["models"]["primary"].fire_after = window + 2
+    fake_vosk["models"]["sibling"].fire_after = 10**9
+    _force_slow_stage1(p, monkeypatch, rt=3.0)
+
+    fired = await _run_detect(p, [_chunk() for _ in range(window + 4)])
+
+    assert p.stats()["stage1_demoted"] == 1
+    assert fired == ["nova"]
 
 
 async def test_stage1_demotion_is_reset_per_detect_session(fake_vosk, monkeypatch) -> None:

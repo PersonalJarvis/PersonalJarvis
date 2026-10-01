@@ -7,18 +7,18 @@
 > `file:line` references, enum-drift defenses, testing buckets, the full script inventory.
 >
 > **Looking for the human-facing overview?** See [`../README.md`](../README.md).
-> **Binding source-of-truth:** [`../CLAUDE.md`](../CLAUDE.md) + the docs linked at the bottom.
+> **Binding source-of-truth:** [`../AGENTS.md`](../AGENTS.md) + the docs linked at the bottom.
 
 **Personal Jarvis** is a voice-driven **Supervisor-Agent meta-orchestrator** — not a classical voice assistant. The core pattern is a fast **Router-Brain** that dispatches work to interchangeable executors: router-tier tools, a computer-use harness, and — for heavy work — isolated mission workers (`ClaudeDirectWorker`, `CodexDirectWorker`, `GoogleCliWorker`, in-process `ApiAgentWorker`). NB: only two `jarvis.harness` entry points are registered, `python-script` and `screenshot` (`pyproject.toml`); `open_interpreter.py` is a stub that returns `exit_code=1` and `mcp_remote.py` is unregistered — `tests/contract/test_harness_protocol.py` asserts both are unavailable. MCP reaches the brain as *tools* via the `mcp-tools` loader, not as a harness. The voice layer is just the I/O surface; the soul is the dispatcher discipline that keeps the Router-Brain lean and delegates heavy reasoning to specialized Jarvis-Agents under critic-loop + worktree-isolation guard rails. The project is **provider-agnostic by mandate** — assume the downloader has exactly one credential, from any vendor, and never assume it is an Anthropic API key (subscription OAuth is used only inside workers) — and **self-modifying** via an atomic config-writer with a 10-step validate-backup-tempfile-replace-rollback-audit pipeline.
 
 > ### Cloud-First — Read This Before The Install Section
-> **Target runtime is any €5 / month VPS or low-spec laptop** with a modern browser. **The maintainer's RTX 5070 Ti / Windows 11 Pro workstation is not a requirement** — it represents fewer than 0.1 % of the install base this project is being designed for. All Brain / STT / TTS / Vision / Wake providers default to cloud APIs; no GPU, no local models, no Windows APIs, no microphone are required in the base install. Windows-desktop features (tray app, Orb overlay, global hotkey wake, local Whisper, Silero-VAD-in-process, Computer-Use harness, PowerShell drift-guard daemon) are **opt-in `[desktop]` extras**, not requirements. **Binding doctrine: [`CLAUDE.md`](CLAUDE.md)**. On conflict between this README and `PHILOSOPHY.md`, the doctrine wins.
+> **Target runtime is any €5 / month VPS or low-spec laptop** with a modern browser. **The maintainer's RTX 5070 Ti / Windows 11 Pro workstation is not a requirement** — it represents fewer than 0.1 % of the install base this project is being designed for. All Brain / STT / TTS / Vision / Wake providers default to cloud APIs; no GPU, no local models, no Windows APIs, no microphone are required in the base install. Windows-desktop features (tray app, Orb overlay, global hotkey wake, local Whisper, Silero-VAD-in-process, Computer-Use harness, PowerShell drift-guard daemon) are **opt-in `[desktop]` extras**, not requirements. **Binding doctrine: [`AGENTS.md`](AGENTS.md)**. On conflict between this README and `PHILOSOPHY.md`, the doctrine wins.
 
 - **Base runtime:** Linux / macOS / Windows with Python 3.11+ and a network connection. Headless VPS + browser UI is a first-class deployment target.
 - **Maintainer's reference machine** (the project is developed on, but **does not require**, this hardware): RTX 5070 Ti, 32 GB RAM, CUDA 12.8, Windows 11 Pro — unlocks the optional `[desktop]` extras.
 - **Repo root** (maintainer's workstation; not relevant to consumers): `<USER_HOME>\Desktop\Personal Jarvis`
 - **Binding plan:** `~/.claude/plans/also-er-muss-auch-lexical-pond.md` (plan wins on plan-vs-code conflict).  <!-- i18n-allow -->
-- **Binding doctrine:** [`CLAUDE.md`](CLAUDE.md) (cloud-first; wins over the binding plan when the two disagree on hardware assumptions).
+- **Binding doctrine:** [`AGENTS.md`](AGENTS.md) (cloud-first; wins over the binding plan when the two disagree on hardware assumptions).
 
 ---
 
@@ -88,7 +88,7 @@ The base + cloud-voice experience is fully cross-platform. The six desktop power
 | Orb overlay | 🟡 unverified-on-real-desktop (best-effort; ⚙ tray fallback) | 🟡 unverified-on-real-desktop (Tk `-transparentcolor`) | ✅ |
 | Admin-helper / elevation | 🟡 unverified-on-real-desktop (pkexec/sudo; ⚙ NullElevator) | 🟡 unverified-on-real-desktop (Authorization Services) | ✅ UAC |
 
-> macOS / Linux get the full Router-Brain → Worker-Critic → Mission-Manager experience — including voice, local Whisper, and the **screenshot → click → type** Computer-Use loop: the vision model picks pixel targets, and `mss` (screen capture) + `pyautogui` (click / type / scroll) are cross-platform **base** dependencies, not Windows-only. The six former Windows-only desktop features — the built-in terminal, launch-app-by-name, click-by-UI-element-name (UIA / AX / AT-SPI accessibility trees), global-hotkey wake, the Orb overlay, and the admin-helper / elevation — are now **cross-platform behind the `jarvis/platform/` seam** (one per-OS implementation per feature, selected by a `detect_platform()` factory, each degrading to a logged English no-op when its capability is absent). They remain **opt-in `[desktop]` / `[desktop-macos]` extras** (the headless €5-VPS base install ships none of them). Terminal and launch-by-name are fully CI-provable on the ubuntu/macos runners; UI-element-click, global-hotkey capture, the Orb transparency, and the elevation prompt are live GUI/permission behaviors that need a one-time sign-off on a real device (AD-3) — see the per-feature verdicts in [Verification status](#verification-status). See the `[desktop]` extras in [`pyproject.toml`](pyproject.toml), the cloud-first doctrine in [`CLAUDE.md`](CLAUDE.md), and ADR-0020 (cross-platform elevation, supersedes ADR-0001).
+> macOS / Linux get the full Router-Brain → Worker-Critic → Mission-Manager experience — including voice, local Whisper, and the **screenshot → click → type** Computer-Use loop: the vision model picks pixel targets, and `mss` (screen capture) + `pyautogui` (click / type / scroll) are cross-platform **base** dependencies, not Windows-only. The six former Windows-only desktop features — the built-in terminal, launch-app-by-name, click-by-UI-element-name (UIA / AX / AT-SPI accessibility trees), global-hotkey wake, the Orb overlay, and the admin-helper / elevation — are now **cross-platform behind the `jarvis/platform/` seam** (one per-OS implementation per feature, selected by a `detect_platform()` factory, each degrading to a logged English no-op when its capability is absent). They remain **opt-in `[desktop]` / `[desktop-macos]` extras** (the headless €5-VPS base install ships none of them). Terminal and launch-by-name are fully CI-provable on the ubuntu/macos runners; UI-element-click, global-hotkey capture, the Orb transparency, and the elevation prompt are live GUI/permission behaviors that need a one-time sign-off on a real device (AD-3) — see the per-feature verdicts in [Verification status](#verification-status). See the `[desktop]` extras in [`pyproject.toml`](pyproject.toml), the cloud-first doctrine in [`AGENTS.md`](AGENTS.md), and ADR-0020 (cross-platform elevation, supersedes ADR-0001).
 
 #### Verification status
 
@@ -378,7 +378,7 @@ Locking is `ClassVar threading.Lock`. Three router-tier Self-Mod tools: `list_mu
 
 ## 12. Phase status table
 
-Verified against the actual file tree (not just CLAUDE.md claims):
+Verified against the actual file tree (not just AGENTS.md claims):
 
 | Phase | Status | Evidence |
 |---|---|---|
@@ -386,7 +386,7 @@ Verified against the actual file tree (not just CLAUDE.md claims):
 | 5 Vision/Action/Admin/Async/Control + Tiered Routing | live | `jarvis/{vision,admin,tasks,control,telemetry}/`, `ROUTER_TOOLS` frozenset, ADR-0001..0011 |
 | 6 Self-Healing Worker-Critic | live | `jarvis/missions/{manager,kontrollierer,critic,workers,isolation,worker_runtime,voice,safety}/`. 458 mission tests. Wired via `bootstrap_missions` |
 | 7 Self-Mod (foundation + writer + tools) | live | `jarvis/core/self_mod/` (audit, errors, pending, registry, schema, writer). `spawn-skill-author` is **NOT** reachable from the brain — see §25; the brain-reachable authoring path is the `create-skill` router tool (2026-08-18) over the same `SkillCreatorService` as `POST /api/skills/creator/*` and `jarvis skills create` |
-| Awareness A0–A5 | live | `jarvis/awareness/` (state, story, salience, verdichter, working_set, episode, watchers, probes). A1 + A3 router tools registered |
+| Awareness A0–A5 | removed 2026-09-30 | Package and both router tools deleted (token cost, no longer wanted). ADR-0011 amendment "Awareness tools retired" |
 | Wiki B0/B1/B2/B3/B5/B7/B8/B9 | live | `jarvis/memory/wiki/` (curator, atomic_writer, page, integration, scheduler, session_rollup, voice_bridge, telemetry, vault_index, watcher, search). 3 router tools |
 | Wiki B4 (legacy Curator) | soft-disabled | `factory.py:736-757` gates on `cfg.memory.legacy_curator.enabled` (default `false` since 2026-05-17). `data/workspace/` snapshot stays on disk for 35 reader sites |
 | Wiki B6 | not started | — |
@@ -519,7 +519,7 @@ npm run build     # tsc -b && vite build --outDir ../dist --emptyOutDir
 npm run test      # vitest
 ```
 
-Line length 100. Target `py311`. One per-file `E501` exception (`jarvis/awareness/prompts.py` — long few-shot strings).
+Line length 100. Target `py311`.
 
 ---
 
@@ -541,7 +541,7 @@ Line length 100. Target `py311`. One per-file `E501` exception (`jarvis/awarenes
 **Smoke / probe (manual):**
 - `smoke_brain_e2e.py`, `smoke_frontier.py`, `smoke_phase6_p{1,2,2_jobkill,3,3_real}.py`, `smoke-test-ack.ps1`.
 - `voice_e2e_probe.py`, `voice_compare.py`, `tts_brain_endtoend.py`, `tts_output_sanity.py`, `warm_keep_bench.py`.
-- `awareness_smoke_a{1,2}.py`, `vision_smoke.py`.
+- `vision_smoke.py`.
 - `diag_audio_devices.py`, `diag_mic_{live,mute,wasapi}.py`, `verify_orb_{appears,mute_toggle,drag}.py`, `snap_orb.py` — audio/orb debugging.
 
 **Migration / one-time:**
@@ -660,7 +660,6 @@ Self-mod writeup: [`docs/self_mod.md`](docs/self_mod.md) — 8 mutable settings 
 | `jarvis/missions/workers/{base,claude_direct_worker,codex_worker,gemini_worker,subjarvis_worker,supervisor}.py` | Worker variants — `WorkerProtocol` structural contract. |
 | `jarvis/missions/isolation/{worktree,job_object,env}.py` | Git-worktree manager + Windows Job Object kill-on-close. |
 | `jarvis/harness/screenshot_only_loop.py` | Screenshot-only POAV loop — the sole `computer_use` engine (vision picks pixel targets; cross-platform `mss` + `pyautogui`). |
-| `jarvis/awareness/manager.py` | `AwarenessManager` — state holder; **never on voice critical path** (AP-9). |
 | `jarvis/memory/wiki/integration.py` | `bootstrap_wiki_integration` — wires SessionRollupWorker (B7) + WikiCurator (B1). |
 | `jarvis/sessions/constants.py` | `HANGUP_REASONS` single source of truth — canonical 5-layer enum example. |
 | `jarvis/speech/pipeline.py` | Voice pipeline — wake→VAD→STT→Brain→TTS, scrub_for_voice at lines 647 and 1330. |
@@ -671,19 +670,19 @@ Self-mod writeup: [`docs/self_mod.md`](docs/self_mod.md) — 8 mutable settings 
 
 ## 25. Doc-vs-code drift (verified)
 
-Two drifts surfaced during the agent audit; flag them before quoting CLAUDE.md to a fresh chat:
+Two drifts surfaced during the agent audit; flag them before quoting AGENTS.md to a fresh chat:
 
 1. **`spawn-skill-author` is NOT wired** (corrected 2026-07-25). It carried a `pyproject.toml` entry point, and this document previously concluded from that registration that the tool was live — it was not, and that claim misled every agent session reading this file. The tool is absent from `ROUTER_TOOLS` (the only allow-set, so `factory.py` filters it out), AND its `__init__` requires a `runner=` argument the entry-point loader cannot supply — so adding it to `ROUTER_TOOLS` raises `TypeError` at tool load rather than fixing anything. The entry point has been removed. **Since 2026-08-18 the brain CAN author skills** — through the `create-skill` router tool (`jarvis/plugins/tool/create_skill.py`, in `ROUTER_TOOLS`, loader-constructible), which calls the same `SkillCreatorService.author()` as `POST /api/skills/creator/author` and `jarvis skills create`; every path lands the skill as `state: draft` (AP-15) because `commit` forces it. A spoken "erstell mir einen neuen Skill …" is recognised deterministically by `jarvis/skills/authoring_request.py` BEFORE any brand trigger, so a service named inside the request can no longer capture the turn. Guarded by `tests/unit/brain/test_router_tool_entrypoint_parity.py`, `tests/unit/plugins/test_create_skill_tool.py`, `tests/unit/brain/test_skill_authoring_turn.py`.
 
-2. **`jarvis/sub_jarvis/` directory still exists** as an **empty placeholder** (no `__init__.py`, no files) despite CLAUDE.md and `docs/jarvis-agents-bridge.md §11` declaring it deleted in Welle 4. Cleanup is structurally complete (no code references), but the empty dir itself is leftover.
+2. **`jarvis/sub_jarvis/` directory still exists** as an **empty placeholder** (no `__init__.py`, no files) despite AGENTS.md and `docs/jarvis-agents-bridge.md §11` declaring it deleted in Welle 4. Cleanup is structurally complete (no code references), but the empty dir itself is leftover.
 
-Neither blocks anything — but a fresh chat parroting CLAUDE.md verbatim will be wrong on point 1, and confused by `ls jarvis/` on point 2.
+Neither blocks anything — but a fresh chat parroting AGENTS.md verbatim will be wrong on point 1, and confused by `ls jarvis/` on point 2.
 
 ---
 
 ## 26. Pointers
 
-- [`CLAUDE.md`](CLAUDE.md) — project guidance (highest priority for any agent working in this repo)
+- [`AGENTS.md`](AGENTS.md) — project guidance (highest priority for any agent working in this repo)
 - [`docs/BUGS.md`](docs/BUGS.md) — 26-entry bug register with regression-test pointers
 - [`docs/jarvis-agents-bridge.md`](docs/jarvis-agents-bridge.md) — AD-1..AD-21 Jarvis-Agents harness contract
 - [`docs/anti-drift-three-layer.md`](docs/anti-drift-three-layer.md) — five-layer enum pattern (mandatory for any new wire-format string)
@@ -716,4 +715,4 @@ Neither blocks anything — but a fresh chat parroting CLAUDE.md verbatim will b
 
 **No warranty for self-modifying behaviour.** The Phase-7 self-mod tools (`set_config_value`, `spawn-skill-author`) and the Phase-6 Worker-Critic loop can write to `jarvis.toml`, generate skills (created with `state="draft"`, never auto-activated — AP-15), and create isolated `git worktree` branches under `<repo_parent>/sub-agents-outputs/`. The 10-step atomic-write pipeline (allowlist → pre-validate → backup → tempfile → synchronous reload → rollback → audit) is designed to be safe and reversible, but the Apache 2.0 "as is" disclaimer (§7) and limitation of liability (§8) apply in full: the maintainers are not liable for any state the system writes on your behalf, on your filesystem or against the third-party APIs you have configured.
 
-**Contributing.** Pull requests are welcome. By contributing you agree that your contribution is licensed under the Apache License 2.0 above. See [`CLAUDE.md`](CLAUDE.md) and [`CLAUDE.md`](CLAUDE.md) for the binding output-language policy (English-only artifacts) and the cloud-first design doctrine. The repository's bug register lives at [`docs/BUGS.md`](docs/BUGS.md); architecture decisions are recorded under [`docs/adr/`](docs/adr/).
+**Contributing.** Pull requests are welcome. By contributing you agree that your contribution is licensed under the Apache License 2.0 above. See [`AGENTS.md`](../AGENTS.md) for the binding output-language policy (English-only artifacts) and the cloud-first design doctrine. The repository's bug register lives at [`docs/BUGS.md`](docs/BUGS.md); architecture decisions are recorded under [`docs/adr/`](docs/adr/).

@@ -1861,9 +1861,6 @@ def test_router_tools_is_pure_dispatcher_set() -> None:
             # Enum-constrained + schema-validated; dangerous -> risk "ask".
             # Never a spawn (AP-5/AP-14). ADR-0011 amendment "app-command tool".
             "app-command",
-            "awareness-snapshot",
-            # Awareness Phase A3 (BM25 search over recent episode log).
-            "awareness-recall",
             # Skills-Brain-Integration (also in SUB_TOOLS — structural D9 protection)
             "run-skill",
             # Skill authoring by voice/chat (2026-08-18): the brain writes a NEW
@@ -2002,6 +1999,11 @@ def test_router_tools_is_pure_dispatcher_set() -> None:
             "delegate-to-agent",
             "society-status",
             "message-agent",
+            # Every app action (2026-09-29): catalog search + one gated REST
+            # operation under the person's policy - never a spawn, never in a
+            # worker set. See ADR-0011 amendment "Every app action".
+            "find-app-action",
+            "run-app-action",
         }
     )
     assert ROUTER_TOOLS == expected, (

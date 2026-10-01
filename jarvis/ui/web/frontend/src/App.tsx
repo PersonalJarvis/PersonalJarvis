@@ -18,7 +18,6 @@ import {
   SIDEBAR_WIDTH_STORAGE_KEY,
 } from "@/components/layout/Sidebar";
 import { PaneResizer } from "@/components/layout/PaneResizer";
-import { SETTINGS_HUB_IDS } from "@/components/layout/navGroups";
 import { useResizablePane } from "@/hooks/useResizablePane";
 import { TopBar } from "@/components/layout/TopBar";
 import { PermissionsAlertBanner } from "@/components/layout/PermissionsAlertBanner";
@@ -278,16 +277,7 @@ export default function App() {
   const activeSection = useEventStore((s) => s.activeSection);
   const agentsNavOpen = useSocietyShell((s) => s.navigationOpen);
   const toggleAgentsNav = useSocietyShell((s) => s.toggleNavigation);
-  const settingsHubActive = SETTINGS_HUB_IDS.includes(activeSection);
-  const [settingsSidebarOpen, setSettingsSidebarOpen] = useState(false);
-  // Each visit to the Settings hub starts with its own navigation as the only
-  // left column. Switching tabs inside the hub preserves a deliberate reveal.
-  useEffect(() => {
-    if (!settingsHubActive) setSettingsSidebarOpen(false);
-  }, [settingsHubActive]);
-  const hideNavigation =
-    (activeSection === "agents" && !agentsNavOpen) ||
-    (settingsHubActive && !settingsSidebarOpen);
+  const hideNavigation = activeSection === "agents" && !agentsNavOpen;
   const solo = useEventStore((s) => s.solo);
   const detachedViews = useEventStore((s) => s.detachedViews);
   /*
@@ -295,22 +285,18 @@ export default function App() {
    *
    * The toggle moved here from the sidebar header, so the stranded handlers
    * move with it: the agents section folds its own navigation, every other
-   * section folds the main column. The settings hub brings its own toggle
-   * (TopBar maps it onto the same button), so it needs nothing here. The
-   * collapsed flag mirrors the rail the sidebar itself reports — a dragged
+   * section folds the main column. The collapsed flag mirrors the rail the sidebar itself reports — a dragged
    * narrow column reads as collapsed even before the toggle was touched.
    */
-  const navToggle = settingsHubActive
-    ? undefined
-    : activeSection === "agents"
-      ? {
-          collapsed: !agentsNavOpen || sidebar.size < SIDEBAR_RAIL_AT_WIDTH,
-          onToggle: toggleAgentsNav,
-        }
-      : {
-          collapsed: navCollapsed || sidebar.size < SIDEBAR_RAIL_AT_WIDTH,
-          onToggle: toggleNav,
-        };
+  const navToggle = activeSection === "agents"
+    ? {
+        collapsed: !agentsNavOpen || sidebar.size < SIDEBAR_RAIL_AT_WIDTH,
+        onToggle: toggleAgentsNav,
+      }
+    : {
+        collapsed: navCollapsed || sidebar.size < SIDEBAR_RAIL_AT_WIDTH,
+        onToggle: toggleNav,
+      };
 
   /*
    * The realtime broker must exist exactly ONCE across all windows: it
@@ -377,7 +363,7 @@ export default function App() {
       {!hideNavigation && <>
       <Sidebar
         width={sidebar.size}
-        collapsed={activeSection === "agents" || settingsHubActive ? false : navCollapsed}
+        collapsed={activeSection === "agents" ? false : navCollapsed}
       />
 
       <PaneResizer
@@ -411,7 +397,7 @@ export default function App() {
         {/* Gray, like the sidebar. The content panel below rounds its
             top-left corner so this gray shows in the curve. */}
         <div className="h-8 shrink-0" data-testid="caption-rule" />
-        <div className={activeSection === "agents" || settingsHubActive ? "flex min-h-0 min-w-0 flex-1 flex-col" : "jarvis-sheet flex min-h-0 min-w-0 flex-1 flex-col"}>
+        <div className={activeSection === "agents" ? "flex min-h-0 min-w-0 flex-1 flex-col" : "jarvis-sheet flex min-h-0 min-w-0 flex-1 flex-col"}>
         {/* App-wide macOS permission alert — topmost so a missing grant is
             impossible to miss on any view. No-op on other platforms. */}
         <PermissionsAlertBanner />
@@ -420,11 +406,8 @@ export default function App() {
             it is the same class of problem: an OS-level gate the user must be
             told about, since nothing else reports it. */}
         <InputIsolationBanner />
-        <TopBar navToggle={navToggle} settingsNavigation={settingsHubActive ? {
-          open: settingsSidebarOpen,
-          onToggle: () => setSettingsSidebarOpen((open) => !open),
-        } : undefined} />
-        <VoiceWarmingBanner />
+        <TopBar navToggle={navToggle} />
+        {!(["agentic-ide", "chat-workspace", "agentic-ide-classic"].includes(activeSection)) && <VoiceWarmingBanner />}
         {/* The one-time "all lights green" note — the first time every
             section of the active voice mode answers. Never again after. */}
         <ReadyCelebration />
@@ -447,7 +430,7 @@ export default function App() {
           as long as a cliConnectCoach is set in the store. */}
       <CliConnectPoller />
       {/* Blocking onboarding gate — overlays everything until first-run setup is complete. */}
-      <OnboardingGate />
+      <OnboardingGate activeSection={activeSection} />
       {/* `?` anywhere in the app opens this; the chunk loads on first use. */}
       {shortcutsOpen && (
         <Suspense fallback={null}>

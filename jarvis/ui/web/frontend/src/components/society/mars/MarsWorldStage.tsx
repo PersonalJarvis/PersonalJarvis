@@ -1,4 +1,3 @@
-import { BrandedSelect } from "@/components/ui/select";
 import { Component, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Canvas } from "@react-three/fiber";
@@ -7,6 +6,7 @@ import { useCanvasAwake } from "@/hooks/useCanvasAwake";
 import { useWebglSurface } from "@/hooks/useWebglSurface";
 import { useWebglSupported } from "@/lib/graphDimension";
 import { useLocaleChunk, useT } from "@/i18n";
+import { BrandedSelect } from "@/components/ui/select";
 import { CAMERA_FOV, fitWorldBounds } from "./camera";
 import { MarsScene, type CameraMode } from "./MarsScene";
 import { WORLD, WORLD_BOUNDS } from "./world";
@@ -120,12 +120,14 @@ export function MarsWorldStage({ topRight, onOpenLedger, onSelectAgent, stationP
         <div className="mars-actions">
           <button type="button" aria-pressed={mode === "overview"} onClick={() => choose("overview")}>{t("society.mars.overview")}</button>
           <button type="button" aria-pressed={mode === "outpost"} onClick={() => choose("outpost")}>{t("society.mars.outpost")}</button>
-          <BrandedSelect ariaLabel={t("society.mars.viewpoint")} value={viewpoint} onValueChange={(selected) => {
-            setViewpoint(selected as Viewpoint); choose("outpost");
-          }} options={VIEWPOINTS.map(value => ({ value, label: t(`society.mars.view_${value}`) }))} />
+          <BrandedSelect ariaLabel={t("society.mars.viewpoint")} value={viewpoint} className="min-w-36"
+            onValueChange={(value) => { setViewpoint(value as Viewpoint); choose("outpost"); }}
+            options={VIEWPOINTS.map((value) => ({ value, label: t(`society.mars.view_${value}`) }))} />
           <button type="button" aria-pressed={mode === "player"} onClick={() => choose("player")}>{t("society.mars.walk")}</button>
-          <BrandedSelect ariaLabel={t("society.mars.follow_agent")} value={mode === "follow" ? followAgentId ?? "" : ""} disabled={!followAvailable}
-            onValueChange={(selected) => { if (selected) startFollow(selected); else orbit(); }} options={[{ value: "", label: t("society.mars.follow_agent") }, ...followCandidates.map(row => ({ value: row.agent_id, label: agentNames.get(row.agent_id) ?? row.agent_id }))]} />
+          <BrandedSelect ariaLabel={t("society.mars.follow_agent")} value={mode === "follow" ? followAgentId ?? "" : ""}
+            disabled={!followAvailable} className="min-w-36"
+            onValueChange={(value) => { if (value) startFollow(value); else orbit(); }}
+            options={[{ value: "", label: t("society.mars.follow_agent") }, ...followCandidates.map((row) => ({ value: row.agent_id, label: agentNames.get(row.agent_id) ?? row.agent_id }))]} />
           {mode === "follow" && <button type="button" onClick={orbit}>{t("society.mars.stop_follow")}</button>}
           <button type="button" aria-pressed={neutral} onClick={() => setNeutral((value) => !value)}>{t("society.mars.neutral")}</button>
           <button type="button" aria-pressed={shadows} onClick={() => setShadows((value) => !value)}>{t("society.mars.shadows")}</button>

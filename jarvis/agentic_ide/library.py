@@ -63,6 +63,8 @@ from uuid import uuid4
 
 from loguru import logger
 
+from jarvis.core.path_safety import UnsafePathError, safe_child
+
 #: Saves arrive from several request handlers at once; the last writer has to be
 #: the one that lands rather than the one that finished its rename first.
 _WRITE_LOCK = threading.RLock()
@@ -92,6 +94,10 @@ class Project:
     #: UI always has one and the user never has to pick.
     color: str | None = None
     pinned: bool = False
+    #: Manual sidebar position, set by drag and drop. Files written before this
+    #: existed read as 0.0, which ties and falls through to ``last_opened_at`` —
+    #: so the order nobody arranged stays exactly the order they already see.
+    position: float = 0.0
     archived: bool = False
     created_at: float = 0.0
     last_opened_at: float = 0.0
@@ -159,8 +165,17 @@ def _projects_path() -> Path:
     return _root() / "projects.json"
 
 
-def _threads_path(project_id: str) -> Path:
-    return _root() / "threads" / f"{project_id}.json"
+def _threads_path(project_id: str) -> Path | None:
+    """The chat file of one project, or None when the id is not a plain name.
+
+    Project ids reach this from HTTP routes, so the file name is checked to stay
+    inside the threads folder before anything reads, writes or deletes it.
+    """
+    try:
+        return safe_child(_root() / "threads", f"{project_id}.json")
+    except UnsafePathError:
+        logger.warning("Chat library: refusing project id {!r}", project_id)
+        return None
 
 
 def _read_json(path: Path) -> Any:
@@ -258,6 +273,7 @@ def _load_projects() -> list[Project]:
                 name=str(item.get("name") or Path(path).name or path),
                 color=(str(item["color"]) if item.get("color") else None),
                 pinned=bool(item.get("pinned")),
+                position=float(item.get("position") or 0.0),
                 archived=bool(item.get("archived")),
                 created_at=float(item.get("created_at") or 0.0),
                 last_opened_at=float(item.get("last_opened_at") or 0.0),
@@ -275,7 +291,7 @@ def _save_projects(projects: list[Project]) -> bool:
 
 
 def list_projects(*, include_archived: bool = False) -> list[Project]:
-    """Every project, pinned first, then most recently opened.
+    """Every project, pinned first, then in the user's own order.
 
     Folders that no longer exist are kept rather than dropped. An unplugged
     external drive or a repo on a network share is a normal, temporary state,
@@ -287,7 +303,7 @@ def list_projects(*, include_archived: bool = False) -> list[Project]:
         projects = _load_projects()
     if not include_archived:
         projects = [p for p in projects if not p.archived]
-    projects.sort(key=lambda p: (not p.pinned, -p.last_opened_at, p.name.lower()))
+    projects.sort(key=lambda p: (not p.pinned, p.position, -p.last_opened_at, p.name.lower()))
     return projects
 
 
@@ -297,6 +313,11 @@ def get_project(project_id: str) -> Project | None:
             if project.id == project_id:
                 return project
     return None
+
+
+def _next_position(projects: list[Project]) -> float:
+    """Where a project nobody arranged goes: behind every arranged one."""
+    return max((p.position for p in projects), default=0.0) + 1.0
 
 
 def ensure_project(path: str | Path, *, name: str | None = None) -> Project:
@@ -324,6 +345,7 @@ def ensure_project(path: str | Path, *, name: str | None = None) -> Project:
             id=pid,
             path=resolved,
             name=(name or Path(resolved).name or resolved)[:TITLE_MAX],
+            position=_next_position(projects),
             created_at=now,
             last_opened_at=now,
         )
@@ -333,7 +355,7 @@ def ensure_project(path: str | Path, *, name: str | None = None) -> Project:
 
 
 #: What the one project-less holder is called on screen. English because every
-#: artifact is (CLAUDE.md §1); it is a name, not a translated label.
+#: artifact is (AGENTS.md §1); it is a name, not a translated label.
 SCRATCH_NAME = "Sessions"
 
 
@@ -375,6 +397,7 @@ def ensure_scratch() -> Project:
             id=pid,
             path=resolved,
             name=SCRATCH_NAME,
+            position=_next_position(projects),
             created_at=now,
             last_opened_at=now,
             scratch=True,
@@ -424,6 +447,31 @@ def touch_project(project_id: str) -> None:
                 return
 
 
+def reorder_projects(project_ids: list[str]) -> list[Project]:
+    """Persist a drag-and-drop sidebar order.
+
+    ``project_ids`` carries the visible projects front to back. It may be a
+    subset — archived projects and the scratch holder are never on screen, so
+    they keep their positions. Unknown ids and duplicates are rejected without
+    moving anything.
+    """
+    with _WRITE_LOCK:
+        projects = _load_projects()
+        known = {p.id for p in projects}
+        if len(set(project_ids)) != len(project_ids):
+            raise ValueError("Project order must contain every project exactly once.")
+        unknown = [pid for pid in project_ids if pid not in known]
+        if unknown:
+            raise ValueError(f"Unknown project: {unknown[0]}")
+        rank = {pid: index for index, pid in enumerate(project_ids)}
+        for project in projects:
+            if project.id in rank:
+                project.position = float(rank[project.id])
+        _save_projects(projects)
+        projects.sort(key=lambda p: (not p.pinned, p.position, -p.last_opened_at, p.name.lower()))
+        return projects
+
+
 def delete_project(project_id: str) -> bool:
     """Forget a project AND every chat in it. True when something was removed.
 
@@ -437,8 +485,10 @@ def delete_project(project_id: str) -> bool:
         if len(kept) == len(projects):
             return False
         _save_projects(kept)
+        threads_file = _threads_path(project_id)
         try:
-            _threads_path(project_id).unlink(missing_ok=True)
+            if threads_file is not None:
+                threads_file.unlink(missing_ok=True)
         except OSError as exc:
             logger.warning("Chat library: could not drop chats of {}: {}", project_id, exc)
         return True
@@ -451,7 +501,10 @@ def delete_project(project_id: str) -> bool:
 
 def _load_threads(project_id: str) -> list[Thread]:
     out: list[Thread] = []
-    for item in _unwrap(_read_json(_threads_path(project_id)), "threads"):
+    path = _threads_path(project_id)
+    if path is None:
+        return out
+    for item in _unwrap(_read_json(path), "threads"):
         tid = str(item.get("id") or "").strip()
         if not tid:
             continue
@@ -477,9 +530,10 @@ def _load_threads(project_id: str) -> list[Thread]:
 
 
 def _save_threads(project_id: str, threads: list[Thread]) -> bool:
-    return _write_json(
-        _threads_path(project_id), _envelope("threads", [t.to_dict() for t in threads])
-    )
+    path = _threads_path(project_id)
+    if path is None:
+        return False
+    return _write_json(path, _envelope("threads", [t.to_dict() for t in threads]))
 
 
 def list_threads(project_id: str, *, include_archived: bool = False) -> list[Thread]:

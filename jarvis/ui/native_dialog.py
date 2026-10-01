@@ -22,26 +22,86 @@ from __future__ import annotations
 import contextlib
 import os
 import sys
+import threading
 from collections.abc import Callable
 
 
-def _run_helper(cmd: list[str]) -> tuple[bool, int]:
-    """Run a dialog helper; ``(ran, returncode)``. ``ran=False`` → not installed."""
+def _run_helper(
+    cmd: list[str], *, dismiss: threading.Event | None = None
+) -> tuple[bool, int]:
+    """Run a dialog helper; ``(ran, returncode)``. ``ran=False`` → not installed.
+
+    With ``dismiss``, setting that event closes the helper's dialog and the
+    call returns a non-zero code, which every caller reads as "no".
+    """
     import subprocess
 
     from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 
+    if dismiss is None:
+        try:
+            completed = subprocess.run(  # noqa: S603 — fixed argv, no shell
+                cmd,
+                check=False,
+                encoding="utf-8",
+                errors="replace",
+                creationflags=NO_WINDOW_CREATIONFLAGS,
+            )
+        except (OSError, ValueError):  # no dialog tool here: the caller falls back
+            return False, -1
+        return True, int(getattr(completed, "returncode", 0) or 0)
     try:
-        completed = subprocess.run(  # noqa: S603 — fixed argv, no shell
-            cmd,
-            check=False,
-            encoding="utf-8",
-            errors="replace",
-            creationflags=NO_WINDOW_CREATIONFLAGS,
+        proc = subprocess.Popen(  # noqa: S603 — fixed argv, no shell
+            cmd, creationflags=NO_WINDOW_CREATIONFLAGS
         )
-    except (OSError, ValueError):
+    except (OSError, ValueError):  # no dialog tool here: the caller falls back
         return False, -1
-    return True, int(getattr(completed, "returncode", 0) or 0)
+    while proc.poll() is None:
+        if dismiss.wait(0.2):
+            proc.terminate()
+            try:
+                proc.wait(timeout=2.0)
+            except subprocess.TimeoutExpired:  # ignored terminate: kill is the answer
+                proc.kill()
+            return True, -1
+    return True, int(proc.returncode or 0)
+
+
+def _dismiss_message_box_when_set(
+    thread_id: int, dismiss: threading.Event, done: threading.Event
+) -> None:
+    """Answer "No" on this thread's message box once ``dismiss`` is set.
+
+    ``MessageBoxW`` blocks the thread that shows it, so the close has to come
+    from outside: the box is a ``#32770`` dialog owned by that thread, and a
+    posted ``WM_COMMAND(IDNO)`` ends it exactly like the button would. The
+    post repeats until the box is gone, which also covers a dismissal that
+    arrives before the box has been created.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    # A private WinDLL instance: argtypes on the shared ctypes.windll.user32
+    # would leak into every other caller in the process.
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    enum_proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    user32.EnumThreadWindows.argtypes = [wintypes.DWORD, enum_proc, wintypes.LPARAM]
+    user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+    wm_command, idno = 0x0111, 7
+
+    def _answer_no(hwnd, _lparam):
+        name = ctypes.create_unicode_buffer(32)
+        user32.GetClassNameW(hwnd, name, 32)
+        if name.value == "#32770":
+            user32.PostMessageW(hwnd, wm_command, idno, 0)
+        return True
+
+    callback = enum_proc(_answer_no)
+    while not done.is_set():
+        if dismiss.wait(0.2):
+            user32.EnumThreadWindows(thread_id, callback, 0)
+            done.wait(0.2)
 
 
 def _applescript_literal(text: str) -> str:
@@ -88,7 +148,8 @@ def ask_yes_no(
     title: str,
     message: str,
     *,
-    _run: Callable[[list[str]], tuple[bool, int]] = _run_helper,
+    dismiss: threading.Event | None = None,
+    _run: Callable[..., tuple[bool, int]] = _run_helper,
 ) -> bool:
     """Modal Yes/No question; ``True`` only on an explicit Yes.
 
@@ -96,20 +157,40 @@ def ask_yes_no(
     error — is ``False``, so callers can only ever take the destructive branch
     on a real click. ``_run`` is injectable for tests (the helper is otherwise
     a real process that blocks on a real click).
+
+    ``dismiss`` lets the caller withdraw the question: once that event is set
+    the box closes and the answer is ``False``. The caller tells a withdrawal
+    from a "No" by looking at its own event.
     """
+    if dismiss is not None and dismiss.is_set():
+        return False
     if sys.platform == "win32":
+        done = threading.Event()
         try:
             import ctypes
 
+            if dismiss is not None:
+                threading.Thread(
+                    target=_dismiss_message_box_when_set,
+                    args=(int(ctypes.windll.kernel32.GetCurrentThreadId()), dismiss, done),
+                    name="jarvis-dialog-dismiss",
+                    daemon=True,
+                ).start()
             mb_yesno, mb_iconquestion, mb_defbutton2, idyes = 0x4, 0x20, 0x100, 6
             result = ctypes.windll.user32.MessageBoxW(
                 None, message, title, mb_yesno | mb_iconquestion | mb_defbutton2
             )
-            return int(result) == idyes
+            return int(result) == idyes and not (dismiss is not None and dismiss.is_set())
         except Exception:  # noqa: BLE001 — no box → no consent
             return False
+        finally:
+            done.set()
+
+    def _ask(cmd: list[str]) -> tuple[bool, int]:
+        return _run(cmd) if dismiss is None else _run(cmd, dismiss=dismiss)
+
     if sys.platform == "darwin":
-        ran, code = _run(
+        ran, code = _ask(
             [
                 "osascript",
                 "-e",
@@ -131,7 +212,7 @@ def ask_yes_no(
         ["zenity", "--question", f"--title={title}", f"--text={message}", "--default-cancel"],
         ["kdialog", "--title", title, "--warningyesno", message],
     ):
-        ran, code = _run(cmd)
+        ran, code = _ask(cmd)
         if ran:
             return code == 0  # both helpers exit 0 for Yes, 1 for No
     return False

@@ -19,8 +19,11 @@ enforcement — this description is the second line, for the turns where the
 gate opens but the request was about something else.
 
 Router-tier. It is a dispatch (risk ``monitor``, like ``spawn_worker``), so it
-never enters a worker tool set (AP-5/AP-14): a worker building an artifact
-cannot spawn another worker to build it.
+never enters a mission worker's tool set (AP-5/AP-14): a worker building an
+artifact cannot spawn another worker to build it. Society agents and their
+routines MAY hold it (maintainer decision 2026-09-29, see
+``jarvis.society.capabilities``); such a call builds quietly — no jump to the
+Artifacts section, no spoken readback.
 """
 
 from __future__ import annotations
@@ -79,7 +82,7 @@ def _turn_language(ctx: Any, args: dict[str, Any]) -> str:
     The turn's resolved output language wins (stamped by the tool-use loop via
     ``resolve_output_language``); the brain's own ``language`` guess is next;
     the ambient answer last. This layer never re-derives a language from the
-    utterance (CLAUDE.md §2).
+    utterance (AGENTS.md §2).
     """
     config = getattr(ctx, "config", None)
     stamped = ""
@@ -87,6 +90,23 @@ def _turn_language(ctx: Any, args: dict[str, Any]) -> str:
         stamped = str(config.get("output_language") or "").strip().lower()
     lang = stamped or str(args.get("language") or "").strip().lower()
     return lang or resolve_ambient_language()
+
+
+def _called_in_background(ctx: Any) -> bool:
+    """True when no person is looking at Jarvis's own surface for this call.
+
+    An agent's chat or routine (session ``society:…``) and an unattended
+    scheduled task build a page too, but the screen must not jump to the
+    Artifacts section under the person's hands, and the finished build must
+    not be read aloud into an idle room (mandate 2026-09-28: Jarvis never
+    speaks uncalled). The executor's config snapshot says which it is.
+    """
+    config = getattr(ctx, "config", None)
+    if not isinstance(config, dict):
+        return False
+    if config.get("unattended") or config.get("approval_surface") == "unattended":
+        return True
+    return "society:" in str(config.get("approval_ref") or "")
 
 
 def _utterance(ctx: Any) -> str:
@@ -286,6 +306,7 @@ class CreateArtifactTool:
         # The mission dispatch contract is de/en; an "es" turn keeps the German
         # mission readback (the same cap spawn_worker applies).
         mission_language = language if language in ("de", "en") else "de"
+        background = _called_in_background(ctx)
 
         # UI/telemetry announce — the agent strip shows "builds the artifact".
         # Best-effort like every other announce: the build happens either way.
@@ -314,21 +335,24 @@ class CreateArtifactTool:
                 trace_id=ctx.trace_id,
                 mission_language=mission_language,
                 readback_language=language,
+                background=background,
             ),
             name=f"jarvis-agent-artifact-{ctx.trace_id.hex[:8]}",
         )
 
-        # Move the UI to the Artifacts section so the "building…" row is seen.
-        # Best-effort on purpose: the build exists either way.
-        try:
-            await self._bus.publish(
-                NavigateSidebar(
-                    section=ARTIFACTS_SECTION,
-                    source_layer="brain.tool.create_artifact",
+        # Move the UI to the Artifacts section so the "building…" row is seen —
+        # only for the person who asked Jarvis directly. Best-effort on
+        # purpose: the build exists either way.
+        if not background:
+            try:
+                await self._bus.publish(
+                    NavigateSidebar(
+                        section=ARTIFACTS_SECTION,
+                        source_layer="brain.tool.create_artifact",
+                    )
                 )
-            )
-        except Exception as exc:  # noqa: BLE001 — see comment above
-            log.warning("create_artifact navigate failed error=%s", exc)
+            except Exception as exc:  # noqa: BLE001 — see comment above
+                log.warning("create_artifact navigate failed error=%s", exc)
 
         ack = (str(args.get("spoken_ack") or "").strip()) or action_phrase(
             "artifact_revising" if brief.revision else "artifact_building",
@@ -398,6 +422,7 @@ class CreateArtifactTool:
         trace_id: UUID,
         mission_language: str,
         readback_language: str,
+        background: bool = False,
     ) -> None:
         """Read the facts, compose the brief, persist the mission and run it —
         the two-step contract spawn_worker documents (dispatch → PENDING,
@@ -406,6 +431,11 @@ class CreateArtifactTool:
         Every dead end becomes a spoken failure through the same completion
         event a finished mission uses, never a log line alone (AU-11): the
         user already heard a promise.
+
+        A ``background`` build (an agent's chat or routine) is dispatched as a
+        ``system`` mission, which the mission voice listener does not read back,
+        and its failures are logged instead of spoken: nobody called Jarvis, and
+        the page (or its absence) shows in the Artifacts section.
         """
         try:
             source_data = await self._source_data(needs, trace_id=trace_id, utterance=utterance)
@@ -413,7 +443,7 @@ class CreateArtifactTool:
             mission_id = await manager.dispatch(
                 prompt=prompt,
                 language=mission_language,
-                source_actor="hauptjarvis",
+                source_actor="system" if background else "hauptjarvis",
             )
             if kontrollierer is None:
                 log.warning(
@@ -421,9 +451,10 @@ class CreateArtifactTool:
                     "available — it stays PENDING until the next app start",
                     mission_id,
                 )
-                await self._publish_failure(
-                    utterance, action_phrase("spawn_no_runner", readback_language)
-                )
+                if not background:
+                    await self._publish_failure(
+                        utterance, action_phrase("spawn_no_runner", readback_language)
+                    )
                 return
             await kontrollierer.run_mission(mission_id)
         except asyncio.CancelledError:
@@ -431,7 +462,8 @@ class CreateArtifactTool:
             raise
         except BaseException as exc:  # noqa: BLE001 — fire-and-forget task, see docstring
             log.exception("create_artifact background dispatch crashed")
-            await self._publish_failure(utterance, f"{type(exc).__name__}: {exc}")
+            if not background:
+                await self._publish_failure(utterance, f"{type(exc).__name__}: {exc}")
 
     async def _publish_failure(self, utterance: str, error: str) -> None:
         try:

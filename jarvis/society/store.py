@@ -135,6 +135,19 @@ class SocietyStore:
                 "TEXT NOT NULL DEFAULT '[]'"
             )
             log.info("society store: migration applied — added browser_allowed_domains")
+        if "approval_mode" not in existing:
+            # NULL preserves legacy sessions until the person chooses a mode.
+            await self.conn.execute(
+                "ALTER TABLE society_agents ADD COLUMN approval_mode TEXT DEFAULT NULL "
+                "CHECK (approval_mode IN ('bypass', 'ask', 'always_ask'))"
+            )
+            log.info("society store: migration applied — added approval_mode")
+        if "computer_id" not in existing:
+            # NULL = this computer; every existing agent keeps running here.
+            await self.conn.execute(
+                "ALTER TABLE society_agents ADD COLUMN computer_id TEXT DEFAULT NULL"
+            )
+            log.info("society store: migration applied — added computer_id")
         await self._migrate_checkpoint_vocabulary()
 
     async def _migrate_checkpoint_vocabulary(self) -> None:
@@ -370,6 +383,65 @@ class SocietyStore:
         rows = await cur.fetchall()
         await cur.close()
         return [_row_to_envelope(r) for r in rows]
+
+    # ------------------------------------------------------- persistent groups
+
+    async def list_chat_groups(self) -> list[dict[str, Any]]:
+        async with self.conn.execute(
+            "SELECT group_id, name, members_json, created_ms, updated_ms "
+            "FROM society_chat_groups ORDER BY created_ms ASC"
+        ) as cur:
+            rows = await cur.fetchall()
+        return [
+            {
+                "group_id": row[0],
+                "name": row[1],
+                "members": json.loads(row[2]),
+                "created_ms": row[3],
+                "updated_ms": row[4],
+            }
+            for row in rows
+        ]
+
+    async def get_chat_group(self, group_id: str) -> dict[str, Any] | None:
+        async with self.conn.execute(
+            "SELECT group_id, name, members_json, created_ms, updated_ms "
+            "FROM society_chat_groups WHERE group_id = ?",
+            (group_id,),
+        ) as cur:
+            row = await cur.fetchone()
+        if row is None:
+            return None
+        return {
+            "group_id": row[0],
+            "name": row[1],
+            "members": json.loads(row[2]),
+            "created_ms": row[3],
+            "updated_ms": row[4],
+        }
+
+    async def create_chat_group(
+        self, group_id: str, name: str, members: list[str]
+    ) -> dict[str, Any]:
+        stamp = now_ms()
+        await self.conn.execute(
+            "INSERT INTO society_chat_groups VALUES (?, ?, ?, ?, ?)",
+            (group_id, name, json.dumps(members), stamp, stamp),
+        )
+        return (await self.get_chat_group(group_id)) or {}
+
+    async def update_chat_group(
+        self, group_id: str, name: str, members: list[str]
+    ) -> dict[str, Any]:
+        await self.conn.execute(
+            "UPDATE society_chat_groups SET name = ?, members_json = ?, updated_ms = ? "
+            "WHERE group_id = ?",
+            (name, json.dumps(members), now_ms(), group_id),
+        )
+        return (await self.get_chat_group(group_id)) or {}
+
+    async def delete_chat_group(self, group_id: str) -> None:
+        await self.conn.execute("DELETE FROM society_chat_groups WHERE group_id = ?", (group_id,))
 
     async def last_seq(self) -> int:
         cur = await self.conn.execute("SELECT COALESCE(MAX(seq), 0) FROM society_events")

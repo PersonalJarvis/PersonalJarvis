@@ -11,7 +11,7 @@ mentioned it), the confirmation fires.
 
 Deliberately dumb: a word-boundary vocabulary match, no LLM (AP-11 — the
 safety path must be deterministic and fast). The vocabulary is speech-input
-vocabulary in de/en/es (CLAUDE.md §1 — registered in the german-allowlist);
+vocabulary in de/en/es (AGENTS.md §1 — registered in the german-allowlist);
 it covers DESTRUCTION verbs only. STT-confidence doubts are not this
 module's job: a plausibility-forced confirmation is never skipped (see
 ToolExecutor).

@@ -84,15 +84,11 @@ def test_a_number_above_the_cap_is_clamped_not_refused() -> None:
     assert found.count == MAX_TERMINALS
 
 
-def test_an_ordinary_large_count_is_taken_at_face_value() -> None:
-    """ "as many as you want" is the point — 20 panes must not be trimmed to 12.
-
-    Guards the 2026-07-26 directive: the old cap of 12 silently rewrote what the
-    user asked for, which is worse than refusing it.
-    """
+def test_a_large_requested_count_obeys_the_workspace_capacity() -> None:
+    """Spoken counts share the same eight-session ceiling as the launch picker."""
     found = intent.detect_spawn("Spawne 20 Terminals")  # i18n-allow: spoken input under test
     assert found is not None
-    assert found.count == 20
+    assert found.count == MAX_TERMINALS
 
 
 @pytest.mark.parametrize(
@@ -207,7 +203,7 @@ def test_recombined_completed_turn_does_not_hide_a_later_spawn_clause() -> None:
 
 
 def test_question_inside_the_spawn_clause_still_never_opens_panes() -> None:
-    utterance = "Was passiert, wenn ich 5 Claude-Code-Terminals spawne?"  # i18n-allow: spoken input under test
+    utterance = "Was passiert, wenn ich 5 Claude-Code-Terminals spawne?"  # i18n-allow: speech
 
     assert intent.detect_spawn(utterance, names=NAMES) is None
     assert intent.owns_turn(utterance, names=NAMES) is False
@@ -436,7 +432,7 @@ def test_a_briefed_position_never_becomes_a_fleet_size() -> None:
     "there is no terminal two" — rather than opening panes the user never
     asked for.
     """
-    utterance = "prompt wird du terminal tft zwei, dass es ein deep dive machen soll"  # i18n-allow: production transcript under test
+    utterance = "prompt wird du terminal tft zwei, dass es ein deep dive machen soll"  # i18n-allow
 
     assert intent.detect_spawn(utterance, names=["T1"]) is None
     assert (

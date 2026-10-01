@@ -9,7 +9,7 @@ captures deliverables a worker named with an ignored pattern such as
 so a denylist must keep tool-scratch out of ``artifacts/files/``.
 
 Three layers consume this predicate, so it lives in ONE module to stop the
-multi-layer drift bug class (CLAUDE.md / BUG-008):
+multi-layer drift bug class (AGENTS.md / BUG-008):
 
   * the archive filter — :func:`Kontrollierer._archive_task_artifacts`
     (``orchestrator.py``) — keeps scratch out of the archive at the source;

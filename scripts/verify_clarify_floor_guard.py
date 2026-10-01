@@ -29,7 +29,7 @@ import sys
 from unittest.mock import MagicMock
 
 # Windows console is cp1252 by default; the transcript + the "→" marker are
-# UTF-8 (CLAUDE.md Windows-specifics: reconfigure stdout or stick to ASCII).
+# UTF-8 (AGENTS.md Windows-specifics: reconfigure stdout or stick to ASCII).
 try:
     sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
 except Exception:  # noqa: BLE001 — best effort; older streams lack reconfigure

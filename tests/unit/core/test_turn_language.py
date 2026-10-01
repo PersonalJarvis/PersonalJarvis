@@ -119,7 +119,7 @@ def test_unknown_everything_falls_back_to_default() -> None:
 # every spoken/written layer must consume. Precedence: explicit reply-language
 # pin (de/en/es) > detected input language (text > STT tag) > default locale.
 # This is the contract enforced by the "Runtime Output Language" doctrine in
-# CLAUDE.md (2026-06-18 forensic: a German utterance mis-transcribed as English
+# AGENTS.md (2026-06-18 forensic: a German utterance mis-transcribed as English
 # made the whole chain go English because each layer re-derived language).
 # ---------------------------------------------------------------------------
 

@@ -1,14 +1,20 @@
-# CLAUDE.md
+# Personal Jarvis agent rules
 
 The binding rules for every coding agent in this repo — Claude Code, Codex,
 Gemini CLI, whichever. This is the whole rulebook; there is no longer a fuller
 version to read first. Write everything here so it addresses ANY agent.
 
-**Twin:** `AGENTS.md` is byte-identical to this file. `.claude/{agents,skills}/`
-↔ `.agents/{…}`, and `.codex/agents/*.toml` is a generated projection of
-`.claude/agents/*.md` — never hand-edit it. Three sync engines hold all of it
-(`sync_agents_md.py`, `sync_agents_dir.py`, `sync_codex_agents.py`); a hook,
-pre-commit and CI run them. Edit the canonical side and let them work.
+**Source of truth:** `AGENTS.md` is the only instructions file; every agent
+reads it directly. Never add a `CLAUDE.md`, `.claude/CLAUDE.md` or
+`CLAUDE.local.md`: Claude Code then reads that file INSTEAD of this one
+(`scripts/ci/check_agents_md.py` blocks a tracked one). A Claude pane on a
+Jarvis account config dir sees `~/.claude/CLAUDE.md` as such a parent-dir file,
+so its Project instructions setting must be `claude-md-and-agents-md`.
+Edit `.agents/{agents,skills}/`; `.claude/{agents,skills}/` are compatibility
+copies because Claude Code does not discover subagents or skills under
+`.agents/`, and `.codex/agents/*.toml` is generated from `.agents/agents/*.md`
+for Codex. The sync scripts and CI check these copies; never edit a generated
+copy directly.
 
 ---
 
@@ -18,10 +24,16 @@ These cost real bugs. Nothing catches them but you.
 
 - **Restore trap.** A fix works in tests and changes nothing after restart:
   live Python imports from elsewhere. New worktree → `pwsh scripts/preflight.ps1`,
-  then `python -c "import jarvis; print(jarvis.__file__)"`. (AP-8)
+  then `python -c "import jarvis; print(jarvis.__file__)"`. (AP-8) Never
+  `pip install -e` from a linked worktree: that pin is the user's desktop app,
+  and their next restart boots your branch with an empty `data/`. (BUG-219)
 - **The working tree is SHARED** with other agent sessions. Stage only YOUR
   paths — `git add -p` or an explicit pathspec, and `git commit --only -- <paths>`.
   `git add -A` sweeps someone else's half-finished work into your commit.
+- **A probe against the running app spends the user's real money.** Turns sent
+  to it (`/ws`, `jarvis` CLI, Telegram) bill their own keys: five scripted
+  test turns once cost $6.82 on a deep model. Send one turn, on a subscription
+  or `tests/fakes/`, never a loop against a paid provider.
 - **`jarvis.toml` only through `jarvis/core/config_writer.py`** — lock, tempfile,
   BOM-safe. A raw write leaves the backend unbootable. (AP-7)
 - **Never share a native inference engine** (ctranslate2, ONNX) between callers.
@@ -59,6 +71,12 @@ the install base, and "works on my machine" is the defect. (AP-23)
 - **Any single key must work.** Gate on capability, never a provider name or
   model id (AP-21). A tier whose primary AND fallback share one provider family
   is a brick — every chain crosses families or degrades honestly (AP-22).
+- **Nothing the user did not start may bill a key on its own.** Health dots
+  come from real calls, never a paid probe. Once a subscription is connected,
+  background work runs only on subscriptions or local models
+  (`jarvis/brain/background_policy.py`); a failing subscription makes it WAIT,
+  never fall back to an API key. An agent's own memory updates run on that
+  agent's seat. Idle once burned 5 EUR in three hours on wiki calls.
 - **Every OS**, including a headless `python:3.11-slim` with no GPU, audio or
   native API: base install + boot must succeed there. Extras group, environment
   marker or lazy import — whichever fits.
@@ -73,19 +91,31 @@ the install base, and "works on my machine" is the defect. (AP-23)
   German in files you touch. Runtime output language is decided ONCE per turn by
   `jarvis/core/turn_language.py`; no layer re-derives it, all locales are equal.
 
-**Proportionality — the evidence a change owes scales with what it touches.**
-Name the tier in one line, then owe only that tier.
-**T1 local** (styling, copy, one view, a test, a doc, a refactor behind one call
-site) → nothing extra. A matrix here is noise, not diligence.
-**T2 one surface** (an existing adapter, transport, channel or OS backend,
-shared contract unchanged) → name the cells you touched and what the others do
-(unchanged / emulated / degraded), plus tests for that family.
-**T3 contract** (a capability, shared interface, turn-taking, credentials,
-config schema, a NEW provider/transport/OS backend) → the full treatment: all
-three OSes in the same change behind one capability probe, `tests/contract/`
-per family, `docs/os-parity.md` updated, and a fresh install with ONE arbitrary
-key verified end to end. Unsure between T2 and T3 → it is T3. Over-tiering is
-also a defect.
+**Proportionality.** The agent owns the validation plan and chooses the smallest
+set of checks that can detect a plausible regression from the diff. State the
+scope, what was run, and what remains unverified in the PR. Use these tiers as
+guidance, not as automatic checklists:
+
+- **T1 local:** for copy, styling, docs, one view, or an isolated refactor, run
+  focused checks for that surface. A frontend change still needs a production
+  build and light/dark inspection when its appearance changes.
+- **T2 one surface:** test the affected adapter, transport, channel, or OS
+  backend and its nearest callers. Check other platforms when the changed path
+  can execute there; state why an unavailable platform is unaffected or how it
+  degrades.
+- **T3 shared contract:** prove the changed behavior with contract tests and
+  exercise the affected providers and OSes. Update `docs/os-parity.md` when OS
+  behavior changes. A new provider or credential path needs a fresh-install,
+  one-key proof; a schema-only change does not automatically owe that test.
+
+Escalate evidence when risk crosses a boundary, not because a label is
+ambiguous. Do not claim unrun platforms, devices, or providers were verified.
+If a required check is red on the exact base commit, compare failure identities
+and causes under the same environment. A failure already present on base may
+be reported as a separate backlog item; a new failure or an unexplained change
+in a failing test blocks completion. Counts alone are not a comparison. Do not
+silence a required check, raise a baseline, or bypass branch protection to make
+a PR appear green.
 
 ## 3. Architecture you must respect
 
@@ -140,14 +170,17 @@ history for any of them: `docs/BUGS.md`.
 
 **World and character art:** follow `docs/agent-society/game-art-pipeline.md`
 and the `game-art-pipeline` skill before creating/redesigning game assets.
-Author a small reference in Blender, verify it in the actual runtime, and obtain
-user approval of that reference before rolling its style out across asset families.
-Pipeline setup alone approves no visual redesign. Existing runtime contracts stay binding.
+Author a small reference in Blender and verify it in the actual runtime before
+rolling its style out across asset families; no separate user approval of the
+reference is required. Existing runtime contracts stay binding.
 
 Commit each finished step (Conventional Commits). Use the coding agent's
 standard Git workflow: do not artificially leave completed work local, and do
 not wait for extra PersonalJarvis permission to commit, branch, push, or open
-a pull request. `git pull --rebase --ff-only` first if origin moved. Never
+a pull request. Once the scoped review and required checks pass, the agent may
+merge an ordinary authorized PR without another confirmation; a draft PR stays
+draft until its remaining work is done. `git pull --rebase --ff-only` first if
+origin moved. Never
 `--force`, never `--no-verify`. Isolated mission workers must not run git
 (`add`/`commit`/`branch`/`checkout`/`push`) — the parent runtime captures the
 diff and lands it. Never push from a linked mission worktree. **A push is
@@ -174,18 +207,25 @@ when changed; nothing a year old or older ships as a default.
 ## 5. Run & test
 
 `pip install -e . --no-deps` + `-r requirements.txt` + `".[dev]"`; launch
-`run.bat` (`--headless` = API only); `ruff check jarvis/ && ruff format jarvis/
-&& mypy jarvis/`; `pytest tests/` with fakes from `tests/fakes/`, never
-`unittest.mock`. New providers pass `tests/contract/`. Four guards must stay
-green and have their own blocking CI step: `test_routing`, `test_output_filter`,
+`run.bat` (`--headless` = API only). Choose focused `pytest` and lint targets
+for the diff; use fakes from `tests/fakes/`, never `unittest.mock`. Run the
+full suite when a change has broad reach or focused tests cannot bound its
+risk. New providers pass their `tests/contract/` family. Four guards remain
+required in CI: `test_routing`, `test_output_filter`,
 `test_hangup_reason_parity`, `test_turn_language`.
 
-Everything else is enforced by a gate in `scripts/ci/` via pre-commit and CI —
-German, private keys, bundle consistency, CLI coverage, danger metadata, unwired
-switches, silent handlers, import cleanliness, the dependency/lockfile matrix,
-and the three mirrors. Don't spend attention re-checking them by hand; a failure
-fails the build. The one exception with no gate: run `check_boot_budget.py`
-yourself after touching startup.
+The commit and push hooks block confirmed secret, private-key, withheld-path,
+language, and broken-bundle additions. CI (`docs/ci-pipeline.md`) has ONE
+required check, `CI gate`, over change-classified lanes; a test failure blocks
+unless it is listed in `scripts/ci/test-baseline-<os>.json`. Finished work in
+your own worktree lands with `python scripts/agent_land.py` (rebase onto main,
+auto-resolve generated files, gates, relevant tests, push); a `codex/`,
+`claude/`, `agent/` branch or an `auto-merge` label puts a PR on the merge
+train, which keeps it current with main and squash-merges it once green.
+Triage any red job against the exact base; never add to a baseline to hide a
+new failure.
+Run `check_boot_budget.py` after touching startup; CI cannot measure the live
+voice-ready path.
 
 **Pointers:** [`docs/architecture-overview.md`](docs/architecture-overview.md) ·
 [`docs/BUGS.md`](docs/BUGS.md) (symptom → cause) · `docs/adr/` ·

@@ -65,14 +65,16 @@ import asyncio
 import hashlib
 import os
 import re
+import shlex
 import shutil
 import sys
+import threading
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 from loguru import logger
@@ -80,15 +82,29 @@ from loguru import logger
 from jarvis.workspace import agents as workspace_agents
 from jarvis.workspace import launch_picks
 
-from . import layout_tree, opening, prompt_history, recap_engine, resume_store
+from . import (
+    fork,
+    layout_tree,
+    library,
+    opening,
+    pane_sessions,
+    prompt_history,
+    recap_engine,
+    remote,
+    resume_store,
+)
 from .activity import NO_READING, Reading, has_work_behind_it, observed
 from .agent_sessions import (
     ResumeHandle,
+    can_fork,
     can_resume,
     discover,
+    fork_argv,
     has_conversation,
     launch_extra,
+    reports_session_starts,
     resume_argv,
+    resume_env,
 )
 from .folders import ProjectProfile, probe_project
 from .names import free_positions, normalize, position_of, resolve
@@ -216,19 +232,30 @@ def _unavailable(agent: str) -> str:
     return f"{pretty} cannot open: this machine has no shell Jarvis can start."
 
 
-# How many panes one workspace may hold.
-#
-# Raised from 12 on maintainer directive (2026-07-26): "you can open as many as
-# you want". 12 was a product opinion dressed up as a limit, and it was wrong —
-# how many agents are useful is the user's call, not this module's.
-#
-# A number remains, and it is deliberately far above any real use: this is a
-# RUNAWAY GUARD, not a product ceiling. Every pane is a real coding-agent
-# process with its own memory, CPU and API spend, so a mistyped "500" in the
-# count field must not take the machine down before anyone can click away.
-# Nobody reaches 100 deliberately; anyone who mistypes their way past it gets a
-# sentence instead of a frozen desktop.
-MAX_TERMINALS = 100
+# How many coding sessions one workspace may hold. Every pane is a full CLI
+# process with its own pseudo-terminal and socket, so this is a resource
+# ceiling, not a layout rule. It matches the largest grid the workspace draws
+# (MAX_GRID_COLUMNS x MAX_GRID_ROWS); past it, a second workspace tab is the
+# better home. Voice call-signs cover it (see `names._NUMBER_WORDS`). Mirrored
+# by the frontend's `workspaceDocking.ts`, which reads the count from the state.
+MAX_GRID_COLUMNS = 4
+MAX_GRID_ROWS = 4
+MAX_TERMINALS = MAX_GRID_COLUMNS * MAX_GRID_ROWS
+
+
+def balanced_columns(count: int) -> int:
+    """Columns of the even grid ``count`` panes are dealt into, row by row.
+
+    Two panes read best side by side; three to eight form two rows (six is
+    3 x 2); beyond that the grid grows a row per four panes, never wider than
+    MAX_GRID_COLUMNS. Mirrored by `balancedLayout` in ``workspaceDocking.ts``.
+    """
+    if count <= 2:
+        return max(1, count)
+    rows = 2 if count <= 2 * MAX_GRID_COLUMNS else -(-count // MAX_GRID_COLUMNS)
+    return min(MAX_GRID_COLUMNS, -(-count // rows))
+
+
 # How deep a wizard-opened column is filled before the next one is started.
 #
 # The workspace is exactly one screenful, so its columns share the window's
@@ -415,6 +442,19 @@ COLD_START_HOLD_MAX_S = 15.0
 # distinct events for a process that polls or debounces its resize handler,
 # short enough that nobody sees a pane one row short.
 REPAINT_NUDGE_S = 0.08
+
+# A nudge is a request, and a busy agent may ignore it: measured against Claude
+# Code 2.1.283 on Windows (2026-09-28), 10 of 20 nudges sent while it worked
+# drew nothing, and a longer hold (0.3 s) or a width nudge did no better. A
+# viewer that re-joined on a cut replay then keeps empty rectangles wherever
+# the agent's screen does not change. So a full-screen agent's answer — the
+# whole-screen erase its repaint opens with — is waited for, and the nudge
+# repeated when none comes. Re-sending right away answered within two tries in
+# every one of 12 measured runs; five bound the cost for an agent that never
+# repaints this way.
+REPAINT_CONFIRM_S = 0.5
+REPAINT_NUDGE_ATTEMPTS = 5
+REPAINT_POLL_S = 0.05
 
 # Bracketed paste. A TUI that has enabled it receives everything between these
 # markers as ONE pasted block rather than as keystrokes, which is the only way
@@ -772,6 +812,28 @@ def account_home(agent: str, account_id: str | None) -> Path | None:
     return agent_accounts.config_dir_for(agent, account_id)  # type: ignore[arg-type]
 
 
+def remote_agent_argv(agent: str) -> tuple[str, ...] | None:
+    """argv for ``agent`` on a connected computer (a POSIX server).
+
+    Resolved THERE, by the server's own PATH (the pane starts in a login
+    shell), so only the command name travels, never this machine's absolute
+    path or a Windows shim. A plain terminal is the server's login shell.
+    """
+    spec = workspace_agents.get_agent(agent)
+    if spec is None:
+        return None
+    if not spec.is_coding_agent:
+        return ("bash", "-l")
+    if spec.shell_launch:
+        return ("sh", "-c", spec.launch_command or "")
+    binary = spec.executable or spec.launch_command or spec.name
+    name = binary.replace("\\", "/").rsplit("/", 1)[-1]
+    for suffix in (".cmd", ".bat", ".exe", ".ps1"):
+        if name.lower().endswith(suffix):
+            name = name[: -len(suffix)]
+    return (name, *spec.launch_args)
+
+
 def agent_argv(agent: str) -> tuple[str, ...] | None:
     """argv that runs ``agent`` as the PTY's own process, or None if missing.
 
@@ -956,6 +1018,31 @@ class Terminal:
     #: the timeline can tell a pick the chat just typed in from the older
     #: value the CLI's record still carries until its next reply.
     picked_at: dict[str, float] = field(default_factory=dict)
+    # Where this pane's agent runs, when that is NOT the workspace folder: the
+    # git worktree a fork was opened in (see `Registry.fork_terminal`). Empty
+    # means the workspace folder, which is every pane that is not such a fork.
+    # `branch` is that worktree's branch, shown in the pane header.
+    folder: str = ""
+    branch: str = ""
+    # The conversation this pane is a COPY of, until its first process has
+    # copied it. Spent by `attach` on the first spawn (the copy then has its
+    # own handle in `resume`), so a restart afterwards resumes the copy rather
+    # than forking the original a second time.
+    fork_from: ResumeHandle | None = None
+    # Where this pane's agent RUNS when that is a connected computer rather
+    # than this machine (``jarvis.computers``): the computer's id, the folder
+    # there, and the snapshot commit the code left here as. The agent then
+    # lives in a tmux session on that computer and keeps working while this
+    # app is closed; this pane is only its viewer. Empty = this machine.
+    computer_id: str = ""
+    remote_folder: str = ""
+    offload_snapshot: str = ""
+    # Set while the pane's folder is on its way to (or back from) its
+    # computer: a viewer attaching then is told "not yet" instead of starting
+    # the agent in the wrong place. Never persisted.
+    placing: str = ""
+    # The last placement's one-line report for the UI ("Not copied: .env").
+    notice: str = ""
     status: Status = "pending"
     pty_id: str | None = None
     # The geometry the PTY ACTUALLY holds, as last handed to `setwinsize`.
@@ -981,6 +1068,14 @@ class Terminal:
     # then run on unwatched, which is the whole thing the kill prevents.
     stopping: bool = False
     exit_code: int | None = None
+    # Restored from the snapshot: was this pane's agent running when the app
+    # last saved? Read once, by ``_resume_after_reboot``.
+    was_running: bool = False
+    # Re-joined after an app restart while its last checkpoint saw it working:
+    # whatever it finished in the meantime nobody was watching. The pane
+    # watcher reads this once, on first sight, to report that finish instead
+    # of treating it as history (``notifications.ActivityWatcher._step``).
+    worked_while_detached: bool = False
     error: str = ""
     started_at: float | None = None
     last_output_at: float | None = None
@@ -997,6 +1092,11 @@ class Terminal:
     # Movement in the shadow of this stamp is the pane being redrawn, not the
     # agent working — see `activity._resize_shadowed`.
     last_resize_at: float | None = None
+    # Resized while its agent was still loading, before it had taken the whole
+    # screen — so no repaint check could run for that size, and a CLI that was
+    # not listening yet may still be drawing for the size it was born with.
+    # Settled once the input line appears (see `_prompt_ready_then_settle`).
+    resized_while_booting: bool = False
     prompts_sent: int = 0
     last_prompt: str = ""
     # The current process's records are kept as a fallback if the local history
@@ -1045,6 +1145,14 @@ class Terminal:
     # bursts — for work nobody had asked for. A pane nobody has given an
     # instruction cannot have finished one, and this is how that is known.
     last_submit_at: float | None = None
+    # Is the job this pane is working on one the user gave THROUGH Jarvis (a
+    # spoken order, the IDE prompt bar)? Then Jarvis owes the user a spoken
+    # "here is what it did" when the pane stops (see `.voice_readback`). Set by
+    # the prompt paths that ask for it, cleared by a job typed in by hand and by
+    # the readback itself. Ephemeral: a restored pane owes nobody anything.
+    voice_readback: bool = False
+    # The user's own words for that job — what the readback is about.
+    voice_readback_request: str = ""
     # Did the last prompt actually leave the input line? None = none sent yet.
     submitted: bool | None = None
     # A hand-pressed Enter on an injected prompt is being checked against the
@@ -1080,37 +1188,16 @@ class Terminal:
     # picked up an old transcript, "still running" means the same process has
     # been working the whole time you were looking somewhere else.
     reattached: bool = False
-    # Was this pane last observed actively working before its process went
-    # away? Persisted in the resume snapshot and kept separate from `resumed`:
-    # an existing conversation may already be finished or waiting for input,
-    # neither of which should receive a blind "continue".
+    # Was this pane last observed actively working? Checkpointed into the
+    # resume snapshot by the pane watcher. Evidence only — nothing is ever
+    # typed on its strength: a re-joined agent that was working and has since
+    # stopped is reported by the bell (``worked_while_detached``), and a
+    # resumed Claude pane finishes an interrupted turn by itself
+    # (``agent_sessions.resume_env``).
     resume_continuation_needed: bool = False
-    # This pane picked its old conversation back up, and NOBODY has told it what
-    # to do since. That is the state a restart leaves behind: the agent is alive
-    # and holds the whole transcript, but it was killed mid-task and a resumed
-    # CLI sits at its prompt waiting rather than carrying on by itself — so the
-    # work simply stops, silently, and looks exactly like a pane that finished.
-    #
-    # Raised where a restore establishes that this pane's conversation really
-    # exists, and again where a process is SPAWNED onto one (see `attach`, which
-    # also clears it when a resume failed and the pane came back empty). Cleared
-    # by anything that counts as "somebody is driving this pane again": a prompt
-    # from Jarvis, or a line the user typed into the pane themselves. Never
-    # persisted — it describes the pane on screen, not the workspace on disk.
-    continuation_pending: bool = False
-    # "Continue this one as soon as it can be typed into."
-    #
-    # Cold starts are staggered (COLD_START_LIMIT), so in a workspace of a dozen
-    # panes most are still waiting for a slot when the user presses Continue.
-    # Sending only to the ones that happen to be up already is what made the
-    # button look like it skipped terminals; refusing them would be the same
-    # answer worn differently. So the wish is REMEMBERED here and spent by
-    # `attach` once that pane's agent exposes a writable input line.
-    continue_when_ready: bool = False
-    # The exact nudge paired with ``continue_when_ready``. Usually the one-word
-    # default, but the REST contract accepts custom wording and a queued pane
-    # must not silently replace it while waiting for its cold-start slot.
-    continue_prompt: str = ""
+    # This pane's agent died because the PTY host went away under a running
+    # app (not because it exited): it is resumed once a host is back.
+    lost_with_host: bool = False
     # Has this pane's screen been observed STANDING STILL since its current
     # process started?
     #
@@ -1144,6 +1231,16 @@ class Terminal:
     # A startup repaint has no such stamp, even if the pane resumes an old
     # conversation whose historical prompt count is non-zero.
     submit_generation: int = -1
+    # The process generation re-joined after an app restart while its agent
+    # already had a job — a conversation on disk, prompts sent, or work seen at
+    # the last checkpoint. The instruction behind that job was submitted in the
+    # previous app's lifetime, so ``submit_generation`` cannot prove it; this
+    # does, for exactly this process (a respawn moves the generation on).
+    # Without it every re-joined agent read "done" while still working. The
+    # same proof is stamped on a process RESUMED to finish a turn that was cut
+    # off mid-work (``agent_sessions.resume_env``): it carries on by itself, so
+    # no submit in this lifetime exists either.
+    adopted_generation: int = -1
     transcript: Transcript = field(default_factory=Transcript)
     # The RAW output stream, kept so the next viewer can be handed the screen
     # this pane is actually showing. Cleared on a fresh spawn, so what a viewer
@@ -1302,12 +1399,6 @@ class Terminal:
             # anything" — the same picture, and not the same news.
             "worked": has_work_behind_it(self),
             "resumed": self.resumed,
-            # Continued its old conversation and has had no instruction since —
-            # the pane a restart left standing still. Carried in the ordinary
-            # state so a client can mark it without a second request; the list
-            # of them, with the reason each one can or cannot be nudged, is
-            # `GET /interrupted`.
-            "continuation_pending": self.continuation_pending,
             # Whether a handle EXISTS, never the handle itself: it is an
             # internal pointer into the CLI's history and no client needs it.
             "has_resume": self.resume is not None,
@@ -1315,6 +1406,15 @@ class Terminal:
             "archived": self.archived,
             "account": self.account,
             "account_label": account_label(self.account),
+            # Set only for a pane running in a git worktree of its own.
+            "folder": self.folder,
+            "branch": self.branch,
+            # Set only for a pane running on a connected computer.
+            "computer_id": self.computer_id,
+            "remote_folder": self.remote_folder,
+            # Can this pane be forked with its conversation? False for a CLI
+            # without a fork of its own — the fork then starts a fresh chat.
+            "can_fork": can_fork(self.agent),
         }
 
     def to_row(self) -> dict[str, Any]:
@@ -1405,7 +1505,35 @@ class Terminal:
             model=self.model,
             effort=self.effort,
             permission_mode=self.permission_mode,
+            folder=self.folder,
+            branch=self.branch,
+            fork_from=self.fork_from,
+            computer_id=self.computer_id,
+            remote_folder=self.remote_folder,
+            offload_snapshot=self.offload_snapshot,
+            running=self._counts_as_running(),
         )
+
+    def _counts_as_running(self) -> bool:
+        """Should a reboot bring this pane's agent back?
+
+        A live agent, obviously. So is one that died with anything but a clean
+        exit: a host that went away with the machine reports an unknown code,
+        and a crash is exactly what recovery is for. An agent that exited 0
+        ended by itself (``/exit``, a finished task) and stays ended, and a
+        pane that never started keeps what the last snapshot said about it.
+        """
+        if self.status == "live":
+            return True
+        if self.status == "exited":
+            return self.exit_code != 0
+        if self.status == "pending":
+            return self.was_running
+        return False
+
+    def cwd(self, workspace_folder: str) -> str:
+        """The folder this pane's agent runs in: its own worktree, else the workspace's."""
+        return self.folder or workspace_folder
 
 
 @dataclass(slots=True)
@@ -1421,6 +1549,8 @@ class Session:
     profile: ProjectProfile
     terminals: list[Terminal]
     created_at: float
+    # Durable ownership in the project library, independent of the workspace ID.
+    project_id: str = ""
     # WHERE every pane sits and how much room it has — the split tree, the one
     # authority on workspace geometry (see ``layout_tree``). Every structural
     # change (split, close, move, refold, restore) rewrites it and then lets
@@ -1450,6 +1580,10 @@ class Session:
     # next dropped file or instruction belongs.
     surface_on_screen: bool = False
     surface_prompt_target: str = ""
+    # The pane last selected on screen, kept when the section goes off screen
+    # (unlike ``surface_prompt_target``) and saved with the workspace, so a
+    # reopened app puts the focus back where it was (RUB-102).
+    focused: str = ""
     # When this workspace was last brought to the front. Orders the "most
     # recently used" answer the resume snapshot and the UI both want, which is
     # NOT the order the workspaces were opened in.
@@ -1521,11 +1655,13 @@ class Session:
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
+            "project_id": self.project_id or library.project_id_for(self.folder),
             "folder": self.folder,
             "name": self.name,
             "project": self.profile.to_dict(),
             "created_at": self.created_at,
             "focus_mode": self.focus_mode,
+            "focused": self.focused,
             # The split tree the grid draws from. The per-terminal column/slot
             # fields riding along below are coarse hints for consumers that
             # only talk ABOUT the layout; a client that renders it needs this.
@@ -1563,6 +1699,8 @@ class Session:
             )
         return {
             "folder": self.folder,
+            "id": self.id,
+            "project_id": self.project_id or library.project_id_for(self.folder),
             "name": self.name,
             "focus_mode": self.focus_mode,
             "terminals": terminals,
@@ -1578,6 +1716,7 @@ class Session:
         live = sum(1 for t in self.terminals if t.status == "live")
         return {
             "id": self.id,
+            "project_id": self.project_id or library.project_id_for(self.folder),
             "folder": self.folder,
             "name": self.name,
             "branch": self.profile.branch,
@@ -1697,6 +1836,32 @@ def _announce_geometry(term: Terminal, cols: int, rows: int, *, except_viewer: A
         _tell_geometry(watched, cols, rows)
 
 
+async def _connect_pty_host(*, start: bool) -> Any:
+    """Attach to (or start) the PTY host; ``None`` keeps terminals in-process.
+
+    A module function rather than an inline import so tests can replace it, and
+    so the terminal stack stays off the import path until a pane needs it
+    (AP-26).
+    """
+    from jarvis.terminal.pty_host_client import HostUnreachable, connect
+
+    try:
+        return await connect(start=start)
+    except HostUnreachable as exc:
+        # A host that is running holds agents; "not yet" is the only safe
+        # answer — never a reason to start them a second time.
+        logger.warning("Agentic IDE: {} — waiting for it", exc)
+        raise SessionNotReady(
+            "The terminal host is busy; the panes reconnect when it answers."
+        ) from exc
+
+
+#: The exit code ``RemotePtyManager`` reports for every agent when its host goes
+#: away (``pty_manager.UNKNOWN_EXIT_CODE``); spelled out here so this module
+#: does not import the terminal stack at load time (AP-26).
+_HOST_LOST_CODE = -1
+
+
 def _viewers(term: Terminal) -> list[Any]:
     """Every output callback this pane should write to, newest last.
 
@@ -1750,6 +1915,16 @@ class SessionError(RuntimeError):
     """A request the registry refuses, with a user-facing English message."""
 
 
+class WorkspaceFull(SessionError):
+    """The refusal is the pane cap (``MAX_TERMINALS``), not anything else.
+
+    Its own type because callers answer it differently from every other
+    refusal — the voice path says "the workspace is full" in the turn's
+    language instead of reading the English sentence out — and matching on
+    the message's wording broke the moment a message was reworded.
+    """
+
+
 class SessionNotReady(SessionError):
     """The addressed workspace is not open — not "not here", but "not yet".
 
@@ -1760,6 +1935,58 @@ class SessionNotReady(SessionError):
     stops trying for good. Every caller that can wait must be able to tell the
     two apart — see the PTY socket's close codes.
     """
+
+
+class PlacementError(SessionError):
+    """A pane could not be set up on (or brought back from) a computer.
+
+    Its own type so the HTTP layer can answer 502 — the server, the network or
+    the copy failed — instead of blaming the request.
+    """
+
+
+class _Inherit:
+    """ "Run the new pane where its neighbours run" — the default placement."""
+
+    def __repr__(self) -> str:
+        return "INHERIT_PLACEMENT"
+
+
+#: ``add_terminal(computer_id=...)`` default: a split runs where its anchor
+#: runs, any other new pane where the whole workspace runs.
+INHERIT_PLACEMENT: Any = _Inherit()
+
+
+def _remote_commands(terms: Sequence[Terminal]) -> dict[str, str]:
+    """What must be on a computer's PATH before ``terms`` can start there."""
+    needed = {"tmux": "tmux"}
+    for term in terms:
+        spec = workspace_agents.get_agent(term.agent)
+        argv = remote_agent_argv(term.agent)
+        if spec is not None and spec.is_coding_agent and not spec.shell_launch and argv:
+            needed[term.display_name] = argv[0]
+    return needed
+
+
+def _copy_key(local: str) -> tuple[str, Path | None]:
+    """Blocking half of ``Registry._copy_root``: one git call and a realpath."""
+    top = remote.git_toplevel(Path(local))
+    return os.path.normcase(os.path.realpath(str(top) if top else local)), top
+
+
+def _changed_since(top: Path, snapshot: str) -> bool:
+    """Whether repo ``top``'s working tree differs from offload ``snapshot``.
+
+    Blocking (git). The same comparison ``remote.pull_code`` makes before it
+    applies a copy's work; a snapshot git cannot read counts as unchanged,
+    as joining did before the check existed.
+    """
+    try:
+        offload_tree = remote._git(top, "rev-parse", f"{snapshot}^{{tree}}")
+        return remote.working_tree_id(top) != offload_tree
+    except (remote.MoveError, OSError) as exc:
+        logger.info("Agentic IDE: offload snapshot {} unreadable: {}", snapshot[:12], exc)
+        return False
 
 
 class Registry:
@@ -1801,6 +2028,11 @@ class Registry:
         # burst for one account from starving unrelated ``asyncio.to_thread``
         # work (BUG-043).
         self._account_prepare_locks: dict[str, asyncio.Lock] = {}
+        # One gate per (computer, local folder): copies of one folder to one
+        # computer happen one at a time, so a second pane JOINS the first one's
+        # copy — sending it again reset the server's folder under the agent
+        # already working in it.
+        self._copy_locks: dict[tuple[str, str], asyncio.Lock] = {}
         # Admits a few agent cold starts at a time (see COLD_START_LIMIT).
         # Created on first use rather than here: a semaphore belongs to the loop
         # it is first awaited on, and the registry is also built in tests that
@@ -1816,6 +2048,33 @@ class Registry:
         # references to tasks; without this set a hold could be collected
         # mid-wait and its slot never given back.
         self._cold_start_holds: set[asyncio.Task[None]] = set()
+        # The follow-ups checking that a repaint nudge was answered (see
+        # ``_confirm_repaint``), held for the same weak-reference reason.
+        self._repaint_checks: set[asyncio.Task[None]] = set()
+        # The newest of those per pane, so a burst of resizes keeps one alive.
+        self._repaint_check_by_pane: dict[str, object] = {}
+        # Whether panes may live in the PTY host (``jarvis.terminal.pty_host``)
+        # instead of this process. Off until the app turns it on through
+        # ``boot_restore``: a registry built by a test, a script or the CLI
+        # keeps its terminals in-process and never starts a background process.
+        # On when the app's entry point switched it on before the UI could
+        # reach the API (``host_mode``); ``enable_host`` / ``boot_restore``
+        # turn it on later otherwise. Off for tests, scripts and the CLI.
+        from . import host_mode
+
+        self._host_enabled = host_mode.enabled()
+        # What ``_manager`` hands a synchronous caller while the host is enabled
+        # but not attached yet: an empty pool, never pinned (see ``_manager``).
+        self._idle_pool: PtyManager | None = None
+        # Set by ``set_surface_context`` when the focused pane changed, so the
+        # route can save it without saving on every repeated report.
+        self._focus_dirty = False
+        self._host_lock = asyncio.Lock()
+        self._boot_restored = False
+        # The re-join retried in the background when the host did not answer
+        # at startup, and the one recovery pass after a host died under us.
+        self._rejoin_task: asyncio.Task[None] | None = None
+        self._host_recovery: asyncio.Task[None] | None = None
 
     # ---------------------------------------------------------------- state
     @property
@@ -1965,16 +2224,459 @@ class Registry:
         logger.info("Agentic IDE: new {} terminals will use {!r}", agent, account.label)
         return account
 
+    def _pool(self, term: Terminal) -> Any:
+        """The pool that owns ``term``'s process: its computer's, else this machine's."""
+        if term.computer_id:
+            from jarvis.computers.remote_terminal import pool_for
+
+            return pool_for(term.computer_id)
+        return self._manager()
+
     def _manager(self) -> PtyManager:
         if self._pty is None:
             # Lazy: keeps the terminal stack off the import/boot path (AP-26).
             from jarvis.terminal.pty_manager import PtyManager
 
+            if self._host_enabled:
+                # Never PINNED here while the PTY host is in use. A synchronous
+                # caller (a write, a resize, a status read) can arrive before
+                # the async path has attached to the host; pinning an
+                # in-process pool at that moment made every pane of a reopened
+                # app start its agent again inside the app while the originals
+                # kept running, unseen, in the host (RUB-102, 2026-09-28). An
+                # empty pool answers those callers truthfully: nothing of
+                # theirs runs in this process.
+                if self._idle_pool is None:
+                    self._idle_pool = PtyManager()
+                return self._idle_pool
             self._pty = PtyManager()
         return self._pty
 
+    def enable_host(self) -> None:
+        """Put new and re-joined panes in the PTY host from now on.
+
+        Synchronous and called by the app's entry points BEFORE the UI can
+        reach the registry, so no pane ever starts in-process ahead of it.
+        """
+        from . import host_mode
+
+        host_mode.enable()
+        self._host_enabled = True
+
+    # ---------------------------------------------------------- PTY host
+    async def _live_manager(self) -> PtyManager:
+        """The pool a NEW agent should start in — the PTY host when possible.
+
+        Panes live in the host so that closing, quitting or restarting the app
+        detaches from them instead of killing them (see
+        ``jarvis.terminal.pty_host``). Everything degrades to the in-process
+        pool: host disabled (tests, CLI), host unavailable on this install, or
+        an in-process pool that already holds running agents — those would be
+        orphaned by a switch, so the switch waits for the next app start.
+        """
+        if not self._host_enabled:
+            return self._manager()
+        async with self._host_lock:
+            current = self._pty
+            if current is not None and (
+                # An in-process pool stays for the rest of this process once it
+                # exists: it may hold running agents, and a host that failed to
+                # start once is not worth a stall on every pane that connects.
+                not getattr(current, "persistent", False) or getattr(current, "connected", False)
+            ):
+                return current
+            # No pool yet, or the host went away (its agents went with it —
+            # ``RemotePtyManager._lost`` already told their panes).
+            remote = await _connect_pty_host(start=True)
+            if remote is None:
+                return self._fallback_manager()
+            self._pty = cast("PtyManager", remote)
+            return self._pty
+
+    async def _attached_host(self) -> Any:
+        """The PTY host's pool when one is running, WITHOUT starting one.
+
+        Every re-join goes through here, whichever path gets there first — the
+        boot pass, a workspace the UI restores, a pane that connects. None when
+        the host is disabled, not running, or this process already keeps its
+        agents in-process.
+        """
+        current = self._pty
+        if current is not None and getattr(current, "persistent", False):
+            if getattr(current, "connected", False):
+                return current
+        if not self._host_enabled:
+            return None
+        async with self._host_lock:
+            current = self._pty
+            if current is not None and not getattr(current, "persistent", False):
+                return None
+            if current is not None and getattr(current, "connected", False):
+                return current
+            remote = await _connect_pty_host(start=False)
+            if remote is not None:
+                self._pty = cast("PtyManager", remote)
+            return remote
+
+    @staticmethod
+    def _hosted_for(manager: Any) -> dict[str, Any]:
+        """The host's not-yet-adopted terminals by pane identity, newest wins."""
+        found: dict[str, Any] = {}
+        if manager is None or not hasattr(manager, "hosted"):
+            return found
+        for info in manager.hosted():
+            history = str(info.meta.get("history_id") or "")
+            if not history:
+                continue
+            older = found.get(history)
+            if older is None or info.started_at > older.started_at:
+                found[history] = info
+        return found
+
+    def _fallback_manager(self) -> PtyManager:
+        """An in-process pool, replacing a host that is gone or cannot start.
+
+        Pinned on purpose (``_manager`` would not pin one in host mode): a host
+        that failed to start is not worth a retry on every pane that connects.
+        """
+        if self._pty is None or getattr(self._pty, "persistent", False):
+            from jarvis.terminal.pty_manager import PtyManager
+
+            self._pty = PtyManager()
+        return self._pty
+
+    async def boot_restore(self) -> None:
+        """Bring back what was open when the app last ran — once per process.
+
+        Called by the web server shortly after boot, off the critical path
+        (AP-26). Three steps:
+
+        1. Attach to the PTY host if one is still running from before. Its
+           terminals are agents that never stopped: the app was closed, the
+           machine was not.
+        2. Reopen the workspaces that were open at the last save, in their
+           layout. Each pane whose agent is still running in the host is
+           re-joined to it (``_adopt_hosted``); the rest come back pending and
+           continue their conversation through ``--resume`` when they connect,
+           which is what a reboot leaves behind.
+        3. End hosted terminals no reopened pane claimed. Nothing can reach
+           them any more, and left alone they would keep the host alive forever.
+
+        Deliberately closing every workspace before quitting is respected:
+        ``resume_store.all_closed_at`` records it, and a snapshot older than
+        that is not reopened unasked.
+        """
+        if self._boot_restored:
+            return
+        self._boot_restored = True
+        self._host_enabled = True
+        try:
+            await self._attached_host()
+            host_reachable = True
+        except SessionNotReady:  # a live host that is silent: waited for below, not an error
+            host_reachable = False
+        try:
+            snapshot = await asyncio.to_thread(resume_store.load)
+            closed_at = await asyncio.to_thread(resume_store.all_closed_at)
+        except Exception as exc:  # noqa: BLE001 - a broken file must not break boot
+            logger.warning("Agentic IDE: restore point unreadable at startup: {}", exc)
+            snapshot, closed_at = None, None
+        newest = max((w.saved_at for w in snapshot.workspaces), default=0.0) if snapshot else 0.0
+        if snapshot is not None and snapshot.workspaces and not self._sessions:
+            if closed_at is not None and closed_at >= newest:
+                logger.info(
+                    "Agentic IDE: every workspace was closed before the app quit — "
+                    "nothing reopened at startup"
+                )
+            else:
+                try:
+                    await self.restore(snapshot)
+                except SessionError as exc:
+                    logger.info("Agentic IDE: nothing reopened at startup: {}", exc)
+        # Ended only when NO workspace could ever claim them — neither an open
+        # one nor any the restore point remembers. A remembered workspace that
+        # was not reopened now can still be reopened by hand, and its agents
+        # must be there to re-join rather than killed on a guess.
+        manager: Any = self._pty
+        known = set(self._sessions) | {
+            w.session_id for w in (snapshot.workspaces if snapshot is not None else [])
+        }
+        hosted = manager.hosted() if manager is not None and hasattr(manager, "hosted") else []
+        for info in hosted:
+            if str(info.meta.get("workspace_id") or "") in known:
+                continue
+            logger.info(
+                "Agentic IDE: ending hosted terminal {} — no workspace claims it ({})",
+                info.terminal_id,
+                info.meta.get("name", "unnamed"),
+            )
+            manager.kill_hosted(info.terminal_id)
+        if host_reachable:
+            await self._resume_lost_agents("the machine restarted or the terminal host ended")
+        else:
+            # A host is running but did not answer: its agents are alive.
+            # Resuming now would start a second copy of each one, so the panes
+            # wait and re-join once it answers (``_rejoin_when_reachable``).
+            self._rejoin_task = asyncio.create_task(
+                self._rejoin_when_reachable(), name="ide-host-rejoin"
+            )
+
+    async def _rejoin_when_reachable(self) -> None:
+        """Keep trying a live host that did not answer at startup, then re-join."""
+        delay = 2.0
+        for _attempt in range(30):
+            await asyncio.sleep(delay)
+            delay = min(delay * 1.5, 20.0)
+            try:
+                manager = await self._attached_host()
+            except SessionNotReady:  # still silent; the next attempt follows after the delay
+                continue
+            for session in list(self._sessions.values()):
+                await self._adopt_hosted(session)
+            if manager is None:
+                # It ended while we waited: its agents ended with it.
+                await self._resume_lost_agents("the terminal host ended")
+            return
+        logger.warning("Agentic IDE: the terminal host never answered; panes stay waiting")
+
+    async def _resume_lost_agents(self, why: str) -> None:
+        """Bring back every agent whose process is gone, in every workspace.
+
+        Herdr's native agent-session resume: the process died (with the machine,
+        or with a host that crashed), so each agent is started again on ITS OWN
+        conversation (the CLI's ``--resume <id>`` and equivalents, see
+        ``agent_sessions``) — not a fresh CLI, and not only in the workspace
+        somebody happens to open.
+
+        Nothing is typed into any of them. A Claude Code pane is started with
+        its CLI's own interrupted-turn resume (``agent_sessions.resume_env``), so
+        a task the power cut interrupted runs on by itself; a finished one
+        stays finished; other CLIs come back holding their conversation at
+        their prompt.
+
+        Which panes: every one still ``pending`` (a pane whose agent survived
+        in the host was re-joined and is ``live``) whose agent was running at
+        the last save (an agent that ended by itself stays ended) and whose
+        CLI really holds the conversation its handle points at. The starts run
+        without a viewer through the ordinary cold-start gate, so a dozen
+        agents come back a few at a time.
+        """
+        pending = [
+            (session, term)
+            for session in self._sessions.values()
+            for term in session.terminals
+            if term.status == "pending"
+            and term.was_running
+            and term.resume is not None
+            and accepts_prompts(term.agent)
+            and not term.computer_id
+        ]
+
+        def _with_conversation() -> list[tuple[Session, Terminal]]:
+            found: list[tuple[Session, Terminal]] = []
+            for session, term in pending:
+                try:
+                    if has_conversation(
+                        term.agent, term.resume, account_home(term.agent, term.account)
+                    ):
+                        found.append((session, term))
+                except Exception as exc:  # noqa: BLE001 - one unreadable history skips one pane
+                    logger.debug(
+                        "Agentic IDE: could not check {}'s conversation: {}", term.name, exc
+                    )
+            return found
+
+        starts = await asyncio.to_thread(_with_conversation)
+        for session, term in starts:
+            self._start_in_background(session, term)
+        if starts:
+            logger.info(
+                "Agentic IDE: resuming {} agent(s) on their own conversations — {}",
+                len(starts),
+                why,
+            )
+
+    def _start_in_background(self, session: Session, term: Terminal) -> None:
+        task = asyncio.create_task(
+            self._start_unviewed(session, term), name=f"ide-resume-{term.key}"
+        )
+        self._cold_start_holds.add(task)
+        task.add_done_callback(self._cold_start_holds.discard)
+
+    def _host_went_away(self) -> bool:
+        """Did the PTY host this process was attached to just drop away?"""
+        current = self._pty
+        return bool(
+            current is not None
+            and getattr(current, "persistent", False)
+            and not getattr(current, "connected", True)
+        )
+
+    def _note_host_lost(self, term: Terminal) -> None:
+        """A pane lost its agent with the host: resume it once a host is back."""
+        term.lost_with_host = True
+        term.was_running = True
+        if self._host_recovery is None or self._host_recovery.done():
+            self._host_recovery = asyncio.create_task(
+                self._recover_from_host_loss(), name="ide-host-recovery"
+            )
+
+    async def _recover_from_host_loss(self) -> None:
+        """Replace a host that died under a running app and resume its agents.
+
+        Only what a crash of the host itself leaves behind: every agent in it
+        died together, the conversations are on disk, and the app is still up.
+        A fresh host is started (``_live_manager``) and each lost pane resumes
+        its own conversation, exactly as after a reboot — never a fresh CLI and
+        never a typed prompt.
+        """
+        await asyncio.sleep(1.0)  # let every exit of the lost host arrive first
+        lost = [
+            (session, term)
+            for session in self._sessions.values()
+            for term in session.terminals
+            if term.lost_with_host and term.status == "exited"
+        ]
+        if not lost:
+            return
+        logger.warning("Agentic IDE: the terminal host went away — resuming {} agent(s)", len(lost))
+        for session, term in lost:
+            term.lost_with_host = False
+            term.status = "pending"
+            self._start_in_background(session, term)
+
+    async def _start_unviewed(self, session: Session, term: Terminal) -> None:
+        """Start a pane's agent with nobody watching (the registry records output)."""
+
+        async def discard(_value: Any) -> None:
+            return None
+
+        identity = "pane:" + term.history_id
+        try:
+            await self.attach(
+                identity,
+                term.pty_cols or term.transcript.cols,
+                term.pty_rows or term.transcript.rows,
+                discard,
+                discard,
+                workspace_id=session.id,
+                claim_owner=False,
+            )
+        except SessionError as exc:
+            logger.warning("Agentic IDE: {} could not be started to continue: {}", term.name, exc)
+        finally:
+            self.detach(identity, workspace_id=session.id, viewer=discard)
+
+    async def _adopt_hosted(self, session: Session) -> None:
+        """Re-join each pane of ``session`` to its agent, if it is still running.
+
+        A pane is recognised by its ``history_id`` — the stable identity that
+        survives renames and the call-sign deduplication — which the spawn
+        stored in the hosted terminal's ``meta``. A pane that finds its agent
+        becomes ``live`` on the spot, with the host's copy of its screen in the
+        replay buffer, so the viewer that connects next takes the ordinary
+        "re-join a running agent" path in ``_attach_locked``.
+        """
+        # Attached here rather than trusted to be attached already: the UI can
+        # restore a workspace before the boot pass has reached the host.
+        manager: Any = await self._attached_host()
+        if manager is None or not hasattr(manager, "adopt"):
+            return
+        by_history = self._hosted_for(manager)
+        for term in session.terminals:
+            info = by_history.pop(term.history_id, None)
+            if info is not None and not term.computer_id:
+                await self._adopt_one(manager, term, info)
+
+    async def _adopt_one(self, manager: Any, term: Terminal, info: Any) -> bool:
+        """Re-join ``term`` to the hosted terminal ``info``. True when it is live."""
+        on_output, on_closed = self._adopted_callbacks(term)
+        try:
+            result = await manager.adopt(info.terminal_id, on_output, on_closed)
+        except Exception as exc:  # noqa: BLE001 - the pane falls back to a resume
+            logger.warning("Agentic IDE: {} could not be re-joined: {}", term.name, exc)
+            return False
+        if not result.alive:
+            return False
+        cols = result.cols or term.transcript.cols
+        rows = result.rows or term.transcript.rows
+        term.transcript.resize(cols, rows)
+        term.transcript.feed(result.replay)
+        term.replay.clear()
+        term.replay.feed(result.replay)
+        if result.truncated:
+            term.replay.truncated = True
+        term.pty_id = info.terminal_id
+        term.pty_cols, term.pty_rows = cols, rows
+        term.status = "live"
+        term.error = ""
+        term.exit_code = None
+        term.resumed = False
+        term.worked_while_detached = term.resume_continuation_needed
+        term.resume_continuation_needed = False
+        term.lost_with_host = False
+        term.started_at = info.started_at or time.time()
+        term.last_output_at = time.time() if result.replay else None
+        if await self._adopted_with_work(term):
+            term.adopted_generation = term.process_generation
+        logger.info("Agentic IDE: {} re-joined its running agent after an app restart", term.name)
+        return True
+
+    @staticmethod
+    async def _adopted_with_work(term: Terminal) -> bool:
+        """Had this re-joined agent been given a job before the app restarted?
+
+        Cheap proofs first; the conversation file is the one that survives a
+        pane driven purely by hand (its submit stamps died with the old app).
+        """
+        if term.worked_while_detached or has_work_behind_it(term):
+            return True
+        if term.resume is None:
+            return False
+        try:
+            return await asyncio.to_thread(
+                has_conversation, term.agent, term.resume, account_home(term.agent, term.account)
+            )
+        except Exception as exc:  # noqa: BLE001 - an unreadable history only costs the word
+            logger.debug("Agentic IDE: could not check {}'s conversation: {}", term.name, exc)
+            return False
+
+    def _adopted_callbacks(self, term: Terminal) -> tuple[Any, Any]:
+        """Output/exit callbacks for an agent this process did not start.
+
+        The same fan-out as the ones ``_attach_locked`` builds at spawn, minus
+        the failed-resume recovery: an adopted agent was not just resumed, it
+        has been running all along.
+        """
+
+        async def _output(_tid: str, text: str) -> None:
+            term.transcript.feed(text)
+            term.replay.feed(text)
+            term.last_output_at = time.time()
+            for viewer in _viewers(term):
+                await viewer(text)
+
+        async def _closed(_tid: str, code: int) -> None:
+            term.pty_id = None
+            term.status = "exited"
+            term.exit_code = code
+            if code == _HOST_LOST_CODE and self._host_went_away():
+                self._note_host_lost(term)
+            for viewer in _exit_viewers(term):
+                await viewer(code)
+
+        return _output, _closed
+
     # -------------------------------------------------------------- session
-    async def start(self, folder: str, requested: list[dict[str, Any]]) -> Session:
+    async def start(
+        self,
+        folder: str,
+        requested: list[dict[str, Any]],
+        *,
+        project_id: str | None = None,
+        name: str | None = None,
+        computer_id: str | None = None,
+    ) -> Session:
         """Open ``folder`` as a NEW workspace with one terminal per request entry.
 
         ``requested`` entries look like ``{"agent": "claude", "name": "Mika"}``;
@@ -1984,6 +2686,12 @@ class Registry:
         stays open with its agents running. The same folder may be opened more
         than once deliberately: each workspace is a separate set of panes and
         conversations, with a distinct tab name.
+
+        ``computer_id`` runs every pane on that connected computer from the
+        start: the server is checked (tmux, each CLI), the folder is copied
+        there once, and only then may a pane start — its CLI never has to be
+        installed on this machine. A failure closes the workspace again and
+        raises :class:`PlacementError`.
         """
         async with self._lock:
             if not requested:
@@ -2007,17 +2715,37 @@ class Registry:
             except OSError as exc:
                 raise SessionError(f"Cannot open {root}: {exc}") from exc
 
+            if project_id:
+                # Local: git is needed only for this one check.
+                from .git_ops import same_repository
+
+                project = await asyncio.to_thread(library.get_project, project_id)
+                if project is None and project_id != library.project_id_for(root):
+                    raise SessionError("That project does not exist.")
+                if (
+                    project
+                    and library.project_id_for(root) != library.project_id_for(project.path)
+                    # A git worktree of the project's repository belongs to it
+                    # too: that is how a workspace gets a checkout of its own.
+                    and not await asyncio.to_thread(same_repository, root, project.path)
+                ):
+                    raise SessionError("The workspace folder must belong to its project.")
+
             unknown = {
                 str(r.get("agent")) for r in requested if not is_runnable(str(r.get("agent")))
             }
             if unknown:
                 raise SessionError(f"Unknown agent(s): {', '.join(sorted(unknown))}")
 
+            # A workspace that runs on a computer needs its CLIs THERE, not
+            # here — they are checked on the server before anything is copied.
+            launcher = remote_agent_argv if computer_id else agent_argv
             missing = sorted(
-                {str(r.get("agent")) for r in requested if agent_argv(str(r.get("agent"))) is None}
+                {str(r.get("agent")) for r in requested if launcher(str(r.get("agent"))) is None}
             )
             if missing:
                 raise SessionError(" ".join(_unavailable(m) for m in missing))
+            placing = self._placing_note(computer_id) if computer_id else ""
 
             # Call-signs count from T1 WITHIN this workspace, and every
             # workspace counts from T1 again. That is the whole promise of a
@@ -2033,21 +2761,19 @@ class Registry:
             for index, entry in enumerate(requested):
                 agent = str(entry.get("agent"))
                 wanted = str(entry.get("name") or "").strip() or pool[index]
-                name = _unique_name(wanted, used)
-                used.add(normalize(name))
+                terminal_name = _unique_name(wanted, used)
+                used.add(normalize(terminal_name))
                 requested_account = _requested_account(entry)
                 resolved_account = resolve_account(agent, requested_account)
                 terminals.append(
                     Terminal(
-                        key=normalize(name) or f"t{index}",
-                        name=name,
+                        key=normalize(terminal_name) or f"t{index}",
+                        name=terminal_name,
                         agent=agent,
                         display_name=agent_display(agent),
                         index=index,
-                        # Columns of WIZARD_COLUMN_HEIGHT, filled top to bottom
-                        # before the next one opens — the same arithmetic the
-                        # preview draws with (frontend `layout.ts`), so the
-                        # workspace that appears is the one that was shown.
+                        # Legacy hints are normalized into row-major order
+                        # when the workspace is opened below.
                         column=index // WIZARD_COLUMN_HEIGHT,
                         slot=index % WIZARD_COLUMN_HEIGHT,
                         account=resolved_account,
@@ -2064,16 +2790,32 @@ class Registry:
                         permission_mode=launch_picks.normalize_permission(
                             agent, entry.get("permission_mode")
                         ),
+                        computer_id=computer_id or "",
+                        placing=placing,
                     )
                 )
 
-            session = await self._open_locked(root, terminals)
+            session = await self._open_locked(
+                root,
+                terminals,
+                name=name,
+                project_id=project_id,
+                grid=True,
+            )
             logger.info(
                 "Agentic IDE session started: {} terminals in {}",
                 len(terminals),
                 root,
             )
-            return session
+        if computer_id:
+            try:
+                await self._place_new(session, list(session.terminals), computer_id)
+            except BaseException:
+                # Also when the request itself was cancelled: a workspace whose
+                # panes can never start is closed rather than left behind.
+                await self.end(session.id)
+                raise
+        return session
 
     # ------------------------------------------------------- workspace helpers
     def _find_by_folder(self, root: Path) -> Session | None:
@@ -2123,6 +2865,8 @@ class Registry:
         *,
         name: str | None = None,
         workspace_id: str | None = None,
+        project_id: str | None = None,
+        grid: bool = False,
     ) -> Session:
         """Turn a prepared list of panes into a NEW open workspace, at the front.
 
@@ -2150,6 +2894,7 @@ class Registry:
             profile=profile,
             terminals=terminals,
             created_at=time.time(),
+            project_id=project_id or library.project_id_for(root),
             # Both callers prepare panes with legacy (column, slot) positions
             # — the wizard's opening arithmetic, a snapshot's remembered grid
             # — and the columns-of-stacks shape those describe is exactly
@@ -2157,6 +2902,8 @@ class Registry:
             # replaces this afterwards (`_restore_one_locked`).
             layout=layout_tree.from_grid((t.key, t.column, t.slot) for t in terminals),
         )
+        if grid:
+            self._row_major_grid(session)
         self._sessions[session.id] = session
         self._focus_locked(session)
         # Start indexing the codebase NOW, in a background thread, so the
@@ -2312,8 +3059,98 @@ class Registry:
             )
         return wanted
 
+    async def restore_workspace(self, workspace_id: str) -> Session:
+        """Explicitly reopen one saved workspace, preserving every session ID."""
+        async with self._lock:
+            existing = self.get(workspace_id)
+            if existing is not None:
+                self._focus_locked(existing)
+                return existing
+            snapshot = await asyncio.to_thread(resume_store.load)
+            saved = (
+                next(
+                    (space for space in snapshot.workspaces if space.session_id == workspace_id),
+                    None,
+                )
+                if snapshot
+                else None
+            )
+            if saved is None:
+                raise SessionError("That saved workspace does not exist.")
+            session = await self._restore_one_locked(saved)
+            if session is None:
+                raise SessionError("That saved workspace could not be reopened.")
+            await self._persist()
+            return session
+
+    async def reorder_workspaces(self, workspace_ids: list[str]) -> list[Session]:
+        """Persist tab order without starting, stopping or renaming anything."""
+        async with self._lock:
+            if len(workspace_ids) != len(self._sessions) or set(workspace_ids) != set(
+                self._sessions
+            ):
+                raise SessionError(
+                    "Workspace order must contain every open workspace exactly once."
+                )
+            self._sessions = {wid: self._sessions[wid] for wid in workspace_ids}
+            await self._persist()
+            return list(self._sessions.values())
+
+    async def reorder_terminals(self, workspace_id: str, terminal_ids: list[str]) -> Session:
+        """Persist row-major order without restarting or renaming an agent."""
+        async with self._lock:
+            session = self.get(workspace_id)
+            if session is None:
+                raise SessionError("That workspace is not open.")
+            by_id = {term.history_id: term for term in session.terminals}
+            if len(terminal_ids) != len(by_id) or set(terminal_ids) != set(by_id):
+                raise SessionError(
+                    "Terminal order must contain every workspace terminal exactly once."
+                )
+            session.terminals = [by_id[identity] for identity in terminal_ids]
+            self._row_major_grid(session)
+            await self._persist()
+            return session
+
+    @staticmethod
+    def _row_major_grid(session: Session) -> None:
+        """Keep legacy geometry consistent with the persistent terminal order."""
+        # Rebuild the legacy split tree from the new order. Old geometry
+        # must never sort the terminals back into their previous positions.
+        columns = balanced_columns(len(session.terminals))
+        rows = [
+            layout_tree.normalize(
+                layout_tree.Split(
+                    direction="row",
+                    children=[
+                        layout_tree.Leaf(term.key)
+                        for term in session.terminals[start : start + columns]
+                    ],
+                    weights=[1.0] * len(session.terminals[start : start + columns]),
+                )
+            )
+            for start in range(0, len(session.terminals), columns or 1)
+        ]
+        session.layout = (
+            layout_tree.normalize(
+                layout_tree.Split(
+                    direction="column",
+                    children=rows,
+                    weights=[1.0] * len(rows),
+                )
+            )
+            if rows
+            else None
+        )
+        Registry._renumber(session)
+
     async def _restore_one_locked(self, space: resume_store.SnapshotWorkspace) -> Session | None:
         """Reopen one remembered workspace. Caller holds the lock."""
+        if len(space.terminals) > MAX_TERMINALS:
+            raise SessionError(
+                f"This saved workspace has {len(space.terminals)} terminals; "
+                f"the workspace limit is {MAX_TERMINALS}. Its saved sessions were preserved."
+            )
         root = Path(space.folder).expanduser()  # noqa: ASYNC240
         try:
             if not await asyncio.to_thread(root.is_dir):
@@ -2353,27 +3190,21 @@ class Registry:
                 model=entry.model,
                 effort=entry.effort,
                 permission_mode=entry.permission_mode,
+                # A worktree deleted in the meantime would leave the agent with
+                # no folder to start in; the pane then falls back to the
+                # workspace folder rather than failing the reopen.
+                folder=entry.folder if entry.folder and Path(entry.folder).is_dir() else "",
+                branch=entry.branch if entry.folder and Path(entry.folder).is_dir() else "",
+                fork_from=entry.fork_from,
+                # A pane saved while its folder was still being copied has no
+                # folder on that computer to start in; it comes back here.
+                computer_id=entry.computer_id if entry.remote_folder else "",
+                remote_folder=entry.remote_folder,
+                offload_snapshot=entry.offload_snapshot,
+                was_running=entry.running,
             )
 
         terminals = [_restored(index, entry) for index, entry in enumerate(space.terminals)]
-        # Which of them will come back mid-task, decided HERE rather than when
-        # each pane's agent happens to start.
-        #
-        # **The bug this fixes.** `continuation_pending` used to be raised in
-        # `attach`, which is the moment a pane's process is spawned — and cold
-        # starts are deliberately staggered (see COLD_START_LIMIT), so in a
-        # workspace of a dozen panes most of them are still `pending` seconds
-        # after the grid appears. Anybody pressing "Continue" in that window got
-        # the handful that had started and silently no others, which is exactly
-        # the "it skips terminals that should have carried on" report.
-        #
-        # A restored pane's answer does not depend on its process at all: it
-        # depends on whether the coding CLI's history really holds the
-        # conversation the handle points at. That is knowable now, so it is
-        # answered now — one thread hop for the whole workspace, since each
-        # check is a filename lookup. `attach` still corrects it either way when
-        # the process really starts (a resume that fails clears it).
-        await asyncio.to_thread(_mark_restored_continuations, terminals)
         # A snapshot remembers the call-signs each workspace had. Another one may
         # hold them now, and two panes answering to one name would make every
         # spoken instruction ambiguous — so a collision is renamed here. Only the
@@ -2386,10 +3217,13 @@ class Registry:
             terminals,
             name=space.name or None,
             workspace_id=space.session_id or None,
+            project_id=space.project_id or library.project_id_for(space.folder),
         )
         # Which record this came back from, so a second restore of the same file
         # recognises it rather than opening a duplicate.
         session.restored_from = _restore_key(space)
+        focused = session.find(space.focused) if space.focused else None
+        session.focused = focused.name if focused is not None else ""
         # The remembered split tree, when the snapshot carries one and it
         # parses. `_open_locked` already built the coarse columns-of-stacks
         # equivalent from the legacy (column, slot) pairs, so a snapshot from
@@ -2413,6 +3247,9 @@ class Registry:
         # close and its renumbering (or a remembered tree can disagree with the
         # panes that really came back), and `_renumber` settles both.
         self._renumber(session)
+        # Panes whose agents never stopped (the app was closed, the PTY host
+        # kept them) are re-joined now rather than resumed on connect.
+        await self._adopt_hosted(session)
         return session
 
     @staticmethod
@@ -2504,6 +3341,25 @@ class Registry:
             await self._close_locked(target)
             return True
 
+    async def remove_workspace(self, workspace_id: str) -> bool:
+        """Remove a workspace for good: stop its agents and forget its record.
+
+        What the sidebar's "Remove workspace" means, as opposed to ``end``:
+        closing keeps the workspace as a closed, restorable row; removing makes
+        the row go away. Works on an open workspace and on a remembered closed
+        one alike. The folder on disk is never touched. False when the id is
+        neither open nor remembered.
+        """
+        async with self._lock:
+            closed = workspace_id in self._sessions
+            if closed:
+                await self._close_locked(workspace_id)
+        # Under the persist lock so a save that read the old state cannot land
+        # after the record is gone and write it straight back.
+        async with self._persist_lock:
+            forgotten = await asyncio.to_thread(resume_store.forget, session_ids={workspace_id})
+        return closed or forgotten > 0
+
     async def close_all(self) -> int:
         """Close every open workspace. Returns how many were closed.
 
@@ -2514,6 +3370,68 @@ class Registry:
             for workspace_id in list(self._sessions):
                 await self._close_locked(workspace_id)
             return count
+
+    def _sync_hooked_session(self, term: Terminal) -> None:
+        """Adopt the conversation id the pane's session hook last reported.
+
+        Runs off the loop (one small file read). A pane whose hook never fired
+        keeps the id it was launched with.
+        """
+        latest = pane_sessions.latest_session(term.history_id)
+        if latest is None:
+            return
+        session_id, at = latest
+        if term.resume is not None and term.resume.id == session_id:
+            return
+        term.resume = ResumeHandle("claude_session", session_id, at or time.time())
+        logger.info(
+            "Agentic IDE: {} is now on conversation {} (reported by its session hook)",
+            term.name,
+            session_id[:8],
+        )
+
+    def _sync_hooked_sessions(self) -> None:
+        for session in list(self._sessions.values()):
+            for term in list(session.terminals):
+                if not term.computer_id and reports_session_starts(term.agent):
+                    self._sync_hooked_session(term)
+
+    def runtime_status(self) -> dict[str, Any]:
+        """Where the agents run right now, for the UI and ``jarvis api``.
+
+        ``host`` — in the PTY host, surviving the app; ``in_process`` — in this
+        process, ending with it; ``idle`` — no agent has been started yet.
+        """
+        manager = self._pty
+        hosted = bool(getattr(manager, "persistent", False)) and bool(
+            getattr(manager, "connected", False)
+        )
+        mode = "host" if hosted else ("in_process" if manager is not None else "idle")
+        return {
+            "mode": mode,
+            "host_pid": int(getattr(manager, "host_pid", 0) or 0) if hosted else 0,
+            "persistent_enabled": self._host_enabled,
+            "workspaces": len(self._sessions),
+            "live_agents": sum(
+                1
+                for session in self._sessions.values()
+                for term in session.terminals
+                if term.status == "live" and term.pty_id
+            ),
+        }
+
+    async def stop_runtime(self) -> int:
+        """The explicit "stop everything": end every agent in every workspace.
+
+        Closing the app only detaches from the agents (``jarvis.terminal.pty_host``);
+        this is the separate, deliberate action that ends them. It closes each
+        workspace the ordinary way — so the restore point stays on offer and
+        the next start does not reopen anything unasked — and the PTY host,
+        left with no terminal, exits on its own shortly after.
+        """
+        count = await self.close_all()
+        logger.info("Agentic IDE: runtime stopped by request — {} workspace(s) closed", count)
+        return count
 
     # ------------------------------------------------------------- snapshot
     def snapshot(self) -> resume_store.Snapshot | None:
@@ -2542,9 +3460,11 @@ class Registry:
                 resume_store.SnapshotWorkspace(
                     session_id=session.id,
                     folder=session.folder,
+                    project_id=session.project_id or library.project_id_for(session.folder),
                     name=session.name,
                     terminals=[t.to_snapshot() for t in session.terminals],
                     layout=layout_tree.to_dict(session.layout) if session.layout else None,
+                    focused=session.focused,
                 )
                 for session in self._sessions.values()
             ],
@@ -2567,6 +3487,7 @@ class Registry:
         than the one the previous save stored.
         """
         async with self._persist_lock:
+            await asyncio.to_thread(self._sync_hooked_sessions)
             snapshot = self.snapshot()
             if snapshot is None:
                 return
@@ -2576,7 +3497,7 @@ class Registry:
                 logger.warning("Agentic IDE: resume snapshot not written: {}", exc)
 
     async def persist_resume_activity(self) -> None:
-        """Checkpoint activity evidence used by the interrupted-work offer.
+        """Checkpoint the "was working" evidence the bell and the resume use.
 
         The activity sweep calls this only when a pane crosses a meaningful
         boundary, never for each terminal repaint. Keeping it on the registry
@@ -2619,11 +3540,12 @@ class Registry:
             term.viewer_exit = None
             term.watchers.clear()
             term.prompt_viewers.clear()
-        if manager is not None:
-            for term in session.terminals:
+        for term in session.terminals:
+            owner = self._pool(term) if term.computer_id else manager
+            if owner is not None:
                 if term.pty_id:
                     try:
-                        manager.close(term.pty_id)
+                        owner.close(term.pty_id)
                     except Exception:  # noqa: BLE001, S110 - best-effort teardown
                         pass
         # Its pane notifications go with it. Each one is a "jump to this pane"
@@ -2670,6 +3592,14 @@ class Registry:
         # third of it back tomorrow". The cost of the other direction is a
         # workspace that lingers in the offer until something else happens, and
         # reopening one workspace too many is trivially undone.
+        if not self._sessions:
+            # The restore point stays on offer, but the app must not reopen it
+            # by itself at the next start: the user shut everything down on
+            # purpose (see ``boot_restore``).
+            try:
+                await asyncio.to_thread(resume_store.note_all_closed)
+            except Exception as exc:  # noqa: BLE001 - closing must always succeed
+                logger.warning("Agentic IDE: could not record that everything closed: {}", exc)
         logger.info("Agentic IDE session ended: {}", session.id)
 
     def set_focus_mode(self, enabled: bool) -> bool:
@@ -2719,7 +3649,15 @@ class Registry:
         session.surface_prompt_target = (
             prompt.name if prompt is not None and accepts_prompts(prompt.agent) else ""
         )
+        if prompt is not None and prompt.name != session.focused:
+            session.focused = prompt.name
+            self._focus_dirty = True
         return True
+
+    def take_focus_dirty(self) -> bool:
+        """Did a focus change arrive since the last call? (Then it wants saving.)"""
+        dirty, self._focus_dirty = self._focus_dirty, False
+        return dirty
 
     # ------------------------------------------------------------------ pty
     def _locate(self, key: str, workspace_id: str | None) -> tuple[Session, Terminal] | None:
@@ -2826,6 +3764,35 @@ class Registry:
             session, [term.name], timeout_s=COLD_START_HOLD_MAX_S
         )
         return term.name in ready
+
+    async def _prompt_ready_then_settle(self, session: Session, term: Terminal) -> bool:
+        """Wait for the input line, then repaint a pane resized while it loaded.
+
+        A fresh pane is spawned at the size its tile measured on mount, and the
+        grid settles a moment later — so its real size reaches the PTY while the
+        CLI is still booting. A CLI that is not listening for size changes yet
+        keeps drawing for the size it was born with: an interface narrower or
+        shorter than its pane, the input box floating mid-pane (reported
+        2026-09-29, four panes opened together). The repaint check cannot catch
+        this, because it only runs once the agent has taken the whole screen.
+        One nudge after the input line appears — when the CLI certainly listens
+        — makes it lay out for the size the pane really has.
+        """
+        generation = term.process_generation
+        ready = await self._prompt_ready(session, term)
+        if (
+            ready
+            and term.process_generation == generation
+            and term.resized_while_booting
+            and term.replay.holds_screen
+            and term.pty_cols
+            and term.pty_rows
+        ):
+            term.resized_while_booting = False
+            # Shielded: the slot's ceiling may cancel this wait, and a nudge
+            # cut between its two resizes leaves the PTY a row short.
+            await asyncio.shield(self._nudge_repaint(term, term.pty_cols, term.pty_rows))
+        return ready
 
     async def _acquire_agent_cold_start(self, term: Terminal) -> asyncio.Semaphore | None:
         """Take this CLI/account's boot slot when its registry entry needs one.
@@ -2966,6 +3933,11 @@ class Registry:
         them. Omitting ``on_replay`` keeps the old single-channel behaviour, for
         internal callers that consume bytes rather than paint them.
 
+        ``on_replay`` is called with ``repaint=True`` when the replay cannot
+        stand on its own and a full-screen agent has been asked to repaint: the
+        viewer then waits for that repaint's whole-screen erase before showing
+        the pane.
+
         **This is also where a conversation is continued rather than restarted.**
         A pane holding a resume handle launches its CLI with the arguments that
         reopen that conversation; a pane without one starts fresh and keeps
@@ -2988,6 +3960,10 @@ class Registry:
                 raise SessionNotReady("No Agentic-IDE session is running.")
             raise SessionError(f"Unknown terminal: {key}")
         session, term = found
+        if term.placing:
+            # Its folder is still travelling to the computer it will run on; a
+            # viewer attaching now would start the agent in the wrong place.
+            raise SessionNotReady(term.placing)
         if cols < MIN_VIEWER_COLS or rows < MIN_VIEWER_ROWS:
             # A handshake tile too narrow for the agent to draw in, which is how
             # a whole conversation ends up printed one character per line (the
@@ -3008,10 +3984,23 @@ class Registry:
             # transcript's default is exactly the right answer.
             cols = max(term.pty_cols or term.transcript.cols, MIN_VIEWER_COLS)
             rows = max(term.pty_rows or term.transcript.rows, MIN_VIEWER_ROWS)
+        # A pane on a connected computer is driven by that computer's SSH pool;
+        # everything below (re-join, replay, resume) is the same path.
+        manager = self._pool(term) if term.computer_id else await self._live_manager()
+        if not term.computer_id and not (term.pty_id and manager.has(term.pty_id)):
+            # Herdr's rule: attach to the running session first, start one only
+            # when there is none. The host may still hold this pane's agent
+            # from before the app restarted — whichever path restored the pane.
+            hosted = self._hosted_for(manager).get(term.history_id)
+            if hosted is not None:
+                await self._adopt_one(manager, term, hosted)
         if appearance in THEME_COLOURS:
             term.queries.appearance = appearance
+            if term.pty_id and hasattr(manager, "set_appearance"):
+                # A hosted agent's emulator queries are answered in the host,
+                # from its own copy of the appearance (``pty_host_client.spawn``).
+                manager.set_appearance(term.pty_id, appearance)
 
-        manager = self._manager()
         if term.pty_id and manager.has(term.pty_id):
             # The agent never stopped. A foreground viewer takes over the owner
             # slot; a background viewer only joins the output fanout. A viewer
@@ -3068,7 +4057,15 @@ class Registry:
                 # On the replay channel when the viewer offered one — see the
                 # docstring for what appending it to a screen that already had
                 # a copy of it looked like.
-                await (on_replay or on_output)(replay)
+                if on_replay is not None and needs_repaint and term.replay.holds_screen:
+                    # This replay alone cannot rebuild the screen, and the
+                    # nudge below will be answered by a whole-screen erase —
+                    # so the viewer is told to keep its curtain down until that
+                    # erase arrives, instead of revealing the broken tail
+                    # while a busy agent takes its time to repaint.
+                    await on_replay(replay, repaint=True)
+                else:
+                    await (on_replay or on_output)(replay)
             if needs_repaint:
                 # Either the tail lost its opening frame, or its cursor moves
                 # belong to another geometry. Neither can rebuild this viewer.
@@ -3077,7 +4074,7 @@ class Registry:
             logger.debug("Agentic IDE: {} re-joined a running agent", term.name)
             return term
 
-        argv = agent_argv(term.agent)
+        argv = remote_agent_argv(term.agent) if term.computer_id else agent_argv(term.agent)
         if argv is None:
             term.status = "error"
             term.error = f"{term.display_name} is not on PATH."
@@ -3102,12 +4099,19 @@ class Registry:
         # busiest: a restore mounts every pane in one commit, so a dozen panes
         # meant a dozen stalls interleaved with their own spawns. It only ever
         # runs on a pane that HAS a handle, which is why the restore path was
-        # the only one that ever felt it. `_mark_restored_continuations` already
-        # takes the same call to a thread for the same reason.
+        # the only one that ever felt it.
+        if not term.computer_id and reports_session_starts(term.agent):
+            # The conversation the pane is on NOW — after a ``/clear`` or a
+            # ``/resume`` inside it that is not the id it was launched with.
+            await asyncio.to_thread(self._sync_hooked_session, term)
         home = account_home(term.agent, term.account)
         continuing = resume_argv(term.agent, term.resume)
-        if continuing is not None and not await asyncio.to_thread(
-            has_conversation, term.agent, term.resume, home
+        # A remote pane's history lives on that computer; its handle was
+        # carried there with it (``remote.push_conversation``), so trust it.
+        if (
+            continuing is not None
+            and not term.computer_id
+            and not await asyncio.to_thread(has_conversation, term.agent, term.resume, home)
         ):
             logger.info(
                 "Agentic IDE: {} has no conversation to continue — starting fresh",
@@ -3115,6 +4119,25 @@ class Registry:
             )
             term.resume = None
             continuing = None
+        # A forked pane's FIRST process starts as a copy of the conversation it
+        # was forked from (see `Registry.fork_terminal`). Spent here, once: the
+        # copy gets its own handle, and every later start resumes THAT rather
+        # than forking the original again. A source without a conversation on
+        # disk — never prompted, or pruned since — leaves nothing to copy, and
+        # the pane starts fresh like any other.
+        forking: tuple[tuple[str, ...], ResumeHandle | None] | None = None
+        if continuing is None and term.fork_from is not None:
+            source = term.fork_from
+            term.fork_from = None
+            if not term.computer_id and await asyncio.to_thread(
+                has_conversation, term.agent, source, home
+            ):
+                forking = fork_argv(term.agent, source)
+            if forking is None:
+                logger.info(
+                    "Agentic IDE: {} has no conversation to fork — starting fresh",
+                    term.name,
+                )
         # What the pane was OPENED on, put back on the command line. A resume
         # gets them too: the CLI reads a conversation back, never the model or
         # the permission stance it ran under, so a restored pane without these
@@ -3134,6 +4157,14 @@ class Registry:
         if continuing is not None:
             argv = (*argv, *continuing)
             term.resumed = True
+        elif forking is not None:
+            extra, minted = forking
+            argv = (*argv, *extra)
+            # A copy of an existing conversation — the same "continued, not
+            # empty" claim a resume makes, and the same early-exit recovery
+            # (`_closed`) if the CLI refuses the fork: the pane restarts fresh.
+            term.resumed = True
+            term.resume = minted
         else:
             if term.resume is None and term.prompts_sent and can_resume(term.agent):
                 # A pane that was WORKED IN and still has no conversation id is
@@ -3154,18 +4185,7 @@ class Registry:
             term.resumed = False
             if minted is not None:
                 term.resume = minted
-        # A process that inherits a conversation inherits whatever it was in the
-        # middle of, and then waits. That is the whole reason this flag exists —
-        # see the field. A fresh start clears it, so a pane that failed its
-        # resume and came back empty is not reported as waiting to be nudged.
-        # A valid conversation may already be finished or waiting for input.
-        # Offer a nudge only when the previous live pane was observed working.
-        # A Continue claimed while this pane was still pending stays claimed:
-        # raising the flag again during attach would let a second click enqueue
-        # the same nudge while the first is waiting for the input line.
-        term.continuation_pending = (
-            term.resumed and term.resume_continuation_needed and not term.continue_when_ready
-        )
+        # A fresh start has no interrupted work behind it.
         if not term.resumed:
             term.resume_continuation_needed = False
 
@@ -3174,6 +4194,7 @@ class Registry:
         # can inherit the previous PTY's settled-screen evidence.
         term.process_generation += 1
         term.idle_seen = False
+        term.resized_while_booting = False
         term.transcript.resize(cols, rows)
         # Readiness belongs to this process. Keeping the dead process's screen
         # here leaves old prompt sigils visible to the readiness probe and makes
@@ -3211,6 +4232,15 @@ class Registry:
         async def _closed(_tid: str, code: int) -> None:
             nonlocal recovered
             term.pty_id = None
+            if code == _HOST_LOST_CODE and self._host_went_away():
+                # Not this agent failing: the host holding it went away. It is
+                # resumed on its own conversation once a host is back.
+                term.status = "exited"
+                term.exit_code = code
+                self._note_host_lost(term)
+                for viewer in _exit_viewers(term):
+                    await viewer(code)
+                return
             died_young = time.monotonic() - spawned_at < RESUME_FAILED_WINDOW_S
             # Only a FAILED early exit is blamed on the resume. Quitting an
             # agent normally exits 0, and a pane we killed ourselves reports a
@@ -3274,17 +4304,48 @@ class Registry:
         # claimed to be starting forever, with the actual reason living only in
         # a socket frame the pane painted over a moment later.
         try:
-            if redirected_home is None:
-                env = await asyncio.to_thread(self._prepare_spawn, term, session.folder)
+            if term.computer_id:
+                # The CLI's account, config and env are the SERVER's own;
+                # nothing of this machine's setup applies there.
+                env: dict[str, str] | None = {}
+            elif redirected_home is None:
+                env = await asyncio.to_thread(self._prepare_spawn, term, term.cwd(session.folder))
             else:
                 account_key = os.path.normcase(str(redirected_home))
                 account_gate = self._account_prepare_locks.setdefault(account_key, asyncio.Lock())
                 async with account_gate:
-                    env = await asyncio.to_thread(self._prepare_spawn, term, session.folder)
+                    env = await asyncio.to_thread(
+                        self._prepare_spawn, term, term.cwd(session.folder)
+                    )
         except SessionError as exc:
             term.status = "error"
             term.error = str(exc)
             raise
+
+        if term.resumed and not term.computer_id:
+            # The CLI's own "finish the turn that was cut off" (see
+            # ``agent_sessions.resume_env``) — how a resumed agent carries on
+            # without Jarvis ever typing into it.
+            native = resume_env(term.agent)
+            if native:
+                base = env if env is not None else _without_parent_agent_session(dict(os.environ))
+                env = {**(base if base is not None else os.environ), **native}
+                if term.resume_continuation_needed:
+                    # The turn it re-runs is the job the user handed over before
+                    # the process died. Nothing is submitted in THIS lifetime, so
+                    # without this proof the agent worked on while every list
+                    # filed it under "done" (maintainer report 2026-09-29).
+                    term.adopted_generation = term.process_generation
+        if not term.computer_id and reports_session_starts(term.agent):
+            # Herdr's rule: the pane reports every conversation it starts, so a
+            # reboot resumes the one it was really on (``pane_sessions``).
+            wiring_argv, wiring_env = await asyncio.to_thread(
+                pane_sessions.launch_wiring, term.history_id
+            )
+            # Right behind the binary, so resume arguments stay last.
+            argv = (argv[0], *wiring_argv, *argv[1:])
+            base = env if env is not None else _without_parent_agent_session(dict(os.environ))
+            env = {**(base if base is not None else os.environ), **wiring_env}
 
         # The provider/account gate is acquired BEFORE the machine-wide gate.
         # A Codex pane waiting on shared state must never occupy a CPU slot that
@@ -3312,7 +4373,9 @@ class Registry:
         try:
             # One of a few starts at a time (see COLD_START_LIMIT), and the
             # slot stays taken until this pane's input line appears.
-            async with self._cold_start_slot(ready=lambda: self._prompt_ready(session, term)):
+            async with self._cold_start_slot(
+                ready=lambda: self._prompt_ready_then_settle(session, term)
+            ):
                 try:
                     identity = "pane:" + term.history_id
                     if term.stopping or self._locate(identity, session.id) != (session, term):
@@ -3320,7 +4383,11 @@ class Registry:
                     pty_session = await manager.spawn(
                         shell_argv=argv,
                         shell_id=f"agentic-ide:{term.key}",
-                        cwd=session.folder,
+                        cwd=(
+                            term.remote_folder or term.cwd(session.folder)
+                            if term.computer_id
+                            else term.cwd(session.folder)
+                        ),
                         cols=cols,
                         rows=rows,
                         on_output=_output,
@@ -3335,6 +4402,21 @@ class Registry:
                         # and landed in the CLI's prompt as junk the user never
                         # typed. Off the loop it is immediate.
                         on_probe=term.queries.feed,
+                        # Only the PTY host takes (and needs) this: it is how a
+                        # still-running agent is matched back to its pane after
+                        # an app restart (``_adopt_hosted``).
+                        **(
+                            {
+                                "meta": {
+                                    "history_id": term.history_id,
+                                    "name": term.name,
+                                    "workspace_id": session.id,
+                                    "agent": term.agent,
+                                }
+                            }
+                            if getattr(manager, "persistent", False) or term.computer_id
+                            else {}
+                        ),
                     )
                     if term.stopping or self._locate(identity, session.id) != (session, term):
                         manager.close(pty_session.terminal_id)
@@ -3401,69 +4483,13 @@ class Registry:
                     )
             finally:
                 agent_start_gate.release()
-        if term.resume is None and can_resume(term.agent):
+        if term.resume is None and can_resume(term.agent) and not term.computer_id:
             # A CLI that cannot be told its session id (Codex): find out which
-            # one it just created, shortly from now.
-            self._schedule_lookup(session, term, session.folder, term.started_at)
-        if term.continue_when_ready:
-            # Somebody pressed "Continue" while this pane was still waiting for
-            # a cold-start slot. The wish outlives the wait — see
-            # `continue_when_ready` — and is spent HERE. As a task, because the
-            # submit itself verifies the pane's screen for a few seconds and the
-            # viewer should not wait for that receipt before attaching.
-            self.defer_continue(session, term, term.continue_prompt)
+            # one it just created, shortly from now. (Not on a remote pane:
+            # its history is on that computer, not in this machine's folders.)
+            self._schedule_lookup(session, term, term.cwd(session.folder), term.started_at)
         await self._persist()
         return term
-
-    def defer_continue(self, session: Session, term: Terminal, prompt: str = "") -> None:
-        """Remember a Continue nudge and schedule it once this pane is live.
-
-        A pending pane carries the request into :meth:`attach`. A live pane may
-        still be booting, so it enters the same background path immediately and
-        :meth:`send_prompt` waits for the actual input line. There is one route
-        for both states and therefore no fixed-delay race.
-        """
-        from .interrupted import CONTINUE_PROMPT
-
-        term.continue_when_ready = True
-        term.continue_prompt = (prompt or CONTINUE_PROMPT).strip() or CONTINUE_PROMPT
-        if term.status != "live" or not term.pty_id:
-            return
-        queued_prompt = term.continue_prompt
-        term.continue_when_ready = False
-        term.continue_prompt = ""
-        self._schedule_continue(session, term, queued_prompt)
-
-    def _schedule_continue(self, session: Session, term: Terminal, prompt: str) -> None:
-        """Send the deferred "carry on" to a pane that has just come up.
-
-        Kept on the session's own task set, like the conversation-id lookups, so
-        closing that workspace cancels it rather than leaving a nudge in flight
-        for a pane that no longer exists.
-        """
-
-        async def _nudge() -> None:
-            try:
-                await self.send_prompt(
-                    term.name,
-                    prompt,
-                    workspace_id=session.id,
-                )
-            except SessionError as exc:
-                # No bytes were written when readiness timed out or the pane
-                # stopped. Put the offer back instead of losing the user's click.
-                term.continuation_pending = True
-                logger.warning(
-                    "Agentic IDE: {} came up but could not be continued: {}", term.name, exc
-                )
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:  # noqa: BLE001 - a nudge must not kill the pane
-                logger.warning("Agentic IDE: deferred continue for {} failed: {}", term.name, exc)
-
-        task = asyncio.create_task(_nudge())
-        session.lookups.add(task)
-        task.add_done_callback(session.lookups.discard)
 
     def _prepare_spawn(self, term: Terminal, folder: str) -> dict[str, str] | None:
         """Everything this pane's agent needs on disk, then its environment.
@@ -3629,7 +4655,9 @@ class Registry:
             return
         if term.lookup_at and time.monotonic() - term.lookup_at < LOOKUP_COOLDOWN_S:
             return
-        self._schedule_lookup(owner, term, owner.folder, term.started_at, CONVERSATION_DELAYS_S)
+        self._schedule_lookup(
+            owner, term, term.cwd(owner.folder), term.started_at, CONVERSATION_DELAYS_S
+        )
 
     def write(self, key: str, data: str, workspace_id: str | None = None) -> bool:
         """Raw keystrokes from the pane's own xterm (not the injection path)."""
@@ -3639,7 +4667,7 @@ class Registry:
         owner, term = found
         if not term.pty_id:
             return False
-        manager = self._manager()
+        manager = self._pool(term)
         if is_pointer_noise_only(data):
             # A wheel tick, a click, a focus flip: the terminal talking, not a
             # person typing. It echoes nothing, so it must not arm the typing
@@ -3677,11 +4705,8 @@ class Registry:
         # Gated on a SUBMIT rather than on any keystroke: scrolling, arrow keys
         # and a half-typed line are not an instruction.
         if is_submit:
-            # The user submitted something in the pane themselves, so this one
-            # is being driven again and is no longer waiting to be nudged.
-            # Dropping the pane off that list for a mere keypress would hide a
-            # stalled agent behind an accidental one.
-            term.continuation_pending = False
+            # The user submitted something in the pane themselves: whatever
+            # was interrupted before is superseded by this instruction.
             term.resume_continuation_needed = False
             # And this pane now has an instruction of its own, which is what
             # makes its next stop worth reporting — a pane driven only by hand
@@ -3697,6 +4722,11 @@ class Registry:
             else:
                 term.last_submit_at = term.last_input_at
                 term.submit_generation = term.process_generation
+                if term.reading().activity != "asking":
+                    # A new job typed by hand is the user's own, and nobody
+                    # asked Jarvis to report on it. Answering the pane's
+                    # question keeps the Jarvis job (and its readback) alive.
+                    term.voice_readback = False
             # And the pane's conversation may have just begun, which for most
             # coding CLIs is the first moment its id exists on disk at all. A
             # pane driven only by hand never goes through `send_prompt`, so
@@ -3778,11 +4808,113 @@ class Registry:
         Never fatal: a pane whose PTY refuses to resize is one whose screen
         could not have been repaired anyway, and that must not cost the user
         the reconnect itself.
+
+        A full-screen agent may let a nudge pass without redrawing (see
+        ``REPAINT_CONFIRM_S``), so for one the answer is checked in the
+        background and the nudge repeated — off the caller's path, because
+        the caller holds the registry lock every other pane's attach waits on.
+        """
+        clears_before = term.replay.clears
+        if not await self._resize_there_and_back(term, cols, rows):
+            return
+        self._watch_repaint(term, clears_before)
+
+    def _watch_repaint(self, term: Terminal, clears_before: int) -> None:
+        """Check in the background that a size change was answered by a repaint.
+
+        Only for a full-screen agent: a line-mode CLI or a shell answers with no
+        whole-screen erase at all, and waiting for one would only nudge it four
+        more times. Needs a running loop; a synchronous caller without one (a
+        test, a script) simply goes unchecked.
+        """
+        if not term.replay.holds_screen:
+            # Either a line-mode CLI, or a full-screen one still loading. The
+            # second cannot be checked yet, so it is settled after boot.
+            term.resized_while_booting = True
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No event loop (shutdown or sync caller): skip the repaint check.
+            return
+        # One check per pane: a dragged seam resizes many times a second, and
+        # only the newest size's repaint is worth waiting for. An older check is
+        # retired by the token below rather than cancelled — cancelling one in
+        # the middle of its own nudge would leave the PTY a row short.
+        token = object()
+        self._repaint_check_by_pane[term.key] = token
+        task = loop.create_task(self._confirm_repaint(term, clears_before, token))
+        self._repaint_checks.add(task)
+        task.add_done_callback(self._repaint_checks.discard)
+
+        def _forget(_done: asyncio.Task[None], key: str = term.key) -> None:
+            if self._repaint_check_by_pane.get(key) is token:
+                del self._repaint_check_by_pane[key]
+
+        task.add_done_callback(_forget)
+
+    async def _confirm_repaint(
+        self, term: Terminal, clears_before: int, token: object | None = None
+    ) -> None:
+        """Repeat the nudge until the agent's screen has really been redrawn.
+
+        Each retry uses the size the pane has NOW: a viewer may have resized it
+        meanwhile, and nudging back to the size captured earlier would undo
+        that. A new process in the pane ends the check — its first paint is
+        whole anyway — and so does a newer check for the same pane (``token``).
+        """
+        pty_id = term.pty_id
+        generation = term.process_generation
+        loop = asyncio.get_running_loop()
+        for attempt in range(1, REPAINT_NUDGE_ATTEMPTS + 1):
+            deadline = loop.time() + REPAINT_CONFIRM_S
+            while loop.time() < deadline:
+                if term.replay.clears != clears_before:
+                    return
+                await asyncio.sleep(REPAINT_POLL_S)
+            if term.replay.clears != clears_before:
+                return
+            if term.pty_id != pty_id or term.process_generation != generation:
+                return
+            if not term.pty_cols or not term.pty_rows:
+                return
+            if token is not None and self._repaint_check_by_pane.get(term.key) is not token:
+                return
+            if attempt == REPAINT_NUDGE_ATTEMPTS:
+                break
+            clears_before = term.replay.clears
+            if not await self._resize_there_and_back(term, term.pty_cols, term.pty_rows):
+                return
+        logger.info(
+            "Agentic IDE: {} did not redraw after {} nudges; its pane may show gaps "
+            "until the agent next repaints",
+            term.name,
+            REPAINT_NUDGE_ATTEMPTS,
+        )
+
+    async def _resize_there_and_back(self, term: Terminal, cols: int, rows: int) -> bool:
+        """One nudge: the height one row short, then back. False if it failed.
+
+        "Back" means the size the pane holds WHEN the nudge ends, not the one
+        passed in. The sleep between the two resizes yields the loop, and a
+        viewer's resize landing inside it (a dragged seam, the IDE view shown
+        again after a tab switch) has already moved the PTY to the new size.
+        Restoring the captured size then put the agent back on the OLD grid
+        while ``pty_cols``, the transcript and every viewer's xterm said the
+        new one — and nothing ever corrected it, because each side believed
+        the sizes agreed. The agent kept formatting for a width nobody showed:
+        rows drawn over rows, word tails left behind (reported 2026-09-29).
         """
         pty_id = term.pty_id
         if not pty_id:
-            return
-        manager = self._manager()
+            return False
+        # The same holds for the start: a nudge only ever varies the height of
+        # the size the agent already has. A re-joining viewer that does not own
+        # the pane passes ITS size, and nudging to that width would reflow the
+        # agent for a window that was never granted the pane.
+        cols = term.pty_cols or cols
+        rows = term.pty_rows or rows
+        manager = self._pool(term)
         try:
             # The whole point of the nudge is a full repaint — which must read
             # as the redraw it is, not as the agent suddenly working. Stamped
@@ -3794,10 +4926,15 @@ class Registry:
             # into a single row and never recover the frame.
             manager.resize(pty_id, cols, max(rows - 1, 2))
             await asyncio.sleep(REPAINT_NUDGE_S)
-            manager.resize(pty_id, cols, rows)
+            if term.pty_id != pty_id:
+                # A new process owns the pane now and was sized on its own.
+                return False
+            manager.resize(pty_id, term.pty_cols or cols, term.pty_rows or rows)
             term.last_resize_at = time.time()
         except Exception as exc:  # noqa: BLE001 - a stale screen beats a failed reconnect
             logger.debug("Agentic IDE: could not nudge {} into a repaint: {}", term.name, exc)
+            return False
+        return True
 
     def claim_viewer(
         self,
@@ -3973,9 +5110,17 @@ class Registry:
         # transcript keeps wrapping at the old width.
         if (term.transcript.cols, term.transcript.rows) == (cols, rows):
             return True
-        if not self._manager().resize(term.pty_id, cols, rows):
+        clears_before = term.replay.clears
+        if not self._pool(term).resize(term.pty_id, cols, rows):
             return False
         term.pty_cols, term.pty_rows = cols, rows
+        # A viewer's resize is a repaint request like any nudge, and a busy
+        # full-screen agent may let it pass (see ``REPAINT_CONFIRM_S``). The
+        # viewer has already reflowed its grid, so an unanswered one leaves the
+        # old frame shredded across the new rows until something else makes the
+        # agent paint (seen after restoring a minimized window, 2026-09-28).
+        # Checked, and re-nudged, like a re-join.
+        self._watch_repaint(term, clears_before)
         # The TUI answers the new size with a full redraw — shadow it so a
         # finished pane does not read as "working" every time the grid
         # re-lays itself out (chat view toggle, maximize, a dragged seam).
@@ -4084,6 +5229,7 @@ class Registry:
     async def add_terminal(
         self,
         *,
+        workspace_id: str | None = None,
         agent: str | None = None,
         name: str | None = None,
         anchor: str | None = None,
@@ -4092,6 +5238,10 @@ class Registry:
         model: str | None = None,
         effort: str | None = None,
         permission_mode: str | None = None,
+        computer_id: Any = INHERIT_PLACEMENT,
+        folder: str = "",
+        fork_from: ResumeHandle | None = None,
+        branch: str = "",
     ) -> Terminal:
         """Open one more terminal in the running workspace.
 
@@ -4126,17 +5276,28 @@ class Registry:
         "another one of these settings", and a model quietly carried onto a
         pane somebody opened to try something else is the confusing kind of
         helpful.
+
+        ``computer_id`` says where the pane RUNS: a connected computer's id,
+        ``None`` for this machine, or (the default) where its neighbours run —
+        a split beside its anchor, any other pane with the workspace when all
+        of it runs on one computer. A pane for a computer is set up there
+        before it can start (:meth:`_place_new`) and removed again if that
+        fails. ``folder`` opens it in another folder than the workspace's (a
+        worktree fork); ``fork_from`` and ``branch`` make the pane a fork
+        (:meth:`fork_terminal`) from the moment it exists, so no viewer can
+        spawn it as a fresh chat first.
         """
+        selected_id = workspace_id or self.active_id
         async with self._lock:
-            session = self.session
+            session = self.get(selected_id) if selected_id else None
             if session is None:
                 raise SessionError("No Agentic-IDE session is running.")
             if len(session.terminals) >= MAX_TERMINALS:
-                raise SessionError(
+                raise WorkspaceFull(
                     f"This workspace already has the maximum of {MAX_TERMINALS} terminals."
                 )
-            if direction not in ("right", "down"):
-                raise SessionError("Direction must be 'right' or 'down'.")
+            if direction not in ("right", "down", "left", "up", "above", "below"):
+                raise SessionError("Direction must be 'right', 'down', 'left', or 'up'.")
 
             base = session.find(anchor) if anchor else None
             if anchor and base is None:
@@ -4155,7 +5316,9 @@ class Registry:
                 chosen = _prevailing_agent(session)
             if not is_runnable(chosen):
                 raise SessionError(f"Unknown agent: {chosen}")
-            if agent_argv(chosen) is None:
+            target = self._new_pane_computer(session, base if anchor else None, computer_id)
+            launcher = remote_agent_argv if target else agent_argv
+            if launcher(chosen) is None:
                 raise SessionError(_unavailable(chosen))
 
             # Unused within THIS workspace — the scope a positional call-sign
@@ -4217,6 +5380,11 @@ class Registry:
                 model=launch_picks.normalize_model(chosen, model),
                 effort=launch_picks.normalize_effort(chosen, effort),
                 permission_mode=launch_picks.normalize_permission(chosen, permission_mode),
+                folder=folder,
+                branch=branch,
+                fork_from=fork_from,
+                computer_id=target,
+                placing=self._placing_note(target) if target else "",
             )
             session.terminals.append(term)
             # Where it goes is the tree's business, and the distinction is the
@@ -4230,10 +5398,16 @@ class Registry:
                     session.layout,
                     base.key,
                     term.key,
-                    "right" if direction == "right" else "down",
+                    direction,
                 )
             else:
                 session.layout = layout_tree.append_pane(session.layout, term.key)
+            # A split or an appended column may not leave the largest grid the
+            # workspace draws; past it the panes are dealt into the even grid
+            # instead (voice and the CLI have no preview to stop them first).
+            columns, rows = layout_tree.grid_span(session.layout)
+            if columns > MAX_GRID_COLUMNS or rows > MAX_GRID_ROWS:
+                self._row_major_grid(session)
             # Then every terminal back to an equal share — the same act as the
             # grid's "even out" button, run for the user on every open — EXCEPT
             # inside a container whose boundaries were dragged by hand
@@ -4255,17 +5429,594 @@ class Registry:
                 direction,
                 base.name if base else "the grid",
             )
-            return term
+        if term.computer_id:
+            try:
+                await self._place_new(session, [term], term.computer_id)
+            except BaseException:
+                # Nothing ever started (the pane was gated); take it away rather
+                # than leave a pane that can never start — also when the request
+                # itself was cancelled.
+                await self.close_terminals([term.name], workspace_id=session.id)
+                raise
+        return term
+
+    def fork_suggestion(self, wanted: str, workspace_id: str | None = None) -> dict[str, Any]:
+        """What the fork dialog offers for pane ``wanted``, before anything is made.
+
+        Blocking (a few ``git`` calls) — callers run it in a worker thread.
+        """
+        found = self._locate(wanted, workspace_id)
+        if found is None:
+            raise self._unknown_terminal(wanted)
+        session, term = found
+        base = term.cwd(session.folder)
+        return {
+            "name": fork.suggest_name(base, term.name, recap_engine.known_headline(term)),
+            "in_repo": fork.repo_root(base) is not None,
+            "can_fork": can_fork(term.agent),
+            "has_conversation": term.resume is not None,
+        }
+
+    # ------------------------------------------------------------ placement
+    async def place_terminal(
+        self, key: str, *, workspace_id: str | None, computer_id: str | None
+    ) -> dict[str, Any]:
+        """Run pane ``key`` on ``computer_id`` from now on (``None`` = this machine).
+
+        To a computer ("offload"): the pane's folder travels as it is, uncommitted
+        edits included, its conversation is copied so the agent continues with
+        ``--resume``, the local process ends and the agent starts again THERE,
+        inside tmux, where it keeps running while this app is closed.
+
+        Back ("bring back"): the agent on the server ends, the server's work and
+        the conversation come home (``remote.pull_code`` never overwrites local
+        changes made meanwhile), and the pane runs here again.
+
+        A pane that is not running just changes place; it starts there on its
+        next attach.
+        """
+        found = self._locate(key, workspace_id)
+        if found is None:
+            raise SessionError(f"Unknown terminal: {key}")
+        session, term = found
+        target = computer_id or ""
+        if term.computer_id == target:
+            return {"moved": False, "message": "The pane already runs there."}
+        if term.placing:
+            raise SessionError(f"{term.name} is being moved already.")
+        if term.computer_id and target:
+            # Straight from one computer to another would copy this machine's
+            # stale folder and end the agent there with its work unreturned.
+            raise SessionError(
+                f"{term.name} runs on {self._computer_label(term.computer_id)}. "
+                "Bring it back to this computer first."
+            )
+        if not target:
+            back, failures, messages = await self._bring_back_group([(session, term)])
+            for failed, error in failures:
+                if failed is term:
+                    raise PlacementError(error)
+            for other in back:
+                if other is not term:
+                    messages.append(
+                        f"{other.name} came back with it: they worked in one copy there."
+                    )
+            return {"moved": True, "message": " ".join(messages), "terminal": term.to_dict()}
+        async with term.attach_lock:
+            was_live = bool(term.pty_id)
+            message = await self._offload_locked(session, term, target, {})
+            if was_live:
+                await self._restart_in_place(session, term)
+        await self._persist()
+        return {"moved": True, "message": message, "terminal": term.to_dict()}
+
+    async def place_workspace(
+        self, workspace_id: str, *, computer_id: str | None
+    ) -> dict[str, Any]:
+        """Move every pane of a workspace, one folder transfer per folder.
+
+        To a computer: a pane already on ANOTHER computer stays there (the
+        messages say so) — moving it from there would lose its work. Back:
+        see :meth:`_bring_workspace_back`. Whatever moved before a failure is
+        remembered.
+        """
+        session = self.get(workspace_id)
+        if session is None:
+            raise SessionError("Unknown workspace.")
+        target = computer_id or ""
+        if not target:
+            return await self._bring_workspace_back(session)
+        placements: dict[str, tuple[remote.Placement, str]] = {}
+        moved: list[str] = []
+        messages: list[str] = []
+        try:
+            for term in list(session.terminals):
+                if term.computer_id == target or term.placing:
+                    continue
+                if term.computer_id:
+                    messages.append(
+                        f"{term.name} stays on {self._computer_label(term.computer_id)}; "
+                        "bring it back first to move it."
+                    )
+                    continue
+                async with term.attach_lock:
+                    was_live = bool(term.pty_id)
+                    message = await self._offload_locked(session, term, target, placements)
+                    if was_live:
+                        await self._restart_in_place(session, term)
+                moved.append(term.key)
+                if message and message not in messages:
+                    messages.append(message)
+        finally:
+            await self._persist()
+        return {"moved": moved, "messages": messages}
+
+    async def _bring_workspace_back(self, session: Session) -> dict[str, Any]:
+        """Bring every remote pane of ``session`` home (see :meth:`_bring_back_group`).
+
+        Fails only when no pane came back; otherwise the messages name each
+        pane that stayed on its computer and why.
+        """
+        away = [(session, t) for t in session.terminals if t.computer_id and not t.placing]
+        back, failures, messages = await self._bring_back_group(away)
+        if failures and not back:
+            raise PlacementError(" ".join(messages))
+        return {"moved": [t.key for t in back], "messages": messages}
+
+    async def _bring_back_group(
+        self, panes: list[tuple[Session, Terminal]]
+    ) -> tuple[list[Terminal], list[tuple[Terminal, str]], list[str]]:
+        """Bring ``panes`` home together, one folder transfer per shared copy.
+
+        Returns ``(back, failures, messages)``. Every pane that works in the
+        same copy as one of ``panes`` comes along, from any workspace: a copy
+        is one folder, and returning it for one pane applied a sibling's
+        half-done work here while the sibling kept working there (#253).
+
+        Every agent stops BEFORE any folder is packed — a sibling still writing
+        while the first pane's copy came home lost its last edits — and the
+        panes are gated meanwhile so no viewer restarts one there. Each
+        (computer, folder) comes back once however many panes shared it: one
+        return per pane used to make a second branch, collide on its name and
+        leave the workspace half moved. A pane whose return fails stays on its
+        computer and runs there again if it was running; one failure used to
+        abort the loop and strand every later pane stopped on the server (#252).
+        """
+        panes = await self._with_copy_sharers(panes)
+        back: list[Terminal] = []
+        failures: list[tuple[Terminal, str]] = []
+        messages: list[str] = []
+        live: set[int] = set()
+        returns: dict[tuple[str, str], remote.Return] = {}
+        for _session, term in panes:
+            term.placing = "Bringing the work back to this computer…"
+        try:
+            for _session, term in panes:
+                async with term.attach_lock:
+                    if term.pty_id:
+                        live.add(id(term))
+                        await self._stop_for_move(term, self._pool(term))
+            for session, term in panes:
+                async with term.attach_lock:
+                    where = self._computer_label(term.computer_id)
+                    try:
+                        message = await self._bring_back_locked(session, term, returns)
+                    except Exception as exc:  # noqa: BLE001 - reported per pane, the rest go on
+                        logger.warning("Agentic IDE: {} stays on {}: {}", term.name, where, exc)
+                        message = f"{term.name} stays on {where}: {exc}"
+                        failures.append((term, str(exc)))
+                    else:
+                        back.append(term)
+                    term.placing = ""
+                    if id(term) in live:
+                        await self._restart_in_place(session, term)
+                if message and message not in messages:
+                    messages.append(message)
+        finally:
+            for _session, term in panes:
+                term.placing = ""
+            await self._persist()
+        return back, failures, messages
+
+    async def _with_copy_sharers(
+        self, panes: list[tuple[Session, Terminal]]
+    ) -> list[tuple[Session, Terminal]]:
+        """``panes`` plus every other remote pane that works in one of their copies."""
+        copies: set[tuple[str, str]] = set()
+        for session, term in panes:
+            key, _top = await self._copy_root(term.cwd(session.folder))
+            copies.add((term.computer_id, key))
+        chosen = {id(term) for _session, term in panes}
+        result = list(panes)
+        for session in list(self._sessions.values()):
+            for other in list(session.terminals):
+                if id(other) in chosen or not other.remote_folder or other.placing:
+                    continue
+                key, _top = await self._copy_root(other.cwd(session.folder))
+                if (other.computer_id, key) in copies:
+                    result.append((session, other))
+                    chosen.add(id(other))
+        return result
+
+    async def _stop_for_move(self, term: Terminal, pool: Any) -> None:
+        """End the pane's current process and wait until its exit is recorded."""
+        if not term.pty_id or pool is None:
+            return
+        term.stopping = True
+        try:
+            pool.close(term.pty_id)
+        except Exception as exc:  # noqa: BLE001 - the move proceeds; the process is gone or going
+            logger.info("Agentic IDE: stopping {} for a move: {}", term.name, exc)
+        # A local PTY reports its exit through `_closed`, which clears
+        # `pty_id` and must land BEFORE the new process is recorded. A remote
+        # pool's close is final at once and reports nothing.
+        if not getattr(pool, "computer_id", None):
+            for _ in range(50):
+                if term.pty_id is None:
+                    break
+                await asyncio.sleep(0.1)
+        term.pty_id = None
+
+    async def _offload_locked(
+        self,
+        session: Session,
+        term: Terminal,
+        computer_id: str,
+        placements: dict[str, tuple[remote.Placement, str]],
+    ) -> str:
+        from jarvis.computers.remote_terminal import pool_for
+        from jarvis.computers.service import ComputerError
+
+        pool = pool_for(computer_id)
+        local = term.cwd(session.folder)
+        where = self._computer_label(computer_id)
+        key, top = await self._copy_root(local)
+        async with self._copy_lock(computer_id, key):
+            try:
+                await remote.preflight(pool, _remote_commands([term]), where)
+                placement, joined = await self._join_or_copy(
+                    pool, computer_id, local, key, top, term, placements
+                )
+                carried = await remote.push_conversation(
+                    pool,
+                    term.agent,
+                    term.resume.id if term.resume else None,
+                    placement.remote_folder,
+                    account_home(term.agent, term.account),
+                )
+            except remote.MoveError as exc:
+                raise PlacementError(str(exc)) from exc
+            except ComputerError as exc:
+                raise PlacementError(exc.message) from exc
+            except Exception as exc:  # noqa: BLE001 - SSH/SFTP failures become one sentence
+                logger.warning("Agentic IDE: moving {} failed: {}", term.name, exc)
+                raise PlacementError(f"The move failed: {exc}") from exc
+            await self._stop_for_move(term, self._pty)
+            if not carried:
+                # Nothing to continue from on the server: start clean there
+                # rather than asking the CLI for a conversation it does not have.
+                term.resume = None
+            term.computer_id = computer_id
+            term.remote_folder = placement.remote_folder
+            term.offload_snapshot = placement.offload_snapshot or ""
+        moved = (
+            "Moved with its conversation." if carried else "Moved; the agent starts fresh there."
+        )
+        joined_note = f" It works in the copy already on {where}." if joined else ""
+        term.notice = (
+            f"{moved}{joined_note} {remote.left_behind_note(placement.left_behind)}".strip()
+        )
+        return term.notice
+
+    async def _place_new(self, session: Session, terms: list[Terminal], computer_id: str) -> None:
+        """Set up panes created for ``computer_id``: check the server, copy each repo once.
+
+        The panes exist already, gated by ``placing`` so no viewer can start
+        them anywhere yet. The server is asked first whether tmux and every
+        pane's CLI are there — a missing CLI used to show up only as a dead
+        pane after a long upload. A copy another pane already works in on
+        that computer is JOINED, not sent again.
+        """
+        from jarvis.computers.remote_terminal import pool_for
+        from jarvis.computers.service import ComputerError
+
+        pool = pool_for(computer_id)
+        where = self._computer_label(computer_id)
+        placements: dict[str, tuple[remote.Placement, str]] = {}
+        try:
+            await remote.preflight(pool, _remote_commands(terms), where)
+            for term in terms:
+                local = term.cwd(session.folder)
+                key, top = await self._copy_root(local)
+                async with self._copy_lock(computer_id, key):
+                    placement, joined = await self._join_or_copy(
+                        pool, computer_id, local, key, top, term, placements
+                    )
+                    term.remote_folder = placement.remote_folder
+                    term.offload_snapshot = placement.offload_snapshot or ""
+                    term.notice = (
+                        f"Works in the copy already on {where}."
+                        if joined
+                        else f"Copied to {where}. {remote.left_behind_note(placement.left_behind)}"
+                    ).strip()
+                    term.placing = ""
+        except remote.MoveError as exc:
+            raise PlacementError(str(exc)) from exc
+        except ComputerError as exc:
+            raise PlacementError(exc.message) from exc
+        except Exception as exc:  # noqa: BLE001 - SSH/SFTP failures become one sentence
+            logger.warning("Agentic IDE: setting up panes on {} failed: {}", where, exc)
+            raise PlacementError(f"Copying the folder to {where} failed: {exc}") from exc
+        await self._persist()
+
+    async def _copy_root(self, local: str) -> tuple[str, Path | None]:
+        """What one copy on a computer covers: the git repo ``local`` is in, else the folder.
+
+        Returns ``(key, repo top)``. Panes in different subfolders of one repo
+        share ONE copy there (the whole repo is sent), so they must share its
+        lock and join each other: keyed on their own folders, a subfolder pane
+        sent the repo again and reset it under the agent already working in it.
+        """
+        return await asyncio.to_thread(_copy_key, local)
+
+    async def _join_or_copy(
+        self,
+        pool: Any,
+        computer_id: str,
+        local: str,
+        key: str,
+        top: Path | None,
+        exclude: Terminal,
+        placements: dict[str, tuple[remote.Placement, str]],
+    ) -> tuple[remote.Placement, bool]:
+        """The copy ``local`` works in on ``computer_id``, and whether it joined one.
+
+        Caller holds the copy lock for ``key``. The same repo seen from another
+        subfolder maps to the matching subfolder of the copy.
+
+        A copy another pane made earlier is joined only while this folder is
+        still what that copy started from: after local edits it would run on
+        old code without anyone saying so, and a refresh would rewrite files
+        under the agent working there (#253).
+        """
+        known = placements.get(key)
+        if known is None:
+            known = await self._sibling_placement(computer_id, key, exclude)
+            snapshot = known[0].offload_snapshot if known is not None else None
+            if top is not None and snapshot and await asyncio.to_thread(
+                _changed_since, top, snapshot
+            ):
+                raise remote.MoveError(
+                    f"This folder changed since the copy on {self._computer_label(computer_id)} "
+                    "was made, and another pane still works in that copy. Bring that pane "
+                    "back first, then move this one."
+                )
+        if known is None:
+            placement = await remote.push_code(pool, Path(local))
+            placements[key] = (placement, local)
+            return placement, False
+        placements[key] = known
+        base, base_local = known
+        if top is None or os.path.normcase(base_local) == os.path.normcase(local):
+            return remote.Placement(base.remote_folder, base.offload_snapshot), True
+        folder = await asyncio.to_thread(
+            remote.joined_folder, base.remote_folder, Path(base_local), Path(local), top
+        )
+        return remote.Placement(folder, base.offload_snapshot), True
+
+    async def _sibling_placement(
+        self, computer_id: str, key: str, exclude: Terminal
+    ) -> tuple[remote.Placement, str] | None:
+        """The copy another pane already works in on ``computer_id``, and that pane's folder."""
+        for session in list(self._sessions.values()):
+            for other in list(session.terminals):
+                if (
+                    other is exclude
+                    or other.computer_id != computer_id
+                    or not other.remote_folder
+                    or other.placing
+                ):
+                    continue
+                other_local = other.cwd(session.folder)
+                other_key, _top = await self._copy_root(other_local)
+                if other_key == key:
+                    placement = remote.Placement(
+                        other.remote_folder, other.offload_snapshot or None
+                    )
+                    return placement, other_local
+        return None
+
+    def _copy_lock(self, computer_id: str, key: str) -> asyncio.Lock:
+        return self._copy_locks.setdefault((computer_id, key), asyncio.Lock())
+
+    @staticmethod
+    def _new_pane_computer(session: Session, anchor: Terminal | None, wanted: Any) -> str:
+        """Where a new pane runs: named, else beside its anchor, else with the workspace."""
+        if wanted is not INHERIT_PLACEMENT:
+            return str(wanted or "")
+        if anchor is not None:
+            return anchor.computer_id
+        places = {t.computer_id for t in session.terminals}
+        return places.pop() if len(places) == 1 else ""
+
+    @staticmethod
+    def _computer_label(computer_id: str) -> str:
+        """The computer's name for messages."""
+        from jarvis.computers.service import get_service
+
+        try:
+            return get_service().get(computer_id).name
+        except Exception:  # noqa: BLE001 - a removed or unreadable record still needs a word
+            return "the other computer"
+
+    def _placing_note(self, computer_id: str) -> str:
+        return f"Copying the folder to {self._computer_label(computer_id)}…"
+
+    async def _bring_back_locked(
+        self,
+        session: Session,
+        term: Terminal,
+        returns: dict[tuple[str, str], remote.Return] | None = None,
+    ) -> str:
+        """Bring one pane home; ``returns`` shares one return per copy across calls.
+
+        The pane is gated meanwhile and the copy's lock is held, so no new pane
+        joins a copy that is being packed up.
+        """
+        from jarvis.computers.remote_terminal import pool_for, tmux_session_name
+
+        pool = pool_for(term.computer_id)
+        term.placing = term.placing or "Bringing the work back to this computer…"
+        try:
+            if term.pty_id:
+                await self._stop_for_move(term, pool)
+            else:
+                await pool.run(
+                    f"tmux kill-session -t {shlex.quote(tmux_session_name(term.history_id))}"
+                    " 2>/dev/null; true",
+                    timeout_s=20,
+                )
+            local_folder = Path(term.cwd(session.folder))
+            name = self._computer_label(term.computer_id)
+            copy_key, _top = await self._copy_root(str(local_folder))
+            key = (term.computer_id, copy_key)
+            async with self._copy_lock(term.computer_id, copy_key):
+                try:
+                    outcome = returns.get(key) if returns is not None else None
+                    if outcome is None:
+                        outcome = await remote.pull_code(
+                            pool,
+                            local_folder,
+                            term.remote_folder,
+                            term.offload_snapshot or None,
+                            name,
+                        )
+                        if returns is not None:
+                            returns[key] = outcome
+                    carried = await remote.pull_conversation(
+                        pool,
+                        term.agent,
+                        term.resume.id if term.resume else None,
+                        local_folder,
+                        account_home(term.agent, term.account),
+                    )
+                except remote.MoveError as exc:
+                    raise PlacementError(str(exc)) from exc
+                except Exception as exc:  # noqa: BLE001 - SSH/SFTP failures become one sentence
+                    logger.warning("Agentic IDE: bringing {} back failed: {}", term.name, exc)
+                    raise PlacementError(f"Bringing the pane back failed: {exc}") from exc
+                if not carried:
+                    term.resume = None
+                term.computer_id = ""
+                term.remote_folder = ""
+                term.offload_snapshot = ""
+        finally:
+            term.placing = ""
+        return outcome.message
+
+    async def _restart_in_place(self, session: Session, term: Terminal) -> None:
+        """Start the pane's agent in its new place for whoever is watching it."""
+
+        async def _discard(_data: Any) -> None:
+            return None
+
+        term.status = "pending"
+        term.stopping = False
+        try:
+            await self._attach_locked(
+                term.key,
+                term.pty_cols or term.transcript.cols,
+                term.pty_rows or term.transcript.rows,
+                term.viewer_output or _discard,
+                term.viewer_exit or _discard,
+                workspace_id=session.id,
+            )
+        except SessionError as exc:
+            logger.warning("Agentic IDE: {} did not start after its move: {}", term.name, exc)
+
+    async def fork_terminal(
+        self,
+        wanted: str,
+        *,
+        workspace_id: str | None = None,
+        worktree: bool = False,
+        name: str | None = None,
+        direction: str = "right",
+    ) -> Terminal:
+        """Open a new pane that starts from a copy of pane ``wanted``'s chat.
+
+        The new pane runs the same CLI on the same account (its conversation
+        lives in that account's history) with the same picks, beside the
+        original. Its first process copies the conversation through the CLI's
+        own fork (:func:`.agent_sessions.fork_argv`); a CLI without one, or a
+        pane with nothing said yet, gives a fresh chat instead.
+
+        ``worktree=True`` first creates a git worktree on a new branch called
+        ``name`` (:func:`.fork.create_worktree`) and runs the new pane there,
+        so the two agents can change files without touching each other's work.
+        """
+        found = self._locate(wanted, workspace_id)
+        if found is None:
+            raise self._unknown_terminal(wanted)
+        session, source = found
+        if not accepts_prompts(source.agent):
+            raise SessionError(f"{source.name} is a plain terminal — it has no chat to fork.")
+        # Checked before a worktree is created, so a full workspace does not
+        # leave an orphaned branch behind.
+        if len(session.terminals) >= MAX_TERMINALS:
+            raise WorkspaceFull(
+                f"This workspace already has the maximum of {MAX_TERMINALS} terminals."
+            )
+        folder = ""
+        branch = ""
+        if worktree:
+            base = source.cwd(session.folder)
+            wanted_name = (name or "").strip() or await asyncio.to_thread(
+                fork.suggest_name, base, source.name, recap_engine.known_headline(source)
+            )
+            try:
+                created = await asyncio.to_thread(fork.create_worktree, base, wanted_name)
+            except fork.ForkError as exc:
+                raise SessionError(str(exc)) from exc
+            folder, branch = str(created.folder), created.branch
+        term = await self.add_terminal(
+            workspace_id=session.id,
+            agent=source.agent,
+            anchor=source.name,
+            direction=direction,
+            account=source.account,
+            model=source.model,
+            effort=source.effort,
+            permission_mode=source.permission_mode,
+            folder=folder,
+            # Born a fork: a pane for a computer opens its ``placing`` gate
+            # and persists before add_terminal returns, so a viewer can spawn
+            # it inside that await (#254).
+            fork_from=source.resume,
+            branch=branch,
+        )
+        logger.info(
+            "Agentic IDE: forked {} into {}{}",
+            source.name,
+            term.name,
+            f" on worktree branch {branch}" if branch else "",
+        )
+        return term
 
     async def add_terminals(
-        self, count: int, *, agent: str | None = None, account: str | None = None
+        self,
+        count: int,
+        *,
+        agent: str | None = None,
+        account: str | None = None,
+        workspace_id: str | None = None,
     ) -> tuple[list[Terminal], bool]:
-        """Open up to ``count`` more panes — the batch behind "open five more".
+        """Open a batch in one pinned workspace, rejecting oversized requests.
 
-        Returns the panes that were created and whether the pane cap
-        truncated the request, because those are two different answers the caller
-        has to speak out loud: five requested with three opened is a success the
-        user must hear ("room for three"), not a silent partial.
+        Returns the created panes and a flag for partial operational failure.
+        Capacity is checked before any pane is created. A concurrent addition
+        or a disappearing agent binary can still stop a batch partway through,
+        which the flag reports honestly.
 
         Deliberately a loop over ``add_terminal`` rather than a second placement
         implementation: the anchor, the call-sign pool, and the grid position are
@@ -4273,17 +6024,24 @@ class Registry:
         drift from what the split buttons do. No anchor is named, so without an
         explicit ``account`` every pane opens on the workspace's active one.
 
-        The cap is the expected stopping point, so hitting it is not an error.
-        A failure with NOTHING opened is — an unknown agent or a vanished binary
-        must not be reported as "nothing to do".
+        A failure before creating any pane is raised to the caller.
         """
-        if self.session is None:
+        selected = self.get(workspace_id)
+        if selected is None:
             raise SessionError("No Agentic-IDE session is running.")
         wanted = max(1, int(count))
+        if len(selected.terminals) + wanted > MAX_TERMINALS:
+            raise WorkspaceFull(f"A workspace can contain at most {MAX_TERMINALS} terminals.")
         created: list[Terminal] = []
         for _ in range(wanted):
             try:
-                created.append(await self.add_terminal(agent=agent, account=account))
+                created.append(
+                    await self.add_terminal(
+                        agent=agent,
+                        account=account,
+                        workspace_id=selected.id,
+                    )
+                )
             except SessionError as exc:
                 if not created:
                     raise
@@ -4338,6 +6096,14 @@ class Registry:
                 raise SessionError(f"No terminal called {target!r}. Running: {known}.")
             if anchor.key == moved.key:
                 return moved
+
+            if session.layout is None:
+                # Legacy/injected workspaces can still carry only grid hints.
+                # Build their tree before moving; moving None followed by
+                # renumbering would silently leave every pane in its old order.
+                session.layout = layout_tree.from_grid(
+                    (term.key, term.column, term.slot) for term in session.terminals
+                )
 
             # "swap" exchanges the two panes and keeps the tree's exact shape;
             # the four sides carve the TARGET's own rectangle — the same local
@@ -4576,11 +6342,16 @@ class Registry:
 
             for term in resolved:
                 term.stopping = True  # a deliberate kill, not a crashed resume
-                if term.pty_id and self._pty is not None:
+                pool = self._pool(term) if term.computer_id else self._pty
+                if term.pty_id and pool is not None:
                     try:
-                        self._pty.close(term.pty_id)
+                        pool.close(term.pty_id)
                     except Exception:  # noqa: BLE001, S110 - best-effort teardown
                         pass
+                elif term.computer_id and term.remote_folder and hasattr(pool, "end_session"):
+                    # Nobody is watching it, but its agent may still be working
+                    # in tmux on the computer: closing the pane ends it there too.
+                    pool.end_session(term.history_id)
                 term.pty_id = None
                 term.status = "exited"
                 term.viewer_output = None
@@ -4596,7 +6367,7 @@ class Registry:
                 # The recap cache is keyed by pane, and pane keys are reused
                 # (a new "Mika" in the same workspace). Dropping it here is what
                 # stops a fresh pane opening under the last one's sentence.
-                recap_engine.forget(term.key)
+                recap_engine.forget(recap_engine.pane_id(term))
                 opening.forget(term.key)
                 # Its bell entries go the same way and for the same reason.
                 # Each one is a "jump to this pane" button, and the pane has
@@ -4666,8 +6437,14 @@ class Registry:
         require_idle: bool = False,
         expected_input: str = "",
         allow_question: bool = False,
+        readback: bool = False,
     ) -> Terminal:
-        """Serialize deliveries and pin the pane before the first await."""
+        """Serialize deliveries and pin the pane before the first await.
+
+        ``readback`` marks the job as one the user gave through Jarvis, so its
+        end is reported by voice (see :mod:`.voice_readback`). Callers that
+        supervise the pane themselves (a society agent) leave it off.
+        """
         found = self.find_terminal(wanted, workspace_id)
         if found is None:
             raise self._unknown_terminal(wanted)
@@ -4700,6 +6477,7 @@ class Registry:
                 attachments=attachments,
                 expected_input=expected_input,
                 allow_question=allow_question,
+                readback=readback,
             )
 
     @staticmethod
@@ -4718,6 +6496,7 @@ class Registry:
         attachments: Sequence[Any] = (),
         expected_input: str = "",
         allow_question: bool = False,
+        readback: bool = False,
     ) -> Terminal:
         """Type ``text`` into a terminal, press Enter, and CONFIRM it was sent.
 
@@ -4823,7 +6602,7 @@ class Registry:
             not in (("asking", "waiting") if allow_question else ("waiting",))
         ):
             raise SessionError("The input request changed while waiting; nothing was sent.")
-        manager = self._manager()
+        manager = self._pool(term)
         multiline = "\n" in payload
 
         submitted = await self._write_and_confirm(term, payload, manager, multiline)
@@ -4864,6 +6643,10 @@ class Registry:
         term.manual_submit_token += 1
         term.submitted = submitted
         term.sent_multiline = multiline and submitted is True
+        # Whoever sent THIS job decides whether its end is reported by voice; a
+        # supervising agent's follow-up replaces a Jarvis job and its readback.
+        term.voice_readback = readback
+        term.voice_readback_request = (typed or payload).strip() if readback else ""
         from .prompt_receipts import receipts_for
 
         history_entry = prompt_history.PromptHistoryEntry(
@@ -4888,11 +6671,8 @@ class Registry:
                 term.name,
                 exc,
             )
-        # Somebody is driving this pane again, whatever the prompt said. Cleared
-        # even when the pane did not submit the text: the instruction is sitting
-        # in its input box in full, so offering to type "continue" behind it
-        # would append a second line to a prompt the user still has to send.
-        term.continuation_pending = False
+        # Somebody is driving this pane again: an earlier interrupted turn is
+        # superseded by this instruction.
         term.resume_continuation_needed = False
         if submitted is not False:
             # The conversation has (or may have) just begun, so for a CLI that
@@ -5003,7 +6783,7 @@ class Registry:
             if term.name not in ready:
                 declined[pick] = f"{term.name} is still starting — its input line never appeared."
                 continue
-            submitted = await self._write_and_confirm(term, line, self._manager(), False)
+            submitted = await self._write_and_confirm(term, line, self._pool(term), False)
             if submitted is False:
                 declined[pick] = f"{term.name} kept `{line}` in its input box instead of taking it."
                 continue
@@ -5257,32 +7037,6 @@ def _unique_name(wanted: str, used: set[str]) -> str:
     return f"{wanted} {suffix}"
 
 
-def _mark_restored_continuations(terminals: list[Terminal]) -> None:
-    """Flag the restored panes that will come back in the middle of a job.
-
-    Runs off the event loop (each check stats the coding CLI's history) and
-    never raises: a pane whose history cannot be read is left unflagged, which
-    costs an offer to continue it and nothing else.
-
-    Holding a handle is not the same as having a conversation — a pane that was
-    opened and never used holds an id that points at nothing — so this asks the
-    CLI's own history, exactly as the resume offer does.
-    """
-    for term in terminals:
-        if term.resume is None or not accepts_prompts(term.agent):
-            continue
-        try:
-            term.continuation_pending = term.resume_continuation_needed and has_conversation(
-                term.agent, term.resume, account_home(term.agent, term.account)
-            )
-        except Exception as exc:  # noqa: BLE001 - a restore must never fail on this
-            logger.debug(
-                "Agentic IDE: could not tell whether {} has work to continue: {}",
-                term.name,
-                exc,
-            )
-
-
 def terminals_added_event(session: Session, created: list[Terminal], *, source_layer: str) -> Any:
     """The bus event announcing new panes to every connected client.
 
@@ -5426,34 +7180,67 @@ def coding_mode_event(session: Session | None, *, source_layer: str) -> Any:
 
 
 _REGISTRY: Registry | None = None
+_REGISTRY_LOCK = threading.Lock()
 
 
 def get_registry() -> Registry:
     """The process-wide Agentic-IDE registry (created on first use)."""
     global _REGISTRY
-    if _REGISTRY is None:
-        _REGISTRY = Registry()
-    return _REGISTRY
+    with _REGISTRY_LOCK:
+        if _REGISTRY is None:
+            _REGISTRY = Registry()
+        return _REGISTRY
+
+
+def schedule_boot_restore() -> asyncio.Task[None] | None:
+    """Run :meth:`Registry.boot_restore` in the background, once.
+
+    Called by the two real app entry points (the desktop shell and the web
+    launcher) right after the server is up — never by ``WebServer.start``,
+    which tests boot against the real user data directory and must not attach
+    to the user's PTY host or reopen their workspaces.
+    """
+    # Before anything can reach the registry — see ``Registry.enable_host``.
+    get_registry().enable_host()
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        logger.debug("Agentic IDE: startup restore not scheduled — no running loop")
+        return None
+
+    async def _run() -> None:
+        try:
+            await get_registry().boot_restore()
+        except Exception as exc:  # noqa: BLE001 - startup must not fail on this
+            logger.opt(exception=exc).warning("Agentic IDE: startup restore failed")
+
+    return loop.create_task(_run(), name="agentic-ide-boot-restore")
 
 
 def reset_registry() -> None:
     """Drop the registry — tests only."""
     global _REGISTRY
-    _REGISTRY = None
+    with _REGISTRY_LOCK:
+        _REGISTRY = None
 
 
 __all__ = [
     "AGENT_BINARIES",
     "AGENT_DISPLAY",
     "MAX_PROMPT_CHARS",
+    "MAX_GRID_COLUMNS",
+    "MAX_GRID_ROWS",
     "MAX_TERMINALS",
     "MAX_WORKSPACES",
+    "INHERIT_PLACEMENT",
     "PLAIN_TERMINAL",
+    "PlacementError",
     "Registry",
     "Session",
     "SessionError",
     "SessionNotReady",
     "Terminal",
+    "WorkspaceFull",
     "accepts_prompts",
     "agent_argv",
     "agent_display",

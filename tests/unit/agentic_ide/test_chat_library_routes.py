@@ -197,7 +197,7 @@ def test_creating_a_chat_starts_nothing(client: TestClient, tmp_path: Path) -> N
 
 
 def test_destructive_routes_declare_themselves(client: TestClient) -> None:
-    """The danger flag is what keeps a delete out of an unattended yes (CLAUDE.md §5)."""
+    """The danger flag is what keeps a delete out of an unattended yes (AGENTS.md §5)."""
     schema = client.get("/openapi.json").json()["paths"]
 
     for path in (
@@ -205,3 +205,134 @@ def test_destructive_routes_declare_themselves(client: TestClient) -> None:
         "/api/chat-library/projects/{project_id}/chats/{chat_id}",
     ):
         assert schema[path]["delete"]["x-jarvis-dangerous"] is True
+
+
+def test_project_order_survives_a_reorder_and_a_reopen(client: TestClient, tmp_path: Path) -> None:
+    """Drag and drop arranges the folders; reopening one must not reshuffle them."""
+    for name in ("alpha", "bravo", "gamma"):
+        (tmp_path / name).mkdir()
+        library.ensure_project(tmp_path / name)
+    body = client.get("/api/chat-library/projects").json()
+    assert [p["name"] for p in body["projects"]] == ["alpha", "bravo", "gamma"]
+
+    moved = client.put(
+        "/api/chat-library/projects/order",
+        json={
+            "project_ids": [
+                body["projects"][2]["id"],
+                body["projects"][0]["id"],
+                body["projects"][1]["id"],
+            ]
+        },
+    )
+    assert moved.status_code == 200
+    assert [p["name"] for p in moved.json()["projects"]] == ["gamma", "alpha", "bravo"]
+
+    # Reopening bumps last_opened_at, which used to BE the order — it must not
+    # undo the arrangement any more.
+    library.ensure_project(tmp_path / "bravo")
+    again = client.get("/api/chat-library/projects").json()
+    assert [p["name"] for p in again["projects"]] == ["gamma", "alpha", "bravo"]
+
+    # A brand-new folder lands behind every arranged one.
+    (tmp_path / "delta").mkdir()
+    library.ensure_project(tmp_path / "delta")
+    latest = client.get("/api/chat-library/projects").json()
+    assert [p["name"] for p in latest["projects"]] == ["gamma", "alpha", "bravo", "delta"]
+
+
+def test_invalid_project_order_is_rejected_without_mutation(
+    client: TestClient, tmp_path: Path
+) -> None:
+    (tmp_path / "repo").mkdir()
+    project = library.ensure_project(tmp_path / "repo")
+    before = client.get("/api/chat-library/projects").json()
+
+    assert (
+        client.put("/api/chat-library/projects/order", json={"project_ids": ["nope"]}).status_code
+        == 422
+    )
+    assert (
+        client.put(
+            "/api/chat-library/projects/order",
+            json={"project_ids": [project.id, project.id]},
+        ).status_code
+        == 422
+    )
+    assert client.get("/api/chat-library/projects").json() == before
+
+
+# --------------------------------------------------------------- reveal folder
+def test_reveal_opens_the_stored_project_folder(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jarvis.platform import open_path
+
+    opened: list[Path] = []
+    monkeypatch.setattr(open_path, "open_file", lambda path: opened.append(path) or True)
+    client.app.state.native_file_actions = True
+    project = library.ensure_project(tmp_path, name="Reveal me")
+    response = client.post(f"/api/chat-library/projects/{project.id}/reveal")
+    assert response.status_code == 200
+    assert response.json() == {"opened": True}
+    assert opened == [Path(project.path)]
+
+
+def test_reveal_is_desktop_only(client: TestClient, tmp_path: Path) -> None:
+    project = library.ensure_project(tmp_path)
+    assert client.post(f"/api/chat-library/projects/{project.id}/reveal").status_code == 404
+
+
+def test_reveal_refuses_an_unknown_project(client: TestClient) -> None:
+    client.app.state.native_file_actions = True
+    assert client.post("/api/chat-library/projects/nope/reveal").status_code == 404
+
+
+def test_launchers_list_only_what_is_available(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jarvis.agentic_ide import project_links
+    from jarvis.ui.web import outputs_routes
+
+    monkeypatch.setattr(
+        outputs_routes,
+        "_available_openers",
+        lambda: [
+            {"id": "default", "label": "System default app"},
+            {"id": "cursor", "label": "Cursor"},
+        ],
+    )
+    monkeypatch.setattr(project_links, "remote_web_url", lambda folder: "https://github.com/me/app")
+    client.app.state.native_file_actions = True
+    project = library.ensure_project(tmp_path)
+    body = client.get(f"/api/chat-library/projects/{project.id}/launchers").json()
+    assert body == {
+        "file_manager": True,
+        "editors": [{"id": "cursor", "label": "Cursor"}],
+        "remote_url": "https://github.com/me/app",
+        "remote_label": "GitHub",
+    }
+
+
+def test_launchers_are_empty_on_a_headless_host(client: TestClient, tmp_path: Path) -> None:
+    project = library.ensure_project(tmp_path)
+    body = client.get(f"/api/chat-library/projects/{project.id}/launchers").json()
+    assert body["editors"] == [] and body["file_manager"] is False
+
+
+def test_open_in_accepts_only_known_editors(client: TestClient, tmp_path: Path) -> None:
+    client.app.state.native_file_actions = True
+    project = library.ensure_project(tmp_path)
+    response = client.post(
+        f"/api/chat-library/projects/{project.id}/open-in", json={"target": "calc.exe"}
+    )
+    assert response.status_code == 400
+
+
+def test_open_in_remote_needs_a_remote(client: TestClient, tmp_path: Path) -> None:
+    client.app.state.native_file_actions = True
+    project = library.ensure_project(tmp_path)
+    response = client.post(
+        f"/api/chat-library/projects/{project.id}/open-in", json={"target": "remote"}
+    )
+    assert response.status_code == 404

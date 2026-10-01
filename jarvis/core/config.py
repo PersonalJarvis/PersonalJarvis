@@ -31,10 +31,6 @@ from typing import TYPE_CHECKING, Any, Literal, get_args, get_origin
 import yaml
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
-# Sub-config from the awareness sub-package. A top-level import is fine because
-# jarvis.awareness.config only knows Pydantic and never calls back into core.* —
-# no circular-import risk.
-from jarvis.awareness.config import AwarenessConfig
 from jarvis.live.config import LiveConfig
 
 # wake_constants is pure stdlib (no jarvis imports) — safe to import from this
@@ -1492,17 +1488,14 @@ class EvidenceDomainsConfig(BaseModel):
                 "guthaben",
                 "billing",
             ],
-            # Local screen / window-activity history. Served by the always-on
-            # internal `awareness-recall` tool (wired into the domain→tool map in
-            # BrainManager._run_evidence_gate, NOT a connected CLI), so a question
-            # like "was hatte ich heute offen / was habe ich gemacht / which
-            # windows were open" deterministically FORCES an awareness-recall call
-            # instead of letting the (esp. fast-tier) model confabulate "der lokale
-            # Verlaufsspeicher ist nicht verfügbar" without ever calling the tool
-            # (live 2026-06-18, proven from the log: no tool execution line, yet the
-            # refusal was spoken). Keywords are PHRASE-specific to opened
-            # windows/apps/today's on-device activity — never a bare "offen"/"open"
-            # token, so "ist die Frage noch offen" can't hijack the domain.
+            # Local screen / window-activity history. Jarvis keeps no such
+            # history (the awareness recorder was removed 2026-09-30), so no
+            # tool serves this domain: a question like "was hatte ich heute
+            # offen / which windows were open" gets the gate's honest "I have
+            # no access to your activity history" instead of a confabulated
+            # timeline. Keywords are PHRASE-specific to opened windows/apps/
+            # today's on-device activity — never a bare "offen"/"open" token,
+            # so "ist die Frage noch offen" can't hijack the domain.
             "activity": [
                 "offen hatte",
                 "offen gehabt",
@@ -1638,20 +1631,18 @@ class BrainConfig(BaseModel):
 class WikiCuratorConfig(BaseModel):
     """Curator LLM settings for the long-term wiki memory (Phase B1).
 
-    The curator turns one new source (a BrainTurnCompleted summary, an
-    EpisodeRecorded entry, a MissionCompleted hand-off) into a small set
+    The curator turns one new source (a BrainTurnCompleted summary or a
+    MissionCompleted hand-off) into a small set
     of structured wiki page updates. The LLM is intentionally provider-
     agnostic: ``provider=""`` falls back to ``brain.primary`` and
     ``model=""`` falls back to the resolved provider's ``model`` field
-    under ``brain.providers``. Pattern mirrors
-    ``AwarenessVerdichterConfig`` (Plan §6).
+    under ``brain.providers``.
     """
 
     model_config = ConfigDict(extra="allow")
 
     provider: str = ""  # "" = fall back to brain.primary
     model: str = ""  # "" = provider default model
-    max_input_tokens: int = 64_000
     # Headroom for a complete proposal; the streaming truncation guard
     # rejects any residual length-capped generation. The Stage-2 judge
     # returns FULL page bodies per add/update, so a batched response
@@ -1860,6 +1851,38 @@ class LegacyCuratorConfig(BaseModel):
     enabled: bool = False
 
 
+class JarvisLearningConfig(BaseModel):
+    """``[memory.learning]`` — Jarvis' own self-learning loop.
+
+    ``jarvis/memory/learning/`` reviews finished voice and chat conversations
+    in the background and keeps two bounded notebooks: USER.md (who the user
+    is, what they prefer, what they are working toward) and MEMORY.md
+    (Jarvis' own working notes and lessons from corrections). Both reach the
+    classic brain prompt and the realtime voice instructions. Every key below
+    is read by ``jarvis.memory.learning`` (AP-31).
+    """
+
+    model_config = {"extra": "allow"}
+
+    #: Master switch: off stops reviews and removes the notebooks from prompts.
+    enabled: bool = True
+    #: A conversation is reviewed once, when a call ends or it has been quiet
+    #: this long, and only if a deterministic filter found a personal fact,
+    #: preference, correction or plan in it (most conversations cost nothing).
+    idle_review_seconds: float = Field(default=300.0, ge=10.0, le=86_400.0)
+    #: Safety net for very long conversations: also review after this many turns.
+    review_every_turns: int = Field(default=30, ge=1, le=200)
+    #: Prompt budget per notebook: this text rides along on every turn, so it
+    #: stays small. At 125 % new entries are refused until the reviewer merges.
+    user_budget_chars: int = Field(default=1_500, ge=300, le=40_000)
+    memory_budget_chars: int = Field(default=1_000, ge=300, le=40_000)
+    #: Reviewer provider/model. Empty = the wiki curator's provider on its cheap
+    #: model, then every other reachable provider (subscriptions before keys).
+    provider: str = ""
+    model: str = ""
+    timeout_s: float = Field(default=90.0, ge=5.0, le=600.0)
+
+
 class MemoryConfig(BaseModel):
     recall_store: str = "sqlite"
     # chromadb was removed (2026-06-28); there is no chroma backend in
@@ -1870,6 +1893,7 @@ class MemoryConfig(BaseModel):
     data_dir: str = "./data"
     wiki: WikiMemoryConfig = Field(default_factory=WikiMemoryConfig)
     legacy_curator: LegacyCuratorConfig = Field(default_factory=LegacyCuratorConfig)
+    learning: JarvisLearningConfig = Field(default_factory=JarvisLearningConfig)
 
 
 class SafetyWhitelistConfig(BaseModel):
@@ -2314,8 +2338,9 @@ class SecurityConfig(BaseModel):
     """Gate for sensitive UI actions (e.g. built-in skill editing).
 
     Empty hash = no admin mode set — built-in edits are locked.
-    To set: write the SHA-256 hex of the password into ``admin_password_hash``,
-    e.g. via ``python -c "import hashlib; print(hashlib.sha256(b'<pass>').hexdigest())"``.
+    To set: run ``python -m jarvis.core.admin_password`` and paste the printed
+    salted scrypt hash into ``admin_password_hash``. A bare SHA-256 hex digest
+    (the old format) is still accepted but deprecated.
     """
 
     admin_password_hash: str = ""
@@ -2575,6 +2600,38 @@ class ScreenContextConfig(BaseModel):
     ocr_enabled: bool = False
 
 
+class AppshotConfig(BaseModel):
+    """Top-level ``[appshot]`` config — show the assistant the front window.
+
+    An appshot is one capture of the window the user is working in, taken on
+    a global shortcut or when the user asks for one, and handed to the
+    conversation as context (``jarvis/appshot/``). It runs through the Screen
+    Context capture engine, so every ``[screen_context]`` privacy rule applies.
+
+    The master switch is ``[screen_context].enabled``: an appshot and a spoken
+    "what do you see?" are the same look, so one switch governs both. Every
+    key below is read by ``jarvis.appshot`` (AP-31).
+    """
+
+    model_config = {"extra": "allow"}
+
+    #: Global shortcut. ``alt+alt`` means both Alt keys pressed together (read
+    #: by ``jarvis.appshot.gesture``); any other value is an ordinary combo in
+    #: the shared hotkey syntax; an empty string switches the shortcut off.
+    hotkey: str = "alt+alt"
+
+    #: Where a shortcut appshot goes. ``auto``: into the running voice call,
+    #: otherwise onto the next message. ``message``: always onto the next
+    #: message. ``voice``: only into a running voice call.
+    target: Literal["auto", "message", "voice"] = "auto"
+
+    #: Shutter sound on every appshot (also gated by ``[ui].sound_effects``).
+    sound: bool = True
+
+    #: Flash and thumbnail animation on the captured window.
+    effect: bool = True
+
+
 class ComputerUseConfig(BaseModel):
     """Top-level ``[computer_use]`` config for the Computer-Use harness.
 
@@ -2808,7 +2865,7 @@ class PerformanceConfig(BaseModel):
     # keep it whenever in doubt. Cuts the per-turn image tax on cheap turns.
     conditional_vision: bool = True
     # Wave 2 (omni-latency): cache-optimized prompt layout. Static prefix in the
-    # system prompt, per-turn dynamic context (awareness/wiki/date) moved into the
+    # system prompt, per-turn dynamic context (wiki/date) moved into the
     # user message so the provider prompt cache actually hits.
     cache_optimized_prompt: bool = True
 
@@ -4366,6 +4423,9 @@ class JarvisConfig(BaseModel):
     # One-shot, intent-driven screen look (jarvis/screen_context/). Distinct
     # from ``[vision]`` above, which governs the always-on observation path.
     screen_context: ScreenContextConfig = Field(default_factory=ScreenContextConfig)
+    # Appshots: the front window as conversation context, on a shortcut or on
+    # request (jarvis/appshot/). Captures through Screen Context above.
+    appshot: AppshotConfig = Field(default_factory=AppshotConfig)
     # Phase 5/6 — Computer-Use-POAV-Harness (ADR-0008).
     computer_use: ComputerUseConfig = Field(default_factory=ComputerUseConfig)
     # Low-latency local-action gate. Hidden tools only; never exposed in the
@@ -4379,9 +4439,6 @@ class JarvisConfig(BaseModel):
     performance: PerformanceConfig = Field(default_factory=PerformanceConfig)
     # Wave 0 (omni-latency) — hot-path latency span instrumentation toggle.
     latency: LatencyConfig = Field(default_factory=LatencyConfig)
-    # Phase A0+: awareness layer (continuous context). Entire subsystem
-    # hot-disabled via [awareness].enabled = false (plan §15).
-    awareness: AwarenessConfig = Field(default_factory=AwarenessConfig)
     # Phase B5 — wiki write-wiring: SessionRollupWorker + WikiCurator bootstrap (Agent A).
     wiki_integration: WikiIntegrationConfig = Field(default_factory=WikiIntegrationConfig)
     # Phase B5 — CuratorScheduler (Agent D). Top-level field — Wave-2 cleanup task
@@ -4577,6 +4634,16 @@ _PERSISTED_PROVIDER_ENV_KEYS: tuple[str, ...] = (
     "JARVIS__GOOGLE__VERTEX_PROJECT",
     "JARVIS__GOOGLE__VERTEX_LOCATION",
     "JARVIS__GOOGLE__SERVICE_ACCOUNT_PATH",
+    # GPT-Live profile. Forensic 2026-09-29: the user switched the thinking
+    # model to a ~20x cheaper one, jarvis.toml and the registry both held it,
+    # yet a restart inherited the old model from an ancestor env and every
+    # voice turn kept billing the expensive one.
+    "JARVIS__LIVE__MODEL",
+    "JARVIS__LIVE__VOICE",
+    "JARVIS__LIVE__BACKEND_MODEL",
+    "JARVIS__LIVE__REASONING_EFFORT",
+    "JARVIS__LIVE__WEB_SEARCH",
+    "JARVIS__LIVE__CONFIGURED",
 )
 
 

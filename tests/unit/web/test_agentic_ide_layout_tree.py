@@ -151,6 +151,33 @@ def test_split_down_in_a_stack_halves_the_anchor_only() -> None:
     assert tree.weights == [1.0, 1.0, 2.0]
 
 
+def test_split_left_puts_the_new_pane_before_the_anchor() -> None:
+    row = Split(
+        direction="row",
+        children=[Leaf(pane="t1"), Leaf(pane="t2")],
+        weights=[2.0, 2.0],
+    )
+    tree = lt.split_pane(row, "t2", "t3", "left")
+
+    assert isinstance(tree, Split) and tree.direction == "row"
+    assert lt.leaves(tree) == ["t1", "t3", "t2"]
+    assert tree.weights == [2.0, 1.0, 1.0]
+    check_canonical(tree)
+
+
+def test_split_above_puts_the_new_pane_over_the_anchor() -> None:
+    for direction in ("above", "up"):
+        row = lt.wizard_tree(["t1", "t2"], 1)  # two panes side by side
+        tree = lt.split_pane(row, "t2", "t3", direction)
+
+        assert lt.leaves(tree) == ["t1", "t3", "t2"]
+        # t1 stays one whole column; t3 sits on top of t2 in the other.
+        column = next(child for child in tree.children if isinstance(child, Split))
+        assert column.direction == "column"
+        assert lt.leaves(column) == ["t3", "t2"]
+        check_canonical(tree)
+
+
 def test_split_down_beside_a_neighbour_leaves_the_neighbour_whole() -> None:
     row = lt.wizard_tree(["t1", "t2"], 1)  # two panes side by side
     tree = lt.split_pane(row, "t2", "t3", "down")
@@ -160,6 +187,22 @@ def test_split_down_beside_a_neighbour_leaves_the_neighbour_whole() -> None:
     assert left == Leaf(pane="t1")
     assert isinstance(right, Split) and right.direction == "column"
     assert lt.leaves(right) == ["t2", "t3"]
+
+
+def test_split_left_places_new_pane_before_anchor() -> None:
+    leaf = Leaf(pane="t1")
+    tree = lt.split_pane(leaf, "t1", "t2", "left")
+
+    assert isinstance(tree, Split) and tree.direction == "row"
+    assert lt.leaves(tree) == ["t2", "t1"]
+
+
+def test_split_above_places_new_pane_over_anchor() -> None:
+    leaf = Leaf(pane="t1")
+    tree = lt.split_pane(leaf, "t1", "t2", "above")
+
+    assert isinstance(tree, Split) and tree.direction == "column"
+    assert lt.leaves(tree) == ["t2", "t1"]
 
 
 def test_deep_splits_stay_local_at_any_depth() -> None:
@@ -576,6 +619,37 @@ def test_removing_gives_the_room_to_the_siblings() -> None:
     slimmed = lt.remove_pane(row, "t3")
     assert isinstance(slimmed, Split)
     assert slimmed.weights == [2.0, 1.0]  # 2:1 survives, the tail's share dissolves
+
+
+def test_closing_a_grid_cell_moves_the_pane_below_up() -> None:
+    """Close the top-right of a 2x2: the bottom-right rises, the left stays.
+
+    The grid stands on its rows, so the closed pane's row neighbour used to
+    stretch across the full width instead (maintainer report, 2026-09-29).
+    """
+    grid = lt.wizard_tree(["t1", "t2", "t3", "t4"], 2)
+    assert isinstance(grid, Split) and grid.direction == "column"
+
+    closed = lt.remove_pane(grid, "t2")
+    assert closed == Split(
+        direction="row",
+        children=[
+            Split(
+                direction="column",
+                children=[Leaf(pane="t1"), Leaf(pane="t3")],
+                weights=[0.5, 0.5],
+            ),
+            Leaf(pane="t4"),
+        ],
+        weights=[1.0, 1.0],
+    )
+    check_canonical(closed)
+
+    # A bottom cell folds the same way: its column-mate grows down.
+    lower = lt.remove_pane(grid, "t3")
+    assert isinstance(lower, Split) and lower.direction == "row"
+    assert lower.children[0] == Leaf(pane="t1")
+    check_canonical(lower)
 
 
 def test_removing_the_last_pane_empties_the_tree() -> None:

@@ -99,7 +99,7 @@ export const DARK_TERMINAL_THEME: ITheme = {
   // #12141a at alpha 0 — the deep-slate ground the backend also reports to the
   // CLI (jarvis/agentic_ide/terminal_input.py); see the light theme's note.
   background: "rgba(18, 20, 26, 0)",
-  foreground: "#e8e8ec",
+  foreground: "#f4f4f6",
   cursor: "#ffffff",
   cursorAccent: "#12141a",
   selectionBackground: "#3a4252",
@@ -114,7 +114,7 @@ export const DARK_TERMINAL_THEME: ITheme = {
   blue: "#81a1c1",
   magenta: "#b48ead",
   cyan: "#88c0d0",
-  white: "#c8c8c8",
+  white: "#dcdcdc",
   brightBlack: "#8a8a8a",
   brightRed: "#ff8fa3",
   brightGreen: "#70b489",
@@ -129,6 +129,59 @@ export type TerminalAppearance = "light" | "dark";
 
 export function themeFor(appearance: TerminalAppearance): ITheme {
   return appearance === "dark" ? DARK_TERMINAL_THEME : LIGHT_TERMINAL_THEME;
+}
+
+/** Where the reader's pane appearance is kept; no entry means "follow the app". */
+export const TERMINAL_APPEARANCE_KEY = "jarvis.agenticIde.terminalAppearance";
+
+/** The stored pane appearance, or null when there is none (or storage is blocked). */
+export function storedTerminalAppearance(): TerminalAppearance | null {
+  try {
+    const raw = window.localStorage.getItem(TERMINAL_APPEARANCE_KEY);
+    return raw === "light" || raw === "dark" ? raw : null;
+  } catch {
+    // Private mode or disabled storage reads as "no preference", never as a failure.
+    return null;
+  }
+}
+
+/**
+ * How a workspace draws its panes.
+ *
+ * * `minimal` — the tiling-multiplexer look (herdr, tmux): square 1px frames,
+ *   a slim square title row carrying the pane's controls, and the pane the
+ *   reader works in outlined in the signal hue.
+ * * `classic` — rounded cards, each with a taller title bar.
+ *
+ * A reader's preference, kept in this window's storage like the appearance;
+ * `classic` stays one click away in Workspace options for anyone who wants
+ * the titles back.
+ */
+export type PaneStyle = "minimal" | "classic";
+
+/** Where the reader's pane style is kept; no entry means the default. */
+export const PANE_STYLE_KEY = "jarvis.agenticIde.paneStyle";
+
+export const DEFAULT_PANE_STYLE: PaneStyle = "minimal";
+
+/** The stored pane style, or the default when there is none (or storage is blocked). */
+export function storedPaneStyle(): PaneStyle {
+  try {
+    const raw = window.localStorage.getItem(PANE_STYLE_KEY);
+    return raw === "minimal" || raw === "classic" ? raw : DEFAULT_PANE_STYLE;
+  } catch {
+    // Private mode or disabled storage reads as "no preference", never as a failure.
+    return DEFAULT_PANE_STYLE;
+  }
+}
+
+/** Remember the reader's pane style; losing it only costs a click next time. */
+export function storePaneStyle(style: PaneStyle): void {
+  try {
+    window.localStorage.setItem(PANE_STYLE_KEY, style);
+  } catch {
+    // Blocked storage keeps the choice for this session only, which is fine.
+  }
 }
 
 /**
@@ -248,6 +301,15 @@ export const PANE_BRAND: Record<TerminalAppearance, PaneBrand> = {
   },
 };
 
+/**
+ * The pane's ground made near-opaque, for a pane floated over a busy scene
+ * (the office map) where the translucent `shell` would let the world through.
+ */
+export const PANE_SOLID: Record<TerminalAppearance, string> = {
+  light: "rgba(252, 251, 248, 0.94)",
+  dark: "rgba(18, 18, 18, 0.92)",
+};
+
 export const PANE_CHROME: Record<TerminalAppearance, PaneChrome> = {
   light: {
     shell: "rgba(252, 251, 248, 0.68)",
@@ -270,5 +332,49 @@ export const PANE_CHROME: Record<TerminalAppearance, PaneChrome> = {
       exited: "rgba(255,255,255,0.06)",
       error: "rgba(227,70,113,0.55)",
     },
+  },
+};
+
+/** The frame of a pane drawn in the `minimal` style. */
+export interface PaneTileChrome {
+  /** The resting edge per lifecycle, as in `PaneChrome.edge`. */
+  edge: Record<PaneEdgeState, string>;
+  /** The focused pane's edge. */
+  focus: string;
+}
+
+/**
+ * Frame colours for the `minimal` pane style.
+ *
+ * A multiplexer grid is separated by its lines alone — no radius, no
+ * elevation — so the resting edge is a full step brighter than
+ * the card style's hairline (herdr draws it in a mid grey). Otherwise every
+ * edge would dissolve into the wallpaper and the grid would read as one
+ * block of text.
+ *
+ * The focused pane wears the app's signal hue (`--accent`: #3D8BFF dark,
+ * #096CDC light), the one colour the product spends on "this is where you
+ * are". It is the only standing accent in the workspace; a failed pane keeps
+ * the fault hue from `PANE_CHROME`, a little stronger to match the brighter
+ * resting line.
+ */
+export const PANE_TILE: Record<TerminalAppearance, PaneTileChrome> = {
+  light: {
+    edge: {
+      connecting: "rgba(38,37,30,0.30)",
+      live: "rgba(38,37,30,0.30)",
+      exited: "rgba(38,37,30,0.14)",
+      error: "rgba(190,23,68,0.65)",
+    },
+    focus: "#096cdc",
+  },
+  dark: {
+    edge: {
+      connecting: "rgba(255,255,255,0.26)",
+      live: "rgba(255,255,255,0.26)",
+      exited: "rgba(255,255,255,0.11)",
+      error: "rgba(227,70,113,0.75)",
+    },
+    focus: "#3d8bff",
   },
 };

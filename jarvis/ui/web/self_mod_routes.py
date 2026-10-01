@@ -16,8 +16,6 @@ because the log can grow over months (Plan §AD-6, no rotation).
 from __future__ import annotations
 
 import base64
-import hashlib
-import hmac
 import json
 import logging
 from datetime import datetime
@@ -27,6 +25,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from jarvis.core.admin_password import check_admin_pass
 from jarvis.core.self_mod import (
     AtomicConfigWriter,
     BackupRef,
@@ -106,13 +105,7 @@ def _security_cfg(request: Request) -> Any:
 
 def _check_admin_pass(provided: str | None, security_cfg: Any) -> bool:
     """Identical to skills_routes._check_admin_pass — reused here."""
-    if security_cfg is None:
-        return False
-    expected = getattr(security_cfg, "admin_password_hash", "")
-    if not expected or not provided:
-        return False
-    computed = hashlib.sha256(provided.encode("utf-8")).hexdigest()
-    return hmac.compare_digest(computed, expected)
+    return check_admin_pass(provided, security_cfg)
 
 
 # ----------------------------------------------------------------------

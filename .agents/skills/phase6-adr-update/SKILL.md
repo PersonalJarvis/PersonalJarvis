@@ -56,7 +56,7 @@ This skill writes a new ADR or amends an existing ADR in the Phase-6 family. Sty
    - ADR-0015 Worker-Backend-Containerized
    - ADR-0016 Mission-Reattach-Strategy
 
-5. **Update CLAUDE.md:** the Phase-6 section in `CLAUDE.md` references the current ADRs. If the new ADR is Phase-6-relevant: add it.
+5. **Update AGENTS.md:** the Phase-6 section in `AGENTS.md` references the current ADRs. If the new ADR is Phase-6-relevant: add it.
 
 6. **Verification:**
    - `markdown-lint` if available (otherwise visually).

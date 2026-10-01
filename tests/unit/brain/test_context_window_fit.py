@@ -248,3 +248,35 @@ class TestContextOverflowCause:
         assert "Kontextfenster" in text  # i18n-allow: the diagnostic is German
         assert "ollama" in text
         assert "Netzwerk" not in text  # i18n-allow
+
+
+class TestToolCountCap:
+    """Live 2026-09-29: xAI refused 378 tools ("the maximum is 350")."""
+
+    def test_count_cap_trims_without_a_window(self) -> None:
+        tools = {f"t{i}": _tool(f"t{i}", mcp=i < 3) for i in range(10)}
+        fitted, dropped = _fit_tools_to_context_window(
+            tools, context_window=0, used_tokens=0, max_tools=7
+        )
+        assert len(fitted) == 7
+        # Connected-server tools leave first.
+        assert set(dropped) == {"t0", "t1", "t2"}
+
+    def test_count_cap_never_drops_kept_tools(self) -> None:
+        tools = {f"t{i}": _tool(f"t{i}") for i in range(5)}
+        fitted, _ = _fit_tools_to_context_window(
+            tools, context_window=0, used_tokens=0, keep={"t0"}, max_tools=2
+        )
+        assert "t0" in fitted and len(fitted) == 2
+
+    def test_under_the_cap_is_untouched(self) -> None:
+        tools = {f"t{i}": _tool(f"t{i}") for i in range(5)}
+        fitted, dropped = _fit_tools_to_context_window(
+            tools, context_window=0, used_tokens=0, max_tools=5
+        )
+        assert fitted is tools and dropped == []
+
+    def test_grok_declares_its_cap(self) -> None:
+        from jarvis.plugins.brain.grok import GrokBrain
+
+        assert GrokBrain.max_tools == 350

@@ -13,7 +13,7 @@ call and no network. An LLM classifier here would sit on the voice path (AP-9),
 and it would make "did it look at my screen, and why?" unanswerable after the
 fact — ``IntentVerdict.evidence`` exists so that question always has an answer.
 
-**Every supported locale is equal** (CLAUDE.md §1): de, en and es are matched
+**Every supported locale is equal** (AGENTS.md §1): de, en and es are matched
 simultaneously rather than selected by the session locale, because a bilingual
 user mixes them inside one sentence and a locale-gated matcher would go deaf on
 the half it did not pick. Adding a locale is a data entry below, not code.
@@ -194,7 +194,7 @@ _END = r"\s*(?:$|[.?!;:])"
 
 # Filler particles a spoken deictic may trail before the clause ends. These are
 # the only tokens allowed between the pronoun and the end — anything else makes
-# it a determiner. Matching data, not prose (CLAUDE.md §1 category 3).
+# it a determiner. Matching data, not prose (AGENTS.md §1 category 3).
 _EN_TAIL = r"(?:\s+(?:then|exactly|now|again|here|there|really))*"
 _DE_TAIL = (  # i18n-allow: German speech-input matching data
     r"(?:\s+(?:denn|eigentlich|jetzt|gerade|genau|nochmal|noch\s+mal"
@@ -290,7 +290,7 @@ _SCREEN_INTENT_RE: re.Pattern[str] = re.compile(
     # readily as "Bildschirm" — the miss sent a live turn into a blind
     # tool-loop instead of the one-shot look (voice session 2026-08-06 20:51).
     # i18n-allow: German speech-input matching data
-    r"|\b(?:auf|an|in)\s+(?:dem|den|meinem|meinen|deinem|deinen|diesem|diesen)"  # i18n-allow: DE input
+    r"|\b(?:auf|an|in)\s+(?:dem|den|meinem|meinen|deinem|deinen|diesem|diesen)"  # i18n-allow
     r"\s+(?:bildschirm|monitor|screen|display)\b"  # i18n-allow: DE input
     r"|\bam\s+(?:bildschirm|monitor|screen|display)\b"  # i18n-allow: DE input
     r"|\bmein(?:en|em)?\s+(?:bildschirm|monitor|screen|display)\b"  # i18n-allow
@@ -347,6 +347,46 @@ _SCREEN_INTENT_RE: re.Pattern[str] = re.compile(
     r")",
     re.IGNORECASE,
 )
+
+
+# --------------------------------------------------------------------------
+# Appshot — the feature named outright
+# --------------------------------------------------------------------------
+
+# "Appshot" is the product's own word for "show the assistant my front
+# window", so naming it is the least ambiguous look request there is. Speech
+# recognition spells it every way ("App Shot", "App-Shot", "Epp Shot").
+_APPSHOT_WORD = r"\b(?:app|apps|ap|epp|ep)[\s-]?shots?\b"
+_APPSHOT_RE: re.Pattern[str] = re.compile(_APPSHOT_WORD, re.IGNORECASE)
+
+# Asking ABOUT the feature is not asking for one.
+_APPSHOT_META_RE: re.Pattern[str] = re.compile(
+    r"(?:"
+    rf"\bwhat\s+(?:is|are)\s+(?:an?\s+)?{_APPSHOT_WORD}"
+    rf"|\bhow\s+(?:do|does|can|to)\b[^.?!]{{0,48}}{_APPSHOT_WORD}"
+    # i18n-allow: German speech-input matching data
+    rf"|\bwas\s+(?:ist|sind)\s+(?:ein(?:e)?\s+)?{_APPSHOT_WORD}"  # i18n-allow: DE speech input
+    rf"|\bwie\s+(?:funktioniert|funktionieren|geht|macht\s+man)\b[^.?!]{{0,48}}{_APPSHOT_WORD}"
+    # i18n-allow: Spanish speech-input matching data
+    rf"|\bque\s+(?:es|son)\s+(?:un\s+)?{_APPSHOT_WORD}"
+    rf"|\bcomo\s+(?:funciona|funcionan|se\s+hace)\b[^.?!]{{0,48}}{_APPSHOT_WORD}"
+    # Opening the Appshots settings page is navigation, not a capture.
+    r"|\b(?:open|go\s+to|navigate\s+to|oeffne|geh\s+(?:zu|in|auf)"  # i18n-allow: DE input
+    r"|wechsel\s+(?:zu|in)|abre|ve\s+a)\b[^.?!]{0,24}?"
+    rf"(?:the\s+|die\s+|den\s+|los\s+)?{_APPSHOT_WORD}"  # i18n-allow: DE speech input
+    r"(?:\s+(?:settings|page|section|einstellungen|seite"  # i18n-allow
+    r"|ajustes|pagina))?\s*(?:$|[.?!;:])"
+    rf"|{_APPSHOT_WORD}[\s-]?(?:settings|page|section"
+    r"|einstellungen|seite|ajustes)\b"  # i18n-allow
+    r")",
+    re.IGNORECASE,
+)
+
+
+def mentions_appshot(text: str) -> bool:
+    """Does ``text`` ask for an appshot (not merely ask about the feature)?"""
+    normalized = _normalize(text or "")
+    return bool(_APPSHOT_RE.search(normalized)) and not _APPSHOT_META_RE.search(normalized)
 
 
 # --------------------------------------------------------------------------
@@ -588,6 +628,14 @@ def classify(text: str, *, locale: str = "") -> IntentVerdict:
     if requests_screen_operation(normalized):
         return IntentVerdict(intent=VisualIntent.NONE, locale=locale)
 
+    # An appshot is the front window by definition.
+    if _APPSHOT_RE.search(normalized) and not _APPSHOT_META_RE.search(normalized):
+        return IntentVerdict(
+            intent=VisualIntent.WINDOW,
+            evidence=_evidence(_APPSHOT_RE, normalized),
+            locale=locale,
+        )
+
     window_hits = _evidence(_WINDOW_SCOPE_RE, normalized)
     screen_hits = _evidence(_SCREEN_INTENT_RE, normalized)
 
@@ -624,7 +672,7 @@ def classify(text: str, *, locale: str = "") -> IntentVerdict:
 
 # One entry per supported locale, keyed by the BCP-47 base tag. Adding a locale
 # means adding a line here AND to the matcher above — never a de/en-only table
-# (CLAUDE.md §1.3). The phrasing is deliberately a yes/no question about
+# (AGENTS.md §1.3). The phrasing is deliberately a yes/no question about
 # looking, so a bare "yes" in the next turn is a complete answer.
 # i18n-allow: this IS the runtime multilingual product surface (§1 category 1)
 _CLARIFY_QUESTION: dict[str, str] = {

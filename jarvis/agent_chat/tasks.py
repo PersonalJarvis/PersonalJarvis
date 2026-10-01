@@ -5,7 +5,12 @@ from __future__ import annotations
 import asyncio
 from uuid import uuid4
 
-from jarvis.core.task_agent import TaskToolScope, register_scope, release_scope, subscription_seat
+from jarvis.core.task_agent import (
+    TaskToolScope,
+    register_scope,
+    release_scope,
+    subscription_seat_off_loop,
+)
 
 
 async def run_subscription_task(*, selection, prompt, tool_names, trace_id=None) -> str:
@@ -15,7 +20,7 @@ async def run_subscription_task(*, selection, prompt, tool_names, trace_id=None)
     from jarvis.core.paths import chat_workspace_dir
     from jarvis.core.protocols import ChatTurn, current_chat_turn
 
-    seat = subscription_seat(selection.provider)
+    seat = await subscription_seat_off_loop(selection.provider)
     if seat is None:
         raise RuntimeError("No subscription runner is registered for the selected agent.")
     provider, runner = seat

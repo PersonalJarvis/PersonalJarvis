@@ -1,0 +1,118 @@
+# Merge train — integrates several coding agents' pull requests without a human.
+#
+# Every tick (a push to main, a finished CI run, every 15 minutes, or by hand):
+#
+#   1. Eligible PRs: same repository, base main, not a draft, head branch
+#      codex/ claude/ agent/ gemini/ cursor/ bot/ — or labelled `auto-merge`.
+#      `no-auto-merge`, `do-not-merge`, `wip` or `needs-human` opt a PR out.
+#      Forks and Dependabot never qualify (supply-chain bumps stay human).
+#   2. A PR that CONFLICTS with main (or whose CI failed while it was behind)
+#      gets main merged into it (scripts/ci/agent_integrate.py): generated
+#      files are regenerated, append-only files union-merged, everything else
+#      goes to the optional AI resolver or is reported with a `needs-rebase`
+#      label. No force push. A PR that is merely behind is left alone — with
+#      several agents pushing to main, re-testing every PR on every push meant
+#      nothing ever landed.
+#   3. The first green, conflict-free PR is squash-merged — one per tick. The
+#      full post-merge run on main is the backstop for changes that pass alone
+#      and break together (the same model as GitHub's non-strict checks).
+#
+# Tokens: with the optional INTEGRATION_TOKEN secret (a fine-grained PAT or App
+# token with contents + pull-requests write), pushes and merges fire the normal
+# pull_request / push events. Without it the train uses GITHUB_TOKEN: the
+# pull_request run its own push triggers parks in "action_required" and the
+# train approves it on the next tick (a dispatched run would never count for
+# the pull request), and it dispatches ci.yml for main after every merge.
+#
+# AI conflict resolution is optional: set ANTHROPIC_API_KEY (Claude Code) or
+# OPENAI_API_KEY (Codex CLI). Without a key, semantic conflicts are reported.
+#
+# Trust: the train runs the checked-out PR's own build scripts with a write
+# token, which is why forks are excluded — only people with push access to this
+# repository can put a branch on the train.
+
+name: Merge train
+
+on:
+  push:
+    branches: [main]
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Report what the train would do without pushing or merging."
+        type: boolean
+        default: false
+
+# One train at a time; a queued tick replaces an older queued one.
+concurrency:
+  group: merge-train
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+  checks: read
+
+jobs:
+  train:
+    name: merge train
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ secrets.INTEGRATION_TOKEN || github.token }}
+      TOKEN_IS_BOT: ${{ secrets.INTEGRATION_TOKEN == '' }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.INTEGRATION_TOKEN || github.token }}
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Regenerator dependencies (mirrors, reference docs, locks)
+        run: |
+          python -m pip install -e . --no-deps
+          python -m pip install typer platformdirs click httpx rich pyyaml pydantic loguru python-dotenv packaging uv==0.11.19
+      - name: Restore recorded conflict resolutions (git rerere)
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: .git/rr-cache
+          key: rerere-${{ github.run_id }}
+          restore-keys: rerere-
+      - name: Optional AI conflict resolver
+        id: resolver
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ -n "$ANTHROPIC_API_KEY" ]; then
+            npm install -g @anthropic-ai/claude-code >/dev/null
+            echo 'cmd=claude -p --permission-mode acceptEdits --allowedTools Read,Edit' >> "$GITHUB_OUTPUT"
+          elif [ -n "$OPENAI_API_KEY" ]; then
+            npm install -g @openai/codex >/dev/null
+            echo 'cmd=codex exec --full-auto -' >> "$GITHUB_OUTPUT"
+          else
+            echo "No resolver key configured - semantic conflicts are reported, not resolved."
+          fi
+      - name: Run the train
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          CONFLICT_RESOLVER_CMD: ${{ steps.resolver.outputs.cmd }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          git config user.name "jarvis-merge-train[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          args=(--repo "$GITHUB_REPOSITORY")
+          [ "$DRY_RUN" = "true" ] && args+=(--dry-run)
+          [ "$TOKEN_IS_BOT" = "true" ] && args+=(--token-is-bot)
+          python scripts/ci/agent_integrate.py train "${args[@]}"

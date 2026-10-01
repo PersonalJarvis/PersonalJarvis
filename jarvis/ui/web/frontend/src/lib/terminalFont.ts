@@ -47,8 +47,24 @@ export const TERMINAL_FONT_STACK =
 /** The display font at the head of the stack — the one that arrives late. */
 const DISPLAY_FAMILY = '"JetBrains Mono"';
 
+/**
+ * The weight body text draws with: Medium, not Regular.
+ *
+ * xterm's WebGL renderer rasterises glyphs with greyscale anti-aliasing, which
+ * draws JetBrains Mono Regular with a thin, grey stem — a native terminal's
+ * DirectWrite/Core Text pass renders the same size visibly fuller. Measured on
+ * 2026-09-29 against a pane in Windows Terminal (Cascadia Mono 12pt): its
+ * text had roughly eight times as many fully-inked pixels per line as ours,
+ * even though our foreground is the brighter colour. The Medium cut closes
+ * that gap without touching the palette; the cut ships in ../index.css.
+ */
+export const TERMINAL_FONT_WEIGHT = 500;
+
+/** The weight a TUI's bold spans draw with — still clearly above the body. */
+export const TERMINAL_FONT_WEIGHT_BOLD = 700;
+
 /** The weights xterm paints with: body text, and the bold spans a TUI uses. */
-const WEIGHTS = [400, 700] as const;
+const WEIGHTS = [TERMINAL_FONT_WEIGHT, TERMINAL_FONT_WEIGHT_BOLD] as const;
 
 /** Measured over a run of glyphs so per-character rounding cannot dominate. */
 const SAMPLE = "W".repeat(32);
@@ -206,7 +222,7 @@ export function terminalFontSettled(
   const fonts = deps.fonts !== undefined ? deps.fonts : browserFonts();
   if (!fonts) return true;
   try {
-    return displayFaceDeclared(fonts) && fonts.check(`400 ${fontSize}px ${DISPLAY_FAMILY}`);
+    return displayFaceDeclared(fonts) && fonts.check(`${TERMINAL_FONT_WEIGHT} ${fontSize}px ${DISPLAY_FAMILY}`);
   } catch {
     return true;
   }
@@ -240,7 +256,12 @@ export function whenTerminalFontReady(
   const fonts = deps.fonts !== undefined ? deps.fonts : browserFonts();
   if (!fonts || terminalFontSettled(fontSize, { fonts })) return Promise.resolve();
   const timeoutMs = deps.timeoutMs ?? FONT_WAIT_MS;
-  const spec = `400 ${fontSize}px ${DISPLAY_FAMILY}`;
+  // The weight the settled check asks about, never a hard-coded Regular. When
+  // the body weight moved to Medium this still requested 400: the Regular cut
+  // loaded, the Medium one was never asked for, and every pane opened on a
+  // screen that had drawn no terminal yet sat out the whole wait (1.5 s+ on
+  // the office's pane panel, 2026-09-30).
+  const spec = `${TERMINAL_FONT_WEIGHT} ${fontSize}px ${DISPLAY_FAMILY}`;
   return new Promise<void>((resolve) => {
     let done = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -284,6 +305,27 @@ export function whenTerminalFontReady(
       if (!done) request();
     }, 50);
   });
+}
+
+/**
+ * Start fetching the terminal's display faces before any pane exists.
+ *
+ * A face nothing has drawn with yet is only loaded once asked for, so the
+ * first pane a screen opens pays for the fetch inside `whenTerminalFontReady`
+ * — a few hundred milliseconds on a busy page, and all of it between the click
+ * and the agent's screen. A surface that is about to offer panes (the office's
+ * coding floor) calls this ahead of time. Fire-and-forget, never throws.
+ */
+export function warmTerminalFont(fontSize: number): void {
+  const fonts = browserFonts();
+  if (!fonts) return;
+  for (const weight of WEIGHTS) {
+    try {
+      void fonts.load(`${weight} ${fontSize}px ${DISPLAY_FAMILY}`).catch(() => undefined);
+    } catch {
+      /* a family the engine refuses to parse — the pane's own bounded wait covers it */
+    }
+  }
 }
 
 function browserFonts(): FontFaceSet | null {

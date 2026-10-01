@@ -112,6 +112,22 @@ SELF_INPUT_SUPPRESSED_EVENTS: frozenset[str] = frozenset(
     }
 )
 
+def _is_bare_ctrl_alt_chord(combo: str) -> bool:
+    """A modifier-only chord holding Ctrl and Alt, e.g. ``ctrl+alt``.
+
+    On an AltGr keyboard layout the right Alt key IS Ctrl+Alt to Windows, so
+    such a chord also fires on every ``@``/``€`` typed and on the both-Alt
+    appshot gesture. An explicit ``right_ctrl`` is a real key, never AltGr.
+    """
+    tokens = [t.strip() for t in _normalize_combo(combo).split("+") if t.strip()]
+    return (
+        "control" in tokens
+        and "alt" in tokens
+        and "right_control" not in tokens
+        and all(t in _MODIFIER_TOKENS for t in tokens)
+    )
+
+
 # Tokens that are modifiers, not "real" keys. A hotkey made of ONLY modifiers
 # is not a usable trigger; a usable combo needs at least one real key.
 _MODIFIER_TOKENS = frozenset(
@@ -705,6 +721,13 @@ class HotkeyTrigger:
         return getattr(self._backend, "_gh", None)
 
     def _make_handler(self, event_name: str):
+        # Only START edges are guarded: a dropped release would strand the
+        # latch its press set (see ``SELF_INPUT_SUPPRESSED_EVENTS``).
+        altgr_guarded = event_name in SELF_INPUT_SUPPRESSED_EVENTS and all(
+            _is_bare_ctrl_alt_chord(combo)
+            for combo in self._bindings_cfg.get(event_name.removesuffix("_press")) or ["x"]
+        )
+
         def _on_press() -> None:
             # Runs on the BACKEND's thread — the Windows poller calls it with
             # no try/except around it (``HotkeyChecker.run``), so anything that
@@ -715,6 +738,11 @@ class HotkeyTrigger:
                     log.debug(
                         "Hotkey %r ignored: Jarvis is synthesizing input right now.",
                         event_name,
+                    )
+                    return
+                if altgr_guarded and _gh_backend.altgr_is_down():
+                    log.debug(
+                        "Hotkey %r ignored: AltGr, not Ctrl+Alt, is held.", event_name
                     )
                     return
                 loop = self._loop

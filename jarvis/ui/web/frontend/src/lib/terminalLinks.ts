@@ -11,6 +11,13 @@ import type {
 import { openTerminalTarget } from "@/lib/agenticIdeApi";
 import { openExternalUrl } from "@/lib/openExternal";
 
+/**
+ * Raised for a Ctrl/Cmd-clicked local path before the OS opener runs. A
+ * listener that shows the file in the app (the IDE's Explorer) calls
+ * `preventDefault()`, and the OS opener is skipped.
+ */
+export const OPEN_PATH_EVENT = "jarvis:ide-open-path";
+
 const MAX_LOGICAL_LINE_CHARS = 4096;
 
 const BARE_FILE = /^(?:(?:readme|license|makefile|dockerfile|containerfile)|[^/\\]+\.(?:c|cc|cpp|h|hpp|cs|go|rs|java|kt|kts|swift|php|rb|py|pyi|js|mjs|cjs|jsx|ts|mts|cts|tsx|vue|svelte|html?|css|scss|sass|less|json|jsonl|ya?ml|toml|xml|md|mdx|txt|log|csv|tsv|sql|sh|bash|zsh|fish|ps1|bat|cmd|ini|cfg|conf|env|lock|diff|patch|pdf|png|jpe?g|gif|svg|webp))(?::[1-9]\d*(?::[1-9]\d*)?|#L[1-9]\d*(?::[1-9]\d*)?|\([1-9]\d*(?:,[1-9]\d*)?\))?$/i;
@@ -80,6 +87,13 @@ export function activateTerminalLink(
     return;
   }
   if (!options.workspaceId || !isTerminalPath(uri)) return;
+  // The IDE's Explorer shows the file — with its diff — when it is mounted; it
+  // answers by cancelling the event. Otherwise the OS opens it as before.
+  const routed = new CustomEvent(OPEN_PATH_EVENT, {
+    cancelable: true,
+    detail: { workspaceId: options.workspaceId, path: uri },
+  });
+  if (!window.dispatchEvent(routed)) return;
   void openTerminalTarget(options.workspaceId, uri).catch((error: unknown) => {
     const message = errorMessage(error);
     if (options.onError) options.onError(message);

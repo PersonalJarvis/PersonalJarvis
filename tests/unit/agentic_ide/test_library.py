@@ -44,22 +44,20 @@ def test_reopening_a_project_keeps_its_name(tmp_path: Path) -> None:
     assert reopened.name == "The good one"
 
 
-def test_projects_list_pinned_first_then_most_recent(tmp_path: Path) -> None:
+def test_projects_list_pinned_first_then_in_the_users_order(tmp_path: Path) -> None:
     """The order IS the sidebar's order, so it is asserted rather than assumed."""
     for name in ("alpha", "beta", "gamma"):
         (tmp_path / name).mkdir()
-    alpha = library.ensure_project(tmp_path / "alpha")
+    library.ensure_project(tmp_path / "alpha")
     library.ensure_project(tmp_path / "beta")
     gamma = library.ensure_project(tmp_path / "gamma")
-    library.update_project(alpha.id, pinned=True)
+    library.update_project(gamma.id, pinned=True)
 
     listed = [p.name for p in library.list_projects()]
 
-    # Pinned wins outright; the rest fall in most-recently-opened order, and
-    # gamma was opened last.
-    assert listed[0] == "alpha"
-    assert listed[1] == "gamma"
-    assert gamma.id in {p.id for p in library.list_projects()}
+    # Pinned wins outright; the rest keep the drag-and-drop order, where a
+    # project nobody arranged goes behind every arranged one.
+    assert listed == ["gamma", "alpha", "beta"]
 
 
 def test_archived_projects_are_hidden_but_not_gone(tmp_path: Path) -> None:
@@ -218,3 +216,10 @@ def test_title_from_prompt_takes_the_first_line_and_stays_short() -> None:
 def test_title_from_prompt_survives_an_empty_prompt() -> None:
     """Whitespace in, empty out — never an exception on the prompt path."""
     assert library.title_from_prompt("   \n\n  ") == ""
+
+
+def test_a_hostile_project_id_never_names_a_file_outside() -> None:
+    """A project id from a request cannot read or write beside the threads folder."""
+    for hostile in ("../projects", "..", "a/b", "C:evil"):
+        assert library._threads_path(hostile) is None
+        assert library.list_threads(hostile) == []

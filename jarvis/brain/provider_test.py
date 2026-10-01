@@ -18,6 +18,7 @@ mirror it (anti-drift, BUG-008 class).
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -347,6 +348,31 @@ def _resolve_provider_option(cfg: Any, provider: str, field: str) -> str:
         return ""
 
 
+def _continuous_rejection(event: dict) -> str:
+    """Explain a rejected continuous-voice session without its provider body.
+
+    The provider's error text is classified here and then dropped (AP-34); only
+    our own sentence for that class leaves. Live 2026-09-29: an OpenAI key with
+    no credits was reported as "rejected the selected session, check the
+    model settings", which sent the user to the wrong screen.
+    """
+    try:
+        raw = json.dumps(event.get("error") or event, default=str)
+    except (TypeError, ValueError):  # unserializable: classify as an unknown refusal
+        raw = ""
+    status = classify_provider_error(raw)
+    if status == NO_CREDITS:
+        return "Continuous voice refused the session: the account has no credits left."
+    if status == RATE_LIMITED:
+        return "Continuous voice refused the session: too many requests right now."
+    if status == BAD_KEY:
+        return "Continuous voice refused the session: HTTP 401, the key was rejected."
+    return (
+        "Continuous voice rejected the selected session. "
+        "Check the Live model, voice and thinking-model settings."
+    )
+
+
 async def _default_realtime_probe(spec: Any, cfg: Any, *, timeout_s: float) -> float:
     """Open and close the exact selected realtime provider.
 
@@ -411,10 +437,7 @@ async def _default_realtime_probe(spec: Any, cfg: Any, *, timeout_s: float) -> f
                         await session.send({"type": "session.close"})
                         return latency_ms
                     if event.get("type") in {"error", "session.closed"}:
-                        raise RuntimeError(
-                            "Continuous voice rejected the selected session. "
-                            "Check the Live model, voice and thinking-model settings."
-                        )
+                        raise RuntimeError(_continuous_rejection(event))
             finally:
                 await session.close()
 

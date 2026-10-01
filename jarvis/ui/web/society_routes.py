@@ -13,12 +13,16 @@ is dangerous in both directions because releasing it resumes work.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from collections.abc import Iterator
+from contextlib import contextmanager
+from typing import Any, Literal
+from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.requests import HTTPConnection
 
+from jarvis.brain.assistant_name import DEFAULT_ASSISTANT_NAME, resolve_assistant_name
 from jarvis.society.events import MsgType
 from jarvis.society.failure_reasons import FailureReason, retry_action
 from jarvis.society.memory import MEMORY_SHARE_CAPABILITY, MemoryRefused
@@ -67,6 +71,40 @@ def _typed_error(exc: RosterError | RoomError) -> HTTPException:
     )
 
 
+def _validated_chat_runner(
+    rt: SocietyRuntime,
+    agent: AgentRecord,
+    provider: str,
+    *,
+    approval_mode: str | None = None,
+    permission_ceiling: str | None = None,
+) -> str:
+    """Reject a runner change that cannot honor the effective chat approval."""
+    from jarvis.agent_chat.permissions import normalize_permission, society_mode_supported
+    from jarvis.agent_chat.service import resolve_runner
+
+    runner = resolve_runner(provider, surface="society")
+    mode = approval_mode if approval_mode is not None else (
+        str(agent.approval_mode) if agent.approval_mode is not None else ""
+    )
+    if mode and not society_mode_supported(runner, mode):
+        raise HTTPException(422, "This runner cannot provide an actionable approval for that mode.")
+    ceiling = str(
+        permission_ceiling if permission_ceiling is not None else agent.permission_ceiling
+    )
+    if not mode and ceiling != "safe" and not society_mode_supported(runner, "ask"):
+        raise HTTPException(
+            422, "This runner cannot provide an actionable approval for this legacy agent."
+        )
+    chat = rt.chat_service()
+    if chat is not None and chat.store.get_session(agent.session_id) is not None:
+        override = chat.store.permission_override(agent.session_id)
+        if override and override not in ("plan", "read-only"):
+            if not society_mode_supported(runner, normalize_permission("society", override)):
+                raise HTTPException(422, "This runner cannot honor the chat's approval choice.")
+    return runner
+
+
 # ------------------------------------------------------------------- models
 
 
@@ -86,12 +124,22 @@ class CreateAgentBody(BaseModel):
     denies: list[str] | None = None
     skills: list[str] | None = None
     permission_ceiling: str | None = None
+    approval_mode: str | None = None
     approval_rules: dict[str, list[str]] | None = None
     daily_budget_usd: float | None = None
     max_concurrent_runs: int | None = None
     avatar: dict[str, Any] | None = None
     browser_mode: str | None = None
     browser_allowed_domains: list[str] | None = None
+    #: Where the agent runs: "" = this computer, else a connected computer id.
+    computer_id: str | None = None
+    #: Structured brief (jarvis.society.brief); rendered into ``description``.
+    mission: str | None = Field(default=None, max_length=2_000)
+    responsibilities: list[str] | None = None
+    working_rules: list[str] | None = None
+    output_format: str | None = Field(default=None, max_length=2_000)
+    boundaries: list[str] | None = None
+    success_criteria: str | None = Field(default=None, max_length=2_000)
 
 
 class PatchAgentBody(BaseModel):
@@ -112,6 +160,7 @@ class PatchAgentBody(BaseModel):
     skills: list[str] | None = None
     knowledge_scope: str | None = None
     permission_ceiling: str | None = None
+    approval_mode: str | None = None
     approval_rules: dict[str, list[str]] | None = None
     daily_budget_usd: float | None = None
     max_concurrent_runs: int | None = None
@@ -119,6 +168,15 @@ class PatchAgentBody(BaseModel):
     checkpoint: str | None = None
     browser_mode: str | None = None
     browser_allowed_domains: list[str] | None = None
+    #: Where the agent runs: "" = this computer, else a connected computer id.
+    computer_id: str | None = None
+    #: Structured brief (jarvis.society.brief); rendered into ``description``.
+    mission: str | None = Field(default=None, max_length=2_000)
+    responsibilities: list[str] | None = None
+    working_rules: list[str] | None = None
+    output_format: str | None = Field(default=None, max_length=2_000)
+    boundaries: list[str] | None = None
+    success_criteria: str | None = Field(default=None, max_length=2_000)
 
 
 class MessageBody(BaseModel):
@@ -127,6 +185,11 @@ class MessageBody(BaseModel):
     msg_type: str = "SAY"
     trace_id: str | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class ChatGroupBody(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    members: list[str] = Field(min_length=2, max_length=50)
 
 
 class AssignBody(BaseModel):
@@ -156,13 +219,29 @@ class RoomSayBody(BaseModel):
 # ------------------------------------------------------------------- agents
 
 
+def _agent_row(agent: AgentRecord, request: HTTPConnection) -> dict[str, Any]:
+    """Serialize an agent; the lead wears the name derived from the wake phrase.
+
+    The roster row keeps its seeded name, but the lead IS the assistant, so every
+    surface (office, roster, chat, CLI) shows what the user calls it. Resolved per
+    request, so a changed wake word shows up without a restart.
+    """
+    row = agent.to_dict()
+    if agent.tier == "lead":
+        config = getattr(request.app.state, "config", None)
+        name = resolve_assistant_name(config) if config is not None else ""
+        if name and name != DEFAULT_ASSISTANT_NAME:
+            row["name"] = name
+    return row
+
+
 @router.get("/agents")
 async def list_agents(request: Request, include_archived: bool = False) -> dict[str, Any]:
     rt = await _runtime(request)
     agents = await rt.roster.list(include_archived=include_archived)
     rows = []
     for agent in agents:
-        row = agent.to_dict()
+        row = _agent_row(agent, request)
         if agent.state == "paused":
             row["run_state"] = "paused"
         elif rt.checkpoints.is_busy(agent.agent_id):
@@ -188,16 +267,48 @@ async def _creator_from_request(request: Request, rt: SocietyRuntime) -> AgentRe
     return agent
 
 
+def _capability_readback(rt: SocietyRuntime, agent: AgentRecord) -> dict[str, Any]:
+    """What the agent can reach, so a spoken confirmation states facts: its
+    focus by label, and focus capabilities whose service is not connected."""
+    try:
+        rows = {row.id: row for row in rt.catalog()}
+    except Exception:  # noqa: BLE001 — the readback is advisory; the save stands
+        log.warning("society: capability readback unavailable", exc_info=True)
+        return {}
+    focus = [rows[cap].label if cap in rows else cap for cap in agent.focus]
+    missing = [rows[cap].label for cap in agent.focus if cap in rows and not rows[cap].connected]
+    readback: dict[str, Any] = {"focus": focus}
+    if missing:
+        readback["not_connected"] = missing
+        readback["hint"] = "Tell the user to connect these in the Marketplace first."
+    return readback
+
+
 @router.post("/agents")
 async def create_agent(body: CreateAgentBody, request: Request) -> dict[str, Any]:
+    from jarvis.society.brief import BRIEF_FIELDS, compose_description
+
     rt = await _runtime(request)
-    fields = body.model_dump(exclude_none=True, exclude={"name", "title", "description", "tier"})
+    fields = body.model_dump(
+        exclude_none=True, exclude={"name", "title", "description", "tier", *BRIEF_FIELDS}
+    )
+    description = compose_description(body.description, body.model_dump(include=set(BRIEF_FIELDS)))
     creator = await _creator_from_request(request, rt)
     if creator is not None:
         from jarvis.society.inherit import inherit_creator_fields
 
         fields = inherit_creator_fields(fields, creator)
-    derived_focus, derived_rules = rt.derive(body.title, body.description)
+    requested_mode = str(fields.get("approval_mode") or "bypass")
+    provider = str(fields.get("provider") or body.provider)
+    if provider:
+        from jarvis.agent_chat.permissions import society_mode_supported
+        from jarvis.agent_chat.service import resolve_runner
+
+        if not society_mode_supported(resolve_runner(provider, surface="society"), requested_mode):
+            raise HTTPException(
+                422, "This runner cannot provide an actionable approval for that mode."
+            )
+    derived_focus, derived_rules = rt.derive(body.title, description)
     if body.focus is None and derived_focus:
         fields["focus"] = derived_focus
     if str(fields.get("grant_mode") or "") == "allowlist":
@@ -210,13 +321,17 @@ async def create_agent(body: CreateAgentBody, request: Request) -> dict[str, Any
         agent, created = await rt.roster.create(
             name=body.name,
             title=body.title,
-            description=body.description,
+            description=description,
             tier=body.tier,
             **fields,
         )
     except RosterError as exc:
         raise _typed_error(exc) from exc
-    return {"agent": agent.to_dict(), "created": created}
+    return {
+        "agent": agent.to_dict(),
+        "created": created,
+        "readback": _capability_readback(rt, agent),
+    }
 
 
 @router.get("/agents/{agent_id}")
@@ -227,7 +342,7 @@ async def get_agent(agent_id: str, request: Request) -> dict[str, Any]:
         raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
     events = await rt.store.events_for_agent(agent.agent_id, limit=50)
     return {
-        "agent": agent.to_dict(),
+        "agent": _agent_row(agent, request),
         "recent_events": [e.model_dump() for e in events],
         "active_runs": rt.scheduler.active_runs(agent.agent_id),
     }
@@ -239,7 +354,21 @@ async def patch_agent(agent_id: str, body: PatchAgentBody, request: Request) -> 
     agent = await rt.roster.resolve(agent_id)
     if agent is None:
         raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
-    fields = body.model_dump(exclude_none=True)
+    from jarvis.society.brief import BRIEF_FIELDS, compose_description, has_brief
+
+    fields = body.model_dump(exclude_none=True, exclude=set(BRIEF_FIELDS))
+    brief = body.model_dump(include=set(BRIEF_FIELDS))
+    if has_brief(brief):
+        # A brief rewrites the standing instructions as a whole.
+        fields["description"] = compose_description(body.description or "", brief)
+    if any(key in fields for key in ("provider", "approval_mode", "permission_ceiling")):
+        _validated_chat_runner(
+            rt,
+            agent,
+            body.provider or agent.provider,
+            approval_mode=body.approval_mode,
+            permission_ceiling=fields.get("permission_ceiling"),
+        )
     if ("title" in fields or "description" in fields) and "focus" not in fields:
         # A prose edit must not wipe what the agent earned in its chat: the
         # derived focus is APPENDED to the existing order (existing first,
@@ -261,10 +390,23 @@ async def patch_agent(agent_id: str, body: PatchAgentBody, request: Request) -> 
         updated = await rt.roster.update(agent.agent_id, fields)
     except RosterError as exc:
         raise _typed_error(exc) from exc
+    if "approval_mode" in fields:
+        svc = rt.chat_service()
+        if (
+            svc is not None
+            and svc.store.get_session(updated.session_id) is not None
+            and not svc.is_running(updated.session_id)
+        ):
+            from jarvis.society.chat_binding import ensure_session
+
+            # An active turn keeps its pinned seat. An idle one rebinds through
+            # the roster plus any narrower chat override instead of replacing
+            # that override with the card's new default.
+            ensure_session(svc, rt.config(), updated)
     if "state" in fields:
         await rt.checkpoints.refresh(agent.agent_id)
         updated = await rt.roster.get(agent.agent_id) or updated
-    return {"agent": updated.to_dict()}
+    return {"agent": _agent_row(updated, request), "readback": _capability_readback(rt, updated)}
 
 
 @router.post("/agents/{agent_id}/chat")
@@ -281,7 +423,10 @@ async def bind_agent_chat(agent_id: str, request: Request) -> dict[str, Any]:
         raise HTTPException(503, "agent chat service unavailable")
     from jarvis.society.chat_binding import ensure_session
 
-    session = ensure_session(svc, rt.config(), agent)
+    try:
+        session = ensure_session(svc, rt.config(), agent)
+    except PermissionError as exc:
+        raise HTTPException(422, str(exc)) from exc
     return {"session": session.to_dict(), "agent_id": agent.agent_id}
 
 
@@ -296,6 +441,56 @@ async def archive_agent(agent_id: str, request: Request) -> dict[str, Any]:
     except RosterError as exc:
         raise _typed_error(exc) from exc
     return {"agent": archived.to_dict()}
+
+
+async def _valid_group_members(rt: SocietyRuntime, members: list[str]) -> list[str]:
+    if len(set(members)) != len(members):
+        raise HTTPException(422, "group members must be unique")
+    for member_id in members:
+        agent = await rt.roster.get(member_id)
+        if agent is None or agent.tier == "lead" or agent.state == "archived":
+            raise HTTPException(422, f"agent {member_id} is unavailable for a group")
+    return members
+
+
+@router.get("/chat-groups")
+async def list_chat_groups(request: Request) -> dict[str, Any]:
+    """List persistent Society group chats and their members."""
+    rt = await _runtime(request)
+    return {"groups": await rt.store.list_chat_groups()}
+
+
+@router.post("/chat-groups")
+async def create_chat_group(body: ChatGroupBody, request: Request) -> dict[str, Any]:
+    """Create one group chat from available Society agents."""
+    rt = await _runtime(request)
+    if not body.name.strip():
+        raise HTTPException(422, "group name is required")
+    members = await _valid_group_members(rt, body.members)
+    group = await rt.store.create_chat_group(uuid4().hex, body.name.strip(), members)
+    return {"group": group}
+
+
+@router.patch("/chat-groups/{group_id}")
+async def update_chat_group(group_id: str, body: ChatGroupBody, request: Request) -> dict[str, Any]:
+    """Rename a group chat and replace its member list."""
+    rt = await _runtime(request)
+    if not body.name.strip():
+        raise HTTPException(422, "group name is required")
+    if await rt.store.get_chat_group(group_id) is None:
+        raise HTTPException(404, "chat group not found")
+    members = await _valid_group_members(rt, body.members)
+    return {"group": await rt.store.update_chat_group(group_id, body.name.strip(), members)}
+
+
+@router.delete("/chat-groups/{group_id}", openapi_extra={"x-jarvis-dangerous": True})
+async def delete_chat_group(group_id: str, request: Request) -> dict[str, bool]:
+    """Ungroup agents while preserving their individual conversations."""
+    rt = await _runtime(request)
+    if await rt.store.get_chat_group(group_id) is None:
+        raise HTTPException(404, "chat group not found")
+    await rt.store.delete_chat_group(group_id)
+    return {"deleted": True}
 
 
 @router.post("/agents/{agent_id}/message", openapi_extra={"x-jarvis-dangerous": True})
@@ -374,7 +569,7 @@ async def kill_agent(agent_id: str, request: Request) -> dict[str, Any]:
             except Exception:  # noqa: BLE001 — already gone is fine
                 log.debug("society kill: mission %s not cancellable", run_id)
     paused = await rt.roster.update(agent.agent_id, {"state": "paused"})
-    return {"agent": paused.to_dict(), "runs_dropped": dropped}
+    return {"agent": _agent_row(paused, request), "runs_dropped": dropped}
 
 
 # ------------------------------------------------------------------ quests
@@ -560,7 +755,6 @@ async def switch_agent_model(agent_id: str, body: ModelBody, request: Request) -
     """Move the agent onto another provider / model / effort / subscription seat.
     Its canonical chat is re-seated at once (transcript kept)."""
     from jarvis.agent_chat.catalog import offers
-    from jarvis.agent_chat.service import resolve_runner
 
     rt = await _runtime(request)
     agent = await rt.roster.resolve(agent_id)
@@ -571,13 +765,14 @@ async def switch_agent_model(agent_id: str, body: ModelBody, request: Request) -
             422,
             {"reason": str(FailureReason.BLOCKED_BY_POLICY), "detail": "provider not offered"},
         )
+    target_runner = _validated_chat_runner(rt, agent, body.provider)
+    chat = rt._get_chat()
     fields = {
         "provider": body.provider.strip().lower(),
         "model": body.model.strip(),
         "effort": body.effort.strip(),
         "account_id": body.account_id.strip(),
     }
-    chat = rt._get_chat()
     if chat is not None and hasattr(chat, "controls") and chat.store.get_session(agent.session_id):
         await chat.controls.pause(agent.session_id, "Model settings changed")
         await chat.controls._clear_saved_native(agent.session_id)
@@ -596,8 +791,8 @@ async def switch_agent_model(agent_id: str, body: ModelBody, request: Request) -
         except PermissionError as exc:
             log.info("society: %s re-seat deferred: %s", agent.agent_id, exc)
     return {
-        "agent": updated.to_dict(),
-        "runner": resolve_runner(updated.provider, surface="society"),
+        "agent": _agent_row(updated, request),
+        "runner": target_runner,
         "reseated": reseated,
     }
 
@@ -623,7 +818,7 @@ async def agent_knowledge(agent_id: str, request: Request) -> dict[str, Any]:
     last = await rt.store.get_meta(f"review:last:{agent.agent_id}", "")
     return {
         "files": files,
-        "learned_instructions": [e.text[len(PREFIX):] for e in rules(entries)],
+        "learned_instructions": [e.text[len(PREFIX) :] for e in rules(entries)],
         "reviews": rt.conversations.review_counts(agent.agent_id),
         "last_review": json.loads(last) if last else None,
     }
@@ -824,9 +1019,33 @@ async def list_agent_routines(agent_id: str, request: Request) -> dict[str, Any]
     return {"routines": rows, "total": len(rows)}
 
 
-@router.post("/agents/{agent_id}/routines", openapi_extra={"x-jarvis-dangerous": True})
-async def create_agent_routine(
-    agent_id: str, body: RoutineBody, request: Request
+@contextmanager
+def _turn_timezone(request: Request) -> Iterator[None]:
+    """Adopt the zone an in-process app command forwarded for its turn."""
+    from jarvis.tasks.context import CLIENT_TIMEZONE_HEADER, client_timezone
+
+    zone = request.headers.get(CLIENT_TIMEZONE_HEADER)
+    if not zone or client_timezone.get():
+        yield
+        return
+    token = client_timezone.set(zone)
+    try:
+        yield
+    finally:
+        client_timezone.reset(token)
+
+
+_TIMEZONE_REQUIRED: dict[str, str] = {
+    "reason": "timezone_required",
+    "message": (
+        "This schedule runs on the user's wall clock but their timezone is unknown. "
+        "Ask for it and pass schedule.timezone as an IANA name such as Europe/Berlin."
+    ),
+}
+
+
+async def _create_routine_for(
+    agent: AgentRecord, body: RoutineBody, request: Request
 ) -> dict[str, Any]:
     """A routine is a task in the Automations scheduler tagged with the agent."""
     from jarvis.society.routines import (
@@ -835,15 +1054,16 @@ async def create_agent_routine(
         count_routines,
         create_routine,
         is_agent_routine,
+        missing_timezone,
+        next_run_readback,
     )
+    from jarvis.tasks.context import turn_timezone
 
-    rt = await _runtime(request)
-    agent = await rt.roster.resolve(agent_id)
-    if agent is None:
-        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
     store = _task_store(request)
     if await count_routines(store, agent.agent_id) >= MAX_ROUTINES_PER_AGENT:
         raise HTTPException(409, {"reason": str(FailureReason.BLOCKED_BY_POLICY)})
+    if missing_timezone(body.schedule):
+        raise HTTPException(422, _TIMEZONE_REQUIRED)
     parent_spec = None
     parent_row = None
     if body.parent_task_id:
@@ -908,7 +1128,75 @@ async def create_agent_routine(
         if spec.action.kind == "agent"
         else None
     )
-    return {"id": task_id, "title": spec.title, "tags": list(spec.tags), "seat": seat}
+    row = await store.get(task_id) or {}
+    zone = getattr(spec.trigger, "timezone", None) or turn_timezone()
+    return {
+        "id": task_id,
+        "title": spec.title,
+        "tags": list(spec.tags),
+        "seat": seat,
+        "state": row.get("state"),
+        "next_run": next_run_readback(row.get("due_at_ns"), zone),
+    }
+
+
+@router.post("/agents/{agent_id}/routines", openapi_extra={"x-jarvis-dangerous": True})
+async def create_agent_routine(
+    agent_id: str, body: RoutineBody, request: Request
+) -> dict[str, Any]:
+    """A routine is a task in the Automations scheduler tagged with the agent."""
+    rt = await _runtime(request)
+    agent = await rt.roster.resolve(agent_id)
+    if agent is None:
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
+    with _turn_timezone(request):
+        return await _create_routine_for(agent, body, request)
+
+
+class RoutineOperationBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    operation: Literal["pause", "resume", "delete", "run"]
+
+
+@router.post(
+    "/agents/{agent_id}/routines/{task_id}/operation",
+    openapi_extra={"x-jarvis-dangerous": True},
+)
+async def operate_agent_routine(
+    agent_id: str, task_id: str, body: RoutineOperationBody, request: Request
+) -> dict[str, Any]:
+    """Pause, resume, delete or run-now one of the agent's own routines."""
+    from jarvis.society.routines import is_agent_routine, manage_routine
+    from jarvis.tasks.scheduler import TaskNotFound, TaskStateConflict
+
+    rt = await _runtime(request)
+    agent = await rt.roster.resolve(agent_id)
+    store = _task_store(request)
+    row = await store.get(task_id)
+    if agent is None or row is None or not is_agent_routine(row, agent.agent_id):
+        raise HTTPException(404, "Routine not found")
+    scheduler = getattr(request.app.state, "task_scheduler", None)
+    if scheduler is None:
+        raise HTTPException(503, "The task scheduler is unavailable")
+    if body.operation == "run" and row.get("state") == "running":
+        raise HTTPException(409, "The routine is already running")
+    try:
+        if body.operation == "run":
+            await scheduler.run_now(task_id)
+        else:
+            await manage_routine(
+                agent, {"task_id": task_id, "operation": body.operation}, store, scheduler
+            )
+    except TaskNotFound as exc:
+        raise HTTPException(404, "Routine not found") from exc
+    except TaskStateConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if body.operation == "delete":
+        return {"ok": True, "id": task_id, "operation": "delete", "state": "deleted"}
+    after = await store.get(task_id) or {}
+    return {"ok": True, "id": task_id, "operation": body.operation, "state": after.get("state")}
 
 
 class RoutineUpdateBody(BaseModel):
@@ -1263,8 +1551,7 @@ async def memory_file(request: Request, path: str = "") -> dict[str, Any]:
         content = content[-200_000:]
     try:
         updated_ms = int(target.stat().st_mtime * 1000)
-    except OSError:
-        # Content was read already; zero marks unavailable optional timestamp metadata.
+    except OSError:  # Missing source metadata uses an unknown update timestamp.
         updated_ms = 0
     parts = Path(rel).parts
     agent_id = parts[1] if len(parts) >= 3 else ""

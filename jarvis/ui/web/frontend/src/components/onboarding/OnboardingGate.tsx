@@ -1,72 +1,105 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { useOnboarding } from "@/hooks/useOnboarding";
+import { TOUR_START_EVENT } from "./tourEvents";
 
 /**
- * Code-split: a completed install renders this gate exactly once per mount —
- * a no-op `null` return, forever — yet the full six-step flow (with its own
- * step components) used to travel in the entry chunk anyway, on every boot,
- * for every returning user. Split the same way MainView.tsx splits section
- * views: only the gate's own show/hide logic stays static, the flow loads on
- * the one boot that actually shows it.
+ * Code-split: a finished install renders this gate as `null` forever, so the
+ * setup and the tour load only on the boot that shows them — the gate's own
+ * show/hide logic is all that rides in the entry chunk.
  */
-const OnboardingFlow = lazy(() =>
-  import("./OnboardingFlow").then((m) => ({ default: m.OnboardingFlow })),
+const SetupTour = lazy(() =>
+  import("./setup/SetupTour").then((m) => ({ default: m.SetupTour })),
+);
+const GuidedTour = lazy(() =>
+  import("./tour/GuidedTour").then((m) => ({ default: m.GuidedTour })),
 );
 
+/** Where the IDE keeps working without app-wide setup — no guide over it. */
+const IDE_SECTIONS = ["agentic-ide", "chat-workspace", "agentic-ide-classic"];
+
+function param(name: string): string | null {
+  return new URLSearchParams(window.location.search).get(name);
+}
+
 /**
- * The first-run stage. It covers the whole window on the app's own ground —
- * no scrim, no blur, no floating card: on a fresh install there is nothing
- * behind it worth hinting at, and a dialog over a half-built app looked
- * exactly like what it was. Fails open (renders nothing) while loading or on
- * a fetch error so a broken guide never traps the user. `?onboarding=force`
- * forces the flow for non-destructive dev replay.
+ * First run, in two acts, both on the real app — there is no setup screen.
  *
- * The risk acknowledgement lives INSIDE the flow's first step now (it used to
- * be a separate screen before a separate video screen before the wizard).
- * Its acceptance is awaited and persisted there; nothing about
- * onboarding/completed state changes until the final step, so the
- * restart-loop bug cannot come back through this path.
+ * 1. Setup: the window dims and a guide walks the user to the app's own
+ *    places — consent, the API Keys page, the wake word in Settings (and the
+ *    macOS permissions) — until onboarding is complete. Fails open: while
+ *    loading or on a fetch error it renders nothing, so a broken guide never
+ *    traps anyone.
+ * 2. The tour: after the completion restart, a spotlight explains the app
+ *    one control at a time. Shown once (`tour_completed`), replayable from
+ *    Settings via `jarvis:tour-start`.
+ *
+ * Replay, never destructive: `?onboarding=force` walks the setup on a
+ * finished install without completing or restarting anything, then hands
+ * over to the tour; `?tour=force` opens the tour alone.
  */
-export function OnboardingGate() {
+export function OnboardingGate({ activeSection }: { activeSection?: string } = {}) {
   const onb = useOnboarding();
-  // Set once the user completes the guide (the "Start" / complete() path
-  // dispatches jarvis:onboarding-changed). It dismisses the stage even under
-  // ?onboarding=force, so a dev replay closes on finish exactly like a real
-  // first run instead of staying stuck open.
+  // Set once setup completes (the Start action dispatches
+  // jarvis:onboarding-changed) or a replay ends.
   const [dismissed, setDismissed] = useState(false);
+  const [tourRequested, setTourRequested] = useState(() => param("tour") === "force");
+  const [tourDone, setTourDone] = useState(false);
+  const forced = useMemo(() => param("onboarding") === "force", []);
 
   useEffect(() => {
     const onChanged = () => {
       void onb.refetch();
       setDismissed(true);
     };
+    const onTour = () => {
+      setTourDone(false);
+      setTourRequested(true);
+    };
     window.addEventListener("jarvis:onboarding-changed", onChanged);
-    return () => window.removeEventListener("jarvis:onboarding-changed", onChanged);
+    window.addEventListener(TOUR_START_EVENT, onTour);
+    return () => {
+      window.removeEventListener("jarvis:onboarding-changed", onChanged);
+      window.removeEventListener(TOUR_START_EVENT, onTour);
+    };
   }, [onb]);
 
-  const forced = useMemo(
-    () => new URLSearchParams(window.location.search).get("onboarding") === "force",
-    [],
-  );
+  const inIde = IDE_SECTIONS.includes(activeSection ?? "");
 
-  if (onb.loading) return null;
-  if (onb.error) return null; // fail open — never trap the user
-  if (!onb.state) return null;
+  if (onb.loading || onb.error || !onb.state) return null;
 
-  const show = (forced || !onb.state.completed) && !dismissed;
-  if (!show) return null;
-
-  return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      className="fixed inset-x-0 bottom-0 top-8 z-50 bg-background text-foreground"
-    >
-      {/* Fallback is empty: the stage ground is already painted while the
-          first-run chunk fetches. */}
+  const showSetup = (forced || !onb.state.completed) && !dismissed && (forced || !inIde);
+  if (showSetup) {
+    return (
       <Suspense fallback={null}>
-        <OnboardingFlow onb={onb} />
+        <SetupTour
+          onb={onb}
+          preview={forced && onb.state.completed}
+          onFinished={() => {
+            setDismissed(true);
+            setTourDone(false);
+            setTourRequested(true);
+          }}
+        />
       </Suspense>
-    </div>
-  );
+    );
+  }
+
+  const tourDue = tourRequested || (onb.state.completed && onb.state.tour_completed === false);
+  // An automatic tour waits until the user is out of the IDE; a replay they
+  // asked for starts wherever they are.
+  if (tourDue && !tourDone && (tourRequested || !inIde)) {
+    return (
+      <Suspense fallback={null}>
+        <GuidedTour
+          onDone={() => {
+            setTourDone(true);
+            setTourRequested(false);
+            void onb.completeTour();
+          }}
+        />
+      </Suspense>
+    );
+  }
+
+  return null;
 }

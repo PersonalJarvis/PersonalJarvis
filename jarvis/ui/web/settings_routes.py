@@ -42,6 +42,7 @@ from jarvis.memory.wiki.integration import get_running_curator
 from jarvis.speech.local_models import FASTER_WHISPER_PACKAGE
 from jarvis.ui.overlay_styles import OVERLAY_STYLES, normalize_overlay_style
 
+from .error_text import LOG_HINT
 from .lifecycle_guard import require_interactive_desktop_action
 
 if TYPE_CHECKING:
@@ -596,7 +597,7 @@ async def put_ui_language(body: UiLanguageBody, request: Request) -> dict[str, o
 # painted from config BEFORE the web view loads anything (a light app inside a
 # black frame is visible for the whole boot), the choice must survive a cleared
 # web store, and every user-facing action in this project ships as a REST route
-# so it becomes a `jarvis api settings ...` command (CLAUDE.md §5, CLI-first).
+# so it becomes a `jarvis api settings ...` command (AGENTS.md §5, CLI-first).
 #
 # "system" is stored as intent, not as a resolved value: the frontend re-reads
 # the OS preference live, so flipping the OS theme flips the app with it.
@@ -838,7 +839,7 @@ def put_music_settings(body: MusicSettingsBody, request: Request) -> dict[str, o
 # The accepted set is EVERY language the recogniser understands, shared with
 # dictation through one constant (AP-4): what Jarvis can hear is a wider question
 # than the three locales it speaks back in, and capping it at those three locked
-# out every other speaker on earth (CLAUDE.md §3).
+# out every other speaker on earth (AGENTS.md §3).
 # ----------------------------------------------------------------------
 
 _STT_LANGUAGES: tuple[str, ...] = RECOGNITION_LANGUAGE_CHOICES
@@ -1168,7 +1169,7 @@ def _local_speech_ready() -> bool:
 # ``faster-whisper`` powers the ``stt_match`` wake path — the ONLY local way to
 # detect an arbitrary, user-invented wake phrase. It is a torch-FREE opt-in
 # package (ctranslate2 CPU wheels, cross-platform) that the cloud-first base
-# install deliberately omits (CLAUDE.md §3). Historically it was dropped from
+# install deliberately omits (AGENTS.md §3). Historically it was dropped from
 # every extra (2026-05-18, "Groq Whisper API is the new default"), so a fresh
 # install could not use a custom wake word at all and silently degraded to the
 # bundled "Hey Rhasspy" model. This endpoint pulls the package from INSIDE the
@@ -1499,15 +1500,14 @@ def set_wake_activation(body: WakeActivationBody, request: Request) -> dict[str,
     # The failure is REPORTED, never swallowed: `persisted` and `message` carry
     # it so the UI can say the setting will not survive a restart.
     persisted = False
-    persist_error = ""
     try:
         from jarvis.core import config_writer
 
         config_writer.set_wake_word_enabled(bool(body.enabled))
         persisted = True
-    except Exception as exc:  # noqa: BLE001 — best-effort, reported not raised
-        persist_error = str(exc)
-        log.warning("wake activation persist failed: %s", exc)
+    except Exception:  # noqa: BLE001 — best-effort, reported not raised
+        # The traceback stays in the log; the client gets a stable sentence.
+        log.warning("wake activation persist failed", exc_info=True)
     # Best-effort in-memory update so a later cfg read agrees pre-restart.
     cfg = _config(request)
     if cfg is not None and getattr(cfg, "trigger", None) is not None:
@@ -1534,7 +1534,7 @@ def set_wake_activation(body: WakeActivationBody, request: Request) -> dict[str,
         "message": (
             ""
             if persisted
-            else f"The setting could not be saved to jarvis.toml: {persist_error}"
+            else f"The setting could not be saved to jarvis.toml. {LOG_HINT}"
         ),
     }
 
@@ -1543,7 +1543,7 @@ def set_wake_activation(body: WakeActivationBody, request: Request) -> dict[str,
 async def download_wake_model(request: Request) -> dict[str, object]:
     """Provision (or repair) the per-language Vosk wake model in-app.
 
-    Recoverable-in-app contract (CLAUDE.md §3): a user whose Vosk model is
+    Recoverable-in-app contract (AGENTS.md §3): a user whose Vosk model is
     absent/dead gets a working reliable wake engine without editing jarvis.toml.
     Never 500s on a fetch failure — returns a clear message and the runtime lazy
     net (``_heavy_backend_bg``'s one-shot provision) remains the backstop.
@@ -2229,8 +2229,12 @@ async def put_overlay_style(body: OverlayStyleBody, request: Request) -> dict[st
                 bool(result.get("applied_live")) if isinstance(result, dict) else bool(result)
             )
         except Exception as exc:  # noqa: BLE001 — never fail the toggle on an apply hiccup
-            log.warning("overlay-style live-apply failed (persisted; applies on restart): %s", exc)
-            detail = str(exc)
+            log.warning(
+                "overlay-style live-apply failed (persisted; applies on restart): %s",
+                exc,
+                exc_info=True,
+            )
+            detail = f"The live switch failed; the style applies on restart. {LOG_HINT}"
 
     return {
         "ok": True,
@@ -2484,6 +2488,7 @@ async def restart_app(request: Request, force: bool = False) -> dict[str, object
         raise HTTPException(
             status_code=503, detail="self-restart unavailable on this host"
         )
+    log.info("Desktop restart requested through settings route (force=%s)", force)
     # Off the shared default pool — a restart must survive a pool exhausted by
     # hung threads (see ``_run_off_pool``). ``asyncio.to_thread`` would queue
     # behind the dead pool and hang the POST forever.

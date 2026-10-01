@@ -270,7 +270,7 @@ past all of that to the work itself.
 
 Answer with exactly two physical lines and nothing else:
 
-HEADLINE: <about 5 words, HARD MAXIMUM 48 characters. A self-contained \
+HEADLINE: <3 to 5 words, HARD MAXIMUM 48 characters. A self-contained \
 navigation label for the user's problem or desired outcome, normally \
 "subject — result". No pane name, agent name, quotation marks, or trailing \
 period.>
@@ -294,7 +294,7 @@ activity may follow after it if room remains.
 "Which generic engineering activity is happening?" Use the user's vocabulary \
 when the original request is visible; otherwise infer the outcome cautiously \
 from the work.
-- Aim for about 5 words. Shorter is acceptable only when the subject genuinely \
+- Aim for 3 to 5 words. Fewer is acceptable only when the subject genuinely \
 needs fewer; never pad, never exceed 48 characters.
 - Keep file paths, class names, commands and implementation mechanisms OUT of \
 the headline. Put useful technical evidence in DETAIL instead.
@@ -450,6 +450,18 @@ def describe_failure(exc: BaseException) -> str:
     return recap.condense(raw, 200)
 
 
+def pane_id(term: Any) -> str:
+    """The id this module remembers a pane under: its LIFETIME id, never its key.
+
+    A pane key ("t5") is unique only inside one workspace, and two open
+    workspaces each hold a T5. Keyed by it, both panes shared one cache entry,
+    so one pane's header showed the other pane's model-written title
+    (maintainer report 2026-09-29). ``history_id`` is minted once per pane and
+    never handed on; the key is only the fallback for an object without one.
+    """
+    return str(getattr(term, "history_id", "") or getattr(term, "key", "") or "")
+
+
 def _state(key: str) -> _PaneState:
     entry = _panes.get(key)
     if entry is None:
@@ -554,7 +566,7 @@ def recap_for(term: Any, *, lines: Sequence[str] | None = None) -> SmartRecap:
     been written, and the deterministic one until then — so a pane always has a
     header, from the moment it opens.
     """
-    entry = _panes.get(str(getattr(term, "key", "") or ""))
+    entry = _panes.get(pane_id(term))
     if entry is not None and entry.pinned_headline:
         return SmartRecap(
             headline=entry.pinned_headline,
@@ -579,7 +591,7 @@ def recap_for(term: Any, *, lines: Sequence[str] | None = None) -> SmartRecap:
     # that names the work. A state label ("running since 10:52") is true for
     # this poll and must not be what the list keeps saying once the pane has
     # been asked something.
-    key = str(getattr(term, "key", "") or "")
+    key = pane_id(term)
     if key:
         state = _state(key)
         state.floor_headline = plain.headline if plain.names_work else ""
@@ -612,7 +624,7 @@ def known_headline(term: Any) -> str:
     been asked nothing anywhere; the list then names the CLI, which is then in
     fact everything there is to say.
     """
-    entry = _panes.get(str(getattr(term, "key", "") or ""))
+    entry = _panes.get(pane_id(term))
     if entry is not None:
         if entry.pinned_headline:
             return entry.pinned_headline
@@ -635,11 +647,10 @@ def refresh_soon(term: Any, *, lines: Sequence[str], folder: str = "") -> None:
     Never raises. Called on every pane of every poll, so a failure here would be
     a failure of the workspace view.
     """
-    global _inflight
     try:
         if not _enabled():
             return
-        key = str(getattr(term, "key", "") or "")
+        key = pane_id(term)
         if not key:
             return
         rows = list(lines)
@@ -670,19 +681,49 @@ def refresh_soon(term: Any, *, lines: Sequence[str], folder: str = "") -> None:
                 return
         except Exception:  # noqa: BLE001 - recap never blocks a composition
             logger.debug("Agentic IDE recap: compose-busy check failed", exc_info=True)
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            # No event loop — a synchronous caller (a CLI state dump, a test).
-            # The deterministic recap is the whole answer there.
+        _spawn(term, key, rows, folder)
+    except Exception as exc:  # noqa: BLE001 - a recap must never break a state read
+        logger.debug("Agentic IDE recap: scheduling failed ({})", exc)
+
+
+def _spawn(term: Any, key: str, rows: list[str], folder: str) -> None:
+    """Start :func:`_run` on the app's event loop, from whichever thread asks.
+
+    The ``/recaps`` route is a plain ``def`` and runs in the server's worker
+    threadpool (it walks every pane's replay buffer, which must not block the
+    loop). A worker thread has no running loop of its own, so the old
+    ``get_running_loop()`` guard returned there on every poll and no pane was
+    ever summarized — every header stayed on the prompt's first words. anyio's
+    ``from_thread`` hands the start back to the loop that owns the worker; the
+    bookkeeping below then runs on that loop's thread, as it always did.
+    """
+
+    def start() -> None:
+        global _inflight
+        entry = _state(key)
+        if entry.inflight or _inflight >= MAX_CONCURRENT:
             return
         entry.inflight = True
         _inflight += 1
-        task = loop.create_task(_run(term, key, rows, folder))
+        task = asyncio.get_running_loop().create_task(_run(term, key, rows, folder))
         _tasks.add(task)
         task.add_done_callback(_tasks.discard)
-    except Exception as exc:  # noqa: BLE001 - a recap must never break a state read
-        logger.debug("Agentic IDE recap: scheduling failed ({})", exc)
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        # No running loop: this is a worker thread, handled below.
+        try:
+            from anyio.from_thread import run_sync
+
+            # Raises RuntimeError outside an anyio worker thread.
+            run_sync(start)
+        except RuntimeError:
+            # No event loop anywhere — a synchronous caller (a CLI state dump,
+            # a test). The deterministic recap is the whole answer there.
+            return
+        return
+    start()
 
 
 async def _run(term: Any, key: str, rows: list[str], folder: str) -> None:
@@ -778,6 +819,13 @@ def _resolve_brains() -> list[Any]:
         from jarvis.core.config import load_config
 
         config = load_config()
+        # Recaps are background work: a connected subscription writes them and
+        # no per-token key is touched (live 2026-09-29: recaps billed the
+        # OpenAI key meant for the voice call). If the subscription cannot
+        # answer, the deterministic floor writes the title instead.
+        subscription = _resolve_subscription(config)
+        if subscription is not None:
+            return [subscription]
         candidates: list[Any] = []
         for brain in frontier_brain_candidates(config):
             candidates.append(brain)
@@ -786,23 +834,8 @@ def _resolve_brains() -> list[Any]:
     except Exception as exc:  # noqa: BLE001 - no brain is an answer, not an error
         logger.info("Agentic IDE recap: no brain reachable ({})", exc)
         return []
-    # Every family above needs an API key, and the install this feature broke
-    # on live had exactly one — depleted. A connected coding subscription is a
-    # credential too (§3), and often the STRONGEST model the user has: the very
-    # CLI running in the panes. It goes LAST because a CLI call costs a process
-    # spawn and seconds where an API call costs milliseconds — it should write
-    # the recap only when everything cheaper is dead.
-    #
-    # Appended UNCONDITIONALLY, not into a spare slot. It used to be skipped
-    # whenever MAX_PROVIDER_TRIES API families were configured — which made it
-    # unreachable on exactly the install it was built for: three configured but
-    # broken keys occupied every slot, and the one credential provably working
-    # (the CLI running in the panes) was never asked. Resolving it here only
-    # instantiates the brain; the expensive CLI call happens solely when every
-    # API family has already failed.
-    subscription = _resolve_subscription(config)
-    if subscription is not None:
-        candidates.append(subscription)
+    # Reached only with no subscription connected: the keyed families are
+    # then the whole chain, so a single-key install still gets model recaps.
     return candidates
 
 
@@ -1182,7 +1215,7 @@ async def summarize_now(term: Any, *, lines: Sequence[str], folder: str = "") ->
     as the deterministic recap plus a note saying exactly that, because "why is
     this line thin" is the question the whole feature exists to answer.
     """
-    key = str(getattr(term, "key", "") or "")
+    key = pane_id(term)
     entry = _state(key) if key else _PaneState()
     unpin(key)
     rows = list(lines)

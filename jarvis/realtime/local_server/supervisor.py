@@ -895,10 +895,10 @@ def _boot_status(*, booting: bool) -> dict[str, object]:
     )
     expected = boot_progress.expected_boot_s(stats)
     remaining: float | None = None
-    # Past twice the historical boot time the countdown would be a lie;
-    # showing only the stage is the honest degradation.
-    if expected is not None and elapsed <= 2.0 * expected:
-        remaining = max(5.0, expected - elapsed)
+    # Once the measured estimate is exceeded, show the loading stage rather
+    # than an endless five-second countdown that promises imminent readiness.
+    if expected is not None and elapsed < expected:
+        remaining = expected - elapsed
     payload.update(
         {
             "starting": True,
@@ -2320,7 +2320,9 @@ def _kill_by_install_root(root: Path) -> tuple[int, int]:
             )
     if not signalled:
         return vanished, failed
-    gone, alive = psutil.wait_procs(signalled, timeout=10)
+    from jarvis.core.process_utils import wait_procs  # noqa: PLC0415
+
+    gone, alive = wait_procs(signalled, timeout=10)
     for proc in alive:
         log.warning("supervisor: managed pid %s survived forced stop", proc.pid)
     return vanished + len(gone), failed + len(alive)

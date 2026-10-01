@@ -66,7 +66,7 @@ KNOWN_VOICE_TIERS: frozenset[str] = frozenset(
         "realtime",
     }
 )
-"""Routing tier as in CLAUDE.md `Brain-Routing` and `Router-Discipline`."""
+"""Routing tier as in AGENTS.md `Brain-Routing` and `Router-Discipline`."""
 
 VoiceTier: TypeAlias = str
 """Open string so a future routing tier cannot break session APIs."""

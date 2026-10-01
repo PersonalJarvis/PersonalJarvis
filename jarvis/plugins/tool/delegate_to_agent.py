@@ -101,7 +101,7 @@ def _lang(args: dict[str, Any], ctx: Any) -> str:
     """The turn's output language: ``ctx.config["output_language"]`` as the
     tool-use loop stamps it (decided once per turn by ``turn_language.py``),
     else a ``turn_language`` argument, else the ambient answer language. This
-    layer never re-derives a language from the utterance (CLAUDE.md §1)."""
+    layer never re-derives a language from the utterance (AGENTS.md §1)."""
     config = getattr(ctx, "config", None) or {}
     value = (
         str(
@@ -205,8 +205,7 @@ class DelegateToAgentTool:
 
         try:
             policy = select_reply_policy(args.get("reply_policy"), MsgType.ASSIGN)
-        except (TypeError, ValueError) as exc:
-            # ToolResult reports invalid reply policy through the caller's error channel.
+        except (TypeError, ValueError) as exc:  # Invalid policy returns a failed tool result.
             return ToolResult(success=False, output=None, error=str(exc))
         context = str(args.get("context") or "").strip()
         criteria = str(args.get("completion_criteria") or "").strip()

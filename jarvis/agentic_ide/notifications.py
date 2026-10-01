@@ -95,6 +95,7 @@ from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 from loguru import logger
 
+from . import voice_readback
 from .activity import (
     RESIZE_SHADOW_S,
     STILL_S,
@@ -444,6 +445,13 @@ class ActivityWatcher:
         self.center = center
         self._panes: dict[tuple[str, str], _PaneWatch] = {}
         self._resume_dirty = False
+        #: Jarvis-given jobs that just stopped: (kind, terminal), in order.
+        self._readbacks: list[tuple[Kind, Any]] = []
+
+    def take_readbacks(self) -> list[tuple[Kind, Any]]:
+        """Return and clear the stops that owe the user a spoken readback."""
+        taken, self._readbacks = self._readbacks, []
+        return taken
 
     def take_resume_dirty(self) -> bool:
         """Return and clear whether activity changed the resume checkpoint."""
@@ -526,11 +534,20 @@ class ActivityWatcher:
             # working, and claims nothing that was not observed.
             settled_at = now - STILL_S - 1.0
             activity = read_activity(term, now=now, still_since=settled_at)
+            # The one exception: an agent that kept working while the app was
+            # closed (the PTY host held it) and was working at the last
+            # checkpoint. Its finish happened with nobody watching, so it is
+            # seeded as a job in progress — the next still sweep reports it
+            # "completed", exactly as if the app had stayed open (RUB-102).
+            detached_work = bool(getattr(term, "worked_while_detached", False))
+            if detached_work:
+                term.worked_while_detached = False
             watch = _PaneWatch(
-                activity=activity,
+                activity="working" if detached_work else activity,
                 since=now,
-                announced=True,
-                tasked=_tasked(term),
+                announced=not detached_work,
+                worked=detached_work,
+                tasked=_tasked(term) or detached_work,
                 resume_needed=bool(getattr(term, "resume_continuation_needed", False)),
                 digest=digest,
                 changed_at=settled_at,
@@ -632,6 +649,14 @@ class ActivityWatcher:
 
         watch.announced = True
         watch.worked = False
+        if kind in ("completed", "needs_input") and getattr(term, "voice_readback", False):
+            # Jarvis handed this job over for the user, so the user hears how
+            # it ended — independent of the bell switch below. A question keeps
+            # the job open: the answer resumes the same job, and its end is
+            # still owed.
+            if kind == "completed":
+                term.voice_readback = False
+            self._readbacks.append((kind, term))
         if not emit:
             return None
         return self.center.add(
@@ -722,30 +747,21 @@ class ActivityWatcher:
         Entering ``working`` arms the checkpoint immediately. A plain prompt
         must remain stable for the same settle window as completion notices,
         because coding TUIs briefly remove their busy row between tool steps.
-        Questions clear immediately: they need the user's answer, never a blind
-        continuation prompt. A resumed pane that is still offering Continue is
-        preserved while it waits at its prompt.
+        Questions clear immediately: a pane waiting for the user's answer was
+        not interrupted mid-work. The evidence is only ever read — by the bell
+        after an app restart — never acted on by typing into a pane.
         """
         if activity == "working":
-            # `read_activity` reaches this state only after a submission stamped
-            # for the live process. The offer to continue is therefore spent.
-            term.continuation_pending = False
             self._set_resume_needed(term, watch, True)
             return
         if activity in {"asking", "failed"}:
-            term.continuation_pending = False
             self._set_resume_needed(term, watch, False)
             return
         if activity == "exited":
             if getattr(term, "exit_code", None) in (0, None):
-                term.continuation_pending = False
                 self._set_resume_needed(term, watch, False)
             return
-        if (
-            activity == "waiting"
-            and not getattr(term, "continuation_pending", False)
-            and now - watch.since >= SETTLE_S
-        ):
+        if activity == "waiting" and now - watch.since >= SETTLE_S:
             self._set_resume_needed(term, watch, False)
 
     def _set_resume_needed(self, term: Any, watch: _PaneWatch, needed: bool) -> None:
@@ -975,6 +991,7 @@ def reset() -> None:
     _CENTER.clear()
     _WATCHER._panes.clear()  # noqa: SLF001 - same module, one owner
     _WATCHER._resume_dirty = False  # noqa: SLF001 - same module, one owner
+    _WATCHER._readbacks.clear()  # noqa: SLF001 - same module, one owner
     _FEED.clear()
     set_publisher(None)
     reset_switch_cache()
@@ -1008,6 +1025,10 @@ async def _run(registry: Registry) -> None:
                 # with notifications disabled, restored panes must not be
                 # offered a blind Continue merely because history exists.
                 _WATCHER.poll(registry, emit=await _enabled_off_loop())
+                for kind, term in _WATCHER.take_readbacks():
+                    # Its own task: composing the sentence waits on a model,
+                    # and the sweep must keep its two-second rhythm.
+                    voice_readback.schedule(kind, term, _publisher)
                 if _WATCHER.take_resume_dirty():
                     await registry.persist_resume_activity()
                 # After the stamps, so the event carries the word this sweep

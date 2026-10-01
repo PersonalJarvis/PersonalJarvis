@@ -22,7 +22,6 @@ import { VolumeGroup } from "@/views/settings/VolumeGroup";
 import { AudioDevicesGroup } from "@/views/settings/AudioDevicesGroup";
 import { SystemPromptGroup } from "@/views/settings/SystemPromptGroup";
 import { SettingsGroupBoundary } from "@/views/settings/SettingsGroupBoundary";
-import { ScreenContextGroup } from "@/views/settings/ScreenContextGroup";
 import { settingsInputCls } from "@/views/settings/SettingsBlock";
 import {
   useWakeWord,
@@ -142,6 +141,7 @@ export function SettingsView({ searchTarget, onSearchTargetHandled }: {
                 key={section.id}
                 id={`settings-${section.id}`}
                 data-settings-section={section.id}
+                data-tour={`settings-${section.id}`}
                 className="scroll-mt-4"
               >
                 <SettingsGroupBoundary group={section.id}>
@@ -161,7 +161,6 @@ const SECTIONS: readonly { id: string; labelKey: string; render: () => React.Rea
   { id: "languages", labelKey: "settings_view.nav.languages", render: () => <LanguagesGroup /> },
   { id: "app", labelKey: "settings_view.nav.app", render: () => <AppSettingsGroup /> },
   { id: "permissions", labelKey: "settings_view.nav.permissions", render: () => <PermissionsPanel /> },
-  { id: "screen-context", labelKey: "settings_view.nav.screen_context", render: () => <ScreenContextGroup /> },
   { id: "realtime-voice", labelKey: "settings_view.nav.realtime_voice", render: () => <RealtimeVoiceGroup /> },
   { id: "system-prompt", labelKey: "settings_view.nav.system_prompt", render: () => <SystemPromptGroup /> },
   { id: "wake-word", labelKey: "settings_view.nav.wake_word", render: () => <WakeWordPanel /> },

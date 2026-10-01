@@ -19,7 +19,7 @@ def _tool(name: str, desc: str) -> SimpleNamespace:
 
 TOOLS = {
     "gmail": _tool("gmail", "Read and send mail."),
-    "google-calendar": _tool("google-calendar", "Read the calendar."),
+    "google_calendar": _tool("google_calendar", "Read the calendar."),
     "cli_gh": _tool("cli_gh", "GitHub CLI."),
 }
 
@@ -55,7 +55,7 @@ def test_a_description_patch_keeps_the_focus_and_rules_the_agent_earned(tmp_path
             },
         ).json()["agent"]
         assert patched["focus"][:2] == ["cli:gh", "plugin:gmail"]
-        assert "plugin:google-calendar" in patched["focus"]
+        assert "plugin:google_calendar" in patched["focus"]
         assert patched["approval_rules"] == {
             "require_approval": [],
             "always_allow": ["plugin:gmail:send"],
@@ -100,3 +100,21 @@ def test_a_proposal_is_applied_only_by_its_own_route(tmp_path: Path) -> None:
         missing = c.post("/api/society/proposals/nope/resolve", json={"approve": True})
         assert missing.status_code == 404
     assert runtime is not None
+
+
+def test_the_lead_wears_the_wake_word_name_and_follows_a_change(tmp_path: Path) -> None:
+    app, _ = _app(tmp_path)
+    wake = SimpleNamespace(phrase="Hey George")
+    app.state.config = SimpleNamespace(trigger=SimpleNamespace(wake_word=wake))
+    with TestClient(app) as c:
+
+        def lead() -> dict:
+            agents = c.get("/api/society/agents").json()["agents"]
+            return next(a for a in agents if a["tier"] == "lead")
+
+        assert lead()["name"] == "George"
+        one = c.get(f"/api/society/agents/{lead()['agent_id']}").json()["agent"]
+        assert one["name"] == "George"
+
+        wake.phrase = "Athena"
+        assert lead()["name"] == "Athena"

@@ -109,10 +109,10 @@ Read a bounded page of evidence or work records from one selected team.
 
 ## `society-create-agent` — Create a persistent team agent
 
-Create an agent in the user's existing Agents team, only when requested. This creates a roster profile and starts no work. Responsibilities derive capabilities through the same service as the Agents UI. Read the returned agent and created flag: an existing name is adopted, never duplicated. Use society-switch-agent-model only if a specific provider is requested.
+Create an agent in the user's existing Agents team, only when requested. This creates a roster profile and starts no work. Responsibilities derive capabilities through the same service as the Agents UI. When a team agent creates a teammate, the new agent inherits that creator's model seat (provider, model, effort, subscription account) and permission setup (approval mode, ceiling, grant mode, grants, denies) and cannot exceed them. Read the returned agent and created flag: an existing name is adopted, never duplicated. Use society-switch-agent-model only if a different provider is requested. Design the agent before calling: turn the user's words into a complete brief — mission, 3-6 responsibilities, working rules naming the data sources, output format and boundaries — inferring sensible defaults instead of copying the request verbatim. Read readback.not_connected and tell the user which services to connect. A requested schedule is a separate society-create-routine call.
 
 - **Endpoint:** `POST /api/society/agents`
-- **Arguments:** `name` (string; required); `title` (string; optional); `description` (string; optional); `tier` (one of: specialist, orchestrator; optional); `focus` (array; optional); `skills` (array; optional); `daily_budget_usd` (number; optional); `max_concurrent_runs` (integer; optional)
+- **Arguments:** `name` (string; required); `title` (string; optional); `description` (string; optional); `mission` (string; optional); `responsibilities` (array; optional); `working_rules` (array; optional); `output_format` (string; optional); `boundaries` (array; optional); `success_criteria` (string; optional); `tier` (one of: specialist, orchestrator; optional); `focus` (array; optional); `skills` (array; optional); `approval_mode` (one of: bypass, ask, always_ask; optional); `daily_budget_usd` (number; optional); `max_concurrent_runs` (integer; optional); `permission_ceiling` (one of: safe, monitor, ask; optional); `grant_mode` (one of: all, allowlist; optional); `grants` (array; optional); `denies` (array; optional)
 - **Requires confirmation:** no
 - **Desktop UI section:** `agents`
 - **Voice example (EN):** "create an agent for researching suppliers"
@@ -122,7 +122,7 @@ Create an agent in the user's existing Agents team, only when requested. This cr
 Change an existing agent's responsibilities, skills, focus, budget or paused/active state as requested by the user. Resolve its real id with society_status first. Only send requested fields. Existing learned focus and approval rules survive prose edits. Report the returned stored agent.
 
 - **Endpoint:** `PATCH /api/society/agents/{agent_id}`
-- **Arguments:** `agent_id` (string; required); `title` (string; optional); `description` (string; optional); `tier` (one of: specialist, orchestrator; optional); `focus` (array; optional); `skills` (array; optional); `daily_budget_usd` (number; optional); `max_concurrent_runs` (integer; optional); `state` (one of: active, paused; optional)
+- **Arguments:** `agent_id` (string; required); `title` (string; optional); `description` (string; optional); `mission` (string; optional); `responsibilities` (array; optional); `working_rules` (array; optional); `output_format` (string; optional); `boundaries` (array; optional); `success_criteria` (string; optional); `tier` (one of: specialist, orchestrator; optional); `focus` (array; optional); `skills` (array; optional); `approval_mode` (one of: bypass, ask, always_ask; optional); `daily_budget_usd` (number; optional); `max_concurrent_runs` (integer; optional); `permission_ceiling` (one of: safe, monitor, ask; optional); `grant_mode` (one of: all, allowlist; optional); `grants` (array; optional); `denies` (array; optional); `state` (one of: active, paused; optional)
 - **Requires confirmation:** no
 - **Desktop UI section:** `agents`
 - **Voice example (EN):** "update Scout's responsibilities"
@@ -156,6 +156,56 @@ Change one persistent agent's provider/model/effort only on user request. Use so
 - **Requires confirmation:** no
 - **Desktop UI section:** `agents`
 - **Voice example (EN):** "change Scout's model"
+
+## `society-archive-agent` — Archive a team agent
+
+Archive (remove from the team) one agent on explicit user request; its chat history is kept. Delete its routines first with society-routine-operation so none keeps firing.
+
+- **Endpoint:** `DELETE /api/society/agents/{agent_id}`
+- **Arguments:** `agent_id` (string; required)
+- **Requires confirmation:** yes
+- **Desktop UI section:** `agents`
+- **Voice example (EN):** "delete the agent Scout"
+
+## `society-list-routines` — List an agent's routines
+
+List one agent's scheduled routines with ids, schedules, state and next run.
+
+- **Endpoint:** `GET /api/society/agents/{agent_id}/routines`
+- **Arguments:** `agent_id` (string; required)
+- **Requires confirmation:** no
+- **Desktop UI section:** `agents`
+- **Voice example (EN):** "which routines does Scout have"
+
+## `society-create-routine` — Schedule a routine for an agent
+
+The ONLY way to make an agent do something on a schedule (daily briefing, weekly report, every morning at 8). Never use create-skill for this. The prompt is the complete task the agent runs each time: sources, steps, output. Speak the returned next_run; on timezone_required ask the user.
+
+- **Endpoint:** `POST /api/society/agents/{agent_id}/routines`
+- **Arguments:** `agent_id` (string; required); `title` (string; required); `prompt` (string; required); `schedule` (object; required); `announce_on_success` (string; optional)
+- **Requires confirmation:** yes
+- **Desktop UI section:** `agents`
+- **Voice example (EN):** "give me a briefing every morning at eight"
+
+## `society-update-routine` — Change an agent's routine
+
+Change a routine's title, prompt or schedule. Send all three: read the current values with society-list-routines and change only what was asked.
+
+- **Endpoint:** `PATCH /api/society/agents/{agent_id}/routines/{task_id}`
+- **Arguments:** `agent_id` (string; required); `task_id` (string; required); `title` (string; required); `prompt` (string; required); `schedule` (object; required)
+- **Requires confirmation:** no
+- **Desktop UI section:** `agents`
+- **Voice example (EN):** "move the briefing to seven"
+
+## `society-routine-operation` — Pause, resume, delete or run a routine
+
+Pause, resume, delete or run-now one agent routine on user request.
+
+- **Endpoint:** `POST /api/society/agents/{agent_id}/routines/{task_id}/operation`
+- **Arguments:** `agent_id` (string; required); `task_id` (string; required); `operation` (one of: pause, resume, delete, run; required)
+- **Requires confirmation:** yes
+- **Desktop UI section:** `agents`
+- **Voice example (EN):** "pause the morning briefing"
 
 ## `brain-switch` — Switch brain provider
 
@@ -192,7 +242,7 @@ Switch the speech-to-text provider. Takes effect on the next voice-pipeline star
 Switch which realtime voice engine (speech-to-speech) is active, including subscription- and API-backed providers. Experimental transports require explicit acknowledgement.
 
 - **Endpoint:** `POST /api/realtime/switch`
-- **Arguments:** `provider` (one of: gemini-live, local-realtime, openai-realtime, vertex-live; required); `persist` (boolean; optional); `accept_experimental` (boolean; optional)
+- **Arguments:** `provider` (one of: gemini-live, local-realtime, openai-live, vertex-live; required); `persist` (boolean; optional); `accept_experimental` (boolean; optional)
 - **Requires confirmation:** no
 - **Desktop UI section:** `apikeys`
 - **Voice example (EN):** "switch the realtime model to gemini"
@@ -242,7 +292,7 @@ List all configured providers and which ones are active.
 Test connectivity and authentication for one provider.
 
 - **Endpoint:** `POST /api/providers/{provider_id}/test`
-- **Arguments:** `provider_id` (one of: antigravity, cartesia, claude-api, claude-cli, codex, elevenlabs, faster-whisper, gemini, gemini-api, gemini-flash-tts, gemini-live, gemini-polish, grok, grok-build, grok-voice, groq-api, groq-polish, inworld, local-openai, local-realtime, nemotron-local, nvidia, ollama, ollama-polish, openai, openai-api, openai-polish, openai-realtime, openrouter, openrouter-polish, openrouter-stt, openrouter-tts, piper-local, vertex, vertex-live, vertex-stt, vertex-tts; required)
+- **Arguments:** `provider_id` (one of: antigravity, cartesia, claude-api, claude-cli, codex, elevenlabs, faster-whisper, gemini, gemini-api, gemini-flash-tts, gemini-live, gemini-polish, grok, grok-build, grok-voice, groq-api, groq-polish, inworld, local-openai, local-realtime, nemotron-local, nvidia, ollama, ollama-polish, openai, openai-api, openai-live, openai-polish, openrouter, openrouter-polish, openrouter-stt, openrouter-tts, piper-local, vertex, vertex-live, vertex-stt, vertex-tts; required)
 - **Requires confirmation:** no
 - **Desktop UI section:** `apikeys`
 - **Voice example (EN):** "test the openai provider"
@@ -576,24 +626,4 @@ Reopen the coding workspace that was last open: the same folder, the same named 
 - **Requires confirmation:** no
 - **Desktop UI section:** `agentic-ide`
 - **Voice example (EN):** "resume all my coding sessions"
-
-## `agentic-ide-interrupted` — List interrupted Agentic-IDE sessions
-
-Which coding terminals came back holding their conversation and have been told nothing since. That is what a restart leaves behind: reopening a workspace reconnects each pane to the conversation it was having, but the coding CLI reads that transcript and then WAITS at its prompt — so an agent stopped mid-task looks exactly like one that finished. Use this to answer 'what was interrupted?' before continuing anything. 'continuable' is per pane: a pane whose agent is not running cannot be typed into, and 'blocked_reason' says why.
-
-- **Endpoint:** `GET /api/agentic-ide/interrupted`
-- **Arguments:** none
-- **Requires confirmation:** no
-- **Desktop UI section:** `agentic-ide`
-- **Voice example (EN):** "which coding sessions were interrupted"
-
-## `agentic-ide-continue-interrupted` — Continue interrupted Agentic-IDE sessions
-
-Tell the coding terminals a restart left standing still to carry on: 'continue' is typed into each one and submitted. With no names, every interrupted pane in every open workspace — which is the shape of the problem, since a restart stops them all at once. CHECK THE REPLY: 'continued' really started, 'queued' had not finished starting yet and will carry on by itself within seconds (say 'shortly', not 'done'), 'unconfirmed' had the text typed in without a confirmed submit (it may be sitting in the input box — tell the user to look at that pane), and 'failed' names what refused and why. Reporting an unconfirmed or queued pane as running is the one wrong thing to do with this answer. Pressing twice is safe: each pane is claimed before anything is typed, so a repeat call cannot send a second 'continue' into the same agent.
-
-- **Endpoint:** `POST /api/agentic-ide/interrupted/continue`
-- **Arguments:** `names` (array; optional); `prompt` (string; optional)
-- **Requires confirmation:** no
-- **Desktop UI section:** `agentic-ide`
-- **Voice example (EN):** "continue the interrupted coding sessions"
 

@@ -77,7 +77,10 @@ def package_family_name() -> str | None:
         import ctypes
         from ctypes import wintypes
 
-        kernel32 = ctypes.windll.kernel32
+        # A private WinDLL instance, not ctypes.windll.kernel32: mutating
+        # argtypes on the shared object corrupts every other caller in the
+        # process (e.g. pywebview's winforms SetWindowPos calls).
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         probe = kernel32.GetCurrentPackageFamilyName
         probe.argtypes = [ctypes.POINTER(wintypes.UINT), wintypes.LPWSTR]
         probe.restype = wintypes.LONG

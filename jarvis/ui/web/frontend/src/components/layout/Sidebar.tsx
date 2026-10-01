@@ -3,6 +3,7 @@ import {
   MessageSquare,
   Mic,
   ChevronDown,
+  ChevronLeft,
   MoreHorizontal,
   Store,
   UserCircle2,
@@ -16,6 +17,7 @@ import {
   type NavItem,
 } from "@/components/layout/navGroups";
 import { useEventStore } from "@/store/events";
+import { useSectionPrefetch } from "@/hooks/useSectionPrefetch";
 import { useVoiceReadiness } from "@/hooks/useVoiceReadiness";
 import { useVoiceMode } from "@/hooks/useVoiceMode";
 import { useSectionHealth } from "@/hooks/useProviders";
@@ -28,10 +30,11 @@ import { RecentChats } from "@/components/home/RecentChats";
 import { useConversations } from "@/hooks/useConversations";
 import { useHomeStore } from "@/store/home";
 import { useAgentChatStore } from "@/store/agentChat";
-import { useIdeChatStore } from "@/store/ideChat";
-import { WorkspaceChats } from "@/components/agentic/WorkspaceChats";
+import { IdeProjectTree } from "@/components/agentic/IdeProjectTree";
+import { useIdeProjectsStore } from "@/store/ideProjects";
 import { useAppInstance } from "@/hooks/useAppInstance";
-import { usePublishIdentity } from "@/components/marketplace/PublishIdentity";
+// The query alone, not ./PublishIdentity: the sign-in UI stays out of the entry chunk.
+import { usePublishIdentity } from "@/components/marketplace/publishIdentityQuery";
 import { GigiMark } from "@/components/GigiMark";
 import * as Dialog from "@radix-ui/react-dialog";
 import { startNewVoiceRun } from "@/lib/chatsApi";
@@ -166,8 +169,13 @@ export function Sidebar({
   collapsed = false,
 }: SidebarProps = {}) {
   const t = useT();
+  const profilePrefetch = useSectionPrefetch("profile");
+  const marketplacePrefetch = useSectionPrefetch("marketplace");
   const active = useEventStore((s) => s.activeSection);
   const setActive = useEventStore((s) => s.setActiveSection);
+  const activeIdeWorkspaceId = useIdeProjectsStore((s) => s.activeWorkspaceId);
+  const openIdeWorkspaceOptions = useIdeProjectsStore((s) => s.openWorkspaceOptions);
+  const toggleIdeVoice = useIdeProjectsStore((s) => s.toggleVoice);
   const voiceState = useEventStore((s) => s.voiceState);
   const assistantName = useEventStore((s) => s.assistantName);
   // The dev instance (a second, restartable app beside the live one — see
@@ -199,7 +207,6 @@ export function Sidebar({
    * Only while the IDE is the section on screen: every other section gets the
    * plain navigation, with no workspace list bolted on top of it.
    */
-  const ideView = useIdeChatStore((s) => s.view);
   /*
    * Is there anything for this column to list?
    *
@@ -216,9 +223,7 @@ export function Sidebar({
    * workspace as its own band now, so it has something true to say for as
    * long as any of them is running.
    */
-  const ideWorkspaceOpen = useIdeChatStore((s) => s.workspaces.length > 0);
   const onIdeSection = IDE_SECTIONS.includes(active);
-  const chatFace = onIdeSection && ideWorkspaceOpen && ideView === "chat";
   const [moreOpen, setMoreOpen] = useState(false);
   const [newChatOpen, setNewChatOpen] = useState(false);
   const [startingVoice, setStartingVoice] = useState(false);
@@ -320,6 +325,9 @@ export function Sidebar({
       : voiceMode.connecting
         ? t("voice_state.connecting")
         : t(`voice_state.${voiceState}`);
+  // The header spells the state out only when it is news — anything but a
+  // connected, warmed-up pipeline at rest. See the header row below.
+  const voiceHasNews = !connected || showSpinner || voiceState !== "idle";
 
   // Dragged past the snap point the sidebar becomes a rail of icons. Everything
   // that only makes sense with a label beside it steps aside; the
@@ -332,13 +340,13 @@ export function Sidebar({
 
   const allItems = NAV_GROUPS.flat();
   const findItem = (id: string) => allItems.find((item) => item.id === id)!;
-  const toolIds = ["memory", "board", "docs", "sessions", "run_inspector", "clis", "agentic-ide"];
+  const toolIds = ["memory", "board", "docs", "sessions", "run_inspector", "clis", "tasks"];
   const toolItems = toolIds.map(findItem);
   // Artifacts ("visualization") sits directly in the main list where the
   // retired "Jarvis Tools" folder used to be — it was the only entry hiding
   // behind "Show more" that users reached for daily, while the tools folder
   // duplicated exactly what "Show more" already lists.
-  const primaryIds = ["chats", "agents", "dictation", "visualization", "tasks", "plugins", "marketplace"];
+  const primaryIds = ["chats", "agents", "dictation", "visualization", "agentic-ide", "plugins", "marketplace"];
   // The Settings hub owns its entries — they live in the hub's left
   // navigation now, so "Show more" must not list them a second time. The set
   // itself is named once in `navGroups` (`SETTINGS_HUB_IDS`).
@@ -380,18 +388,18 @@ export function Sidebar({
       {/* One 8px gutter down the whole column — header, navigation and footer
           share it, so the rows, the "+ New" button and the brain card all line
           up on the same left edge. */}
-      <div className={cn("px-3", railed ? "py-2.5" : "pb-2 pt-3")}>
+      <div className={cn(railed ? "px-3 py-2.5" : "flex h-10 items-center px-4")}>
         <div
           className={cn(
-            "flex items-center gap-2.5",
-            railed && "flex-col justify-center gap-1.5",
+            "flex items-center",
+            railed ? "flex-col justify-center gap-1.5" : "w-full gap-2",
           )}
         >
           <span
             data-testid="sidebar-style-avatar"
             data-variant="logo"
             title={railed ? `${assistantName} — ${voiceLabel}` : undefined}
-            className={cn("relative shrink-0", railed ? "h-9 w-9" : "h-7 w-7")}
+            className={cn("relative shrink-0", railed ? "h-9 w-9" : "h-5 w-5")}
           >
             {railed && devTag && (
               <span
@@ -402,45 +410,54 @@ export function Sidebar({
                 {devTag}
               </span>
             )}
-            <GigiMark size={railed ? 36 : 28} />
+            <GigiMark size={railed ? 36 : 20} />
           </span>
+          {/* One quiet row, like the workspace switcher in Linear or Cursor:
+              mark, name, status dot. It used to be a two-line identity card
+              whose second line said "Ready" for as long as nothing was wrong,
+              which is almost always — the one word that carries no news took
+              the loudest spot in the column. The dot says "fine" on its own
+              (its hover and accessible name still carry the word); the word
+              only appears when there IS news: starting, offline, error. */}
           {!railed && (
-            <div className="flex min-w-0 flex-1 flex-col">
-              <span className="flex min-w-0 items-center gap-2 text-base font-medium text-foreground-strong">
-                <span className="truncate">{assistantName}</span>
-                {devTag && (
-                  // A mark, not a status: the fill is the neutral accent, so it
-                  // never competes with the green/amber/red the voice dot
-                  // beside it uses to mean something.
-                  <span
-                    data-testid="sidebar-instance-tag"
-                    title={t("sidebar.instance_dev_hint")}
-                    className="shrink-0 rounded-sm bg-primary px-1.5 text-xs font-medium leading-none text-primary-foreground"
-                  >
-                    {devTag}
-                  </span>
-                )}
-              </span>
-              {/* The state: a 6 px dot in the status colour, then the word. */}
-              <span className="flex min-w-0 items-center gap-1.5 text-sm text-muted-foreground">
-                {showSpinner ? (
-                  <Loader2
-                    className="h-3 w-3 shrink-0 animate-spin"
-                    data-testid="voice-starting-spinner"
-                    aria-hidden
-                  />
-                ) : (
-                  <span
-                    className={cn(
-                      "h-1.5 w-1.5 shrink-0 rounded-full",
-                      vs.dot,
-                      vs.pulse && "animate-jarvis-pulse",
-                    )}
-                    aria-hidden
-                  />
-                )}
-                <span className="truncate">{voiceLabel}</span>
-              </span>
+            <div
+              className="flex min-w-0 flex-1 items-center gap-2 text-sm"
+              title={voiceLabel}
+            >
+              <span className="truncate font-medium text-foreground-strong">{assistantName}</span>
+              {devTag && (
+                // A mark, not a status: the fill is the neutral accent, so it
+                // never competes with the green/amber/red the voice dot
+                // beside it uses to mean something.
+                <span
+                  data-testid="sidebar-instance-tag"
+                  title={t("sidebar.instance_dev_hint")}
+                  className="shrink-0 rounded-sm bg-primary px-1.5 text-xs font-medium leading-none text-primary-foreground"
+                >
+                  {devTag}
+                </span>
+              )}
+              {showSpinner ? (
+                <Loader2
+                  className="h-3 w-3 shrink-0 animate-spin text-muted-foreground"
+                  data-testid="voice-starting-spinner"
+                  aria-hidden
+                />
+              ) : (
+                <span
+                  data-testid="sidebar-voice-dot"
+                  role="img"
+                  aria-label={voiceLabel}
+                  className={cn(
+                    "h-1.5 w-1.5 shrink-0 rounded-full",
+                    vs.dot,
+                    vs.pulse && "animate-jarvis-pulse",
+                  )}
+                />
+              )}
+              {voiceHasNews && (
+                <span className="truncate text-xs text-muted-foreground">{voiceLabel}</span>
+              )}
             </div>
           )}
           {railed &&
@@ -465,10 +482,28 @@ export function Sidebar({
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto scrollbar-jarvis">
-        <nav aria-label={t("sidebar.sections")} className="space-y-1 px-2 py-2">
+        {onIdeSection ? <nav aria-label="IDE navigation" className="px-2 pt-2">
+          <button type="button" data-testid="ide-back-to-jarvis" onClick={() => setActive("chats")}
+            className="flex min-h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            <ChevronLeft aria-hidden className="h-3.5 w-3.5 shrink-0" />
+            {!railed && <span>Back to Jarvis</span>}
+          </button>
+          {railed && <div className="mt-2 flex flex-col items-center gap-1 border-t border-border/60 pt-2">
+            <button type="button" aria-label="Workspace options" title="Workspace options"
+              disabled={!activeIdeWorkspaceId}
+              onClick={() => { if (activeIdeWorkspaceId) openIdeWorkspaceOptions(activeIdeWorkspaceId); }}
+              className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-35">
+              <MoreHorizontal aria-hidden className="h-4 w-4" />
+            </button>
+            <button type="button" aria-label="Jarvis Live" title="Jarvis Live" onClick={toggleIdeVoice}
+              className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <Mic aria-hidden className="h-4 w-4" />
+            </button>
+          </div>}
+        </nav> : <nav aria-label={t("sidebar.sections")} className="space-y-1 px-2 py-2">
           <ul className="space-y-1">
             <li><Dialog.Root open={newChatOpen} onOpenChange={(open) => { if (!startingVoiceRef.current) setNewChatOpen(open); }}>
-              <Dialog.Trigger asChild><button type="button" data-testid="sidebar-new-chat"
+              <Dialog.Trigger asChild><button type="button" data-testid="sidebar-new-chat" data-tour="new-chat"
               aria-label={t("sidebar.new_chat")} title={t("sidebar.new_chat")} className={rowClass}>
               <Plus aria-hidden className="h-4 w-4 shrink-0" />
               {!railed && <span>{t("sidebar.new_chat")}</span>}
@@ -494,7 +529,7 @@ export function Sidebar({
           </ul>
           <ul className="space-y-1">
             {renderRow(findItem("visualization"))}
-            {renderRow({ ...findItem("tasks"), labelKey: "sidebar.scheduled" })}
+            {renderRow(findItem("agentic-ide"))}
             {renderRow({ ...findItem("plugins"), labelKey: "sidebar.extensions_label" })}
           </ul>
           <button type="button" onClick={() => { setMoreOpen(!moreOpen); }} aria-expanded={moreOpen}
@@ -502,11 +537,11 @@ export function Sidebar({
             <MoreHorizontal aria-hidden className="h-4 w-4 shrink-0" />
             {!railed && <span>{t(moreOpen ? "sidebar.show_less" : "sidebar.more")}</span>}
           </button>
-          {moreOpen && <ul id="sidebar-more" className="space-y-1">{moreItems.map((item) => renderRow(item))}</ul>}
-        </nav>
-        {!railed && <section className="mt-4 px-2 pb-3" aria-label={t("sidebar.recent_chats")}>
-          {chatFace ? <WorkspaceChats /> : <RecentChats />}
-        </section>}
+          {moreOpen && <ul id="sidebar-more" className="space-y-1">{moreItems.map((item) => item.id === "tasks" ? renderRow({ ...item, labelKey: "sidebar.scheduled" }) : renderRow(item))}</ul>}
+        </nav>}
+        {!railed && (onIdeSection
+          ? <IdeProjectTree />
+          : <section className="mt-4 px-2 pb-3" aria-label={t("sidebar.recent_chats")}><RecentChats /></section>)}
       </div>
 
       {/* The footer is one button now, not a popup: it opens the Settings hub
@@ -517,8 +552,9 @@ export function Sidebar({
           needs care, must be visible without opening anything. */}
       <div className="shrink-0 border-t border-border p-2">
         <div className={cn("flex items-center gap-1", railed && "flex-col")}>
-          <button type="button" onClick={() => setActive("profile")} title={t("nav.profile")}
+          <button type="button" {...profilePrefetch} onClick={() => setActive("profile")} title={t("nav.profile")}
             data-testid="sidebar-profile-toggle"
+            data-tour="settings"
             className={cn(rowClass, "min-w-0 flex-1", hubActive && "jarvis-nav-active bg-secondary text-foreground")}>
             <span className="relative shrink-0">
               <UserCircle2 aria-hidden className="h-7 w-7" />
@@ -528,7 +564,7 @@ export function Sidebar({
             </span>
             {!railed && <span className="min-w-0 flex-1 truncate text-left">{identity.data?.signed_in ? identity.data.login || t("nav.profile") : t("nav.profile")}</span>}
           </button>
-          <button type="button" onClick={() => setActive("marketplace")} title={t("nav.marketplace")}
+          <button type="button" {...marketplacePrefetch} onClick={() => setActive("marketplace")} title={t("nav.marketplace")}
             aria-label={t("nav.marketplace")} data-testid="nav-row-marketplace"
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             <Store aria-hidden className="h-5 w-5" />
@@ -580,6 +616,7 @@ function NavRow({
   warnTitle?: string;
   onClick: () => void;
 }) {
+  const prefetch = useSectionPrefetch(item.id);
   const Icon = item.icon;
   const hint = alert ? alertTitle : warn ? warnTitle : undefined;
   /*
@@ -608,6 +645,8 @@ function NavRow({
         <button
           type="button"
           data-testid={`nav-row-${item.id}`}
+          {...prefetch}
+          data-tour={`nav-${item.id}`}
           onClick={onClick}
           title={compact ? `${label}${hint ? ` — ${hint}` : ""}` : hint}
           aria-label={compact ? label : undefined}

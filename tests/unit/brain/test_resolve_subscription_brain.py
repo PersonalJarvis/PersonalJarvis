@@ -202,3 +202,4 @@ def test_every_subscription_card_can_answer_the_connection_probe() -> None:
         assert callable(
             getattr(brain_cls, "subscription_connected", None)
         ), f"{spec.id} has no subscription_connected probe"
+

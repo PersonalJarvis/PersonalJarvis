@@ -24,8 +24,19 @@ __all__ = ["derive_approval_rules", "derive_focus"]
 # words on a folded text. German and English on purpose: the description is
 # product-surface text the person writes in their own language.
 _ALIASES: Final[dict[str, tuple[str, ...]]] = {
-    "plugin:gmail": ("gmail", "mail", "mails", "email", "emails", "e-mail", "inbox", "postfach"),
-    "plugin:google-calendar": (
+    "plugin:gmail": (
+        "gmail",
+        "mail",
+        "mails",
+        "email",
+        "emails",
+        "e-mail",
+        "inbox",
+        "postfach",
+        "briefing",
+        "morgenbriefing",  # i18n-allow: input vocab
+    ),
+    "plugin:google_calendar": (
         "calendar",
         "kalender",
         "termin",
@@ -34,11 +45,15 @@ _ALIASES: Final[dict[str, tuple[str, ...]]] = {
         "meetings",
         "appointment",
         "appointments",
+        "agenda",
+        "briefing",
+        "morgenbriefing",  # i18n-allow: input vocab
+        "tagesueberblick",  # i18n-allow: input vocab
     ),
-    "plugin:drive": ("drive", "google drive", "gdrive"),
+    "plugin:google_drive": ("drive", "google drive", "gdrive"),
     "plugin:spotify": ("spotify", "playlist", "playlists", "musik", "music", "song", "songs"),
-    "plugin:youtube-music": ("youtube music", "youtube-music"),
-    "plugin:home-assistant": ("home assistant", "smart home", "smarthome", "licht", "lights"),
+    "plugin:youtube_music": ("youtube music", "youtube-music"),
+    "plugin:home_assistant": ("home assistant", "smart home", "smarthome", "licht", "lights"),
     "plugin:vercel": ("vercel", "deployment", "deployments", "deploy"),
     "cli:gh": ("github", "gh", "pull request", "pull requests", "pr", "prs", "issue", "issues"),
     "cli:git": ("git", "commit", "commits", "branch", "branches"),
@@ -54,6 +69,10 @@ _ALIASES: Final[dict[str, tuple[str, ...]]] = {
         "suche",
         "news",
         "nachrichten",
+        "weather",
+        "wetter",  # i18n-allow: input vocab
+        "briefing",
+        "morgenbriefing",  # i18n-allow: input vocab
     ),
     "core:wiki-recall": ("wiki", "wissen", "knowledge", "notes", "notizen", "obsidian"),
     "core:computer-use": ("browser", "website", "webseite", "click", "klicken", "screen"),
@@ -82,7 +101,7 @@ _APPROVAL_PHRASES: Final[tuple[str, ...]] = (
 #: Sending verbs per capability kind that an approval boundary should gate.
 _SEND_VERBS: Final[dict[str, tuple[str, ...]]] = {
     "plugin:gmail": ("send",),
-    "plugin:google-calendar": ("create", "update", "delete"),
+    "plugin:google_calendar": ("create", "update", "delete"),
     "plugin:spotify": ("play",),
     "plugin:vercel": ("deploy",),
     "cli:gh": ("create", "merge", "close"),

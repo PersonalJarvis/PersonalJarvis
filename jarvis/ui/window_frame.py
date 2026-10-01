@@ -2,6 +2,9 @@
 
 The desktop window is created with ``FormBorderStyle.None``. Windows then
 refuses edge resizing, and a maximized window is laid out over the taskbar.
+A window rectangle that covers the whole monitor also makes Explorer treat it
+as a fullscreen app and hide the taskbar, so ``WM_GETMINMAXINFO`` caps the
+maximized rectangle at the monitor work area (except in real fullscreen).
 HTML draws the caption buttons and drags via pywebview's drag region, so this
 module never returns ``HTCAPTION`` and never paints caption buttons. Only the
 outer border (8px) is a resize grip.
@@ -23,6 +26,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -31,6 +35,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "caption_hit",
     "install_resize_frame",
+    "maximized_bounds",
     "native_hwnd",
     "window_is_maximized",
 ]
@@ -45,6 +50,7 @@ _HTBOTTOM = 15
 _HTBOTTOMLEFT = 16
 _HTBOTTOMRIGHT = 17
 
+_WM_GETMINMAXINFO = 0x0024
 _WM_NCCALCSIZE = 0x0083
 _WM_NCHITTEST = 0x0084
 
@@ -84,6 +90,9 @@ class _PinnedSubclass:
 
     callback: Any
     previous: int
+
+
+FullscreenProbe = Callable[[], bool]
 
 
 @dataclass(slots=True)
@@ -146,6 +155,24 @@ def caption_hit(
     return None
 
 
+def maximized_bounds(
+    monitor: tuple[int, int, int, int],
+    work: tuple[int, int, int, int],
+) -> tuple[int, int, int, int]:
+    """Return ``(x, y, width, height)`` for ``MINMAXINFO`` from two rectangles.
+
+    Both rectangles are ``(left, top, right, bottom)`` screen pixels. The
+    position is relative to the monitor origin, as ``ptMaxPosition`` expects;
+    the size is the work area, so the taskbar keeps its strip.
+    """
+    return (
+        work[0] - monitor[0],
+        work[1] - monitor[1],
+        work[2] - work[0],
+        work[3] - work[1],
+    )
+
+
 def window_is_maximized(hwnd: int) -> bool:
     """Return whether Windows reports ``hwnd`` as zoomed (maximized).
 
@@ -192,14 +219,15 @@ def native_hwnd(window: Any) -> int | None:
         return None
 
 
-def install_resize_frame(hwnd: int) -> bool:
+def install_resize_frame(hwnd: int, *, is_fullscreen: FullscreenProbe | None = None) -> bool:
     """Subclass ``hwnd`` so the outer border resizes and maximize keeps the taskbar.
 
     Returns true only when the subclass is installed. A second call for the
     same hwnd returns true and does not stack another procedure. Non-Windows,
     a null handle, and a handle that is not a real window return false.
     Never raises. A shadow (1px DWM margins) is best-effort: if it fails the
-    subclass still stands.
+    subclass still stands. ``is_fullscreen`` reports real fullscreen mode;
+    while it is true the window may cover the whole monitor, taskbar included.
     """
     if os.name != "nt":
         return False
@@ -218,7 +246,7 @@ def install_resize_frame(hwnd: int) -> bool:
             if not api.user32.IsWindow(key):
                 logger.debug("resize frame not installed; hwnd %s is not a window", key)
                 return False
-            return _install_locked(api, key)
+            return _install_locked(api, key, is_fullscreen)
         except Exception:  # noqa: BLE001 - install is a capability probe
             _log_exception("install_resize_frame failed")
             return False
@@ -387,7 +415,7 @@ def _load_dwm_extend(ctypes: Any, margins: Any) -> Any:
     return extend
 
 
-def _install_locked(api: _Win32, hwnd: int) -> bool:
+def _install_locked(api: _Win32, hwnd: int, is_fullscreen: FullscreenProbe | None) -> bool:
     old_style = _get_long(api, hwnd, _GWL_STYLE)
     if old_style is None:
         return False
@@ -395,7 +423,7 @@ def _install_locked(api: _Win32, hwnd: int) -> bool:
     new_style = style_bits | _RESIZE_STYLE
     if not _set_long(api, hwnd, _GWL_STYLE, new_style):
         return False
-    if not _subclass(api, hwnd):
+    if not _subclass(api, hwnd, is_fullscreen):
         # Put the previous bits back so a failed install does not leave a caption.
         _set_long(api, hwnd, _GWL_STYLE, style_bits)
         return False
@@ -410,14 +438,14 @@ def _install_locked(api: _Win32, hwnd: int) -> bool:
     return True
 
 
-def _subclass(api: _Win32, hwnd: int) -> bool:
+def _subclass(api: _Win32, hwnd: int, is_fullscreen: FullscreenProbe | None) -> bool:
     previous = _get_long(api, hwnd, _GWLP_WNDPROC)
     if previous is None:
         return False
     if previous == 0:
         logger.error("window procedure pointer is null hwnd=%s", hwnd)
         return False
-    callback = api.wndproc_type(_make_proc(api, previous))
+    callback = api.wndproc_type(_make_proc(api, previous, is_fullscreen))
     raw = api.ctypes.cast(callback, api.ctypes.c_void_p).value
     if not raw:
         logger.error("resize window procedure thunk is null hwnd=%s", hwnd)
@@ -436,12 +464,26 @@ def _subclass(api: _Win32, hwnd: int) -> bool:
     return True
 
 
-def _make_proc(api: _Win32, previous: int):
+def _make_proc(api: _Win32, previous: int, is_fullscreen: FullscreenProbe | None):
     user32 = api.user32
 
     def proc(hwnd, msg, wparam, lparam):
+        if msg == _WM_GETMINMAXINFO:
+            # The previous procedure (WinForms, then DefWindowProc) fills the
+            # structure first; only the maximized rectangle is replaced.
+            try:
+                result = user32.CallWindowProcW(previous, hwnd, msg, wparam, lparam)
+            except Exception:  # noqa: BLE001 - a window procedure must not raise into Win32
+                _log_exception("CallWindowProcW failed")
+                return 0
+            try:
+                if hwnd is not None and not _probe_fullscreen(is_fullscreen):
+                    _cap_maximized(api, _as_int(hwnd), lparam)
+            except Exception:  # noqa: BLE001 - keep the previous procedure's answer
+                _log_exception("WM_GETMINMAXINFO work-area cap failed")
+            return result
         try:
-            result = _dispatch(api, hwnd, msg, wparam, lparam)
+            result = _dispatch(api, hwnd, msg, wparam, lparam, is_fullscreen)
             if result is not None:
                 return result
         except Exception:  # noqa: BLE001 - a window procedure must not raise into Win32
@@ -455,13 +497,30 @@ def _make_proc(api: _Win32, previous: int):
     return proc
 
 
-def _dispatch(api: _Win32, hwnd: object, msg: object, wparam: object, lparam: object) -> int | None:
+def _probe_fullscreen(is_fullscreen: FullscreenProbe | None) -> bool:
+    if is_fullscreen is None:
+        return False
+    try:
+        return bool(is_fullscreen())
+    except Exception:  # noqa: BLE001 - an unknown state keeps the taskbar visible
+        _log_exception("fullscreen probe failed")
+        return False
+
+
+def _dispatch(
+    api: _Win32,
+    hwnd: object,
+    msg: object,
+    wparam: object,
+    lparam: object,
+    is_fullscreen: FullscreenProbe | None = None,
+) -> int | None:
     message = _as_int(msg)
     if message == _WM_NCCALCSIZE and _as_int(wparam):
         # Returning 0 without the old procedure is what removes the title bar.
         # Falling through would let DefWindowProc reserve the caption strip.
         try:
-            if hwnd is not None:
+            if hwnd is not None and not _probe_fullscreen(is_fullscreen):
                 _apply_client_area(api, _as_int(hwnd), lparam)
         except Exception:  # noqa: BLE001 - keep the borderless client area anyway
             _log_exception("WM_NCCALCSIZE client-area adjustment failed")
@@ -511,10 +570,48 @@ def _apply_client_area(api: _Win32, hwnd: int, lparam: object) -> None:
     """
     if not api.user32.IsZoomed(hwnd):
         return
+    info = _monitor_info(api, hwnd)
+    if info is None:
+        return
+    address = _pointer_bits(lparam)
+    if address == 0:
+        logger.error("WM_NCCALCSIZE lParam is null hwnd=%s", hwnd)
+        return
+    # rgrc[0] is the first field. Copying the work rectangle onto it avoids
+    # the ctypes nested-array copy that drops field writes.
+    api.ctypes.memmove(address, api.ctypes.byref(info.rcWork), api.ctypes.sizeof(api.rect))
+
+
+def _cap_maximized(api: _Win32, hwnd: int, lparam: object) -> None:
+    """Set ``ptMaxSize`` / ``ptMaxPosition`` in a MINMAXINFO to the work area.
+
+    WinForms maximizes a borderless form to the full monitor. A window that
+    covers the monitor is taken for a fullscreen app and Explorer hides the
+    taskbar, even though ``WM_NCCALCSIZE`` already keeps the page off it.
+    """
+    info = _monitor_info(api, hwnd)
+    if info is None:
+        return
+    address = _pointer_bits(lparam)
+    if address == 0:
+        logger.error("WM_GETMINMAXINFO lParam is null hwnd=%s", hwnd)
+        return
+    x, y, width, height = maximized_bounds(
+        (info.rcMonitor.left, info.rcMonitor.top, info.rcMonitor.right, info.rcMonitor.bottom),
+        (info.rcWork.left, info.rcWork.top, info.rcWork.right, info.rcWork.bottom),
+    )
+    # MINMAXINFO is five POINTs: ptReserved, ptMaxSize, ptMaxPosition, ...
+    fields = (api.ctypes.c_long * 10).from_address(address)
+    fields[2], fields[3] = width, height
+    fields[4], fields[5] = x, y
+
+
+def _monitor_info(api: _Win32, hwnd: int) -> Any | None:
+    """MONITORINFO of the monitor nearest ``hwnd``, or None (logged)."""
     monitor = api.user32.MonitorFromWindow(hwnd, _MONITOR_DEFAULTTONEAREST)
     if not monitor:
         logger.error("MonitorFromWindow returned no monitor hwnd=%s", hwnd)
-        return
+        return None
     info = api.monitor_info()
     info.cbSize = api.ctypes.sizeof(info)
     api.kernel32.SetLastError(0)
@@ -524,14 +621,8 @@ def _apply_client_area(api: _Win32, hwnd: int, lparam: object) -> None:
             hwnd,
             api.ctypes.get_last_error(),
         )
-        return
-    address = _pointer_bits(lparam)
-    if address == 0:
-        logger.error("WM_NCCALCSIZE lParam is null hwnd=%s", hwnd)
-        return
-    # rgrc[0] is the first field. Copying the work rectangle onto it avoids
-    # the ctypes nested-array copy that drops field writes.
-    api.ctypes.memmove(address, api.ctypes.byref(info.rcWork), api.ctypes.sizeof(api.rect))
+        return None
+    return info
 
 
 def _screen_point(lparam: object) -> tuple[int, int] | None:

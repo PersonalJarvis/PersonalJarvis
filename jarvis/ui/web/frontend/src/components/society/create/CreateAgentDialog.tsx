@@ -37,6 +37,7 @@ import { Switch } from "@/components/ui/switch";
 import { Combobox, isComboboxPanelEvent, type ComboboxGroup } from "@/components/ui/combobox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useT } from "@/i18n";
+import { ComputerPicker } from "./ComputerPicker";
 import {
   fetchAgentChatCatalog,
   fetchAgentConnections,
@@ -45,7 +46,7 @@ import {
   type AgentConnectionRow,
   type CuratedModel,
 } from "@/lib/agentChatApi";
-import { fetchSocietyProviders, type SocietyProviderRow } from "@/lib/societyApi";
+import { AGENT_APPROVAL_MODES, fetchSocietyProviders, type AgentApprovalMode, type SocietyProviderRow } from "@/lib/societyApi";
 import { cn } from "@/lib/utils";
 import { joinProviderOptions } from "@/store/agentChat";
 
@@ -59,7 +60,7 @@ import {
   type BrainSeat,
 } from "./brainPicker";
 import { modelSeats } from "../chat/modelChoices";
-import { useCreateAgent, type PermissionCeiling } from "../data";
+import { useCreateAgent } from "../data";
 import { CompanionEditor } from "../companion/CompanionEditor";
 import { resolveCompanion } from "../companion/appearance";
 import { AgentFigureViewer } from "../figures/AgentFigureViewer";
@@ -83,8 +84,6 @@ import {
   CATALOG,
 } from "../figures/figureRegistry";
 import type { FigureArchetype } from "../figures/figureRecipe";
-
-const CEILINGS: readonly PermissionCeiling[] = ["safe", "monitor", "ask"];
 
 /**
  * How tall a figure may be made, per archetype. One 1.5–2.1 m band fits a
@@ -128,7 +127,9 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
   const [model, setModel] = useState("");
   const [effort, setEffort] = useState("");
   const [accountId, setAccountId] = useState("");
-  const [ceiling, setCeiling] = useState<PermissionCeiling>("monitor");
+  // "" = this computer; otherwise a connected computer (VPS / local VM) id.
+  const [computerId, setComputerId] = useState("");
+  const [approvalMode, setApprovalMode] = useState<AgentApprovalMode>("bypass");
   const [budget, setBudget] = useState("2");
   // A cap is the default because an agent that can spend without one is the
   // surprising case, not the ordinary one. Off sends 0, which is exactly what
@@ -147,7 +148,12 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
   // joined with the Agents tab's credential truth exactly as the chat's
   // composer joins it, plus the subscription logins stored per CLI.
   const catalog = useQuery({
-    queryKey: ["agent-chat", "catalog", "society", accountId],
+    // Without an account this is the very query the Agents view prepared on
+    // mount (`useModelMenuData`, seeded from the saved snapshot), so the
+    // picker fills the instant the dialog opens instead of refetching.
+    queryKey: accountId
+      ? ["agent-chat", "catalog", "society", accountId]
+      : ["agent-chat", "catalog", "society"],
     queryFn: () => fetchAgentChatCatalog("society", { accountId }),
     enabled: open,
     staleTime: 60_000,
@@ -165,8 +171,10 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
     staleTime: 60_000,
   });
   // A keyless row (Ollama, a local server) is listed only when it answers
-  // with models, so those lists are fetched before the picker fills; a keyed
-  // row's live list is fetched once it is picked, like the composer does.
+  // with models. The picker does not wait for them: the other seats show at
+  // once and a local row joins when its server answers (each list is capped
+  // by `MODEL_LIST_TIMEOUT_MS`). A keyed row's live list is fetched once it
+  // is picked, like the composer does.
   const keylessIds = useMemo(
     () => (catalog.data?.providers ?? []).filter((p) => p.keyless && p.models_source === "live").map((p) => p.id),
     [catalog.data],
@@ -191,8 +199,7 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
     [keylessModels.data, pickedModels.data],
   );
 
-  const seatsLoading =
-    catalog.isLoading || connections.isLoading || societyProviders.isLoading || keylessModels.isLoading;
+  const seatsLoading = catalog.isLoading || connections.isLoading || societyProviders.isLoading;
   // Joined only once every answer is in (each query settles to [] on a
   // failure): a join over a catalog without the credential rows would call
   // every API seat unconnected, list the local rows alone, and the default
@@ -200,14 +207,14 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
   const defaultModelLabel = t("agent_chat.model_default");
   const seats = useMemo<BrainSeat[]>(() => {
     const providers = catalog.data?.providers ?? [];
-    if (!providers.length || !connections.data || !societyProviders.data || !keylessModels.data) return [];
+    if (!providers.length || !connections.data || !societyProviders.data) return [];
     return modelSeats(
       joinProviderOptions(providers, connections.data),
       societyProviders.data,
       liveModels,
       defaultModelLabel,
     );
-  }, [catalog.data, connections.data, societyProviders.data, keylessModels.data, liveModels, defaultModelLabel]);
+  }, [catalog.data, connections.data, societyProviders.data, liveModels, defaultModelLabel]);
   const seat = seats.find((s) => s.provider.id === providerId) ?? null;
   const accounts = accountChoice(seat);
   const efforts = effortsFor(seat, model);
@@ -217,6 +224,7 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
     setModel(next ? next.provider.default_model || modelsFor(next)[0]?.id || "" : "");
     setEffort(next?.provider.default_effort ?? "");
     setAccountId("");
+    setApprovalMode("bypass");
   };
 
   // A fresh dialog starts on the brain marked active, else the first seat —
@@ -243,6 +251,7 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
     setModel("");
     setEffort("");
     setAccountId("");
+    setApprovalMode("bypass");
     setImportProblems(null);
     setImportedName(null);
     setError(null);
@@ -366,12 +375,14 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
         model,
         effort,
         accountId,
+        computerId,
         // Every tool Jarvis has connected; what the agent reaches for first
         // is settled in its own chat afterwards (maintainer, 2026-09-02).
         grantMode: "all",
         toolGrants: [],
         focus: [],
-        permissionCeiling: ceiling,
+        permissionCeiling: "ask",
+        approvalMode,
         dailyBudgetUsd: budgetOn ? Math.max(0, Number.parseFloat(budget) || 0) : 0,
       });
       onCreated(agent.agentId);
@@ -569,13 +580,17 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
                   <p className="mt-1 text-xs text-muted-foreground">{t("society.create.brain_hint")}</p>
                 </div>
 
+                <ComputerPicker value={computerId} onChange={setComputerId} labelClass={labelClass} />
+
                 <Collapsible.Root open={advanced} onOpenChange={setAdvanced}>
                   <Collapsible.Trigger asChild>
                     <button
                       type="button"
                       className="flex w-full items-center justify-between rounded-md border border-border px-3 py-2 text-sm font-medium text-foreground hover:bg-secondary"
                     >
-                      {t("society.create.advanced")}
+                      <span>
+                        {t("society.create.advanced")} · {t(`society.approval_mode.${approvalMode}`)}
+                      </span>
                       <ChevronDown
                         className={cn("h-4 w-4 transition-transform", advanced && "rotate-180")}
                         aria-hidden
@@ -584,12 +599,23 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
                   </Collapsible.Trigger>
                   <Collapsible.Content className="flex flex-col gap-4 pt-4">
                     <div>
-                      <span className={labelClass}>{t("society.create.ceiling")}</span>
+                      <span className={labelClass}>{t("society.approval_mode.title")}</span>
                       <Segmented
-                        value={ceiling}
-                        options={CEILINGS.map((c) => ({ value: c, label: t(`society.ceiling.${c}`) }))}
-                        onChange={(v) => setCeiling(v as PermissionCeiling)}
+                        value={approvalMode}
+                        options={AGENT_APPROVAL_MODES.map((mode) => ({
+                          value: mode,
+                          label: t(`society.approval_mode.${mode}`),
+                          disabled: mode === "always_ask"
+                            ? seat?.kind === "subscription" && seat.provider.runner !== "codex-cli"
+                            : mode === "ask" && seat?.kind === "subscription"
+                              && !["codex-cli", "claude-cli", "glm-cli"].includes(seat.provider.runner),
+                          hint: t(`society.approval_mode.${mode}_hint`),
+                        }))}
+                        onChange={(v) => setApprovalMode(v as AgentApprovalMode)}
                       />
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {t(`society.approval_mode.${approvalMode}_hint`)}
+                      </p>
                     </div>
                     <div>
                       <div className="mb-2 flex items-center gap-2">
@@ -883,10 +909,18 @@ function seatGroups(seats: BrainSeat[], t: (key: string) => string): ComboboxGro
  * The live model lists of `ids`, fetched together; a provider that answers
  * nothing (not running, nothing installed, route missing) maps to [].
  */
+/** A provider's model list that has not answered in this long counts as empty. */
+const MODEL_LIST_TIMEOUT_MS = 4_000;
+
 async function fetchModelLists(ids: string[]): Promise<Record<string, CuratedModel[]>> {
   const lists = await Promise.all(
     ids.map(async (id) => {
-      const rows = await fetchProviderModels(id).catch(() => []);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<[]>((resolve) => {
+        timer = setTimeout(() => resolve([]), MODEL_LIST_TIMEOUT_MS);
+      });
+      const rows = await Promise.race([fetchProviderModels(id).catch(() => []), timeout]);
+      clearTimeout(timer);
       return [id, rows.map((m) => ({ id: m.id, label: m.label ?? m.name ?? m.id }))] as const;
     }),
   );

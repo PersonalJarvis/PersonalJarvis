@@ -1,10 +1,11 @@
 import { useState } from "react";
-import { Monitor, Moon, Power, Sun, Zap } from "lucide-react";
+import { Compass, Monitor, Moon, Power, Sun, Zap } from "lucide-react";
+import { TOUR_START_EVENT } from "@/components/onboarding/tourEvents";
 import { Switch } from "@/components/ui/switch";
 import { useAutostart } from "@/hooks/useAutostart";
 import { useTheme, type ThemePreference } from "@/hooks/useTheme";
 import { useEventStore } from "@/store/events";
-import { useT } from "@/i18n";
+import { useLocaleChunk, useT } from "@/i18n";
 
 /**
  * "App settings" group inside the Settings view. Currently hosts the
@@ -29,6 +30,39 @@ export function AppSettingsGroup() {
       </h3>
       <AppearanceRow />
       <AutostartRow />
+      <TourRow />
+    </div>
+  );
+}
+
+/**
+ * Replays the guided tour of the app — the spotlight walk that runs once
+ * after first-run setup. The strings live in the onboarding locale chunk,
+ * which this row loads for itself.
+ */
+function TourRow() {
+  const t = useT();
+  const ready = useLocaleChunk("onboarding");
+  if (!ready) return null;
+  return (
+    <div className="rounded-lg border border-border bg-card p-4">
+      <div className="flex items-start gap-3">
+        <Compass className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h4 className="font-medium">{t("app_tour.replay_title")}</h4>
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new CustomEvent(TOUR_START_EVENT))}
+              data-testid="settings-replay-tour"
+              className="inline-flex items-center rounded-md border border-border bg-background px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {t("app_tour.replay")}
+            </button>
+          </div>
+          <p className="mt-0.5 text-xs text-muted-foreground">{t("app_tour.replay_body")}</p>
+        </div>
+      </div>
     </div>
   );
 }

@@ -394,8 +394,7 @@ class CodingSupervision:
         try:
             if budget is not None:
                 budget.assert_under_limit(row["trace_id"])
-        except Exception as exc:
-            # The pause notice persists the reason and informs the user.
+        except Exception as exc:  # The pause notice reports the budget failure to the agent.
             await self._pause_notice(key, f"Budget limit: {exc}")
             return
         if agent.daily_budget_usd > 0:
@@ -478,7 +477,15 @@ class CodingSupervision:
         if not self._accepting or row["state"] != "running" or row["revision"] != revision:
             return
         incoming = IncomingMessage(**row["outbox"])
-        await service.send(row["session_id"], incoming.prompt, incoming=incoming, direct_user=False)
+        routine_session = row["session_id"].startswith(f"society:{row['agent_id']}:routine:")
+        send_kwargs = {"incoming": incoming, "direct_user": False}
+        if routine_session:
+            send_kwargs["routine_run"] = True
+        await service.send(
+            row["session_id"],
+            incoming.prompt,
+            **send_kwargs,
+        )
         row.update(outbox=None, turns=row["turns"] + 1)
         if row["revision"] == revision and row["state"] == "running":
             row["awaiting_action"] = True

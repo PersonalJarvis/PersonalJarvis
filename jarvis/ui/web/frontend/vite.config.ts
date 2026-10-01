@@ -1,4 +1,4 @@
-/// <reference types="vitest" />
+/// <reference types="vitest/config" />
 import fs from "node:fs";
 import { defineConfig } from "vite";
 import type { Plugin } from "vite";

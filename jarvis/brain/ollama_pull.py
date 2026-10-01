@@ -1,6 +1,6 @@
 """In-app model downloads for a local Ollama server.
 
-CLAUDE.md section 3 requires a capability to be recoverable from INSIDE the
+AGENTS.md section 3 requires a capability to be recoverable from INSIDE the
 app. The local brain card missed that bar in the one place it matters most:
 with a running server and no downloads, every path failed with "run: ollama
 pull <model>" — a terminal instruction in a desktop app with no terminal, and
@@ -114,7 +114,7 @@ class RecommendedModel:
 #: When a maintainer last checked the shortlist against the live library.
 #: Surfaced in the download panel ("Shortlist reviewed …") and enforced by
 #: ``tests/integration/test_ollama_catalog_is_current.py``: a review older
-#: than twelve months fails the suite, because CLAUDE.md §4 forbids shipping a
+#: than twelve months fails the suite, because AGENTS.md §4 forbids shipping a
 #: year-old local default. Bump it in the same commit that refreshes the list.
 CURATED_REVIEWED_ON = datetime.date(2026, 8, 24)
 

@@ -203,7 +203,7 @@ TOOL_CALL_INLINE_RE = re.compile(
 #: its closing brace and leaves a bare "}" standing in the spoken sentence
 #: ("Ich öffne Spotify. }"). One level covers every envelope this codebase
 #: emits; deeper nesting is not expressible in a regex and is out of scope for
-#: a filter that must stay regex-only (CLAUDE.md §5).
+#: a filter that must stay regex-only (AGENTS.md §5).
 _TOOL_JSON_INNER = r"(?:[^{}]|\{[^{}]*\})"
 TOOL_JSON_RE = re.compile(
     r"\{" + _TOOL_JSON_INNER + r"*?"
@@ -229,10 +229,85 @@ TOOL_XML_RE = re.compile(
 # format. The brain occasionally leaks this verbatim into the output. The
 # pattern matches the whole block, greedy up to the closing tag. Also a
 # standalone ``<invoke>`` in case the ``</function_calls>`` wrapper is missing.
-ANTHROPIC_FUNCTION_CALLS_RE = re.compile(
-    r"<function_calls>.*?</function_calls>",
-    re.DOTALL | re.IGNORECASE,
-)
+_FUNCTION_CALLS_TAG_RE = re.compile(r"<function_calls>|</function_calls>", re.IGNORECASE)
+
+
+def _strip_function_call_blocks(text: str) -> str:
+    """Remove every ``<function_calls>…</function_calls>`` block, in linear time.
+
+    Same result as ``re.sub(r"<function_calls>.*?</function_calls>", "", text,
+    flags=re.DOTALL | re.IGNORECASE)``: each block runs from the leftmost
+    opener to the first closer after it. That lazy regex rescanned the rest of
+    the text from every unclosed opener, which is quadratic on long LLM output
+    (CodeQL py/polynomial-redos), so the tags are walked once instead. The two
+    tags cannot overlap each other, so a single left-to-right token pass sees
+    exactly the tags the regex would.
+    """
+    pieces: list[str] = []
+    kept_from = 0
+    block_start = -1
+    for tag in _FUNCTION_CALLS_TAG_RE.finditer(text):
+        closing = tag.group().startswith("</")
+        if block_start < 0 and not closing:
+            block_start = tag.start()
+        elif block_start >= 0 and closing:
+            pieces.append(text[kept_from:block_start])
+            kept_from = tag.end()
+            block_start = -1
+    pieces.append(text[kept_from:])
+    return "".join(pieces)
+
+
+_UNICODE_DASH_RE = re.compile(r"[—–]")
+_DOUBLE_HYPHEN_RE = re.compile(r"-{2,}")
+
+
+def _collapse_unicode_dashes(text: str) -> str:
+    """Replace each em/en dash and the blanks around it with ", ".
+
+    Same result as ``re.sub(r"\\s*[—–]\\s*", ", ", text)``, in linear time:
+    that pattern restarted ``\\s*`` at every position of a long blank run and
+    rescanned the run each time (CodeQL py/polynomial-redos). Splitting at the
+    dashes and trimming the blanks next to each cut is the same edit.
+    """
+    parts = _UNICODE_DASH_RE.split(text)
+    if len(parts) == 1:
+        return text
+    last = len(parts) - 1
+    return ", ".join(
+        part.rstrip() if i == 0 else part.lstrip() if i == last else part.strip()
+        for i, part in enumerate(parts)
+    )
+
+
+def _collapse_double_hyphens(text: str) -> str:
+    """Replace each blank-framed ``--`` aside (and its blanks) with ", ".
+
+    Same result as ``re.sub(r"\\s+-{2,}\\s+", ", ", text)``, in linear time
+    (that pattern had the same restart problem as the dash rewrite above). A
+    hyphen run counts only when blanks frame it on both sides; blanks already
+    swallowed by the previous replacement cannot frame the next one.
+    """
+    pieces: list[str] = []
+    kept_from = 0
+    size = len(text)
+    for run in _DOUBLE_HYPHEN_RE.finditer(text):
+        start, end = run.span()
+        left = start
+        while left > kept_from and text[left - 1].isspace():
+            left -= 1
+        if left == start or end >= size or not text[end].isspace():
+            continue
+        right = end
+        while right < size and text[right].isspace():
+            right += 1
+        pieces.append(text[kept_from:left])
+        pieces.append(", ")
+        kept_from = right
+    pieces.append(text[kept_from:])
+    return "".join(pieces)
+
+
 ANTHROPIC_INVOKE_RE = re.compile(
     r"<invoke\b[^>]*>.*?</invoke>",
     re.DOTALL | re.IGNORECASE,
@@ -671,12 +746,12 @@ def scrub_for_voice(
         out = new
 
     # 3. Tool-Call-JSON / -KW / -XML / YAML-Args / Anthropic-Tags / Base64 —
-    #    alle Tool-Use-/Internal-Leaks rausschneiden.
-    #    Reihenfolge: zuerst die groessten Wrapper-Bloecke (function_calls,
-    #    generic_tool_wrappers, base64_data_uri), dann verbleibende kleinere
-    #    Patterns. Sonst koennten innere Token-Patterns Teile des Wrapper-
-    #    Inhalts matchen und Whitespace-Reste hinterlassen.
-    new = ANTHROPIC_FUNCTION_CALLS_RE.sub("", out)
+    #    cut out every tool-use / internal leak.
+    #    Order: the largest wrapper blocks first (function_calls,
+    #    generic_tool_wrappers, base64_data_uri), then the remaining smaller
+    #    patterns. Otherwise inner token patterns could match parts of the
+    #    wrapper content and leave whitespace behind.
+    new = _strip_function_call_blocks(out)
     new = ANTHROPIC_INVOKE_RE.sub("", new)
     new = GENERIC_TOOL_WRAPPER_RE.sub("", new)
     new = BASE64_DATA_URI_RE.sub("", new)
@@ -803,13 +878,13 @@ def scrub_for_voice(
     #     comma. Hyphen compounds ("Browser-Provider", "Sub-Agent") use a plain
     #     ASCII '-' with no surrounding whitespace and are NOT in the class below,
     #     so they survive untouched.
-    new = re.sub(r"\s*[—–]\s*", ", ", out)
+    new = _collapse_unicode_dashes(out)
     # ASCII double hyphen used as a dash-aside (" -- ") reads as the same hard
     # TTS pause; collapse it too (2026-06-30: the Unicode-only scrub missed it,
     # and several canned phrases / LLM outputs use " -- "). Require surrounding
     # whitespace so hyphen compounds ("T-Shirt") and numeric ranges ("20-30") —
     # which have no spaces — survive untouched.
-    new = re.sub(r"\s+-{2,}\s+", ", ", new)
+    new = _collapse_double_hyphens(new)
     if new != out:
         actions.append("removed_em_dash")
         out = new
@@ -826,7 +901,8 @@ def scrub_for_voice(
         actions.append("spelled_out_numbers")
         out = new
 
-    # 8. Whitespace normalisieren
+    # 8. Normalise whitespace. After the first line every blank run is a
+    #    single character, so the ``\s+`` patterns below cannot backtrack.
     out = re.sub(r"\s{2,}", " ", out).strip()
     out = re.sub(r"\s+([,.!?;:])", r"\1", out)
     # A dash->comma swap can leave a doubled or dangling comma; tidy it.

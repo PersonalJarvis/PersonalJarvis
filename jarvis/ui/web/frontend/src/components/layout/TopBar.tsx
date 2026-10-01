@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import { CodingModeBadge } from "@/components/layout/CodingModeBadge";
 import { SectionNavButtons } from "@/components/layout/SectionNavButtons";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
+import { IdeSidePanelToggle } from "@/components/agentic/sidePanel/IdeSidePanelToggle";
 import { useDesktopChrome, WindowControls } from "@/components/layout/WindowControls";
 import { hasEmbeddedDesktopBridge } from "@/components/voice/BrowserRealtimeControl";
 import { openExternalUrl } from "@/lib/openExternal";
@@ -70,8 +71,7 @@ const CHROME_QUIET = "text-muted-foreground hover:bg-secondary hover:text-foregr
  */
 const CHROME_ARMED = "bg-warning text-background";
 
-export function TopBar({ settingsNavigation, navToggle }: {
-  settingsNavigation?: { open: boolean; onToggle: () => void };
+export function TopBar({ navToggle }: {
   /**
    * The sidebar toggle the caption owns. State lives in the shell (App.tsx):
    * the sidebar header no longer carries its own button — it moved here, next
@@ -82,19 +82,6 @@ export function TopBar({ settingsNavigation, navToggle }: {
 } = {}) {
   const chrome = useDesktopChrome();
   const controls = chrome.frameless ? chrome.controls : "none";
-  /*
-   * The settings hub's own navigation toggle and the caption sidebar toggle
-   * are the same control: one panel button at the leading edge, not two
-   * adjacent ones doing the same job. It keeps its test id so the hub's
-   * contract ("the caption reopens the navigation") stays observable.
-   */
-  const sidebarToggle = settingsNavigation
-    ? {
-        collapsed: !settingsNavigation.open,
-        onToggle: settingsNavigation.onToggle,
-        testId: "settings-sidebar-toggle",
-      }
-    : navToggle;
 
   return (
     // One title strip for the whole window. The empty middle is the drag
@@ -107,7 +94,7 @@ export function TopBar({ settingsNavigation, navToggle }: {
       {controls === "leading" && (
         <WindowControls controls={controls} maximized={chrome.maximized} onCommand={chrome.command} />
       )}
-      <SectionNavButtons sidebarToggle={sidebarToggle} />
+      <SectionNavButtons sidebarToggle={navToggle} />
       <div
         className="pywebview-drag-region min-w-0 flex-1"
         onDoubleClick={() => {
@@ -117,6 +104,7 @@ export function TopBar({ settingsNavigation, navToggle }: {
       <div className="flex shrink-0 items-center">
         <CodingModeBadge />
         <TopBarActions />
+        <IdeSidePanelToggle />
         {controls === "trailing" && (
           <WindowControls controls={controls} maximized={chrome.maximized} onCommand={chrome.command} />
         )}

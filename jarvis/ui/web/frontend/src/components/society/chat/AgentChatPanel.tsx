@@ -30,7 +30,7 @@ import { RoutineChatHost } from "./RoutineChatHost";
 import { MessageSquare, Mic, Paperclip, Plus, RotateCcw, Send, Square } from "lucide-react";
 import { ChatMarkdown, MediaPreview, mediaKind } from "@/components/agentchat/ChatMarkdown";
 
-import { AgentChatStoreProvider, useAgentChat } from "@/components/agentchat/AgentChatStoreContext";
+import { AgentChatStoreProvider, useAgentChat, useAgentChatApi } from "@/components/agentchat/AgentChatStoreContext";
 import { ChatAttachmentStrip } from "@/components/agentchat/ChatAttachmentStrip";
 import { ScrollToEndButton } from "@/components/ui/scroll-to-end-button";
 import { useStickToBottom } from "@/hooks/useStickToBottom";
@@ -38,7 +38,7 @@ import { ComposerChipField, type ComposerChipFieldHandle } from "@/components/ag
 import { MessageWithChips } from "@/components/agentchat/ToolChoiceChips";
 import { choiceToken } from "@/components/agentchat/composerChips";
 import { useChatAttachments } from "@/components/agentchat/useChatAttachments";
-import { DictationStatus } from "@/components/agentchat/DictationStatus";
+import { DictationButton } from "@/components/agentchat/DictationButton";
 import { useComposerDictation } from "@/components/agentchat/useComposerDictation";
 import { useEventStore } from "@/store/events";
 import { useHomeStore } from "@/store/home";
@@ -55,7 +55,8 @@ import { VoiceStage } from "@/components/home/VoiceStage";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
-import { createAgentChatStore, useAgentChatStore } from "@/store/agentChat";
+import { societyDisplayName } from "@/lib/societyDisplayName";
+import { createAgentChatStore, useAgentChatStore, type AgentChatStoreHook } from "@/store/agentChat";
 import type { AgentChatSurface, ApprovalDecision } from "@/lib/agentChatApi";
 
 import { AgentSwatch } from "../AgentSwatch";
@@ -101,6 +102,8 @@ let onboardingAsked = false;
 export interface AgentChatPanelProps {
   agent: SocietyAgent;
   roster: SocietyAgent[];
+  /** An isolated store lets two canonical agent sessions remain open side by side. */
+  chatStore?: AgentChatStoreHook;
 }
 
 /**
@@ -142,14 +145,15 @@ export function itemsForOpenSession(
 
 export function AgentChatPanel(props: AgentChatPanelProps) {
   const disconnect = useCallback(() => {
-    (props.agent.tier === "lead" ? useAgentChatStore : useSocietyChatStore).getState().disconnect();
-  }, [props.agent.tier]);
-  return <PairConversationBoundary key={props.agent.agentId} recipient={{ id: props.agent.agentId, name: props.agent.name }}>
+    (props.agent.tier === "lead" ? useAgentChatStore : props.chatStore ?? useSocietyChatStore).getState().disconnect();
+  }, [props.agent.tier, props.chatStore]);
+  const assistantName = useEventStore((state) => state.assistantName);
+  return <PairConversationBoundary key={props.agent.agentId} recipient={{ id: props.agent.agentId, name: societyDisplayName(props.agent, assistantName) }}>
     <RoutineChatHost agentId={props.agent.agentId} onOpen={disconnect}><AgentChatPanelContent {...props} /></RoutineChatHost>
   </PairConversationBoundary>;
 }
 
-function AgentChatPanelContent({ agent, roster }: AgentChatPanelProps) {
+function AgentChatPanelContent({ agent, roster, chatStore }: AgentChatPanelProps) {
   if (agent.tier === "lead") {
     return (
       <AgentChatStoreProvider store={useAgentChatStore}>
@@ -159,7 +163,7 @@ function AgentChatPanelContent({ agent, roster }: AgentChatPanelProps) {
   }
   if (!agent.chatSessionId) return <NotBoundYet />;
   return (
-    <AgentChatStoreProvider store={useSocietyChatStore}>
+    <AgentChatStoreProvider store={chatStore ?? useSocietyChatStore}>
       <SpecialistChat agent={agent} roster={roster} />
     </AgentChatStoreProvider>
   );
@@ -186,6 +190,7 @@ function SpecialistChat({ agent, roster }: AgentChatPanelProps) {
   const activeSessionId = useAgentChat((s) => s.activeSessionId);
   const busy = useAgentChat((s) => s.busy);
   const lastError = useAgentChat((s) => s.lastError);
+  const socketState = useAgentChat((s) => s.socketState);
   const loadCatalog = useAgentChat((s) => s.loadCatalog);
   const loadSessions = useAgentChat((s) => s.loadSessions);
   const openSession = useAgentChat((s) => s.openSession);
@@ -263,6 +268,11 @@ function SpecialistChat({ agent, roster }: AgentChatPanelProps) {
       data-session-ready={sessionReady ? "true" : "false"}
     >
       <Transcript key={`${sessionId ?? agent.agentId}:${view.boundaryId}`} items={view.items} agent={agent} roster={roster} onDecide={decide} />
+      {sessionReady && socketState !== "open" && socketState !== "idle" ? (
+        <p role="status" className="px-4 pb-1 text-xs text-muted-foreground">
+          {t(socketState === "closed" ? "society.chat.reconnecting" : "society.chat.connecting")}
+        </p>
+      ) : null}
       {lastError && sessionReady ? (
         <p role="alert" className="px-4 pb-1 text-xs text-destructive">
           {lastError}
@@ -300,6 +310,7 @@ function JarvisChat({ agent, roster }: AgentChatPanelProps) {
   const activeSessionId = useAgentChat((s) => s.activeSessionId);
   const busy = useAgentChat((s) => s.busy);
   const lastError = useAgentChat((s) => s.lastError);
+  const socketState = useAgentChat((s) => s.socketState);
   const draft = useAgentChat((s) => s.draft);
   const loadCatalog = useAgentChat((s) => s.loadCatalog);
   const loadSessions = useAgentChat((s) => s.loadSessions);
@@ -398,6 +409,11 @@ function JarvisChat({ agent, roster }: AgentChatPanelProps) {
     <div className="flex h-full min-h-0 flex-col bg-background" data-testid="society-chat" data-mode="chat">
       {header}
       <Transcript key={`${activeSessionId ?? ""}:${view.boundaryId}`} items={view.items} agent={agent} roster={roster} onDecide={decide} />
+      {activeSessionId && socketState !== "open" && socketState !== "idle" ? (
+        <p role="status" className="px-4 pb-1 text-xs text-muted-foreground">
+          {t(socketState === "closed" ? "society.chat.reconnecting" : "society.chat.connecting")}
+        </p>
+      ) : null}
       {lastError ? (
         <p role="alert" className="px-4 pb-1 text-xs text-destructive">
           {lastError}
@@ -993,12 +1009,13 @@ interface ComposerProps {
   provider: string;
   /** Which chat surface the attachments belong to (the front page by default). */
   surface?: AgentChatSurface;
-  onSend: (text: string, attachments?: ReturnType<typeof useChatAttachments>["attachments"]) => Promise<void>;
+  onSend: (text: string, attachments?: ReturnType<typeof useChatAttachments>["attachments"]) => Promise<void | "sent" | "failed" | "stale">;
   onCancel: () => Promise<void>;
 }
 
 export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, surface = "jarvis", onClear, onSend, onCancel }: ComposerProps) {
   const t = useT();
+  const chatStore = useAgentChatApi();
   const [modelSaving, setModelSaving] = useState(false);
   const [value, setValue] = useState("");
   const [plusOpen, setPlusOpen] = useState(false);
@@ -1011,6 +1028,8 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
   const composerRef = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const attachments = useChatAttachments({ sessionId, cwd, provider, surface }, (message) => setProblem(message));
+  const attachmentsRef = useRef(attachments.attachments);
+  attachmentsRef.current = attachments.attachments;
   const commands = useChatCommands({ value, agentId: agent.agentId, onClear,
     attachments: attachments.attachments, attachmentsBusy: attachments.analyzing > 0, onAttachmentsSent: attachments.clear,
     setValue: (next) => { setValue(next); fieldRef.current?.setText(next); },
@@ -1093,12 +1112,14 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
 
   const submit = async () => {
     const draft = fieldRef.current?.getDraft();
-    const draftText = (draft?.text ?? value).trim();
+    const fullDraft = draft?.text ?? value;
+    const draftText = fullDraft.trim();
     const submittedFolder = codingFolder;
     const selected = selectedTools;
+    const sentAttachments = attachments.attachments;
     const text = draftText;
     if (await commands.execute(text)) return;
-    if (!text || (busy || live) && !commands.canSteer || modelSaving) return;
+    if ((!text && attachments.attachments.length === 0) || (busy || live) && !commands.canSteer || modelSaving || attachments.analyzing > 0) return;
     const chosenIds = new Set((draft?.choices ?? []).map((row) => row.id));
     const chosen = [...chosenIds].map((id) => catalog.find((item) => item.key === id));
     if (chosen.some((item) => !item || !item.connected)) {
@@ -1130,19 +1151,26 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
     const codingHint = codingAssignmentHint(codingSelections, codingFolder);
     if (codingHint) lines.push(codingHint);
     const hint = lines.join("\n");
-    setValue("");
-    fieldRef.current?.clear();
-    setMention(null);
     setProblem(null);
     try {
-      await onSend(hint ? `${text}\n\n${hint}` : text, attachments.attachments);
-      setSelectedTools([]);
-      attachments.clear();
+      const result = await onSend(hint ? `${text}\n\n${hint}` : text, sentAttachments);
+      if (result === "stale" || sessionId && chatStore.getState().activeSessionId !== sessionId) return;
+      const sendError = chatStore.getState().lastError;
+      if (result === "failed" || result === undefined && sendError) throw new Error(sendError ?? t("common.error_generic"));
+      if ((fieldRef.current?.getDraft().text ?? value) === fullDraft) {
+        setValue("");
+        fieldRef.current?.clear();
+        setMention(null);
+        setSelectedTools([]);
+      }
+      if (attachmentsRef.current === sentAttachments) attachments.clear();
+      else sentAttachments.forEach((file) => attachments.remove(file.name));
     } catch (err) {
-      setValue(draftText);
-      fieldRef.current?.hydrate(draftText, draft?.choices ?? []);
-      setSelectedTools(selected);
-      setCodingFolder(submittedFolder);
+      // The input and files stay in place until the server accepts them.
+      if ((fieldRef.current?.getDraft().text ?? value) === fullDraft) {
+        setSelectedTools(selected);
+        setCodingFolder(submittedFolder);
+      }
       setProblem(err instanceof Error ? err.message : String(err));
     }
   };
@@ -1158,7 +1186,6 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
       <div className={CHAT_MEASURE}>
         <ChatAttachmentStrip attachments={attachments.attachments} analyzing={attachments.analyzing} onRemove={attachments.remove} />
       </div>
-      <DictationStatus onStop={dictation.stop} className={cn(CHAT_MEASURE, "mb-1.5")} />
       <MentionPicker
         anchorRef={composerRef}
         open={pickerOpen}
@@ -1177,7 +1204,7 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
           attachments.dragging && "border-border-strong",
           // The whole composer reads as armed while the mic is open, not just
           // the 32px button someone has to go looking for.
-          dictation.dictating && "border-success/40 ring-1 ring-success/25",
+          dictation.dictating && "border-success/35 focus-within:border-success/50",
         )}
         {...attachments.dragHandlers}
       >
@@ -1245,7 +1272,11 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
         </div>
         <ComposerChipField
           ref={fieldRef}
-          placeholder={t("society.chat.placeholder").replace("{0}", agent.name)}
+          placeholder={
+            dictation.dictating
+              ? t("chats_view.dictation_listening")
+              : t("society.chat.placeholder").replace("{0}", agent.name)
+          }
           disabled={false}
           onSubmit={() => void submit()}
           onDraftChange={onDraftChange}
@@ -1281,23 +1312,18 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
           }}
           className="max-h-[180px]"
         />
-        {surface === "society" ? <div className="flex h-8 min-w-0 max-w-[40%] shrink-0 items-center">
+        {/* Hidden, not unmounted, while recording: the pill needs the room,
+            and a save in flight must still report back. */}
+        {surface === "society" ? <div className={cn("h-8 min-w-0 max-w-[40%] shrink-0 items-center", dictation.dictating ? "hidden" : "flex")}>
           <AgentModelPicker key={agent.agentId} agent={agent} busy={busy} onSavingChange={setModelSaving} />
         </div> : null}
-        <button
-          type="button"
-          onClick={dictation.toggle}
-          aria-label={dictation.dictating ? t("society.chat.stop_recording") : t("society.chat.record")}
-          aria-pressed={dictation.dictating}
-          className={cn(
-            "flex h-8 w-8 items-center justify-center rounded-full transition-colors",
-            dictation.dictating
-              ? "bg-secondary text-success motion-safe:animate-jarvis-pulse"
-              : "text-muted-foreground hover:bg-secondary hover:text-foreground",
-          )}
-        >
-          {dictation.dictating ? <Square className="h-4 w-4" aria-hidden /> : <Mic className="h-4 w-4" aria-hidden />}
-        </button>
+        <DictationButton
+          dictating={dictation.dictating}
+          onToggle={dictation.toggle}
+          startLabel={t("society.chat.record")}
+          stopLabel={t("society.chat.stop_recording")}
+          shape="round"
+        />
         {live && !commands.isCommand && !(commands.canSteer && value.trim()) ? (
           <button
             type="button"
@@ -1313,7 +1339,7 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
           <button
             type="button"
             onClick={() => void submit()}
-            disabled={modelSaving || (!value.trim() && selectedTools.length === 0)}
+            disabled={modelSaving || attachments.analyzing > 0 || (!value.trim() && selectedTools.length === 0 && attachments.attachments.length === 0)}
             aria-label={t("society.chat.send")}
             data-testid="composer-send"
             className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground disabled:opacity-40"

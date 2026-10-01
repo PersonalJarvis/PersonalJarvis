@@ -176,3 +176,26 @@ def test_select_tools_is_deterministic():
         )
     )
     assert a == b
+
+
+def test_the_ban_holds_in_the_registrys_underscore_spelling() -> None:
+    """Tools register as ``spawn_worker``; the ban list says ``spawn-worker``.
+    The mismatch once let every spawn and dispatch tool reach an agent."""
+    for name in (
+        "spawn_worker",
+        "spawn_subagents",
+        "multi_spawn",
+        "dispatch_to_harness",
+        "dispatch_to_admin",
+        "dispatch_with_review",
+        "app_command",
+        "switch_provider",
+    ):
+        assert capability_id_for_tool(name) is None, name
+
+
+def test_an_agent_may_hold_the_artifact_builder() -> None:
+    """Maintainer decision 2026-09-29: agents and their routines build artifacts."""
+    assert capability_id_for_tool("create_artifact") == "plugin:create_artifact"
+    rows = build_catalog({"create_artifact": _tool("create_artifact", "Build an ARTIFACT.")})
+    assert [(r.id, r.label) for r in rows] == [("plugin:create_artifact", "Artifact / Artefakt")]

@@ -63,7 +63,7 @@ from pathlib import Path
 
 # Windows console defaults to cp1252; the report uses a few non-ASCII glyphs
 # (em dash). Reconfigure to UTF-8 so the summary renders cleanly (house rule for
-# new CLI modules — see CLAUDE.md "Windows specifics").
+# new CLI modules — see AGENTS.md "Windows specifics").
 if sys.platform == "win32":
     with contextlib.suppress(AttributeError, OSError):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")

@@ -86,6 +86,7 @@ from jarvis.core.events import (
     WakeWordDetected,
 )
 from jarvis.core.protocols import AudioChunk, Transcript
+from jarvis.core.redact import safe_preview
 from jarvis.core.turn_language import (
     DEFAULT_LOCALE,
     normalize_language_tag,
@@ -389,6 +390,24 @@ _READBACK_KINDS: frozenset[str] = frozenset(
 )
 
 
+#: Readback sources that never speak outside a call (see ``_is_agent_reply``).
+#: A mission the user just asked for is not here: its answer may still punch
+#: through the hangup gate (AD-OE5/OE6).
+_HELD_FOR_CALL_SOURCES: frozenset[str] = frozenset(
+    {
+        "society.lead",
+        # A pane finishing a job Jarvis handed it (jarvis/agentic_ide/
+        # voice_readback.py): spoken inside the call, else at the next one.
+        "agentic_ide.readback",
+        "tasks.runner",
+        "workflows.runner",
+        "workflows.scheduler",
+        "desktop_app.conductor",
+        "skills.cron",
+    }
+)
+
+
 def _announcement_spoken_kind(kind: str | None) -> str:
     """Map an ``AnnouncementRequested.kind`` to a ``SpeechSpoken.spoken_kind``.
 
@@ -475,7 +494,7 @@ _REALTIME_UNAVAILABLE_PHRASE: dict[str, str] = {
 # Honest, cause-aware messaging (live complaint 2026-06-30). The old single
 # phrase ("Sorry, I couldn't finish the answer in time.") explained NOTHING:
 # a slow MCP/plugin tool hung ~35 s, the turn timed out, and Jarvis apologised
-# for "taking too long" with no reason. Honesty over guessing (CLAUDE.md §1.4):
+# for "taking too long" with no reason. Honesty over guessing (AGENTS.md §1.4):
 #   • TOOL-STALL — the turn was beheaded mid-tool-loop (no first audio frame,
 #     i.e. the assistant was blocked waiting on a tool/stage that never
 #     returned) OR a desktop (computer_use) tool was demonstrably active when
@@ -487,7 +506,7 @@ _REALTIME_UNAVAILABLE_PHRASE: dict[str, str] = {
 # Both are short, TTS-clean (``_speak`` does not scrub — no em-dash, two short
 # sentences), and carry all supported locales (de/en/es). String-only: NO LLM
 # call in this timeout/scrub path (AP-11). Resolved through the ONE output-
-# language decision via ``_resolve_timeout_phrase`` below (CLAUDE.md §1 — no
+# language decision via ``_resolve_timeout_phrase`` below (AGENTS.md §1 — no
 # per-layer language re-derivation).
 _TIMEOUT_TOOL_STALL_PHRASE: dict[str, str] = {
     "de": (
@@ -575,7 +594,7 @@ def _resolve_timeout_phrase(site: str, lang: str, *, tool_active: bool) -> str:
     """Pick the honest, cause-aware timeout phrase for ``site``.
 
     Resolves language through the ONE shared decision (``_phrase_lang``) — never
-    a per-layer re-derivation (CLAUDE.md §1). String-only, no LLM call (AP-11).
+    a per-layer re-derivation (AGENTS.md §1). String-only, no LLM call (AP-11).
     Names a tool cause when the turn was beheaded mid-tool-loop (no first frame)
     or a desktop tool was active; otherwise honestly admits no answer was found.
     """
@@ -1131,7 +1150,7 @@ def resolve_dictation_language(*, pinned: str, reported: str, text: str) -> str:
     text while the setting said the cleanup was on.
 
     Everything resolves through the canonical resolver's helpers — no layer
-    invents its own detection (CLAUDE.md §1).
+    invents its own detection (AGENTS.md §1).
     """
     pin = str(pinned or "").strip().lower()
     if pin not in ("", "auto"):
@@ -1142,7 +1161,7 @@ def resolve_dictation_language(*, pinned: str, reported: str, text: str) -> str:
 
         # Points 2 and 3 above live in the canonical resolver, which the voice
         # lane's transcript filter reads too — one decision, not two copies
-        # that drift the first time either is touched (CLAUDE.md §1).
+        # that drift the first time either is touched (AGENTS.md §1).
         code = resolve_transcript_language(tag, text)
         if code != "unknown":
             if code != normalize_language_tag(tag):
@@ -4750,8 +4769,9 @@ class SpeechPipeline:
 
         The brain receives a synthetic scheduled-run turn with the skill
         noted (``note_skill_trigger`` → instruction injection + SkillInvoked
-        source="cron"); the reply is announced via ``AnnouncementRequested``
-        (scrubbed TTS path). Falls back to the legacy macro runner when the
+        source="cron"); the reply is queued as a held ``AnnouncementRequested``
+        and spoken at the next call, and a total provider failure stays
+        silent. Falls back to the legacy macro runner when the
         wired brain cannot take the handoff (echo/mock brains).
         """
         from jarvis.skills.schema import SkillLifecycleState
@@ -4807,14 +4827,29 @@ class SpeechPipeline:
             _prompts.get(lang, _prompts["en"]).format(name=skill.name)
         )
         text = (reply or "").strip()
+        if self._brain_turn_failed():
+            # Nobody called Jarvis for this turn: a provider-chain failure on a
+            # scheduled run is not news worth speaking into an idle room (live
+            # 2026-09-29 08:00: the daily triage skill failed on every provider
+            # and Jarvis announced "my stored API key is being rejected" out of
+            # nowhere). The API-keys view shows the broken key; the log keeps
+            # the chain diagnostic.
+            log.warning(
+                "Cron skill '%s' failed on every provider; staying silent", skill.name
+            )
+            return
         if text and self._bus is not None:
             try:
+                # Held for the next call like every other background result
+                # (_HELD_FOR_CALL_SOURCES): a scheduled run never speaks
+                # into a room where nobody called Jarvis.
                 await self._bus.publish(
                     AnnouncementRequested(
-                        source_layer="speech.pipeline",
+                        source_layer="skills.cron",
                         text=text,
                         language=lang,
                         priority="normal",
+                        kind=SPOKEN_KIND_COMPLETION,
                     )
                 )
             except Exception as exc:  # noqa: BLE001
@@ -4823,7 +4858,15 @@ class SpeechPipeline:
 
     @staticmethod
     def _is_agent_reply(event: AnnouncementRequested) -> bool:
-        return event.source_layer == "society.lead" and event.kind in _READBACK_KINDS
+        """A readback that is owed to the user but must wait for an open call.
+
+        An agent's reply, and every piece of background news nobody asked for
+        in this conversation (a routine or automation result, a scheduled job
+        failing or recovering). Spoken into an idle machine it is Jarvis
+        talking without having been called; held here, it is delivered at the
+        next call, once, and only after the audio actually finished.
+        """
+        return event.source_layer in _HELD_FOR_CALL_SOURCES and event.kind in _READBACK_KINDS
 
     def _agent_reply_needs_session(self) -> bool:
         hangup = getattr(self, "_hangup_event", None)
@@ -4918,10 +4961,14 @@ class SpeechPipeline:
             remember = getattr(session, "remember_announcement_context", None)
             if callable(remember):
                 try:
+                    # The full report too, so "what exactly did it change?"
+                    # can be answered on the next turn.
+                    report = str(getattr(event, "report", None) or "").strip()
                     remember(
                         text=event.text,
                         spoken_kind=event_kind,
                         detail=getattr(event, "detail", None),
+                        **({"report": report} if report else {}),
                     )
                 except Exception:  # noqa: BLE001 -- memory mirror is best-effort
                     log.debug(
@@ -5411,6 +5458,10 @@ class SpeechPipeline:
             self._agent_reply_inflight = event
             self._agent_reply_inflight_text = text
         accepted = False
+        # The raw report goes to the live model as data to reason over; only
+        # sessions that understand it are handed the keyword.
+        report = str(getattr(event, "report", None) or "").strip()
+        extra: dict[str, Any] = {"report": report} if report else {}
         try:
             accepted = bool(
                 await deliver(
@@ -5420,6 +5471,7 @@ class SpeechPipeline:
                         getattr(event, "kind", None)
                     ),
                     detail=getattr(event, "detail", None),
+                    **extra,
                 )
             )
         except Exception as exc:  # noqa: BLE001 -- classic path is load-bearing
@@ -8843,7 +8895,6 @@ class SpeechPipeline:
         chime is immediate feedback that recording is live; speech is not.
         """
         try:
-            await self._play_earcon(CHIME_PCM)
             if ptt:
                 # Chime only, and NO dead-zone: the mic opens the instant this
                 # returns and the user is already holding the key + talking. The
@@ -8851,8 +8902,20 @@ class SpeechPipeline:
                 # into the mic — PTT has no spoken ACK, so running it would just
                 # swallow the opening words of every capture (and turn a short
                 # hold into a silent no-op, since the mic is not open yet when
-                # the key is released).
+                # the key is released). ``play_pcm`` returns only once the chime
+                # has played out, so it is not awaited here.
+                # Strong reference: the loop holds only a weak one.
+                pending = getattr(self, "_earcon_tasks", None)
+                if pending is None:
+                    pending = set()
+                    self._earcon_tasks = pending
+                chime = asyncio.create_task(
+                    self._play_earcon(CHIME_PCM), name="ptt-earcon"
+                )
+                pending.add(chime)
+                chime.add_done_callback(pending.discard)
                 return
+            await self._play_earcon(CHIME_PCM)
             if self._ack_pcm:
                 await self._player.play_pcm(self._ack_pcm, sample_rate=24_000)
             # Brief echo suppression keeps a pre-rendered acknowledgement from
@@ -9575,12 +9638,15 @@ class SpeechPipeline:
                     # Filler-only surface text. The residue guard turned it
                     # into the generic error phrase; re-rendering that would
                     # announce a failure the user does not have.
+                    # Only the scrub actions and the length: the filler text
+                    # itself stems from the provider message and carries no
+                    # diagnostic value worth logging.
                     log.info(
                         "Realtime surface fallback carried no substance (%s) "
-                        "— dropping it instead of speaking the error phrase: "
-                        "%r",
+                        "— dropping it instead of speaking the error phrase "
+                        "(%d chars)",
                         scrubbed.actions,
-                        text[:80],
+                        len(text),
                     )
                     return
                 cleaned = scrubbed.cleaned.strip()
@@ -9763,7 +9829,13 @@ class SpeechPipeline:
                                 else TurnTakingState.LISTENING
                             )
             elif kind == "provider_error":
-                log.warning("Realtime desktop status: %s", message)
+                # Only the redacted, capped error text -- never the raw
+                # message dict, whose provider detail may echo a credential
+                # or a provider error body (AP-34).
+                log.warning(
+                    "Realtime desktop status: provider_error: %s",
+                    safe_preview(message.get("error"), max_chars=300),
+                )
             elif kind == "provider_fallback":
                 # The call is crossing to a DIFFERENT provider family, which can
                 # mean a different billing path (AP-22). The user-facing notice
@@ -10657,7 +10729,7 @@ class SpeechPipeline:
         **Every refusal is announced**, not just logged: each one publishes a
         ``DictationRefused`` carrying a stable reason token and a finished
         English sentence. Before that, a refused shortcut produced a
-        ``log.info`` in a file the desktop app cannot display (CLAUDE.md §9), so
+        ``log.info`` in a file the desktop app cannot display (AGENTS.md §9), so
         the key simply did nothing and the user had no way to learn why. The
         boolean return is unchanged, so every existing caller (hotkey edge, WS
         handler, REST route) keeps working; ``True`` from the handover path
@@ -15344,7 +15416,7 @@ class SpeechPipeline:
                     self._buffer_is_complete = True
                     self._schedule_completion_timeout(lang, is_complete=True)
                     return None
-            # Precision-over-recall + latency doctrine (CLAUDE.md intent→ACK
+            # Precision-over-recall + latency doctrine (AGENTS.md intent→ACK
             # budget): a COMPLETE utterance goes STRAIGHT to the brain — no
             # buffering, no grace-hold, no added latency. completion.py's own
             # contract is "a complete prompt must NEVER be held back".
@@ -16271,7 +16343,7 @@ class SpeechPipeline:
                 return
             cleaned = scrubbed.cleaned.strip()
             if not cleaned:
-                # Never swallow output silently (CLAUDE.md §7): the answer
+                # Never swallow output silently (AGENTS.md §7): the answer
                 # loses a clause here, so the drop has to be visible.
                 dropped_sentences.append(sentence)
                 log.warning(
@@ -17410,7 +17482,7 @@ class SpeechPipeline:
         English text drove the whole chain English because the pipeline
         re-derived language from text/STT alone). ``auto``/unset mirrors the
         detected input language. Single source for the whole pipeline, per
-        CLAUDE.md "Runtime Output Language". The live pin lives on the
+        AGENTS.md "Runtime Output Language". The live pin lives on the
         BrainManager (hot-reloaded via ``set_reply_language``); the config is
         only consulted when the brain callback does not expose the pin (tests /
         mock brains).

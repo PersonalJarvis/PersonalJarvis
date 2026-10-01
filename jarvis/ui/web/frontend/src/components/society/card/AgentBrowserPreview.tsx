@@ -1,14 +1,17 @@
 /**
- * The real agent browser, continuously rendered in the Options rail.
- * Pixels stay out of React state; all manual actions require a control lease.
+ * The real agent browser, rendered in the Options rail while it runs.
+ * Opening the card never launches one; pixels stay out of React state; all
+ * manual actions require a control lease.
  */
 import { useEffect, useState } from "react";
 import { ArrowLeft, ArrowRight, Maximize2, Minimize2, RotateCw } from "lucide-react";
 import { useLocaleChunk, useT } from "@/i18n";
+import { societyDisplayName } from "@/lib/societyDisplayName";
+import { useEventStore } from "@/store/events";
 import { cn } from "@/lib/utils";
 import { BrandedSelect } from "@/components/ui/select";
 import type { SocietyAgent } from "../data";
-import { useBrowserInstallStatus } from "../cardData";
+import { useAgentBrowserOpen, useBrowserInstallStatus } from "../cardData";
 import { useBrowserView } from "./useBrowserView";
 import { AgentCursor } from "./AgentCursor";
 import "./agentCard.css";
@@ -16,13 +19,24 @@ import "./agentCard.css";
 export function AgentBrowserPreview({ agent }: { agent: SocietyAgent }) {
   const t = useT();
   useLocaleChunk("society");
-  const { canvas, state, control, approve } = useBrowserView(agent.agentId);
+  const assistantName = useEventStore((s) => s.assistantName);
+  const displayName = societyDisplayName(agent, assistantName);
+  // Viewing launches a Chromium, so the view attaches only to a browser the
+  // agent already runs, or after the person asks for it.
+  const running = useAgentBrowserOpen(agent.agentId);
+  const [wanted, setWanted] = useState(false);
+  useEffect(() => { setWanted(false); }, [agent.agentId]);
+  useEffect(() => { if (running.data) setWanted(true); }, [running.data]);
+  const live = wanted || running.data === true;
+  const { canvas, state, control, approve } = useBrowserView(agent.agentId, live);
   const install = useBrowserInstallStatus();
   const [expanded, setExpanded] = useState(false);
   const [address, setAddress] = useState("");
   useEffect(() => setAddress(state.url), [state.url]);
   useEffect(() => { setExpanded(false); }, [agent.agentId]);
-  const status = state.connected && state.ready
+  const status = !live
+    ? t("society.browser_live.off")
+    : state.connected && state.ready
     ? t(state.manual ? "society.browser_live.manual" : "society.browser_live.live")
     : t(install.data && !install.data.installed ? "society.card.browser_setting_up" : "society.card.browser_connecting");
   const buttonClass = "rounded px-2 py-1 text-xs hover:bg-secondary disabled:opacity-40";
@@ -36,7 +50,7 @@ export function AgentBrowserPreview({ agent }: { agent: SocietyAgent }) {
     )}>
       <div className="mb-1 flex items-center justify-between gap-1 text-[10px] text-muted-foreground">
         <div className="min-w-0">
-          <div className="truncate">{agent.name} · {status}</div>
+          <div className="truncate">{displayName} · {status}</div>
         </div>
         <button className={buttonClass} onClick={() => setExpanded((v) => !v)}
           aria-label={t(expanded ? "society.browser_live.collapse" : "society.browser_live.expand")}>
@@ -61,7 +75,7 @@ export function AgentBrowserPreview({ agent }: { agent: SocietyAgent }) {
       <div className={cn("relative flex items-center justify-center overflow-hidden rounded-lg bg-muted",
         expanded ? "min-h-0 flex-1" : "aspect-[16/10]")}>
         <canvas ref={canvas} width={1280} height={800} tabIndex={state.manual ? 0 : -1}
-          aria-label={t("society.browser_live.screen").replace("{0}", agent.name)}
+          aria-label={t("society.browser_live.screen").replace("{0}", displayName)}
           className="block max-h-full max-w-full object-contain focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
           style={{ aspectRatio: "16/10", width: "100%", height: "100%", objectFit: "contain" }}
           onClick={(e) => {
@@ -95,7 +109,15 @@ export function AgentBrowserPreview({ agent }: { agent: SocietyAgent }) {
         {!state.fullWindow && (
           <AgentCursor pointer={state.ready && state.connected && !state.manual ? state.pointer : undefined} />
         )}
-        {!state.ready && <div className="absolute inset-0 grid place-items-center bg-muted p-3 text-center text-xs text-muted-foreground">
+        {!live && <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-muted p-3 text-center text-xs text-muted-foreground">
+          <p>{t("society.browser_live.off_hint").replace("{0}", displayName)}</p>
+          <button type="button" data-testid="agent-browser-open"
+            className="rounded-md border border-border bg-background px-3 py-1 text-xs font-medium text-foreground hover:bg-secondary"
+            onClick={() => setWanted(true)}>
+            {t("society.browser_live.open")}
+          </button>
+        </div>}
+        {live && !state.ready && <div className="absolute inset-0 grid place-items-center bg-muted p-3 text-center text-xs text-muted-foreground">
           {install.data?.detail || status}
           {install.data?.running && <span>{install.data.percent}%</span>}
         </div>}

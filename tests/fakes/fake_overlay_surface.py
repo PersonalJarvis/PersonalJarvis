@@ -1,6 +1,6 @@
 """Hand-built overlay fakes for the Wave-2 orb seam (EK-3).
 
-Per CLAUDE.md the project uses real fakes, never ``unittest.mock``. These let the
+Per AGENTS.md the project uses real fakes, never ``unittest.mock``. These let the
 ``OverlaySurface`` lifecycle, the factory selection, and the tray state-mapping be
 exercised on a headless Windows/CI box **without** creating a real ``tk.Tk()``
 window or spinning up a real pystray thread:

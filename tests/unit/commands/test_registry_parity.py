@@ -223,7 +223,7 @@ def test_registry_dicts_are_json_serializable_and_small() -> None:
 
 @pytest.mark.parametrize("locale", ["de", "en", "es"])
 def test_every_command_has_voice_aliases_for_all_supported_locales(locale) -> None:
-    """Supported languages are equal (CLAUDE.md §1) — no de/en-only bias."""
+    """Supported languages are equal (AGENTS.md §1) — no de/en-only bias."""
     for cmd in get_registry():
         assert cmd.voice_aliases.get(locale), (
             f"{cmd.id}: missing {locale} voice alias"

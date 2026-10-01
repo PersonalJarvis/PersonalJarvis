@@ -31,21 +31,26 @@
  * Every string goes through the locale files.
  */
 import { useMemo, useState } from "react";
-import { MessageSquare, Pause, Play } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { MessageSquare, Pause, Play, Server } from "lucide-react";
 
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
 import { useT } from "@/i18n";
+import { useComputers } from "@/hooks/useComputers";
+import { societyDisplayName } from "@/lib/societyDisplayName";
 import { cn } from "@/lib/utils";
+import { useEventStore } from "@/store/events";
 
 import { AgentRoutinesList } from "./AgentRoutinesList";
 import { RetireButton } from "./RetireButton";
 import { CapabilityChip } from "../CapabilityChip";
 import { useAgentActivity, useAgentSkills, type AgentActivity } from "../cardData";
-import { PERMISSION_CEILINGS } from "@/lib/societyApi";
+import { AGENT_APPROVAL_MODES, PERMISSION_CEILINGS, fetchSocietyProviders, type AgentApprovalMode } from "@/lib/societyApi";
 
 import {
+  useSetAgentComputer,
   useSetAgentPaused,
   useSocietyCapabilities,
   useUpdateAgentDescription,
@@ -56,6 +61,7 @@ import {
   type SocietyAgent,
 } from "../data";
 import { CapabilityTile } from "./CapabilityTile";
+import { ComputerPicker } from "../create/ComputerPicker";
 import { LeadBrain, LeadInstructions } from "./LeadSections";
 
 import "./agentCard.css";
@@ -210,10 +216,16 @@ export interface AgentSpecSheetProps {
 
 export function AgentSpecSheet({ agent, onOpenChat, onRetired }: AgentSpecSheetProps) {
   const t = useT();
+  const assistantName = useEventStore((s) => s.assistantName);
+  const displayName = societyDisplayName(agent, assistantName);
   const capabilities = useSocietyCapabilities();
   const activity = useAgentActivity(agent.agentId);
   const skills = useAgentSkills(agent.agentId);
   const setPaused = useSetAgentPaused();
+  const computers = useComputers();
+  const remoteComputer = agent.computerId
+    ? (computers.data ?? []).find((c) => c.id === agent.computerId) ?? null
+    : null;
   const [busy, setBusy] = useState(false);
   const byId = useMemo(() => {
     const map = new Map<string, Capability>();
@@ -265,7 +277,7 @@ export function AgentSpecSheet({ agent, onOpenChat, onRetired }: AgentSpecSheetP
     <div className="ac-card" data-testid="agent-card-sheet">
       <header className="ac-band" data-tier={agent.tier}>
         <span className="min-w-0 flex-1">
-          <span className="ac-band-name block truncate">{agent.name}</span>
+          <span className="ac-band-name block truncate">{displayName}</span>
           {/* Jarvis' title IS "Lead", so the tier would otherwise read twice. */}
           <span className="ac-band-title block truncate">
             {[t(`society.tier.${agent.tier}`), agent.title]
@@ -273,6 +285,16 @@ export function AgentSpecSheet({ agent, onOpenChat, onRetired }: AgentSpecSheetP
               .join(" · ")}
           </span>
         </span>
+        {remoteComputer ? (
+          <span
+            data-testid="agent-remote-badge"
+            title={t("society.card.runs_on_badge").replace("{computer}", remoteComputer.name)}
+            className="inline-flex max-w-[40%] shrink-0 items-center gap-1 rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground"
+          >
+            <Server className="h-3 w-3 shrink-0" aria-hidden />
+            <span className="truncate">{remoteComputer.name}</span>
+          </span>
+        ) : null}
         <span className={cn("ac-dot", STATE_FILL[agent.state])} data-state={agent.state} aria-hidden />
         <span className="shrink-0 text-xs text-muted-foreground">
           {activeRuns > 0
@@ -344,6 +366,8 @@ export function AgentSpecSheet({ agent, onOpenChat, onRetired }: AgentSpecSheetP
               </ul>
             </section>
           ) : null}
+
+          {agent.tier !== "lead" && <RunsOnSection agent={agent} />}
 
           <LimitsSection
             agent={agent}
@@ -503,6 +527,9 @@ function LimitsSection({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [ceiling, setCeiling] = useState<PermissionCeiling>(agent.permissionCeiling);
+  const [approvalMode, setApprovalMode] = useState<AgentApprovalMode | null>(agent.approvalMode ?? null);
+  const providerRows = useQuery({ queryKey: ["society", "providers"], queryFn: fetchSocietyProviders });
+  const runner = providerRows.data?.find((row) => row.id === agent.provider)?.runner;
   const [budget, setBudget] = useState(String(agent.dailyBudgetUsd));
   // The stored 0 IS 'no cap' (the scheduler skips the gate), so the switch
   // reads it back rather than asking the person to know that.
@@ -511,6 +538,7 @@ function LimitsSection({
 
   const begin = () => {
     setCeiling(agent.permissionCeiling);
+    setApprovalMode(agent.approvalMode ?? null);
     setBudget(String(agent.dailyBudgetUsd || 2));
     setBudgetOn(agent.dailyBudgetUsd > 0);
     setJobs(String(agent.maxConcurrentRuns));
@@ -523,6 +551,7 @@ function LimitsSection({
     try {
       await update(agent, {
         permissionCeiling: ceiling,
+        approvalMode,
         dailyBudgetUsd: budgetOn ? Math.max(0, Number.parseFloat(budget) || 0) : 0,
         maxConcurrentRuns: Number.parseInt(jobs, 10) || 1,
       });
@@ -552,8 +581,37 @@ function LimitsSection({
 
       {editing ? (
         <div className="ac-prose flex flex-col gap-3">
-          <div className="flex flex-col gap-1">
-            <span className="text-xs text-muted-foreground">{t("society.card.permission")}</span>
+          {agent.tier !== "lead" && <div className="flex flex-col gap-1">
+            <span className="text-xs text-muted-foreground">{t("society.approval_mode.title")}</span>
+            <div className="flex flex-wrap gap-1">
+              {AGENT_APPROVAL_MODES.map((mode) => {
+                const unknownRunner = Boolean(agent.provider) && runner == null;
+                const unavailable = mode === "always_ask"
+                  ? unknownRunner || (runner != null && runner !== "codex-cli" && runner !== "brain")
+                  : mode === "ask" && (unknownRunner || (runner != null
+                    && !["codex-cli", "claude-cli", "glm-cli", "brain"].includes(runner)));
+                return <button
+                  key={mode}
+                  type="button"
+                  disabled={saving || unavailable}
+                  title={unavailable ? t("society.approval_mode.unavailable") : t(`society.approval_mode.${mode}_hint`)}
+                  onClick={() => setApprovalMode(mode)}
+                  aria-pressed={approvalMode === mode}
+                  className={cn(
+                    "rounded-md border px-2.5 py-1 text-xs transition-colors disabled:opacity-50",
+                    approvalMode === mode
+                      ? "border-border-strong bg-secondary text-foreground"
+                      : "border-border text-muted-foreground hover:bg-secondary",
+                  )}
+                >{t(`society.approval_mode.${mode}`)}</button>;
+              })}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {approvalMode ? t(`society.approval_mode.${approvalMode}_hint`) : t("society.approval_mode.legacy_hint")}
+            </p>
+          </div>}
+          {(agent.tier === "lead" || !agent.approvalMode) && <div className="flex flex-col gap-1">
+            <span className="text-xs text-muted-foreground">{t("society.approval_mode.legacy_ceiling")}</span>
             <div className="flex flex-wrap gap-1">
               {PERMISSION_CEILINGS.map((step) => (
                 <button
@@ -573,7 +631,7 @@ function LimitsSection({
                 </button>
               ))}
             </div>
-          </div>
+          </div>}
 
           <div className="flex flex-wrap items-end gap-4">
             <div className="flex flex-col gap-1">
@@ -643,12 +701,18 @@ function LimitsSection({
         </div>
       ) : (
         <>
-          <StepMeter
-            label={t("society.card.permission")}
-            steps={3}
-            filled={CEILING_STEP[agent.permissionCeiling] ?? 0}
-            value={t(`society.ceiling.${agent.permissionCeiling}`)}
-          />
+          {agent.tier !== "lead" && agent.approvalMode ? (
+            <div className="text-xs text-muted-foreground">
+              {t("society.approval_mode.title")}: <span className="text-foreground">{t(`society.approval_mode.${agent.approvalMode}`)}</span>
+            </div>
+          ) : (
+            <StepMeter
+              label={t("society.approval_mode.legacy_ceiling")}
+              steps={3}
+              filled={CEILING_STEP[agent.permissionCeiling] ?? 0}
+              value={t(`society.ceiling.${agent.permissionCeiling}`)}
+            />
+          )}
           <StepMeter
             label={t("society.card.meter_reach")}
             steps={REACH_STEPS}
@@ -763,5 +827,36 @@ function RuleRow({ label, ids, byId }: { label: string; ids: string[]; byId: Map
         ))}
       </div>
     </div>
+  );
+}
+
+/**
+ * Where the agent's work executes — this computer or a connected one. The
+ * change applies from the agent's next turn; a turn already running finishes
+ * where it started.
+ */
+function RunsOnSection({ agent }: { agent: SocietyAgent }) {
+  const t = useT();
+  const setComputer = useSetAgentComputer();
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  return (
+    <section className="flex flex-col gap-2" data-testid="agent-runs-on">
+      <ComputerPicker
+        value={agent.computerId ?? ""}
+        labelClass="ac-head mb-1 block"
+        testId="agent-runs-on-picker"
+        onChange={(id) => {
+          if (saving || id === (agent.computerId ?? "")) return;
+          setSaving(true);
+          setError("");
+          setComputer(agent, id)
+            .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
+            .finally(() => setSaving(false));
+        }}
+      />
+      {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
+      {saving ? <p className="text-xs text-muted-foreground">{t("society.card.runs_on_saving")}</p> : null}
+    </section>
   );
 }

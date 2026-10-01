@@ -121,11 +121,10 @@ docs/phase-b1-wiki-curator/**
 docs/diagnostics/**
 
 # --- Contributor doctrine now SHIPS (2026-06-27, revised) -------------------
-# CLAUDE.md + CLOUD.md are the binding contributor doctrine. AGENTS.md is the
-# byte-twin of CLAUDE.md and ALREADY ships, so withholding CLAUDE.md was
-# inconsistent — its content was public via AGENTS.md regardless. the openclaw repo ships
-# CLAUDE.md + VISION.md publicly; matching that is the professional move. Both
-# are depersonalized by the PII scrub on the way out. (docs/BUGS.md stays
+# AGENTS.md + CLOUD.md are the binding contributor doctrine and ship; the old
+# CLAUDE.md twin was retired on 2026-09-30 (AGENTS.md is the only rulebook).
+# the openclaw repo ships its doctrine publicly too; matching that is the
+# professional move. Both are depersonalized by the PII scrub on the way out. (docs/BUGS.md stays
 # withheld below — that is the internal bug log, not contributor doctrine.)
 
 # --- BUGS.md now SHIPS (2026-06-27): the recurring-bug "journey" log is strong

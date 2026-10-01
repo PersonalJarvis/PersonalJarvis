@@ -1440,3 +1440,54 @@ exact counters, validated arguments and both worker and Society denial.
 `tests/unit/cli_ctl/test_commands_swarm.py` checks paths, bounded input, version
 propagation, confirmation and dry-run behavior. The generated command and CLI
 references stay covered by their existing drift checks.
+
+## Amendment 2026-09-29 — Every app action
+
+`find-app-action` and `run-app-action` join `ROUTER_TOOLS`. The Command
+Registry keeps its curated, hand-described commands; these two open the rest
+of the app's own REST surface (about 765 operations) without declaring a
+schema per operation on every turn. `find-app-action` (risk `safe`) ranks the
+catalog built in-process from the live app's OpenAPI document
+(`jarvis/app_actions/catalog.py`) and returns a few matches with their
+parameters. `run-app-action` sends ONE operation through the same in-process
+ASGI transport as `app-command`.
+
+### Pure-Dispatcher spirit is preserved
+
+- Each call's tier comes from `risk_tier_for_args`: the person's per-action
+  mode from Settings > Jarvis actions (`allow` → monitor, `ask`, `block`),
+  else the action default (read → safe, change → monitor, dangerous route →
+  ask). `ToolExecutor.execute()` still evaluates and confirms (AP-3); a
+  blocked action is refused by the evaluator. The same policy applies to the
+  registry commands that share an endpoint.
+- The catalog never contains credentials, sign-ins, OAuth callbacks,
+  webhooks, the raw control plane, self-modification or the policy routes —
+  voice never carries a secret (AP-2) and Jarvis never edits its own
+  permissions.
+- Never a spawn and never in a worker set (AP-5/AP-14): both names are in the
+  worker broker's forbidden list and in the society `NEVER_GRANTED` set.
+
+### Regression guards
+
+`tests/unit/brain/test_routing.py` (exact router set) and
+`tests/unit/app_actions/` (catalog exclusions, policy tiers, blocked calls,
+parameter mapping).
+
+## Amendment 2026-09-30 — Awareness tools retired
+
+`awareness-snapshot` and `awareness-recall` leave `ROUTER_TOOLS` together with
+the awareness layer that fed them (ADR-0009, ADR-0012). The layer watched the
+foreground window, summarised each stretch of work with a model call, and
+put a live snapshot into every turn's context. That cost tokens on every
+turn and in the background for a recall feature the product no longer wants.
+
+The evidence gate keeps its `activity` domain. No tool serves it now, so a
+question like "what did I have open today?" gets the gate's honest refusal
+("I don't keep a history of your activity") instead of an invented timeline.
+Mission workers lose the `awareness-recall` grant (ADR-0030).
+
+### Regression guards
+
+- `tests/unit/brain/test_routing.py` (exact router set)
+- `tests/unit/brain/test_evidence_gate.py`, `tests/unit/brain/test_evidence_gate_wiring.py` (honest refusal for the `activity` domain)
+- `tests/missions/test_worker_capability_parity.py` (the worker grant)

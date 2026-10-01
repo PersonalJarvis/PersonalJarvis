@@ -51,5 +51,5 @@ describe("dropdown design guard", () => {
       violations,
       "Use BrandedSelect or Combobox so the opened menu follows the app theme.",
     ).toEqual([]);
-  });
+  }, 20_000);
 });

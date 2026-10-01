@@ -250,7 +250,6 @@ jarvis/ui/web/frontend/src/components/runs/__tests__/toolTable.test.tsx
 #     German fixtures are the content under test for the bilingual confirm flow,
 #     evidence-gate domains, the turn-language resolver, the continuation buffer
 #     and the Spanish path (same rationale as the voice turn-taking block) ---
-tests/unit/awareness/test_awareness_recall_tool.py
 tests/unit/brain/test_evidence_gate.py
 tests/unit/brain/test_evidence_gate_wiring.py
 tests/unit/brain/test_refresh_tools_di.py
@@ -271,10 +270,6 @@ jarvis/voice/tool_confirmation.py
 #     de/en/es, same speech-input-vocabulary rationale as the wake words ---
 jarvis/safety/explicit_intent.py
 tests/unit/safety/test_explicit_intent.py
-
-# --- awareness-recall tool: forensic comments quote the German runtime phrase
-#     ("der lokale Verlaufsspeicher ist nicht verfügbar") the DI fix addresses ---
-jarvis/plugins/tool/awareness_recall.py
 
 # --- manager.py + config.py: forensic comments quote the same German runtime
 #     phrase, and config.py carries the evidence-domain voice-intent keyword
@@ -348,8 +343,6 @@ jarvis/harness/screenshot_only_loop_stable.py
 # --- German drain (2026-07-01): product-surface files where an inline i18n-allow
 #     marker is impossible (multiline prompt strings / JSON / YAML front-matter /
 #     verbatim forensic code-blocks). Each is one of the four allowed buckets. ---
-# German runtime summarizer system prompt (bucket 1, multiline string)
-jarvis/awareness/prompts.py
 # German runtime self-observation system prompt (bucket 1, multiline string)
 jarvis/board/prompts.py
 # German user-utterance examples in the wiki-extraction prompt (bucket 3, multiline string)

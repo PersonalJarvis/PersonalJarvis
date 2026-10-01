@@ -1,0 +1,74 @@
+/* Office HUD panels and prompts: theme tokens only, so light and dark mode both work. */
+/* Opens below the minimap card (14 + 236 px) in the top-right corner. */
+.office-panel-slot { position:absolute; z-index:35; right:14px; top:258px; width:min(340px, calc(100% - 28px)); max-height:calc(100% - 310px); display:flex; }
+.office-panel { display:flex; flex-direction:column; width:100%; min-height:0; overflow:hidden; }
+.office-panel-head { display:flex; align-items:flex-start; justify-content:space-between; gap:8px; padding:10px 12px 6px; }
+.office-panel:focus { outline:none; }
+.office-panel:focus-visible { outline:2px solid hsl(var(--ring)); outline-offset:2px; }
+.office-panel-head > div { min-width:0; }
+.office-panel-head h2 { display:block; margin:0; font-size:14px; font-weight:700; overflow-wrap:anywhere; }
+.office-panel-head span { display:block; font-size:11px; color:hsl(var(--muted-foreground)); margin-top:2px; }
+/* A checkpoint panel wears its checkpoint's icon, gold like the token on the floor. */
+.office-panel-head > div { flex:1; }
+.office-panel-head .office-panel-badge { flex:none; display:inline-flex; align-items:center; justify-content:center; width:34px; height:34px; margin:0; border-radius:10px; background:linear-gradient(160deg, #ffd476, #f0a92b); color:#1f1300; box-shadow:0 4px 14px rgb(240 169 43 / .3); }
+.office-panel-badge svg { width:18px; height:18px; }
+.office-panel-body { display:flex; flex-direction:column; gap:9px; padding:4px 12px 12px; overflow:auto; font-size:12px; line-height:1.45; }
+.office-panel-body p { margin:0; }
+.office-panel-status { display:flex; align-items:center; gap:6px; font-weight:600; }
+.office-icon-button { border:0; background:none; color:hsl(var(--muted-foreground)); font-size:18px; line-height:1; cursor:pointer; padding:0 4px; border-radius:6px; }
+.office-icon-button:hover { color:hsl(var(--foreground)); background:hsl(var(--secondary)); }
+.office-icon-button:focus-visible { outline:2px solid hsl(var(--ring)); outline-offset:1px; color:hsl(var(--foreground)); }
+.office-actions { display:flex; flex-wrap:wrap; gap:6px; }
+.office-action { border:1px solid hsl(var(--border)); border-radius:9px; padding:6px 10px; background:hsl(var(--background)); color:hsl(var(--foreground)); font-size:12px; cursor:pointer; }
+.office-action:hover:not(:disabled) { background:hsl(var(--secondary)); }
+.office-action[aria-pressed="true"] { background:hsl(var(--secondary)); border-color:hsl(var(--ring)); }
+.office-action:disabled { opacity:.5; cursor:not-allowed; }
+.office-action-primary { background:hsl(var(--primary)); color:hsl(var(--primary-foreground)); border-color:transparent; font-weight:600; }
+.office-action-primary:hover:not(:disabled) { background:hsl(var(--primary) / .88); }
+.office-action:focus-visible, .office-mini:focus-visible, .office-chip:focus-visible, .office-link:focus-visible, .office-prompt:focus-visible { outline:2px solid hsl(var(--ring)); outline-offset:2px; }
+.office-link { border:0; background:none; padding:0; color:hsl(var(--primary)); font-size:12px; cursor:pointer; text-decoration:underline; text-underline-offset:2px; }
+.office-list { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:3px; max-height:260px; overflow:auto; }
+.office-list li { display:flex; align-items:center; gap:6px; padding:4px 6px; border-radius:7px; }
+.office-list li:hover { background:hsl(var(--secondary) / .6); }
+.office-list label { display:flex; align-items:center; gap:6px; width:100%; cursor:pointer; }
+.office-list-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.office-mini { border:1px solid hsl(var(--border)); border-radius:6px; padding:2px 7px; background:hsl(var(--background)); color:hsl(var(--foreground)); font-size:11px; cursor:pointer; }
+.office-mini:hover { background:hsl(var(--secondary)); }
+.office-list li > .office-mini { flex:none; }
+.office-dot { display:inline-block; flex:none; width:8px; height:8px; border-radius:50%; background:hsl(var(--muted-foreground)); }
+.office-dot[data-state="working"] { background:hsl(var(--success)); }
+.office-dot[data-state="waiting"] { background:hsl(var(--warning)); }
+.office-dot[data-state="paused"] { background:transparent; box-shadow:inset 0 0 0 1.5px hsl(var(--muted-foreground)); }
+.office-field { display:flex; flex-direction:column; gap:4px; font-size:11px; color:hsl(var(--muted-foreground)); }
+.office-field input { border:1px solid hsl(var(--border)); border-radius:8px; padding:6px 8px; background:hsl(var(--background)); color:hsl(var(--foreground)); font-size:12px; }
+.office-field input:focus-visible { outline:2px solid hsl(var(--ring)); outline-offset:0; }
+.office-subhead { margin:4px 0 0; font-size:11px; font-weight:600; color:hsl(var(--muted-foreground)); }
+.office-chips { display:flex; flex-wrap:wrap; gap:5px; }
+.office-chip { border:1px solid hsl(var(--border)); border-radius:999px; padding:3px 9px; background:hsl(var(--background)); color:hsl(var(--foreground)); font-size:11px; cursor:pointer; }
+.office-chip:hover:not([aria-pressed="true"]) { background:hsl(var(--secondary)); }
+.office-chip[aria-pressed="true"] { background:hsl(var(--primary)); color:hsl(var(--primary-foreground)); border-color:transparent; }
+.office-list input[type="checkbox"] { flex:none; accent-color:hsl(var(--primary)); }
+.office-list input[type="checkbox"]:focus-visible { outline:2px solid hsl(var(--ring)); outline-offset:1px; }
+.office-hint { margin:0; font-size:11px; color:hsl(var(--muted-foreground)); }
+.office-error { color:hsl(var(--destructive)); }
+.office-success { display:flex; flex-wrap:wrap; gap:6px; align-items:center; color:hsl(var(--foreground)); }
+.office-note-inline { color:hsl(var(--muted-foreground)); }
+.office-prompt { left:50%; bottom:48px; transform:translateX(-50%); display:inline-flex; align-items:center; gap:8px; padding:7px 14px 7px 7px; border-radius:999px; border:1px solid hsl(var(--border)); background:hsl(var(--popover) / .94); color:hsl(var(--popover-foreground)); font-size:13px; font-weight:600; cursor:pointer; box-shadow:0 6px 20px rgb(0 0 0 / .3); }
+.office-prompt kbd { display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; border-radius:7px; background:#f5b83d; color:#1f1300; font-family:inherit; font-size:12px; font-weight:800; }
+.office-hud-right .office-button[aria-pressed="true"] { border-color:#f5b83d; background:hsl(var(--secondary)); }
+.office-plate[data-selected] { box-shadow:0 0 0 2px #93c5fd, 0 2px 8px rgb(0 0 0 / .35); }
+.office-plate-player { cursor:default; background:rgb(58 44 12 / .9); box-shadow:0 0 0 1.5px #f5b83d, 0 2px 8px rgb(0 0 0 / .35); }
+@media (max-width:900px) { .office-prompt { bottom:64px; } }
+/* Narrow: the buttons sit under the minimap; the panel covers the map card while open. */
+@media (max-width:760px) { .office-panel-slot { top:14px; max-height:calc(100% - 80px); } }
+/* No minimap on short windows: the panel goes back under the corner buttons. */
+@media (max-height:520px) { .office-panel-slot { top:60px; max-height:calc(100% - 100px); } }
+@media (max-width:600px) { .office-panel-slot { top:auto; bottom:12px; max-height:55%; } .office-hud-right { max-width:60%; } .office-prompt { bottom:48px; max-width:calc(100% - 28px); } }
+
+/* The monitor dive ends in the chat view: the stage fades to the app background just before it opens. */
+.office-dive-fade { position:absolute; inset:0; z-index:60; pointer-events:none; background:hsl(var(--background)); opacity:0; animation:office-dive-fade 1.4s ease-in forwards; }
+@keyframes office-dive-fade { 0%, 72% { opacity:0; } 100% { opacity:1; } }
+@media (prefers-reduced-motion: reduce) { .office-dive-fade { animation:none; } }
+
+/* The real chat on a desk monitor: the app's own chat panel at window size, scaled onto the screen. */
+.office-real-chat { width:100%; height:100%; overflow:hidden; background:hsl(var(--background)); color:hsl(var(--foreground)); border-radius:6px; }

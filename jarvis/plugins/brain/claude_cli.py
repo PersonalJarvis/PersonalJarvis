@@ -124,6 +124,11 @@ _FAST_STRUCTURED_ARGS: tuple[tuple[str, tuple[str, ...]], ...] = (
 # wait this mapping exists to stop.
 _EFFORT_LEVELS: frozenset[str] = frozenset({"low", "medium", "high"})
 
+#: The most characters the argv of one turn may take. Windows refuses a
+#: command line over 32,767 characters; elsewhere a single argument is capped
+#: at 128 KiB (Linux MAX_ARG_STRLEN). Room is left for the binary path.
+_ARGV_BUDGET: int = 30_000 if sys.platform == "win32" else 120_000
+
 # The probed set of long options this install's CLI understands, filled once
 # per process from ``claude --help``. ``None`` means "not probed yet"; an empty
 # set means the probe failed and every gated flag stays off — slower, but every
@@ -304,6 +309,12 @@ class ClaudeCliBrain:
             if "--effort" in known and effort in _EFFORT_LEVELS:
                 argv += ["--effort", effort]
             system = str(getattr(req, "system", "") or "").strip()
+            if system and len(system) + sum(len(arg) + 1 for arg in argv) > _ARGV_BUDGET:
+                # Too long for one command line (Windows caps the whole line at
+                # 32,767 chars; live: every browser turn of a society agent died
+                # with WinError 206). stdin has no such limit, and the
+                # structured rendering already carries the contract verbatim.
+                return argv, render_structured_prompt(req)
             if system:
                 argv += ["--system-prompt", system]
                 # The contract already rides in argv; sending it on stdin too

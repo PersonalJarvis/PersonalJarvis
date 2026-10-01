@@ -25,8 +25,10 @@ from collections import deque
 from contextlib import suppress
 
 from PySide6.QtCore import (
+    QByteArray,
     QEasingCurve,
     QObject,
+    QRectF,
     Qt,
     QVariantAnimation,
     Signal,
@@ -37,8 +39,10 @@ from PySide6.QtGui import (
     QFont,
     QFontMetricsF,
     QGuiApplication,
+    QImage,
     QLinearGradient,
     QPainter,
+    QPainterPath,
     QPen,
 )
 from PySide6.QtWidgets import QApplication, QWidget
@@ -178,6 +182,184 @@ class _GlowWindow(QWidget):
         )
 
 
+# ---------------------------------------------------------------------------
+# Appshot shutter effect — the phone-screenshot moment.
+#
+# A white flash over the captured surface, then the picture shrinks into the
+# bottom-right corner of that monitor, rests there as a rounded thumbnail and
+# slides out. Purely local: the thumbnail arrives over this process's stdin,
+# is painted, and is dropped with the window. Click-through like the glow.
+# ---------------------------------------------------------------------------
+
+_SNAP_FLASH_MS = 200
+_SNAP_FLY_START_MS = 90
+_SNAP_FLY_MS = 430
+_SNAP_HOLD_UNTIL_MS = 2500
+_SNAP_OUT_MS = 320
+_SNAP_TOTAL_MS = _SNAP_HOLD_UNTIL_MS + _SNAP_OUT_MS
+_SNAP_THUMB_W = 320
+_SNAP_THUMB_MAX_H = 240
+_SNAP_MARGIN = 28
+_SNAP_RADIUS = 12.0
+
+
+def _ease_out_cubic(x: float) -> float:
+    x = max(0.0, min(1.0, x))
+    return 1.0 - (1.0 - x) ** 3
+
+
+def _lerp(a: float, b: float, t: float) -> float:
+    return a + (b - a) * t
+
+
+def _match_screen(monitor: list[float]):
+    """The QScreen that best matches a capture-coordinate monitor rect.
+
+    Capture coordinates are physical pixels on Windows and points on macOS,
+    while Qt reports logical geometry — so every plausible interpretation of
+    each screen is scored and the closest one wins. Primary on no data.
+    """
+    screens = QGuiApplication.screens()
+    primary = QGuiApplication.primaryScreen()
+    if not screens or len(monitor) != 4:
+        return primary
+    left, top, width, height = (float(v) for v in monitor)
+    best, best_score = primary, float("inf")
+    for screen in screens:
+        g = screen.geometry()
+        dpr = float(screen.devicePixelRatio() or 1.0)
+        candidates = (
+            (g.x(), g.y(), g.width(), g.height()),
+            (g.x(), g.y(), g.width() * dpr, g.height() * dpr),
+            (g.x() * dpr, g.y() * dpr, g.width() * dpr, g.height() * dpr),
+        )
+        for cx, cy, cw, ch in candidates:
+            score = abs(cx - left) + abs(cy - top) + abs(cw - width) + abs(ch - height)
+            if score < best_score:
+                best, best_score = screen, score
+    return best
+
+
+class _SnapWindow(QWidget):
+    """One monitor-sized, click-through canvas for a single shutter effect."""
+
+    def __init__(self, screen, rect_frac: list[float], thumb: QImage, on_done) -> None:
+        super().__init__(None)
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.WindowTransparentForInput
+            | Qt.WindowType.WindowDoesNotAcceptFocus
+            | Qt.WindowType.Tool
+            | Qt.WindowType.NoDropShadowWindowHint
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        if sys.platform == "darwin":
+            mac_always_show = getattr(Qt.WidgetAttribute, "WA_MacAlwaysShowToolWindow", None)
+            if mac_always_show is not None:
+                self.setAttribute(mac_always_show)
+        self.setScreen(screen)
+        self.setGeometry(screen.geometry())
+        self._thumb = thumb
+        self._on_done = on_done
+        w, h = float(screen.geometry().width()), float(screen.geometry().height())
+        fx, fy, fw, fh = (max(0.0, min(1.0, float(v))) for v in rect_frac)
+        self._src = QRectF(fx * w, fy * h, max(1.0, fw * w), max(1.0, fh * h))
+        aspect = (
+            thumb.height() / max(1, thumb.width())
+            if not thumb.isNull()
+            else (fh * h) / max(fw * w, 1e-6)
+        )
+        tw = float(_SNAP_THUMB_W)
+        th = tw * aspect
+        if th > _SNAP_THUMB_MAX_H:
+            th = float(_SNAP_THUMB_MAX_H)
+            tw = th / max(aspect, 1e-6)
+        self._dst = QRectF(w - tw - _SNAP_MARGIN, h - th - _SNAP_MARGIN, tw, th)
+        self._t = 0.0
+        self._anim = QVariantAnimation(self)
+        self._anim.setStartValue(0.0)
+        self._anim.setEndValue(float(_SNAP_TOTAL_MS))
+        self._anim.setDuration(_SNAP_TOTAL_MS)
+        self._anim.valueChanged.connect(self._on_tick)
+        self._anim.finished.connect(self._finish)
+
+    def start(self) -> None:
+        self.show()
+        self._anim.start()
+
+    def finish_now(self) -> None:
+        self._anim.stop()
+        self._finish()
+
+    def _on_tick(self, value) -> None:
+        self._t = float(value)
+        self.update()
+
+    def _finish(self) -> None:
+        self.hide()
+        callback, self._on_done = self._on_done, None
+        if callback is not None:
+            callback(self)
+        self.deleteLater()
+
+    def showEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        super().showEvent(event)
+        hwnd = int(self.winId())
+        harden_window(hwnd)
+        exclude_from_capture(hwnd)
+
+    def paintEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        del event
+        t = self._t
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+
+        fly = _ease_out_cubic((t - _SNAP_FLY_START_MS) / _SNAP_FLY_MS)
+        out = _ease_out_cubic((t - _SNAP_HOLD_UNTIL_MS) / _SNAP_OUT_MS)
+        rect = QRectF(
+            _lerp(self._src.x(), self._dst.x(), fly) + 48.0 * out,
+            _lerp(self._src.y(), self._dst.y(), fly),
+            _lerp(self._src.width(), self._dst.width(), fly),
+            _lerp(self._src.height(), self._dst.height(), fly),
+        )
+        radius = _SNAP_RADIUS * fly
+        opacity = 1.0 - out
+
+        if not self._thumb.isNull() and opacity > 0.0:
+            painter.setOpacity(opacity)
+            # Soft shadow grows in as the card lifts off the surface.
+            if fly > 0.0:
+                for spread, alpha in ((10.0, 18), (5.0, 30), (2.0, 46)):
+                    shadow = rect.adjusted(-spread, -spread + 4, spread, spread + 4)
+                    painter.setPen(Qt.PenStyle.NoPen)
+                    painter.setBrush(QColor(0, 0, 0, int(alpha * fly)))
+                    painter.drawRoundedRect(shadow, radius + spread, radius + spread)
+            clip = QPainterPath()
+            clip.addRoundedRect(rect, radius, radius)
+            painter.save()
+            painter.setClipPath(clip)
+            painter.drawImage(rect, self._thumb)
+            painter.restore()
+            if fly > 0.0:
+                pen = QPen(QColor(255, 255, 255, int(235 * fly)))
+                pen.setWidthF(2.5)
+                painter.setPen(pen)
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawRoundedRect(rect, radius, radius)
+
+        flash = 1.0 - _ease_out_cubic(t / _SNAP_FLASH_MS)
+        if flash > 0.0:
+            painter.setOpacity(1.0)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(255, 255, 255, int(225 * flash)))
+            painter.drawRect(self._src)
+        painter.end()
+
+
 class Renderer(QObject):
     """Owns the per-monitor windows, the animations, and the IPC slots."""
 
@@ -185,6 +367,7 @@ class Renderer(QObject):
         super().__init__()
         self._app = app
         self._windows: list[_GlowWindow] = []
+        self._snaps: list[_SnapWindow] = []
         self._hint = ""
         self._active = False  # "show" was requested and not yet "hide"
         self._blanked = False  # capture guard currently hiding the border
@@ -242,6 +425,8 @@ class Renderer(QObject):
                     self._blank()
                 elif cmd == protocol.CMD_UNBLANK:
                     self._unblank()
+                elif cmd == protocol.CMD_SNAP:
+                    self._snap(payload)
                 elif cmd == protocol.CMD_QUIT:
                     _ack(cmd)
                     self._app.quit()
@@ -274,7 +459,33 @@ class Renderer(QObject):
         self._active = False
         self._fade_to(0.0)
 
+    def _snap(self, payload: dict) -> None:
+        thumb = QImage()
+        raw = payload.get("thumb")
+        if isinstance(raw, str) and raw:
+            thumb.loadFromData(QByteArray.fromBase64(raw.encode("ascii")))
+        rect = payload.get("rect")
+        if not isinstance(rect, list) or len(rect) != 4:
+            rect = [0.0, 0.0, 1.0, 1.0]
+        monitor = payload.get("monitor")
+        screen = _match_screen(monitor if isinstance(monitor, list) else [])
+        if screen is None:
+            return
+        # One effect at a time: a second appshot replaces the resting card.
+        for old in list(self._snaps):
+            old.finish_now()
+        win = _SnapWindow(screen, rect, thumb, self._snap_done)
+        self._snaps.append(win)
+        win.start()
+
+    def _snap_done(self, win) -> None:
+        with suppress(ValueError):
+            self._snaps.remove(win)
+
     def _blank(self) -> None:
+        # A resting thumbnail must never end up inside the next capture.
+        for snap in list(self._snaps):
+            snap.finish_now()
         if not self._active:
             return
         self._blanked = True

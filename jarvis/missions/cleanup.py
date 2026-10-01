@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Final
 
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
+from jarvis.missions.standalone_run import MARKER_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +97,8 @@ def _sweep_blocking(
         age_seconds = now - mtime
         if age_seconds < cutoff_seconds:
             continue  # too young — keep
+        if _holds_deliverables(entry):
+            continue  # the user's artifacts — never an age-based deletion
 
         # Older than cutoff -> remove.
         if not _remove_entry(entry, repo_root=repo_root):
@@ -109,6 +112,38 @@ def _sweep_blocking(
             stats["scanned"], stats["removed"], stats["errors"],
         )
     return stats
+
+
+def _holds_deliverables(entry: Path) -> bool:
+    """True when ``entry`` is a run whose results the user can still open.
+
+    The sweep exists to reclaim worker scaffolding (worktrees, CLI homes), but
+    finished runs live in the same root: every page, picture and report in the
+    Artifacts section is a file under ``tasks/<id>/artifacts/files``. Deleting
+    those after N days silently emptied the section (2026-09-29). A standalone
+    run (its ``.standalone-run.json`` marker) is kept too: chat media is served
+    from there and a chat transcript would otherwise lose its pictures.
+
+    A worktree-slug directory never has either, so it is still reclaimed.
+    """
+    if (entry / MARKER_NAME).is_file():
+        return True
+    tasks_dir = entry / "tasks"
+    try:
+        task_dirs = [child for child in tasks_dir.iterdir() if child.is_dir()]
+    except OSError:
+        return False  # no tasks directory — nothing the user could open
+    for task_dir in task_dirs:
+        files_dir = task_dir / "artifacts" / "files"
+        try:
+            if any(path.is_file() for path in files_dir.rglob("*")):
+                return True
+        except OSError as exc:
+            # Unreadable deliverables are still deliverables: keeping a
+            # directory is recoverable, deleting it is not.
+            logger.warning("startup_sweep: cannot read %s: %s", files_dir, exc)
+            return True
+    return False
 
 
 def _on_rmtree_error(func, path, exc_info) -> None:  # type: ignore[no-untyped-def]

@@ -3,7 +3,7 @@
 The words a pane can be in ("working", "waiting", …) cross four layers: the
 Python literal that produces them, the Pydantic field that ships them, the
 TypeScript union that types them and the label map that turns each one into
-something a person reads. CLAUDE.md §5 exists because a value added to one layer
+something a person reads. AGENTS.md §5 exists because a value added to one layer
 and forgotten in another is this repo's most-repeated bug — and the failure mode
 here is quiet: an unknown word reaches a `Record` lookup, the badge renders
 nothing, and a pane silently loses its status.

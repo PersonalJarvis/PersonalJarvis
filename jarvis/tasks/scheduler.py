@@ -139,6 +139,8 @@ class TaskScheduler:
         self._fired_dedup: dict[tuple[str, str], None] = {}
         # Pending runner tasks, so we can clean up on cancel.
         self._runner_tasks: set[asyncio.Task[Any]] = set()
+        #: TaskScheduled publishes still in flight (kept referenced until done).
+        self._publish_tasks: set[asyncio.Task[Any]] = set()
         # Per-run cancel tokens (H-03): cancel_task() fires the token of a
         # RUNNING task so its harness action stops; cleared in _safe_run.
         self._running_tokens: dict[str, Any] = {}
@@ -162,15 +164,24 @@ class TaskScheduler:
         due_at_ns = row.get("due_at_ns") if row is not None else self._due_at_ns_for(spec)
         self._register_in_memory(spec, task_id, stored_due_at_ns=due_at_ns)
         # The event, heap and database must agree even across a clock boundary.
-        await self._bus.publish(
-            TaskScheduled(
-                task_id=task_id,
-                trigger_type=spec.trigger.type,
-                due_at_ns=due_at_ns or 0,
-                title=spec.title,
-                source_layer="tasks.scheduler",
-            )
+        # Published without waiting: every bus-wide listener (chat bridges, the
+        # web forwarder, this scheduler's own locked handler) may take seconds,
+        # and the caller — often a person pressing "Save" — needs only the id.
+        # Heap and row are already consistent, so nothing depends on the order.
+        publish = asyncio.create_task(
+            self._bus.publish(
+                TaskScheduled(
+                    task_id=task_id,
+                    trigger_type=spec.trigger.type,
+                    due_at_ns=due_at_ns or 0,
+                    title=spec.title,
+                    source_layer="tasks.scheduler",
+                )
+            ),
+            name=f"task-scheduled-{task_id}",
         )
+        self._publish_tasks.add(publish)
+        publish.add_done_callback(self._publish_tasks.discard)
         self._wakeup.set()
         return task_id
 
@@ -276,8 +287,7 @@ class TaskScheduler:
                 status = await self.receive_hook(
                     task_id, payload, str(event.trace_id), source="source", lineage=path
                 )
-            except ValueError:
-                # The source status below persists this rejection as blocked/payload_invalid.
+            except ValueError:  # The source is marked blocked with payload_invalid below.
                 status = "payload_invalid"
             if status not in {"queued", "duplicate", "filtered"}:
                 await self._store.sources.status(task_id, "blocked", status)
@@ -385,8 +395,7 @@ class TaskScheduler:
                     and current["state"] == "scheduled"
                 ):
                     await self._store.update_state(tid, "completed")
-        except RoutineDeferred:
-            # Backpressure durably returns delivery to pending and schedules a retry.
+        except RoutineDeferred:  # Keep the hook pending and retry after a short delay.
             await self._store.hooks.mark(tid, delivery, "pending")
             self._hook_retry_at[tid] = time.monotonic() + 2
         except asyncio.CancelledError:
@@ -807,7 +816,7 @@ class TaskScheduler:
         if trig.type == "at_time":
             try:
                 return parse_iso_timestamp_to_ns(trig.iso_timestamp)
-            except ValueError:
+            except ValueError:  # Invalid ISO times have no schedulable due date.
                 return None
         if trig.type == "cron":
             return next_every_due_ns(spec, time.time_ns())
@@ -817,7 +826,7 @@ class TaskScheduler:
             if trig.start_at:
                 try:
                     return parse_iso_timestamp_to_ns(trig.start_at)
-                except ValueError:
+                except ValueError:  # Invalid start times have no schedulable due date.
                     return None
             return time.time_ns() + int(trig.interval_seconds * 1e9)
         return None
@@ -860,7 +869,7 @@ class TaskScheduler:
                     await self._wakeup.wait()
                 else:
                     await asyncio.wait_for(self._wakeup.wait(), timeout=timeout)
-            except TimeoutError:
+            except TimeoutError:  # The periodic wake interval elapsed without a signal.
                 pass
             self._wakeup.clear()
 
@@ -992,7 +1001,7 @@ def next_every_due_ns(spec: TaskSpec, now_ns: int) -> int:
     if start_at:
         try:
             anchor = parse_iso_timestamp_to_ns(start_at)
-        except ValueError:
+        except ValueError:  # An invalid anchor falls back to the current interval.
             anchor = None
         if anchor is not None:
             if anchor > now_ns:
@@ -1069,7 +1078,7 @@ def _match_filter(event: Event, filter_expr: str | None) -> bool:
 
     try:
         tree = ast.parse(filter_expr, mode="eval")
-    except SyntaxError:
+    except SyntaxError:  # Malformed filters are rejected before evaluation.
         return False
 
     for node in ast.walk(tree):

@@ -17,6 +17,7 @@ from collections.abc import Sequence
 from typing import Any, Final
 from uuid import UUID
 
+from jarvis.brain.artifact_gate import wants_artifact
 from jarvis.tasks.schema import (
     AgentAction,
     PluginGrant,
@@ -35,13 +36,25 @@ from jarvis.tasks.schema import (
 
 from .roster import AgentRecord
 
+#: Appended to a routine whose prompt asks for an artifact. The build runs in
+#: the background; the routine's own reply only says it was started.
+ARTIFACT_DELIVERY: Final[str] = (
+    "Deliver the result as an artifact: gather what the routine needs first, then "
+    "call create_artifact exactly once with a short title and a self-contained "
+    "request carrying every fact, number and item the page must show. Your reply "
+    "then says in one sentence that the page is being built."
+)
+
 __all__ = [
+    "ARTIFACT_DELIVERY",
     "ROUTINE_TAG",
     "agent_tag",
     "build_task_spec",
     "create_routine",
     "is_agent_routine",
     "list_routines",
+    "missing_timezone",
+    "next_run_readback",
     "routine_seat",
 ]
 
@@ -53,18 +66,72 @@ def agent_tag(agent_id: str) -> str:
     return f"agent:{agent_id}"
 
 
+_WEEKDAYS: Final[dict[str, int]] = {
+    name: index
+    for index, names in enumerate(
+        (
+            ("mon", "monday"),
+            ("tue", "tuesday"),
+            ("wed", "wednesday"),
+            ("thu", "thursday"),
+            ("fri", "friday"),
+            ("sat", "saturday"),
+            ("sun", "sunday"),
+        )
+    )
+    for name in names
+}
+
+
+def _without_blanks(schedule: dict[str, Any]) -> dict[str, Any]:
+    """Drop the empty optionals a tool-calling model fills in (None, "", [])."""
+    return {k: v for k, v in schedule.items() if v not in (None, "", [], ())}
+
+
+def _fields_of(model: Any, schedule: dict[str, Any]) -> dict[str, Any]:
+    """Keep the keys this trigger kind knows. The voice command offers one
+    flat schedule object, and models fill sibling fields of other kinds
+    (``interval_seconds`` next to a calendar ``local_time``, seen live)."""
+    known = set(model.model_fields)
+    return {k: v for k, v in schedule.items() if k in known or k in ("kind", "type")}
+
+
+def _spoken_calendar(schedule: dict[str, Any]) -> dict[str, Any]:
+    """Accept the voice command's shape: ``days`` as weekday names and
+    ``local_time`` without a leading zero ("8:00")."""
+    values = dict(schedule)
+    days = values.pop("days", None)
+    if days:
+        weekdays = []
+        for day in days:
+            key = str(day).strip().lower()
+            if key.isdigit() and int(key) in range(7):
+                weekdays.append(int(key))
+            elif key in _WEEKDAYS:
+                weekdays.append(_WEEKDAYS[key])
+            else:
+                raise ValueError(f"unknown weekday {day!r}; use mon..sun")
+        values["weekdays"] = sorted(set(weekdays))
+    local_time = str(values.get("local_time") or "")
+    hour, sep, minute = local_time.partition(":")
+    if sep and hour.isdigit() and len(hour) == 1:
+        values["local_time"] = f"0{hour}:{minute}"
+    return values
+
+
 def _trigger(schedule: dict[str, Any]) -> Any:
     from jarvis.tasks.calendar import absolute_timestamp
-    from jarvis.tasks.context import client_timezone
+    from jarvis.tasks.context import turn_timezone
 
     kind = str(schedule.get("kind") or schedule.get("type") or "every")
     if kind == "source":
         return TriggerSource.model_validate(
             {"type": kind, **{k: v for k, v in schedule.items() if k not in ("kind", "type")}}
         )
+    schedule = _without_blanks(schedule)
     if kind == "cron":
-        values = dict(schedule)
-        values.setdefault("timezone", client_timezone.get())
+        values = _fields_of(TriggerCron, schedule)
+        values.setdefault("timezone", turn_timezone())
         return TriggerCron.model_validate(
             {"type": kind, **{k: v for k, v in values.items() if k not in ("kind", "type")}}
         )
@@ -74,8 +141,8 @@ def _trigger(schedule: dict[str, Any]) -> Any:
             {"type": kind, **{k: v for k, v in schedule.items() if k not in ("kind", "type")}}
         )
     if kind == "calendar":
-        schedule = dict(schedule)
-        schedule.setdefault("timezone", client_timezone.get())
+        schedule = _fields_of(TriggerCalendar, _spoken_calendar(schedule))
+        schedule.setdefault("timezone", turn_timezone())
         return TriggerCalendar.model_validate(
             {"type": kind, **{k: v for k, v in schedule.items() if k not in ("kind", "type")}}
         )
@@ -84,7 +151,7 @@ def _trigger(schedule: dict[str, Any]) -> Any:
             interval_seconds=float(schedule.get("interval_seconds", 86_400)),
             start_at=(
                 absolute_timestamp(
-                    str(schedule["start_at"]), schedule.get("timezone") or client_timezone.get()
+                    str(schedule["start_at"]), schedule.get("timezone") or turn_timezone()
                 )
                 if schedule.get("start_at")
                 else None
@@ -93,7 +160,7 @@ def _trigger(schedule: dict[str, Any]) -> Any:
     if kind == "at_time":
         return TriggerAtTime(
             iso_timestamp=absolute_timestamp(
-                str(schedule["iso_timestamp"]), schedule.get("timezone") or client_timezone.get()
+                str(schedule["iso_timestamp"]), schedule.get("timezone") or turn_timezone()
             )
         )
     if kind == "after_delay":
@@ -110,6 +177,45 @@ def _trigger(schedule: dict[str, Any]) -> Any:
     raise ValueError(f"unknown schedule kind {kind!r}")
 
 
+#: Schedule kinds pinned to a wall clock; they need the person's IANA zone.
+_WALL_CLOCK_KINDS: Final[frozenset[str]] = frozenset({"calendar", "cron"})
+
+
+def missing_timezone(schedule: dict[str, Any]) -> bool:
+    """True when a wall-clock schedule has no zone and the turn knows none."""
+    from jarvis.tasks.context import turn_timezone
+
+    kind = str(schedule.get("kind") or schedule.get("type") or "every")
+    local_at_time = kind == "at_time" and not _has_offset(str(schedule.get("iso_timestamp", "")))
+    if kind not in _WALL_CLOCK_KINDS and not local_at_time:
+        return False
+    return not (schedule.get("timezone") or turn_timezone())
+
+
+def _has_offset(stamp: str) -> bool:
+    tail = stamp[10:]
+    return stamp.endswith("Z") or "+" in tail or "-" in tail
+
+
+def next_run_readback(due_at_ns: int | None, timezone: str | None) -> str | None:
+    """``"Wed 2026-09-30 08:00 (Europe/Berlin)"`` for a spoken confirmation."""
+    if not due_at_ns:
+        return None
+    from datetime import UTC, datetime
+
+    from jarvis.tasks.calendar import calendar_zone
+
+    when = datetime.fromtimestamp(due_at_ns / 1e9, UTC)
+    if timezone:
+        try:
+            when = when.astimezone(calendar_zone(timezone))
+        except ValueError:
+            # Unknown zone name: show the time in UTC and label it so.
+            timezone = "UTC"
+    label = timezone or "UTC"
+    return f"{when:%a %Y-%m-%d %H:%M} ({label})"
+
+
 def _routine_prompt(agent: AgentRecord, prompt: str) -> str:
     lines = [
         f"You are {agent.name}" + (f", {agent.title}" if agent.title else "") + ",",
@@ -120,6 +226,11 @@ def _routine_prompt(agent: AgentRecord, prompt: str) -> str:
     if agent.focus:
         lines += ["", "Reach for these capabilities first: " + ", ".join(agent.focus)]
     lines += ["", "Routine:", prompt.strip()]
+    if wants_artifact(prompt):
+        # The person asked for the result as an artifact. Naming the tool pins
+        # it through the artifact gate (rule 0) even when the standing
+        # instructions above read like a question.
+        lines += ["", ARTIFACT_DELIVERY]
     return "\n".join(lines)
 
 
@@ -234,6 +345,7 @@ def _summary(row: dict[str, Any]) -> dict[str, Any]:
         try:
             spec = json.loads(raw) if isinstance(raw, str) else dict(raw)
         except ValueError:
+            # A corrupt stored spec shows as an empty routine, not a crash.
             spec = {}
     action = spec.get("action") or {}
     return {

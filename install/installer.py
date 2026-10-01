@@ -58,7 +58,7 @@ from jarvis.core.branding import (  # noqa: E402 - bootstrap source path above
     PRODUCT_NAME,
 )
 
-# CLAUDE.md: new CLI modules must use UTF-8 stdout or stick to ASCII. Without
+# AGENTS.md: new CLI modules must use UTF-8 stdout or stick to ASCII. Without
 # this, the Rich panels render fine but inline bullets break on cp1252 cmd.exe.
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -442,7 +442,7 @@ def step_models(*, full_profile: bool, dry_run: bool) -> None:
     # The download step's exit code alone is not proof: a skipped or cache-served
     # model can still leave "done" looking complete. So don't stop at rc — VERIFY
     # what actually landed on disk and print a per-model truth. Read-only +
-    # best-effort: this never bricks the install (CLAUDE.md section 3).
+    # best-effort: this never bricks the install (AGENTS.md section 3).
     # run_noted, not run_quiet: with the HF progress bars silenced inside the
     # prefetch itself, its output is a handful of milestone lines ("downloading
     # wake model … ~40 MB", "speech model 'base': ready") — streaming them as
@@ -853,6 +853,10 @@ def step_summary(*, no_launch: bool, update: bool, headless: bool) -> None:
     else:
         rows.append(("Next", "the app opens with a one-time setup guide", "muted"))
         rows.append(("", "(language, wake word, API keys) - it never shows again", "muted"))
+    # Most installs never find their way back to the repo page; one quiet line
+    # in the finale is the only place a new user learns how to support it.
+    rows.append(("Like it?", "a GitHub star helps others find it:", "muted"))
+    rows.append(("", "github.com/PersonalJarvis/PersonalJarvis", "brand"))
 
     title = f"{PRODUCT_NAME} is {'updated' if update else 'ready'}"
     key_w = 13

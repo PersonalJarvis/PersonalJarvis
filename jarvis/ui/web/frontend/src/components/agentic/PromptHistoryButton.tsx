@@ -46,10 +46,18 @@ export function PromptHistoryButton({
   terminal,
   workspaceId,
   count,
+  triggerMode = "icon",
+  onOpen,
+  restoreFocus,
 }: {
   terminal: string;
   workspaceId?: string;
   count: number;
+  /** A workspace overflow uses a text menu item; legacy headers keep the icon. */
+  triggerMode?: "icon" | "menu-item";
+  onOpen?: () => void;
+  /** The menu trigger can be hidden while the history dialog stays mounted. */
+  restoreFocus?: () => void;
   /**
    * Whether the PANE this button sits on wears the light appearance.
    *
@@ -122,18 +130,22 @@ export function PromptHistoryButton({
       open={open}
       onOpenChange={(next) => {
         setOpen(next);
+        if (next) onOpen?.();
         if (!next) setCopyState("idle");
       }}
     >
       <Dialog.Trigger asChild>
         <button
           type="button"
+          role={triggerMode === "menu-item" ? "menuitem" : undefined}
           aria-label={triggerLabel}
           title={triggerLabel}
           data-testid={`pane-prompt-history-${terminal}`}
           onMouseDown={(event) => event.stopPropagation()}
           className={cn(
-            "flex h-6 min-w-6 shrink-0 items-center justify-center gap-1 rounded-md px-1.5",
+            triggerMode === "menu-item"
+              ? "flex w-full items-center gap-2 rounded px-2.5 py-2 text-left text-xs focus:bg-[color:var(--pane-chip)] focus:outline-none"
+              : "flex h-6 min-w-6 shrink-0 items-center justify-center gap-1 rounded-md px-1.5",
             "text-micro font-medium tabular-nums transition-colors active:translate-y-px",
             // The header's own `--pane-*` ladder, exactly as PaneAction next
             // door reads it. This used to be a hex per appearance, which is
@@ -144,13 +156,14 @@ export function PromptHistoryButton({
           )}
         >
           <History className="h-3.5 w-3.5" aria-hidden="true" />
-          {count > 0 && <span>{count}</span>}
+          {triggerMode === "menu-item" ? <span>{t("agentic_grid.history.title")}</span> : count > 0 && <span>{count}</span>}
         </button>
       </Dialog.Trigger>
 
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-[80] bg-scrim/75 backdrop-blur-sm data-[state=open]:animate-in data-[state=open]:fade-in-0 motion-reduce:animate-none" />
         <Dialog.Content
+          onCloseAutoFocus={restoreFocus ? (event) => { event.preventDefault(); restoreFocus(); } : undefined}
           data-testid="prompt-history-dialog"
           className={cn(
             "fixed left-1/2 top-1/2 z-[90] flex max-h-[82dvh] w-[min(940px,calc(100vw-2rem))]",

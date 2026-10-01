@@ -1,6 +1,6 @@
-import { BrandedSelect } from "@/components/ui/select";
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { BrandedSelect } from "@/components/ui/select";
 import { useT } from "@/i18n";
 import { MarsApiError } from "./api";
 import { cancelMove, clearMoveAttempt, currentRoverRide, latestNavigationRecords, readMoveAttempt, saveMoveAttempt, submitMove, type MoveAttempt } from "./navigationApi";
@@ -54,9 +54,11 @@ export function MarsNavigationPanel({ agentId, active = false }: { agentId: stri
     <h3 className="text-sm font-semibold">{t("society.mars.visits")}</h3>
     <p className="text-xs text-muted-foreground">{t("society.mars.visit_scope")}</p>
     {pending.current && <p className="text-xs text-muted-foreground">{t("society.mars.pending_visit")}: {pending.current.agent_id} · {t(`society.mars.destination_${pending.current.station_id}`)}</p>}
-    <label className="grid gap-1 text-sm">{t("society.mars.destination")}
-      <BrandedSelect value={destination} disabled={busy || !!pending.current} onValueChange={(selected) => setDestination(selected)} className="rounded border border-border bg-background p-2" ariaLabel={t("society.mars.destination")} options={VISIT_DESTINATIONS.map(id => ({ value: id, label: t(`society.mars.destination_${id}`) }))} />
-    </label>
+    <div className="grid gap-1 text-sm"><span>{t("society.mars.destination")}</span>
+      <BrandedSelect value={destination} disabled={busy || !!pending.current} onValueChange={setDestination}
+        ariaLabel={t("society.mars.destination")} className="rounded border border-border bg-background p-2"
+        options={VISIT_DESTINATIONS.map((id) => ({ value: id, label: t(`society.mars.destination_${id}`) }))} />
+    </div>
     {destination === "outpost-approach" && <p className="text-xs text-muted-foreground">{t("society.mars.approach_hint")}</p>}
     <div className="flex flex-wrap gap-2 text-sm">
       <button type="button" disabled={busy || riding || !agentId || (!pending.current && !!inMotion)} onClick={() => void move()} className="rounded border border-border px-2 py-1 disabled:opacity-50">{t(pending.current ? "society.mars.retry_visit" : "society.mars.start_visit")}</button>

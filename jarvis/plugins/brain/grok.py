@@ -20,6 +20,10 @@ class GrokBrain:
 
     name: str = "grok"
     context_window: int = 1_000_000
+    # xAI refuses the whole request above this many tools ("Maximum tools
+    # limit reached. 378 tools have been provided but the maximum is 350",
+    # live 2026-09-29); the manager trims the surface to it.
+    max_tools: int = 350
     supports_tools: bool = True
     scoped_execution_only: bool = True  # Never falls back to ambient agent/tool execution.
     # xAI's OpenAI-compatible chat API accepts ``image_url`` data URIs on

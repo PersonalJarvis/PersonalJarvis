@@ -72,7 +72,7 @@ def load(group: str, name: str, protocol: type[Protocol] | None = None) -> type[
         )
 
     ep = candidates[0]
-    # Plugins must not import jarvis.* (structural purity, CLAUDE.md §5), yet
+    # Plugins must not import jarvis.* (structural purity, AGENTS.md §5), yet
     # several read credentials straight from the OS keyring. The HOST therefore
     # prepares the process-wide backend before handing over: on macOS this
     # installs the single-vault-item wrapper (BUG-103) so a plugin's direct

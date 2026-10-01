@@ -1,7 +1,9 @@
 /**
- * Desktop translation state and locale-aware lookup.
- * Core resources load before the first render; later language choices keep
- * the current language visible until their resources are ready.
+ * In-house i18n for the desktop app.
+ *
+ * The small Zustand implementation avoids a framework dependency. English is
+ * part of the first render; the other interface languages load on demand so
+ * their full dictionaries do not delay the default startup path.
  *
  * Usage:
  *   import { useT } from "@/i18n";
@@ -10,7 +12,7 @@
  *
  *   import { useUiLanguage, setUiLanguage } from "@/i18n";
  *   const lang = useUiLanguage();      // "en" | "de" | "es"
- *   setUiLanguage("de");                // reactive once its resources are ready
+ *   setUiLanguage("de");               // updates reactively when loaded
  *
  * STT recognition language (what Whisper transcribes the spoken voice INTO) is
  * its own setting, distinct from the UI and the reply language:
@@ -18,11 +20,10 @@
  */
 import { useEffect } from "react";
 import { create } from "zustand";
-import { CORE_LANGUAGES, CORE_RESOURCES, isCoreLocaleLoaded, loadCoreLocale } from "./coreLocales";
-import type { CoreLanguage } from "./coreLocales";
+import enJson from "./locales/en.json";
 import { useEventStore } from "@/store/events";
 
-export type UiLanguage = CoreLanguage;
+export type UiLanguage = "en" | "de" | "es";
 // "auto" mirrors the user's input language; the rest hard-pin the reply language.
 // Mirrors jarvis/brain/manager.py::SUPPORTED_REPLY_LANGUAGES (single source of truth).
 export type ReplyLanguage = "auto" | "en" | "de" | "es";
@@ -60,29 +61,44 @@ function isSttLanguage(v: unknown): v is SttLanguage {
   return typeof v === "string" && (v === "auto" || STT_CODE_RE.test(v));
 }
 
-const RESOURCES = CORE_RESOURCES;
-let uiSelection = 0;
+const RESOURCES: Record<UiLanguage, Record<string, unknown>> = {
+  en: enJson as Record<string, unknown>,
+  de: enJson as Record<string, unknown>,
+  es: enJson as Record<string, unknown>,
+};
 
-/** Prepare the actual UI language and its established English fallback before first render. */
-export async function prepareUiTranslations(): Promise<void> {
-  await Promise.all([loadCoreLocale(useI18nStore.getState().ui), loadCoreLocale("en")]);
-}
+const UI_LOCALE_LOADERS: Record<"de" | "es", () => Promise<unknown>> = {
+  de: () => import("./locales/de.json"),
+  es: () => import("./locales/es.json"),
+};
+const UI_LOCALE_PROMISES: Partial<Record<"de" | "es", Promise<void>>> = {};
 
-/** Warm other languages after first paint so later switches are usually synchronous. */
-export async function warmUiTranslations(): Promise<void> {
-  await Promise.all(CORE_LANGUAGES.map(loadCoreLocale));
+/** Load a selected interface dictionary once and refresh mounted translations. */
+export function loadUiLocale(lang: UiLanguage): Promise<void> {
+  if (lang === "en") return Promise.resolve();
+  if (UI_LOCALE_PROMISES[lang]) return UI_LOCALE_PROMISES[lang];
+  const pending = UI_LOCALE_LOADERS[lang]().then((module) => {
+    RESOURCES[lang] = unwrapModule(module);
+    useI18nStore.setState((state) => ({ chunkRevision: state.chunkRevision + 1 }));
+  }).catch((error: unknown) => {
+    delete UI_LOCALE_PROMISES[lang];
+    throw error;
+  });
+  UI_LOCALE_PROMISES[lang] = pending;
+  return pending;
 }
 
 /**
  * Locale chunks that load on demand.
  *
- * Core locale files load individually. A section nobody opens
- * on start — the marketplace's publish studio, say — keeps its strings in
+ * English rides in the startup bundle; German and Spanish load on demand.
+ * A section nobody opens on start — the marketplace's publish studio, say —
+ * keeps its strings in
  * `locales/<chunk>/<lang>.json` and asks for them with `useLocaleChunk` when
  * it mounts. Until the chunk has arrived, `t()` returns the key, so a view
  * that cares waits for `ready` before it paints.
  */
-export type LocaleChunk = "marketplace" | "local_models" | "society";
+export type LocaleChunk = "marketplace" | "local_models" | "society" | "computers" | "onboarding";
 
 const CHUNK_LOADERS: Record<LocaleChunk, Record<UiLanguage, () => Promise<unknown>>> = {
   marketplace: {
@@ -99,6 +115,17 @@ const CHUNK_LOADERS: Record<LocaleChunk, Record<UiLanguage, () => Promise<unknow
     en: () => import("./locales/society/en.json"),
     de: () => import("./locales/society/de.json"),
     es: () => import("./locales/society/es.json"),
+  },
+  computers: {
+    en: () => import("./locales/computers/en.json"),
+    de: () => import("./locales/computers/de.json"),
+    es: () => import("./locales/computers/es.json"),
+  },
+  // First-run guide and app tour: read on one boot, then only on a replay.
+  onboarding: {
+    en: () => import("./locales/onboarding/en.json"),
+    de: () => import("./locales/onboarding/de.json"),
+    es: () => import("./locales/onboarding/es.json"),
   },
 };
 
@@ -325,22 +352,20 @@ export const useI18nStore = create<I18nState>((set) => ({
   chunkRevision: 0,
   setSttOptions: (options) => set({ sttOptions: options }),
   setUi: (lang, opts) => {
-    const selection = ++uiSelection;
-    const apply = () => {
-      if (selection !== uiSelection) return;
-      try {
-        localStorage.setItem(UI_KEY, lang);
-      } catch {
-        /* The loaded language remains usable without browser storage. */
-      }
-      set({ ui: lang });
-      // Hydration and websocket updates avoid a GET/PUT echo loop.
-      if (opts?.push !== false) pushUi(lang);
-    };
-    if (isCoreLocaleLoaded(lang)) apply();
-    else void loadCoreLocale(lang).then(apply).catch((error: unknown) => {
-      console.warn("[i18n] language resources unavailable; keeping the current language", error);
+    try {
+      localStorage.setItem(UI_KEY, lang);
+    } catch {
+      /* ignore */
+    }
+    set({ ui: lang });
+    void loadUiLocale(lang).catch((error: unknown) => {
+      console.warn("Interface language could not be loaded", error);
     });
+    // Default: propagate to the backend (the new source of truth). The WS
+    // handler and hydrate pass push:false to avoid a GET/PUT echo loop.
+    if (opts?.push !== false) {
+      pushUi(lang);
+    }
   },
   setReply: (lang, opts) => {
     try {
@@ -371,8 +396,8 @@ export const useI18nStore = create<I18nState>((set) => ({
 }));
 
 /**
- * Resolve a dotted key in the active language, then English, then the key
- * itself. Unavailable strings remain visible instead of becoming undefined.
+ * Resolve a key from the active language, then English, then the key itself.
+ * A failed optional dictionary load never renders an undefined label.
  */
 function resolve(lang: UiLanguage, key: string): string {
   const parts = key.split(".");

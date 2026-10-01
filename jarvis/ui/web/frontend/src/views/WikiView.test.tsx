@@ -538,6 +538,15 @@ describe("PageRenderer — wikilink behaviour", () => {
     );
   });
 
+  it("preprocessWikilinks escapes backslashes in labels", () => {
+    expect(preprocessWikilinks("[[example-user|a\\b]]")).toBe(
+      "[a\\\\b](#wiki:example-user)",
+    );
+    expect(preprocessWikilinks("[[example-user|trail\\]]")).toBe(
+      "[trail\\\\](#wiki:example-user)",
+    );
+  });
+
   it("clicking a wikilink fires onWikilinkClick with the target slug", async () => {
     installFetchMock({
       "/api/wiki/tree": () => POPULATED_TREE,

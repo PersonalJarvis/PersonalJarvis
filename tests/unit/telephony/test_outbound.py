@@ -65,6 +65,34 @@ _VALID = {
 }
 
 
+def test_place_call_sdk_error_is_classified_not_echoed(monkeypatch):
+    """Twilio's raw REST error body never reaches the exception text (AP-34)."""
+    from jarvis.telephony.outbound import place_call
+
+    class _RejectingCalls:
+        def create(self, **kwargs):  # noqa: ANN003, ANN201
+            raise RuntimeError("HTTP 401 error: Unable to create record: body-with-details")
+
+    class _RejectingClient:
+        def __init__(self, account_sid: str, auth_token: str) -> None:
+            self.calls = _RejectingCalls()
+
+    # A stand-in ``twilio.rest`` module, so this runs without the telephony extra.
+    import types  # noqa: PLC0415
+
+    fake_rest = types.ModuleType("twilio.rest")
+    fake_rest.Client = _RejectingClient  # type: ignore[attr-defined]
+    fake_pkg = types.ModuleType("twilio")
+    fake_pkg.rest = fake_rest  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "twilio", fake_pkg)
+    monkeypatch.setitem(sys.modules, "twilio.rest", fake_rest)
+    with pytest.raises(TelephonyProvisionError) as exc:
+        place_call(to="+4915112345678", opening="Hi", **_VALID)
+    assert exc.value.status == "bad_key"
+    assert "body-with-details" not in str(exc.value)
+    assert str(exc.value).startswith("Outbound call failed")
+
+
 # --------------------------------------------------------------------------- #
 # place_call — Contract 2
 # --------------------------------------------------------------------------- #

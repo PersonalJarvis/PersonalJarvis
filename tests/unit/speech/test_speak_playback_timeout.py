@@ -952,7 +952,7 @@ async def test_timeout_phrase_resolves_in_input_language() -> None:
 
 
 def test_cause_aware_timeout_tables_cover_de_en_es() -> None:
-    """Both new cause-aware tables must carry every supported locale (CLAUDE.md
+    """Both new cause-aware tables must carry every supported locale (AGENTS.md
     §1): an es speaker must never fall back to the wrong language."""
     for table in (_TIMEOUT_TOOL_STALL_PHRASE, _TIMEOUT_NO_ANSWER_PHRASE):
         assert {"de", "en", "es"} <= set(table), table

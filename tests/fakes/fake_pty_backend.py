@@ -1,6 +1,6 @@
 """Hand-built ``PtyBackend`` / ``PtyHandle`` fake (EK-3).
 
-Per CLAUDE.md the project uses real fakes, never ``unittest.mock``. A real PTY
+Per AGENTS.md the project uses real fakes, never ``unittest.mock``. A real PTY
 cannot be spawned on the Windows dev box for ``UnixPtyBackend`` (ptyprocess is
 POSIX-only), and even the real-PTY roundtrip test only runs on the CI Linux/
 macOS legs. This fake gives the str<->bytes normalization and lifecycle tests a

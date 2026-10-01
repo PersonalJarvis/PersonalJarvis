@@ -13,6 +13,9 @@ Prefix ``/api/agent-chat``:
     POST   /sessions/{id}/messages           {text, attachments} -> starts a turn
     POST   /sessions/{id}/cancel
     POST   /sessions/{id}/approvals/{aid}    {decision: allow | allow_always | deny}
+    POST   /sessions/{id}/questions/{qid}    {index, option_index} or {index, text} -> answer
+                                             one question of an agent's card
+    POST   /sessions/{id}/questions/{qid}/skip  close the card: recommendations apply
     WS     /sessions/{id}/ws?after=<seq>     snapshot, then live events
     POST   /attachments                      drop/paste/pick files for the next message
     POST   /pick-folder                      the system folder dialog (desktop only)
@@ -49,7 +52,7 @@ from pydantic import BaseModel, Field
 
 from jarvis.agent_chat import attachments as chat_attachments
 from jarvis.agent_chat import runner_cli, typeahead
-from jarvis.agent_chat.catalog import CLAUDE_CODE_MODELS, offers, rows_for
+from jarvis.agent_chat.catalog import claude_code_models, offers, rows_for
 from jarvis.agent_chat.control_types import CommandRequest, CommandResult
 from jarvis.agent_chat.effort import normalize_effort
 from jarvis.agent_chat.events import make_event
@@ -59,6 +62,7 @@ from jarvis.agent_chat.permissions import (
     ladder_key,
     normalize_permission,
     permission_modes,
+    society_mode_supported,
 )
 from jarvis.agent_chat.service import (
     DECISIONS,
@@ -90,7 +94,7 @@ router = APIRouter(prefix="/api/agent-chat", tags=["agent-chat"])
 
 
 @router.get("/commands", summary="List chat slash commands and their availability")
-async def list_chat_commands(request: Request, session_id: str | None = None) -> dict[str, Any]:
+def list_chat_commands(request: Request, session_id: str | None = None) -> dict[str, Any]:
     try:
         return await asyncio.to_thread(_service(request).controls.catalog, session_id)
     except ValueError as exc:
@@ -98,7 +102,7 @@ async def list_chat_commands(request: Request, session_id: str | None = None) ->
 
 
 @router.get("/sessions/{session_id}/control", summary="Read this chat's mode and goal state")
-async def get_chat_control(session_id: str, request: Request) -> dict[str, Any]:
+def get_chat_control(session_id: str, request: Request) -> dict[str, Any]:
     try:
         state = await asyncio.to_thread(_service(request).controls.state, session_id)
         return state.model_dump()
@@ -164,6 +168,15 @@ class MessageBody(BaseModel):
 
 class ApprovalBody(BaseModel):
     decision: str
+
+
+class QuestionAnswerBody(BaseModel):
+    #: Which question of the card's series this answers.
+    index: int = 0
+    #: The picked option (0 is the agent's recommendation) ...
+    option_index: int | None = None
+    #: ... or the person's own typed answer. Exactly one of the two.
+    text: str | None = None
 
 
 class PickFolderBody(BaseModel):
@@ -294,7 +307,7 @@ async def get_catalog(
         # Anthropic catalog route lists the models live.
         if row.id == "claude-api":
             if runner == "claude-cli":
-                d["curated_models"] = [m.to_dict() for m in CLAUDE_CODE_MODELS]
+                d["curated_models"] = [m.to_dict() for m in claude_code_models()]
                 d["models_source"] = "curated"
             else:
                 d["models_source"] = "live"
@@ -633,7 +646,7 @@ async def get_provider_health(
 
 
 @router.get("/sessions")
-async def list_sessions(
+def list_sessions(
     request: Request,
     limit: int = Query(200, ge=1, le=1000),
     surface: SurfaceName | None = None,
@@ -650,7 +663,7 @@ async def list_sessions(
 
 
 @router.post("/sessions", status_code=201)
-async def create_session(body: CreateSessionBody, request: Request) -> dict[str, Any]:
+def create_session(body: CreateSessionBody, request: Request) -> dict[str, Any]:
     svc = _service(request)
     ladder = ladder_key(body.surface, resolve_runner(body.provider, surface=body.surface))
     if body.permission_mode and not is_permission_mode(ladder, body.permission_mode):
@@ -680,14 +693,20 @@ async def create_session(body: CreateSessionBody, request: Request) -> dict[str,
 
 
 @router.get("/sessions/{session_id}")
-async def get_session(session_id: str, request: Request) -> dict[str, Any]:
+def get_session(
+    session_id: str,
+    request: Request,
+    tail: int | None = Query(
+        None, ge=1, le=500, description="Only the newest N events (e.g. a live preview)."
+    ),
+) -> dict[str, Any]:
     svc = _service(request)
     session = svc.store.get_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="session not found")
     d = session.to_dict()
     d["running"] = svc.is_running(session_id)
-    return {"session": d, "events": svc.store.list_events(session_id)}
+    return {"session": d, "events": svc.store.list_events(session_id, tail=tail)}
 
 
 @router.patch("/sessions/{session_id}")
@@ -698,6 +717,10 @@ async def patch_session(
     existing = svc.store.get_session(session_id)
     if existing is None:
         raise HTTPException(status_code=404, detail="session not found")
+    if existing.surface == "society" and ":routine:" in session_id:
+        raise HTTPException(status_code=403, detail="Routine chat is owned by its schedule")
+    if existing.surface == "society" and svc.is_running(session_id):
+        raise HTTPException(status_code=409, detail="Agent chat is working")
     fields: dict[str, Any] = {}
     if body.title is not None:
         fields["title"] = body.title.strip()[:120]
@@ -732,6 +755,13 @@ async def patch_session(
                     + ", ".join(m.id for m in permission_modes(ladder))
                 ),
             )
+        if current.surface == "society" and not society_mode_supported(
+            runner, body.permission_mode
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail=f"{runner} cannot provide an actionable approval for {body.permission_mode}",
+            )
         fields["permission_mode"] = body.permission_mode
     elif "provider" in fields:
         # A provider change folds the old mode onto the new runner's ladder
@@ -754,9 +784,21 @@ async def patch_session(
             await svc.controls.pause(session_id, "Model or permission settings changed")
         if "provider" in fields or "account_id" in fields:
             await svc.controls._clear_saved_native(session_id)
+    if current.surface == "society" and svc.is_running(session_id):
+        raise HTTPException(status_code=409, detail="Agent chat is working")
     session = svc.store.update_session(session_id, **fields)
     assert session is not None
-    changed = {k: v for k, v in fields.items() if k != "vendor_session"}
+    if current.surface == "society" and body.permission_mode is not None:
+        svc.store.set_permission_override(session_id, session.permission_mode)
+    if current.surface == "society":
+        binder = getattr(svc, "bind_society_session", None)
+        if binder is not None:
+            session = await binder(session_id)
+            if body.permission_mode is not None:
+                # Persist the effective choice, not a requested escalation that
+                # the roster narrowed during binding.
+                svc.store.set_permission_override(session_id, session.permission_mode)
+    changed = {key: getattr(session, key) for key in fields if key != "vendor_session"}
     if changed:
         await svc._emit(session_id, make_event("session_updated", changed))  # noqa: SLF001 — same package boundary
     d = session.to_dict()
@@ -800,6 +842,8 @@ async def post_message(session_id: str, body: MessageBody, request: Request) -> 
         raise HTTPException(status_code=404, detail="session not found") from exc
     except SessionBusy as exc:
         raise HTTPException(status_code=409, detail="a turn is already running") from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     finally:
@@ -843,6 +887,40 @@ async def resolve_approval(
     if not ok:
         raise HTTPException(status_code=404, detail="no such pending approval")
     return {"ok": True, "approval_id": approval_id, "decision": body.decision}
+
+
+@router.post(
+    "/sessions/{session_id}/questions/{question_id}",
+    summary="Answer an agent's multiple-choice question",
+)
+async def answer_question(
+    session_id: str, question_id: str, body: QuestionAnswerBody, request: Request
+) -> dict[str, Any]:
+    svc = _service(request)
+    try:
+        ok = svc.resolve_question(
+            session_id,
+            question_id,
+            index=body.index,
+            option_index=body.option_index,
+            text=body.text,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not ok:
+        raise HTTPException(status_code=404, detail="no such open question")
+    return {"ok": True, "question_id": question_id}
+
+
+@router.post(
+    "/sessions/{session_id}/questions/{question_id}/skip",
+    summary="Close an agent's question card and let its recommendations apply",
+)
+async def skip_question(session_id: str, question_id: str, request: Request) -> dict[str, Any]:
+    svc = _service(request)
+    if not svc.skip_question(session_id, question_id):
+        raise HTTPException(status_code=404, detail="no such open question")
+    return {"ok": True, "question_id": question_id}
 
 
 # ------------------------------------------------------------------ attachments
@@ -899,9 +977,9 @@ async def attach_files(
     if not folder:
         folder = svc.default_cwd(surface if surface in SURFACE_NAMES else "agent")
 
-    uploads: list[tuple[str, bytes]] = []
-    for upload in files or []:
-        uploads.append((upload.filename or "file", await upload.read()))
+    # The spooled upload file itself, not its bytes: a screen recording streams
+    # to disk instead of being read into memory whole.
+    uploads = [(upload.filename or "file", upload.file) for upload in files or []]
 
     try:
         found = await chat_attachments.ingest(
@@ -977,6 +1055,7 @@ async def session_stream(ws: WebSocket, session_id: str) -> None:
         d = session.to_dict()
         d["running"] = svc.is_running(session_id)
         d["pending_approvals"] = svc.pending_approvals(session_id)
+        d["pending_questions"] = svc.pending_questions(session_id)
         await ws.send_json({"type": "snapshot", "session": d, "events": events})
         last_seq = events[-1]["seq"] if events else after
 

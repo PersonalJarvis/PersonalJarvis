@@ -156,12 +156,23 @@ describe("openPaneSocket", () => {
     // interleave into unreadable text (2026-07-29).
     MockWebSocket.last!.deliver({ t: "replay", d: "\x1b[?1049h# the screen" });
 
-    expect(cb.onReplay).toHaveBeenCalledWith("\x1b[?1049h# the screen");
+    expect(cb.onReplay).toHaveBeenCalledWith("\x1b[?1049h# the screen", false);
     expect(cb.onOutput).not.toHaveBeenCalled();
 
     MockWebSocket.last!.deliver({ t: "o", d: "live" });
     expect(cb.onOutput).toHaveBeenCalledWith("live");
     expect(cb.onReplay).toHaveBeenCalledTimes(1);
+    socket.close();
+  });
+
+  it("passes on that a replay is waiting for a repaint", () => {
+    const cb = handlers();
+    const socket = openPaneSocket({ name: "Mika", cols: 80, rows: 24 }, cb);
+    MockWebSocket.last!.fire("open");
+
+    MockWebSocket.last!.deliver({ t: "replay", d: "tail", repaint: true });
+
+    expect(cb.onReplay).toHaveBeenCalledWith("tail", true);
     socket.close();
   });
 

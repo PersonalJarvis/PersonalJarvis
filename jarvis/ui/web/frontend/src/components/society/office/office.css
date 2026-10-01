@@ -1,0 +1,75 @@
+/* HUD over the office canvas: theme tokens, so it follows light and dark mode. */
+.office-stage { position:relative; width:100%; min-width:0; height:100%; min-height:0; overflow:hidden; background:#0b1024; }
+.office-viewport { position:absolute; inset:0; touch-action:none; }
+.office-viewport:focus-visible { outline:2px solid hsl(var(--ring)); outline-offset:-2px; }
+.office-fallback { display:flex; align-items:center; justify-content:center; height:100%; padding:24px; font-size:13px; color:hsl(var(--muted-foreground)); background:hsl(var(--background)); }
+.office-hud { position:absolute; z-index:30; }
+.office-hud-left { left:14px; top:14px; display:flex; flex-direction:column; align-items:flex-start; gap:8px; max-width:min(320px, calc(100% - 28px)); }
+/* A column to the left of the minimap (top-right, 204 px wide + 8 px gap). */
+.office-hud-right { right:226px; top:14px; display:flex; flex-direction:column; align-items:flex-end; gap:6px; }
+/* Narrow: under the minimap, wrapping within its width. */
+@media (max-width:760px) { .office-hud-right { right:14px; top:256px; flex-direction:row; flex-wrap:wrap; justify-content:flex-end; max-width:204px; } }
+/* No minimap (short or very narrow window): back to a wrapping row in the corner. */
+@media (max-height:520px), (max-width:600px) { .office-hud-right { right:14px; top:14px; flex-direction:row; flex-wrap:wrap; justify-content:flex-end; max-width:max(180px, calc(100% - 370px)); } }
+.office-card { border:1px solid hsl(var(--border)); border-radius:12px; background:hsl(var(--popover) / .92); color:hsl(var(--popover-foreground)); box-shadow:0 4px 18px rgb(0 0 0 / .25); backdrop-filter:blur(6px); }
+.office-title { display:flex; flex-direction:column; gap:2px; padding:8px 12px; font-size:14px; }
+.office-title span { font-size:11px; color:hsl(var(--muted-foreground)); }
+.office-counts { display:flex; gap:14px; padding:7px 12px; font-size:12px; font-weight:600; }
+.office-counts span { display:inline-flex; align-items:center; gap:6px; }
+.office-counts i { width:8px; height:8px; border-radius:50%; background:hsl(var(--muted-foreground)); }
+.office-counts [data-tone="working"] i { background:hsl(var(--success)); }
+.office-counts [data-tone="waiting"] i { background:hsl(var(--warning)); }
+.office-note { margin:0; padding:6px 10px; font-size:11px; color:hsl(var(--muted-foreground)); }
+.office-button { border:1px solid hsl(var(--border)); border-radius:10px; padding:6px 11px; background:hsl(var(--popover) / .92); color:hsl(var(--popover-foreground)); font-size:12px; white-space:nowrap; cursor:pointer; backdrop-filter:blur(6px); }
+.office-button:hover { background:hsl(var(--secondary)); }
+.office-button:focus-visible { outline:2px solid hsl(var(--ring)); outline-offset:2px; }
+.office-help { left:50%; bottom:12px; transform:translateX(-50%); margin:0; padding:5px 12px; border-radius:999px; font-size:11px; white-space:nowrap; max-width:calc(100% - 28px); overflow:hidden; text-overflow:ellipsis; background:hsl(var(--popover) / .85); color:hsl(var(--muted-foreground)); border:1px solid hsl(var(--border)); pointer-events:none; }
+
+/* In-world name pills: part of the diorama, so they keep one dark look in both modes. */
+.office-plate { transform-origin:center bottom; display:inline-flex; align-items:center; gap:5px; padding:2px 8px 2px 2px; border:0; border-radius:999px; background:rgb(24 26 32 / .84); color:#f8fafc; cursor:pointer; font-family:inherit; white-space:nowrap; user-select:none; box-shadow:0 2px 8px rgb(0 0 0 / .35); }
+.office-plate:hover { background:rgb(36 39 48 / .95); }
+.office-plate-name { max-width:16em; overflow:hidden; text-overflow:ellipsis; font-size:12px; font-weight:700; }
+.office-plate-badge { display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px; font-size:10px; font-weight:800; color:#fff; clip-path:polygon(25% 3%, 75% 3%, 100% 50%, 75% 97%, 25% 97%, 0 50%); }
+.office-plate-state { display:inline-flex; align-items:center; gap:4px; font-size:10px; font-weight:600; color:#cbd5e1; }
+.office-plate-state em { font-style:normal; }
+.office-plate-state i { width:7px; height:7px; border-radius:50%; background:#94a3b8; }
+.office-plate[data-state="working"] .office-plate-state i { background:#4ade80; box-shadow:0 0 6px #4ade80; }
+.office-plate[data-state="waiting"] .office-plate-state i { background:#fbbf24; }
+.office-plate:focus-visible { outline:2px solid #93c5fd; outline-offset:2px; }
+/* A coding pane's plate: subject on top, result + run state below; hovered, the whole title and its last ask. */
+.office-plate[data-pane] { align-items:flex-start; gap:6px; padding:4px 10px 4px 4px; border-radius:12px; text-align:left; }
+.office-plate[data-pane] .office-plate-badge { flex:none; margin-top:1px; }
+/* The coding CLI's mark: ink marks masked in the plate's white, colour lockups on a dark tile. */
+.office-plate-logo { display:inline-flex; flex:none; align-items:center; justify-content:center; width:20px; height:20px; margin-top:1px; border-radius:6px; background:rgb(255 255 255 / .08); }
+.office-plate-logo[data-ground="dark"] { background:#111318; }
+.office-plate-logo i { display:block; width:14px; height:14px; background:#f8fafc; -webkit-mask-repeat:no-repeat; mask-repeat:no-repeat; -webkit-mask-position:center; mask-position:center; -webkit-mask-size:contain; mask-size:contain; }
+.office-plate-logo img { display:block; width:14px; height:14px; object-fit:contain; }
+.office-plate-text { display:flex; flex-direction:column; align-items:flex-start; gap:1px; min-width:0; line-height:1.25; }
+.office-plate[data-pane] .office-plate-name { max-width:13em; }
+.office-plate-line { display:inline-flex; align-items:center; gap:6px; max-width:17em; }
+.office-plate-result { min-width:0; overflow:hidden; text-overflow:ellipsis; font-size:11px; font-weight:600; color:#e2e8f0; }
+.office-plate-line .office-plate-state { flex:none; }
+.office-plate-sign { font-size:10px; font-weight:600; color:#94a3b8; }
+.office-plate-asked { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; max-width:20em; margin-top:2px; font-size:11px; font-style:italic; font-weight:500; color:#cbd5e1; white-space:normal; }
+/* max-content: the Html anchor has no width, so an opened plate would otherwise wrap after every word. */
+.office-plate[data-pane][data-open] { width:max-content; max-width:22em; background:rgb(24 26 32 / .96); }
+.office-plate[data-pane][data-open] .office-plate-name,
+.office-plate[data-pane][data-open] .office-plate-result { max-width:20em; white-space:normal; overflow:visible; }
+.office-plate[data-pane][data-open] .office-plate-line { max-width:none; }
+/* Checkpoint label pills: same dark in-world pill as .office-plate, with a gold hexagon badge. */
+.office-checkpoint { transform-origin:center center; display:inline-flex; align-items:center; gap:6px; padding:3px 11px 3px 3px; border:1px solid rgb(245 184 61 / .55); border-radius:999px; background:rgb(24 26 32 / .86); color:#fff7ec; cursor:pointer; font-family:inherit; font-size:12px; font-weight:700; white-space:nowrap; user-select:none; box-shadow:0 2px 8px rgb(0 0 0 / .35); transition:background .15s, border-color .15s, box-shadow .15s; }
+.office-checkpoint:hover { background:rgb(36 39 48 / .95); border-color:#f5b83d; }
+.office-checkpoint-badge { display:inline-flex; align-items:center; justify-content:center; flex:none; width:20px; height:20px; background:#f5b83d; color:#2a1d0a; clip-path:polygon(25% 3%, 75% 3%, 100% 50%, 75% 97%, 25% 97%, 0 50%); }
+.office-checkpoint-badge svg { width:12px; height:12px; }
+.office-checkpoint-label { max-width:12em; overflow:hidden; text-overflow:ellipsis; }
+.office-checkpoint-text { display:flex; flex-direction:column; align-items:flex-start; min-width:0; line-height:1.2; }
+/* The action behind the place, shown while the character stands in (or the panel is open). */
+.office-checkpoint-hint { max-width:14em; overflow:hidden; text-overflow:ellipsis; font-size:10px; font-weight:600; color:#f5d493; }
+.office-checkpoint[data-active="true"] { background:rgb(58 42 12 / .94); border-color:#f5b83d; color:#fff; box-shadow:0 0 0 2px rgb(245 184 61 / .35), 0 2px 14px rgb(245 184 61 / .5); }
+.office-checkpoint:focus-visible { outline:2px solid #93c5fd; outline-offset:2px; }
+@media (prefers-reduced-motion:reduce) { .office-checkpoint { transition:none; } }
+@media (max-width:900px) { .office-help { white-space:normal; text-align:center; border-radius:12px; } }
+@media (max-width:600px) { .office-help { display:none; } .office-counts { gap:8px; } }
+/* The executive chair's prompt: a wider pill with the E key and a short hint. */
+.office-seat-prompt { padding:4px 12px 4px 4px; gap:7px; font-size:12px; font-weight:600; cursor:default; }
+.office-seat-prompt kbd { display:inline-flex; align-items:center; justify-content:center; width:20px; height:20px; border-radius:6px; background:#f5b83d; color:#1f1300; font-family:inherit; font-size:11px; font-weight:800; }

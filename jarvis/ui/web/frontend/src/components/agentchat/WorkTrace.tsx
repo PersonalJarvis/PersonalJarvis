@@ -1,12 +1,13 @@
 import { createContext, memo, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Brain, Check, ChevronRight, CircleAlert, CircleDashed, FilePenLine, FileText, FolderSearch, ShieldQuestion, Terminal } from "lucide-react";
+import { Brain, Check, ChevronRight, CircleAlert, CircleDashed, FilePenLine, FileText, FolderSearch, MessageCircleQuestion, ShieldQuestion, Terminal } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import type { ApprovalDecision } from "@/lib/agentChatApi";
-import type { ReasoningBlock, TextBlock, ToolBlock, TurnBlock, TurnItem, TurnStatus } from "./reduce";
+import { isQuestionTool, type ReasoningBlock, type TextBlock, type ToolBlock, type TurnBlock, type TurnItem, type TurnStatus } from "./reduce";
 import { ChatMarkdown } from "./ChatMarkdown";
+import { QuestionCard } from "./QuestionCard";
 import { toolDiff } from "./toolDiff";
 import { formatTokens, outputTokens } from "./toolView";
 import { activityParts, traceToolIdentity, traceToolName } from "./traceActivity";
@@ -46,7 +47,12 @@ function operation(name: string): string | null {
 }
 
 function attention(block: ToolBlock) {
-  return block.isError || Boolean(block.approval);
+  return block.isError || Boolean(block.approval) || Boolean(block.question);
+}
+
+/** An agent's question still waiting for the person — it never folds away. */
+function isOpenQuestion(block: TurnBlock): block is ToolBlock {
+  return block.kind === "tool" && Boolean(block.question && !block.question.closed);
 }
 
 /** Only adjacent, successful, read-only operations may lose individual rows. */
@@ -99,15 +105,17 @@ export function splitConversationTurn(blocks: TurnBlock[]): { work: TurnBlock[];
 }
 
 function isPendingApproval(block: TurnBlock): block is ToolBlock {
-  return block.kind === "tool" && Boolean(block.approval && block.approval.decision === null);
+  return (block.kind === "tool" && Boolean(block.approval && block.approval.decision === null)) || isOpenQuestion(block);
+}
+
+function needsAttention(block: TurnBlock): block is ToolBlock {
+  return block.kind === "tool" && (block.isError || isPendingApproval(block));
 }
 
 function hasFoldableWork(blocks: TurnBlock[]): boolean {
   return blocks.some((block) => {
-    // Only a pending approval keeps its row outside the fold — it asks the
-    // person to act. Failures and interruptions fold like any other work:
-    // the finished conversation shows the reply, the toggle reveals the rest.
-    if (isPendingApproval(block)) return false;
+    // Decisions and failed tools remain visible after a turn completes.
+    if (needsAttention(block)) return false;
     return block.kind !== "text" || Boolean(block.text.trim());
   });
 }
@@ -292,6 +300,11 @@ function Detail({ label, text }: { label: string; text: string }) {
 }
 
 export const TraceTool = memo(function TraceTool({ block, status, onDecide }: { block: ToolBlock; status: TurnStatus; onDecide?: Decide }) {
+  if (block.question) return <QuestionCard question={block.question} />;
+  return <TraceToolRow block={block} status={status} onDecide={onDecide} />;
+});
+
+function TraceToolRow({ block, status, onDecide }: { block: ToolBlock; status: TurnStatus; onDecide?: Decide }) {
   const t = useT();
   const pending = Boolean(block.approval && block.approval.decision === null);
   const denied = block.approval?.decision === "deny";
@@ -341,7 +354,7 @@ export const TraceTool = memo(function TraceTool({ block, status, onDecide }: { 
       {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
     </div> : null}
   </div>;
-});
+}
 
 function ActivitySummary({ blocks, live }: { blocks: TurnBlock[]; live: boolean }) {
   const t = useT();
@@ -419,35 +432,46 @@ function TraceGroups({ groups, live, status, onDecide, renderText, conversation 
   });
 }
 
-export function WorkTrace({ blocks, status, startedMs, durationMs, error, onDecide, renderText, className, receipt, completionLabel, conversation = false }: {
+/**
+ * An agent's question shows as its card; the tool calls that only wait on
+ * that card (``wait_for`` polls, jarvis/society/ask_tool.py) are plumbing
+ * and draw nothing.
+ */
+function withoutQuestionPolls(blocks: TurnBlock[]): TurnBlock[] {
+  const kept = blocks.filter((block) => !(block.kind === "tool" && isQuestionTool(block.name) && !block.question && !block.isError));
+  return kept.length === blocks.length ? blocks : kept;
+}
+
+export function WorkTrace({ blocks: rawBlocks, status, startedMs, durationMs, error, onDecide, renderText, className, receipt, completionLabel, conversation = false }: {
   blocks: TurnBlock[]; status: TurnStatus; startedMs: number; durationMs: number | null; error?: string | null;
   onDecide?: Decide; renderText?: (text: string, id: string) => ReactNode; className?: string;
   receipt?: ReactNode; completionLabel?: string; conversation?: boolean;
 }) {
   const t = useT();
+  const blocks = useMemo(() => withoutQuestionPolls(rawBlocks), [rawBlocks]);
   const live = status === "running";
   const elapsed = useClock(startedMs, live);
   const split = useMemo(() => conversation && !live ? splitConversationTurn(blocks) : null, [blocks, conversation, live]);
-  // A finished conversation turn shows the reply and nothing else. All work
-  // — tools, thoughts, intermediate replies, failures, interruptions, and
-  // post-reply work — folds behind the "Thought for …" toggle. Pending
-  // approvals stay visible both ways: beside the toggle while it is closed
-  // (they need a tap) and inside the open chain.
+  // Completed failures and pending approvals stay visible beside the fold.
+  // Other work can collapse without hiding an action that needs attention.
   const fold = useMemo(() => {
     if (!split) return null;
     const workAll = [...split.work, ...split.after];
-    if (!hasFoldableWork(workAll.filter((block) => !isPendingApproval(block)))) return null;
+    if (!hasFoldableWork(workAll)) return null;
     return {
       answer: split.answer,
       workAll,
-      approvals: workAll.filter(isPendingApproval),
+      attention: workAll.filter(needsAttention),
     };
   }, [split]);
   const groups = useMemo(() => conversation ? groupConversationTrace(fold ? fold.workAll : blocks) : groupActivityTrace(blocks), [blocks, conversation, fold]);
   const restGroups = useMemo(() => fold ? groupConversationTrace(fold.answer) : null, [fold]);
-  const pending = blocks.some(block => block.kind === "tool" && block.approval?.decision === null);
-  const outcome = pending ? "approval" : live ? "working" : status === "error" ? "failed" : status === "cancelled" ? "stopped" : "done";
-  const Icon = pending ? ShieldQuestion : live ? CircleDashed : status === "error" ? CircleAlert : Check;
+  const asking = blocks.some(isOpenQuestion);
+  const pending = asking || blocks.some(block => block.kind === "tool" && block.approval?.decision === null);
+  const toolFailed = blocks.some(block => block.kind === "tool" && block.isError);
+  const failed = status === "error";
+  const outcome = asking ? "question" : pending ? "approval" : live ? "working" : failed ? "failed" : status === "cancelled" ? "stopped" : "done";
+  const Icon = asking ? MessageCircleQuestion : pending ? ShieldQuestion : live ? CircleDashed : failed ? CircleAlert : Check;
   const groupProps = { live, status, onDecide, renderText, conversation };
   // A turn-level error next to a reply folds with the work — it stays one
   // tap away behind the toggle. With no reply the error IS the outcome, so
@@ -456,7 +480,7 @@ export function WorkTrace({ blocks, status, startedMs, durationMs, error, onDeci
   const foldedError = fold && answered && error ? error : null;
   const visibleError = error && !foldedError ? error : null;
   return <div className={cn("min-w-0 space-y-0.5", conversation && "w-full max-w-xl self-start", className)} data-testid="work-trace" data-state={status} {...(conversation ? { "data-conversation": "" } : {})}>
-    {fold ? <ConversationWorkFold durationMs={durationMs} attention={fold.approvals.map(block =>
+    {fold ? <ConversationWorkFold durationMs={durationMs} attention={fold.attention.map(block =>
       <div key={block.callId} className="w-full py-1 text-xs [&_button]:text-xs">
         <TraceTool block={block} status={status} onDecide={onDecide} />
       </div>)}>
@@ -465,9 +489,13 @@ export function WorkTrace({ blocks, status, startedMs, durationMs, error, onDeci
     </ConversationWorkFold> : <TraceGroups groups={groups} {...groupProps} />}
     {restGroups ? <TraceGroups groups={restGroups} {...groupProps} /> : null}
     {visibleError ? <p role="alert" className="py-2 text-sm text-destructive [overflow-wrap:anywhere]">{visibleError}</p> : null}
-    <div role="status" aria-live="polite" className={cn("flex flex-wrap items-center gap-2 text-xs text-muted-foreground", conversation ? "px-1 pb-2 pt-1" : "border-t border-border pt-3", status === "error" && "text-destructive")}>
+    {toolFailed && !live && !failed ? <p data-testid="tool-failure-warning" className="flex items-center gap-1.5 px-1 py-1 text-xs text-destructive">
+      <CircleAlert aria-hidden className="h-3.5 w-3.5" />{t("work_trace.tool_failed")}
+    </p> : null}
+    <div role="status" aria-live="polite" className={cn("flex flex-wrap items-center gap-2 text-xs text-muted-foreground", conversation ? "px-1 pb-2 pt-1" : "border-t border-border pt-3", failed && "text-destructive")}>
       <Icon aria-hidden className={cn("h-3.5 w-3.5", live && !pending && "motion-safe:animate-spin")} />
       <span>{outcome === "done" && completionLabel ? completionLabel : t(`work_trace.${outcome}`)}</span>
+      {toolFailed && !live && !failed ? <span className="sr-only">{t("work_trace.tool_failed")}</span> : null}
       {(live || durationMs !== null) ? <span aria-live="off" className="tabular-nums">{traceDuration(live ? elapsed : durationMs ?? 0)}</span> : null}
       {receipt ? conversation ? <details className="ml-1"><summary className="cursor-pointer rounded-sm focus-visible:ring-2 focus-visible:ring-ring">{t("society.chat.activity_details")}</summary><div className="flex flex-wrap gap-2 py-1">{receipt}</div></details> : receipt : null}
     </div>

@@ -16,6 +16,7 @@ from jarvis.missions.cleanup import (
     daily_cleanup_task,
     startup_sweep,
 )
+from jarvis.missions.standalone_run import write_marker
 
 # --- startup_sweep ---
 
@@ -91,6 +92,54 @@ async def test_sweep_mixed_keeps_fresh_removes_old(tmp_path: Path) -> None:
     assert stats["removed"] == 1
     assert fresh.exists()
     assert not old.exists()
+
+
+def _age(path: Path, days: int = 30) -> None:
+    past = time.time() - (days * 86400)
+    os.utime(path, (past, past))
+
+
+@pytest.mark.asyncio
+async def test_sweep_keeps_old_runs_that_hold_deliverables(tmp_path: Path) -> None:
+    """A finished run's pages and pictures are the Artifacts section itself.
+
+    The age sweep deleted them after 14 days and the section emptied out
+    (2026-09-29). Scaffolding without deliverables is still reclaimed.
+    """
+    root = tmp_path / "outputs"
+    root.mkdir()
+    artifact = root / "mission_artifact"
+    files = artifact / "tasks" / "task-1" / "artifacts" / "files" / "site"
+    files.mkdir(parents=True)
+    (files / "index.html").write_text("<title>Dashboard</title>")
+    empty_run = root / "mission_failed"
+    (empty_run / "tasks" / "task-1" / "artifacts" / "files").mkdir(parents=True)
+    worktree = root / "20260727T095351__scaffolding__259d2674"
+    (worktree / "tasks" / "task-1" / "workspace").mkdir(parents=True)
+    for entry in (artifact, empty_run, worktree):
+        _age(entry)
+
+    stats = await startup_sweep(isolation_root=root, cleanup_days=14)
+
+    assert stats["removed"] == 2
+    assert artifact.exists()
+    assert not empty_run.exists()
+    assert not worktree.exists()
+
+
+@pytest.mark.asyncio
+async def test_sweep_keeps_old_standalone_runs(tmp_path: Path) -> None:
+    """Chat media lives in a standalone run; deleting it breaks the transcript."""
+    root = tmp_path / "outputs"
+    root.mkdir()
+    media = root / "chat-media-abc"
+    write_marker(media, kind="chat_media", title="Chat media")
+    _age(media)
+
+    stats = await startup_sweep(isolation_root=root, cleanup_days=14)
+
+    assert stats["removed"] == 0
+    assert media.exists()
 
 
 @pytest.mark.asyncio

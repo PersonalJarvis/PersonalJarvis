@@ -4,14 +4,20 @@ import { setMapFullscreen } from "@/lib/mapFullscreen";
 import { LAST_AGENT_STORAGE_KEY } from "./lastAgent";
 import { SocietyView } from "./SocietyView";
 
-const app = vi.hoisted(() => ({ instance: { name: "default", isDev: false }, desktop: false }));
-vi.mock("@/lib/nativeDrop", () => ({ inDesktopShell: () => app.desktop }));
+const app = vi.hoisted(() => ({ instance: { name: "default", isDev: false } }));
+const groupsState = vi.hoisted(() => ({ groups: [] as Array<{ group_id: string; name: string; members: string[] }> }));
 vi.mock("@/hooks/useAppInstance", () => ({ useAppInstance: () => app.instance }));
-beforeEach(() => { app.instance = { name: "default", isDev: false }; app.desktop = false; });
+beforeEach(() => { app.instance = { name: "default", isDev: false }; groupsState.groups = []; });
 
 vi.mock("@/lib/mapFullscreen", () => ({ setMapFullscreen: vi.fn(async () => undefined) }));
+vi.mock("@tanstack/react-query", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tanstack/react-query")>()),
+  useQueryClient: () => ({ invalidateQueries: async () => undefined }),
+}));
 vi.mock("@/i18n", () => ({ useT: () => (key: string) => key, useLocaleChunk: () => true }));
 vi.mock("@/components/society/chat/useModelMenuData", () => ({ useModelMenuData: () => undefined }));
+vi.mock("@/lib/societyChatGroups", () => ({ useSocietyChatGroups: () => ({ data: groupsState.groups }) }));
+vi.mock("@/components/society/chat/ChatGroupPanel", () => ({ ChatGroupPanel: ({ group, onOpenAgent }: any) => <div data-testid="group-workspace">{group.name}<button onClick={() => onOpenAgent("specialist")}>Open member</button></div> }));
 vi.mock("@/components/society/data", () => ({ useSocietyRoster: () => ({ data: { sample: false, agents: [
   { agentId: "lead", name: "Lead", tier: "lead", state: "idle" },
   { agentId: "specialist", name: "Specialist", tier: "specialist", state: "idle" },
@@ -20,11 +26,12 @@ vi.mock("@/views/JarvisAgentsView", () => ({ JarvisAgentsView: ({ onSelectAgent,
   <div data-testid="map"><button onClick={() => onSelectAgent("specialist")}>Map specialist</button><button onClick={onOpenAgents}>Map fallback</button><div data-mars-ui><input aria-label="Mars draft" /></div><div data-mars-mode="player"><button>Player viewport</button></div><div data-mars-mode="follow"><button>Follow viewport</button></div><button onClick={() => onMarsSelectionChange(false)}>Previous world</button><button onClick={() => onMarsSelectionChange(true)}>Mars world</button></div>
 ) }));
 vi.mock("@/components/society/mars/MarsStationPanel", () => ({ MarsStationPanel: ({ onClose }: any) => <aside aria-label="Mars station"><button onClick={onClose}>Close station</button></aside> }));
-vi.mock("@/components/society/card/AgentCardOverlay", () => ({ AgentCardOverlay: ({ agent, embedded, onSelectAgent, onCreate, railHeader }: any) => (
+vi.mock("@/components/society/card/AgentCardOverlay", () => ({ AgentCardOverlay: ({ agent, embedded, onSelectAgent, onSelectGroup, onCreate, railHeader }: any) => (
   <div data-testid="workspace" data-embedded={String(embedded)}>
     {railHeader}
     <span>{agent.name}</span><input aria-label="Draft" />
     <button onClick={() => onSelectAgent("specialist")}>Select specialist</button>
+    <button onClick={() => onSelectGroup?.("team")}>Open group</button>
     <button onClick={onCreate}>Create agent</button>
   </div>
 ) }));
@@ -42,6 +49,15 @@ it("defaults to the embedded Agents workspace even with a saved legacy ledger pr
   expect(screen.getByText("Lead")).toBeTruthy();
   expect(screen.queryByTestId("map")).toBeNull();
   localStorage.removeItem("jarvis.agents.mode.v2");
+});
+
+it("opens a group from the agent rail and returns to an individual member chat", () => {
+  groupsState.groups = [{ group_id: "team", name: "Launch team", members: ["specialist"] }];
+  render(<SocietyView />);
+  fireEvent.click(screen.getByText("Open group"));
+  expect(screen.getByTestId("group-workspace").textContent).toContain("Launch team");
+  fireEvent.click(screen.getByText("Open member"));
+  expect(screen.getByTestId("workspace").textContent).toContain("Specialist");
 });
 
 it("switches to Map and back without losing the selected agent or draft", async () => {
@@ -108,35 +124,19 @@ it("navigates back through the window caption instead of a sections toggle", () 
   expect(screen.getByTestId("mode-switch")).toBeTruthy();
 });
 
-it("requests fullscreen for Map and leaves it on Escape", async () => {
-  app.desktop = true;
+it("leaves Map on Escape without requesting native fullscreen in a browser", async () => {
   render(<SocietyView />);
   fireEvent.click(screen.getByRole("tab", { name: "society.world.mode_map" }));
   await screen.findByTestId("map");
-  expect(setMapFullscreen).toHaveBeenLastCalledWith(true);
+  expect(setMapFullscreen).not.toHaveBeenCalledWith(true);
   fireEvent.keyDown(document, { key: "Escape" });
-  expect(setMapFullscreen).toHaveBeenLastCalledWith(false);
   expect(screen.queryByTestId("map")).toBeNull();
 });
 
-it("keeps Mars station controls reachable without mounting a renderer", async () => {
-  window.history.replaceState(null, "", "?view=agents&world=mars");
-  render(<SocietyView />);
-  fireEvent.click(screen.getByRole("button", { name: "society.mars.station_title" }));
-  expect(await screen.findByRole("complementary", { name: "Mars station" })).toBeTruthy();
-  expect(screen.queryByTestId("map")).toBeNull();
-  expect(screen.getByTestId("workspace")).toBeTruthy();
-  fireEvent.click(screen.getByText("Close station"));
-  expect(screen.queryByRole("complementary", { name: "Mars station" })).toBeNull();
-});
-
-it("exposes the Mars station in dev without an opt-in URL", async () => {
-  app.instance = { name: "dev", isDev: true };
+it("shows no station shortcut in Agents mode", () => {
   window.history.replaceState(null, "", "?view=agents");
   render(<SocietyView />);
-  fireEvent.click(screen.getByRole("button", { name: "society.mars.station_title" }));
-  expect(await screen.findByRole("complementary", { name: "Mars station" })).toBeTruthy();
-  expect(screen.queryByTestId("map")).toBeNull();
+  expect(screen.queryByRole("button", { name: "society.mars.station_title" })).toBeNull();
 });
 
 it("does not discard a Mars form when Escape belongs to its input", async () => {
@@ -174,3 +174,5 @@ it("still leaves the ordinary map when browser fullscreen exits", async () => {
   fireEvent(document, new Event("fullscreenchange"));
   expect(screen.queryByTestId("map")).toBeNull();
 });
+
+

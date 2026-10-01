@@ -46,6 +46,7 @@ from jarvis.screen_context.models import (
     IntentVerdict,
     ScreenContext,
     TargetKind,
+    TargetReason,
     VisualIntent,
 )
 from jarvis.screen_context.ports import (
@@ -203,6 +204,7 @@ class ScreenContextService:
         self._expiry_timers: dict[str, asyncio.TimerHandle | threading.Timer] = {}
         self._handle_lock = threading.RLock()
         self._closed = False
+        self._shutter_hook: Any | None = None
         self._patterns = redaction.build_patterns(
             self._settings.extra_patterns,
             include_defaults=self._settings.include_default_patterns,
@@ -263,6 +265,21 @@ class ScreenContextService:
 
             attach_audio_effects(bus)
 
+    def set_shutter_hook(self, hook: Any | None) -> None:
+        """Run ``hook(target, size, rgb, monitors)`` at every shutter.
+
+        Called synchronously right after the pixels are grabbed, on the event
+        loop, before redaction. It exists for the appshot effect, which must
+        start at the true shutter moment; the hook stays in-process and must
+        schedule anything slow itself. Its failures never affect the capture.
+
+        A service with a shutter hook shows no pre-shutter border: the appshot
+        flash over the captured window is the visible signal instead
+        (maintainer directive 2026-09-29 — the gold frame before every appshot
+        read as an ugly glitch).
+        """
+        self._shutter_hook = hook
+
     # ---- intent ----------------------------------------------------------
 
     def classify(self, text: str, *, locale: str = "") -> IntentVerdict:
@@ -284,7 +301,7 @@ class ScreenContextService:
         ``locale`` must be the ALREADY-RESOLVED output language for this turn
         (``jarvis.core.turn_language.resolve_output_language``). This service
         never derives a language itself — a second derivation is exactly the
-        mid-session language flip CLAUDE.md §1.3 forbids.
+        mid-session language flip AGENTS.md §1.3 forbids.
 
         ``force`` skips classification for callers that are not a conversation
         turn (the REST endpoint, an explicit bar button). It never skips
@@ -424,10 +441,11 @@ class ScreenContextService:
             if callable(getter):
                 window_handle = await asyncio.to_thread(getter)
 
+        monitors = await asyncio.to_thread(self.displays.monitors)
         try:
             target, target_degradations = resolve_target(
                 verdict.intent,
-                monitors=await asyncio.to_thread(self.displays.monitors),
+                monitors=monitors,
                 cursor_point=cursor_point,
                 bar_point=bar_point,
                 window=window_facts,
@@ -462,8 +480,10 @@ class ScreenContextService:
         # Announce BEFORE the shutter so the indicator is up while there is
         # still something to indicate.
         event_trace_id = trace_id or uuid4()
-        announced = await self._announce(target, trace_id=event_trace_id)
-        if not announced:
+        # The appshot flash replaces the border (see ``set_shutter_hook``).
+        border = self._shutter_hook is None
+        announced = await self._announce(target, trace_id=event_trace_id) if border else False
+        if border and not announced:
             degradations.append(
                 Degradation(
                     code=DegradationCode.INDICATOR_UNAVAILABLE,
@@ -473,7 +493,7 @@ class ScreenContextService:
                     ),
                 )
             )
-        else:
+        elif announced:
             # Give the composited border a perceptible pre-shutter moment. The
             # renderer ACK proves it was processed; this short dwell makes the
             # privacy signal human-visible rather than a one-frame flicker.
@@ -508,11 +528,7 @@ class ScreenContextService:
                     message=monitor_privacy_error,
                 )
             try:
-                size, rgb = await asyncio.to_thread(
-                    self.capturer.grab,
-                    target.bbox,
-                    window_handle=target.window_handle,
-                )
+                size, rgb = await self._grab(target)
             except CaptureUnavailable as exc:
                 log.info("screen_context: capture failed — %s", exc)
                 return CaptureOutcome(
@@ -536,6 +552,7 @@ class ScreenContextService:
             # This is the shutter boundary: pixels exist now. Publish only
             # metadata so the shared audio layer can play its cue at the
             # truthful moment without receiving or retaining screen content.
+            self._run_shutter_hook(target, size, rgb, monitors)
             await self._publish_grabbed(size, trace_id=event_trace_id)
 
             # Treat a post-shutter identity change as untrusted: discard the
@@ -612,7 +629,58 @@ class ScreenContextService:
                 handle_id=handle_id,
             )
         finally:
-            await self._dismiss_indicator(trace_id=event_trace_id)
+            if border:
+                await self._dismiss_indicator(trace_id=event_trace_id)
+
+    async def _grab(self, target: CaptureTarget) -> tuple[tuple[int, int], bytes]:
+        """Grab the target the way the user sees it.
+
+        A window target is always the window in FRONT, so its rectangle of the
+        desktop is exactly the window as the user sees it. That rect grab is
+        the first choice. Native window-only capture returned near-black
+        frames for GPU-composited windows (WebView2 apps, Jarvis's own window
+        among them — BUG-220: luma 0-13 across the whole frame, so a
+        flat-colour check missed it) and remains only the privacy path: when a
+        denylisted window intersects the rectangle, the window alone is
+        captured, and a blank result there is refused rather than described.
+        """
+        handle = target.window_handle
+        if handle is None:
+            return await asyncio.to_thread(self.capturer.grab, target.bbox, window_handle=None)
+        blocked = await asyncio.to_thread(self._rect_privacy_error, target.bbox)
+        if not blocked:
+            return await asyncio.to_thread(self.capturer.grab, target.bbox, window_handle=None)
+        size, rgb = await asyncio.to_thread(
+            self.capturer.grab, target.bbox, window_handle=handle
+        )
+        if await asyncio.to_thread(_is_flat_frame, size, rgb):
+            raise CaptureUnavailable(
+                f"{blocked} The window alone could not be captured either."
+            )
+        return size, rgb
+
+    def _rect_privacy_error(self, bbox: tuple[int, int, int, int]) -> str | None:
+        """Refuse a desktop-rectangle grab a denylisted window could appear in."""
+        if not self._settings.denylist:
+            return None
+        return self._monitor_privacy_error(
+            CaptureTarget(kind=TargetKind.MONITOR, bbox=bbox, reason=TargetReason.FOCUSED_WINDOW)
+        )
+
+    def _run_shutter_hook(
+        self,
+        target: CaptureTarget,
+        size: tuple[int, int],
+        rgb: bytes,
+        monitors: list[dict],
+    ) -> None:
+        hook = self._shutter_hook
+        if hook is None:
+            return
+        try:
+            hook(target, size, rgb, monitors)
+        except Exception:  # noqa: BLE001 - an effect must never cost the capture
+            log.warning("screen_context: shutter hook failed", exc_info=True)
 
     # ---- assembly --------------------------------------------------------
 
@@ -1077,6 +1145,40 @@ class ScreenContextService:
                 "screen_context: shutter receipt publication failed",
                 exc_info=True,
             )
+
+
+def _is_flat_frame(size: tuple[int, int], rgb: bytes) -> bool:
+    """True when a frame carries no picture — a capture that produced nothing.
+
+    A real window has contrast somewhere (text, borders, an icon). A frame
+    whose middle 98 % of pixels spans at most a few luma levels does not, even
+    when anti-aliased corners or a one-pixel edge stray from the flat body.
+    """
+    width, height = size
+    if width <= 0 or height <= 0 or len(rgb) < width * height * 3:
+        return True
+    from PIL import Image  # noqa: PLC0415
+
+    image = Image.frombytes("RGB", size, rgb).convert("L")
+    factor = max(1, min(width, height) // 128)
+    if factor > 1:
+        image = image.reduce(factor)
+    histogram = image.histogram()
+    total = sum(histogram)
+    cut = total * 0.01
+    seen, low = 0, 0
+    for level, count in enumerate(histogram):
+        seen += count
+        if seen > cut:
+            low = level
+            break
+    seen, high = 0, 255
+    for level in range(255, -1, -1):
+        seen += histogram[level]
+        if seen > cut:
+            high = level
+            break
+    return high - low <= 6
 
 
 def _safe_target_label(target: CaptureTarget) -> str:

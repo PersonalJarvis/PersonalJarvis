@@ -12,6 +12,7 @@ import type {
   CuratedModel,
   PermissionModeOption,
 } from "./agentChatApi";
+import type { ChatProject } from "./chatLibraryApi";
 
 export interface AgentStatus {
   name: string;
@@ -226,6 +227,18 @@ export interface TerminalState {
   account?: string | null;
   /** Its display name, so the pane header can show it without a second lookup. */
   account_label?: string | null;
+  /** Set only for a pane running in a git worktree of its own (a worktree fork). */
+  folder?: string;
+  /** That worktree's branch, shown in the pane header. */
+  branch?: string;
+  /**
+   * Set only for a pane whose agent runs on a connected computer (a VPS or a
+   * local VM, see Computers): that computer's id and the folder there.
+   */
+  computer_id?: string;
+  remote_folder?: string;
+  /** Can a fork of this pane copy its chat? False: the fork starts a fresh chat. */
+  can_fork?: boolean;
   /**
    * What this pane is doing, in one clause — the pane header's label.
    *
@@ -354,10 +367,17 @@ export interface ActivityResponse {
 
 export interface SessionState {
   id: string;
+  project_id?: string | null;
+  name?: string;
   folder: string;
   project: ProjectProfile;
   created_at: number;
   focus_mode: boolean;
+  /**
+   * The pane last selected in this workspace, saved with it so a reopened app
+   * lands on the same pane. Absent from older backends.
+   */
+  focused?: string;
   /**
    * WHERE every pane sits and how much room it has — the split tree the grid
    * draws from (see `components/agentic/treeLayout`). Null only while the
@@ -376,6 +396,7 @@ export interface SessionState {
  */
 export interface WorkspaceCard {
   id: string;
+  project_id?: string | null;
   folder: string;
   /** Project name — what the tab is labelled with. */
   name: string;
@@ -387,6 +408,74 @@ export interface WorkspaceCard {
   created_at: number;
   last_active_at: number;
   active: boolean;
+}
+
+export interface ProjectWorkspace extends WorkspaceCard {
+  status: "open" | "closed";
+  restorable: boolean;
+}
+
+export interface IdeProject extends ChatProject {
+  workspaces: ProjectWorkspace[];
+}
+
+export interface IdeProjectsResponse {
+  projects: IdeProject[];
+  active_project_id: string | null;
+  active_workspace_id: string | null;
+  max_terminals: number;
+}
+
+export function fetchIdeProjects(): Promise<IdeProjectsResponse> {
+  return getJson<IdeProjectsResponse>("/api/agentic-ide/projects");
+}
+
+export async function restoreIdeWorkspace(id: string): Promise<IdeState> {
+  const res = await fetch(`/api/agentic-ide/workspaces/${encodeURIComponent(id)}/restore`, { method: "POST" });
+  if (!res.ok) throw new Error(await detail(res));
+  return ((await res.json()) as { state: IdeState }).state;
+}
+
+export async function reorderIdeTerminals(id: string, terminalIds: string[]): Promise<IdeState> {
+  const res = await fetch(`/api/agentic-ide/workspaces/${encodeURIComponent(id)}/terminal-order`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ terminal_ids: terminalIds }),
+  });
+  if (!res.ok) throw new Error(await detail(res));
+  return ((await res.json()) as { state: IdeState }).state;
+}
+
+/**
+ * Persist a drag-and-drop workspace tab order.
+ *
+ * `workspaceIds` must contain every open workspace exactly once, in
+ * left-to-right order. Nothing starts, stops or restarts — only the tab
+ * positions move, and the order survives restarts via the resume snapshot.
+ *
+ * Throws {@link IdeApiError} carrying the HTTP status, so callers can tell
+ * "the backend refused" apart from "the backend is too old to know this
+ * endpoint" (405).
+ */
+export async function reorderWorkspaces(workspaceIds: string[]): Promise<IdeState> {
+  const res = await fetch("/api/agentic-ide/workspaces/order", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ workspace_ids: workspaceIds }),
+  });
+  if (!res.ok) throw new IdeApiError(await detail(res), res.status);
+  return ((await res.json()) as { state: IdeState }).state;
+}
+
+/** An IDE API failure with its HTTP status attached. */
+export class IdeApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "IdeApiError";
+  }
 }
 
 /**
@@ -489,76 +578,6 @@ export interface ResumeResult {
   skipped: { folder: string; detail: string }[];
 }
 
-/**
- * One pane that came back holding its conversation and was never restarted.
- *
- * The state a restart leaves behind: resuming reconnects a pane to the
- * conversation it was having, but a coding CLI launched on an old transcript
- * reads it and then waits at its prompt. So the agent knows everything about the
- * job it was halfway through and does nothing with it — which on screen is
- * indistinguishable from a pane that finished.
- */
-export interface InterruptedPane {
-  workspace_id: string;
-  /** The workspace tab it belongs to — a list can span several. */
-  workspace: string;
-  folder: string;
-  key: string;
-  name: string;
-  agent: string;
-  display_name: string;
-  status: string;
-  /**
-   * Will a "continue" reach it? False only when its agent is DEAD — a pane that
-   * is merely still starting IS continuable, the instruction just waits for it.
-   */
-  continuable: boolean;
-  /**
-   * Its agent is still coming up.
-   *
-   * Cold starts are staggered on purpose, so most of a big workspace is in this
-   * state for the first seconds after it appears — which is exactly when this
-   * button gets pressed. Those panes are queued, never skipped.
-   */
-  starting?: boolean;
-  /** A "continue" is already on its way to this pane. */
-  queued?: boolean;
-  /** Why not, in one sentence. Empty when it can be continued. */
-  blocked_reason: string;
-  /** What it was last asked to do. Empty when that instruction was typed in by hand. */
-  last_task: string;
-  prompts_sent: number;
-  started_at: number | null;
-}
-
-export interface InterruptedOffer {
-  count: number;
-  continuable_count: number;
-  /** The instruction the continue action sends — "continue" unless configured. */
-  prompt: string;
-  panes: InterruptedPane[];
-}
-
-export interface ContinueResult {
-  ok: boolean;
-  /** Panes that accepted the instruction and started. */
-  continued: string[];
-  /**
-   * Panes whose agent had not started yet. The instruction is held and delivered
-   * when each comes up — "shortly", never "done".
-   */
-  queued: string[];
-  /**
-   * Panes the text was typed into without a confirmed submit — the prompt may be
-   * sitting in the input box. Reporting these as running is the one wrong thing
-   * to do with this answer.
-   */
-  unconfirmed: string[];
-  failed: { name: string; detail: string }[];
-  /** Interrupted panes still waiting afterwards. */
-  remaining: number;
-}
-
 export interface TerminalPlan {
   agent: string;
   name?: string;
@@ -586,8 +605,8 @@ export function fetchIdeState(): Promise<IdeState> {
   return getJson<IdeState>("/api/agentic-ide/state");
 }
 
-export function fetchIdeAgents(): Promise<AgentsResponse> {
-  return getJson<AgentsResponse>("/api/agentic-ide/agents");
+export function fetchIdeAgents(quick = false): Promise<AgentsResponse> {
+  return getJson<AgentsResponse>(`/api/agentic-ide/agents${quick ? "?quick=true" : ""}`);
 }
 
 /** One entry, probed just now — what an install dialog watches for. */
@@ -1164,26 +1183,58 @@ export async function resolveDroppedFolder(payload: {
 export async function startIdeSession(
   folder: string,
   terminals: TerminalPlan[],
+  options: OpenWorkspaceOptions = {},
 ): Promise<IdeState> {
+  return (await openIdeWorkspace(folder, terminals, options)).state;
+}
+
+export interface OpenWorkspaceOptions {
+  projectId?: string;
+  name?: string;
+  computerId?: string;
+  /** Told the backend's one-line report, e.g. which files stayed on this PC. */
+  onMessage?: (message: string) => void;
+}
+
+/**
+ * `startIdeSession` for a caller that goes on to use the new panes: the new
+ * workspace ITSELF, beside the state. `state.session` is only whichever
+ * workspace is at the front when the answer is built, and another window can
+ * bring a different one forward in between.
+ */
+export async function openIdeWorkspace(
+  folder: string,
+  terminals: TerminalPlan[],
+  options: OpenWorkspaceOptions = {},
+): Promise<{ session: SessionState; state: IdeState }> {
   const res = await fetch("/api/agentic-ide/session", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ folder, terminals }),
+    body: JSON.stringify({
+      folder,
+      terminals,
+      project_id: options.projectId,
+      name: options.name,
+      // Run every pane on this connected computer; the folder is copied there first.
+      computer_id: options.computerId,
+    }),
   });
   if (!res.ok) throw new Error(await detail(res));
-  const body = (await res.json()) as { session: SessionState; state: IdeState };
+  const body = (await res.json()) as { session: SessionState; state: IdeState; message?: string };
+  if (body.message) options.onMessage?.(body.message);
   // `state` is authoritative; `session` alone is kept as the fallback for a
   // backend that predates the workspace bar.
-  return (
-    body.state ?? { ...EMPTY_IDE_STATE, active: true, session: body.session }
-  );
+  return {
+    session: body.session,
+    state: body.state ?? { ...EMPTY_IDE_STATE, active: true, session: body.session },
+  };
 }
 
 /** Shape a pre-workspace-bar backend does not send. */
 const EMPTY_IDE_STATE: IdeState = {
   active: false,
   session: null,
-  max_terminals: 12,
+  max_terminals: 16,
   workspaces: [],
   active_id: null,
   max_workspaces: 6,
@@ -1256,6 +1307,23 @@ export async function closeWorkspace(id: string): Promise<IdeState> {
   return body.state;
 }
 
+/**
+ * Remove ONE workspace for good: stop its agents if it is open and forget its
+ * saved record, so the sidebar row disappears instead of turning into a closed
+ * one. The folder on disk is untouched. Returns the state that is left.
+ */
+export async function removeWorkspace(id: string): Promise<IdeState> {
+  const res = await fetch(
+    `/api/agentic-ide/workspaces/${encodeURIComponent(id)}/record`,
+    { method: "DELETE" },
+  );
+  // Carries the status: a bare "Not Found" means a backend older than this
+  // route, which the sidebar explains as "restart the app".
+  if (!res.ok) throw new IdeApiError(await detail(res), res.status);
+  const body = (await res.json()) as { state: IdeState };
+  return body.state;
+}
+
 /** What reopening the last workspace would bring back, checked against this machine. */
 export function fetchResumeOffer(): Promise<ResumeOffer> {
   return getJson<ResumeOffer>("/api/agentic-ide/resume");
@@ -1288,8 +1356,9 @@ export async function forgetResumeOffer(): Promise<void> {
  * inherits the anchor's. Returns the updated workspace.
  */
 export async function addTerminal(payload: {
+  workspace_id?: string;
   anchor?: string;
-  direction?: "right" | "down";
+  direction?: "right" | "down" | "left" | "above" | "up" | "below";
   agent?: string;
   name?: string;
   /** Subscription for the new pane; omitted inherits the anchor's. */
@@ -1303,17 +1372,40 @@ export async function addTerminal(payload: {
   model?: string;
   effort?: string;
   permission_mode?: string;
-}): Promise<SessionState> {
+  /**
+   * Where the new pane runs: a connected computer's id, or null for this PC.
+   * Omitted, it runs where its anchor (or the whole workspace) runs.
+   */
+  computer_id?: string | null;
+}, options: { onMessage?: (message: string) => void } = {}): Promise<SessionState> {
   const res = await fetch("/api/agentic-ide/terminals", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
   if (!res.ok) throw new Error(await detail(res));
-  const body = (await res.json()) as { state: IdeState };
+  const body = (await res.json()) as { state: IdeState; message?: string };
+  if (body.message) options.onMessage?.(body.message);
   if (!body.state.session)
     throw new Error("The workspace closed while adding a terminal.");
   return body.state.session;
+}
+
+/**
+ * Open one more terminal and answer with THAT terminal — the pane Mission
+ * Control goes on to brief. `addTerminal` answers with the front workspace,
+ * which is not where the pane went when another workspace was named.
+ */
+export async function openTerminal(
+  payload: Parameters<typeof addTerminal>[0],
+): Promise<TerminalState> {
+  const res = await fetch("/api/agentic-ide/terminals", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(await detail(res));
+  return ((await res.json()) as { terminal: TerminalState }).terminal;
 }
 
 /**
@@ -1428,6 +1520,98 @@ export async function renameTerminal(
   return body.state.session;
 }
 
+/** What the fork dialog pre-fills for a pane, and what a fork of it can do. */
+export interface ForkSuggestion {
+  /** A free branch/worktree name that reads like the pane, e.g. "t3-fix-login". */
+  name: string;
+  /** False outside a git checkout: only the chat fork is possible. */
+  in_repo: boolean;
+  /** False for a CLI without its own fork: the fork starts a fresh chat. */
+  can_fork: boolean;
+  /** Whether the pane holds a conversation handle at all yet. */
+  has_conversation: boolean;
+}
+
+export async function fetchForkSuggestion(
+  name: string,
+  workspaceId?: string,
+): Promise<ForkSuggestion> {
+  const query = workspaceId ? `?workspace_id=${encodeURIComponent(workspaceId)}` : "";
+  const res = await fetch(
+    `/api/agentic-ide/terminals/${encodeURIComponent(name)}/fork${query}`,
+  );
+  if (!res.ok) throw new Error(await detail(res));
+  return (await res.json()) as ForkSuggestion;
+}
+
+/**
+ * Open a new pane beside `name` that continues a copy of its chat. With
+ * `worktree`, the copy runs in a new git worktree on branch `branch`.
+ * Returns the updated workspace and the new pane's call-sign.
+ */
+export async function forkTerminal(
+  name: string,
+  options: { workspaceId?: string; worktree: boolean; branch?: string },
+): Promise<{ session: SessionState; terminal: TerminalState }> {
+  const res = await fetch(
+    `/api/agentic-ide/terminals/${encodeURIComponent(name)}/fork`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        workspace_id: options.workspaceId,
+        worktree: options.worktree,
+        name: options.branch,
+      }),
+    },
+  );
+  if (!res.ok) throw new Error(await detail(res));
+  const body = (await res.json()) as { state: IdeState; terminal: TerminalState };
+  if (!body.state.session)
+    throw new Error("The workspace closed while forking a terminal.");
+  return { session: body.state.session, terminal: body.terminal };
+}
+
+/** What a placement answered: the new workspace state and a sentence for the user. */
+export interface PlacementResult {
+  session: SessionState | null;
+  message: string;
+}
+
+/**
+ * Run one pane's agent on a connected computer, or bring it back here
+ * (`computerId: null`). The folder and the conversation travel with it.
+ */
+export async function placeTerminal(
+  name: string,
+  workspaceId: string,
+  computerId: string | null,
+): Promise<PlacementResult> {
+  const res = await fetch(`/api/agentic-ide/terminals/${encodeURIComponent(name)}/place`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ workspace_id: workspaceId, computer_id: computerId }),
+  });
+  if (!res.ok) throw new Error(await detail(res));
+  const body = (await res.json()) as { state: IdeState; message?: string };
+  return { session: body.state.session, message: body.message ?? "" };
+}
+
+/** Every pane of a workspace to a connected computer, or all of them back. */
+export async function placeWorkspace(
+  workspaceId: string,
+  computerId: string | null,
+): Promise<PlacementResult> {
+  const res = await fetch(`/api/agentic-ide/workspaces/${encodeURIComponent(workspaceId)}/place`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ computer_id: computerId }),
+  });
+  if (!res.ok) throw new Error(await detail(res));
+  const body = (await res.json()) as { state: IdeState; messages?: string[] };
+  return { session: body.state.session, message: (body.messages ?? []).join(" ") };
+}
+
 /** Stop one terminal's agent and remove its pane. Returns the updated workspace. */
 export async function closeTerminal(
   name: string,
@@ -1494,44 +1678,6 @@ export async function closeTerminals(names: string[]): Promise<CloseTerminalsRes
     closed: body.closed ?? [],
     failed: body.failed ?? [],
     session: body.state.session,
-  };
-}
-
-/**
- * Which panes are waiting to be told to carry on, across every open workspace.
- *
- * Its own read rather than part of `fetchIdeState`: the answer changes only when
- * a pane is resumed or driven again, and folding it into the state poll would
- * re-send every workspace to update a number.
- */
-export function fetchInterrupted(): Promise<InterruptedOffer> {
-  return getJson<InterruptedOffer>("/api/agentic-ide/interrupted");
-}
-
-/**
- * Tell interrupted panes to carry on. No names means every one of them.
- *
- * `prompt` overrides the default "continue" — the agent still holds its whole
- * conversation, so short beats elaborate.
- */
-export async function continueInterrupted(
-  names?: string[],
-  prompt?: string,
-): Promise<ContinueResult> {
-  const res = await fetch("/api/agentic-ide/interrupted/continue", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ names: names ?? [], prompt: prompt ?? "" }),
-  });
-  if (!res.ok) throw new Error(await detail(res));
-  const body = (await res.json()) as Partial<ContinueResult>;
-  return {
-    ok: body.ok ?? false,
-    continued: body.continued ?? [],
-    queued: body.queued ?? [],
-    unconfirmed: body.unconfirmed ?? [],
-    failed: body.failed ?? [],
-    remaining: body.remaining ?? 0,
   };
 }
 
@@ -1652,6 +1798,20 @@ export async function setFocusMode(enabled: boolean): Promise<boolean> {
   if (!res.ok) throw new Error(await detail(res));
   const body = (await res.json()) as { focus_mode: boolean };
   return body.focus_mode;
+}
+
+/**
+ * The explicit "stop everything": ends every agent in every workspace.
+ *
+ * Closing the app never does this — the agents live in a background host and
+ * keep working — so this is the one control that does. The workspaces stay on
+ * offer for a deliberate reopen and are not reopened by themselves.
+ */
+export async function stopIdeRuntime(): Promise<number> {
+  const res = await fetch("/api/agentic-ide/runtime/stop", { method: "POST", cache: "no-store" });
+  if (!res.ok) throw new Error(await detail(res));
+  const body = (await res.json()) as { closed_workspaces: number };
+  return body.closed_workspaces;
 }
 
 /**
@@ -1897,10 +2057,12 @@ export interface PromptResult {
 export async function promptTerminal(
   name: string,
   prompt: string,
-  options: { compose?: boolean; attachments?: DropAttachment[] } = {},
+  options: { compose?: boolean; attachments?: DropAttachment[]; workspaceId?: string } = {},
 ): Promise<PromptResult> {
+  // A call-sign is only unique inside its workspace; name it when the caller knows it.
+  const query = options.workspaceId ? `?workspace=${encodeURIComponent(options.workspaceId)}` : "";
   const res = await fetch(
-    `/api/agentic-ide/terminals/${encodeURIComponent(name)}/prompt`,
+    `/api/agentic-ide/terminals/${encodeURIComponent(name)}/prompt${query}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },

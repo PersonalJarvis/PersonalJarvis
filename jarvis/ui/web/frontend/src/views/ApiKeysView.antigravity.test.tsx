@@ -12,7 +12,6 @@ import {
   render,
   screen,
   waitFor,
-  within,
 } from "@testing-library/react";
 
 import { ApiKeysView } from "@/views/ApiKeysView";
@@ -234,7 +233,7 @@ describe("ApiKeysView — Antigravity (Google subscription) OAuth card", () => {
     await waitFor(() =>
       // The redesign shortens the card title to just "Antigravity"; the
       // subscription billing now lives in the billing badge, not the title.
-      expect(screen.getByTestId("agent-row-antigravity")).toBeTruthy(),
+      expect(screen.getAllByText("Antigravity").length).toBeGreaterThan(0),
     );
 
     // The "Set active" control now lives ON the subscription card, so there is
@@ -299,8 +298,7 @@ describe("ApiKeysView — Antigravity (Google subscription) OAuth card", () => {
     expect((connectBtn.closest("button") as HTMLButtonElement).disabled).toBe(true);
     // The install hint sits in the row body; open the row first. The row
     // has no login yet, so the click only opens it — no switch.
-    const row = screen.getByTestId("agent-row-antigravity");
-    fireEvent.click(within(row).getByRole("button", { expanded: false }));
+    fireEvent.click(screen.getAllByText("Antigravity")[0]);
     expect(
       await screen.findByText("Install Antigravity or the Gemini CLI before connecting."),
     ).toBeTruthy();

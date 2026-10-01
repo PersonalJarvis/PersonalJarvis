@@ -66,6 +66,22 @@ async def test_accept_terms_persists(tmp_path: Path) -> None:
         fp._STATE_PATH_OVERRIDE = None
 
 
+async def test_tour_complete_persists(tmp_path: Path) -> None:
+    fp._STATE_PATH_OVERRIDE = tmp_path / "setup_state.json"
+    try:
+        sent, send = _collector()
+        await fp.handle(_scope("GET", "/api/onboarding/state"), _receive_empty, send)
+        assert _body_json(sent)["tour_completed"] is False
+        sent2, send2 = _collector()
+        await fp.handle(_scope("POST", "/api/onboarding/tour-complete"), _receive_empty, send2)
+        assert sent2[0]["status"] == 200
+        sent3, send3 = _collector()
+        await fp.handle(_scope("GET", "/api/onboarding/state"), _receive_empty, send3)
+        assert _body_json(sent3)["tour_completed"] is True
+    finally:
+        fp._STATE_PATH_OVERRIDE = None
+
+
 async def test_complete_persists_and_next_state_is_completed(tmp_path: Path) -> None:
     fp._STATE_PATH_OVERRIDE = tmp_path / "setup_state.json"
     try:

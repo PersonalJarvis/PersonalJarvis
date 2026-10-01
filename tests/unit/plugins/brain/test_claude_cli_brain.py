@@ -5,6 +5,7 @@ The invocation builder is pure on purpose: what this brain gets wrong is not
 is decided entirely by argv plus the stdin payload. Testing that pair directly
 catches the failure that matters without spawning a CLI.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -38,9 +39,7 @@ def test_structured_mode_forwards_the_system_contract_verbatim() -> None:
 def test_conversational_mode_does_not_leak_the_router_prompt() -> None:
     """A voice turn stays short and never carries the heavy tool prompt."""
     brain = ClaudeCliBrain(structured_prompts=False)
-    _argv, prompt = brain.build_invocation(
-        _req(system="ROUTER PROMPT WITH TOOLS", user="hello")
-    )
+    _argv, prompt = brain.build_invocation(_req(system="ROUTER PROMPT WITH TOOLS", user="hello"))
     assert "ROUTER PROMPT WITH TOOLS" not in prompt
     assert "hello" in prompt
 
@@ -85,9 +84,7 @@ def test_subscription_probe_never_raises(monkeypatch: pytest.MonkeyPatch) -> Non
     def _explode() -> object:
         raise OSError("no keychain on this host")
 
-    monkeypatch.setattr(
-        "jarvis.claude_auth.ClaudeAuthService", lambda *a, **k: _explode()
-    )
+    monkeypatch.setattr("jarvis.claude_auth.ClaudeAuthService", lambda *a, **k: _explode())
     assert ClaudeCliBrain.subscription_connected() is False
 
 
@@ -98,9 +95,7 @@ def test_api_key_login_does_not_masquerade_as_a_subscription(
 
     monkeypatch.setattr(
         "jarvis.claude_auth.ClaudeAuthService",
-        lambda: SimpleNamespace(
-            status=lambda: SimpleNamespace(connected=True, mode="api_key")
-        ),
+        lambda: SimpleNamespace(status=lambda: SimpleNamespace(connected=True, mode="api_key")),
     )
     assert ClaudeCliBrain.subscription_connected() is False
 
@@ -109,9 +104,7 @@ async def test_complete_raises_a_clear_error_when_the_cli_is_absent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A headless host with no CLI gets an actionable message, never a hang."""
-    monkeypatch.setattr(
-        "jarvis.plugins.brain.claude_cli._resolve_claude_binary", lambda: None
-    )
+    monkeypatch.setattr("jarvis.plugins.brain.claude_cli._resolve_claude_binary", lambda: None)
     brain = ClaudeCliBrain(structured_prompts=True)
     with pytest.raises(RuntimeError, match="Claude CLI"):
         async for _delta in brain.complete(_req()):
@@ -137,8 +130,7 @@ def test_structured_turns_shed_startup_weight_the_cli_supports() -> None:
     argv, _prompt = brain.build_invocation(_req(), cli_flags=_FAST_FLAGS)
     assert "--tools" in argv
     assert argv[argv.index("--tools") + 1] == ""
-    for flag in ("--strict-mcp-config", "--disable-slash-commands",
-                 "--no-session-persistence"):
+    for flag in ("--strict-mcp-config", "--disable-slash-commands", "--no-session-persistence"):
         assert flag in argv
 
 
@@ -236,3 +228,27 @@ def test_a_failed_probe_degrades_to_the_minimal_invocation(
         assert claude_cli._probe_supported_flags() == frozenset()  # noqa: SLF001
     finally:
         claude_cli.reset_flag_probe_cache()
+
+
+def test_a_contract_too_long_for_one_command_line_travels_on_stdin() -> None:
+    """Windows refuses a command line over 32,767 characters (WinError 206):
+    every browser turn of a society agent died at spawn. The contract then
+    rides on stdin, verbatim, and argv stays short.
+
+    The budget is per platform (Linux caps one argument at 128 KiB, not the
+    whole line at 32 KiB), so the contract is sized against this host's budget
+    rather than a Windows-only constant."""
+    from jarvis.plugins.brain import claude_cli
+
+    budget = claude_cli._ARGV_BUDGET  # noqa: SLF001
+    brain = ClaudeCliBrain(structured_prompts=True)
+    contract = "RULE " * (budget // 5 + 1_000)
+    argv, prompt = brain.build_invocation(
+        _req(system=contract, user="do X"), cli_flags=frozenset({"--system-prompt"})
+    )
+    assert "--system-prompt" not in argv
+    assert sum(len(arg) for arg in argv) < budget
+    assert contract.strip() in prompt and "do X" in prompt
+    # A short contract keeps its dedicated flag.
+    argv, _ = brain.build_invocation(_req(), cli_flags=frozenset({"--system-prompt"}))
+    assert "--system-prompt" in argv

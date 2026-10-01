@@ -1,0 +1,98 @@
+/* Coding floor command surfaces: the session command panel and Mission Control.
+   Theme tokens only, so both read in light and dark mode. */
+
+/* ---- shared ----------------------------------------------------------- */
+.office-mc-chips button { padding:4px 10px; border:1px solid hsl(var(--border)); border-radius:999px; background:hsl(var(--background)); color:hsl(var(--foreground)); font-size:11px; font-weight:600; cursor:pointer; }
+.office-mc-chips button:hover:not(:disabled) { background:hsl(var(--secondary)); }
+.office-mc-chips button:disabled { opacity:.45; cursor:not-allowed; }
+.office-mc-chips button[aria-pressed="true"] { border-color:hsl(var(--primary)); background:hsl(var(--primary)); color:hsl(var(--primary-foreground)); text-shadow:none; }
+.office-mc-chips button:focus-visible, .office-mc-tabs button:focus-visible { outline:2px solid hsl(var(--ring)); outline-offset:2px; }
+.office-talk-status[data-tone="ok"] { color:hsl(var(--success)); }
+.office-talk-status[data-tone="error"] { color:hsl(var(--destructive)); white-space:normal; }
+.office-cmd-check { display:inline-flex; align-items:center; gap:6px; flex:none; font-size:11px; color:hsl(var(--muted-foreground)); cursor:pointer; }
+.office-cmd-check input { accent-color:hsl(var(--primary)); }
+
+/* ---- Mission Control -------------------------------------------------- */
+/* Quiet and typographic: sentence-case headings, hairline dividers, one filled
+   button per block. No tabs, no pills, no icons for decoration. */
+.office-mc { display:flex; flex-direction:column; gap:14px; max-width:520px; }
+.office-mc-heading { margin:0 0 10px; font-size:13px; font-weight:600; color:hsl(var(--foreground)); letter-spacing:0; }
+.office-mc-more { border-top:1px solid hsl(var(--border)); padding-top:12px; }
+.office-mc-more > summary { cursor:pointer; list-style:none; display:flex; align-items:center; justify-content:space-between; margin:0; }
+.office-mc-more > summary::-webkit-details-marker { display:none; }
+.office-mc-more > summary::after { content:""; width:7px; height:7px; border-right:1.5px solid hsl(var(--muted-foreground)); border-bottom:1.5px solid hsl(var(--muted-foreground)); transform:rotate(45deg); transition:transform .15s; margin-right:3px; }
+.office-mc-more[open] > summary { margin-bottom:10px; }
+.office-mc-more[open] > summary::after { transform:rotate(-135deg); }
+.office-mc-block { display:flex; flex-direction:column; gap:10px; }
+.office-mc-note { margin:0; font-size:12px; line-height:1.45; color:hsl(var(--muted-foreground)); }
+.office-mc-note[data-tone="ok"] { color:hsl(var(--success)); }
+.office-mc-empty { display:flex; flex-direction:column; gap:10px; font-size:12px; color:hsl(var(--muted-foreground)); }
+.office-mc-empty p { margin:0; }
+
+/* Agent picker: a two-column list of real marks, the chosen one outlined. */
+.office-mc-agents { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:6px; }
+.office-mc-agents button { display:flex; align-items:center; gap:8px; min-width:0; padding:6px 8px; border:1px solid hsl(var(--border)); border-radius:10px; background:hsl(var(--background)); color:hsl(var(--foreground)); font:inherit; font-size:12px; font-weight:500; text-align:left; cursor:pointer; transition:border-color .12s, background .12s; }
+.office-mc-agents button span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.office-mc-agents button:hover:not(:disabled) { background:hsl(var(--secondary)); }
+.office-mc-agents button[aria-checked="true"] { border-color:hsl(var(--foreground)); box-shadow:inset 0 0 0 1px hsl(var(--foreground)); }
+.office-mc-agents button:disabled { opacity:.5; cursor:not-allowed; }
+
+.office-mc-row { display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:12px; color:hsl(var(--muted-foreground)); }
+.office-mc-row .office-mc-select { flex:0 1 60%; width:auto; min-width:0; }
+.office-mc-row input { flex:0 1 60%; min-width:0; padding:6px 8px; border:1px solid hsl(var(--border)); border-radius:8px; background:hsl(var(--background)); color:hsl(var(--foreground)); font:inherit; font-size:12px; }
+.office-mc-row input::placeholder { color:hsl(var(--muted-foreground)); }
+.office-mc-task { width:100%; min-height:44px; resize:vertical; padding:9px 10px; border:1px solid hsl(var(--border)); border-radius:10px; background:hsl(var(--background)); color:hsl(var(--foreground)); font:inherit; font-size:13px; line-height:1.4; }
+.office-mc-task::placeholder { color:hsl(var(--muted-foreground)); }
+
+.office-mc-go { display:flex; align-items:center; gap:8px; }
+.office-mc-stepper { display:inline-flex; align-items:center; border:1px solid hsl(var(--border)); border-radius:10px; overflow:hidden; flex:none; }
+.office-mc-stepper button { display:inline-flex; align-items:center; justify-content:center; width:30px; height:34px; border:0; background:none; color:hsl(var(--foreground)); cursor:pointer; }
+.office-mc-stepper button svg { width:14px; height:14px; }
+.office-mc-stepper button:hover:not(:disabled) { background:hsl(var(--secondary)); }
+.office-mc-stepper button:disabled { opacity:.35; cursor:not-allowed; }
+.office-mc-stepper output { min-width:22px; text-align:center; font-size:13px; font-weight:600; font-variant-numeric:tabular-nums; }
+.office-mc-primary, .office-mc-secondary { flex:1; height:36px; padding:0 14px; border-radius:10px; font:inherit; font-size:13px; font-weight:600; cursor:pointer; transition:opacity .12s, background .12s; }
+.office-mc-primary { border:0; background:hsl(var(--foreground)); color:hsl(var(--background)); text-shadow:none; }
+.office-mc-primary:hover:not(:disabled) { opacity:.88; }
+.office-mc-secondary { border:1px solid hsl(var(--border)); background:hsl(var(--background)); color:hsl(var(--foreground)); flex:0 1 auto; }
+.office-mc-secondary:hover:not(:disabled) { background:hsl(var(--secondary)); }
+.office-mc-primary:disabled, .office-mc-secondary:disabled { opacity:.4; cursor:not-allowed; }
+.office-mc-link { align-self:flex-start; padding:0; border:0; background:none; color:hsl(var(--muted-foreground)); font:inherit; font-size:12px; text-decoration:underline; text-underline-offset:2px; cursor:pointer; }
+.office-mc-link:hover { color:hsl(var(--foreground)); }
+.office-mc button:focus-visible, .office-mc select:focus-visible, .office-mc input:focus-visible, .office-mc textarea:focus-visible, .office-mc summary:focus-visible { outline:2px solid hsl(var(--ring)); outline-offset:2px; }
+
+/* Files: the whole launcher takes a drop; what is held sits under the task as quiet chips. */
+.office-mc-dropzone { position:relative; }
+.office-mc-drophint { position:absolute; inset:-6px; display:flex; align-items:center; justify-content:center; padding:16px; border:1.5px dashed hsl(var(--ring)); border-radius:12px; background:hsl(var(--background) / .9); color:hsl(var(--foreground)); font-size:13px; font-weight:600; text-align:center; pointer-events:none; }
+.office-mc-tools { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.office-mc-attach { display:inline-flex; align-items:center; gap:5px; text-decoration:none; }
+.office-mc-attach svg { width:13px; height:13px; }
+.office-mc-attach:disabled { opacity:.45; cursor:not-allowed; }
+.office-mc-files { list-style:none; margin:0; padding:0; display:flex; flex-wrap:wrap; gap:6px; }
+.office-mc-files li { display:inline-flex; align-items:center; gap:2px; max-width:100%; min-width:0; padding:2px 3px 2px 9px; border:1px solid hsl(var(--border)); border-radius:999px; background:hsl(var(--secondary) / .6); color:hsl(var(--foreground)); font-size:11px; }
+.office-mc-files span { max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.office-mc-files button { display:inline-flex; align-items:center; justify-content:center; flex:none; width:18px; height:18px; padding:0; border:0; border-radius:50%; background:none; color:hsl(var(--muted-foreground)); cursor:pointer; }
+.office-mc-files button:hover:not(:disabled) { background:hsl(var(--secondary)); color:hsl(var(--foreground)); }
+.office-mc-files button:disabled { opacity:.45; cursor:not-allowed; }
+.office-mc-files button svg { width:12px; height:12px; }
+
+/* Launch progress: one quiet line per agent with a status dot. */
+.office-mc-log { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:5px; font-size:12px; color:hsl(var(--foreground)); }
+.office-mc-log li { display:flex; align-items:baseline; gap:8px; line-height:1.4; }
+.office-mc-log li i { flex:none; width:7px; height:7px; border-radius:50%; background:hsl(var(--muted-foreground)); transform:translateY(-1px); }
+.office-mc-log li[data-tone="busy"] { color:hsl(var(--muted-foreground)); }
+.office-mc-log li[data-tone="busy"] i { animation:office-mc-pulse 1.2s ease-in-out infinite; }
+.office-mc-log li[data-tone="ok"] i { background:hsl(var(--success)); }
+.office-mc-log li[data-tone="warn"] i { background:hsl(var(--warning)); }
+.office-mc-log li[data-tone="error"] { color:hsl(var(--destructive)); }
+.office-mc-log li[data-tone="error"] i { background:hsl(var(--destructive)); }
+@keyframes office-mc-pulse { 50% { opacity:.3; } }
+@media (prefers-reduced-motion:reduce) { .office-mc-log li i { animation:none !important; } }
+
+/* Message several: a plain checklist. */
+.office-mc-fleet { list-style:none; margin:0; padding:0; max-height:180px; overflow:auto; display:flex; flex-direction:column; }
+.office-mc-fleet label { display:flex; align-items:center; gap:9px; padding:6px 2px; border-bottom:1px solid hsl(var(--border) / .6); cursor:pointer; font-size:12px; min-width:0; }
+.office-mc-fleet li:last-child label { border-bottom:0; }
+.office-mc-fleet input { accent-color:hsl(var(--foreground)); flex:none; }
+.office-mc-fleet-name { flex:1; min-width:0; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.office-mc-fleet-state { display:inline-flex; align-items:center; gap:6px; flex:none; color:hsl(var(--muted-foreground)); }

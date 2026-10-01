@@ -88,21 +88,6 @@ function composer() {
   );
 }
 
-function composerInput() {
-  return screen.getByRole("textbox");
-}
-
-function typeText(input: HTMLElement, text: string) {
-  input.textContent = text;
-  const range = document.createRange();
-  range.selectNodeContents(input);
-  range.collapse(false);
-  const selection = document.getSelection();
-  selection?.removeAllRanges();
-  selection?.addRange(range);
-  fireEvent.input(input);
-}
-
 /** A DataTransfer stand-in: jsdom's own carries neither files nor types. */
 function transfer(files: File[]) {
   return {
@@ -142,7 +127,7 @@ describe("chat composer attachments", () => {
 
   it("takes a pasted image and shows what was read from it", async () => {
     composer();
-    const box = composerInput();
+    const box = screen.getByTestId("composer-chip-field");
     const png = new File([new Uint8Array([1, 2, 3])], "image.png", { type: "image/png" });
 
     await act(async () => {
@@ -161,23 +146,18 @@ describe("chat composer attachments", () => {
     expect((init.body as FormData).get("session_id")).toBe("s-1");
   });
 
-  it("inserts pasted text as plain text without uploading an attachment", async () => {
+  it("leaves a pasted TEXT alone so ordinary copy-paste keeps working", async () => {
     composer();
-    const box = composerInput();
-    typeText(box, "Existing ");
+    const box = screen.getByTestId("composer-chip-field");
 
     const event = new Event("paste", { bubbles: true, cancelable: true });
-    Object.defineProperty(event, "clipboardData", {
-      value: { ...transfer([]), types: ["text/plain"], getData: () => "<b>plain text</b>" },
-    });
+    Object.defineProperty(event, "clipboardData", { value: transfer([]) });
     await act(async () => {
       box.dispatchEvent(event);
     });
 
-    // The rich-text composer inserts text itself, without treating it as HTML.
-    expect(event.defaultPrevented).toBe(true);
-    expect(box.textContent).toBe("Existing <b>plain text</b>");
-    expect(box.querySelector("b")).toBeNull();
+    // Not claimed, not prevented: the browser inserts the text itself.
+    expect(event.defaultPrevented).toBe(false);
     expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/attachments"))).toBe(false);
   });
 
@@ -201,7 +181,7 @@ describe("chat composer attachments", () => {
     const send = vi.fn(async () => {});
     seed({ send });
     composer();
-    const box = composerInput();
+    const box = screen.getByTestId("composer-chip-field");
     const png = new File([new Uint8Array([1])], "image.png", { type: "image/png" });
 
     await act(async () => {
@@ -209,7 +189,8 @@ describe("chat composer attachments", () => {
     });
     await waitFor(() => expect(screen.getByTestId("chat-attachment-shot.png")).toBeDefined());
 
-    typeText(box, "what is wrong here");
+    box.textContent = "what is wrong here";
+    fireEvent.input(box);
     await act(async () => {
       fireEvent.click(screen.getByTestId("composer-send"));
     });
@@ -223,7 +204,7 @@ describe("chat composer attachments", () => {
     const send = vi.fn(async () => {});
     seed({ send });
     composer();
-    const box = composerInput();
+    const box = screen.getByTestId("composer-chip-field");
     const png = new File([new Uint8Array([1])], "image.png", { type: "image/png" });
 
     await act(async () => {

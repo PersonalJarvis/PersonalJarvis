@@ -180,6 +180,10 @@ class ModelInfo:
     context_length: int | None = None
     quantization_level: str | None = None
     parameter_size: str | None = None
+    # Release time (Unix seconds) where the catalog publishes one — OpenRouter
+    # and OpenAI send ``created``. Public discovery (``discovered_from_feed``)
+    # uses it to admit only models released within the last year.
+    created: float | None = None
 
 
 def _curated(pairs: list[tuple[str, str]]) -> list[ModelInfo]:
@@ -197,6 +201,8 @@ def _curated(pairs: list[tuple[str, str]]) -> list[ModelInfo]:
 CURATED_MODELS: dict[str, list[ModelInfo]] = {
     "claude-api": _curated(
         [
+            ("claude-opus-5-5", "Claude Opus 5.5"),
+            ("claude-fable-5-1", "Claude Fable 5.1"),
             ("claude-fable-5", "Claude Fable 5"),
             ("claude-opus-5", "Claude Opus 5"),
             ("claude-opus-4-8", "Claude Opus 4.8"),
@@ -206,6 +212,11 @@ CURATED_MODELS: dict[str, list[ModelInfo]] = {
     ),
     "openai": _curated(
         [
+            ("gpt-6-sol", "GPT-6 Sol"),
+            ("gpt-6-astra", "GPT-6 Astra"),
+            ("gpt-6-luna", "GPT-6 Luna"),
+            ("gpt-6-sol-pro", "GPT-6 Sol Pro"),
+            ("gpt-6-astra-pro", "GPT-6 Astra Pro"),
             ("gpt-5.6-sol", "GPT-5.6 Sol (preview)"),
             ("gpt-5.6-terra", "GPT-5.6 Terra (preview)"),
             ("gpt-5.6-luna", "GPT-5.6 Luna (preview)"),
@@ -220,6 +231,7 @@ CURATED_MODELS: dict[str, list[ModelInfo]] = {
     ),
     "gemini": _curated(
         [
+            ("gemini-3.8-flash", "Gemini 3.8 Flash"),
             ("gemini-3.7-flash", "Gemini 3.7 Flash"),
             ("gemini-3.6-flash", "Gemini 3.6 Flash"),
             ("gemini-3.5-flash", "Gemini 3.5 Flash"),
@@ -233,16 +245,22 @@ CURATED_MODELS: dict[str, list[ModelInfo]] = {
     ),
     "openrouter": _curated(
         [
+            ("anthropic/claude-opus-5.5", "Claude Opus 5.5"),
+            ("anthropic/claude-fable-5.1", "Claude Fable 5.1"),
             ("anthropic/claude-fable-5", "Claude Fable 5"),
             ("anthropic/claude-opus-4.8", "Claude Opus 4.8"),
             ("anthropic/claude-sonnet-5", "Claude Sonnet 5"),
             ("anthropic/claude-haiku-4.5", "Claude Haiku 4.5"),
+            ("openai/gpt-6-sol", "GPT-6 Sol"),
+            ("openai/gpt-6-astra", "GPT-6 Astra"),
+            ("openai/gpt-6-luna", "GPT-6 Luna"),
             ("openai/gpt-5.6-sol-pro", "GPT-5.6 Sol Pro"),
             ("openai/gpt-5.6-sol", "GPT-5.6 Sol"),
             ("openai/gpt-5.6-terra-pro", "GPT-5.6 Terra Pro"),
             ("openai/gpt-5.6-terra", "GPT-5.6 Terra"),
             ("openai/gpt-5.6-luna-pro", "GPT-5.6 Luna Pro"),
             ("openai/gpt-5.6-luna", "GPT-5.6 Luna"),
+            ("google/gemini-3.8-flash", "Gemini 3.8 Flash"),
             ("google/gemini-3.5-flash", "Gemini 3.5 Flash"),
             ("google/gemini-3.1-pro-preview", "Gemini 3.1 Pro"),
             ("x-ai/grok-4.7", "Grok 4.7"),
@@ -733,6 +751,10 @@ class CatalogSpec:
     selects: str  # "model" | "voice"
     curated: tuple[ModelInfo, ...]
     live: bool
+    #: The direct provider whose publicly discovered models join this curated
+    #: list (``discovered_from_feed``) — for a login that publishes no catalog
+    #: of its own. ``None`` = the curated list is the whole answer.
+    discover: str | None = None
 
 
 def _build_provider_catalog() -> dict[str, CatalogSpec]:
@@ -808,7 +830,7 @@ def _build_provider_catalog() -> dict[str, CatalogSpec]:
     # the user an empty picker on a working account; the curated list is the
     # honest one, and a newer model can still be typed into the model field.
     cat["vertex"] = CatalogSpec(
-        "brain", "model", tuple(CURATED_MODELS.get("gemini", ())), live=False
+        "brain", "model", tuple(CURATED_MODELS.get("gemini", ())), live=False, discover="gemini"
     )
     cat["claude-cli"] = CatalogSpec(
         "brain",
@@ -823,6 +845,9 @@ def _build_provider_catalog() -> dict[str, CatalogSpec]:
             )
         ),
         live=False,
+        # ``claude -p --model`` also takes full ids, so a release the aliases
+        # have not reached yet is still pickable by name.
+        discover="claude-api",
     )
     for p, (selects, opts) in TTS_CATALOG.items():
         cat[p] = CatalogSpec("tts", selects, tuple(opts), live=False)
@@ -904,9 +929,18 @@ def parse_models_response(provider: str, payload: dict) -> list[ModelInfo]:
                 input_modalities=_input_modalities(m),
                 supported_parameters=_supported_parameters(m),
                 pricing=_pricing(m),
+                created=_created(m),
             )
         )
     return out
+
+
+def _created(entry: dict) -> float | None:
+    """The entry's ``created`` Unix timestamp, or None when absent/non-numeric."""
+    raw = entry.get("created")
+    if isinstance(raw, bool) or not isinstance(raw, int | float) or raw <= 0:
+        return None
+    return float(raw)
 
 
 def _pricing(entry: dict) -> tuple[float, float] | None:
@@ -1290,6 +1324,15 @@ _FAMILY_RANK: tuple[tuple[str, int], ...] = (
 )
 
 
+#: family -> (first frontier generation, its rank). Older generations fall
+#: through to the ``_FAMILY_RANK`` rows (``gpt-4`` 15, ``gemini-2`` 14, …).
+_FRONTIER_GENERATIONS: dict[str, tuple[int, int]] = {
+    "gpt": (5, 37),
+    "gemini": (3, 36),
+    "grok": (4, 35),
+}
+
+
 def _family_rank(model_id: str) -> int:
     """Presentation-only relevance band for ``model_id`` (higher = first)."""
     low = model_id.lower()
@@ -1299,6 +1342,14 @@ def _family_rank(model_id: str) -> int:
     tail = low.rsplit("/", 1)[-1]
     if tail.startswith(("o3", "o4")):
         return 34
+    # The flagship families by generation, so a NEW generation (gpt-6,
+    # gemini-4, grok-5) ranks as frontier the day it ships instead of sinking
+    # to rank 0 until someone adds a row below.
+    gen = re.match(r"(gpt|gemini|grok)-(\d+)", tail)
+    if gen:
+        floor, rank = _FRONTIER_GENERATIONS[gen.group(1)]
+        if int(gen.group(2)) >= floor:
+            return rank
     for needle, rank in _FAMILY_RANK:
         if needle in low:
             return rank
@@ -1502,6 +1553,98 @@ def sort_models(provider: str, models: list[ModelInfo]) -> list[ModelInfo]:
 
 
 # ----------------------------------------------------------------------
+# Public discovery — current models for logins that publish no catalog
+# ----------------------------------------------------------------------
+# A subscription login (Claude, ChatGPT, Google OAuth) or a missing key leaves
+# a picker on the curated lists above, and those age with every release: Opus
+# 5.5 shipped while the Claude list still ended at Opus 5. OpenRouter's catalog
+# is public, keyless and lists each vendor's release within hours, so it is
+# the discovery feed. A vendor model it lists that was released within
+# DISCOVERY_MAX_AGE_DAYS joins that vendor's picker under the vendor's own id.
+# Discovery only ever ADDS picks; the curated list stays as the floor, and a
+# provider whose own live catalog answers never needs it.
+
+#: OpenRouter namespace -> the direct provider whose picker gains its models.
+_DISCOVERY_NAMESPACES: dict[str, str] = {
+    "anthropic": "claude-api",
+    "openai": "openai",
+    "google": "gemini",
+    "x-ai": "grok",
+}
+#: The providers a discovered model can join.
+DISCOVERY_PROVIDERS: frozenset[str] = frozenset(_DISCOVERY_NAMESPACES.values())
+#: Nothing a year old or older is offered as "new" (the same line the local
+#: model defaults hold).
+DISCOVERY_MAX_AGE_DAYS = 365
+#: The one feed discovery reads — cached with the rest of the catalog.
+DISCOVERY_FEED = "openrouter"
+#: How long a failed feed fetch is not retried, so an offline box does not pay
+#: the timeout on every picker open.
+_DISCOVERY_RETRY_SECONDS = 5 * 60
+_DISCOVERY_TIMEOUT_SECONDS = 6.0
+
+
+def native_model_id(provider: str, gateway_tail: str) -> str:
+    """The vendor's own id for an OpenRouter id tail.
+
+    Anthropic spells versions with hyphens (``claude-opus-5-5``) where
+    OpenRouter writes a dot (``claude-opus-5.5``); the other vendors use one
+    spelling on both.
+    """
+    if provider == "claude-api":
+        return gateway_tail.replace(".", "-")
+    return gateway_tail
+
+
+def discovered_from_feed(
+    provider: str, feed: list[ModelInfo], *, now: float | None = None
+) -> list[ModelInfo]:
+    """``provider``'s models in the public feed released within the age window,
+    under their native ids, in the picker's order (:func:`sort_models`).
+
+    Variant rows (``:batch``, ``:free``) and non-chat models are skipped; a row
+    without a release time is skipped too, since its age cannot be shown to
+    be inside the window.
+    """
+    cutoff = (time.time() if now is None else now) - DISCOVERY_MAX_AGE_DAYS * 86400
+    out: list[ModelInfo] = []
+    seen: set[str] = set()
+    for m in filter_brain_models(feed):
+        namespace, sep, tail = m.id.partition("/")
+        if not sep or ":" in tail or _DISCOVERY_NAMESPACES.get(namespace) != provider:
+            continue
+        if m.created is None or m.created < cutoff:
+            continue
+        native = native_model_id(provider, tail)
+        if native in seen:
+            continue
+        seen.add(native)
+        # "Anthropic: Claude Opus 5.5" -> "Claude Opus 5.5"
+        label = m.label.split(": ", 1)[1] if ": " in m.label else m.label
+        out.append(replace(m, id=native, label=label))
+    # The picker's own order (flagship of each line first), so a small sibling
+    # released last week does not lead the list.
+    return sort_models(provider, out)
+
+
+def not_yet_listed(discovered: list[ModelInfo], listed: list[tuple[str, str]]) -> list[ModelInfo]:
+    """The discovered models a list of ``(id, label)`` pairs does not hold yet.
+
+    Compared separator-insensitively on id AND label, so a curated dated id
+    (``claude-haiku-4-5-20251001``) and its discovered alias
+    (``claude-haiku-4-5``), both "Claude Haiku 4.5", are not offered twice.
+    """
+    known = {_squash(i) for i, _ in listed} | {_squash(lbl) for _, lbl in listed}
+    return [m for m in discovered if _squash(m.id) not in known and _squash(m.label) not in known]
+
+
+def merge_discovered(listed: list[ModelInfo], discovered: list[ModelInfo]) -> list[ModelInfo]:
+    """``listed`` with the discovered models it lacks placed first."""
+    fresh = not_yet_listed(discovered, [(m.id, m.label) for m in listed])
+    return [*fresh, *listed]
+
+
+# ----------------------------------------------------------------------
 # Catalog with cache + live fetch + static fallback
 # ----------------------------------------------------------------------
 
@@ -1525,6 +1668,13 @@ def shared_catalog() -> ModelCatalog:
     return _shared_catalog
 
 
+#: A provider whose live list just failed (a local server that is not running:
+#: on Windows each refused connect costs about two seconds) is not asked again
+#: for this long; the picker gets its fallback at once. ``force_refresh`` and a
+#: successful fetch clear it.
+_FETCH_RETRY_SECONDS = 30.0
+
+
 class ModelCatalog:
     """Live model lists per provider with a TTL cache and honest fallbacks."""
 
@@ -1541,7 +1691,10 @@ class ModelCatalog:
         # provider -> (fetched_at, models)
         self._cache: dict[str, tuple[float, list[ModelInfo]]] = {}
         self._lock = asyncio.Lock()
+        self._fetch_failed_at: dict[str, float] = {}
         self._client_factory = http_client_factory
+        # When the discovery feed last failed to load (0 = never).
+        self._discovery_failed_at = 0.0
         self._load_cache()
 
     # -- cache I/O -----------------------------------------------------
@@ -1578,6 +1731,11 @@ class ModelCatalog:
                             if isinstance(m.get("pricing"), list) and len(m["pricing"]) == 2
                             else None
                         ),
+                        created=(
+                            float(m["created"])
+                            if isinstance(m.get("created"), int | float)
+                            else None
+                        ),
                     )
                     for m in entry.get("models", [])
                 ]
@@ -1611,6 +1769,7 @@ class ModelCatalog:
                             else {}
                         ),
                         **({"pricing": list(m.pricing)} if m.pricing is not None else {}),
+                        **({"created": m.created} if m.created is not None else {}),
                     }
                     for m in models
                 ],
@@ -1653,9 +1812,14 @@ class ModelCatalog:
         # (no brain-model filtering/sorting — voices and STT models are not brain
         # models and must keep their curated order).
         if not spec.live:
+            curated = list(spec.curated)
+            if spec.discover:
+                async with self._lock:
+                    feed = await self._discovery_feed()
+                curated = merge_discovered(curated, discovered_from_feed(spec.discover, feed))
             return CatalogResult(
                 provider=provider,
-                models=tuple(spec.curated),
+                models=tuple(curated),
                 source="curated",
                 fetched_at=0.0,
                 selects=spec.selects,
@@ -1672,10 +1836,16 @@ class ModelCatalog:
                     "model",
                 )
 
+            failed_at = self._fetch_failed_at.get(provider, 0.0)
+            recently_failed = not force_refresh and time.time() - failed_at < _FETCH_RETRY_SECONDS
             try:
+                if recently_failed:
+                    raise RuntimeError("the last fetch failed moments ago")
                 models = await self._fetch_raw(provider)
             except Exception as exc:  # noqa: BLE001 — a UI list must never crash the page.
-                log.info("Model catalog fetch for %s failed: %s", provider, exc)
+                if not recently_failed:
+                    log.info("Model catalog fetch for %s failed: %s", provider, exc)
+                    self._fetch_failed_at[provider] = time.time()
                 if cached:
                     return CatalogResult(
                         provider,
@@ -1685,6 +1855,9 @@ class ModelCatalog:
                         "model",
                     )
                 static = self._static_fallback(provider)
+                if provider in DISCOVERY_PROVIDERS:
+                    feed = await self._discovery_feed()
+                    static = merge_discovered(static, discovered_from_feed(provider, feed))
                 return CatalogResult(
                     provider,
                     self._present(provider, static),
@@ -1694,6 +1867,7 @@ class ModelCatalog:
                 )
 
             now = time.time()
+            self._fetch_failed_at.pop(provider, None)
             self._cache[provider] = (now, models)
             self._save_cache()
             return CatalogResult(
@@ -1703,6 +1877,45 @@ class ModelCatalog:
                 now,
                 "model",
             )
+
+    # -- public discovery ---------------------------------------------
+
+    async def refresh_discovery(self) -> None:
+        """Load the discovery feed when its cache has expired (no-op when fresh).
+
+        For callers that then read :meth:`discovered` synchronously.
+        """
+        async with self._lock:
+            await self._discovery_feed()
+
+    def discovered(self, provider: str) -> list[ModelInfo]:
+        """``provider``'s publicly discovered models from the cached feed, with
+        no network: whatever the last :meth:`refresh_discovery` (or any
+        OpenRouter picker) loaded, including the copy on disk."""
+        cached = self._cache.get(DISCOVERY_FEED)
+        return discovered_from_feed(provider, cached[1]) if cached else []
+
+    async def _discovery_feed(self) -> list[ModelInfo]:
+        """The public feed, fetched when its cache has expired. Caller holds
+        ``self._lock``. A failed fetch serves the stale copy (or nothing) and is
+        not retried for ``_DISCOVERY_RETRY_SECONDS``."""
+        cached = self._cache.get(DISCOVERY_FEED)
+        if cached and self._is_fresh(DISCOVERY_FEED, cached[0]):
+            return cached[1]
+        if time.time() - self._discovery_failed_at < _DISCOVERY_RETRY_SECONDS:
+            return cached[1] if cached else []
+        try:
+            models = await asyncio.wait_for(
+                self._fetch_raw(DISCOVERY_FEED), timeout=_DISCOVERY_TIMEOUT_SECONDS
+            )
+        except Exception as exc:  # noqa: BLE001 — discovery only adds; the curated list stands.
+            log.info("Public model discovery feed unavailable: %s", exc)
+            self._discovery_failed_at = time.time()
+            return cached[1] if cached else []
+        now = time.time()
+        self._cache[DISCOVERY_FEED] = (now, models)
+        self._save_cache()
+        return models
 
     # -- network -------------------------------------------------------
 

@@ -162,7 +162,7 @@ async def test_bind_is_idempotent_per_bus():
 
 @pytest.mark.asyncio
 async def test_forward_kill_bridges_between_busses():
-    """Two-bus problem from CLAUDE.md: KillSwitch can forward an event from
+    """Two-bus problem from AGENTS.md: KillSwitch can forward an event from
     bus A to bus B.
     """
     ui_bus = EventBus()

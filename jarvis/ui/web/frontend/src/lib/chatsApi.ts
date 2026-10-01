@@ -65,15 +65,23 @@ export async function resumeConversation(
   });
 }
 
+/**
+ * Start a call that already remembers this conversation: the backend seeds
+ * the brain (and the next live call) with its turns and arms the microphone.
+ * Queued with the other context changes so a slower archive load can never
+ * re-seed a different thread after it.
+ */
 export async function speakInConversation(
   kind: ConversationKind,
   id: string,
 ): Promise<{ armed: boolean; seeded_turns: number }> {
-  const res = await fetch(`/api/chats/${kind}/${encodeURIComponent(id)}/speak`, {
-    method: "POST",
+  return changeContext(async () => {
+    const res = await fetch(`/api/chats/${kind}/${encodeURIComponent(id)}/speak`, {
+      method: "POST",
+    });
+    if (!res.ok) throw new ChatsApiError("speak-failed", res.status);
+    return (await res.json()) as { armed: boolean; seeded_turns: number };
   });
-  if (!res.ok) throw new ChatsApiError("speak-failed", res.status);
-  return (await res.json()) as { armed: boolean; seeded_turns: number };
 }
 
 /**

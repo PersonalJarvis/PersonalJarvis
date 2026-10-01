@@ -101,3 +101,33 @@ it("recognizes a newly connected key without losing the user's model choice", as
   expect(screen.getByRole("combobox", { name: "live.thinking_model" }).textContent).toContain("Chosen");
   client.clear();
 });
+
+it("applies a new thinking model at once when Live is already set up", async () => {
+  const requests: unknown[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (path: string, init?: RequestInit) => {
+      if (init?.method === "PUT") {
+        requests.push(JSON.parse(String(init.body)));
+        return { ok: true, json: async () => ({}) };
+      }
+      return {
+        ok: true,
+        json: async () => path.endsWith("options") ? {
+          models: [{ id: "old-model", label: "Old" }, { id: "cheap-model", label: "Cheap" }],
+          voices: ["gleam"], efforts: ["medium"],
+        } : {
+          key_ready: true, active: true, agent_configured: true,
+          profile: { model: "gpt-live-1", voice: "gleam", backend_model: "old-model", reasoning_effort: "medium", web_search: true, instructions: "", backend_instructions: "", configured: true },
+        },
+      };
+    }),
+  );
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(<QueryClientProvider client={client}><LiveProfile /></QueryClientProvider>);
+  fireEvent.click(await screen.findByRole("combobox", { name: "live.thinking_model" }));
+  fireEvent.click(await screen.findByRole("option", { name: /Cheap/ }));
+  await waitFor(() => expect(requests).toHaveLength(1));
+  expect(requests[0]).toMatchObject({ backend_model: "cheap-model", configured: true });
+  client.clear();
+});

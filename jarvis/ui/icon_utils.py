@@ -341,7 +341,10 @@ def _replace_exe_icon(exe_path: Path, ico_path: Path) -> bool:
         return False
 
     RT_ICON, RT_GROUP_ICON, LANG = 3, 14, 0x0409
-    k = ctypes.windll.kernel32
+    # A private WinDLL instance, not ctypes.windll.kernel32: mutating
+    # argtypes on the shared object corrupts every other caller in the
+    # process (e.g. pywebview's winforms SetWindowPos calls).
+    k = ctypes.WinDLL("kernel32", use_last_error=True)
     k.BeginUpdateResourceW.restype = wintypes.HANDLE
     k.BeginUpdateResourceW.argtypes = [wintypes.LPCWSTR, wintypes.BOOL]
     k.UpdateResourceW.argtypes = [
@@ -1218,7 +1221,10 @@ def _apply_icon_to_hwnd(hwnd: int, ico_path: Path) -> bool:
         logger.opt(exception=exc).warning("ctypes not available")
         return False
 
-    user32 = ctypes.windll.user32
+    # A private WinDLL instance, not ctypes.windll.user32: mutating
+    # argtypes on the shared object corrupts every other caller in the
+    # process (e.g. pywebview's winforms SetWindowPos calls).
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
     user32.LoadImageW.restype = wintypes.HANDLE
     user32.SendMessageW.restype = ctypes.c_long
     # On 64-bit Windows SetClassLongPtrW is the correct variant.
@@ -1379,7 +1385,10 @@ def set_window_icon_by_title(
         logger.opt(exception=exc).warning("ctypes not available")
         return False
 
-    user32 = ctypes.windll.user32
+    # A private WinDLL instance, not ctypes.windll.user32: mutating
+    # argtypes on the shared object corrupts every other caller in the
+    # process (e.g. pywebview's winforms SetWindowPos calls).
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
     user32.FindWindowW.restype = wintypes.HWND
     user32.GetWindowThreadProcessId.argtypes = [
         wintypes.HWND,
@@ -1426,7 +1435,10 @@ def set_window_icon_for_pid(pid: int, ico_path: Path) -> bool:
         logger.opt(exception=exc).warning("ctypes not available")
         return False
 
-    user32 = ctypes.windll.user32
+    # A private WinDLL instance, not ctypes.windll.user32: mutating
+    # argtypes on the shared object corrupts every other caller in the
+    # process (e.g. pywebview's winforms SetWindowPos calls).
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
     user32.GetWindowThreadProcessId.argtypes = [
         wintypes.HWND, ctypes.POINTER(wintypes.DWORD)
     ]
@@ -1593,7 +1605,7 @@ def ensure_linux_desktop_entry(applications_dir: Path | None = None) -> bool:
             "[Desktop Entry]\n"
             "Type=Application\n"
             f"Name={escape_value(APP_DISPLAY_NAME)}\n"
-            "Comment=Voice-driven meta-orchestrator\n"
+            "Comment=Turn your computer into an AI agent\n"
             f"Exec={exec_value(sys.executable, ('-m', _LAUNCHER_MODULE, *_LAUNCHER_ARGS))}\n"
             f"Path={escape_value(str(PROJECT_ROOT))}\n"
             "Terminal=false\n"

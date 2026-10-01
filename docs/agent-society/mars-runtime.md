@@ -1,8 +1,9 @@
 # Mars runtime reference
 
-Status: development reference, not the completed colony. **Agents > Map** opens
-Mars directly in both normal and Dev instances and offers no previous-world
-selector, including when an older URL requests another world. The Agents workspace and communications-station
+Status: development reference, not the completed colony. Since 2026-09-28
+**Agents > Map** opens the agent office ([office-map.md](office-map.md)) instead
+of Mars; this page documents the Mars code and backend contracts, which remain
+in the tree. No older URL restores a previous world. The Agents workspace and communications-station
 controls remain separate from rendering. Final character/rover art, player
 boarding and remaining districts are unfinished.
 The art study has no user visual approval and must not be rolled out by family.

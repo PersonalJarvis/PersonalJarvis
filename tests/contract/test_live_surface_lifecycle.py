@@ -133,3 +133,29 @@ async def test_new_input_recovers_after_task_cancellation(tmp_path):
         assert old_token.is_cancelled()
     finally:
         ledger.close()
+
+
+@pytest.mark.asyncio
+async def test_an_empty_balance_is_spoken_instead_of_a_silent_hangup():
+    """Live 2026-09-29: every wake ended after a second with no word because
+    the API balance was empty; the call must say why it ends."""
+    frames = []
+
+    async def send(frame):
+        frames.append(frame)
+
+    session = LiveVoiceSession(
+        session_id="live-no-credits",
+        bus=None,
+        send_json=send,
+        send_binary=send,
+        config=SimpleNamespace(brain=SimpleNamespace(reply_language="en")),
+        providers=[SimpleNamespace(name="test")],
+    )
+    await session._announce_start_failure(
+        RuntimeError("OpenAI Live session creation failed (HTTP 429, no_credits).")
+    )
+
+    spoken = [f for f in frames if f.get("type") == "error_spoken"]
+    assert len(spoken) == 1
+    assert "credit" in spoken[0]["text"].lower()

@@ -5,7 +5,7 @@ SkillRegistry snapshot into a Markdown ``## AVAILABLE SKILLS`` block that the
 BrainManager appends to the system prompt. Bullets carry description +
 when_to_use, capped at 1536 chars per entry.
 
-These tests use lightweight Fakes (no ``unittest.mock``, per CLAUDE.md
+These tests use lightweight Fakes (no ``unittest.mock``, per AGENTS.md
 testing convention).
 """
 from __future__ import annotations

@@ -205,8 +205,14 @@ export interface PaneSocketHandlers {
    * The implementation therefore has exactly one obligation — reset the
    * terminal before writing this — and it is required rather than optional so
    * that a new pane cannot quietly forget it.
+   *
+   * `awaitRepaint` means the replay cannot rebuild the screen by itself (its
+   * front was cut, or it belongs to another geometry) and the server has asked
+   * the full-screen agent to repaint: that repaint starts with a whole-screen
+   * erase on the ordinary output channel, and the pane should stay hidden
+   * until it arrives.
    */
-  onReplay: (text: string) => void;
+  onReplay: (text: string, awaitRepaint?: boolean) => void;
   /**
    * The agent is attached — freshly started, resumed, or re-joined.
    *
@@ -433,7 +439,9 @@ export function openPaneSocket(
       // restart plays out, patient afterwards — a workspace restored a quarter
       // of an hour later still finds its panes waiting.
       waits += 1;
-      handlers.onTrouble("Waiting for the workspace to come back…", true);
+      // The server's own sentence when it gave one ("Copying the folder to
+      // vps…" while a pane is set up on a computer); otherwise the restart case.
+      handlers.onTrouble(serverReason || "Waiting for the workspace to come back…", true);
       // Before settling into the slow knock, ask once whether the world still
       // looks the way this pane thinks it does. A workspace that opened while
       // the panes were waiting announces itself, but a pane that has already
@@ -497,6 +505,7 @@ export function openPaneSocket(
         last_prompt_preview?: string;
         cols?: number;
         rows?: number;
+        repaint?: boolean;
       };
       try {
         msg = JSON.parse((ev as MessageEvent).data as string);
@@ -506,7 +515,7 @@ export function openPaneSocket(
       if (msg.t === "o") {
         handlers.onOutput(msg.d ?? "");
       } else if (msg.t === "replay") {
-        handlers.onReplay(msg.d ?? "");
+        handlers.onReplay(msg.d ?? "", msg.repaint === true);
       } else if (msg.t === "ready") {
         // A live handshake also clears the auth streak: whatever credential
         // this attempt used, it worked.

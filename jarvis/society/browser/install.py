@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import platform
+import shutil
 import signal
 import subprocess
 import sys
@@ -299,6 +300,43 @@ def _run(cmd: list[str], *, env: dict[str, str], timeout: float = 900) -> str:
         proc.wait()
 
 
+def _system_deps_installable() -> bool:
+    """Whether ``playwright install-deps`` can run without a password prompt.
+
+    It needs root: either the process already is root, or ``sudo`` works
+    non-interactively. A headless or WSL install without passwordless sudo
+    would otherwise stop at "a password is required" and fail the whole setup.
+    """
+    geteuid = getattr(os, "geteuid", None)
+    if geteuid is not None and geteuid() == 0:
+        return True
+    sudo = shutil.which("sudo")
+    if sudo is None:
+        return False
+    try:
+        probe = subprocess.run(
+            [sudo, "-n", "true"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+            check=False,
+            creationflags=NO_WINDOW_CREATIONFLAGS,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        log.debug("Passwordless sudo probe failed", exc_info=True)
+        return False
+    return probe.returncode == 0
+
+
+def _system_deps_hint(python: Path) -> str:
+    return (
+        "The browser's system libraries are missing and could not be installed "
+        "without a password. Run once in a terminal: "
+        f"sudo {python} -m playwright install-deps chromium"
+    )
+
+
 def ensure_installed(
     data_dir: Path | None = None, *, repair: bool = False, system_dependencies: bool = False
 ) -> dict[str, Any]:
@@ -362,8 +400,13 @@ def ensure_installed(
                 env=env,
             )
             _set(data_dir, percent=60, detail="Downloading the managed browser")
+            deps_skipped = False
             if system_dependencies and sys.platform.startswith("linux"):
-                _run([str(python), "-m", "playwright", "install-deps", "chromium"], env=env)
+                if _system_deps_installable():
+                    _run([str(python), "-m", "playwright", "install-deps", "chromium"], env=env)
+                else:
+                    deps_skipped = True
+                    log.warning("%s", _system_deps_hint(python))
             _run([str(python), "-m", "playwright", "install", "chromium", "--no-shell"], env=env)
             _set(
                 data_dir,
@@ -371,17 +414,24 @@ def ensure_installed(
                 percent=90,
                 detail="Checking browser rendering and input",
             )
-            output = _run(
-                [str(python), str(runner_path()), "--probe"],
-                env=worker_env(data_dir),
-                timeout=120,
-            )
+            try:
+                output = _run(
+                    [str(python), str(runner_path()), "--probe"],
+                    env=worker_env(data_dir),
+                    timeout=120,
+                )
+            except RuntimeError as exc:
+                if deps_skipped:
+                    raise RuntimeError(_system_deps_hint(python)) from exc
+                raise
             lines = [
                 json.loads(line)
                 for line in output.splitlines()
                 if line.startswith('{"kind": "probe"')
             ]
             if not lines or not lines[-1].get("ok"):
+                if deps_skipped:
+                    raise RuntimeError(_system_deps_hint(python))
                 raise RuntimeError(f"Browser render check failed: {output[-1500:]}")
             probe = lines[-1]
             executable = Path(probe["executable"]).resolve()

@@ -497,9 +497,42 @@ class LiveVoiceSession:
                     "continuous": True,
                 }
             )
-        except BaseException:
+        except BaseException as exc:
+            if isinstance(exc, Exception):
+                await self._announce_start_failure(exc)
             await self.end(reason="error")
             raise
+
+    async def _announce_start_failure(self, exc: Exception) -> None:
+        """Say why the call ends instead of hanging up in silence.
+
+        Live 2026-09-29: an empty API balance made every wake end after a
+        second with no word, which read as a broken wake word.
+        """
+        from jarvis.brain.provider_test import (
+            NO_CREDITS,
+            RATE_LIMITED,
+            classify_provider_error,
+        )
+        from jarvis.realtime.session import _handshake_failure_message
+
+        status = classify_provider_error(str(exc))
+        cause = {NO_CREDITS: "no_credits", RATE_LIMITED: "rate_limited"}.get(
+            status, "unavailable"
+        )
+        log.warning("Live session could not start (cause=%s): %s", cause, exc)
+        try:
+            await self._send_json(
+                {
+                    "type": "error_spoken",
+                    "text": _handshake_failure_message(cause, self._language),
+                    "language": self._language,
+                    "spoken_kind": "reply",
+                    "provider": self.active_provider,
+                }
+            )
+        except Exception:  # noqa: BLE001 — the start failure still propagates
+            log.warning("Live start failure notice could not be sent", exc_info=True)
 
     def _take_initial_context(self) -> list[dict]:
         from jarvis.core.runtime_refs import get_brain_manager
@@ -800,8 +833,7 @@ class LiveVoiceSession:
                     result = await self._tools.execute(
                         f"{self._wire_epoch}:{item['call_id']}", item["name"], arguments, revision
                     )
-                except (ValueError, TypeError):
-                    # The structured tool response reports invalid input without logging it.
+                except (ValueError, TypeError):  # The tool receives an invalid-arguments result.
                     result = {"success": False, "error": "Invalid function arguments."}
                 if self._closing:
                     return
@@ -930,11 +962,100 @@ class LiveVoiceSession:
             }
         )
 
-    async def deliver_announcement(self, text: str, **_kwargs: Any) -> bool:
+    async def deliver_announcement(
+        self, text: str, *, report: str | None = None, **kwargs: Any
+    ) -> bool:
         if not self.is_active:
             return False
+        if str(report or "").strip():
+            return await self._deliver_report(text, str(report), kwargs)
         await self._connection.send(
             {"type": "session.commentary.append", "delegation_id": None, "content": text[:1000]}
+        )
+        return True
+
+    async def _deliver_report(self, text: str, report: str, kwargs: dict[str, Any]) -> bool:
+        """Let the reasoning backend think about an agent's report, then speak.
+
+        A report is not a line to relay: the backend is given the full text and
+        works out what the user needs to hear (``report_prompt``). Refused while
+        a turn is in flight — the caller parks it and retries at the next
+        boundary — so it never talks over the user or a running answer.
+        """
+        if (
+            self._recovering
+            or self._resume_needs_input
+            or self._input_active
+            or self._thinking
+            or self._speaking
+            or self.playback_active
+            or self._has_pending_work()
+        ):
+            return False
+        from jarvis.realtime.report_prompt import report_update_prompt
+
+        language = str(kwargs.get("language") or self._language)
+        prompt = report_update_prompt(
+            text,
+            report,
+            language=language,
+            kind=str(kwargs.get("spoken_kind") or "completion"),
+        )
+        await self._connection.send(
+            {
+                "type": "response.item.create",
+                "item": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": "[Application event, not the user speaking]\n" + prompt,
+                        }
+                    ],
+                },
+            }
+        )
+        await self._connection.send({"type": "response.create"})
+        return True
+
+    async def attach_appshot(self, image: bytes, mime: str, note: str) -> bool:
+        """Put an appshot into the thinking backend's context, silently.
+
+        The voice model only hears that it exists; the picture itself goes to
+        the backend conversation, which answers every question about it. No
+        response is requested: the user's next words are the question.
+        """
+        if not self.is_active or self._recovering or self._resume_needs_input:
+            return False
+        await self._connection.send(
+            {
+                "type": "session.thinking.append",
+                "delegation_id": None,
+                "content": (
+                    "The user just took an appshot of their front window. It is "
+                    "in your backend's context. Delegate any question about what "
+                    "they are looking at; do not describe it yourself, and do "
+                    "not comment on the appshot unless asked."
+                ),
+            }
+        )
+        await self._connection.send(
+            {
+                "type": "response.item.create",
+                "item": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": note},
+                        {
+                            "type": "input_image",
+                            "image_url": f"data:{mime};base64,"
+                            + base64.b64encode(image).decode("ascii"),
+                        },
+                    ],
+                },
+            }
         )
         return True
 

@@ -1,0 +1,89 @@
+/* Reception: the office's help centre. Theme tokens only, so light and dark mode both work. */
+.office-panel-slot[data-wide] { width:min(440px, calc(100% - 28px)); }
+/* Focus lands on the panel when it opens (H); its tabs and fields show their own rings. */
+.office-panel[data-panel="create"]:focus-visible { outline:none; }
+.office-reception { display:flex; flex-direction:column; gap:12px; min-height:0; }
+.office-reception svg { width:15px; height:15px; flex:none; }
+
+/* Tabs: a segmented control with a sliding thumb. */
+.office-rx-tabs { position:relative; display:grid; grid-template-columns:repeat(3, 1fr); padding:3px; border-radius:11px; background:hsl(var(--secondary) / .75); border:1px solid hsl(var(--border)); }
+.office-rx-tab-thumb { position:absolute; top:3px; bottom:3px; left:3px; width:calc((100% - 6px) / 3); border-radius:8px; background:hsl(var(--background)); box-shadow:0 1px 2px rgb(0 0 0 / .12), 0 2px 8px rgb(0 0 0 / .12); transform:translateX(calc(var(--rx-tab, 0) * 100%)); transition:transform .22s cubic-bezier(.3, .7, .2, 1); }
+.office-rx-tab { position:relative; display:inline-flex; align-items:center; justify-content:center; gap:6px; border:0; border-radius:8px; padding:7px 6px; background:transparent; color:hsl(var(--muted-foreground)); font-size:12px; font-weight:600; cursor:pointer; white-space:nowrap; min-width:0; transition:color .15s; }
+.office-rx-tab svg { width:14px; height:14px; }
+.office-rx-tab:hover, .office-rx-tab[aria-selected="true"] { color:hsl(var(--foreground)); }
+.office-rx-tab:focus-visible { outline:2px solid hsl(var(--ring)); outline-offset:1px; }
+.office-rx-body { display:flex; flex-direction:column; gap:10px; animation:office-rx-in .2s ease-out; }
+@keyframes office-rx-in { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:none; } }
+
+/* Icon tiles: a checkpoint's icon, as on its floor token. */
+.office-rx-icon { flex:none; display:inline-flex; align-items:center; justify-content:center; width:32px; height:32px; border-radius:10px; background:hsl(var(--secondary)); color:hsl(var(--foreground)); border:1px solid hsl(var(--border)); }
+.office-rx-icon svg { width:16px; height:16px; }
+.office-rx-icon[data-tone="gold"] { background:linear-gradient(160deg, #ffd476, #f0a92b); color:#1f1300; border-color:transparent; box-shadow:0 4px 14px rgb(240 169 43 / .35); }
+
+.office-rx-heading { margin:4px 2px -2px; font-size:10.5px; font-weight:700; letter-spacing:.07em; text-transform:uppercase; color:hsl(var(--muted-foreground)); }
+.office-rx-lead { color:hsl(var(--muted-foreground)); }
+
+/* Welcome: hiring first, then every place on the floor. */
+.office-rx-hero { position:relative; overflow:hidden; display:flex; gap:12px; padding:13px; border-radius:13px; border:1px solid rgb(240 169 43 / .35); background:linear-gradient(135deg, rgb(245 184 61 / .16), rgb(245 184 61 / .03) 60%), hsl(var(--background) / .55); }
+.office-rx-hero::after { content:""; position:absolute; right:-40px; top:-40px; width:130px; height:130px; border-radius:50%; background:radial-gradient(circle, rgb(245 184 61 / .22), transparent 70%); pointer-events:none; }
+.office-rx-hero > div { position:relative; display:flex; flex-direction:column; align-items:flex-start; gap:6px; min-width:0; }
+.office-rx-hero strong { font-size:13.5px; }
+.office-rx-hero p { color:hsl(var(--muted-foreground)); }
+.office-rx-hero .office-action-primary { margin-top:2px; padding:7px 14px; }
+.office-rx-places { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:3px; }
+.office-rx-place { display:flex; align-items:center; gap:10px; width:100%; padding:6px 8px 6px 6px; border:1px solid transparent; border-radius:11px; background:transparent; color:inherit; font:inherit; text-align:left; cursor:pointer; transition:background .15s, border-color .15s; }
+.office-rx-place:hover { background:hsl(var(--secondary) / .7); border-color:hsl(var(--border)); }
+.office-rx-place:focus-visible { outline:2px solid hsl(var(--ring)); outline-offset:1px; }
+.office-rx-place-text { flex:1; min-width:0; display:flex; flex-direction:column; }
+.office-rx-place-text strong { font-size:12.5px; }
+.office-rx-place-text span { font-size:11px; color:hsl(var(--muted-foreground)); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.office-rx-go { flex:none; display:inline-flex; align-items:center; gap:2px; font-size:11px; font-weight:600; color:hsl(var(--muted-foreground)); opacity:.75; transition:opacity .15s, color .15s, transform .15s; }
+.office-rx-go svg { width:13px; height:13px; }
+.office-rx-place:hover .office-rx-go, .office-rx-place:focus-visible .office-rx-go { opacity:1; color:hsl(var(--foreground)); transform:translateX(2px); }
+.office-rx-tip { display:flex; align-items:center; gap:9px; padding:9px 11px; border-radius:11px; background:hsl(var(--secondary) / .45); font-size:11px; color:hsl(var(--muted-foreground)); }
+
+/* Key caps: a raised key for keys, a softer pill for mouse gestures. */
+.office-rx-cap { display:inline-flex; align-items:center; justify-content:center; min-width:23px; height:23px; padding:0 6px; border-radius:6px; border:1px solid hsl(var(--border)); box-shadow:inset 0 -2px 0 hsl(var(--border)); background:linear-gradient(hsl(var(--background)), hsl(var(--secondary) / .6)); color:hsl(var(--foreground)); font-family:inherit; font-size:11px; font-weight:700; line-height:1; white-space:nowrap; }
+.office-rx-cap svg { width:12px; height:12px; stroke-width:2.6; }
+.office-rx-cap[data-mouse] { box-shadow:none; border-radius:999px; padding:0 9px; font-weight:600; background:hsl(var(--secondary) / .8); color:hsl(var(--muted-foreground)); }
+.office-rx-keys { display:flex; flex-wrap:wrap; justify-content:flex-end; align-items:center; gap:4px; }
+.office-rx-alt { display:inline-flex; align-items:center; gap:3px; }
+.office-rx-or { margin:0 3px 0 1px; font-size:10.5px; color:hsl(var(--muted-foreground)); }
+.office-rx-plus { font-size:11px; color:hsl(var(--muted-foreground)); }
+
+/* Controls: a search, then one card per group with a row per action. */
+.office-rx-search { display:flex; align-items:center; gap:8px; padding:0 10px; border-radius:10px; border:1px solid hsl(var(--border)); background:hsl(var(--background) / .7); color:hsl(var(--muted-foreground)); transition:border-color .15s, box-shadow .15s; }
+.office-rx-search:focus-within { border-color:hsl(var(--ring)); box-shadow:0 0 0 3px hsl(var(--ring) / .18); }
+.office-rx-search input { flex:1; min-width:0; height:32px; border:0; background:transparent; color:hsl(var(--foreground)); font-size:12px; outline:none; }
+.office-rx-search input::placeholder { color:hsl(var(--muted-foreground)); }
+.office-rx-empty { padding:18px 8px; text-align:center; color:hsl(var(--muted-foreground)); }
+.office-rx-groups { display:flex; flex-direction:column; gap:8px; }
+.office-rx-group { border:1px solid hsl(var(--border)); border-radius:12px; padding:9px 11px 4px; background:hsl(var(--background) / .5); }
+.office-rx-group h3 { display:flex; align-items:center; gap:7px; margin:0 0 4px; font-size:10.5px; font-weight:700; letter-spacing:.07em; text-transform:uppercase; color:hsl(var(--muted-foreground)); }
+.office-rx-group h3 svg { width:13px; height:13px; }
+.office-rx-group ul { list-style:none; margin:0; padding:0; }
+.office-rx-group li { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:6px 0; border-top:1px solid hsl(var(--border) / .6); }
+.office-rx-group li:first-child { border-top:0; }
+.office-rx-what { min-width:0; }
+
+/* Settings: sections of rows, each with an icon and a switch. */
+.office-rx-settings { display:flex; flex-direction:column; border:1px solid hsl(var(--border)); border-radius:12px; overflow:hidden; background:hsl(var(--background) / .5); }
+.office-rx-setting { display:flex; align-items:center; gap:11px; padding:11px; }
+.office-rx-setting + .office-rx-setting { border-top:1px solid hsl(var(--border)); }
+.office-rx-setting > div { flex:1; display:flex; flex-direction:column; gap:2px; min-width:0; }
+.office-rx-setting strong { font-size:12.5px; }
+.office-rx-setting span { font-size:11px; color:hsl(var(--muted-foreground)); }
+.office-rx-switch { flex:none; position:relative; width:38px; height:22px; border-radius:999px; border:1px solid hsl(var(--border)); background:hsl(var(--secondary)); cursor:pointer; padding:0; transition:background .18s, border-color .18s; }
+.office-rx-switch i { position:absolute; top:2px; left:2px; width:16px; height:16px; border-radius:50%; background:hsl(var(--background)); box-shadow:0 1px 3px rgb(0 0 0 / .3); transition:transform .18s cubic-bezier(.3, .7, .2, 1); }
+.office-rx-switch[aria-checked="true"] { background:#f0a92b; border-color:transparent; }
+.office-rx-switch[aria-checked="true"] i { transform:translateX(16px); background:#fff; }
+.office-rx-switch:focus-visible { outline:2px solid hsl(var(--ring)); outline-offset:2px; }
+.office-rx-reset { align-self:flex-start; display:inline-flex; align-items:center; gap:6px; border:1px solid hsl(var(--border)); border-radius:9px; padding:6px 11px; background:transparent; color:hsl(var(--muted-foreground)); font-size:11.5px; font-weight:600; cursor:pointer; }
+.office-rx-reset svg { width:13px; height:13px; }
+.office-rx-reset:hover { color:hsl(var(--foreground)); background:hsl(var(--secondary)); }
+.office-rx-reset:focus-visible { outline:2px solid hsl(var(--ring)); outline-offset:2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .office-rx-tab-thumb, .office-rx-tab, .office-rx-switch, .office-rx-switch i, .office-rx-place, .office-rx-go { transition:none; }
+  .office-rx-body { animation:none; }
+}

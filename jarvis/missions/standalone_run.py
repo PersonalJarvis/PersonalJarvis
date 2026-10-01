@@ -84,6 +84,19 @@ def read_marker(run_dir: Path) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
+#: Marker kinds that only park a chat's media so the transcript can serve it.
+#: They are storage, not results: a picture pasted into a chat or a clip a tool
+#: returned is no artifact, and listing each one as a run flooded the Artifacts
+#: section with untitled "Chat media" rows (2026-09-29). Their files stay
+#: reachable by URL; the run list leaves them out.
+CHAT_ATTACHMENT_KINDS = frozenset({"chat_media", "chat_image"})
+
+
+def is_chat_attachment(marker: dict[str, Any]) -> bool:
+    """True when the marker belongs to a chat's parked media, not a run."""
+    return marker.get("kind") in CHAT_ATTACHMENT_KINDS
+
+
 def marker_label(marker: dict[str, Any]) -> str | None:
     """The tile label for a standalone run: what was asked, else what came out."""
     for key in ("utterance", "title"):
@@ -93,4 +106,11 @@ def marker_label(marker: dict[str, Any]) -> str | None:
     return None
 
 
-__all__ = ["MARKER_NAME", "marker_label", "read_marker", "write_marker"]
+__all__ = [
+    "CHAT_ATTACHMENT_KINDS",
+    "MARKER_NAME",
+    "is_chat_attachment",
+    "marker_label",
+    "read_marker",
+    "write_marker",
+]

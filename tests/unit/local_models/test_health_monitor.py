@@ -21,8 +21,11 @@ def _data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return tmp_path
 
 
-def _cfg(chat: str = "", hours: float | None = None) -> JarvisConfig:
+def _cfg(chat: str = "", hours: float | None = None, primary: str = "ollama") -> JarvisConfig:
     cfg = JarvisConfig()
+    # Local models SELECTED unless a test says otherwise — the only state in
+    # which the check may load a model (see test_unused_picks_are_never_loaded).
+    cfg.brain.primary = primary
     provider = BrainProviderConfig(model=chat, base_url="http://fake:11434")
     if hours is not None:
         provider.health_check_hours = hours
@@ -186,6 +189,36 @@ async def test_one_generation_decides_ok_or_error(tmp_path: Path) -> None:
         hm.GENERATION_CAP_S = hm_cap
     assert record is not None and record["status"] == "error"
     assert "did not answer" in record["reason"]
+
+
+async def test_unused_picks_are_never_loaded(tmp_path: Path) -> None:
+    """A hosted brain with local picks stored: probe the server, load nothing.
+
+    One generation loads the pick and keeps it resident behind its keep-alive —
+    a 14B model held ~11 GB for half an hour after every boot on a box that
+    never asked a local model anything.
+    """
+    calls: list[str] = []
+
+    async def generate(_cfg: Any, model: str) -> Any:
+        calls.append(model)
+        return _Result("ok")
+
+    record = await hm.check_once(
+        _cfg(chat="deepseek-r1:14b", primary="openrouter"),
+        probe=_probe(True),
+        generate=generate,
+    )
+    assert record == {"status": "ok", "reason": ""}
+    assert calls == [], "a pick nothing selects must not be generated on"
+
+    record = await hm.check_once(
+        _cfg(chat="deepseek-r1:14b", primary="openrouter"),
+        probe=_probe(True),
+        generate=generate,
+        in_use=lambda _cfg: (True, "the active realtime voice (local)"),
+    )
+    assert calls == ["deepseek-r1:14b"], "a local VOICE still counts as in use"
 
 
 def test_read_record_defaults_without_a_file() -> None:

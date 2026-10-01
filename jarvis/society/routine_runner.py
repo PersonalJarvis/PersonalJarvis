@@ -9,6 +9,14 @@ from uuid import uuid4
 from .chat_binding import SURFACE, _workspace, pair_for
 from .routines import agent_id_from_tags, routine_seat
 
+#: Marks a per-execution routine chat: ``society:<agent>:routine:<task>:<run>``.
+ROUTINE_SESSION_MARKER = ":routine:"
+
+
+def is_routine_session(session_id: str) -> bool:
+    """Whether ``session_id`` is an unattended routine execution's own chat."""
+    return ROUTINE_SESSION_MARKER in (session_id or "")
+
 
 async def guard_owned_routine(runtime: Any, tags: tuple[str, ...]) -> Any:
     """Check live owner availability for both chat and native workflow actions."""
@@ -41,7 +49,7 @@ def _billed_via_api(provider: str) -> bool:
     return resolve_runner(provider, surface=SURFACE) in ("brain", "api", "unknown")
 
 
-def _subscription_seat(cfg: Any) -> tuple[str, str, str] | None:
+async def _subscription_seat(cfg: Any) -> tuple[str, str, str] | None:
     """The Jarvis chat's current subscription seat, if it has one.
 
     Mirrors what a typed turn on the front page resolves to
@@ -51,7 +59,7 @@ def _subscription_seat(cfg: Any) -> tuple[str, str, str] | None:
     """
     try:
         from jarvis.core.model_selection import worker_selection
-        from jarvis.core.task_agent import subscription_seat
+        from jarvis.core.task_agent import subscription_seat_off_loop
     except Exception:  # noqa: BLE001 — no selection layer: no subscription seat
         return None
     try:
@@ -60,7 +68,7 @@ def _subscription_seat(cfg: Any) -> tuple[str, str, str] | None:
         return None
     if selection is None or not selection.provider:
         return None
-    mapped = subscription_seat(selection.provider)
+    mapped = await subscription_seat_off_loop(selection.provider)
     if mapped is not None:
         return mapped[0], selection.model or "", selection.reasoning_effort or ""
     if not _billed_via_api(selection.provider):
@@ -94,7 +102,7 @@ async def _seat_for_run(runtime: Any, agent: Any, task_id: str) -> tuple[str, st
     if getattr(agent, "provider", ""):
         _provider, _model, _effort = pair_for(cfg, agent)
         return _provider, _model, _effort, account_id
-    subscription = _subscription_seat(cfg)
+    subscription = await _subscription_seat(cfg)
     if subscription is not None:
         provider, model, effort = subscription
         return provider, model, effort, account_id
@@ -133,7 +141,7 @@ async def run_owned_routine(
     cfg = runtime.config()
     provider, model, effort, account_id = await _seat_for_run(runtime, agent, task_id)
     session = service.store.create_session(
-        session_id=f"{agent.session_id}:routine:{task_id}:{uuid4().hex}",
+        session_id=f"{agent.session_id}{ROUTINE_SESSION_MARKER}{task_id}:{uuid4().hex}",
         surface=SURFACE,
         provider=provider,
         model=model,
@@ -162,14 +170,13 @@ async def run_owned_routine(
     queue = service.subscribe(session.session_id)
     answer = ""
     try:
-        turn_id = await service.send(session.session_id, task, direct_user=False)
+        turn_id = await service.send(session.session_id, task, direct_user=False, routine_run=True)
         while True:
             if cancel_token is not None and cancel_token.is_cancelled():
                 raise asyncio.CancelledError
             try:
                 event = await asyncio.wait_for(queue.get(), timeout=0.25)
-            except TimeoutError:
-                # Empty polling is expected; return to the cancellation check every 250 ms.
+            except TimeoutError:  # An empty poll window simply waits for the next event.
                 continue
             payload = event.get("payload") or {}
             if payload.get("turn_id") not in (None, turn_id):

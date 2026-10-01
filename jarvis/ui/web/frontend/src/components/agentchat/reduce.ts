@@ -43,6 +43,54 @@ export interface ApprovalState {
   decision: string | null;
 }
 
+/** One prepared answer on an agent's question card. */
+export interface QuestionOption {
+  label: string;
+  description: string;
+}
+
+/** One question of a card. Option 0 is always the agent's recommendation. */
+export interface QuestionItem {
+  question: string;
+  options: QuestionOption[];
+  recommendationReason: string;
+}
+
+/**
+ * What one question resolved to. `source`: `person`, `timeout` (nobody
+ * answered for five minutes), `skipped` (the card was closed), `cancelled`,
+ * or `closed` (the turn ended without an answer).
+ */
+export interface QuestionAnswerState {
+  text: string;
+  optionIndex: number | null;
+  source: string;
+}
+
+/**
+ * An agent's question card (jarvis/agent_chat/questions.py): a short series
+ * the person answers one by one. Open questions take their recommendation
+ * when nobody answers before `expiresMs`, which every answer pushes back.
+ */
+export interface QuestionState {
+  questionId: string;
+  /** The agent asking, for the card's title; empty on older events. */
+  asker: string;
+  questions: QuestionItem[];
+  /** One slot per question; `null` while unanswered. */
+  answers: (QuestionAnswerState | null)[];
+  expiresMs: number | null;
+  /** The card no longer takes answers (resolved, or the turn ended). */
+  closed: boolean;
+}
+
+/** The tool an agent asks its question with — bare or behind an MCP prefix. */
+export const QUESTION_TOOL = "society_ask_user";
+
+export function isQuestionTool(name: string): boolean {
+  return name === QUESTION_TOOL || name.endsWith(`__${QUESTION_TOOL}`);
+}
+
 export interface ToolBlock {
   kind: "tool";
   callId: string;
@@ -52,6 +100,8 @@ export interface ToolBlock {
   isError: boolean;
   durationMs: number | null;
   approval: ApprovalState | null;
+  /** The question card this call shows, when the call is an agent's question. */
+  question?: QuestionState;
   /** When the call was made; a result without its own duration is timed from here. */
   startedMs: number;
 }
@@ -244,6 +294,79 @@ function closeLiveReasoning(turn: TurnItem, nowMs: number): TurnItem {
       live: false,
       durationMs: block.durationMs ?? Math.max(0, nowMs - block.startedMs),
     }),
+  };
+}
+
+function questionOptions(raw: unknown): QuestionOption[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const row = entry as Record<string, unknown>;
+    const label = str(row.label);
+    return label ? [{ label, description: str(row.description) }] : [];
+  });
+}
+
+function questionAnswer(raw: unknown): QuestionAnswerState | null {
+  if (!raw || typeof raw !== "object") return null;
+  const row = raw as Record<string, unknown>;
+  return { text: str(row.answer), optionIndex: num(row.option_index), source: str(row.source, "person") };
+}
+
+/** The answer slots off a progress/resolved payload; older events carried one flat answer. */
+function questionAnswers(p: Record<string, unknown>, count: number): (QuestionAnswerState | null)[] {
+  const raw = Array.isArray(p.answers) ? p.answers : "answer" in p ? [p] : [];
+  return Array.from({ length: count }, (_, i) => questionAnswer(raw[i]));
+}
+
+function updateQuestion(
+  tl: Timeline,
+  turnId: string,
+  questionId: string,
+  fn: (q: QuestionState) => QuestionState,
+): Timeline {
+  return updateTurn(tl, turnId, (turn) => {
+    const i = turn.blocks.findIndex((b) => b.kind === "tool" && b.question?.questionId === questionId);
+    if (i < 0) return turn;
+    const block = turn.blocks[i] as ToolBlock;
+    return { ...turn, blocks: replaceAt(turn.blocks, i, { ...block, question: fn(block.question!) }) };
+  });
+}
+
+/** Attach a question to its tool row: the open ask call, else a row of its own. */
+function withQuestion(turn: TurnItem, question: QuestionState, tsMs: number): TurnItem {
+  let index = -1;
+  for (let i = turn.blocks.length - 1; i >= 0; i -= 1) {
+    const b = turn.blocks[i];
+    if (b.kind !== "tool") continue;
+    if (b.question?.questionId === question.questionId) return turn;
+    if (isQuestionTool(b.name) && !b.question) {
+      index = i;
+      break;
+    }
+  }
+  if (index >= 0) {
+    const block = turn.blocks[index] as ToolBlock;
+    return { ...turn, blocks: replaceAt(turn.blocks, index, { ...block, question }) };
+  }
+  const closed = closeLiveReasoning(turn, tsMs);
+  return {
+    ...closed,
+    blocks: [
+      ...closed.blocks,
+      {
+        kind: "tool",
+        callId: `q-${question.questionId}`,
+        name: QUESTION_TOOL,
+        input: null,
+        output: null,
+        isError: false,
+        durationMs: null,
+        approval: null,
+        question,
+        startedMs: tsMs,
+      },
+    ],
   };
 }
 
@@ -481,6 +604,7 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
           turn,
           (b) => b.kind === "tool" && b.callId === callId,
           (ex) => ({
+            ...(ex?.question ? { question: ex.question } : {}),
             kind: "tool",
             callId,
             name: ex?.name ?? str(p.name),
@@ -573,12 +697,53 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
       };
     }
 
+    case "question_required": {
+      const questionId = str(p.question_id);
+      if (!questionId) return base;
+      // Older events carried a single question's fields at the top level.
+      const raw = Array.isArray(p.questions) ? p.questions : [p];
+      const questions: QuestionItem[] = raw.flatMap((entry) => {
+        if (!entry || typeof entry !== "object") return [];
+        const row = entry as Record<string, unknown>;
+        const options = questionOptions(row.options);
+        const text = str(row.question);
+        return text && options.length ? [{ question: text, options, recommendationReason: str(row.recommendation_reason) }] : [];
+      });
+      if (!questions.length) return base;
+      const question: QuestionState = {
+        questionId,
+        asker: str(p.asker),
+        questions,
+        answers: questions.map(() => null),
+        expiresMs: num(p.expires_ms),
+        closed: false,
+      };
+      return updateTurn(base, turnId, (turn) => withQuestion(turn, question, ev.ts_ms));
+    }
+
+    case "question_progress": {
+      return updateQuestion(base, turnId, str(p.question_id), (q) => ({
+        ...q,
+        answers: questionAnswers(p, q.questions.length).map((a, i) => a ?? q.answers[i]),
+        expiresMs: num(p.expires_ms) ?? q.expiresMs,
+      }));
+    }
+
+    case "question_resolved": {
+      return updateQuestion(base, turnId, str(p.question_id), (q) => ({
+        ...q,
+        answers: questionAnswers(p, q.questions.length).map((a, i) => a ?? q.answers[i]),
+        closed: true,
+      }));
+    }
+
     case "turn_finished": {
       const status = str(p.status, "done") as TurnStatus;
       const finished = updateTurn(base, turnId, (turn) => ({
         ...turn,
         status: status === "running" ? "done" : status,
-        // A turn that ended mid-stream closes its live reasoning block.
+        // A turn that ended mid-stream closes its live reasoning block, and
+        // a question nobody can answer any more stops asking.
         blocks: turn.blocks.map((b) =>
           b.kind === "reasoning" && b.live
             ? {
@@ -586,7 +751,16 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
                 live: false,
                 durationMs: b.durationMs ?? Math.max(0, ev.ts_ms - b.startedMs),
               }
-            : b,
+            : b.kind === "tool" && b.question && !b.question.closed
+              ? {
+                  ...b,
+                  question: {
+                    ...b.question,
+                    closed: true,
+                    answers: b.question.answers.map((a) => a ?? { text: "", optionIndex: null, source: "closed" }),
+                  },
+                }
+              : b,
         ),
         durationMs: num(p.duration_ms) ?? Math.max(0, ev.ts_ms - turn.startedMs),
         usage:

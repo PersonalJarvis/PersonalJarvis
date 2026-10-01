@@ -279,6 +279,22 @@ function installIsBusy(row: BrowserInstallStatus | undefined): boolean {
 }
 
 /** The one-click browser-use venv on this machine. */
+/** Whether the agent's browser is already running. A read that never launches one. */
+export function useAgentBrowserOpen(agentId: string) {
+  return useQuery({
+    queryKey: ["society", "browser-open", agentId],
+    staleTime: 2_000,
+    refetchInterval: import.meta.env.MODE === "test" ? false : 4_000,
+    retry: false,
+    queryFn: async (): Promise<boolean> => {
+      const body = await getJson<{ open?: boolean }>(
+        "/api/society/agents/" + encodeURIComponent(agentId) + "/browser/open",
+      );
+      return Boolean(body?.open);
+    },
+  });
+}
+
 export function useBrowserInstallStatus() {
   return useQuery({
     queryKey: ["society", "browser-install"],
@@ -356,8 +372,11 @@ export function useCreateAgentRoutine() {
         throw new Error(reason);
       }
       const payload = (await res.json()) as { id?: string; title?: string };
+      // Only the agent's own list is waited for (one small read) so the new
+      // routine is on screen when the composer closes; the Automations views
+      // catch up in the background.
+      void client.invalidateQueries({ queryKey: ["tasks"] });
       await client.invalidateQueries({ queryKey: ["society", "agent-routines", agentId] });
-      await client.invalidateQueries({ queryKey: ["tasks"] });
       return { id: String(payload.id ?? ""), title: String(payload.title ?? body.title) };
     },
     [client],

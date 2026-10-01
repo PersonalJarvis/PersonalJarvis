@@ -1,6 +1,6 @@
 /**
- * The model card's centre column: one agent's figure, rendered through the
- * same pixelated pass the island uses, turned by hand.
+ * The model card's centre column: one agent's figure — the toy character the
+ * office draws (office/ToyFigure) — turned by hand.
  *
  * Drag turns the figure and tilts the camera — all the way to a view from
  * above and one from below — the wheel zooms, a double-click resets. The
@@ -15,27 +15,26 @@
  */
 import { Component, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ErrorInfo, PointerEvent as ReactPointerEvent, ReactNode, WheelEvent } from "react";
-import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { Canvas, useThree } from "@react-three/fiber";
 import { useReducedMotion } from "framer-motion";
 import * as THREE from "three";
-import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
-import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
-import { RenderPixelatedPass } from "three/examples/jsm/postprocessing/RenderPixelatedPass.js";
 
 import { useCanvasAwake } from "@/hooks/useCanvasAwake";
 import { useWebglSurface } from "@/hooks/useWebglSurface";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
-import { assembleFigure, playClip, type AssembledFigure } from "./assembleFigure";
 import { frameDistance } from "./figureFraming";
-import { recipeKey, resolvePalette, type FigureRecipe } from "./figureRecipe";
-import { figureAssetFor } from "./figureRegistry";
+import { resolvePalette, type FigureRecipe } from "./figureRecipe";
+import type { FigureDrive, FigureMode } from "./FigureRig";
 import { LobbyStage } from "./LobbyStage";
-import { useFigureAssets } from "./useFigureAssets";
+import { ToyFigure } from "../office/ToyFigure";
+import { toyLookFor, TOY_HEIGHT, type ToyLook } from "../office/toyFigureModel";
 
-/** Target resolution the pixel pass renders the column at (docs §9.3). */
-const PIXEL_TARGET_WIDTH = 240;
+/** How tall the preview figure is drawn, hair included, for framing. */
+const FRAMED_HEIGHT_M = TOY_HEIGHT * 1.04;
+/** How long the opening wave lasts before the figure settles into its clip. */
+const WAVE_MS = 1800;
 
 /** Camera pitch limit upwards: straight down is +90°; stop short of the pole. */
 const PITCH_LIMIT = (80 * Math.PI) / 180;
@@ -79,10 +78,9 @@ export function AgentFigureViewer({ recipe, clip = "idle", quiet = false, classN
   const [orbitTick, setOrbitTick] = useState(0);
   const drag = useRef<{ x: number; y: number; id: number } | null>(null);
 
-  const asset = recipe ? figureAssetFor(recipe) : null;
   const palette = useMemo(() => resolvePalette(recipe), [recipe]);
-  const heightM = recipe?.heightM ?? asset?.defaultHeightM ?? 1.75;
-  const look = recipe ? recipeKey(recipe) : "";
+  const heightM = TOY_HEIGHT;
+  const look = useMemo(() => (recipe ? toyLookFor(recipe, "") : null), [recipe]);
 
   const onPointerDown = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
@@ -139,13 +137,13 @@ export function AgentFigureViewer({ recipe, clip = "idle", quiet = false, classN
       onWheel={onWheel}
       onDoubleClick={onDoubleClick}
     >
-      {asset && recipe ? (
+      {look ? (
         <FigureErrorBoundary fallback={<PaletteTile palette={palette} label={t("society.figure.unavailable")} />}>
           <Canvas
             key={generation}
             dpr={1}
             frameloop={frameloop}
-            gl={{ antialias: false, alpha: true, powerPreference: "low-power" }}
+            gl={{ antialias: true, alpha: true, powerPreference: "low-power" }}
             camera={{ fov: 26, near: 0.1, far: 40, position: [0, heightM * 0.55, heightM * 2.5] }}
             onCreated={({ gl }) => {
               gl.setClearColor(0x000000, 0);
@@ -153,9 +151,7 @@ export function AgentFigureViewer({ recipe, clip = "idle", quiet = false, classN
           >
             <Suspense fallback={null}>
               <FigureScene
-                recipe={recipe}
                 look={look}
-                palette={palette}
                 heightM={heightM}
                 clip={clip}
                 quiet={quiet}
@@ -165,7 +161,6 @@ export function AgentFigureViewer({ recipe, clip = "idle", quiet = false, classN
               />
             </Suspense>
             <HostSizeSync />
-            <PixelPass />
           </Canvas>
         </FigureErrorBoundary>
       ) : (
@@ -183,9 +178,7 @@ export function AgentFigureViewer({ recipe, clip = "idle", quiet = false, classN
 // ---------------------------------------------------------------------------
 
 interface SceneProps {
-  recipe: FigureRecipe;
-  look: string;
-  palette: ReturnType<typeof resolvePalette>;
+  look: ToyLook;
   heightM: number;
   clip: string;
   quiet: boolean;
@@ -194,100 +187,46 @@ interface SceneProps {
   orbitTick: number;
 }
 
-function FigureScene({ recipe, look, palette, heightM, clip, quiet, paused, orbit, orbitTick }: SceneProps) {
-  const assets = useFigureAssets(recipe);
-  const gltf = assets.base;
+const CLIP_MODES: readonly FigureMode[] = ["idle", "walk", "work", "talk", "sit", "sleep", "celebrate", "wave"];
+
+function FigureScene({ look, heightM, clip, quiet, paused, orbit, orbitTick }: SceneProps) {
   const camera = useThree((s) => s.camera);
   const invalidate = useThree((s) => s.invalidate);
   const size = useThree((s) => s.size);
   const groupRef = useRef<THREE.Group>(null);
-  const figureRef = useRef<AssembledFigure | null>(null);
-  // What the camera frames: the body plus whatever it wears. A wizard hat
-  // reaches above the figure's own height, and framing by the height alone
-  // cut its point off the top of the column.
-  const [framedHeightM, setFramedHeightM] = useState(heightM);
-  // How far the camera stands back: the figure's LARGEST extent, so a fox is
-  // framed by its length and a person still by their height.
-  const [framedSpanM, setFramedSpanM] = useState(heightM);
+  const settled: FigureMode = (CLIP_MODES as readonly string[]).includes(clip) ? (clip as FigureMode) : "idle";
+  const drive = useRef<FigureDrive>({ mode: quiet ? settled : "wave", speed: 0 });
 
-  // One assembled figure per look; the previous one is disposed first.
+  // Wave once on open, then hold the requested clip.
   useEffect(() => {
-    const figure = assembleFigure(
-      gltf,
-      palette,
-      heightM,
-      assets.parts.map((p) => p.gltf),
-      assets.clips,
-    );
-    figureRef.current = figure;
-    setFramedHeightM(figure?.renderedHeightM ?? heightM);
-    setFramedSpanM(figure?.renderedSpanM ?? heightM);
-    const group = groupRef.current;
-    if (figure && group) group.add(figure.root);
-    if (figure) {
-      if (!quiet && figure.actions.wave) playClip(figure, "wave", clip);
-      else playClip(figure, clip, clip, 0);
-      if (paused) figure.mixer.update(0.001);
-    }
-    // The first frames after the figure lands: the pixel pass and the size
-    // sync may still be settling, so ask for a few draws, not one.
+    drive.current.mode = quiet ? settled : "wave";
     invalidate();
-    let frames = 0;
-    const kick = () => {
-      invalidate();
-      if (++frames < 6) requestAnimationFrame(kick);
-    };
-    requestAnimationFrame(kick);
-    return () => {
-      if (figure && group) group.remove(figure.root);
-      figure?.dispose();
-      figureRef.current = null;
-    };
-    // `look` stands in for the palette object identity; heightM and the
-    // gltf are part of the same identity.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gltf, look, heightM]);
-
-  useEffect(() => {
-    const figure = figureRef.current;
-    if (figure) playClip(figure, clip, clip);
-    invalidate();
-  }, [clip, invalidate]);
+    if (quiet) return;
+    const timer = setTimeout(() => { drive.current.mode = settled; invalidate(); }, WAVE_MS);
+    return () => clearTimeout(timer);
+  }, [quiet, settled, invalidate]);
 
   // The camera orbits the figure's middle: yaw turns the figure itself (so
-  // the light stays put), pitch and zoom move the camera.
+  // the light stays put), pitch and zoom move the camera. Stand back far
+  // enough for the figure to fit the box both ways, whatever its shape.
   useEffect(() => {
     const group = groupRef.current;
     const o = orbit.current;
     if (group) group.rotation.y = o.yaw;
-    // Stand back far enough for the figure to fit the box BOTH ways. A fixed
-    // multiple of its height only works while the column is tall: the look
-    // editor grew, the column became wide and short, and a fixed distance cut
-    // the legs off. Solving the frustum for the span in each axis does not
-    // care what shape the box is.
-    const mid = framedHeightM * 0.5;
-    // The stage always mounts a perspective camera; the store types it loosely.
+    const mid = FRAMED_HEIGHT_M * 0.5;
     const lens = camera as THREE.PerspectiveCamera;
-    const distance = frameDistance({
-      spanM: framedSpanM,
-      fovDeg: lens.fov,
-      aspect: lens.aspect,
-      zoom: o.zoom,
-    });
+    const distance = frameDistance({ spanM: FRAMED_HEIGHT_M, fovDeg: lens.fov, aspect: lens.aspect, zoom: o.zoom });
     camera.position.set(0, mid + Math.sin(o.pitch) * distance, Math.cos(o.pitch) * distance);
     camera.lookAt(0, mid, 0);
     camera.updateProjectionMatrix();
     invalidate();
-  }, [orbitTick, framedHeightM, framedSpanM, camera, invalidate, orbit, size]);
-
-  useFrame((_, dt) => {
-    if (paused) return;
-    figureRef.current?.mixer.update(Math.min(dt, 0.1));
-  });
+  }, [orbitTick, camera, invalidate, orbit, size]);
 
   return (
     <>
-      <group ref={groupRef} />
+      <group ref={groupRef}>
+        <ToyFigure look={look} drive={drive} paused={paused} heightM={heightM} />
+      </group>
       {/* The room the agent spawns into, lights included (LobbyStage). */}
       <LobbyStage heightM={heightM} paused={paused} />
     </>
@@ -322,29 +261,6 @@ function HostSizeSync() {
     observer.observe(wrapper);
     return () => observer.disconnect();
   }, [gl, setSize, invalidate]);
-  return null;
-}
-
-/** The island's look, in the card: the scene through a low-resolution, nearest-filtered target. */
-function PixelPass() {
-  const { gl, scene, camera, size } = useThree();
-  const composer = useMemo(() => {
-    const c = new EffectComposer(gl);
-    const pass = new RenderPixelatedPass(2, scene, camera, { normalEdgeStrength: 0.3, depthEdgeStrength: 0.4 });
-    c.addPass(pass);
-    c.addPass(new OutputPass());
-    return { composer: c, pass };
-  }, [gl, scene, camera]);
-
-  useEffect(() => {
-    const pixelSize = Math.max(2, Math.round(size.width / PIXEL_TARGET_WIDTH));
-    composer.pass.setPixelSize(pixelSize);
-    composer.composer.setSize(size.width, size.height);
-  }, [composer, size]);
-
-  useEffect(() => () => composer.composer.dispose(), [composer]);
-
-  useFrame(() => composer.composer.render(), 1);
   return null;
 }
 

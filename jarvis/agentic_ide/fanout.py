@@ -175,7 +175,7 @@ class Delivery:
 
     The spoken layer localizes from THIS, never from ``reason`` — an English
     sentence pasted into a German answer is exactly the mixed-language output
-    the per-turn resolver exists to prevent (CLAUDE.md, runtime output
+    the per-turn resolver exists to prevent (AGENTS.md, runtime output
     language)."""
 
     reason: str = ""
@@ -443,7 +443,9 @@ async def _default_send(name: str, text: str, **receipt: Any) -> Any:
     """
     from .session import get_registry
 
-    return await get_registry().send_prompt(name, text, **receipt)
+    # A job Jarvis handed over on the user's behalf: its end is reported by
+    # voice (see `voice_readback`).
+    return await get_registry().send_prompt(name, text, readback=True, **receipt)
 
 
 async def deliver(

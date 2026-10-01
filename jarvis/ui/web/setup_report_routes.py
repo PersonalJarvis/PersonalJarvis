@@ -1,6 +1,6 @@
 """Cross-device setup report — makes "why is THIS install different?" a 2-minute read.
 
-The most expensive cross-device misdiagnosis (CLAUDE.md §3, device-parity
+The most expensive cross-device misdiagnosis (AGENTS.md §3, device-parity
 triage ritual): a feature "missing" on a second machine is usually not a code
 bug but an invisible setup difference — a key that exists only on the dev box,
 a tier that quietly crossed to a fallback family, a wake word never set.

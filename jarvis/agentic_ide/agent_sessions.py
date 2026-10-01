@@ -129,6 +129,10 @@ class _Adapter:
     discover: Callable[[str, float, Collection[str], Path | None], ResumeHandle | None] | None
     # Is there actually a conversation behind an id? See `has_conversation`.
     exists: Callable[[ResumeHandle, Path | None], bool]
+    # Extra argv that starts a NEW conversation carrying a copy of an existing
+    # one, plus the handle the copy will be reachable by (None = discovered
+    # later, like a fresh start). None for a CLI with no fork of its own.
+    fork: Callable[[str], tuple[tuple[str, ...], ResumeHandle | None]] | None = None
 
 
 def _claude_launch() -> tuple[tuple[str, ...], ResumeHandle | None]:
@@ -151,6 +155,19 @@ def _grok_launch() -> tuple[tuple[str, ...], ResumeHandle | None]:
     )
 
 
+def _claude_fork(source_id: str) -> tuple[tuple[str, ...], ResumeHandle | None]:
+    # `--fork-session` copies the resumed conversation under a new id, and it is
+    # the one combination in which Claude Code also accepts `--session-id` — so
+    # the copy's id is assigned here rather than searched for afterwards. The
+    # copy is filed under the CURRENT folder's project, which is what lets a
+    # fork continue inside a git worktree of the original checkout.
+    session_id = str(uuid4())
+    return (
+        ("--resume", source_id, "--fork-session", "--session-id", session_id),
+        ResumeHandle(kind="claude_session", id=session_id, captured_at=time.time()),
+    )
+
+
 def _codex_launch() -> tuple[tuple[str, ...], ResumeHandle | None]:
     # Nothing can be passed: the id is Codex's to choose and ours to find later.
     return ((), None)
@@ -168,6 +185,7 @@ _ADAPTERS: dict[str, _Adapter] = {
         resume=lambda session_id: ("--resume", session_id),
         discover=None,
         exists=lambda handle, home: _claude_conversation_exists(handle, home),
+        fork=_claude_fork,
     ),
     "codex": _Adapter(
         kind="codex_rollout",
@@ -179,6 +197,9 @@ _ADAPTERS: dict[str, _Adapter] = {
         # next to the file-format knowledge it needs.
         discover=lambda cwd, started, taken, home: _discover_codex(cwd, started, taken, home),
         exists=lambda handle, home: _codex_conversation_exists(handle, home),
+        # `codex fork <id>` writes a new rollout; its id is discovered like any
+        # other Codex session (folder + time, minus the ids already taken).
+        fork=lambda session_id: (("fork", session_id), None),
     ),
     "opencode": _Adapter(
         kind="opencode_session",
@@ -189,6 +210,7 @@ _ADAPTERS: dict[str, _Adapter] = {
         resume=lambda session_id: ("--session", session_id),
         discover=lambda cwd, started, taken, home: _discover_opencode(cwd, started, taken, home),
         exists=lambda handle, home: _opencode_conversation_exists(handle, home),
+        fork=lambda session_id: (("--session", session_id, "--fork"), None),
     ),
     "kimi": _Adapter(
         kind="kimi_session",
@@ -212,9 +234,7 @@ _ADAPTERS: dict[str, _Adapter] = {
         launch=_discovered_launch,
         # ``agy --conversation <id>`` is the long form; there is no short flag.
         resume=lambda session_id: ("--conversation", session_id),
-        discover=lambda cwd, started, taken, home: _discover_antigravity(
-            cwd, started, taken, home
-        ),
+        discover=lambda cwd, started, taken, home: _discover_antigravity(cwd, started, taken, home),
         exists=lambda handle, home: _agy_conversation_exists(handle, home),
     ),
 }
@@ -264,6 +284,66 @@ def resume_argv(agent: str, handle: ResumeHandle | None) -> tuple[str, ...] | No
     if adapter is None or adapter.kind != handle.kind:
         return None
     return adapter.resume(handle.id)
+
+
+#: Environment a CLI is resumed with so it finishes an interrupted turn BY
+#: ITSELF, keyed by resume kind. Claude Code's own mechanism (measured against
+#: 2.1.283, 2026-09-28): with ``CLAUDE_CODE_RESUME_INTERRUPTED_TURN`` set, a
+#: resumed conversation whose last turn was cut off mid-way re-runs that turn —
+#: a pane killed at step 26 of 30 went on to 30 with nothing typed, and without
+#: it stayed at its prompt. A turn that had finished is left alone. The age
+#: limit is switched off (``0``): after a night with the machine off the turn
+#: is still the one the user asked for. CLIs without such a mechanism resume
+#: their conversation and wait at their prompt — Jarvis never types for them.
+_NATIVE_RESUME_ENV: dict[str, dict[str, str]] = {
+    "claude_session": {
+        "CLAUDE_CODE_RESUME_INTERRUPTED_TURN": "1",
+        "CLAUDE_CODE_RESUME_INTERRUPTED_TURN_MAX_AGE_MS": "0",
+    },
+}
+
+
+def reports_session_starts(agent: str) -> bool:
+    """Does ``agent`` report every conversation it starts (Claude Code's hook)?
+
+    True for Claude Code and every launch profile built on it; their current
+    conversation is tracked by :mod:`.pane_sessions` rather than trusted from
+    the launch id.
+    """
+    adapter = _adapter_for(agent)
+    return adapter is not None and adapter.kind == "claude_session"
+
+
+def resume_env(agent: str) -> dict[str, str]:
+    """Extra environment that lets ``agent`` finish an interrupted turn itself."""
+    adapter = _adapter_for(agent)
+    if adapter is None:
+        return {}
+    return dict(_NATIVE_RESUME_ENV.get(adapter.kind, {}))
+
+
+def can_fork(agent: str) -> bool:
+    """True when this coding CLI can copy one of its conversations into a new one."""
+    adapter = _adapter_for(agent)
+    return adapter is not None and adapter.fork is not None
+
+
+def fork_argv(
+    agent: str, handle: ResumeHandle | None
+) -> tuple[tuple[str, ...], ResumeHandle | None] | None:
+    """Extra argv that starts a copy of ``handle``'s conversation, or None.
+
+    The second element is the copy's own handle when the CLI lets us assign
+    it, else None (the handle is discovered afterwards, as for a fresh start).
+    None overall means the same as for :func:`resume_argv`: this CLI, this
+    handle or its kind cannot be forked, so the caller starts fresh.
+    """
+    if handle is None:
+        return None
+    adapter = _adapter_for(agent)
+    if adapter is None or adapter.fork is None or adapter.kind != handle.kind:
+        return None
+    return adapter.fork(handle.id)
 
 
 def has_conversation(agent: str, handle: ResumeHandle | None, home: Path | None = None) -> bool:
@@ -1064,14 +1144,7 @@ def _agy_conversation_db(root: Path, session_id: str) -> Path | None:
 
 
 def _agy_transcript(root: Path, session_id: str) -> Path:
-    return (
-        root
-        / "brain"
-        / session_id
-        / ".system_generated"
-        / "logs"
-        / "transcript.jsonl"
-    )
+    return root / "brain" / session_id / ".system_generated" / "logs" / "transcript.jsonl"
 
 
 def _agy_log_has_user_turn(log: Path) -> bool:
@@ -1165,9 +1238,7 @@ def _agy_summaries_for_cwd(root: Path, cwd: str) -> list[tuple[float, str]]:
                 uris = []
             if not isinstance(uris, list):
                 continue
-            if not any(
-                _agy_cwd_matches(_agy_file_uri_path(str(uri)), cwd) for uri in uris
-            ):
+            if not any(_agy_cwd_matches(_agy_file_uri_path(str(uri)), cwd) for uri in uris):
                 continue
             try:
                 stamp = datetime.fromisoformat(str(row[2] or "").replace("Z", "+00:00"))

@@ -159,7 +159,7 @@ def main() -> int:
     if findings:
         sys.stderr.write(
             "check_no_private_keys: BLOCKED - private-key material must never "
-            "enter the repo (CLAUDE.md rule). Findings:\n"
+            "enter the repo (AGENTS.md rule). Findings:\n"
         )
         for f in findings:
             sys.stderr.write(f"  - {f}\n")

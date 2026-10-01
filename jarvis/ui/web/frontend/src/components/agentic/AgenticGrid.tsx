@@ -44,7 +44,7 @@ import { PaneResizer } from "@/components/layout/PaneResizer";
 import { useEventStore, type VoiceState } from "@/store/events";
 import { AgenticTerminal, type SplitDirection } from "./AgenticTerminal";
 import { AgentPickerMenu, offersAgentChoice, type SplitAgentChoice } from "./AgentPicker";
-import type { TerminalAppearance } from "./terminalThemes";
+import { TERMINAL_APPEARANCE_KEY, type TerminalAppearance } from "./terminalThemes";
 import { installZoomKeyBridge, type ZoomIntent } from "./terminalZoom";
 import {
   FONT_DEFAULT,
@@ -67,7 +67,6 @@ import {
   hasLayoutViolations,
   type MeasuredPane,
 } from "./paneLayoutGuard";
-import { ContinueInterrupted } from "./ContinueInterrupted";
 import { PaneNotifications } from "./PaneNotifications";
 import { isVoiceActive } from "./useVoiceCall";
 // One strip of chips, one drop handler and one paste handler for every
@@ -380,6 +379,9 @@ const GRID_GAP_PX = 4;
 /** Half of it — what each pane gives up on the sides it shares with a neighbour. */
 const HALF_GAP_PX = GRID_GAP_PX / 2;
 
+/** How long a pane takes to zoom to the whole workspace and back. */
+const ZOOM_MS = 220;
+
 /** A maximized pane simply fills the workspace. */
 const MAXIMIZED_BOX: React.CSSProperties = {
   position: "absolute",
@@ -486,7 +488,7 @@ function writePosition(node: HTMLElement, style: React.CSSProperties): void {
  * working. Its localStorage entry stays as the first-paint cache so the panes
  * open at the remembered size instead of visibly resizing a moment later.
  */
-const APPEARANCE_KEY = "jarvis.agenticIde.terminalAppearance";
+const APPEARANCE_KEY = TERMINAL_APPEARANCE_KEY;
 
 /**
  * The two ways of looking at one workspace.
@@ -1714,6 +1716,112 @@ export function AgenticGrid({
   );
 
   /*
+   * Maximize and restore ZOOM instead of jumping.
+   *
+   * The pane's box used to swap between its tile and `inset: 0` in one repaint,
+   * and on the way back the move glide (a `left/top/width/height` transition)
+   * caught half of it: `width: auto` cannot be tweened, so the pane snapped to
+   * its small size and then slid across the workspace — while every hidden
+   * sibling woke up and the terminal refitted, all on the main thread. Every
+   * one of those frames was a layout pass, and the animation ran at a handful
+   * of frames per second (maintainer report 2026-09-29).
+   *
+   * Now the box takes its final place at once and the MOTION is a transform —
+   * the classic FLIP: measure where it was, where it is, and play the
+   * difference back as a translate + scale. A transform never lays anything
+   * out and runs on the compositor, so the zoom stays smooth even while the
+   * terminal reflows and the neighbours catch up underneath it. The move glide
+   * is switched off for the commit that swaps the box (`zoomCommit`), or it
+   * would start a second, layout-bound animation of the same change.
+   *
+   * The "before" rectangle is computed from the layout rather than measured,
+   * so every caller of `setMaximized` — the button, a jump, a request from
+   * another pane — gets the same zoom without having to measure first.
+   */
+  const lastMaximized = useRef<string | null>(maximized);
+  // Read during render on purpose: the commit that changes `maximized` is the
+  // one whose box swap must not also start the move glide.
+  const zoomCommit = lastMaximized.current !== maximized;
+  useLayoutEffect(() => {
+    const from = lastMaximized.current;
+    lastMaximized.current = maximized;
+    if (from === maximized || chatView) return;
+    if (
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    ) {
+      return;
+    }
+    const surface = canvasRef.current?.getBoundingClientRect();
+    if (!surface || surface.width <= 0 || surface.height <= 0) return;
+    // The on-screen rectangle `paneBoxStyle` gives a tile, in viewport pixels.
+    const tileRect = (name: string) => {
+      const box = layout.boxes[session.terminals.findIndex((t) => t.name === name)];
+      if (!box) return surface;
+      const left = atEdge(box.x) ? 0 : HALF_GAP_PX;
+      const right = atEdge(box.x + box.w) ? 0 : HALF_GAP_PX;
+      const top = atEdge(box.y) ? 0 : HALF_GAP_PX;
+      const bottom = atEdge(box.y + box.h) ? 0 : HALF_GAP_PX;
+      return {
+        left: surface.left + box.x * surface.width + left,
+        top: surface.top + box.y * surface.height + top,
+        width: box.w * surface.width - left - right,
+        height: box.h * surface.height - top - bottom,
+      };
+    };
+    const zoom = (
+      name: string,
+      start: { left: number; top: number; width: number; height: number },
+    ) => {
+      const node = paneNodes.current.get(name);
+      if (!node || typeof node.animate !== "function") return;
+      for (const running of node.getAnimations?.() ?? []) running.cancel();
+      const end = node.getBoundingClientRect();
+      if (end.width <= 0 || end.height <= 0 || start.width <= 0 || start.height <= 0) return;
+      const dx = start.left - end.left;
+      const dy = start.top - end.top;
+      const sx = start.width / end.width;
+      const sy = start.height / end.height;
+      if (Math.abs(dx) < 1 && Math.abs(dy) < 1 && Math.abs(sx - 1) < 0.01 && Math.abs(sy - 1) < 0.01) {
+        return;
+      }
+      // Above its neighbours while it shrinks back over them.
+      node.style.zIndex = "10";
+      const animation = node.animate(
+        [
+          { transformOrigin: "0 0", transform: `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})` },
+          { transformOrigin: "0 0", transform: "none" },
+        ],
+        { duration: ZOOM_MS, easing: "cubic-bezier(0.2, 0, 0, 1)" },
+      );
+      const done = () => node.style.removeProperty("z-index");
+      animation.onfinish = done;
+      animation.oncancel = done;
+    };
+    if (maximized !== null) {
+      zoom(maximized, tileRect(maximized));
+      return;
+    }
+    if (from === null) return;
+    zoom(from, surface);
+    // The neighbours come back with a fade rather than a pop — opacity is as
+    // compositor-only as the transform.
+    for (const term of session.terminals) {
+      if (term.name === from) continue;
+      const node = paneNodes.current.get(term.name);
+      if (!node || typeof node.animate !== "function") continue;
+      node.animate([{ opacity: 0 }, { opacity: 1 }], {
+        duration: ZOOM_MS,
+        easing: "ease-out",
+      });
+    }
+    // `layout` and the pane list are read, not reacted to: only a change of
+    // the maximized pane zooms.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [maximized]);
+
+  /*
    * The layout watchdog: the screen has to MATCH the layout, and when it does
    * not, the grid repairs itself instead of standing there looking broken.
    *
@@ -2235,7 +2343,12 @@ export function AgenticGrid({
             Off in chat view and while a pane is maximized: both hide the
             boundaries this evens out, so the click would be a change nobody
             can see — and a control whose effect is invisible reads as a dead
-            one. The tooltip says which of the reasons applies. */}
+            one. The tooltip says which of the reasons applies.
+
+            It carries a word beside its glyph, framed like the text-size
+            stepper: as a bare 28 px glyph it sat among a dozen others and,
+            being disabled whenever the grid was already even, faded to 40 %
+            — people who knew it existed could no longer find it. */}
         <button
           type="button"
           data-testid="agentic-even-panes"
@@ -2249,9 +2362,10 @@ export function AgenticGrid({
                 : t("agentic_grid.even.hint")
           }
           aria-label={t("agentic_grid.even.label")}
-          className={TOOLBAR_BTN}
+          className="flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-border bg-background px-2 text-micro font-medium text-foreground transition-colors hover:bg-secondary hover:text-foreground-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong disabled:cursor-not-allowed disabled:text-muted-foreground disabled:hover:bg-background"
         >
-          <AlignHorizontalDistributeCenter className="h-4 w-4 shrink-0" />
+          <AlignHorizontalDistributeCenter className="h-3.5 w-3.5 shrink-0" aria-hidden />
+          <span className="whitespace-nowrap">{t("agentic_grid.even.short")}</span>
         </button>
 
         {/* Appearance stays behind one quiet menu; text size is deliberately
@@ -2267,18 +2381,8 @@ export function AgenticGrid({
           onFontSize={setFontSize}
         />
 
-        {/* Which terminals stopped while you were looking at another one.
-            Before "Continue" rather than after it, because the two answer the
-            same question at different scales — this one is "what happened",
-            that one is "what should start again" — and reading them in that
-            order is how somebody decides they need the second at all. */}
+        {/* Which terminals stopped while you were looking at another one. */}
         <PaneNotifications onJump={jumpToNotification} onScreen={onScreen} />
-
-        {/* Work a restart stopped: which panes came back holding a conversation
-            and were never told to carry on, and the one click that tells them.
-            The pane headers catch up on their own — a continued agent starts
-            printing, and the recap poll above is already watching for that. */}
-        <ContinueInterrupted busy={busy || working} onScreen={onScreen} />
 
         {/* Which subscription the next terminal spends, and the way to change
             it without leaving the workspace. */}
@@ -2489,6 +2593,7 @@ export function AgenticGrid({
                 !chatView &&
                   !isMaximized &&
                   !layoutBusy &&
+                  !zoomCommit &&
                   "transition-[left,top,width,height] duration-300 ease-out motion-reduce:transition-none",
                 /*
                  * The three rings below are drawn WITHOUT an offset, and that

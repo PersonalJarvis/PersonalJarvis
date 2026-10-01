@@ -2,7 +2,7 @@
 
 Mirrors ``jarvis/state/chat_store.py``: one ``sqlite3`` connection in WAL
 mode behind a ``threading.Lock`` (route handlers and the runner share the
-asyncio loop; the lock keeps a future worker-thread caller safe). Two tables:
+asyncio loop; the lock keeps a future worker-thread caller safe). Three tables:
 
 ``agent_chat_sessions``
     One row per session — title, the provider / model / effort the composer
@@ -13,6 +13,9 @@ asyncio loop; the lock keeps a future worker-thread caller safe). Two tables:
 ``agent_chat_events``
     The append-only event log (see :mod:`jarvis.agent_chat.events`), ordered
     by ``seq`` per session. Transient kinds are never written.
+
+``agent_chat_permission_overrides``
+    A user's explicit Society chat stance, kept apart from the roster ceiling.
 
 Ordering by ``seq`` (our own counter), not by wall clock: Windows ``time()``
 resolution can tie two fast appends.
@@ -54,6 +57,10 @@ CREATE TABLE IF NOT EXISTS agent_chat_events (
     kind        TEXT NOT NULL,
     payload     TEXT NOT NULL,
     PRIMARY KEY (session_id, seq)
+);
+CREATE TABLE IF NOT EXISTS agent_chat_permission_overrides (
+    session_id TEXT PRIMARY KEY,
+    mode TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_agent_chat_sessions_updated
     ON agent_chat_sessions(updated_ms DESC);
@@ -244,6 +251,24 @@ class AgentChatStore:
             self._conn.commit()
         return self.get_session(session_id)
 
+    def permission_override(self, session_id: str) -> str:
+        """The user's explicit stance, separate from a Society roster ceiling."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT mode FROM agent_chat_permission_overrides WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        return str(row[0]) if row else ""
+
+    def set_permission_override(self, session_id: str, mode: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO agent_chat_permission_overrides (session_id, mode) VALUES (?, ?) "
+                "ON CONFLICT(session_id) DO UPDATE SET mode = excluded.mode",
+                (session_id, mode),
+            )
+            self._conn.commit()
+
     def data_version(self) -> int:
         """How many one-shot data migrations this file has already had.
 
@@ -293,6 +318,9 @@ class AgentChatStore:
                 "DELETE FROM agent_chat_sessions WHERE session_id = ?", (session_id,)
             )
             self._conn.execute("DELETE FROM agent_chat_events WHERE session_id = ?", (session_id,))
+            self._conn.execute(
+                "DELETE FROM agent_chat_permission_overrides WHERE session_id = ?", (session_id,)
+            )
             self._conn.commit()
         return cur.rowcount > 0
 
@@ -375,17 +403,42 @@ class AgentChatStore:
         if row is None:
             return None
         return {
-            "seq": int(row["seq"]), "ts_ms": int(row["ts_ms"]), "kind": row["kind"],
+            "seq": int(row["seq"]),
+            "ts_ms": int(row["ts_ms"]),
+            "kind": row["kind"],
             "payload": json.loads(row["payload"]),
         }
 
-    def list_events(self, session_id: str, *, after_seq: int = 0) -> list[dict[str, Any]]:
+    def turn_has_text_before(self, session_id: str, turn_id: str, before_seq: int) -> bool:
+        """Whether this exact turn wrote a nonblank answer before its terminal."""
         with self._lock:
-            rows = self._conn.execute(
-                "SELECT seq, ts_ms, kind, payload FROM agent_chat_events "
-                "WHERE session_id = ? AND seq > ? ORDER BY seq ASC",
-                (session_id, int(after_seq)),
-            ).fetchall()
+            row = self._conn.execute(
+                "SELECT 1 FROM agent_chat_events WHERE session_id = ? AND seq < ? "
+                "AND kind = 'assistant_text' AND json_extract(payload, '$.turn_id') = ? "
+                "AND trim(coalesce(json_extract(payload, '$.text'), '')) <> '' LIMIT 1",
+                (session_id, before_seq, turn_id),
+            ).fetchone()
+        return row is not None
+
+    def list_events(
+        self, session_id: str, *, after_seq: int = 0, tail: int | None = None
+    ) -> list[dict[str, Any]]:
+        """Events in order; ``tail`` keeps only the newest N (still oldest first)."""
+        with self._lock:
+            if tail is not None:
+                rows = self._conn.execute(
+                    "SELECT seq, ts_ms, kind, payload FROM ("
+                    "SELECT seq, ts_ms, kind, payload FROM agent_chat_events "
+                    "WHERE session_id = ? AND seq > ? ORDER BY seq DESC LIMIT ?"
+                    ") ORDER BY seq ASC",
+                    (session_id, int(after_seq), max(0, int(tail))),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT seq, ts_ms, kind, payload FROM agent_chat_events "
+                    "WHERE session_id = ? AND seq > ? ORDER BY seq ASC",
+                    (session_id, int(after_seq)),
+                ).fetchall()
         out: list[dict[str, Any]] = []
         for r in rows:
             try:

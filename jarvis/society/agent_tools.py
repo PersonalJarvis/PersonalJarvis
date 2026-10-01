@@ -171,8 +171,7 @@ class MessageAgentTool:
         refs = args.get("refs")
         try:
             policy = select_reply_policy(args.get("reply_policy"), msg_type)
-        except (TypeError, ValueError) as exc:
-            # The structured policy failure is returned to the invoking agent.
+        except (TypeError, ValueError) as exc:  # Invalid reply policy returns a policy failure.
             return _failure(FailureReason.BLOCKED_BY_POLICY, str(exc))
         reply_status = args.get("reply_status", "done")
         if reply_status not in ("done", "blocked"):
@@ -352,15 +351,14 @@ class WikiNoteTool:
             rel, _ = await rt.memory.note(
                 caller, title, text, origin=origin, trace=trace, root=self._vault_root
             )
-        except MemoryRefused as exc:
+        except MemoryRefused as exc:  # The caller receives the vault refusal as a policy failure.
             return _failure(FailureReason.BLOCKED_BY_POLICY, str(exc))
         try:
             from .memory import build_memory_diff as _build_diff
 
             vault = rt.memory.root(self._vault_root)
             after_page = (vault / rel).read_text(encoding="utf-8")
-        except OSError:
-            # The write already succeeded; its receipt can show the submitted text.
+        except OSError:  # If the saved page is unreadable, report the submitted text instead.
             after_page = text
         return ToolResult(
             success=True,
@@ -530,7 +528,7 @@ class ProposeChangeTool:
                 reason=str(args.get("reason") or ""),
                 session_id=self._session_id or caller.session_id,
             )
-        except ProposalRefused as exc:
+        except ProposalRefused as exc:  # Return the proposal's explicit refusal reason.
             return _failure(exc.reason, exc.detail)
         if apply_now:
             task_store, scheduler = rt.task_services()
@@ -595,12 +593,13 @@ class ShellTool:
     def __init__(
         self, runtime: Any, agent_id: str, *, workspace: Path, backend: Any = None
     ) -> None:
-        from .shell import default_backend
-
         self._runtime = runtime
         self._agent_id = agent_id
         self._workspace = Path(workspace)
-        self._backend = backend or default_backend()
+        #: An explicit backend (tests, a future container) wins; otherwise the
+        #: agent's placement picks one per call — a move to another computer
+        #: applies from the very next command.
+        self._backend = backend
 
     @staticmethod
     def _level(command: str) -> str:
@@ -639,14 +638,14 @@ class ShellTool:
             return _failure(FailureReason.BLOCKED_BY_POLICY, "command is required")
         try:
             cwd = resolve_contained(self._workspace, args.get("cwd"))
-        except ContainmentError as exc:
+        except ContainmentError as exc:  # Return the workspace containment failure to the caller.
             return _failure(FailureReason.BLOCKED_BY_POLICY, str(exc))
         level = self._level(command)
         tier = "ask" if level == DESTRUCTIVE else "monitor"
         verdict = decide(caller, "core:shell", tier, verb=level)
         if verdict is Verdict.BLOCK:
             return _failure(FailureReason.BLOCKED_BY_POLICY, "command class is blocked")
-        if verdict is Verdict.QUEUE:
+        if verdict is Verdict.QUEUE and getattr(ctx, "approved_by", None) != "user":
             item = await rt.approvals.enqueue(
                 agent_id=caller.agent_id,
                 trace_id=f"shell:{caller.agent_id}:{getattr(ctx, 'trace_id', '')}"[:120],
@@ -666,16 +665,23 @@ class ShellTool:
         cwd.mkdir(parents=True, exist_ok=True)
         try:
             timeout = float(args.get("timeout_s") or DEFAULT_TIMEOUT_S)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError):  # Invalid optional timeouts use the bounded default.
             timeout = DEFAULT_TIMEOUT_S
-        result = await self._backend.run(command, cwd=cwd, timeout_s=timeout)
+        from .remote import backend_for
+
+        backend = self._backend or backend_for(caller, self._workspace)
+        result = await backend.run(command, cwd=cwd, timeout_s=timeout)
         body = {
             "output": result.output,
             "exit_code": result.exit_code,
             "seconds": round(result.seconds, 2),
             "folder": str(cwd),
-            "backend": getattr(self._backend, "name", "local"),
+            "backend": getattr(backend, "name", "local"),
         }
+        runs_on = getattr(backend, "where", None)
+        if runs_on:
+            # A remote command did not run in the local ``folder`` above; say where.
+            body["runs_on"] = runs_on
         if result.timed_out:
             return ToolResult(success=False, output=body, error="command timed out")
         if result.failed_to_start:

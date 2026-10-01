@@ -19,7 +19,7 @@ which is why this module exists.
 Caching for the life of the process is correct rather than merely convenient:
 the catalogue only changes when a distribution is installed or removed, and a
 new entry-point does not take effect in an already-running interpreter anyway
-(hence CLAUDE.md §10's ``pip install -e . --no-deps`` followed by a restart).
+(hence AGENTS.md §10's ``pip install -e . --no-deps`` followed by a restart).
 :func:`invalidate` is provided for the one case that does need it — a test, or
 an in-process install that wants the next read to see new plugins.
 """

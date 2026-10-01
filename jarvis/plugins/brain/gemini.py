@@ -545,7 +545,36 @@ def _sanitize_for_gemini(schema: dict[str, Any]) -> dict[str, Any]:
             out[k] = _gemini_single_type(v)
         else:
             out[k] = v
+    if out.get("type") == "array" and not _gemini_schema_is_typed(out.get("items")):
+        out["items"] = _gemini_array_items(schema)
     return out
+
+
+def _gemini_schema_is_typed(schema: Any) -> bool:
+    return isinstance(schema, dict) and bool(
+        schema.get("type") or schema.get("anyOf") or schema.get("any_of")
+    )
+
+
+def _gemini_array_items(schema: dict[str, Any]) -> dict[str, Any]:
+    """Element schema for an array Gemini would reject as untyped.
+
+    Gemini requires every array to carry a typed ``items``. A tuple
+    (``tuple[float, float, float]`` → ``prefixItems``, no ``items``) or a bare
+    ``items: {}`` fails the WHOLE request with "items: missing field" (live
+    2026-09-29 08:00: a connected server's ``transform.scale`` took Gemini out
+    of the chain). The first tuple slot is the best honest guess; otherwise a
+    string, the one type every value can be written as.
+    """
+    for key in ("prefixItems", "prefix_items"):
+        slots = schema.get(key)
+        if isinstance(slots, list) and slots and isinstance(slots[0], dict):
+            first = _sanitize_for_gemini(slots[0])
+            if _gemini_schema_is_typed(first):
+                return first
+    items = schema.get("items")
+    base = _sanitize_for_gemini(items) if isinstance(items, dict) else {}
+    return {**base, "type": "string"}
 
 
 _GEMINI_TYPE_NAMES: tuple[str, ...] = (

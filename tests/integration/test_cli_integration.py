@@ -147,8 +147,6 @@ async def test_load_tools_for_tier_includes_cli_tool(tmp_path: Path) -> None:
         people=None,
         config=JarvisConfig(),
         mission_manager=None,
-        awareness_manager=None,
-        recall_store=None,
     )
     assert "cli_demo" in tools, f"cli_demo not loaded; got {sorted(tools)}"
 

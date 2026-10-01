@@ -170,6 +170,23 @@ def leaves(node: LayoutNode | None) -> list[str]:
     return found
 
 
+def grid_span(node: LayoutNode | None) -> tuple[int, int]:
+    """How many columns and rows ``node`` occupies at its widest and tallest.
+
+    Siblings in a row add their columns and share the tallest row count;
+    siblings in a column the other way round. Mirrored by `layoutSpan` in the
+    frontend's ``workspaceDocking.ts``, which enforces the same grid bounds.
+    """
+    if node is None:
+        return (0, 0)
+    if isinstance(node, Leaf):
+        return (1, 1)
+    spans = [grid_span(child) for child in node.children]
+    if node.direction == "row":
+        return (sum(cols for cols, _ in spans), max(rows for _, rows in spans))
+    return (max(cols for cols, _ in spans), sum(rows for _, rows in spans))
+
+
 def contains(node: LayoutNode | None, pane: str) -> bool:
     return pane in leaves(node)
 
@@ -310,24 +327,26 @@ def split_pane(
     root: LayoutNode | None,
     anchor: str | None,
     added: str,
-    direction: Literal["right", "down"],
+    direction: Literal["right", "down", "left", "up", "above", "below"] = "right",
 ) -> LayoutNode:
     """The tree after ``added`` was split off ``anchor``.
 
-    ``"right"`` puts the new pane beside the anchor, ``"down"`` beneath it —
-    and in both cases the pair shares the room the anchor had, because that is
-    what splitting A pane means. Nothing outside the anchor's rectangle moves.
+    ``"right"`` or ``"left"`` puts the new pane beside the anchor, ``"down"``
+    or ``"up"`` / ``"above"`` beneath or above it — and in each case the pair
+    shares the room the anchor had, because that is what splitting A pane means.
+    Nothing outside the anchor's rectangle moves.
 
     Without an anchor (an empty tree, or a caller that named none) the pane
     joins the ROOT as a new full-height column on the far right — the shape
     "open one more terminal" has always produced, and the only honest reading
     of a request that named no pane to split.
     """
-    grown: Direction = "row" if direction == "right" else "column"
+    grown: Direction = "row" if direction in ("right", "left") else "column"
+    after = direction in ("right", "down", "below")
     if root is None:
         return Leaf(pane=added)
     if anchor is not None:
-        rewritten, found = _insert_beside(root, anchor, added, grown, after=True)
+        rewritten, found = _insert_beside(root, anchor, added, grown, after=after)
         if found:
             return _rows_outermost(normalize(rewritten))
     return append_pane(root, added)
@@ -571,15 +590,18 @@ def remove_pane(root: LayoutNode | None, pane: str) -> LayoutNode | None:
     through :func:`rows_outermost` — once, at the end, never per recursion
     step.
     """
-    return rows_outermost(_removed(root, pane))
+    return rows_outermost(_removed(root, pane, by_columns=True))
 
 
-def _removed(root: LayoutNode | None, pane: str) -> LayoutNode | None:
+def _removed(root: LayoutNode | None, pane: str, *, by_columns: bool = False) -> LayoutNode | None:
     if root is None:
         return None
     if isinstance(root, Leaf):
         return None if root.pane == pane else root
 
+    if by_columns:
+        # A close hands the room to the pane below, not beside (see there).
+        root = _columns_for_close(root, pane)
     children: list[LayoutNode] = []
     weights: list[float] = []
     for index, child in enumerate(root.children):
@@ -587,7 +609,7 @@ def _removed(root: LayoutNode | None, pane: str) -> LayoutNode | None:
         if isinstance(child, Leaf) and child.pane == pane:
             continue
         if isinstance(child, Split):
-            slimmed = _removed(child, pane)
+            slimmed = _removed(child, pane, by_columns=by_columns)
             if slimmed is None:
                 continue
             children.append(slimmed)
@@ -602,6 +624,62 @@ def _removed(root: LayoutNode | None, pane: str) -> LayoutNode | None:
         return normalize(children[0])
     return normalize(
         Split(direction=root.direction, children=children, weights=weights, pinned=root.pinned)
+    )
+
+
+def _columns_for_close(node: Split, pane: str) -> Split:
+    """A grid about to lose one of its cells, read as columns for the close.
+
+    A grid stands on its rows (:func:`rows_outermost`), so closing a cell
+    would hand its room to its ROW neighbour — close the top-right of a 2×2
+    and the top-left stretches across the full width. The maintainer asked
+    (2026-09-29) for the pane BELOW to move up instead: the closed pane's
+    column-mates share its room and every other column keeps its width.
+
+    So a ``column[row[...], row[...]]`` whose bands line up is transposed
+    into the equivalent ``row[column[...], ...]`` — same picture, nothing
+    moves — right before the cell is dropped. :func:`remove_pane` stands
+    whatever grid survives back on its rows afterwards.
+    """
+    if node.direction != "column" or len(node.children) < 2:
+        return node
+    bands: list[Split] = []
+    for child in node.children:
+        if not isinstance(child, Split) or child.direction != "row":
+            return node
+        bands.append(child)
+    width = len(bands[0].children)
+    if width < 2 or any(len(band.children) != width for band in bands):
+        return node
+    cells = [cell for band in bands for cell in band.children]
+    if not any(isinstance(cell, Leaf) and cell.pane == pane for cell in cells):
+        return node
+    first = _shares(bands[0])
+    if not all(
+        abs(share - first[index]) <= EVEN_EPSILON * first[index]
+        for band in bands[1:]
+        for index, share in enumerate(_shares(band))
+    ):
+        return node
+
+    heights = [
+        _clean_weight(node.weights[index] if index < len(node.weights) else 1.0)
+        for index in range(len(bands))
+    ]
+    columns: list[LayoutNode] = [
+        Split(
+            direction="column",
+            children=[band.children[column] for band in bands],
+            weights=list(heights),
+            pinned=node.pinned,
+        )
+        for column in range(width)
+    ]
+    return Split(
+        direction="row",
+        children=columns,
+        weights=list(bands[0].weights),
+        pinned=any(band.pinned for band in bands),
     )
 
 

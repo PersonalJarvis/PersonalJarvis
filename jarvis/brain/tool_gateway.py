@@ -35,11 +35,13 @@ class BrainSupervisorToolGateway:
         browser_tool: Callable[[str], Awaitable[Tool | None]] | None = None,
         session_tools: Callable[[str, dict[str, Any]], Awaitable[dict[str, Any] | None]]
         | None = None,
+        workspace_tool: Tool | None = None,
     ) -> None:
         self._manager = manager
         self._session_tool = session_tool
         self._browser_tool = browser_tool
         self._session_tools = session_tools
+        self._workspace_tool = workspace_tool
         self._lock = threading.Lock()
         self._fingerprint: tuple[tuple[str, int], ...] = ()
         self._catalog_version = 0
@@ -103,6 +105,7 @@ class BrainSupervisorToolGateway:
 
     def _voice_tools(self) -> dict[str, Any]:
         from jarvis.harness.computer_use_context import peek_computer_use_context
+        from jarvis.plugins.tool.appshot import AppshotTool
         from jarvis.plugins.tool.live_screen import LiveScreenTool
 
         tools = self._live_tools()
@@ -111,6 +114,17 @@ class BrainSupervisorToolGateway:
         if context is not None and getattr(computer_use, "enabled", True):
             tools.update(context.tools or {})
         tools["screen_snapshot"] = LiveScreenTool()
+        # "Take an appshot" said in a live call: the shortcut's capture, with
+        # its effect and sound. Voice-only — a brain turn gets the same
+        # picture from its own Screen Context step.
+        tools["take_appshot"] = AppshotTool()
+        if self._workspace_tool is not None:
+            # Live delegates coding to one addressed service. The old prompt
+            # tools silently choose an ambient pane and cannot safely coexist.
+            tools = {
+                name: tool for name, tool in tools.items() if not name.startswith("agentic-ide-")
+            }
+            tools[self._workspace_tool.name] = self._workspace_tool
         return tools
 
     def voice_catalog(self) -> tuple[SupervisorToolDescriptor, ...]:
