@@ -352,12 +352,17 @@ def _call_centre_pixel(state: controls.PetStripState) -> tuple[int, int, int]:
     return frame.getpixel((int(cx), int(cy - r + 2)))
 
 
-def test_the_phone_wears_the_strips_own_fill_in_and_out_of_a_call() -> None:
-    # One quiet family: the phone says "call" with its handset, not a colour.
+def test_the_phone_wears_the_strips_own_fill_at_rest() -> None:
+    # One quiet family: without the pointer the phone has no colour of its own.
     assert _call_centre_pixel(controls.PetStripState()) == controls.PET_FILL
     assert _call_centre_pixel(controls.PetStripState(active=True)) == controls.PET_FILL
-    hovered = controls.PetStripState(hovered="call")
-    assert _call_centre_pixel(hovered) == controls.PET_FILL_HOVER
+
+
+def test_the_hovered_phone_turns_green_to_call_and_red_to_hang_up() -> None:
+    idle = controls.PetStripState(hovered="call")
+    assert _call_centre_pixel(idle) == controls.PET_CALL_HOVER_START
+    in_call = controls.PetStripState(hovered="call", active=True)
+    assert _call_centre_pixel(in_call) == controls.PET_CALL_HOVER_HANGUP
 
 
 def _handset_pixels(state: controls.PetStripState) -> list[tuple[int, int, int]]:

@@ -369,8 +369,9 @@ def render_row(
 # The desktop pet (``docs/pets.md``) carries its controls in a compact row:
 # a bell in its own filled disc, then ONE filled
 # pill holding microphone mute, the talk orb and the speaker, with thin
-# low-contrast dividers, then the phone in its own disc — green to call Jarvis,
-# red to hang up, the colours every phone app uses for exactly those two. Same
+# low-contrast dividers, then the phone in its own disc — quiet at rest, and
+# under the pointer green to call Jarvis or red to hang up, the colours every
+# phone app uses for exactly those two. Same
 # hard-edge rules as the row above: every silhouette that meets the colour key
 # goes through a binary mask, every glyph and the orb's gradient are drawn at
 # 4x and downscaled INSIDE the opaque surface, so their antialiasing never
@@ -473,9 +474,12 @@ PET_RING_PHASES = 14
 PET_RING_STEP_S = 0.04
 PET_RING_DEG = 16.0
 
-#: The phone disc wears the bell disc's fill and glyph colour — the strip is
-#: one quiet family, so the phone says "call" and "hang up" with the pose of
-#: its handset alone, never with a coloured button of its own.
+#: At rest the phone disc wears the bell disc's fill and glyph colour — the
+#: strip is one quiet family. Only under the pointer does it take a phone app's
+#: colour: green when a click would call Jarvis, red when it would hang up.
+PET_CALL_HOVER_START = (22, 163, 74)
+PET_CALL_HOVER_HANGUP = (220, 38, 38)
+PET_CALL_HOVER_ICON = (255, 255, 255)
 #: Pressing call rings the handset: the bell's damped swing, played
 #: ``PET_CALL_RING_PASSES`` times so it reads as a phone ringing out.
 PET_CALL_RING_PASSES = 2
@@ -1030,16 +1034,20 @@ def _draw_indicator(
 
 
 def _render_call_disc(state: PetStripState, diameter: int, scale: float) -> Image.Image:
-    """The phone disc: the bell disc's look, the handset tilted or lying flat."""
+    """The phone disc: the bell disc's look, green or red under the pointer."""
     size = diameter * _SS
-    hovered = state.hovered == "call"
-    layer = Image.new("RGB", (size, size), PET_FILL_HOVER if hovered else PET_FILL)
+    if state.hovered == "call":
+        fill = PET_CALL_HOVER_HANGUP if state.active else PET_CALL_HOVER_START
+        icon = PET_CALL_HOVER_ICON
+    else:
+        fill, icon = PET_FILL, PET_ICON
+    layer = Image.new("RGB", (size, size), fill)
     d = ImageDraw.Draw(layer)
     box = _spx(PET_SLOT, scale) * PET_ICON_BOX * _SS
     stroke = PET_ICON_STROKE * max(0.5, scale) * _SS
     _glyph_phone(
         _Pen(d, size / 2.0, size / 2.0, box, stroke),
-        PET_ICON,
+        icon,
         hangup=state.active,
         shake=call_ring_angle(state.call_ring),
     )
