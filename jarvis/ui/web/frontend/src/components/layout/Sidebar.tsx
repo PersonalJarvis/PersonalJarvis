@@ -23,6 +23,7 @@ import { cn } from "@/lib/utils";
 import { lazy, Suspense, useMemo, useState, type ReactNode } from "react";
 import { useT } from "@/i18n";
 import { RecentChats } from "@/components/home/RecentChats";
+import { SidebarScheduled } from "@/components/layout/SidebarScheduled";
 import { useHomeStore } from "@/store/home";
 import { IdeProjectTree } from "@/components/agentic/IdeProjectTree";
 import { useIdeProjectsStore } from "@/store/ideProjects";
@@ -552,7 +553,7 @@ export function Sidebar({
         </nav>}
         {!railed && (onIdeSection
           ? <IdeProjectTree />
-          : <section className="mt-6 px-2 pb-3" aria-label={t("sidebar.recent_chats")}><RecentChats /></section>)}
+          : <><SidebarScheduled /><section className="mt-5 px-2 pb-3" aria-label={t("sidebar.recent_chats")}><RecentChats /></section></>)}
       </div>
 
       {/* The footer is one button now, not a popup: it opens the Settings hub
