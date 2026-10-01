@@ -13,7 +13,7 @@ import { GRID_LIMIT_HINT, MAX_WORKSPACE_PANES, canSplitFit, fitsWorkspace, isBal
 import { AgentMark } from "@/components/agentic/AgentMark";
 import { CloseAgentDialog, type CloseTarget } from "@/components/agentic/CloseAgentDialog";
 import { IdeHotkeyMenu } from "@/components/agentic/IdeHotkeyMenu";
-import { PANE_COMMAND_EVENT, type IdeHotkeyAction, type PaneCommand, type PaneCommandDetail } from "@/components/agentic/ideHotkeys";
+import { LEADER_PASSTHROUGH, PANE_COMMAND_EVENT, PANE_INPUT_EVENT, type IdeHotkeyAction, type PaneCommand, type PaneCommandDetail, type PaneInputDetail } from "@/components/agentic/ideHotkeys";
 import { GitCheckoutPicker } from "@/components/agentic/git/GitCheckoutPicker";
 import { GitPanelDialog } from "@/components/agentic/git/GitPanelDialog";
 import { KEEP_CHECKOUT, prepareGit, type GitPlan } from "@/lib/gitApi";
@@ -467,7 +467,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const stopWorkspace = () => {
     if (session) setCloseRequest({ kind: "workspace", workspaceId: session.id });
   };
-  // Ctrl+Shift+B, then a key (see components/agentic/ideHotkeys): the IDE's
+  // Ctrl+B, then a key (see components/agentic/ideHotkeys): the IDE's
   // key menu. Pane commands go to the grid that owns the pane; the rest are
   // the same calls the buttons and the sidebar make.
   const hotkeysEnabled = onScreen && !dialogOpen && !optionsOpen && !gitOpen && !closeRequest;
@@ -566,7 +566,12 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     </main>
 
     <IdeHotkeyMenu enabled={hotkeysEnabled} agents={hotkeyAgents} pane={session ? selected : ""} onAction={runHotkey}
-      onRenamePane={(name) => sendPaneCommand({ kind: "rename", name })} />
+      onRenamePane={(name) => sendPaneCommand({ kind: "rename", name })}
+      onPassThrough={() => {
+        if (!session || !selected) return;
+        const detail: PaneInputDetail = { workspaceId: session.id, pane: selected, data: LEADER_PASSTHROUGH };
+        window.dispatchEvent(new CustomEvent(PANE_INPUT_EVENT, { detail }));
+      }} />
     <VoiceBubble open={voiceOpen} onClose={closeVoice} onScreen={onScreen} onJumpToPane={jumpToPane} promptTarget={selected} />
 
     {agentPicker && <div className="fixed inset-0 z-[80] flex items-center justify-center bg-background/75 p-4 backdrop-blur-sm"

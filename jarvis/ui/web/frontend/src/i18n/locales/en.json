@@ -1621,7 +1621,7 @@
       "zoom_out": "Smaller terminal text",
       "zoom_reset": "Reset terminal text size",
       "open_overlay": "Open this list",
-      "ide_menu": "Agentic IDE key menu: new panes, panes, workspaces"
+      "ide_menu": "Agentic IDE key menu (twice: Ctrl+B to the pane)"
     }
   },
   "board_view": {

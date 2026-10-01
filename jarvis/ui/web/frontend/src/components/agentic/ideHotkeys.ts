@@ -1,16 +1,17 @@
 /**
  * Leader-key shortcuts for the Agentic IDE.
  *
- * One chord — Ctrl+Shift+B, Cmd+Shift+B on a Mac — opens a small key menu;
- * the next keys pick what happens, the way tmux and which-key editors work.
- * `Ctrl+Shift+B, C, →` opens a Claude Code pane to the right of the focused
- * pane; `Ctrl+Shift+B, W, N` starts a new workspace.
+ * One chord — Ctrl+B, on every OS, like tmux — opens a small key menu; the
+ * next keys pick what happens, the way tmux and which-key editors work.
+ * `Ctrl+B, C, →` opens a Claude Code pane to the right of the focused pane;
+ * `Ctrl+B, W, N` starts a new workspace.
  *
  * Why a leader and not a chord per action: a focused pane forwards nearly every
  * Ctrl chord to the coding agent running in it, and each agent claims its own
  * (Claude Code alone uses Ctrl+B, Ctrl+G, Ctrl+O, Ctrl+R, Ctrl+T). One reserved
- * chord leaves every other key with the agent. Shift is part of it because
- * plain Ctrl+B is Claude Code's "run in background".
+ * chord leaves every other key with the agent. The one it takes, Ctrl+B, is
+ * Claude Code's "run in background": pressing it twice types it into the pane
+ * (`LEADER_PASSTHROUGH`), exactly as tmux passes its prefix through.
  *
  * Everything here is pure: the hook (`useIdeHotkeys`) feeds key events in and
  * carries out the actions that come back, so the whole key map is testable
@@ -71,14 +72,19 @@ export type HotkeyOutcome =
   | { type: "close" }
   | { type: "ignore" };
 
-/** Is this the leader chord? Mod+Shift+B, with Mod = Cmd on a Mac, Ctrl elsewhere. */
-export function isLeaderChord(event: HotkeyEventLike, isMac: boolean): boolean {
-  const mod = isMac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+/**
+ * Is this the leader chord? Ctrl+B on every OS — Ctrl, not Cmd, on a Mac too,
+ * because that is the terminal key tmux users already have in their hands.
+ */
+export function isLeaderChord(event: HotkeyEventLike): boolean {
   // `code` first: it names the physical key on every layout. `key` covers a
   // host that reports no code (some remote-desktop and test events do).
   const isB = event.code === "KeyB" || (!event.code && event.key.toLowerCase() === "b");
-  return mod && event.shiftKey && !event.altKey && isB;
+  return event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey && isB;
 }
+
+/** What Ctrl+B twice types into the focused pane: the control code Ctrl+B itself sends. */
+export const LEADER_PASSTHROUGH = "\x02";
 
 /** Letters the root menu keeps for its own commands; no agent may take one. */
 export const RESERVED_ROOT_KEYS = new Set(["e", "f", "n", "q", "r", "v", "w", "z"]);
@@ -278,6 +284,7 @@ export function hotkeyHints(step: IdeHotkeyStep, agents: readonly AgentKey[]): H
         { keys: ["1–9"], label: "Go to workspace" },
         { keys: ["Tab"], label: "Next workspace" },
         { keys: ["V"], label: "Voice bubble" },
+        { keys: ["Ctrl", "B"], label: "Send Ctrl+B to the pane" },
       ],
     },
   ];
@@ -319,3 +326,7 @@ export type PaneCommand =
   | { kind: "fork" }
   | { kind: "rename"; name: string };
 export interface PaneCommandDetail { workspaceId: string; pane: string; command: PaneCommand }
+
+/** The window event that types text into one pane's terminal, as if from the keyboard. */
+export const PANE_INPUT_EVENT = "jarvis:ide-pane-input";
+export interface PaneInputDetail { workspaceId: string; pane: string; data: string }

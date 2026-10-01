@@ -15,29 +15,30 @@ interface Props {
   pane: string;
   onAction: (action: IdeHotkeyAction) => void;
   onRenamePane: (name: string) => void;
+  /** Ctrl+B twice: type one Ctrl+B into the selected pane. */
+  onPassThrough: () => void;
 }
 
 type View = IdeHotkeyStep | { menu: "rename" };
 
-const isMac = typeof navigator !== "undefined" && /mac|iphone|ipad/i.test(navigator.userAgent);
-const LEADER = isMac ? ["⌘", "Shift", "B"] : ["Ctrl", "Shift", "B"];
+const LEADER = ["Ctrl", "B"];
 
 function Cap({ children }: { children: React.ReactNode }) {
   return <kbd className="inline-flex min-w-[1.5rem] items-center justify-center rounded-md border border-border bg-muted px-1.5 py-0.5 font-mono text-[11px] font-medium text-foreground shadow-[inset_0_-1px_0_rgba(0,0,0,0.12)]">{children}</kbd>;
 }
 
 /**
- * The IDE's key menu: Ctrl+Shift+B (Cmd+Shift+B on a Mac), then the keys it
- * lists. It listens on the window in the capture phase, so the chord is taken
+ * The IDE's key menu: Ctrl+B, then the keys it lists; Ctrl+B twice types a
+ * Ctrl+B into the pane. It listens on the window in the capture phase, so the chord is taken
  * before a focused terminal can hand it to the agent running there; while the
  * menu is open every key goes to the menu and none reaches a pane.
  */
-export function IdeHotkeyMenu({ enabled, agents, pane, onAction, onRenamePane }: Props) {
+export function IdeHotkeyMenu({ enabled, agents, pane, onAction, onRenamePane, onPassThrough }: Props) {
   const [view, setView] = useState<View | null>(null);
   const [draft, setDraft] = useState("");
   const keyed = useMemo(() => assignAgentKeys(agents), [agents]);
-  const latest = useRef({ view, keyed, pane, onAction, enabled });
-  latest.current = { view, keyed, pane, onAction, enabled };
+  const latest = useRef({ view, keyed, pane, onAction, onPassThrough, enabled });
+  latest.current = { view, keyed, pane, onAction, onPassThrough, enabled };
   // The element that had the keyboard before the menu opened gets it back.
   const returnFocus = useRef<HTMLElement | null>(null);
 
@@ -53,10 +54,15 @@ export function IdeHotkeyMenu({ enabled, agents, pane, onAction, onRenamePane }:
     const onKeyDown = (event: KeyboardEvent) => {
       const { view: current, keyed: agentKeys, enabled: on } = latest.current;
       if (!on || event.isComposing) return;
-      if (isLeaderChord(event, isMac)) {
+      if (isLeaderChord(event)) {
         event.preventDefault();
         event.stopPropagation();
-        if (current) { close(true); return; }
+        if (current) {
+          close(true);
+          // Twice in a row: the agent in the pane wanted its own Ctrl+B.
+          if (current.menu === "root") latest.current.onPassThrough();
+          return;
+        }
         returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
         setView({ menu: "root" });
         return;
