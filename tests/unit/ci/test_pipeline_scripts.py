@@ -389,6 +389,12 @@ def test_apply_moves_notes_under_a_dated_section(tmp_path):
     (tmp_path / "jarvis").mkdir()
     (tmp_path / "pyproject.toml").write_text('[project]\nversion = "1.0.0"\n', encoding="utf-8")
     (tmp_path / "jarvis" / "__init__.py").write_text('__version__ = "1.0.0"\n', encoding="utf-8")
+    (tmp_path / "uv.lock").write_text(
+        '[[package]]\nname = "dependency"\nversion = "1.0.0"\n\n'
+        '[[package]]\nname = "personal-jarvis"\nversion = "1.0.0"\n'
+        'source = { editable = "." }\n',
+        encoding="utf-8",
+    )
     (tmp_path / "CHANGELOG.md").write_text(
         "# Changelog\n\n## [Unreleased]\n\n---\n\n## [1.0.0] — 2026-01-01\n\n- old\n",
         encoding="utf-8",
@@ -398,6 +404,9 @@ def test_apply_moves_notes_under_a_dated_section(tmp_path):
     assert text.index("## [Unreleased]") < text.index("## [1.1.0] — 2026-09-28")
     assert text.index("## [1.1.0]") < text.index("## [1.0.0]")
     assert cut_release.section_notes(text, "1.1.0") == "### Added\n\n- thing"
+    lock = (tmp_path / "uv.lock").read_text(encoding="utf-8")
+    assert 'name = "personal-jarvis"\nversion = "1.1.0"' in lock
+    assert 'name = "dependency"\nversion = "1.0.0"' in lock
     from scripts.ci import release_admit
 
     assert release_admit.versions(tmp_path) == ("1.1.0", "1.1.0")

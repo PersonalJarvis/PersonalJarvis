@@ -7,8 +7,8 @@ dispatch — a release never happens by itself) and runnable locally::
     python scripts/ci/cut_release.py --bump patch      # 2.3.2 -> 2.3.3
     python scripts/ci/cut_release.py --version 2.4.0
 
-The version lives in exactly two places, ``pyproject.toml`` and
-``jarvis/__init__.py``. The CHANGELOG section takes the ``[Unreleased]``
+The package version in ``pyproject.toml`` and ``jarvis/__init__.py`` stays
+synchronized with the workspace entry in ``uv.lock``. The CHANGELOG takes the ``[Unreleased]``
 notes when there are any; otherwise it is built from the Conventional Commit
 subjects since the previous tag (feat -> Added, fix -> Fixed, perf/refactor ->
 Changed). The notes are also written to ``--notes-out`` for the GitHub
@@ -95,6 +95,17 @@ def apply(version: str, notes: str, today: str, root: Path = REPO_ROOT) -> None:
     text = init.read_text(encoding="utf-8")
     text = re.sub(r'__version__ = "[^"]+"', f'__version__ = "{version}"', text, count=1)
     init.write_bytes(text.encode("utf-8"))
+    lockfile = root / "uv.lock"
+    if lockfile.exists():
+        text = lockfile.read_text(encoding="utf-8")
+        text, count = re.subn(
+            r'(?m)(^\[\[package\]\]\nname = "personal-jarvis"\nversion = ")[^"]+',
+            lambda match: match.group(1) + version,
+            text,
+        )
+        if count != 1:
+            raise SystemExit("uv.lock must contain one personal-jarvis workspace package")
+        lockfile.write_bytes(text.encode("utf-8"))
     changelog = root / "CHANGELOG.md"
     head, _body, rest = split_unreleased(changelog.read_text(encoding="utf-8"))
     section = f"## [{version}] — {today}\n\n{notes.strip()}\n\n---\n\n"
