@@ -1,5 +1,10 @@
 # Managed agent browser
 
+Named profiles can be shared with all agents or selected agents. The optional
+Chrome extension connects an existing user's Chrome profile. See
+[browser profiles and shared logins](browser-profiles.md) for setup, assignment
+semantics and the connector's current verification limits.
+
 Jarvis provisions an isolated Browser-Use Python environment and a managed
 browser automatically during installation and after the server becomes ready.
 Opening an agent subscribes to that agent's actual rendered tab in the right

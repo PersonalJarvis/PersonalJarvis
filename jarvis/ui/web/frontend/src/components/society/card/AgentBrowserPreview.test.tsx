@@ -13,13 +13,20 @@ vi.mock("@/i18n", () => ({
     "society.browser_live.live": "Live",
     "society.browser_live.off_hint": "Starts when {0} needs it",
     "society.browser_live.open": "Open browser",
+    "society.browser_profiles.chrome_offline": "Chrome disconnected",
+    "society.browser_profiles.profile_unavailable": "Profile disconnected — choose a profile",
+    "society.browser_profiles.title": "Browser profiles",
+    "society.browser_profiles.sign_in_chrome": "Sign in directly in Chrome",
+    "society.browser_profiles.preview_paused": "Sign in directly in Chrome. The preview is paused.",
+    "society.browser_live.return_control": "Return control",
+    "society.browser_live.repair": "Repair browser",
   } as Record<string, string>)[key] ?? key,
 }));
 const { control, state, view, browser } = vi.hoisted(() => ({
   control: vi.fn(),
   view: vi.fn(),
-  browser: { open: true },
-  state: { connected: true, ready: true, fullWindow: false, manual: false, running: false,
+  browser: { open: true, mode: "own", connected: true, profileName: "" },
+  state: { connected: true, ready: true, fullWindow: false, previewPaused: false, manual: false, running: false,
     url: "https://example.com", target: "one", tabs: [{ id: "one", url: "https://example.com" }], error: "" },
 }));
 vi.mock("./useBrowserView", () => ({
@@ -30,7 +37,7 @@ vi.mock("./useBrowserView", () => ({
 }));
 vi.mock("../cardData", () => ({
   useBrowserInstallStatus: () => ({ data: { installed: true, running: false } }),
-  useAgentBrowserOpen: () => ({ data: browser.open }),
+  useAgentBrowserOpen: () => ({ data: browser }),
 }));
 const agent = { agentId: "scout", name: "Scout" } as SocietyAgent;
 function mount() {
@@ -40,9 +47,41 @@ function mount() {
 }
 afterEach(() => {
   cleanup(); control.mockClear(); view.mockClear();
-  state.manual = false; state.fullWindow = false; browser.open = true;
+  state.manual = false; state.fullWindow = false; state.previewPaused = false; state.ready = true; state.error = ""; browser.open = true;
+  browser.mode = "own"; browser.connected = true; browser.profileName = "";
 });
 describe("live agent browser", () => {
+  test("an unavailable profile blocks live access and offers profile selection without open or repair", () => {
+    browser.mode = "unavailable";
+    state.error = "Previous browser error";
+    mount();
+    expect(view).toHaveBeenLastCalledWith("scout", false);
+    expect(screen.getByTestId("agent-browser-preview").textContent).toContain("Profile disconnected — choose a profile");
+    expect(screen.queryByRole("button", { name: "Open browser" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Repair browser" })).toBeNull();
+    expect((screen.getByRole("button", { name: "Browser profiles" }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole("button", { name: "Take control" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByLabelText("Live browser of Scout"));
+    fireEvent.keyDown(screen.getByLabelText("Live browser of Scout"), { key: "x" });
+    expect(control).not.toHaveBeenCalled();
+  });
+  test("Chrome metadata shows the assigned profile and disables opening while disconnected", () => {
+    browser.mode = "chrome"; browser.connected = false; browser.open = false; browser.profileName = "Work Chrome";
+    mount();
+    expect(screen.getByTestId("agent-browser-preview").textContent).toContain("Work Chrome · Chrome disconnected");
+    expect((screen.getByRole("button", { name: "Open browser" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByRole("button", { name: "Repair browser" })).toBeNull();
+  });
+  test("Chrome manual login pauses mirrored input while return control stays available", () => {
+    browser.mode = "chrome"; state.previewPaused = true; state.ready = false; state.manual = true;
+    mount();
+    expect(screen.getByText("Sign in directly in Chrome. The preview is paused.")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Return control" }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.keyDown(screen.getByLabelText("Live browser of Scout"), { key: "x" });
+    expect(control).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Return control" }));
+    expect(control).toHaveBeenCalledWith("takeover", { enabled: false });
+  });
   test("opening the card never launches a browser the agent is not using", () => {
     browser.open = false;
     mount();

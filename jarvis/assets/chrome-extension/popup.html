@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Connect Jarvis</title><link rel="stylesheet" href="popup.css"></head>
+<body>
+  <h1>Connect this Chrome profile</h1>
+  <p>Jarvis uses a visible tab in this profile. Your logins stay in Chrome. Choose the agents and allowed websites in Jarvis.</p>
+  <form id="pair">
+    <label for="server">Local Jarvis address shown with the pairing code</label><input id="server" type="url" placeholder="http://127.0.0.1:47821" required>
+    <label for="code">Pairing code from Jarvis</label><input id="code" autocomplete="off" spellcheck="false" required>
+    <button type="submit">Connect profile</button>
+  </form>
+  <p>For another account, switch to its Chrome profile and connect the extension there.</p>
+  <p id="status" role="status">Checking connection…</p>
+  <button id="disconnect" type="button">Disconnect this profile</button>
+  <script src="popup.mjs" type="module"></script>
+</body></html>

@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { mintWsTicket } from "@/lib/ws";
 import { jitteredDelay, requestConnect } from "@/lib/connectBudget";
+import { BROWSER_PROFILE_CHANGED_EVENT } from "@/lib/browserProfiles";
 import type { BrowserPointerState } from "./browserPointerState";
 
 export interface BrowserViewState {
   connected: boolean;
   ready: boolean;
   fullWindow: boolean;
+  previewPaused: boolean;
   manual: boolean;
   running: boolean;
   controlPending: boolean;
@@ -19,7 +21,7 @@ export interface BrowserViewState {
   dialog?: { type: string; message: string };
 }
 const empty: BrowserViewState = {
-  connected: false, ready: false, fullWindow: false, manual: false, running: false, controlPending: false,
+  connected: false, ready: false, fullWindow: false, previewPaused: false, manual: false, running: false, controlPending: false,
   url: "", tabs: [], target: "", error: "",
 };
 
@@ -31,9 +33,20 @@ export function useBrowserView(agentId: string, enabled = true) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const socket = useRef<WebSocket | null>(null);
   const [state, setState] = useState<BrowserViewState>(empty);
+  const [profileRevision, setProfileRevision] = useState(0);
   const manual = useRef(false);
+  const previewPaused = useRef(false);
   const claiming = useRef(false);
   const inputs = useRef<Array<{ op: string; args: Record<string, unknown> }>>([]);
+  useEffect(() => {
+    const onProfileChanged = (event: Event) => {
+      if ((event as CustomEvent<{ agentIds: string[] }>).detail?.agentIds.includes(agentId)) {
+        setProfileRevision((revision) => revision + 1);
+      }
+    };
+    window.addEventListener(BROWSER_PROFILE_CHANGED_EVENT, onProfileChanged);
+    return () => window.removeEventListener(BROWSER_PROFILE_CHANGED_EVENT, onProfileChanged);
+  }, [agentId]);
   useEffect(() => {
     let disposed = false;
     let attempt = 0;
@@ -48,6 +61,7 @@ export function useBrowserView(agentId: string, enabled = true) {
     let renderedFrames = 0;
     let latestFrame: { data: string; sequence: number; timestamp: number } | null = null;
     manual.current = false;
+    previewPaused.current = false;
     claiming.current = false;
     inputs.current = [];
     setState(empty);
@@ -108,6 +122,7 @@ export function useBrowserView(agentId: string, enabled = true) {
           try {
             const event = JSON.parse(message.data);
             if (event.kind === "frame") {
+              if (previewPaused.current) return;
               if (typeof event.data !== "string" || typeof event.sequence !== "number") return;
               if (!Number.isFinite(event.timestamp)) return;
               lastLiveEvent = Date.now();
@@ -140,9 +155,19 @@ export function useBrowserView(agentId: string, enabled = true) {
               setState((s) => ({ ...s, ready: false, error: event.error }));
             } else if (event.kind === "state") {
               lastLiveEvent = Date.now();
-              if (!renderedFrames && !waitingForFrameSince) waitingForFrameSince = Date.now();
+              const paused = Boolean(event.preview_paused);
+              if (paused && !previewPaused.current) {
+                epoch++;
+                latestFrame = null;
+                renderedFrames = 0;
+                clearCanvas();
+              }
+              previewPaused.current = paused;
+              if (paused) waitingForFrameSince = 0;
+              else if (!renderedFrames && !waitingForFrameSince) waitingForFrameSince = Date.now();
               setState((s) => ({ ...s, manual: event.manual, running: event.running,
-                url: event.url, target: event.target, tabs: event.tabs ?? [], fullWindow: Boolean(event.full_window) }));
+                url: event.url, target: event.target, tabs: event.tabs ?? [], fullWindow: Boolean(event.full_window),
+                previewPaused: paused, ready: paused ? false : s.ready, pointer: paused ? undefined : s.pointer }));
             } else if (event.kind === "control") {
               if (typeof event.manual === "boolean") manual.current = event.manual;
               if (claiming.current && (event.manual === true || !event.ok)) {
@@ -217,9 +242,10 @@ export function useBrowserView(agentId: string, enabled = true) {
       ws?.close();
       clearCanvas();
     };
-  }, [agentId, enabled]);
+  }, [agentId, enabled, profileRevision]);
 
   const control = useCallback((op: string, args: Record<string, unknown> = {}) => {
+    if (previewPaused.current && op !== "takeover" && op !== "cancel") return;
     if (op === "cancel") {
       void fetch("/api/society/agents/" + encodeURIComponent(agentId) + "/browser/cancel",
         { method: "POST", headers: { "X-Jarvis-Stop-Chat": "1" } }).then((res) => {

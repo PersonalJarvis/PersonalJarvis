@@ -414,6 +414,7 @@ class WebServer:
         from .skills_routes import router as skills_router
         from .socials_routes import router as socials_router
         from .society_browser_routes import router as society_browser_router
+        from .browser_profile_routes import router as browser_profile_router
         from .society_figure_routes import router as society_figure_router
         from .society_routes import router as society_router
         from .starter_plan_routes import router as starter_plan_router
@@ -622,6 +623,7 @@ class WebServer:
 
         app.include_router(mars_router)
         app.include_router(society_browser_router)
+        app.include_router(browser_profile_router)
         app.include_router(society_figure_router)
         app.include_router(drop_router)
         # Default: no recorder wired up — _init_session_stack() in start()
