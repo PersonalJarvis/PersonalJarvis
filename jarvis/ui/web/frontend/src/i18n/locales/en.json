@@ -2714,6 +2714,7 @@
       "in_label": "Zoom in",
       "out_label": "Zoom out",
       "reset_label": "Back to 100 %",
+      "reset_button": "Reset",
       "problem_typing_key": "This key alone would zoom every time you type it. Add Ctrl, Alt or Command — or use a function key such as F9.",
       "problem_os_reserved": "The Windows key belongs to the system (Windows + Plus opens the magnifier). Pick a chord with Ctrl or Alt.",
       "problem_duplicate": "Another zoom step already uses exactly this combination.",

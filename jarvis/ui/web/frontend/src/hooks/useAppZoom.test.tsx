@@ -5,7 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, renderHook, waitFor } from "@testing-library/react";
 
-import { useAppZoom, useAppZoomSupport } from "./useAppZoom";
+import { resetAppZoomApplyState, useAppZoom, useAppZoomSupport, useZoomIndicator } from "./useAppZoom";
 import {
   APP_ZOOM_STORAGE_KEY,
   readAppZoomSettings,
@@ -27,6 +27,8 @@ describe("useAppZoom", () => {
     window.localStorage.removeItem(APP_ZOOM_STORAGE_KEY);
     useAppZoomSettings.setState(readAppZoomSettings());
     useAppZoomSupport.setState({ support: "unknown" });
+    useZoomIndicator.setState({ open: false, seq: 0 });
+    resetAppZoomApplyState();
     (window as Host).__JARVIS_EMBEDDED_DESKTOP = true;
   });
   afterEach(() => {
@@ -49,8 +51,36 @@ describe("useAppZoom", () => {
     fireEvent.keyDown(document.body, { key: "0", code: "Digit0", ctrlKey: true });
     expect(useAppZoomSettings.getState().level).toBe(1);
 
-    await waitFor(() => expect(sentFactors(fetchMock)).toEqual([1, 1.1, 1, 0.9, 1]));
+    // Steps pressed while a request is out are folded into the newest one; the
+    // last factor sent is always the level the user ended on.
+    await waitFor(() => expect(sentFactors(fetchMock).at(-1)).toBe(1));
+    expect(sentFactors(fetchMock)[0]).toBe(1);
     expect(readAppZoomSettings().level).toBe(1);
+    expect(useZoomIndicator.getState().open).toBe(true);
+  });
+
+  it("never lets the requests of a held-down key overtake each other", async () => {
+    const pending: (() => void)[] = [];
+    const sent: number[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: string, init: RequestInit) => {
+        sent.push(JSON.parse(String(init.body)).factor);
+        return new Promise<Response>((resolve) => {
+          pending.push(() => resolve(new Response(JSON.stringify({ ok: true }), { status: 200 })));
+        });
+      }),
+    );
+    renderHook(() => useAppZoom());
+    await waitFor(() => expect(sent).toEqual([1]));
+
+    for (let i = 0; i < 4; i++) {
+      fireEvent.keyDown(document.body, { key: "+", code: "BracketRight", ctrlKey: true });
+    }
+    expect(sent).toEqual([1]); // still one in flight
+    pending.shift()?.();
+    await waitFor(() => expect(sent).toEqual([1, 1.75])); // 1.1, 1.25, 1.5 skipped
+    pending.shift()?.();
   });
 
   it("re-applies a remembered level when the window opens", async () => {

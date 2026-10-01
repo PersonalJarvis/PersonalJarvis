@@ -49,6 +49,7 @@ const QuickSwitcher = lazy(() =>
 import { eventMatchesChord } from "@/lib/quickSwitchChord";
 import { useQuickSwitchSettings } from "@/store/quickSwitchSettings";
 import { useAppZoom } from "@/hooks/useAppZoom";
+import { ZoomIndicator } from "@/components/ZoomIndicator";
 import { useQuickSwitcher } from "@/store/quickSwitcher";
 import { JarvisDock } from "@/components/JarvisDock";
 import { CliConnectPoller } from "@/components/CliConnectPoller";
@@ -347,6 +348,7 @@ export default function App() {
         <ToastLayer />
         <CommandActivityLayer />
         <EditContextMenu />
+        <ZoomIndicator />
         {shortcutsOpen && (
           <Suspense fallback={null}>
             <ShortcutOverlay open onOpenChange={setShortcutsOpen} />
@@ -442,6 +444,8 @@ export default function App() {
           />
         </Suspense>
       )}
+      {/* Names the level after Ctrl + Plus / Minus, like Chrome's zoom bubble. */}
+      <ZoomIndicator />
       {/* `?` anywhere in the app opens this; the chunk loads on first use. */}
       {shortcutsOpen && (
         <Suspense fallback={null}>

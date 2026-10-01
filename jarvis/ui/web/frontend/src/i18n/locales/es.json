@@ -2681,6 +2681,7 @@
       "in_label": "Acercar",
       "out_label": "Alejar",
       "reset_label": "Volver al 100 %",
+      "reset_button": "Restablecer",
       "problem_typing_key": "Esta tecla sola haría zoom cada vez que la escribes. Añade Ctrl, Alt o Command, o usa una tecla de función como F9.",
       "problem_os_reserved": "La tecla Windows pertenece al sistema (Windows + Más abre la lupa). Elige una combinación con Ctrl o Alt.",
       "problem_duplicate": "Otro paso de zoom ya usa exactamente esta combinación.",

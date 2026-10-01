@@ -2681,6 +2681,7 @@
       "in_label": "Hineinzoomen",
       "out_label": "Herauszoomen",
       "reset_label": "Zurück auf 100 %",
+      "reset_button": "Zurücksetzen",
       "problem_typing_key": "Diese Taste allein würde bei jedem Tippen zoomen. Nimm Strg, Alt oder Command dazu — oder eine Funktionstaste wie F9.",
       "problem_os_reserved": "Die Windows-Taste gehört dem System (Windows + Plus öffnet die Bildschirmlupe). Wähle eine Kombination mit Strg oder Alt.",
       "problem_duplicate": "Ein anderer Zoom-Schritt nutzt genau diese Kombination schon.",

@@ -28,6 +28,7 @@ import { create } from "zustand";
 
 import { hasEmbeddedDesktopBridge } from "@/components/voice/BrowserRealtimeControl";
 import { appZoomIntentFor, nextAppZoom } from "@/lib/appZoom";
+import { armZoomTransition, installZoomTransition } from "@/lib/zoomTransition";
 import { useAppZoomSettings } from "@/store/appZoomSettings";
 import { useEventStore } from "@/store/events";
 
@@ -38,12 +39,65 @@ export const useAppZoomSupport = create<{ support: AppZoomSupport }>(() => ({
   support: "unknown",
 }));
 
+/**
+ * The Chrome-style bubble that names the new level after a zoom step. `seq`
+ * changes on every step so the bubble restarts its hide timer.
+ */
+export const useZoomIndicator = create<{ open: boolean; seq: number }>(() => ({
+  open: false,
+  seq: 0,
+}));
+
+export function showZoomIndicator(): void {
+  useZoomIndicator.setState((s) => ({ open: true, seq: s.seq + 1 }));
+}
+
+export function hideZoomIndicator(): void {
+  useZoomIndicator.setState({ open: false });
+}
+
 function windowView(): string | null {
   const { solo, activeSection } = useEventStore.getState();
   return solo ? activeSection : null;
 }
 
+/**
+ * One request in flight at a time, and only the newest level waits behind it.
+ * A held-down key repeats faster than the shell answers; firing a request per
+ * repeat let them overtake each other, and the window visibly stepped back
+ * and forth on its way to the level the user asked for.
+ */
+let inFlight = false;
+let queued: number | null = null;
+let applied: number | null = null;
+
+/** Forget what this window applied — for tests, which share the module. */
+export function resetAppZoomApplyState(): void {
+  inFlight = false;
+  queued = null;
+  applied = null;
+}
+
 async function applyWindowZoom(level: number): Promise<void> {
+  if (inFlight) {
+    queued = level;
+    return;
+  }
+  inFlight = true;
+  try {
+    await sendWindowZoom(level);
+  } finally {
+    inFlight = false;
+    const next = queued;
+    queued = null;
+    if (next !== null && next !== applied) void applyWindowZoom(next);
+  }
+}
+
+async function sendWindowZoom(level: number): Promise<void> {
+  // The engine's resize is the cue for the glide (lib/zoomTransition); the
+  // first apply at start-up has nothing to glide from.
+  if (applied !== null && applied !== level) armZoomTransition();
   try {
     const res = await fetch("/api/window/zoom", {
       method: "POST",
@@ -52,6 +106,7 @@ async function applyWindowZoom(level: number): Promise<void> {
     });
     const body = (res.ok ? await res.json() : null) as { ok?: boolean; reason?: string } | null;
     if (body?.ok) {
+      applied = level;
       useAppZoomSupport.setState({ support: "native" });
       return;
     }
@@ -75,6 +130,8 @@ export function useAppZoom(): void {
     if (!embedded) useAppZoomSupport.setState({ support: "browser" });
   }, [embedded]);
 
+  useEffect(() => (embedded ? installZoomTransition(window) : undefined), [embedded]);
+
   // Apply the level to THIS window — on start (the window opens at 100 %), on
   // every step, and when another window changed it through storage.
   useEffect(() => {
@@ -96,6 +153,9 @@ export function useAppZoom(): void {
       const { level: current, setLevel } = useAppZoomSettings.getState();
       const next = nextAppZoom(current, intent);
       if (next !== current) setLevel(next);
+      // Shown even at the ends of the range, like Chrome: the bubble is how
+      // the user learns that 300 % is as far as it goes.
+      showZoomIndicator();
     };
     document.addEventListener("keydown", onKeyDown, true);
     return () => document.removeEventListener("keydown", onKeyDown, true);
