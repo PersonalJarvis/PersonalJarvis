@@ -18,7 +18,7 @@ import {
 } from "@/i18n";
 import { LanguageSelect } from "@/components/ui/language-select";
 
-const UI_OPTIONS: UiLanguage[] = ["en", "de", "es"];
+const UI_OPTIONS: UiLanguage[] = ["en", "de", "es", "it"];
 const REPLY_OPTIONS: ReplyLanguage[] = ["auto", "en", "de", "es"];
 
 /**
