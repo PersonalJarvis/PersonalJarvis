@@ -981,6 +981,18 @@ class AnnouncementRequested(Event):
     report: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class DelegationResultReady(Event):
+    """A coding result addressed to one existing Jarvis text conversation."""
+
+    session_id: str = ""
+    request_id: str = ""
+    agent_name: str = ""
+    status: str = ""
+    text: str = ""
+    report: str = ""
+
+
 # Mission completion — bridged from the per-mission MissionBus to drive When-Then rules
 
 @dataclass(frozen=True, slots=True)

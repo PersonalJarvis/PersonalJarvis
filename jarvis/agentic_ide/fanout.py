@@ -443,9 +443,7 @@ async def _default_send(name: str, text: str, **receipt: Any) -> Any:
     """
     from .session import get_registry
 
-    # A job Jarvis handed over on the user's behalf: its end is reported by
-    # voice (see `voice_readback`).
-    return await get_registry().send_prompt(name, text, readback=True, **receipt)
+    return await get_registry().send_prompt(name, text, **receipt)
 
 
 async def deliver(
@@ -657,6 +655,10 @@ async def deliver(
         receipt = (
             {"typed": utterance, "attachments": pending_attachments} if send is None else {}
         )
+        if send is None and cancel_on_hangup:
+            from jarvis.core.delegation import origin_metadata
+
+            receipt["followup"] = origin_metadata()
         try:
             sent = await send_fn(term.name, text, **receipt)
         except asyncio.CancelledError:

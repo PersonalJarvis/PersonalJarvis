@@ -95,7 +95,6 @@ from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 from loguru import logger
 
-from . import voice_readback
 from .activity import (
     RESIZE_SHADOW_S,
     STILL_S,
@@ -445,13 +444,11 @@ class ActivityWatcher:
         self.center = center
         self._panes: dict[tuple[str, str], _PaneWatch] = {}
         self._resume_dirty = False
-        #: Jarvis-given jobs that just stopped: (kind, terminal), in order.
-        self._readbacks: list[tuple[Kind, Any]] = []
+        self._results: list[tuple[str, Any, Any]] = []
 
-    def take_readbacks(self) -> list[tuple[Kind, Any]]:
-        """Return and clear the stops that owe the user a spoken readback."""
-        taken, self._readbacks = self._readbacks, []
-        return taken
+    def take_results(self) -> list[tuple[str, Any, Any]]:
+        results, self._results = self._results, []
+        return results
 
     def take_resume_dirty(self) -> bool:
         """Return and clear whether activity changed the resume checkpoint."""
@@ -649,14 +646,9 @@ class ActivityWatcher:
 
         watch.announced = True
         watch.worked = False
-        if kind in ("completed", "needs_input") and getattr(term, "voice_readback", False):
-            # Jarvis handed this job over for the user, so the user hears how
-            # it ended — independent of the bell switch below. A question keeps
-            # the job open: the answer resumes the same job, and its end is
-            # still owed.
-            if kind == "completed":
-                term.voice_readback = False
-            self._readbacks.append((kind, term))
+        pending = getattr(term, "delegation_result", None)
+        if pending is not None:
+            self._results.append((kind, term, pending))
         if not emit:
             return None
         return self.center.add(
@@ -991,7 +983,7 @@ def reset() -> None:
     _CENTER.clear()
     _WATCHER._panes.clear()  # noqa: SLF001 - same module, one owner
     _WATCHER._resume_dirty = False  # noqa: SLF001 - same module, one owner
-    _WATCHER._readbacks.clear()  # noqa: SLF001 - same module, one owner
+    _WATCHER.take_results()
     _FEED.clear()
     set_publisher(None)
     reset_switch_cache()
@@ -1025,10 +1017,16 @@ async def _run(registry: Registry) -> None:
                 # with notifications disabled, restored panes must not be
                 # offered a blind Continue merely because history exists.
                 _WATCHER.poll(registry, emit=await _enabled_off_loop())
-                for kind, term in _WATCHER.take_readbacks():
-                    # Its own task: composing the sentence waits on a model,
-                    # and the sweep must keep its two-second rhythm.
-                    voice_readback.schedule(kind, term, _publisher)
+                from .followthrough import poll_ready, publish_result
+
+                for kind, term, pending in _WATCHER.take_results():
+                    if not await publish_result(kind, term, pending, _publisher):
+                        # Retry publication only while the same submission still owns it.
+                        from .followthrough import current
+
+                        if current(term, pending):
+                            _WATCHER._results.append((kind, term, pending))
+                await poll_ready(registry, _publisher)
                 if _WATCHER.take_resume_dirty():
                     await registry.persist_resume_activity()
                 # After the stamps, so the event carries the word this sweep
