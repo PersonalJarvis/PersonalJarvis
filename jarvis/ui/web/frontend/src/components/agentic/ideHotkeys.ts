@@ -2,9 +2,11 @@
  * Leader-key shortcuts for the Agentic IDE.
  *
  * One chord — Ctrl+B, on every OS, like tmux — opens a small key menu; the
- * next keys pick what happens, the way tmux and which-key editors work.
- * `Ctrl+B, C, →` opens a Claude Code pane to the right of the focused pane;
- * `Ctrl+B, W, N` starts a new workspace.
+ * next keys pick what happens, the way tmux and herdr work: a one-line mode
+ * bar at the bottom says PREFIX and names the keys, `?` opens the full list,
+ * Esc or any unbound key drops back to the terminal. `Ctrl+B, C, →` opens a
+ * Claude Code pane to the right of the focused pane; `Ctrl+B, V` splits the
+ * focused pane with the same agent; `Ctrl+B, W, N` starts a new workspace.
  *
  * Why a leader and not a chord per action: a focused pane forwards nearly every
  * Ctrl chord to the coding agent running in it, and each agent claims its own
@@ -25,6 +27,7 @@ export type PaneDirection = "left" | "right" | "up" | "down";
 export type IdeHotkeyAction =
   | { kind: "spawn"; agent: string; direction: PaneSplitDirection | null }
   | { kind: "agent-picker" }
+  | { kind: "split"; direction: PaneSplitDirection }
   | { kind: "focus-pane"; direction: PaneDirection }
   | { kind: "swap-pane"; direction: PaneDirection }
   | { kind: "maximize-pane" }
@@ -47,6 +50,7 @@ export type IdeHotkeyAction =
 export type IdeHotkeyStep =
   | { menu: "root" }
   | { menu: "workspace" }
+  | { menu: "help" }
   | { menu: "direction"; agent: string; label: string };
 
 /** The minimal slice of a KeyboardEvent the matcher reads. */
@@ -87,7 +91,7 @@ export function isLeaderChord(event: HotkeyEventLike): boolean {
 export const LEADER_PASSTHROUGH = "\x02";
 
 /** Letters the root menu keeps for its own commands; no agent may take one. */
-export const RESERVED_ROOT_KEYS = new Set(["e", "f", "n", "q", "r", "v", "w", "z"]);
+export const RESERVED_ROOT_KEYS = new Set(["e", "f", "m", "n", "p", "q", "r", "v", "w", "z"]);
 
 /**
  * The letter each known agent prefers. Claude and Codex both start with C, so
@@ -170,6 +174,8 @@ export function resolveHotkey(step: IdeHotkeyStep, event: HotkeyEventLike, agent
   if (MODIFIER_KEYS.has(event.key)) return { type: "ignore" };
   if (event.key === "Escape") return { type: "close" };
   if (event.key === "Backspace") return step.menu === "root" ? { type: "close" } : { type: "step", step: { menu: "root" } };
+  // The full key list: any key leaves it, the way herdr's prefix+? help does.
+  if (step.menu === "help") return { type: "close" };
   // Ctrl/Cmd/Alt combinations belong to the app and the OS, never to the menu.
   if (event.ctrlKey || event.metaKey || event.altKey) return { type: "close" };
   const arrow = ARROWS[event.key];
@@ -202,16 +208,28 @@ export function resolveHotkey(step: IdeHotkeyStep, event: HotkeyEventLike, agent
   // Root menu.
   if (arrow) return { type: "run", action: { kind: event.shiftKey ? "swap-pane" : "focus-pane", direction: arrow } };
   if (event.key === "Tab") return { type: "run", action: { kind: "workspace-step", step: event.shiftKey ? -1 : 1 } };
+  if (event.key === "?") return { type: "step", step: { menu: "help" } };
+  if (event.key === "+") return { type: "run", action: { kind: "agent-picker" } };
+  if (event.key === "-") return { type: "run", action: { kind: "split", direction: "down" } };
   const digit = digitOf(event);
   if (digit) return { type: "run", action: { kind: "workspace-index", index: digit - 1 } };
+  // herdr's capital workspace keys: Shift+N new, Shift+W rename, Shift+D close.
+  if (letter && event.shiftKey) {
+    const shifted: Record<string, IdeHotkeyAction> = {
+      n: { kind: "new-workspace" }, w: { kind: "rename-workspace" }, d: { kind: "close-workspace" },
+    };
+    return shifted[letter] ? { type: "run", action: shifted[letter] } : { type: "close" };
+  }
   if (letter) {
     const rootKeys: Record<string, IdeHotkeyAction | IdeHotkeyStep> = {
       e: { kind: "balance" },
       f: { kind: "fork-pane" },
-      n: { kind: "agent-picker" },
+      m: { kind: "toggle-voice" },
+      n: { kind: "workspace-step", step: 1 },
+      p: { kind: "workspace-step", step: -1 },
       q: { kind: "close-pane" },
       r: { kind: "rename-pane" },
-      v: { kind: "toggle-voice" },
+      v: { kind: "split", direction: "right" },
       w: { menu: "workspace" },
       z: { kind: "maximize-pane" },
     };
@@ -221,6 +239,47 @@ export function resolveHotkey(step: IdeHotkeyStep, event: HotkeyEventLike, agent
     if (agent) return { type: "step", step: { menu: "direction", agent: agent.name, label: agent.label } };
   }
   return { type: "close" };
+}
+
+/** The one-line mode bar: a badge naming the mode, then the keys that work in it. */
+export interface ModeBar { badge: string; hints: HotkeyHint[] }
+
+/** What the bar at the bottom says for a step; the full list lives behind `?`. */
+export function modeBar(step: IdeHotkeyStep, agents: readonly AgentKey[]): ModeBar {
+  if (step.menu === "direction") {
+    return {
+      badge: step.label.toUpperCase(),
+      hints: [
+        { keys: ["→"], label: "right" }, { keys: ["←"], label: "left" }, { keys: ["↑"], label: "above" },
+        { keys: ["↓"], label: "below" }, { keys: ["Enter"], label: "even grid" }, { keys: ["Esc"], label: "cancel" },
+      ],
+    };
+  }
+  if (step.menu === "workspace") {
+    return {
+      badge: "WORKSPACE",
+      hints: [
+        { keys: ["N"], label: "new" }, { keys: ["T"], label: "worktree" }, { keys: ["R"], label: "rename" },
+        { keys: ["Q"], label: "close" }, { keys: ["G"], label: "git" }, { keys: ["O"], label: "options" },
+        { keys: ["P"], label: "connect folder" }, { keys: ["←→"], label: "switch" }, { keys: ["Esc"], label: "back" },
+      ],
+    };
+  }
+  if (step.menu === "help") return { badge: "KEYS", hints: [{ keys: ["any key"], label: "close" }] };
+  return {
+    badge: "PREFIX",
+    hints: [
+      ...agents.map((agent) => ({ keys: [agent.key.toUpperCase()], label: agent.label })),
+      { keys: ["V", "-"], label: "split" },
+      { keys: ["←↑→↓"], label: "move" },
+      { keys: ["Z"], label: "zoom" },
+      { keys: ["Q"], label: "close" },
+      { keys: ["W"], label: "workspaces" },
+      { keys: ["?"], label: "all keys" },
+      { keys: ["Esc"], label: "cancel" },
+      { keys: ["Ctrl", "B"], label: "send Ctrl+B" },
+    ],
+  };
 }
 
 /** One row of the key menu as the overlay draws it. */
@@ -261,8 +320,10 @@ export function hotkeyHints(step: IdeHotkeyStep, agents: readonly AgentKey[]): H
     {
       title: "New pane",
       hints: [
-        ...agents.map((agent) => ({ keys: [agent.key.toUpperCase()], label: agent.label })),
-        { keys: ["N"], label: "Choose agent…" },
+        ...agents.map((agent) => ({ keys: [agent.key.toUpperCase()], label: `${agent.label}, then an arrow` })),
+        { keys: ["V"], label: "Split right, same agent" },
+        { keys: ["-"], label: "Split below, same agent" },
+        { keys: ["+"], label: "Choose agent…" },
       ],
     },
     {
@@ -282,8 +343,11 @@ export function hotkeyHints(step: IdeHotkeyStep, agents: readonly AgentKey[]): H
       hints: [
         { keys: ["W"], label: "Workspace menu…" },
         { keys: ["1–9"], label: "Go to workspace" },
-        { keys: ["Tab"], label: "Next workspace" },
-        { keys: ["V"], label: "Voice bubble" },
+        { keys: ["N", "P"], label: "Next / previous workspace" },
+        { keys: ["Shift", "N"], label: "New workspace" },
+        { keys: ["Shift", "W"], label: "Rename workspace" },
+        { keys: ["Shift", "D"], label: "Close workspace" },
+        { keys: ["M"], label: "Voice bubble" },
         { keys: ["Ctrl", "B"], label: "Send Ctrl+B to the pane" },
       ],
     },

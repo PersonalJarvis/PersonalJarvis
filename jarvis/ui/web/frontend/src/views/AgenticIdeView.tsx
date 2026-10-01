@@ -483,8 +483,16 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     if (!target) { pushToast("info", `There is no workspace ${index + 1}.`); return; }
     if (target.id !== session?.id) void activateFromTree(target.id);
   };
-  const runHotkey = (hotkey: IdeHotkeyAction) => {
+  const runHotkey = (hotkey: IdeHotkeyAction): void => {
     switch (hotkey.kind) {
+      case "split": {
+        // tmux/herdr split: the new pane runs what the focused pane runs.
+        const focused = session?.terminals.find((terminal) => terminal.name === selected);
+        const agent = focused?.agent ?? installed[0]?.name;
+        if (!agent) { openAgentPicker(); return; }
+        runHotkey({ kind: "spawn", agent, direction: hotkey.direction });
+        return;
+      }
       case "spawn": {
         if (!session) { setProjectDialog(true); return; }
         if (session.terminals.length >= maxPanes) { pushToast("error", `This workspace is full (${maxPanes} agents). Close a pane, or open another workspace.`); return; }

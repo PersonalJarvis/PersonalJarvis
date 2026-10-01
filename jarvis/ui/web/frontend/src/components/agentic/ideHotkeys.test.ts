@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  LEADER_PASSTHROUGH, RESERVED_ROOT_KEYS, assignAgentKeys, hotkeyHints, isLeaderChord, neighborInDirection, resolveHotkey,
+  LEADER_PASSTHROUGH, RESERVED_ROOT_KEYS, assignAgentKeys, hotkeyHints, isLeaderChord, modeBar, neighborInDirection, resolveHotkey,
   type HotkeyEventLike, type IdeHotkeyStep,
 } from "./ideHotkeys";
 
@@ -91,6 +91,24 @@ describe("key sequences", () => {
   it("an unknown key or a Ctrl chord closes the menu instead of hanging", () => {
     expect(resolveHotkey(ROOT, press("j"), AGENTS)).toEqual({ type: "close" });
     expect(resolveHotkey(ROOT, press("c", { ctrlKey: true }), AGENTS)).toEqual({ type: "close" });
+  });
+
+  it("speaks herdr's keys: V and - split, N/P switch, Shift+N/W/D manage workspaces", () => {
+    expect(resolveHotkey(ROOT, press("v"), AGENTS)).toEqual({ type: "run", action: { kind: "split", direction: "right" } });
+    expect(resolveHotkey(ROOT, { ...press("-"), code: "Minus" }, AGENTS)).toEqual({ type: "run", action: { kind: "split", direction: "down" } });
+    expect(resolveHotkey(ROOT, press("n"), AGENTS)).toEqual({ type: "run", action: { kind: "workspace-step", step: 1 } });
+    expect(resolveHotkey(ROOT, press("p"), AGENTS)).toEqual({ type: "run", action: { kind: "workspace-step", step: -1 } });
+    expect(resolveHotkey(ROOT, press("N", { shiftKey: true }), AGENTS)).toEqual({ type: "run", action: { kind: "new-workspace" } });
+    expect(resolveHotkey(ROOT, press("W", { shiftKey: true }), AGENTS)).toEqual({ type: "run", action: { kind: "rename-workspace" } });
+    expect(resolveHotkey(ROOT, press("D", { shiftKey: true }), AGENTS)).toEqual({ type: "run", action: { kind: "close-workspace" } });
+    expect(resolveHotkey(ROOT, { ...press("?"), shiftKey: true }, AGENTS)).toEqual({ type: "step", step: { menu: "help" } });
+  });
+
+  it("the mode bar names the mode and the agent letters", () => {
+    const bar = modeBar(ROOT, AGENTS);
+    expect(bar.badge).toBe("PREFIX");
+    expect(bar.hints.map((hint) => hint.keys.join("+"))).toEqual(expect.arrayContaining(["C", "X", "Esc", "?", "Ctrl+B"]));
+    expect(modeBar({ menu: "direction", agent: "codex", label: "Codex" }, AGENTS).badge).toBe("CODEX");
   });
 
   it("lists every agent letter and every command it accepts", () => {

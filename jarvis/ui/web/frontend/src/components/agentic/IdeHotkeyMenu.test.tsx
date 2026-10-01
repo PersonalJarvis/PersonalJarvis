@@ -42,7 +42,7 @@ describe("IdeHotkeyMenu", () => {
     const { leader, key, actions, terminalKeys } = setup();
     leader();
     key({ key: "c", code: "KeyC" });
-    expect(screen.getByText("Open Claude Code")).toBeTruthy();
+    expect(screen.getByText("CLAUDE CODE")).toBeTruthy();
     key({ key: "ArrowRight", code: "ArrowRight" });
     expect(actions).toEqual([{ kind: "spawn", agent: "claude", direction: "right" }]);
     expect(terminalKeys).toEqual([]);
@@ -93,6 +93,16 @@ describe("IdeHotkeyMenu", () => {
       act(() => { fireEvent.keyUp(window, { key: "Control", code: "ControlLeft" }); });
       expect(screen.queryByRole("button", { name: /opens the IDE key menu/ })).toBeNull();
     });
+  });
+
+  it("shows a PREFIX mode bar, and ? opens the full key list", () => {
+    const { leader, key } = setup();
+    leader();
+    expect(screen.getByText("PREFIX")).toBeTruthy();
+    key({ key: "?", code: "Minus", shiftKey: true });
+    expect(screen.getByText("All keys")).toBeTruthy();
+    key({ key: "a", code: "KeyA" });
+    expect(screen.queryByRole("dialog", { name: "IDE shortcuts" })).toBeNull();
   });
 
   it("Escape closes the menu", () => {

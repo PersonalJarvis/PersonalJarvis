@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Keyboard } from "lucide-react";
-import { cn } from "@/lib/utils";
 import {
-  assignAgentKeys, hotkeyHints, isLeaderChord, resolveHotkey,
+  assignAgentKeys, hotkeyHints, isLeaderChord, modeBar, resolveHotkey,
   type HotkeyAgent, type IdeHotkeyAction, type IdeHotkeyStep,
 } from "./ideHotkeys";
 
@@ -144,8 +143,20 @@ export function IdeHotkeyMenu({ enabled, agents, pane, onAction, onRenamePane, o
     </button>;
   }
 
-  const crumbs = view.menu === "workspace" ? ["W"] : view.menu === "direction"
-    ? [keyed.find((agent) => agent.name === view.agent)?.key.toUpperCase() ?? "?"] : [];
+  // Prefix, workspace and direction steps: one bar along the bottom edge, the
+  // way herdr draws its PREFIX mode — it names the mode and the keys that work
+  // now, and covers nothing but the last line of the panes.
+  if (view.menu !== "help" && view.menu !== "rename") {
+    const bar = modeBar(view, keyed);
+    return <div data-ide-hotkey-menu role="dialog" aria-label="IDE shortcuts"
+      className="pointer-events-auto fixed inset-x-0 bottom-0 z-[90] flex h-8 items-center gap-3 overflow-hidden whitespace-nowrap border-t border-border bg-popover px-2 text-xs text-popover-foreground shadow-[0_-4px_16px_rgba(0,0,0,0.18)]">
+      <span className="shrink-0 rounded-sm bg-primary px-2 py-0.5 text-[11px] font-bold tracking-wide text-primary-foreground">{bar.badge}</span>
+      {pane && view.menu !== "workspace" && <span className="shrink-0 text-muted-foreground">{pane}</span>}
+      {bar.hints.map((hint) => <span key={`${hint.keys.join("+")}-${hint.label}`} className="inline-flex shrink-0 items-center gap-1">
+        {hint.keys.map((key) => <Cap key={key}>{key}</Cap>)}<span className="text-muted-foreground">{hint.label}</span>
+      </span>)}
+    </div>;
+  }
 
   return <div data-ide-hotkey-menu role="dialog" aria-label="IDE shortcuts"
     className="pointer-events-auto fixed bottom-6 left-1/2 z-[90] w-[min(46rem,calc(100vw-2rem))] -translate-x-1/2 rounded-2xl border border-border bg-popover p-4 text-popover-foreground shadow-2xl">
@@ -153,10 +164,9 @@ export function IdeHotkeyMenu({ enabled, agents, pane, onAction, onRenamePane, o
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         <Keyboard className="h-4 w-4" aria-hidden="true" />
         <span className="inline-flex items-center gap-1">{LEADER.map((key) => <Cap key={key}>{key}</Cap>)}</span>
-        {crumbs.map((key) => <span key={key} className="inline-flex items-center gap-1"><span aria-hidden="true">›</span><Cap>{key}</Cap></span>)}
-        {pane && view.menu !== "workspace" && <span className="truncate">· {pane}</span>}
+        <span className="font-medium text-foreground">{view.menu === "rename" ? `Rename ${pane}` : "All keys"}</span>
       </div>
-      <span className="text-[11px] text-muted-foreground"><Cap>Esc</Cap> close{view.menu !== "root" && <> · <Cap>⌫</Cap> back</>}</span>
+      <span className="text-[11px] text-muted-foreground"><Cap>Esc</Cap> close</span>
     </div>
     {view.menu === "rename" ? <form className="flex items-center gap-2" onSubmit={(event) => {
       event.preventDefault();
@@ -172,10 +182,10 @@ export function IdeHotkeyMenu({ enabled, agents, pane, onAction, onRenamePane, o
       </label>
       <button type="submit" className="h-9 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground">Save</button>
     </form>
-      : <div className={cn("grid gap-x-6 gap-y-3", view.menu === "root" ? "sm:grid-cols-3" : "grid-cols-1")}>
-        {hotkeyHints(view, keyed).map((group) => <section key={group.title} className="min-w-0">
+      : <div className="grid gap-x-6 gap-y-3 sm:grid-cols-3">
+        {hotkeyHints({ menu: "root" }, keyed).map((group) => <section key={group.title} className="min-w-0">
           <h3 className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{group.title}</h3>
-          <ul className={cn("space-y-1", view.menu !== "root" && "grid gap-1 space-y-0 sm:grid-cols-2")}>
+          <ul className="space-y-1">
             {group.hints.map((hint) => <li key={hint.label} className="flex items-center gap-2 text-sm">
               <span className="inline-flex shrink-0 items-center gap-1">{hint.keys.map((key) => <Cap key={key}>{key}</Cap>)}</span>
               <span className="truncate">{hint.label}</span>
