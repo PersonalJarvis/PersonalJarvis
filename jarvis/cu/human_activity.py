@@ -1,14 +1,15 @@
 """Detect recent physical mouse/keyboard activity on macOS.
 
-Quartz exposes multiple event-source state tables.  The HID system table tracks
+Quartz exposes multiple event-source state tables. The HID system table tracks
 hardware-originated input, while Jarvis synthetic events are posted through a
-separate session source.  Using the HID table therefore lets Computer-Use yield
+separate session source. Using the HID table therefore lets Computer-Use yield
 when the person is actively touching the Mac without mistaking its own injected
 input for human activity.
 
-The probe is advisory: an unavailable Quartz bridge must not disable an otherwise
-working Computer-Use installation.  Callers can treat ``None`` as unknown and
-continue with their existing target/window guards.
+The probe is side-effect-free: it installs no event tap, consumes no input and
+never requests permissions. On macOS an unavailable or invalid HID observation
+is treated as unknown ownership and therefore fails closed. On other platforms
+the helper remains a no-op because this module only qualifies the macOS path.
 """
 from __future__ import annotations
 
@@ -17,7 +18,6 @@ import math
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
 
 log = logging.getLogger(__name__)
 
@@ -68,9 +68,9 @@ def macos_human_activity(
 ) -> HumanActivity:
     """Return whether physical input happened inside ``grace_s``.
 
-    No event tap is installed and no input is consumed.  On non-macOS hosts the
-    check is intentionally a no-op.  ``available=False`` means the caller should
-    keep using its normal safety guards rather than fail the whole feature.
+    No event tap is installed and no input is consumed. On non-macOS hosts the
+    check is intentionally a no-op. ``available=False`` on macOS means the
+    caller cannot prove that Jarvis owns input and must fail closed.
     """
     if grace_s < 0:
         raise ValueError("grace_s must be >= 0")
@@ -132,14 +132,22 @@ def human_input_allows_automation(
     platform: str | None = None,
     seconds_since_input: Callable[[], float | None] | None = None,
 ) -> tuple[bool, str]:
-    """Return ``(allowed, detail)`` for a pre-action human-handoff guard."""
+    """Return ``(allowed, detail)`` for a pre-action human-handoff guard.
+
+    macOS is fail-closed: an unavailable HID state is not evidence that the
+    machine is idle. Non-macOS remains a no-op so the existing platform safety
+    paths keep ownership of their own input policy.
+    """
+    platform_name = platform or sys.platform
     activity = macos_human_activity(
         grace_s=grace_s,
-        platform=platform,
+        platform=platform_name,
         seconds_since_input=seconds_since_input,
     )
-    if not activity.available:
+    if platform_name != "darwin":
         return True, activity.detail
+    if not activity.available:
+        return False, f"physical-input state unknown: {activity.detail}"
     return (not activity.recent), activity.detail
 
 
