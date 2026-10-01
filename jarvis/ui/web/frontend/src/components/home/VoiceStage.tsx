@@ -114,7 +114,7 @@ export function VoiceStage() {
           <div className="h-2 shrink-0" aria-hidden />
           {lines.map((m) =>
             m.who === "steps" ? (
-              <div key={m.id} className="pl-[80px]" data-testid="transcript-steps">
+              <div key={m.id} className="max-w-[85%] pl-1" data-testid="transcript-steps">
                 <TurnSteps
                   steps={m.steps}
                   live={m.live}
@@ -147,9 +147,12 @@ export function VoiceStage() {
 }
 
 /**
- * One line of the lane. A LIVE line (words still being said, an answer still
- * being produced) is muted and italic with a cursor; the finished line it
- * becomes is in full colour — the same words, settled.
+ * One line of the lane, drawn as a chat bubble so voice mode reads like the
+ * chat it lives in: your words on the right in the signal hue, the
+ * assistant's on the left on a card. A LIVE line (words still being said, an
+ * answer still being produced) is dimmed and italic with a cursor; the
+ * finished line it becomes is the same words, settled. The speaker's name
+ * stays for screen readers only — the side says who spoke.
  */
 function TranscriptLine({
   who,
@@ -164,29 +167,22 @@ function TranscriptLine({
 }) {
   return (
     <div
-      className="grid grid-cols-[64px_1fr] items-baseline gap-x-4"
+      className={cn("flex", user ? "justify-end" : "justify-start")}
       data-testid={live ? (user ? "transcript-live" : "transcript-live-answer") : "transcript-line"}
       data-who={user ? "user" : "assistant"}
     >
-      <span className="truncate text-right font-mono text-micro uppercase tracking-[0.12em] text-muted-foreground">
-        {who}
-      </span>
+      <span className="sr-only">{who}: </span>
       <span
         className={cn(
-          "whitespace-pre-wrap",
-          user
-            ? cn("text-lg", live ? "text-muted-foreground/70" : "text-muted-foreground")
-            : cn(
-                "font-display text-lg leading-snug",
-                live ? "text-muted-foreground" : "text-foreground",
-              ),
-          live && "italic",
+          "max-w-[80%] whitespace-pre-wrap px-4 py-2.5 text-lg leading-snug",
+          user ? "jarvis-chat-out rounded-3xl rounded-br-lg" : "rounded-3xl rounded-tl-lg bg-card text-foreground",
+          live && "italic opacity-70",
         )}
       >
         {text}
         {live && (
           <span
-            className="ml-0.5 inline-block h-[1em] w-0.5 translate-y-0.5 animate-pulse bg-foreground motion-reduce:animate-none"
+            className="ml-0.5 inline-block h-[1em] w-0.5 translate-y-0.5 animate-pulse bg-current motion-reduce:animate-none"
             aria-hidden
           />
         )}

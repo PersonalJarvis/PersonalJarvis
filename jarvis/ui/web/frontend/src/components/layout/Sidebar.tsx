@@ -1,6 +1,5 @@
 import {
   Loader2,
-  MessageSquare,
   Mic,
   ChevronDown,
   ChevronLeft,
@@ -23,18 +22,15 @@ import { useSectionHealth } from "@/hooks/useProviders";
 import { usePluginAttention } from "@/hooks/usePluginAttention";
 import { clsx } from "clsx";
 import { cn } from "@/lib/utils";
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useT } from "@/i18n";
 import { RecentChats } from "@/components/home/RecentChats";
 import { useHomeStore } from "@/store/home";
-import { useAgentChatStore } from "@/store/agentChat";
 import { IdeProjectTree } from "@/components/agentic/IdeProjectTree";
 import { useIdeProjectsStore } from "@/store/ideProjects";
 import { useAppInstance } from "@/hooks/useAppInstance";
 import { usePublishIdentity } from "@/components/marketplace/PublishIdentity";
 import { GigiMark } from "@/components/GigiMark";
-import * as Dialog from "@radix-ui/react-dialog";
-import { startNewVoiceRun } from "@/lib/chatsApi";
 import { startNewTextChat } from "@/lib/newChat";
 
 /*
@@ -179,9 +175,6 @@ export function Sidebar({
   // confused; the default app shows nothing here.
   const appInstance = useAppInstance();
   const devTag = appInstance?.isDev ? appInstance.name.toUpperCase() : null;
-  // New chat offers both conversation types independently of the current view.
-  const newAgentChat = useAgentChatStore((s) => s.newChat);
-  const setSurface = useHomeStore((s) => s.setSurface);
   // The front page's nav row names the face the switch picked (Voice / Chat),
   // see `presentNavItem`.
   const surface = useHomeStore((s) => s.surface);
@@ -220,38 +213,7 @@ export function Sidebar({
    */
   const onIdeSection = IDE_SECTIONS.includes(active);
   const [moreOpen, setMoreOpen] = useState(false);
-  const [newChatOpen, setNewChatOpen] = useState(false);
-  const [startingVoice, setStartingVoice] = useState(false);
-  const startingVoiceRef = useRef(false);
   const identity = usePublishIdentity();
-  const startNewChat = () => {
-    startNewTextChat();
-    setNewChatOpen(false);
-  };
-  const startVoiceChat = async () => {
-    if (startingVoiceRef.current) return;
-    startingVoiceRef.current = true;
-    setStartingVoice(true);
-    try {
-      await startNewVoiceRun();
-      newAgentChat();
-      const events = useEventStore.getState();
-      events.setActiveConversation("voice", null);
-      events.setMessages([]);
-      events.seedThinkingTraces({});
-      events.setTranscription("", true);
-      useHomeStore.getState().resetTranscript();
-      useHomeStore.setState({ freshVoicePending: false });
-      setSurface("voice");
-      setActive("chats");
-      setNewChatOpen(false);
-    } catch {
-      useEventStore.getState().pushToast("error", `${t("sidebar.new_voice_chat")}: ${t("voice_state.error")}`);
-    } finally {
-      startingVoiceRef.current = false;
-      setStartingVoice(false);
-    }
-  };
   // Shared readiness derivation (same source the banner + chat empty-state use).
   const { connected, voiceWarming, bootWarming, warming } = useVoiceReadiness();
 
@@ -494,28 +456,15 @@ export function Sidebar({
           </div>}
         </nav> : <nav aria-label={t("sidebar.sections")} className="space-y-1 px-2 py-2">
           <ul className="space-y-1">
-            <li><Dialog.Root open={newChatOpen} onOpenChange={(open) => { if (!startingVoiceRef.current) setNewChatOpen(open); }}>
-              <Dialog.Trigger asChild><button type="button" data-testid="sidebar-new-chat" data-tour="new-chat"
-              aria-label={t("sidebar.new_chat")} title={t("sidebar.new_chat")} className={rowClass}>
+            {/* One door: a fresh typed chat. Voice is a mode INSIDE the chat
+                now (its top bar's button), so there is nothing to choose
+                between here (2026-10-01). */}
+            <li><button type="button" data-testid="sidebar-new-chat" data-tour="new-chat"
+              aria-label={t("sidebar.new_chat")} title={t("sidebar.new_chat")} className={rowClass}
+              onClick={() => { useHomeStore.getState().setSurface("chat"); startNewTextChat(); }}>
               <Plus aria-hidden className="h-4 w-4 shrink-0" />
               {!railed && <span>{t("sidebar.new_chat")}</span>}
-              </button></Dialog.Trigger>
-              <Dialog.Portal>
-                <Dialog.Overlay className="fixed inset-0 z-[80] bg-background/80 backdrop-blur-sm" />
-                <Dialog.Content aria-describedby={undefined} className="fixed left-1/2 top-1/2 z-[90] w-[min(360px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-popover p-4 text-popover-foreground shadow-xl">
-                  <Dialog.Title className="mb-4 text-lg font-semibold">{t("sidebar.new_chat")}</Dialog.Title>
-                  <div className="space-y-2">
-                    <button type="button" data-testid="new-text-chat" disabled={startingVoice} onClick={startNewChat} className={cn(rowClass, "border border-border py-3 disabled:opacity-50")}>
-                      <MessageSquare aria-hidden className="h-5 w-5" />{t("sidebar.surface_chat")}
-                    </button>
-                    <button type="button" data-testid="new-voice-chat" disabled={startingVoice} onClick={() => void startVoiceChat()} className={cn(rowClass, "border border-border py-3 disabled:opacity-50")}>
-                      {startingVoice ? <Loader2 aria-hidden className="h-5 w-5 animate-spin" /> : <Mic aria-hidden className="h-5 w-5" />}{t("sidebar.new_voice_chat")}
-                    </button>
-                  </div>
-                  <Dialog.Close disabled={startingVoice} className={cn(rowClass, "mt-3 justify-center disabled:opacity-50")}>{t("common.cancel")}</Dialog.Close>
-                </Dialog.Content>
-              </Dialog.Portal>
-            </Dialog.Root></li>
+            </button></li>
             {renderRow(findItem("agents"))}
             {renderRow(findItem("dictation"))}
           </ul>

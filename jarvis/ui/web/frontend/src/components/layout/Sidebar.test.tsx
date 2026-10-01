@@ -194,66 +194,24 @@ describe("Sidebar new-conversation button", () => {
     useEventStore.setState({ conversations: [], messages: [], activeThreadId: null });
   });
 
-  test("offers both kinds and opens typed chat from the voice stage", async () => {
+  test("opens an empty typed chat in one click, even from voice mode", async () => {
     useHomeStore.setState({ surface: "voice", transcript: [] });
     renderSidebar();
     const button = screen.getByTestId("sidebar-new-chat");
     expect(button.textContent).toContain("New chat");
     await act(async () => { button.click(); await Promise.resolve(); });
-    expect(useHomeStore.getState().surface).toBe("voice");
-    expect(useEventStore.getState().activeThreadId).toBe("old-voice-thread");
-    expect(screen.getByTestId("new-voice-chat")).toBeTruthy();
-    fireEvent.click(screen.getByTestId("new-text-chat"));
     expect(useHomeStore.getState().surface).toBe("chat");
     expect(useEventStore.getState().activeSection).toBe("chats");
-  });
-
-  test("on the chat surface it still opens an empty chat", async () => {
-    useHomeStore.setState({ surface: "chat", transcript: [] });
-
-    renderSidebar();
-    const button = screen.getByTestId("sidebar-new-chat");
-    expect(button.textContent).toContain("New chat");
-    expect(button.textContent).not.toContain("voice");
-
-    await act(async () => {
-      button.click();
-      await Promise.resolve();
-    });
-    fireEvent.click(screen.getByTestId("new-text-chat"));
-
-    expect(useHomeStore.getState().surface).toBe("chat");
-    const calls = (globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls;
-    expect(calls.some((c) => String(c[0]) === "/api/chats/voice/new")).toBe(false);
-  });
-
-  test("opens a fresh voice chat from the chat surface", async () => {
-    useHomeStore.setState({ surface: "chat", transcript: [], liveReply: "Previous reply" });
-    renderSidebar();
-    fireEvent.click(screen.getByTestId("sidebar-new-chat"));
-    await act(async () => { fireEvent.click(screen.getByTestId("new-voice-chat")); });
-    expect(fetch).toHaveBeenCalledWith("/api/chats/voice/new", { method: "POST" });
-    expect(useHomeStore.getState().surface).toBe("voice");
-    expect(useHomeStore.getState().liveReply).toBe("");
-    expect(useEventStore.getState().activeSection).toBe("chats");
-    expect(useEventStore.getState().activeKind).toBe("voice");
-    expect(useEventStore.getState().activeThreadId).toBeNull();
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  test("keeps the current conversation if creating a voice chat fails", async () => {
-    vi.stubGlobal("fetch", vi.fn(async (url: string) =>
-      String(url) === "/api/chats/voice/new"
-        ? new Response("", { status: 503 })
-        : new Response(JSON.stringify([]), { status: 200 }),
-    ));
+  test("never starts a voice run — voice is a mode inside the chat now", async () => {
     useHomeStore.setState({ surface: "chat", transcript: [] });
     renderSidebar();
-    fireEvent.click(screen.getByTestId("sidebar-new-chat"));
-    await act(async () => { fireEvent.click(screen.getByTestId("new-voice-chat")); });
+    await act(async () => { screen.getByTestId("sidebar-new-chat").click(); await Promise.resolve(); });
     expect(useHomeStore.getState().surface).toBe("chat");
-    expect(useEventStore.getState().activeThreadId).toBe("old-voice-thread");
-    expect(screen.getByRole("dialog")).toBeTruthy();
+    const calls = (globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    expect(calls.some((c) => String(c[0]) === "/api/chats/voice/new")).toBe(false);
   });
 });
 
