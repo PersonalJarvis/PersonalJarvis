@@ -40,6 +40,8 @@ _GO_AHEAD_WORDS = frozenset(
     }
 )  # fmt: skip
 _APPROVAL_LOCALES = ("de", "en", "es")
+_RECENT_SEGMENTS = 4
+_REQUEST_TEXT_CHARS = 1200
 # Declared before every other tool so the size budget never drops them.
 _PRIORITY_TOOLS = frozenset({"workspace-orchestrate", "find-app-action", "run-app-action"})
 _APPROVAL_NEXT_STEP = (
@@ -99,6 +101,8 @@ class LiveTools:
         self.session_id = session_id
         self.language = language
         self.backend_model = backend_model
+        # Recent user caption segments, newest last (see ``user_text``).
+        self._recent_user: list[str] = []
         self.user_text = ""
         self.revision = 0
         self.cancel_token = CancelToken()
@@ -390,6 +394,35 @@ class LiveTools:
             }
         return self._result(result)
 
+    @property
+    def user_text(self) -> str:
+        """The user's latest caption segment: what answers a question just asked."""
+        return self._recent_user[-1] if self._recent_user else ""
+
+    @user_text.setter
+    def user_text(self, text: str) -> None:
+        text = text or ""
+        last = self._recent_user[-1] if self._recent_user else None
+        if last is not None and (text.startswith(last) or last.startswith(text)):
+            self._recent_user[-1] = text  # the same segment, transcribed further
+        elif text.strip():
+            self._recent_user = [*self._recent_user[-(_RECENT_SEGMENTS - 1) :], text]
+        elif last is None:
+            self._recent_user = [text]
+
+    @property
+    def request_text(self) -> str:
+        """The user's last few segments together: what a tool was asked to do.
+
+        The latest segment alone is often only the answer to Jarvis's question
+        ("Ja, los"); a tool that checks its task against the user's words then
+        sees nothing of the order and, in spawn_worker's bleed guard, even
+        replaced the task with "Ja, los".
+        """
+        return " ".join(part.strip() for part in self._recent_user if part.strip())[
+            -_REQUEST_TEXT_CHARS:
+        ]
+
     def _reads_only(self, name: str, args: dict) -> bool:
         """True for a call that only reads: tool search or a safe-tier tool."""
         if name == "discover_tools":
@@ -421,7 +454,7 @@ class LiveTools:
         return SupervisorToolRequest(
             trace_id=trace,
             origin="realtime",
-            user_utterance=self.user_text,
+            user_utterance=self.request_text,
             cancel_token=self.cancel_token,
             config_snapshot={
                 "output_language": self.language,

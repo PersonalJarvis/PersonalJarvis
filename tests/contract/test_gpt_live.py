@@ -1160,3 +1160,19 @@ def test_a_refusal_that_ran_nothing_does_not_block_reconnecting(ledger):
     ledger.finish("s", "bye", {"success": False, "executed": False, "error": "Stay on the call."})
     resumable, _ = ledger.recovery_state("s")
     assert resumable
+
+
+@pytest.mark.asyncio
+async def test_a_tool_sees_the_order_not_only_the_answer_to_a_question(ledger):
+    # A worker once started with the task "Ja, los": the bleed guard compared
+    # the order with the latest caption segment only.
+    gateway = Gateway()
+    runtime = LiveTools(gateway, ledger, "s", language="en", backend_model="")
+    runtime.user_text = "Write a file that says hello"
+    runtime.user_text = "Write a file that says hello please"
+    runtime.user_text = "Yes, go"
+    assert runtime.user_text == "Yes, go"
+    request = {"name": "write-file", "arguments_json": '{"text":"hello"}'}
+    assert (await runtime.execute("w", "call_tool", request, 0))["success"]
+    utterance = gateway.calls[-1][2].user_utterance
+    assert utterance == "Write a file that says hello please Yes, go"
