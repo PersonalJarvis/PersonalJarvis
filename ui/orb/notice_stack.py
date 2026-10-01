@@ -60,10 +60,6 @@ COLLAPSE_GRACE_MS = 280
 DRIFT_PX = 10
 
 
-def _spx(value: float, scale: float) -> int:
-    return max(1, int(round(value * max(0.25, float(scale)))))
-
-
 # --- model -------------------------------------------------------------------
 
 
@@ -215,8 +211,11 @@ class _Item:
 class PetNoticeStack:
     """The card column's own frameless window. Every method runs on the Tk thread."""
 
-    def __init__(self, parent: tk.Misc, *, scale: float = 1.0, width: int = 360) -> None:
+    def __init__(
+        self, parent: tk.Misc, *, scale: float = 1.0, width: int = 360, art_px: int = 3
+    ) -> None:
         self._scale = max(0.25, float(scale))
+        self._art_px = max(1, int(art_px))
         self._card_w = max(160, int(width))
         self._model = NoticeModel()
         self._items: dict[int, _Item] = {}
@@ -243,18 +242,23 @@ class PetNoticeStack:
 
     @property
     def _pad(self) -> int:
-        return _spx(pet_cards.SHADOW_PAD, self._scale)
+        return pet_cards.card_pad(self._art_px)
 
     @property
     def window_size(self) -> tuple[int, int]:
-        """Room for every kept card fanned out."""
-        s = self._scale
-        tallest_card = _spx(
-            2 * pet_cards.PAD_Y + 1.45 * pet_cards.TITLE_PX + 3 + 2 * 1.45 * pet_cards.BODY_PX, s
+        """Room for every kept card fanned out (each as tall as a card gets)."""
+        tallest = pet_cards.render_card(
+            "done",
+            "x",
+            "word " * 80,
+            scale=round(self._scale, 3),
+            max_width=self._card_w,
+            art_px=self._art_px,
+            content=False,
         )
-        gap = CARD_GAP * s
-        height = NOTICE_KEEP * (tallest_card + gap)
-        return self._card_w + 2 * self._pad, int(height) + 2 * self._pad
+        tallest_card = tallest.height - 2 * self._pad
+        height = NOTICE_KEEP * (tallest_card + CARD_GAP * self._scale)
+        return tallest.width, int(height) + 2 * self._pad
 
     # -- public ---------------------------------------------------------------
 
@@ -268,11 +272,12 @@ class PetNoticeStack:
         """The column's toplevel while it is on screen (for Z-order repair)."""
         return self._window.top if self._window.shown else None
 
-    def set_scale(self, scale: float, width: int) -> None:
+    def set_scale(self, scale: float, width: int, art_px: int | None = None) -> None:
         scale, width = max(0.25, float(scale)), max(160, int(width))
-        if (scale, width) == (self._scale, self._card_w):
+        px = self._art_px if art_px is None else max(1, int(art_px))
+        if (scale, width, px) == (self._scale, self._card_w, self._art_px):
             return
-        self._scale, self._card_w = scale, width
+        self._scale, self._card_w, self._art_px = scale, width, px
         self._window.resize(self.window_size)
         self._retarget(snap=True)
         self._place()
@@ -368,6 +373,7 @@ class PetNoticeStack:
             item.detail,
             scale=round(self._scale, 3),
             max_width=self._card_w,
+            art_px=self._art_px,
             hovered=hovered,
             icon_frame=pet_cards.ICON_FRAMES if frame is None else frame,
             content=content,
@@ -491,7 +497,7 @@ class PetNoticeStack:
             if abs(size - 1.0) > 0.004:
                 image = image.resize(
                     (max(1, int(image.width * size)), max(1, int(image.height * size))),
-                    Image.Resampling.BILINEAR,
+                    Image.Resampling.NEAREST,  # pixel art stays crisp
                 )
             if opacity < 0.995:
                 image = image.copy()

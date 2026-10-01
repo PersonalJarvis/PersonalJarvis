@@ -43,9 +43,9 @@ one click.
   never the reply. It can be switched off (`[ui] pet_bubble`). See *The
   thought bubble*.
 - **Done cards** under the strip (above the pet when there is no room below):
-  a dark, slightly see-through surface with a hairline rim, soft corners and a
-  soft shadow, when Jarvis answered a typed chat or a job Jarvis started came
-  back — a check, what was asked, the start of the answer (see *Cards*).
+  little pixel-art letters — the pet gets mail — when Jarvis answered a typed
+  chat or a job Jarvis started came back: a pixel envelope with a check badge,
+  what was asked, the start of the answer (see *Cards*).
 - **The pet "None"** (`pet_id = "none"`) shows the control strip and the
   cards without a figure.
 
@@ -58,12 +58,16 @@ Wayland, global shortcuts are a no-op, as for every other shortcut.
 ## Cards
 
 One window (`ui/orb/notice_stack.py`) holds the done cards;
-`ui/orb/pet_cards.py` draws them. Both it and the thought bubble show their
-frames through `ui/orb/layered_surface.py`: on Windows with real per-pixel
-alpha (`jarvis/platform/layered_window.py`, `UpdateLayeredWindow`) — the
-desktop shows faintly through the cards, shadows and fades are soft —
-elsewhere, or when Windows refuses a frame, flattened onto the colour key:
-opaque with hard edges, no shadow.
+`ui/orb/pet_cards.py` draws them in the same pixel-art language as the thought
+bubble, at the pet sprite's pixel size: a sheet of cream paper with the
+sprites' dark outline, a shaded bottom row, a folded top-right corner and a
+hard one-pixel drop shadow; a pixel envelope that drops in, then a green check
+badge (a red cross when it failed) that pops onto its corner; the text in the
+pets' dark ink. Both windows show their frames through
+`ui/orb/layered_surface.py`: on Windows with real per-pixel alpha
+(`jarvis/platform/layered_window.py`, `UpdateLayeredWindow`), so cards fade in
+and out; elsewhere, or when Windows refuses a frame, flattened onto the colour
+key with hard edges.
 
 Done cards are about Jarvis and nothing else (`jarvis/ui/pets/notices.py`):
 
@@ -78,12 +82,12 @@ error gets no card; neither does a spoken turn (the answer was heard).
 
 Done cards are always the column's width, so they stack edge to edge: the
 newest in front, up to two older ones peeking out behind it, each a step
-smaller and fainter and showing its surface only; at most three are kept.
+smaller and fainter and showing its paper only; at most three are kept.
 Hovering fans them into a column; leaving folds them back. A click sends the
 card under the pointer away. A card leaves on its own after 9 s (`error` 14
 s), never while the pointer rests on the stack; the same card twice within 3 s
 refreshes instead of stacking. Cards drift in and fade on springs, and the
-check ticks itself in. The column repaints at ~60 fps only while something
+envelope and its badge arrive in steps. The column repaints at ~60 fps only while something
 moves and not at all at rest. Done cards are dropped while the bell is off,
 the pet is hidden, or the look is not the pet; the strip stays in sight while
 they show.

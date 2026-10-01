@@ -122,23 +122,24 @@ def test_a_spring_settles_with_a_small_overshoot() -> None:
 # --- the cards themselves ----------------------------------------------------------
 
 
-def test_a_done_card_is_see_through_with_a_soft_shadow() -> None:
-    card = pet_cards.render_card("done", "Hi", "Hi! How can I help?", scale=1.0, max_width=360)
+def test_a_done_card_is_a_pixel_art_letter() -> None:
+    card = pet_cards.render_card("done", "Hi", "Hi! How can I help?", max_width=360, art_px=4)
     assert card.mode == "RGBA"
-    x0, y0, x1, y1 = pet_cards.card_box(card, 1.0)
-    middle = card.getpixel(((x0 + x1) // 2, y1 - 3))
-    assert 150 < middle[3] < 255  # the desktop shows through the surface
-    shadow = card.getpixel(((x0 + x1) // 2, y1 + 3))
-    assert 0 < shadow[3] < 120  # a soft shadow under it, not a hard edge
+    assert card.width % 4 == 0 and card.height % 4 == 0  # whole art pixels
+    # Hard sprite edges: opaque, transparent, or the hard drop shadow.
+    assert set(card.getchannel("A").getdata()) <= {0, pet_cards.SHADOW_ALPHA, 255}
+    x0, y0, x1, y1 = pet_cards.card_box(card, 4)
+    assert card.getpixel((x0 + 6, y1 - 12))[:3] == pet_cards.PAPER
+    assert card.getpixel((x0 + 6, y0 - 1))[:3] == pet_cards.OUTLINE  # the rim hugs the sheet
     assert card.getpixel((0, 0))[3] == 0
 
 
 def test_done_cards_share_one_width_and_wrap_the_answer() -> None:
-    short = pet_cards.render_card("done", "Hi", "Hello", scale=1.0, max_width=300)
-    long = pet_cards.render_card("done", "word " * 40, "word " * 80, scale=1.0, max_width=300)
-    pad = 2 * pet_cards.SHADOW_PAD
-    assert short.width == long.width == 300 + pad
-    assert long.height - pad < 120  # title on one line, the answer on two
+    short = pet_cards.render_card("done", "Hi", "Hello", max_width=300, art_px=3)
+    long = pet_cards.render_card("done", "word " * 40, "word " * 80, max_width=300, art_px=3)
+    assert short.width == long.width == 300 + 2 * pet_cards.card_pad(3)
+    assert long.height > short.height
+    assert long.height - 2 * pet_cards.card_pad(3) < 120  # the answer stops at two lines
 
 
 def test_text_helpers_ellipsize_and_wrap() -> None:
@@ -157,8 +158,8 @@ def test_a_keyed_frame_has_hard_edges_only() -> None:
 
 
 def test_the_icon_ticks_itself() -> None:
-    empty = pet_cards.render_icon("done", 0, 20)
-    full = pet_cards.render_icon("done", pet_cards.ICON_FRAMES, 20)
+    empty = pet_cards.render_icon("done", 0)
+    full = pet_cards.render_icon("done", pet_cards.ICON_FRAMES)
     assert empty.getchannel("A").getextrema()[1] == 0
     assert full.getchannel("A").getextrema()[1] == 255
 

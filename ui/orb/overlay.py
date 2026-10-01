@@ -2696,7 +2696,9 @@ class OrbOverlay:
         notices = self._notices
         if notices is not None:
             strip_w, _strip_h = orb_controls.pet_strip_size(scale)
-            notices.set_scale(scale, int(round(strip_w * PET_NOTICE_WIDTH_PER_STRIP)))
+            notices.set_scale(
+                scale, int(round(strip_w * PET_NOTICE_WIDTH_PER_STRIP)), self._thought_art_px()
+            )
             self._sync_notice_anchor()
 
     def _clamp_position(
@@ -3836,6 +3838,7 @@ class OrbOverlay:
                     self._root,
                     scale=scale,
                     width=int(round(strip_w * PET_NOTICE_WIDTH_PER_STRIP)),
+                    art_px=self._thought_art_px(),
                 )
             except tk.TclError:
                 logging.getLogger("jarvis.orb").debug("card column unavailable", exc_info=True)
@@ -3864,6 +3867,11 @@ class OrbOverlay:
         notices = self._notices
         if notices is None:
             return
+        scale = self._pet_strip_scale()
+        strip_w, _strip_h = orb_controls.pet_strip_size(scale)
+        notices.set_scale(
+            scale, int(round(strip_w * PET_NOTICE_WIDTH_PER_STRIP)), self._thought_art_px()
+        )
         notices.set_anchor(self._notice_anchor(refresh_limit=refresh_limit))
 
     def _thought_art_px(self) -> int:
