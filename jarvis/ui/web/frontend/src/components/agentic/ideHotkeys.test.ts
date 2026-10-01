@@ -88,9 +88,11 @@ describe("key sequences", () => {
     expect(resolveHotkey(ROOT, press("Shift", { shiftKey: true }), AGENTS)).toEqual({ type: "ignore" });
   });
 
-  it("an unknown key or a Ctrl chord closes the menu instead of hanging", () => {
-    expect(resolveHotkey(ROOT, press("j"), AGENTS)).toEqual({ type: "close" });
-    expect(resolveHotkey(ROOT, press("c", { ctrlKey: true }), AGENTS)).toEqual({ type: "close" });
+  it("swallows an unknown key, releases a Ctrl chord, and backs out of a sub-menu", () => {
+    expect(resolveHotkey(ROOT, press("j"), AGENTS)).toEqual({ type: "unknown" });
+    expect(resolveHotkey(ROOT, press("c", { ctrlKey: true }), AGENTS)).toEqual({ type: "release" });
+    expect(resolveHotkey({ menu: "workspace" }, press("j"), AGENTS)).toEqual({ type: "step", step: { menu: "root" } });
+    expect(resolveHotkey({ menu: "help" }, press("j"), AGENTS)).toEqual({ type: "step", step: { menu: "root" } });
   });
 
   it("speaks herdr's keys: V and - split, N/P switch, Shift+N/W/D manage workspaces", () => {
@@ -107,7 +109,7 @@ describe("key sequences", () => {
   it("the mode bar names the mode and the agent letters", () => {
     const bar = modeBar(ROOT, AGENTS);
     expect(bar.badge).toBe("PREFIX");
-    expect(bar.hints.map((hint) => hint.keys.join("+"))).toEqual(expect.arrayContaining(["C", "X", "Esc", "?", "Ctrl+B"]));
+    expect(bar.hints.map((hint) => hint.keys.join("+"))).toEqual(expect.arrayContaining(["C", "X", "?", "Ctrl+B"]));
     expect(modeBar({ menu: "direction", agent: "codex", label: "Codex" }, AGENTS).badge).toBe("CODEX");
   });
 
