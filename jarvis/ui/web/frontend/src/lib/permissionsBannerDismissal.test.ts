@@ -33,7 +33,8 @@ describe("permissionsBannerDismissal", () => {
     dismissPermissionIds(["automation"], T0);
     const after = dismissPermissionIds(["accessibility"], T0 + 1000);
 
-    expect([...after].sort()).toEqual(["accessibility", "automation"]);
+    expect(after.persisted).toBe(true);
+    expect([...after.ids].sort()).toEqual(["accessibility", "automation"]);
     expect([...readDismissedPermissionIds(T0 + 2000)].sort()).toEqual([
       "accessibility",
       "automation",
@@ -91,7 +92,9 @@ describe("permissionsBannerDismissal", () => {
 
     const dismissed = dismissPermissionIds(["automation"], T0);
 
-    expect([...dismissed]).toEqual(["automation"]);
+    // The caller is told the write failed, so it can hold the set in memory.
+    expect(dismissed.persisted).toBe(false);
+    expect([...dismissed.ids]).toEqual(["automation"]);
     expect([...readDismissedPermissionIds(T0)]).toEqual([]);
   });
 

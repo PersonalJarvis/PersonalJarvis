@@ -357,5 +357,100 @@ describe("PermissionsAlertBanner", () => {
     );
     expect(screen.queryByTestId("permissions-banner-dismiss")).toBeNull();
   });
+
+  it("keeps the restart call-to-action when the rows still missing were put off", () => {
+    // Screen Recording was granted in System Settings and waits for a restart;
+    // the microphone is still missing, but the person said "not now" to it.
+    mockSnapshot = darwinSnapshot({
+      permissions: [
+        row({ id: "microphone", required: ["voice"], status: "denied" }),
+        row({
+          id: "screen_recording",
+          required: ["computer_use"],
+          status: "granted",
+          restart_required: true,
+        }),
+      ],
+      features: {
+        voice: { ready: false, missing: ["microphone"], active: true },
+        computer_use: { ready: false, missing: [], active: true },
+      },
+      restart_required: true,
+    });
+    localStorage.setItem(
+      PERMISSIONS_BANNER_DISMISSED_KEY,
+      JSON.stringify({ at: Date.now(), ids: ["microphone"] }),
+    );
+
+    render(<PermissionsAlertBanner />);
+
+    expect(screen.getByTestId("permissions-alert-banner").getAttribute("data-state")).toBe(
+      "restart",
+    );
+    expect(screen.getByRole("button", { name: "permissions.restart_now" })).toBeDefined();
+    // The put-off row is not dragged back in, and there is nothing left to put off.
+    expect(screen.queryByText("permissions.items.microphone.title")).toBeNull();
+    expect(screen.queryByTestId("permissions-banner-dismiss")).toBeNull();
+  });
+
+  describe("a Not now that outlives the status it was given for", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    });
+
+    it("comes back at the next status refresh once its week is over, without a restart", () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-03-02T09:00:00Z"));
+      mockSnapshot = darwinSnapshot();
+      const view = render(<PermissionsAlertBanner />);
+      fireEvent.click(screen.getByTestId("permissions-banner-dismiss"));
+      expect(screen.queryByTestId("permissions-alert-banner")).toBeNull();
+
+      // The window stays open for days; the poll keeps handing the banner a status.
+      vi.setSystemTime(new Date("2026-03-02T09:00:00Z").getTime() + PERMISSIONS_BANNER_DISMISS_TTL_MS - 1000);
+      mockSnapshot = darwinSnapshot();
+      view.rerender(<PermissionsAlertBanner />);
+      expect(screen.queryByTestId("permissions-alert-banner")).toBeNull();
+
+      vi.setSystemTime(new Date("2026-03-02T09:00:00Z").getTime() + PERMISSIONS_BANNER_DISMISS_TTL_MS + 1000);
+      mockSnapshot = darwinSnapshot();
+      view.rerender(<PermissionsAlertBanner />);
+      expect(screen.getByTestId("permissions-alert-banner")).toBeDefined();
+    });
+
+    it("keeps every row put off in this window when the storage refuses the writes", () => {
+      vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+        throw new Error("denied");
+      });
+      const first = row({ id: "screen_recording", required: ["computer_use"] });
+      const second = row({ id: "automation", required: ["audio_ducking"], wanted: true });
+      const features = {
+        computer_use: { ready: false, missing: ["screen_recording" as const], active: true },
+        audio_ducking: { ready: false, missing: ["automation" as const], active: true },
+      };
+      mockSnapshot = darwinSnapshot({
+        permissions: [first],
+        features: { computer_use: features.computer_use },
+      });
+      const view = render(<PermissionsAlertBanner />);
+      fireEvent.click(screen.getByTestId("permissions-banner-dismiss"));
+      expect(screen.queryByTestId("permissions-alert-banner")).toBeNull();
+
+      // A second row turns up (the user switched a feature on) and is put off too.
+      mockSnapshot = darwinSnapshot({ permissions: [first, second], features });
+      view.rerender(<PermissionsAlertBanner />);
+      expect(screen.getByText("permissions.items.automation.title")).toBeDefined();
+      expect(screen.queryByText("permissions.items.screen_recording.title")).toBeNull();
+      fireEvent.click(screen.getByTestId("permissions-banner-dismiss"));
+
+      // Neither write reached the storage, yet the first row must not come back
+      // just because the second one was put off on top of an empty record.
+      expect(screen.queryByTestId("permissions-alert-banner")).toBeNull();
+      mockSnapshot = darwinSnapshot({ permissions: [first, second], features });
+      view.rerender(<PermissionsAlertBanner />);
+      expect(screen.queryByTestId("permissions-alert-banner")).toBeNull();
+    });
+  });
 });
 

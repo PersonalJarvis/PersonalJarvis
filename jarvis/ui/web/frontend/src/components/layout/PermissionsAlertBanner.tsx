@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Accessibility,
   ChevronDown,
@@ -76,6 +76,9 @@ export function PermissionsAlertBanner() {
   const [dismissed, setDismissed] = useState<ReadonlySet<string>>(() =>
     readDismissedPermissionIds(),
   );
+  // Rows put off while the storage refused the write: honoured for this window's
+  // lifetime, since the stored record cannot carry them.
+  const unstored = useRef<Set<string>>(new Set());
   const {
     snapshot,
     pendingId,
@@ -87,6 +90,13 @@ export function PermissionsAlertBanner() {
     setupProgress,
     setupNeeded,
   } = usePermissions();
+
+  // The banner stays mounted for the window's whole life, so a "Not now" that
+  // runs out after a week would never come back if it were only read at mount.
+  // Read it again whenever the status is refreshed.
+  useEffect(() => {
+    setDismissed(new Set([...readDismissedPermissionIds(), ...unstored.current]));
+  }, [snapshot]);
 
   if (!snapshot || snapshot.platform !== "darwin" || snapshot.headless) return null;
 
@@ -139,7 +149,9 @@ export function PermissionsAlertBanner() {
   }
 
   function putOff() {
-    setDismissed(dismissPermissionIds(missing.map((item) => item.id)));
+    const result = dismissPermissionIds(missing.map((item) => item.id));
+    if (!result.persisted) result.ids.forEach((id) => unstored.current.add(id));
+    setDismissed(new Set([...result.ids, ...unstored.current]));
   }
 
   async function restartApp() {

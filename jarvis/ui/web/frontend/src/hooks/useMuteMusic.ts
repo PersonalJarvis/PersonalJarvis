@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
+import { requestPermissionsRefresh } from "@/hooks/usePermissions";
+
 /** "Mute music while dictating" (ducking.enabled). */
 export interface MuteMusicResult {
   ok: boolean;
@@ -41,6 +43,8 @@ export function useMuteMusic() {
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.detail ?? `HTTP ${res.status}`);
       setEnabledState(Boolean(body.enabled));
+      // Switching this on makes the Music/Spotify Automation row wanted (off: not).
+      requestPermissionsRefresh();
       return body as MuteMusicResult;
     },
     [],

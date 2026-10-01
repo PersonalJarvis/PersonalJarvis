@@ -168,6 +168,19 @@ function normalizeSnapshot(payload: unknown): PermissionSnapshot {
   };
 }
 
+/** Fired when something that decides which permissions are wanted just changed. */
+export const PERMISSIONS_REFRESH_EVENT = "jarvis:permissions-refresh";
+
+/**
+ * Ask every mounted permission view to read the status again. A feature switch
+ * ("Mute music while dictating") changes which rows are wanted without the
+ * window gaining focus, so without this the banner would only notice at the
+ * next focus event.
+ */
+export function requestPermissionsRefresh(): void {
+  window.dispatchEvent(new Event(PERMISSIONS_REFRESH_EVENT));
+}
+
 export function usePermissions() {
   const [snapshot, setSnapshot] = useState<PermissionSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
@@ -297,9 +310,11 @@ export function usePermissions() {
     };
     window.addEventListener("focus", refreshWhenVisible);
     document.addEventListener("visibilitychange", refreshWhenVisible);
+    window.addEventListener(PERMISSIONS_REFRESH_EVENT, refreshWhenVisible);
     return () => {
       window.removeEventListener("focus", refreshWhenVisible);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
+      window.removeEventListener(PERMISSIONS_REFRESH_EVENT, refreshWhenVisible);
     };
   }, [refetch]);
 

@@ -1,11 +1,16 @@
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { usePermissions, type PermissionSnapshot } from "./usePermissions";
+import {
+  requestPermissionsRefresh,
+  usePermissions,
+  type PermissionSnapshot,
+} from "./usePermissions";
 
 vi.mock("@/lib/bootStagger", () => ({ bootSettled: () => Promise.resolve() }));
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -254,5 +259,90 @@ it("keeps asking about a row a backend that sends no policy still wants", async 
   const { result } = renderHook(() => usePermissions());
 
   await waitFor(() => expect(result.current.setupNeeded).toBe(true));
+});
+
+/** Only the Music/Spotify row is missing; `wanted` says whether "mute music" is on. */
+function automationOnlySnapshot(wanted: boolean): PermissionSnapshot {
+  return {
+    ...twoRowSnapshot("granted", "granted"),
+    permissions: [
+      {
+        id: "automation",
+        status: "not_determined",
+        required: ["audio_ducking"],
+        wanted,
+        can_request: true,
+        can_open_settings: true,
+        can_reset: false,
+        restart_required: false,
+      },
+    ],
+    features: { audio_ducking: { ready: false, missing: ["automation"], active: wanted } },
+  };
+}
+
+it("keeps polling for a missing grant a feature that is on is waiting for", async () => {
+  // The control for the next test: the poll exists, so its absence there means something.
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const fetchMock = vi.fn().mockResolvedValue({
+    ok: true,
+    status: 200,
+    json: () => Promise.resolve(automationOnlySnapshot(true)),
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  const { result } = renderHook(() => usePermissions());
+  await waitFor(() => expect(result.current.snapshot).not.toBeNull());
+  const loaded = fetchMock.mock.calls.length;
+
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(10_000);
+  });
+
+  expect(fetchMock.mock.calls.length).toBeGreaterThan(loaded);
+});
+
+it("does not poll for a missing grant nothing the user turned on needs", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const fetchMock = vi.fn().mockResolvedValue({
+    ok: true,
+    status: 200,
+    json: () => Promise.resolve(automationOnlySnapshot(false)),
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  const { result } = renderHook(() => usePermissions());
+  await waitFor(() => expect(result.current.snapshot).not.toBeNull());
+  const loaded = fetchMock.mock.calls.length;
+
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(10_000);
+  });
+
+  // An optional row sits in Settings quietly: no status request every 2.5 seconds.
+  expect(fetchMock.mock.calls.length).toBe(loaded);
+});
+
+it("reads the status again when a feature switch changes which rows are wanted", async () => {
+  let wanted = false;
+  const fetchMock = vi.fn().mockImplementation(() =>
+    Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve(automationOnlySnapshot(wanted)),
+    }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+
+  const { result } = renderHook(() => usePermissions());
+  await waitFor(() => expect(result.current.snapshot?.permissions[0].wanted).toBe(false));
+
+  // "Mute music while dictating" is switched on; the window never gained focus.
+  wanted = true;
+  act(() => {
+    requestPermissionsRefresh();
+  });
+
+  await waitFor(() => expect(result.current.snapshot?.permissions[0].wanted).toBe(true));
 });
 

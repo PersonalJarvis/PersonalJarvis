@@ -53,18 +53,20 @@ export function readDismissedPermissionIds(now: number = Date.now()): ReadonlySe
 
 /**
  * Put `ids` off (on top of the rows already put off) and restart the week.
- * Returns what is dismissed afterwards, whether or not it could be stored.
+ * Returns what is dismissed afterwards and whether it could be stored; when it
+ * could not, the caller keeps the set in memory for this session.
  */
 export function dismissPermissionIds(
   ids: readonly string[],
   now: number = Date.now(),
-): ReadonlySet<string> {
+): { ids: ReadonlySet<string>; persisted: boolean } {
   const merged = new Set([...readDismissedPermissionIds(now), ...ids]);
   try {
     const record: DismissedRecord = { at: now, ids: [...merged] };
     window.localStorage.setItem(PERMISSIONS_BANNER_DISMISSED_KEY, JSON.stringify(record));
+    return { ids: merged, persisted: true };
   } catch {
     // Not stored: this session still honours the click, the next one asks again.
+    return { ids: merged, persisted: false };
   }
-  return merged;
 }
