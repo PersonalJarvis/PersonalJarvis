@@ -19,7 +19,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install the base app and test dependencies
-        run: python -m pip install -e ".[dev]"
+        run: python scripts/pip_install.py -e ".[dev]"
       - name: Provision Linux browser system libraries
         if: runner.os == 'Linux'
         run: |

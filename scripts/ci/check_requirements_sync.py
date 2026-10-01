@@ -52,15 +52,17 @@ def _canonical(spec: str) -> tuple[str, frozenset[str], str, str]:
     return (name, extras, specifier, marker)
 
 
-def _parse_pyproject() -> dict[tuple[str, frozenset[str], str, str], str]:
-    data = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
+def _parse_pyproject(path: Path = PYPROJECT) -> dict[tuple[str, frozenset[str], str, str], str]:
+    data = tomllib.loads(path.read_text(encoding="utf-8"))
     deps = data.get("project", {}).get("dependencies", [])
     return {_canonical(d): d for d in deps}
 
 
-def _parse_requirements_in() -> dict[tuple[str, frozenset[str], str, str], str]:
+def _parse_requirements_in(
+    path: Path = REQUIREMENTS_IN,
+) -> dict[tuple[str, frozenset[str], str, str], str]:
     out: dict[tuple[str, frozenset[str], str, str], str] = {}
-    for raw in REQUIREMENTS_IN.read_text(encoding="utf-8").splitlines():
+    for raw in path.read_text(encoding="utf-8").splitlines():
         line = raw.split("#", 1)[0].strip()
         if not line:
             continue
@@ -68,24 +70,20 @@ def _parse_requirements_in() -> dict[tuple[str, frozenset[str], str, str], str]:
     return out
 
 
-def main() -> int:
-    pyproject = _parse_pyproject()
-    req_in = _parse_requirements_in()
+def check_pair(project_path: Path, requirements_path: Path) -> int:
+    pyproject = _parse_pyproject(project_path)
+    req_in = _parse_requirements_in(requirements_path)
 
     only_in_pyproject = sorted(pyproject.keys() - req_in.keys())
     only_in_reqin = sorted(req_in.keys() - pyproject.keys())
 
     if not only_in_pyproject and not only_in_reqin:
-        print("OK: requirements.in is in lockstep with pyproject.toml [project].dependencies")
+        print(f"OK: {requirements_path.relative_to(REPO_ROOT)} mirrors its project dependencies")
         return 0
 
-    print("FAIL: requirements.in has drifted from pyproject.toml [project].dependencies.")
+    print(f"FAIL: {requirements_path.relative_to(REPO_ROOT)} has drifted from its project.")
     print("      They must mirror each other exactly (name + extras + version + marker).")
-    print("      After fixing, regenerate the platform-universal lockfile:")
-    print(
-        "        uv pip compile --universal --generate-hashes "
-        "--python-version 3.11 --output-file=requirements.txt requirements.in"
-    )
+    print("      Regenerate with the scoped native crypto configuration (install/README.md).")
     print()
     if only_in_pyproject:
         print("  In pyproject.toml but MISSING from requirements.in:")
@@ -97,6 +95,13 @@ def main() -> int:
         for key in only_in_reqin:
             print(f"    - {req_in[key]}")
     return 1
+
+
+def main() -> int:
+    browser = REPO_ROOT / "jarvis" / "assets" / "browser"
+    base_result = check_pair(PYPROJECT, REQUIREMENTS_IN)
+    browser_result = check_pair(browser / "pyproject.toml", browser / "requirements.in")
+    return max(base_result, browser_result)
 
 
 if __name__ == "__main__":
