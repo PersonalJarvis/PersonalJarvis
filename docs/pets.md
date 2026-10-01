@@ -18,10 +18,7 @@ one click.
 - **The figure.** It reacts to Jarvis in real time (see *States*). It can be
   dragged anywhere, and its position is remembered per monitor
   (`[overlay.mascot] position_*`, shared with the mascot).
-- **The control strip** under the figure. Where the window carries per-pixel
-  alpha it has no background of its own: the glyphs and the indicator float
-  on the desktop with a soft shadow, and each control's round area stays
-  clickable while invisible. From left to right:
+- **The control strip** under the figure, from left to right:
   - pen: raise the main window and open a new chat (`ComposeRequested`);
   - microphone: mute Jarvis's microphone (`VoiceMuteToggleRequested`, mirrored
     from `VoiceMuteChanged`);
