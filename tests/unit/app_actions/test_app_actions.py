@@ -7,6 +7,7 @@ from typing import Any
 import httpx
 import pytest
 from fastapi import FastAPI
+from pydantic import BaseModel
 
 from jarvis.app_actions import catalog as catalog_mod
 from jarvis.app_actions import history
@@ -175,3 +176,51 @@ async def test_area_is_a_hint_not_an_exact_slug(app: FastAPI, area: str) -> None
     found = await FindAppActionTool().execute({"query": "rename pane", "area": area}, None)
     assert found.success
     assert found.output["actions"][0]["title"] == "Rename Pane"
+
+
+class _Hook(BaseModel):
+    url: str
+    webhook_token: str
+
+
+class _NewComputer(BaseModel):
+    host: str
+    password: str
+
+
+class _Usage(BaseModel):
+    tokens_in: int
+    max_tokens: int
+
+
+class _Session(BaseModel):
+    permission_mode: str
+
+
+def test_actions_carrying_a_credential_are_never_offered() -> None:
+    # AP-2: the URL alone hid neither a webhook route returning its token nor
+    # a computer route taking a password.
+    application = FastAPI()
+
+    @application.get("/api/tasks/{task_id}/webhook-connection", response_model=_Hook)
+    async def hook(task_id: str) -> _Hook:
+        return _Hook(url="", webhook_token="")
+
+    @application.post("/api/computers")
+    async def add_computer(body: _NewComputer) -> dict[str, Any]:
+        return {}
+
+    @application.get("/api/usage", response_model=_Usage)
+    async def usage() -> _Usage:
+        return _Usage(tokens_in=0, max_tokens=0)
+
+    @application.patch("/api/agent-chat/sessions/{sid}")
+    async def patch_session(sid: str, body: _Session) -> dict[str, Any]:
+        return {}
+
+    catalog = build_catalog(application.openapi())
+    routes = {(e.method, e.path): e for e in catalog.values()}
+    assert ("GET", "/api/tasks/{task_id}/webhook-connection") not in routes
+    assert ("POST", "/api/computers") not in routes
+    assert ("GET", "/api/usage") in routes
+    assert default_tier(routes[("PATCH", "/api/agent-chat/sessions/{sid}")]) == "ask"

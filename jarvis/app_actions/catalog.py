@@ -29,6 +29,24 @@ _EXCLUDED: Final[re.Pattern[str]] = re.compile(
 
 _SCHEMA_KEYS: Final[tuple[str, ...]] = ("type", "enum", "items", "properties", "required")
 
+#: A field that carries a credential, wherever the URL does not say so: a
+#: webhook route returned its token and a computer route took a password, and
+#: both were offered to the model (AP-2). Matched on whole field names, so
+#: usage counters such as ``tokens_in`` or ``max_tokens`` stay reachable.
+_SECRET_FIELD: Final[re.Pattern[str]] = re.compile(
+    r"^(?:\w+_)?(?:secret|secrets|token|password|passphrase|private_key|api_key|"
+    r"client_secret|pat)$",
+    re.IGNORECASE,
+)
+
+#: Fields that widen what an agent may do. Changing them on an existing agent
+#: or session asks first, like a deletion (an approval route was able to
+#: grant "allow always", a session PATCH could set bypassPermissions).
+_PERMISSION_FIELD: Final[re.Pattern[str]] = re.compile(
+    r"^(?:permission_mode|approval_mode|grant_mode|grants|ceiling|decision)$",
+    re.IGNORECASE,
+)
+
 
 @dataclass(frozen=True, slots=True)
 class ActionEntry:
@@ -74,9 +92,53 @@ def is_excluded(path: str) -> bool:
     return bool(_EXCLUDED.search(path))
 
 
-def _dangerous(method: str, path: str, operation: dict[str, Any]) -> bool:
+def _field_names(schema: Any, components: dict[str, Any], depth: int = 0) -> set[str]:
+    """Every property name a schema can carry, through refs, unions and arrays."""
+    if not isinstance(schema, dict) or depth > 6:
+        return set()
+    ref = schema.get("$ref")
+    if isinstance(ref, str):
+        schema = components.get(ref.rsplit("/", 1)[-1], {})
+    names: set[str] = set()
+    for key in ("anyOf", "oneOf", "allOf"):
+        for option in schema.get(key) or ():
+            names |= _field_names(option, components, depth + 1)
+    for key in ("items", "additionalProperties"):
+        names |= _field_names(schema.get(key), components, depth + 1)
+    for name, value in (schema.get("properties") or {}).items():
+        names.add(str(name))
+        names |= _field_names(value, components, depth + 1)
+    return names
+
+
+def _json_schemas(operation: dict[str, Any]) -> tuple[Any, list[Any]]:
+    """The JSON request body schema and every JSON response schema."""
+    body = ((operation.get("requestBody") or {}).get("content") or {}).get("application/json")
+    responses = [
+        ((response or {}).get("content") or {}).get("application/json", {}).get("schema")
+        for response in (operation.get("responses") or {}).values()
+        if isinstance(response, dict)
+    ]
+    return (body or {}).get("schema"), responses
+
+
+def _carries_secret(operation: dict[str, Any], components: dict[str, Any]) -> bool:
+    body, responses = _json_schemas(operation)
+    fields = _field_names(body, components)
+    for schema in responses:
+        fields |= _field_names(schema, components)
+    return any(_SECRET_FIELD.match(name) for name in fields)
+
+
+def _dangerous(
+    method: str, path: str, operation: dict[str, Any], components: dict[str, Any] | None = None
+) -> bool:
     if operation.get("x-jarvis-dangerous"):
         return True
+    if method in {"PUT", "PATCH"} or (method == "POST" and "/approvals/" in path):
+        body, _ = _json_schemas(operation)
+        if any(_PERMISSION_FIELD.match(n) for n in _field_names(body, components or {})):
+            return True
     try:
         from jarvis.cli_ctl.safety import is_dangerous
     except Exception:  # noqa: BLE001 — without the CLI extras, DELETE alone is dangerous
@@ -119,7 +181,12 @@ def _entry(
     method: str, path: str, operation: dict[str, Any], components: dict[str, Any]
 ) -> ActionEntry | None:
     op_id = str(operation.get("operationId") or "")
-    if not op_id or is_excluded(path):
+    if (
+        not op_id
+        or is_excluded(path)
+        or operation.get("x-jarvis-exclude")
+        or _carries_secret(operation, components)
+    ):
         return None
     properties: dict[str, Any] = {}
     required: list[str] = []
@@ -152,7 +219,7 @@ def _entry(
         area=str((operation.get("tags") or ["app"])[0]),
         title=str(operation.get("summary") or op_id),
         description=" ".join(description.split())[:300],
-        dangerous=_dangerous(method.upper(), path, operation),
+        dangerous=_dangerous(method.upper(), path, operation, components),
         path_params=tuple(path_params),
         query_params=tuple(query_params),
         has_body=bool(body),
