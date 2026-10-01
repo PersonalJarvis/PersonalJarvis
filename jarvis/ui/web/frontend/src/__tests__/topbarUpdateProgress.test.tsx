@@ -1,10 +1,11 @@
 /**
  * The update button as a progress bar.
  *
- * While an update runs, the button IS the progress indicator: it shows the
- * percentage the backend reports, fills proportionally, and finishes on the one
- * phase nothing can measure — the restart, announced by the UI itself because
- * the server reporting it is the process shutting down.
+ * While an update runs, the title-strip icon becomes a progress ring and the
+ * update panel shows the percentage the backend reports, fills its bar
+ * proportionally, and finishes on the one phase nothing can measure — the
+ * restart, announced by the UI itself because the server reporting it is the
+ * process shutting down.
  *
  * What these tests defend is honesty. A bar that animates on a timer, rewinds,
  * or sticks at a number after the update failed is worse than no bar at all:
@@ -80,9 +81,10 @@ function mockBackend(opts: {
   return calls;
 }
 
+/** Open the update panel from the title-strip icon, then start the update. */
 async function clickUpdate(): Promise<void> {
-  const button = await screen.findByText("Update available");
-  button.click();
+  (await screen.findByRole("button", { name: /update available/i })).click();
+  (await screen.findByRole("button", { name: "Update & restart" })).click();
 }
 
 function fillWidth(): string | undefined {
@@ -148,7 +150,7 @@ describe("TopBar update progress", () => {
   it("is not a progress bar before an update starts", async () => {
     mockBackend({ progress: () => progressBody(0) });
     render(<TopBar />);
-    await screen.findByText("Update available");
+    await screen.findByRole("button", { name: /update available/i });
 
     // A stray role here would announce a bar frozen at 0 % on every launch.
     expect(screen.queryByRole("progressbar")).toBeNull();

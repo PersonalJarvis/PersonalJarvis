@@ -71,7 +71,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from jarvis.core.branding import (
     MANAGED_INSTALL_MARKER,
@@ -910,14 +910,80 @@ async def _frozen_status(current: str) -> dict[str, object]:
     return result
 
 
-async def _apply_frozen() -> dict[str, object]:
+def _running_missions(request: Request | None) -> list[str]:
+    """IDs of the missions an app quit would kill right now (empty on doubt)."""
+    if request is None:
+        return []
+    kontrollierer = getattr(request.app.state, "kontrollierer", None)
+    list_running = getattr(kontrollierer, "running_mission_ids", None)
+    if not callable(list_running):
+        return []
+    try:
+        return [str(mid) for mid in list_running()]
+    except Exception:  # noqa: BLE001 — a wedged guard must not block the update
+        log.warning("[update] could not list running missions", exc_info=True)
+        return []
+
+
+def _refuse_if_missions_run(request: Request | None, *, force: bool) -> None:
+    """Raise the restart route's 409 when quitting now would kill missions."""
+    if force:
+        return
+    running = _running_missions(request)
+    if running:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "missions_running",
+                "missions": [{"id": mid, "title": ""} for mid in running],
+            },
+        )
+
+
+def _desktop_can_quit(request: Request | None) -> bool:
+    """True when a desktop window exists that ``_quit_for_update`` can close."""
+    if request is None:
+        return False
+    desktop = getattr(request.app.state, "desktop_app", None)
+    return callable(getattr(desktop, "request_quit", None))
+
+
+def _quit_for_update(request: Request | None) -> bool:
+    """Close the desktop app so the handed-over installer can take its place.
+
+    The native handover only starts the new version once THIS process is gone
+    (the single-instance lock), so a successful handover must be followed by a
+    quit. Returns False on a host without a desktop window (``jarvis serve``):
+    the user then restarts by hand, and the response says so.
+    """
+    if request is None:
+        return False
+    desktop = getattr(request.app.state, "desktop_app", None)
+    quit_fn = getattr(desktop, "request_quit", None)
+    if not callable(quit_fn):
+        return False
+    try:
+        return bool(quit_fn())
+    except Exception:  # noqa: BLE001 — reported to the caller as "restart by hand"
+        log.warning("[update] could not quit for the update", exc_info=True)
+        return False
+
+
+async def _apply_frozen(
+    request: Request | None = None, *, force: bool = False
+) -> dict[str, object]:
     """Download, verify and install the native installer for this machine.
 
     Fail-CLOSED at every step: an unresolvable release, a missing asset, a
     missing or mismatching SHA-256 all raise before anything is executed. The
     running app keeps working on the old version in every failure case.
+
+    A successful handover ends this app (the installer replaces it), so the
+    same mission guard as ``/api/settings/restart-app`` runs FIRST — before a
+    single byte is downloaded — and refuses with 409 unless ``force`` is set.
     """
     _progress.begin(INSTALL_KIND_FROZEN)
+    _refuse_if_missions_run(request, force=force)
     current = _running_version()
     asset_name = _frozen_asset_name()
     if asset_name is None:
@@ -990,10 +1056,23 @@ async def _apply_frozen() -> dict[str, object]:
         # the time it returns the verify phase is already over — the window is
         # closed here rather than announced, to keep the bar truthful.
         _progress.advance(PHASE_VERIFYING, 1.0, detail=None)
+        # The download can take minutes; a mission started meanwhile must get
+        # the same protection, so the guard runs again right before the point
+        # of no return.
+        _refuse_if_missions_run(request, force=force)
         _progress.enter(PHASE_INSTALLING)
+        # Without a window to close (``jarvis serve``, a browser-only AppImage)
+        # this process keeps running, so a relaunch waiter would only start a
+        # second instance that bounces off the lock: the user restarts instead.
+        relaunch = _desktop_can_quit(request)
         # hdiutil, a directory swap and a detached spawn all block; keep the
         # event loop (and therefore the UI this answer travels back over) free.
-        handover = await asyncio.to_thread(apply_installer, installer)
+        handover = await asyncio.to_thread(
+            lambda: apply_installer(installer, relaunch=relaunch)
+        )
+    except HTTPException:
+        shutil.rmtree(workdir, ignore_errors=True)
+        raise
     except InstallerUpdateError as exc:
         shutil.rmtree(workdir, ignore_errors=True)
         _progress.fail(str(exc))
@@ -1009,10 +1088,17 @@ async def _apply_frozen() -> dict[str, object]:
 
     # The native installer restarts the app itself, so this run is complete.
     _progress.finish(version=release_version, restart_required=False)
+    # The new version starts once this process is gone — so go.
+    quitting = _quit_for_update(request)
+    if not quitting:
+        handover = f"{handover} — restart Personal Jarvis to finish the update"
 
-    # The download is deliberately NOT deleted: on Windows the installer that
-    # replaces this app is running from it right now. The OS reclaims the temp
-    # directory; deleting it here would kill the update mid-flight.
+    # On Windows the installer that replaces this app is running from the
+    # download right now, so it stays (deleting it would kill the update). On
+    # macOS and Linux the swap is already done, and nothing reclaims a
+    # hundreds-of-MB file in the temp directory on its own.
+    if sys.platform != "win32":
+        shutil.rmtree(workdir, ignore_errors=True)
     log.info("[update] %s installed from %s (%s)", release_tag, asset.name, workdir)
 
     global _status_cache, _status_cache_until, _status_cache_root
@@ -1021,11 +1107,13 @@ async def _apply_frozen() -> dict[str, object]:
     return {
         "ok": True,
         "prepared": True,
-        # The handover restarts the app itself (Inno's /RESTARTAPPLICATIONS,
-        # `open` on macOS, re-exec on Linux), so no caller-driven restart is
-        # required. The field is honest about that; a caller that restarts
-        # anyway is harmless because the single-instance lock still holds.
+        # The handover relaunches the app itself once this process exits
+        # (the installer's /RELAUNCH=1 run on Windows, a wait-then-exec helper
+        # on macOS and Linux), and this route already scheduled that exit. A
+        # caller must NOT restart on top: on a frozen build that would race
+        # the installer for the program files.
         "restart_required": False,
+        "quitting": quitting,
         "kind": INSTALL_KIND_FROZEN,
         "version": release_version,
         "release_tag": release_tag,
@@ -1147,7 +1235,7 @@ async def update_progress() -> dict[str, object]:
 
 
 @router.post("/apply", openapi_extra={"x-jarvis-dangerous": True})
-async def update_apply() -> dict[str, object]:
+async def update_apply(request: Request, force: bool = False) -> dict[str, object]:
     """Prepare the latest version and report progress while doing it.
 
     Dispatches on the install kind: a FROZEN install downloads and hands over
@@ -1166,10 +1254,13 @@ async def update_apply() -> dict[str, object]:
     async with _apply_lock:
         try:
             if is_frozen():
-                return await _apply_frozen()
+                return await _apply_frozen(request, force=force)
             return await _apply_managed()
         except HTTPException as exc:
-            _progress.fail(str(exc.detail))
+            detail = exc.detail
+            if isinstance(detail, dict) and detail.get("error") == "missions_running":
+                detail = "missions are running — confirm to update anyway"
+            _progress.fail(str(detail))
             raise
         except Exception as exc:  # noqa: BLE001 — re-raised; this only records it
             _progress.fail(f"{type(exc).__name__}: {exc}")

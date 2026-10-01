@@ -743,6 +743,24 @@ mount that disappears when the app exits — and the uninstall path would delete
 shortcuts it never created. Covered by
 `tests/unit/setup/test_desktop_integration.py`.
 
+**In-app update of a native install (2026-10-01).** The new version may only
+start once the running app is gone (the single-instance lock), so every
+handover ends with the update route quitting the app, and each OS brings the
+new version back its own way: Windows runs the Inno installer with
+`/SILENT /SUPPRESSMSGBOXES /CLOSEAPPLICATIONS /NORESTART /RELAUNCH=1`, and the
+installer's own `[Run]` entry (`Check: RelaunchRequested`, not `skipifsilent`)
+starts the app again; macOS swaps the `.app` and Linux the AppImage, then a
+detached POSIX `sh` waiter (`relaunch_after_exit_command`) starts the new
+version once the old PID has exited. The plain Restart button of a frozen
+build re-enters its own executable with `--relauncher` (a frozen build has no
+`python -m`), and relaunches through `$APPIMAGE` on Linux and `open -n` on
+macOS. A frozen apply runs the mission guard before downloading. A host with
+no desktop window (`jarvis serve`) keeps running and is told to restart by
+hand. Covered by `tests/unit/core/test_installer_update.py` (the waiter is
+executed for real on macOS and Linux), `tests/unit/ui/test_relauncher_frozen.py`
+and `tests/unit/ui/web/test_update_routes_frozen.py`, run on all three OSes by
+the CI `updater` lane. Not yet run against a real installed build on any OS.
+
 | # | Impact | Area | Gap | Evidence | Behavior off-Windows |
 |---|---|---|---|---|---|
 | P-38 | Medium | Native installer / desktop window | The Linux AppImage and `.deb` have **no native desktop window**. Windows (WebView2) and macOS (WKWebView) get one from the frozen bundle; Linux does not, because pywebview's GTK backend needs PyGObject and a frozen interpreter can never import the distribution's `python3-gi` (it is compiled against the system CPython), while bundling GTK 3 + WebKit2GTK portably means shipping its helper processes, GIO modules, pixbuf loaders, GSettings schemas and typelibs. The Qt route is also closed today: the `[desktop]` extra installs `pyside6-essentials`, which has no QtWebEngine, and `jarvis.spec` excludes PySide6 outright. Adding `pyside6-addons` and dropping that exclusion is the realistic fix, at roughly +400 MB | `packaging/linux/README.md` ("The window question"), `jarvis/ui/desktop_app.py::_degrade_to_browser_ui`, `jarvis.spec` `excludes`, `pyproject.toml` `[desktop]` | Linux: honest degradation, verified against a real build — the app catches pywebview's `WebViewException`, keeps the backend serving, and `AppRun` waits for `/api/health` and opens the interface with `xdg-open`. Everything except the window frame works, including the whole CLI. A source/pipx install on a Linux desktop with `python3-gi` + `gir1.2-webkit2-4.1` still gets the native window; only the frozen build does not. Sub-gap: the app's fallback message advises installing those system packages, which does not help a frozen build |

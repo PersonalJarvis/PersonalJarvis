@@ -194,7 +194,7 @@ def test_apply_happy_path_pulls_and_signals_restart(
         },
     )
 
-    async def _fake_git(args, *, cwd, timeout_s=60.0):
+    async def _fake_git(args, *, cwd, timeout_s=60.0, on_stderr_line=None):
         calls.append(args)
         return 0, "", ""
 
@@ -221,8 +221,11 @@ def test_apply_happy_path_pulls_and_signals_restart(
     assert body["desktop_integration_pending"] is True
     assert body["desktop_integration_ok"] is None
     assert body["desktop_integration_warning"] is None
+    # ``--progress`` makes git report object counters through a pipe, which
+    # is what drives the download phase of the progress bar.
     assert [
         "fetch",
+        "--progress",
         "--depth",
         "1",
         "origin",
@@ -246,7 +249,7 @@ def test_apply_git_fetch_failure_is_502(
     monkeypatch.setattr(u, "_running_version", lambda: "1.0.1")
     _patch_latest(monkeypatch, {"version": "1.0.2", "tag": "v1.0.2"})
 
-    async def _fake_git(args, *, cwd, timeout_s=60.0):
+    async def _fake_git(args, *, cwd, timeout_s=60.0, on_stderr_line=None):
         return 1, "", "network down"
 
     async def _fake_git_output(args, *, cwd, timeout_s=15.0):
@@ -267,7 +270,7 @@ def test_apply_preserves_headless_profile_for_deferred_installer(
     monkeypatch.setattr(u, "_running_version", lambda: "1.0.1")
     _patch_latest(monkeypatch, {"version": "1.0.2", "tag": "v1.0.2"})
 
-    async def _fake_git(args, *, cwd, timeout_s=60.0):
+    async def _fake_git(args, *, cwd, timeout_s=60.0, on_stderr_line=None):
         return 0, "", ""
 
     async def _fake_git_output(args, *, cwd, timeout_s=15.0):
@@ -340,7 +343,7 @@ def test_apply_falls_back_to_cached_release_when_refetch_fails(
     _patch_latest(monkeypatch, None)
     u._last_good_release = {"version": "1.0.2", "tag": "v1.0.2"}
 
-    async def _fake_git(args, *, cwd, timeout_s=60.0):
+    async def _fake_git(args, *, cwd, timeout_s=60.0, on_stderr_line=None):
         return 0, "", ""
 
     async def _fake_git_output(args, *, cwd, timeout_s=15.0):
@@ -487,7 +490,7 @@ def test_apply_invalidates_status_cache(
     client.get("/api/update/status")
     assert u._status_cache is not None
 
-    async def _fake_git(args, *, cwd, timeout_s=60.0):
+    async def _fake_git(args, *, cwd, timeout_s=60.0, on_stderr_line=None):
         return 0, "", ""
 
     async def _fake_git_output(args, *, cwd, timeout_s=15.0):

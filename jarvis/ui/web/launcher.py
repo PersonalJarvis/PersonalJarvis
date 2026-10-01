@@ -1136,6 +1136,113 @@ def _health_answers(port: int, *, timeout: float = 2.0) -> bool:
     return response.status_code == 200
 
 
+# How long a freshly installed native build waits for the OLDER build it is
+# replacing to exit. Long enough for an old app to finish quitting after its
+# installer handover; short enough that a genuinely stuck old instance still
+# reaches the normal "already running" recovery.
+UPDATE_HANDOFF_WAIT_S = 90.0
+
+
+def _holder_version(port: int, *, timeout: float = 1.5) -> str | None:
+    """The version the running instance reports on ``/api/health``, if any."""
+    try:
+        import httpx
+    except Exception:  # noqa: BLE001 — no probe possible means no hand-off claim
+        return None
+    try:
+        response = httpx.get(f"http://127.0.0.1:{int(port)}/api/health", timeout=timeout)
+        version = response.json().get("version")
+    except Exception:  # noqa: BLE001 — silent/old holder: treat as "unknown version"
+        return None
+    return version if isinstance(version, str) and version.strip() else None
+
+
+def _is_older(holder: str, ours: str) -> bool:
+    """True only when ``holder`` is provably an older release than ``ours``."""
+    try:
+        from packaging.version import InvalidVersion, Version
+    except Exception:  # noqa: BLE001 — cannot compare means "not older"
+        return False
+    try:
+        return Version(holder) < Version(ours)
+    except InvalidVersion:  # an unparsable version proves nothing, so no hand-off wait
+        return False
+
+
+def _wait_out_an_older_holder(
+    *,
+    frozen: bool | None = None,
+    read_meta=None,
+    version_of=None,
+    acquire=None,
+    running_version: str | None = None,
+    sleep=None,
+    now=None,
+    wait_s: float = UPDATE_HANDOFF_WAIT_S,
+):
+    """Take over from an OLDER native build that is quitting for an update.
+
+    Native builds up to v2.4.x start the new version while they themselves are
+    still running: macOS ``open -n`` and the Linux AppImage respawn fire right
+    after the swap, before the old app has quit. The new version then found the
+    lock held, focused the old window and exited — and the old app quit a
+    moment later, leaving nothing running. When the lock holder reports an
+    older version than this build, this is that hand-off: wait for it to let
+    go instead of bowing out. Returns the lock, or ``None`` to fall through to
+    the normal "already running" handling (same version, a dev tree, a holder
+    that does not answer, or one that never exits).
+    """
+    from loguru import logger
+
+    from jarvis.ui import desktop_app as _desktop_app
+
+    if frozen is None:
+        from jarvis.core.frozen import is_frozen
+
+        frozen = is_frozen()
+    if not frozen:
+        return None
+    read_meta = read_meta or _desktop_app._read_meta
+    version_of = version_of or _holder_version
+    if acquire is None:
+
+        def acquire():
+            return _desktop_app.acquire_single_instance_lock(
+                timeout=0.5, terminate=lambda _pid: False
+            )
+
+    if running_version is None:
+        from jarvis import __version__ as running_version
+    sleep = sleep or time.sleep
+    now = now or time.monotonic
+
+    meta = None
+    with contextlib.suppress(Exception):
+        meta = read_meta()
+    port = meta.get("port") if isinstance(meta, dict) else None
+    if port is None:
+        return None
+    holder = version_of(int(port))
+    if holder is None or not _is_older(holder, running_version):
+        return None
+
+    logger.info(
+        "launcher: v{} is still running while v{} starts — an update hand-over; "
+        "waiting up to {:.0f}s for it to quit",
+        holder,
+        running_version,
+        wait_s,
+    )
+    deadline = now() + wait_s
+    while now() < deadline:
+        try:
+            return acquire()
+        except _desktop_app.SingleInstanceError:  # still held by the old app: poll again
+            sleep(0.5)
+    logger.warning("launcher: the older v{} never quit — normal recovery takes over", holder)
+    return None
+
+
 def _holder_alive(pid: int) -> bool:
     """False only when ``pid`` has certainly exited; an unknown answer is True.
 
@@ -1475,12 +1582,16 @@ def _run_desktop(cfg, use_lock: bool) -> int:
         try:
             lock = acquire_single_instance_lock()
         except SingleInstanceError as exc:
-            print(f"{APP_DISPLAY_NAME} is already running.", file=sys.stderr)
-            lock = _recover_from_already_running(
-                exc,
-                focus=focus_existing_instance_robust,
-                health=_health_answers,
-            )
+            # An older native build quitting for an update is not "already
+            # running" — this build is its replacement and takes over.
+            lock = _wait_out_an_older_holder()
+            if lock is None:
+                print(f"{APP_DISPLAY_NAME} is already running.", file=sys.stderr)
+                lock = _recover_from_already_running(
+                    exc,
+                    focus=focus_existing_instance_robust,
+                    health=_health_answers,
+                )
             if lock is None:
                 return 3
 

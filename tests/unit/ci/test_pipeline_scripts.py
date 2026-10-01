@@ -54,6 +54,22 @@ def test_route_change_turns_on_cli_lane_and_windows_path_is_normalized():
     assert result["python"] is True
 
 
+def test_updater_change_turns_on_the_cross_os_updater_lane():
+    for path in (
+        "jarvis/core/installer_update.py",
+        "jarvis\\ui\\relauncher.py",
+        "packaging/windows/PersonalJarvis.iss",
+        "tests/unit/ui/web/test_update_routes_frozen.py",
+    ):
+        assert classify_changes.classify([path])["updater"] is True, path
+
+
+def test_unrelated_python_change_leaves_the_updater_lane_off():
+    result = classify_changes.classify(["jarvis/society/roster.py"])
+    assert result["python"] is True
+    assert result["updater"] is False
+
+
 def test_lockfile_change_reaches_deps_realtime_and_installer():
     result = classify_changes.classify(["requirements.txt"])
     assert result["deps"] and result["realtime"] and result["installer"]
