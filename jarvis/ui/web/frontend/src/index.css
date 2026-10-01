@@ -562,8 +562,8 @@ label,
     --user-bubble: 0 0% 96%; /* #F5F5F5 — the speaker: quiet lift, strong ink */
     --user-bubble-foreground: 0 0% 9%;
     --surface-raised: 0 0% 93%; /* #EDEDED — pressed/selected rows, code blocks */
-    --border: 0 0% 90%; /* #E5E5E5 — hairline */
-    --border-strong: 0 0% 82%; /* #D1D1D1 — input borders, focused card, float rim */
+    --border: 0 0% 86%; /* #DBDBDB — hairline */
+    --border-strong: 0 0% 74%; /* #BDBDBD — input borders, focused card, float rim */
 
     /* --- Ink. Four steps, one job each ------------------------------------
        The split is what stops a single ink slab from reading as harsh: with
@@ -571,10 +571,10 @@ label,
        has nothing to justify its weight. */
     --foreground-strong: 0 0% 4%; /* #0A0A0A — headings, headline numbers */
     --foreground: 0 0% 9%; /* #171717 — body, labels, running text */
-    --muted-foreground: 0 0% 40%; /* #666666 — labels, meta, table heads (5.7:1) */
-    --faint-foreground: 0 0% 46%; /* #757575 — placeholder + disabled ONLY (4.6:1) */
-    --foreground-faint: 0 0% 46%; /* = --faint-foreground; the Tailwind name */
-    --foreground-secondary: 0 0% 32%; /* #525252 — body on cards, descriptions */
+    --muted-foreground: 0 0% 33%; /* #545454 — labels, meta, table heads (7.5:1, the dark twin's 7.9:1) */
+    --faint-foreground: 0 0% 42%; /* #6B6B6B — placeholder + disabled ONLY (5.3:1) */
+    --foreground-faint: 0 0% 42%; /* = --faint-foreground; the Tailwind name */
+    --foreground-secondary: 0 0% 26%; /* #424242 — body on cards, descriptions */
 
     /* --primary is a FILL, not an ink: buttons, marks, active indicators,
        focus rings. It never paints running text, a byline or a decorative

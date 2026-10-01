@@ -89,6 +89,7 @@ import {
   type TerminalAppearance,
 } from "./terminalThemes";
 import { clearTuiCanvasFill } from "./terminalGlass";
+import { inkForLightPane } from "./terminalLightInk";
 import {
   extractPaneDrop,
   extractPasteFiles,
@@ -1239,8 +1240,10 @@ export function AgenticTerminal({
       parsing += 1;
       // A TUI that paints its theme ground on every cell would hide the
       // glass this pane sits on. Default-background those fills here, on
-      // the way into xterm — see ./terminalGlass.
-      term.write(clearTuiCanvasFill(text), () => {
+      // the way into xterm — see ./terminalGlass. A light pane also re-inks
+      // the dark-theme truecolor most CLIs paint — see ./terminalLightInk.
+      const glass = clearTuiCanvasFill(text);
+      term.write(appearanceRef.current === "light" ? inkForLightPane(glass) : glass, () => {
         parsing = Math.max(0, parsing - 1);
         afterWrite?.();
         // The parser is between chunks — the one safe moment to reflow.

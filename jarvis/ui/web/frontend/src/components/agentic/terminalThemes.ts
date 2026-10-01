@@ -283,11 +283,11 @@ export const PANE_BRAND: Record<TerminalAppearance, PaneBrand> = {
   light: {
     accent: "#26251e",
     onAccent: "#f7f7f4",
-    accentSoft: "rgba(38,37,30,0.24)",
+    accentSoft: "rgba(38,37,30,0.32)",
     ink: "#26251e",
-    inkMuted: "#66635a",
-    inkFaint: "#8b877c",
-    chip: "rgba(38,37,30,0.08)",
+    inkMuted: "#4a4840",
+    inkFaint: "#6e6a60",
+    chip: "rgba(38,37,30,0.09)",
   },
   dark: {
     accent: "#ffffff",
@@ -311,13 +311,13 @@ export const PANE_SOLID: Record<TerminalAppearance, string> = {
 
 export const PANE_CHROME: Record<TerminalAppearance, PaneChrome> = {
   light: {
-    shell: "rgba(252, 251, 248, 0.68)",
-    border: "rgba(38,37,30,0.14)",
+    shell: "rgba(252, 251, 248, 0.86)",
+    border: "rgba(38,37,30,0.2)",
     float: "#ffffff",
     edge: {
-      connecting: "rgba(38,37,30,0.14)",
-      live: "rgba(38,37,30,0.14)",
-      exited: "rgba(38,37,30,0.07)",
+      connecting: "rgba(38,37,30,0.2)",
+      live: "rgba(38,37,30,0.2)",
+      exited: "rgba(38,37,30,0.1)",
       error: "rgba(190,23,68,0.45)",
     },
   },
@@ -360,9 +360,9 @@ export interface PaneTileChrome {
 export const PANE_TILE: Record<TerminalAppearance, PaneTileChrome> = {
   light: {
     edge: {
-      connecting: "rgba(38,37,30,0.30)",
-      live: "rgba(38,37,30,0.30)",
-      exited: "rgba(38,37,30,0.14)",
+      connecting: "rgba(38,37,30,0.36)",
+      live: "rgba(38,37,30,0.36)",
+      exited: "rgba(38,37,30,0.18)",
       error: "rgba(190,23,68,0.65)",
     },
     focus: "#096cdc",
