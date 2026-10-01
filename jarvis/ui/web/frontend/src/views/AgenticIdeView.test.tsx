@@ -172,7 +172,8 @@ describe("Agentic IDE project flow", () => {
     const dialog = screen.getByRole("dialog", { name: "Add coding agent" });
     expect(within(dialog).queryByRole("button", { name: "Codex" })).toBeNull();
     expect(within(dialog).queryByRole("button", { name: "Browser Harness" })).toBeNull();
-    fireEvent.change(within(dialog).getByRole("combobox", { name: "Split next to" }), { target: { value: "T1" } });
+    fireEvent.click(within(dialog).getByRole("combobox", { name: "Split next to" }));
+    fireEvent.click(await within(dialog).findByRole("option", { name: "T1 · Plain Terminal" }));
     fireEvent.click(within(dialog).getByRole("radio", { name: "Split right" }));
     fireEvent.click(within(dialog).getByRole("button", { name: "Plain Terminal" }));
     await waitFor(() => expect(api.addTerminal).toHaveBeenCalledWith(
