@@ -10,11 +10,11 @@ import { sessionTitle } from "@/components/agentic/sessionTitle";
  * Every pane's short title — a few words naming its goal — for the workspace
  * on screen.
  *
- * The titles come from `/recaps`: a model reads each pane and writes a 3–5
- * word navigation label (`recap_engine`). That poll is also the ONLY thing
- * that asks the backend to write those labels at all — the summarizer runs
- * because somebody is looking — so the grid headers and the side panel share
- * one reference-counted poll here rather than each running their own.
+ * The titles come from `/recaps`: the title the pane's coding CLI gave its
+ * own session (`cli_title`), else one the user pinned, else — only when the
+ * user switched model recaps on — a model-written label (`recap_engine`). The
+ * grid headers and the side panel share one reference-counted poll here
+ * rather than each running their own.
  *
  * It polls only while the Agentic IDE is the section on screen: the view stays
  * mounted when hidden, and a hidden workspace needs no fresh titles.
@@ -72,8 +72,8 @@ export function usePaneRecapPoll(): void {
 /**
  * The words a pane is labelled with instead of its call-sign.
  *
- * A title the user pinned or the model wrote wins. Before one exists, the
- * pane's own topic (`sessionTitle`: its last prompt, the message that opened
+ * A title the user pinned, the CLI gave its session, or the model wrote wins.
+ * Before one exists, the pane's own topic (`sessionTitle`: its last prompt, the message that opened
  * the conversation) stands in; a pane that was never asked anything has no
  * topic, and "" tells the caller to fall back to the call-sign.
  */
@@ -82,7 +82,8 @@ export function paneTitleFrom(
   row: Parameters<typeof sessionTitle>[0] | undefined,
 ): string {
   const written = (recap?.recap ?? "").trim();
-  if (written && (recap?.source === "model" || recap?.source === "user")) return written;
+  const named = recap?.source === "user" || recap?.source === "cli" || recap?.source === "model";
+  if (written && named) return written;
   if (!row) return "";
   const topic = sessionTitle(row).trim();
   return topic && topic !== row.display_name && topic !== row.name ? topic : "";

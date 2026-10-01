@@ -140,6 +140,25 @@ _REALTIME_WARM_MIN_INTERVAL_S = 20.0
 _BACKEND_MIN_UPTIME_FOR_RECOVERY_S = 120.0
 
 
+def _clamp_pet_scale(value: object) -> float:
+    """``[ui] pet_scale`` as a usable multiplier: 0.5–2.0, 1.0 when unusable."""
+    import math
+
+    try:
+        scale = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 1.0
+    if not math.isfinite(scale):
+        return 1.0
+    return max(0.5, min(2.0, scale))
+
+
+def _pet_toggle_hotkey(cfg: Any) -> str:
+    """``[trigger] hotkey_pet_toggle``, stripped; empty when unset or disabled."""
+    value = getattr(getattr(cfg, "trigger", None), "hotkey_pet_toggle", "")
+    return str(value or "").strip()
+
+
 def boot_overlay_style(configured: str | None, *, instance: Any | None = None) -> str:
     """The on-screen overlay style this process boots with.
 
@@ -1972,6 +1991,7 @@ class DesktopApp:
         # the window is still rendering. See the note at the top of _run_backend.
         from jarvis.brain.factory import build_default_brain
         from jarvis.core.events import (
+            ComposeRequested,
             ErrorOccurred,
             MessageSent,
             ResponseGenerated,
@@ -2595,6 +2615,9 @@ class DesktopApp:
         # handler runs on the asyncio loop and immediately thread-hops, because
         # pywebview calls block their calling thread (see _on_show_window_requested).
         server.bus.subscribe(ShowWindowRequested, self._on_show_window_requested)
+        # The pet's pen asks for a fresh chat: the window comes up through the
+        # very same off-loop path; the frontend opens the new chat itself.
+        server.bus.subscribe(ComposeRequested, self._on_show_window_requested)
         self._install_focus_route(server)
 
         # Workflow system (Phase 6) — store + runner + scheduler. Its own
@@ -3364,6 +3387,7 @@ class DesktopApp:
                     surface = SubprocessMascotOverlay(
                         mascot_path=self.cfg.ui.orb_mascot_path or None,
                         style=style,
+                        **self._pet_surface_kwargs(),
                     )
                     surface.start_in_thread()
                     logger.info(
@@ -3403,9 +3427,104 @@ class DesktopApp:
                 mic_reactive=False,
                 style=style,
                 mascot_path=self.cfg.ui.orb_mascot_path or None,
+                **self._pet_surface_kwargs(),
             )
         surface.start_in_thread()
         return surface
+
+    def _pet_surface_kwargs(self) -> dict[str, object]:
+        """The pet's ``[ui]`` settings for the orb window (``docs/pets.md``).
+
+        Passed to every orb-window surface, not only a pet one: a live swap to
+        the pet style reuses the same window, which must already know them.
+        """
+        from jarvis.ui.pets.states import DEFAULT_PET_ID
+
+        ui = self.cfg.ui
+        return {
+            "pet_id": str(getattr(ui, "pet_id", DEFAULT_PET_ID) or DEFAULT_PET_ID),
+            "pet_scale": _clamp_pet_scale(getattr(ui, "pet_scale", 1.0)),
+            "pet_bubble": bool(getattr(ui, "pet_bubble", True)),
+        }
+
+    def _hide_on_idle_for(self, style: str) -> bool:
+        """The bridge's idle regime for one overlay style.
+
+        The bar follows "show at all times"; a persistent orb style (the pet)
+        stays up while idle; the mascot and the voice orb pop up per session.
+        """
+        from jarvis.ui.overlay_styles import PERSISTENT_ORB_STYLES
+
+        if style == "jarvis_bar":
+            return not bool(getattr(self.cfg.ui, "bar_persistent", True))
+        return style not in PERSISTENT_ORB_STYLES
+
+    def _pet_call(self, method: str, *args: object) -> bool:
+        """Call a pet surface method on the live overlay. True when it ran."""
+        from loguru import logger
+
+        fn = getattr(getattr(self, "_orb", None), method, None)
+        if not callable(fn):
+            return False
+        try:
+            fn(*args)
+        except Exception as exc:  # noqa: BLE001 — cosmetic; the setting is stored
+            logger.opt(exception=exc).warning("pet surface call {} failed", method)
+            return False
+        return True
+
+    def set_pet(self, pet_id: str) -> dict[str, object]:
+        """Switch the desktop pet live (``PUT /api/pets/active``).
+
+        Updates ``[ui] pet_id`` in memory (the route persists it) and swaps the
+        figure on the running orb window. ``applied_live`` is False when there
+        is no orb window to swap it on — the choice then applies at the next
+        start or the next switch to the pet style.
+        """
+        from loguru import logger
+
+        from jarvis.ui.pets.states import NO_PET_ID
+
+        pet = str(pet_id or "").strip() or NO_PET_ID
+        try:
+            self.cfg.ui.pet_id = pet
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("pet_id not stored in config: {}", exc)
+        return {"ok": True, "applied_live": self._pet_call("set_pet", pet)}
+
+    def set_pet_look(
+        self, scale: float | None = None, bubble: bool | None = None
+    ) -> dict[str, object]:
+        """Apply the pet's size and status-bubble switch live (``PUT /api/pets/settings``)."""
+        from loguru import logger
+
+        clamped = None if scale is None else _clamp_pet_scale(scale)
+        flag = None if bubble is None else bool(bubble)
+        try:
+            if clamped is not None:
+                self.cfg.ui.pet_scale = clamped
+            if flag is not None:
+                self.cfg.ui.pet_bubble = flag
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("pet look not stored in config: {}", exc)
+        return {"ok": True, "applied_live": self._pet_call("set_pet_look", clamped, flag)}
+
+    def set_pet_visible(self, visible: bool) -> dict[str, object]:
+        """Hide or show the pet for this run (``POST /api/pets/visibility``).
+
+        Runtime only by design, like the shortcut: nothing is written, and the
+        pet is back at the next start.
+        """
+        return {"ok": True, "applied_live": self._pet_call("set_visible", bool(visible))}
+
+    def pet_visible(self) -> bool:
+        """Is the pet shown for this run? False only after the user hid it.
+
+        Read by ``GET /api/pets``. A surface without the flag (the bar,
+        ``NullOverlay``, no overlay at all) reports True: nothing hid a pet.
+        """
+        hidden = getattr(getattr(self, "_orb", None), "pet_user_hidden", None)
+        return not hidden if isinstance(hidden, bool) else True
 
     def set_bar_persistent(self, enabled: bool) -> dict[str, object]:
         """Live-toggle 'show bar at all times' (bar_persistent) without a restart.
@@ -3529,7 +3648,11 @@ class DesktopApp:
         """
         from loguru import logger
 
-        from jarvis.ui.overlay_styles import ORB_STYLES, OVERLAY_STYLES
+        from jarvis.ui.overlay_styles import (
+            ORB_STYLES,
+            OVERLAY_STYLES,
+            PERSISTENT_ORB_STYLES,
+        )
 
         style = (style or "jarvis_bar").strip()
         if style not in OVERLAY_STYLES:
@@ -3550,10 +3673,19 @@ class DesktopApp:
             # transition needs a restart (a second tk.Tk() root would abort the
             # process — BUG-031).
             if style in ORB_STYLES and old is not None and hasattr(old, "set_style"):
+                previous = str(getattr(self.cfg.ui, "orb_style", "") or "")
                 old.set_style(style)
                 for key in [k for k, v in cache.items() if v is old]:
                     cache.pop(key, None)
                 cache[style] = old
+                # The idle regime travels with the look: the pet stays up
+                # while idle, the mascot and the voice orb pop up per session.
+                bridge._hide_on_idle = self._hide_on_idle_for(style)
+                mode = str(getattr(old, "_mode", "idle") or "idle")
+                if style in PERSISTENT_ORB_STYLES:
+                    old.show(mode)
+                elif previous in PERSISTENT_ORB_STYLES and mode == "idle":
+                    old.hide()
                 try:
                     self.cfg.ui.orb_style = style  # best-effort in-memory
                 except Exception:  # noqa: BLE001
@@ -3582,13 +3714,16 @@ class DesktopApp:
 
             bridge.set_surface(new)
             self._orb = new
+            bridge._hide_on_idle = self._hide_on_idle_for(style)
             if old is not None and old is not new:
                 try:
                     old.hide()
                 except Exception:  # noqa: BLE001
                     logger.debug("old overlay hide failed", exc_info=True)
             try:
-                if style == "jarvis_bar" and self.cfg.ui.bar_persistent:
+                if (
+                    style == "jarvis_bar" and self.cfg.ui.bar_persistent
+                ) or style in PERSISTENT_ORB_STYLES:
                     new.show("idle")
             except Exception:  # noqa: BLE001
                 logger.debug("post-swap show failed", exc_info=True)
@@ -3657,6 +3792,8 @@ class DesktopApp:
             desktop_launch_args,
             detached_creationflags,
             fresh_user_env,
+            relauncher_command,
+            restart_workdir,
             run_restart_quit_sequence,
             spawn_detached,
         )
@@ -3669,15 +3806,12 @@ class DesktopApp:
         try:
             import jarvis as _jarvis
 
-            repo_root = str(Path(_jarvis.__file__).resolve().parent.parent)
-            argv = [
-                sys.executable,
-                "-m",
-                "jarvis.ui.relauncher",
-                str(os.getpid()),
-                repo_root,
-                *desktop_launch_args(),
-            ]
+            # The checkout on a source install; a stable per-user directory on a
+            # frozen one, whose bundle may be a mount that dies with this process.
+            repo_root = restart_workdir(str(Path(_jarvis.__file__).resolve().parent.parent))
+            # ``python -m`` on a source install, the frozen executable's own
+            # helper flag on a native install (which has no ``-m``).
+            argv = relauncher_command(os.getpid(), repo_root, desktop_launch_args())
             if drop_elevation:
                 from jarvis.platform.deescalate import spawn_unelevated
 
@@ -3978,11 +4112,23 @@ class DesktopApp:
                     orb_style,
                     gate_until_voice_ready=(orb_style == "jarvis_bar"),
                 )
-                hide_on_idle = (
-                    (not self.cfg.ui.bar_persistent) if orb_style == "jarvis_bar" else True
+                hide_on_idle = self._hide_on_idle_for(orb_style)
+                bridge = OrbBusBridge(
+                    bus=bus,
+                    orb=surface,
+                    hide_on_idle=hide_on_idle,
+                    # The pet's bubble headers follow the interface language
+                    # (and UiLanguageChanged live, inside the bridge).
+                    language=str(getattr(self.cfg.ui, "language", "") or "") or None,
                 )
-                bridge = OrbBusBridge(bus=bus, orb=surface, hide_on_idle=hide_on_idle)
                 bridge.attach()
+                if not hide_on_idle and orb_style != "jarvis_bar":
+                    # A persistent orb style (the pet) is on screen from the
+                    # start; the bar keeps its voice-ready gate instead.
+                    try:
+                        surface.show("idle")
+                    except Exception:  # noqa: BLE001 — cosmetic; never block boot
+                        logger.debug("persistent overlay boot reveal failed", exc_info=True)
                 self._orb = surface
                 self._bridge = bridge
                 # Cache the boot surface so a later swap back to it reuses the
@@ -4280,6 +4426,10 @@ class DesktopApp:
                     if self.cfg.trigger.hotkey_paste_last.strip()
                     else ()
                 ),
+                # "Hide / show the desktop pet" (docs/pets.md). Armed here like
+                # every other editable shortcut; its dispatch publishes
+                # PetVisibilityToggleRequested, which the bridge forwards.
+                pet_toggle_hotkeys=tuple(filter(None, (_pet_toggle_hotkey(self.cfg),))),
                 dictate_mode=self.cfg.dictation.mode,
                 dictation_config=self.cfg.dictation,
                 hangup_hotkeys=(
@@ -6146,6 +6296,10 @@ class DesktopApp:
         # Always-on bar: the tray-minimise must not disturb it.
         if bool(getattr(self.cfg.ui, "bar_persistent", True)):
             return
+        # The pet is always-on by nature: a companion that vanished whenever
+        # the app went to the tray would be exactly the pop-up it is not.
+        if not self._hide_on_idle_for(str(getattr(self.cfg.ui, "orb_style", "") or "")):
+            return
         bar = getattr(self, "_orb", None)
         bridge = getattr(self, "_bridge", None)
         if bar is None or bridge is None:
@@ -6180,13 +6334,16 @@ class DesktopApp:
             orb_style = getattr(self.cfg.ui, "orb_style", "jarvis_bar") or "jarvis_bar"
             persistent = bool(getattr(self.cfg.ui, "bar_persistent", True))
             is_bar = orb_style == "jarvis_bar"
-            bridge._hide_on_idle = (not persistent) if is_bar else True
+            bridge._hide_on_idle = self._hide_on_idle_for(orb_style)
             if hasattr(bar, "_persistent"):
                 bar._persistent = persistent
+            show = getattr(bar, "show", None)
             if is_bar and persistent:
-                show = getattr(bar, "show", None)
                 if callable(show):
                     show("idle")
+            elif not is_bar and not bridge._hide_on_idle and callable(show):
+                # The pet comes back with the window, in whatever it is doing.
+                show(str(getattr(bar, "_mode", "idle") or "idle"))
         except Exception:  # noqa: BLE001
             from loguru import logger
 

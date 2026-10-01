@@ -53,6 +53,8 @@ describe("setup steps", () => {
 
   it("open the app's own place for each job", () => {
     expect(SETUP_STEPS.keys.section).toBe("apikeys");
+    expect(SETUP_STEPS.subscriptions.section).toBe("apikeys");
+    expect(SETUP_STEPS.subscriptions.apiKeysTab).toBe("subagents");
     expect(SETUP_STEPS.voice.section).toBe("settings");
     expect(SETUP_STEPS.voice.anchor).toBe("settings-wake-word");
     expect(SETUP_STEPS.welcome.anchor).toBeUndefined();

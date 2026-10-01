@@ -83,6 +83,20 @@ export function padded(r: Rect, pad = PAD): Rect {
 }
 
 /**
+ * Keep a highlight rect inside the window, `margin` from every edge. An
+ * element that fills the window (a whole page) would otherwise have its
+ * padded ring drawn off-screen, leaving no visible frame at all; clamped,
+ * the ring sits just inside the window edge instead.
+ */
+export function fitToView(r: Rect, view: { w: number; h: number }, margin = 6): Rect {
+  const x1 = Math.max(r.x, margin);
+  const y1 = Math.max(r.y, margin);
+  const x2 = Math.min(r.x + r.w, view.w - margin);
+  const y2 = Math.min(r.y + r.h, view.h - margin);
+  return { x: x1, y: y1, w: Math.max(0, x2 - x1), h: Math.max(0, y2 - y1) };
+}
+
+/**
  * Where the tour card goes for a highlighted rect, kept fully inside the
  * window (`margin` from every edge). `inside` sits in the element's top-right
  * corner — for a whole page. With no rect the card is centred.

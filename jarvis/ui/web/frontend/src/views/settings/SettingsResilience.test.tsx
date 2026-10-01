@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SettingsView } from "@/views/SettingsView";
 import { KeybindRow } from "@/views/settings/KeybindRow";
+import { ShortcutsView } from "@/views/ShortcutsView";
 import { SettingsGroupBoundary } from "@/views/settings/SettingsGroupBoundary";
 
 /**
@@ -159,17 +160,38 @@ describe("SettingsView against an empty backend", () => {
 
     render(wrap(<SettingsView />));
 
-    // A locale row (identical in every language) proves the page is rendered,
-    // and the keybind field proves the row that used to kill it survived.
+    // A locale row (identical in every language) proves the page is rendered.
+    // The keybind rows moved to the Keyboard shortcuts page — tested below.
     await waitFor(() => {
       // One row per language section (interface / recognition / reply).
       expect(screen.getAllByText("Deutsch (German)").length).toBeGreaterThan(0);
     });
-    expect(screen.getByTestId("combo-field-call")).toBeTruthy();
     // A 640px form cap left the groups as a left-hand column in a sea of
     // black. The section fills the window; the page gutter sits on the row inside.
     const scroll = screen.getByTestId("settings-scroll");
     expect(scroll.className).not.toMatch(/max-w-form/);
     expect(scroll.firstElementChild?.className).toMatch(/px-8/);
+  });
+
+  it("renders the Keyboard shortcuts page when every route answers {}", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          ({
+            ok: true,
+            status: 200,
+            json: async () => ({}),
+            text: async () => "{}",
+          }) as unknown as Response,
+      ),
+    );
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    render(wrap(<ShortcutsView />));
+
+    // The keybind field proves the row that used to kill Settings survived.
+    await waitFor(() => expect(screen.getByTestId("combo-field-call")).toBeTruthy());
+    expect(screen.getByTestId("shortcut-tester")).toBeTruthy();
   });
 });

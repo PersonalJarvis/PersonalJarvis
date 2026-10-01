@@ -552,11 +552,16 @@ def _started_mascot(monkeypatch, **kwargs) -> tuple[SubprocessMascotOverlay, _Fa
 def test_mascot_init_line_declares_surface_and_mascot_path(monkeypatch) -> None:
     surface, proc = _started_mascot(monkeypatch, mascot_path="assets/m.png")
     init = proc.sent()[0]
+    # The pet settings ride along for every orb-window style: a live swap to
+    # the pet reuses this window, and a respawn re-initializes it from here.
     assert init == {
         "op": "init",
         "surface": "mascot",
         "style": "mascot",
         "mascot_path": "assets/m.png",
+        "pet_id": None,
+        "pet_scale": 1.0,
+        "pet_bubble": True,
     }
     assert surface._ready.is_set()  # scripted ready event consumed
     assert surface._visible is False  # sticky=False mascot starts withdrawn

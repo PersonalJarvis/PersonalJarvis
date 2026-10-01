@@ -7,6 +7,12 @@
 /** Window event that asks the onboarding gate to replay the app tour. */
 export const TOUR_START_EVENT = "jarvis:tour-start";
 
+/**
+ * Window event that asks the onboarding gate to replay setup (API keys, agent
+ * subscriptions, wake word) as a preview, followed by the app tour.
+ */
+export const SETUP_REPLAY_EVENT = "jarvis:setup-replay";
+
 /** Marks the guide's dim and card, so dialogs can tell its clicks apart. */
 export const TOUR_LAYER_ATTR = "data-tour-layer";
 

@@ -216,13 +216,16 @@ def _capture_install(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         path.write_bytes(b"verified installer")
         return path
 
-    async def _download(asset: Any, checksums: Any, *, dest_dir: Path) -> Path:
+    async def _download(
+        asset: Any, checksums: Any, *, dest_dir: Path, on_progress: Any = None
+    ) -> Path:
         seen["asset"] = asset
         seen["checksums"] = checksums
         return _write_verified(dest_dir, asset.name)
 
-    def _apply(installer: Path) -> str:
+    def _apply(installer: Path, **kwargs: Any) -> str:
         seen["installer"] = installer
+        seen["relaunch"] = kwargs.get("relaunch", True)
         return "the Windows installer is running"
 
     monkeypatch.setattr(u, "download_and_verify", _download)
@@ -279,7 +282,7 @@ def test_apply_refuses_without_a_checksum_manifest(
         ),
     )
 
-    def _never(installer: Path) -> str:
+    def _never(installer: Path, **_kwargs: Any) -> str:
         raise AssertionError("nothing may be executed without a checksum manifest")
 
     monkeypatch.setattr(u, "apply_installer", _never)
@@ -305,10 +308,12 @@ def test_apply_surfaces_a_verification_failure(
     _patch_frozen(monkeypatch)
     _patch_latest(monkeypatch, _release("1.6.0"))
 
-    async def _download(asset: Any, checksums: Any, *, dest_dir: Path) -> Path:
+    async def _download(
+        asset: Any, checksums: Any, *, dest_dir: Path, on_progress: Any = None
+    ) -> Path:
         raise InstallerUpdateError("PersonalJarvis-Setup-x64.exe failed its SHA-256 check")
 
-    def _never(installer: Path) -> str:
+    def _never(installer: Path, **_kwargs: Any) -> str:
         raise AssertionError("a failed verification must never reach the handover")
 
     monkeypatch.setattr(u, "download_and_verify", _download)
@@ -345,3 +350,180 @@ def test_apply_falls_back_to_the_last_good_release(
 
     assert response.status_code == 200
     assert seen["asset"].name == SETUP_NAME
+
+
+# --------------------------------------------------------------------------- #
+# The handover ends this app — mission guard first, quit after
+# --------------------------------------------------------------------------- #
+class _FakeKontrollierer:
+    def __init__(self, running: list[str]) -> None:
+        self._running = running
+
+    def running_mission_ids(self) -> list[str]:
+        return list(self._running)
+
+
+class _FakeDesktop:
+    def __init__(self, *, accepts: bool = True) -> None:
+        self.accepts = accepts
+        self.quit_calls = 0
+
+    def request_quit(self) -> bool:
+        self.quit_calls += 1
+        return self.accepts
+
+
+def _client_with(
+    *, missions: list[str] | None = None, desktop: _FakeDesktop | None = None
+) -> TestClient:
+    app = FastAPI()
+    app.include_router(update_router)
+    if missions is not None:
+        app.state.kontrollierer = _FakeKontrollierer(missions)
+    if desktop is not None:
+        app.state.desktop_app = desktop
+    return TestClient(app)
+
+
+def test_apply_refuses_before_downloading_while_missions_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_frozen(monkeypatch)
+    _patch_latest(monkeypatch, _release("1.6.0"))
+
+    async def _never(*_args: Any, **_kwargs: Any) -> Path:
+        raise AssertionError("no download may start while a quit would kill missions")
+
+    monkeypatch.setattr(u, "download_and_verify", _never)
+    desktop = _FakeDesktop()
+
+    response = _client_with(missions=["m-1", "m-2"], desktop=desktop).post(
+        "/api/update/apply"
+    )
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["error"] == "missions_running"
+    assert [m["id"] for m in detail["missions"]] == ["m-1", "m-2"]
+    assert desktop.quit_calls == 0
+
+
+def test_apply_with_force_overrides_the_mission_guard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_frozen(monkeypatch)
+    _patch_latest(monkeypatch, _release("1.6.0"))
+    seen = _capture_install(monkeypatch)
+    desktop = _FakeDesktop()
+
+    response = _client_with(missions=["m-1"], desktop=desktop).post(
+        "/api/update/apply?force=true"
+    )
+
+    assert response.status_code == 200
+    assert seen["installer"].name == SETUP_NAME
+    assert desktop.quit_calls == 1
+
+
+def test_apply_quits_the_app_after_a_successful_handover(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The new version only starts once this process is gone (single instance)."""
+    _patch_frozen(monkeypatch)
+    _patch_latest(monkeypatch, _release("1.6.0"))
+    _capture_install(monkeypatch)
+    desktop = _FakeDesktop()
+
+    body = _client_with(missions=[], desktop=desktop).post("/api/update/apply").json()
+
+    assert body["ok"] is True
+    assert body["quitting"] is True
+    assert body["restart_required"] is False
+    assert desktop.quit_calls == 1
+
+
+def test_apply_without_a_desktop_window_says_to_restart_by_hand(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_frozen(monkeypatch)
+    _patch_latest(monkeypatch, _release("1.6.0"))
+    _capture_install(monkeypatch)
+
+    body = _client_with().post("/api/update/apply").json()
+
+    assert body["ok"] is True
+    assert body["quitting"] is False
+    assert "restart Personal Jarvis" in body["handover"]
+
+
+def test_apply_never_quits_when_the_handover_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_frozen(monkeypatch)
+    _patch_latest(monkeypatch, _release("1.6.0"))
+    _capture_install(monkeypatch)
+
+    def _refuse(installer: Path, **_kwargs: Any) -> str:
+        raise InstallerUpdateError("could not replace the app")
+
+    monkeypatch.setattr(u, "apply_installer", _refuse)
+    desktop = _FakeDesktop()
+
+    response = _client_with(desktop=desktop).post("/api/update/apply")
+
+    assert response.status_code == 502
+    # A failed handover leaves the old version running — it must stay up.
+    assert desktop.quit_calls == 0
+
+
+def test_apply_without_a_desktop_window_skips_the_relaunch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Nothing will quit this process, so a relaunch would only bounce off the lock."""
+    _patch_frozen(monkeypatch)
+    _patch_latest(monkeypatch, _release("1.6.0"))
+    seen = _capture_install(monkeypatch)
+
+    _client_with().post("/api/update/apply")
+
+    assert seen["relaunch"] is False
+
+
+def test_apply_with_a_desktop_window_relaunches(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_frozen(monkeypatch)
+    _patch_latest(monkeypatch, _release("1.6.0"))
+    seen = _capture_install(monkeypatch)
+
+    _client_with(desktop=_FakeDesktop()).post("/api/update/apply")
+
+    assert seen["relaunch"] is True
+
+
+def test_a_mission_started_during_the_download_still_stops_the_handover(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_frozen(monkeypatch)
+    _patch_latest(monkeypatch, _release("1.6.0"))
+    kontrollierer = _FakeKontrollierer([])
+    seen = _capture_install(monkeypatch)
+    real_download = u.download_and_verify
+
+    async def _download_then_mission(*args: Any, **kwargs: Any) -> Path:
+        path = await real_download(*args, **kwargs)
+        kontrollierer._running = ["m-late"]
+        return path
+
+    monkeypatch.setattr(u, "download_and_verify", _download_then_mission)
+    desktop = _FakeDesktop()
+    app = FastAPI()
+    app.include_router(update_router)
+    app.state.kontrollierer = kontrollierer
+    app.state.desktop_app = desktop
+
+    response = TestClient(app).post("/api/update/apply")
+
+    assert response.status_code == 409
+    assert "installer" not in seen
+    assert desktop.quit_calls == 0
+    progress = TestClient(app).get("/api/update/progress").json()
+    assert "missions are running" in str(progress["error"])

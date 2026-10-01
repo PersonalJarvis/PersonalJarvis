@@ -87,6 +87,13 @@ export type SectionId =
   // Appshots: the shortcut, destination, sound and flash for showing the
   // assistant the front window. A Settings-hub page.
   | "appshots"
+  // Keyboard shortcuts: every shortcut in one place — the quick switcher,
+  // Call / Hang up, the dictation keys (listed) and a key tester. A
+  // Settings-hub page.
+  | "shortcuts"
+  // My Pets: the desktop pet — which one, its size, its bubble, and custom
+  // pets from a sprite sheet (docs/pets.md). A Settings-hub page.
+  | "pets"
   // Jarvis actions: every app action Jarvis can run and the person's
   // allow / ask / block choice for each. A Settings-hub page.
   | "jarvis-actions"
@@ -144,6 +151,8 @@ export const SECTION_IDS = [
   "feedback",
   "agent-instructions",
   "appshots",
+  "shortcuts",
+  "pets",
   "jarvis-actions",
   "dictionary",
   "dictation",
@@ -239,6 +248,8 @@ export const SECTION_LABELS: Record<SectionId, string> = {
   feedback: "Feedback",
   "agent-instructions": "Agent Instructions",
   appshots: "Appshots",
+  shortcuts: "Keyboard shortcuts",
+  pets: "My Pets",
   "jarvis-actions": "Jarvis actions",
   dictionary: "Dictionary",
   dictation: "Dictation",

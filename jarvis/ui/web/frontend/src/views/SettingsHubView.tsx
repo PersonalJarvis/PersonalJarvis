@@ -22,7 +22,8 @@ import { cn } from "@/lib/utils";
  * floats over the user's current section, with a searchable left navigation
  * (General · System · Activity) and the selected section on the right:
  *
- *   General: Settings, Appshots, Profile, {name}.md, Contacts, Socials
+ *   General: Settings, Keyboard shortcuts, Appshots, My Pets, Profile,
+ *            {name}.md, Contacts, Socials
  *   System: Computers, API Keys, Local models, Jarvis actions
  *   Activity: Spend, Feedback
  *
@@ -84,6 +85,12 @@ const JarvisActionsTab = lazy(() =>
 const AppshotsTab = lazy(() =>
   import("@/views/AppshotsView").then((m) => ({ default: m.AppshotsView })),
 );
+const ShortcutsTab = lazy(() =>
+  import("@/views/ShortcutsView").then((m) => ({ default: m.ShortcutsView })),
+);
+const PetsTab = lazy(() =>
+  import("@/views/PetsView").then((m) => ({ default: m.PetsView })),
+);
 const CostsTab = lazy(() =>
   import("@/views/CostsView").then((m) => ({ default: m.CostsView })),
 );
@@ -93,10 +100,12 @@ const FeedbackTab = lazy(() =>
   })),
 );
 
-/** The twelve entries of the left navigation, in display order. */
+/** The entries of the left navigation, in display order. */
 type HubNavId =
   | "settings"
+  | "shortcuts"
   | "appshots"
+  | "pets"
   | "profile"
   | "agent-instructions"
   | "contacts"
@@ -111,7 +120,16 @@ type HubNavId =
 const HUB_NAV_GROUPS: readonly { labelKey: string; ids: readonly HubNavId[] }[] = [
   {
     labelKey: "settings_hub.group_general",
-    ids: ["settings", "appshots", "profile", "agent-instructions", "contacts", "socials"],
+    ids: [
+      "settings",
+      "shortcuts",
+      "appshots",
+      "pets",
+      "profile",
+      "agent-instructions",
+      "contacts",
+      "socials",
+    ],
   },
   {
     labelKey: "settings_hub.group_system",
@@ -134,6 +152,8 @@ const TAB_CONTENT: Record<HubNavId | "telephony-setup", LazyExoticComponent<Comp
   "local-models": LocalModelsTab,
   computers: ComputersTab,
   appshots: AppshotsTab,
+  shortcuts: ShortcutsTab,
+  pets: PetsTab,
   "jarvis-actions": JarvisActionsTab,
   costs: CostsTab,
   feedback: FeedbackTab,
@@ -165,6 +185,10 @@ function resolveHubTab(active: string): { content: HubNavId | "telephony-setup";
       return { content: "computers", highlight: "computers" };
     case "appshots":
       return { content: "appshots", highlight: "appshots" };
+    case "shortcuts":
+      return { content: "shortcuts", highlight: "shortcuts" };
+    case "pets":
+      return { content: "pets", highlight: "pets" };
     case "jarvis-actions":
       return { content: "jarvis-actions", highlight: "jarvis-actions" };
     case "costs":

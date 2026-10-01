@@ -22,6 +22,21 @@ from jarvis.realtime.audio import StreamingPcm16Resampler
 
 log = logging.getLogger(__name__)
 
+#: Smallest gap between two live snapshots of one streaming reasoning summary.
+#: The summary arrives token by token; the bus sees a few snapshots a second.
+REASONING_SNAPSHOT_INTERVAL_S = 0.3
+
+#: Reasoning items whose summary may be streaming at once (a bound, not a goal).
+_REASONING_ITEMS_MAX = 16
+
+
+def _summary_index(event: dict) -> int:
+    """The summary part a reasoning-summary event belongs to (0 when absent)."""
+    try:
+        return max(0, int(event.get("summary_index") or 0))
+    except (TypeError, ValueError):
+        return 0
+
 
 class LiveVoiceSession:
     """Browser route facade, with no dependency on the legacy turn planner."""
@@ -74,6 +89,11 @@ class LiveVoiceSession:
         self._last_role = ""
         self._last_end = {"user": -1, "assistant": -1}
         self._delegation_responses: dict[str, str] = {}
+        # The thinking model's reasoning summary while it streams: per
+        # reasoning item, its summary parts by index, and when the item last
+        # reached the bus (see ``_on_reasoning_delta``).
+        self._reasoning_parts: dict[str, dict[int, str]] = {}
+        self._reasoning_published_at: dict[str, float] = {}
         self._voice_seconds = 0.0
         self.playback_active = False
         self._speaking = False
@@ -719,6 +739,53 @@ class LiveVoiceSession:
                 }
             )
 
+    def _reasoning_text(self, item_id: str) -> str:
+        """The streamed summary of one reasoning item so far, parts in order."""
+        parts = self._reasoning_parts.get(item_id, {})
+        return "\n\n".join(parts[index] for index in sorted(parts) if parts[index])
+
+    async def _publish_reasoning(self, item_id: str, text: str, *, done: bool) -> None:
+        """Publish one cumulative ``ReasoningSummaryUpdated`` snapshot."""
+        if self._bus is None or not text.strip():
+            return
+        from jarvis.core.events import ReasoningSummaryUpdated
+        from jarvis.core.redact import safe_preview
+
+        self._reasoning_published_at[item_id] = time.monotonic()
+        await self._bus.publish(ReasoningSummaryUpdated(
+            source_layer="live.delegation", trace_id=self._indicator_trace_id,
+            response_id=item_id, text=safe_preview(text, max_chars=4000), done=done,
+        ))
+
+    async def _on_reasoning_delta(self, event: dict, delegation: str) -> None:
+        """Accumulate a streamed summary token; publish a snapshot now and then.
+
+        The thinking model's summary arrives token by token. Every mirror — the
+        app's thinking steps, the desktop pet's card — wants to follow it live,
+        but one bus event per token is exactly the hot-path load AP-9 forbids.
+        So the tokens collect per reasoning item and the bus sees the
+        cumulative text at most every ``REASONING_SNAPSHOT_INTERVAL_S``; the
+        ``.done`` events that follow always publish the final text.
+        """
+        item_id = str(event.get("item_id") or delegation)
+        delta = str(event.get("delta") or "")
+        if not delta:
+            return
+        streaming = self._reasoning_parts
+        if item_id not in streaming and len(streaming) >= _REASONING_ITEMS_MAX:
+            # Items are dropped when they finish; a stream that never finished
+            # must not grow this forever. The oldest one goes.
+            stale = next(iter(self._reasoning_parts))
+            self._reasoning_parts.pop(stale, None)
+            self._reasoning_published_at.pop(stale, None)
+        parts = self._reasoning_parts.setdefault(item_id, {})
+        index = _summary_index(event)
+        parts[index] = parts.get(index, "") + delta
+        last = self._reasoning_published_at.get(item_id)
+        if last is not None and time.monotonic() - last < REASONING_SNAPSHOT_INTERVAL_S:
+            return
+        await self._publish_reasoning(item_id, self._reasoning_text(item_id), done=False)
+
     async def _response(self, envelope: dict) -> None:
         assert self._ledger is not None and self._tools is not None
         event = envelope.get("event", {})
@@ -744,32 +811,29 @@ class LiveVoiceSession:
                     provider=self.active_provider, model=self._tools.backend_model,
                 ))
             await self._note_thinking()
+        elif kind == "response.reasoning_summary_text.delta":
+            await self._on_reasoning_delta(event, delegation)
         elif kind == "response.reasoning_summary_text.done":
-            if self._bus is not None and event.get("text"):
-                from jarvis.core.events import ReasoningSummaryUpdated
-                from jarvis.core.redact import safe_preview
-
-                await self._bus.publish(ReasoningSummaryUpdated(
-                    source_layer="live.delegation", trace_id=self._indicator_trace_id,
-                    response_id=str(event.get("item_id") or event.get("response_id") or delegation),
-                    text=safe_preview(event["text"], max_chars=4000), done=True,
-                ))
+            if event.get("text"):
+                item_id = str(event.get("item_id") or event.get("response_id") or delegation)
+                parts = self._reasoning_parts.setdefault(item_id, {})
+                parts[_summary_index(event)] = str(event["text"])
+                # The whole summary so far, not only this part: a snapshot
+                # replaces the previous one, so a part alone would erase the
+                # parts before it from every mirror.
+                await self._publish_reasoning(item_id, self._reasoning_text(item_id), done=True)
         elif kind == "response.output_item.done":
             item = event.get("item", {})
             if item.get("type") == "reasoning":
+                item_id = str(item.get("id") or delegation)
+                self._reasoning_parts.pop(item_id, None)
+                self._reasoning_published_at.pop(item_id, None)
                 summary = "\n\n".join(
                     str(part.get("text", "")) for part in item.get("summary", [])
                     if part.get("type") == "summary_text"
                 )
-                if summary and self._bus is not None:
-                    from jarvis.core.events import ReasoningSummaryUpdated
-                    from jarvis.core.redact import safe_preview
-
-                    await self._bus.publish(ReasoningSummaryUpdated(
-                        source_layer="live.delegation", trace_id=self._indicator_trace_id,
-                        response_id=str(item.get("id") or delegation),
-                        text=safe_preview(summary, max_chars=4000), done=True,
-                    ))
+                if summary:
+                    await self._publish_reasoning(item_id, summary, done=True)
             if item.get("type") == "function_call":
                 rid = str(
                     event.get("response_id")

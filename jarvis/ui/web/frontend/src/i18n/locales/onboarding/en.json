@@ -36,6 +36,14 @@
       "security": "Keys go into your system's keychain and only ever to the provider you picked.",
       "later": "I'll add a key later"
     },
+    "subscriptions": {
+      "title": "Connect a subscription for your agents",
+      "lede": "This is the Agents tab. Sign in with a subscription you already pay for. We recommend Claude (Pro or Max) or ChatGPT (Codex). Click Connect on its row; your browser opens once.",
+      "waiting": "No subscription connected yet…",
+      "connected": "Connected: {names}.",
+      "why": "A subscription is a flat monthly price, so your agents' bigger jobs do not bill your API key per call.",
+      "later": "I'll connect one later"
+    },
     "permissions": {
       "title": "Allow access on this Mac",
       "lede": "These are the Mac permissions. Allow the ones you want; each row updates by itself.",
@@ -45,13 +53,16 @@
       "title": "Choose your wake word",
       "lede": "Type your word after \"Hey\" here and save it. The word also becomes the assistant's name. No wake word? The Call shortcut works anytime.",
       "on": "\"{phrase}\" is on. Say it anytime.",
-      "off": "No wake word yet. The Call shortcut works meanwhile."
+      "off": "No wake word yet. The Call shortcut works meanwhile.",
+      "later": "Skip, I'll use the Call shortcut"
     },
     "ready": {
       "title": "All set",
       "lede": "The app restarts once to switch everything on. Then a short tour shows you around.",
       "row_brain": "Brain",
+      "row_agents": "Agents",
       "row_voice": "Activation",
+      "no_subscription": "No subscription",
       "no_key": "No key yet",
       "shortcut": "Call shortcut",
       "autostart": "Start at login",
@@ -69,9 +80,9 @@
     "finish": "Finish",
     "skip": "Skip tour",
     "step_of": "{current} of {total}",
-    "replay_title": "App tour",
-    "replay_body": "A short walk through the app with the spotlight, the same one you saw after setup.",
-    "replay": "Replay tour",
+    "replay_title": "Setup and app tour",
+    "replay_body": "Walks you through setup again (API keys, agent subscriptions, wake word), then the short tour of the app. Nothing restarts.",
+    "replay": "Replay",
     "steps": {
       "voice": "This is how you talk to {name}. Click the bar, say your wake word or press your Call keys, then just speak. The wave shows who is talking.",
       "new_chat": "Rather type? Start a new chat here, as text or voice. Every conversation lands under Recent chats.",

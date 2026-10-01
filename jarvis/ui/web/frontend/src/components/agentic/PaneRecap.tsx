@@ -76,6 +76,7 @@ export const MAX_DETAIL = 2000;
  */
 const WHY: Partial<Record<RecapReason, string>> = {
   pinned: "You wrote this. It stays until you reset it.",
+  cli_title: "The agent in this pane named its session itself.",
   disabled:
     "Model recaps are switched off, so this is read from the pane's own output.",
   not_started: "Nothing is running in this pane yet, so there is nothing to summarize.",
@@ -92,6 +93,11 @@ const WHY: Partial<Record<RecapReason, string>> = {
 function credit(source: RecapSource, writer: string): { label: string; icon: JSX.Element } {
   if (source === "user")
     return { label: "Written by you", icon: <User className="h-3 w-3" /> };
+  if (source === "cli")
+    return {
+      label: writer ? `Named by ${writer}` : "Named by the agent",
+      icon: <Terminal className="h-3 w-3" />,
+    };
   if (source === "model")
     return {
       label: writer ? `Summarized by ${writer}` : "Summarized by a model",

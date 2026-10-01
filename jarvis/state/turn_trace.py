@@ -86,6 +86,8 @@ _ARGS_MAX_KEYS = 8
 #: How many events the ring keeps. A turn rarely exceeds a few dozen; the
 #: ring spans the last several turns so a slow reply still finds its slice.
 DEFAULT_RING_SIZE = 600
+#: How far back a streamed reasoning snapshot looks for the one it replaces.
+_SNAPSHOT_LOOKBACK = 64
 
 
 def _scalar(value: Any, *, max_chars: int) -> Any:
@@ -164,7 +166,31 @@ class TurnTraceCollector:
             payload=trace_payload_for(name, event),
         )
         with self._lock:
+            if name == "ReasoningSummaryUpdated":
+                self._drop_open_snapshot(item)
             self._ring.append(item)
+
+    def _drop_open_snapshot(self, item: TraceEvent) -> None:
+        """Remove the still-streaming snapshot this one supersedes (lock held).
+
+        A streamed reasoning summary arrives as cumulative snapshots of one
+        ``response_id``; each replaces the last, so the ring keeps one entry
+        per summary instead of dozens of growing copies that would push the
+        turn's other steps out of the bounded ring.
+        """
+        response_id = item.payload.get("response_id")
+        if response_id is None:
+            return
+        oldest = max(0, len(self._ring) - _SNAPSHOT_LOOKBACK)
+        for index in range(len(self._ring) - 1, oldest - 1, -1):
+            previous = self._ring[index]
+            if (
+                previous.name == item.name
+                and previous.payload.get("response_id") == response_id
+                and previous.payload.get("done") is False
+            ):
+                del self._ring[index]
+                return
 
     def slice(self, since_ms: int, until_ms: int | None = None) -> list[dict[str, Any]]:
         """Events with ``since_ms <= ts_ms <= until_ms``, oldest first."""

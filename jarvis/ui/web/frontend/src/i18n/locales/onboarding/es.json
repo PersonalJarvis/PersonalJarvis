@@ -36,6 +36,14 @@
       "security": "Las claves se guardan en el llavero de tu sistema y solo van al proveedor que elegiste.",
       "later": "Añadiré una clave más tarde"
     },
+    "subscriptions": {
+      "title": "Conecta una suscripción para tus agentes",
+      "lede": "Esta es la pestaña Agentes. Inicia sesión con una suscripción que ya pagas. Te recomendamos Claude (Pro o Max) o ChatGPT (Codex). Pulsa Connect en su fila; tu navegador se abre una vez.",
+      "waiting": "Aún no hay ninguna suscripción conectada…",
+      "connected": "Conectado: {names}.",
+      "why": "Una suscripción tiene un precio mensual fijo, así las tareas grandes de tus agentes no se cobran por llamada a tu clave de API.",
+      "later": "Conectaré una más tarde"
+    },
     "permissions": {
       "title": "Permitir acceso en este Mac",
       "lede": "Estos son los permisos del Mac. Permite los que quieras; cada fila se actualiza sola.",
@@ -45,13 +53,16 @@
       "title": "Elige tu palabra de activación",
       "lede": "Escribe aquí tu palabra después de «Hey» y guárdala. La palabra también será el nombre de tu asistente. ¿Sin palabra? El atajo de llamada funciona siempre.",
       "on": "«{phrase}» está activada. Dila cuando quieras.",
-      "off": "Aún no hay palabra de activación. Mientras tanto funciona el atajo de llamada."
+      "off": "Aún no hay palabra de activación. Mientras tanto funciona el atajo de llamada.",
+      "later": "Omitir, usaré el atajo de llamada"
     },
     "ready": {
       "title": "Todo listo",
       "lede": "La aplicación se reinicia una vez para activarlo todo. Después, una breve visita te enseña la aplicación.",
       "row_brain": "Cerebro",
+      "row_agents": "Agentes",
       "row_voice": "Activación",
+      "no_subscription": "Sin suscripción",
       "no_key": "Sin clave todavía",
       "shortcut": "Atajo de llamada",
       "autostart": "Iniciar al entrar en la sesión",
@@ -69,9 +80,9 @@
     "finish": "Terminar",
     "skip": "Saltar visita",
     "step_of": "{current} de {total}",
-    "replay_title": "Visita guiada",
-    "replay_body": "Un recorrido breve por la aplicación con el foco, el mismo que viste tras la configuración.",
-    "replay": "Repetir visita",
+    "replay_title": "Configuración y visita guiada",
+    "replay_body": "Te guía de nuevo por la configuración (claves de API, suscripciones de agentes, palabra de activación) y luego por la visita breve de la aplicación. Nada se reinicia.",
+    "replay": "Repetir",
     "steps": {
       "voice": "Así hablas con {name}. Haz clic en la barra, di tu palabra de activación o pulsa tu atajo de llamada, y habla. La onda muestra quién está hablando.",
       "new_chat": "¿Prefieres escribir? Empieza aquí un chat nuevo, por texto o por voz. Cada conversación queda en Chats recientes.",

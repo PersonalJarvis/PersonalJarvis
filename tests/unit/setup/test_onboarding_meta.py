@@ -4,8 +4,9 @@ from jarvis.setup import onboarding_meta as m
 def test_meta_constants():
     assert m.CURRENT_TERMS_VERSION == "1.0"
     # Setup runs inside the real app (2026-09-30): consent, one key on the API
-    # Keys page, macOS permissions, the wake word in Settings, then the start.
-    assert m.ONBOARDING_STEPS == ["welcome", "keys", "permissions", "voice", "ready"]
+    # Keys page, a subscription for the agents on its Agents tab (2026-10-01),
+    # macOS permissions, the wake word in Settings, then the start.
+    assert m.ONBOARDING_STEPS == ["welcome", "keys", "subscriptions", "permissions", "voice", "ready"]
     # Restart batching (2026-07-18): permissions + voice sit LAST before the
     # final step so the single unconditional completion restart covers both.
     assert m.ONBOARDING_STEPS.index("permissions") < m.ONBOARDING_STEPS.index("voice")

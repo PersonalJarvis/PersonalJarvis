@@ -66,6 +66,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useEventStore, type VoiceState } from "@/store/events";
+import { SPEAKER_MUTE_EVENT } from "@/lib/speakerMute";
 import {
   fetchTtsVolume,
   requestVoiceHangup,
@@ -431,6 +432,18 @@ export function VoiceBubble({
     return () => {
       cancelled = true;
     };
+  }, [mounted]);
+
+  // A mute from anywhere else (the desktop pet's speaker disc, another
+  // window) arrives as the backend's VoiceSpeakerMuteChanged; mirror it.
+  useEffect(() => {
+    if (!mounted) return;
+    const onMuteChanged = (event: Event) => {
+      const muted = (event as CustomEvent<{ muted?: unknown }>).detail?.muted;
+      if (typeof muted === "boolean") setMuted(muted);
+    };
+    window.addEventListener(SPEAKER_MUTE_EVENT, onMuteChanged);
+    return () => window.removeEventListener(SPEAKER_MUTE_EVENT, onMuteChanged);
   }, [mounted]);
 
   // Only a parent that can actually move the grid makes the card a link —

@@ -108,6 +108,10 @@
     "update_staged_restart_failed": "Update downloaded — restart {name} to finish installing it",
     "update_rolled_back": "The last update could not be installed — {name} was rolled back to the previous version",
     "update_network_error": "network error",
+    "update_now": "Update & restart",
+    "update_later": "Later",
+    "update_current_version": "You have v{version}",
+    "update_restart_note": "{name} restarts once.",
     "detach": "Own window",
     "detach_hint": "Open this view in its own window",
     "detach_failed": "Could not open a separate window",
@@ -169,7 +173,9 @@
     "voice": "{name} Voice",
     "voice_shortcuts": "Shortcuts",
     "voice_language": "Language",
-    "voice_api_keys": "API Keys"
+    "voice_api_keys": "API Keys",
+    "shortcuts": "Keyboard shortcuts",
+    "pets": "My Pets"
   },
   "agent_instructions": {
     "subtitle": "Your personal preferences for how the assistant works with you — tone, language, defaults, standing facts. Separate from the System Prompt, and it never overrides safety or confirmations.",
@@ -1601,7 +1607,7 @@
     "or": "or",
     "unassigned": "not assigned",
     "off": "off",
-    "footer": "Rebind the voice keys under Settings → Keyboard.",
+    "footer": "Change them under Settings → Keyboard shortcuts.",
     "area": {
       "voice": "Voice",
       "workspace": "Workspace"
@@ -1795,116 +1801,163 @@
   },
   "profile_view": {
     "title": "Profile",
-    "subtitle": "What the assistant knows about you, how it learned it, and what it never records.",
+    "subtitle": "What {name} knows about you, where each detail came from, and what it never keeps.",
     "reload_tooltip": "Reload",
-    "field_unknown": "not known yet",
-    "no_user_hint": "{name} doesn't know your name yet. Just tell him what to call you — the curator picks up the rest from your conversations over time.",
-    "section_source": "The source file",
+    "no_user_hint": "The profile is not running in this session. It starts with the full assistant.",
+    "unavailable_title": "Profile not available",
     "error_title": "The profile could not be loaded",
-    "group_filled": "{0} of {1} known",
+    "section_source": "Profile file",
     "source_updated": "Updated {0}",
     "source_empty_title": "Nothing written yet",
-    "source_empty_body": "The curator has not put anything in this file. You can write the first lines yourself.",
-    "value_yes": "yes",
-    "value_no": "no",
+    "source_empty_body": "Nothing has been written to this file yet. You can write the first lines yourself.",
+    "value_yes": "Yes",
+    "value_no": "No",
     "field_edit": "Edit",
-    "field_clear": "Clear",
+    "field_clear": "Remove",
     "field_remove_item": "Remove",
     "field_add": "Add",
-    "field_add_placeholder": "Add…",
-    "field_value_placeholder": "Value…",
+    "field_add_placeholder": "Type and press Enter",
+    "field_value_placeholder": "Type a value",
     "field_saved": "Saved",
+    "field_done": "Done",
     "raw_edit": "Edit",
     "raw_save": "Save",
     "raw_saving": "Saving…",
     "raw_cancel": "Cancel",
     "raw_saved": "USER.md saved",
-    "raw_editing_hint": "Editing the source file directly. The YAML frontmatter between the --- drives the clusters above.",
-    "raw_frontmatter_warning": "Saved — but the YAML frontmatter couldn't be parsed. The clusters stay empty until you fix it.",
+    "raw_editing_hint": "You are editing the file directly. The block between the --- lines holds the details shown on the profile page.",
+    "raw_frontmatter_warning": "Saved, but the block between the --- lines could not be read. The profile details stay empty until it is fixed.",
     "just_updated": "just updated",
-    "avatar_alt": "Profile picture",
+    "avatar_alt": "Profile photo",
     "avatar_upload": "Upload photo",
     "avatar_change": "Change photo",
     "avatar_remove": "Remove photo",
-    "avatar_uploaded": "Profile picture updated",
-    "avatar_removed": "Profile picture removed",
-    "clusters": {
-      "identity": {
-        "label": "Identity",
-        "description": "Name, languages, devices, basics."
+    "avatar_uploaded": "Profile photo updated",
+    "avatar_removed": "Profile photo removed",
+    "hero_ask_name": "What should {name} call you?",
+    "hero_called": "called “{0}”",
+    "name_placeholder": "Your name",
+    "stat_since": "Together since",
+    "stat_days": "{0} days",
+    "stat_conversations": "Conversations",
+    "stat_known": "Details known",
+    "stat_known_sub": "in your profile",
+    "stat_updated": "Last change",
+    "groups": {
+      "about": {
+        "title": "About you",
+        "description": "The basics {name} uses in every reply."
       },
-      "communication": {
-        "label": "Communication",
-        "description": "How {name} talks to you: directness, humor, formality."
+      "talk": {
+        "title": "How {name} talks to you",
+        "description": "Tone, length and style of answers."
       },
-      "work_style": {
-        "label": "Work Style",
-        "description": "Focus mode, planning horizon, tools."
+      "work": {
+        "title": "How you work",
+        "description": "Focus, planning, and how you like feedback."
       },
       "values": {
-        "label": "Values",
-        "description": "Top values, pet peeves, motivations."
-      },
-      "relationship": {
-        "label": "Relationship",
-        "description": "How {name} gives feedback, how the dynamic runs."
+        "title": "What matters to you",
+        "description": "Priorities, motivation, and what gets on your nerves."
       }
     },
+    "group_empty": "Nothing here yet. {name} fills this in from your conversations, or you can add details now.",
+    "add_label": "Add",
+    "scale_hint": {
+      "directness": "1 diplomatic · 5 no fluff",
+      "formality": "1 casual · 5 formal"
+    },
+    "source_show": "Show where this came from",
+    "source_no_quote": "Recorded without a quote.",
+    "source_learned": "Learned {0}",
+    "source_revisions": "Changed {0} times",
+    "portrait_title": "How {name} sees you",
+    "portrait_description": "A short portrait written from your activity and past conversations.",
+    "portrait_fits": "Fits",
+    "portrait_misses": "Misses",
+    "portrait_harder": "Be harder",
+    "portrait_ask": "Does it fit?",
+    "portrait_thanks": "Noted. The next portrait takes this into account.",
+    "portrait_written": "Portrait written.",
+    "portrait_rewrite": "Write a new one",
+    "portrait_write": "Write the portrait",
+    "portrait_written_on": "Written {0}",
+    "portrait_empty_body": "{name} has not written a portrait of you yet.",
+    "portrait_cut_off": "The last portrait was cut off before it was finished.",
+    "memory_title": "Memory and privacy",
+    "memory_description": "Where the rest of what {name} knows lives, and what it never keeps.",
+    "open": "Open",
+    "rules_title": "Your standing rules",
+    "rules_open": "{0} lines in {1}",
+    "rules_empty_body": "No rules yet. Rules apply to every reply.",
+    "rules_write": "Write rules",
+    "wiki_title": "Wiki page about you",
+    "wiki_facts": "{0} facts",
+    "wiki_links": "{0} links",
+    "wiki_empty_body": "No page yet. The wiki starts one once your conversations give it something to record.",
+    "wiki_needs_name": "Add your name and the wiki can start a page about you.",
+    "file_title": "Profile file",
+    "file_hint": "USER.md, the file behind this page",
+    "file_hint_dated": "USER.md · changed {0}",
+    "file_open": "View file",
+    "never_title": "Never recorded",
+    "never_body": "{name} refuses to store these, whatever a conversation contains.",
+    "back_to_profile": "Back to profile",
     "fields": {
       "name": "Name",
-      "preferred_address": "Address form",
+      "preferred_address": "What to call you",
       "pronouns": "Pronouns",
-      "primary_language": "Primary language",
+      "primary_language": "Main language",
       "languages": "Languages",
-      "timezone": "Timezone",
+      "timezone": "Time zone",
       "devices": "Devices",
-      "directness": "Directness (1–5)",
-      "formality": "Formality (1–5)",
-      "verbosity": "Verbosity",
-      "humor_types": "Humor styles",
-      "emoji_ok": "Emojis OK?",
-      "focus_mode": "Focus mode",
+      "directness": "Directness",
+      "formality": "Formality",
+      "verbosity": "Answer length",
+      "humor_types": "Humor",
+      "emoji_ok": "Emojis",
+      "focus_mode": "Focus",
       "planning_horizon": "Planning horizon",
       "top_values": "Top values",
       "pet_peeves": "Pet peeves",
       "motivations": "Motivations",
-      "feedback_pref": "Feedback style"
+      "feedback_pref": "Feedback"
     },
-    "tab_file": "The file",
-    "header_unnamed": "No name on file",
-    "header_nothing_yet": "Nothing on file yet",
-    "header_since": "since {0}",
-    "header_conversations": "{0} conversations",
-    "header_entries": "{0} of {1} entries",
-    "header_updated": "updated {0}",
-    "gaps_show": "{0} open fields",
-    "gaps_hide": "Hide open fields",
-    "source_show": "Where this came from",
-    "source_no_quote": "Written without a quoted source.",
-    "source_learned": "learned {0}",
-    "source_revisions": "{0} entries",
-    "portrait_title": "How {name} describes you",
-    "portrait_fits": "Fits",
-    "portrait_misses": "Misses",
-    "portrait_harder": "Be harder",
-    "portrait_thanks": "Noted — the next portrait will take that into account.",
-    "portrait_written": "Portrait written.",
-    "portrait_rewrite": "Write it again",
-    "portrait_write": "Write the portrait",
-    "portrait_empty_body": "{name} has not written a portrait of you yet. It is drawn from your activity, your memory file and past conversations.",
-    "rules_title": "Your standing rules",
-    "rules_open": "{0} lines in {1}",
-    "rules_empty_body": "You have not given {name} any standing instructions yet. They apply on every turn, on top of what it works out on its own.",
-    "rules_write": "Write your rules",
-    "never_title": "Never recorded",
-    "never_body": "{name} refuses these categories outright, whatever a conversation contains.",
-    "wiki_title": "In the wiki",
-    "wiki_facts": "{0} facts",
-    "wiki_links": "{0} links",
-    "wiki_words": "{0} words",
-    "wiki_open": "Open the vault",
-    "wiki_empty_body": "The vault has no page about you yet. One is written once your conversations give it something to record.",
-    "wiki_needs_name": "Tell {name} your name and it will start a page about you in the vault."
+    "choices": {
+      "verbosity": {
+        "tldr": "Short",
+        "normal": "Normal",
+        "deep-dive": "In depth"
+      },
+      "focus_mode": {
+        "deep-work": "Deep work",
+        "fragment": "Short bursts",
+        "mixed": "Mixed"
+      },
+      "planning_horizon": {
+        "now": "Right now",
+        "today": "Today",
+        "week": "This week",
+        "quarter": "This quarter"
+      },
+      "feedback_pref": {
+        "direct-correct": "Correct me directly",
+        "suggest": "Suggest changes",
+        "ask-then-act": "Ask, then act"
+      },
+      "humor_types": {
+        "dry": "Dry",
+        "nerdy": "Nerdy",
+        "sarcastic": "Sarcastic",
+        "warm": "Warm",
+        "none": "None"
+      },
+      "motivations": {
+        "mastery": "Mastery",
+        "autonomy": "Autonomy",
+        "impact": "Impact"
+      }
+    }
   },
   "apikeys_view": {
     "title": "API Keys & Providers",
@@ -2577,7 +2630,7 @@
     },
     "overlay_style": {
       "title": "Display style",
-      "description": "Choose how {name} appears on screen during voice activity. The bar is the slim default; the mascot is the classic companion; the voice orb is a glowing sphere; or hide it entirely. Every floating style can be dragged to any monitor.",
+      "description": "Choose how {name} appears on screen during voice activity. The bar is the slim default; the mascot is the classic companion; the voice orb is a glowing sphere; the pet is a pixel companion that stays on screen; or hide it entirely. Every floating style can be dragged to any monitor.",
       "label": "Style",
       "save": "Save",
       "saved": "Display style switched.",
@@ -2586,6 +2639,7 @@
         "jarvis_bar": "Bar (default)",
         "mascot": "Mascot",
         "voice_orb": "Voice orb",
+        "pet": "Pet",
         "none": "None (hidden)"
       }
     },
@@ -2623,6 +2677,7 @@
       "hangup_label": "Hangup",
       "dictate_label": "Dictation (hold to speak, text lands where you type)",
       "paste_last_label": "Paste the last dictation again",
+      "pet_toggle_label": "Show or hide the pet",
       "record": "Record",
       "stop": "Stop",
       "recording": "Press your keys…",
@@ -5758,6 +5813,12 @@
       "count_other": "{n} agents",
       "no_workspace": "Select a workspace to see its agents.",
       "empty": "No agents running in this workspace.",
+      "empty_folder": "No agents running in this folder.",
+      "scope": {
+        "aria": "Show agents from",
+        "workspace": "This space",
+        "folder": "Whole folder"
+      },
       "columns": {
         "done": "Done",
         "working": "Working",
@@ -5978,6 +6039,117 @@
       "effect_label": "Show the animation",
       "effect_hint": "A short flash, then the thumbnail flies into the corner.",
       "recording_unavailable": "Screen recording is not available here: {0}"
+    }
+  },
+  "shortcuts_view": {
+    "title": "Keyboard shortcuts",
+    "description": "Every key combination Jarvis listens for, in one place. Press any combination to see what it does.",
+    "tester_title": "Try a combination",
+    "tester_hint": "Press any keys — they show up here with what they do in Jarvis.",
+    "tester_modifiers": "Keep holding and add a key.",
+    "tester_free": "Free — nothing in Jarvis uses this combination.",
+    "section_app": "In the app",
+    "section_app_hint": "Works while the Jarvis window is in front.",
+    "section_calls": "Calls",
+    "section_calls_hint": "Start and end a voice call — from any app on this computer.",
+    "section_dictation": "Dictation",
+    "section_dictation_hint": "Speak into whatever window is in front. Changed in the voice section.",
+    "edit_in_voice": "Change",
+    "section_workspace": "Terminals and workspace",
+    "section_workspace_hint": "Fixed keys for the agent terminals and this app.",
+    "footer": "Call, hang-up and dictation keys work everywhere on this computer. The quick switcher and the workspace keys only work inside the Jarvis window."
+  },
+  "pets": {
+    "title": "My Pets",
+    "subtitle": "A small pixel companion that floats on your desktop and reacts as {name} listens, thinks and talks. Press {0} to hide or show it.",
+    "subtitle_no_shortcut": "A small pixel companion that floats on your desktop and reacts as {name} listens, thinks and talks. Set a shortcut under Customize to hide or show it.",
+    "hide": "Hide pet",
+    "show": "Show pet",
+    "open_settings": "Choose your pet",
+    "style_notice_title": "The pet is not on your desktop yet",
+    "style_notice_body": "Your display style is “{0}”. Switch to the pet to see it on your desktop. The pet you pick below is kept either way.",
+    "use_pet": "Use pet on desktop",
+    "style_saved": "The pet is now on your desktop.",
+    "enabled_label": "Pet on desktop",
+    "style_off_saved": "The pet is off. The Jarvis bar is back on your desktop.",
+    "restart_hint": "Saved. Restart {name} to bring the pet to your desktop.",
+    "load_error": "Your pets could not be loaded: {0}",
+    "save_error": "That did not save: {0}",
+    "preview_title": "Active pet",
+    "customize": "Customize",
+    "size_label": "Size",
+    "size_hint": "How big the pet is on your desktop.",
+    "bubble_label": "Status bubble",
+    "bubble_hint": "Short lines under the pet that say what {name} is doing.",
+    "shortcut_hint": "Hides the pet, or brings it back to the front.",
+    "my_pets": "My pets",
+    "create": "Create pet",
+    "created": "{0} is ready.",
+    "none_name": "None",
+    "none_description": "Just the control strip",
+    "selected": "Selected",
+    "delete": "Delete pet",
+    "delete_named": "Delete {0}",
+    "delete_title": "Delete {0}?",
+    "delete_body": "The pet and its sprite sheet are removed from this computer. This cannot be undone.",
+    "deleted": "{0} was deleted.",
+    "states": {
+      "idle": "Idle",
+      "listening": "Listening",
+      "thinking": "Thinking",
+      "talking": "Talking",
+      "success": "Success",
+      "error": "Error",
+      "sleeping": "Sleeping"
+    },
+    "builtin": {
+      "gigi": {
+        "description": "The ghost of {name}, eight bits tall."
+      },
+      "miso": {
+        "description": "A cat: ears up while listening, curls up to sleep."
+      },
+      "brew": {
+        "description": "A teapot: steams while thinking, whistles while talking."
+      },
+      "bolt": {
+        "description": "A battery: charges while thinking, sparks on success, runs flat asleep."
+      },
+      "mochi": {
+        "description": "A jelly blob that wobbles while listening."
+      },
+      "shelly": {
+        "description": "A snail: the shell spins while thinking, it withdraws to sleep."
+      }
+    },
+    "create_dialog": {
+      "title": "Create pet",
+      "description": "Upload a sprite sheet, give your pet a name, and it joins your pets.",
+      "name_label": "Name",
+      "name_placeholder": "For example: Pixel",
+      "description_label": "Description",
+      "description_placeholder": "One sentence about your pet",
+      "sheet_label": "Sprite sheet (PNG)",
+      "sheet_preview_alt": "Preview of the chosen sprite sheet",
+      "sheet_hint": "A PNG with a transparent background, up to 2 MB and 512 × 512 pixels.",
+      "sheet_choose": "Choose PNG",
+      "sheet_change": "Choose another",
+      "frame_size_label": "Frame size",
+      "frame_size_option": "{0} × {0} px",
+      "layout_title": "How the sheet is laid out",
+      "layout_body": "The sheet is a grid of square frames. Each row is one state, top to bottom in this order, with up to {0} frames from left to right:",
+      "template_download": "Download template",
+      "manifest_label": "Manifest (optional)",
+      "manifest_hint": "A pet.json sets each row's frames, speed and looping. Without one, the rows are read in the order above and the frames of each row are counted.",
+      "manifest_choose": "Add pet.json",
+      "manifest_remove": "Remove",
+      "error_name": "Give your pet a name.",
+      "error_no_sheet": "Choose a sprite sheet.",
+      "error_not_png": "Choose a PNG image.",
+      "error_too_big": "This image is larger than 2 MB.",
+      "error_manifest": "The manifest must be a .json file.",
+      "create": "Create pet",
+      "creating": "Creating…"
     }
   }
 }

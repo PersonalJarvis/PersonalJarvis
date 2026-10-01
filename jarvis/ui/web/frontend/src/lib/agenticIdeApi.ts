@@ -284,9 +284,10 @@ export type PaneActivity =
  * Who wrote the recap on screen.
  *
  * `"user"` outranks both machines: a pane the user has labelled themselves
- * keeps that label until they clear it.
+ * keeps that label until they clear it. `"cli"` is the title the pane's own
+ * coding CLI gave its session (Claude Code, Codex) — free, and next in line.
  */
-export type RecapSource = "user" | "model" | "heuristic";
+export type RecapSource = "user" | "cli" | "model" | "heuristic";
 
 /**
  * Why this recap and not a better one.
@@ -297,6 +298,7 @@ export type RecapSource = "user" | "model" | "heuristic";
  */
 export type RecapReason =
   | "pinned"
+  | "cli_title"
   | "summarized"
   | "disabled"
   | "not_started"
@@ -1509,7 +1511,10 @@ export interface WorkspaceLayoutView {
   id: string;
   name: string;
   layout: LayoutNode | null;
-  terminals: Pick<TerminalState, "key" | "name" | "agent" | "display_name" | "history_id">[];
+  terminals: (Pick<TerminalState, "key" | "name" | "agent" | "display_name" | "history_id"> & {
+    /** What the pane's header shows: its goal in a few words, or empty. */
+    title?: string;
+  })[];
   max_terminals: number;
 }
 

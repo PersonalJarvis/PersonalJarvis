@@ -31,6 +31,9 @@ import { WSAudioLevel, WSEventEnvelope, WSWelcome } from "@/schema/ws";
 import { useI18nStore, hydrateUiLanguage, hydrateReplyLanguage, translate } from "@/i18n";
 import { hydrateUiTheme } from "@/hooks/useTheme";
 import { announceDictationSettings } from "@/hooks/usePromptMode";
+import { petKeys } from "@/hooks/usePets";
+import { focusChatComposer, startNewTextChat } from "@/lib/newChat";
+import { SPEAKER_MUTE_EVENT } from "@/lib/speakerMute";
 
 let singleton: WSClient | null = null;
 
@@ -307,6 +310,31 @@ export function useWebSocket(): void {
         // not on the next 30 s poll.
         if (env.event_name === "SocietyCheckpointChanged") {
           void queryClient.invalidateQueries({ queryKey: ["society", "roster"] });
+        }
+
+        // The desktop pet's pen: the backend already raised this window; land
+        // on an empty typed chat with the caret in the composer. A detached
+        // solo window is pinned to its section and stays where it is.
+        if (env.event_name === "ComposeRequested" && !useEventStore.getState().solo) {
+          startNewTextChat();
+          focusChatComposer();
+        }
+
+        // The assistant's voice was muted or unmuted somewhere else (the
+        // pet's speaker disc, another window); in-app speaker toggles follow.
+        if (env.event_name === "VoiceSpeakerMuteChanged") {
+          const p = env.payload as { muted?: unknown };
+          if (typeof p.muted === "boolean") {
+            window.dispatchEvent(
+              new CustomEvent(SPEAKER_MUTE_EVENT, { detail: { muted: p.muted } }),
+            );
+          }
+        }
+
+        // The active pet, its look or its visibility changed (this window,
+        // another one, the shortcut): the My Pets page re-reads the list.
+        if (env.event_name === "PetChanged") {
+          void queryClient.invalidateQueries({ queryKey: petKeys.all });
         }
 
         if (env.event_name === "TranscriptionUpdate") {

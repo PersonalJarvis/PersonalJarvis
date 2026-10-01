@@ -65,12 +65,24 @@ interface Props {
   workspaces?: readonly WorkspaceChoice[];
 }
 
-interface WorkspaceChoice { id: string; name: string }
+interface WorkspaceChoice { id: string; name: string; folder?: string }
 interface DropTarget { id: string; position: PaneMovePosition; allowed: boolean }
-interface DragFeedback { id: string; target: DropTarget | null; x: number; y: number; workspace?: WorkspaceChoice | null }
+interface DragFeedback { id: string; target: DropTarget | null; x: number; y: number; workspace?: WorkspaceChoice | null; blocked?: string | null }
 
 /** The attribute a sidebar row carries when a dragged pane may be dropped on it. */
 const WORKSPACE_DROP = "data-pane-drop-workspace";
+
+/**
+ * One folder, however the path is spelled. Panes only move between
+ * workspaces on the same folder (the server refuses anything else); Windows
+ * paths compare case-blind, like the filesystem under them.
+ */
+function sameFolder(left: string | undefined, right: string | undefined): boolean {
+  if (!left || !right) return false;
+  const clean = (path: string) => path.replace(/\\/g, "/").replace(/\/+$/, "");
+  const [a, b] = [clean(left), clean(right)];
+  return /^[a-z]:\//i.test(a) ? a.toLowerCase() === b.toLowerCase() : a === b;
+}
 
 export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSelect, selected, maxPanes = MAX_WORKSPACE_PANES, fontSize, appearance, disabled = false, onMutationStart, onMutationEnd, paneStyle: look = "classic", workspaces = [], active = true }: Props) {
   const theme = useThemeValue();
@@ -205,9 +217,14 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
   // running, and that tab's grid re-joins it.
   const [transferring, setTransferring] = useState<string | null>(null);
   const [moving, setMoving] = useState<{ id: string; request: MovePaneRequest } | null>(null);
+  // Only the other workspaces on this one's folder: a pane never moves to
+  // another project's folder.
+  const movable = workspaces.filter((workspace) => workspace.id !== session.id && sameFolder(workspace.folder, session.folder));
+  const movableRef = useRef(movable);
+  movableRef.current = movable;
   const askWhere = useCallback((sourceId: string, target: WorkspaceChoice) => {
     const terminal = latest.current.session.terminals.find((entry) => idOf(entry) === sourceId);
-    if (!terminal || target.id === latest.current.session.id) return;
+    if (!terminal || !movableRef.current.some((entry) => entry.id === target.id)) return;
     setMoving({ id: sourceId, request: { pane: { name: terminal.name, agent: terminal.agent, displayName: terminal.display_name }, target } });
   }, []);
   const transfer = useCallback(async (sourceId: string, target: WorkspaceChoice, placement: TransferPlacement | null = null) => {
@@ -263,26 +280,30 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
     };
     // A workspace row in the sidebar under the pointer. It is lit straight on
     // the DOM: the sidebar is another component, and this is one attribute
-    // for the length of a drag, not state it needs to own.
+    // for the length of a drag, not state it needs to own. A row on another
+    // folder stays dark and is named as `blocked`, so the drag can say why.
     let litRow: HTMLElement | null = null;
-    const workspaceAt = (x: number, y: number): WorkspaceChoice | null => {
+    const workspaceAt = (x: number, y: number): { workspace: WorkspaceChoice | null; blocked: string | null } => {
       const row = document.elementFromPoint?.(x, y)?.closest<HTMLElement>(`[${WORKSPACE_DROP}]`) ?? null;
       const targetId = row?.getAttribute(WORKSPACE_DROP) ?? "";
-      const hit = row && targetId && targetId !== latest.current.session.id ? row : null;
+      const workspace = targetId ? movableRef.current.find((entry) => entry.id === targetId) ?? null : null;
+      const hit = workspace ? row : null;
       if (hit !== litRow) {
         litRow?.removeAttribute("data-pane-drop-active");
         hit?.setAttribute("data-pane-drop-active", "true");
         litRow = hit;
       }
-      return hit ? { id: targetId, name: hit.getAttribute("data-pane-drop-name") || "that workspace" } : null;
+      const blocked = row && targetId && !workspace && targetId !== latest.current.session.id
+        ? row.getAttribute("data-pane-drop-name") || "that workspace" : null;
+      return { workspace, blocked };
     };
     const onMove = (motion: PointerEvent) => {
       if (motion.pointerId !== pointer) return;
       if (!armed && Math.hypot(motion.clientX - initialX, motion.clientY - initialY) <= 5) return;
       armed = true;
       motion.preventDefault();
-      const workspace = workspaceAt(motion.clientX, motion.clientY);
-      setDrag({ id, target: workspace ? null : targetAt(motion.clientX, motion.clientY), workspace, x: motion.clientX, y: motion.clientY });
+      const { workspace, blocked } = workspaceAt(motion.clientX, motion.clientY);
+      setDrag({ id, target: workspace || blocked ? null : targetAt(motion.clientX, motion.clientY), workspace, blocked, x: motion.clientX, y: motion.clientY });
     };
     const cleanup = () => {
       litRow?.removeAttribute("data-pane-drop-active");
@@ -300,7 +321,7 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
     const onKey = (key: KeyboardEvent) => { if (key.key === "Escape") { key.preventDefault(); key.stopPropagation(); cleanup(); } };
     const onUp = (release: PointerEvent) => {
       if (release.pointerId !== pointer) return;
-      const workspace = armed ? workspaceAt(release.clientX, release.clientY) : null;
+      const workspace = armed ? workspaceAt(release.clientX, release.clientY).workspace : null;
       const target = workspace ? null : targetAt(release.clientX, release.clientY);
       cleanup();
       if (armed && workspace) askWhere(id, workspace);
@@ -493,7 +514,7 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
             splitDisabled={tiles.length >= maxPanes} onSplit={(direction) => onAdd(terminal.name, direction)}
             branch={terminal.branch || undefined}
             computerName={computerName(terminal)} placementItems={placementItems(terminal)}
-            workspaceItems={transferring || saving || disabled ? [] : workspaces.filter((workspace) => workspace.id !== session.id)
+            workspaceItems={transferring || saving || disabled ? [] : movable
               .map((workspace) => ({ label: `Move to ${workspace.name}…`, run: () => askWhere(id, workspace) }))}
             onFork={terminal.accepts_prompts === false ? undefined : () => setForking({ name: terminal.name, agent: terminal.agent, displayName: terminal.display_name, workspaceId: session.id })} />
           {drag?.target?.id === id && <div aria-hidden="true" data-testid="dock-preview" data-position={drag.target.position}
@@ -528,6 +549,7 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
       style={{ left: drag.x + 14, top: drag.y + 14 }}>
       <AgentMark agent={dragged.agent} label={dragged.display_name} variant="plain" />{dragged.name}
       {drag.workspace && <span className="font-normal text-muted-foreground">Move to {drag.workspace.name}</span>}
+      {drag.blocked && <span className="font-normal text-destructive">Not into {drag.blocked}: another folder</span>}
     </div>}
     <span className="sr-only" role="status">{announcement}</span>
     <ForkPaneDialog source={forking} busy={forkBusy} onCancel={() => setForking(null)} onConfirm={(choice) => void fork(choice)} />

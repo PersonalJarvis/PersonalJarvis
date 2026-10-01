@@ -38,6 +38,10 @@ from jarvis.live.config import LiveConfig
 # wake-engine enum + the default phrase.
 from jarvis.speech.wake_constants import DEFAULT_WAKE_PHRASE, WAKE_ENGINES
 
+# The pet vocabulary module has no imports at all (see its docstring), so it is
+# as safe here as wake_constants.
+from jarvis.ui.pets.states import DEFAULT_PET_ID
+
 from .branding import CONFIG_FILE_NAME, KEYRING_SERVICE_NAME
 from .instance import current_instance
 from .protocols import RiskTier
@@ -423,6 +427,20 @@ class TriggerConfig(BaseModel):
     # A macOS user can record a Command-based combination instead; the
     # validator accepts `cmd+...` on darwin.
     hotkey_paste_last: str = "ctrl+alt+v"
+    # Hide the desktop pet, or show it and bring it to the front (docs/pets.md).
+    # A no-op for every other overlay style. Ships bound, like the dictation
+    # keys, and curated the same way: ``alt+win+p`` passes ``validate_hotkey``
+    # on win32, darwin AND linux with no caution (Win+P alone is the Windows
+    # projection shortcut; with Alt held it is not a shell chord), and its
+    # normalized key set {alt, window, p} is neither a subset nor a superset of
+    # Call / Hangup / both dictation keys / paste-last, the kill switch
+    # (ctrl+alt+shift+k) or the Jarvis X keys (ctrl+shift+1..6), so
+    # ``combos_collide`` accepts all of them at once. It holds ONE Alt key, so
+    # it can never fire the both-Alt appshot gesture (``alt+alt``) either. On
+    # macOS the win token is Command (cmd+alt+p). An empty value disables it;
+    # on Wayland the compositor owns global shortcuts and this is a no-op.
+    # ``tests/unit/core/test_pet_config.py`` pins every one of these claims.
+    hotkey_pet_toggle: str = "alt+win+p"
     wake_word: WakeWordConfig = Field(default_factory=WakeWordConfig)
     # When false (default), the pipeline keeps the mic open after the
     # response (conversation mode) and only hangs up via HANGUP_RE, the idle
@@ -979,6 +997,41 @@ def normalize_force_spawn_mode(value: object) -> str:
     """
     mode = str(value or "").strip().lower()
     return mode if mode in FORCE_SPAWN_MODES else DEFAULT_FORCE_SPAWN_MODE
+
+
+#: The SHAPE every pet id has: a built-in slug (``gigi``), a user-created id
+#: (``u`` + 16 hex digits) or ``none``. The user-created form is a special case
+#: of the slug, so one pattern covers all three (docs/pets.md, sprite format).
+_PET_ID_SHAPE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
+
+
+def normalize_pet_id(value: object) -> str | None:
+    """Lower-cased, trimmed pet id, or ``None`` when it cannot be one.
+
+    Shape only — whether the pet exists is decided where pets are listed. Also
+    the path-traversal guard for every route that turns an id into a folder:
+    the shape admits no separator, no dot and no drive letter.
+    """
+    if not isinstance(value, str):
+        return None
+    pet_id = value.strip().lower()
+    return pet_id if _PET_ID_SHAPE.fullmatch(pet_id) else None
+
+
+def clamp_pet_scale(value: object) -> float:
+    """The pet size multiplier, clamped to 0.5–2.0.
+
+    Same sanitizing as ``bar_size_scale``: a non-numeric or non-finite value
+    becomes 1.0. One definition for the config load, the TOML writer and the
+    pets route, so the three can never disagree about the range.
+    """
+    try:
+        f = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 1.0
+    if f != f or f in (float("inf"), float("-inf")):  # NaN / ±inf
+        return 1.0
+    return max(0.5, min(2.0, f))
 
 
 class BrainRoutingConfig(BaseModel):
@@ -2143,6 +2196,17 @@ class UIConfig(BaseModel):
     # a headless / Wayland host with no reliable per-monitor geometry keeps the
     # single-monitor behaviour. See jarvis/ui/jarvisbar/interaction.py.
     bar_follow_cursor_monitor: bool = True
+    # Desktop pet (orb_style = "pet", docs/pets.md). ``pet_id`` is a built-in
+    # id, a user-created ``u…`` id, or "none" (the control strip without a
+    # figure). An id that no longer exists on disk falls back to the default
+    # pet where it is resolved (pets routes / overlay), never here: the
+    # validator only sanitizes the SHAPE so a hand-edited value cannot brick
+    # the load. Vocabulary: jarvis.ui.pets.states.
+    pet_id: str = DEFAULT_PET_ID
+    # Pet size multiplier on top of the monitor DPI scale, 0.5–2.0.
+    pet_scale: float = 1.0
+    # Show the status bubble under the pet's control strip.
+    pet_bubble: bool = True
     # Remembered "open with" choice for Outputs artifacts: an opener id
     # ("default" = OS default app, "browser", or an editor key like "code").
     # Empty = ask via the chooser dialog on first open. Desktop-only.
@@ -2173,6 +2237,19 @@ class UIConfig(BaseModel):
         if f != f or f in (float("inf"), float("-inf")):  # NaN / ±inf
             return 1.0
         return max(0.5, min(2.0, f))
+
+    @field_validator("pet_id", mode="before")
+    @classmethod
+    def _sanitize_pet_id(cls, v: object) -> object:
+        # Lower-case and trim; anything that is not a valid pet id shape (a
+        # typo, a path, a non-string) falls back to the default pet so a
+        # corrupt jarvis.toml can never brick the load. "none" is a valid pick.
+        return normalize_pet_id(v) or DEFAULT_PET_ID
+
+    @field_validator("pet_scale", mode="before")
+    @classmethod
+    def _clamp_pet_scale(cls, v: object) -> object:
+        return clamp_pet_scale(v)
 
 
 class DuckingConfig(BaseModel):
@@ -4269,12 +4346,12 @@ class AgenticIdeConfig(BaseModel):
     )
 
     smart_recaps: bool = Field(
-        default=True,
+        default=False,
         description=(
-            "Let a model write each pane's header recap — what the pane set out "
-            "to do, where it stands, what is outstanding. Off falls back to the "
-            "transcript-derived one, which costs nothing and says much less. An "
-            "install with no reachable provider gets the fallback either way."
+            "Let a model write a pane's header title when its coding CLI has not "
+            "named the session itself. Off (the default) uses the CLI's own title "
+            "(Claude Code, Codex) and otherwise the pane's first or last prompt, "
+            "which costs nothing. On spends background model requests."
         ),
     )
 

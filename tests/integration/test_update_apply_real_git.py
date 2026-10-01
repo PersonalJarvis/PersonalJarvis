@@ -97,7 +97,8 @@ def test_real_apply_fetches_and_pins_without_mutating_live_head(
         return {"version": "9.9.10", "tag": "v9.9.10"}
 
     monkeypatch.setattr(u, "_fetch_latest_release", _latest)
-    result = asyncio.run(u.update_apply())
+    # No request: a managed apply never quits the app itself, so it needs none.
+    result = asyncio.run(u.update_apply(None))
 
     assert result["ok"] is True
     assert result["prepared"] is True

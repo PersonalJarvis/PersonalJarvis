@@ -37,6 +37,11 @@ import {
 } from "@/hooks/useProviders";
 import { useVoiceMode } from "@/hooks/useVoiceMode";
 import { useLocalMode } from "@/lib/localMode";
+import {
+  APIKEYS_TAB_EVENT,
+  clearApiKeysTabRequest,
+  requestedApiKeysTab,
+} from "@/lib/apiKeysTab";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 
@@ -90,9 +95,28 @@ export function ApiKeysView() {
   // Reset the selected tab to the mode's first tab whenever the mode changes,
   // so switching Pipeline→Realtime never leaves `active` pointing at a tab
   // that no longer exists in the new mode (e.g. "tts").
+  // A tab another part of the app asked for (the first-run guide) wins over
+  // the mode's first tab while it is still in force.
   useEffect(() => {
-    setActive(engineMode === "realtime" ? "realtime" : "brain");
+    const tabs = engineMode === "realtime" ? REALTIME_TABS : PIPELINE_TABS;
+    const wanted = requestedApiKeysTab() as CategoryKey | null;
+    setActive(wanted && tabs.includes(wanted) ? wanted : tabs[0]);
   }, [engineMode]);
+
+  useEffect(() => {
+    const onRequest = (event: Event) => {
+      const wanted = (event as CustomEvent<string | null>).detail as CategoryKey | null;
+      const tabs = engineMode === "realtime" ? REALTIME_TABS : PIPELINE_TABS;
+      setActive(wanted && tabs.includes(wanted) ? wanted : tabs[0]);
+    };
+    window.addEventListener(APIKEYS_TAB_EVENT, onRequest);
+    return () => window.removeEventListener(APIKEYS_TAB_EVENT, onRequest);
+  }, [engineMode]);
+
+  const selectTab = (key: CategoryKey) => {
+    clearApiKeysTabRequest();
+    setActive(key);
+  };
 
   // Open the view on the engine that is actually LIVE (once, when the mode
   // query resolves) — a user whose voice runs on Realtime should not land on
@@ -128,7 +152,7 @@ export function ApiKeysView() {
 
       <CategoryTabs
         active={active}
-        onSelect={setActive}
+        onSelect={selectTab}
         health={health}
         tabs={modeTabs}
       />

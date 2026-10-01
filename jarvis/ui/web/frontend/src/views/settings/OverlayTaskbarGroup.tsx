@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Monitor, Eye, Volume2, Bell, MousePointer } from "lucide-react";
+import { Monitor, Eye, Volume2, Bell, MousePointer, PawPrint } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import {
   useOverlayStyle,
@@ -12,13 +12,14 @@ import { useBarFollowCursor } from "@/hooks/useBarFollowCursor";
 import { BarSizeGroup } from "@/views/settings/BarSizeGroup";
 import { useMuteMusic } from "@/hooks/useMuteMusic";
 import { useSoundEffects } from "@/hooks/useSoundEffects";
+import { useRestartApp } from "@/hooks/useRestartApp";
 import { useEventStore } from "@/store/events";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 /**
  * "Bar & Overlay" group inside the Settings view — the on-screen overlay
- * appearance (Bar / Mascot / None) and two dictation behaviours: show the bar at
+ * appearance (Bar / Mascot / Voice orb / Pet / None) and two dictation behaviours: show the bar at
  * all times, and mute music while a voice session is active. Moved here from the
  * former standalone Taskbar section; the controls, hooks, and i18n keys
  * (``taskbar_view.*`` + ``settings_view.overlay_style.*``) are unchanged.
@@ -232,57 +233,24 @@ function SoundEffectsRow() {
 }
 
 /**
- * On-screen overlay style selector (Bar / Mascot / None). Reuses the
- * settings_view.overlay_style.* i18n. A bar <-> mascot switch cannot apply live
- * (BUG-031: Tcl cross-thread abort), so the app self-restarts to deliver it.
+ * On-screen overlay style selector (Bar / Mascot / Voice orb / Pet / None).
+ * Reuses the settings_view.overlay_style.* i18n. A switch between the bar and
+ * an orb-window style cannot apply live (BUG-031: Tcl cross-thread abort), so
+ * the app self-restarts to deliver it (`useRestartApp`).
  */
 function OverlayStylePanel() {
   const t = useT();
   const { config, loading, error, saveStyle } = useOverlayStyle();
   const pushToast = useEventStore((s) => s.pushToast);
+  const setActiveSection = useEventStore((s) => s.setActiveSection);
   const [style, setStyle] = useState<OverlayStyle>("jarvis_bar");
   const [saving, setSaving] = useState(false);
   const [needsRestart, setNeedsRestart] = useState(false);
-  const [restarting, setRestarting] = useState(false);
-  // Armed after the backend refuses the restart (HTTP 409) because missions are
-  // running; the next click resends with ``force=true``.
-  const [forceArmed, setForceArmed] = useState(false);
+  const { restart, restarting, buttonLabel: restartLabel } = useRestartApp();
 
   useEffect(() => {
     if (config) setStyle(config.style);
   }, [config]);
-
-  // The window goes away on success, so we never clear ``restarting`` there.
-  async function onRestartNow(force: boolean) {
-    if (restarting) return;
-    setRestarting(true);
-    try {
-      const url = force
-        ? "/api/settings/restart-app?force=true"
-        : "/api/settings/restart-app";
-      const res = await fetch(url, { method: "POST" });
-      if (res.status === 409) {
-        // Live missions would be killed — surface the count and arm a force
-        // restart instead of killing them silently.
-        let count = 0;
-        try {
-          const body = await res.json();
-          count = body?.detail?.missions?.length ?? 0;
-        } catch {
-          /* malformed body — still arm the override */
-        }
-        setRestarting(false);
-        setForceArmed(true);
-        pushToast("warning", `${count} ${t("topbar.restart_missions_running")}`);
-        return;
-      }
-      if (!res.ok) throw new Error(`restart-failed:${res.status}`);
-      pushToast("info", t("taskbar_view.restarting"));
-    } catch (e) {
-      setRestarting(false);
-      pushToast("error", (e as Error).message);
-    }
-  }
 
   const options = config?.options ?? OVERLAY_STYLES;
 
@@ -319,9 +287,9 @@ function OverlayStylePanel() {
           </p>
 
           {/* Visual preview cards — click to apply (no dropdown). Two columns
-              on a narrow window so a fourth style never squeezes the previews
+              on a narrow window so a fifth style never squeezes the previews
               into unreadable slivers. */}
-          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
             {options.map((opt) => (
               <button
                 key={opt}
@@ -351,6 +319,19 @@ function OverlayStylePanel() {
             ))}
           </div>
 
+          {/* Which pet, its size and its bubble live on their own page. */}
+          {style === "pet" && (
+            <button
+              type="button"
+              data-testid="overlay-style-open-pets"
+              onClick={() => setActiveSection("pets")}
+              className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <PawPrint className="h-3.5 w-3.5" aria-hidden />
+              {t("pets.open_settings")}
+            </button>
+          )}
+
           {needsRestart && (
             <div className="mt-3 flex flex-wrap items-center gap-3">
               <p className="text-xs text-foreground">
@@ -358,15 +339,11 @@ function OverlayStylePanel() {
               </p>
               <button
                 type="button"
-                onClick={() => onRestartNow(forceArmed)}
+                onClick={() => void restart()}
                 disabled={restarting}
                 className="rounded-md bg-secondary px-3 py-1.5 text-xs font-medium text-foreground-strong transition-colors hover:bg-popover disabled:opacity-60"
               >
-                {restarting
-                  ? t("taskbar_view.restarting")
-                  : forceArmed
-                    ? t("topbar.restart_force")
-                    : t("taskbar_view.restart_now")}
+                {restartLabel}
               </button>
             </div>
           )}

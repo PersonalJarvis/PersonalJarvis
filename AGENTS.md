@@ -188,7 +188,11 @@ diff and lands it. Never push from a linked mission worktree. **A push is
 Review happens when code is written, never when it is published. A check that
 reads the whole tree belongs in CI, never in `pre-push`. A release (SemVer +
 tag + CHANGELOG + published GitHub Release) happens ONLY when explicitly
-asked — an ordinary push is not a release.
+asked — an ordinary push is not a release. A release is ONE command:
+`gh workflow run release-cut.yml -f bump=patch|minor|major` (pick the bump from
+the commits since the last tag), then watch the run and report the Release URL.
+That workflow bumps, writes the CHANGELOG, tags, waits for CI and publishes;
+never bump, tag or `gh release create` by hand.
 
 Every frontend change works in BOTH light and dark mode, and on the terminal
 panes' own appearance — colours come from theme tokens or the per-appearance

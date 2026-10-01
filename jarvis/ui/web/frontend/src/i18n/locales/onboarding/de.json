@@ -36,6 +36,14 @@
       "security": "Schlüssel liegen im Schlüsselbund deines Systems und gehen nur an den Anbieter, den du gewählt hast.",
       "later": "Ich trage später einen Schlüssel ein"
     },
+    "subscriptions": {
+      "title": "Verbinde ein Abo für deine Agents",
+      "lede": "Das ist der Agents-Tab. Melde dich mit einem Abo an, das du schon bezahlst. Wir empfehlen Claude (Pro oder Max) oder ChatGPT (Codex). Klick in der Zeile auf Connect; dein Browser öffnet sich einmal.",
+      "waiting": "Noch kein Abo verbunden…",
+      "connected": "Verbunden: {names}.",
+      "why": "Ein Abo kostet einen festen Monatspreis. So rechnen die größeren Aufgaben deiner Agents nicht pro Aufruf über deinen API-Schlüssel ab.",
+      "later": "Ich verbinde später eins"
+    },
     "permissions": {
       "title": "Zugriff auf diesem Mac erlauben",
       "lede": "Das sind die Mac-Berechtigungen. Erlaube die, die du möchtest; jede Zeile aktualisiert sich selbst.",
@@ -45,13 +53,16 @@
       "title": "Wähle dein Weckwort",
       "lede": "Tippe hier dein Wort nach „Hey“ ein und speichere es. Das Wort wird auch der Name deines Assistenten. Kein Weckwort? Das Anruf-Kürzel funktioniert immer.",
       "on": "„{phrase}“ ist an. Sag es jederzeit.",
-      "off": "Noch kein Weckwort. Bis dahin funktioniert das Anruf-Kürzel."
+      "off": "Noch kein Weckwort. Bis dahin funktioniert das Anruf-Kürzel.",
+      "later": "Überspringen, ich nutze das Anruf-Kürzel"
     },
     "ready": {
       "title": "Alles bereit",
       "lede": "Die App startet einmal neu, damit alles eingeschaltet ist. Danach zeigt dir eine kurze Tour die App.",
       "row_brain": "Gehirn",
+      "row_agents": "Agents",
       "row_voice": "Aktivierung",
+      "no_subscription": "Kein Abo",
       "no_key": "Noch kein Schlüssel",
       "shortcut": "Anruf-Kürzel",
       "autostart": "Bei der Anmeldung starten",
@@ -69,9 +80,9 @@
     "finish": "Fertig",
     "skip": "Tour überspringen",
     "step_of": "{current} von {total}",
-    "replay_title": "App-Tour",
-    "replay_body": "Ein kurzer Rundgang durch die App mit dem Scheinwerfer, derselbe wie nach der Einrichtung.",
-    "replay": "Tour wiederholen",
+    "replay_title": "Einrichtung und App-Tour",
+    "replay_body": "Führt dich noch einmal durch die Einrichtung (API-Schlüssel, Abos für Agents, Weckwort) und danach durch den kurzen Rundgang. Nichts startet neu.",
+    "replay": "Wiederholen",
     "steps": {
       "voice": "So sprichst du mit {name}. Klick auf die Leiste, sag dein Weckwort oder drück dein Anruf-Kürzel, dann sprich einfach. Die Welle zeigt, wer gerade redet.",
       "new_chat": "Lieber tippen? Hier startest du einen neuen Chat, als Text oder mit Stimme. Jedes Gespräch landet unter Letzte Chats.",

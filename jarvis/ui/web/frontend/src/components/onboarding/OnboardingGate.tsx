@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { useOnboarding } from "@/hooks/useOnboarding";
-import { TOUR_START_EVENT } from "./tourEvents";
+import { SETUP_REPLAY_EVENT, TOUR_START_EVENT } from "./tourEvents";
 
 /**
  * Code-split: a finished install renders this gate as `null` forever, so the
@@ -30,8 +30,11 @@ function param(name: string): string | null {
  *    loading or on a fetch error it renders nothing, so a broken guide never
  *    traps anyone.
  * 2. The tour: after the completion restart, a spotlight explains the app
- *    one control at a time. Shown once (`tour_completed`), replayable from
- *    Settings via `jarvis:tour-start`.
+ *    one control at a time. Shown once (`tour_completed`); `jarvis:tour-start`
+ *    replays it alone.
+ *
+ * Settings' replay (`jarvis:setup-replay`) walks setup again as a preview,
+ * from the API Keys page on (the consent is already given), then the tour.
  *
  * Replay, never destructive: `?onboarding=force` walks the setup on a
  * finished install without completing or restarting anything, then hands
@@ -44,6 +47,9 @@ export function OnboardingGate({ activeSection }: { activeSection?: string } = {
   const [dismissed, setDismissed] = useState(false);
   const [tourRequested, setTourRequested] = useState(() => param("tour") === "force");
   const [tourDone, setTourDone] = useState(false);
+  // Bumped by each Settings replay; > 0 means a setup preview is requested,
+  // and the value remounts the guide so every replay starts fresh.
+  const [setupReplay, setSetupReplay] = useState(0);
   const forced = useMemo(() => param("onboarding") === "force", []);
 
   useEffect(() => {
@@ -55,11 +61,19 @@ export function OnboardingGate({ activeSection }: { activeSection?: string } = {
       setTourDone(false);
       setTourRequested(true);
     };
+    const onSetupReplay = () => {
+      setDismissed(false);
+      setTourDone(false);
+      setTourRequested(false);
+      setSetupReplay((n) => n + 1);
+    };
     window.addEventListener("jarvis:onboarding-changed", onChanged);
     window.addEventListener(TOUR_START_EVENT, onTour);
+    window.addEventListener(SETUP_REPLAY_EVENT, onSetupReplay);
     return () => {
       window.removeEventListener("jarvis:onboarding-changed", onChanged);
       window.removeEventListener(TOUR_START_EVENT, onTour);
+      window.removeEventListener(SETUP_REPLAY_EVENT, onSetupReplay);
     };
   }, [onb]);
 
@@ -67,14 +81,19 @@ export function OnboardingGate({ activeSection }: { activeSection?: string } = {
 
   if (onb.loading || onb.error || !onb.state) return null;
 
-  const showSetup = (forced || !onb.state.completed) && !dismissed && (forced || !inIde);
+  const replaying = setupReplay > 0;
+  const asked = forced || replaying;
+  const showSetup = (asked || !onb.state.completed) && !dismissed && (asked || !inIde);
   if (showSetup) {
     return (
       <Suspense fallback={null}>
         <SetupTour
+          key={setupReplay}
           onb={onb}
-          preview={forced && onb.state.completed}
+          preview={asked && onb.state.completed}
+          startAt={replaying && onb.state.completed ? "keys" : undefined}
           onFinished={() => {
+            setSetupReplay(0);
             setDismissed(true);
             setTourDone(false);
             setTourRequested(true);

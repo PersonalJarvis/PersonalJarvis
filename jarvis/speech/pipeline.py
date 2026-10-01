@@ -73,6 +73,7 @@ from jarvis.core.events import (
     ListeningStarted,
     MessageSent,
     ObservationCaptured,
+    PetVisibilityToggleRequested,
     SpeechSpoken,
     TranscriptFinal,
     TranscriptionUpdate,
@@ -82,6 +83,7 @@ from jarvis.core.events import (
     VoiceMuteToggleRequested,
     VoiceSessionEnded,
     VoiceSessionStarted,
+    VoiceSpeakerMuteChanged,
     WakeCandidateDetected,
     WakeWordDetected,
 )
@@ -2321,6 +2323,10 @@ class SpeechPipeline:
         # persisted, the UI showed the new combo, and the key did nothing —
         # forever, restart included (the AP-4 trap: one layer never told).
         paste_last_hotkeys: tuple[str, ...] = (),
+        # Hide / show the desktop pet ([trigger].hotkey_pet_toggle). Dispatched
+        # here like every other global shortcut; the pipeline only publishes
+        # ``PetVisibilityToggleRequested`` and the overlay bridge does the rest.
+        pet_toggle_hotkeys: tuple[str, ...] = (),
         # Resolved DictationConfig (jarvis.core.config.DictationConfig) or None.
         # None keeps every legacy call site and test on the built-in defaults.
         dictation_config: Any = None,
@@ -2331,6 +2337,14 @@ class SpeechPipeline:
         self._dictate_hotkeys = list(dictate_hotkeys)
         self._dictate_toggle_hotkeys = list(dictate_toggle_hotkeys)
         self._paste_last_hotkeys = list(paste_last_hotkeys)
+        self._pet_toggle_hotkeys = list(pet_toggle_hotkeys)
+        # Speaker mute = TTS volume 0. The muted-ness last broadcast as
+        # ``VoiceSpeakerMuteChanged``; ``set_tts_volume`` runs on the REST
+        # threadpool AND the overlay's Tk thread, so the compare-and-set that
+        # decides "did it flip?" holds this lock. ``None`` = nothing broadcast
+        # yet, so the first change is compared against the configured volume.
+        self._speaker_mute_lock = threading.Lock()
+        self._speaker_muted_last: bool | None = None
         # One paste at a time — two overlapping ones race over the clipboard
         # restore and the loser puts the wrong content back (see _on_paste_last).
         self._paste_last_busy = False
@@ -3418,18 +3432,66 @@ class SpeechPipeline:
         if callable(setter):
             setter(_local_silence_window_ms(ms))
 
-    def set_tts_volume(self, volume: float) -> None:
+    def set_tts_volume(self, volume: float, *, source: str = "") -> None:
         """Live-apply a new master TTS output volume (0.0–1.0) — no restart.
 
         Delegates to ``AudioPlayer.set_volume`` so a Settings change is audible
         on the next spoken sub-block. No-op-safe when the player is absent
         (headless / not yet started) — the value still persisted and applies on
         the next start.
+
+        Also the ONE place speaker mute is decided (mute = volume 0): when the
+        change flips the voice between silent and audible it broadcasts
+        ``VoiceSpeakerMuteChanged`` so every surface (the pet's speaker disc,
+        the in-app speaker button) mirrors it. Callers run on the REST
+        threadpool and on the overlay's Tk thread, so the flip is decided under
+        a lock and the publish is marshalled onto the pipeline's loop — this
+        never blocks and never awaits.
+        """
+        target = float(volume)
+        lock = getattr(self, "_speaker_mute_lock", None)
+        if lock is None:
+            # Pipelines built via ``__new__`` in tests skip ``__init__``.
+            lock = self._speaker_mute_lock = threading.Lock()
+        with lock:
+            last = getattr(self, "_speaker_muted_last", None)
+            was_muted = self.get_tts_volume() <= 0.0 if last is None else last
+            # Remembered even without a player, so a headless mute/unmute
+            # reads back what was asked for instead of the boot value.
+            self._tts_volume_requested = max(0.0, min(1.0, target))
+            player = getattr(self, "_player", None)
+            setter = getattr(player, "set_volume", None)
+            if callable(setter):
+                setter(target)
+            muted = target <= 0.0
+            self._speaker_muted_last = muted
+            if muted != was_muted:
+                log.info(
+                    "Speaker %s (source=%s)", "muted" if muted else "unmuted", source or "unknown"
+                )
+                self._publish_event_soon(VoiceSpeakerMuteChanged(muted=muted, source=source))
+
+    def get_tts_volume(self) -> float:
+        """The master TTS output volume in effect right now (0.0–1.0).
+
+        The live player's volume when there is a player, else the last value
+        ``set_tts_volume`` was asked for, else the configured ``[tts].volume``,
+        else full volume. The orb/pet speaker disc reads this to decide whether
+        a click mutes or unmutes; without it every click read "audible" and the
+        voice could be muted but never brought back.
         """
         player = getattr(self, "_player", None)
-        setter = getattr(player, "set_volume", None)
-        if callable(setter):
-            setter(float(volume))
+        live = getattr(player, "_volume", None)
+        if isinstance(live, int | float) and not isinstance(live, bool):
+            return max(0.0, min(1.0, float(live)))
+        requested = getattr(self, "_tts_volume_requested", None)
+        if isinstance(requested, int | float):
+            return float(requested)
+        configured = getattr(getattr(getattr(self, "_config", None), "tts", None), "volume", None)
+        try:
+            return max(0.0, min(1.0, float(configured))) if configured is not None else 1.0
+        except (TypeError, ValueError):
+            return 1.0
 
     def set_audio_devices(
         self,
@@ -3678,6 +3740,7 @@ class SpeechPipeline:
         dictate: list[str] | None = None,
         dictate_toggle: list[str] | None = None,
         paste_last: list[str] | None = None,
+        pet_toggle: list[str] | None = None,
     ) -> None:
         """Live-apply changed voice keybinds — no app/pipeline restart.
 
@@ -3712,15 +3775,18 @@ class SpeechPipeline:
             self._dictate_toggle_hotkeys = list(dictate_toggle)
         if paste_last is not None:
             self._paste_last_hotkeys = list(paste_last)
+        if pet_toggle is not None:
+            self._pet_toggle_hotkeys = list(pet_toggle)
         log.info(
             "Keybinds live-switched: CALL=[%s] PTT=[%s] HANGUP=[%s] DICTATE=[%s] "
-            "DICTATE-TOGGLE=[%s] PASTE-LAST=[%s]",
+            "DICTATE-TOGGLE=[%s] PASTE-LAST=[%s] PET-TOGGLE=[%s]",
             ", ".join(self._call_hotkeys),
             ", ".join(self._ptt_hotkeys) or "off",
             ", ".join(self._hangup_hotkeys),
             ", ".join(self._dictate_hotkeys) or "off",
             ", ".join(self._dictate_toggle_hotkeys) or "off",
             ", ".join(getattr(self, "_paste_last_hotkeys", None) or []) or "off",
+            ", ".join(getattr(self, "_pet_toggle_hotkeys", None) or []) or "off",
         )
         self._hotkey_reload_event.set()
 
@@ -3777,6 +3843,10 @@ class SpeechPipeline:
             # Single-fire on release, like every non-hold action: holding the
             # key must paste once, not once per polling tick.
             bindings["paste_last"] = list(paste_last)
+        pet_toggle = getattr(self, "_pet_toggle_hotkeys", None) or []
+        if pet_toggle:
+            # Single-fire on release too: one press hides or shows the pet once.
+            bindings["pet_toggle"] = list(pet_toggle)
         return bindings, edge_events
 
     # ------------------------------------------------------------------
@@ -6362,7 +6432,7 @@ class SpeechPipeline:
         hotkey_bindings, ptt_events = self._build_hotkey_bindings()
         log.info(
             "Pipeline ready. CALL=[%s] PTT=[%s] HANGUP=[%s] DICTATE=[%s/%s] "
-            "DICTATE-TOGGLE=[%s] PASTE-LAST=[%s] OWW=%s "
+            "DICTATE-TOGGLE=[%s] PASTE-LAST=[%s] PET-TOGGLE=[%s] OWW=%s "
             "WAKE=%s (threshold=%.2f) WHISPER-WAKE=%s TURN-MODE=%s",
             ", ".join(self._call_hotkeys),
             ", ".join(self._ptt_hotkeys) or "off",
@@ -6371,6 +6441,7 @@ class SpeechPipeline:
             self._dictate_mode,
             ", ".join(getattr(self, "_dictate_toggle_hotkeys", None) or []) or "off",
             ", ".join(getattr(self, "_paste_last_hotkeys", None) or []) or "off",
+            ", ".join(getattr(self, "_pet_toggle_hotkeys", None) or []) or "off",
             "on" if self._openwakeword_enabled else "off",
             list(self._wake._keywords),
             self._wake._threshold,
@@ -6908,6 +6979,8 @@ class SpeechPipeline:
             self._on_dictate_toggle()
         elif event_name == "paste_last":
             self._on_paste_last()
+        elif event_name == "pet_toggle":
+            self._on_pet_toggle()
         elif event_name == "hangup":
             log.info("📵 HANGUP via Hotkey")
             self._trigger_voice_hangup()
@@ -7021,6 +7094,18 @@ class SpeechPipeline:
         self.start_dictation(
             target=self._configured_dictation_target(), source="toggle_key"
         )
+
+    def _on_pet_toggle(self) -> None:
+        """Pet shortcut — hide the desktop pet, or show it and bring it forward.
+
+        The pipeline owns the shortcut, not the pet: it only announces the
+        press. ``OrbBusBridge`` turns ``PetVisibilityToggleRequested`` into
+        ``surface.toggle_visible()``, which every other overlay style ignores.
+        Scheduled, never awaited — this runs inside the hotkey loop, which must
+        not wait on bus subscribers.
+        """
+        log.info("Pet visibility toggle via hotkey")
+        self._publish_event_soon(PetVisibilityToggleRequested(source="hotkey"))
 
     def _on_paste_last(self) -> None:
         """"Insert the last dictation again" key — re-deliver the last transcript.
@@ -17982,6 +18067,11 @@ async def _main() -> None:
         paste_last_hotkeys=(
             (config.trigger.hotkey_paste_last,)
             if config.trigger.hotkey_paste_last.strip()
+            else ()
+        ),
+        pet_toggle_hotkeys=(
+            (config.trigger.hotkey_pet_toggle,)
+            if config.trigger.hotkey_pet_toggle.strip()
             else ()
         ),
         dictate_mode=config.dictation.mode,

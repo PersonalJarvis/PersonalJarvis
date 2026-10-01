@@ -145,6 +145,7 @@ export const ACTION_LABEL_KEY: Record<KeybindAction, string> = {
   dictate: "settings_view.keybinds.dictate_label",
   dictate_toggle: "settings_view.keybinds.dictate_toggle_label",
   paste_last: "settings_view.keybinds.paste_last_label",
+  pet_toggle: "settings_view.keybinds.pet_toggle_label",
 };
 
 /**

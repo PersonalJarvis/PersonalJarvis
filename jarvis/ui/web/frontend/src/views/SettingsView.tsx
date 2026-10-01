@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Settings,
   Mic,
-  Keyboard,
   Loader2,
   Languages,
 } from "lucide-react";
@@ -28,9 +27,6 @@ import {
   useLocalSpeechInstall,
   type WakeWordSaveResult,
 } from "@/hooks/useWakeWord";
-import { useKeybinds, type KeybindAction } from "@/hooks/useHotkey";
-import { KeybindRow } from "@/views/settings/KeybindRow";
-import { QuickSwitchKeybind } from "@/views/settings/QuickSwitchKeybind";
 import { deriveAssistantName } from "@/lib/deriveAssistantName";
 import { WAKE_ENGINES, WAKE_ENGINE_I18N_KEY } from "@/constants/wakeEngines";
 import { useEventStore } from "@/store/events";
@@ -169,7 +165,6 @@ const SECTIONS: readonly { id: string; labelKey: string; render: () => React.Rea
   { id: "volume", labelKey: "settings_view.nav.volume", render: () => <VolumeGroup /> },
   { id: "audio-devices", labelKey: "settings_view.nav.audio_devices", render: () => <AudioDevicesGroup /> },
   { id: "music", labelKey: "settings_view.nav.music", render: () => <MusicGroup /> },
-  { id: "keybinds", labelKey: "settings_view.nav.keybinds", render: () => <KeybindsPanel /> },
   { id: "more", labelKey: "settings_view.nav.more", render: () => <MoreSettings /> },
   { id: "overlay-taskbar", labelKey: "settings_view.nav.overlay_taskbar", render: () => <OverlayTaskbarGroup /> },
 ];
@@ -817,64 +812,8 @@ function WakeWordPanel() {
   );
 }
 
-const _KEYBIND_ROWS: { action: KeybindAction; labelKey: string }[] = [
-  { action: "call", labelKey: "settings_view.keybinds.call_label" },
-  { action: "hangup", labelKey: "settings_view.keybinds.hangup_label" },
-];
-
-/**
- * Editable Call and Hangup keybinds, one row each — the two keys that start
- * and end a conversation. The user clicks Record and presses a combination, or
- * resets to default, then saves. The backend validator is the authority — an
- * unsafe combo or a collision with another action is rejected with a reason
- * shown as a toast. A successful save surfaces a restart-required hint.
- *
- * NO dictation row lives here. Dictation is a different act — it never reaches
- * the brain, it types into whatever window is in front, and it now has three
- * shortcuts of its own (hold, hands-free, paste again). Those belong together
- * on ONE surface, and that surface is the voice section's Shortcuts tab. This
- * panel is deliberately NOT synced with it: the two answer different questions,
- * and a row duplicated across both would let a user change the same key in two
- * places and see two different truths.
- *
- * The row component itself is shared, so the recorder, the live validation and
- * the collision check behave identically in both places — the collision check
- * in particular still spans EVERY action, dictation included, because the
- * backend keeps serving the whole set. Fewer rows here, never less data.
+/*
+ * The keybind rows moved to their own Settings-hub page ("Keyboard shortcuts",
+ * views/ShortcutsView). Re-exported so existing imports keep resolving.
  */
-export function KeybindsPanel() {
-  const t = useT();
-  const { config, loading, error, saveKeybind } = useKeybinds();
-
-  return (
-    <div className="rounded-lg border border-border bg-card p-block">
-      <div className="flex items-start gap-3">
-        <Keyboard className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
-        <div className="min-w-0 flex-1">
-          <h4 className="text-title font-semibold text-foreground-strong">
-            {t("settings_view.keybinds.title")}
-          </h4>
-          <p className="mt-1 text-meta text-muted-foreground">
-            {t("settings_view.keybinds.description")}
-          </p>
-          {error && (
-            <p className="mt-stack text-meta text-destructive">{error}</p>
-          )}
-          <div className="mt-block space-y-stack">
-            {_KEYBIND_ROWS.map((row) => (
-              <KeybindRow
-                key={row.action}
-                action={row.action}
-                label={t(row.labelKey)}
-                config={config}
-                loading={loading}
-                onSave={saveKeybind}
-              />
-            ))}
-          </div>
-          <QuickSwitchKeybind voiceConfig={config} />
-        </div>
-      </div>
-    </div>
-  );
-}
+export { KeybindsPanel } from "@/views/settings/KeybindsPanel";

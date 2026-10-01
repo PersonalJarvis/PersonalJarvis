@@ -36,6 +36,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import sqlite3
 import time
 from collections import Counter
@@ -416,8 +417,25 @@ def _safe(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         return None
 
 
+_SENTENCE_END = re.compile(r"[.!?…][\"'”»)\]]*(?=\s|$)")
+
+
+def _complete_sentences(text: str) -> str:
+    """``text`` cut back to its last finished sentence; "" when it has none.
+
+    A reply that hit the token limit or a dropped stream stops mid-word
+    ("…and while your Tool-"). Stored as-is, that fragment became the
+    portrait for weeks, so an unfinished tail is dropped instead.
+    """
+    last_end = 0
+    for match in _SENTENCE_END.finditer(text):
+        last_end = match.end()
+    return text[:last_end].strip()
+
+
 def _post_process(raw: str, *, max_words: int) -> str:
-    """Normalises the model output to a single paragraph within a word limit."""
+    """Normalises the model output to a single paragraph of whole sentences
+    within a word limit."""
     if not raw:
         return ""
     text = raw.strip().strip("`").strip('"').strip()
@@ -427,9 +445,7 @@ def _post_process(raw: str, *, max_words: int) -> str:
     words = text.split()
     if len(words) > max_words:
         text = " ".join(words[:max_words])
-        if not text.endswith((".", "!", "?")):
-            text = text.rstrip(",;:") + "."
-    return text
+    return _complete_sentences(text)
 
 
 def _peak_hour_from_jsonl(jsonl_dir: Path | None) -> int | None:

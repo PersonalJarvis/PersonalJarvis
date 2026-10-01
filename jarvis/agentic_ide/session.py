@@ -6152,16 +6152,16 @@ class Registry:
         already relies on — the new workspace's grid attaches a viewer and
         re-joins the running agent.
 
-        What does change is only what is scoped to ONE workspace:
+        Only between workspaces on the SAME folder. An agent belongs to the
+        folder it works in, and a pane listed under another project while it
+        edits this one is a trap, not an organisation (maintainer decision,
+        2026-10-01). A target on another folder is refused before anything
+        changes.
 
-        * the call-sign and key, which are unique per tab — a "T2" moving into
-          a tab that already has a T2 takes the lowest free number there, a
-          custom name keeps itself unless it is taken (``_unique_name``);
-        * the folder. The agent keeps working where it was started; a pane
-          moved into a workspace on ANOTHER folder records that folder as its
-          own (the field a worktree fork uses), so a later restart resumes the
-          same conversation in the same place instead of an empty chat in the
-          new folder. Moved back home, the field empties again.
+        What does change is only what is scoped to ONE workspace: the
+        call-sign and key, which are unique per tab — a "T2" moving into a tab
+        that already has a T2 takes the lowest free number there, a custom
+        name keeps itself unless it is taken (``_unique_name``).
 
         ``anchor`` names a pane of the TARGET tab to put the moved one beside,
         on ``side`` (``left``/``right``/``above``/``below``): the two then
@@ -6191,6 +6191,11 @@ class Registry:
                 )
             if target.id == source.id:
                 return source, target, term
+            if not _same_folder(source.folder, target.folder):
+                raise SessionError(
+                    f"{term.name} can only move to a workspace on the same folder; "
+                    f"{target.name} works in another one."
+                )
             if len(target.terminals) >= MAX_TERMINALS:
                 raise SessionError(
                     f"{target.name} already has the maximum of {MAX_TERMINALS} terminals."
@@ -6216,9 +6221,6 @@ class Registry:
                 new_key = f"{stem}{suffix}"
                 suffix += 1
             placed = self._placed_beside(target, new_key, anchor, side)
-
-            cwd = term.cwd(source.folder)
-            term.folder = "" if _same_folder(cwd, target.folder) else cwd
 
             # Out of the old workspace the way a close takes a pane out, minus
             # the kill: its rectangle folds away and its bell entries go (they
