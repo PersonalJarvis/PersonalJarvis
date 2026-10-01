@@ -23,7 +23,7 @@ import { create } from "zustand";
 import enJson from "./locales/en.json";
 import { useEventStore } from "@/store/events";
 
-export type UiLanguage = "en" | "de" | "es";
+export type UiLanguage = "en" | "de" | "es" | "it";
 // "auto" mirrors the user's input language; the rest hard-pin the reply language.
 // Mirrors jarvis/brain/manager.py::SUPPORTED_REPLY_LANGUAGES (single source of truth).
 export type ReplyLanguage = "auto" | "en" | "de" | "es";
@@ -46,7 +46,7 @@ const STT_LANGUAGE_ENDPOINT = "/api/settings/stt-language";
 const REPLY_VALUES: readonly ReplyLanguage[] = ["auto", "en", "de", "es"];
 
 function isUiLanguage(v: unknown): v is UiLanguage {
-  return v === "en" || v === "de" || v === "es";
+  return v === "en" || v === "de" || v === "es" || v === "it";
 }
 
 function isReplyLanguage(v: unknown): v is ReplyLanguage {
@@ -65,13 +65,15 @@ const RESOURCES: Record<UiLanguage, Record<string, unknown>> = {
   en: enJson as Record<string, unknown>,
   de: enJson as Record<string, unknown>,
   es: enJson as Record<string, unknown>,
+  it: enJson as Record<string, unknown>,
 };
 
-const UI_LOCALE_LOADERS: Record<"de" | "es", () => Promise<unknown>> = {
+const UI_LOCALE_LOADERS: Record<"de" | "es" | "it", () => Promise<unknown>> = {
   de: () => import("./locales/de.json"),
   es: () => import("./locales/es.json"),
+  it: () => import("./locales/it.json"),
 };
-const UI_LOCALE_PROMISES: Partial<Record<"de" | "es", Promise<void>>> = {};
+const UI_LOCALE_PROMISES: Partial<Record<"de" | "es" | "it", Promise<void>>> = {};
 
 /** Load a selected interface dictionary once and refresh mounted translations. */
 export function loadUiLocale(lang: UiLanguage): Promise<void> {
@@ -105,31 +107,36 @@ const CHUNK_LOADERS: Record<LocaleChunk, Record<UiLanguage, () => Promise<unknow
     en: () => import("./locales/marketplace/en.json"),
     de: () => import("./locales/marketplace/de.json"),
     es: () => import("./locales/marketplace/es.json"),
+    it: () => import("./locales/marketplace/it.json"),
   },
   local_models: {
     en: () => import("./locales/local_models/en.json"),
     de: () => import("./locales/local_models/de.json"),
     es: () => import("./locales/local_models/es.json"),
+    it: () => import("./locales/local_models/it.json"),
   },
   society: {
     en: () => import("./locales/society/en.json"),
     de: () => import("./locales/society/de.json"),
     es: () => import("./locales/society/es.json"),
+    it: () => import("./locales/society/it.json"),
   },
   computers: {
     en: () => import("./locales/computers/en.json"),
     de: () => import("./locales/computers/de.json"),
     es: () => import("./locales/computers/es.json"),
+    it: () => import("./locales/computers/it.json"),
   },
   // First-run guide and app tour: read on one boot, then only on a replay.
   onboarding: {
     en: () => import("./locales/onboarding/en.json"),
     de: () => import("./locales/onboarding/de.json"),
     es: () => import("./locales/onboarding/es.json"),
+    it: () => import("./locales/onboarding/it.json"),
   },
 };
 
-const EXTRA: Record<UiLanguage, Record<string, unknown>[]> = { en: [], de: [], es: [] };
+const EXTRA: Record<UiLanguage, Record<string, unknown>[]> = { en: [], de: [], es: [], it: [] };
 const CHUNK_PROMISES: Partial<Record<LocaleChunk, Promise<void>>> = {};
 
 function unwrapModule(mod: unknown): Record<string, unknown> {
@@ -182,7 +189,7 @@ const STT_KEY = "jarvis.stt.language";
 function readUi(): UiLanguage {
   try {
     const raw = localStorage.getItem(UI_KEY);
-    if (raw === "en" || raw === "de" || raw === "es") return raw;
+    if (raw === "en" || raw === "de" || raw === "es" || raw === "it") return raw;
   } catch {
     /* SSR / private mode */
   }
