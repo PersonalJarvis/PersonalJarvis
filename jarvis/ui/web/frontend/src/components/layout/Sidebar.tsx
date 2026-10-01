@@ -5,7 +5,6 @@ import {
   ChevronLeft,
   MoreHorizontal,
   Store,
-  UserCircle2,
   Plus,
 } from "lucide-react";
 import {
@@ -314,7 +313,10 @@ export function Sidebar({
   // Lit while any hub section is on screen — the profile button IS the hub's
   // entry point now, so it carries the "you are here" state for all of them.
   const hubActive = (SETTINGS_HUB_IDS as readonly string[]).includes(active);
-  const rowClass = "flex min-h-9 w-full items-center gap-2.5 rounded-md px-3 text-base font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+  // Rows read like the Claude app's column: regular weight, light ink at
+  // rest (muted grey made every entry look disabled), the icon in the same
+  // ink, a lift on hover. Section labels and tail rows stay muted.
+  const rowClass = "flex min-h-9 w-full items-center gap-3 rounded-lg px-3 text-base text-foreground-secondary transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
   const renderRow = (raw: NavItem, compact = railed) => {
     const item = presentNavItem(raw, surface);
     return <NavRow key={item.id} item={item} label={resolveNavLabel(t, item)} compact={compact}
@@ -501,35 +503,35 @@ export function Sidebar({
               <Mic aria-hidden className="h-4 w-4" />
             </button>
           </div>}
-        </nav> : <nav aria-label={t("sidebar.sections")} className="space-y-1 px-2 py-2">
-          <ul className="space-y-1">
+        </nav> : <nav aria-label={t("sidebar.sections")} className="space-y-0.5 px-2 py-2">
+          <ul className="space-y-0.5">
             {/* One door: a fresh typed chat. Voice is a mode INSIDE the chat
                 now (its top bar's button), so there is nothing to choose
                 between here (2026-10-01). */}
             <li><button type="button" data-testid="sidebar-new-chat" data-tour="new-chat"
               aria-label={t("sidebar.new_chat")} title={t("sidebar.new_chat")} className={rowClass}
               onClick={() => { useHomeStore.getState().setSurface("chat"); startNewTextChat(); }}>
-              <Plus aria-hidden className="h-4 w-4 shrink-0" />
+              <Plus aria-hidden strokeWidth={1.75} className="h-[18px] w-[18px] shrink-0" />
               {!railed && <span>{t("sidebar.new_chat")}</span>}
             </button></li>
             {renderRow(findItem("agents"))}
             {renderRow(findItem("dictation"))}
           </ul>
-          <ul className="space-y-1">
+          <ul className="space-y-0.5">
             {renderRow(findItem("visualization"))}
             {renderRow(findItem("agentic-ide"))}
             {renderRow({ ...findItem("plugins"), labelKey: "sidebar.extensions_label" })}
           </ul>
           <button type="button" onClick={() => { setMoreOpen(!moreOpen); }} aria-expanded={moreOpen}
-            aria-controls="sidebar-more" title={t("sidebar.more")} data-testid="sidebar-more-toggle" className={rowClass}>
-            <MoreHorizontal aria-hidden className="h-4 w-4 shrink-0" />
+            aria-controls="sidebar-more" title={t("sidebar.more")} data-testid="sidebar-more-toggle" className={cn(rowClass, "text-muted-foreground")}>
+            <ChevronDown aria-hidden strokeWidth={1.75} className={cn("h-[18px] w-[18px] shrink-0 transition-transform", moreOpen && "rotate-180")} />
             {!railed && <span>{t(moreOpen ? "sidebar.show_less" : "sidebar.more")}</span>}
           </button>
           {moreOpen && <ul id="sidebar-more" className="space-y-1">{moreItems.map((item) => item.id === "tasks" ? renderRow({ ...item, labelKey: "sidebar.scheduled" }) : renderRow(item))}</ul>}
         </nav>}
         {!railed && (onIdeSection
           ? <IdeProjectTree />
-          : <section className="mt-4 px-2 pb-3" aria-label={t("sidebar.recent_chats")}><RecentChats /></section>)}
+          : <section className="mt-6 px-2 pb-3" aria-label={t("sidebar.recent_chats")}><RecentChats /></section>)}
       </div>
 
       {/* The footer is one button now, not a popup: it opens the Settings hub
@@ -545,7 +547,10 @@ export function Sidebar({
             data-tour="settings"
             className={cn(rowClass, "min-w-0 flex-1", hubActive && "jarvis-nav-active bg-secondary text-foreground")}>
             <span className="relative shrink-0">
-              <UserCircle2 aria-hidden className="h-7 w-7" />
+              <span aria-hidden data-testid="sidebar-profile-initial"
+                className="flex h-7 w-7 items-center justify-center rounded-full bg-secondary text-xs font-semibold uppercase text-foreground">
+                {(identity.data?.signed_in && identity.data.login ? identity.data.login : t("nav.profile")).trim().charAt(0) || "?"}
+              </span>
               {(apikeysHasError || localModelsNeedAttention) && <span data-testid="sidebar-profile-attention"
                 role="status" aria-label={t("sidebar.apikeys_alert")}
                 className={cn("absolute bottom-0 right-0 h-2 w-2 rounded-full", apikeysHasError ? "bg-destructive" : "bg-warning")} />}
@@ -637,7 +642,7 @@ function NavRow({
           title={compact ? `${label}${hint ? ` — ${hint}` : ""}` : hint}
           aria-label={compact ? label : undefined}
           className={clsx(
-            "group relative flex h-9 w-full items-center gap-2.5 rounded-md px-3 text-base font-medium transition-colors",
+            "group relative flex h-9 w-full items-center gap-3 rounded-lg px-3 text-base transition-colors",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
             // Leave the chevron its own column so the two buttons never overlap.
             expand && "pr-9",
@@ -645,15 +650,16 @@ function NavRow({
             // ink, and only the active row carries the 2 px accent bar at the
             // left edge (`.jarvis-nav-active`).
             active
-              ? "jarvis-nav-active bg-secondary text-foreground"
-              : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+              ? "jarvis-nav-active bg-secondary text-foreground-strong"
+              : "text-foreground-secondary hover:bg-secondary hover:text-foreground",
           )}
         >
           <Icon
             aria-hidden
+            strokeWidth={1.75}
             className={cn(
-              "h-4 w-4 shrink-0 transition-colors",
-              active ? "text-foreground" : "text-muted-foreground group-hover:text-foreground",
+              "h-[18px] w-[18px] shrink-0 transition-colors",
+              active ? "text-foreground-strong" : "text-foreground-secondary group-hover:text-foreground",
             )}
           />
           <span className={cn("flex min-w-0 flex-1 items-center gap-2 text-left", compact && "hidden")}>
