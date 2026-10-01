@@ -24,24 +24,63 @@ const segmenter = typeof Intl.Segmenter === "function"
   ? new Intl.Segmenter(undefined, { granularity: "grapheme" }) : null;
 const graphemes = (text: string) => [...segmenter!.segment(text)].length;
 
+const PROMPT_MARKER = /^ *[❯›>] /;
+/** Rows below the draft that close an editor block: blank, or a box rule. */
+const CLOSING_ROW = /^\s*$|^\s*[─━═╌┄╰└]/;
+const MAX_PROMPT_ROWS = 200;
+
 /**
- * Only the logical input line containing the live cursor is editable. A
- * terminal selection otherwise belongs to output, not to the CLI's editor.
- * Recognise the same input markers as agentic_ide/session.py, without using
- * provider names. Wrapped buffer rows are one line; separate TUI rows are not
- * guessed to be input (they can be menus, permission questions or output).
+ * Only the logical input containing the live cursor is editable. A terminal
+ * selection otherwise belongs to output, not to the CLI's editor. Recognise
+ * the same input markers as agentic_ide/session.py, without using provider
+ * names.
+ *
+ * A long draft spans several rows in one of two ways. The terminal's own soft
+ * wrap marks rows `isWrapped` and fills them edge to edge. A TUI editor (Claude
+ * Code, Codex) wraps the draft itself: every continuation row is a separate
+ * line indented to the width of the marker, and the break character — the
+ * space at a word wrap or a typed newline — is not drawn but still costs one
+ * arrow press. Rows above the caret are only accepted as input when every one
+ * of them up to the marker row is such a continuation; rows below it only
+ * when the block then closes like an editor box, so a footer, menu or
+ * permission question is never mistaken for draft text.
  */
 function readPrompt(term: PromptSelectionTerminal): PromptLine | null {
   const buffer = term.buffer.active;
   if (!segmenter) return null;
+  const rowText = (row: number) => buffer.getLine(row)?.translateToString(false, 0, term.cols);
   const cursorRow = buffer.baseY + buffer.cursorY;
   let first = cursorRow;
-  while (first > buffer.baseY && buffer.getLine(first)?.isWrapped) first--;
-  const head = buffer.getLine(first)?.translateToString(false, 0, term.cols);
-  const prefix = head?.match(/^ *[❯›>] /)?.[0];
-  if (!prefix) return null;
+  let prefix: string | undefined;
+  for (;;) {
+    const line = buffer.getLine(first);
+    const shown = rowText(first);
+    if (!line || shown === undefined) return null;
+    if (!line.isWrapped) {
+      prefix = shown.match(PROMPT_MARKER)?.[0];
+      if (prefix) break;
+      if (!/^ +\S/.test(shown)) return null;
+    }
+    if (first === 0 || cursorRow - first >= MAX_PROMPT_ROWS) return null;
+    first--;
+  }
+  const indent = " ".repeat(prefix.length);
+  const continuation = (row: number) => {
+    const shown = rowText(row);
+    return shown !== undefined && shown.startsWith(indent) && /\S/.test(shown[indent.length] ?? "");
+  };
+  for (let row = first + 1; row <= cursorRow; row++) {
+    if (!buffer.getLine(row)?.isWrapped && !continuation(row)) return null;
+  }
   let last = cursorRow;
-  while (buffer.getLine(last + 1)?.isWrapped) last++;
+  for (let row = cursorRow + 1; row - cursorRow <= MAX_PROMPT_ROWS; row++) {
+    const line = buffer.getLine(row);
+    if (line?.isWrapped || (line && continuation(row))) continue;
+    const closing = rowText(row);
+    if (closing !== undefined && CLOSING_ROW.test(closing)) last = row - 1;
+    else while (buffer.getLine(last + 1)?.isWrapped) last++;
+    break;
+  }
 
   const offsets = new Map<number, number>();
   let text = "";
@@ -50,10 +89,11 @@ function readPrompt(term: PromptSelectionTerminal): PromptLine | null {
   for (let row = first; row <= last; row++) {
     const line = buffer.getLine(row);
     if (!line) return null;
-    const left = row === first ? start.x : 0;
+    const left = row === first || !line.isWrapped ? prefix.length : 0;
+    const softWrapped = row < last && buffer.getLine(row + 1)?.isWrapped;
     // Keep typed spaces through the caret, but omit empty cells after input.
     let right = term.cols;
-    if (row === last) {
+    if (!softWrapped) {
       right = left;
       for (let col = left; col < term.cols; col++) {
         const cell = line.getCell(col);
@@ -68,6 +108,9 @@ function readPrompt(term: PromptSelectionTerminal): PromptLine | null {
       text += cell.getChars() || " ";
     }
     offsets.set(row * term.cols + right, text.length);
+    // The editor's own wrap swallowed one break character here, unless a
+    // single word filled the row and was cut without one.
+    if (row < last && !softWrapped && right < term.cols) text += " ";
     end = { x: right, y: row };
   }
   const cursor = offsets.get(cursorRow * term.cols + buffer.cursorX);
@@ -110,8 +153,15 @@ export function installPromptSelectionBridge(
     const key = (pos: IBufferCellPosition) => pos.y * term.cols + pos.x;
     if (selection.start.y < prompt.start.y ||
         key(selection.end) > (prompt.end.y + 1) * term.cols) return false;
-    const start = prompt.offsets.get(Math.max(key(selection.start), key(prompt.start)));
-    const end = prompt.offsets.get(Math.min(key(selection.end), key(prompt.end)));
+    // A drag may begin in a continuation row's indent or end in the empty
+    // cells after a row's text; snap both ends onto the draft.
+    const cells = [...prompt.offsets.keys()];
+    const from = Math.max(key(selection.start), key(prompt.start));
+    const to = Math.min(key(selection.end), key(prompt.end));
+    const startCell = cells.find((cell) => cell >= from);
+    const endCell = cells.filter((cell) => cell <= to).pop();
+    const start = startCell === undefined ? undefined : prompt.offsets.get(startCell);
+    const end = endCell === undefined ? undefined : prompt.offsets.get(endCell);
     if (start === undefined || end === undefined || start >= end) return false;
     // A cell boundary can be inside an emoji composed of several code points.
     const boundaries = new Set([0, ...[...segmenter!.segment(prompt.text)].map((s) => s.index + s.segment.length)]);
