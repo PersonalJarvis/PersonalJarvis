@@ -1,1 +1,0 @@
-const t="jarvis.society.lastAgent";function o(){try{return window.localStorage.getItem(t)}catch{return null}}function r(e){try{window.localStorage.setItem(t,e)}catch{}}function a(){try{window.localStorage.removeItem(t)}catch{}}export{a as f,r,o as s};
