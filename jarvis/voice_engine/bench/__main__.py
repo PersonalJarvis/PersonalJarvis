@@ -71,6 +71,14 @@ def build_parser() -> argparse.ArgumentParser:
     e2e.add_argument("--opt", action="append", default=[], help="TTS option key=value")
     common(memory := sub.add_parser("memory", help="resident memory per component"))
     memory.add_argument("--tts", type=_list, default=["piper", "pocket"])
+    common(worker := sub.add_parser("worker", help="P1: real-time talk through the worker"),
+           llm=True)
+    worker.add_argument("--tts", default="pocket", choices=["piper", "pocket", "qwen3"])
+    worker.add_argument("--voice", default="piper", choices=["piper", "pocket"])
+    worker.add_argument("--opt", action="append", default=[], help="TTS option key=value")
+    worker.add_argument("--barge-trials", type=int, default=3)
+    drill = sub.add_parser("drill", help="P1: kill the worker's parent, measure the orphan")
+    drill.add_argument("--trials", type=int, default=3)
     sub.add_parser("summary", help="print the latest result of every suite")
     return parser
 
@@ -116,6 +124,15 @@ def main(argv: list[str] | None = None) -> int:
                                  tts_options=_options(args.opt))
     elif args.command == "memory":
         payload = suites.run_memory(args.languages, args.tts)
+    elif args.command == "worker":
+        from jarvis.voice_engine.bench.worker_suite import run_worker  # noqa: PLC0415
+
+        payload = run_worker(args.model, args.tts, args.languages, voice_kind=args.voice,
+                             tts_options=_options(args.opt), barge_trials=args.barge_trials)
+    elif args.command == "drill":
+        from jarvis.voice_engine.bench.worker_suite import run_drill  # noqa: PLC0415
+
+        payload = run_drill(args.trials)
     else:  # pragma: no cover - argparse enforces the choices
         raise SystemExit(f"unknown command {args.command}")
     path = suites.write_report(args.command, payload, before)

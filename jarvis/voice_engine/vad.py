@@ -84,6 +84,13 @@ class Endpointer:
         self._unvoiced = 0
         self._frame = 0
 
+    def start_speech(self) -> None:
+        """Enter speech now (e.g. after a barge-in detected elsewhere), with clean counters."""
+        self.in_speech = True
+        self.in_silence = False
+        self._voiced = self.min_speech_frames
+        self._unvoiced = 0
+
     def feed(self, probability: float) -> VadEvent | None:
         self._frame += 1
         now = self._frame * FRAME_MS
