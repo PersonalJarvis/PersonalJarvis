@@ -312,5 +312,8 @@ async def test_placement_follows_the_society_roster(monkeypatch: pytest.MonkeyPa
         return SimpleNamespace(surface=surface, session_id=sid)
 
     assert await remote.placement_for_session(chat("society", "society:scout")) == ("c_1", "scout")
+    assert await remote.placement_for_session(
+        chat("society", "society:scout:routine:task1:run1")
+    ) == ("c_1", "scout")
     assert await remote.placement_for_session(chat("society", "society:here")) is None
     assert await remote.placement_for_session(chat("jarvis", "society:scout")) is None

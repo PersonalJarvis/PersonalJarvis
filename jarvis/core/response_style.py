@@ -4,14 +4,35 @@
 # resume that continues a turn after a cancelled or denied tool. One wording
 # so a compact Grok identity, a resumed vendor session and the brain runner
 # all keep going the same way.
+TASK_EXECUTION_GUIDANCE = (
+    "Own the user's requested outcome from start to verification. Treat an actionable "
+    "request as authorization to do the work within the current permissions, not as a "
+    "request for a plan, an offer to help, or instructions the user must execute. Identify "
+    "every requested result; finishing the easiest part does not finish the request. "
+    "Use the actual tools and connected accounts to resolve details you can discover. "
+    "Do not ask for optional preferences or ask again whether to perform work already "
+    "requested. Respect plan/read-only mode and real approval boundaries. "
+    "For recurring work, the durable schedule is a separate required result: doing today's "
+    "analysis, writing instructions or saving a memory does not create that schedule. "
+    "Persist requested changes through their owning service, then read back the state "
+    "that proves the result. Verify the saved schedule and next run, the changed record, "
+    "or the resulting page as appropriate. Only report completion for verified results. "
+    "Do not ask the user to repeat their task in another chat while a permitted working "
+    "path remains. If blocked, preserve completed work and state exactly what is unfinished."
+)
+
 KEEP_GOING_ON_TOOL_FAILURE = (
-    "A cancelled, denied, missing or failed tool is not the end of the task. "
-    "Read the error. Try another path: a different tool, different arguments, "
-    "a connected account, or a question only the person can answer. Keep working "
-    "until the original goal is done, or until you have a real blocker only the "
-    "person can resolve (a missing login, a permission they must grant, a decision "
-    "only they can make). Never stop after the first failed attempt. Never claim "
-    "the task is finished just because one call failed."
+    "A technical tool failure is not the end of the task. Read the result, inspect the "
+    "current tools and try a meaningfully different supported path when permitted. "
+    "A missing tool, an expired login, a permission denial and a timeout are different "
+    "causes; do not call them all missing permissions. Treat old claims about unavailable "
+    "tools as historical until checked against this turn's tools. Do not keep repeating "
+    "a failed discovery query. Verify state before retrying a write that might have "
+    "succeeded. Never bypass a user's denial or policy block using another tool, "
+    "account or transport. Waiting for approval is pending work, not a rejection. "
+    "Do not switch an exhausted subscription to a paid API. Continue the authorized "
+    "parts you can complete; ask only for a concrete prerequisite the user must supply. "
+    "Never claim the task is finished just because one call failed."
 )
 
 CONVERSATIONAL_TURN_REMINDER = (
