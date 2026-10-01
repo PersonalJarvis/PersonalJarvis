@@ -4939,8 +4939,8 @@
     "continue_busy": "La llamada no pudo iniciarse. Termina la llamada en curso o trae la app al frente e inténtalo de nuevo."
   },
   "ready_note": {
-    "title": "Todo en verde.",
-    "body": "Pensar, herramientas, agentes y {0} han respondido a la primera. Di tu palabra de activación — o simplemente empieza a escribir.",
+    "title": "Todo listo.",
+    "body": "Pensar, herramientas, agentes y {0} están configurados. Di tu palabra de activación — o simplemente empieza a escribir.",
     "go": "Vamos",
     "mode_realtime": "voz en vivo",
     "mode_pipeline": "voz de entrada y salida"

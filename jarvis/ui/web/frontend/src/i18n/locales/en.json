@@ -4972,8 +4972,8 @@
     "continue_busy": "The call could not start. End the running call or bring the app to the front, then try again."
   },
   "ready_note": {
-    "title": "All lights green.",
-    "body": "Thinking, tools, agents and {0} all answered on the first try. Say your wake word — or just start typing.",
+    "title": "All set.",
+    "body": "Thinking, tools, agents and {0} are set up. Say your wake word — or just start typing.",
     "go": "Let's go",
     "mode_realtime": "live voice",
     "mode_pipeline": "voice in and out"

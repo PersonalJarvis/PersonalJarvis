@@ -129,10 +129,29 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   const send = useAgentChat((s) => s.send);
   const cancel = useAgentChat((s) => s.cancel);
   const loadCatalog = useAgentChat((s) => s.loadCatalog);
+  const loadHealth = useAgentChat((s) => s.loadHealth);
 
   useEffect(() => {
     if (!catalog) void loadCatalog();
   }, [catalog, loadCatalog]);
+
+  // A real call changed a seat's recorded health, or a key was saved or
+  // removed somewhere: re-read the dots (a plain read — the server never
+  // probes a provider for them). Debounced, since one turn can report
+  // several providers.
+  useEffect(() => {
+    let timer: number | undefined;
+    const reread = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => void loadHealth(), 400);
+    };
+    const events = ["jarvis:provider-health-changed", "jarvis:secret-configured"];
+    events.forEach((e) => window.addEventListener(e, reread));
+    return () => {
+      window.clearTimeout(timer);
+      events.forEach((e) => window.removeEventListener(e, reread));
+    };
+  }, [loadHealth]);
 
   const providers = useMemo<ProviderOption[]>(
     () => store.getState().providerOptions(),

@@ -580,6 +580,14 @@ export function useSectionHealth() {
       if (event.type === "jarvis:provider-selection-pending") return;
       timer = window.setTimeout(() => void reload(false), 400);
     };
+    // A real call changed a provider's recorded health (pushed by the server
+    // over the existing WebSocket). Nothing about the selection changed, so
+    // the current dots stay until the plain re-read replaces them.
+    const onHealthRecorded = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => void reload(false), 400);
+    };
+    window.addEventListener("jarvis:provider-health-changed", onHealthRecorded);
     const events = [
       "jarvis:secret-configured",
       "jarvis:brain-switched",
@@ -601,6 +609,7 @@ export function useSectionHealth() {
       requestController.current?.abort();
       window.clearTimeout(timer);
       events.forEach((e) => window.removeEventListener(e, onChange));
+      window.removeEventListener("jarvis:provider-health-changed", onHealthRecorded);
     };
   }, [reload]);
 

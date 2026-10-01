@@ -6,7 +6,9 @@ import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 /**
- * The one-time "all lights green" note.
+ * The one-time "all set" note. It says the sections are set up — never that
+ * the providers answered: readiness counts a keyed provider that has not made
+ * a real call yet, because nothing probes it (that would bill the key).
  *
  * Shown exactly once: the first time every section the active voice mode
  * needs is set up with no known failure in the section-health rollup
@@ -27,6 +29,9 @@ const REFRESH_EVENTS = [
   "jarvis:agent-switched",
   "jarvis:provider-tested",
   "jarvis:provider-config-changed",
+  // A real call changed a provider's recorded health (server push over the
+  // existing WebSocket); readiness is re-read with a plain GET.
+  "jarvis:provider-health-changed",
 ];
 
 export function ReadyCelebration({ inline = false }: { inline?: boolean }) {

@@ -197,6 +197,25 @@ describe("the health dot in the provider picker", () => {
     expect(working.className).toContain("bg-muted-foreground");
   });
 
+  it("re-reads the dots when a real call changes a seat's recorded health", async () => {
+    seed({});
+    const loadHealth = vi.fn(async () => {});
+    useAgentChatStore.setState({ loadHealth } as never);
+    render(
+      <AgentChatStoreProvider store={useAgentChatStore}>
+        <AgentComposer />
+      </AgentChatStoreProvider>,
+    );
+
+    // Pushed by the server over the existing WebSocket; a burst is one read.
+    window.dispatchEvent(new CustomEvent("jarvis:provider-health-changed", { detail: {} }));
+    window.dispatchEvent(new CustomEvent("jarvis:provider-health-changed", { detail: {} }));
+
+    await waitFor(() => expect(loadHealth).toHaveBeenCalledTimes(1));
+    // A plain read: the store's loadHealth is never asked to force a sweep.
+    expect(loadHealth.mock.calls[0]).toEqual([]);
+  });
+
   it("draws no dot at all before the sweep lands", async () => {
     seed({});
     render(
