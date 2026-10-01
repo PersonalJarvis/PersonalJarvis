@@ -43,7 +43,7 @@ from typing import Any
 
 from PIL import Image
 
-from jarvis.ui.pets.states import NO_PET_ID
+from jarvis.ui.pets.states import CALL_STATES, NO_PET_ID
 from ui.orb import controls as orb_controls
 
 log = logging.getLogger("jarvis.orb")
@@ -90,108 +90,11 @@ _ACT_KEY = "act:"
 
 _ColorKey = tuple[int, int, int]
 
-#: The handset a pet holds to its ear while a voice conversation runs — the
-#: figure's half of the strip's phone button. Pixel art in source pixels,
-#: drawn at the pet's own factor so it matches every pack's pixel grid. The
-#: open side (earpiece and mouthpiece) faces the pet; the spine is on the right.
-#: ``O`` outline, ``B`` body, ``H`` highlight, ``.`` transparent.
-PHONE_SPRITE: tuple[str, ...] = (
-    ".OOOOO.",
-    "OWWWHWO",
-    "OWWWWWO",
-    ".OOOWWO",
-    "....OWO",
-    "....OWO",
-    "....OHO",
-    "....OWO",
-    ".OOOWWO",
-    "OWWWWWO",
-    "OWWWHWO",
-    ".OOOOO.",
-)
-#: The strip's glyph white and its sky-blue accent inside a near-black
-#: outline: light enough to read against a dark desktop and a dark pet alike.
-PHONE_COLORS: dict[str, tuple[int, int, int]] = {
-    "O": (13, 17, 23),
-    "W": (232, 233, 238),
-    "H": (126, 186, 255),
-}
-#: Where the ear is looked for: a band of the figure's height, from the top.
-PHONE_EAR_BAND = (0.22, 0.5)
-#: The earpiece's top, as a share of the figure's height from its top.
-PHONE_TOP = 0.2
-#: How many source pixels of the earpiece overlap the side of the head.
-PHONE_OVERLAP = 3
+#: Frame-key prefix of an on-the-phone row (``pet.json`` ``phone``).
+_PHONE_KEY = "phone:"
 #: Voice modes in which the pet is "on the phone" — the same set that turns
 #: the strip's phone button into hang-up.
 CALL_MODES: frozenset[str] = frozenset({"listen", "think", "speak"})
-
-
-def _figure_rows(frame: Image.Image, factor: int, key: _ColorKey) -> list[list[bool]]:
-    """Which source pixels of a scaled, colour-keyed frame are painted."""
-    width, height = frame.size
-    f = max(1, int(factor))
-    px = frame.load()
-    half = f // 2
-    return [
-        [px[x * f + half, y * f + half][:3] != key for x in range(width // f)]
-        for y in range(height // f)
-    ]
-
-
-def _head_edge(row: list[bool]) -> int | None:
-    """The head's right edge on one row: walk out from the centre column.
-
-    Walking (and tolerating one-pixel gaps) instead of taking the rightmost
-    painted pixel keeps loose sparkles or floating marks beside a pet from
-    being mistaken for its ear.
-    """
-    x = len(row) // 2
-    if not any(row[max(0, x - 2) : x + 3]):
-        return None
-    edge = None
-    while x < len(row):
-        if row[x]:
-            edge = x
-        elif not (x + 1 < len(row) and row[x + 1]):
-            break
-        x += 1
-    return edge
-
-
-def with_phone(frame: Image.Image, factor: int, key: _ColorKey) -> Image.Image:
-    """``frame`` with the handset held at the right side of the pet's head.
-
-    The ear is the rightmost painted pixel in the head band of THIS frame, so
-    the phone follows a bobbing head. The prop is clamped inside the frame:
-    the window never grows for it, and nothing is drawn off-screen.
-    """
-    rows = _figure_rows(frame, factor, key)
-    painted = [y for y, row in enumerate(rows) if any(row)]
-    if not painted:
-        return frame
-    top, bottom = painted[0], painted[-1]
-    fig_h = bottom - top + 1
-    band = range(top + int(fig_h * PHONE_EAR_BAND[0]), top + max(1, int(fig_h * PHONE_EAR_BAND[1])))
-    ear = max((e for e in (_head_edge(rows[y]) for y in band) if e is not None), default=None)
-    if ear is None:
-        return frame
-    width_s = len(rows[0]) if rows else 0
-    sprite_w = len(PHONE_SPRITE[0])
-    x0 = min(ear + 1 - PHONE_OVERLAP, width_s - sprite_w)
-    y0 = min(top + int(fig_h * PHONE_TOP), len(rows) - len(PHONE_SPRITE))
-    if x0 < 0 or y0 < 0:
-        return frame
-    out = frame.copy()
-    f = max(1, int(factor))
-    for sy, line in enumerate(PHONE_SPRITE):
-        for sx, cell in enumerate(line):
-            color = PHONE_COLORS.get(cell)
-            if color is None:
-                continue
-            x, y = (x0 + sx) * f, (y0 + sy) * f
-            out.paste(color, (x, y, x + f, y + f))
-    return out
 
 
 def dpi_ratio_for(points_per_inch: float | None, platform: str = sys.platform) -> float:
@@ -413,7 +316,6 @@ class PetRenderer:
         self._smoothed = 0.0
         #: A voice conversation runs: the pet holds the phone to its ear.
         self._on_call = False
-        self._phone_frames: dict[Hashable, Image.Image] = {}
         self.load(pet_id)
 
     # -- pack ------------------------------------------------------------
@@ -449,7 +351,6 @@ class PetRenderer:
 
     def _rescale(self) -> None:
         self._frames = {}
-        self._phone_frames = {}
         self._act_names: tuple[str, ...] = ()
         self._act = None
         self._blank = None
@@ -459,11 +360,14 @@ class PetRenderer:
             return
         edge = int(pack.manifest.frame_size)
         acts: Mapping[str, Any] = getattr(pack, "acts", None) or {}
+        # Phone rows join the crop too: the handset reaches past the head.
+        phone: Mapping[str, Any] = getattr(pack, "phone", None) or {}
         # Act frames join the crop (a flame may reach past the idle figure)
         # and are scaled with the states, under a prefixed key.
         source: Mapping[str, Any] = {
             **pack.frames,
             **{_ACT_KEY + str(name): seq for name, seq in acts.items()},
+            **{_PHONE_KEY + str(state): seq for state, seq in phone.items()},
         }
         try:
             crop, (idle_w, idle_h) = figure_crop(source, edge)
@@ -623,6 +527,22 @@ class PetRenderer:
         elapsed = max(0.0, now - started)
         return _ACT_KEY + name, spec, frame_index(elapsed, spec.frames, spec.fps, False), elapsed
 
+    def _phone_spec(self, state: str) -> tuple[str, Any] | None:
+        """The on-the-phone row for ``state`` during a call, or ``None``.
+
+        A pet with phone rows but none for this exact state borrows its
+        ``listening`` phone row, so the handset never vanishes mid-call; a pet
+        without phone rows (an uploaded one) keeps its plain rows.
+        """
+        if not self._on_call:
+            return None
+        phone = getattr(self._pack.manifest, "phone", None) or {}
+        for name in (state, "listening"):
+            spec = phone.get(name)
+            if spec is not None and state in CALL_STATES and self._frames.get(_PHONE_KEY + name):
+                return _PHONE_KEY + name, spec
+        return None
+
     def _current(self) -> tuple[str, Any, int, float, bool]:
         """(resolved state, spec, frame index, elapsed seconds, level-driven) for now."""
         state = self.state()
@@ -630,7 +550,7 @@ class PetRenderer:
         if act is not None:
             key, spec, index, elapsed = act
             return key, spec, index, elapsed, False
-        resolved, spec = self._pack.manifest.spec_for(state)
+        resolved, spec = self._phone_spec(state) or self._pack.manifest.spec_for(state)
         resolved = str(resolved)
         sequence = self._frames.get(resolved) or self._frames.get(state) or ()
         frames = len(sequence) or max(1, int(getattr(spec, "frames", 1)))
@@ -655,7 +575,7 @@ class PetRenderer:
         if self._pack is None:
             return ("none", self._size)
         resolved, _spec, index, _elapsed, _driven = self._current()
-        return (self._pet_id, self._factor, resolved, index, self._on_call)
+        return (self._pet_id, self._factor, resolved, index)
 
     def next_frame_delay_ms(self, t: float = 0.0) -> int:
         """How long the overlay may sleep before the next repaint is due."""
@@ -701,12 +621,4 @@ class PetRenderer:
             if self._blank is None:
                 self._blank = Image.new("RGB", self._size, self._color_key)
             return self._blank
-        frame = sequence[min(index, len(sequence) - 1)]
-        if not self._on_call:
-            return frame
-        cache_key = (resolved, min(index, len(sequence) - 1))
-        held = self._phone_frames.get(cache_key)
-        if held is None:
-            held = with_phone(frame, self._factor, self._color_key)
-            self._phone_frames[cache_key] = held
-        return held
+        return sequence[min(index, len(sequence) - 1)]

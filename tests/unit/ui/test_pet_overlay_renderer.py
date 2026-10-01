@@ -537,46 +537,22 @@ def test_a_pet_without_acts_just_idles() -> None:
 
 # --- on the phone ------------------------------------------------------------
 
-_KEY = (255, 0, 255)
 
-
-def _keyed_figure(factor: int = 3) -> Image.Image:
-    """A 30 x 30 source-pixel window with a 16 x 24 figure in the middle."""
-    frame = Image.new("RGB", (30 * factor, 30 * factor), _KEY)
-    frame.paste((200, 60, 60), (7 * factor, 3 * factor, 23 * factor, 27 * factor))
-    return frame
-
-
-def _phone_pixels(frame: Image.Image) -> int:
-    white = pr.PHONE_COLORS["W"]
-    return sum(1 for px in frame.getdata() if px[:3] == white)
-
-
-def test_the_phone_is_held_at_the_side_of_the_head_inside_the_frame() -> None:
-    frame = _keyed_figure()
-    held = pr.with_phone(frame, 3, _KEY)
-    assert held.size == frame.size
-    assert _phone_pixels(frame) == 0  # the cached original is never painted on
-    box = Image.new("1", held.size)
-    box.putdata([px[:3] == pr.PHONE_COLORS["W"] for px in held.getdata()])
-    x0, y0, _x1, y1 = box.getbbox()
-    # Earpiece overlapping the figure's right edge (source x 22), in its top half.
-    assert 18 * 3 <= x0 <= 23 * 3
-    assert 3 * 3 <= y0 and y1 <= 27 * 3
-
-
-def test_an_empty_frame_gets_no_phone() -> None:
-    blank = Image.new("RGB", (60, 60), _KEY)
-    assert pr.with_phone(blank, 2, _KEY) is blank
-
-
-def test_a_voice_conversation_puts_the_phone_to_the_ear_and_ending_it_puts_it_away() -> None:
+def test_a_voice_call_shows_the_pets_phone_rows_and_hanging_up_puts_them_away() -> None:
     renderer = pr.PetRenderer("gigi")
-    idle_key = renderer.frame_key()
-    assert _phone_pixels(renderer.render()) == 0
     renderer.on_mode("speak")
-    assert renderer.on_call and renderer.frame_key() != idle_key
-    assert _phone_pixels(renderer.render()) > 0
+    renderer.on_mode("listen")
+    assert renderer.on_call
+    assert renderer.frame_key()[2] == "phone:listening"
+    on_call = renderer.render()
     renderer.on_mode("idle")
     assert not renderer.on_call
-    assert _phone_pixels(renderer.render()) == 0
+    assert not str(renderer.frame_key()[2]).startswith("phone:")
+    assert renderer.render() is not on_call
+
+
+def test_a_pet_without_phone_rows_keeps_its_plain_rows_in_a_call() -> None:
+    renderer = pr.PetRenderer("fake", loader=_Loader({"fake": _Pack()}))
+    renderer.on_mode("listen")
+    assert renderer.on_call
+    assert renderer.frame_key()[2] == "listening"

@@ -40,10 +40,13 @@ one click.
     while it dials — or, during a conversation, hang up (the handset lies
     flat).
 - **On the phone**: while a voice conversation runs (listen / think / speak)
-  the pet holds a small pixel-art handset to the right side of its head
-  (`pet_renderer.with_phone`), drawn at the pack's own pixel factor and found
-  per frame, so it follows a bobbing head. Every pack gets it; no sprite row
-  is needed.
+  the pet holds a corded handset to its head, drawn into the pet's own
+  `phone.png` rows (one per `CALL_STATES` state, `"phone"` and
+  `"phone_sheet"` in `pet.json`). Each built-in pet grips it its own way
+  (`PhoneRig` in `scripts/pets/build_pets.py`): Gigi, Miso, Bolt and Ember
+  raise an arm or paw, Mochi pulls out a soft nub, Shelly curls up a fold of
+  its foot, and Brew cradles the handset in its handle. A pet without phone
+  rows (an uploaded one) keeps its plain rows during a call.
 - **The thought bubble** above the pet's head while Jarvis thinks, drawn in
   the pets' pixel art: a white pixel cloud with a dark outline and two small
   puffs trailing down to the head. Bobbing dots while Jarvis just thinks, the
@@ -234,6 +237,12 @@ Two row conventions make the pet feel alive:
   act twice in a row; any other state cancels it, and the overlay's frame
   timer covers the wait, so idling costs nothing extra. A user upload is a
   single sheet, so the store drops `acts` from an uploaded `pet.json`.
+- **On the phone.** A pet may also draw its call states holding a handset:
+  `"phone_sheet": "phone.png"` and `"phone": {"listening": {...},
+  "thinking": {...}, "talking": {...}}` (only the `CALL_STATES`, rows of
+  their own sheet). During a voice conversation the renderer shows those
+  rows instead of the plain ones; a call state without its own phone row
+  borrows the `listening` one. Uploads drop `phone` like `acts`.
 
 Rules the loader enforces (`jarvis/ui/pets/manifest.py`):
 

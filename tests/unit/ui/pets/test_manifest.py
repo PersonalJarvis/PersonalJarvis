@@ -13,6 +13,7 @@ from jarvis.ui.pets.manifest import (
     PetManifestError,
     check_act_cells,
     check_cells,
+    check_phone_cells,
     check_sheet_size,
     parse_manifest,
 )
@@ -266,3 +267,49 @@ def test_an_act_must_fit_its_sheet() -> None:
         check_act_cells(manifest, 48 * 5, 48 * 2)
     with pytest.raises(PetManifestError):
         check_act_cells(manifest, 48 * 6, 48)
+
+
+# --- On the phone ------------------------------------------------------------------
+
+
+def _phone(**overrides: object) -> dict:
+    phone: dict = {
+        "listening": {"row": 0, "frames": 6, "fps": 8, "loop": True},
+        "talking": {"row": 2, "frames": 4, "fps": 10, "loop": True},
+    }
+    phone.update(overrides)
+    return phone
+
+
+def test_phone_rows_are_optional_call_states_on_their_own_sheet() -> None:
+    manifest = parse_manifest(_data(phone=_phone(), phone_sheet="phone.png"), builtin=True)
+    assert list(manifest.phone) == ["listening", "talking"]
+    assert manifest.phone_sheet == "phone.png"
+    again = parse_manifest(manifest.to_json(), builtin=True)
+    assert again.phone == manifest.phone and again.phone_sheet == "phone.png"
+    plain = parse_manifest(_data(), builtin=True)
+    assert not plain.phone and plain.phone_sheet is None
+    assert "phone" not in plain.to_json()
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"phone": _phone()},  # no sheet
+        {"phone_sheet": "phone.png"},  # no rows
+        {"phone": {}, "phone_sheet": "phone.png"},
+        {"phone": _phone(), "phone_sheet": "sheet.png"},  # the state sheet
+        {"phone": _phone(), "phone_sheet": "../phone.png"},
+        {"phone": {"sleeping": {"row": 0, "frames": 2, "fps": 3}}, "phone_sheet": "p.png"},
+    ],
+)
+def test_broken_phone_rows_are_rejected(overrides: dict) -> None:
+    with pytest.raises(PetManifestError):
+        parse_manifest(_data(**overrides), builtin=True)
+
+
+def test_a_phone_row_must_fit_its_sheet() -> None:
+    manifest = parse_manifest(_data(phone=_phone(), phone_sheet="phone.png"), builtin=True)
+    check_phone_cells(manifest, 48 * 6, 48 * 3)
+    with pytest.raises(PetManifestError):
+        check_phone_cells(manifest, 48 * 6, 48 * 2)

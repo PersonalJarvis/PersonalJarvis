@@ -18,6 +18,7 @@ Adding a state = add it here (at the END, so existing sheets keep their rows),
 give it a fallback, teach the state machine when it applies, and add the label
 to every locale. Nothing else needs touching.
 """
+
 from __future__ import annotations
 
 #: Every animation state a pet can show, in sprite-sheet row order.
@@ -66,6 +67,12 @@ STATE_FALLBACKS: dict[str, str] = {
     "searching": "working",
     "held": "listening",
 }
+
+#: States a pet may also draw "on the phone" (``phone`` rows in ``pet.json``):
+#: the three a voice conversation runs through. While a call is live the
+#: renderer shows these rows instead of the plain ones; a pet without them
+#: simply keeps its plain rows.
+CALL_STATES: tuple[str, ...] = ("listening", "thinking", "talking")
 
 #: The pet id that shows the control strip with no figure ("None" in the UI).
 NO_PET_ID: str = "none"
