@@ -400,23 +400,24 @@ PET_ICON_STROKE = 2.0
 PET_LEVEL_STEPS = 6
 #: The orb's diameter as a share of the pill's height: at rest, and the extra
 #: it swells by at full level while listening or talking.
-PET_ORB_REST_SHARE = 0.80
+PET_ORB_REST_SHARE = 0.74
 PET_ORB_PULSE_SHARE = 0.08
 
-#: Fill of the pen disc and the pill: a dark navy-black, and a shade lighter
-#: under the pointer.
-PET_FILL = (23, 27, 38)
-PET_FILL_HOVER = (36, 42, 58)
+#: Fill of the pen disc and the pill: a blue-black only a breath away from a
+#: dark desktop, so the controls read as glyphs floating in a faint shadow
+#: rather than as solid buttons; a shade lighter under the pointer.
+PET_FILL = (13, 17, 23)
+PET_FILL_HOVER = (27, 32, 43)
 #: Glyphs: near-white; a muted control turns red-ish.
 PET_ICON = (232, 233, 238)
 PET_ICON_MUTED = (248, 113, 113)
-#: The divider between pill slots — just above the fill, never a hard line.
-PET_DIVIDER = (48, 55, 72)
-#: The talk orb: a glossy sphere lit from the top left.
-PET_ORB_HIGHLIGHT = (169, 208, 255)
-PET_ORB_MID = (74, 124, 245)
-PET_ORB_RIM = (39, 71, 200)
-PET_ORB_SPECULAR = (230, 241, 255)
+#: The divider between pill slots — barely above the fill, never a hard line.
+PET_DIVIDER = (24, 28, 37)
+#: The talk orb: a matte sphere, deep blue at the top that brightens toward a
+#: soft pale glow at the bottom — no gloss, no specular dot.
+PET_ORB_TOP = (40, 88, 226)
+PET_ORB_MID = (66, 114, 236)
+PET_ORB_GLOW = (178, 204, 252)
 
 
 def _spx(value: float, scale: float) -> int:
@@ -667,27 +668,40 @@ def _draw_orb(
     cy: float,
     radius: float,
 ) -> None:
-    """A glossy sphere: concentric discs drifting toward a top-left light.
+    """A matte sphere: a top-to-bottom gradient with a soft glow at the base.
 
-    The outermost disc is the deep rim colour, the innermost the highlight; the
-    centres slide toward the light as they shrink, which reads as a lit ball.
-    PIL only — no numpy on this import path.
+    Each row of the disc gets one colour — deep blue at the top, brighter
+    blue through the middle — and the lowest fifth blends toward a pale glow
+    that is strongest at the bottom centre. PIL only — no numpy on this
+    import path.
     """
-    steps = max(8, int(radius))
-    lx, ly = cx - radius * 0.38, cy - radius * 0.40
-    for k in range(steps, 0, -1):
-        t = k / steps  # 1 at the rim, toward 0 at the light
-        r = radius * t
-        ox = lx + (cx - lx) * t
-        oy = ly + (cy - ly) * t
-        if t > 0.55:
-            color = _lerp(PET_ORB_MID, PET_ORB_RIM, (t - 0.55) / 0.45)
-        else:
-            color = _lerp(PET_ORB_HIGHLIGHT, PET_ORB_MID, t / 0.55)
-        d.ellipse([ox - r, oy - r, ox + r, oy + r], fill=color)
-    shine = radius * 0.16
-    sx, sy = cx - radius * 0.42, cy - radius * 0.46
-    d.ellipse([sx - shine, sy - shine * 0.8, sx + shine, sy + shine * 0.8], fill=PET_ORB_SPECULAR)
+    top, bottom = int(cy - radius), int(cy + radius) + 1
+    for y in range(top, bottom):
+        dy = (y + 0.5) - cy
+        if abs(dy) > radius:
+            continue
+        half = math.sqrt(radius * radius - dy * dy)
+        t = (dy + radius) / (2.0 * radius)  # 0 at the top, 1 at the bottom
+        color = _lerp(PET_ORB_TOP, PET_ORB_MID, t / 0.6) if t < 0.6 else PET_ORB_MID
+        if t > 0.64:
+            # The glow fades in toward the base and toward the centre line,
+            # so the bottom reads as lit from below, not as a flat band.
+            rise = (t - 0.64) / 0.36
+            for x0, x1, share in _glow_segments(cx, half, rise):
+                d.line([(x0, y), (x1, y)], fill=_lerp(color, PET_ORB_GLOW, share))
+            continue
+        d.line([(cx - half, y), (cx + half, y)], fill=color)
+
+
+def _glow_segments(cx: float, half: float, rise: float) -> list[tuple[float, float, float]]:
+    """Split one orb row into bands whose glow share falls off from the centre."""
+    bands = 6
+    out: list[tuple[float, float, float]] = []
+    for k in range(bands, 0, -1):
+        w = half * k / bands
+        centre = 1.0 - (k - 1) / bands  # 1 for the innermost band
+        out.append((cx - w, cx + w, rise * rise * (0.25 + 0.6 * centre)))
+    return out
 
 
 def _orb_radius(state: PetStripState, pill_height: float) -> float:
