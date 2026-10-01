@@ -307,7 +307,7 @@ class NativeSmokeHarness:
         self.app_environments = []
         self.live_output = []
 
-    def install(self, installer, root, env):
+    def install(self, installer, root, env, *, log=None):
         self.installer_environments.append(dict(env))
         return root / "application"
 

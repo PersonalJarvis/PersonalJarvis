@@ -18,7 +18,7 @@ class CompletedSmoke:
     def __init__(self):
         self.installations = 0
 
-    def install(self, installer, root, env):
+    def install(self, installer, root, env, *, log=None):
         self.installations += 1
         return root / "jarvis.exe"
 
@@ -40,7 +40,7 @@ class CompletedSmoke:
 
 
 class FailedReplacementSmoke(CompletedSmoke):
-    def install(self, installer, root, env):
+    def install(self, installer, root, env, *, log=None):
         executable = super().install(installer, root, env)
         if self.installations == 2:
             raise RuntimeError("Synthetic replacement failure")

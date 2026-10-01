@@ -413,8 +413,8 @@ def isolated_environment(root: Path, port: int, control_key: str) -> dict[str, s
 class NativeRunner:
     """Execute the updater's commands, with an owned Inno destination override."""
 
-    def __init__(self, target: Path, env: dict[str, str]) -> None:
-        self.target, self.env = target, env
+    def __init__(self, target: Path, env: dict[str, str], log: Path | None = None) -> None:
+        self.target, self.env, self.log = target, env, log
 
     def run(self, argv, *, timeout_s):
         with contained_process(
@@ -440,16 +440,21 @@ class NativeRunner:
             "/TASKS=",
             f"/DIR={self.target}",
         ]
+        if self.log is not None:
+            # Inno's own log names the file behind an abort (exit code 5).
+            command.append(f"/LOG={self.log}")
         rc, _out, _err = self.run(command, timeout_s=600)
         if rc:
             raise NativeInstallerError(rc, self.target)
 
 
-def install(installer: Path, root: Path, env: dict[str, str]) -> Path:
+def install(
+    installer: Path, root: Path, env: dict[str, str], *, log: Path | None = None
+) -> Path:
     """Install or replace the same temporary destination using the real updater."""
     if sys.platform == "win32":
         target = root / "application"
-        apply_installer(installer, runner=NativeRunner(target, env), relaunch=False)
+        apply_installer(installer, runner=NativeRunner(target, env, log), relaunch=False)
         executable = target / "jarvis.exe"
     elif sys.platform == "darwin":
         target = root / "Personal Jarvis.app"
@@ -616,7 +621,9 @@ def run(installer: Path, report: Path, *, live_provider: str = "", live_model: s
             goal = "Preserve this unstarted team across installer replacement."
             for index, phase in enumerate(("fresh_install", "same_artifact_replacement")):
                 progress(phase, "install")
-                executable = install(installer, root, env)
+                executable = install(
+                    installer, root, env, log=report.with_name(f"installer-{index + 1}.log")
+                )
                 log_path = report.with_name(f"native-smoke-{index + 1}.log")
                 progress(phase, "start_application")
                 with running_app(
