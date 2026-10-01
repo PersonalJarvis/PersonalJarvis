@@ -39,6 +39,7 @@ Read saved questions, answers and the exact plan revision/digest; this never run
 - **Arguments:** `team_id` (string; required)
 - **Requires confirmation:** no
 - **Desktop UI section:** `ultra-swarm`
+- **Voice example (EN):** "show this swarm's plan"
 
 ## `swarm-clarify` — Begin or retry goal clarification for an unlaunched team when the owner requests it.
 
@@ -48,6 +49,7 @@ Begin or retry goal clarification for an unlaunched team when the owner requests
 - **Arguments:** `team_id` (string; required); `expected_storage_generation` (string; required); `request_key` (string; required)
 - **Requires confirmation:** yes
 - **Desktop UI section:** `ultra-swarm`
+- **Voice example (EN):** "ask this swarm's clarifying questions"
 
 ## `swarm-plan` — Submit only the user's actual answers or their explicit delegation; generate a saved plan for review without launching workers.
 
@@ -57,6 +59,7 @@ Submit only the user's actual answers or their explicit delegation; generate a s
 - **Arguments:** `team_id` (string; required); `expected_revision` (integer; required); `expected_storage_generation` (string; required); `answers` (object; required); `request_key` (string; required)
 - **Requires confirmation:** yes
 - **Desktop UI section:** `ultra-swarm`
+- **Voice example (EN):** "plan this swarm with my answers"
 
 ## `swarm-launch` — Launch only after the owner has reviewed and explicitly approved this saved plan revision. Send its exact digest, revision and storage generation; never invent approval or replacement tasks.
 
@@ -66,6 +69,7 @@ Launch only after the owner has reviewed and explicitly approved this saved plan
 - **Arguments:** `team_id` (string; required); `expected_revision` (integer; required); `expected_storage_generation` (string; required); `digest` (string; required); `request_key` (string; required)
 - **Requires confirmation:** yes
 - **Desktop UI section:** `ultra-swarm`
+- **Voice example (EN):** "launch the approved swarm plan"
 
 ## `swarm-show` — Inspect one Swarm team
 

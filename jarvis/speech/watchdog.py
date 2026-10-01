@@ -68,14 +68,22 @@ def _write_pid_file(path: Path) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(str(os.getpid()), encoding="utf-8")
-    except OSError:  # The PID marker is advisory; startup still proceeds without it.
-        pass
+    except OSError:
+        log.warning(
+            "Could not persist watchdog ownership marker; duplicate-start protection is limited"
+        )
 
 
 def _read_pid_file(path: Path) -> int | None:
     try:
         return int(path.read_text(encoding="utf-8").strip())
-    except (OSError, ValueError):  # An unreadable marker has no trusted owner PID.
+    except (FileNotFoundError, ValueError):
+        # First boot has no marker; malformed stale contents do not identify a process.
+        return None
+    except OSError:
+        log.warning(
+            "Could not read watchdog ownership marker; duplicate-start protection is limited"
+        )
         return None
 
 

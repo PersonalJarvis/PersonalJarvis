@@ -296,13 +296,33 @@ def _swarm_commands() -> tuple[AppCommand, ...]:
         "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50},
         "offset": {"type": "integer", "minimum": 0, "maximum": 10000000, "default": 0},
     }
+    # Explicit spoken phrasings; each still needs ToolExecutor confirmation.
+    preparation_aliases: dict[str, dict[str, tuple[str, ...]]] = {
+        "swarm-clarify": {
+            "en": ("ask this swarm's clarifying questions",),
+            "de": ("stelle die Rückfragen für diesen Swarm",),  # i18n-allow: input vocabulary
+            "es": ("haz las preguntas de este Swarm",),  # i18n-allow: input vocabulary
+        },
+        "swarm-plan": {
+            "en": ("plan this swarm with my answers",),
+            "de": ("plane diesen Swarm mit meinen Antworten",),  # i18n-allow: input vocabulary
+            "es": ("planifica este Swarm con mis respuestas",),  # i18n-allow: input vocabulary
+        },
+        "swarm-launch": {
+            "en": ("launch the approved swarm plan",),
+            "de": ("starte den freigegebenen Swarm Plan",),  # i18n-allow: input vocabulary
+            "es": ("lanza el plan aprobado del Swarm",),  # i18n-allow: input vocabulary
+        },
+    }
+
     def preparation_command(command_id: str, path: str, model: Any, description: str) -> AppCommand:
         schema = model.model_json_schema()
         schema["properties"] = {"team_id": team_id, **schema["properties"]}
         schema["required"] = ["team_id", *schema.get("required", [])]
         return AppCommand(id=command_id, title=description, description=description,
             method="POST", path=path, ui_section="ultra-swarm", params=schema,
-            path_params=("team_id",), dangerous=True, worker_allowed=False)
+            path_params=("team_id",), dangerous=True, worker_allowed=False,
+            voice_aliases=preparation_aliases[command_id])
     return (
         AppCommand(
             id="swarm-list", title="List independent Swarm teams",
@@ -340,7 +360,12 @@ def _swarm_commands() -> tuple[AppCommand, ...]:
                          "this never runs work."),
             method="GET", path="/api/swarm/teams/{team_id}/preparation", ui_section="ultra-swarm",
             params={"type": "object", "properties": {"team_id": team_id}, "required": ["team_id"]},
-            path_params=("team_id",), worker_allowed=False),
+            path_params=("team_id",), worker_allowed=False,
+            voice_aliases={
+                "en": ("show this swarm's plan",),
+                "de": ("zeige den Plan dieses Swarms",),  # i18n-allow: input vocabulary
+                "es": ("muestra el plan de este Swarm",),  # i18n-allow: input vocabulary
+            }),
         preparation_command("swarm-clarify", "/api/swarm/teams/{team_id}/preparation",
             PreparationBegin,
             "Begin or retry goal clarification for an unlaunched team when the owner requests it."),

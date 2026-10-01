@@ -22,7 +22,8 @@ async def test_unattached_media_reports_timeout_and_releases_watcher(monkeypatch
         result = await runtime.run_browser_call(bus, asyncio.Event(), timeout_s=0.01)
 
     assert result == "error"
-    assert actions == ["start"]
+    # The pending start is retracted so a later window focus cannot revive it.
+    assert actions == ["start", "stop"]
     assert not runtime._watchers
     assert caplog.messages == [
         "Browser voice media did not attach before its startup deadline"
@@ -44,6 +45,7 @@ async def test_user_hangup_during_startup_is_not_reported_as_timeout(monkeypatch
         result = await runtime.run_browser_call(bus, hangup, timeout_s=0.01)
 
     assert result == "hotkey"
-    assert actions == ["start", "stop"]
+    # A hangup before startup never requests media; the retraction stays idempotent.
+    assert actions == ["stop"]
     assert not runtime._watchers
     assert not caplog.records

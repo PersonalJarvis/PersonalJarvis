@@ -158,10 +158,15 @@ def test_windows_diagnostic_selection_cannot_skip_other_tagged_release_platforms
     inputs = workflow.get("on", workflow.get(True))["workflow_dispatch"]["inputs"]
     assert inputs["windows_only"]["default"] is False
     assert inputs["windows_only"]["type"] == "boolean"
-    assert "if" not in workflow["jobs"]["windows"]
+    # Every platform waits for release admission; only a manual dispatch may
+    # narrow a run to Windows, so tagged releases still build all platforms.
+    admission = "!failure() && !cancelled()"
+    assert workflow["jobs"]["windows"]["if"] == f"${{{{ {admission} }}}}"
     for target in ("macos", "linux"):
+        assert workflow["jobs"][target]["needs"] == "admit"
         assert workflow["jobs"][target]["if"] == (
-            "github.event_name != 'workflow_dispatch' || !inputs.windows_only"
+            f"${{{{ {admission} && "
+            "(github.event_name != 'workflow_dispatch' || !inputs.windows_only) }}"
         )
     assert set(workflow["jobs"]["release"]["needs"]) == {"windows", "macos", "linux"}
 
