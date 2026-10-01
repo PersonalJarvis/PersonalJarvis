@@ -944,9 +944,32 @@ def gigi_pose(state: str, i: int) -> Pose:
     return pose
 
 
+#: Thinking: the bits Gigi is made of, as 3 x 5 glyphs.
+_GIGI_DIGITS = {
+    "1": (".#.", "##.", ".#.", ".#.", "###"),
+    "0": (".#.", "#.#", "#.#", "#.#", ".#."),
+}
+_GIGI_RING = ("1", "0", "1")
+
+
+def _gigi_bit_ring(f: Frame, i: int, *, front: bool) -> None:
+    """Three bits orbit the head like a planet's ring; ``front`` picks the half."""
+    for k, digit in enumerate(_GIGI_RING):
+        angle = 2.0 * math.pi * (i / 8.0 + k / 3.0)
+        depth = math.sin(angle)
+        if (depth >= 0) != front:
+            continue
+        x = math.floor(24 + 18 * math.cos(angle)) - 1
+        y = math.floor(8 + 3 * depth) - 2  # around the crown, clear of the eyes
+        color = GIGI_WHITE if front else GIGI_SCAN
+        f.glyph(x, y, _GIGI_DIGITS[digit], {"#": color})
+
+
 def draw_gigi(f: Frame, pose: Pose) -> None:
     with f.offset(pose.dx, pose.dy):
         body = _gigi_body(_gigi_hem_phase(pose))
+        if pose.state == "thinking":
+            _gigi_bit_ring(f, pose.i, front=False)
         f.part(body, shade(body, GIGI_BODY, rim=GIGI_WHITE))
         for side in _gigi_arms(pose):
             f.paint(outer_ring(side) - body, OUTLINE)
@@ -965,6 +988,8 @@ def draw_gigi(f: Frame, pose: Pose) -> None:
             draw_eyes(f, pose.eyes, (17, 18), (27, 18), GIGI_EYES)
         _gigi_mouth(f, pose.mouth)
         _gigi_bits(f, pose)
+        if pose.state == "thinking":
+            _gigi_bit_ring(f, pose.i, front=True)
 
 
 def _gigi_eyes_looking(f: Frame, look: int) -> None:
@@ -1061,6 +1086,8 @@ _GIGI_ERROR_GLITCH = (
 )
 GIGI_GLITCH_RED = hexc("#e5383b")
 GIGI_SCREEN = hexc("#16181e")
+#: The one accent Gigi wears: the app's blue, on the terminal's progress bar.
+GIGI_PROGRESS = hexc("#3d9be0")
 
 #: Working: code lines on the terminal (lengths), scrolling up one a frame.
 _GIGI_CODE = (5, 3, 7, 4, 2, 6, 5, 3)
@@ -1083,6 +1110,7 @@ def _gigi_terminal_fx(f: Frame, pose: Pose) -> None:
             f.paint(rect(38 + indent, y, 37 + indent + length, y), color)
             if newest and pose.i % 2 == 0:
                 f.paint({(39 + indent + length, y)}, GIGI_WHITE)  # the cursor
+        f.paint(rect(38, 31, 38 + pose.i, 31), GIGI_PROGRESS)
 
 
 def _gigi_lens_disc(cx: int, cy: int) -> Mask:
@@ -1128,7 +1156,63 @@ def magnify(img: Image.Image, cx: int, cy: int, radius: int = 4, zoom: int = 2) 
     return out
 
 
+#: Success: a full turn in the air, as the body's width per hop frame.
+_GIGI_SPIN = (1.0, 1.0, 0.6, 0.2, 0.6, 1.0, 1.0, 1.0)
+
+
+def squash_x(img: Image.Image, factor: float) -> Image.Image:
+    """Narrow the cell around its centre line: a figure turning on the spot."""
+    width = max(2, round(CELL * factor))
+    if width >= CELL:
+        return img
+    out = Image.new("RGBA", (CELL, CELL), (0, 0, 0, 0))
+    out.paste(img.resize((width, CELL), Image.NEAREST), ((CELL - width) // 2, 0))
+    return out
+
+
+def _opaque(img: Image.Image) -> Mask:
+    return {(x, y) for y in range(CELL) for x in range(CELL) if img.getpixel((x, y))[3] >= 128}
+
+
+def ghost_aura(img: Image.Image, rings: int, color: RGBA) -> Image.Image:
+    """Dithered halos ``rings`` deep around the figure: a ghost's voice shimmer."""
+    out = img.copy()
+    covered = _opaque(img)
+    covered |= outer_ring(covered)  # one clear pixel between figure and halo
+    for depth in range(rings):
+        shell = outer_ring(covered)
+        for x, y in shell:
+            if 0 <= x < CELL and 0 <= y < CELL and (x + y + depth) % 2 == 0:
+                out.putpixel((x, y), color)
+        covered |= shell
+        covered |= outer_ring(covered)  # and one between halos
+    return out
+
+
+def afterimage(img: Image.Image, trail: Sequence[tuple[int, int]], color: RGBA) -> Image.Image:
+    """Dithered copies of the figure at each ``(dx, dy)`` behind it, fading out."""
+    out = img.copy()
+    body = _opaque(img)
+    for n, (dx, dy) in enumerate(trail):
+        step = 2 + n  # every 2nd, then every 3rd pixel
+        for x, y in body:
+            tx, ty = x + dx, y + dy
+            if (tx, ty) in body or not (0 <= tx < CELL and 0 <= ty < CELL):
+                continue
+            if (tx + 2 * ty) % step == 0 and out.getpixel((tx, ty))[3] < 128:
+                out.putpixel((tx, ty), color)
+    return out
+
+
 def gigi_post(img: Image.Image, pose: Pose) -> Image.Image:
+    if pose.state == "success":
+        return squash_x(img, _GIGI_SPIN[pose.i])
+    if pose.state == "talking" and pose.mouth in ("open", "wide"):
+        return ghost_aura(img, 1 if pose.mouth == "open" else 2, GIGI_BAND)
+    if pose.state == "held":
+        swing = _GIGI_SWAY[pose.i] - _GIGI_SWAY[pose.i - 1]
+        trail = [(-3 * swing, 2), (-6 * swing, 4)] if swing else [(0, 2), (0, 4)]
+        return afterimage(img, trail, GIGI_BAND)
     if pose.state == "error":
         slices = [(y0 + pose.dy, y1 + pose.dy, dx) for y0, y1, dx in _GIGI_ERROR_GLITCH[pose.i]]
         return glitch_slices(img, slices, GIGI_GLITCH_RED)
@@ -1169,6 +1253,7 @@ GIGI = PetDesign(
     fps=_GIGI_FPS,
     fx={
         "success": _gigi_success_fx,
+        "thinking": lambda f, pose: None,  # the bit ring is drawn with the body
         "working": _gigi_terminal_fx,
         "searching": _gigi_lens_fx,
         "held": _gigi_held_fx,
