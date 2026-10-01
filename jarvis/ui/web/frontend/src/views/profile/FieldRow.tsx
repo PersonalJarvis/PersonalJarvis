@@ -163,6 +163,8 @@ export function FieldRow({
   const kind = fieldKind(field);
   const empty = isEmptyValue(value);
   const label = t(`profile_view.fields.${field}`);
+  // Free text only: choices, scales and yes/no save on click, not via Save.
+  const typed = kind === "scalar" && !CHOICE_FIELDS[field] && !SCALE_FIELDS.has(field);
 
   const [editing, setEditing] = useState(initiallyEditing);
   const [showSource, setShowSource] = useState(false);
@@ -351,9 +353,9 @@ export function FieldRow({
           )}
           <span className="flex items-center gap-2">
             <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={close}>
-              {kind === "scalar" ? t("profile_view.raw_cancel") : t("profile_view.field_done")}
+              {typed ? t("profile_view.raw_cancel") : t("profile_view.field_done")}
             </Button>
-            {kind === "scalar" && (
+            {typed && (
               <Button type="button" size="sm" disabled={busy} onClick={saveText}>
                 <Check aria-hidden />
                 {t("profile_view.raw_save")}

@@ -135,6 +135,8 @@ describe("details", () => {
 
     const row = await screen.findByTestId("field-verbosity");
     expect(within(row).getByRole("radio", { name: "In depth" })).toBeTruthy();
+    // A choice saves on click; a Save button here would clear the value.
+    expect(within(row).queryByRole("button", { name: /Save/ })).toBeNull();
   });
 
   it("renders a choice value by its label, not its stored token", async () => {
