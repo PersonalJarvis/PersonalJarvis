@@ -1,5 +1,6 @@
 {
   "schema": 1,
+  "build_revision": 1,
   "cryptography": {
     "version": "50.0.2",
     "url": "https://files.pythonhosted.org/packages/9d/af/182eb91b0df3fe75c4d9f26fe70684569566745f6ba7e5c9c73a862c5252/cryptography-50.0.2.tar.gz",
@@ -12,5 +13,20 @@
   },
   "rust": "1.92.0",
   "macos_deployment_target": "13.0",
-  "artifacts": []
+  "build_run": "https://github.com/PersonalJarvis/PersonalJarvis/actions/runs/36845115815",
+  "build_commit": "30af211017e78c4feb9686dba844af123be57eab",
+  "artifacts": [
+    {
+      "target": "macos-x86_64",
+      "filename": "cryptography-50.0.2-cp311-abi3-macosx_13_0_x86_64.whl",
+      "sha256": "bb9df0f60294d8608d909a39c750238b48b03f51e2c8df8b2a029000a565c0d8",
+      "url": "https://personaljarvis.github.io/PersonalJarvis/native-crypto/50.0.2-1/files/cryptography-50.0.2-cp311-abi3-macosx_13_0_x86_64.whl"
+    },
+    {
+      "target": "windows-arm64",
+      "filename": "cryptography-50.0.2-cp311-abi3-win_arm64.whl",
+      "sha256": "88b0a2dac04700ebef175acd16ac8929b5cdce0110155982ccaf26f568cadc81",
+      "url": "https://personaljarvis.github.io/PersonalJarvis/native-crypto/50.0.2-1/files/cryptography-50.0.2-cp311-abi3-win_arm64.whl"
+    }
+  ]
 }

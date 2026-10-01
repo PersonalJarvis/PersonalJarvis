@@ -51,6 +51,32 @@ flows, and remains fully usable for text when the user declines. The installer
 stops instead of claiming success if the full profile or app-bundle registration
 fails.
 
+## Current cryptography on every architecture
+
+The installer uses cryptography 50.0.2 or newer and AsyncSSH 2.24.0 or newer
+on every supported architecture. Intel macOS 13+ and Windows ARM64 receive
+hash-pinned native wheels from the project's supplemental package index;
+Apple Silicon, Windows x64 and Linux use upstream PyPI wheels. Users do not
+need Rust or OpenSSL development tools. The full profile and frozen browser
+helper use the same reviewed builds.
+
+For a manual source checkout, use `python scripts/pip_install.py -e '.[full]'`
+to select the supplemental index automatically. A raw `pip` or `pipx` install
+on Intel macOS or Windows ARM64 needs
+`--extra-index-url https://personaljarvis.github.io/PersonalJarvis/native-crypto/50.0.2-1/simple/`
+(pass it through `pipx --pip-args` when using pipx).
+
+Maintainers build both native wheels with the **Native cryptography wheels**
+workflow, which validates source hashes, native architecture, linked system
+libraries and security/compatibility contracts. Record the successful artifacts'
+SHA256 values in `packaging/native-crypto.json`. Generate the static index with
+`python scripts/native_crypto_index.py --artifacts <downloaded-wheels> --output <pages-checkout>`
+and publish it on the `native-crypto-index` Pages branch before regenerating
+the application locks. Preserve older version directories; never replace a
+published wheel. A rebuilt wheel needs a new `build_revision`, even when the
+upstream version is unchanged. Keep the explicit uv index URL and pipx example
+in sync, then run the portable matrix and native runtime CI jobs before merging.
+
 ## File layout
 
 | File              | Stage | Responsibility |

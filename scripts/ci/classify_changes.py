@@ -65,6 +65,13 @@ _DEPS_FILES = {
     "requirements.in",
     "requirements.txt",
     "uv.lock",
+    "packaging/native-crypto.json",
+    "scripts/native_crypto_index.py",
+    "scripts/pip_install.py",
+    "scripts/build_native_crypto.py",
+    "tests/contract/test_native_crypto.py",
+    "tests/contract/test_native_ssh.py",
+    "jarvis/computers/ssh_packet_guard.py",
 }
 
 _REALTIME_PREFIXES = (

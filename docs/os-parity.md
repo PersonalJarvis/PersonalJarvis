@@ -1,5 +1,28 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
+## Current cryptography and SSH channel validation (2026-10-01, T3)
+
+Every architecture now requires cryptography >=50.0.2 and AsyncSSH >=2.24.0.
+Intel macOS 13+ and Windows ARM64 use project-built cp311-abi3 wheels with
+statically linked OpenSSL, published through an explicit supplemental index.
+Apple Silicon, Windows x64 and Linux continue to use upstream PyPI artifacts.
+The old Intel/ARM dependency downgrades are removed. Source installers and
+frozen browser packaging select the reviewed wheel automatically; raw pip/pipx
+users must supply the index documented in the installation guide.
+
+The 24-cell CPython 3.11-3.14 base/full resolution gate checks exact artifact
+URLs, identities, architecture tags and hashes. Native CI additionally installs
+the hashed base on Intel and Apple Silicon macOS (Python 3.11/3.14) and Windows
+ARM64 (Python 3.12/3.14), then exercises X.509 name constraints, bounded issuer
+verification, Ed25519, signing-identity PKCS12 and encrypted SSH keys. Native
+build jobs check the actual Mach-O deployment floor and Windows PE architecture.
+These checks do not imply physical microphone, UI or device verification.
+
+All SSH connections reject zero effective channel packet sizes before AsyncSSH
+can enter its send loop, including the compressed Dropbear size-one form.
+Real loopback contracts cover rejection and ordinary channel traffic, while
+unit tests preserve the password-authentication callback and host-key handling.
+
 ## Linux CLI discovery and headless credentials (2026-10-01, T2)
 
 The Linux installer exposes `jarvis` and `jarvisctl` through symlinks in

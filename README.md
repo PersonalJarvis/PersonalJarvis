@@ -52,6 +52,9 @@ For a minimal server installation, use `pip install personal-jarvis` and
 `jarvis serve`. Open the local address reported at startup; the default is
 `http://localhost:47821`. Remote browser microphone access requires HTTPS.
 See the [headless deployment guide](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/headless-vps-deployment.md).
+Manual pip/pipx installs on Intel macOS and Windows ARM64 also need the
+[native package index](docs/product/start-here/install-personal-jarvis.md#install-the-isolated-pypi-package);
+the recommended installer configures it automatically.
 
 The idea is simple: one place on your computer where you say what you need, and it happens. You talk to Jarvis or type to it, and it works out whether to just answer, do something on your computer for you, or pass the job to an agent that keeps at it while you get on with your day. You can always see what it's doing, and it asks before it touches anything that matters.
 
