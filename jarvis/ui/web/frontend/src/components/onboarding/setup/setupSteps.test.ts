@@ -64,17 +64,13 @@ describe("setup steps", () => {
 describe("resumeStep", () => {
   const steps = stepsFor("win32");
 
-  it("never skips the consent", () => {
-    expect(resumeStep(steps, "voice", false)).toBe("welcome");
+  it("returns to the saved step", () => {
+    expect(resumeStep(steps, "voice")).toBe("voice");
+    expect(resumeStep(steps, "subscriptions")).toBe("subscriptions");
   });
 
-  it("returns to the saved step once consent exists", () => {
-    expect(resumeStep(steps, "voice", true)).toBe("voice");
-  });
-
-  it("starts after the consent for an unknown or old step id", () => {
-    expect(resumeStep(steps, "api-keys", true)).toBe("keys");
-    expect(resumeStep(steps, null, true)).toBe("keys");
-    expect(resumeStep(steps, "welcome", true)).toBe("keys");
+  it("starts at the welcome for a fresh run or an unknown, old step id", () => {
+    expect(resumeStep(steps, null)).toBe("welcome");
+    expect(resumeStep(steps, "api-keys")).toBe("welcome");
   });
 });

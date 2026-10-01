@@ -1,14 +1,14 @@
 ---
 title: "Complete First-Run Setup"
 slug: first-run-setup
-summary: "Setup runs inside the app. Agree to the terms, add one key on the API Keys page, pick a wake word in Settings, then take the tour."
+summary: "Setup runs inside the app. Add one key on the API Keys page, connect a subscription for your agents, pick a wake word in Settings, then take the tour."
 section: "Start here"
 section_order: 1
 order: 3
 diataxis: tutorial
 status: active
 owner: maintainers
-last_reviewed: 2026-09-30
+last_reviewed: 2026-10-01
 phase: "-"
 audience: end-user
 tags: [setup, onboarding, tour, language, permissions, microphone, wake-word, providers]
@@ -17,8 +17,8 @@ related: [providers-and-api-keys, audio-and-wake-word, permissions, start-your-f
 
 First-run setup happens inside the real app. There is no separate setup
 screen: the window dims and a small card with the mascot walks you to the
-places where each thing is really set, and waits there. Everything else is
-explained afterwards by a short tour of the app.
+places where each thing is really set, and waits there. A short tour of the
+app follows straight away and explains everything else.
 
 ## Before You Start
 
@@ -36,21 +36,15 @@ explained afterwards by a short tour of the app.
 
 While setup runs, only the highlighted part of the app and the card can be
 used. The dots on the card show where you are. **Back** returns to the
-previous step, never behind the agreement. If the window reloads, setup
-reopens on the step you were on.
+previous step, never to the welcome. If the window reloads, setup reopens on
+the step you were on.
 
-### 1. Agree to the terms
+### 1. Welcome
 
-The first card lists what the assistant does on this computer: it runs
-commands and changes files, can see your screen when asked, sends what you say
-to the provider you choose, is billed by that provider, and can make mistakes.
-
-1. Pick **English**, **Deutsch** or **Español** on the card if you want
-   another interface language. You can change it later under **Settings >
-   Languages**.
-2. Optionally open **Read the full Terms of Use**.
-3. Tick the agreement, then select **Agree and continue**. **Decline and quit**
-   closes the app without saving anything; setup asks again next time.
+Pick **English**, **Deutsch** or **Español** on the card if you want another
+interface language (you can change it later under **Settings > Languages**),
+then select **Let's start**. There is nothing to agree to: the app is open
+source.
 
 ### 2. Add one API key
 
@@ -65,29 +59,41 @@ provider card and save it:
 **Continue** unlocks once a key is saved. **I'll add a key later** moves on;
 chat and voice then stay off until a key exists.
 
-### 3. Allow access on this Mac (macOS only)
+### 3. Connect a subscription for your agents
+
+Setup switches the API Keys page to its **Agents** tab. Agents do the bigger
+background jobs, and they run best on a subscription you already pay for:
+**Claude** (Pro or Max) or **ChatGPT** (Codex) are recommended. Select
+**Connect** on that row; your browser opens once to sign in. A subscription is
+a flat monthly price, so agent work does not bill your API key per call.
+
+The card lists every subscription that is signed in, and **Continue** unlocks
+once there is one. **I'll connect one later** moves on.
+
+### 4. Allow access on this Mac (macOS only)
 
 Setup opens **Settings > Privacy permissions**. Use **Allow** or **Open
 Settings** on each row you want, return, and wait for the row to update. The
 restart at the end applies the grants. Windows and Linux skip this step.
 
-### 4. Choose your wake word
+### 5. Choose your wake word
 
 Setup opens **Settings** at the **Wake Word** group. **Hey** is fixed; type
 your own word after it and save. The word also becomes the assistant's name,
 for example **Hey Nova** makes an assistant called Nova. The card confirms when
-the wake word is on. Without a wake word, the Call keyboard shortcut starts a
-conversation.
+the wake word is on, and **Continue** unlocks once one is saved. Without a
+wake word, choose **Skip, I'll use the Call shortcut**; the Call keyboard
+shortcut then starts a conversation.
 
-### 5. All set
+### 6. All set
 
-The last card reads back the active Brain and how voice starts, and offers
-**Start at login** if your system supports it. **Start** saves the setup and
-restarts the app once so every choice takes effect together.
+The last card reads back the active Brain, the connected agent subscriptions
+and how voice starts, and offers **Start at login** if your system supports
+it. **Show me around** starts the tour.
 
 ## Take the Tour
 
-After the restart the app opens with a short guided tour. It dims the window,
+The tour follows setup straight away. It dims the window,
 lights up one part of the real interface at a time, and explains it in a small
 card: the voice bar, a new chat, the agents and their world, Voice, Artifacts,
 the Agentic IDE, Plugins and the Marketplace, and Settings.
@@ -96,7 +102,10 @@ the Agentic IDE, Plugins and the Marketplace, and Settings.
 - The tour navigates by itself where needed (into the agents' world and back)
   and ends on the home screen. It never starts a call or any work for you.
 - **Skip tour** or **Escape** ends it at any point.
-- Replay it anytime under **Settings > App > App tour**.
+- When the tour ends (or is skipped), setup is saved and the app restarts once
+  so every choice takes effect together.
+- Replay setup and tour anytime under **Settings > App > Setup and app tour**.
+  The replay starts at the API Keys page and never restarts anything.
 
 ## Recover a Skipped or Deferred Choice
 
@@ -111,7 +120,7 @@ the Agentic IDE, Plugins and the Marketplace, and Settings.
 
 ## How It Fits Together
 
-1. The agreement is the only consent moment; the installer asks nothing.
+1. Nothing asks for consent: neither the installer nor setup.
 2. Setup never has its own screens: each step uses the page you will use
    later, so what you learn on day one is where things live.
 3. One key is enough to start. A starter plan points live voice and its
@@ -120,11 +129,12 @@ the Agentic IDE, Plugins and the Marketplace, and Settings.
    The Call shortcut starts voice without an always-listening wake engine.
 5. Permissions allow an operating-system capability; they do not approve a
    later Computer Use action or bypass its safety check.
-6. One restart at the end applies every choice; the tour runs once after it.
+6. Setup and tour run as one flow; one restart after the tour applies every
+   choice.
 
 ## Check That It Works
 
-1. After **Start**, confirm the app reopens and the tour begins.
+1. After the tour, confirm the app restarts and reopens on the home screen.
 2. Open **API Keys**, select **Test** on the active Brain card, and look for
    **Works**.
 3. Start a new chat and send a harmless message. Confirm a reply arrives.
@@ -141,7 +151,7 @@ Desktop-only features report their limits rather than prevent startup.
 | A card on the API Keys page reports a failing key | The provider refused the key or the account has no credit | Fix the account at the provider, or save a key from another provider |
 | Microphone test reports quiet, missing, or blocked | The input has no usable signal | Check OS access and **Settings > Audio devices** |
 | Saved wake word does not respond | Its local model, language, microphone, or activation switch is not ready | Use the Call shortcut; under **Settings > Wake Word**, install the offered model and run **Test wake word** |
-| The tour does not appear after the restart | The app opened in the Agentic IDE, or the tour was already seen | Leave the IDE, or replay it under **Settings > App** |
+| The tour does not appear | The tour was already seen | Replay it under **Settings > App** |
 | App does not reopen | The restart could not start a fresh process | Open the app; setup was already saved |
 | First-run setup returns every launch | The completion state is not read from the same writable data location | Follow [Troubleshooting](troubleshooting) for data-directory and version checks |
 

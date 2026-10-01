@@ -2,8 +2,10 @@ import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 
 vi.mock("./setup/SetupTour", () => ({
-  SetupTour: ({ preview, startAt }: { preview: boolean; startAt?: string }) => (
-    <div data-testid="guide" data-preview={String(preview)} data-start={startAt ?? ""} />
+  SetupTour: ({ preview, startAt, onFinished }: { preview: boolean; startAt?: string; onFinished: () => void }) => (
+    <button type="button" data-testid="guide" data-preview={String(preview)} data-start={startAt ?? ""} onClick={onFinished}>
+      guide
+    </button>
   ),
 }));
 vi.mock("./tour/GuidedTour", () => ({
@@ -46,7 +48,7 @@ it("shows the guide while setup is not complete", async () => {
   stub({ ...base, completed: false, tour_completed: false });
   render(<OnboardingGate />);
   await waitFor(() => expect(screen.getByTestId("guide")).toBeDefined());
-  // A first run is real: it completes and restarts at its end.
+  // A first run is real: it completes and restarts once its tour ends.
   expect(screen.getByTestId("guide").dataset.preview).toBe("false");
   expect(screen.queryByTestId("tour")).toBeNull();
 });
@@ -146,4 +148,34 @@ it("replays setup from the API Keys page on request from Settings", async () => 
   });
   await waitFor(() => expect(screen.getByTestId("guide").dataset.preview).toBe("true"));
   expect(screen.getByTestId("guide").dataset.start).toBe("keys");
+});
+
+it("goes from setup straight into the tour and completes when the tour ends", async () => {
+  const fetchMock = stub({ ...base, completed: false, tour_completed: false });
+  render(<OnboardingGate activeSection="chats" />);
+  const guide = await screen.findByTestId("guide");
+  act(() => guide.click());
+  const tour = await screen.findByTestId("tour");
+  const urls = () => fetchMock.mock.calls.map((c) => String(c[0]));
+  // Nothing completes (and nothing restarts) while the tour is still showing.
+  expect(urls()).not.toContain("/api/onboarding/complete");
+  act(() => tour.click());
+  await waitFor(() => expect(urls()).toContain("/api/onboarding/complete"));
+  expect(urls().indexOf("/api/onboarding/tour-complete")).toBeLessThan(urls().indexOf("/api/onboarding/complete"));
+});
+
+it("never completes onboarding after a replayed setup", async () => {
+  const fetchMock = stub({ ...base, completed: true, tour_completed: true });
+  render(<OnboardingGate activeSection="chats" />);
+  await new Promise((r) => setTimeout(r, 20));
+  act(() => {
+    window.dispatchEvent(new CustomEvent(SETUP_REPLAY_EVENT));
+  });
+  const guide = await screen.findByTestId("guide");
+  act(() => guide.click());
+  const tour = await screen.findByTestId("tour");
+  act(() => tour.click());
+  await waitFor(() => expect(screen.queryByTestId("tour")).toBeNull());
+  await new Promise((r) => setTimeout(r, 20));
+  expect(fetchMock.mock.calls.map((c) => String(c[0]))).not.toContain("/api/onboarding/complete");
 });

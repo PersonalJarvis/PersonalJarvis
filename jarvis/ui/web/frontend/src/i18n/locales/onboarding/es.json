@@ -5,25 +5,12 @@
     "step_of": "{current} de {total}",
     "welcome": {
       "title": "Bienvenido",
-      "lede": "Configuramos tu asistente aquí mismo, en la aplicación. Tarda unos dos minutos.",
+      "lede": "Configuramos tu asistente aquí mismo, en la aplicación: una clave de API, una suscripción para tus agentes y tu palabra de activación. Después, una breve visita te enseña la aplicación.",
       "language": "Idioma",
       "lang_en": "English",
       "lang_de": "Deutsch",
       "lang_es": "Español",
-      "fact_commands": "Ejecuta comandos, abre aplicaciones y cambia archivos por ti.",
-      "fact_screen": "Puede ver tu pantalla y actuar sobre ella cuando se lo pidas.",
-      "fact_cloud": "Lo que dices va al proveedor de IA que elijas.",
-      "fact_costs": "Ese proveedor cobra el uso en tu cuenta.",
-      "fact_mistakes": "Puede equivocarse, también de formas difíciles de deshacer.",
-      "accept": "Lo entiendo y lo uso bajo mi propia responsabilidad.",
-      "read_terms": "Leer las condiciones de uso completas",
-      "hide_terms": "Ocultar las condiciones",
-      "terms_loading": "Cargando las condiciones…",
-      "start": "Aceptar y continuar",
-      "decline": "Rechazar y salir",
-      "accept_failed": "No se pudo guardar tu aceptación. Comprueba que la aplicación está en marcha y vuelve a intentarlo.",
-      "declined_title": "Cerrando la aplicación",
-      "declined_body": "Has rechazado, así que no se configuró ni se guardó nada. Abre la aplicación cuando quieras y volverá a preguntar."
+      "start": "Empezar"
     },
     "keys": {
       "title": "Añade una clave de API",
@@ -58,7 +45,7 @@
     },
     "ready": {
       "title": "Todo listo",
-      "lede": "La aplicación se reinicia una vez para activarlo todo. Después, una breve visita te enseña la aplicación.",
+      "lede": "Esto es lo que está configurado. Ahora, una breve visita te enseña la aplicación.",
       "row_brain": "Cerebro",
       "row_agents": "Agentes",
       "row_voice": "Activación",
@@ -67,11 +54,9 @@
       "shortcut": "Atajo de llamada",
       "autostart": "Iniciar al entrar en la sesión",
       "no_key_note": "Sin clave, el chat y la voz siguen apagados hasta que añadas una en la página Claves API.",
-      "preview_note": "Esto es una repetición, así que no se reinicia nada. Empezar abre la visita.",
-      "restart_note": "El reinicio tarda unos diez segundos.",
-      "start_failed": "No se pudo terminar la configuración. Comprueba que la aplicación está en marcha y vuelve a intentarlo.",
-      "starting": "Iniciando…",
-      "start": "Empezar"
+      "preview_note": "Esto es una repetición, así que no se reinicia nada.",
+      "restart_note": "Al terminar la visita, la aplicación se reinicia una vez (unos diez segundos) para activarlo todo.",
+      "start": "Enséñame la aplicación"
     }
   },
   "app_tour": {

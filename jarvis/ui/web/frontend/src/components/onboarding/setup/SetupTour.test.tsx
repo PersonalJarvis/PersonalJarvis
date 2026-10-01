@@ -105,16 +105,18 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it("asks for the consent first and opens the API Keys page after it", async () => {
+it("starts with a welcome and no consent gate, then opens the API Keys page", async () => {
   const onb = fakeOnb();
   render(<SetupTour onb={onb} preview={false} onFinished={vi.fn()} />);
   const start = (await screen.findByTestId("onboarding-primary")) as HTMLButtonElement;
-  expect(start.disabled).toBe(true);
-  fireEvent.click(screen.getByTestId("onboarding-accept"));
+  expect(screen.getByTestId("setup-card").dataset.step).toBe("welcome");
+  expect(start.disabled).toBe(false);
+  expect(screen.queryByTestId("onboarding-accept")).toBeNull();
+  expect(screen.queryByTestId("onboarding-decline")).toBeNull();
   await act(async () => {
     fireEvent.click(start);
   });
-  expect(onb.acceptTerms).toHaveBeenCalled();
+  expect(onb.acceptTerms).not.toHaveBeenCalled();
   await waitFor(() => expect(screen.getByTestId("setup-card").dataset.step).toBe("keys"));
   expect(onb.saveStep).toHaveBeenCalledWith("keys", []);
   await waitFor(() => expect(useEventStore.getState().activeSection).toBe("apikeys"));
@@ -188,7 +190,7 @@ it("leaves a key that was already there exactly as it is", async () => {
   expect(calls.some((c) => c.url.includes("/switch"))).toBe(false);
 });
 
-it("completes onboarding from the last step", async () => {
+it("hands over to the tour from the last step without completing yet", async () => {
   const onb = fakeOnb({ ...accepted, current_step: "ready" });
   const onFinished = vi.fn();
   render(<SetupTour onb={onb} preview={false} onFinished={onFinished} />);
@@ -196,15 +198,24 @@ it("completes onboarding from the last step", async () => {
   await act(async () => {
     fireEvent.click(start);
   });
-  expect(onb.complete).toHaveBeenCalled();
-  expect(onFinished).not.toHaveBeenCalled();
+  // The gate completes onboarding (and restarts) only once the tour ends.
+  expect(onFinished).toHaveBeenCalled();
+  expect(onb.complete).not.toHaveBeenCalled();
+});
+
+it("keeps the app on the step's page when something else moves it", async () => {
+  render(<SetupTour onb={fakeOnb({ ...accepted, current_step: "keys" })} preview={false} onFinished={vi.fn()} />);
+  await screen.findByTestId("setup-keys-waiting");
+  await waitFor(() => expect(useEventStore.getState().activeSection).toBe("apikeys"));
+  act(() => useEventStore.getState().setActiveSection("profile"));
+  await waitFor(() => expect(useEventStore.getState().activeSection).toBe("apikeys"));
 });
 
 it("walks a replay from the start and never writes, completes or restarts", async () => {
   const onb = fakeOnb({ ...accepted, completed: true, current_step: "voice" });
   const onFinished = vi.fn();
   render(<SetupTour onb={onb} preview onFinished={onFinished} />);
-  // A replay shows every step, the consent included (already ticked).
+  // A replay from the URL shows every step, the welcome included.
   await waitFor(() => expect(screen.getByTestId("setup-card").dataset.step).toBe("welcome"));
   await act(async () => {
     fireEvent.click(screen.getByTestId("onboarding-primary"));
