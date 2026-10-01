@@ -247,15 +247,22 @@ class LiveTools:
                 return {"success": False, "error": "Tool arguments must be an object."}
             name, args = str(args["name"]), inner
         if name == "end_call":
-            if self._pending and self._affirmation_locale() is not None:
+            from jarvis.speech.hangup import user_asked_to_hang_up
+
+            if not user_asked_to_hang_up(self.user_text):
                 # Live 2026-10-01: after "Ja" to a pending approval the model
                 # called end_call instead of confirm_action and the call dropped.
-                return {
+                refusal: dict = {
                     "success": False,
-                    "error": "The user approved a pending action; they did not ask to hang up.",
-                    "approval_ids": list(self._pending),
-                    "next_step": "Call confirm_action with the approval_id.",
+                    "error": "The user did not ask to hang up. Stay on the call.",
                 }
+                if self._pending:
+                    refusal["approval_ids"] = list(self._pending)
+                    refusal["next_step"] = (
+                        "If the user approved, call confirm_action with the approval_id."
+                    )
+                log.info("Live end_call refused: the user's turn holds no hang-up request")
+                return refusal
             self.end_requested = True
             return {"success": True, "status": "closing_voice"}
         if name == "discover_tools":

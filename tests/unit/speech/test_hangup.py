@@ -11,6 +11,7 @@ from jarvis.speech.hangup import (
     is_legacy_farewell,
     strip_end_signal,
     supports_semantic_hangup,
+    user_asked_to_hang_up,
 )
 
 
@@ -171,3 +172,20 @@ def test_semantic_closure_requires_positive_user_evidence(text: str) -> None:
 ])
 def test_task_completion_and_quoted_closings_are_not_session_closure(text: str) -> None:
     assert not supports_semantic_hangup(text)
+
+
+@pytest.mark.parametrize("text", [
+    "Leg auf", "auflegen bitte", "Tschüss Jarvis", "hang up", "Goodbye",  # i18n-allow
+    "Danke, das war alles", "That's it for today", "Cuelga", "Adiós",  # i18n-allow
+])
+def test_end_call_gate_accepts_the_users_own_closing(text: str) -> None:
+    assert user_asked_to_hang_up(text)
+
+
+@pytest.mark.parametrize("text", [
+    "", None, "Ja", "Ja.", "Yes", "Sí", "Okay", "Alles klar", "Mach das",  # i18n-allow
+    "Danke", "Thanks", "Hey George, hallo",  # i18n-allow
+])
+def test_end_call_gate_refuses_a_model_hang_up_without_user_evidence(text) -> None:
+    # Live 2026-10-01: the model answered a spoken "Ja" with end_call.
+    assert not user_asked_to_hang_up(text)
