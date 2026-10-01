@@ -244,6 +244,9 @@ export function scoreTerm(term: string, needle: string): number {
   return 0;
 }
 
+/** How far a tab ranks below a top-level page with the same match quality. */
+const TAB_PENALTY = 25;
+
 export interface RankedEntry {
   entry: QuickSwitchEntry;
   label: string;
@@ -263,9 +266,14 @@ export function rankQuickSwitch(
   const needle = normalizeQuery(query);
   const all = entries.map((item) => {
     const label = labelFor(item);
-    const score = needle
+    let score = needle
       ? Math.max(0, ...entryTerms(item, label).map((term) => scoreTerm(term, needle)))
       : 1;
+    // A tab inside another area yields to a page of its own on the same word:
+    // "API Keys" means the API Keys page, not the voice section's key tab, and
+    // a word for "language" the app languages, not the dictation language. Large enough to
+    // drop an exact tab hit (100) below a page's prefix hit (80).
+    if (needle && score > 0 && item.parentLabelKey) score = Math.max(1, score - TAB_PENALTY);
     return { entry: item, label, score };
   });
   return all.filter((row) => row.score > 0).sort((a, b) => b.score - a.score);
@@ -290,4 +298,21 @@ export function strongSettingsMatches<T extends { label: string; detail?: string
       [match.label, match.detail ?? ""].some((text) => scoreTerm(normalizeQuery(text), needle) >= 60),
     )
     .slice(0, limit);
+}
+
+/**
+ * Keys of the entries whose label another entry also uses ("API Keys" is both a
+ * page and a voice tab). The row then names its area as well, so two rows that
+ * look identical never send someone to the wrong place.
+ */
+export function ambiguousEntryKeys(
+  labelFor: (item: QuickSwitchEntry) => string,
+  entries: readonly QuickSwitchEntry[] = QUICK_SWITCH_ENTRIES,
+): Set<string> {
+  const seen = new Map<string, string[]>();
+  for (const item of entries) {
+    const label = normalizeQuery(labelFor(item));
+    seen.set(label, [...(seen.get(label) ?? []), item.key]);
+  }
+  return new Set([...seen.values()].filter((keys) => keys.length > 1).flat());
 }

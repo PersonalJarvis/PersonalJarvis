@@ -19,7 +19,12 @@ import { useT, useUiLanguage } from "@/i18n";
 import { useEventStore } from "@/store/events";
 import { useHomeStore } from "@/store/home";
 import { useSettingsJump } from "@/store/settingsJump";
-import { rankQuickSwitch, strongSettingsMatches, type QuickSwitchEntry } from "@/lib/quickSwitch";
+import {
+  ambiguousEntryKeys,
+  rankQuickSwitch,
+  strongSettingsMatches,
+  type QuickSwitchEntry,
+} from "@/lib/quickSwitch";
 import { searchSettingsOptions } from "@/views/settings/settingsSearch";
 import { cn } from "@/lib/utils";
 
@@ -65,7 +70,9 @@ export function QuickSwitcher({
   const [query, setQuery] = useState("");
 
   // About forty destinations — ranked inline on every keystroke, no memo needed.
-  const ranked = rankQuickSwitch(query, (item) => label(item.labelKey, item.fallbackLabel));
+  const labelFor = (item: QuickSwitchEntry) => label(item.labelKey, item.fallbackLabel);
+  const ranked = rankQuickSwitch(query, labelFor);
+  const ambiguous = ambiguousEntryKeys(labelFor);
   const settingsMatches = useMemo(
     () => strongSettingsMatches(query, searchSettingsOptions(language, query, t)),
     [query, language, t],
@@ -137,6 +144,10 @@ export function QuickSwitcher({
                   {ranked.map(({ entry: item, label: text }) => {
                     const Icon = item.icon;
                     const here = item.section === activeSection && !item.surface;
+                    const area = item.parentLabelKey ? label(item.parentLabelKey, "") : "";
+                    // A label two rows share names its area up front, e.g.
+                    // "Voice › API Keys" beside the API Keys page itself.
+                    const shown = area && ambiguous.has(item.key) ? `${area} › ${text}` : text;
                     return (
                       <Command.Item
                         key={item.key}
@@ -148,13 +159,9 @@ export function QuickSwitcher({
                         <span className={TILE}>
                           <Icon className="h-4 w-4" aria-hidden />
                         </span>
-                        <span className="min-w-0 truncate">{text}</span>
+                        <span className="min-w-0 truncate">{shown}</span>
                         <span className={DETAIL}>
-                          {here
-                            ? t("quick_switch.current")
-                            : item.parentLabelKey
-                              ? label(item.parentLabelKey, "")
-                              : ""}
+                          {here ? t("quick_switch.current") : shown === text ? area : ""}
                         </span>
                       </Command.Item>
                     );

@@ -6,7 +6,16 @@ import { describe, expect, it } from "vitest";
 import { NAV_FOOTER_ITEMS, NAV_GROUPS, SETTINGS_HUB_ONLY_ITEMS } from "@/components/layout/navGroups";
 import { SECTION_IDS } from "@/store/events";
 import en from "@/i18n/locales/en.json";
-import { QUICK_SWITCH_ENTRIES, normalizeQuery, rankQuickSwitch, scoreTerm, strongSettingsMatches } from "./quickSwitch";
+import de from "@/i18n/locales/de.json";
+import es from "@/i18n/locales/es.json";
+import {
+  QUICK_SWITCH_ENTRIES,
+  ambiguousEntryKeys,
+  normalizeQuery,
+  rankQuickSwitch,
+  scoreTerm,
+  strongSettingsMatches,
+} from "./quickSwitch";
 
 /** Resolve labels from the shipped English dictionary, like the UI on "en". */
 function englishLabel(item: { labelKey: string; fallbackLabel: string }): string {
@@ -109,5 +118,40 @@ describe("strongSettingsMatches", () => {
     expect(strongSettingsMatches("ide", hits)).toEqual([]);
     expect(strongSettingsMatches("wake", hits).map((h) => h.label)).toEqual(["Wake word"]);
     expect(strongSettingsMatches("w", [...hits, ...hits, ...hits], 2)).toHaveLength(2);
+  });
+});
+
+/** Labels as a given UI language shows them. */
+function labelIn(tree: Record<string, unknown>) {
+  return (item: { labelKey: string; fallbackLabel: string }) => {
+    const value = item.labelKey
+      .split(".")
+      .reduce<unknown>((node, part) => (node as Record<string, unknown> | undefined)?.[part], tree);
+    return typeof value === "string" ? value.replace("{name}", "Jarvis") : item.fallbackLabel;
+  };
+}
+
+describe("typing a row's own name lands on that row", () => {
+  // The bug this guards: "API Keys" is both a page and a voice tab, and the
+  // switcher sent someone to the tab. A page must win its own name in every UI
+  // language; a tab must at least be reachable by its name.
+  for (const [language, tree] of [["en", en], ["de", de], ["es", es]] as const) {
+    const labelFor = labelIn(tree);
+    it(`in ${language}`, () => {
+      for (const item of QUICK_SWITCH_ENTRIES) {
+        const rows = rankQuickSwitch(labelFor(item), labelFor);
+        if (item.parentLabelKey) {
+          expect(rows.map((r) => r.entry.key), item.key).toContain(item.key);
+        } else {
+          expect(rows[0]?.entry.key, `${language}: "${labelFor(item)}"`).toBe(item.key);
+        }
+      }
+    });
+  }
+
+  it("ranks the API Keys page above the voice tab of the same name", () => {
+    const keys = rankQuickSwitch("API Keys", englishLabel).map((r) => r.entry.key);
+    expect(keys.indexOf("apikeys")).toBeLessThan(keys.indexOf("voice-api-keys"));
+    expect(ambiguousEntryKeys(englishLabel)).toEqual(new Set(["apikeys", "voice-api-keys"]));
   });
 });
