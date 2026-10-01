@@ -22,11 +22,12 @@ one click.
   - pen: raise the main window and open a new chat (`ComposeRequested`);
   - microphone: mute Jarvis's microphone (`VoiceMuteToggleRequested`, mirrored
     from `VoiceMuteChanged`);
-  - talk indicator (three blue-white strokes, the Jarvis bar's equalizer cut
-    down to three): start a conversation, or hang up the running one. The
-    strokes stand still and dimmed at rest, follow the live audio level while
+  - talk button (a matte blue orb carrying three slim white strokes, the
+    Jarvis bar's equalizer cut down to three): start a conversation, or hang
+    up the running one. The strokes stand still as a small waveform mark at
+    rest, follow the live audio level while
     listening, dictating or talking, and carry a travelling highlight while
-    thinking or transcribing;
+    thinking or transcribing (three dots, one lit at a time);
   - speaker: silence the assistant's voice for this session (TTS volume 0,
     mirrored from `VoiceSpeakerMuteChanged`).
 - **The thinking card** under the strip: a rounded pill with a bold title

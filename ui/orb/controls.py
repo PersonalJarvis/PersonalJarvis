@@ -399,18 +399,20 @@ PET_ICON_STROKE = 2.0
 #: enough to read as "moving with the voice" and bounds the cached frames.
 PET_LEVEL_STEPS = 6
 
-#: The talk control is three upright strokes — the Jarvis bar's equalizer
-#: vocabulary, cut down to three. Geometry as shares of the pill's height:
-#: stroke centre spacing, stroke half-width, and the shortest / tallest stroke.
+#: The talk control is a matte blue orb carrying three slim white strokes —
+#: the Jarvis bar's equalizer cut down to three and set inside the button,
+#: the way voice buttons in chat apps show they are live. Geometry as shares
+#: of the pill's height: the orb's diameter, the strokes' centre spacing and
+#: half-width, and the shortest (a round dot) and tallest stroke.
+PET_ORB_SHARE = 0.74
 PET_INDICATOR_BARS = 3
-PET_INDICATOR_SPACING = 0.21
-PET_INDICATOR_HALF_W = 0.052
-PET_INDICATOR_MIN_H = 0.18
-PET_INDICATOR_MAX_H = 0.64
-#: At rest the strokes stand still and dimmed; the middle one a little taller,
-#: so the three read as one control and not as three loose dots.
-PET_INDICATOR_REST_H: tuple[float, ...] = (0.22, 0.32, 0.22)
-PET_INDICATOR_REST_GLOW = 0.55
+PET_INDICATOR_SPACING = 0.105
+PET_INDICATOR_HALF_W = 0.029
+PET_INDICATOR_MIN_H = 2 * PET_INDICATOR_HALF_W
+PET_INDICATOR_MAX_H = 0.36
+#: At rest the strokes stand still as a small waveform mark, middle tallest.
+PET_INDICATOR_REST_H: tuple[float, ...] = (0.13, 0.21, 0.13)
+PET_INDICATOR_REST_GLOW = 1.0
 #: Animation steps per cycle. Voice: the strokes wobble around the level in
 #: ``PET_VOICE_PHASES`` steps of ``PET_VOICE_STEP_S``. Thinking: a highlight
 #: travels across the three in ``PET_THINK_PHASES`` steps per pass of
@@ -421,9 +423,9 @@ PET_THINK_PHASES = 12
 PET_THINK_PERIOD_S = 1.05
 #: Sweep shape: gaussian width (row fractions), the unlit and the lit level.
 PET_THINK_WIDTH = 0.2
-PET_THINK_BASE_V = 0.21
-PET_THINK_PEAK_V = 0.93
-PET_THINK_DIM = 0.32
+PET_THINK_BASE_V = 0.0
+PET_THINK_PEAK_V = 0.22
+PET_THINK_DIM = 0.45
 
 #: What the indicator is showing. ``rest``: nothing running. ``voice``: the
 #: microphone or Jarvis's voice is live and the strokes follow its level.
@@ -441,10 +443,13 @@ PET_ICON = (232, 233, 238)
 PET_ICON_MUTED = (248, 113, 113)
 #: The divider between pill slots — barely above the fill, never a hard line.
 PET_DIVIDER = (24, 28, 37)
-#: The indicator strokes: near-white at the top fading into a clear blue at
-#: the bottom, like the Jarvis bar's blue-white equalizer.
-PET_INDICATOR_TOP = (236, 243, 255)
-PET_INDICATOR_BOTTOM = (88, 140, 250)
+#: The talk orb: a matte sphere, deep blue at the top that brightens toward a
+#: soft pale glow at the bottom — no gloss, no specular dot.
+PET_ORB_TOP = (40, 88, 226)
+PET_ORB_MID = (66, 114, 236)
+PET_ORB_GLOW = (178, 204, 252)
+#: The strokes: plain white; a dimmed stroke mixes toward the orb's blue.
+PET_INDICATOR_WHITE = (255, 255, 255)
 
 
 def _spx(value: float, scale: float) -> int:
@@ -740,15 +745,58 @@ def indicator_bars(state: PetStripState) -> list[tuple[float, float]]:
     return [(h, PET_INDICATOR_REST_GLOW) for h in PET_INDICATOR_REST_H]
 
 
+def _draw_orb(
+    d: ImageDraw.ImageDraw,
+    cx: float,
+    cy: float,
+    radius: float,
+) -> None:
+    """A matte sphere: a top-to-bottom gradient with a soft glow at the base.
+
+    Each row of the disc gets one colour — deep blue at the top, brighter
+    blue through the middle — and the lowest fifth blends toward a pale glow
+    that is strongest at the bottom centre. PIL only — no numpy on this
+    import path.
+    """
+    top, bottom = int(cy - radius), int(cy + radius) + 1
+    for y in range(top, bottom):
+        dy = (y + 0.5) - cy
+        if abs(dy) > radius:
+            continue
+        half = math.sqrt(radius * radius - dy * dy)
+        t = (dy + radius) / (2.0 * radius)  # 0 at the top, 1 at the bottom
+        color = _lerp(PET_ORB_TOP, PET_ORB_MID, t / 0.6) if t < 0.6 else PET_ORB_MID
+        if t > 0.64:
+            # The glow fades in toward the base and toward the centre line,
+            # so the bottom reads as lit from below, not as a flat band.
+            rise = (t - 0.64) / 0.36
+            for x0, x1, share in _glow_segments(cx, half, rise):
+                d.line([(x0, y), (x1, y)], fill=_lerp(color, PET_ORB_GLOW, share))
+            continue
+        d.line([(cx - half, y), (cx + half, y)], fill=color)
+
+
+def _glow_segments(cx: float, half: float, rise: float) -> list[tuple[float, float, float]]:
+    """Split one orb row into bands whose glow share falls off from the centre."""
+    bands = 6
+    out: list[tuple[float, float, float]] = []
+    for k in range(bands, 0, -1):
+        w = half * k / bands
+        centre = 1.0 - (k - 1) / bands  # 1 for the innermost band
+        out.append((cx - w, cx + w, rise * rise * (0.25 + 0.6 * centre)))
+    return out
+
+
 def _draw_indicator(
     d: ImageDraw.ImageDraw, cx: float, cy: float, pill_h: float, state: PetStripState
 ) -> None:
-    """Three rounded strokes with a white-to-blue gradient, dimmed by glow.
+    """The matte orb with three rounded white strokes centred on it.
 
-    Drawn row by row so the gradient follows each stroke's own height; the
-    frame is RGB (the colour key needs it), so "dim" is a mix toward the
-    pill's fill — what an opacity would look like over it anyway.
+    Drawn row by row so the round caps stay exact at every height; the frame
+    is RGB (the colour key needs it), so a dimmed stroke is a mix toward the
+    orb's blue — what an opacity would look like over it anyway.
     """
+    _draw_orb(d, cx, cy, pill_h * PET_ORB_SHARE / 2.0)
     half_w = pill_h * PET_INDICATOR_HALF_W
     step = pill_h * PET_INDICATOR_SPACING
     first = cx - step * (PET_INDICATOR_BARS - 1) / 2.0
@@ -756,20 +804,18 @@ def _draw_indicator(
         x = first + i * step
         h = max(2.0 * half_w, pill_h * share)
         top, bottom = cy - h / 2.0, cy + h / 2.0
+        color = _lerp(PET_ORB_MID, PET_INDICATOR_WHITE, glow)
         for y in range(int(top), int(bottom) + 1):
             yc = y + 0.5
             if yc < top or yc > bottom:
                 continue
-            # Round caps: a circle of radius half_w at each end.
             edge = min(yc - top, bottom - yc)
             if edge < half_w:
                 dy = half_w - edge
                 span = math.sqrt(max(0.0, half_w * half_w - dy * dy))
             else:
                 span = half_w
-            t = (yc - top) / h
-            color = _lerp(PET_INDICATOR_TOP, PET_INDICATOR_BOTTOM, t)
-            d.line([(x - span, y), (x + span, y)], fill=_lerp(PET_FILL, color, glow))
+            d.line([(x - span, y), (x + span, y)], fill=color)
 
 
 def _render_pen_disc(state: PetStripState, diameter: int, scale: float) -> Image.Image:
