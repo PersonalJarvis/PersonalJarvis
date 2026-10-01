@@ -18,7 +18,10 @@ one click.
 - **The figure.** It reacts to Jarvis in real time (see *States*). It can be
   dragged anywhere, and its position is remembered per monitor
   (`[overlay.mascot] position_*`, shared with the mascot).
-- **The control strip** under the figure, from left to right:
+- **The control strip** under the figure. At rest only the figure shows; the
+  strip appears while Jarvis is listening, thinking, talking or dictating and
+  while the pointer is on the figure or the strip (it leaves 0.6 s after the
+  pointer does). With the pet "None" it always shows. From left to right:
   - pen: raise the main window and open a new chat (`ComposeRequested`);
   - microphone: mute Jarvis's microphone (`VoiceMuteToggleRequested`, mirrored
     from `VoiceMuteChanged`);
@@ -39,7 +42,7 @@ one click.
 - **The pet "None"** (`pet_id = "none"`) shows the control strip and the
   card without a figure.
 
-The pet stays on screen while Jarvis is idle. The global shortcut
+The pet stays on screen while Jarvis is idle (its strip does not). The global shortcut
 (`[trigger] hotkey_pet_toggle`, default `alt+win+p`) hides it or brings it
 back and to the front; hiding lasts until the next app start. The shortcut is
 changed on the My Pets page (Customize); an empty value switches it off. On

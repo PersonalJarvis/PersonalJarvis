@@ -2375,13 +2375,17 @@ class PetControlStrip(OrbControlRow):
     """The pet's control strip — see ``ui.orb.controls`` (``PET_ACTIONS``).
 
     The voice orb's row with three differences that make it the pet's own: it
-    stays up whenever the pet is on screen (a companion, not a pop-up), its
-    empty area is a drag handle for the whole group (the only one when the pet
-    is "None"), and its orb pulses with the live audio level through cached
-    frames, so a strip at rest never repaints.
+    shows only while the overlay's ``keep_visible`` says so (Jarvis is engaged,
+    the pointer is on the pet, or there is no figure to hover), its empty area
+    is a drag handle for the whole group (the only one when the pet is "None"),
+    and its orb pulses with the live audio level through cached frames, so a
+    strip at rest never repaints.
     """
 
     GUARDED_ACTIONS: tuple[str, ...] = ("orb",)
+    #: Longer than the orb row's: the pointer crosses a gap between the
+    #: figure and the strip, and a strip that vanishes on the way is a miss.
+    HOVER_GRACE_MS = 600
 
     def __init__(
         self,
@@ -2396,8 +2400,10 @@ class PetControlStrip(OrbControlRow):
         on_drag_motion: Callable[[Any], None] | None = None,
         on_drag_release: Callable[[Any], None] | None = None,
         on_context: Callable[[Any], None] | None = None,
+        keep_visible: Callable[[], bool] | None = None,
     ) -> None:
         self._scale = float(scale)
+        self._keep_visible = keep_visible
         self._on_drag_press = on_drag_press
         self._on_drag_motion = on_drag_motion
         self._on_drag_release = on_drag_release
@@ -2491,11 +2497,17 @@ class PetControlStrip(OrbControlRow):
     # -- pointer ----------------------------------------------------------
 
     def hide_after_grace(self) -> None:
-        """The strip stays while the pet is on screen; the pointer leaving is not a reason."""
+        """Hide after the grace, unless the overlay still wants the strip up."""
+        if self._keep_visible is not None and self._keep_visible():
+            return
+        super().hide_after_grace()
 
-    def _on_leave(self, _event: tk.Event) -> None:
-        self._pointer_inside = False
-        self._set_hovered(None)
+    def _grace_elapsed(self) -> None:
+        # The conversation may have started during the grace.
+        if self._keep_visible is not None and self._keep_visible():
+            self._hide_after_id = None
+            return
+        super()._grace_elapsed()
 
     def _on_press(self, event: tk.Event) -> None:
         super()._on_press(event)
@@ -3275,6 +3287,7 @@ class OrbOverlay:
                     on_drag_motion=self._on_drag_motion,
                     on_drag_release=self._on_drag_release,
                     on_context=self._on_right_click,
+                    keep_visible=self._pet_strip_wanted,
                 )
             else:
                 row = OrbControlRow(
@@ -3302,11 +3315,27 @@ class OrbOverlay:
         if row is not None:
             row.show()
 
+    def _pet_strip_wanted(self) -> bool:
+        """Should the pet's strip be up right now?
+
+        Only while it is useful: Jarvis is listening, thinking or talking, the
+        pointer is on the figure or the strip, or the pet is "None" (the strip
+        is all there is, so hiding it would leave nothing to hover).
+        """
+        if self._pet_id == NO_PET_ID:
+            return True
+        if self._mode in PET_VOICE_MODES or self._mode in PET_THINK_MODES:
+            return True
+        row = self._controls
+        return self._pointer_over_orb or (row is not None and row.pointer_inside)
+
     def _on_orb_pointer_leave(self, _event: tk.Event | None = None) -> None:
         self._pointer_over_orb = False
         row = self._controls
-        if row is None or self._style == "pet":
-            # The pet's strip stays while the pet does.
+        if row is None:
+            return
+        if self._style == "pet":
+            row.hide_after_grace()  # a no-op while the strip is still wanted
             return
         # A live conversation keeps the controls out: hanging up is the one
         # thing the user reaches for mid-call, and hunting for a row that hides
@@ -3323,11 +3352,13 @@ class OrbOverlay:
         active = self._mode in ("listen", "think", "speak")
         row.set_state(active=active)
         if self._style == "pet":
-            # The pet's strip lives exactly as long as the pet is on screen.
-            if self._window_mapped():
+            # The pet alone at rest; its strip joins it while it is useful.
+            if not self._window_mapped():
+                row.hide()
+            elif self._pet_strip_wanted():
                 row.show()
             else:
-                row.hide()
+                row.hide_after_grace()
             return
         # Never on its own: the row is the orb's controls, so a mode change
         # arriving while the sphere is withdrawn must not float four buttons
@@ -4065,6 +4096,8 @@ class OrbOverlay:
             return
         renderer.load(pet_id)
         self._refit_pet_window()
+        # "None" keeps its strip up; a figure lets it rest hidden again.
+        self._sync_controls_visibility()
 
     def _apply_pet_look(self) -> None:
         if self._style != "pet":

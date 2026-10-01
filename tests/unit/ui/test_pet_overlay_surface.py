@@ -498,3 +498,83 @@ def test_the_host_dispatches_status_ops_including_the_old_keys() -> None:
         ("clear_status", 0.5),
         ("clear_status", 1.5),
     ]
+
+
+# --- The control strip shows only while it is useful -------------------------
+
+
+class _Strip:
+    """Records what the overlay asks of its pet strip."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+        self.pointer_inside = False
+
+    def set_state(self, **_kwargs: object) -> None:
+        pass
+
+    def show(self) -> None:
+        self.calls.append("show")
+
+    def hide(self) -> None:
+        self.calls.append("hide")
+
+    def hide_after_grace(self) -> None:
+        self.calls.append("grace")
+
+
+def _pet_with_strip(pet_id: str = "gigi") -> tuple[OrbOverlay, _Strip]:
+    pet = OrbOverlay(style="pet", pet_id=pet_id)
+    strip = _Strip()
+    pet._controls = strip  # type: ignore[assignment]
+    pet._window_mapped = lambda: True  # type: ignore[method-assign]
+    return pet, strip
+
+
+def test_an_idle_pet_shows_only_the_figure() -> None:
+    pet, strip = _pet_with_strip()
+    pet._mode = "idle"
+    assert pet._pet_strip_wanted() is False
+    pet._sync_controls_visibility()
+    assert strip.calls == ["grace"]
+
+
+@pytest.mark.parametrize("mode", ["listen", "think", "speak", "dictate", "dictate_transcribing"])
+def test_the_strip_joins_the_pet_while_jarvis_is_engaged(mode: str) -> None:
+    pet, strip = _pet_with_strip()
+    pet._mode = mode
+    pet._sync_controls_visibility()
+    assert strip.calls == ["show"]
+
+
+def test_hovering_the_pet_brings_the_strip_and_leaving_lets_it_go() -> None:
+    pet, strip = _pet_with_strip()
+    pet._mode = "idle"
+    pet._on_orb_pointer_enter()
+    assert strip.calls == ["show"]
+    assert pet._pet_strip_wanted() is True
+    pet._on_orb_pointer_leave()
+    assert strip.calls == ["show", "grace"]
+    assert pet._pet_strip_wanted() is False
+
+
+def test_the_pointer_on_the_strip_keeps_it_up() -> None:
+    pet, strip = _pet_with_strip()
+    pet._mode = "idle"
+    strip.pointer_inside = True
+    assert pet._pet_strip_wanted() is True
+
+
+def test_the_figureless_pet_always_keeps_its_strip() -> None:
+    pet, strip = _pet_with_strip(pet_id="none")
+    pet._mode = "idle"
+    pet._sync_controls_visibility()
+    assert strip.calls == ["show"]
+
+
+def test_a_hidden_pet_hides_its_strip_even_mid_conversation() -> None:
+    pet, strip = _pet_with_strip()
+    pet._mode = "speak"
+    pet._window_mapped = lambda: False  # type: ignore[method-assign]
+    pet._sync_controls_visibility()
+    assert strip.calls == ["hide"]
