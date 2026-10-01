@@ -58,6 +58,7 @@ def normalize_domains(values: list[str]) -> list[str]:
         try:
             ipaddress.ip_address(host)
         except ValueError:
+            # A public DNS name intentionally does not parse as an IP literal.
             result.add(host)
         else:
             raise ValueError("Browser domains must be public DNS names")

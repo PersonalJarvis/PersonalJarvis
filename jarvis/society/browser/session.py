@@ -171,6 +171,7 @@ class BrowserJobs:
         try:
             binding = self.live.profiles.resolve(agent)
         except ValueError as exc:
+            # The status exposes revoked identities so the user can choose again.
             return {
                 "installed": True,
                 "mode": "unavailable",

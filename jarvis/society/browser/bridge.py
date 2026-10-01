@@ -201,6 +201,7 @@ async def execute_live(
             try:
                 selected = await asyncio.to_thread(live.profiles.resolve, current)
             except ValueError:
+                # Revocation is returned as a visible tool denial, not hidden.
                 return {"ok": False, "error": "Browser profile was disconnected"}
             if selected.access_key != binding.access_key or active_session.closed:
                 return {"ok": False, "error": "Browser profile changed; start a new task"}
