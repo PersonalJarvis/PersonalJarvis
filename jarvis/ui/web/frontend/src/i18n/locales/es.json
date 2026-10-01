@@ -2319,6 +2319,8 @@
     "restart_failed": "Personal Jarvis no pudo reiniciarse. Ciérralo y ábrelo de nuevo manualmente.",
     "request": "Permitir",
     "open_settings": "Abrir Ajustes",
+    "optional": "Opcional",
+    "optional_hint": "Solo hace falta si activas la función correspondiente.",
     "status": {
       "granted": "Permitido",
       "not_determined": "No solicitado",
@@ -2364,7 +2366,8 @@
       "impact": "Ahora mismo no funciona: {0}",
       "hint": "Permite el acceso con los botones: macOS abre directamente la página correcta de Ajustes del Sistema para cada permiso. {name} vuelve a comprobarlo automáticamente.",
       "collapse": "Ocultar detalles",
-      "expand": "Mostrar detalles"
+      "expand": "Mostrar detalles",
+      "dismiss": "Ahora no"
     },
     "features": {
       "voice": "Voz y palabra de activación",

@@ -2319,6 +2319,8 @@
     "restart_failed": "Personal Jarvis could not restart. Quit and reopen it manually.",
     "request": "Allow",
     "open_settings": "Open Settings",
+    "optional": "Optional",
+    "optional_hint": "Only needed if you turn on the matching feature.",
     "status": {
       "granted": "Allowed",
       "not_determined": "Not requested",
@@ -2364,7 +2366,8 @@
       "impact": "Not working right now: {0}",
       "hint": "Use the buttons to allow access — macOS opens the right System Settings page for each permission. {name} re-checks automatically.",
       "collapse": "Hide details",
-      "expand": "Show details"
+      "expand": "Show details",
+      "dismiss": "Not now"
     },
     "features": {
       "voice": "Voice & wake word",

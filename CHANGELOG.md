@@ -9,8 +9,14 @@ versioning per [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **macOS asks only for what you use.** "Set up everything" and the warning banner no longer demand the Music/Spotify Automation permission (or open those apps to ask) while "Mute music while dictating" is off; such rows stay in Settings, marked **Optional**. The banner has a **Not now** button that puts its rows off for a week.
+
 ### Fixed
 
+- **macOS: the downloaded app can use its permissions.** The `.dmg` app was never accepted as an installed app, so with every permission granted its microphone, shortcuts and Computer Use stayed disabled and no Allow button was offered. It is now recognised, `jarvis permissions` finds it, and "Ask again" resets its own permission records.
+- **macOS: the release image can be signed and notarized.** `packaging/macos/build.sh` now imports the Developer ID certificate secrets the workflow already passed along; until the Apple secrets are added the image stays ad-hoc signed (first launch needs Open Anyway, updates re-ask the permissions).
 - Restore the installation-guide link on the PyPI package page and unblock package publication.
 
 This patch includes all v2.5.0 features: desktop pets, profile and keyboard-shortcut settings, workspace shell tabs, improved terminal editing, task recovery, native updates, and subscription-bound background work.

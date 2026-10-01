@@ -717,6 +717,27 @@ player, and **Set up everything** walks all rows and ends in a single restart.
 Windows and Linux: no TCC, no signing identity, the rows read "not required"
 as before.
 
+**Fix pass 2026-10-01 (macOS: the downloaded app, and what is worth asking
+for, BUG-222/223/224).** Three findings from a Mac that fought its permissions.
+(1) The `.dmg` app carries its own bundle id (`ai.personaljarvis.desktop`) and
+the permission port accepted only the managed bundle's id, so the downloaded app
+read every grant as unusable: no microphone capture, no hotkeys, no request
+buttons. Both ids are now installed identities (`ACCEPTED_BUNDLE_IDS`), reset
+targets the running app's id, and `jarvis permissions` finds either app.
+(2) The published `.dmg` was ad-hoc signed and not notarized (the v2.5.0 build
+log says so), and the workflow's certificate secrets were never imported by
+`build.sh`: that is now done in a throw-away keychain, so the six `APPLE_*`
+secrets are the only thing missing for a Developer-ID-signed, notarized image;
+until then the first launch needs **System Settings > Privacy & Security >
+Open Anyway** (macOS 15) and each update re-asks every permission.
+(3) The snapshot now says which rows a feature the user turned on needs
+(`wanted`, `features[...].active`): Music/Spotify Automation is optional until
+"Mute music while dictating" is on, the banner and "Set up everything" skip
+optional rows, and the banner can be put off with "Not now". **Not verified:**
+all of it ran against faked native frameworks and a `DRY_RUN` rehearsal on
+Linux; no Mac, no Apple account and no real notarization were available.
+Windows and Linux are unchanged — no TCC, no signing identity.
+
 ## Audit verdict summary
 
 **No hard breakers found.** No feature crashes on macOS or headless Linux;
@@ -804,7 +825,7 @@ verifies against before it replaces anything.
 | OS | Artifact | Built by | Native window | Signing | Shell registration | Where it has actually run |
 |---|---|---|---|---|---|---|
 | Windows 10/11 x64 | `PersonalJarvis-Setup-x64.exe` (Inno Setup, per-user, no admin prompt, fixed AppId for in-place upgrades) | `packaging/windows/build.ps1` | Yes — WebView2, the shipping desktop window | Owned by the Windows packaging work; see `packaging/windows/` | The installer creates and removes the Start-Menu / Desktop entries | Owned by the Windows packaging work — not verified from here |
-| macOS 12+, arm64 and x64 | `PersonalJarvis-macOS-arm64.dmg`, `PersonalJarvis-macOS-x64.dmg` (`Personal Jarvis.app` + an `/Applications` symlink) | `packaging/macos/build.sh` | Yes — WKWebView through pywebview | Developer ID + Hardened Runtime + notarization when `APPLE_SIGNING_IDENTITY`/`APPLE_ID`/`APPLE_TEAM_ID`/`APPLE_APP_SPECIFIC_PASSWORD` are set; ad-hoc signing and a printed "right-click > Open" notice otherwise | The user drags the app to `/Applications`; the app registers nothing | **No real run yet.** `bash -n`, ShellCheck 0.11.0 `-S style` (zero findings) and a full `DRY_RUN=1` rehearsal of both the signed and unsigned paths. A macOS runner or a physical Mac is the outstanding gate |
+| macOS 12+, arm64 and x64 | `PersonalJarvis-macOS-arm64.dmg`, `PersonalJarvis-macOS-x64.dmg` (`Personal Jarvis.app` + an `/Applications` symlink) | `packaging/macos/build.sh` | Yes — WKWebView through pywebview | Developer ID + Hardened Runtime + notarization when `APPLE_SIGNING_IDENTITY`/`APPLE_ID`/`APPLE_TEAM_ID`/`APPLE_APP_SPECIFIC_PASSWORD` are set; ad-hoc signing and a printed notice otherwise (as of v2.5.0 every published image is the ad-hoc one; the certificate itself comes from the `APPLE_CERTIFICATE_P12_BASE64` / `APPLE_CERTIFICATE_PASSWORD` secrets, which `build.sh` imports into a temporary keychain) | The user drags the app to `/Applications`; the app registers nothing | **No real run yet.** `bash -n`, ShellCheck 0.11.0 `-S style` (zero findings) and a full `DRY_RUN=1` rehearsal of both the signed and unsigned paths. A macOS runner or a physical Mac is the outstanding gate |
 | Linux x86_64 | `PersonalJarvis-Linux-x86_64.AppImage`, `personal-jarvis_<version>_amd64.deb` | `packaging/linux/build.sh` | **No** — serves its interface over loopback HTTP and opens the default browser (P-38) | None. AppImage has no signing story in this project; the release's SHA-256 sums are the integrity check | `.deb` installs a `.desktop` entry, the hicolor icon, `/usr/bin/jarvis` and `/usr/bin/personal-jarvis`. The AppImage carries its `.desktop` inside itself for AppImageLauncher/`appimaged` | Full build proven in a `python:3.12-bookworm` container on 2026-08-25 (~2 min, 156 MB AppImage + 172 MB `.deb`): `appimagetool` digest check, `desktop-file-validate`, both executables out of one freeze, `--version` through the packaged AppImage and through `AppRun`, `AppRun serve` answering `/api/health` in 1-3 s, and the browser hand-off calling the opener with the right URL. Not run on a real desktop distribution or with FUSE |
 
 **Frozen builds register nothing themselves.** For a native install the

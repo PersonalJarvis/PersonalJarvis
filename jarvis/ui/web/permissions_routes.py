@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from jarvis.platform.permissions import (
     PermissionId,
     SystemPermissionPort,
+    active_features,
     get_system_permission_port,
 )
 
@@ -26,10 +27,23 @@ def _port(request: Request) -> SystemPermissionPort:
     return injected if injected is not None else get_system_permission_port()
 
 
+def _active_features(request: Request) -> frozenset[str]:
+    """The features the live configuration has turned on.
+
+    The port reports what macOS says; which of those answers are worth asking
+    about is a policy of the running configuration (a ducking switch that is
+    off needs no Music/Spotify consent), so the route owns it and every
+    response — status AND each operation's before/after snapshot — carries the
+    same ``wanted`` flags.
+    """
+    state = request.app.state
+    return active_features(getattr(state, "config", None) or getattr(state, "cfg", None))
+
+
 @router.get("/status", summary="Inspect system permission readiness")
 def get_permissions_status(request: Request) -> dict:
     """Return a fresh native permission and feature-readiness snapshot."""
-    return _port(request).snapshot()
+    return _port(request).snapshot(active_features=_active_features(request))
 
 
 def _operation_response(payload: dict) -> Any:
@@ -50,7 +64,11 @@ def request_permission(
     dry_run: bool = Query(default=False),
 ) -> Any:
     """Trigger an Apple prompt only from the foreground installed app."""
-    payload = _port(request).request(permission_id, dry_run=dry_run).to_dict()
+    payload = (
+        _port(request)
+        .request(permission_id, dry_run=dry_run, active_features=_active_features(request))
+        .to_dict()
+    )
     return _operation_response(payload)
 
 
@@ -66,7 +84,11 @@ def open_permission_settings(
     dry_run: bool = Query(default=False),
 ) -> Any:
     """Open the matching pane only for a local foreground app interaction."""
-    payload = _port(request).open_settings(permission_id, dry_run=dry_run).to_dict()
+    payload = (
+        _port(request)
+        .open_settings(permission_id, dry_run=dry_run, active_features=_active_features(request))
+        .to_dict()
+    )
     return _operation_response(payload)
 
 
@@ -87,7 +109,11 @@ def reset_permission(
     that ever listened before being asked and then never prompts again.
     Scoped strictly to this app's bundle id; other apps stay untouched.
     """
-    payload = _port(request).reset(permission_id, dry_run=dry_run).to_dict()
+    payload = (
+        _port(request)
+        .reset(permission_id, dry_run=dry_run, active_features=_active_features(request))
+        .to_dict()
+    )
     return _operation_response(payload)
 
 

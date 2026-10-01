@@ -13,7 +13,7 @@ import typer
 from jarvis.cli_ctl import invoke, options, render
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 from jarvis.platform import detect_platform
-from jarvis.platform.permissions import EXPECTED_BUNDLE_ID, PermissionId
+from jarvis.platform.permissions import ACCEPTED_BUNDLE_IDS, PermissionId
 
 app = typer.Typer(
     no_args_is_help=True,
@@ -22,9 +22,9 @@ app = typer.Typer(
 
 
 def _installed_macos_app() -> Path:
-    from jarvis.setup.macos_app_bundle import macos_app_bundle_path
+    from jarvis.setup.macos_app_bundle import installed_macos_app_bundle_path
 
-    return macos_app_bundle_path()
+    return installed_macos_app_bundle_path()
 
 
 def _activation_error(message: str) -> NoReturn:
@@ -63,7 +63,7 @@ def _activate_macos_app_for_tcc() -> None:
         while time.monotonic() < deadline:
             frontmost = workspace.frontmostApplication()
             raw_id = frontmost.bundleIdentifier() if frontmost is not None else None
-            if raw_id and str(raw_id) == EXPECTED_BUNDLE_ID:
+            if raw_id and str(raw_id) in ACCEPTED_BUNDLE_IDS:
                 return
             time.sleep(0.05)
     except Exception as exc:  # noqa: BLE001 - native verification fails closed

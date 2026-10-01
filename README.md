@@ -41,6 +41,12 @@ your setup, permissions, and the tools you connect.
 [macOS (Intel)](https://github.com/PersonalJarvis/PersonalJarvis/releases/latest/download/PersonalJarvis-macOS-x64.dmg) ·
 [Linux AppImage](https://github.com/PersonalJarvis/PersonalJarvis/releases/latest/download/PersonalJarvis-Linux-x86_64.AppImage)
 
+> **macOS:** the downloaded disk image is not Apple-notarized yet, so the first
+> launch needs **System Settings > Privacy & Security > Open Anyway** (macOS 15;
+> right-click > Open works up to macOS 14), and each update asks for the macOS
+> permissions again. The one-line installer below builds the app on your Mac and
+> needs neither.
+
 Prefer the command line? Use the installer below.
 
 **Windows — PowerShell**

@@ -198,3 +198,61 @@ it("stops when asked and never restarts without being allowed to", async () => {
   expect(outcome).toBe("cancelled");
   expect(calls).toEqual(["/api/permissions/accessibility/open-settings?dry_run=false"]);
 });
+
+it("skips a row nothing the user turned on needs, and never nags about it", async () => {
+  // Music/Spotify Automation while "mute music" is off: the row exists and can
+  // be allowed by hand, but the guided flow must not open Music to ask for it.
+  const calls: string[] = [];
+  const body: PermissionSnapshot = {
+    ...twoRowSnapshot("granted", "granted"),
+    permissions: [
+      ...twoRowSnapshot("granted", "granted").permissions,
+      {
+        id: "automation",
+        status: "not_determined",
+        required: ["audio_ducking"],
+        wanted: false,
+        can_request: true,
+        can_open_settings: true,
+        can_reset: false,
+        restart_required: false,
+      },
+    ],
+    features: {
+      voice: { ready: true, missing: [], active: true },
+      audio_ducking: { ready: false, missing: ["automation"], active: false },
+    },
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (init?.method === "POST") calls.push(url);
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    }),
+  );
+
+  const { result } = renderHook(() => usePermissions());
+  await waitFor(() => expect(result.current.snapshot).not.toBeNull());
+
+  expect(result.current.setupNeeded).toBe(false);
+  let outcome: string | undefined;
+  await act(async () => {
+    outcome = await result.current.setupAll({ pollMs: 1 });
+  });
+  expect(outcome).toBe("complete");
+  expect(calls).toEqual([]);
+});
+
+it("keeps asking about a row a backend that sends no policy still wants", async () => {
+  // An older backend has no `wanted` flag: every row is wanted, as it always was.
+  const body = twoRowSnapshot("not_determined", "granted");
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue({ ok: true, status: 200, json: () => Promise.resolve(body) }),
+  );
+
+  const { result } = renderHook(() => usePermissions());
+
+  await waitFor(() => expect(result.current.setupNeeded).toBe(true));
+});
+

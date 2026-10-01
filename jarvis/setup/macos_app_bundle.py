@@ -51,6 +51,7 @@ from jarvis.core.branding import (
     MACOS_BUNDLE_ID as BUNDLE_ID,
 )
 from jarvis.core.branding import (
+    MACOS_DMG_BUNDLE_ID,
     MACOS_EXECUTABLE_NAME,
 )
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
@@ -164,6 +165,17 @@ def macos_applications_dir(
     return user
 
 
+def _bundle_identifier(candidate: Path) -> str | None:
+    """``CFBundleIdentifier`` of ``candidate``; ``None`` when it cannot be read."""
+    try:
+        with (candidate / "Contents" / "Info.plist").open("rb") as stream:
+            bundle_id = plistlib.load(stream).get("CFBundleIdentifier")
+    except (OSError, ValueError, plistlib.InvalidFileException):
+        # Missing or unreadable metadata proves nothing about ownership.
+        return None
+    return bundle_id if isinstance(bundle_id, str) and bundle_id else None
+
+
 def _is_foreign_bundle(candidate: Path) -> bool:
     """Whether ``candidate`` is an app of the same NAME that is not ours.
 
@@ -174,13 +186,27 @@ def _is_foreign_bundle(candidate: Path) -> bool:
     ``Info.plist`` naming a different bundle id proves that — a damaged bundle
     of ours (no or unreadable ``Info.plist``) stays ours, so it can be repaired.
     """
-    try:
-        with (candidate / "Contents" / "Info.plist").open("rb") as stream:
-            bundle_id = plistlib.load(stream).get("CFBundleIdentifier")
-    except (OSError, ValueError, plistlib.InvalidFileException):
-        # Missing or unreadable metadata proves nothing about ownership.
-        return False
-    return isinstance(bundle_id, str) and bool(bundle_id) and bundle_id != BUNDLE_ID
+    bundle_id = _bundle_identifier(candidate)
+    return bundle_id is not None and bundle_id != BUNDLE_ID
+
+
+def installed_macos_app_bundle_path() -> Path:
+    """The app the user actually launches: the managed bundle, else the .dmg app.
+
+    ``macos_app_bundle_path`` answers for the managed install only and, on a
+    Mac that has just the downloaded .dmg app, points at a bundle that does not
+    exist — so anything that has to bring the running app to the front (the
+    ``jarvis permissions`` commands) reported "app not found" for a perfectly
+    healthy install. The .dmg app is accepted only under its own bundle id.
+    """
+    managed = macos_app_bundle_path()
+    if managed.is_dir():
+        return managed
+    for root in (SYSTEM_APPLICATIONS_DIR, user_applications_dir()):
+        candidate = root / APP_DIR_NAME
+        if candidate.is_dir() and _bundle_identifier(candidate) == MACOS_DMG_BUNDLE_ID:
+            return candidate
+    return managed
 
 
 def macos_app_bundle_path(*, applications_dir: Path | None = None) -> Path:
@@ -1346,6 +1372,7 @@ __all__ = [
     "last_error",
     "macos_app_bundle_is_launchable",
     "SYSTEM_APPLICATIONS_DIR",
+    "installed_macos_app_bundle_path",
     "macos_app_bundle_path",
     "macos_applications_dir",
     "user_applications_dir",

@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+import typer
 from typer.testing import CliRunner
 
 from jarvis.cli_ctl.__main__ import app
+from jarvis.platform.permissions import ACCEPTED_BUNDLE_IDS
 
 runner = CliRunner()
 
@@ -95,15 +98,14 @@ def test_request_dry_run_does_not_activate_app(monkeypatch, capture_api):
     assert capture_api["calls"] == []
 
 
-def test_macos_activation_targets_canonical_bundle_and_waits_for_identity(
-    monkeypatch, tmp_path
-):
+def _activate_with_frontmost(monkeypatch, tmp_path, frontmost_id: str):
+    """Run the macOS activation helper against a fake frontmost app."""
     from jarvis.cli_ctl.commands import permissions as module
 
     bundle = tmp_path / "Personal Jarvis.app"
     bundle.mkdir()
     commands: list[list[str]] = []
-    frontmost = SimpleNamespace(bundleIdentifier=lambda: module.EXPECTED_BUNDLE_ID)
+    frontmost = SimpleNamespace(bundleIdentifier=lambda: frontmost_id)
     workspace = SimpleNamespace(frontmostApplication=lambda: frontmost)
     appkit = SimpleNamespace(
         NSWorkspace=SimpleNamespace(sharedWorkspace=lambda: workspace)
@@ -118,7 +120,36 @@ def test_macos_activation_targets_canonical_bundle_and_waits_for_identity(
         ),
     )
     monkeypatch.setattr(module.importlib, "import_module", lambda _name: appkit)
+    # A fake clock keeps the "never became the foreground app" case instant.
+    ticks = iter(range(1000))
+    monkeypatch.setattr(
+        module,
+        "time",
+        SimpleNamespace(monotonic=lambda: float(next(ticks)), sleep=lambda _s: None),
+    )
+    return module, bundle, commands
+
+
+@pytest.mark.parametrize("bundle_id", ACCEPTED_BUNDLE_IDS)
+def test_macos_activation_targets_canonical_bundle_and_waits_for_identity(
+    monkeypatch, tmp_path, bundle_id
+):
+    # Both the managed bundle and the downloaded .dmg app are the installed app;
+    # the .dmg one used to be refused here, so `jarvis permissions request`
+    # failed on a Mac that only has the downloaded app.
+    module, bundle, commands = _activate_with_frontmost(monkeypatch, tmp_path, bundle_id)
 
     module._activate_macos_app_for_tcc()
 
     assert commands == [["open", str(bundle)]]
+
+
+def test_macos_activation_refuses_when_another_app_stays_in_front(monkeypatch, tmp_path):
+    module, _bundle, _commands = _activate_with_frontmost(
+        monkeypatch, tmp_path, "com.apple.Terminal"
+    )
+
+    with pytest.raises(typer.Exit) as excinfo:
+        module._activate_macos_app_for_tcc()
+
+    assert excinfo.value.exit_code == 1

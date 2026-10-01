@@ -97,6 +97,30 @@ describe("PermissionRows", () => {
 
     expect(screen.queryByRole("button", { name: "permissions.ask_again" })).toBeNull();
   });
+
+  it("marks a row nothing the user turned on needs as optional, but keeps it usable", () => {
+    mockSnapshot = snapshotWith({
+      id: "automation",
+      required: ["audio_ducking"],
+      wanted: false,
+      status: "not_determined",
+    });
+    render(<PermissionRows />);
+
+    expect(screen.getByTestId("permission-optional-automation")).toBeDefined();
+    expect(screen.getByText(/permissions\.optional_hint/)).toBeDefined();
+    // Still there for anyone who wants to allow it by hand.
+    fireEvent.click(screen.getByRole("button", { name: "permissions.request" }));
+    expect(request).toHaveBeenCalledWith("automation");
+  });
+
+  it("does not label a wanted row as optional", () => {
+    mockSnapshot = snapshotWith({ wanted: true });
+    render(<PermissionRows />);
+
+    expect(screen.queryByTestId("permission-optional-screen_recording")).toBeNull();
+    expect(screen.queryByText(/permissions\.optional_hint/)).toBeNull();
+  });
 });
 
 describe("Set up everything", () => {

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from jarvis.platform.permissions import PermissionOperation
+from jarvis.platform.permissions import FEATURE_REQUIREMENTS, PermissionOperation
 from jarvis.ui.web.control_auth import require_control_key_or_session
 from jarvis.ui.web.permissions_routes import router
 
@@ -34,12 +36,16 @@ class _Port:
     def __init__(self, *, fail: bool = False) -> None:
         self.fail = fail
         self.calls: list[tuple[str, str, bool]] = []
+        # The feature policy each call arrived with, in call order.
+        self.policies: list[frozenset[str] | None] = []
 
-    def snapshot(self) -> dict:
+    def snapshot(self, *, active_features=None) -> dict:
+        self.policies.append(active_features)
         return _snapshot()
 
-    def request(self, permission_id, *, dry_run: bool = False):
+    def request(self, permission_id, *, dry_run: bool = False, active_features=None):
         self.calls.append(("request", permission_id.value, dry_run))
+        self.policies.append(active_features)
         return PermissionOperation(
             not self.fail,
             permission_id.value,
@@ -51,8 +57,9 @@ class _Port:
             _snapshot(),
         )
 
-    def open_settings(self, permission_id, *, dry_run: bool = False):
+    def open_settings(self, permission_id, *, dry_run: bool = False, active_features=None):
         self.calls.append(("open_settings", permission_id.value, dry_run))
+        self.policies.append(active_features)
         return PermissionOperation(
             True,
             permission_id.value,
@@ -64,11 +71,27 @@ class _Port:
             _snapshot(),
         )
 
+    def reset(self, permission_id, *, dry_run: bool = False, active_features=None):
+        self.calls.append(("reset", permission_id.value, dry_run))
+        self.policies.append(active_features)
+        return PermissionOperation(
+            True,
+            permission_id.value,
+            "reset",
+            not dry_run,
+            dry_run,
+            False,
+            "reset",
+            _snapshot(),
+        )
 
-def _client(port: _Port) -> TestClient:
+
+def _client(port: _Port, *, config=None) -> TestClient:
     app = FastAPI()
     app.include_router(router)
     app.state.system_permission_port = port
+    if config is not None:
+        app.state.config = config
     app.dependency_overrides[require_control_key_or_session] = lambda: None
     return TestClient(app)
 
@@ -125,3 +148,37 @@ def test_mutating_routes_are_marked_dangerous_in_openapi() -> None:
         paths["/api/permissions/{permission_id}/open-settings"]["post"]["x-jarvis-dangerous"]
         is True
     )
+
+
+def _config(*, ducking: bool) -> SimpleNamespace:
+    return SimpleNamespace(ducking=SimpleNamespace(enabled=ducking))
+
+
+def test_every_route_hands_the_port_the_live_configurations_feature_policy() -> None:
+    """Ducking is off by default, so its Automation row must not be asked for."""
+    port = _Port()
+    client = _client(port, config=_config(ducking=False))
+
+    client.get("/api/permissions/status")
+    client.post("/api/permissions/microphone/request")
+    client.post("/api/permissions/microphone/open-settings")
+    client.post("/api/permissions/accessibility/reset")
+
+    expected = frozenset(FEATURE_REQUIREMENTS) - {"audio_ducking"}
+    assert port.policies == [expected, expected, expected, expected]
+
+
+def test_turning_ducking_on_makes_every_feature_active_again() -> None:
+    port = _Port()
+
+    _client(port, config=_config(ducking=True)).get("/api/permissions/status")
+
+    assert port.policies == [frozenset(FEATURE_REQUIREMENTS)]
+
+
+def test_without_a_configuration_every_feature_stays_active() -> None:
+    port = _Port()
+
+    _client(port).get("/api/permissions/status")
+
+    assert port.policies == [frozenset(FEATURE_REQUIREMENTS)]

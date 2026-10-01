@@ -13,7 +13,7 @@ import logging
 import os
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import asdict, dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -25,10 +25,21 @@ from jarvis.core.branding import (
 from jarvis.core.branding import (
     MACOS_BUNDLE_ID as EXPECTED_BUNDLE_ID,
 )
+from jarvis.core.branding import (
+    MACOS_DMG_BUNDLE_ID,
+)
 
 from . import PlatformName, detect_platform
 
 log = logging.getLogger(__name__)
+
+# Both ways the app reaches a Mac are "the installed app": the managed local
+# bundle and the downloadable .dmg build. They carry different bundle ids and so
+# keep different privacy grants, but each one is the app the user launched —
+# never Terminal or a bare Python. Accepting only the managed id made every
+# permission feature of the .dmg app fail closed even with all grants given, and
+# hid every Allow / Open Settings button, so the user had no way to fix it.
+ACCEPTED_BUNDLE_IDS: tuple[str, ...] = (EXPECTED_BUNDLE_ID, MACOS_DMG_BUNDLE_ID)
 
 _SYSTEM_SETTINGS_BUNDLE_ID = "com.apple.systempreferences"
 
@@ -205,6 +216,25 @@ FEATURE_REQUIREMENTS: dict[str, tuple[PermissionId, ...]] = {
     "audio_ducking": (PermissionId.AUTOMATION,),
     "api_keys": (PermissionId.CREDENTIAL_STORE,),
 }
+
+
+def active_features(config: object | None = None) -> frozenset[str]:
+    """The features this configuration has turned on.
+
+    A macOS permission is only worth asking for while a feature that needs it
+    is on. Every feature is on by default except audio ducking
+    (``[ducking].enabled`` is opt-in): its Automation row opens Music and
+    Spotify in the background just to show a consent dialog, which nobody who
+    never enabled "mute music while dictating" should ever meet.
+
+    ``None`` — a caller that knows no configuration — keeps every feature on,
+    which is the behaviour that existed before this policy.
+    """
+    active = set(FEATURE_REQUIREMENTS)
+    if config is not None and not bool(getattr(getattr(config, "ducking", None), "enabled", False)):
+        active.discard("audio_ducking")
+    return frozenset(active)
+
 
 _LABELS: dict[PermissionId, str] = {
     PermissionId.MICROPHONE: "Microphone",
@@ -471,6 +501,11 @@ class PermissionStatus:
     can_reset: bool
     restart_required: bool
     detail: str | None
+    # Whether a feature the user has turned on needs this permission right now.
+    # ``required`` lists every feature that COULD use it; a permission nothing
+    # active needs is optional — shown, never nagged about, never asked in the
+    # guided flow (a Music/Spotify consent for a ducking switch that is off).
+    wanted: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -573,9 +608,21 @@ class SystemPermissionPort:
                 # location. False is the cautious reading and it feeds a
                 # stability flag the caller already reports on.
                 canonical_path = False
-        stable = bundle_id == EXPECTED_BUNDLE_ID and launched_as_bundle and canonical_path
+        stable = bundle_id in ACCEPTED_BUNDLE_IDS and launched_as_bundle and canonical_path
         self._bundle_identity_cache = (bundle_id, bundle_path, launched_as_bundle, stable)
         return self._bundle_identity_cache
+
+    def _tcc_bundle_id(self) -> str:
+        """The bundle id whose privacy rows belong to THIS running app.
+
+        ``tccutil reset`` must drop the rows of the app the user is looking at:
+        the .dmg build owns ``ai.personaljarvis.desktop`` and never touched the
+        managed bundle's rows, so resetting the managed id for it would report
+        success and change nothing. A process that is not an installed app
+        (a development run) keeps the managed id it always used.
+        """
+        running = self._bundle_identity()[0]
+        return running if running in ACCEPTED_BUNDLE_IDS else EXPECTED_BUNDLE_ID
 
     def _stable_identity(self) -> bool:
         """The cached static half of the runtime-access gate (darwin only)."""
@@ -599,6 +646,9 @@ class SystemPermissionPort:
             )
 
         bundle_id, bundle_path, launched_as_bundle, stable = self._bundle_identity()
+        # What the UI calls "expected" is the id this install is supposed to
+        # carry: its own when it is one of ours, the managed one otherwise.
+        expected_bundle_id = bundle_id if bundle_id in ACCEPTED_BUNDLE_IDS else EXPECTED_BUNDLE_ID
         foreground = False
         headless = True
         appkit = self._load("AppKit")
@@ -619,7 +669,7 @@ class SystemPermissionPort:
         return (
             AppIdentity(
                 app_name=APP_NAME,
-                expected_bundle_id=EXPECTED_BUNDLE_ID,
+                expected_bundle_id=expected_bundle_id,
                 bundle_id=bundle_id,
                 bundle_path=bundle_path,
                 launched_as_bundle=launched_as_bundle,
@@ -959,11 +1009,22 @@ class SystemPermissionPort:
             ),
         }[state]
 
-    def snapshot(self) -> dict[str, Any]:
-        """Return a fresh native snapshot; no permission result is retained."""
+    def snapshot(self, *, active_features: Collection[str] | None = None) -> dict[str, Any]:
+        """Return a fresh native snapshot; no permission result is retained.
+
+        ``active_features`` names the features the user has turned on (see
+        :func:`active_features`); a permission is ``wanted`` only while one of
+        them needs it. ``None`` keeps every feature on.
+        """
+        active = (
+            frozenset(FEATURE_REQUIREMENTS)
+            if active_features is None
+            else frozenset(active_features)
+        )
         identity, headless = self._app_identity()
         statuses: list[PermissionStatus] = []
         states: dict[PermissionId, PermissionState] = {}
+        wanted_ids: set[PermissionId] = set()
         eligible = (
             self.platform == "darwin" and identity.stable and identity.foreground and not headless
         )
@@ -979,6 +1040,9 @@ class SystemPermissionPort:
                 for feature, requirements in FEATURE_REQUIREMENTS.items()
                 if permission_id in requirements
             )
+            wanted = any(feature in active for feature in required)
+            if wanted:
+                wanted_ids.add(permission_id)
             restart_pending = permission_id in self._restart_required
             # After the first request/settings visit macOS never re-prompts in
             # this process (and the Screen Recording preflight stays frozen
@@ -1056,6 +1120,7 @@ class SystemPermissionPort:
                     can_reset=can_reset,
                     restart_required=restart_pending,
                     detail=detail,
+                    wanted=wanted,
                 )
             )
 
@@ -1075,14 +1140,19 @@ class SystemPermissionPort:
                 "missing": missing,
                 "identity_ready": identity_ready,
                 "restart_required": restart_required,
+                "active": feature in active,
             }
 
         # A signature change wipes the recorded grants. Surface that as its own
         # fact so the UI can explain the re-ask instead of looking amnesic, and
         # retire the note the moment every TCC-governed grant is back.
+        # Only the rows somebody wants can bring the grants "back": an optional
+        # Automation row nobody asked for would otherwise keep the note alive.
         identity_reset = _read_identity_reset() if self.platform == "darwin" else None
         if identity_reset is not None and all(
-            states[permission_id] in _READY_STATES for permission_id in _TCC_RESET_SERVICES
+            states[permission_id] in _READY_STATES
+            for permission_id in _TCC_RESET_SERVICES
+            if permission_id in wanted_ids
         ):
             _clear_identity_reset()
             identity_reset = None
@@ -1166,9 +1236,15 @@ class SystemPermissionPort:
             return bool(app_services.AXIsProcessTrustedWithOptions({prompt_key: True}))
         raise RuntimeError(f"Native permission request is unavailable: {name}")
 
-    def request(self, permission_id: PermissionId, *, dry_run: bool = False) -> PermissionOperation:
+    def request(
+        self,
+        permission_id: PermissionId,
+        *,
+        dry_run: bool = False,
+        active_features: Collection[str] | None = None,
+    ) -> PermissionOperation:
         """Invoke Apple's supported prompt API after identity/foreground checks."""
-        before = self.snapshot()
+        before = self.snapshot(active_features=active_features)
         current = next(item for item in before["permissions"] if item["id"] == permission_id.value)
         if dry_run:
             return PermissionOperation(
@@ -1220,11 +1296,11 @@ class SystemPermissionPort:
                 False,
                 False,
                 f"The native permission request failed: {type(exc).__name__}.",
-                self.snapshot(),
+                self.snapshot(active_features=active_features),
             )
         if permission_id in _RESTART_AFTER_CHANGE:
             self._restart_required.add(permission_id)
-        after = self.snapshot()
+        after = self.snapshot(active_features=active_features)
         # Read the flag back from the snapshot: a permission whose probe reads
         # live (Accessibility, Input Monitoring) is already granted again by
         # the time we get here, and _live_state retired the flag. Reporting a
@@ -1296,7 +1372,13 @@ class SystemPermissionPort:
         url = foundation.NSURL.URLWithString_(_SETTINGS_URLS[permission_id])
         return bool(appkit.NSWorkspace.sharedWorkspace().openURL_(url))
 
-    def reset(self, permission_id: PermissionId, *, dry_run: bool = False) -> PermissionOperation:
+    def reset(
+        self,
+        permission_id: PermissionId,
+        *,
+        dry_run: bool = False,
+        active_features: Collection[str] | None = None,
+    ) -> PermissionOperation:
         """Drop this app's own TCC row so the native prompt can appear again.
 
         The in-app way out of the auto-denied trap: once ANY build of the
@@ -1308,7 +1390,7 @@ class SystemPermissionPort:
         "not determined" (never touching other apps' grants), so the real
         system dialog can fire again on the next request.
         """
-        before = self.snapshot()
+        before = self.snapshot(active_features=active_features)
         service = _TCC_RESET_SERVICES.get(permission_id)
         if self.platform != "darwin" or service is None:
             return PermissionOperation(
@@ -1335,11 +1417,10 @@ class SystemPermissionPort:
         import subprocess  # lazy: this method is darwin-only at runtime
 
         from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
-        from jarvis.setup.macos_app_bundle import BUNDLE_ID
 
         try:
             result = subprocess.run(
-                ["/usr/bin/tccutil", "reset", service, BUNDLE_ID],
+                ["/usr/bin/tccutil", "reset", service, self._tcc_bundle_id()],
                 capture_output=True,
                 text=True,
                 timeout=30,
@@ -1378,14 +1459,18 @@ class SystemPermissionPort:
             False,
             f"{_LABELS[permission_id]} was reset - the system prompt can "
             "appear again on the next request.",
-            self.snapshot(),
+            self.snapshot(active_features=active_features),
         )
 
     def open_settings(
-        self, permission_id: PermissionId, *, dry_run: bool = False
+        self,
+        permission_id: PermissionId,
+        *,
+        dry_run: bool = False,
+        active_features: Collection[str] | None = None,
     ) -> PermissionOperation:
         """Open the matching System Settings pane via LaunchServices."""
-        before = self.snapshot()
+        before = self.snapshot(active_features=active_features)
         if permission_id not in _SETTINGS_URLS:
             return PermissionOperation(
                 False,
@@ -1435,7 +1520,7 @@ class SystemPermissionPort:
         restart = opened and permission_id in _RESTART_AFTER_CHANGE and not already_granted
         if restart:
             self._restart_required.add(permission_id)
-        after = self.snapshot()
+        after = self.snapshot(active_features=active_features)
         return PermissionOperation(
             opened,
             permission_id.value,
@@ -1463,6 +1548,7 @@ def get_system_permission_port() -> SystemPermissionPort:
 
 
 __all__ = [
+    "ACCEPTED_BUNDLE_IDS",
     "APP_NAME",
     "AUTOMATION_TARGETS",
     "EXPECTED_BUNDLE_ID",
@@ -1473,5 +1559,6 @@ __all__ = [
     "PermissionState",
     "PermissionStatus",
     "SystemPermissionPort",
+    "active_features",
     "get_system_permission_port",
 ]

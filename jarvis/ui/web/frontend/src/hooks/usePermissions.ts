@@ -23,7 +23,16 @@ export type PermissionState =
 export interface PermissionItem {
   id: PermissionId;
   status: PermissionState;
+  /** Every feature that could use this permission. */
   required: string[];
+  /**
+   * Whether a feature the user has turned on needs this permission right now.
+   * An optional row (`false`) stays listed and can be allowed by hand, but it is
+   * never nagged about and never part of the guided flow — a Music/Spotify
+   * consent for a "mute music" switch that is off. A backend that does not send
+   * the flag wants everything, as it always did.
+   */
+  wanted?: boolean;
   can_request: boolean;
   can_open_settings: boolean;
   /**
@@ -47,6 +56,8 @@ export interface PermissionIdentityReset {
 export interface PermissionFeature {
   ready: boolean;
   missing: PermissionId[];
+  /** Whether the user has this feature turned on; absent on an older backend. */
+  active?: boolean;
 }
 
 export interface PermissionSnapshot {
@@ -95,10 +106,16 @@ export type SetupOutcome = "complete" | "cancelled" | "timeout" | "restart";
 
 const SETTLED_STATES = new Set(["granted", "not_required"]);
 
+/** Whether something the user turned on needs this row (see `PermissionItem.wanted`). */
+export function isWanted(item: PermissionItem): boolean {
+  return item.wanted !== false;
+}
+
 /** A row the guided flow still has to deal with. */
 export function needsSetup(item: PermissionItem): boolean {
   return (
     item.required.length > 0 &&
+    isWanted(item) &&
     !SETTLED_STATES.has(item.status) &&
     !item.restart_required &&
     item.status !== "unavailable" &&
@@ -291,6 +308,7 @@ export function usePermissions() {
       snapshot?.permissions.some(
         (permission) =>
           permission.required.length > 0 &&
+          isWanted(permission) &&
           !["granted", "not_required", "unavailable"].includes(permission.status),
       ) ?? false,
     [snapshot],

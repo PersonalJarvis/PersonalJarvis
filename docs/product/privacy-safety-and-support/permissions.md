@@ -8,7 +8,7 @@ order: 3
 diataxis: howto
 status: active
 owner: maintainers
-last_reviewed: 2026-07-21
+last_reviewed: 2026-10-01
 phase: "-"
 audience: end-user
 tags: [permissions, macos, privacy, computer-use, safety, approvals]
@@ -24,11 +24,19 @@ are macOS privacy permissions. The seventh reports whether API keys use macOS
 Keychain. Browser permissions, connected-account access, and Jarvis safety
 approvals remain separate.
 
+Jarvis only asks for what a feature you turned on needs. A row that nothing you
+enabled needs is marked **Optional**: it stays in the list so you can allow it
+by hand, but it never appears in the warning banner or in **Set up everything**.
+Today that is **Automation (Music & Spotify)** until you switch on **Mute music
+while dictating**.
+
 ## Before You Start
 
 - On macOS, open the installed **Personal Jarvis** app and bring it to the
-  foreground. Do not grant access to Terminal, Python, or a copied app bundle.
-  macOS records access against the exact app identity.
+  foreground. The app from the installer and the app from the downloaded disk
+  image both count; each is its own app to macOS, with its own permissions. Do
+  not grant access to Terminal, Python, or a copied app bundle. macOS records
+  access against the exact app identity.
 - Decide which features you need. Text chat does not require microphone,
   screen, accessibility, or input access.
 - Finish or stop active Jarvis-Agent missions before a permission change that
@@ -68,7 +76,7 @@ these visible row names:
 | **Accessibility** | Read supported interface structure, focus or move windows, and support reliable input | Computer Use, window control, and global shortcuts | Yes |
 | **Input Monitoring** | Listen for configured system-wide keyboard shortcuts | Global shortcuts | Yes |
 | **Input control** | Post mouse and keyboard events | Computer Use | No |
-| **Automation (Music & Spotify)** | Send Apple Events to Music and Spotify | Mute music while dictating | No |
+| **Automation (Music & Spotify)** | Send Apple Events to Music and Spotify | Mute music while dictating (**Optional** until that setting is on) | No |
 | **Keychain (API keys)** | Store API keys in macOS Keychain | Encrypted operating-system credential storage | No |
 
 Current macOS versions may name the Screen Recording pane **Screen & System
@@ -76,13 +84,20 @@ Audio Recording**. **Input control** is Jarvis's label for posting input
 events. Its state can follow **Accessibility**, and **Open Settings** may open
 the Accessibility pane rather than a separate pane named Input control.
 
-**Set up everything** runs the whole list for you: it raises each native
-dialog in turn, opens the matching System Settings pane for the rows macOS
-only grants there, waits until the switch is on, and finishes with one
+**Set up everything** runs the list your enabled features need: it raises each
+native dialog in turn, opens the matching System Settings pane for the rows
+macOS only grants there, waits until the switch is on, and finishes with one
 automatic restart when a grant needs a fresh process. **Stop** ends the flow at
 any point; nothing already granted is lost. **Automation** briefly opens a
 closed Music or Spotify in the background so macOS can ask, and closes it
-again.
+again — which is why it only joins the list once you turn on **Mute music while
+dictating**. You can still allow an **Optional** row yourself with its own
+**Allow** button.
+
+The warning banner at the top of the app lists only the permissions your
+enabled features are missing. **Not now** puts those rows off: they stay in
+Settings, and the banner returns after a week or as soon as a different row
+needs attention.
 
 Grants made this way are recorded against the app's local signing
 certificate, which the installer creates once (macOS asks for your login
@@ -211,7 +226,8 @@ Use](computer-use).
 
 | What you see | What it usually means | What to do |
 |---|---|---|
-| App identity warning or no permission actions | Jarvis is not the foreground installed app, or the session is headless | Quit it and open the installed Personal Jarvis app in an interactive macOS session |
+| App identity warning or no permission actions | Jarvis is not the foreground installed app (the installer's app or the disk-image app in **Applications**), or the session is headless | Quit it and open the installed Personal Jarvis app in an interactive macOS session |
+| Permissions are asked for again after an update | The new version was signed differently, so macOS treats it as a new app and discarded the old grants | Allow them once more; the card says so when it detects this. Releases signed with a stable Apple certificate keep their grants |
 | **Denied** or **Not allowed**, but no prompt appears | macOS already recorded a choice or the native check cannot distinguish it | Use **Ask again** for a denied privacy row, then **Allow**; otherwise use **Open Settings**. For Keychain, use **Allow** |
 | **Restart now** refuses to restart | A Jarvis-Agent mission is still running | Finish or stop the mission, then use **Restart now** again |
 | The card says **Not required**, but the feature is blocked | The host is not macOS, or a browser, device, display session, Wayland, or file boundary owns the failure | Test the feature directly and review the relevant host or browser settings |

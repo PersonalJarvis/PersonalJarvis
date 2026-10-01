@@ -10,9 +10,11 @@ import pytest
 
 from jarvis.platform.permissions import (
     EXPECTED_BUNDLE_ID,
+    FEATURE_REQUIREMENTS,
     PermissionId,
     PermissionState,
     SystemPermissionPort,
+    active_features,
 )
 from jarvis.setup.macos_app_bundle import BUNDLE_ID
 
@@ -210,6 +212,7 @@ def test_snapshot_maps_native_states_and_feature_readiness() -> None:
         "missing": [],
         "identity_ready": True,
         "restart_required": False,
+        "active": True,
     }
     # event_posting is granted through the trusted Accessibility fixture, so
     # only the screen-recording grant is still missing for Computer-Use.
@@ -218,6 +221,7 @@ def test_snapshot_maps_native_states_and_feature_readiness() -> None:
         "missing": ["screen_recording"],
         "identity_ready": True,
         "restart_required": False,
+        "active": True,
     }
 
 
@@ -848,6 +852,108 @@ def test_the_app_in_the_shared_applications_folder_is_a_stable_identity() -> Non
     assert snapshot["features"]["voice"]["identity_ready"] is True
 
 
+# --- The downloaded .dmg app is an installed app too (its own bundle id)
+
+
+def _installed_as(modules: dict[str, object], bundle_id: str, path: str) -> None:
+    """Make ``NSBundle.mainBundle()`` answer as ``bundle_id`` installed at ``path``."""
+    running = SimpleNamespace(bundleIdentifier=lambda: bundle_id, bundlePath=lambda: path)
+    modules["Foundation"].NSBundle = SimpleNamespace(mainBundle=lambda: running)
+
+
+def test_the_downloaded_dmg_app_is_a_stable_identity() -> None:
+    """The release .dmg is a PyInstaller bundle with its own bundle id.
+
+    The identity gate once accepted only the managed bundle's id, so on the
+    .dmg app EVERY grant was ignored: with microphone, screen, accessibility and
+    input access all given, each feature still read "not ready", the microphone
+    gate refused to capture, and no Allow / Open Settings button was offered.
+    """
+    from jarvis.core.branding import MACOS_DMG_BUNDLE_ID
+
+    _CaptureDevice.status = 3
+    modules, screen, _ = _native_modules()
+    screen["granted"] = True
+    _installed_as(modules, MACOS_DMG_BUNDLE_ID, "/Applications/Personal Jarvis.app")
+    port = _port(modules, iohid_check=lambda _type: 0)
+
+    snapshot = port.snapshot()
+
+    assert snapshot["app_identity"]["stable"] is True
+    assert snapshot["app_identity"]["bundle_id"] == MACOS_DMG_BUNDLE_ID
+    assert snapshot["app_identity"]["expected_bundle_id"] == MACOS_DMG_BUNDLE_ID
+    assert all(feature["identity_ready"] for feature in snapshot["features"].values())
+    assert snapshot["features"]["voice"]["ready"] is True
+    assert port.runtime_access_granted(PermissionId.MICROPHONE) is True
+    assert port.runtime_feature_ready("global_hotkeys") is True
+
+
+def test_the_downloaded_dmg_app_gets_its_request_buttons_back() -> None:
+    from jarvis.core.branding import MACOS_DMG_BUNDLE_ID
+
+    modules, screen, _ = _native_modules()
+    screen["granted"] = False
+    _installed_as(modules, MACOS_DMG_BUNDLE_ID, "/Applications/Personal Jarvis.app")
+
+    snapshot = _port(modules).snapshot()
+
+    item = _permission(snapshot, PermissionId.SCREEN_RECORDING)
+    assert item["can_request"] is True
+    assert item["can_open_settings"] is True
+
+
+@pytest.mark.parametrize(
+    "bundle_id", ["org.python.python", "com.apple.Terminal", "ai.personaljarvis.desktop.evil", None]
+)
+def test_an_app_that_is_not_ours_is_never_a_stable_identity(bundle_id: str | None) -> None:
+    """Widening the gate to the .dmg id must not turn it into "any app"."""
+    modules, _, _ = _native_modules()
+    _installed_as(modules, bundle_id, "/Applications/Personal Jarvis.app")  # type: ignore[arg-type]
+
+    snapshot = _port(modules).snapshot()
+
+    assert snapshot["app_identity"]["stable"] is False
+    assert snapshot["app_identity"]["expected_bundle_id"] == EXPECTED_BUNDLE_ID
+    assert all(not feature["identity_ready"] for feature in snapshot["features"].values())
+    assert _port(modules).runtime_access_granted(PermissionId.MICROPHONE) is False
+
+
+@pytest.mark.parametrize(
+    ("running_id", "expected"),
+    [
+        (EXPECTED_BUNDLE_ID, EXPECTED_BUNDLE_ID),
+        ("ai.personaljarvis.desktop", "ai.personaljarvis.desktop"),
+        # A development run is not an installed app: it keeps the managed id it
+        # always reset, never an arbitrary id read from the process.
+        ("org.python.python", EXPECTED_BUNDLE_ID),
+    ],
+)
+def test_reset_drops_the_rows_of_the_app_that_is_running(
+    monkeypatch: pytest.MonkeyPatch, running_id: str, expected: str
+) -> None:
+    """``tccutil reset`` is scoped to one bundle id, so it must be the right one.
+
+    Resetting the managed id for the .dmg app reports success and changes
+    nothing, leaving a stranded grant stranded.
+    """
+    import subprocess
+
+    modules, _, _ = _native_modules()
+    _installed_as(modules, running_id, "/Applications/Personal Jarvis.app")
+    commands: list[list[str]] = []
+
+    def fake_run(command, **_kwargs):
+        commands.append(list(command))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    operation = _port(modules).reset(PermissionId.SCREEN_RECORDING)
+
+    assert operation.ok is True
+    assert commands == [["/usr/bin/tccutil", "reset", "ScreenCapture", expected]]
+
+
 def test_a_live_window_probe_beats_the_frozen_screen_recording_preflight() -> None:
     """A grant given in System Settings mid-session must be seen at once.
 
@@ -1143,3 +1249,126 @@ def test_identity_reset_forgets_the_automation_answers(tmp_path: Path, monkeypat
     permissions_module.record_identity_reset(("Microphone", "AppleEvents"))
 
     assert not (tmp_path / "consent.json").exists()
+
+
+# --- Ask only for what an enabled feature needs
+
+
+def _config_with_ducking(enabled: bool | None) -> SimpleNamespace:
+    if enabled is None:
+        return SimpleNamespace()
+    return SimpleNamespace(ducking=SimpleNamespace(enabled=enabled))
+
+
+def test_every_feature_is_active_for_a_caller_that_knows_no_configuration() -> None:
+    assert active_features(None) == frozenset(FEATURE_REQUIREMENTS)
+    assert active_features() == frozenset(FEATURE_REQUIREMENTS)
+
+
+@pytest.mark.parametrize("config", [_config_with_ducking(False), _config_with_ducking(None)])
+def test_ducking_is_inactive_unless_the_user_turned_it_on(config: SimpleNamespace) -> None:
+    """``[ducking].enabled`` is opt-in, so its Automation consent must be too."""
+    assert active_features(config) == frozenset(FEATURE_REQUIREMENTS) - {"audio_ducking"}
+
+
+def test_ducking_is_active_once_the_user_turned_it_on() -> None:
+    assert active_features(_config_with_ducking(True)) == frozenset(FEATURE_REQUIREMENTS)
+
+
+def test_a_permission_nothing_active_needs_is_optional_not_wanted() -> None:
+    modules, _, _ = _native_modules()
+    port = _port(modules)
+
+    off = port.snapshot(active_features=active_features(_config_with_ducking(False)))
+    on = port.snapshot(active_features=active_features(_config_with_ducking(True)))
+
+    assert _permission(off, PermissionId.AUTOMATION)["wanted"] is False
+    assert off["features"]["audio_ducking"]["active"] is False
+    # Everything else is still wanted: microphone for voice, screen for CU, ...
+    assert all(
+        item["wanted"] for item in off["permissions"] if item["id"] != PermissionId.AUTOMATION
+    )
+    assert _permission(on, PermissionId.AUTOMATION)["wanted"] is True
+    assert on["features"]["audio_ducking"]["active"] is True
+
+
+def test_a_permission_shared_with_an_active_feature_stays_wanted() -> None:
+    """Accessibility serves hotkeys and window control as well as Computer-Use."""
+    modules, _, _ = _native_modules()
+    only_hotkeys = frozenset({"global_hotkeys"})
+
+    snapshot = _port(modules).snapshot(active_features=only_hotkeys)
+
+    assert _permission(snapshot, PermissionId.ACCESSIBILITY)["wanted"] is True
+    assert _permission(snapshot, PermissionId.INPUT_MONITORING)["wanted"] is True
+    assert _permission(snapshot, PermissionId.SCREEN_RECORDING)["wanted"] is False
+    assert _permission(snapshot, PermissionId.MICROPHONE)["wanted"] is False
+
+
+def test_a_snapshot_without_a_policy_wants_everything() -> None:
+    """The default keeps the behaviour every existing caller already relies on."""
+    modules, _, _ = _native_modules()
+
+    snapshot = _port(modules).snapshot()
+
+    assert all(item["wanted"] for item in snapshot["permissions"])
+    assert all(feature["active"] for feature in snapshot["features"].values())
+
+
+def test_every_operation_reports_the_same_policy_as_the_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A request or a Settings visit must not flip optional rows back to nagging."""
+    import subprocess
+
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stdout="", stderr=""),
+    )
+    modules, _, _ = _native_modules()
+    port = _port(modules)
+    policy = active_features(_config_with_ducking(False))
+
+    operations = (
+        port.open_settings(PermissionId.MICROPHONE, active_features=policy),
+        port.request(PermissionId.SCREEN_RECORDING, active_features=policy),
+        port.request(PermissionId.MICROPHONE, active_features=policy, dry_run=True),
+        port.reset(PermissionId.ACCESSIBILITY, active_features=policy),
+    )
+
+    for operation in operations:
+        automation = _permission(operation.snapshot, PermissionId.AUTOMATION)
+        assert automation["wanted"] is False, operation.action
+
+
+def test_an_optional_row_never_keeps_the_signature_reset_note_alive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The "macOS treats this app as new" note retires when the WANTED grants are back.
+
+    An installed Music that was never asked keeps Automation at "not asked" for
+    good. Waiting for it would keep the note on screen forever for a feature the
+    user never enabled.
+    """
+    import jarvis.platform.permissions as permissions_module
+
+    _CaptureDevice.status = 3
+    modules, _launches, _probes, probe = _automation_fixture(
+        tmp_path, monkeypatch, installed={_MUSIC}, running=set(), answers={}
+    )
+    modules["Quartz"].CGPreflightScreenCaptureAccess = lambda: True
+    monkeypatch.setattr(
+        permissions_module, "identity_reset_marker_path", lambda: tmp_path / "reset.json"
+    )
+    permissions_module.record_identity_reset(("Microphone",))
+    port = _port(modules, iohid_check=lambda _type: 0, automation_probe=probe)
+
+    everything = port.snapshot()
+    assert _permission(everything, PermissionId.AUTOMATION)["status"] == "not_determined"
+    assert everything["identity_reset"] is not None  # still waiting for the Automation row
+
+    without_ducking = port.snapshot(active_features=active_features(_config_with_ducking(False)))
+
+    assert without_ducking["identity_reset"] is None
+    assert not (tmp_path / "reset.json").exists()

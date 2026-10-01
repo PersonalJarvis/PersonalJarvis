@@ -15513,3 +15513,120 @@ plain daemon worker through a `queue.SimpleQueue` (documented reentrant and
 safe in destructors); `__del__` only enqueues and takes no lock. The worker is
 started in ordinary code (`LockedRecognizer.__init__`, `release_recognizer`).
 Guard: `tests/unit/plugins/wake/test_vosk_native.py::test_dropping_the_proxy_inside_an_executor_submit_does_not_deadlock`.
+
+## BUG-222: the downloaded macOS app could not use a single permission — it was never accepted as "the installed app" (HIGH, FIXED 2026-10-01)
+
+**Symptom.** On the app from the release `.dmg`, macOS permissions looked
+impossible. With microphone, screen, accessibility and input access all given in
+System Settings, every feature still read "not ready", the microphone never
+captured (wake word and voice dead), the banner told the user to relaunch the
+app from its installed location — where it already was — and no **Allow** or
+**Open Settings** button was offered. The app did not even appear in the
+Microphone list of System Settings, because it never got as far as asking.
+
+**Cause.** `SystemPermissionPort` accepted exactly one bundle id,
+`com.personal-jarvis.desktop`, the managed local bundle. The `.dmg` build
+(`jarvis.spec`) has its own id, `ai.personaljarvis.desktop` — deliberately
+different, because BUG-218 keeps the managed installer from rebuilding over it.
+Run against the port with every grant present, the `.dmg` identity gave
+`stable=False`, all six features `identity_ready=False`,
+`runtime_access_granted(microphone)` false and every `can_request` /
+`can_open_settings` false. The gate fails closed by design (granting Terminal or
+a bare Python would be unsafe), so one wrong constant disabled the whole
+permission surface — and nothing ever ran the port as the `.dmg` app.
+
+**Fix.**
+
+- `jarvis.core.branding.MACOS_DMG_BUNDLE_ID` names the second legitimate
+  identity; `permissions.ACCEPTED_BUNDLE_IDS` is what the identity gate, the
+  `jarvis permissions` CLI and the UI's "expected id" now use. Anything else
+  (Terminal, Python, an app that merely shares the name) is still refused.
+- `tccutil reset` targets the id of the app that is RUNNING. Resetting the
+  managed id for the `.dmg` app reported success and changed nothing.
+- `jarvis permissions request|open-settings` find the `.dmg` app instead of
+  reporting "app not found" (`installed_macos_app_bundle_path`).
+
+**Guards.** `tests/unit/platform/test_permissions.py` (the `.dmg` identity is
+stable and gets its buttons back, foreign ids are refused, reset hits the right
+id), `tests/unit/setup/test_macos_dmg_identity.py` (the literal in `jarvis.spec`
+equals the branding constant, the two ids stay distinct, the lookup),
+`tests/unit/cli_ctl/test_commands_permissions.py`.
+
+**Class rule.** A fail-closed identity gate needs a test that runs it as EVERY
+shipped identity. An id duplicated in a build spec that cannot import the
+constant needs a parity test, or it drifts silently.
+
+## BUG-223: every public macOS download was ad-hoc signed — the first launch was blocked and every update forgot every grant (HIGH, FIXED 2026-10-01; signing needs the maintainer's Apple account)
+
+**Symptom.** The `.dmg` behind the README's macOS link opens with "Apple cannot
+check it for malicious software", and after each update the app asks for every
+permission again.
+
+**Evidence.** The v2.5.0 "Desktop installers" run, macOS arm64 job, printed:
+
+    NOTICE: APPLE_SIGNING_IDENTITY is not set - ad-hoc signing this build. It is
+    NOT notarized; macOS will refuse the first double-click ...
+    codesign --force --deep -s - .../Personal Jarvis.app
+    NOTICE: this build is ad-hoc signed and unnotarized - suitable for local
+    testing, not for public download.
+
+and that build is the published asset.
+
+**Cause, two layers.**
+
+1. No Developer ID identity is configured: that needs an Apple Developer Program
+   membership only the maintainer can hold.
+2. Configuring it would not have worked. The workflow passed
+   `APPLE_CERTIFICATE_P12_BASE64` / `APPLE_CERTIFICATE_PASSWORD` to `build.sh`,
+   which never read them; a GitHub runner starts with an empty keychain, so
+   `codesign --sign "Developer ID Application: ..."` could only fail.
+
+An ad-hoc signature is a hash of the app's bytes, and macOS pins every privacy
+grant to it: each release is a stranger and its grants are gone (BUG-083,
+BUG-217). A Developer ID signature keeps one identity — Team ID plus bundle id —
+for the life of the product, which is why apps from the big vendors never ask
+twice.
+
+**Fix.** `packaging/macos/build.sh` imports the certificate into a throw-away
+keychain when both secrets are present (search list restored and keychain
+deleted on exit), reads the signing identity from it when
+`APPLE_SIGNING_IDENTITY` is not given, and refuses a certificate without its
+password before the long freeze. No secret reaches the log. Without secrets
+nothing changes. **Still open, by nature:** the six `APPLE_*` secrets
+(`docs/desktop-installers.md` §4) have to be added before a build can be signed
+and notarized.
+
+**Guards.** `tests/unit/packaging/test_macos_build_script.py` rehearses the
+script with `DRY_RUN=1` in a scratch copy of the layout: unchanged ad-hoc path
+without secrets, import order, identity read back, no secret in the output,
+early refusal.
+
+## BUG-224: macOS asked for Music and Spotify control — and opened both apps — for a feature that is off (MEDIUM, FIXED 2026-10-01)
+
+**Symptom.** "Set up everything" and the app-wide banner demanded the
+Automation (Music & Spotify) permission on every Mac, launched Music and
+Spotify hidden to show the consent dialog, and kept the banner on screen until
+it was answered — although "Mute music while dictating" is opt-in and off by
+default.
+
+**Cause.** `FEATURE_REQUIREMENTS` marked every permission needed by some
+feature as missing, whether or not the user had turned that feature on.
+
+**Fix.** The snapshot carries the policy: `features[...].active` and
+`permissions[...].wanted` (a feature the user has turned on needs it).
+`permissions.active_features(config)` switches `audio_ducking` off while
+`[ducking].enabled` is false; the routes derive it from the live configuration
+and hand it to every operation, so the status and each request/reset/open
+response agree. The banner, the guided "Set up everything" flow and the
+Settings poll consider only wanted rows; Settings still lists every row, with
+an "Optional" tag, so it can be allowed by hand. The banner also gained
+"Not now": per row, expiring after a week, and a row that turns up later (a
+feature switched on afterwards) shows again. The "macOS treats the app as new"
+note retires when the WANTED grants are back — an Automation row nobody asked
+for no longer keeps it alive.
+
+**Guards.** `tests/unit/platform/test_permissions.py` (policy, shared
+permissions stay wanted, operations report the same policy, the note retires),
+`tests/unit/ui/web/test_permissions_routes.py`, `usePermissions.test.tsx`,
+`PermissionsAlertBanner.test.tsx`, `PermissionsPanel.test.tsx`,
+`src/lib/permissionsBannerDismissal.test.ts`.

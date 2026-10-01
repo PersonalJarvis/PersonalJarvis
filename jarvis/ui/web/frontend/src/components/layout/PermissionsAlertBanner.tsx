@@ -23,6 +23,10 @@ import {
   type PermissionId,
   type PermissionItem,
 } from "@/hooks/usePermissions";
+import {
+  dismissPermissionIds,
+  readDismissedPermissionIds,
+} from "@/lib/permissionsBannerDismissal";
 import { SetupAllControl } from "@/views/settings/PermissionsPanel";
 
 const ICONS = {
@@ -36,12 +40,16 @@ const ICONS = {
 } satisfies Record<PermissionId, typeof Mic>;
 
 // Mirrors the "waiting for System Settings" logic inside usePermissions: a
-// permission only blocks features when some feature requires it AND its state
-// is neither granted, exempt, nor unknowable on this installation.
+// permission only blocks features when some feature the user has turned on
+// requires it AND its state is neither granted, exempt, nor unknowable on this
+// installation. An optional row (`wanted === false`) never blocks anything: it
+// stays in Settings for anyone who wants it, and is not worth a banner.
 const SETTLED_STATES = new Set(["granted", "not_required", "unavailable"]);
 
 function isBlocking(item: PermissionItem): boolean {
-  return item.required.length > 0 && !SETTLED_STATES.has(item.status);
+  return (
+    item.required.length > 0 && item.wanted !== false && !SETTLED_STATES.has(item.status)
+  );
 }
 
 /**
@@ -64,6 +72,10 @@ export function PermissionsAlertBanner() {
   const pushToast = useEventStore((state) => state.pushToast);
   const [collapsed, setCollapsed] = useState(false);
   const [restarting, setRestarting] = useState(false);
+  // Rows the person put off with "Not now" (see permissionsBannerDismissal).
+  const [dismissed, setDismissed] = useState<ReadonlySet<string>>(() =>
+    readDismissedPermissionIds(),
+  );
   const {
     snapshot,
     pendingId,
@@ -78,15 +90,25 @@ export function PermissionsAlertBanner() {
 
   if (!snapshot || snapshot.platform !== "darwin" || snapshot.headless) return null;
 
-  const missing = snapshot.permissions.filter(isBlocking);
+  const missing = snapshot.permissions
+    .filter(isBlocking)
+    .filter((item) => !dismissed.has(item.id));
   if (missing.length === 0 && !snapshot.restart_required) return null;
 
   // Everything is granted, the OS just needs a fresh process to hand the new
   // access to. Collapse the whole banner into a single restart call-to-action.
   const restartOnly = missing.length === 0;
 
+  // Name only what the banner still asks about: a feature switched off, or one
+  // whose missing rows were all put off, is not "broken right now".
+  const shownIds = new Set<string>(missing.map((item) => item.id));
   const brokenFeatures = Object.entries(snapshot.features)
-    .filter(([, feature]) => !feature.ready)
+    .filter(
+      ([, feature]) =>
+        !feature.ready &&
+        feature.active !== false &&
+        (feature.missing.length === 0 || feature.missing.some((id) => shownIds.has(id))),
+    )
     .map(([key]) => t(`permissions.features.${key}`));
 
   async function run(action: () => Promise<void>) {
@@ -114,6 +136,10 @@ export function PermissionsAlertBanner() {
           : message,
       );
     }
+  }
+
+  function putOff() {
+    setDismissed(dismissPermissionIds(missing.map((item) => item.id)));
   }
 
   async function restartApp() {
@@ -187,6 +213,18 @@ export function PermissionsAlertBanner() {
               )}
               {t(collapsed ? "permissions.banner.expand" : "permissions.banner.collapse")}
             </Button>
+            {/* Ask once, then let people get on with it: the rows come back
+                after a week, or when a new one turns up. */}
+            {!setupProgress && (
+              <Button
+                size="sm"
+                variant="ghost"
+                data-testid="permissions-banner-dismiss"
+                onClick={putOff}
+              >
+                {t("permissions.banner.dismiss")}
+              </Button>
+            )}
           </>
         )}
       </div>

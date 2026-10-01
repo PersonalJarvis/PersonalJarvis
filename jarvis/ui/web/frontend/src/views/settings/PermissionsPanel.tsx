@@ -278,6 +278,9 @@ function PermissionRow({
   const t = useT();
   const Icon = ICONS[item.id];
   const ready = READY_STATES.has(item.status);
+  // Nothing the person turned on needs this row: it stays here to be allowed by
+  // hand, but it is neither nagged about nor part of "Set up everything".
+  const optional = item.wanted === false;
   const showRequest = !ready && item.can_request;
   // The Core Graphics boolean preflights cannot distinguish "not asked" from
   // "asked and denied". Keep the Settings escape hatch visible alongside the
@@ -309,13 +312,24 @@ function PermissionRow({
       <div className="flex flex-wrap items-center gap-3">
         <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
         <div className="min-w-[12rem] flex-1">
-          <div className="text-sm font-medium">{t(`permissions.items.${item.id}.title`)}</div>
+          <div className="text-sm font-medium">
+            {t(`permissions.items.${item.id}.title`)}
+            {optional && (
+              <span
+                data-testid={`permission-optional-${item.id}`}
+                className="ml-2 rounded-full bg-secondary px-2 py-0.5 text-micro font-medium text-muted-foreground"
+              >
+                {t("permissions.optional")}
+              </span>
+            )}
+          </div>
           {/* Compact rows drop descriptions to stay scannable — except when
               the grant is missing: a user deciding whether to allow access
               (e.g. the startup Keychain prompt) needs the why right here. */}
           {(!compact || !ready) && (
             <p className="mt-0.5 text-xs text-muted-foreground">
               {t(`permissions.items.${item.id}.description`)}
+              {optional && !ready && <> {t("permissions.optional_hint")}</>}
             </p>
           )}
         </div>

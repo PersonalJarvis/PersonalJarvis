@@ -2319,6 +2319,8 @@
     "restart_failed": "Personal Jarvis konnte nicht neu starten. Beende und öffne es manuell erneut.",
     "request": "Erlauben",
     "open_settings": "Einstellungen öffnen",
+    "optional": "Optional",
+    "optional_hint": "Nur nötig, wenn du die passende Funktion einschaltest.",
     "status": {
       "granted": "Erlaubt",
       "not_determined": "Nicht angefragt",
@@ -2364,7 +2366,8 @@
       "impact": "Funktioniert gerade nicht: {0}",
       "hint": "Erlaube den Zugriff über die Buttons — macOS öffnet für jede Berechtigung direkt die richtige Seite der Systemeinstellungen. {name} prüft automatisch nach.",
       "collapse": "Details ausblenden",
-      "expand": "Details anzeigen"
+      "expand": "Details anzeigen",
+      "dismiss": "Jetzt nicht"
     },
     "features": {
       "voice": "Sprache & Aktivierungswort",
