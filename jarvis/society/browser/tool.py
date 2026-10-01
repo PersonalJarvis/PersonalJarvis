@@ -82,8 +82,14 @@ def lead_browser_tools(session: Any = None, *, read_only: bool = False) -> dict[
 _ASK_VERBS: Final[re.Pattern[str]] = re.compile(
     r"\b(send|submit|post|publish|tweet|reply|buy|purchase|order|pay|checkout|delete|remove|"
     r"cancel|unsubscribe|transfer|book|sign up|register|accept|agree|"
-    r"senden|abschicken|posten|veröffentlichen|kaufen|bestellen|bezahlen|löschen|"  # i18n-allow
-    r"kündigen|überweisen|buchen|registrieren|zustimmen)\b",  # i18n-allow: verb list
+    r"senden|abschicken|posten|veröffentlichen|kaufen|bestellen|bezahlen|löschen|"  # i18n-allow: verb list
+    r"kündigen|überweisen|buchen|registrieren|zustimmen|"  # i18n-allow: German verb list
+    r"invia|inviare|manda|mandare|pubblica|pubblicare|postare|rispondi|rispondere|"  # i18n-allow: Italian verb list
+    r"compra|comprare|acquista|acquistare|ordina|ordinare|paga|pagare|"  # i18n-allow: Italian verb list
+    r"elimina|eliminare|cancella|cancellare|annulla|annullare|"  # i18n-allow: Italian verb list
+    r"disiscriviti|disiscrivere|trasferisci|trasferire|prenota|prenotare|"  # i18n-allow: Italian verb list
+    r"registrati|registrare|iscriviti|iscrivere|accetta|accettare|"  # i18n-allow: Italian verb list
+    r"sottoscrivi|sottoscrivere|abbonati|abbonare)\b",  # i18n-allow: Italian verb list
     re.I,
 )
 
