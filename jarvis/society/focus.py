@@ -7,8 +7,9 @@ labels, one-liners and MCP server names are matched too, so a freshly
 connected MCP server is reachable by its own name without a table edit.
 
 ``derive_approval_rules`` reads the same text for an approval boundary
-("only after approval", "nur nach Freigabe") and turns it into Grok-style
-require-approval patterns on the focus tools' sending verbs.
+("only after approval", "nur nach Freigabe", "solo dopo approvazione") and
+turns it into Grok-style require-approval patterns on the focus tools' sending
+verbs.
 """
 
 from __future__ import annotations
@@ -21,8 +22,8 @@ from .capabilities import CapabilityKind, CapabilityRow
 __all__ = ["derive_approval_rules", "derive_focus"]
 
 # capability id (or prefix) → words that mean it. Lower-case, matched as whole
-# words on a folded text. German and English on purpose: the description is
-# product-surface text the person writes in their own language.
+# words on a folded text. German, English and Italian on purpose: the description
+# is product-surface text the person writes in their own language.
 _ALIASES: Final[dict[str, tuple[str, ...]]] = {
     "plugin:gmail": (
         "gmail",
@@ -35,6 +36,9 @@ _ALIASES: Final[dict[str, tuple[str, ...]]] = {
         "postfach",
         "briefing",
         "morgenbriefing",  # i18n-allow: input vocab
+        "posta",  # i18n-allow: Italian input vocab
+        "posta in arrivo",  # i18n-allow: Italian input vocab
+        "casella di posta",  # i18n-allow: Italian input vocab
     ),
     "plugin:google_calendar": (
         "calendar",
@@ -49,14 +53,47 @@ _ALIASES: Final[dict[str, tuple[str, ...]]] = {
         "briefing",
         "morgenbriefing",  # i18n-allow: input vocab
         "tagesueberblick",  # i18n-allow: input vocab
+        "calendario",  # i18n-allow: Italian input vocab
+        "appuntamento",  # i18n-allow: Italian input vocab
+        "appuntamenti",  # i18n-allow: Italian input vocab
+        "riunione",  # i18n-allow: Italian input vocab
+        "riunioni",  # i18n-allow: Italian input vocab
     ),
     "plugin:google_drive": ("drive", "google drive", "gdrive"),
-    "plugin:spotify": ("spotify", "playlist", "playlists", "musik", "music", "song", "songs"),
+    "plugin:spotify": (
+        "spotify",
+        "playlist",
+        "playlists",
+        "musik",
+        "music",
+        "song",
+        "songs",
+        "musica",  # i18n-allow: Italian input vocab
+        "canzone",  # i18n-allow: Italian input vocab
+        "canzoni",  # i18n-allow: Italian input vocab
+    ),
     "plugin:youtube_music": ("youtube music", "youtube-music"),
-    "plugin:home_assistant": ("home assistant", "smart home", "smarthome", "licht", "lights"),
+    "plugin:home_assistant": (
+        "home assistant",
+        "smart home",
+        "smarthome",
+        "licht",
+        "lights",
+        "casa intelligente",  # i18n-allow: Italian input vocab
+        "luci",  # i18n-allow: Italian input vocab
+    ),
     "plugin:vercel": ("vercel", "deployment", "deployments", "deploy"),
-    "cli:gh": ("github", "gh", "pull request", "pull requests", "pr", "prs", "issue", "issues"),
-    "cli:git": ("git", "commit", "commits", "branch", "branches"),
+    "cli:gh": (
+        "github",
+        "gh",
+        "pull request",
+        "pull requests",
+        "pr",
+        "prs",
+        "issue",
+        "issues",
+    ),
+    "cli:git": ("git", "commit", "commits", "branch", "branches", "ramo", "rami"),  # i18n-allow: Italian input vocab
     "cli:gcloud": ("gcloud", "google cloud", "gcp"),
     "cli:docker": ("docker", "container", "containers"),
     "cli:npm": ("npm", "node", "package.json"),
@@ -73,12 +110,69 @@ _ALIASES: Final[dict[str, tuple[str, ...]]] = {
         "wetter",  # i18n-allow: input vocab
         "briefing",
         "morgenbriefing",  # i18n-allow: input vocab
+        "ricerca",  # i18n-allow: Italian input vocab
+        "cerca",  # i18n-allow: Italian input vocab
+        "notizie",  # i18n-allow: Italian input vocab
+        "meteo",  # i18n-allow: Italian input vocab
     ),
-    "core:wiki-recall": ("wiki", "wissen", "knowledge", "notes", "notizen", "obsidian"),
-    "core:computer-use": ("browser", "website", "webseite", "click", "klicken", "screen"),
-    "core:run-shell": ("shell", "terminal", "script", "scripts", "command", "befehl"),
-    "core:contact-lookup": ("kontakt", "kontakte", "contact", "contacts", "people", "leute"),
-    "core:Read": ("files", "dateien", "file", "datei", "ordner", "folder", "code", "repo"),
+    "core:wiki-recall": (
+        "wiki",
+        "wissen",
+        "knowledge",
+        "notes",
+        "notizen",
+        "obsidian",
+        "conoscenza",  # i18n-allow: Italian input vocab
+        "appunti",  # i18n-allow: Italian input vocab
+        "note",  # i18n-allow: Italian input vocab
+    ),
+    "core:computer-use": (
+        "browser",
+        "website",
+        "webseite",
+        "click",
+        "klicken",
+        "screen",
+        "sito",  # i18n-allow: Italian input vocab
+        "sito web",  # i18n-allow: Italian input vocab
+        "clic",  # i18n-allow: Italian input vocab
+        "schermo",  # i18n-allow: Italian input vocab
+    ),
+    "core:run-shell": (
+        "shell",
+        "terminal",
+        "script",
+        "scripts",
+        "command",
+        "befehl",
+        "terminale",  # i18n-allow: Italian input vocab
+        "comando",  # i18n-allow: Italian input vocab
+        "comandi",  # i18n-allow: Italian input vocab
+    ),
+    "core:contact-lookup": (
+        "kontakt",
+        "kontakte",
+        "contact",
+        "contacts",
+        "people",
+        "leute",
+        "contatto",  # i18n-allow: Italian input vocab
+        "contatti",  # i18n-allow: Italian input vocab
+        "persone",  # i18n-allow: Italian input vocab
+    ),
+    "core:Read": (
+        "files",
+        "dateien",
+        "file",
+        "datei",
+        "ordner",
+        "folder",
+        "code",
+        "repo",
+        "cartella",  # i18n-allow: Italian input vocab
+        "cartelle",  # i18n-allow: Italian input vocab
+        "codice",  # i18n-allow: Italian input vocab
+    ),
 }
 
 _APPROVAL_PHRASES: Final[tuple[str, ...]] = (
@@ -96,6 +190,14 @@ _APPROVAL_PHRASES: Final[tuple[str, ...]] = (
     "frage vorher",
     "vorher fragen",
     "nur mit erlaubnis",
+    "solo dopo approvazione",  # i18n-allow: Italian approval boundary
+    "dopo approvazione",  # i18n-allow: Italian approval boundary
+    "con approvazione",  # i18n-allow: Italian approval boundary
+    "chiedi prima",  # i18n-allow: Italian approval boundary
+    "chiedimi prima",  # i18n-allow: Italian approval boundary
+    "prima chiedi",  # i18n-allow: Italian approval boundary
+    "solo con permesso",  # i18n-allow: Italian approval boundary
+    "con il mio permesso",  # i18n-allow: Italian approval boundary
 )
 
 #: Sending verbs per capability kind that an approval boundary should gate.
