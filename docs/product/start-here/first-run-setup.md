@@ -1,7 +1,7 @@
 ---
 title: "Complete First-Run Setup"
 slug: first-run-setup
-summary: "Setup runs inside the app. Add one key on the API Keys page, connect a subscription for your agents, pick a wake word in Settings, then take the tour."
+summary: "Your pet explains the app, then you add one key, connect a subscription, pick a wake word and try ten first steps."
 section: "Start here"
 section_order: 1
 order: 3
@@ -16,9 +16,10 @@ related: [providers-and-api-keys, audio-and-wake-word, permissions, start-your-f
 ---
 
 First-run setup happens inside the real app. There is no separate setup
-screen: the window dims and a small card with the mascot walks you to the
-places where each thing is really set, and waits there. A short tour of the
-app follows straight away and explains everything else.
+screen: the window dims and your desktop pet (chosen under **Settings > My
+Pets**) walks you to the places where each thing is really set, explains them
+in a speech bubble, and waits there. A short tour and ten small first steps
+follow and let you try the assistant for real.
 
 ## Before You Start
 
@@ -44,39 +45,58 @@ the step you were on.
 Pick **English**, **Deutsch** or **Español** on the card if you want another
 interface language (you can change it later under **Settings > Languages**),
 then select **Let's start**. There is nothing to agree to: the app is open
-source.
+source. **Skip setup, I know my way around** ends the whole first-run guide
+at once; it is recorded as done and the app restarts once.
 
-### 2. Add one API key
+### 2. How it works
+
+Before anything is set up, the pet walks the real interface and explains how
+everything runs through one assistant: you talk to it in the composer, it
+thinks with an AI model, uses tools (your computer, the browser and connected
+apps from **Plugins**), hands bigger jobs to **Agents**, works with coding
+agents in the **Agentic IDE**, keeps results in **Artifacts**, remembers what
+matters, and asks before anything with real consequences. **Next** and
+**Back** move through it, the dots show where you are, **Skip** goes straight
+to the keys. Nothing is changed while the pet explains.
+
+### 3. Add one API key
 
 Setup opens the **API Keys** page and highlights it. Paste one key into a
 provider card and save it:
 
-- An **OpenAI** or **Gemini** key is enough on its own: setup points live voice
-  and its thinking model at it and confirms **Connected**.
-- Any other provider's key becomes the Brain when none is active yet.
+- An **OpenAI** or **Gemini** key is enough on its own and also brings live
+  voice: setup points live voice and its thinking model at it and confirms
+  **Connected**.
+- Any other provider's key becomes the Brain when none is active yet. Chat
+  works, and voice runs the classic way (speech to text, answer read aloud),
+  a little slower. The card says which of the two you have.
 - For a keyless start, turn on **Local Mode** on the same page and use Ollama.
+
+Once a key is saved, the card points on to the subscriptions.
 
 **Continue** unlocks once a key is saved. **I'll add a key later** moves on;
 chat and voice then stay off until a key exists.
 
-### 3. Connect a subscription for your agents
+### 4. Connect a subscription for your agents
 
-Setup switches the API Keys page to its **Agents** tab. Agents do the bigger
+Setup switches the API Keys page to its **Agents** tab and scrolls to the
+**Coding CLIs** rows. Agents do the bigger
 background jobs, and they run best on a subscription you already pay for:
 **Claude** (Pro or Max) or **ChatGPT** (Codex) are recommended. Select
 **Connect** on that row; your browser opens once to sign in. A subscription is
-a flat monthly price, so agent work does not bill your API key per call.
+a flat monthly price; without one, agents use your API key and each job is
+billed per use.
 
 The card lists every subscription that is signed in, and **Continue** unlocks
 once there is one. **I'll connect one later** moves on.
 
-### 4. Allow access on this Mac (macOS only)
+### 5. Allow access on this Mac (macOS only)
 
 Setup opens **Settings > Privacy permissions**. Use **Allow** or **Open
 Settings** on each row you want, return, and wait for the row to update. The
 restart at the end applies the grants. Windows and Linux skip this step.
 
-### 5. Choose your wake word
+### 6. Choose your wake word
 
 Setup opens **Settings** at the **Wake Word** group. **Hey** is fixed; type
 your own word after it and save. The word also becomes the assistant's name,
@@ -85,7 +105,7 @@ the wake word is on, and **Continue** unlocks once one is saved. Without a
 wake word, choose **Skip, I'll use the Call shortcut**; the Call keyboard
 shortcut then starts a conversation.
 
-### 6. All set
+### 7. All set
 
 The last card reads back the active Brain, the connected agent subscriptions
 and how voice starts, and offers **Start at login** if your system supports
@@ -93,10 +113,10 @@ it. **Show me around** starts the tour.
 
 ## Take the Tour
 
-The tour follows setup straight away. It dims the window,
-lights up one part of the real interface at a time, and explains it in a small
-card: the voice bar, a new chat, the agents and their world, Voice, Artifacts,
-the Agentic IDE, Plugins and the Marketplace, and Settings.
+The tour follows setup straight away. It dims the window, lights up one part
+of the real interface at a time, and the pet explains it: the voice bar, a new
+chat, the agents' world, Voice, and Settings. What the setup walk already
+covered is not repeated.
 
 - **Next** moves on; clicking the highlighted part yourself does the same.
 - The tour navigates by itself where needed (into the agents' world and back)
@@ -104,8 +124,26 @@ the Agentic IDE, Plugins and the Marketplace, and Settings.
 - **Skip tour** or **Escape** ends it at any point.
 - When the tour ends (or is skipped), setup is saved and the app restarts once
   so every choice takes effect together.
-- Replay setup and tour anytime under **Settings > App > Setup and app tour**.
-  The replay starts at the API Keys page and never restarts anything.
+- Do it all again anytime under **Settings > App > Do the onboarding again**.
+  The replay starts at the pet's explanation and never restarts anything.
+
+## Try the First Steps
+
+After the first tour, the pet stays in the bottom-right corner with ten small
+things to try for real: wake the assistant, ask a first question, let it use a
+tool, let it look at your screen, teach it something, have it make an
+artifact, hand a big job to an agent, meet your agents, connect an app, and
+open the Agentic IDE.
+
+- Each step shows one example. **Send it for me** sends exactly that message;
+  it is a real request and bills your connected model like any other.
+- The pet waits until the app reports that the step really happened, then
+  explains what went on and where to see the result.
+- **Skip this one** moves on; the arrow tucks the pet into a small pill; the
+  cross closes the guide. It never blocks the app.
+- Start it again under **Settings > App > First steps**.
+- Stuck at any point? Ask the assistant; it can open any part of the app for
+  you.
 
 ## Recover a Skipped or Deferred Choice
 
@@ -152,6 +190,7 @@ Desktop-only features report their limits rather than prevent startup.
 | Microphone test reports quiet, missing, or blocked | The input has no usable signal | Check OS access and **Settings > Audio devices** |
 | Saved wake word does not respond | Its local model, language, microphone, or activation switch is not ready | Use the Call shortcut; under **Settings > Wake Word**, install the offered model and run **Test wake word** |
 | The tour does not appear | The tour was already seen | Replay it under **Settings > App** |
+| A first step never completes | The app did not report that action (for example no tool was needed for the answer) | Choose **Skip this one**, or try the example again |
 | App does not reopen | The restart could not start a fresh process | Open the app; setup was already saved |
 | First-run setup returns every launch | The completion state is not read from the same writable data location | Follow [Troubleshooting](troubleshooting) for data-directory and version checks |
 

@@ -65,7 +65,7 @@ pages:
     file: docs/product/start-here/first-run-setup.md
     title: Complete First-Run Setup
     diataxis: tutorial
-    summary: Setup runs inside the app. Agree to the terms, add one key on the API Keys page, pick a wake word in Settings, then take the tour.
+    summary: Your pet explains the app, then you add one key, connect a subscription, pick a wake word and try ten first steps.
     authoritative_sources:
       - jarvis/ui/web/frontend/src/components/onboarding/setup/SetupTour.tsx
       - jarvis/ui/web/frontend/src/components/onboarding/setup/setupSteps.ts
