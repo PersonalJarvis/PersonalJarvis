@@ -43,6 +43,32 @@ def test_selection_survives_restart_without_creating_a_chat(tmp_path: Path):
     reopened.close()
 
 
+def test_legacy_choice_comes_from_the_last_user_chat_not_background_activity():
+    store = AgentChatStore()
+    earlier = store.create_session(
+        provider="openai", model="earlier", effort="", cwd="", surface="jarvis"
+    )
+    latest = store.create_session(
+        provider="ollama", model="last-used", effort="", cwd="", surface="jarvis"
+    )
+    ide = store.create_session(
+        provider="openai-codex", model="ide", effort="", cwd="", surface="agent"
+    )
+    for session, timestamp, payload in [
+        (earlier, 100, {"text": "first"}),
+        (latest, 200, {"text": "latest user chat"}),
+        (ide, 300, {"text": "unrelated IDE work"}),
+        (earlier, 400, {"text": "automatic continuation", "origin": "control"}),
+    ]:
+        store.append_event(
+            session.session_id, {"kind": "user_message", "ts_ms": timestamp, "payload": payload}
+        )
+    assert store.chat_selection() == ChatSelection("ollama", "last-used")
+    store.save_chat_selection(ChatSelection("openai-codex", "explicit-new-choice"))
+    assert store.chat_selection() == ChatSelection("openai-codex", "explicit-new-choice")
+    store.close()
+
+
 @pytest.mark.parametrize(
     "provider,model",
     [

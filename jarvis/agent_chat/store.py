@@ -186,6 +186,22 @@ class AgentChatStore:
     def chat_selection(self) -> ChatSelection | None:
         with self._lock:
             row = self._conn.execute("SELECT * FROM jarvis_chat_selection WHERE id = 1").fetchone()
+            if row is None:
+                # Upgrade installs whose last choice exists only in chat history.
+                # Agent replies and automatic control turns must not win recency.
+                history = self._conn.execute(
+                    "SELECT s.provider, s.model, s.effort, s.account_id, e.payload "
+                    "FROM agent_chat_sessions s JOIN agent_chat_events e USING (session_id) "
+                    "WHERE s.surface = 'jarvis' AND e.kind = 'user_message' "
+                    "ORDER BY e.ts_ms DESC, e.seq DESC"
+                )
+                for previous in history:
+                    if (
+                        previous["provider"]
+                        and json.loads(previous["payload"]).get("origin") != "control"
+                    ):
+                        row = previous
+                        break
         if row is None:
             return None
         return ChatSelection(

@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { waitFor } from "@testing-library/react";
 import { createAgentChatStore, draftKey } from "./agentChat";
-import type { AgentChatCatalog, ChatSelection } from "@/lib/agentChatApi";
+import type { AgentChatProvider, ChatSelection } from "@/lib/agentChatApi";
 
-const provider = {
+const provider: AgentChatProvider = {
   id: "claude-api", label: "Anthropic Claude", runner: "brain", models_source: "curated",
+  family: "anthropic", keyless: false, native_resume: true, cli_installed: null,
   curated_models: [], effort_levels: ["high"], default_effort: "high", default_model: "",
-  permission_modes: [{ id: "bypass", label: "Bypass" }], default_permission_mode: "bypass",
+  permission_modes: [{ id: "bypass", label: "Bypass", description: "Bypass" }], default_permission_mode: "bypass",
 };
 const pick: ChatSelection = { provider: "claude-api", model: "claude-sonnet-5-5", effort: "high" };
 const draft = { ...pick, cwd: "", permissionMode: "bypass", buildMode: "bypass" };
@@ -102,7 +103,7 @@ describe("remembered Jarvis chat model", () => {
   it("serializes rapid choices so the last click wins in persistent storage", async () => {
     const { fetch, writes } = backend();
     const store = createAgentChatStore("jarvis");
-    store.setState({ catalog: { providers: [provider] } as AgentChatCatalog });
+    store.setState({ catalog: { providers: [provider], default_cwd: "", shell: "test" } });
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
     const normal = fetch.getMockImplementation()!;

@@ -421,6 +421,7 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
         const revision = selectionRevision;
         const sessionId = get().activeSessionId;
         try {
+          if (surface === "jarvis" && !sessionId) await selectionWrite;
           const [raw, connections] = await Promise.all([
             fetchAgentChatCatalog(surface, { sessionId: sessionId ?? undefined, cwd: get().draft.cwd || undefined }),
             fetchAgentConnections().catch(() => [] as AgentConnectionRow[]),
