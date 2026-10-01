@@ -2965,6 +2965,9 @@ def get_workspace_layout(workspace_id: str) -> dict:
                 "agent": t.agent,
                 "display_name": t.display_name,
                 "history_id": t.history_id,
+                # What the pane's header shows, from memory — never a
+                # scrollback walk, so a map of a dozen panes stays cheap.
+                "title": recap_engine.known_headline(t),
             }
             for t in session.terminals
         ],

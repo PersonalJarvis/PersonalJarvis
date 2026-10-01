@@ -1509,7 +1509,10 @@ export interface WorkspaceLayoutView {
   id: string;
   name: string;
   layout: LayoutNode | null;
-  terminals: Pick<TerminalState, "key" | "name" | "agent" | "display_name" | "history_id">[];
+  terminals: (Pick<TerminalState, "key" | "name" | "agent" | "display_name" | "history_id"> & {
+    /** What the pane's header shows: its goal in a few words, or empty. */
+    title?: string;
+  })[];
   max_terminals: number;
 }
 

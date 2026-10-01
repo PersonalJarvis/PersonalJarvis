@@ -341,6 +341,7 @@ async def test_the_layout_route_describes_another_tab(registry: Registry, tmp_pa
 
     assert body["name"] == "Blog"
     assert [t["name"] for t in body["terminals"]] == ["T1", "T2"]
+    assert all(isinstance(t["title"], str) for t in body["terminals"])
     assert body["layout"] is not None
     with pytest.raises(HTTPException) as missing:
         routes.get_workspace_layout("ide_missing")
