@@ -170,16 +170,6 @@ export const MarketplaceIcon = defineIcon(
   </>,
 );
 
-/** A clock inside a turning arrow: work that runs again on a schedule. */
-export const AutomationIcon = defineIcon(
-  "AutomationIcon",
-  <>
-    <path d="M20 12a8 8 0 1 1-2.35-5.65" />
-    <path d="M20 4.5v3.75h-3.75" />
-    <path d="M12 8v4l2.5 1.75" />
-  </>,
-);
-
 /** A card on top of a card: the things a run produced. */
 export const ArtifactsIcon = defineIcon(
   "ArtifactsIcon",

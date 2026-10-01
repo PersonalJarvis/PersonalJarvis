@@ -373,12 +373,12 @@ Cancel a running Jarvis-Agent mission by id.
 
 ## `tasks-list` — List tasks
 
-List scheduled and running tasks.
+List scheduled and running tasks (agent routines).
 
 - **Endpoint:** `GET /api/tasks`
 - **Arguments:** none
 - **Requires confirmation:** no
-- **Desktop UI section:** `tasks`
+- **Desktop UI section:** `agents`
 - **Voice example (EN):** "show me my tasks"
 
 ## `task-cancel` — Cancel a task
@@ -388,7 +388,7 @@ Cancel a running or scheduled task by id.
 - **Endpoint:** `POST /api/tasks/{task_id}/cancel`
 - **Arguments:** `task_id` (string; required)
 - **Requires confirmation:** yes
-- **Desktop UI section:** `tasks`
+- **Desktop UI section:** `agents`
 - **Voice example (EN):** "cancel the task"
 
 ## `skills-list` — List installed skills

@@ -1062,11 +1062,11 @@ def _build_registry() -> tuple[AppCommand, ...]:
         AppCommand(
             id="tasks-list",
             title="List tasks",
-            description="List scheduled and running tasks.",
+            description="List scheduled and running tasks (agent routines).",
             method="GET",
             path="/api/tasks",
             worker_allowed=True,
-            ui_section="tasks",
+            ui_section="agents",
             voice_aliases={
                 "de": ("zeig mir meine aufgaben",),  # i18n-allow: input vocab
                 "en": ("show me my tasks",),
@@ -1088,7 +1088,7 @@ def _build_registry() -> tuple[AppCommand, ...]:
             },
             path_params=("task_id",),
             dangerous=True,
-            ui_section="tasks",
+            ui_section="agents",
             voice_aliases={
                 "de": ("brich die aufgabe ab",),  # i18n-allow: input vocab
                 "en": ("cancel the task",),

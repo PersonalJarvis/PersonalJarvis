@@ -35,7 +35,7 @@ def test_pipeline_change_runs_everything():
 
 
 def test_frontend_source_change_keeps_python_on_because_tests_read_it():
-    result = classify_changes.classify(["jarvis/ui/web/frontend/src/views/tasks/taskSpec.ts"])
+    result = classify_changes.classify(["jarvis/ui/web/frontend/src/lib/tasksApi.ts"])
     assert result["frontend"] is True
     assert result["python"] is True
     assert result["realtime"] is False

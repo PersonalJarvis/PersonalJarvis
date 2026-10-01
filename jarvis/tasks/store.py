@@ -552,3 +552,30 @@ class TaskStore:
         rowcount = cur.rowcount
         await cur.close()
         return int(rowcount or 0)
+
+    async def retire_catalogue_tasks(self) -> int:
+        """Startup cleanup: cancel every live task the retired automations
+        catalogue created (``created_by="template"``).
+
+        Scheduling now lives on agents (``jarvis/society/routines.py``); the
+        catalogue and the standalone Automations section are gone, so such a
+        task would keep firing with nowhere left to see, pause or stop it.
+        The row is kept, only its state changes. Returns the number of
+        retired tasks; called at app start, before the scheduler hydrates.
+        """
+        conn = self._require_conn()
+        now_ns = time.time_ns()
+        cur = await conn.execute(
+            """
+            UPDATE tasks
+            SET state = 'cancelled',
+                finished_at_ns = ?,
+                last_error = 'Standalone schedules were retired; give this job to an agent instead'
+            WHERE state IN ('pending', 'scheduled', 'paused')
+              AND json_extract(spec_json, '$.created_by') = 'template'
+            """,
+            (now_ns,),
+        )
+        rowcount = cur.rowcount
+        await cur.close()
+        return int(rowcount or 0)

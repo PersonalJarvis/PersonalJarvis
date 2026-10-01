@@ -453,10 +453,6 @@ docs/commands-reference.md
 jarvis/brain/artifact_gate.py
 tests/unit/brain/test_artifact_tool_hide.py
 
-# --- Automation templates (2026-08-24): localized card copy (en/de/es) lives
-#     next to each template so ten authors never edit one shared i18n file ---
-jarvis/tasks/templates/*
-
 # --- Dictation Prompt Mode (2026-08-27): the worked de/en example pair in the
 #     system prompt and the closed thanks pool are product output, plus the
 #     fixtures that pin them ---

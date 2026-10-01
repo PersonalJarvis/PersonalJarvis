@@ -234,8 +234,8 @@ For repeated provider, connection, or startup failures, follow the main
 
 ## Next Steps
 
-- Read [Tasks and Reminders](tasks-and-reminders) when one saved action should
-  start at a time, interval, or mission event.
+- Read [Tasks and Reminders](tasks-and-reminders) when an agent should run a
+  saved job at a time, an interval, or an event.
 - Read [Skills](skills) when you want repeatable instructions that can choose
   from currently connected capabilities.
 - Use the [CLI Reference](cli-reference) to browse safe workflow and feature

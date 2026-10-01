@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, expect, test, vi } from "vitest";
 import { AgentRoutineDetail, routineRuns } from "./AgentRoutineDetail";
 import type { LiveRoutine } from "../cardData";
-import type { TaskDetail, TaskStep } from "@/views/automations/automationsModel";
+import type { TaskDetail, TaskStep } from "@/lib/tasksApi";
 import en from "@/i18n/locales/society/en.json";
 import { RoutineChatHost } from "../chat/RoutineChatHost";
 import { useRoutineNavigation } from "../chat/routineNavigation";

@@ -269,8 +269,8 @@ approval field is not proof that no standing rule applied.
 
 - Read [Computer Use](computer-use) before allowing live mouse and keyboard
   control.
-- Review [Tasks and Reminders](tasks-and-reminders) before granting unattended
-  Write or Full access.
+- Review [Tasks and Reminders](tasks-and-reminders) before letting an agent's
+  routine act unattended.
 - Use [Skills](skills) to understand drafts, activation, and how instructions
   call normal tools.
 - Read [Privacy and Local Data](privacy-and-local-data) to understand what an

@@ -3373,6 +3373,12 @@ class WebServer:
                 "TaskStack: cleaned up {} interrupted tasks from the previous run",
                 recovered,
             )
+        retired = await store.retire_catalogue_tasks()
+        if retired:
+            logger.info(
+                "TaskStack: cancelled {} schedules from the retired automations catalogue",
+                retired,
+            )
 
         # Wire the brain so agentic (`agent`) tasks can run a tool-restricted
         # turn unattended. app.state.brain is set before server.start() (see

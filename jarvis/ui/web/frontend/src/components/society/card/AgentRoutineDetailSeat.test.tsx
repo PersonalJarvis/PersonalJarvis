@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { AgentRoutineDetail } from "./AgentRoutineDetail";
-import type { TaskDetail } from "@/views/automations/automationsModel";
+import type { TaskDetail } from "@/lib/tasksApi";
 import en from "@/i18n/locales/society/en.json";
 
 vi.mock("@/components/agentchat/AgentTimeline", () => ({ AgentTimeline: () => null }));

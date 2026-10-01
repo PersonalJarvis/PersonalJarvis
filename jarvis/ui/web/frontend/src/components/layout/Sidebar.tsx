@@ -323,7 +323,7 @@ export function Sidebar({
 
   const allItems = NAV_GROUPS.flat();
   const findItem = (id: string) => allItems.find((item) => item.id === id)!;
-  const toolIds = ["memory", "board", "docs", "sessions", "run_inspector", "clis", "tasks"];
+  const toolIds = ["memory", "board", "docs", "sessions", "run_inspector", "clis"];
   const toolItems = toolIds.map(findItem);
   // Artifacts ("visualization") sits directly in the main list where the
   // retired "Jarvis Tools" folder used to be — it was the only entry hiding
@@ -553,7 +553,7 @@ export function Sidebar({
             <ChevronDown aria-hidden strokeWidth={1.75} className={cn("h-[18px] w-[18px] shrink-0 transition-transform", moreOpen && "rotate-180")} />
             {!railed && <span>{t(moreOpen ? "sidebar.show_less" : "sidebar.more")}</span>}
           </button>
-          {moreOpen && <ul id="sidebar-more" className="space-y-1">{moreItems.map((item) => item.id === "tasks" ? renderRow({ ...item, labelKey: "sidebar.scheduled" }) : renderRow(item))}</ul>}
+          {moreOpen && <ul id="sidebar-more" className="space-y-1">{moreItems.map((item) => renderRow(item))}</ul>}
         </nav>}
         {!railed && (onIdeSection
           ? <IdeProjectTree />

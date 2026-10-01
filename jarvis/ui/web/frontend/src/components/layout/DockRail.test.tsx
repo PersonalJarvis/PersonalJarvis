@@ -73,7 +73,7 @@ describe("DockRail", () => {
   test("keeps the active control on a lit fill", () => {
     renderRail();
     expect(screen.getByTestId("nav-row-chats").classList).toContain("jarvis-nav-active");
-    expect(screen.getByTestId("nav-row-tasks").classList).not.toContain(
+    expect(screen.getByTestId("nav-row-board").classList).not.toContain(
       "jarvis-nav-active",
     );
   });
@@ -148,9 +148,9 @@ describe("DockRail", () => {
   test("picking an icon jumps to its section", () => {
     renderRail();
     act(() => {
-      fireEvent.click(screen.getByTestId("nav-row-tasks"));
+      fireEvent.click(screen.getByTestId("nav-row-board"));
     });
-    expect(useEventStore.getState().activeSection).toBe("tasks");
+    expect(useEventStore.getState().activeSection).toBe("board");
   });
 
   test("keyboard focus names the icon too, so the rail is not a row of blank glyphs", () => {

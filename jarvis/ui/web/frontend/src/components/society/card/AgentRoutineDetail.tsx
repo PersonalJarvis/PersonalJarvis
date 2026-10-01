@@ -4,9 +4,9 @@ import { useQueries, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Check, Clock, Plus, X } from "lucide-react";
 import { useT } from "@/i18n";
 import { Switch } from "@/components/ui/switch";
-import { cancelAndDeleteTask, cancelTask, fetchTask, runTaskNow, setTaskEnabled } from "@/hooks/useAutomations";
+import { cancelAndDeleteTask, cancelTask, fetchTask, runTaskNow, setTaskEnabled } from "@/lib/tasksApi";
 import { describeTrigger, displayRoutineTitle, type LiveRoutine } from "../cardData";
-import type { TaskDetail, TaskStep } from "@/views/automations/automationsModel";
+import type { TaskDetail, TaskStep } from "@/lib/tasksApi";
 import { TriggerBuilder } from "./TriggerBuilder";
 import { WebhookConnection } from "./WebhookConnection";
 import { SourceControls } from "./SourceControls";
@@ -192,7 +192,7 @@ export function AgentRoutineDetail({ agentId, routine, onClose }: {
             <button className="flex w-full items-start gap-2 rounded text-left text-[12px] disabled:opacity-70" disabled={pending || !editable || Boolean(draft) || !detail || !timeKinds.includes(detail.trigger_type)} onClick={() => { setEditing({ ...member, trigger: detail?.trigger }); setSchedule(null); }}>
               <Clock size={14} className="mt-0.5 shrink-0" /><span>{describeTrigger(detail?.trigger ?? member.trigger, t)}</span>
             </button>
-            {detail?.due_at_ns && detail.state === "scheduled" ? <p className="pl-5 text-[11px] text-muted-foreground">{t("automations_view.next_run")}: {new Date(detail.due_at_ns / 1e6).toLocaleString(undefined, { timeZoneName: "short" })}</p> : null}
+            {detail?.due_at_ns && detail.state === "scheduled" ? <p className="pl-5 text-[11px] text-muted-foreground">{t("society.card.next_run")}: {new Date(detail.due_at_ns / 1e6).toLocaleString(undefined, { timeZoneName: "short" })}</p> : null}
             {detail && renderConnection(detail)}
             {index > 0 && <button className="pl-5 text-[11px] text-muted-foreground" disabled={pending || !editable || Boolean(draft)} onClick={() => void act(async () => { await cancelTask(member.id); })}>{label("remove_schedule")}</button>}
           </div>;

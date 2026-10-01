@@ -14,7 +14,6 @@ import { OllamaIcon } from "@/components/icons/OllamaIcon";
 import {
   AgentsIcon,
   ArtifactsIcon,
-  AutomationIcon,
   BoardIcon,
   CaptureIcon,
   ChatIcon,
@@ -143,9 +142,6 @@ export const NAV_GROUPS: NavItem[][] = [
       icon: MarketplaceIcon,
       fallbackLabel: "Marketplace",
     },
-    // Automations — the recurring agent tasks and their catalogue. The id stays
-    // "tasks" (navigate parity, deep links); only the label and glyph changed.
-    { id: "tasks", labelKey: "nav.tasks", icon: AutomationIcon, fallbackLabel: "Automations" },
     // Artifacts — everything a run produced. The id stays "visualization"
     // because it crosses the navigate parity test, the detachable-view
     // registry and deep links.

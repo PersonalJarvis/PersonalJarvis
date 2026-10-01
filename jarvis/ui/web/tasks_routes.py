@@ -1,8 +1,9 @@
-"""REST API for the task queue (Phase 5 Capability 4) — the Automations section.
+"""REST API for the task queue (Phase 5 Capability 4) — the engine under agent routines.
+
+Agent routines (``jarvis/society/routines.py``) are tagged tasks; the agent
+card reads and drives them through these endpoints.
 
 Endpoints:
-- ``GET    /api/tasks/templates``            → the pre-built automations catalogue.
-- ``POST   /api/tasks/templates/{key}/add``  → instantiate a template as a task.
 - ``POST   /api/tasks``              → create + schedule a TaskSpec.
 - ``GET    /api/tasks``              → task list, optionally ``?state=...``.
 - ``GET    /api/tasks/{id}``         → full task with steps timeline.
@@ -14,11 +15,11 @@ Endpoints:
 The router expects a ``TaskStore`` + ``TaskScheduler`` on
 ``app.state.task_store`` resp. ``app.state.task_scheduler`` — these are
 set by the DesktopApp at startup. If neither is set, the endpoints answer
-with ``503`` (Service Unavailable). Template readiness reads the live tool
-names from ``app.state.brain`` when it exists.
+with ``503`` (Service Unavailable).
 
-Route order matters: the ``/templates`` routes are registered BEFORE the
-``/{task_id}`` routes so "templates" is never captured as a task id.
+Route order matters: the fixed-path routes (``/client-timezone``) are
+registered BEFORE the ``/{task_id}`` routes so they are never captured as a
+task id.
 """
 
 from __future__ import annotations
@@ -29,7 +30,6 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from jarvis.tasks import templates as tpl
 from jarvis.tasks.scheduler import TaskNotFound, TaskStateConflict
 from jarvis.tasks.schema import PAUSABLE_TRIGGER_TYPES, TERMINAL_STATES, TaskSpec
 
@@ -56,22 +56,6 @@ def _require_scheduler(request: Request) -> Any:
     if scheduler is None:
         raise HTTPException(status_code=503, detail="TaskScheduler not available")
     return scheduler
-
-
-def _live_tool_names(request: Request) -> list[str] | None:
-    """Tool names of the live brain, or ``None`` when no brain is up yet
-    (readiness then defaults to "ready" rather than flagging every card)."""
-    brain = getattr(request.app.state, "brain", None)
-    snapshot = getattr(brain, "snapshot", None)
-    if brain is None or not callable(snapshot):
-        return None
-    try:
-        tools = snapshot().get("tools_available")
-    except Exception:  # noqa: BLE001 — a half-built brain must not 500 the catalogue
-        return None
-    if tools is None:
-        return None
-    return [str(t) for t in tools]
 
 
 def _last_run_state(row: dict[str, Any]) -> str | None:
@@ -131,65 +115,6 @@ def _row_to_summary(
         "last_run_state": _last_run_state(row),
         "last_result": last_result,
     }
-
-
-# ----------------------------------------------------------------------
-# Templates (registered first — see module docstring)
-# ----------------------------------------------------------------------
-
-
-class TemplateAddRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    inputs: dict[str, str] = Field(default_factory=dict)
-    schedule: tpl.TemplateSchedule | None = None
-    title: str | None = Field(default=None, max_length=256)
-    locale: str = "en"
-
-
-@router.get("/templates")
-async def list_templates(request: Request, locale: str = "en") -> dict[str, Any]:
-    """The automations catalogue, localized, with a readiness verdict per
-    template computed against the live brain's tool names."""
-    live_tools = _live_tool_names(request)
-    return {
-        "templates": [
-            t.to_api(locale, live_tools=live_tools) for t in tpl.all_templates().values()
-        ],
-        "categories": list(tpl.CATEGORIES),
-    }
-
-
-@router.post("/templates/{key}/add", status_code=201)
-async def add_template(
-    key: str,
-    body: TemplateAddRequest,
-    request: Request,
-) -> dict[str, Any]:
-    """Instantiate a template as a scheduled task (``created_by="template"``,
-    tagged ``template:<key>``). 404 unknown key, 422 missing required input."""
-    template = tpl.get_template(key)
-    if template is None:
-        raise HTTPException(status_code=404, detail=f"Unknown template {key!r}")
-    try:
-        spec = tpl.build_spec(
-            template,
-            inputs=body.inputs,
-            schedule=body.schedule,
-            title=body.title,
-            locale=body.locale,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    store = _require_store(request)
-    scheduler = _optional_scheduler(request)
-    try:
-        if scheduler is not None:
-            task_id = await scheduler.schedule(spec)
-        else:
-            task_id = await store.insert(spec)
-    except ValueError as exc:
-        raise HTTPException(422, str(exc)) from exc
-    return {"id": task_id}
 
 
 class ClientTimezoneBody(BaseModel):

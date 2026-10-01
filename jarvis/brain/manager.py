@@ -13415,10 +13415,10 @@ class BrainManager:
         Unknown grants (e.g. a plugin that isn't connected) are silently
         skipped — the task runs with whatever of its allowlist is live.
 
-        A grant is matched by :func:`jarvis.tasks.templates.grant_matches`:
+        A grant is matched by :func:`jarvis.tasks.grants.grant_matches`:
         exact name, or the plugin prefix of a bridged MCP tool — the grant
         ``github`` covers every ``github/<tool>``. (Exact matching alone left
-        a template with a ``github`` grant running with ZERO tools.)
+        a routine with a ``github`` grant running with ZERO tools.)
 
         A grant naming one of :data:`_TASK_ONLY_TOOLS` that is NOT in the live
         (router) set is loaded from its entry point on demand: ``remember`` is
@@ -13428,7 +13428,7 @@ class BrainManager:
         dispatcher — never the router surface.
         """
         from jarvis.clis.capability_provider import equivalent_grants  # noqa: PLC0415
-        from jarvis.tasks.templates import grant_matches  # noqa: PLC0415
+        from jarvis.tasks.grants import grant_matches  # noqa: PLC0415
 
         if not allowed_tools:
             return {}

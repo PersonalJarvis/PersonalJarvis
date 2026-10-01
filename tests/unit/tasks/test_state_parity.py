@@ -2,9 +2,9 @@
 
 ``paused`` (2026-08-24) joined the vocabulary that lives in Python
 (``TaskState``/``TASK_STATES``), SQL (the ``state`` CHECK in ``schema.sql``
-and the migration rebuild target), TypeScript (the ``TaskState`` union + the
-label/dot maps of the Automations views) and i18n (``tasks_view.state.*`` in
-every locale). A value missing from any one layer is a silent defect: a CHECK
+and the migration rebuild target), TypeScript (the ``TaskState`` union the
+agent card reads routines with) and i18n (``tasks_view.state.*`` in every
+locale). A value missing from any one layer is a silent defect: a CHECK
 violation on pause, a blank badge, or an untranslated key.
 
 Source of truth: ``TASK_STATES`` in ``jarvis/tasks/schema.py``.
@@ -23,8 +23,7 @@ from jarvis.tasks.schema import TASK_STATES, TERMINAL_STATES, TaskState
 REPO_ROOT = Path(__file__).resolve().parents[3]
 FRONTEND = REPO_ROOT / "jarvis/ui/web/frontend/src"
 SCHEMA_SQL = REPO_ROOT / "jarvis/tasks/schema.sql"
-MODEL_TS = FRONTEND / "views/automations/automationsModel.ts"
-SHARED_TSX = FRONTEND / "views/automations/shared.tsx"
+MODEL_TS = FRONTEND / "lib/tasksApi.ts"
 LOCALES = FRONTEND / "i18n/locales"
 
 
@@ -58,17 +57,9 @@ def test_migration_rebuild_target_matches_python() -> None:
 def test_ts_union_matches_python() -> None:
     text = MODEL_TS.read_text(encoding="utf-8")
     block = re.search(r"export type TaskState =([\s\S]+?);", text)
-    assert block is not None, "could not find TaskState union in automationsModel.ts"
+    assert block is not None, "could not find TaskState union in tasksApi.ts"
     found = set(re.findall(r'"([^"]+)"', block.group(1)))
-    assert found == _expected(), f"automationsModel.ts TaskState drift: {found ^ _expected()}"
-
-
-def test_ts_label_map_covers_every_state() -> None:
-    text = SHARED_TSX.read_text(encoding="utf-8")
-    found = set(re.findall(r'(\w+):\s*t\("tasks_view\.state\.(\w+)"\)', text))
-    keys = {k for k, _ in found}
-    assert keys == _expected(), f"shared.tsx label map drift: {keys ^ _expected()}"
-    assert all(k == v for k, v in found), "label map key/i18n key mismatch"
+    assert found == _expected(), f"tasksApi.ts TaskState drift: {found ^ _expected()}"
 
 
 @pytest.mark.parametrize("locale", ["de", "en", "es"])
