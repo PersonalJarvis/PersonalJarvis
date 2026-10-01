@@ -352,11 +352,12 @@ def _call_centre_pixel(state: controls.PetStripState) -> tuple[int, int, int]:
     return frame.getpixel((int(cx), int(cy - r + 2)))
 
 
-def test_the_phone_is_green_to_call_and_red_to_hang_up() -> None:
-    assert _call_centre_pixel(controls.PetStripState()) == controls.PET_CALL_FILL
-    assert _call_centre_pixel(controls.PetStripState(active=True)) == controls.PET_HANGUP_FILL
-    hovered = controls.PetStripState(active=True, hovered="call")
-    assert _call_centre_pixel(hovered) == controls.PET_HANGUP_FILL_HOVER
+def test_the_phone_wears_the_strips_own_fill_in_and_out_of_a_call() -> None:
+    # One quiet family: the phone says "call" with its handset, not a colour.
+    assert _call_centre_pixel(controls.PetStripState()) == controls.PET_FILL
+    assert _call_centre_pixel(controls.PetStripState(active=True)) == controls.PET_FILL
+    hovered = controls.PetStripState(hovered="call")
+    assert _call_centre_pixel(hovered) == controls.PET_FILL_HOVER
 
 
 def _handset_pixels(state: controls.PetStripState) -> list[tuple[int, int, int]]:
@@ -367,10 +368,11 @@ def _handset_pixels(state: controls.PetStripState) -> list[tuple[int, int, int]]
 
 
 def test_the_handset_turns_flat_to_hang_up() -> None:
-    call = [px == controls.PET_CALL_ICON for px in _handset_pixels(controls.PetStripState())]
-    hangup = [
-        px == controls.PET_CALL_ICON for px in _handset_pixels(controls.PetStripState(active=True))
-    ]
+    def lit(state: controls.PetStripState) -> list[bool]:
+        return [sum(px) > 3 * 180 for px in _handset_pixels(state)]
+
+    call = lit(controls.PetStripState())
+    hangup = lit(controls.PetStripState(active=True))
     assert any(call) and any(hangup) and call != hangup
 
 

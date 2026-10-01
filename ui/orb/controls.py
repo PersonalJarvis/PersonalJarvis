@@ -473,20 +473,15 @@ PET_RING_PHASES = 14
 PET_RING_STEP_S = 0.04
 PET_RING_DEG = 16.0
 
-#: The phone disc: a call button is green and a hang-up button red in every
-#: phone app, so the disc borrows that language instead of the strip's
-#: near-black. A shade lighter under the pointer; the handset is white.
-PET_CALL_FILL = (22, 163, 74)
-PET_CALL_FILL_HOVER = (34, 197, 94)
-PET_HANGUP_FILL = (220, 38, 38)
-PET_HANGUP_FILL_HOVER = (239, 68, 68)
-PET_CALL_ICON = (255, 255, 255)
+#: The phone disc wears the bell disc's fill and glyph colour — the strip is
+#: one quiet family, so the phone says "call" and "hang up" with the pose of
+#: its handset alone, never with a coloured button of its own.
 #: Pressing call rings the handset: the bell's damped swing, played
 #: ``PET_CALL_RING_PASSES`` times so it reads as a phone ringing out.
 PET_CALL_RING_PASSES = 2
-#: The handset's turn from its hang-up pose (lying flat, ends down) to its
-#: call pose (tilted, earpiece up) — the same 135 degrees phone apps animate.
-PET_CALL_TILT_DEG = -135.0
+#: The handset's turn from its call pose (lucide's ``phone``) to its hang-up
+#: pose (lying flat, ends down) — the 135 degrees phone apps animate.
+PET_HANGUP_TILT_DEG = 135.0
 
 
 def _spx(value: float, scale: float) -> int:
@@ -761,40 +756,80 @@ def call_ring_angle(phase: int) -> float:
     return ring_angle(phase % PET_RING_PHASES)
 
 
-@functools.lru_cache(maxsize=1)
-def _handset_outline() -> tuple[tuple[tuple[float, float], ...], ...]:
-    """The handset in its hang-up pose on the 24-unit grid: a flat bow, ends down.
+def _svg_arc(
+    p0: tuple[float, float],
+    p1: tuple[float, float],
+    r: float,
+    *,
+    large: bool,
+    sweep: bool,
+    steps: int = 8,
+) -> list[tuple[float, float]]:
+    """A circular SVG ``A`` segment from ``p0`` to ``p1``, sampled; ``p0`` excluded."""
+    (x0, y0), (x1, y1) = p0, p1
+    mx, my = (x0 - x1) / 2.0, (y0 - y1) / 2.0
+    half = math.hypot(mx, my)
+    r = max(r, half)
+    # Centre on the chord's perpendicular bisector; flags pick the side.
+    k = math.sqrt(max(0.0, r * r - half * half)) / max(half, 1e-9)
+    if large == sweep:
+        k = -k
+    cx = (x0 + x1) / 2.0 + k * my
+    cy = (y0 + y1) / 2.0 - k * mx
+    a0 = math.atan2(y0 - cy, x0 - cx)
+    a1 = math.atan2(y1 - cy, x1 - cx)
+    delta = a1 - a0
+    if sweep and delta < 0:
+        delta += 2.0 * math.pi
+    elif not sweep and delta > 0:
+        delta -= 2.0 * math.pi
+    return [
+        (cx + r * math.cos(a0 + delta * i / steps), cy + r * math.sin(a0 + delta * i / steps))
+        for i in range(1, steps + 1)
+    ]
 
-    Three polylines — the grip and the two stubby ear and mouth pieces — drawn
-    with a heavy stroke, so the handset reads as one solid shape at 20 px.
+
+@functools.lru_cache(maxsize=1)
+def _handset_outline() -> tuple[tuple[float, float], ...]:
+    """Lucide's ``phone`` on the 24-unit grid, as one closed polyline.
+
+    The same line icon set as the bell, microphone and speaker, so the phone
+    reads as part of the strip rather than as a button of its own.
     """
-    grip = tuple(_arc_points(12, 17.2, 8.2, 207, 333, steps=14))
-    left = grip[0]
-    right = grip[-1]
-    ear = (left, (left[0] - 0.9, left[1] + 3.0))
-    mouth = (right, (right[0] + 0.9, right[1] + 3.0))
-    return (grip, ear, mouth)
+    pts: list[tuple[float, float]] = [(13.832, 16.568)]
+
+    def arc(end: tuple[float, float], r: float, *, large: bool = False, sweep: bool) -> None:
+        pts.extend(_svg_arc(pts[-1], end, r, large=large, sweep=sweep))
+
+    arc((15.045, 16.265), 1, sweep=False)
+    pts.append((15.4, 15.8))
+    arc((17, 15), 2, sweep=True)
+    pts.append((20, 15))
+    arc((22, 17), 2, sweep=True)
+    pts.append((22, 20))
+    arc((20, 22), 2, sweep=True)
+    arc((2, 4), 18, sweep=True)
+    arc((4, 2), 2, sweep=True)
+    pts.append((7, 2))
+    arc((9, 4), 2, sweep=True)
+    pts.append((9, 7))
+    arc((8.2, 8.6), 2, sweep=True)
+    pts.append((7.732, 8.951))
+    arc((7.44, 10.184), 1, sweep=False)
+    arc((13.832, 16.568), 14, sweep=False)
+    return tuple(pts)
 
 
 def _glyph_phone(pen: _Pen, color: _Rgb, *, hangup: bool, shake: float = 0.0) -> None:
-    """The handset: tilted to call, lying flat to hang up; ``shake`` rings it."""
-    a = math.radians((0.0 if hangup else PET_CALL_TILT_DEG) + shake)
+    """The handset: lucide's phone to call, turned flat to hang up; ``shake`` rings it."""
+    a = math.radians((PET_HANGUP_TILT_DEG if hangup else 0.0) + shake)
     cos_a, sin_a = math.cos(a), math.sin(a)
-    pivot_u, pivot_v = 12.0, 14.0
 
     def turn(point: tuple[float, float]) -> tuple[float, float]:
-        # Turned about the handset's own middle, then centred on the grid.
-        du, dv = point[0] - pivot_u, point[1] - pivot_v
+        du, dv = point[0] - 12.0, point[1] - 12.0
         return (12.0 + du * cos_a - dv * sin_a, 12.0 + du * sin_a + dv * cos_a)
 
-    base = pen.width
-    grip, ear, mouth = _handset_outline()
-    pen.width = max(1, int(round(base * 1.6)))
-    pen.lines([turn(point) for point in grip], color)
-    pen.width = max(1, int(round(base * 2.4)))
-    pen.lines([turn(point) for point in ear], color)
-    pen.lines([turn(point) for point in mouth], color)
-    pen.width = base
+    pen.lines([turn(point) for point in _handset_outline()], color)
 
 
 def _glyph_mic(pen: _Pen, color: _Rgb) -> None:
@@ -995,20 +1030,16 @@ def _draw_indicator(
 
 
 def _render_call_disc(state: PetStripState, diameter: int, scale: float) -> Image.Image:
-    """The phone disc: green with a tilted handset, red with a flat one."""
+    """The phone disc: the bell disc's look, the handset tilted or lying flat."""
     size = diameter * _SS
     hovered = state.hovered == "call"
-    if state.active:
-        fill = PET_HANGUP_FILL_HOVER if hovered else PET_HANGUP_FILL
-    else:
-        fill = PET_CALL_FILL_HOVER if hovered else PET_CALL_FILL
-    layer = Image.new("RGB", (size, size), fill)
+    layer = Image.new("RGB", (size, size), PET_FILL_HOVER if hovered else PET_FILL)
     d = ImageDraw.Draw(layer)
     box = _spx(PET_SLOT, scale) * PET_ICON_BOX * _SS
     stroke = PET_ICON_STROKE * max(0.5, scale) * _SS
     _glyph_phone(
         _Pen(d, size / 2.0, size / 2.0, box, stroke),
-        PET_CALL_ICON,
+        PET_ICON,
         hangup=state.active,
         shake=call_ring_angle(state.call_ring),
     )
