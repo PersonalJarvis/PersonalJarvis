@@ -105,15 +105,23 @@ def _matches(rule: dict[str, Any], actual: Any) -> bool:
 
 _CALL_SHAPES = re.compile(r'"name"\s*:|<tool_call>|"arguments"\s*:|function_call|\[TOOL_CALLS\]')
 _DONE_CLAIMS = {
+    # A finished action in the perfect tense, or an action announced in the
+    # present tense ("Ich schicke dir die E-Mail ...") without any call.
     "de": re.compile(  # i18n-allow: German completion claims the grader detects
         r"\b(habe|hab|ist|wurde|wurden|sind)\b[^.?!]*\b(gestellt|gesetzt|erstellt|"  # i18n-allow
         r"eingetragen|geöffnet|gestartet|gesendet|geschickt|verschickt|abgespielt|"  # i18n-allow
-        r"eingeschaltet|ausgeschaltet|gedimmt|erledigt|gespeichert|angelegt)\b",  # i18n-allow
-        re.IGNORECASE,
+        r"eingeschaltet|ausgeschaltet|gedimmt|erledigt|gespeichert|angelegt|beendet|"  # i18n-allow
+        r"aufgelegt|geschrieben|gesucht|gespielt|aufgenommen)\b"  # i18n-allow
+        r"|^\s*(ich\s+)?(schicke|sende|stelle|öffne|spiele|starte|beende|lege|"  # i18n-allow
+        r"schreibe|trage|mache|suche)\b",  # i18n-allow
+        re.IGNORECASE | re.MULTILINE,
     ),
     "en": re.compile(
-        r"\b(i've|i have|has been|have been|is now|are now|i set|i opened|i sent|i started|"
-        r"i turned|i added|i created|i saved)\b",
+        r"\b(i've|i have|has been|have been)\s+(set|sent|opened|started|turned|added|created|"
+        r"saved|scheduled|played|ended|switched|dimmed|taken|captured)\b"
+        r"|\b(is now|are now)\b|\bi (set|opened|sent|started|turned|added|created|saved)\b"
+        r"|\bi'm (sending|setting|opening|starting|playing|ending|turning|adding)\b"
+        r"|\bending the call\b|\bsending (it )?now\b",
         re.IGNORECASE,
     ),
 }

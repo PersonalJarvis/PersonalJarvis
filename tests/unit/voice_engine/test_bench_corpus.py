@@ -110,3 +110,18 @@ def test_hard_negatives_flag_a_destructive_call(language: str) -> None:
     thanks = next(c for c in hard if c.tool is None and "end_call" in c.forbidden)
     assert corpus.grade(thanks, [{"name": "end_call", "arguments": {}}])["verdict"] == "forbidden"
     assert corpus.grade(thanks, [])["verdict"] == "correct"
+
+
+@pytest.mark.parametrize(
+    ("language", "text", "verdict"),
+    [
+        ("de", "Das Gespräch wurde beendet.", "invented"),  # i18n-allow: graded fixture
+        ("de", "Ich schicke dir die E-Mail an Anna.", "invented"),  # i18n-allow: graded fixture
+        ("en", "I'm sending it now.", "invented"),
+        ("en", "I have set a timer for ten minutes.", "invented"),
+        ("en", "I have no access to your email.", "missed"),
+    ],
+)
+def test_completion_claims_without_a_call(language: str, text: str, verdict: str) -> None:
+    case = _case(language=language)
+    assert corpus.grade(case, [], text)["verdict"] == verdict
