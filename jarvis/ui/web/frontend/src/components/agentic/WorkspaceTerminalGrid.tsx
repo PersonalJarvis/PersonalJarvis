@@ -39,6 +39,8 @@ function writeStyle(node: HTMLElement, style: React.CSSProperties) {
 }
 
 interface Props {
+  /** Hidden retained workspaces keep their sockets but park output and focus. */
+  active?: boolean;
   session: SessionState;
   onChanged: (session: SessionState) => void;
   /** Open the agent picker; with an anchor, the new pane splits off that pane. */
@@ -63,7 +65,7 @@ interface Props {
 interface DropTarget { id: string; position: PaneMovePosition; allowed: boolean }
 interface DragFeedback { id: string; target: DropTarget | null; x: number; y: number }
 
-export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSelect, selected, maxPanes = MAX_WORKSPACE_PANES, fontSize, appearance, disabled = false, onMutationStart, onMutationEnd, paneStyle: look = "classic" }: Props) {
+export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSelect, selected, maxPanes = MAX_WORKSPACE_PANES, fontSize, appearance, disabled = false, onMutationStart, onMutationEnd, paneStyle: look = "classic", active = true }: Props) {
   const theme = useThemeValue();
   const pushToast = useEventStore((state) => state.pushToast);
   // The pane an agent card in the side panel pointed at, framed in blue.
@@ -139,12 +141,12 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
   const paneRequest = useIdeChatStore((state) => state.paneRequest);
   const settlePaneMaximize = useIdeChatStore((state) => state.settlePaneMaximize);
   useEffect(() => {
-    if (!paneRequest?.maximize || paneRequest.workspaceId !== session.id) return;
+    if (!active || !paneRequest?.maximize || paneRequest.workspaceId !== session.id) return;
     const terminal = session.terminals.find((entry) => entry.name === paneRequest.pane);
     if (!terminal) return;
     settlePaneMaximize(paneRequest.nonce);
     setMaximized(idOf(terminal));
-  }, [paneRequest, session.id, session.terminals, settlePaneMaximize]);
+  }, [active, paneRequest, session.id, session.terminals, settlePaneMaximize]);
   useEffect(() => { if (disabled) dragCleanup.current?.(); }, [disabled]);
   useEffect(() => {
     const node = frame.current;
@@ -408,10 +410,10 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
             drag?.id === id && "opacity-50",
             spotlitPane === terminal.name && "ring-2 ring-accent ring-offset-2 ring-offset-background",
             visibleMaximized && visibleMaximized !== id && "hidden")}>
-          <AgenticTerminal headerMode={minimal ? "minimal" : "compact"} agent={terminal.agent}
+          <AgenticTerminal active={active} headerMode={minimal ? "minimal" : "compact"} agent={terminal.agent}
             name={terminal.name} workspaceId={session.id} displayName={terminal.display_name}
             recap={terminal.recap} promptCount={terminal.prompts_sent} appearance={appearance ?? theme} fontSize={fontSize}
-            focused={selected === terminal.name} markFocus={!panelInUse}
+            focused={active && selected === terminal.name} markFocus={!panelInUse}
             onFocus={() => { if (spotlitPane && spotlitPane !== terminal.name) setSpotlight(null); setPanelInUse(false); onSelect(terminal.name); }}
             layoutBusy={resizing}
             maximized={visibleMaximized === id} onToggleMaximize={() => setMaximized((current) => current === id ? null : id)}
