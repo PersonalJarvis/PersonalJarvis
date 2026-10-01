@@ -4,7 +4,15 @@ from __future__ import annotations
 
 import pytest
 
-from jarvis.ui.pets.status_line import ELLIPSIS, MAX_INPUT_CHARS, StatusFeed, condense
+from jarvis.ui.pets.status_line import (
+    DETAIL_MAX_CHARS,
+    ELLIPSIS,
+    MAX_INPUT_CHARS,
+    TITLE_MAX_CHARS,
+    StatusFeed,
+    condense,
+    parse_reasoning_summary,
+)
 
 
 class FakeClock:
@@ -115,3 +123,78 @@ def test_only_the_head_of_a_long_text_is_condensed() -> None:
     assert len(line) <= 90
     # A sentence that starts after the cap is not part of the gist.
     assert "Tail" not in condense("x" * (MAX_INPUT_CHARS + 10) + " Tail sentence.")
+
+
+# ---------------------------------------------------------------------------
+# reasoning summaries -> (title, detail) for the thinking card
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # The OpenAI shape: a bold heading line, then a short paragraph.
+        (
+            "**Checking the calendar**\n\nI look at today first. Then the week.",
+            ("Checking the calendar", "Then the week."),
+        ),
+        # Several sections: the NEWEST is what the model is doing now.
+        (
+            "**Reading the request**\n\nThe user wants trains.\n\n"
+            "**Searching connections**\n\nI query the timetable for Berlin.",
+            ("Searching connections", "I query the timetable for Berlin."),
+        ),
+        # Still streaming: the fragment waits until its sentence is complete.
+        (
+            "**Planning**\n\nI need the train times first. Then I compare",
+            ("Planning", "I need the train times first."),
+        ),
+        # A heading whose body has not arrived yet.
+        ("**Planning the answer**\n\n", ("Planning the answer", "")),
+        # Markdown # headings count too; a trailing colon is dropped.
+        ("## Next step:\nOpen the settings file.", ("Next step", "Open the settings file.")),
+        # No heading: no title, the last sentence is the detail.
+        ("I compare both offers. The second is cheaper.", ("", "The second is cheaper.")),
+        # Only a fragment so far: the fragment is better than nothing.
+        ("I am looking at", ("", "I am looking at")),
+        # Noise is stripped from the detail.
+        (
+            "**Editing**\n\nI open `config.toml` in C:\\Users\\me\\app\\config.toml now.",
+            ("Editing", "I open config.toml in config.toml now."),
+        ),
+        ("", ("", "")),
+        ("   \n\n ", ("", "")),
+    ],
+)
+def test_parse_reasoning_summary(text: str, expected: tuple[str, str]) -> None:
+    assert parse_reasoning_summary(text) == expected
+
+
+def test_reasoning_title_and_detail_are_clipped() -> None:
+    title, detail = parse_reasoning_summary(
+        "**" + "Heading word " * 20 + "**\n\n" + "A long detail sentence " * 20 + "."
+    )
+    assert len(title) <= TITLE_MAX_CHARS
+    assert title.endswith(ELLIPSIS)
+    assert len(detail) <= DETAIL_MAX_CHARS
+    assert detail.endswith(ELLIPSIS)
+
+
+def test_a_huge_summary_is_parsed_from_its_end() -> None:
+    text = "**Old**\n\n" + "Filler sentence. " * 2_000 + "\n\n**New**\n\nThe last thought."
+    assert parse_reasoning_summary(text) == ("New", "The last thought.")
+
+
+def test_a_non_string_summary_is_empty() -> None:
+    assert parse_reasoning_summary(None) == ("", "")  # type: ignore[arg-type]
+
+
+def test_the_feed_honours_its_card_lengths() -> None:
+    feed = StatusFeed(FakeClock(), title_chars=60, line_chars=110)
+    title = "Working on the quarterly numbers for the whole finance team"
+    detail = "Comparing the second quarter against the first one before writing it up for you."
+    assert feed.offer(title, detail) == (title, detail)
+    narrow = StatusFeed(FakeClock())
+    shown = narrow.offer(title, detail)
+    assert shown is not None
+    assert len(shown[0]) <= 40

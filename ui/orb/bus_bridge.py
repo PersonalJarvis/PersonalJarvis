@@ -38,8 +38,6 @@ from typing import TYPE_CHECKING, Any
 from jarvis.core.events import (
     ActionExecuted,
     ActionProposed,
-    AnnouncementRequested,
-    AssistantTextDelta,
     AudioOutFirst,
     ComposeRequested,
     DictationCompleted,
@@ -51,13 +49,17 @@ from jarvis.core.events import (
     DictationTranscript,
     ErrorOccurred,
     JarvisAgentBackgroundCompleted,
+    JarvisAgentTaskCompleted,
+    JarvisAgentTaskStarted,
     ListeningStarted,
     OrbResetRequested,
     PetVisibilityToggleRequested,
+    ReasoningSummaryUpdated,
     ResponseGenerated,
     ShowWindowRequested,
     SpeechSpoken,
     SystemStateChanged,
+    ToolCallStarted,
     TranscriptionUpdate,
     UiLanguageChanged,
     UserVisibleFeedback,
@@ -79,7 +81,7 @@ from jarvis.sessions.constants import (
     SPOKEN_KIND_TIMEOUT,
     SPOKEN_KIND_UNAVAILABLE,
 )
-from jarvis.ui.pets.status_line import StatusFeed
+from jarvis.ui.pets.status_line import StatusFeed, condense, parse_reasoning_summary
 from ui.orb.animations import IDLE_ANIMATION_POOL
 
 if TYPE_CHECKING:
@@ -233,76 +235,80 @@ PET_ERROR_SPOKEN_KINDS: frozenset[str] = frozenset(
     {SPOKEN_KIND_TIMEOUT, SPOKEN_KIND_UNAVAILABLE, SPOKEN_KIND_STT_UNAVAILABLE}
 )
 
-# Headers of the pet's status bubble, per interface language ([ui] language).
-# User-facing product text drawn by the overlay, so every supported locale has
-# its own entry and none of them is a fallback for another.
-PET_STATUS_HEADERS: dict[str, dict[str, str]] = {
-    "listening": {
-        "en": "Listening …",
-        "de": "Ich höre zu …",  # i18n-allow
-        "es": "Escuchando …",  # i18n-allow
-    },
+# The pet's status card (docs/pets.md): a bold title and one muted detail line,
+# shown ONLY while Jarvis is really thinking — the thinking model's reasoning
+# summary, a tool step, a running agent task. Never the live transcript and
+# never the reply: those are heard, and echoing them here read as noise.
+# Fixed labels per interface language ([ui] language); every supported locale
+# has its own entry and none of them is a fallback for another.
+PET_CARD_LABELS: dict[str, dict[str, str]] = {
     "thinking": {
         "en": "Thinking …",
-        "de": "Denke nach …",  # i18n-allow
+        "de": "Denkt nach …",  # i18n-allow
         "es": "Pensando …",  # i18n-allow
     },
-    "talking": {
-        "en": "Answer",
-        "de": "Antwort",  # i18n-allow
-        "es": "Respuesta",  # i18n-allow
+    "working": {
+        "en": "Working",
+        "de": "Arbeitet",  # i18n-allow
+        "es": "Trabajando",  # i18n-allow
+    },
+    "working_detail": {
+        "en": "Working …",
+        "de": "Arbeitet …",  # i18n-allow
+        "es": "Trabajando …",  # i18n-allow
+    },
+    "step_done": {
+        "en": "Step done",
+        "de": "Befehl ausgeführt",  # i18n-allow
+        "es": "Paso completado",  # i18n-allow
+    },
+    "step_failed": {
+        "en": "Step failed",
+        "de": "Befehl fehlgeschlagen",  # i18n-allow
+        "es": "Paso fallido",  # i18n-allow
+    },
+    "done": {
+        "en": "Done",
+        "de": "Erledigt",  # i18n-allow
+        "es": "Hecho",  # i18n-allow
+    },
+    "failed": {
+        "en": "Failed",
+        "de": "Fehlgeschlagen",  # i18n-allow
+        "es": "Falló",  # i18n-allow
     },
 }
 PET_STATUS_LANGUAGES: tuple[str, ...] = ("en", "de", "es")
 
-# Minimum spacing of two status-bubble updates. A streamed reply produces a few
-# snapshots per second; repainting the bubble for each one is flicker.
+# Minimum spacing of two card updates. A streamed reasoning summary produces a
+# few snapshots per second; repainting the card for each one is flicker.
 PET_STATUS_MIN_INTERVAL_S = 0.3
+
+# Longest card title and detail line (characters); the card is a small pill.
+PET_CARD_TITLE_CHARS = 60
+PET_CARD_DETAIL_CHARS = 110
+
+# A THINKING phase with no thought yet shows the bare "Thinking …" title after
+# this long — a fast turn whose thinking is over in a second shows no card.
+PET_CARD_THINKING_FALLBACK_S = 1.5
+
+# How long a card stays after the thinking stopped (the surface fades it out).
+PET_CARD_LINGER_S = 1.5
+
+# A finished agent task keeps its Done / Failed card this long.
+PET_CARD_TASK_DONE_S = 3.0
+
+# A thought outside a THINKING phase — the thinking model working on while the
+# voice model is already talking — clears itself after this much quiet.
+PET_CARD_QUIET_CLEAR_S = 4.0
+
+# An agent task whose completion never arrived stops holding the card after
+# this long; a lost event must not pin a card to the desktop forever.
+PET_CARD_TASK_MAX_S = 1800.0
 
 # Minimum spacing of two pet one-shots (success / error). A burst of results is
 # one thing that happened; replaying the one-shot for each is flicker.
 PET_OUTCOME_MIN_INTERVAL_S = 3.0
-
-# Reply channels whose streamed text the pet shows. Typed chat and background
-# work are read in the app window, not in an always-on-top bubble.
-PET_STATUS_REPLY_CHANNELS = frozenset({"voice", "realtime"})
-
-# The most text a status line is cut from. A reply can be pages long; only its
-# end matters for the latest sentence, and condensing pages per update is waste.
-PET_STATUS_INPUT_CHARS = 400
-
-# Announcement kinds that describe work in progress (the pet's "thinking" line).
-# A completion or a sub-agent readback is an ANSWER, and it is spoken anyway.
-_PET_THINKING_ANNOUNCEMENT_KINDS = frozenset({"preamble", "progress"})
-
-# A sentence ends at terminal punctuation followed by whitespace.
-_SENTENCE_BREAK_RE = re.compile(r"(?<=[.!?…])\s+")
-_SENTENCE_END_RE = re.compile(r"[.!?…][\"'»”)\]]*$")
-
-
-def _last_sentence(text: str, *, complete_only: bool = False) -> str:
-    """The last sentence of ``text`` (whitespace collapsed).
-
-    ``complete_only`` is for text still being produced: a reply streamed word
-    by word ends in a fragment most of the time, and showing "The" for a
-    moment between two full sentences is flicker, not information. Until the
-    fragment ends in punctuation the previous complete sentence stays; a reply
-    with no complete sentence yet shows the fragment.
-    """
-    flat = " ".join((text or "").split())
-    if not flat:
-        return ""
-    pieces = [piece for piece in _SENTENCE_BREAK_RE.split(flat) if piece]
-    if not pieces:
-        return ""
-    if complete_only and len(pieces) > 1 and not _SENTENCE_END_RE.search(pieces[-1]):
-        return pieces[-2]
-    return pieces[-1]
-
-
-def _tail_sentence(text: str, *, complete_only: bool = False) -> str:
-    """:func:`_last_sentence` of the last ``PET_STATUS_INPUT_CHARS`` of ``text``."""
-    return _last_sentence((text or "")[-PET_STATUS_INPUT_CHARS:], complete_only=complete_only)
 
 
 def _humanize_tool_name(tool_name: str) -> str:
@@ -344,12 +350,27 @@ class OrbBusBridge:
         # from the running pipeline's config when needed; ``UiLanguageChanged``
         # overrides it live.
         self._language: str | None = language if language in PET_STATUS_LANGUAGES else None
-        # ONE rate-limited feed for every status line the pet shows, so a burst
-        # of transcript, tool and reply updates cannot flood the Tk thread. A
-        # line the feed holds back is shown by ``_status_flush_task`` once the
+        # ONE rate-limited feed for every card the pet shows, so a burst of
+        # reasoning snapshots and tool steps cannot flood the Tk thread. A
+        # card the feed holds back is shown by ``_status_flush_task`` once the
         # interval has passed, so the LAST update of a burst is never lost.
-        self._status_feed = StatusFeed(time.monotonic, min_interval_s=PET_STATUS_MIN_INTERVAL_S)
+        self._status_feed = StatusFeed(
+            time.monotonic,
+            min_interval_s=PET_STATUS_MIN_INTERVAL_S,
+            title_chars=PET_CARD_TITLE_CHARS,
+            line_chars=PET_CARD_DETAIL_CHARS,
+        )
         self._status_flush_task: asyncio.Task | None = None
+        # The pet's thinking card (docs/pets.md). ``_card_visible``: a card is
+        # on screen. ``_reasoning_title``: the heading of the thought the
+        # thinking model is on, which also titles the tool steps under it.
+        # ``_agent_tasks``: running agent tasks by trace id, as (title,
+        # started) — while one runs, its card stays up.
+        self._card_visible = False
+        self._reasoning_title = ""
+        self._agent_tasks: dict[str, tuple[str, float]] = {}
+        self._card_fallback_task: asyncio.Task | None = None
+        self._card_clear_task: asyncio.Task | None = None
         # Clock for the pet's outcome throttle (replaceable in tests) and the
         # last one-shot it played, as (kind, time).
         self._clock = time.monotonic
@@ -563,13 +584,16 @@ class OrbBusBridge:
             self._bus.subscribe(ActionExecuted, self._on_action_executed)
             self._bus.subscribe(SpeechSpoken, self._on_speech_spoken)
             self._bus.subscribe(ErrorOccurred, self._on_error_occurred)
-            # ``JarvisAgentAnnouncement`` is deliberately NOT a status source:
-            # its ``action`` is the spawn tool's bare relative-clause fragment
-            # in the tool schema's language, whatever the interface language,
-            # and reads as a broken sentence on its own. The spawn's
-            # ``ActionProposed`` already puts a thinking line up.
-            self._bus.subscribe(AnnouncementRequested, self._on_announcement)
-            self._bus.subscribe(AssistantTextDelta, self._on_assistant_text_delta)
+            # The pet's thinking card: what the thinking model reasons about,
+            # the tool steps it takes, the agent tasks it hands work to. Spoken
+            # lines (acks, progress readbacks) and the reply are heard, not
+            # shown. ``JarvisAgentAnnouncement`` is no source either: its
+            # ``action`` is a bare clause fragment in the spawn tool's language
+            # and reads as a broken sentence on its own.
+            self._bus.subscribe(ReasoningSummaryUpdated, self._on_reasoning_summary)
+            self._bus.subscribe(ToolCallStarted, self._on_tool_call_started)
+            self._bus.subscribe(JarvisAgentTaskStarted, self._on_agent_task_started)
+            self._bus.subscribe(JarvisAgentTaskCompleted, self._on_agent_task_completed)
             # Wire the orb's double-double-click gesture to a bus publish.
             # The orb requires two ``<Double-Button-1>`` events inside
             # ``MUTE_GESTURE_WINDOW_MS`` (four clicks in <600 ms) before
@@ -784,46 +808,174 @@ class OrbBusBridge:
             return "en"
         return language if language in PET_STATUS_LANGUAGES else "en"
 
-    def _offer_status(self, kind: str, line: str, *, force: bool = False) -> None:
-        """Feed one status line to a surface that shows them (the pet).
+    def _wants_card(self) -> bool:
+        """Does the current surface show the thinking card (the pet)?"""
+        return bool(getattr(self._orb, "wants_status_lines", False))
 
-        Gated on ``wants_status_lines`` so no other style pays for condensing
-        or rate limiting. ``kind`` picks the localized header; the feed decides
-        whether this update is shown now or dropped as too soon after the last.
-        """
-        if not getattr(self._orb, "wants_status_lines", False):
+    def _label(self, key: str) -> str:
+        """One fixed card label in the interface language."""
+        labels = PET_CARD_LABELS[key]
+        return labels.get(self._status_language(), labels["en"])
+
+    def _cancel_card_task(self, name: str) -> None:
+        """Cancel one of the card's timers — never the task running this call."""
+        task = getattr(self, name)
+        setattr(self, name, None)
+        if task is None or task.done():
             return
-        headers = PET_STATUS_HEADERS.get(kind)
-        if headers is None:
-            return
-        header = headers.get(self._status_language(), headers["en"])
         try:
-            # The feed condenses both parts itself (markdown, paths, dumps).
-            shown = self._status_feed.offer(header, line or "", force=force)
-        except Exception:  # noqa: BLE001 — a status line is cosmetic
-            log.debug("status feed rejected a line", exc_info=True)
+            current = asyncio.current_task()
+        except RuntimeError:
+            current = None
+        if task is not current:
+            task.cancel()
+
+    @staticmethod
+    def _card_loop() -> asyncio.AbstractEventLoop | None:
+        try:
+            return asyncio.get_running_loop()
+        except RuntimeError:
+            # Only bus handlers drive the card, and they run on the loop.
+            log.debug("pet card timer skipped: no running loop")
+            return None
+
+    def _expire_agent_tasks(self) -> None:
+        """Drop agent tasks whose completion never arrived (a lost event)."""
+        now = self._clock()
+        stale = [
+            key
+            for key, (_title, started) in self._agent_tasks.items()
+            if now - started > PET_CARD_TASK_MAX_S
+        ]
+        for key in stale:
+            self._agent_tasks.pop(key, None)
+
+    def _agent_title(self) -> str:
+        """Title of the newest running agent task ("" when none runs)."""
+        self._expire_agent_tasks()
+        if not self._agent_tasks:
+            return ""
+        return next(reversed(self._agent_tasks.values()))[0]
+
+    def _card_title(self) -> str:
+        """The title for a step: the current thought, else the running task."""
+        return self._reasoning_title or self._agent_title() or self._label("working")
+
+    def _show_card(
+        self,
+        title: str,
+        detail: str = "",
+        *,
+        force: bool = False,
+        quiet_clear_s: float | None = None,
+    ) -> None:
+        """Put ``title`` / ``detail`` on the pet's card (a no-op elsewhere).
+
+        The feed condenses both parts, drops a repeat and rate-limits the rest;
+        a held-back card is shown by the flush timer. A card that no THINKING
+        phase and no running agent task stands behind — the thinking model
+        working on while the voice model already talks — clears itself after
+        ``quiet_clear_s`` (default :data:`PET_CARD_QUIET_CLEAR_S`) without a
+        new thought.
+        """
+        if not self._wants_card():
+            return
+        self._cancel_card_task("_card_fallback_task")
+        self._cancel_card_task("_card_clear_task")
+        try:
+            shown = self._status_feed.offer(title, detail or "", force=force)
+        except Exception:  # noqa: BLE001 — a card is cosmetic
+            log.debug("status feed rejected a card", exc_info=True)
             return
         if shown is not None:
+            self._card_visible = True
             self._call_surface("show_status", *shown)
         else:
             self._schedule_status_flush()
+        if self._last_state != "THINKING" and not self._agent_tasks:
+            self._schedule_card_clear(
+                PET_CARD_QUIET_CLEAR_S if quiet_clear_s is None else quiet_clear_s
+            )
+
+    def _clear_card(self, *, keep_agent_card: bool = True) -> None:
+        """Take the card down after a short linger — unless an agent still works."""
+        if not self._wants_card():
+            return
+        self._expire_agent_tasks()
+        if keep_agent_card and self._agent_tasks:
+            return
+        self._cancel_card_task("_card_fallback_task")
+        self._cancel_card_task("_card_clear_task")
+        self._cancel_card_task("_status_flush_task")
+        self._status_feed.reset()
+        self._reasoning_title = ""
+        if not self._card_visible:
+            return
+        self._card_visible = False
+        clear = getattr(self._orb, "clear_status", None)
+        if not callable(clear):
+            return
+        try:
+            clear(PET_CARD_LINGER_S)
+        except Exception:  # noqa: BLE001 — a surface update must never break the bus
+            log.debug("surface clear_status failed", exc_info=True)
+
+    def _schedule_card_clear(self, delay_s: float) -> None:
+        """Clear the card after ``delay_s`` unless a newer card cancels this."""
+        loop = self._card_loop()
+        if loop is None:
+            return
+
+        async def _later() -> None:
+            try:
+                await asyncio.sleep(delay_s)
+            except asyncio.CancelledError:
+                return
+            self._card_clear_task = None
+            if self._last_state == "THINKING":
+                return
+            self._clear_card()
+
+        self._card_clear_task = loop.create_task(_later(), name="orb-pet-card-clear")
+
+    def _schedule_thinking_fallback(self) -> None:
+        """Show a bare "Thinking …" when a THINKING phase brings no thought.
+
+        Most turns that think put a real thought or step up within a moment;
+        this only fills the silence of one that does not, and a turn that is
+        over within the delay shows no card at all.
+        """
+        if not self._wants_card():
+            return
+        self._cancel_card_task("_card_fallback_task")
+        loop = self._card_loop()
+        if loop is None:
+            return
+
+        async def _later() -> None:
+            try:
+                await asyncio.sleep(PET_CARD_THINKING_FALLBACK_S)
+            except asyncio.CancelledError:
+                return
+            self._card_fallback_task = None
+            if self._last_state == "THINKING" and not self._card_visible:
+                self._show_card(self._agent_title() or self._label("thinking"), "", force=True)
+
+        self._card_fallback_task = loop.create_task(_later(), name="orb-pet-card-thinking")
 
     def _schedule_status_flush(self) -> None:
-        """Show the line the feed held back once the rate limit allows it.
+        """Show the card the feed held back once the rate limit allows it.
 
-        Without this the last transcript or reply update of a burst would stay
-        in the feed until some later event happened to arrive — often never.
-        One pending flush at a time; it asks the feed, which returns nothing
-        when there is nothing held back.
+        Without this the last snapshot of a burst would stay in the feed until
+        some later event happened to arrive — often never. One pending flush
+        at a time; it asks the feed, which returns nothing when there is
+        nothing held back.
         """
         task = self._status_flush_task
         if task is not None and not task.done():
             return
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            # Only bus handlers offer lines, and they run on the loop.
-            log.debug("status flush skipped: no running loop")
+        loop = self._card_loop()
+        if loop is None:
             return
 
         async def _flush() -> None:
@@ -831,10 +983,11 @@ class OrbBusBridge:
                 await asyncio.sleep(PET_STATUS_MIN_INTERVAL_S)
             except asyncio.CancelledError:
                 return
-            if not getattr(self._orb, "wants_status_lines", False):
+            if not self._wants_card():
                 return
             shown = self._status_feed.flush()
             if shown is not None:
+                self._card_visible = True
                 self._call_surface("show_status", *shown)
 
         self._status_flush_task = loop.create_task(_flush(), name="orb-pet-status-flush")
@@ -880,16 +1033,51 @@ class OrbBusBridge:
         if language in PET_STATUS_LANGUAGES:
             self._language = language
 
+    async def _on_reasoning_summary(self, event: ReasoningSummaryUpdated) -> None:
+        """The thinking model's summary (GPT-Live): its newest section is the card.
+
+        A summary streams in as cumulative snapshots. The section heading is
+        the title — and stays the title of the tool steps taken under it — and
+        the last sentence of its body is the detail. The final snapshot beats
+        the rate limit so the card never stops one sentence short.
+        """
+        if not self._wants_card():
+            return
+        title, detail = parse_reasoning_summary(event.text or "")
+        if title:
+            self._reasoning_title = title
+        if not (title or detail):
+            return
+        heading = self._reasoning_title or self._agent_title() or self._label("thinking")
+        self._show_card(heading, detail, force=bool(event.done))
+
     async def _on_action_proposed(self, event: ActionProposed) -> None:
-        """A tool is about to run: its reason (else its name) is the thinking line."""
-        line = (event.rationale or "").strip() or _humanize_tool_name(event.tool_name)
-        if line:
-            self._offer_status("thinking", line)
+        """A tool is about to run: its reason (else its name) is the detail."""
+        if not self._wants_card():
+            return
+        detail = (event.rationale or "").strip() or _humanize_tool_name(event.tool_name)
+        if detail:
+            self._show_card(self._card_title(), detail)
+
+    async def _on_tool_call_started(self, event: ToolCallStarted) -> None:
+        """A tool call some path reports without an ``ActionProposed``."""
+        if not self._wants_card():
+            return
+        detail = _humanize_tool_name(event.tool_name)
+        if detail:
+            self._show_card(self._card_title(), detail)
 
     async def _on_action_executed(self, event: ActionExecuted) -> None:
-        """A tool result is an outcome only when no turn is running (work
-        finished in the background or between turns). Inside a turn it is a
-        step; a failed step the turn recovers from is not the user's failure."""
+        """A tool result is a step on the card while Jarvis works.
+
+        It is an OUTCOME only when no turn is running (work finished in the
+        background or between turns). Inside a turn it is a step; a failed step
+        the turn recovers from is not the user's failure.
+        """
+        if self._card_visible:
+            self._show_card(
+                self._card_title(), self._label("step_done" if event.success else "step_failed")
+            )
         if self._turn_in_progress():
             return
         self._pet_outcome("success" if event.success else "error")
@@ -908,29 +1096,32 @@ class OrbBusBridge:
             return
         self._pet_outcome("error")
 
-    async def _on_announcement(self, event: AnnouncementRequested) -> None:
-        """A preamble or a progress milestone is work in progress: show it."""
-        if event.kind in _PET_THINKING_ANNOUNCEMENT_KINDS and (event.text or "").strip():
-            self._offer_status("thinking", event.text)
-
-    async def _on_assistant_text_delta(self, event: AssistantTextDelta) -> None:
-        """The reply as it streams in: the latest sentence, rate-limited.
-
-        ``text`` is the cumulative snapshot, so only its last sentence matters.
-        The final snapshot (``done``) is forced through the rate limit, or the
-        bubble could stop one sentence short of the answer.
-
-        Spoken replies only (``voice`` / ``realtime``): a typed-chat or
-        background reply is read in the app window, and an always-on-top
-        bubble would put it on every shared screen.
-        """
-        if event.channel not in PET_STATUS_REPLY_CHANNELS:
+    async def _on_agent_task_started(self, event: JarvisAgentTaskStarted) -> None:
+        """An agent took on a task: its card stays until the task is done."""
+        if not self._wants_card():
             return
-        if not getattr(self._orb, "wants_status_lines", False):
+        title = condense(event.utterance or "", max_chars=PET_CARD_TITLE_CHARS)
+        title = title or self._label("working")
+        self._agent_tasks[str(event.trace_id)] = (title, self._clock())
+        self._show_card(title, self._label("working_detail"), force=True)
+
+    async def _on_agent_task_completed(self, event: JarvisAgentTaskCompleted) -> None:
+        """The task is done: Done / Failed on its card, then the card goes."""
+        if not self._wants_card():
             return
-        line = _tail_sentence(event.text, complete_only=not event.done)
-        if line:
-            self._offer_status("talking", line, force=bool(event.done))
+        entry = self._agent_tasks.pop(str(event.trace_id), None)
+        if entry is None and self._agent_tasks:
+            # A completion published under another trace than its start: the
+            # oldest running task is the best match, and it must not keep the
+            # card up forever.
+            entry = self._agent_tasks.pop(next(iter(self._agent_tasks)))
+        title = entry[0] if entry is not None else self._card_title()
+        self._show_card(
+            title,
+            self._label("done" if event.success else "failed"),
+            force=True,
+            quiet_clear_s=PET_CARD_TASK_DONE_S,
+        )
 
     def _publish_visible_feedback(self, mode: str, observed: dict) -> None:
         """Called from the orb's Tk thread after a deiconify. Builds and
@@ -1113,10 +1304,8 @@ class OrbBusBridge:
         self._show_listening_transcript("")
         self._completion_continuation = False
         self._cancel_idle_scheduler()
-        # A new conversation starts a new bubble: nothing from the previous
-        # one may be rate-limited against, or linger in, this one.
-        self._status_feed.reset()
-        self._offer_status("listening", "", force=True)
+        # A new conversation: nothing of the previous one's thinking lingers.
+        self._clear_card()
 
     async def _on_session_ended(self, event: VoiceSessionEnded) -> None:
         """A voice session ended (hangup / idle-timeout / shutdown / error).
@@ -1139,6 +1328,7 @@ class OrbBusBridge:
         self._suppress_show_until_session = True
         if event.hangup_reason == HANGUP_ERROR:
             self._pet_outcome("error")
+        self._clear_card()
         # Defense in depth: a persistent (always-on) bar must drop to its idle
         # look the instant a session ends, not only when the follow-up
         # SystemStateChanged(IDLE) arrives. That state edge can be skipped or
@@ -1298,11 +1488,8 @@ class OrbBusBridge:
                 self._last_response_text = ""
                 self._show_listening_transcript("")
                 self._completion_continuation = False
-                # Every fresh turn of a conversation, not only the first one,
-                # opens the pet's bubble with its "Listening …" header; the
-                # reset keeps the feed from treating it as a repeat.
-                self._status_feed.reset()
-                self._offer_status("listening", "", force=True)
+                # A fresh turn: the previous turn's thinking card is over.
+                self._clear_card()
             self._cancel_idle_scheduler()
         elif state == "WAITING_FOR_COMPLETION":
             # User paused mid-sentence; the pipeline buffered an incomplete
@@ -1328,7 +1515,9 @@ class OrbBusBridge:
             # happening). A reply arriving mid-THINKING swaps it in via
             # _on_response_generated.
             self._refresh_voice_bubble()
-            self._offer_status("thinking", "", force=True)
+            # The pet's card waits for a real thought; only a silent phase
+            # gets the bare "Thinking …" title.
+            self._schedule_thinking_fallback()
             self._cancel_idle_scheduler()
         elif state == "SPEAKING":
             # TTS synthesis is often still running here — the state flips to
@@ -1349,12 +1538,17 @@ class OrbBusBridge:
             # does not outlive the mascot or stick around past the session.
             # Also clear any in-flight completion-continuation window.
             self._completion_continuation = False
-            hide_comment = getattr(self._orb, "hide_comment", None)
-            if callable(hide_comment):
-                try:
-                    hide_comment()
-                except Exception as exc:  # noqa: BLE001
-                    log.debug("hide_comment failed: %s", exc)
+            if self._wants_card():
+                # The pet's card belongs to the thinking, not to the turn: a
+                # still running agent task keeps it up.
+                self._clear_card()
+            else:
+                hide_comment = getattr(self._orb, "hide_comment", None)
+                if callable(hide_comment):
+                    try:
+                        hide_comment()
+                    except Exception as exc:  # noqa: BLE001
+                        log.debug("hide_comment failed: %s", exc)
 
             if not self._hides_when_idle():
                 # Persistent "show at all times" bar: a standalone always-on
@@ -1438,8 +1632,6 @@ class OrbBusBridge:
         # diverge.
         self._listening_transcript_text = event.text.strip()
         self._show_listening_transcript(self._listening_transcript_text)
-        if getattr(self._orb, "wants_status_lines", False):
-            self._offer_status("listening", _tail_sentence(self._listening_transcript_text))
 
     async def _on_response_generated(self, event: ResponseGenerated) -> None:
         """Capture Jarvis's reply so the orb bubble can show it while speaking.
@@ -1453,14 +1645,6 @@ class OrbBusBridge:
         self._last_response_text = (event.text or "").strip()
         if self._last_state in ("THINKING", "SPEAKING"):
             self._refresh_voice_bubble()
-        # The pet's talking line, for reply paths that stream no
-        # ``AssistantTextDelta``; after a streamed reply this is the same
-        # sentence again and the feed treats it as such.
-        if not getattr(self._orb, "wants_status_lines", False):
-            return
-        line = _tail_sentence(self._last_response_text)
-        if line:
-            self._offer_status("talking", line)
 
     def _refresh_voice_bubble(self) -> None:
         """Render the right bubble text for the current voice state.
@@ -1909,6 +2093,10 @@ class OrbBusBridge:
         )
 
     def _show_listening_transcript(self, text: str) -> None:
+        if self._wants_card():
+            # The pet's card shows thinking only: what was said and what is
+            # answered are heard, not echoed (docs/pets.md).
+            return
         show_transcript = getattr(self._orb, "show_listening_transcript", None)
         if not callable(show_transcript):
             return
@@ -1932,6 +2120,9 @@ class OrbBusBridge:
         if self._last_state != "SPEAKING":
             return
         log.info("OrbBridge._on_audio_out_first → speaking overlay + mouth")
+        # Jarvis answers out loud: the thinking is over (an agent task that
+        # still runs keeps its card).
+        self._clear_card()
         self._orb.show(mode="speak")
         self._orb.play_animation("nod")
         start_mouth = getattr(self._orb, "start_mouth_animation", None)
@@ -1979,6 +2170,14 @@ class OrbBusBridge:
         """
         if event.success:
             self._pet_outcome("success")
+        if self._wants_card() and (self._card_visible or self._agent_tasks):
+            title = condense(event.utterance or "", max_chars=PET_CARD_TITLE_CHARS)
+            self._show_card(
+                title or self._card_title(),
+                self._label("done" if event.success else "failed"),
+                force=True,
+                quiet_clear_s=PET_CARD_TASK_DONE_S,
+            )
         if self._last_state not in ("IDLE", "ERROR", "PAUSED"):
             return
         self._orb.show(mode="speak")
@@ -2144,7 +2343,10 @@ class OrbBusBridge:
         # A fresh surface starts with default icons; show it the live state.
         self._seed_prompt_mode()
         self._seed_mute_state()
+        # A fresh surface shows no card yet; nothing may be deduped against
+        # what the previous surface showed.
         self._status_feed.reset()
+        self._card_visible = False
         if self._voice_usable:
             self._release_bar_startup_gate("voice-ready surface swap")
         log.info("OrbBridge surface swapped (last_state=%s)", self._last_state)

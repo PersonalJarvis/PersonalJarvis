@@ -26,23 +26,50 @@ one click.
     live audio level;
   - speaker: silence the assistant's voice for this session (TTS volume 0,
     mirrored from `VoiceSpeakerMuteChanged`).
-- **The status bubble** under the strip. It shows short, condensed lines of
-  what Jarvis is doing: the live transcript while listening, a "Thinking …"
-  header with the current reason, tool or progress line while thinking, and
-  the condensed reply while talking. Only spoken replies appear there (voice
-  and realtime channels); typed-chat and background answers stay in the app
-  window, so the always-on-top bubble never puts them on a shared screen. It
-  collapses to two lines, expands to six
-  on click, and fades out six seconds after the last update while idle. It can
-  be switched off (`[ui] pet_bubble`).
+- **The thinking card** under the strip: a rounded pill with a bold title
+  (what Jarvis is working on) and one muted detail line (the current thought
+  or step). It appears ONLY while Jarvis is really thinking and shows what it
+  thinks — never the live transcript and never the reply, which the user hears
+  anyway (see *The thinking card* below). It can be switched off
+  (`[ui] pet_bubble`).
 - **The pet "None"** (`pet_id = "none"`) shows the control strip and the
-  bubble without a figure.
+  card without a figure.
 
 The pet stays on screen while Jarvis is idle. The global shortcut
 (`[trigger] hotkey_pet_toggle`, default `alt+win+p`) hides it or brings it
 back and to the front; hiding lasts until the next app start. The shortcut is
 changed on the My Pets page (Customize); an empty value switches it off. On
 Wayland, global shortcuts are a no-op, as for every other shortcut.
+
+## The thinking card
+
+The card mirrors Jarvis's real thinking, fed by bus events in
+`ui/orb/bus_bridge.py` and condensed by `jarvis/ui/pets/status_line.py`:
+
+| Source | Title | Detail |
+|---|---|---|
+| `ReasoningSummaryUpdated` — the thinking model behind GPT-Live (`jarvis/live/session.py`, streamed as cumulative snapshots a few times per second) | the newest section heading of the summary (`**Heading**`) | the last complete sentence of that section |
+| `ActionProposed` / `ToolCallStarted` — a tool step | the current thought's heading, else the running agent task, else "Working" | the step's rationale, else the humanized tool name |
+| `ActionExecuted` while a card is up | unchanged | "Step done" / "Step failed" |
+| `JarvisAgentTaskStarted` / `JarvisAgentTaskCompleted` / `JarvisAgentBackgroundCompleted` — an agent task | the task (the user's request, condensed) | "Working …", then "Done" / "Failed" |
+| `SystemStateChanged(THINKING)` with no thought after 1.5 s | "Thinking …" | empty |
+
+When it goes away (a 1.5 s linger, then the surface fades it out):
+
+- Jarvis starts talking out loud (`AudioOutFirst`), the turn ends (`IDLE`,
+  `ERROR`, `PAUSED`), a fresh turn starts listening, or the session ends;
+- a thought that arrives while Jarvis is already talking (the thinking model
+  working on behind the voice model) clears itself after four quiet seconds;
+- a finished agent task shows Done / Failed for three seconds.
+
+A running agent task keeps its card across all of these until it completes;
+a completion that never arrives stops holding the card after 30 minutes.
+Spoken lines (acks, progress readbacks), the transcript and the reply never
+reach the card. Updates are rate-limited (0.3 s) and deduplicated, and the
+newest held-back update is always shown once the limit allows. The fixed
+labels follow the interface language (`[ui] language`: en / de / es). Title
+and detail are clipped to 60 and 110 characters; markdown, code, URLs, file
+paths and JSON dumps are stripped.
 
 ## States
 
@@ -162,9 +189,11 @@ name.
 | Method | Meaning |
 |---|---|
 | `set_pet(pet_id)` | Swap the figure live; `"none"` shows the strip only |
-| `set_pet_look(scale, bubble)` | Apply size and bubble on/off live |
+| `set_pet_look(scale, bubble)` | Apply size and card on/off live |
 | `set_pet_outcome(kind)` | Play the one-shot `success` or `error` |
-| `show_status(header, line)` | Update the status bubble (already condensed) |
+| `show_status(title, detail="")` | Show or update the thinking card (already condensed) |
+| `clear_status(linger_s=1.5)` | Take the card down after `linger_s` |
+| `wants_status_lines` (attribute) | True only for the pet: the bridge feeds the card to nothing else |
 | `set_muted(muted)` | Mirror the microphone mute on the strip |
 | `set_speaker_muted(muted)` | Mirror the speaker mute on the strip |
 | `set_visible(visible)` | Hide or show the whole pet (shortcut, settings) |
@@ -191,7 +220,7 @@ Control-strip actions reported back through callbacks: `compose`, `mic_mute`,
 | `[ui] orb_style` | `jarvis_bar` | `pet` selects the pet |
 | `[ui] pet_id` | `gigi` | Active pet (built-in id, `u…` id or `none`) |
 | `[ui] pet_scale` | `1.0` | Size multiplier, 0.5–2.0 |
-| `[ui] pet_bubble` | `true` | Show the status bubble |
+| `[ui] pet_bubble` | `true` | Show the thinking card |
 | `[trigger] hotkey_pet_toggle` | `alt+win+p` | Hide / show the pet; empty disables it |
 
 ### REST (`jarvis/ui/web/pets_routes.py`)

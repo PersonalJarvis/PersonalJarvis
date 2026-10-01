@@ -1,11 +1,12 @@
-"""Condense what Jarvis is doing into one short line for the pet's status bubble.
+"""Condense what Jarvis is thinking into the pet's two-line status card.
 
-The bubble sits under a small floating figure, so it shows a *gist*: the first
-sentence of a reply, the current tool, the live transcript. Everything a
-human would skip when glancing over is stripped: markdown syntax, code
-blocks, URLs, file paths and JSON / dict dumps. :class:`StatusFeed` then
-drops repeats and rate-limits updates so a fast token stream does not make
-the bubble flicker.
+The card sits under a small floating figure, so it shows a *gist*: a bold
+title (what Jarvis is working on) and one muted detail line (the current
+thought or step). Everything a human would skip when glancing over is
+stripped: markdown syntax, code blocks, URLs, file paths and JSON / dict
+dumps. :func:`parse_reasoning_summary` turns a thinking model's streamed
+reasoning summary into that pair, and :class:`StatusFeed` drops repeats and
+rate-limits updates so a fast stream does not make the card flicker.
 """
 
 from __future__ import annotations
@@ -156,14 +157,87 @@ def condense(text: str, *, max_chars: int = 90) -> str:
     return _clip(gist, max_chars)
 
 
+#: Longest card title and detail line, in characters.
+TITLE_MAX_CHARS = 60
+DETAIL_MAX_CHARS = 110
+
+#: A reasoning section heading: a line that is bold as a whole (the form the
+#: OpenAI reasoning summaries use) or a markdown ``#`` heading.
+_SECTION_HEADING_RE = re.compile(
+    r"^[ \t]*(?:\*\*(?P<bold>[^*\n]+?)\*\*|__(?P<under>[^_\n]+?)__|#{1,6}[ \t]+(?P<hash>[^\n]+?))"
+    r"[ \t]*:?[ \t]*$",
+    re.MULTILINE,
+)
+
+
+def _last_sentence(body: str) -> str:
+    """The last sentence of ``body``, preferring a complete one.
+
+    A summary streams word by word, so its end is usually a fragment; until
+    the fragment ends in punctuation the previous complete sentence stays.
+    A body with no complete sentence yet gives its fragment.
+    """
+    flat = _WS_RE.sub(" ", body).strip()
+    if not flat:
+        return ""
+    pieces = [piece for piece in _SENTENCE_END_RE.split(flat) if piece.strip()]
+    if not pieces:
+        return ""
+    last = pieces[-1].rstrip()
+    if len(pieces) > 1 and last[-1:] not in _SENTENCE_MARKS:
+        return pieces[-2]
+    return last
+
+
+def parse_reasoning_summary(text: str) -> tuple[str, str]:
+    """Split a reasoning summary into the card's ``(title, detail)``.
+
+    Thinking models summarize in sections — ``**Heading**`` then a short
+    paragraph — and the newest section is what the model is doing now. The
+    title is that section's heading (at most :data:`TITLE_MAX_CHARS`), the
+    detail the last sentence of its body (at most :data:`DETAIL_MAX_CHARS`).
+    Text without a heading gives an empty title (the caller supplies a
+    generic one); a heading whose body has not streamed in yet gives an
+    empty detail.
+    """
+    if not isinstance(text, str) or not text.strip():
+        return "", ""
+    headings = list(_SECTION_HEADING_RE.finditer(text))
+    if headings:
+        last = headings[-1]
+        raw_title = last.group("bold") or last.group("under") or last.group("hash") or ""
+        title = _clip(_strip_noise(raw_title), TITLE_MAX_CHARS)
+        body = text[last.end():]
+    else:
+        title = ""
+        body = text
+    # Only the end of the body matters for its last sentence.
+    body = _strip_blocks(body[-MAX_INPUT_CHARS:])
+    lines = [
+        _strip_noise(_clean_line(raw))
+        for raw in body.splitlines()
+        if not (_RULE_RE.match(raw) or _TABLE_RULE_RE.match(raw))
+    ]
+    sentence = _last_sentence(" ".join(line for line in lines if line))
+    detail = _clip(sentence, DETAIL_MAX_CHARS) if sentence else ""
+    return title, detail
+
+
 class StatusFeed:
     """Dedupe and rate-limit the lines the status bubble shows."""
 
     def __init__(
-        self, clock: Callable[[], float] = time.monotonic, min_interval_s: float = 0.3
+        self,
+        clock: Callable[[], float] = time.monotonic,
+        min_interval_s: float = 0.3,
+        *,
+        title_chars: int = 40,
+        line_chars: int = 90,
     ) -> None:
         self._clock = clock
         self._min_interval = max(0.0, float(min_interval_s))
+        self._title_chars = max(1, int(title_chars))
+        self._line_chars = max(1, int(line_chars))
         self._last: tuple[str, str] | None = None
         self._last_at: float | None = None
         self._pending: tuple[str, str] | None = None
@@ -176,7 +250,10 @@ class StatusFeed:
         last shown one. A throttled pair is kept; :meth:`flush` returns it
         once the interval has passed.
         """
-        pair = (condense(header, max_chars=40), condense(line))
+        pair = (
+            condense(header, max_chars=self._title_chars),
+            condense(line, max_chars=self._line_chars),
+        )
         if not pair[0] and not pair[1]:
             return None
         if pair == self._last:

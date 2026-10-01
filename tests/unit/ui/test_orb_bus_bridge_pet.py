@@ -3,9 +3,9 @@
 The bridge drives every overlay style; the pet adds optional surface methods
 the bridge reaches through ``getattr``. These tests use a real ``EventBus`` and
 a hand-written pet surface and pin: the speaker-mute mirror, the shortcut, the
-one-shot outcomes, the rate-limited status lines (pet only), the pen control,
-the per-surface re-wiring on a live swap, and that the pet is never hidden
-when Jarvis goes idle.
+one-shot outcomes, the thinking card (pet only — real thinking, never the
+transcript or the reply), the pen control, the per-surface re-wiring on a
+live swap, and that the pet is never hidden when Jarvis goes idle.
 """
 from __future__ import annotations
 
@@ -23,13 +23,19 @@ from jarvis.core.events import (
     ActionProposed,
     AnnouncementRequested,
     AssistantTextDelta,
+    AudioOutFirst,
     ComposeRequested,
     ErrorOccurred,
     JarvisAgentAnnouncement,
     JarvisAgentBackgroundCompleted,
+    JarvisAgentTaskCompleted,
+    JarvisAgentTaskStarted,
     PetVisibilityToggleRequested,
+    ReasoningSummaryUpdated,
+    ResponseGenerated,
     SpeechSpoken,
     SystemStateChanged,
+    ToolCallStarted,
     TranscriptionUpdate,
     UiLanguageChanged,
     VoiceBootStatus,
@@ -113,8 +119,11 @@ class _Surface:
     def set_pet_outcome(self, kind: str) -> None:
         self.calls.append(("outcome", kind))
 
-    def show_status(self, header: str, line: str) -> None:
-        self.calls.append(("status", header, line))
+    def show_status(self, title: str, detail: str = "") -> None:
+        self.calls.append(("status", title, detail))
+
+    def clear_status(self, linger_s: float = 1.5) -> None:
+        self.calls.append(("clear", linger_s))
 
     def toggle_visible(self) -> None:
         self.calls.append(("toggle_visible",))
@@ -152,12 +161,6 @@ class _FakePipeline:
 @pytest.fixture(autouse=True)
 def _no_live_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(runtime_refs, "_SPEECH_PIPELINE", [])
-
-
-@pytest.fixture()
-def fast_status(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Shrink the status rate limit so the flush path runs in milliseconds."""
-    monkeypatch.setattr(bus_bridge, "PET_STATUS_MIN_INTERVAL_S", 0.02)
 
 
 def _bridge(surface: _Surface, **kwargs) -> tuple[OrbBusBridge, EventBus]:
@@ -308,111 +311,245 @@ async def test_ordinary_events_play_no_outcome(event) -> None:
 
 
 # ---------------------------------------------------------------------------
-# status lines
+# the thinking card: only real thinking, title + detail
 # ---------------------------------------------------------------------------
 
 
-async def test_status_lines_reach_only_a_surface_that_wants_them() -> None:
-    bar = _Surface()  # has show_status, but does not ask for lines
+@pytest.fixture()
+def fast_card(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Shrink every card timer so the timed paths run in milliseconds."""
+    monkeypatch.setattr(bus_bridge, "PET_STATUS_MIN_INTERVAL_S", 0.02)
+    monkeypatch.setattr(bus_bridge, "PET_CARD_THINKING_FALLBACK_S", 0.03)
+    monkeypatch.setattr(bus_bridge, "PET_CARD_QUIET_CLEAR_S", 0.03)
+    monkeypatch.setattr(bus_bridge, "PET_CARD_TASK_DONE_S", 0.03)
+
+
+_PLAN = "**Planning the trip**\n\nI need the train times first. Then I compare"
+
+
+async def test_the_card_reaches_only_a_surface_that_wants_it(fast_card) -> None:
+    bar = _Surface()  # has show_status, but does not ask for the card
     _bridge_, bus = _bridge(bar)
     await bus.publish(SystemStateChanged(previous="IDLE", new_state="THINKING"))
+    await bus.publish(ReasoningSummaryUpdated(response_id="r", text=_PLAN))
     await bus.publish(ActionProposed(tool_name="web_search", rationale="Checking the news"))
-    await bus.publish(AssistantTextDelta(channel="voice", text="Here it is.", done=True))
+    await bus.publish(JarvisAgentTaskStarted(utterance="Build a site"))
+    await asyncio.sleep(0.06)
     assert bar.of("status") == []
+    assert bar.of("clear") == []
 
 
-async def test_thinking_shows_the_header_then_the_reason(fast_status) -> None:
+async def test_thinking_shows_no_card_until_a_thought_arrives(fast_card) -> None:
     pet = _Pet()
     _bridge_, bus = _bridge(pet)
     await bus.publish(SystemStateChanged(previous="IDLE", new_state="THINKING"))
-    assert pet.of("status")[-1] == ("status", "Thinking …", "")
+    assert pet.of("status") == []
 
+    await bus.publish(ReasoningSummaryUpdated(response_id="r", text=_PLAN))
+    # The section heading is the title; the last COMPLETE sentence the detail.
+    assert pet.of("status") == [("status", "Planning the trip", "I need the train times first.")]
+
+
+async def test_a_silent_thinking_phase_gets_the_bare_title(fast_card) -> None:
+    pet = _Pet()
+    _bridge_, bus = _bridge(pet)
+    await bus.publish(SystemStateChanged(previous="IDLE", new_state="THINKING"))
+    await asyncio.sleep(0.06)
+    assert pet.of("status") == [("status", "Thinking …", "")]
+
+
+async def test_a_quick_turn_shows_no_card_at_all(fast_card) -> None:
+    pet = _Pet()
+    _bridge_, bus = _bridge(pet)
+    await bus.publish(SystemStateChanged(previous="IDLE", new_state="THINKING"))
+    await bus.publish(SystemStateChanged(previous="THINKING", new_state="SPEAKING"))
+    await asyncio.sleep(0.06)
+    assert pet.of("status") == []
+
+
+async def test_a_tool_step_runs_under_the_current_thought(fast_card) -> None:
+    pet = _Pet()
+    _bridge_, bus = _bridge(pet)
+    await bus.publish(SystemStateChanged(previous="IDLE", new_state="THINKING"))
+    await bus.publish(ReasoningSummaryUpdated(response_id="r", text=_PLAN))
     await asyncio.sleep(0.03)
     await bus.publish(
-        ActionProposed(tool_name="web_search", rationale="Looking up the weather in Berlin")
+        ActionProposed(tool_name="web_search", rationale="Looking up the trains to Berlin")
     )
-    assert pet.of("status")[-1] == ("status", "Thinking …", "Looking up the weather in Berlin")
+    assert pet.of("status")[-1] == (
+        "status",
+        "Planning the trip",
+        "Looking up the trains to Berlin",
+    )
 
 
-async def test_a_tool_without_a_reason_shows_its_name(fast_status) -> None:
+async def test_a_tool_without_a_reason_shows_its_name(fast_card) -> None:
     pet = _Pet()
     _bridge_, bus = _bridge(pet)
+    await bus.publish(SystemStateChanged(previous="IDLE", new_state="THINKING"))
     await bus.publish(ActionProposed(tool_name="mcp__github__create_issue"))
-    assert pet.of("status")[-1] == ("status", "Thinking …", "Create issue")
+    assert pet.of("status")[-1] == ("status", "Working", "Create issue")
+    await asyncio.sleep(0.03)
+    await bus.publish(ToolCallStarted(tool_name="read_file"))
+    assert pet.of("status")[-1] == ("status", "Working", "Read file")
 
 
-async def test_progress_announcements_are_thinking_lines(fast_status) -> None:
+async def test_a_tool_result_is_the_next_step(fast_card) -> None:
+    pet = _Pet()
+    _bridge_, bus = _bridge(pet, language="de")
+    await bus.publish(SystemStateChanged(previous="IDLE", new_state="THINKING"))
+    await bus.publish(ActionProposed(tool_name="run_command", rationale="Running the tests"))
+    await asyncio.sleep(0.03)
+    await bus.publish(ActionExecuted(tool_name="run_command", success=True))
+    assert pet.of("status")[-1] == ("status", "Arbeitet", "Befehl ausgeführt")  # i18n-allow
+
+
+async def test_a_tool_result_without_a_card_puts_none_up(fast_card) -> None:
     pet = _Pet()
     _bridge_, bus = _bridge(pet)
+    await bus.publish(SystemStateChanged(previous="IDLE", new_state="THINKING"))
+    await bus.publish(ActionExecuted(tool_name="run_command", success=True))
+    assert pet.of("status") == []
+
+
+async def test_transcripts_replies_and_spoken_lines_never_reach_the_card(fast_card) -> None:
+    pet = _Pet()
+    bridge, bus = _bridge(pet)
+    await bus.publish(VoiceSessionStarted(session_id="s1"))
+    bridge._last_state = "LISTENING"  # noqa: SLF001
+    await bus.publish(TranscriptionUpdate(text="what is the weather", is_final=True))
     await bus.publish(AnnouncementRequested(text="Step 2 of 5 done.", kind="progress"))
-    await asyncio.sleep(0.03)
-    await bus.publish(AnnouncementRequested(text="All finished.", kind="completion"))
-    await asyncio.sleep(0.03)
-    # A spawn announcement's action is a bare clause fragment in the spawn
-    # tool's language — never a status line on its own.
+    await bus.publish(AnnouncementRequested(text="One moment.", kind="preamble"))
+    await bus.publish(AssistantTextDelta(channel="voice", text="It is sunny.", done=True))
+    await bus.publish(ResponseGenerated(text="It is sunny."))
     await bus.publish(
         JarvisAgentAnnouncement(action="eine Flask-App baut", target="auf Port 8000")  # i18n-allow
     )
-    assert [c[2] for c in pet.of("status")] == ["Step 2 of 5 done."]
+    await asyncio.sleep(0.06)
+    assert pet.of("status") == []
+    assert pet.of("transcript") == []
 
 
-async def test_a_streamed_reply_shows_its_latest_complete_sentence(fast_status) -> None:
+async def test_audible_speech_takes_the_card_down(fast_card) -> None:
     pet = _Pet()
     _bridge_, bus = _bridge(pet)
-    await bus.publish(AssistantTextDelta(channel="voice", text="It is sunny. Tomorrow it"))
-    assert pet.of("status")[-1] == ("status", "Answer", "It is sunny.")
+    await bus.publish(SystemStateChanged(previous="IDLE", new_state="THINKING"))
+    await bus.publish(ReasoningSummaryUpdated(response_id="r", text=_PLAN, done=True))
+    await bus.publish(SystemStateChanged(previous="THINKING", new_state="SPEAKING"))
+    assert pet.of("clear") == []  # synthesis lead-in: still thinking for the user
+    await bus.publish(AudioOutFirst())
+    assert pet.of("clear") == [("clear", bus_bridge.PET_CARD_LINGER_S)]
 
-    await asyncio.sleep(0.03)
-    await bus.publish(
-        AssistantTextDelta(channel="voice", text="It is sunny. Tomorrow it rains.", done=True)
-    )
-    assert pet.of("status")[-1] == ("status", "Answer", "Tomorrow it rains.")
+
+@pytest.mark.parametrize("next_state", ["IDLE", "LISTENING", "ERROR"])
+async def test_the_end_of_thinking_takes_the_card_down(fast_card, next_state: str) -> None:
+    pet = _Pet()
+    _bridge_, bus = _bridge(pet)
+    await bus.publish(SystemStateChanged(previous="IDLE", new_state="THINKING"))
+    await bus.publish(ActionProposed(tool_name="web_search", rationale="Searching"))
+    await bus.publish(SystemStateChanged(previous="THINKING", new_state=next_state))
+    assert len(pet.of("clear")) == 1
+
+
+async def test_a_thought_while_jarvis_already_talks_clears_itself(fast_card) -> None:
+    pet = _Pet()
+    _bridge_, bus = _bridge(pet)
+    await bus.publish(SystemStateChanged(previous="IDLE", new_state="SPEAKING"))
+    await bus.publish(ReasoningSummaryUpdated(response_id="r", text=_PLAN))
+    assert pet.of("status")
+    await asyncio.sleep(0.06)
+    assert len(pet.of("clear")) == 1
+
+
+async def test_an_agent_task_keeps_its_card_until_it_is_done(fast_card) -> None:
+    pet = _Pet()
+    _bridge_, bus = _bridge(pet)
+    started = JarvisAgentTaskStarted(utterance="Improve the Jarvis agents")
+    await bus.publish(started)
+    assert pet.of("status")[-1] == ("status", "Improve the Jarvis agents", "Working …")
+
+    # The turn that asked for it ends; the agent works on.
+    await bus.publish(SystemStateChanged(previous="IDLE", new_state="SPEAKING"))
+    await bus.publish(AudioOutFirst())
+    await bus.publish(SystemStateChanged(previous="SPEAKING", new_state="IDLE"))
+    await asyncio.sleep(0.06)
+    assert pet.of("clear") == []
+
+    await bus.publish(JarvisAgentTaskCompleted(trace_id=started.trace_id, success=True))
+    assert pet.of("status")[-1] == ("status", "Improve the Jarvis agents", "Done")
+    await asyncio.sleep(0.06)
+    assert len(pet.of("clear")) == 1
+
+
+async def test_a_completion_under_another_trace_still_releases_the_card(fast_card) -> None:
+    pet = _Pet()
+    _bridge_, bus = _bridge(pet)
+    await bus.publish(JarvisAgentTaskStarted(utterance="Build a site"))
+    await bus.publish(JarvisAgentTaskCompleted(success=False))
+    assert pet.of("status")[-1] == ("status", "Build a site", "Failed")
+    await asyncio.sleep(0.06)
+    assert len(pet.of("clear")) == 1
+
+
+async def test_a_lost_completion_does_not_pin_the_card_forever(fast_card) -> None:
+    pet = _Pet()
+    bridge, bus = _bridge(pet)
+    clock = _Clock()
+    bridge._clock = clock  # noqa: SLF001 — the task age is measured on it
+    await bus.publish(JarvisAgentTaskStarted(utterance="Build a site"))
+    await bus.publish(SystemStateChanged(previous="IDLE", new_state="LISTENING"))
+    assert pet.of("clear") == []
+    clock.now += bus_bridge.PET_CARD_TASK_MAX_S + 1
+    await bus.publish(SystemStateChanged(previous="LISTENING", new_state="IDLE"))
+    assert len(pet.of("clear")) == 1
 
 
 async def test_the_final_snapshot_beats_the_rate_limit() -> None:
     pet = _Pet()
     _bridge_, bus = _bridge(pet)
-    await bus.publish(AssistantTextDelta(channel="voice", text="First."))
-    await bus.publish(AssistantTextDelta(channel="voice", text="First. Second.", done=True))
+    await bus.publish(SystemStateChanged(previous="IDLE", new_state="THINKING"))
+    await bus.publish(ReasoningSummaryUpdated(response_id="r", text="**Plan**\n\nFirst."))
+    await bus.publish(
+        ReasoningSummaryUpdated(response_id="r", text="**Plan**\n\nFirst. Second.", done=True)
+    )
     assert [c[2] for c in pet.of("status")] == ["First.", "Second."]
 
 
-async def test_a_throttled_line_is_flushed_after_the_interval(fast_status) -> None:
-    pet = _Pet()
-    bridge, bus = _bridge(pet)
-    await bus.publish(VoiceSessionStarted(session_id="s1"))
-    bridge._last_state = "LISTENING"  # noqa: SLF001
-    await bus.publish(TranscriptionUpdate(text="what is", is_final=False))
-    await bus.publish(TranscriptionUpdate(text="what is the weather", is_final=False))
-    await asyncio.sleep(0.08)
-    assert pet.of("status")[-1] == ("status", "Listening …", "what is the weather")
-
-
-async def test_a_new_session_starts_a_fresh_bubble() -> None:
+async def test_a_throttled_card_is_flushed_after_the_interval(fast_card) -> None:
     pet = _Pet()
     _bridge_, bus = _bridge(pet)
-    await bus.publish(VoiceSessionStarted(session_id="s1"))
+    await bus.publish(SystemStateChanged(previous="IDLE", new_state="THINKING"))
+    await bus.publish(ReasoningSummaryUpdated(response_id="r", text="**Plan**\n\nFirst."))
+    await bus.publish(ReasoningSummaryUpdated(response_id="r", text="**Plan**\n\nFirst. Second."))
+    await asyncio.sleep(0.06)
+    assert pet.of("status")[-1] == ("status", "Plan", "Second.")
+
+
+async def test_a_new_session_clears_the_previous_card(fast_card) -> None:
+    pet = _Pet()
+    _bridge_, bus = _bridge(pet)
+    await bus.publish(SystemStateChanged(previous="IDLE", new_state="THINKING"))
+    await bus.publish(ReasoningSummaryUpdated(response_id="r", text=_PLAN))
     await bus.publish(VoiceSessionStarted(session_id="s2"))
-    # The same header twice: the reset means the second is not a "repeat".
-    assert pet.of("status") == [
-        ("status", "Listening …", ""),
-        ("status", "Listening …", ""),
-    ]
+    assert len(pet.of("clear")) == 1
+    assert pet.of("status") == [("status", "Planning the trip", "I need the train times first.")]
 
 
-async def test_headers_follow_the_interface_language(fast_status) -> None:
+async def test_labels_follow_the_interface_language(fast_card) -> None:
     pet = _Pet()
     _bridge_, bus = _bridge(pet, language="de")
     await bus.publish(SystemStateChanged(previous="IDLE", new_state="THINKING"))
-    assert pet.of("status")[-1][1] == "Denke nach …"  # i18n-allow
+    await asyncio.sleep(0.06)
+    assert pet.of("status")[-1] == ("status", "Denkt nach …", "")  # i18n-allow
 
     await bus.publish(UiLanguageChanged(language="es"))
-    await asyncio.sleep(0.03)
-    await bus.publish(AssistantTextDelta(channel="voice", text="Hola.", done=True))  # i18n-allow
-    assert pet.of("status")[-1][1] == "Respuesta"  # i18n-allow
+    await bus.publish(ActionProposed(tool_name="web_search"))
+    # Shown at once, or by the flush when it landed inside the rate limit.
+    await asyncio.sleep(0.06)
+    assert pet.of("status")[-1] == ("status", "Trabajando", "Web search")  # i18n-allow
 
 
-async def test_the_language_falls_back_to_the_pipeline_config(monkeypatch) -> None:
+async def test_the_language_falls_back_to_the_pipeline_config(monkeypatch, fast_card) -> None:
     monkeypatch.setattr(
         runtime_refs,
         "_SPEECH_PIPELINE",
@@ -421,7 +558,8 @@ async def test_the_language_falls_back_to_the_pipeline_config(monkeypatch) -> No
     pet = _Pet()
     _bridge_, bus = _bridge(pet)
     await bus.publish(SystemStateChanged(previous="IDLE", new_state="THINKING"))
-    assert pet.of("status")[-1][1] == "Pensando …"  # i18n-allow
+    await asyncio.sleep(0.06)
+    assert pet.of("status")[-1] == ("status", "Pensando …", "")  # i18n-allow
 
 
 # ---------------------------------------------------------------------------
@@ -491,41 +629,6 @@ async def test_outcomes_are_throttled_but_an_error_after_a_success_shows() -> No
     clock.now += 3.5
     await bus.publish(SpeechSpoken(text="Finished.", spoken_kind="completion"))
     assert [c[1] for c in pet.of("outcome")] == ["success", "error", "success"]
-
-
-# ---------------------------------------------------------------------------
-# status lines: spoken replies only, every turn opens with its header
-# ---------------------------------------------------------------------------
-
-
-async def test_typed_and_background_replies_stay_out_of_the_bubble(fast_status) -> None:
-    pet = _Pet()
-    _bridge_, bus = _bridge(pet)
-    await bus.publish(AssistantTextDelta(channel="chat", text="Typed answer.", done=True))
-    await bus.publish(AssistantTextDelta(channel="", text="Background answer.", done=True))
-    assert pet.of("status") == []
-    await bus.publish(AssistantTextDelta(channel="realtime", text="Spoken answer.", done=True))
-    assert pet.of("status")[-1] == ("status", "Answer", "Spoken answer.")
-
-
-async def test_every_follow_up_turn_reopens_the_listening_header(fast_status) -> None:
-    pet = _Pet()
-    _bridge_, bus = _bridge(pet)
-    await bus.publish(SystemStateChanged(previous="IDLE", new_state="LISTENING"))
-    await bus.publish(SystemStateChanged(previous="LISTENING", new_state="THINKING"))
-    await bus.publish(SystemStateChanged(previous="THINKING", new_state="SPEAKING"))
-    await bus.publish(SystemStateChanged(previous="SPEAKING", new_state="LISTENING"))
-    headers = [c[1] for c in pet.of("status")]
-    assert headers.count("Listening …") == 2
-    assert pet.of("status")[-1] == ("status", "Listening …", "")
-
-
-async def test_a_long_reply_is_cut_from_its_end() -> None:
-    pet = _Pet()
-    _bridge_, bus = _bridge(pet)
-    reply = "Some words. " * 5_000 + "The last sentence."
-    await bus.publish(AssistantTextDelta(channel="voice", text=reply, done=True))
-    assert pet.of("status")[-1] == ("status", "Answer", "The last sentence.")
 
 
 # ---------------------------------------------------------------------------
