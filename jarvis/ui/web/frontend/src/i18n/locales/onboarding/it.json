@@ -1,0 +1,88 @@
+{
+  "first_run": {
+    "back": "Indietro",
+    "continue": "Continua",
+    "step_of": "{current} di {total}",
+    "welcome": {
+      "title": "Benvenuto",
+      "lede": "Configuriamo il tuo assistente direttamente qui nell'app. Ci vogliono circa due minuti.",
+      "language": "Lingua",
+      "lang_en": "English",
+      "lang_de": "Deutsch",
+      "lang_es": "Español",
+      "fact_commands": "Esegue comandi, apre app e modifica file per te.",
+      "fact_screen": "Può vedere lo schermo e agire su di esso quando glielo chiedi.",
+      "fact_cloud": "Quello che dici viene inviato al provider AI che scegli.",
+      "fact_costs": "L'utilizzo viene addebitato da quel provider sul tuo account.",
+      "fact_mistakes": "Può commettere errori, anche difficili da annullare.",
+      "accept": "Ho capito e lo uso a mio rischio.",
+      "read_terms": "Leggi i Termini di utilizzo completi",
+      "hide_terms": "Nascondi i Termini",
+      "terms_loading": "Caricamento dei Termini…",
+      "start": "Accetta e continua",
+      "decline": "Rifiuta ed esci",
+      "accept_failed": "Non è stato possibile salvare il consenso. Verifica che l'app sia in esecuzione, quindi riprova.",
+      "declined_title": "Chiusura dell'app",
+      "declined_body": "Hai rifiutato, quindi non è stato configurato né salvato nulla. Puoi riaprire l'app in qualsiasi momento e ti verrà chiesto di nuovo."
+    },
+    "keys": {
+      "title": "Aggiungi una chiave API",
+      "lede": "Questa è la pagina Chiavi API. Incolla una chiave nella scheda di un provider e salvala. OpenAI o Gemini ti consentono di usare la voce in tempo reale con una sola chiave.",
+      "waiting": "In attesa di una chiave…",
+      "connecting": "Attivazione di tutto in corso…",
+      "connected": "Connesso: {provider}.",
+      "present": "È stata salvata una chiave. Puoi continuare.",
+      "partial": "Alcune parti non sono state attivate ({parts}). Puoi sistemarle più tardi in questa pagina.",
+      "security": "Le chiavi vengono salvate nel portachiavi di sistema e inviate esclusivamente al provider che hai scelto.",
+      "later": "Aggiungerò una chiave più tardi"
+    },
+    "permissions": {
+      "title": "Consenti l'accesso su questo Mac",
+      "lede": "Queste sono le autorizzazioni del Mac. Abilita quelle che desideri; ogni riga si aggiorna automaticamente.",
+      "note": "Puoi modificarle in qualsiasi momento nelle Impostazioni. Il riavvio finale applicherà le modifiche."
+    },
+    "voice": {
+      "title": "Scegli la parola di attivazione",
+      "lede": "Digita qui la parola dopo \"Hey\" e salvala. La parola diventerà anche il nome dell'assistente. Non vuoi usare una parola di attivazione? La scorciatoia Chiama funziona sempre.",
+      "on": "\"{phrase}\" è attiva. Puoi pronunciarla in qualsiasi momento.",
+      "off": "Nessuna parola di attivazione per ora. Nel frattempo puoi usare la scorciatoia Chiama."
+    },
+    "ready": {
+      "title": "Tutto pronto",
+      "lede": "L'app verrà riavviata una volta per attivare tutto. Subito dopo partirà un breve tour.",
+      "row_brain": "Cervello",
+      "row_voice": "Attivazione",
+      "no_key": "Nessuna chiave",
+      "shortcut": "Scorciatoia Chiama",
+      "autostart": "Avvia all'accesso",
+      "no_key_note": "Senza una chiave, chat e voce resteranno disattivate finché non ne aggiungi una nella pagina Chiavi API.",
+      "preview_note": "Questa è una ripetizione, quindi non verrà riavviato nulla. Avvia apre il tour.",
+      "restart_note": "Il riavvio richiede circa dieci secondi.",
+      "start_failed": "Non è stato possibile completare la configurazione. Verifica che l'app sia in esecuzione, quindi riprova.",
+      "starting": "Avvio…",
+      "start": "Avvia"
+    }
+  },
+  "app_tour": {
+    "label": "Tour dell'app",
+    "next": "Avanti",
+    "finish": "Fine",
+    "skip": "Salta il tour",
+    "step_of": "{current} di {total}",
+    "replay_title": "Tour dell'app",
+    "replay_body": "Un breve giro nell'app con l'evidenziazione guidata, lo stesso che hai visto dopo la configurazione.",
+    "replay": "Ripeti il tour",
+    "steps": {
+      "voice": "Da qui parli con {name}. Fai clic sulla barra, pronuncia la parola di attivazione oppure premi i tasti Chiama, poi parla normalmente. L'onda mostra chi sta parlando.",
+      "new_chat": "Preferisci scrivere? Avvia qui una nuova chat, testuale o vocale. Ogni conversazione viene salvata in Chat recenti.",
+      "agents": "Gli agenti sono la tua squadra: assistenti che si occupano in background dei lavori più impegnativi. Vediamoli da vicino.",
+      "agents_world": "Questo è il Verse, dove lavorano i tuoi agenti. Fai clic su uno di loro per chattare o assegnargli un'attività. Avanti ti riporterà qui.",
+      "voice_hub": "Voce raccoglie la dettatura verso qualsiasi app, il tuo dizionario personale e le scorciatoie vocali.",
+      "artifacts": "Tutto ciò che {name} crea, dalle pagine alle immagini fino ai report, viene conservato in Artefatti.",
+      "ide": "L'IDE agentico esegue più agenti di programmazione affiancati in terminali reali, sui tuoi progetti.",
+      "plugins": "Plugin, skill e MCP collegano {name} alle tue app. L'icona del negozio in basso apre il Marketplace.",
+      "settings": "Impostazioni, chiavi API, costi e profilo si trovano qui. Puoi ripetere questo tour in qualsiasi momento da Impostazioni → App.",
+      "done": "Il tour è finito. È tutto pronto: parla con {name} quando vuoi."
+    }
+  }
+}
