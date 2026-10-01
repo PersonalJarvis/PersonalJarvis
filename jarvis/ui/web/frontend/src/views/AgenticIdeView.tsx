@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { FolderPlus, Loader2, X } from "lucide-react";
 import { FolderPicker } from "@/components/agentic/FolderPicker";
 import { VoiceBubble, storedVoiceBubbleOpen, storeVoiceBubbleOpen } from "@/components/agentic/VoiceBubble";
-import { WorkspaceTerminalGrid } from "@/components/agentic/WorkspaceTerminalGrid";
+import { RetainedWorkspaceGrid } from "@/components/agentic/RetainedWorkspaceGrid";
 import { WorkspaceAgentSetup } from "@/components/agentic/WorkspaceAgentSetup";
 import { RunOnPicker, storeRunOn, storedRunOn } from "@/components/agentic/RunOnPicker";
 import { WorkspaceOptionsDialog } from "@/components/agentic/WorkspaceOptionsDialog";
@@ -486,7 +486,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
 
     <main className="min-h-0 flex-1">
       <IdeSidePanelFrame markInUse={paneStyle === "minimal"}>
-      {session ? <WorkspaceTerminalGrid key={session.id} session={session} onChanged={(next) => setState((current) => current?.session?.id === next.id ? { ...current, session: next } : current)}
+      {session ? <RetainedWorkspaceGrid session={session} onScreen={onScreen} workspaceIds={state.workspaces?.map((workspace) => workspace.id)} onChanged={(next) => setState((current) => current?.session?.id === next.id ? { ...current, session: next } : current)}
         onAdd={openAgentPicker} onClose={closeAgent} onSelect={setSelected} selected={selected} maxPanes={maxPanes} fontSize={fontSize} appearance={appearance} disabled={busy}
         onMutationStart={beginGridMutation} onMutationEnd={endGridMutation} paneStyle={paneStyle} />
       : <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
