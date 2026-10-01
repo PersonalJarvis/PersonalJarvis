@@ -14,7 +14,7 @@
     },
     "keys": {
       "title": "Add one API key",
-      "lede": "This is the API Keys page. Paste one key into a provider card and save it. OpenAI or Gemini gives you live voice with a single key.",
+      "lede": "Your assistant needs one AI key to think and talk; without it, chat and voice stay off. This is the API Keys page: paste one key into a provider card and save it. OpenAI or Gemini gives you live voice with a single key.",
       "waiting": "Waiting for a key…",
       "connecting": "Switching everything on…",
       "connected": "Connected: {provider}.",
