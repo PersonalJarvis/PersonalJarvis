@@ -125,16 +125,28 @@ follow the order of `PET_STATES`: `idle`, `listening`, `thinking`, `talking`,
   "frame_size": 48,
   "sheet": "sheet.png",
   "animations": {
-    "idle":      {"row": 0, "frames": 4, "fps": 4, "loop": true},
-    "listening": {"row": 1, "frames": 4, "fps": 8, "loop": true},
-    "thinking":  {"row": 2, "frames": 6, "fps": 8, "loop": true},
+    "idle":      {"row": 0, "frames": 8, "fps": 6, "loop": true,
+                  "accent_frames": 1, "accent_every": 3},
+    "listening": {"row": 1, "frames": 6, "fps": 8, "loop": true},
+    "thinking":  {"row": 2, "frames": 8, "fps": 8, "loop": true},
     "talking":   {"row": 3, "frames": 4, "fps": 10, "loop": true},
-    "success":   {"row": 4, "frames": 6, "fps": 10, "loop": false},
-    "error":     {"row": 5, "frames": 4, "fps": 8, "loop": false},
-    "sleeping":  {"row": 6, "frames": 2, "fps": 2, "loop": true}
+    "success":   {"row": 4, "frames": 8, "fps": 10, "loop": false},
+    "error":     {"row": 5, "frames": 6, "fps": 9, "loop": false},
+    "sleeping":  {"row": 6, "frames": 6, "fps": 3, "loop": true}
   }
 }
 ```
+
+Two row conventions make the pet feel alive:
+
+- **Accent frames.** `accent_frames` (optional) marks the last cells of a
+  looping row as an accent, such as a blink, that plays only on every
+  `accent_every`-th pass. The built-in idle rows breathe on seven cells and
+  blink on the eighth every third breath.
+- **Talking by voice.** The `talking` row is ordered by mouth openness, from
+  closed to widest. While a live output level is fresh (under 250 ms old),
+  the renderer picks the frame from that level, lightly smoothed, so the mouth
+  follows the real voice. Without a level the row swings back and forth.
 
 Rules the loader enforces (`jarvis/ui/pets/manifest.py`):
 
@@ -240,11 +252,13 @@ Control-strip actions reported back through callbacks: `compose`, `mic_mute`,
 
 The pet must cost next to nothing while idle:
 
-- every frame is scaled once (nearest-neighbour, integer factor from the
-  monitor DPI times `pet_scale`) and cached as a Tk image;
-- the window repaints only when the frame index changes, and the timer sleeps
-  until the next frame boundary: 4 fps idle, 2 fps asleep, 8–10 fps active,
-  nothing while hidden;
+- every frame is scaled once (nearest-neighbour, an integer factor chosen
+  from the figure's visible size so it reads about 180 logical px tall,
+  times the monitor DPI and `pet_scale`) and cached as a Tk image; the strip
+  (about 0.3 × the figure) and the card scale with it;
+- the window repaints only when the frame key changes (frame index, plus the
+  level bucket while talking), and the timer sleeps until the next frame
+  boundary: 6 fps idle, 3 fps asleep, 8–10 fps active, nothing while hidden;
 - the control strip's orb animates only while listening or talking.
 
 Target: an idle pet adds less than 1 % of one CPU core to the app process.
