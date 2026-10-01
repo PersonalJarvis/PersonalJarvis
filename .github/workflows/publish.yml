@@ -1,0 +1,57 @@
+name: Publish native package index
+
+on:
+  push:
+    branches: [native-crypto-index]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: native-crypto-pages
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: windows-11-arm
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.13'
+          architecture: arm64
+      - name: Verify all native artifacts and archive the static site
+        shell: python
+        run: |
+          import hashlib
+          import json
+          import os
+          import tarfile
+          from pathlib import Path
+          for manifest in Path('native-crypto').glob('*/manifest.json'):
+              spec = json.loads(manifest.read_text(encoding='utf-8'))
+              for row in spec['artifacts']:
+                  wheel = manifest.parent / 'files' / row['filename']
+                  assert hashlib.sha256(wheel.read_bytes()).hexdigest() == row['sha256'], wheel
+          archive = Path(os.environ['RUNNER_TEMP']) / 'artifact.tar'
+          with tarfile.open(archive, 'w', dereference=True) as bundle:
+              for name in ('.nojekyll', 'index.html', 'native-crypto'):
+                  bundle.add(name, arcname=name)
+      - uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882
+        with:
+          name: github-pages
+          path: ${{ runner.temp }}/artifact.tar
+          retention-days: 1
+          if-no-files-found: error
+      - name: Deploy the verified package index
+        id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e
