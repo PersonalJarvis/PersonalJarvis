@@ -1,19 +1,10 @@
 /**
  * Reading a drop or a paste that lands on a terminal pane.
  *
- * A browser hands a web page two very different things depending on where the
- * drag came from, and the difference decides whether anything has to be copied:
- *
- * * **A real path.** Explorer and Finder put the file's location in
- *   `text/uri-list` (and usually `text/plain`). Nothing needs copying — the
- *   agent can open the file where it lies.
- * * **Only bytes.** A screenshot pasted from the clipboard, an image dragged
- *   off a web page, anything from a sandboxed source. There is no path to be
- *   had — that is a deliberate browser restriction, not something to work
- *   around — so those bytes have to be written somewhere the agent can reach.
- *
- * Both are collected here and sent together; the backend copies only what it
- * has to.
+ * Text and custom MIME data can come from a hostile page. They cannot grant
+ * permission to read a local path. Internal explorer drags carry an opaque,
+ * single-use receipt held by this origin; external drops carry File
+ * bytes. Native path hints are not a file-read grant on every WebView backend.
  *
  * The hard constraint that shapes this file: **a DataTransfer is emptied the
  * moment the event handler returns.** Reading it after an `await` yields an
@@ -23,7 +14,7 @@
  */
 
 export interface PaneDropPayload {
-  /** Real filesystem paths the drag carried, if any. */
+  /** Filesystem paths authorized by this page's own explorer. */
   paths: string[];
   /** Raw files, for everything the browser gave no path for. */
   files: File[];
@@ -38,11 +29,84 @@ export interface PaneDropPayload {
  * (`\\server\share`) do not survive being parsed back out of a URL, and the
  * failure is silent — the agent is handed a path to nowhere.
  *
- * So an in-app drag carries the path VERBATIM under its own type. It is
- * newline-separated for the same reason the wire format is: one gesture may
- * eventually mean several entries.
+ * The type carries a receipt, never a path supplied by the drop source.
  */
 export const WORKSPACE_PATH_TYPE = "application/x-jarvis-workspace-path";
+
+interface WorkspaceDrag {
+  receipt: string;
+  paths: string[];
+  expiresAt: number;
+}
+
+const DRAG_STORAGE_KEY = "jarvis:workspace-drag-receipt";
+const DRAG_LIFETIME_MS = 120_000;
+let workspaceDrag: (WorkspaceDrag & { stored: boolean }) | null = null;
+let expiryTimer: ReturnType<typeof setTimeout> | undefined;
+let cleanupInstalled = false;
+
+function clearWorkspaceDrag(): void {
+  try {
+    const stored = JSON.parse(localStorage.getItem(DRAG_STORAGE_KEY) ?? "null");
+    if (stored?.receipt === workspaceDrag?.receipt) localStorage.removeItem(DRAG_STORAGE_KEY);
+  } catch {
+    // Blocked/corrupt storage cannot authorize a drop; the local fallback expires too.
+  }
+  workspaceDrag = null;
+  clearTimeout(expiryTimer);
+}
+
+/** Register paths from an explorer row in this page, not from drag metadata. */
+export function setWorkspaceDragPaths(dt: DataTransfer, paths: readonly string[]): boolean {
+  clearWorkspaceDrag();
+  // Attachment APIs frame paths as lines. A filename containing a newline must
+  // never become a second file-read request; byte uploads still accept it.
+  if (!paths.length || paths.some((path) => !path || /[\r\n]/.test(path))) return false;
+  // getRandomValues also works on HTTP LAN origins where randomUUID is absent.
+  const receipt = Array.from(crypto.getRandomValues(new Uint8Array(32)), (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
+  const record: WorkspaceDrag = { receipt, paths: [...paths], expiresAt: Date.now() + DRAG_LIFETIME_MS };
+  let stored = false;
+  try {
+    // Same-origin storage lets a detached IDE window hand a file to the main
+    // window. Foreign pages cannot mint or change this record.
+    localStorage.setItem(DRAG_STORAGE_KEY, JSON.stringify(record));
+    stored = true;
+  } catch {
+    // Storage-disabled browsers retain same-window drags without trusting MIME paths.
+  }
+  workspaceDrag = { ...record, stored };
+  expiryTimer = setTimeout(clearWorkspaceDrag, DRAG_LIFETIME_MS);
+  if (!cleanupInstalled) {
+    window.addEventListener("dragend", clearWorkspaceDrag);
+    cleanupInstalled = true;
+  }
+  dt.setData(WORKSPACE_PATH_TYPE, receipt);
+  return true;
+}
+
+function consumeWorkspaceDrag(receipt: string): string[] | null {
+  if (!/^[0-9a-f]{64}$/.test(receipt)) return null;
+  let record: WorkspaceDrag | null = null;
+  try {
+    const stored = JSON.parse(localStorage.getItem(DRAG_STORAGE_KEY) ?? "null");
+    if (stored?.receipt === receipt) {
+      localStorage.removeItem(DRAG_STORAGE_KEY);
+      record = stored;
+    }
+  } catch {
+    // A stored receipt that cannot be read/consumed fails closed.
+  }
+  if (!record && workspaceDrag?.receipt === receipt && !workspaceDrag.stored) record = workspaceDrag;
+  if (workspaceDrag?.receipt === receipt) clearWorkspaceDrag();
+  if (
+    !record || !Number.isFinite(record.expiresAt) || record.expiresAt <= Date.now() ||
+    !Array.isArray(record.paths) || record.paths.length === 0 ||
+    record.paths.some((path) => typeof path !== "string" || !path || /[\r\n]/.test(path))
+  ) return null;
+  return record.paths;
+}
 
 /** True when this payload has nothing worth sending. */
 export function isEmptyPayload(payload: PaneDropPayload): boolean {
@@ -82,80 +146,25 @@ export function dragCarriesFiles(dt: DataTransfer | null): boolean {
 }
 
 /**
- * A `file://` URI as a native path; anything else unchanged.
- *
- * Windows URIs carry a leading slash before the drive letter
- * (`file:///C:/x` → `C:/x`), which is why this cannot be a plain `slice(7)`.
- */
-function unwrapFileUri(value: string): string {
-  if (!/^file:/i.test(value)) return value;
-  let path: string;
-  try {
-    path = decodeURIComponent(new URL(value).pathname);
-  } catch {
-    return value;
-  }
-  if (path.length > 2 && path[0] === "/" && path[2] === ":") path = path.slice(1);
-  return path;
-}
-
-/**
- * Does this string look like a filesystem path rather than dragged prose?
- *
- * Dragging selected TEXT also fills `text/plain`, and sending that as a path
- * would have the backend try to read a sentence off the disk. A path is
- * single-line and either absolute (`/x`, `C:\x`, `\\server\share`) or a
- * `file://` URI — a relative-looking fragment is far more likely to be text.
- */
-function looksLikePath(value: string): boolean {
-  const trimmed = value.trim();
-  if (!trimmed || /[\r\n]/.test(trimmed)) return false;
-  if (/^file:/i.test(trimmed)) return true;
-  if (/^[a-zA-Z]:[\\/]/.test(trimmed)) return true;
-  if (trimmed.startsWith("\\\\")) return true;
-  return trimmed.startsWith("/");
-}
-
-/**
  * Everything usable in a drop, pulled out synchronously.
- *
- * Files and paths are matched up by NAME so a single drag does not produce
- * both a path and a byte copy of the same file: when Explorer gives us the
- * path, the `File` object beside it is redundant.
  */
 export function extractPaneDrop(dt: DataTransfer | null): PaneDropPayload {
   const out: PaneDropPayload = { paths: [], files: [] };
   if (!dt) return out;
 
-  // The app's own explorer, when it is the source. Trusted as-is and taken
-  // INSTEAD of the text forms rather than alongside them: the same drag also
-  // carries `text/plain` for the benefit of anything that only understands
-  // text, and reading both would attach every entry twice.
-  const internal = dt.getData(WORKSPACE_PATH_TYPE) || "";
-  if (internal.trim()) {
-    for (const line of internal.split(/[\r\n]+/)) {
-      const candidate = line.trim();
-      if (candidate) out.paths.push(candidate);
-    }
+  const receipt = dt.getData(WORKSPACE_PATH_TYPE);
+  const paths = consumeWorkspaceDrag(receipt);
+  if (paths) {
+    out.paths = paths;
     return out;
   }
 
-  const raw = dt.getData("text/uri-list") || dt.getData("text/plain") || "";
-  for (const line of raw.split(/[\r\n]+/)) {
-    const candidate = line.trim();
-    if (!candidate || candidate.startsWith("#")) continue;
-    const unwrapped = unwrapFileUri(candidate);
-    if (looksLikePath(unwrapped)) out.paths.push(unwrapped);
-  }
-
-  const named = new Set(
-    out.paths.map((p) => p.replace(/\\/g, "/").split("/").pop()?.toLowerCase() ?? ""),
-  );
+  // Never interpret text/plain, file:// URIs or forged workspace MIME as local
+  // paths, even alongside real files. Upload only the bytes the browser grants.
   for (const file of Array.from(dt.files ?? [])) {
     // A directory dropped into a pane arrives as a zero-byte, type-less entry;
     // there is nothing to attach and copying it would produce an empty file.
     if (file.size === 0 && !file.type) continue;
-    if (named.has(file.name.toLowerCase())) continue;
     out.files.push(file);
   }
 

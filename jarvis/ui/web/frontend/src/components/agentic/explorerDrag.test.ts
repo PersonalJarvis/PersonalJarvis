@@ -90,7 +90,8 @@ describe("lifting one explorer row into a drag", () => {
     setWorkspaceEntryDrag(dt, { root: "/home/me/project", path: "src" });
     expect(dt.getData("text/uri-list")).toBe("file:///home/me/project/src");
     expect(dt.getData("text/plain")).toBe("/home/me/project/src");
-    expect(dt.getData(WORKSPACE_PATH_TYPE)).toBe("/home/me/project/src");
+    expect(dt.getData(WORKSPACE_PATH_TYPE)).toMatch(/^[0-9a-f]{64}$/);
+    expect(extractPaneDrop(dt).paths).toEqual(["/home/me/project/src"]);
   });
 
   it("carries a FOLDER as readily as a file", () => {
