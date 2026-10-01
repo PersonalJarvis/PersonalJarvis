@@ -634,6 +634,9 @@ class PetDesign:
     #: The waist: the row the breath stretches the body above. Everything
     #: below it (feet, paws, the foot of a teapot) stays planted.
     waist: int = 31
+    #: Optional pixel pass over the finished body (before the effects), for
+    #: looks no mask can draw: glitch slices, a dithered fade.
+    post: Callable[[Image.Image, Pose], Image.Image] | None = None
 
     def counts(self) -> Mapping[str, int]:
         return {**FRAME_COUNTS, **(self.frame_counts or {})}
@@ -655,6 +658,13 @@ GIGI_BAND = hexc("#4b4d55")
 GIGI_CHEEK = hexc("#5c5f68")
 GIGI_BIT = hexc("#9a9ca4")
 GIGI_EYES = EyeStyle(w=4, h=6, iris=GIGI_WHITE, pupil=GIGI_PUPIL, glint=None, lid=GIGI_WHITE)
+GIGI_SCAN = hexc("#6b6e78")
+#: Talking: the two bands light up with the mouth, like a level meter.
+_GIGI_TALK_BANDS = {
+    "half": hexc("#6b6e78"),
+    "open": hexc("#9a9ca4"),
+    "wide": hexc("#d0d2d8"),
+}
 #: Brand sparkles: white with a bright core instead of the shared gold.
 GIGI_SPARK = {"#": hexc("#d9dbe2"), "o": hexc("#ffffff")}
 
@@ -708,6 +718,8 @@ _GIGI_ARMS = {
     "rest": frozenset({(10, 26), (9, 26), (8, 27), (7, 28), (7, 29), (7, 30)}),
     "up": frozenset({(10, 26), (9, 26), (8, 25), (7, 24), (7, 23), (7, 22)}),
     "droop": frozenset({(10, 27), (9, 28), (9, 29), (9, 30)}),
+    #: Listening: hands cupped beside the head, like a hand to an ear.
+    "cup": frozenset({(10, 24), (9, 23), (8, 22), (8, 21), (9, 20)}),
 }
 
 
@@ -718,6 +730,8 @@ def _gigi_arm_style(pose: Pose) -> str:
         return "up" if pose.i % 2 == 0 else "rest"  # flailing
     if pose.state == "sleeping":
         return "droop"
+    if pose.state == "listening":
+        return "cup"
     return "rest"
 
 
@@ -762,9 +776,14 @@ def draw_gigi(f: Frame, pose: Pose) -> None:
         for side in (set(arm), mirrored(arm)):
             f.paint(outer_ring(side) - body, OUTLINE)
             f.paint(side, GIGI_WHITE)
-        f.paint(rect(12, 26, 35, 26) | rect(12, 34, 35, 34), GIGI_BAND)
+        band = _GIGI_TALK_BANDS.get(pose.mouth, GIGI_BAND) if pose.state == "talking" else GIGI_BAND
+        f.paint(rect(12, 26, 35, 26) | rect(12, 34, 35, 34), band)
         cheek = rect(13, 22, 15, 23)
         f.paint(cheek | mirrored(cheek), GIGI_CHEEK)
+        if pose.state == "thinking":
+            # A scan line sweeps down the body, behind the face.
+            scan = 11 + 3 * pose.i
+            f.paint({p for p in eroded(body) if p[1] == scan}, GIGI_SCAN)
         draw_eyes(f, pose.eyes, (17, 18), (27, 18), GIGI_EYES)
         _gigi_mouth(f, pose.mouth)
         _gigi_bits(f, pose)
@@ -789,6 +808,87 @@ def _gigi_mouth(f: Frame, style: str) -> None:
         raise KeyError(style)
 
 
+#: Success: the loose bits burst outwards in eight directions.
+_GIGI_BURST_DIRS = tuple((math.cos(k * math.pi / 4), math.sin(k * math.pi / 4)) for k in range(8))
+
+
+def _gigi_burst(f: Frame, i: int) -> None:
+    if not 1 <= i <= 5:
+        return
+    rx, ry = 13 + 3 * i, 16 + 3 * i
+    size = 2 if i <= 3 else 1
+    color = GIGI_WHITE if i <= 3 else GIGI_BIT
+    for ux, uy in _GIGI_BURST_DIRS:
+        x, y = round(CX + ux * rx - size / 2), round(25 + uy * ry - size / 2)
+        bit = {p for p in rect(x, y, x + size - 1, y + size - 1)}
+        if all(1 <= px < CELL - 1 and 1 <= py < CELL - 1 for px, py in bit):
+            f.part(bit, color)
+
+
+def _gigi_success_fx(f: Frame, pose: Pose) -> None:
+    _gigi_burst(f, pose.i)
+    fx_sparkles(f, pose.i, GIGI_ANCHORS.sparkles, GIGI_SPARK)
+
+
+def glitch_slices(
+    img: Image.Image, slices: Sequence[tuple[int, int, int]], fringe: RGBA
+) -> Image.Image:
+    """Shift the rows ``y0..y1`` of each ``(y0, y1, dx)`` slice sideways.
+
+    Where the body was and no longer is, a ``fringe`` colour stays behind —
+    the torn-signal look of a bit ghost.
+    """
+    out = img.copy()
+    for y0, y1, dx in slices:
+        for y in range(max(0, y0), min(CELL, y1 + 1)):
+            row = [img.getpixel((x, y)) for x in range(CELL)]
+            for x in range(CELL):
+                sx = x - dx
+                moved = row[sx] if 0 <= sx < CELL else (0, 0, 0, 0)
+                if moved[3] == 0 and row[x][3]:
+                    moved = fringe
+                out.putpixel((x, y), moved)
+    return out
+
+
+def dither_fade(img: Image.Image, top: int) -> Image.Image:
+    """Fade everything below ``top`` with an ordered dither: a quarter of the
+    pixels drop out over three rows, then half (alpha on screen is binary)."""
+    out = img.copy()
+    for y in range(max(0, top), CELL):
+        depth = y - top
+        for x in range(CELL):
+            gone = (x + 2 * y) % 4 == 0 if depth < 3 else (x + y) % 2 == 0
+            if gone:
+                out.putpixel((x, y), (0, 0, 0, 0))
+    return out
+
+
+#: Error glitch slices per frame, ``(y0, y1, dx)`` in body coordinates.
+_GIGI_ERROR_GLITCH = (
+    ((14, 19, 3), (30, 33, -2)),
+    ((22, 26, -3),),
+    ((10, 13, 2), (35, 38, 3)),
+    ((26, 29, -2),),
+    ((18, 22, 2),),
+    (),
+)
+GIGI_GLITCH_RED = hexc("#e5383b")
+
+
+def gigi_post(img: Image.Image, pose: Pose) -> Image.Image:
+    if pose.state == "error":
+        slices = [(y0 + pose.dy, y1 + pose.dy, dx) for y0, y1, dx in _GIGI_ERROR_GLITCH[pose.i]]
+        return glitch_slices(img, slices, GIGI_GLITCH_RED)
+    if pose.state == "idle" and pose.i == len(_GIGI_FLOAT):
+        # The accent cell: a blink with a short signal tear across the eyes.
+        return glitch_slices(img, [(18 + pose.dy, 21 + pose.dy, 2)], GIGI_BIT)
+    if pose.state == "sleeping":
+        # Asleep, the ghost's tail fades out.
+        return dither_fade(img, _GIGI_SKIRT + 1 + pose.dy)
+    return img
+
+
 GIGI_ANCHORS = Anchors(
     arcs_left=(9, 16),
     arcs_right=(38, 16),
@@ -808,7 +908,8 @@ GIGI = PetDesign(
     # An empty row between the mouth and the lower band: the hop's squash and
     # stretch repeat or drop it without touching the face.
     waist=33,
-    fx={"success": lambda f, pose: fx_sparkles(f, pose.i, GIGI_ANCHORS.sparkles, GIGI_SPARK)},
+    post=gigi_post,
+    fx={"success": _gigi_success_fx},
 )
 
 
@@ -1325,6 +1426,8 @@ def render_frame(pet: PetDesign, state: str, i: int) -> Image.Image:
     body = Frame()
     pet.draw(body, pose)
     image = breathe(body.image(), pose.stretch, pet.waist + pose.dy)
+    if pet.post is not None:
+        image = pet.post(image, pose)
     fx = Frame()
     own = pet.fx.get(state)
     if own is not None:

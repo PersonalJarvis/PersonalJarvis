@@ -171,7 +171,7 @@ committed PNGs match the script). User-created pets live in
 
 | Id | Name | Idea |
 |---|---|---|
-| `gigi` | Gigi | The Jarvis ghost in its brand black and white: it floats, and its loose bits glitch while it thinks (default) |
+| `gigi` | Gigi | The Jarvis ghost in brand black and white: it floats, cups its hands to listen, scans while it thinks, its bands light up as it talks, its bits burst on success, it glitches on errors and its tail fades out asleep (default) |
 | `miso` | Miso | A cat: ears up while listening, curls up to sleep |
 | `brew` | Brew | A teapot: steams while thinking, whistles while talking |
 | `bolt` | Bolt | A battery: charges while thinking, sparks on success, runs flat asleep |
