@@ -116,6 +116,7 @@ class NativeLiveVoiceSession(LiveVoiceSession):
             register(self)
             self._pump_task = asyncio.create_task(self._pump(), name="native-live-events")
             await self._take_startup_input(message)
+            self._watch_input_mute()
             await self._send_json(
                 {
                     "type": "audio_ready",
@@ -125,6 +126,7 @@ class NativeLiveVoiceSession(LiveVoiceSession):
                     "output_sample_rate": self._provider.output_sample_rate,
                     "language": self._language,
                     "requires_webrtc_answer": False,
+                    "input_muted": self._input_muted,
                 }
             )
         except BaseException:
@@ -132,7 +134,12 @@ class NativeLiveVoiceSession(LiveVoiceSession):
             raise
 
     async def handle_audio_frame(self, pcm: bytes) -> None:
-        if self._connection is not None and not self._closing and not self._recovering:
+        if (
+            self._connection is not None
+            and not self._closing
+            and not self._recovering
+            and not self._input_muted
+        ):
             audio = self._resampler.process(pcm)
             if audio:
                 try:
@@ -410,6 +417,7 @@ class NativeLiveVoiceSession(LiveVoiceSession):
         if self._ended:
             return
         self._ended = True
+        self._stop_watching_input_mute()
         self._clear_media_levels()
         self._closing = True
         await self._publish_phase("idle")
