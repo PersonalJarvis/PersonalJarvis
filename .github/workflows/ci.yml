@@ -90,6 +90,7 @@ jobs:
       browser: ${{ steps.lanes.outputs.browser }}
       macos_desktop: ${{ steps.lanes.outputs.macos_desktop }}
       installer: ${{ steps.lanes.outputs.installer }}
+      updater: ${{ steps.lanes.outputs.updater }}
       macos: ${{ steps.mode.outputs.macos }}
       base: ${{ steps.mode.outputs.base }}
       pr_mode: ${{ steps.mode.outputs.pr_mode }}
@@ -522,6 +523,49 @@ jobs:
       - name: Target-resolved portable install matrix
         run: python scripts/ci/check_portable_install_matrix.py --jobs 4
 
+  native-crypto-runtime:
+    name: native crypto (${{ matrix.runner }}, Python ${{ matrix.python }})
+    needs: detect
+    if: needs.detect.outputs.deps == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {runner: macos-15-intel, architecture: x64, python: '3.11'}
+          - {runner: macos-15-intel, architecture: x64, python: '3.14'}
+          - {runner: macos-15, architecture: arm64, python: '3.11'}
+          - {runner: macos-15, architecture: arm64, python: '3.14'}
+          - {runner: windows-11-arm, architecture: arm64, python: '3.12'}
+          - {runner: windows-11-arm, architecture: arm64, python: '3.14'}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+          architecture: ${{ matrix.architecture }}
+      - name: Fresh hashed base install without crypto compilation
+        run: python scripts/pip_install.py --require-hashes --only-binary=cryptography,asyncssh -r requirements.txt
+      - name: Native security and compatibility contracts
+        shell: bash
+        run: |
+          python -m pip install pytest pytest-asyncio pytest-timeout
+          python -m pytest --confcutdir=tests/contract -q tests/contract/test_native_crypto.py tests/contract/test_native_ssh.py
+      - name: Confirm the published native wheel uses the reviewed OpenSSL
+        if: matrix.runner != 'macos-15'
+        shell: python
+        run: |
+          import json
+          from pathlib import Path
+          from cryptography.hazmat.backends.openssl.backend import backend
+          expected = json.loads(Path('packaging/native-crypto.json').read_text())['openssl']['version']
+          actual = backend.openssl_version_text()
+          print(actual)
+          assert actual.startswith(f'OpenSSL {expected} '), (actual, expected)
+
   realtime-contract:
     needs: detect
     if: needs.detect.outputs.realtime == 'true'
@@ -545,6 +589,52 @@ jobs:
           python -m pip install pytest pytest-asyncio
       - name: Provider-neutral realtime contract
         run: python -m pytest tests/contract/test_gpt_live.py tests/contract/test_realtime_provider_contract.py tests/contract/test_realtime_reliability_gate.py -q -p no:cacheprovider
+
+  # The in-app updater on every OS it ships to. Each one replaces a running
+  # app differently (Inno handover, .app swap, AppImage swap, git transaction
+  # + restart helper), and the POSIX-only tests run the real relaunch waiter,
+  # so this lane is never narrowed to one runner the way PR test jobs are.
+  updater:
+    name: updater (${{ matrix.os }})
+    needs: detect
+    if: needs.detect.outputs.updater == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+      - name: Portable base + focused runner
+        shell: bash
+        run: |
+          python -m pip install -e .
+          python -m pip install pytest pytest-asyncio
+      - name: Updater suite (status, verify, handover, restart, rollback)
+        shell: bash
+        run: |
+          git config --global user.email ci@example.invalid
+          git config --global user.name ci
+          python -m pytest -q -p no:cacheprovider -rs \
+            tests/unit/core/test_installer_update.py \
+            tests/unit/install/test_installer_update_contract.py \
+            tests/unit/ui/test_relauncher.py \
+            tests/unit/ui/test_relauncher_frozen.py \
+            tests/unit/ui/test_relauncher_fresh_env.py \
+            tests/unit/ui/test_relauncher_update_transaction.py \
+            tests/unit/ui/web/test_launcher_update_handoff.py \
+            tests/unit/ui/web/test_update_routes.py \
+            tests/unit/ui/web/test_update_routes_frozen.py \
+            tests/unit/web/test_update_progress.py \
+            tests/unit/web/test_update_progress_route.py \
+            tests/unit/web/test_update_subprocess_stream.py \
+            tests/integration/test_update_apply_real_git.py
 
   realtime-slim:
     name: realtime on python:3.11-slim (no PortAudio)
@@ -660,6 +750,7 @@ jobs:
       - frontend
       - jarvisctl
       - deps
+      - native-crypto-runtime
       - realtime-contract
       - realtime-slim
       - soak
@@ -667,6 +758,7 @@ jobs:
       - browser
       - macos-desktop
       - installer
+      - updater
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5

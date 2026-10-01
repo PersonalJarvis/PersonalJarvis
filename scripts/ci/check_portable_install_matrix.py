@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prove the advertised installer matrix with target-resolved PyPI artifacts.
+"""Prove the advertised installer matrix with target-resolved public artifacts.
 
 This gate models the two installer phases users actually receive:
 
@@ -13,8 +13,10 @@ the tiny, exact, hash-bound pure-source exceptions audited below. The resulting
 base and full plans are then installed with ``--dry-run`` and source builds
 disabled outside those exact exceptions.
 
-The gate deliberately resolves against public PyPI with user configuration and
-credential helpers disabled. It also proves that ``uv.lock`` is current and
+The gate resolves against public PyPI plus the reviewed native crypto index,
+with user configuration and credential helpers disabled. Only exact native
+artifact identities and digests receive an exception to the PyPI-host rule.
+It also proves that ``uv.lock`` is current and
 that a no-upgrade universal recompile reproduces the shipped hash lock byte for
 byte. A universal lock alone is not portability evidence: it can contain an
 sdist or a wheel for a different target and still resolve successfully.
@@ -41,6 +43,7 @@ from urllib.parse import urlparse
 try:
     from packaging.markers import InvalidMarker, Marker
     from packaging.utils import canonicalize_name, parse_wheel_filename
+    from packaging.version import Version
 except ImportError as exc:  # pragma: no cover - exercised by the CI entry point
     _PACKAGING_IMPORT_ERROR: ImportError | None = exc
 else:
@@ -48,6 +51,11 @@ else:
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from scripts.native_crypto_index import is_native_artifact, wheel_links_url  # noqa: E402
+
 REQUIREMENTS_IN = REPO_ROOT / "requirements.in"
 REQUIREMENTS_TXT = REPO_ROOT / "requirements.txt"
 PYPROJECT = REPO_ROOT / "pyproject.toml"
@@ -359,7 +367,6 @@ def _clean_environment() -> dict[str, str]:
             "UV_COLOR": "never",
             "UV_DEFAULT_INDEX": PUBLIC_PYPI,
             "UV_KEYRING_PROVIDER": "disabled",
-            "UV_NO_CONFIG": "1",
             "UV_NO_PROGRESS": "1",
         }
     )
@@ -402,11 +409,12 @@ def _run_command(
 
 def _public_uv_flags() -> list[str]:
     return [
+        "--config-file",
+        "packaging/native-crypto-uv.toml",
         "--default-index",
         PUBLIC_PYPI,
         "--keyring-provider",
         "disabled",
-        "--no-config",
         "--no-progress",
         "--color",
         "never",
@@ -497,14 +505,29 @@ def _platform_tag_matches(platform: str, target: Target) -> bool:
     return _manylinux_platform_matches(platform, target.wheel_arch)
 
 
-def _wheel_is_compatible(artifact: dict[str, Any], target: Target, python: str) -> bool:
+def _wheel_is_compatible(
+    artifact: dict[str, Any],
+    target: Target,
+    python: str,
+    *,
+    name: str | None = None,
+    version: str | None = None,
+) -> bool:
     url = artifact.get("url")
-    if not _is_public_pypi_url(url) or _artifact_sha256(artifact) is None:
+    digest = _artifact_sha256(artifact)
+    if digest is None:
+        return False
+    native = is_native_artifact(url, digest, target.key, python)
+    if not _is_public_pypi_url(url) and not native:
         return False
     filename = Path(urlparse(str(url)).path).name
     try:
-        _name, _version, _build, tags = parse_wheel_filename(filename)
+        wheel_name, wheel_version, _build, tags = parse_wheel_filename(filename)
+        if version is not None and wheel_version != Version(version):
+            return False
     except ValueError:
+        return False
+    if name is not None and canonicalize_name(wheel_name) != canonicalize_name(name):
         return False
     return any(
         _interpreter_tag_matches(tag.interpreter, tag.abi, python)
@@ -578,7 +601,8 @@ def validate_pylock(
 
         wheels = package.get("wheels", [])
         if isinstance(wheels, list) and any(
-            isinstance(wheel, dict) and _wheel_is_compatible(wheel, target, python)
+            isinstance(wheel, dict)
+            and _wheel_is_compatible(wheel, target, python, name=name, version=version)
             for wheel in wheels
         ):
             continue
@@ -653,7 +677,8 @@ def _materialize_target_requirements(
         hashes = {
             digest
             for wheel in package.get("wheels", [])
-            if isinstance(wheel, dict) and _wheel_is_compatible(wheel, target, python)
+            if isinstance(wheel, dict)
+            and _wheel_is_compatible(wheel, target, python, name=name, version=version)
             if (digest := _artifact_sha256(wheel)) is not None
         }
         if not hashes:
@@ -692,11 +717,10 @@ def _compile_command(
     *,
     profile: str,
 ) -> list[str]:
-    sources = [str(REQUIREMENTS_TXT)]
-    extra_flags: list[str] = []
+    sources = [str(REQUIREMENTS_TXT), str(PYPROJECT)]
+    extra_flags: list[str] = ["--no-emit-package", "personal-jarvis"]
     if profile == "full":
-        sources.append(str(PYPROJECT))
-        extra_flags = ["--extra", "full", "--no-emit-package", "personal-jarvis"]
+        extra_flags.extend(("--extra", "full"))
     return [
         "uv",
         "pip",
@@ -711,7 +735,6 @@ def _compile_command(
         python,
         "--python-platform",
         target.uv_platform,
-        "--no-sources",
         *_public_uv_flags(),
     ]
 
@@ -743,7 +766,9 @@ def _install_command(
         command.append("--require-hashes")
     for name in sorted(allowed_sdists):
         command.extend(("--no-binary", name))
-    command.extend(("--requirements", str(requirement), *_public_uv_flags()))
+    command.extend(
+        ("--requirements", str(requirement), "--find-links", wheel_links_url(), *_public_uv_flags())
+    )
     return command
 
 
@@ -870,7 +895,12 @@ def _verify_reproducible_requirements() -> str | None:
     with tempfile.TemporaryDirectory(prefix="jarvis-requirements-recompile-") as raw_dir:
         workspace = Path(raw_dir)
         generated = workspace / "requirements.txt"
-        shutil.copyfile(REQUIREMENTS_IN, workspace / "requirements.in")
+        shutil.copyfile(PYPROJECT, workspace / "pyproject.toml")
+        (workspace / "packaging").mkdir()
+        shutil.copyfile(
+            REPO_ROOT / "packaging" / "native-crypto-uv.toml",
+            workspace / "packaging" / "native-crypto-uv.toml",
+        )
         # Seeding the output is load-bearing: without --upgrade, uv reuses these
         # exact pins and proves a no-upgrade maintenance recompile is stable.
         shutil.copyfile(REQUIREMENTS_TXT, generated)
@@ -881,10 +911,14 @@ def _verify_reproducible_requirements() -> str | None:
                 "compile",
                 "--universal",
                 "--generate-hashes",
+                "--emit-find-links",
                 "--python-version",
                 "3.11",
                 "--output-file=requirements.txt",
-                "requirements.in",
+                "pyproject.toml",
+                "--find-links",
+                wheel_links_url(),
+                *_public_uv_flags(),
             ],
             cwd=workspace,
         )
@@ -974,8 +1008,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     print(
-        "OK: base hashes and the full profile resolve from public PyPI with compatible "
-        "artifacts on all 24 advertised CPython/OS/architecture cells."
+        "OK: base hashes and the full profile resolve from PyPI and reviewed native wheels "
+        "with compatible artifacts on all 24 advertised CPython/OS/architecture cells."
     )
     return 0
 

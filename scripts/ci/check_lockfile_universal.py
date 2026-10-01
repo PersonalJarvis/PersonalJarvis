@@ -122,8 +122,7 @@ def main() -> int:
         problems.append(
             "  MISSING universal marker: the lockfile header does not record a\n"
             "  `uv pip compile --universal` invocation. Regenerate it with:\n"
-            "    uv pip compile --universal --generate-hashes "
-            "--python-version 3.11 --output-file=requirements.txt requirements.in"
+            "    Use the scoped uv compile command in install/README.md."
         )
 
     # Check 2 — no GPU / CUDA / torch wheels.

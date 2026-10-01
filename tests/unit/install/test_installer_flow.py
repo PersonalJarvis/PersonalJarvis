@@ -106,6 +106,28 @@ def test_headless_pip_plan_stays_base_floor(capsys) -> None:
     assert ".[desktop]" not in out
 
 
+@pytest.mark.parametrize("desktop", [True, False])
+def test_native_crypto_index_reaches_the_installer_profile(monkeypatch, desktop) -> None:
+    from scripts import native_crypto_index
+
+    options = native_crypto_index.pip_options("darwin", "x86_64")
+    monkeypatch.setattr(native_crypto_index, "pip_options", lambda: options)
+    commands = []
+
+    def capture(command, **_kwargs):
+        commands.append(command)
+        return 0
+
+    monkeypatch.setattr(installer, "run_quiet", capture)
+    monkeypatch.setattr(installer, "repair_distribution_metadata", lambda **_kwargs: True)
+    installer.step_pip_install(with_desktop=desktop, with_voice_local=False, dry_run=False)
+    profile = ".[full]" if desktop else "."
+    command = next(
+        command for command in commands if profile in command and "--no-deps" not in command
+    )
+    assert command[command.index("--find-links") + 1] == native_crypto_index.wheel_links_url()
+
+
 def test_full_profile_prefetches_every_wake_language(capsys) -> None:
     installer.step_models(full_profile=True, dry_run=True)
     out = capsys.readouterr().out

@@ -361,13 +361,15 @@ def repair_distribution_metadata(
 
 
 def step_pip_install(*, with_desktop: bool, with_voice_local: bool, dry_run: bool) -> None:
+    from scripts.native_crypto_index import pip_options
+
     phase("4/6", "Dependencies")
     pip = [str(venv_python()), "-m", "pip"]
 
     # ``requirements.txt`` is the Wave 6 hash-pinned, PLATFORM-UNIVERSAL lockfile
-    # generated from ``requirements.in`` (top-level deps mirrored from
-    # ``pyproject.toml [project].dependencies``) by ``uv pip compile --universal
-    # --generate-hashes``. It carries per-OS environment markers so ONE lockfile
+    # generated from ``pyproject.toml [project].dependencies`` (mirrored by
+    # ``requirements.in``) using ``uv pip compile --universal --generate-hashes``
+    # and the scoped native-crypto config. Per-OS markers let ONE lockfile
     # installs on Windows/macOS/Linux (each OS pulls only its wheels). Every
     # package-pinning line carries ``--hash=sha256:...`` so an attacker who compromises a PyPI
     # mirror cannot swap out a transitive dependency without invalidating
@@ -383,7 +385,7 @@ def step_pip_install(*, with_desktop: bool, with_voice_local: bool, dry_run: boo
                         pip + ["install", "--require-hashes", "-r", "requirements.txt"])
     else:
         runtime_step = ("runtime dependencies (cloud-first base)",
-                        pip + ["install", "-e", "."])
+                        pip + ["install", *pip_options(), "-e", "."])
 
     plans: list[tuple[str, list[str]]] = [
         ("editable install (entry-points)", pip + ["install", "-e", ".", "--no-deps"]),
@@ -395,7 +397,7 @@ def step_pip_install(*, with_desktop: bool, with_voice_local: bool, dry_run: boo
         # this OS cannot use. --headless keeps the torch-free base floor.
         # ``with_voice_local`` is a deprecated no-op: [full] already carries it.
         plans.append(("full profile extras (desktop, telephony, channels, local voice)",
-                      pip + ["install", "-e", ".[full]"]))
+                      pip + ["install", *pip_options(), "-e", ".[full]"]))
     plans.append(("dependency consistency check", pip + ["check"]))
 
     note("this can take a minute — grabbing dependencies")

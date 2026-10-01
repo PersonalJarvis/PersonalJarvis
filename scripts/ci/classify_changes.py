@@ -65,6 +65,17 @@ _DEPS_FILES = {
     "requirements.in",
     "requirements.txt",
     "uv.lock",
+    "packaging/native-crypto.json",
+    "packaging/native-crypto-uv.toml",
+    "jarvis/assets/browser/pyproject.toml",
+    "jarvis/assets/browser/requirements.in",
+    "jarvis/assets/browser/requirements.lock",
+    "scripts/native_crypto_index.py",
+    "scripts/pip_install.py",
+    "scripts/build_native_crypto.py",
+    "tests/contract/test_native_crypto.py",
+    "tests/contract/test_native_ssh.py",
+    "jarvis/computers/ssh_packet_guard.py",
 }
 
 _REALTIME_PREFIXES = (
@@ -142,6 +153,32 @@ _INSTALLER_FILES = {
     ".github/workflows/sign-installer.yml",
 }
 
+# In-app updater: status, download + verify, native handover, the restart
+# helper that finishes it, and the installer scripts it hands over to. Each
+# OS replaces a running app differently, so this lane runs on all three.
+_UPDATER_PREFIXES = (
+    "jarvis/core/installer_update",
+    "jarvis/core/frozen",
+    "jarvis/ui/relauncher",
+    "jarvis/ui/web/update_routes",
+    "packaging/",
+    "tests/fakes/fake_installer_update",
+    "tests/integration/test_update_",
+    "tests/unit/core/test_installer_update",
+    "tests/unit/install/test_installer_update",
+    "tests/unit/ui/test_relauncher",
+    "tests/unit/ui/web/test_launcher_update_handoff",
+    "tests/unit/ui/web/test_update_routes",
+    "tests/unit/web/test_update_",
+)
+_UPDATER_FILES = {
+    "jarvis/__main__.py",
+    "jarvis/ui/desktop_app.py",
+    "jarvis/ui/web/launcher.py",
+    "jarvis/ui/web/settings_routes.py",
+    ".github/workflows/desktop-installers.yml",
+} | _DEPS_FILES
+
 LANES = (
     "python",
     "frontend",
@@ -152,6 +189,7 @@ LANES = (
     "browser",
     "macos_desktop",
     "installer",
+    "updater",
 )
 
 
@@ -194,6 +232,7 @@ def classify(paths: Iterable[str], *, full: bool = False) -> dict[str, bool]:
         "browser": _any(changed, _BROWSER_PREFIXES, _BROWSER_FILES),
         "macos_desktop": _any(changed, _MACOS_PREFIXES, _MACOS_FILES),
         "installer": _any(changed, _INSTALLER_PREFIXES, _INSTALLER_FILES),
+        "updater": _any(changed, _UPDATER_PREFIXES, _UPDATER_FILES),
         "full": False,
     }
 

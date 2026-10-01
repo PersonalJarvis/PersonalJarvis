@@ -10,18 +10,25 @@ so every case below runs on Windows, macOS and Linux alike.
 from __future__ import annotations
 
 import hashlib
+import os
+import stat
+import subprocess
+import sys
+import time
 from pathlib import Path
 
 import pytest
 
 from jarvis.core.installer_update import (
     CHECKSUMS_ASSET_NAME,
+    WINDOWS_RELAUNCH_PARAM,
     InstallerAsset,
     InstallerUpdateError,
     apply_installer,
     download_and_verify,
     installer_asset_name,
     parse_sha256sums,
+    relaunch_after_exit_command,
     select_asset,
     select_installer_asset,
 )
@@ -225,12 +232,43 @@ def test_windows_handover_runs_the_silent_in_place_upgrade(tmp_path: Path) -> No
         [
             str(installer),
             "/SILENT",
+            "/SUPPRESSMSGBOXES",
             "/CLOSEAPPLICATIONS",
-            "/RESTARTAPPLICATIONS",
             "/NORESTART",
+            WINDOWS_RELAUNCH_PARAM,
         ]
     ]
     assert "restarts by itself" in message
+
+
+def test_windows_handover_never_relies_on_restart_manager_relaunch(tmp_path: Path) -> None:
+    """/RESTARTAPPLICATIONS needs RegisterApplicationRestart, which the app never
+    calls — it promised a relaunch that never happened."""
+    installer = tmp_path / "PersonalJarvis-Setup-x64.exe"
+    installer.write_bytes(PAYLOAD)
+    runner = FakeCommandRunner()
+    apply_installer(installer, platform_name="win32", runner=runner)
+    assert "/RESTARTAPPLICATIONS" not in runner.spawned[0]
+
+
+def test_windows_installer_script_honours_the_relaunch_param() -> None:
+    """The flag the app passes must be the one the installer's [Run] reads."""
+    iss = Path(__file__).resolve().parents[3] / "packaging" / "windows" / "PersonalJarvis.iss"
+    text = iss.read_text(encoding="utf-8")
+    name = WINDOWS_RELAUNCH_PARAM.lstrip("/").split("=", 1)[0]
+    assert f"{{param:{name}|0}}" in text
+    assert "Check: RelaunchRequested" in text
+    run_section = text.split("\n[Run]\n", 1)[1].split("\n[", 1)[0]
+    relaunch_lines = [line for line in run_section.splitlines() if "RelaunchRequested" in line]
+    assert relaunch_lines, "the relaunch [Run] entry is missing"
+    # A silent upgrade skips every entry flagged skipifsilent - this one must not be.
+    assert "skipifsilent" not in relaunch_lines[0]
+    assert "runasoriginaluser" in relaunch_lines[0]
+
+    # Apps up to v2.4.x hand the NEW installer their old flags; it must still
+    # bring them back, or the first update onto this fix leaves the app closed.
+    function = text.split("function RelaunchRequested", 1)[1].split("\nend;", 1)[0]
+    assert "/RESTARTAPPLICATIONS" in function
 
 
 def test_handover_refuses_a_missing_file(tmp_path: Path) -> None:
@@ -276,10 +314,14 @@ def test_macos_handover_replaces_the_running_app_and_relaunches(
     (app / "Contents" / "MacOS" / "PersonalJarvis").write_text("old", encoding="utf-8")
 
     runner = _mounting_runner("Personal Jarvis.app", "new")
-    message = apply_installer(dmg, platform_name="darwin", runner=runner, app_path=app)
+    message = apply_installer(
+        dmg, platform_name="darwin", runner=runner, app_path=app, wait_for_pid=4242
+    )
 
     assert (app / "Contents" / "MacOS" / "PersonalJarvis").read_text(encoding="utf-8") == "new"
-    assert runner.spawned == [["open", "-n", str(app)]]
+    # The relaunch waits for the old app: started earlier it would bounce off
+    # the single-instance lock and leave the user on the old version.
+    assert runner.spawned == [relaunch_after_exit_command(4242, ["open", "-n", str(app)])]
     # The volume is always released, success or not.
     assert any(cmd[:2] == ["hdiutil", "detach"] for cmd in runner.ran)
     assert "replaced" in message
@@ -343,10 +385,12 @@ def test_linux_handover_replaces_the_appimage_in_place(tmp_path: Path) -> None:
     live.write_bytes(b"old appimage")
 
     runner = FakeCommandRunner()
-    message = apply_installer(downloaded, platform_name="linux", runner=runner, appimage_path=live)
+    message = apply_installer(
+        downloaded, platform_name="linux", runner=runner, appimage_path=live, wait_for_pid=4242
+    )
 
     assert live.read_bytes() == b"new appimage"
-    assert runner.spawned == [[str(live)]]
+    assert runner.spawned == [relaunch_after_exit_command(4242, [str(live)])]
     assert "replaced" in message
     # The staging file must not survive the atomic rename.
     assert not (live.parent / f".{live.name}.new").exists()
@@ -376,3 +420,137 @@ def test_linux_handover_reports_a_failed_relaunch(tmp_path: Path) -> None:
     # The bytes ARE the new version - the failure is only the relaunch, and
     # saying otherwise would send the user looking in the wrong place.
     assert live.read_bytes() == b"new appimage"
+
+
+def test_handover_waits_for_this_process_by_default(tmp_path: Path) -> None:
+    downloaded = tmp_path / "download.AppImage"
+    downloaded.write_bytes(b"new appimage")
+    live = tmp_path / "PersonalJarvis.AppImage"
+    live.write_bytes(b"old appimage")
+
+    runner = FakeCommandRunner()
+    apply_installer(downloaded, platform_name="linux", runner=runner, appimage_path=live)
+
+    assert runner.spawned[0][4] == str(os.getpid())
+
+
+@pytest.mark.skipif(os.name != "posix", reason="AppImages and exec bits exist on POSIX only")
+def test_linux_handover_leaves_the_appimage_executable(tmp_path: Path) -> None:
+    downloaded = tmp_path / "download.AppImage"
+    downloaded.write_bytes(b"new appimage")
+    downloaded.chmod(0o644)
+    live = tmp_path / "PersonalJarvis.AppImage"
+    live.write_bytes(b"old appimage")
+
+    apply_installer(
+        downloaded, platform_name="linux", runner=FakeCommandRunner(), appimage_path=live
+    )
+
+    assert live.stat().st_mode & stat.S_IXUSR
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="the .app swap only runs on macOS; Windows scanners can briefly lock a renamed dir",
+)
+def test_macos_handover_rolls_back_when_the_swap_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dmg = tmp_path / "PersonalJarvis-macOS-arm64.dmg"
+    dmg.write_bytes(PAYLOAD)
+    app = tmp_path / "Applications" / "Personal Jarvis.app"
+    (app / "Contents" / "MacOS").mkdir(parents=True)
+    (app / "Contents" / "MacOS" / "PersonalJarvis").write_text("old", encoding="utf-8")
+
+    real_replace = os.replace
+
+    def _flaky_replace(src: object, dst: object) -> None:
+        # Moving the live bundle aside works; moving the new one in fails.
+        if Path(str(src)).name.endswith(".new"):
+            raise OSError("disk full")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", _flaky_replace)
+    runner = _mounting_runner("Personal Jarvis.app", "new")
+
+    with pytest.raises(InstallerUpdateError, match="could not replace"):
+        apply_installer(dmg, platform_name="darwin", runner=runner, app_path=app)
+
+    # The app is never left missing, and nothing was relaunched.
+    assert (app / "Contents" / "MacOS" / "PersonalJarvis").read_text(encoding="utf-8") == "old"
+    assert runner.spawned == []
+
+
+# --------------------------------------------------------------------------- #
+# The relaunch waiter, executed for real where a POSIX shell exists
+# --------------------------------------------------------------------------- #
+_HAS_SH = os.name == "posix" and Path("/bin/sh").exists()
+
+
+def test_relaunch_waiter_command_shape() -> None:
+    command = relaunch_after_exit_command(123, ["open", "-n", "/Applications/X.app"])
+    assert command[:2] == ["/bin/sh", "-c"]
+    assert command[3:] == ["jarvis-relaunch", "123", "open", "-n", "/Applications/X.app"]
+
+
+@pytest.mark.skipif(not _HAS_SH, reason="the waiter is a POSIX sh script (macOS/Linux)")
+def test_relaunch_waiter_starts_the_app_only_after_the_old_process_exits(
+    tmp_path: Path,
+) -> None:
+    marker = tmp_path / "launched"
+    old_app = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(1.5)"])
+    started = time.monotonic()
+    waiter = subprocess.Popen(
+        relaunch_after_exit_command(
+            old_app.pid, [sys.executable, "-c", f"open({str(marker)!r}, 'w').close()"]
+        )
+    )
+    try:
+        time.sleep(0.6)
+        assert not marker.exists(), "the new version started while the old one still ran"
+        old_app.wait(timeout=10)
+        waiter.wait(timeout=15)
+    finally:
+        for proc in (old_app, waiter):
+            if proc.poll() is None:
+                proc.kill()
+    assert marker.exists()
+    assert time.monotonic() - started >= 1.4
+
+
+@pytest.mark.skipif(not _HAS_SH, reason="the waiter is a POSIX sh script (macOS/Linux)")
+def test_relaunch_waiter_starts_at_once_when_the_old_process_is_gone(tmp_path: Path) -> None:
+    marker = tmp_path / "launched"
+    gone = subprocess.Popen([sys.executable, "-c", "pass"])
+    gone.wait(timeout=10)
+    waiter = subprocess.run(
+        relaunch_after_exit_command(
+            gone.pid, [sys.executable, "-c", f"open({str(marker)!r}, 'w').close()"]
+        ),
+        timeout=15,
+        check=False,
+    )
+    assert waiter.returncode == 0
+    assert marker.exists()
+
+
+@pytest.mark.skipif(not _HAS_SH, reason="the waiter is a POSIX sh script (macOS/Linux)")
+def test_relaunch_waiter_passes_paths_with_spaces_verbatim(tmp_path: Path) -> None:
+    target = tmp_path / "Personal Jarvis.app" / "argv.txt"
+    target.parent.mkdir()
+    script = tmp_path / "record argv.py"
+    script.write_text(
+        "import sys, pathlib\n"
+        "pathlib.Path(sys.argv[1]).write_text(sys.argv[2], encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    gone = subprocess.Popen([sys.executable, "-c", "pass"])
+    gone.wait(timeout=10)
+    subprocess.run(
+        relaunch_after_exit_command(
+            gone.pid, [sys.executable, str(script), str(target), "a b  c"]
+        ),
+        timeout=15,
+        check=True,
+    )
+    assert target.read_text(encoding="utf-8") == "a b  c"

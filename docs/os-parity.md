@@ -1,5 +1,28 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
+## Current cryptography and SSH channel validation (2026-10-01, T3)
+
+Every architecture now requires cryptography >=50.0.2 and AsyncSSH >=2.24.0.
+Intel macOS 13+ and Windows ARM64 use project-built cp311-abi3 wheels with
+statically linked OpenSSL, published through an explicit supplemental index.
+Apple Silicon, Windows x64 and Linux continue to use upstream PyPI artifacts.
+The old Intel/ARM dependency downgrades are removed. Source installers and
+frozen browser packaging select the reviewed wheel automatically; raw pip/pipx
+users must supply the index documented in the installation guide.
+
+The 24-cell CPython 3.11-3.14 base/full resolution gate checks exact artifact
+URLs, identities, architecture tags and hashes. Native CI additionally installs
+the hashed base on Intel and Apple Silicon macOS (Python 3.11/3.14) and Windows
+ARM64 (Python 3.12/3.14), then exercises X.509 name constraints, bounded issuer
+verification, Ed25519, signing-identity PKCS12 and encrypted SSH keys. Native
+build jobs check the actual Mach-O deployment floor and Windows PE architecture.
+These checks do not imply physical microphone, UI or device verification.
+
+All SSH connections reject zero effective channel packet sizes before AsyncSSH
+can enter its send loop, including the compressed Dropbear size-one form.
+Real loopback contracts cover rejection and ordinary channel traffic, while
+unit tests preserve the password-authentication callback and host-key handling.
+
 ## Remote agents retain Jarvis tools (2026-10-01, T3)
 
 Remote coding turns carry their Jarvis MCP tools over a reverse forward on
@@ -719,6 +742,24 @@ line a frozen executable cannot run at all, and inside an AppImage a path in a
 mount that disappears when the app exits — and the uninstall path would delete
 shortcuts it never created. Covered by
 `tests/unit/setup/test_desktop_integration.py`.
+
+**In-app update of a native install (2026-10-01).** The new version may only
+start once the running app is gone (the single-instance lock), so every
+handover ends with the update route quitting the app, and each OS brings the
+new version back its own way: Windows runs the Inno installer with
+`/SILENT /SUPPRESSMSGBOXES /CLOSEAPPLICATIONS /NORESTART /RELAUNCH=1`, and the
+installer's own `[Run]` entry (`Check: RelaunchRequested`, not `skipifsilent`)
+starts the app again; macOS swaps the `.app` and Linux the AppImage, then a
+detached POSIX `sh` waiter (`relaunch_after_exit_command`) starts the new
+version once the old PID has exited. The plain Restart button of a frozen
+build re-enters its own executable with `--relauncher` (a frozen build has no
+`python -m`), and relaunches through `$APPIMAGE` on Linux and `open -n` on
+macOS. A frozen apply runs the mission guard before downloading. A host with
+no desktop window (`jarvis serve`) keeps running and is told to restart by
+hand. Covered by `tests/unit/core/test_installer_update.py` (the waiter is
+executed for real on macOS and Linux), `tests/unit/ui/test_relauncher_frozen.py`
+and `tests/unit/ui/web/test_update_routes_frozen.py`, run on all three OSes by
+the CI `updater` lane. Not yet run against a real installed build on any OS.
 
 | # | Impact | Area | Gap | Evidence | Behavior off-Windows |
 |---|---|---|---|---|---|
