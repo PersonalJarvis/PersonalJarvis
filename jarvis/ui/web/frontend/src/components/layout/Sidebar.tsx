@@ -23,7 +23,6 @@ import { cn } from "@/lib/utils";
 import { lazy, Suspense, useMemo, useState, type ReactNode } from "react";
 import { useT } from "@/i18n";
 import { RecentChats } from "@/components/home/RecentChats";
-import { SidebarScheduled } from "@/components/layout/SidebarScheduled";
 import { useHomeStore } from "@/store/home";
 import { IdeProjectTree } from "@/components/agentic/IdeProjectTree";
 import { useIdeProjectsStore } from "@/store/ideProjects";
@@ -36,6 +35,10 @@ import { MarketplaceIcon } from "@/components/icons/sectionIcons";
 import { startNewTextChat } from "@/lib/newChat";
 import { useUserName } from "@/hooks/useUserName";
 import { useAgentChatStore } from "@/store/agentChat";
+
+// The person's most-used agents. The roster query and the agent faces live in
+// the society code, so they load on their own chunk, not in the sidebar's.
+const SidebarAgents = lazy(() => import("@/components/layout/SidebarAgents"));
 
 // The update button renders nothing on most launches; loaded on its own so
 // the title-strip module it lives in stays out of the sidebar's chunk.
@@ -553,7 +556,7 @@ export function Sidebar({
         </nav>}
         {!railed && (onIdeSection
           ? <IdeProjectTree />
-          : <><SidebarScheduled /><section className="mt-5 px-2 pb-3" aria-label={t("sidebar.recent_chats")}><RecentChats /></section></>)}
+          : <><Suspense fallback={null}><SidebarAgents /></Suspense><section className="mt-5 px-2 pb-3" aria-label={t("sidebar.recent_chats")}><RecentChats /></section></>)}
       </div>
 
       {/* The footer is one button now, not a popup: it opens the Settings hub
