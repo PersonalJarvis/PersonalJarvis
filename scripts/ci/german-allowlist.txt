@@ -270,6 +270,7 @@ jarvis/voice/tool_confirmation.py
 #     de/en/es, same speech-input-vocabulary rationale as the wake words ---
 jarvis/safety/explicit_intent.py
 tests/unit/safety/test_explicit_intent.py
+tests/unit/safety/test_workspace_send_intent.py
 
 # --- manager.py + config.py: forensic comments quote the same German runtime
 #     phrase, and config.py carries the evidence-domain voice-intent keyword

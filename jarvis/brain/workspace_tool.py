@@ -55,6 +55,18 @@ class WorkspaceOrchestrationTool:
     def risk_tier_for_args(self, args: dict) -> str:
         return "safe" if args.get("action") in {"inspect", "resolve", "context"} else "ask"
 
+    def intent_confirms_args(self, args: dict, utterance: str) -> bool:
+        """True when the user's own words already ordered this hand-off.
+
+        Consulted by ``ToolExecutor`` before it arms a confirmation: a send the
+        user asked for ("let an agent in the workspace fix it") runs at once
+        instead of a second "shall I start it?". A send the brain chose while
+        the user talked about something else still confirms.
+        """
+        from jarvis.safety.explicit_intent import utterance_requests_agent_work
+
+        return args.get("action") == "send" and utterance_requests_agent_work(utterance)
+
     def describe_args(self, args: dict) -> dict:
         return {
             "level": "read" if self.risk_tier_for_args(args) == "safe" else "modify",
