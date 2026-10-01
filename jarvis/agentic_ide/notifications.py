@@ -238,29 +238,9 @@ class NotificationCenter:
 
     def __init__(self, limit: int = MAX_ENTRIES) -> None:
         self._entries: deque[Notification] = deque(maxlen=limit)
-        self._listeners: list[Callable[[Notification], None]] = []
-
-    def subscribe(self, listener: Callable[[Notification], None]) -> Callable[[], None]:
-        """Call ``listener`` with every entry filed from now on (the pet's bell).
-
-        Returns the unsubscribe. A listener runs on the event loop, inside the
-        sweep, so it must be quick; one that raises is logged and skipped.
-        """
-        self._listeners.append(listener)
-
-        def _unsubscribe() -> None:
-            if listener in self._listeners:
-                self._listeners.remove(listener)
-
-        return _unsubscribe
 
     def add(self, entry: Notification) -> Notification:
         self._entries.append(entry)
-        for listener in list(self._listeners):
-            try:
-                listener(entry)
-            except Exception as exc:  # noqa: BLE001 — a listener must not stop the sweep
-                logger.warning("Agentic IDE: notification listener failed: {}", exc)
         return entry
 
     def list(self) -> list[Notification]:

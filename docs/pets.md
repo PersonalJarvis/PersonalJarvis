@@ -23,7 +23,7 @@ one click.
   are up, and while the pointer is on the pet. With the pet "None", or with
   **Always show the buttons** on (My Pets → Customize, `[ui] pet_strip_always`),
   it always shows. From left to right:
-  - bell: notifications on or off for this run (see *Notifications*). Off
+  - bell: done cards on or off for this run (see *Cards*). Off
     shows a red, struck-through bell and sends the cards on screen away; on
     rings the bell. Like the speaker mute it never survives a restart, so a
     bell forgotten off cannot hide tomorrow's "your agent is done";
@@ -36,17 +36,16 @@ one click.
     thinking or transcribing;
   - speaker: silence the assistant's voice for this session (TTS volume 0,
     mirrored from `VoiceSpeakerMuteChanged`).
-- **The thinking card** under the strip: a rounded pill with a bold title
-  (what Jarvis is working on) and one muted detail line (the current thought
-  or step). It appears ONLY while Jarvis is really thinking and shows what it
-  thinks — never the live transcript and never the reply, which the user hears
-  anyway (see *The thinking card* below). It can be switched off
-  (`[ui] pet_bubble`).
+- **The card column** under the strip (above the pet when there is no room
+  below), in the Codex companion's material — a dark, slightly see-through
+  surface with a hairline rim, soft corners and a soft shadow (see *Cards*):
+  - the **thinking line** while Jarvis thinks: one muted line, the current
+    step, with a light sweeping across it. Never the live transcript, never
+    the reply. It can be switched off (`[ui] pet_bubble`);
+  - **done cards** when Jarvis answered a typed chat or a job Jarvis started
+    came back: a check, what was asked, the start of the answer.
 - **The pet "None"** (`pet_id = "none"`) shows the control strip and the
-  card without a figure.
-
-- **Notification cards** under the strip (under the thinking card when one
-  shows; above the pet when there is no room below). See *Notifications*.
+  cards without a figure.
 
 The pet stays on screen while Jarvis is idle. The global shortcut
 (`[trigger] hotkey_pet_toggle`, default `alt+win+p`) hides it or brings it
@@ -54,49 +53,54 @@ back and to the front; hiding lasts until the next app start. The shortcut is
 changed on the My Pets page (Customize); an empty value switches it off. On
 Wayland, global shortcuts are a no-op, as for every other shortcut.
 
-## Notifications
+## Cards
 
-When something happens that the user waits for while looking elsewhere, the
-bell swings and a card drops out from under the strip: a round icon (a check
-that ticks itself for `done`, `!` for `attention`, a cross for `error`, a bell
-for `info`), a bold title and one muted detail line. What becomes a card is
-decided in `jarvis/ui/pets/notices.py` (titles per interface language):
+One window (`ui/orb/notice_stack.py`) holds the thinking line on top and the
+done cards below it; `ui/orb/pet_cards.py` draws them. On Windows the window
+carries real per-pixel alpha (`jarvis/platform/layered_window.py`,
+`UpdateLayeredWindow`): the desktop shows faintly through the cards, shadows
+and fades are soft. Elsewhere, or when Windows refuses a frame, the same frame
+is flattened onto the colour key: opaque cards with hard edges, no shadow.
+
+Done cards are about Jarvis and nothing else (`jarvis/ui/pets/notices.py`):
 
 | Source | Card |
 | --- | --- |
-| Agentic IDE pane entry (`NotificationCenter.subscribe`) | `<agent> finished` / `needs your answer` / `exited` / `could not start` |
-| `JarvisAgentBackgroundCompleted` | Background task done / failed |
-| `MissionCompleted` | Mission complete / failed / timed out (a cancel stays quiet) |
-| `DelegationResultReady` | `<agent> has a result` |
-| `ActionApprovalRequired` | Approval needed (not when a chat answers its own card) |
-| `WorkflowCompleted` | Routine finished / failed |
-| `ErrorOccurred(recoverable=False)` | Something went wrong |
+| `JarvisChatTurnFinished` — a turn of a typed chat with Jarvis (surface `jarvis`), published by `AgentChatService` | ✓ what was asked / the start of the answer; ✕ when the turn failed (a cancel stays quiet) |
+| `JarvisAgentBackgroundCompleted` | ✓ / ✕ the task as asked / its result |
+| `DelegationResultReady` — a coding job Jarvis delegated | ✓ / ✕ `<agent> is done` / its report |
 
-Cards stack (`ui/orb/notice_stack.py`): the newest in front, up to two older
-ones peeking out behind it, narrower and darker; at most four are kept.
-Hovering the stack fans it out into a column; leaving folds it back. A click
-dismisses the card under the pointer, which slides away. Every card leaves on
-its own (`done` 8 s, `error` 14 s, `attention` 20 s, `info` 6 s), never while
-the pointer rests on the stack. The same card twice within 3 s refreshes
-instead of stacking. Motion runs on springs at ~60 fps only while something
-moves; a resting stack costs a timer every 400 ms. Cards are dropped while the
-bell is off, the pet is hidden, or the look is not the pet. The strip stays in
-sight while cards show.
+A coding agent the user runs on their own, a mission, a routine or an app
+error gets no card; neither does a spoken turn (the answer was heard).
 
-## The thinking card
+Done cards are always the column's width, so they stack edge to edge: the
+newest in front, up to two older ones peeking out behind it, each a step
+smaller and fainter and showing its surface only; at most three are kept.
+Hovering fans them into a column; leaving folds them back. A click sends the
+card under the pointer away. A card leaves on its own after 9 s (`error`
+14 s), never while the pointer rests on the stack; the same card twice within
+3 s refreshes instead of stacking. Cards drift in and fade on springs, and the
+check ticks itself in. The column repaints at ~60 fps only while something
+moves, at 20 fps while only the thinking line's sweep moves, and not at all at
+rest. Done cards are dropped while the bell is off, the pet is hidden, or the
+look is not the pet; the strip stays in sight while they show.
 
-The card mirrors Jarvis's real thinking, fed by bus events in
+## The thinking line
+
+The line mirrors Jarvis's real thinking, fed by bus events in
 `ui/orb/bus_bridge.py` and condensed by `jarvis/ui/pets/status_line.py`:
+
+The surface shows ONE line: the detail when there is one, else the title.
 
 | Source | Title | Detail |
 |---|---|---|
 | `ReasoningSummaryUpdated` — the thinking model behind GPT-Live (`jarvis/live/session.py`, streamed as cumulative snapshots a few times per second) | the newest section heading of the summary (`**Heading**`) | the last complete sentence of that section |
 | `ActionProposed` / `ToolCallStarted` — a tool step | the current thought's heading, else the running agent task, else "Working" | the step's rationale, else the humanized tool name |
 | `ActionExecuted` while a card is up | unchanged | "Step done" / "Step failed" |
-| `JarvisAgentTaskStarted` / `JarvisAgentTaskCompleted` / `JarvisAgentBackgroundCompleted` — an agent task | the task (the user's request, condensed) | "Working …", then "Done" / "Failed" |
+| `JarvisAgentTaskStarted` / `JarvisAgentTaskCompleted` — an agent task | the task (the user's request, condensed) | "Working …", then "Done" / "Failed" |
 | `SystemStateChanged(THINKING)` with no thought after 1.5 s | "Thinking …" | empty |
 
-When it goes away (a 1.5 s linger, then the surface fades it out):
+When it goes away (a 1.5 s linger, then it fades out):
 
 - Jarvis starts talking out loud (`AudioOutFirst`), the turn ends (`IDLE`,
   `ERROR`, `PAUSED`), a fresh turn starts listening, or the session ends;
@@ -256,14 +260,14 @@ name.
 | `set_pet_outcome(kind)` | Play the one-shot `success` or `error` |
 | `set_pet_action(kind)` | `working` / `searching` for the running tool step, `None` when it ended |
 | `set_pet_busy(busy)` | An agent task is running in the background |
-| `show_status(title, detail="")` | Show or update the thinking card (already condensed) |
+| `show_status(title, detail="")` | Show or update the thinking line (already condensed) |
 | `clear_status(linger_s=1.5)` | Take the card down after `linger_s` |
 | `wants_status_lines` (attribute) | True only for the pet: the bridge feeds the card to nothing else |
 | `set_muted(muted)` | Mirror the microphone mute on the strip |
 | `set_speaker_muted(muted)` | Mirror the speaker mute on the strip |
 | `set_visible(visible)` | Hide or show the whole pet (shortcut, settings) |
 | `toggle_visible()` | Shortcut action: hide, or show and raise |
-| `push_notice(kind, title, detail)` | One notification card; rings the bell |
+| `push_notice(kind, title, detail)` | One done card (`done` / `error`); rings the bell |
 | `set_notifications_enabled(enabled)` | Switch the bell without a click (a respawned host) |
 | `set_on_notifications_toggle(cb)` | `cb(enabled)` after the bell was clicked |
 
@@ -289,7 +293,7 @@ Control-strip actions: `bell` (handled in the surface, reported through
 | `[ui] orb_style` | `jarvis_bar` | `pet` selects the pet |
 | `[ui] pet_id` | `gigi` | Active pet (built-in id, `u…` id or `none`) |
 | `[ui] pet_scale` | `1.0` | Size multiplier, 0.5–2.0 |
-| `[ui] pet_bubble` | `true` | Show the thinking card |
+| `[ui] pet_bubble` | `true` | Show the thinking line |
 | `[ui] pet_strip_always` | `false` | Keep the control strip up even at rest |
 | `[trigger] hotkey_pet_toggle` | `alt+win+p` | Hide / show the pet; empty disables it |
 

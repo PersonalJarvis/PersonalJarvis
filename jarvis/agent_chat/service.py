@@ -471,6 +471,8 @@ class AgentChatService:
 
     def _publish_event(self, session_id: str, event: dict[str, Any]) -> None:
         stored = self.store.append_event(session_id, event)
+        if event.get("kind") == "turn_finished":
+            self._announce_jarvis_turn(session_id, event)
         for q in list(self._subscribers.get(session_id, ())):
             try:
                 q.put_nowait(stored)
@@ -479,6 +481,46 @@ class AgentChatService:
                 # re-syncs from the store when it reconnects.
                 log.debug("agent chat: subscriber queue full for %s — dropping it", session_id)
                 self.unsubscribe(session_id, q)
+
+    def _announce_jarvis_turn(self, session_id: str, event: dict[str, Any]) -> None:
+        """Publish ``JarvisChatTurnFinished`` for a finished turn of a Jarvis chat."""
+        bus = self._bus()
+        session = self.store.get_session(session_id)
+        if bus is None or session is None or session.surface != "jarvis":
+            return
+        payload = event.get("payload") or {}
+        status = str(payload.get("status") or "done")
+        if status == "cancelled":
+            return
+        turn_id = str(payload.get("turn_id") or "")
+        user_text = ""
+        replies: list[str] = []
+        for item in reversed(self.store.list_events(session_id, tail=80)):
+            kind = item["kind"]
+            data = item.get("payload") or {}
+            if kind == "assistant_text" and (not turn_id or data.get("turn_id") == turn_id):
+                replies.append(str(data.get("text") or ""))
+            elif kind == "user_message":
+                user_text = str(data.get("text") or "")
+                break
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return  # no loop, no bus delivery: the chat itself already has the turn
+        from jarvis.core.events import JarvisChatTurnFinished
+
+        loop.create_task(
+            bus.publish(
+                JarvisChatTurnFinished(
+                    session_id=session_id,
+                    turn_id=turn_id,
+                    status="error" if status == "error" else "done",
+                    user_text=user_text,
+                    reply_text=" ".join(reversed(replies)).strip(),
+                    source_layer="agent_chat",
+                )
+            )
+        )
 
     # ---------------------------------------------------------------- turns
 

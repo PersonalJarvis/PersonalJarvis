@@ -36,7 +36,6 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from jarvis.core.events import (
-    ActionApprovalRequired,
     ActionExecuted,
     ActionProposed,
     AudioOutFirst,
@@ -53,8 +52,8 @@ from jarvis.core.events import (
     JarvisAgentBackgroundCompleted,
     JarvisAgentTaskCompleted,
     JarvisAgentTaskStarted,
+    JarvisChatTurnFinished,
     ListeningStarted,
-    MissionCompleted,
     OrbResetRequested,
     PetVisibilityToggleRequested,
     ReasoningSummaryUpdated,
@@ -74,7 +73,6 @@ from jarvis.core.events import (
     VoiceSpeakerMuteChanged,
     WakeCandidateDetected,
     WakeWordDetected,
-    WorkflowCompleted,
 )
 from jarvis.dictation.outcomes import was_delivered
 from jarvis.sessions.constants import (
@@ -356,8 +354,6 @@ class OrbBusBridge:
         # from the running pipeline's config when needed; ``UiLanguageChanged``
         # overrides it live.
         self._language: str | None = language if language in PET_STATUS_LANGUAGES else None
-        #: Unsubscribe from the Agentic IDE's notification centre (the bell).
-        self._pane_notice_unsub: Any = None
         # ONE rate-limited feed for every card the pet shows, so a burst of
         # reasoning snapshots and tool steps cannot flood the Tk thread. A
         # card the feed holds back is shown by ``_status_flush_task`` once the
@@ -604,14 +600,10 @@ class OrbBusBridge:
             self._bus.subscribe(ToolCallStarted, self._on_tool_call_started)
             self._bus.subscribe(JarvisAgentTaskStarted, self._on_agent_task_started)
             self._bus.subscribe(JarvisAgentTaskCompleted, self._on_agent_task_completed)
-            # The pet's bell (jarvis.ui.pets.notices): things the user waits
-            # for while looking elsewhere become notification cards. Coding
-            # panes report through the Agentic IDE's own notification centre.
-            self._bus.subscribe(MissionCompleted, self._on_mission_completed)
+            # The pet's done cards (jarvis.ui.pets.notices): Jarvis answered a
+            # typed chat, or a job Jarvis started came back. Nothing else.
+            self._bus.subscribe(JarvisChatTurnFinished, self._on_chat_turn_finished)
             self._bus.subscribe(DelegationResultReady, self._on_delegation_result)
-            self._bus.subscribe(ActionApprovalRequired, self._on_approval_required)
-            self._bus.subscribe(WorkflowCompleted, self._on_workflow_completed)
-            self._subscribe_pane_notices()
             # Wire the orb's double-double-click gesture to a bus publish.
             # The orb requires two ``<Double-Button-1>`` events inside
             # ``MUTE_GESTURE_WINDOW_MS`` (four clicks in <600 ms) before
@@ -1134,7 +1126,6 @@ class OrbBusBridge:
         if event.recoverable:
             return
         self._pet_outcome("error")
-        self._push_notice(pet_notices.for_error(event, self._status_language()))
 
     # -- the pet's bell ---------------------------------------------------
 
@@ -1144,36 +1135,11 @@ class OrbBusBridge:
             return
         self._call_surface("push_notice", *notice)
 
-    def _subscribe_pane_notices(self) -> None:
-        """Follow the Agentic IDE's notifications (finished / asks / exited panes).
-
-        Lazy: the module is light, but the IDE package stays off the boot path
-        until something asks for it (AP-26). Entries are filed on the event
-        loop, so the surface call below runs there like every bus handler.
-        """
-        if self._pane_notice_unsub is not None:
-            return
-        try:
-            from jarvis.agentic_ide import notifications as ide_notifications
-        except Exception:  # noqa: BLE001 — a missing IDE only costs these cards
-            log.debug("agentic IDE notifications unavailable", exc_info=True)
-            return
-        self._pane_notice_unsub = ide_notifications.center().subscribe(self._on_pane_notice)
-
-    def _on_pane_notice(self, entry: Any) -> None:
-        self._push_notice(pet_notices.for_pane_entry(entry, self._status_language()))
-
-    async def _on_mission_completed(self, event: MissionCompleted) -> None:
-        self._push_notice(pet_notices.for_mission(event, self._status_language()))
+    async def _on_chat_turn_finished(self, event: JarvisChatTurnFinished) -> None:
+        self._push_notice(pet_notices.for_chat_turn(event, self._status_language()))
 
     async def _on_delegation_result(self, event: DelegationResultReady) -> None:
         self._push_notice(pet_notices.for_delegation_result(event, self._status_language()))
-
-    async def _on_approval_required(self, event: ActionApprovalRequired) -> None:
-        self._push_notice(pet_notices.for_approval(event, self._status_language()))
-
-    async def _on_workflow_completed(self, event: WorkflowCompleted) -> None:
-        self._push_notice(pet_notices.for_workflow(event, self._status_language()))
 
     async def _on_agent_task_started(self, event: JarvisAgentTaskStarted) -> None:
         """An agent took on a task: its card stays until the task is done."""
@@ -2253,14 +2219,7 @@ class OrbBusBridge:
             self._pet_outcome("success")
         self._sync_pet_busy()
         self._push_notice(pet_notices.for_background_task(event, self._status_language()))
-        if self._wants_card() and (self._card_visible or self._agent_tasks):
-            title = condense(event.utterance or "", max_chars=PET_CARD_TITLE_CHARS)
-            self._show_card(
-                title or self._card_title(),
-                self._label("done" if event.success else "failed"),
-                force=True,
-                quiet_clear_s=PET_CARD_TASK_DONE_S,
-            )
+        self._clear_card()
         if self._last_state not in ("IDLE", "ERROR", "PAUSED"):
             return
         self._orb.show(mode="speak")

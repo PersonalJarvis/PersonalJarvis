@@ -2102,6 +2102,25 @@ class JarvisAgentBackgroundCompleted(Event):
 
 
 @dataclass(frozen=True, slots=True)
+class JarvisChatTurnFinished(Event):
+    """A turn of a typed chat with Jarvis itself (surface ``jarvis``) ended.
+
+    Published by ``AgentChatService`` once the turn's ``turn_finished`` is
+    stored, so a surface the user is not looking at can confirm it — the
+    desktop pet shows "what was asked / how Jarvis answered". Chats with other
+    agents publish nothing here. A cancelled turn is not announced.
+    """
+
+    session_id: str = ""
+    turn_id: str = ""
+    #: ``done`` or ``error`` (the turn's own ``turn_finished`` status).
+    status: str = "done"
+    #: The user's message that started the turn, and Jarvis's reply.
+    user_text: str = ""
+    reply_text: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class JarvisAgentAnnouncement(Event):
     """Jarvis-Agent spawn start signal for UI/telemetry, without a voice ACK."""
     action: str = ""   # z.B. "eine Flask-App baut"

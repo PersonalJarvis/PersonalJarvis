@@ -285,81 +285,11 @@ def bubble_theme_for_style(style: str) -> BubbleTheme:
     return MASCOT_BUBBLE_THEME
 
 
-# The pet's status card (docs/pets.md): below the control strip, a one-line
-# bold title over one muted detail line (three after a click), sized to its
-# text up to 1.6 x the strip's width. The bridge decides when it goes: it calls
-# ``clear_status`` once Jarvis stops thinking, and the card fades after a short
-# linger. Pixel sizes are at 100 % and scale with the strip.
-PET_CARD_PAD_X = 18
-PET_CARD_PAD_Y = 10
-PET_CARD_LINE_GAP = 2
-PET_CARD_MIN_WIDTH = 150
-#: Used until the overlay tells the card how wide the strip is.
-PET_CARD_MAX_WIDTH = 380
-PET_CARD_MAX_WIDTH_PER_STRIP = 1.6
-PET_CARD_DETAIL_COLLAPSED_LINES = 1
-PET_CARD_DETAIL_EXPANDED_LINES = 3
-PET_CARD_TITLE_FONT_SIZE = 10
-PET_CARD_DETAIL_FONT_SIZE = 9
-#: The fade after the linger: a handful of opacity steps, then withdrawn.
-PET_CARD_FADE_STEPS = 6
-PET_CARD_FADE_STEP_MS = 30
-#: How long a card a click expanded stays before a pending clear proceeds.
-PET_CARD_READING_LINGER_S = 6.0
-#: The default linger of ``clear_status``.
+#: The default linger of the pet's ``clear_status`` (its thinking line).
 PET_STATUS_LINGER_S = 1.5
 PET_BUBBLE_GAP = 8
 #: The notification cards are this many times the strip's width.
 PET_NOTICE_WIDTH_PER_STRIP = 1.5
-PET_BUBBLE_ELLIPSIS = "…"
-
-
-def wrap_text_lines(
-    text: str,
-    measure: Callable[[str], int],
-    max_width: int,
-    max_lines: int,
-    ellipsis: str = PET_BUBBLE_ELLIPSIS,
-) -> list[str]:
-    """Word-wrap ``text`` into at most ``max_lines`` lines of ``max_width`` pixels.
-
-    ``measure`` returns a string's width in pixels (``tkfont.Font.measure`` in
-    the overlay, a plain character count in tests). A word wider than a whole
-    line is broken by characters. When the text does not fit, the last kept
-    line ends in ``ellipsis`` so a truncated status never reads as complete.
-    """
-    limit = max(1, int(max_lines))
-    width = max(1, int(max_width))
-    lines: list[str] = []
-    current = ""
-    for word in " ".join(str(text or "").split()).split(" "):
-        if not word:
-            continue
-        candidate = f"{current} {word}" if current else word
-        if measure(candidate) <= width:
-            current = candidate
-            continue
-        if current:
-            lines.append(current)
-        while len(word) > 1 and measure(word) > width:
-            cut = len(word) - 1
-            while cut > 1 and measure(word[:cut]) > width:
-                cut -= 1
-            lines.append(word[:cut])
-            word = word[cut:]
-        current = word
-        if len(lines) > limit:
-            break
-    if current and len(lines) <= limit:
-        lines.append(current)
-    if len(lines) <= limit:
-        return lines
-    kept = lines[:limit]
-    last = kept[-1]
-    while last and measure(last + ellipsis) > width:
-        last = last[:-1].rstrip()
-    kept[-1] = last + ellipsis
-    return kept
 
 
 # Magenta color key — Tkinter renders this color pixel-perfect transparent
@@ -1302,27 +1232,6 @@ class OrbCommentBubble:
         self._queued_text: str | None = None
         self._queued_duration_ms: int = 0
         self._queue_after_id: str | None = None
-        # The pet's status variant (show_status): its own fonts, content,
-        # placement and expand state, so the comment/transcript variants the
-        # mascot uses stay exactly as they were.
-        self._status_font: tkfont.Font | None = None
-        self._header_font: tkfont.Font | None = None
-        self._status: tuple[str, str] | None = None
-        self._status_showing = False
-        self._status_expanded = False
-        self._status_anchor: tuple[int, int, int, int] | None = None
-        # (width, height) of the status bubble as last painted; a drag only
-        # moves a bubble of this size instead of repainting it.
-        self._status_size: tuple[int, int] | None = None
-        # A requested clear: the linger timer, then the fade steps.
-        self._clear_after_id: str | None = None
-        self._fade_after_id: str | None = None
-        self._status_clear_pending = False
-        self._status_max_w: int | None = None
-        self._ui_scale = 1.0
-        #: Called after the status card appeared, moved, resized or went away,
-        #: so whatever hangs below it (the notification stack) can follow.
-        self.on_status_change: Callable[[], None] | None = None
         self._build()
 
     def update_anchor(self, orb_x: int, orb_y: int, screen_w: int) -> None:
@@ -1679,312 +1588,6 @@ class OrbCommentBubble:
 
     # -- the pet's status variant ------------------------------------------
 
-    def set_ui_scale(self, scale: float) -> None:
-        """Pixel sizes of the status card follow the strip's scale."""
-        try:
-            self._ui_scale = max(0.5, min(4.0, float(scale)))
-        except (TypeError, ValueError):
-            self._ui_scale = 1.0
-
-    def set_status_max_width(self, width: int | None) -> None:
-        """The card's widest size (1.6 x the strip) — ``None`` for the default."""
-        self._status_max_w = None if width is None else max(1, int(width))
-
-    @property
-    def status_showing(self) -> bool:
-        return self._status_showing
-
-    def status_box(self) -> tuple[int, int, int, int] | None:
-        """``(x, y, width, height)`` of the status card on screen, or ``None``."""
-        size = self._status_size
-        anchor = self._status_anchor
-        if not self._status_showing or size is None or anchor is None:
-            return None
-        x, y = self._status_position(size[0], size[1], anchor)
-        return x, y, size[0], size[1]
-
-    def _notify_status_change(self) -> None:
-        # getattr: tests build bubbles without __init__.
-        callback = getattr(self, "on_status_change", None)
-        if callback is None:
-            return
-        try:
-            callback()
-        except Exception:  # noqa: BLE001 — a follower must not break the card
-            logging.getLogger("jarvis.orb").debug("status change hook failed", exc_info=True)
-
-    @property
-    def window(self) -> tk.Toplevel | None:
-        return self._top
-
-    def _ensure_status_fonts(self) -> bool:
-        if self._top is None or self._canvas is None:
-            return False
-        if self._status_font is None:
-            # A click expands the detail to three lines (and collapses it
-            # again). Bound with the first status, so the mascot's comment and
-            # transcript variants keep ignoring clicks as they always have.
-            self._canvas.bind("<ButtonRelease-1>", self._on_click)
-            self._status_font = tkfont.Font(
-                root=self._top,
-                family=BUBBLE_FONT_FAMILY,
-                size=PET_CARD_DETAIL_FONT_SIZE,
-            )
-        if self._header_font is None:
-            self._header_font = tkfont.Font(
-                root=self._top,
-                family=BUBBLE_FONT_FAMILY,
-                size=PET_CARD_TITLE_FONT_SIZE,
-                weight="bold",
-            )
-        return True
-
-    def show_status(
-        self,
-        title: str,
-        detail: str,
-        *,
-        anchor: tuple[int, int, int, int],
-    ) -> None:
-        """Show (or update) the pet's status card and cancel a pending clear.
-
-        ``anchor`` is ``(center_x, below_y, above_y, limit_bottom)``: the card
-        hangs from ``below_y`` (just under the control strip) when it fits above
-        ``limit_bottom``, else it sits on ``above_y`` (just over the figure) —
-        a pet parked on the taskbar would otherwise push its card off screen.
-        A title-less status shows its detail as the title.
-        """
-        if self._top is None or self._canvas is None:
-            return
-        title = " ".join(str(title or "").split())
-        detail = " ".join(str(detail or "").split())
-        if not title:
-            title, detail = detail, ""
-        if not title:
-            self.clear_status(0.0)
-            return
-        self._cancel_timers()
-        self._cancel_clear()
-        self._status = (title, detail)
-        self._status_anchor = anchor
-        self._render_status()
-
-    def clear_status(self, linger_s: float = PET_STATUS_LINGER_S) -> None:
-        """Fade the card out after ``linger_s`` seconds (at once when 0).
-
-        A newer :meth:`show_status` before the fade ends cancels it. Calling
-        it again while a clear is pending keeps the earlier deadline.
-        """
-        if self._top is None:
-            return
-        if not self._status_showing:
-            self._cancel_clear()
-            return
-        try:
-            delay = max(0.0, float(linger_s))
-        except (TypeError, ValueError):
-            delay = PET_STATUS_LINGER_S
-        if delay <= 0.0:
-            self._cancel_clear()
-            self.hide()
-            return
-        if self._status_clear_pending:
-            return
-        self._status_clear_pending = True
-        self._clear_after_id = self._top.after(int(delay * 1000), self._start_fade)
-
-    def _start_fade(self, step: int = 0) -> None:
-        self._clear_after_id = None
-        top = self._top
-        if top is None or not self._status_showing:
-            self._status_clear_pending = False
-            return
-        if step >= PET_CARD_FADE_STEPS:
-            self._fade_after_id = None
-            self.hide()
-            return
-        try:
-            top.wm_attributes("-alpha", 1.0 - (step + 1) / (PET_CARD_FADE_STEPS + 1))
-        except tk.TclError:
-            # No per-window opacity here (some X11 window managers): skip
-            # straight to the end instead of half-fading.
-            self._fade_after_id = None
-            self.hide()
-            return
-        self._fade_after_id = top.after(PET_CARD_FADE_STEP_MS, lambda: self._start_fade(step + 1))
-
-    def _cancel_clear(self) -> None:
-        """Stop a pending clear and bring the card back to full opacity."""
-        top = self._top
-        for attr in ("_clear_after_id", "_fade_after_id"):
-            after_id = getattr(self, attr)
-            if after_id is not None and top is not None:
-                try:
-                    top.after_cancel(after_id)
-                except tk.TclError:
-                    logging.getLogger("jarvis.orb").debug("card timer cancel failed", exc_info=True)
-            setattr(self, attr, None)
-        if self._status_clear_pending and top is not None:
-            try:
-                top.wm_attributes("-alpha", 1.0)
-            except tk.TclError:
-                logging.getLogger("jarvis.orb").debug("card opacity reset failed", exc_info=True)
-        self._status_clear_pending = False
-
-    def move_status(self, anchor: tuple[int, int, int, int]) -> None:
-        """Follow the pet (drag, resize) without touching a pending clear.
-
-        A drag calls this for every mouse motion, and neither the text nor the
-        width changes then: only the window moves. The canvas is repainted
-        only when nothing was painted yet.
-        """
-        self._status_anchor = anchor
-        if not self._status_showing:
-            return
-        size = self._status_size
-        if size is None or self._top is None:
-            self._render_status()
-            return
-        x, y = self._status_position(size[0], size[1], anchor)
-        try:
-            self._top.geometry(f"+{x}+{y}")
-        except tk.TclError:
-            logging.getLogger("jarvis.orb").debug("pet status card move failed", exc_info=True)
-
-    def _status_position(
-        self, card_w: int, height: int, anchor: tuple[int, int, int, int]
-    ) -> tuple[int, int]:
-        """Top-left corner for a card of this size: under the strip when it
-        fits above ``limit_bottom``, else over the figure."""
-        center_x, below_y, above_y, limit_bottom = anchor
-        x = max(8, min(center_x - card_w // 2, self._screen_w - card_w - 8))
-        y = below_y if below_y + height <= limit_bottom else max(8, above_y - height)
-        return x, y
-
-    def _on_click(self, _event: tk.Event | None = None) -> None:
-        if not self._status_showing:
-            return
-        self._status_expanded = not self._status_expanded
-        reading = self._status_clear_pending
-        self._cancel_clear()
-        self._render_status()
-        if reading:
-            # The user opened a card that was about to go: give them time.
-            self.clear_status(PET_CARD_READING_LINGER_S)
-
-    def card_layout(
-        self,
-        title: str,
-        detail: str,
-        measure_title: Callable[[str], int],
-        measure_detail: Callable[[str], int],
-        title_lh: int,
-        detail_lh: int,
-    ) -> tuple[int, int, list[str], list[str], int]:
-        """``(width, height, title_lines, detail_lines, radius)`` of the card.
-
-        Pure geometry (the fonts' measure functions are injected), so it is
-        testable without Tk. The card fits its text between the minimum width
-        and 1.6 x the strip; a collapsed two-line card is a full pill, an
-        expanded one keeps that end radius.
-        """
-        scale = self._ui_scale
-        pad_x = int(round(PET_CARD_PAD_X * scale))
-        pad_y = int(round(PET_CARD_PAD_Y * scale))
-        gap = int(round(PET_CARD_LINE_GAP * scale))
-        max_w = self._status_max_w or int(round(PET_CARD_MAX_WIDTH * scale))
-        max_w = max(1, min(max_w, max(160, self._screen_w - 16)))
-        min_w = min(max_w, int(round(PET_CARD_MIN_WIDTH * scale)))
-        text_max = max(40, max_w - 2 * pad_x)
-        title_lines = wrap_text_lines(title, measure_title, text_max, 1)
-        detail_limit = (
-            PET_CARD_DETAIL_EXPANDED_LINES
-            if self._status_expanded
-            else PET_CARD_DETAIL_COLLAPSED_LINES
-        )
-        detail_lines = (
-            wrap_text_lines(detail, measure_detail, text_max, detail_limit) if detail else []
-        )
-        widest = max(
-            [measure_title(line) for line in title_lines]
-            + [measure_detail(line) for line in detail_lines]
-            + [0]
-        )
-        width = max(min_w, min(max_w, widest + 2 * pad_x))
-        height = 2 * pad_y + title_lh * len(title_lines)
-        if detail_lines:
-            height += gap + detail_lh * len(detail_lines)
-        collapsed = 2 * pad_y + title_lh + (gap + detail_lh if detail else 0)
-        radius = max(4, min(height, collapsed) // 2)
-        return width, height, title_lines, detail_lines, radius
-
-    def _render_status(self) -> bool:
-        """Paint the status card. Returns False when nothing could be drawn."""
-        if (
-            self._top is None
-            or self._canvas is None
-            or self._status is None
-            or self._status_anchor is None
-            or not self._ensure_status_fonts()
-        ):
-            return False
-        detail_font = self._status_font
-        title_font = self._header_font
-        assert detail_font is not None and title_font is not None  # noqa: S101 — set above
-        title, detail = self._status
-        theme = self._theme
-        scale = self._ui_scale
-        pad_x = int(round(PET_CARD_PAD_X * scale))
-        pad_y = int(round(PET_CARD_PAD_Y * scale))
-        gap = int(round(PET_CARD_LINE_GAP * scale))
-        title_lh = max(1, int(title_font.metrics("linespace")))
-        detail_lh = max(1, int(detail_font.metrics("linespace")))
-        width, height, title_lines, detail_lines, radius = self.card_layout(
-            title, detail, title_font.measure, detail_font.measure, title_lh, detail_lh
-        )
-        x, y = self._status_position(width, height, self._status_anchor)
-        try:
-            self._top.wm_attributes("-alpha", 1.0)
-        except tk.TclError:
-            logging.getLogger("jarvis.orb").debug("card opacity reset failed", exc_info=True)
-        try:
-            self._top.geometry(f"{width}x{height}+{x}+{y}")
-            self._canvas.configure(width=width, height=height)
-            self._canvas.delete("all")
-            self._draw_rounded_rect(
-                1,
-                1,
-                width - 1,
-                height - 1,
-                radius,
-                fill=theme.bg,
-                outline=theme.border,
-                width=theme.border_width,
-            )
-            cursor_y = pad_y
-            for line in title_lines:
-                self._canvas.create_text(
-                    pad_x, cursor_y, text=line, font=title_font, anchor="nw", fill=theme.header
-                )
-                cursor_y += title_lh
-            if detail_lines:
-                cursor_y += gap
-            for line in detail_lines:
-                self._canvas.create_text(
-                    pad_x, cursor_y, text=line, font=detail_font, anchor="nw", fill=theme.text
-                )
-                cursor_y += detail_lh
-            self._top.deiconify()
-            self._top.lift()
-        except tk.TclError:
-            logging.getLogger("jarvis.orb").debug("pet status card paint failed", exc_info=True)
-            self._status_size = None
-            return False
-        self._status_showing = True
-        self._status_size = (width, height)
-        self._notify_status_change()
-        return True
-
     def _cancel_timers(self) -> None:
         if self._top is None:
             return
@@ -2000,13 +1603,6 @@ class OrbCommentBubble:
         self._queued_text = None
 
     def hide(self) -> None:
-        self._cancel_clear()
-        was_showing = self._status_showing
-        self._status_showing = False
-        self._status_expanded = False
-        self._status_size = None
-        if was_showing:
-            self._notify_status_change()
         if self._top is None:
             return
         if self._dismiss_after_id is not None:
@@ -2984,8 +2580,6 @@ class OrbOverlay:
             screen_w=screen_w,
             theme=bubble_theme_for_style(self._style),
         )
-        self._comment_bubble.set_ui_scale(self._dpi_ratio)
-        self._comment_bubble.on_status_change = self._sync_notice_anchor
         self._ensure_controls()
         if self._style == "pet":
             self._sync_pet_strip_scale()
@@ -3078,16 +2672,11 @@ class OrbOverlay:
         return strip_h + gap
 
     def _sync_pet_strip_scale(self) -> None:
-        """Bring the strip and the status card to the current strip scale."""
+        """Bring the strip and the card column to the current strip scale."""
         scale = self._pet_strip_scale()
         row = self._controls
         if isinstance(row, PetControlStrip):
             row.set_scale(scale)
-        bubble = self._comment_bubble
-        if bubble is not None:
-            bubble.set_ui_scale(scale)
-            strip_w, _strip_h = orb_controls.pet_strip_size(scale)
-            bubble.set_status_max_width(int(round(strip_w * PET_CARD_MAX_WIDTH_PER_STRIP)))
         notices = self._notices
         if notices is not None:
             strip_w, _strip_h = orb_controls.pet_strip_size(scale)
@@ -3109,11 +2698,8 @@ class OrbOverlay:
     def _move_attached(self, x: int, y: int, screen_w: int) -> None:
         """Bring the bubble and the control row along after the window moved."""
         bubble = self._comment_bubble
-        if bubble is not None:
-            if self._style == "pet":
-                bubble.move_status(self._status_anchor(refresh_limit=False))
-            else:
-                bubble.update_anchor(x, y, screen_w)
+        if bubble is not None and self._style != "pet":
+            bubble.update_anchor(x, y, screen_w)
         if self._controls is not None:
             self._controls.update_anchor(x, y)
         self._sync_notice_anchor(refresh_limit=False)
@@ -3213,9 +2799,9 @@ class OrbOverlay:
         row = self._controls
         if row is not None and row.visible and row.window is not None:
             windows.append(row.window)
-        bubble = self._comment_bubble
-        if bubble is not None and bubble.status_showing and bubble.window is not None:
-            windows.append(bubble.window)
+        notices = self._notices
+        if notices is not None and notices.window is not None:
+            windows.append(notices.window)
         for window in windows:
             try:
                 if force or is_healthy(window) is not True:
@@ -3291,8 +2877,6 @@ class OrbOverlay:
             self._work_area_cache = None
         if self._controls is not None:
             self._controls.update_anchor(self._mascot_x, self._mascot_y)
-        if self._style == "pet" and self._comment_bubble is not None:
-            self._comment_bubble.move_status(self._status_anchor())
         self._sync_notice_anchor()
 
         self._manual_pinned = True
@@ -3986,10 +3570,8 @@ class OrbOverlay:
         if row is not None:
             row.hide()
         self._pointer_over_orb = False
-        if self._style == "pet" and self._comment_bubble is not None:
-            # The pet's status bubble hangs off the pet; it goes with it.
-            self._comment_bubble.hide()
         if self._notices is not None:
+            # The pet's cards hang off the pet; they go with it.
             self._notices.hide()
         if self._root is not None:
             try:
@@ -4105,11 +3687,11 @@ class OrbOverlay:
         The pet's status bubble is not snatched away the moment a turn ends:
         it fades six seconds later, so the last line can still be read.
         """
+        if self._style == "pet":
+            self.clear_status(PET_STATUS_LINGER_S)
+            return
         bubble = self._comment_bubble
         if bubble is None:
-            return
-        if self._style == "pet":
-            self._enqueue_ui(lambda: bubble.clear_status(PET_STATUS_LINGER_S))
             return
         self._enqueue_ui(bubble.hide)
 
@@ -4176,10 +3758,22 @@ class OrbOverlay:
         self._enqueue_ui(lambda: self._apply_notice(kind_text, title_text, detail_text))
 
     def _apply_notice(self, kind: str, title: str, detail: str) -> None:
-        if self._style != "pet" or not self._notify_enabled or self._root is None:
+        if self._style != "pet" or not self._notify_enabled:
             return
+        notices = self._card_column()
+        if notices is None:
+            return
+        notices.push(kind, title, detail)
+        self._sync_controls_visibility()
+        self._ring_bell()
+
+    def _card_column(self) -> PetNoticeStack | None:
+        """The pet's card column, built on first use; ``None`` when the pet
+        cannot show cards right now (no window, hidden by the user)."""
+        if self._style != "pet" or self._root is None:
+            return None
         if self._user_hidden or not self._window_mapped():
-            return
+            return None
         notices = self._notices
         if notices is None:
             scale = self._pet_strip_scale()
@@ -4191,30 +3785,15 @@ class OrbOverlay:
                     width=int(round(strip_w * PET_NOTICE_WIDTH_PER_STRIP)),
                 )
             except tk.TclError:
-                logging.getLogger("jarvis.orb").debug("notice stack unavailable", exc_info=True)
-                return
+                logging.getLogger("jarvis.orb").debug("card column unavailable", exc_info=True)
+                return None
             self._notices = notices
         self._sync_notice_anchor()
-        notices.push(kind, title, detail)
-        self._sync_controls_visibility()
-        self._ring_bell()
+        return notices
 
     def _notice_anchor(self, *, refresh_limit: bool = True) -> tuple[int, int, int, int, int]:
-        """``(center_x, below_y, above_y, limit_bottom, screen_w)`` for the cards.
-
-        Like the status card's, pushed past the status card when one shows:
-        the cards hang under it, or stand above it when it sits over the pet.
-        """
+        """``(center_x, below_y, above_y, limit_bottom, screen_w)`` for the cards."""
         center_x, below_y, above_y, limit = self._status_anchor(refresh_limit=refresh_limit)
-        gap = max(1, int(round(PET_BUBBLE_GAP * self._pet_strip_scale())))
-        bubble = self._comment_bubble
-        box = bubble.status_box() if bubble is not None else None
-        if box is not None:
-            _x, y, _w, h = box
-            if y >= below_y - 1:
-                below_y = y + h + gap
-            else:
-                above_y = y - gap
         try:
             screen_w = int(self._root.winfo_screenwidth()) if self._root is not None else 1920
         except tk.TclError:
@@ -4281,28 +3860,33 @@ class OrbOverlay:
         self._kick_frame()
 
     def show_status(self, title: str = "", detail: str = "") -> None:
-        """Show or update the pet's status card (bold title, muted detail). Thread-safe."""
+        """Show or update the pet's thinking line. Thread-safe.
+
+        One muted line, like the Codex companion's: the current step when
+        there is one (``detail``), else the heading (``title``).
+        """
         if self._style != "pet":
             return
         self._note_activity()
-        if not self._pet_bubble or self._comment_bubble is None:
+        if not self._pet_bubble:
             return
-        title_text = str(title or "")
-        detail_text = str(detail or "")
-        self._enqueue_ui(lambda: self._apply_status(title_text, detail_text))
+        line = " ".join(str(detail or "").split()) or " ".join(str(title or "").split())
+        self._enqueue_ui(lambda: self._apply_status(line))
 
     def clear_status(self, linger_s: float = PET_STATUS_LINGER_S) -> None:
-        """Fade the status card out after ``linger_s`` seconds (at once when 0). Thread-safe."""
+        """Fade the thinking line out after ``linger_s`` seconds (at once when 0). Thread-safe."""
         if self._style != "pet":
-            return
-        bubble = self._comment_bubble
-        if bubble is None:
             return
         try:
             linger = max(0.0, float(linger_s))
         except (TypeError, ValueError):
             linger = PET_STATUS_LINGER_S
-        self._enqueue_ui(lambda: bubble.clear_status(linger))
+
+        def _apply() -> None:
+            if self._notices is not None:
+                self._notices.clear_status(linger)
+
+        self._enqueue_ui(_apply)
 
     def set_muted(self, muted: bool) -> None:
         """Mirror Jarvis's microphone mute on the strip. Thread-safe."""
@@ -4357,8 +3941,8 @@ class OrbOverlay:
     def _apply_pet_look(self) -> None:
         if self._style != "pet":
             return
-        if not self._pet_bubble and self._comment_bubble is not None:
-            self._comment_bubble.hide()
+        if not self._pet_bubble and self._notices is not None:
+            self._notices.clear_status(0.0)
         renderer = self._renderer
         if isinstance(renderer, PetRenderer):
             renderer.set_look(pet_scale=self._pet_scale)
@@ -4396,14 +3980,17 @@ class OrbOverlay:
         elif row is not None:
             row.set_state(speaker_muted=self._speaker_muted)
 
-    def _apply_status(self, title: str, detail: str) -> None:
-        bubble = self._comment_bubble
-        if bubble is None or self._style != "pet" or not self._pet_bubble:
+    def _apply_status(self, line: str) -> None:
+        if not self._pet_bubble:
             return
         # No card floating over an empty desktop: it belongs to the pet.
-        if self._user_hidden or not self._window_mapped():
+        notices = self._card_column()
+        if notices is None:
             return
-        bubble.show_status(title, detail, anchor=self._status_anchor())
+        if line:
+            notices.set_status(line)
+        else:
+            notices.clear_status(0.0)
 
     def _status_anchor(self, *, refresh_limit: bool = True) -> tuple[int, int, int, int]:
         """``(center_x, below_y, above_y, limit_bottom)`` for the status card."""
