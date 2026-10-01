@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "re
 import { createPortal } from "react-dom";
 import { TOUR_LAYER_ATTR } from "../tourEvents";
 import { EASE_OUT } from "../ui";
-import { cutout, padded, placeCard, type Rect, type TourPlacement } from "./tourSteps";
+import { cutout, fitToView, padded, placeCard, type Rect, type TourPlacement } from "./tourSteps";
 
 const CARD_W = 320;
 
@@ -77,7 +77,7 @@ export function Spotlight({
     return () => ro.disconnect();
   }, []);
 
-  const hole = rect ? padded(rect) : null;
+  const hole = rect ? fitToView(padded(rect), view) : null;
   const whole: Rect = { x: 0, y: 0, w: view.w, h: view.h };
   // No element (centred card): the hole collapses to a point in the middle,
   // so the same clip-path shape still animates.
