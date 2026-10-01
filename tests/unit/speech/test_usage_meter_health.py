@@ -113,6 +113,38 @@ def test_an_absorbed_failure_is_charged_to_the_voice_that_was_asked() -> None:
     assert _status("gemini-flash-tts", ledger.MODALITY_TTS) == pt.OK
 
 
+class _SilentTTS(_TTS):
+    """A keyed plugin whose own error was swallowed and no fallback existed:
+    it sets ``last_failure`` and yields nothing at all."""
+
+    async def synthesize(
+        self, text: str, voice: str | None = None, language_code: str | None = None
+    ) -> AsyncIterator[AudioChunk]:
+        self.last_voice_provider = self.name
+        self.last_failure = "_InworldFatalError: HTTP 401"
+        return
+        yield  # pragma: no cover — makes this an async generator
+
+
+def test_a_swallowed_failure_with_no_audio_at_all_is_still_recorded() -> None:
+    """No fallback, no audio, no exception: the user heard silence, and the
+    dot must say why."""
+    produced = asyncio.run(_speak(meter_tts(_SilentTTS("inworld"), _Sink())))
+
+    assert produced == 0
+    assert _status("inworld", ledger.MODALITY_TTS) == pt.BAD_KEY
+
+
+def test_a_pipeline_without_a_cost_sink_still_feeds_the_dots() -> None:
+    """No bus → no spend sink; the health record must not depend on it."""
+    asyncio.run(_speak(meter_tts(_TTS("cartesia"), None)))
+    stt = meter_stt(_STT("openai-api"), None)
+    asyncio.run(stt.transcribe_pcm(_PCM, 16_000))
+
+    assert _status("cartesia", ledger.MODALITY_TTS) == pt.OK
+    assert _status("openai-api", ledger.MODALITY_STT) == pt.OK
+
+
 class _SlowTTS(_TTS):
     async def synthesize(
         self, text: str, voice: str | None = None, language_code: str | None = None

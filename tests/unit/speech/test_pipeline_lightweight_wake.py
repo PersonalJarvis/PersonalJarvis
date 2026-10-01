@@ -59,8 +59,11 @@ def test_lightweight_mode_instantiates_no_faster_whisper() -> None:
     # it, by the runtime fallback chain; the resolved provider must still be the
     # configured Groq cloud STT, and the label must still NAME it rather than
     # naming a wrapper — the log line that reports which provider transcribed is
-    # the first thing anyone reads when a provider starts failing.
-    assert type(pipe._utterance_stt).__name__ == "DictionaryCorrectingSTT"
+    # the first thing anyone reads when a provider starts failing. Outermost is
+    # the speech meter, present with or without a bus: it feeds the
+    # provider-health record behind the status dots.
+    assert type(pipe._utterance_stt).__name__ == "MeteredSTT"
+    assert type(pipe._utterance_stt._inner).__name__ == "DictionaryCorrectingSTT"
     assert pipe._utterance_stt.provider_label == "groq-api"
 
 

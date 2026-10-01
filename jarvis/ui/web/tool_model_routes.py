@@ -246,6 +246,19 @@ async def set_tool_model(
                 manager_cfg.brain.providers[provider] = pc
             pc.tool_model = model or None
             pc.cu_model = model or None
+    # The Tool Model tab reads the passive health record: what the previous
+    # model did says nothing about the one just pinned (whether the KEY works
+    # still holds), and the cached rollup must show the new selection now.
+    from jarvis.brain import provider_health_ledger as health_ledger
+    from jarvis.ui.web.provider_routes import _invalidate_section_health_state
+
+    if provider != "auto" and model is not None:
+        health_ledger.forget_providers(
+            [provider],
+            modality=health_ledger.MODALITY_TOOL,
+            keep_credential_failures=True,
+        )
+    _invalidate_section_health_state(request)
     await _publish_configured(request)
     status = _status(request)
     status["persisted"] = body.persist

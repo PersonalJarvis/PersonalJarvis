@@ -31,9 +31,9 @@ transcription abandoned mid-stream still consumed the audio the provider read.
 Every measured call reports from a ``finally``, so an abandoned generator, a
 cancellation and an exception all still reach the ledger.
 
-Wrapping is free when nothing is listening: ``meter_tts(provider, None)``
-returns the very same object, so an install with no cost sink pays nothing —
-not an attribute lookup, not a stack frame.
+The wrapper also feeds the passive provider-health record behind the status
+dots (the outcome of every real speech call), so it wraps even when there is
+no cost sink: ``meter_tts(provider, None)`` reports health and skips usage.
 
 Pricing lives next door in :mod:`jarvis.costs.speech_rates`; this module only
 counts. Nothing here initialises at import time (AP-26).
@@ -171,7 +171,7 @@ class _MeteredProvider:
     def __init__(
         self,
         provider: Any,
-        sink: UsageSink,
+        sink: UsageSink | None,
         *,
         trace_id: TraceIdSource = None,
     ) -> None:
@@ -199,8 +199,11 @@ class _MeteredProvider:
         """Hand one record to the sink. Never raises, never blocks.
 
         Called from a ``finally``, which may be running during
-        ``GeneratorExit`` — so this is synchronous throughout.
+        ``GeneratorExit`` — so this is synchronous throughout. Without a sink
+        (no bus to publish spend on) there is nothing to report.
         """
+        if self._sink is None:
+            return
         try:
             trace = self._trace_id
             trace_id = str(trace() or "") if callable(trace) else str(trace or "")
@@ -240,9 +243,10 @@ class _MeteredProvider:
         The dots never probe a provider (a probe bills the key); they read what
         real calls did, and this wrapper sees every real speech call. A failure
         is recorded against the provider that was asked, a success against the
-        vendor that actually spoke; when a fallback spoke, the failure the
-        asked provider absorbed (``last_failure``, when it exposes one) is
-        recorded too. Only the classification is kept (AP-34).
+        vendor that actually spoke. A provider that swallows its own error
+        (``last_failure``, when it exposes one) is charged with it whether a
+        fallback then spoke or nothing came out at all. Only the
+        classification is kept (AP-34).
 
         Never raises: like the usage report, health bookkeeping must not cost
         an utterance, so a failure here is logged and dropped on purpose.
@@ -255,14 +259,14 @@ class _MeteredProvider:
             if failure is not None:
                 ledger.record_failure(asked, modality, failure)
                 return
+            absorbed = getattr(self._inner, "last_failure", None)
+            if absorbed:
+                ledger.record_failure(asked, modality, str(absorbed))
             if not answered:
                 return
             spoke = self._provider_label() or asked
-            if asked and spoke.casefold() != asked.casefold():
-                absorbed = getattr(self._inner, "last_failure", None)
-                if absorbed:
-                    ledger.record_failure(asked, modality, str(absorbed))
-            ledger.record_success(spoke, modality)
+            if not absorbed or spoke.casefold() != asked.casefold():
+                ledger.record_success(spoke, modality)
         except Exception as exc:  # noqa: BLE001 — see docstring: speech must not pay
             log.debug("Speech health record failed (%s).", exc)
 
@@ -461,15 +465,17 @@ class MeteredSTT(_MeteredProvider):
 def meter_tts(provider: Any, sink: UsageSink | None, *, trace_id: TraceIdSource = None) -> Any:
     """Wrap a TTS provider so every ``synthesize`` lands in the ledger.
 
-    Returns ``provider`` itself when there is nothing to report to, or when it
-    is already wrapped — an install without a cost sink pays nothing at all.
+    Wrapped even without a cost ``sink``: the provider-health record behind
+    the status dots listens to every real call either way (without a sink
+    only the usage report is skipped). An already wrapped provider is
+    returned as is.
 
     Typed ``Any`` in and ``Any`` out, like ``wrap_stt_with_dictionary`` next
     door and for the same reason: ``TTSProvider.synthesize`` is declared with
     ``async def`` while every implementation (including this wrapper) is an
     async generator, so the nominal type does not describe the real contract.
     """
-    if provider is None or sink is None or isinstance(provider, MeteredTTS):
+    if provider is None or isinstance(provider, MeteredTTS):
         return provider
     return MeteredTTS(provider, sink, trace_id=trace_id)
 
@@ -483,10 +489,10 @@ def meter_stt(provider: Any, sink: UsageSink | None, *, trace_id: TraceIdSource 
     decoding the container, and decoding to price it is exactly the kind of
     work that must never appear here.
 
-    Returns ``provider`` itself when ``sink`` is ``None`` or it is already
-    wrapped.
+    Wrapped even without a cost ``sink`` (see :func:`meter_tts`); an already
+    wrapped provider is returned as is.
     """
-    if provider is None or sink is None or isinstance(provider, MeteredSTT):
+    if provider is None or isinstance(provider, MeteredSTT):
         return provider
     return MeteredSTT(provider, sink, trace_id=trace_id)
 

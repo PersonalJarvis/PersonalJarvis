@@ -70,6 +70,22 @@ class TestAggregate:
         assert sh.aggregate([sh.UNKNOWN, sh.OK]) == sh.OK
 
 
+class TestSectionStatusForOutcome:
+    """A remembered real-call outcome, unlike a fresh probe, may be minutes
+    old: what clears on its own is amber, only what does not is red."""
+
+    @pytest.mark.parametrize("transient", ["rate_limited", "unreachable"])
+    def test_transient_outcomes_are_amber(self, transient: str) -> None:
+        assert sh.section_status_for_outcome(transient) == sh.NEEDS_SETUP
+
+    @pytest.mark.parametrize("hard", ["bad_key", "no_credits", "model_unavailable", "error"])
+    def test_lasting_failures_are_red(self, hard: str) -> None:
+        assert sh.section_status_for_outcome(hard) == sh.ERROR
+
+    def test_ok_is_ok(self) -> None:
+        assert sh.section_status_for_outcome("ok") == sh.OK
+
+
 def test_vocabulary_is_exactly_four() -> None:
     assert set(sh.SECTION_HEALTH_STATUSES) == {sh.OK, sh.NEEDS_SETUP, sh.ERROR, sh.UNKNOWN}
     assert len(sh.SECTION_HEALTH_STATUSES) == 4

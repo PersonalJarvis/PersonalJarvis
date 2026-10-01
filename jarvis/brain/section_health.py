@@ -75,6 +75,27 @@ def section_status_for_test(test_status: str | None, *, configured: bool) -> str
     return ERROR
 
 
+#: Outcomes that clear on their own (``provider_test.RATE_LIMITED`` /
+#: ``UNREACHABLE``). Spelled here to keep this module dependency-free.
+_TRANSIENT_OUTCOMES = frozenset({"rate_limited", "unreachable"})
+
+
+def section_status_for_outcome(outcome_status: str) -> str:
+    """Map the last REAL call's outcome (the passive health record) to a bucket.
+
+    Unlike a fresh probe, a remembered outcome can be minutes old, and a
+    throttle or a network blip has usually passed — or a fallback answered in
+    its place. So transient outcomes are amber (``needs_setup``, the degraded
+    state), never red; red is kept for what does not fix itself: a rejected
+    key, an empty account, a missing model, a failed explicit test.
+    """
+    if outcome_status == _TEST_OK:
+        return OK
+    if outcome_status == _TEST_NOT_CONFIGURED or outcome_status in _TRANSIENT_OUTCOMES:
+        return NEEDS_SETUP
+    return ERROR
+
+
 def aggregate(statuses: Iterable[str]) -> str:
     """Roll several section statuses into one — the most urgent signal wins.
 
@@ -96,5 +117,6 @@ __all__ = [
     "ERROR",
     "UNKNOWN",
     "section_status_for_test",
+    "section_status_for_outcome",
     "aggregate",
 ]

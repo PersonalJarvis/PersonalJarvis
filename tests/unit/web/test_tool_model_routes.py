@@ -95,6 +95,28 @@ def test_put_persists_canonical_selection_and_updates_live(
     assert response.json()["persisted"] is True
 
 
+def test_a_new_tool_model_starts_with_a_clean_health_record(monkeypatch) -> None:
+    """The Tool Model dot reads the passive record: the old model's 404 says
+    nothing about the new pin, but a rejected KEY still does."""
+    from jarvis.brain import provider_health_ledger as ledger
+
+    app, _brain = _app()
+    monkeypatch.setattr(tool_model_routes, "is_credential_present", lambda _s: True)
+    record = ledger.get_ledger()
+    record.record("gemini", ledger.MODALITY_TOOL, "model_unavailable")
+    record.record("openai", ledger.MODALITY_TOOL, "bad_key")
+
+    for provider in ("gemini", "openai"):
+        response = TestClient(app).put(
+            "/api/tool-model",
+            json={"provider": provider, "model": f"{provider}-tool", "persist": False},
+        )
+        assert response.status_code == 200
+
+    assert record.get("gemini", ledger.MODALITY_TOOL) is None
+    assert record.get("openai", ledger.MODALITY_TOOL).status == "bad_key"
+
+
 def test_put_reactivates_a_provider_before_its_runtime_probe(monkeypatch) -> None:
     app, brain = _app()
     monkeypatch.setattr(tool_model_routes, "is_credential_present", lambda _s: True)

@@ -458,6 +458,15 @@ export function useWebSocket(): void {
           window.dispatchEvent(new CustomEvent("jarvis:secret-configured", { detail: env.payload }));
         }
 
+        if (env.event_name === "ProviderHealthChanged") {
+          // Trigger only — a real call just changed a provider's recorded
+          // health. The status dots (tabs, sidebar, dock, chat picker) re-read
+          // with a plain GET; nothing here or there probes a provider.
+          window.dispatchEvent(
+            new CustomEvent("jarvis:provider-health-changed", { detail: env.payload }),
+          );
+        }
+
         if (env.event_name === "DictationPromptModeChanged") {
           // The switch flipped somewhere this window did not click — the
           // native Jarvis bar's sparkle, another window — and every pill and

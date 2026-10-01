@@ -452,6 +452,21 @@ class SecretConfigured(Event):
 
 
 @dataclass(frozen=True, slots=True)
+class ProviderHealthChanged(Event):
+    """The passive provider-health record changed (a real call's outcome).
+
+    Trigger only: open windows re-read their status dots with a plain GET, so
+    a key that just failed for real shows without anyone reloading. Carries
+    the classified status, never an error body or a secret (AP-34). All three
+    fields are empty for a bulk change (the record loaded from disk, or a
+    credential change forgot several providers at once).
+    """
+    provider: str = ""
+    modality: str = ""
+    status: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class UiLanguageChanged(Event):
     """Fired when the interface (display) language changes.
 

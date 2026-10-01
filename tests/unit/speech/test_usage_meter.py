@@ -178,12 +178,18 @@ async def test_a_failing_sink_never_breaks_synthesis() -> None:
 
 
 @pytest.mark.asyncio
-async def test_no_sink_returns_the_provider_untouched() -> None:
-    """Zero cost when nobody is listening — not even a wrapper object."""
+async def test_no_sink_still_wraps_for_health_but_reports_no_usage() -> None:
+    """Without a cost sink (no bus) there is no spend to publish, but the
+    provider-health record behind the status dots still needs every real
+    call — so the provider is wrapped and speech is unchanged."""
     provider = _FakeTTS()
-    assert meter_tts(provider, None) is provider
-    stt = _FakeSTT()
-    assert meter_stt(stt, None) is stt
+    tts = meter_tts(provider, None)
+    assert tts is not provider
+    assert meter_tts(tts, None) is tts  # never double-wrapped
+    chunks = [c async for c in tts.synthesize("hallo")]
+    assert len(chunks) == 3
+    stt = meter_stt(_FakeSTT(), None)
+    assert await stt.transcribe(_audio(2)) == "hello"
 
 
 # ---------------------------------------------------------------------------

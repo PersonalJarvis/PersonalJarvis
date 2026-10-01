@@ -2962,9 +2962,9 @@ class SpeechPipeline:
         # wrapped: ``self._stt`` is the local wake/VAD Whisper, free and
         # called many times a second, and metering it would be noise on the
         # hot path for a number that is always zero.
-        # No bus means nothing can be published, so nothing is wrapped either:
-        # ``meter_*`` hands the provider straight back for a null sink, which
-        # keeps a bus-less pipeline byte-for-byte what it was.
+        # No bus means no spend can be published (no sink), but the providers
+        # are still wrapped: the same wrapper feeds the provider-health record
+        # behind the status dots, which must not depend on the cost sink.
         self._speech_spend = SpeechSpendRecorder(bus) if bus is not None else None
         self._tts = meter_tts(self._tts, self._speech_spend, trace_id=self._speech_trace)
         self._utterance_stt = meter_stt(

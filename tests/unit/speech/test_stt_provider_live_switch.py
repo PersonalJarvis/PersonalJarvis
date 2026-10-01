@@ -61,7 +61,11 @@ def test_pipeline_switch_replaces_voice_and_next_dictation_provider(
 
     assert pipeline._utterance_stt.name == "openrouter-stt"
     assert pipeline._utterance_stt is not old_provider
-    assert pipeline._probe_stt is pipeline._utterance_stt
+    # The utterance lane is wrapped by the speech meter (usage + provider
+    # health, with or without a bus); the preview follows the same provider.
+    assert pipeline._probe_stt is getattr(
+        pipeline._utterance_stt, "_inner", pipeline._utterance_stt
+    )
     assert pipeline._config.stt.provider == "openrouter-stt"
     assert pipeline._dictation_stt_instance is None
     assert pipeline._voice_stt_fallback_chain is None
