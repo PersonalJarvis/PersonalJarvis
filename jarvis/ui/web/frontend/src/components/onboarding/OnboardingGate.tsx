@@ -119,6 +119,22 @@ export function OnboardingGate({ activeSection }: { activeSection?: string } = {
           onb={onb}
           preview={asked && onb.state.completed}
           startAt={replaying && onb.state.completed ? "how" : undefined}
+          onSkipAll={() => {
+            // A replay just closes; a real first run is recorded as done
+            // (tour included) and gets its one completion restart.
+            setSetupReplay(0);
+            setDismissed(true);
+            if (asked && onb.state?.completed) return;
+            void (async () => {
+              await onb.completeTour();
+              try {
+                await onb.complete();
+              } catch (e) {
+                // The next start offers the setup again, so nothing is lost.
+                console.warn("onboarding: skipping setup failed", e);
+              }
+            })();
+          }}
           onFinished={() => {
             if (!(asked && onb.state?.completed)) setCompleteAfterTour(true);
             setSetupReplay(0);
@@ -143,7 +159,10 @@ export function OnboardingGate({ activeSection }: { activeSection?: string } = {
             setTourRequested(false);
             // The first tour hands over to the first-steps guide. Written
             // before the completion restart, so the guide is there after it.
-            if (readFirstSteps() === null) {
+            // A real first run always starts it fresh (an install that was
+            // reset to a new user gets it again); a later tour replay only
+            // when the guide was never met.
+            if (completeAfterTour || readFirstSteps() === null) {
               const fresh = freshState();
               writeFirstSteps(fresh);
               setFirstSteps(fresh);

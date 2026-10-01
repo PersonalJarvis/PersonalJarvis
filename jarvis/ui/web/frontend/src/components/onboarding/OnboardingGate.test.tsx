@@ -2,10 +2,25 @@ import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 
 vi.mock("./setup/SetupTour", () => ({
-  SetupTour: ({ preview, startAt, onFinished }: { preview: boolean; startAt?: string; onFinished: () => void }) => (
-    <button type="button" data-testid="guide" data-preview={String(preview)} data-start={startAt ?? ""} onClick={onFinished}>
-      guide
-    </button>
+  SetupTour: ({
+    preview,
+    startAt,
+    onFinished,
+    onSkipAll,
+  }: {
+    preview: boolean;
+    startAt?: string;
+    onFinished: () => void;
+    onSkipAll?: () => void;
+  }) => (
+    <>
+      <button type="button" data-testid="guide" data-preview={String(preview)} data-start={startAt ?? ""} onClick={onFinished}>
+        guide
+      </button>
+      <button type="button" data-testid="guide-skip-all" onClick={onSkipAll}>
+        skip
+      </button>
+    </>
   ),
 }));
 vi.mock("./tour/GuidedTour", () => ({
@@ -228,5 +243,31 @@ it("starts the first-steps guide on request from Settings", async () => {
   act(() => {
     window.dispatchEvent(new CustomEvent(FIRST_STEPS_START_EVENT));
   });
+  await waitFor(() => expect(screen.getByTestId("first-steps")).toBeDefined());
+});
+
+it("skips the whole first run: tour recorded, onboarding completed, no guide left", async () => {
+  const fetchMock = stub({ ...base, completed: false, tour_completed: false });
+  render(<OnboardingGate activeSection="chats" />);
+  const skip = await screen.findByTestId("guide-skip-all");
+  act(() => skip.click());
+  const urls = () => fetchMock.mock.calls.map((c) => String(c[0]));
+  await waitFor(() => expect(urls()).toContain("/api/onboarding/complete"));
+  expect(urls()).toContain("/api/onboarding/tour-complete");
+  expect(screen.queryByTestId("guide")).toBeNull();
+  expect(screen.queryByTestId("tour")).toBeNull();
+});
+
+it("starts the first-steps guide fresh at the end of a real first run, even if an old one was closed", async () => {
+  window.localStorage.setItem(
+    "jarvis.firstSteps.v1",
+    JSON.stringify({ status: "dismissed", done: [], skipped: [], current: "wake", collapsed: false }),
+  );
+  stub({ ...base, completed: false, tour_completed: false });
+  render(<OnboardingGate activeSection="chats" />);
+  const guide = await screen.findByTestId("guide");
+  act(() => guide.click());
+  const tour = await screen.findByTestId("tour");
+  act(() => tour.click());
   await waitFor(() => expect(screen.getByTestId("first-steps")).toBeDefined());
 });

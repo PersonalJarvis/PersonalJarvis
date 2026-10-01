@@ -4,6 +4,7 @@
     "continue": "Weiter",
     "step_of": "{current} von {total}",
     "welcome": {
+      "skip_all": "Einrichtung überspringen, ich kenne mich aus",
       "title": "Willkommen",
       "lede": "Zuerst ein kurzer Blick darauf, was {name} ist und wie es funktioniert. Danach richten wir es direkt hier in der App ein: einen API-Schlüssel, ein Abo für deine Agents und dein Weckwort.",
       "language": "Sprache",
@@ -19,7 +20,7 @@
       "prev": "Zurück",
       "skip": "Überspringen",
       "finish": "Jetzt einrichten",
-      "beat_of": "{current} / {total}",
+      "beat_of": "Erklärung {current} von {total}",
       "beats": {
         "hello": "Hi, ich bin {pet}! Bevor wir etwas einrichten, zeig ich dir, wie {name} funktioniert. Geht schnell, und du siehst dabei die echte App.",
         "talk": "Hier fängt alles an. Du sprichst mit einem einzigen Assistenten: {name}. Tipp hier oder drück den runden Knopf und sprich einfach. Du wählst nie selbst ein Werkzeug oder Modell; {name} entscheidet, was gebraucht wird.",
@@ -30,12 +31,16 @@
         "results": "Was dabei herauskommt, also Seiten, Berichte oder Bilder, landet in Artifacts. Kurze Antworten kommen direkt im Chat oder laut gesprochen zurück.",
         "memory": "{name} merkt sich auch Dinge. Was du erzählst, landet in seinen Notizen und deinem Profil, gespeichert auf deinem Computer. So musst du dich nie wiederholen.",
         "safety": "Und du behältst die Kontrolle. Harmloses passiert einfach. Alles, was etwas sendet, löscht oder Geld kostet, wartet zuerst auf dein Ja.",
-        "done": "Das ist die ganze Idee: Du sprichst, {name} denkt nach, nutzt Werkzeuge, holt Agents dazu und bringt dir das Ergebnis. Jetzt geben wir ihm ein Gehirn."
+        "done": "Das ist die ganze Idee: Du sprichst, {name} denkt nach, nutzt Werkzeuge, holt Agents dazu und bringt dir das Ergebnis. Später nicht weiter? Frag einfach {name}. Jetzt geben wir ihm ein Gehirn."
       }
     },
     "keys": {
+      "next_hint": "Als Nächstes: Verbinde die Abos, die du schon bezahlst, damit deine Agents arbeiten können.",
+      "no_key": "Noch kein Schlüssel? Ein kostenloses lokales Modell geht auch (Einstellungen → Lokale Modelle), oder überspring es und füg später einen hinzu. Ganz ohne bleiben Chat und Stimme aus.",
+      "live_missing": "Der Chat läuft. Für die Live-Stimme brauchst du einen OpenAI- oder Gemini-Schlüssel; bis dahin spricht {name} auf die klassische Art, etwas langsamer.",
+      "live_ready": "Die Live-Stimme ist an: Du sprichst, und {name} antwortet sofort.",
       "title": "Einen API-Schlüssel eintragen",
-      "lede": "Dein Assistent braucht einen KI-Schlüssel, um zu denken und zu sprechen; ohne ihn bleiben Chat und Sprache aus. Das ist die Seite API-Keys: Füge einen Schlüssel in eine Anbieter-Karte ein und speichere ihn. Mit OpenAI oder Gemini reicht ein einziger Schlüssel für Live-Sprache.",
+      "lede": "Das ist die Seite API-Schlüssel. Füg einen Schlüssel in eine Anbieter-Karte ein und speichere ihn; mehr braucht {name} nicht, um zu denken und zu sprechen. Ein OpenAI- (ChatGPT) oder Google-Gemini-Schlüssel bringt zusätzlich die Live-Stimme.",
       "waiting": "Warte auf einen Schlüssel…",
       "connecting": "Alles wird eingeschaltet…",
       "connected": "Verbunden: {provider}.",
@@ -46,10 +51,10 @@
     },
     "subscriptions": {
       "title": "Verbinde ein Abo für deine Agents",
-      "lede": "Das ist der Agents-Tab. Melde dich mit einem Abo an, das du schon bezahlst. Wir empfehlen Claude (Pro oder Max) oder ChatGPT (Codex). Klick in der Zeile auf Connect; dein Browser öffnet sich einmal.",
+      "lede": "Das ist der Tab Agents. Agents laufen am besten mit einem Abo, das du schon bezahlst; wir empfehlen Claude (Pro oder Max) oder ChatGPT (Codex). Klick in seiner Zeile auf Verbinden, dein Browser öffnet sich einmal.",
       "waiting": "Noch kein Abo verbunden…",
       "connected": "Verbunden: {names}.",
-      "why": "Ein Abo kostet einen festen Monatspreis. So rechnen die größeren Aufgaben deiner Agents nicht pro Aufruf über deinen API-Schlüssel ab.",
+      "why": "Ein Abo ist ein fester Monatspreis. Ohne Abo nutzen die Agents deinen API-Schlüssel, und jeder Auftrag wird einzeln abgerechnet.",
       "later": "Ich verbinde später eins"
     },
     "permissions": {
@@ -86,7 +91,7 @@
     "finish": "Fertig",
     "skip": "Tour überspringen",
     "step_of": "{current} von {total}",
-    "replay_title": "Einrichtung und App-Tour",
+    "replay_title": "Onboarding nochmal machen",
     "replay_body": "Erklärt noch einmal, wie {name} funktioniert, führt dich durch die Einrichtung (API-Schlüssel, Abos für Agents, Weckwort) und danach durch den kurzen Rundgang. Nichts startet neu.",
     "replay": "Wiederholen",
     "steps": {
@@ -95,7 +100,7 @@
       "agents_world": "Das ist das Verse, deine Agenten bei der Arbeit. Klick einen an, um mit ihm zu chatten oder ihm eine Aufgabe zu geben. Weiter bringt dich zurück.",
       "voice_hub": "Unter Stimme findest du Diktat in jede App, deine eigene Wortliste und gesprochene Kürzel.",
       "settings": "Hier findest du Einstellungen, API-Schlüssel, Kosten und dein Profil. Die Tour kannst du jederzeit unter Einstellungen → App wiederholen.",
-      "done": "Das war die Tour. Du bist startklar: Sprich mit {name}, wann immer du willst."
+      "done": "Das war der Rundgang. Sprich mit {name}, wann immer du willst, und wenn du mal nicht weiterweißt, frag einfach {name}. Unter Einstellungen → App kannst du das Onboarding nochmal machen."
     }
   },
   "first_steps": {
@@ -124,7 +129,7 @@
     "replay_body": "Zehn kleine, echte Dinge zum Ausprobieren mit {name}: sprechen, Werkzeuge nutzen, sich etwas merken, etwas bauen, an Agents abgeben. Jedes wird erklärt, nachdem es passiert ist.",
     "finished": {
       "title": "Du kennst jetzt die Grundlagen!",
-      "body": "Du hast {done} von {total} ersten Schritten geschafft. Ab jetzt sprichst du einfach mit {name}: Es entscheidet selbst, ob es antwortet, ein Werkzeug nutzt oder einen Agent dazuholt.",
+      "body": "Du hast {done} von {total} ersten Schritten geschafft. Ab jetzt sprichst du einfach mit {name}: Es entscheidet selbst, ob es antwortet, ein Werkzeug nutzt oder einen Agent dazuholt. Nicht weiter? Frag {name}.",
       "close": "Schließen"
     },
     "quests": {

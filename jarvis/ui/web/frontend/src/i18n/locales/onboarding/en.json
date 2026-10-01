@@ -4,6 +4,7 @@
     "continue": "Continue",
     "step_of": "{current} of {total}",
     "welcome": {
+      "skip_all": "Skip setup, I know my way around",
       "title": "Welcome",
       "lede": "First a short look at what {name} is and how it works. Then we set it up right here in the app: an API key, a subscription for your agents and your wake word.",
       "language": "Language",
@@ -19,7 +20,7 @@
       "prev": "Back",
       "skip": "Skip",
       "finish": "Let's set it up",
-      "beat_of": "{current} / {total}",
+      "beat_of": "Explanation {current} of {total}",
       "beats": {
         "hello": "Hi, I'm {pet}! Before we set anything up, let me show you how {name} works. It's quick, and you'll see the real app while I explain.",
         "talk": "Everything starts here. You talk to one assistant: {name}. Type here, or press the round button and just speak. You never pick a tool or a model yourself; {name} decides what's needed.",
@@ -30,12 +31,16 @@
         "results": "Whatever comes out, like pages, reports or images, lands in Artifacts. Short answers come straight back in the chat or spoken aloud.",
         "memory": "{name} also remembers. What you tell it goes into its notes and your profile, stored on your computer, so you never have to repeat yourself.",
         "safety": "And you stay in control. Harmless things just happen. Anything that sends, deletes or costs money waits for your yes first.",
-        "done": "That's the whole idea: you talk, {name} thinks, uses tools, brings in agents and hands you the result. Now let's give it a brain."
+        "done": "That's the whole idea: you talk, {name} thinks, uses tools, brings in agents and hands you the result. Stuck later? Just ask {name}. Now let's give it a brain."
       }
     },
     "keys": {
+      "next_hint": "Next: connect the subscriptions you already pay for, so your agents can work.",
+      "no_key": "No key yet? A free local model works too (Settings → Local models), or skip and add one later. Without any, chat and voice stay off.",
+      "live_missing": "Chat works. Live voice needs an OpenAI or Gemini key; until then {name} speaks the classic way, a little slower.",
+      "live_ready": "Live voice is on: talk, and {name} answers right away.",
       "title": "Add one API key",
-      "lede": "Your assistant needs one AI key to think and talk; without it, chat and voice stay off. This is the API Keys page: paste one key into a provider card and save it. OpenAI or Gemini gives you live voice with a single key.",
+      "lede": "This is the API Keys page. Paste one key into a provider card and save it; that is all {name} needs to think and talk. An OpenAI (ChatGPT) or Google Gemini key also gives you live voice.",
       "waiting": "Waiting for a key…",
       "connecting": "Switching everything on…",
       "connected": "Connected: {provider}.",
@@ -46,10 +51,10 @@
     },
     "subscriptions": {
       "title": "Connect a subscription for your agents",
-      "lede": "This is the Agents tab. Sign in with a subscription you already pay for. We recommend Claude (Pro or Max) or ChatGPT (Codex). Click Connect on its row; your browser opens once.",
+      "lede": "This is the Agents tab. Agents run best on a subscription you already pay for; we recommend Claude (Pro or Max) or ChatGPT (Codex). Click Connect on its row, and your browser opens once.",
       "waiting": "No subscription connected yet…",
       "connected": "Connected: {names}.",
-      "why": "A subscription is a flat monthly price, so your agents' bigger jobs do not bill your API key per call.",
+      "why": "A subscription is a flat monthly price. Without one, agents use your API key and each job is billed per use.",
       "later": "I'll connect one later"
     },
     "permissions": {
@@ -86,7 +91,7 @@
     "finish": "Finish",
     "skip": "Skip tour",
     "step_of": "{current} of {total}",
-    "replay_title": "Setup and app tour",
+    "replay_title": "Do the onboarding again",
     "replay_body": "Explains again how {name} works, walks you through setup (API keys, agent subscriptions, wake word), then the short tour of the app. Nothing restarts.",
     "replay": "Replay",
     "steps": {
@@ -95,7 +100,7 @@
       "agents_world": "This is the Verse, your agents at work. Click one to chat with it or hand it a job. Next brings you back.",
       "voice_hub": "Voice holds dictation into any app, your own word list and spoken shortcuts.",
       "settings": "Settings, API keys, costs and your profile live here. You can replay this tour anytime from Settings → App.",
-      "done": "That's the tour. You're ready: talk to {name} whenever you like."
+      "done": "That's the tour. Talk to {name} whenever you like, and if you're ever stuck, just ask {name}. Settings → App runs the onboarding again."
     }
   },
   "first_steps": {
@@ -124,7 +129,7 @@
     "replay_body": "Ten small, real things to try with {name}: talk, use tools, remember, build, hand off to agents. Each one is explained after it happened.",
     "finished": {
       "title": "You've got the basics!",
-      "body": "You completed {done} of {total} first steps. From now on, just talk to {name}: it decides whether to answer, use a tool or bring in an agent.",
+      "body": "You completed {done} of {total} first steps. From now on, just talk to {name}: it decides whether to answer, use a tool or bring in an agent. Stuck? Ask {name}.",
       "close": "Close"
     },
     "quests": {

@@ -39,7 +39,10 @@ export const SETUP_STEPS: Record<SetupStepId, SetupStep> = {
     id: "subscriptions",
     section: "apikeys",
     apiKeysTab: "subagents",
-    anchor: "apikeys-page",
+    // The subscription rows themselves (Connect buttons), scrolled into view —
+    // the tab opens on model settings further up.
+    anchor: "apikeys-subscriptions",
+    scrollTo: true,
     placement: "left",
     width: 340,
   },

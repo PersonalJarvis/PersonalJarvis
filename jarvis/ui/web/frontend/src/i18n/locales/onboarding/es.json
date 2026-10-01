@@ -4,6 +4,7 @@
     "continue": "Continuar",
     "step_of": "{current} de {total}",
     "welcome": {
+      "skip_all": "Saltar la configuración, ya me oriento",
       "title": "Bienvenido",
       "lede": "Primero, un vistazo rápido a qué es {name} y cómo funciona. Después lo configuramos aquí mismo, en la aplicación: una clave de API, una suscripción para tus agentes y tu palabra de activación.",
       "language": "Idioma",
@@ -19,7 +20,7 @@
       "prev": "Atrás",
       "skip": "Saltar",
       "finish": "A configurarlo",
-      "beat_of": "{current} / {total}",
+      "beat_of": "Explicación {current} de {total}",
       "beats": {
         "hello": "¡Hola, soy {pet}! Antes de configurar nada, te enseño cómo funciona {name}. Es rápido, y verás la aplicación real mientras te lo explico.",
         "talk": "Todo empieza aquí. Hablas con un solo asistente: {name}. Escribe aquí, o pulsa el botón redondo y habla. Nunca eliges tú una herramienta o un modelo; {name} decide lo que hace falta.",
@@ -30,12 +31,16 @@
         "results": "Lo que salga, como páginas, informes o imágenes, va a Artifacts. Las respuestas cortas vuelven directamente al chat o en voz alta.",
         "memory": "{name} también recuerda. Lo que le cuentas va a sus notas y a tu perfil, guardados en tu ordenador, para que nunca tengas que repetirte.",
         "safety": "Y tú mantienes el control. Lo inofensivo simplemente ocurre. Todo lo que envía, borra o cuesta dinero espera primero tu sí.",
-        "done": "Esa es toda la idea: hablas, {name} piensa, usa herramientas, llama a agentes y te entrega el resultado. Ahora démosle un cerebro."
+        "done": "Esa es toda la idea: hablas, {name} piensa, usa herramientas, llama a agentes y te entrega el resultado. ¿Te atascas luego? Pregúntale a {name}. Ahora démosle un cerebro."
       }
     },
     "keys": {
+      "next_hint": "Siguiente: conecta las suscripciones que ya pagas para que tus agentes puedan trabajar.",
+      "no_key": "¿Aún sin clave? También sirve un modelo local gratuito (Ajustes → Modelos locales), o sáltalo y añade una más tarde. Sin ninguna, el chat y la voz quedan apagados.",
+      "live_missing": "El chat funciona. La voz en directo necesita una clave de OpenAI o Gemini; mientras tanto {name} habla de la forma clásica, algo más lenta.",
+      "live_ready": "La voz en directo está activa: hablas y {name} responde al instante.",
       "title": "Añade una clave de API",
-      "lede": "Tu asistente necesita una clave de IA para pensar y hablar; sin ella, el chat y la voz siguen apagados. Esta es la página Claves API: pega una clave en la tarjeta de un proveedor y guárdala. Con OpenAI o Gemini basta una sola clave para la voz en directo.",
+      "lede": "Esta es la página de claves de API. Pega una clave en la tarjeta de un proveedor y guárdala; es todo lo que {name} necesita para pensar y hablar. Una clave de OpenAI (ChatGPT) o de Google Gemini también te da la voz en directo.",
       "waiting": "Esperando una clave…",
       "connecting": "Activando todo…",
       "connected": "Conectado: {provider}.",
@@ -46,10 +51,10 @@
     },
     "subscriptions": {
       "title": "Conecta una suscripción para tus agentes",
-      "lede": "Esta es la pestaña Agentes. Inicia sesión con una suscripción que ya pagas. Te recomendamos Claude (Pro o Max) o ChatGPT (Codex). Pulsa Connect en su fila; tu navegador se abre una vez.",
+      "lede": "Esta es la pestaña Agentes. Los agentes funcionan mejor con una suscripción que ya pagas; recomendamos Claude (Pro o Max) o ChatGPT (Codex). Pulsa Conectar en su fila y tu navegador se abre una vez.",
       "waiting": "Aún no hay ninguna suscripción conectada…",
       "connected": "Conectado: {names}.",
-      "why": "Una suscripción tiene un precio mensual fijo, así las tareas grandes de tus agentes no se cobran por llamada a tu clave de API.",
+      "why": "Una suscripción es un precio mensual fijo. Sin ella, los agentes usan tu clave de API y cada encargo se cobra por uso.",
       "later": "Conectaré una más tarde"
     },
     "permissions": {
@@ -86,7 +91,7 @@
     "finish": "Terminar",
     "skip": "Saltar visita",
     "step_of": "{current} de {total}",
-    "replay_title": "Configuración y visita guiada",
+    "replay_title": "Hacer el onboarding de nuevo",
     "replay_body": "Vuelve a explicar cómo funciona {name}, te guía por la configuración (claves de API, suscripciones de agentes, palabra de activación) y luego por la visita breve de la aplicación. Nada se reinicia.",
     "replay": "Repetir",
     "steps": {
@@ -95,7 +100,7 @@
       "agents_world": "Este es el Verse, tus agentes trabajando. Haz clic en uno para chatear con él o darle una tarea. Siguiente te lleva de vuelta.",
       "voice_hub": "En Voz tienes el dictado en cualquier aplicación, tu propia lista de palabras y atajos hablados.",
       "settings": "Aquí están los ajustes, las claves de API, los costes y tu perfil. Puedes repetir esta visita cuando quieras en Ajustes → Aplicación.",
-      "done": "Esa es la visita. Ya está todo listo: habla con {name} cuando quieras."
+      "done": "Esa fue la visita. Habla con {name} cuando quieras, y si alguna vez te atascas, pregúntale a {name}. En Ajustes → Aplicación puedes repetir el onboarding."
     }
   },
   "first_steps": {
@@ -124,7 +129,7 @@
     "replay_body": "Diez cosas pequeñas y reales para probar con {name}: hablar, usar herramientas, recordar, construir, pasar trabajo a agentes. Cada una se explica después de ocurrir.",
     "finished": {
       "title": "¡Ya dominas lo básico!",
-      "body": "Completaste {done} de {total} primeros pasos. A partir de ahora, simplemente habla con {name}: decide si responde, usa una herramienta o llama a un agente.",
+      "body": "Completaste {done} de {total} primeros pasos. A partir de ahora, simplemente habla con {name}: decide si responde, usa una herramienta o llama a un agente. ¿Atascado? Pregúntale a {name}.",
       "close": "Cerrar"
     },
     "quests": {

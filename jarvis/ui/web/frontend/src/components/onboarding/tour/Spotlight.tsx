@@ -6,6 +6,8 @@ import { EASE_OUT } from "../ui";
 import { cutout, fitToView, padded, placeCard, type Rect, type TourPlacement } from "./tourSteps";
 
 const CARD_W = 320;
+/** Narrowest a card may shrink to so it fits beside its element. */
+const MIN_SIDE_CARD_W = 240;
 
 function useViewport(): { w: number; h: number } {
   const [view, setView] = useState(() => ({ w: window.innerWidth, h: window.innerHeight }));
@@ -83,7 +85,14 @@ export function Spotlight({
   // so the same clip-path shape still animates.
   const point: Rect = { x: view.w / 2, y: view.h / 2, w: 0, h: 0 };
   const clip = cutout(!settled ? whole : hole ?? point);
-  const width = Math.min(cardWidth, view.w - 24);
+  // A card beside a big element (a whole settings page) must not lie over
+  // the part being set up: when the side it goes on is narrower than the
+  // card but still readable, the card narrows to fit there instead.
+  let width = Math.min(cardWidth, view.w - 24);
+  if (hole && (placement === "left" || placement === "right")) {
+    const room = placement === "left" ? hole.x - 14 - 12 : view.w - (hole.x + hole.w) - 14 - 12;
+    if (room < width && room >= MIN_SIDE_CARD_W) width = room;
+  }
   const pos = placeCard(hole, placement, { w: width, h: cardH }, view);
   const glide = reduced ? "none" : "clip-path 320ms cubic-bezier(0.22,1,0.36,1)";
   const ringGlide = reduced
@@ -91,7 +100,15 @@ export function Spotlight({
     : "transform 320ms cubic-bezier(0.22,1,0.36,1), width 320ms cubic-bezier(0.22,1,0.36,1), height 320ms cubic-bezier(0.22,1,0.36,1)";
 
   return createPortal(
-    <div className="pointer-events-none fixed inset-0 z-[110]" data-testid="tour-layer" {...{ [TOUR_LAYER_ATTR]: "" }}>
+    // aria-live keeps the guide reachable for assistive tech while a modal it
+    // points into (the Settings dialog) hides everything else from it — the
+    // modal's aria-hidden pass spares live regions.
+    <div
+      className="pointer-events-none fixed inset-0 z-[110]"
+      data-testid="tour-layer"
+      aria-live="polite"
+      {...{ [TOUR_LAYER_ATTR]: "" }}
+    >
       <div
         aria-hidden
         className={blocking ? "pointer-events-auto absolute inset-0 bg-scrim/70" : "absolute inset-0 bg-scrim/60"}

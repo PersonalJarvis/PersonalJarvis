@@ -173,7 +173,7 @@ export function FirstStepsGuide({
             FOCUS_RING,
           )}
         >
-          <GuidePetFigure state="idle" px={32} />
+          <GuidePetFigure state="idle" px={48} />
           <span className="font-medium">{t("first_steps.title")}</span>
           <span className="text-xs text-muted-foreground">{progress}</span>
           <ChevronUp aria-hidden className="h-3.5 w-3.5 text-muted-foreground" />
@@ -222,7 +222,7 @@ export function FirstStepsGuide({
         text={line}
         state={finished || isDone ? "success" : PET[quest.id]}
         heading={heading}
-        px={88}
+        px={96}
         testId="first-steps-say"
       >
         {!finished && !isDone && quest.action.kind === "send" && (
