@@ -246,7 +246,7 @@ def _codex_name_locked(path: Path, session_id: str) -> str:
 def _json(line: bytes) -> dict[str, Any]:
     try:
         row = json.loads(line)
-    except ValueError:  # A partially appended CLI record is retried on the next read.
+    except ValueError:  # An incomplete CLI record has no usable title; keep the existing title.
         return {}
     return row if isinstance(row, dict) else {}
 
