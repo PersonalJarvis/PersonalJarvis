@@ -8,6 +8,7 @@ export interface BrowserViewState {
   connected: boolean;
   ready: boolean;
   fullWindow: boolean;
+  extendedInput: boolean;
   previewPaused: boolean;
   manual: boolean;
   running: boolean;
@@ -21,7 +22,7 @@ export interface BrowserViewState {
   dialog?: { type: string; message: string };
 }
 const empty: BrowserViewState = {
-  connected: false, ready: false, fullWindow: false, previewPaused: false, manual: false, running: false, controlPending: false,
+  connected: false, ready: false, fullWindow: false, extendedInput: false, previewPaused: false, manual: false, running: false, controlPending: false,
   url: "", tabs: [], target: "", error: "",
 };
 
@@ -59,7 +60,7 @@ export function useBrowserView(agentId: string, enabled = true) {
     let decodeBusy = false;
     let lastLiveEvent = Date.now();
     let renderedFrames = 0;
-    let latestFrame: { data: string; sequence: number; timestamp: number } | null = null;
+    let latestFrame: { data: string; sequence: number; timestamp: number; geometry_id?: string; extended_input?: boolean } | null = null;
     manual.current = false;
     previewPaused.current = false;
     claiming.current = false;
@@ -68,6 +69,7 @@ export function useBrowserView(agentId: string, enabled = true) {
     const clearCanvas = () => {
       const el = canvas.current;
       if (el) el.width = 1280;
+      if (el) delete el.dataset.browserGeometryId;
     };
     clearCanvas();
     if (!enabled) return;
@@ -84,10 +86,12 @@ export function useBrowserView(agentId: string, enabled = true) {
           if (el.width !== image.width) el.width = image.width;
           if (el.height !== image.height) el.height = image.height;
           el.getContext("2d")?.drawImage(image, 0, 0);
+          el.dataset.browserGeometryId = frame.geometry_id ?? "";
           // Read-only diagnostics for end-to-end stream acceptance and support.
           el.dataset.browserFrameAgeMs = String(Math.max(0, Date.now() - frame.timestamp * 1000));
           el.dataset.browserRenderedFrames = String(++renderedFrames);
-          setState((s) => s.ready ? s : { ...s, ready: true, error: "" });
+          setState((s) => s.ready && s.extendedInput === (frame.extended_input === true) ? s
+            : { ...s, ready: true, error: "", extendedInput: frame.extended_input === true });
         }
         decodeBusy = false;
         decodeFrame();
@@ -115,7 +119,7 @@ export function useBrowserView(agentId: string, enabled = true) {
           opened = true;
           lastLiveEvent = Date.now();
           waitingForFrameSince = 0;
-          setState((s) => ({ ...s, connected: true, ready: false }));
+          setState((s) => ({ ...s, connected: true, ready: false, extendedInput: false }));
         };
         ws.onmessage = (message) => {
           if (disposed || socket.current !== ws) return;
@@ -133,7 +137,9 @@ export function useBrowserView(agentId: string, enabled = true) {
               }
               if (event.generation !== generation) {
                 generation = event.generation;
-                setState((s) => ({ ...s, pointer: undefined }));
+                setState((s) => ({ ...s, ready: false, extendedInput: false, pointer: undefined }));
+                renderedFrames = 0;
+                waitingForFrameSince = Date.now();
                 lastSequence = -1;
                 epoch++;
               }
@@ -167,6 +173,7 @@ export function useBrowserView(agentId: string, enabled = true) {
               else if (!renderedFrames && !waitingForFrameSince) waitingForFrameSince = Date.now();
               setState((s) => ({ ...s, manual: event.manual, running: event.running,
                 url: event.url, target: event.target, tabs: event.tabs ?? [], fullWindow: Boolean(event.full_window),
+                extendedInput: event.extended_input === true,
                 previewPaused: paused, ready: paused ? false : s.ready, pointer: paused ? undefined : s.pointer }));
             } else if (event.kind === "control") {
               if (typeof event.manual === "boolean") manual.current = event.manual;
@@ -201,11 +208,14 @@ export function useBrowserView(agentId: string, enabled = true) {
           // Rejection before accept is exposed as 1006 by browsers, not 4401.
           if (event.code === 4401 || !opened) needsTicket = true;
           epoch++;
+          latestFrame = null;
           renderedFrames = 0;
+          waitingForFrameSince = 0;
+          clearCanvas();
           manual.current = false;
           claiming.current = false;
           inputs.current = [];
-          setState((s) => ({ ...s, connected: false, manual: false, controlPending: false, pointer: undefined }));
+          setState((s) => ({ ...s, connected: false, ready: false, manual: false, extendedInput: false, controlPending: false, pointer: undefined }));
           cancelConnect = requestConnect(() => void connect(), jitteredDelay(attempt++));
         };
         ws.onerror = () => ws.close();

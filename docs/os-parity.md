@@ -1,5 +1,26 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
+## Embedded Chrome menus and native input
+
+On Windows, the managed browser preview composites native menus and dialogs
+whose owner chain leads to the selected Chrome window. Mouse coordinates map
+back to the corresponding owned HWND, including popup offsets and DPI scaling.
+Hover, right/middle/double clicks and scrolling target that widget; keyboard
+input follows the owned focus. Offscreen positions from older builds recover
+onto a monitor without activating Chrome. Hooks and captures have bounded
+cleanup, and stale geometry rejects input.
+
+Manual website sign-in stays inside the embedded viewer. Vision-capable agents
+with unrestricted website access can use approved native window controls;
+domain-restricted agents keep page-only tools because a complete Chrome frame
+can expose unrelated tabs. Native OS file dialogs require manual control to
+preserve workspace file-access boundaries. Other operating systems retain the
+existing page/CDP view and input; no native Chrome-menu parity is claimed.
+Portable fake tests cover ownership, composition, input mapping and lifecycle.
+The installed Browser-Use runtime's tool schema/dispatch was checked without
+launching a browser. Real Chrome menus, authentication and visual acceptance
+still require an interactive Windows check.
+
 ## Current cryptography and SSH channel validation (2026-10-01, T3)
 
 Every architecture now requires cryptography >=50.0.2 and AsyncSSH >=2.24.0.

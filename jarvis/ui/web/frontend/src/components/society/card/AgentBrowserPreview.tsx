@@ -3,7 +3,7 @@
  * Opening the card never launches one; pixels stay out of React state; all
  * manual actions require a control lease.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Maximize2, Minimize2, RotateCw } from "lucide-react";
 import { useLocaleChunk, useT } from "@/i18n";
 import { societyDisplayName } from "@/lib/societyDisplayName";
@@ -14,10 +14,12 @@ import type { SocietyAgent } from "../data";
 import { useAgentBrowserOpen, useBrowserInstallStatus } from "../cardData";
 import { useBrowserView } from "./useBrowserView";
 import { AgentCursor } from "./AgentCursor";
+import { browserPoint } from "./browserInput";
 import { BrowserProfilesButton } from "../browser/BrowserProfilesButton";
 import "./agentCard.css";
 
 export function AgentBrowserPreview({ agent }: { agent: SocietyAgent }) {
+  const lastHoverAt = useRef(0);
   const t = useT();
   useLocaleChunk("society");
   const assistantName = useEventStore((s) => s.assistantName);
@@ -92,14 +94,38 @@ export function AgentBrowserPreview({ agent }: { agent: SocietyAgent }) {
           onClick={(e) => {
             if (!live || !state.ready) return;
             e.currentTarget.focus();
-            const box = e.currentTarget.getBoundingClientRect();
-            const { width, height } = e.currentTarget;
-            const scale = Math.min(box.width / width, box.height / height);
-            const x = (e.clientX - box.left - (box.width - width * scale) / 2) / scale;
-            const y = (e.clientY - box.top - (box.height - height * scale) / 2) / scale;
-            if (x >= 0 && y >= 0 && x <= width && y <= height) control("click", { x, y });
+            const point = browserPoint(e.currentTarget, e.clientX, e.clientY);
+            if (point) control("click", { ...point, ...(state.extendedInput && e.detail === 2 ? { count: 2 } : {}) });
           }}
-          onWheel={(e) => { if (live && state.ready && document.activeElement === e.currentTarget) control("scroll", { dx: e.deltaX, dy: e.deltaY }); }}
+          onContextMenu={(e) => {
+            if (!live || !state.ready) return;
+            e.preventDefault();
+            if (!state.extendedInput) return;
+            e.currentTarget.focus();
+            const point = browserPoint(e.currentTarget, e.clientX, e.clientY);
+            if (point) control("click", { ...point, button: "right" });
+          }}
+          onAuxClick={(e) => {
+            if (!live || !state.ready || e.button !== 1 || !state.extendedInput) return;
+            e.preventDefault();
+            e.currentTarget.focus();
+            const point = browserPoint(e.currentTarget, e.clientX, e.clientY);
+            if (point) control("click", { ...point, button: "middle" });
+          }}
+          onMouseMove={(e) => {
+            if (!live || !state.ready || !state.manual || !state.extendedInput || !state.connected) return;
+            const now = performance.now();
+            if (now - lastHoverAt.current < 33) return;
+            const point = browserPoint(e.currentTarget, e.clientX, e.clientY);
+            // Older running backends already forward click arguments. This
+            // keeps hover compatible while only the browser worker reloads.
+            if (point) { lastHoverAt.current = now; control("click", { ...point, move_only: true }); }
+          }}
+          onWheel={(e) => {
+            if (!live || !state.ready || document.activeElement !== e.currentTarget) return;
+            const point = browserPoint(e.currentTarget, e.clientX, e.clientY);
+            if (point) control("scroll", { ...point, dx: e.deltaX, dy: e.deltaY });
+          }}
           onPaste={(e) => {
             if (!live || !state.ready || document.activeElement !== e.currentTarget) return;
             e.preventDefault();
@@ -117,7 +143,7 @@ export function AgentBrowserPreview({ agent }: { agent: SocietyAgent }) {
               control("key", { key: [...modifiers, e.key].join("+") });
             }
           }} />
-        {!state.fullWindow && (
+        {(!state.fullWindow || state.pointer?.native_window === true) && (
           <AgentCursor pointer={state.ready && state.connected && !state.manual ? state.pointer : undefined} />
         )}
         {!live && <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-muted p-3 text-center text-xs text-muted-foreground">

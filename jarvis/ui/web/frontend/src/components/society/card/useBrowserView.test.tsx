@@ -44,6 +44,45 @@ test("silent live connection becomes disconnected and pays the reconnect budget"
   expect(connect).toHaveBeenCalledTimes(2);
 });
 
+test("extended native input requires an explicit worker capability and resets on reconnect", async () => {
+  const hook = await mount();
+  act(() => Socket.current.onmessage?.({ data: JSON.stringify({ kind: "state", manual: true, full_window: true, url: "", tabs: [] }) }));
+  expect(hook.result.current.state.extendedInput).toBe(false);
+  act(() => Socket.current.onmessage?.({ data: JSON.stringify({ kind: "state", manual: true, full_window: true, extended_input: true, url: "", tabs: [] }) }));
+  expect(hook.result.current.state.extendedInput).toBe(true);
+  act(() => Socket.current.close());
+  expect(hook.result.current.state.extendedInput).toBe(false);
+});
+
+
+test("disconnect discards buffered frames before an old image decoder can restore input capabilities", async () => {
+  class FrameImage {
+    static pending: FrameImage[] = [];
+    width = 1280; height = 800;
+    onload: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    constructor() { FrameImage.pending.push(this); }
+    set src(_value: string) { /* Image completion is controlled by this test. */ }
+  }
+  vi.stubGlobal("Image", FrameImage);
+  const hook = await mount();
+  const canvas = document.createElement("canvas");
+  const drawImage = vi.fn();
+  vi.spyOn(canvas, "getContext").mockReturnValue({ drawImage } as unknown as CanvasRenderingContext2D);
+  Object.defineProperty(hook.result.current.canvas, "current", { value: canvas, writable: true });
+  for (const sequence of [1, 2]) {
+    act(() => Socket.current.onmessage?.({ data: JSON.stringify({ kind: "frame", data: "fixture",
+      sequence, timestamp: Date.now() / 1000, generation: "old", full_window: true, extended_input: true }) }));
+  }
+  expect(FrameImage.pending).toHaveLength(1);
+  act(() => Socket.current.close());
+  act(() => FrameImage.pending[0].onload?.());
+  expect(FrameImage.pending).toHaveLength(1);
+  expect(drawImage).not.toHaveBeenCalled();
+  expect(hook.result.current.state.ready).toBe(false);
+  expect(hook.result.current.state.extendedInput).toBe(false);
+});
+
 test("state heartbeats without first pixels recover instead of connecting forever", async () => {
   const hook = await mount();
   for (let n = 0; n < 4; n++) {

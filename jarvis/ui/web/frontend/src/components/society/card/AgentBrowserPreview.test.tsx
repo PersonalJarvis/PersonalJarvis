@@ -26,7 +26,7 @@ const { control, state, view, browser } = vi.hoisted(() => ({
   control: vi.fn(),
   view: vi.fn(),
   browser: { open: true, mode: "own", connected: true, profileName: "" },
-  state: { connected: true, ready: true, fullWindow: false, previewPaused: false, manual: false, running: false,
+  state: { connected: true, ready: true, fullWindow: false, extendedInput: false, previewPaused: false, manual: false, running: false,
     url: "https://example.com", target: "one", tabs: [{ id: "one", url: "https://example.com" }], error: "" },
 }));
 vi.mock("./useBrowserView", () => ({
@@ -47,7 +47,7 @@ function mount() {
 }
 afterEach(() => {
   cleanup(); control.mockClear(); view.mockClear();
-  state.manual = false; state.fullWindow = false; state.previewPaused = false; state.ready = true; state.error = ""; browser.open = true;
+  state.manual = false; state.fullWindow = false; state.extendedInput = false; state.previewPaused = false; state.ready = true; state.error = ""; browser.open = true;
   browser.mode = "own"; browser.connected = true; browser.profileName = "";
 });
 describe("live agent browser", () => {
@@ -137,5 +137,29 @@ describe("live agent browser", () => {
     mount();
     fireEvent.keyDown(screen.getByLabelText("Live browser of Scout"), { key: "x" });
     expect(control).toHaveBeenCalledWith("text", { text: "x" });
+  });
+  test("native menus receive right click, double click and scroll at the shown frame position", () => {
+    state.manual = true; state.fullWindow = true; state.extendedInput = true;
+    mount();
+    const canvas = screen.getByLabelText("Live browser of Scout") as HTMLCanvasElement;
+    canvas.width = 1600; canvas.height = 1000;
+    canvas.dataset.browserGeometryId = "profile-popup";
+    vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue({ left: 0, top: 0, width: 1600, height: 1000 } as DOMRect);
+    fireEvent.contextMenu(canvas, { clientX: 1500, clientY: 70 });
+    expect(control).toHaveBeenLastCalledWith("click", { x: 1500, y: 70, geometry_id: "profile-popup", button: "right" });
+    fireEvent.click(canvas, { clientX: 1500, clientY: 70, detail: 2 });
+    expect(control).toHaveBeenLastCalledWith("click", { x: 1500, y: 70, geometry_id: "profile-popup", count: 2 });
+    fireEvent.wheel(canvas, { clientX: 1500, clientY: 180, deltaY: 80 });
+    expect(control).toHaveBeenLastCalledWith("scroll", { x: 1500, y: 180, geometry_id: "profile-popup", dx: 0, dy: 80 });
+  });
+  test("an older running worker never receives hover disguised as a click or unsupported mouse buttons", () => {
+    state.manual = true; state.fullWindow = true;
+    mount();
+    const canvas = screen.getByLabelText("Live browser of Scout") as HTMLCanvasElement;
+    vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue({ left: 0, top: 0, width: 1280, height: 800 } as DOMRect);
+    fireEvent.mouseMove(canvas, { clientX: 100, clientY: 70 });
+    fireEvent.contextMenu(canvas, { clientX: 100, clientY: 70 });
+    fireEvent.click(canvas, { clientX: 100, clientY: 70, detail: 2 });
+    expect(control.mock.calls).toEqual([["click", { x: 100, y: 70 }]]);
   });
 });

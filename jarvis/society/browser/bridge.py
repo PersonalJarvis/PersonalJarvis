@@ -184,7 +184,7 @@ async def execute_live(
                 raise
         for field in usage_total:
             usage_total[field] += int(usage.get(field, 0))
-        return {"ok": True, "text": text, "usage": usage}
+        return {"ok": True, "text": text, "usage": usage, "vision_available": vision_available}
 
     denied = False
 

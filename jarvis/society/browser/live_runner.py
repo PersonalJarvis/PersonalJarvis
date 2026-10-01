@@ -107,6 +107,7 @@ class Worker:
         self.pointer: Any = None
         self.visual_action = False
         self.cursor_on = False
+        self.native_pointer_active = False
         self.cursor_jobs: set[asyncio.Task] = set()
 
     async def rpc(self, kind: str, payload: dict) -> dict:
@@ -157,9 +158,18 @@ class Worker:
         }
 
         async def route_request(route: Any) -> None:
+            from window_actions import navigation_allowed
+
             parsed = urlsplit(route.request.url)
             host = parsed.hostname or ""
             if parsed.scheme not in {"http", "https"}:
+                await route.abort()
+                return
+            if route.request.is_navigation_request() and not navigation_allowed(
+                route.request.url,
+                list(args.get("allowed_domains") or []),
+                manual=self.manual,
+            ):
                 await route.abort()
                 return
             if host not in private_hosts:
@@ -296,7 +306,7 @@ class Worker:
         page.on("framenavigated", self.cursor_navigated)
 
     def cursor_navigated(self, frame: Any) -> None:
-        if not self.cursor_on or self.manual:
+        if not self.cursor_on or self.manual or self.native_pointer_active:
             return
         task = asyncio.create_task(self._arm_frame(frame))
         self.cursor_jobs.add(task)
@@ -307,7 +317,10 @@ class Worker:
 
         try:
             await frame.evaluate(CURSOR_SCRIPT)
-            await frame.evaluate(ARM_SOURCE, True)
+            await frame.evaluate(
+                ARM_SOURCE,
+                self.cursor_on and not self.manual and not self.native_pointer_active,
+            )
         except Exception:
             logging.getLogger(__name__).debug(
                 "Agent cursor could not follow a navigation", exc_info=True
@@ -325,7 +338,7 @@ class Worker:
         self.dialog = dialog
         emit("dialog", type=dialog.type, message=dialog.message[:500])
 
-    async def focused(self) -> Any:
+    async def focused(self, *, strict_native: bool = False) -> Any:
         self.tabs = {}
         for page in self.context.pages:
             if page.is_closed():
@@ -337,8 +350,8 @@ class Worker:
             finally:
                 await session.detach()
         focused = self.browser.get_focused_target() if self.browser is not None else None
-        if self.native and self.manual:
-            window_title = self.native.title()
+        if self.native:
+            window_title = await asyncio.to_thread(self.native.title)
             candidates = []
             for page in self.tabs.values():
                 title = await page.title()
@@ -349,11 +362,15 @@ class Worker:
             if len(candidates) == 1:
                 self.page = candidates[0]
             else:
+                visible = []
                 for page in candidates:
                     if await page.evaluate("document.visibilityState === 'visible'"):
-                        self.page = page
-                        break
-        if not self.manual and focused and focused.target_id in self.tabs:
+                        visible.append(page)
+                if len(visible) == 1:
+                    self.page = visible[0]
+                elif strict_native:
+                    raise RuntimeError("The active Chrome tab is ambiguous; select a tab manually")
+        if not self.native and not self.manual and focused and focused.target_id in self.tabs:
             self.page = self.tabs[focused.target_id]
         if self.page is None or self.page.is_closed():
             self.page = next(iter(self.tabs.values()), None)
@@ -424,6 +441,7 @@ class Worker:
                         target=target,
                         tabs=[{"id": t, "url": p.url} for t, p in self.tabs.items()],
                         full_window=bool(self.native),
+                        extended_input=True,
                     )
                 elif self.cdp:
                     await self.cdp.send("Page.stopScreencast")
@@ -447,7 +465,7 @@ class Worker:
             try:
                 if self.viewers:
                     if self.native:
-                        native_frame = self.native.frame()
+                        native_frame = await asyncio.to_thread(self.native.frame)
                         if native_frame and (
                             self.native_replay or native_frame["timestamp"] != self.native_frame_at
                         ):
@@ -477,6 +495,7 @@ class Worker:
                             generation=self.generation,
                             sequence=self.sequence,
                             full_window=bool(self.native),
+                            extended_input=True,
                             **frame,
                         )
             except asyncio.CancelledError:
@@ -512,15 +531,25 @@ class Worker:
             _verified_api_keys = True
 
             async def ainvoke(self, messages, output_format=None, **kwargs):
+                rows = [m.model_dump(mode="json") for m in messages]
+                if worker.native is not None and args.get("vision", True) and worker.native_vision:
+                    from window_actions import window_message
+
+                    full_window = await window_message(worker)
+                    if full_window is not None:
+                        rows.append(full_window)
                 reply = await worker.rpc(
                     "llm",
                     {
-                        "messages": [m.model_dump(mode="json") for m in messages],
+                        "messages": rows,
                         "schema": output_format.model_json_schema() if output_format else None,
                     },
                 )
                 if not reply.get("ok"):
                     raise RuntimeError(reply.get("error", "Jarvis model unavailable"))
+                if reply.get("vision_available") is False:
+                    worker.native_vision = False
+                    worker.window_observation = None
                 text = reply["text"].strip()
                 if text.startswith("```"):
                     text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
@@ -541,12 +570,23 @@ class Worker:
         class GatedTools(Tools):
             async def act(self, action, browser_session, *pos, **kw):
                 proposal = action.model_dump(exclude_unset=True)
+                if any(name.startswith("browser_window_") for name in proposal):
+                    current = await worker.focused(strict_native=True)
+                    current_url = current.url
+                else:
+                    current_url = await browser_session.get_current_page_url()
                 answer = await worker.rpc(
                     "action",
-                    {"action": proposal, "url": await browser_session.get_current_page_url()},
+                    {"action": proposal, "url": current_url},
                 )
                 if not answer.get("ok"):
                     raise asyncio.CancelledError(answer.get("error", "Browser action denied"))
+                native_pointer = any(name.startswith("browser_window_") for name in proposal)
+                if worker.native and native_pointer != worker.native_pointer_active:
+                    if worker.pointer:
+                        worker.pointer.clear()
+                    await worker.show_page_cursor(not native_pointer)
+                    worker.native_pointer_active = native_pointer
                 worker.visual_action = True
                 try:
                     result = await super().act(action, browser_session, *pos, **kw)
@@ -559,7 +599,14 @@ class Worker:
                 return result
 
         self.manual = False
+        self.native_vision = bool(args.get("vision", True))
+        self.native_pointer_active = False
+        self.window_observation = None
         tools = GatedTools(exclude_actions=["execute_python", "run_command", "evaluate"])
+        if self.native is not None and args.get("vision", True):
+            from window_actions import register_window_actions
+
+            register_window_actions(tools, self, ActionResult)
         started = time.monotonic()
         self.agent = Agent(
             task=args["task"],
@@ -586,6 +633,14 @@ class Worker:
             self.step_idle.set()
             await self.agent_gate.wait()
             self.step_idle.clear()
+            if self.native:
+                from browser_use.browser.events import SwitchTabEvent
+
+                page = await self.focused(strict_native=True)
+                target = next((t for t, p in self.tabs.items() if p is page), "")
+                current = self.browser.get_focused_target()
+                if target and (current is None or current.target_id != target):
+                    await self.browser.event_bus.dispatch(SwitchTabEvent(target_id=target))
 
         visible = bool(self.native) or not self.owns_context
         if visible:
@@ -672,7 +727,7 @@ class Worker:
                 self.manual = False
                 self.agent_gate.set()
                 if self.cursor_on:
-                    await self.show_page_cursor(True)
+                    await self.show_page_cursor(not self.native_pointer_active)
             return {"manual": self.manual}
         if op == "run":
             if self.manual:
@@ -683,7 +738,9 @@ class Worker:
             return {}
         if not self.manual:
             raise RuntimeError("Take control of the browser before interacting")
-        if self.native and op in {"click", "scroll", "text", "key"}:
+        if op == "click" and args.get("move_only") is True:
+            op = "move"
+        if self.native and op in {"click", "move", "scroll", "text", "key"}:
             if op == "key" and args.get("key") == "Control+t":
                 async with self.context.expect_page(timeout=5000) as opened:
                     await asyncio.to_thread(self.native.input, op, args)
@@ -719,8 +776,23 @@ class Worker:
             await self.browser.event_bus.dispatch(SwitchTabEvent(target_id=target))
             await self.page.bring_to_front()
         elif op == "click":
-            await page.mouse.click(float(args["x"]), float(args["y"]))
+            if args.get("count", 1) == 2:
+                # The viewer already sent the first physical click. Playwright's
+                # click(count=2) would add two more pairs and turn it into three.
+                await page.mouse.move(float(args["x"]), float(args["y"]))
+                await page.mouse.down(button=args.get("button", "left"), click_count=2)
+                await page.mouse.up(button=args.get("button", "left"), click_count=2)
+            else:
+                await page.mouse.click(
+                    float(args["x"]),
+                    float(args["y"]),
+                    button=args.get("button", "left"),
+                )
+        elif op == "move":
+            await page.mouse.move(float(args["x"]), float(args["y"]))
         elif op == "scroll":
+            if "x" in args and "y" in args:
+                await page.mouse.move(float(args["x"]), float(args["y"]))
             await page.mouse.wheel(float(args.get("dx", 0)), float(args.get("dy", 0)))
         elif op == "text":
             await page.keyboard.insert_text(str(args["text"]))

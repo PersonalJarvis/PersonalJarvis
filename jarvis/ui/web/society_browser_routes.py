@@ -25,6 +25,7 @@ OPERATIONS = {
     "reload",
     "tab",
     "click",
+    "move",
     "scroll",
     "text",
     "key",
@@ -67,8 +68,20 @@ def validate_control(value: Any) -> tuple[str, dict]:
             or abs(args[key]) > 10000
         ):
             raise ValueError("Invalid browser coordinates")
-    if op == "click" and not all(k in args for k in ("x", "y")):
+    if op in {"click", "move"} and not all(k in args for k in ("x", "y")):
         raise ValueError("Click needs coordinates")
+    if "button" in args and (
+        not isinstance(args["button"], str) or args["button"] not in {"left", "right", "middle"}
+    ):
+        raise ValueError("Unsupported browser mouse button")
+    if "move_only" in args and type(args["move_only"]) is not bool:
+        raise ValueError("Invalid browser pointer motion")
+    if "count" in args and (type(args["count"]) is not int or args["count"] not in {1, 2}):
+        raise ValueError("Unsupported browser click count")
+    if "geometry_id" in args and (
+        not isinstance(args["geometry_id"], str) or len(args["geometry_id"]) > 128
+    ):
+        raise ValueError("Invalid browser frame geometry")
     for key in ("text", "key", "url", "target"):
         if key in args and (not isinstance(args[key], str) or len(args[key]) > 8192):
             raise ValueError("Browser input is too large")
@@ -225,7 +238,8 @@ async def agent_browser_live(websocket: WebSocket, agent_id: str) -> None:
                 await send(
                     {
                         "kind": "error",
-                        "error": str(exc)[:300] if isinstance(exc, (RuntimeError, ValueError))
+                        "error": str(exc)[:300]
+                        if isinstance(exc, (RuntimeError, ValueError))
                         else "Browser startup failed. Retry or repair the installation.",
                     }
                 )
