@@ -522,6 +522,49 @@ jobs:
       - name: Target-resolved portable install matrix
         run: python scripts/ci/check_portable_install_matrix.py --jobs 4
 
+  native-crypto-runtime:
+    name: native crypto (${{ matrix.runner }}, Python ${{ matrix.python }})
+    needs: detect
+    if: needs.detect.outputs.deps == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {runner: macos-15-intel, architecture: x64, python: '3.11'}
+          - {runner: macos-15-intel, architecture: x64, python: '3.14'}
+          - {runner: macos-15, architecture: arm64, python: '3.11'}
+          - {runner: macos-15, architecture: arm64, python: '3.14'}
+          - {runner: windows-11-arm, architecture: arm64, python: '3.12'}
+          - {runner: windows-11-arm, architecture: arm64, python: '3.14'}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+          architecture: ${{ matrix.architecture }}
+      - name: Fresh hashed base install without crypto compilation
+        run: python scripts/pip_install.py --require-hashes --only-binary=cryptography,asyncssh -r requirements.txt
+      - name: Native security and compatibility contracts
+        shell: bash
+        run: |
+          python -m pip install pytest pytest-asyncio pytest-timeout
+          python -m pytest --confcutdir=tests/contract -q tests/contract/test_native_crypto.py tests/contract/test_native_ssh.py
+      - name: Confirm the published native wheel uses the reviewed OpenSSL
+        if: matrix.runner != 'macos-15'
+        shell: python
+        run: |
+          import json
+          from pathlib import Path
+          from cryptography.hazmat.backends.openssl.backend import backend
+          expected = json.loads(Path('packaging/native-crypto.json').read_text())['openssl']['version']
+          actual = backend.openssl_version_text()
+          print(actual)
+          assert actual.startswith(f'OpenSSL {expected} '), (actual, expected)
+
   realtime-contract:
     needs: detect
     if: needs.detect.outputs.realtime == 'true'
@@ -660,6 +703,7 @@ jobs:
       - frontend
       - jarvisctl
       - deps
+      - native-crypto-runtime
       - realtime-contract
       - realtime-slim
       - soak

@@ -1,0 +1,7 @@
+# Only cryptography opts into this index through tool.uv.sources.
+# Never pass it as a generic --index/--extra-index-url: that probes this host
+# for every unrelated dependency and triggers Pages' request limit.
+[[index]]
+name = "native-crypto"
+url = "https://personaljarvis.github.io/PersonalJarvis/native-crypto/50.0.2-1/simple/"
+explicit = true
