@@ -335,6 +335,12 @@ MAX_WORKSPACES: int | None = None
 # faster than the old fixed delay, and a busy one gets the time it needs.
 _ARRIVAL_POLL_S = 0.2
 _ARRIVAL_WINDOW_S = 3.0
+# After an unconfirmed send, how long to watch for the text surfacing late in
+# the box (a loading CLI that buffered it and dropped the Enter).
+_LATE_ARRIVAL_WINDOW_S = 8.0
+# How long a process's FIRST prompt waits for the composer to paint on a CLI
+# that otherwise skips the typing wait; past it the prompt goes out anyway.
+_FIRST_PROMPT_COMPOSER_WAIT_S = 20.0
 
 Status = str  # "pending" | "live" | "exited" | "error"
 
@@ -6717,6 +6723,15 @@ class Registry:
 
         process_id = term.pty_id
         generation = term.process_generation
+        if term.submit_generation != generation or term.last_submit_at is None:
+            # The FIRST prompt of a process lets the composer paint even on a
+            # CLI that opts out of the typing wait. Typed early, Claude Code
+            # buffers the text but drops the Enter, so the task sat unsent in a
+            # new agent's box (live 2026-10-01: briefed 3 s after spawn). Soft:
+            # an unrecognised composer still gets the opt-out fast path below.
+            await fleet_actions.wait_for_input_line(
+                owner, [wanted], timeout_s=_FIRST_PROMPT_COMPOSER_WAIT_S
+            )
         ready = await fleet_actions.wait_for_prompt_ready(
             owner,
             [wanted],
@@ -6980,6 +6995,20 @@ class Registry:
         manager.write(term.pty_id or "", "\r")
         left_the_box = await self._confirm_submitted(term, payload, manager)
 
+        if not arrived and left_the_box and await self._await_arrival(
+            term, payload, window_s=_LATE_ARRIVAL_WINDOW_S
+        ):
+            # The text surfaced in the box only after the Enter went out: the
+            # pane buffered it while loading and dropped that early Enter. It
+            # is provably sitting there now, so one more Enter is safe and is
+            # the difference between a briefed agent and an idle one.
+            logger.warning(
+                "Agentic IDE: the prompt reached {} only after Enter — pressing Enter again",
+                term.name,
+            )
+            term.last_input_at = time.time()
+            manager.write(term.pty_id or "", "\r")
+            return await self._confirm_submitted(term, payload, manager)
         if not arrived and left_the_box:
             # The prompt was never SEEN in the box, and an empty box is exactly
             # what a successful submit looks like — so "it went out" and "the
@@ -6997,7 +7026,9 @@ class Registry:
             return None
         return left_the_box
 
-    async def _await_arrival(self, term: Terminal, payload: str) -> bool:
+    async def _await_arrival(
+        self, term: Terminal, payload: str, *, window_s: float | None = None
+    ) -> bool:
         """Wait until the pane visibly holds ``payload``, or give up.
 
         Returns as soon as the text (or the TUI's collapsed stand-in for it) is
@@ -7005,7 +7036,8 @@ class Registry:
         so on a healthy pane this costs a fraction of the old fixed delay.
         """
         needle = _submit_needle(payload)
-        deadline = max(1, int(_ARRIVAL_WINDOW_S / _ARRIVAL_POLL_S)) if _ARRIVAL_POLL_S else 1
+        window = _ARRIVAL_WINDOW_S if window_s is None else window_s
+        deadline = max(1, int(window / _ARRIVAL_POLL_S)) if _ARRIVAL_POLL_S else 1
         for _ in range(deadline):
             await asyncio.sleep(_ARRIVAL_POLL_S)
             if _input_line_holds(term.transcript.tail(10), needle):
