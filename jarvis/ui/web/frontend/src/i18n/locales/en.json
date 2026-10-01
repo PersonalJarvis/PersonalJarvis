@@ -669,7 +669,8 @@
     "prompt_mode_off": "Prompt Mode is off — dictations arrive as spoken. Click to turn every dictation into a finished prompt for a coding agent.",
     "prompt_mode_failed": "Prompt Mode could not be switched.",
     "theme_to_light": "Switch to light mode",
-    "theme_to_dark": "Switch to dark mode"
+    "theme_to_dark": "Switch to dark mode",
+    "back_to_assistant": "Back to {name}"
   },
   "assistant_chat": {
     "voice_enter": "Voice mode",

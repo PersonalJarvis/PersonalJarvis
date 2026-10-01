@@ -669,7 +669,8 @@
     "prompt_mode_off": "El modo Prompt está desactivado: los dictados llegan tal como se dijeron. Haz clic para convertir cada dictado en un prompt terminado para un agente de código.",
     "prompt_mode_failed": "No se pudo cambiar el modo Prompt.",
     "theme_to_light": "Cambiar al modo claro",
-    "theme_to_dark": "Cambiar al modo oscuro"
+    "theme_to_dark": "Cambiar al modo oscuro",
+    "back_to_assistant": "Volver a {name}"
   },
   "assistant_chat": {
     "voice_enter": "Modo voz",

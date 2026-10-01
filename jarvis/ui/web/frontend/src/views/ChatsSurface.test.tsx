@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { ChatsSurface } from "@/views/ChatsSurface";
 import { useHomeStore } from "@/store/home";
 import { readHomeSurface } from "@/lib/homeSurface";
@@ -22,16 +22,30 @@ vi.mock("@/components/home/VoiceStage", () => ({
 vi.mock("@/components/home/ChatStage", () => ({
   ChatStage: () => <div data-testid="chat">chat</div>,
 }));
+vi.mock("@/components/home/HomeAgentChat", () => ({
+  default: ({ agentId }: { agentId: string }) => <div data-testid="agent-chat">{agentId}</div>,
+}));
 
 const STORAGE_KEY = "jarvis.home.surface.v2";
 
 describe("ChatsSurface (the front page)", () => {
   beforeEach(() => {
     window.localStorage.clear();
-    useHomeStore.setState({ surface: readHomeSurface() });
+    useHomeStore.setState({ surface: readHomeSurface(), agentChatId: null });
   });
 
   afterEach(cleanup);
+
+  it("gives the page to an agent's chat picked in the sidebar, and back on a new chat", async () => {
+    useHomeStore.getState().openAgentChat("agent-7");
+    render(<ChatsSurface />);
+    expect((await screen.findByTestId("agent-chat")).textContent).toBe("agent-7");
+    expect(screen.queryByTestId("chat")).toBeNull();
+    const { startNewTextChat } = await import("@/lib/newChat");
+    act(() => startNewTextChat());
+    expect(await screen.findByTestId("chat")).toBeTruthy();
+    expect(useHomeStore.getState().agentChatId).toBeNull();
+  });
 
   it("opens on the chat by default, with nothing above it", async () => {
     render(<ChatsSurface />);

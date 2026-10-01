@@ -178,6 +178,7 @@ export function Sidebar({
   const t = useT();
   const active = useEventStore((s) => s.activeSection);
   const openVoiceThread = useEventStore((s) => s.activeKind === "voice" && Boolean(s.activeThreadId));
+  const agentChatOpen = useHomeStore((s) => s.agentChatId !== null);
   const setActive = useEventStore((s) => s.setActiveSection);
   const activeIdeWorkspaceId = useIdeProjectsStore((s) => s.activeWorkspaceId);
   const openIdeWorkspaceOptions = useIdeProjectsStore((s) => s.openWorkspaceOptions);
@@ -233,7 +234,7 @@ export function Sidebar({
   // An empty chat on the front page: nothing open, nothing being read.
   const onEmptyChat = useAgentChatStore(
     (st) => active === "chats" && !st.activeSessionId && st.timeline.items.length === 0,
-  ) && !openVoiceThread;
+  ) && !openVoiceThread && !agentChatOpen;
   const identity = usePublishIdentity();
   const userName = useUserName();
   // The person by first name once the Profile knows it, else their

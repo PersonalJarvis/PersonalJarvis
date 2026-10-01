@@ -94,6 +94,9 @@ export function useChatRows({ poll = false }: { poll?: boolean } = {}): ChatRows
 
   const open = useCallback(
     (row: ChatRow) => {
+      // A history row is Jarvis' conversation: it takes the stage back from
+      // an agent's chat opened from the sidebar.
+      useHomeStore.getState().openAgentChat(null);
       if (row.kind === "voice") {
         // End the agent session on stage first: the chat stage renders the
         // voice archive only while no agent chat is open, and its socket has

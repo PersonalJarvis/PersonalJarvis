@@ -22,6 +22,7 @@ export function resetTextConversation(): void {
 export function startNewTextChat(): void {
   resetTextConversation();
   useAgentChatStore.getState().newChat();
+  useHomeStore.getState().openAgentChat(null);
   useHomeStore.getState().setSurface("chat");
   useEventStore.getState().setActiveSection("chats");
 }

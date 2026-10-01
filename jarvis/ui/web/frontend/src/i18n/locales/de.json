@@ -669,7 +669,8 @@
     "prompt_mode_off": "Prompt-Modus ist aus — Diktate kommen so an, wie gesprochen. Klicken, damit jedes Diktat zu einem fertigen Prompt für einen Coding-Agenten wird.",
     "prompt_mode_failed": "Der Prompt-Modus konnte nicht umgeschaltet werden.",
     "theme_to_light": "Zum hellen Modus wechseln",
-    "theme_to_dark": "Zum dunklen Modus wechseln"
+    "theme_to_dark": "Zum dunklen Modus wechseln",
+    "back_to_assistant": "Zurück zu {name}"
   },
   "assistant_chat": {
     "voice_enter": "Sprachmodus",
