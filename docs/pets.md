@@ -22,8 +22,11 @@ one click.
   - pen: raise the main window and open a new chat (`ComposeRequested`);
   - microphone: mute Jarvis's microphone (`VoiceMuteToggleRequested`, mirrored
     from `VoiceMuteChanged`);
-  - orb: start a conversation, or hang up the running one; it pulses with the
-    live audio level;
+  - talk indicator (three blue-white strokes, the Jarvis bar's equalizer cut
+    down to three): start a conversation, or hang up the running one. The
+    strokes stand still and dimmed at rest, follow the live audio level while
+    listening, dictating or talking, and carry a travelling highlight while
+    thinking or transcribing;
   - speaker: silence the assistant's voice for this session (TTS volume 0,
     mirrored from `VoiceSpeakerMuteChanged`).
 - **The thinking card** under the strip: a rounded pill with a bold title
@@ -259,6 +262,6 @@ The pet must cost next to nothing while idle:
 - the window repaints only when the frame key changes (frame index, plus the
   level bucket while talking), and the timer sleeps until the next frame
   boundary: 6 fps idle, 3 fps asleep, 8–10 fps active, nothing while hidden;
-- the control strip's orb animates only while listening or talking.
+- the control strip's indicator animates only while listening, talking or thinking.
 
 Target: an idle pet adds less than 1 % of one CPU core to the app process.

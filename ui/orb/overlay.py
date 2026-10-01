@@ -2468,6 +2468,8 @@ class PetControlStrip(OrbControlRow):
         can_attach: bool | None = None,
         mic_muted: bool | None = None,
         level: int | None = None,
+        motion: str | None = None,
+        phase: int | None = None,
     ) -> None:
         """Update what the strip says, repainting only on a real change."""
         _ = can_attach  # the pet strip has no attach control
@@ -2477,6 +2479,8 @@ class PetControlStrip(OrbControlRow):
             speaker_muted=current.speaker_muted if speaker_muted is None else bool(speaker_muted),
             active=current.active if active is None else bool(active),
             level=current.level if level is None else int(level),
+            motion=current.motion if motion is None else str(motion),
+            phase=current.phase if phase is None else int(phase),
             hovered=current.hovered,
         )
         if state == current:
@@ -2535,11 +2539,17 @@ PET_PHOTO_CACHE_MAX = 64
 #: The mascot and voice orb repaint on a fixed ~60 fps timer.
 FRAME_INTERVAL_MS = 16
 
-#: While the strip's orb pulses (listening / talking) the pet ticks at least
-#: this often, so the pulse follows the voice even when the figure is slow.
+#: While the strip's indicator moves (listening, talking, thinking) the pet
+#: ticks at least this often, so the strokes follow the voice even when the
+#: figure is slow.
 PET_PULSE_INTERVAL_MS = 100
-#: A level older than this no longer moves the strip's orb (the voice stopped).
+#: A level older than this no longer moves the strip's strokes (the voice stopped).
 PET_LEVEL_FRESH_S = 0.25
+#: Overlay modes and what the strip's indicator shows for them. Dictation
+#: while the key is held is a live microphone; once it is released and the
+#: speech is being transcribed there is no signal left, only work.
+PET_VOICE_MODES = ("listen", "speak", "dictate")
+PET_THINK_MODES = ("think", "dictate_transcribing")
 
 
 class OrbOverlay:
@@ -4578,19 +4588,30 @@ class OrbOverlay:
             self._canvas.itemconfig(self._image_id, image=photo)
 
     def _pump_strip_level(self) -> bool:
-        """Feed the strip's orb the audio level. True while it is pulsing.
+        """Drive the strip's three strokes. True while they move.
 
-        Only while listening or talking; at rest the orb is static and the
-        strip is not repainted at all.
+        Listening or talking: the strokes follow the live audio level.
+        Thinking: a highlight travels across them. At rest they stand still
+        and the strip is not repainted at all.
         """
         row = self._controls
         if not isinstance(row, PetControlStrip):
             return False
-        pulsing = self._mode in ("listen", "speak", "dictate")
-        fresh = time.monotonic() - self._ext_level_at <= PET_LEVEL_FRESH_S
-        level = orb_controls.quantize_level(self._ext_level) if pulsing and fresh else 0
-        row.set_state(level=level)
-        return pulsing
+        now = time.monotonic()
+        if self._mode in PET_VOICE_MODES:
+            motion = "voice"
+        elif self._mode in PET_THINK_MODES:
+            motion = "think"
+        else:
+            motion = "rest"
+        fresh = now - self._ext_level_at <= PET_LEVEL_FRESH_S
+        level = orb_controls.quantize_level(self._ext_level) if motion == "voice" and fresh else 0
+        row.set_state(
+            level=level,
+            motion=motion,
+            phase=orb_controls.indicator_phase(motion, now),
+        )
+        return motion != "rest"
 
     def _arm_frame(self, delay_ms: int) -> None:
         root = self._root

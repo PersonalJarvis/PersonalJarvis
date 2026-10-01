@@ -395,13 +395,41 @@ PET_STRIP_GAP_FROM_FIGURE = 10
 #: 2 px stroke at 100 %).
 PET_ICON_BOX = 0.42
 PET_ICON_STROKE = 2.0
-#: How many steps the orb's pulse is quantised into. A handful is enough to
-#: read as "breathing with the voice" and bounds how often the strip repaints.
+#: How many steps the indicator's voice level is quantised into. A handful is
+#: enough to read as "moving with the voice" and bounds the cached frames.
 PET_LEVEL_STEPS = 6
-#: The orb's diameter as a share of the pill's height: at rest, and the extra
-#: it swells by at full level while listening or talking.
-PET_ORB_REST_SHARE = 0.74
-PET_ORB_PULSE_SHARE = 0.08
+
+#: The talk control is three upright strokes — the Jarvis bar's equalizer
+#: vocabulary, cut down to three. Geometry as shares of the pill's height:
+#: stroke centre spacing, stroke half-width, and the shortest / tallest stroke.
+PET_INDICATOR_BARS = 3
+PET_INDICATOR_SPACING = 0.21
+PET_INDICATOR_HALF_W = 0.052
+PET_INDICATOR_MIN_H = 0.18
+PET_INDICATOR_MAX_H = 0.64
+#: At rest the strokes stand still and dimmed; the middle one a little taller,
+#: so the three read as one control and not as three loose dots.
+PET_INDICATOR_REST_H: tuple[float, ...] = (0.22, 0.32, 0.22)
+PET_INDICATOR_REST_GLOW = 0.55
+#: Animation steps per cycle. Voice: the strokes wobble around the level in
+#: ``PET_VOICE_PHASES`` steps of ``PET_VOICE_STEP_S``. Thinking: a highlight
+#: travels across the three in ``PET_THINK_PHASES`` steps per pass of
+#: ``PET_THINK_PERIOD_S`` (the Jarvis bar's sweep period).
+PET_VOICE_PHASES = 8
+PET_VOICE_STEP_S = 0.1
+PET_THINK_PHASES = 12
+PET_THINK_PERIOD_S = 1.05
+#: Sweep shape: gaussian width (row fractions), the unlit and the lit level.
+PET_THINK_WIDTH = 0.2
+PET_THINK_BASE_V = 0.21
+PET_THINK_PEAK_V = 0.93
+PET_THINK_DIM = 0.32
+
+#: What the indicator is showing. ``rest``: nothing running. ``voice``: the
+#: microphone or Jarvis's voice is live and the strokes follow its level.
+#: ``think``: work is in flight with no signal to measure, so a highlight
+#: travels — motion, never a fake level.
+PET_MOTIONS: tuple[str, ...] = ("rest", "voice", "think")
 
 #: Fill of the pen disc and the pill: a blue-black only a breath away from a
 #: dark desktop, so the controls read as glyphs floating in a faint shadow
@@ -413,11 +441,10 @@ PET_ICON = (232, 233, 238)
 PET_ICON_MUTED = (248, 113, 113)
 #: The divider between pill slots — barely above the fill, never a hard line.
 PET_DIVIDER = (24, 28, 37)
-#: The talk orb: a matte sphere, deep blue at the top that brightens toward a
-#: soft pale glow at the bottom — no gloss, no specular dot.
-PET_ORB_TOP = (40, 88, 226)
-PET_ORB_MID = (66, 114, 236)
-PET_ORB_GLOW = (178, 204, 252)
+#: The indicator strokes: near-white at the top fading into a clear blue at
+#: the bottom, like the Jarvis bar's blue-white equalizer.
+PET_INDICATOR_TOP = (236, 243, 255)
+PET_INDICATOR_BOTTOM = (88, 140, 250)
 
 
 def _spx(value: float, scale: float) -> int:
@@ -546,10 +573,14 @@ class PetStripState:
     mic_muted: bool = False
     #: The assistant's voice is muted for this session.
     speaker_muted: bool = False
-    #: A conversation is running — the orb hangs up instead of starting one.
+    #: A conversation is running — the talk control hangs up instead of
+    #: starting one.
     active: bool = False
-    #: The orb's pulse step (``quantize_level``); only drawn while ``active``.
+    #: The voice level step (``quantize_level``); drawn only in ``voice``.
     level: int = 0
+    #: What the indicator shows (``PET_MOTIONS``) and its animation step.
+    motion: str = "rest"
+    phase: int = 0
     #: Which control the pointer is over, if any.
     hovered: str | None = None
 
@@ -662,52 +693,83 @@ def _lerp(a: _Rgb, b: _Rgb, t: float) -> _Rgb:
     )
 
 
-def _draw_orb(
-    d: ImageDraw.ImageDraw,
-    cx: float,
-    cy: float,
-    radius: float,
-) -> None:
-    """A matte sphere: a top-to-bottom gradient with a soft glow at the base.
+def indicator_phase(motion: str, t: float) -> int:
+    """The animation step for ``motion`` at clock time ``t`` (0 at rest)."""
+    if motion == "voice":
+        return int(t / PET_VOICE_STEP_S) % PET_VOICE_PHASES
+    if motion == "think":
+        cycle = (t % PET_THINK_PERIOD_S) / PET_THINK_PERIOD_S
+        return int(cycle * PET_THINK_PHASES) % PET_THINK_PHASES
+    return 0
 
-    Each row of the disc gets one colour — deep blue at the top, brighter
-    blue through the middle — and the lowest fifth blends toward a pale glow
-    that is strongest at the bottom centre. PIL only — no numpy on this
-    import path.
+
+def _sweep_gain(index: int, phase: int) -> float:
+    """Brightness of stroke ``index`` under the thinking highlight.
+
+    Positions sit on a ring (``index / bars``), so the highlight leaves on
+    the right and comes back on the left without a jump.
     """
-    top, bottom = int(cy - radius), int(cy + radius) + 1
-    for y in range(top, bottom):
-        dy = (y + 0.5) - cy
-        if abs(dy) > radius:
-            continue
-        half = math.sqrt(radius * radius - dy * dy)
-        t = (dy + radius) / (2.0 * radius)  # 0 at the top, 1 at the bottom
-        color = _lerp(PET_ORB_TOP, PET_ORB_MID, t / 0.6) if t < 0.6 else PET_ORB_MID
-        if t > 0.64:
-            # The glow fades in toward the base and toward the centre line,
-            # so the bottom reads as lit from below, not as a flat band.
-            rise = (t - 0.64) / 0.36
-            for x0, x1, share in _glow_segments(cx, half, rise):
-                d.line([(x0, y), (x1, y)], fill=_lerp(color, PET_ORB_GLOW, share))
-            continue
-        d.line([(cx - half, y), (cx + half, y)], fill=color)
+    pos = index / PET_INDICATOR_BARS
+    head = (phase % PET_THINK_PHASES) / PET_THINK_PHASES
+    d = abs(pos - head)
+    d = min(d, 1.0 - d)
+    return math.exp(-(d * d) / (2.0 * PET_THINK_WIDTH * PET_THINK_WIDTH))
 
 
-def _glow_segments(cx: float, half: float, rise: float) -> list[tuple[float, float, float]]:
-    """Split one orb row into bands whose glow share falls off from the centre."""
-    bands = 6
-    out: list[tuple[float, float, float]] = []
-    for k in range(bands, 0, -1):
-        w = half * k / bands
-        centre = 1.0 - (k - 1) / bands  # 1 for the innermost band
-        out.append((cx - w, cx + w, rise * rise * (0.25 + 0.6 * centre)))
-    return out
+def indicator_bars(state: PetStripState) -> list[tuple[float, float]]:
+    """Each stroke as ``(height share of the pill, glow 0..1)``, left to right.
+
+    Pure in the state, so every look is testable and cacheable.
+    """
+    lo, hi = PET_INDICATOR_MIN_H, PET_INDICATOR_MAX_H
+    if state.motion == "voice":
+        level = max(0.0, min(1.0, state.level / PET_LEVEL_STEPS))
+        angle = 2.0 * math.pi * (state.phase % PET_VOICE_PHASES) / PET_VOICE_PHASES
+        out = []
+        for i in range(PET_INDICATOR_BARS):
+            wobble = 0.55 + 0.45 * (0.5 + 0.5 * math.sin(angle + i * 2.1))
+            out.append((lo + (hi - lo) * level * wobble, 0.62 + 0.38 * level))
+        return out
+    if state.motion == "think":
+        out = []
+        for i in range(PET_INDICATOR_BARS):
+            g = _sweep_gain(i, state.phase)
+            v = PET_THINK_BASE_V + (PET_THINK_PEAK_V - PET_THINK_BASE_V) * g
+            out.append((lo + (hi - lo) * v, PET_THINK_DIM + (1.0 - PET_THINK_DIM) * g))
+        return out
+    return [(h, PET_INDICATOR_REST_GLOW) for h in PET_INDICATOR_REST_H]
 
 
-def _orb_radius(state: PetStripState, pill_height: float) -> float:
-    pulse = (state.level / PET_LEVEL_STEPS) if state.active else 0.0
-    share = PET_ORB_REST_SHARE + PET_ORB_PULSE_SHARE * max(0.0, min(1.0, pulse))
-    return pill_height * share / 2.0
+def _draw_indicator(
+    d: ImageDraw.ImageDraw, cx: float, cy: float, pill_h: float, state: PetStripState
+) -> None:
+    """Three rounded strokes with a white-to-blue gradient, dimmed by glow.
+
+    Drawn row by row so the gradient follows each stroke's own height; the
+    frame is RGB (the colour key needs it), so "dim" is a mix toward the
+    pill's fill — what an opacity would look like over it anyway.
+    """
+    half_w = pill_h * PET_INDICATOR_HALF_W
+    step = pill_h * PET_INDICATOR_SPACING
+    first = cx - step * (PET_INDICATOR_BARS - 1) / 2.0
+    for i, (share, glow) in enumerate(indicator_bars(state)):
+        x = first + i * step
+        h = max(2.0 * half_w, pill_h * share)
+        top, bottom = cy - h / 2.0, cy + h / 2.0
+        for y in range(int(top), int(bottom) + 1):
+            yc = y + 0.5
+            if yc < top or yc > bottom:
+                continue
+            # Round caps: a circle of radius half_w at each end.
+            edge = min(yc - top, bottom - yc)
+            if edge < half_w:
+                dy = half_w - edge
+                span = math.sqrt(max(0.0, half_w * half_w - dy * dy))
+            else:
+                span = half_w
+            t = (yc - top) / h
+            color = _lerp(PET_INDICATOR_TOP, PET_INDICATOR_BOTTOM, t)
+            d.line([(x - span, y), (x + span, y)], fill=_lerp(PET_FILL, color, glow))
 
 
 def _render_pen_disc(state: PetStripState, diameter: int, scale: float) -> Image.Image:
@@ -744,7 +806,7 @@ def _render_pill(state: PetStripState, layout: PetStripLayout, scale: float) -> 
     for action, sx0, sx1 in layout.slots:
         cx = ((sx0 + sx1) / 2.0 - x0) * _SS
         if action == "orb":
-            _draw_orb(d, cx, cy, _orb_radius(state, h_ss))
+            _draw_indicator(d, cx, cy, h_ss, state)
         else:
             _draw_glyph(action, d, cx, cy, box, stroke, state)
     return layer.resize((width, height), Image.Resampling.LANCZOS)
@@ -759,7 +821,7 @@ def _binary_stadium_mask(width: int, height: int) -> Image.Image:
     return mask
 
 
-@functools.lru_cache(maxsize=96)
+@functools.lru_cache(maxsize=256)
 def render_pet_strip(
     state: PetStripState,
     scale: float = 1.0,

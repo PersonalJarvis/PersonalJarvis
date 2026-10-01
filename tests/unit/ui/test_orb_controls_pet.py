@@ -137,17 +137,55 @@ def test_a_muted_speaker_carries_a_red_slash() -> None:
     assert _red_pixels(_frame(controls.PetStripState(speaker_muted=True)), box) > 5
 
 
-def test_the_orb_is_bluish_and_swells_only_while_engaged() -> None:
+def test_the_indicator_rests_still_and_grows_with_the_voice() -> None:
     box = _slot_box("orb")
 
-    def _blue(frame: Image.Image) -> int:
-        return sum(1 for (r, g, b) in frame.crop(box).getdata() if b > 180 and r < 150)
+    def _lit(frame: Image.Image) -> int:
+        return sum(1 for (r, g, b) in frame.crop(box).getdata() if b > 150 and b > r)
 
-    rest = _blue(_frame(controls.PetStripState(level=6)))  # level ignored at rest
+    rest = _lit(_frame(controls.PetStripState(level=6, phase=3)))  # ignored at rest
     assert rest > 20
-    assert rest == _blue(_frame(controls.PetStripState(level=0)))
-    loud = _blue(_frame(controls.PetStripState(active=True, level=6)))
+    assert rest == _lit(_frame(controls.PetStripState()))
+    quiet = _lit(_frame(controls.PetStripState(active=True, motion="voice", level=0)))
+    loud = _lit(_frame(controls.PetStripState(active=True, motion="voice", level=6)))
+    assert loud > quiet
     assert loud > rest
+
+
+def test_voice_strokes_wobble_but_stay_in_bounds() -> None:
+    heights = {
+        tuple(
+            round(h, 3)
+            for h, _ in controls.indicator_bars(
+                controls.PetStripState(motion="voice", level=6, phase=p)
+            )
+        )
+        for p in range(controls.PET_VOICE_PHASES)
+    }
+    assert len(heights) > 1  # the strokes move
+    for row in heights:
+        assert len(row) == 3
+        assert all(controls.PET_INDICATOR_MIN_H <= h <= controls.PET_INDICATOR_MAX_H for h in row)
+
+
+def test_thinking_moves_a_highlight_across_the_strokes() -> None:
+    brightest = []
+    for p in range(controls.PET_THINK_PHASES):
+        bars = controls.indicator_bars(controls.PetStripState(motion="think", phase=p))
+        glows = [g for _h, g in bars]
+        brightest.append(glows.index(max(glows)))
+    # The lit stroke visits all three, left to right, then starts over.
+    assert set(brightest) == {0, 1, 2}
+    firsts = [brightest.index(i) for i in range(3)]
+    assert firsts == sorted(firsts)
+
+
+def test_indicator_phase_follows_the_clock() -> None:
+    assert controls.indicator_phase("rest", 12.3) == 0
+    assert controls.indicator_phase("voice", 0.0) == 0
+    assert controls.indicator_phase("voice", controls.PET_VOICE_STEP_S * 3 + 0.01) == 3
+    half = controls.PET_THINK_PERIOD_S / 2
+    assert controls.indicator_phase("think", half) == controls.PET_THINK_PHASES // 2
 
 
 def test_a_resting_strip_is_one_cached_frame() -> None:
@@ -261,17 +299,16 @@ def test_the_pen_and_the_pill_are_filled_without_a_ring() -> None:
     assert frame.getpixel(((x0 + x1) // 2, y0 + 1)) == controls.PET_FILL
 
 
-def test_the_orb_fills_most_of_the_pill_height() -> None:
+def test_the_talk_control_is_three_strokes() -> None:
     frame = controls.render_pet_strip(controls.PetStripState(), 2.0)
     layout = controls.pet_strip_layout(2.0)
     action, sx0, sx1 = layout.slots[1]
     assert action == "orb"
-    x0, y0, x1, y1 = layout.pill
-    cx = (sx0 + sx1) // 2
-    column = [frame.getpixel((cx, y)) for y in range(y0, y1)]
-    blue = [px for px in column if px[2] > 150 and px[2] > px[0] + 40]
-    share = len(blue) / (y1 - y0)
-    assert 0.7 <= share <= 0.9
+    _x0, y0, _x1, y1 = layout.pill
+    row = [frame.getpixel((x, (y0 + y1) // 2)) for x in range(sx0, sx1)]
+    lit = [sum(px) > 3 * 60 for px in row]
+    runs = sum(1 for i, on in enumerate(lit) if on and (i == 0 or not lit[i - 1]))
+    assert runs == controls.PET_INDICATOR_BARS == 3
 
 
 def test_the_strip_is_about_a_third_of_the_figure_tall() -> None:
