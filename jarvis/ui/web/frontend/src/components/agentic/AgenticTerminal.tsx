@@ -137,6 +137,8 @@ import {
   PARKED_RECHECK_MS,
 } from "./offscreenBuffer";
 import { installQuerySuppression } from "./terminalQueries";
+import { installSynchronizedOutput } from "./terminalSynchronizedOutput";
+import { FULL_SCREEN_ERASE_SCAN_TAIL, hasFullScreenErase } from "./terminalRepaint";
 import {
   bindTerminalScrollRegion,
   captureWheelForTerminalHistory,
@@ -244,9 +246,6 @@ export const REBUILD_SETTLE_MAX_MS = 450;
  * for the erase, bounded by this, and still under {@link CURTAIN_MAX_MS}.
  */
 export const REPAINT_WAIT_MAX_MS = 1_400;
-
-/** The whole-screen erase a full-screen agent's repaint starts with. */
-const FULL_SCREEN_ERASE = "\x1b[2J";
 
 /**
  * The longest an active pane's surface may stay behind a curtain, full stop.
@@ -1035,6 +1034,10 @@ export function AgenticTerminal({
     } catch {
       /* proposed API unavailable in this build — widths stay at Unicode 6 */
     }
+    // Align before the renderer joins the shared glyph atlas and before the
+    // first fit/handshake. Correcting spacing afterwards changes the grid and
+    // invalidates every existing pane's cache just to open an empty terminal.
+    alignTerminalCells(term);
     term.open(container);
     // The wheel always moves xterm's own history, even while a normal-buffer
     // CLI has negotiated mouse tracking — otherwise scrolling only "works"
@@ -1052,6 +1055,7 @@ export function AgenticTerminal({
       // The fallback renderer starts on an empty surface.
       term.refresh(0, term.rows - 1);
     });
+    const synchronizedOutput = installSynchronizedOutput(term);
     termRef.current = term;
     fitRef.current = fit;
     setTerminalEpoch((current) => current + 1);
@@ -1368,12 +1372,12 @@ export function AgenticTerminal({
     const noteRepaintOutput = (text: string) => {
       if (!repaintPending) return;
       const scanned = eraseScanTail + text;
-      if (scanned.includes(FULL_SCREEN_ERASE)) {
+      if (hasFullScreenErase(scanned)) {
         repaintPending = false;
         eraseScanTail = "";
         return;
       }
-      eraseScanTail = scanned.slice(-(FULL_SCREEN_ERASE.length - 1));
+      eraseScanTail = scanned.slice(-FULL_SCREEN_ERASE_SCAN_TAIL);
     };
 
     const clearSettleTimers = () => {
@@ -1523,6 +1527,7 @@ export function AgenticTerminal({
         setTailReady(false);
         armCurtainWatchdog();
       }
+      synchronizedOutput.reset();
       term.reset();
       // A normal-buffer CLI's replay is its whole scrollback — up to the
       // server's 128 KB (see `ReplayBuffer`) — and xterm parses it in time
@@ -2289,6 +2294,7 @@ export function AgenticTerminal({
       disposePasteBridge();
       disposeNewlineBridge();
       disposeQuerySuppression();
+      synchronizedOutput.dispose();
       try {
         socket?.close();
       } catch {
@@ -2415,24 +2421,25 @@ export function AgenticTerminal({
    * change has to invalidate it or the old palette keeps being painted.
    *
    * `terminalEpoch` is in here, and in the size effect below, for a reason the
-   * appearance prop alone cannot cover: these effects fire on CHANGES, and the
-   * terminal underneath them can be replaced without one. Every rebuild bumps
-   * the epoch, so the pane restates the current theme and size to the new
-   * terminal instead of trusting that it was born with them.
+   * appearance prop alone cannot cover: the terminal can be replaced without
+   * either prop changing. Check the replacement's actual options, but leave a
+   * correctly initialized terminal alone. Clearing its shared atlas on mount
+   * makes every existing WebGL pane rebuild its glyphs too.
    */
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
-    term.options.theme = themeFor(appearance);
+    const theme = themeFor(appearance);
+    if (term.options.theme === theme) return;
+    term.options.theme = theme;
     clearTerminalTextureAtlas(term);
   }, [appearance, terminalEpoch]);
 
   useEffect(() => {
     const term = termRef.current;
-    if (!term) return;
-    // A no-op on a terminal already built at this size (xterm's setter drops a
-    // write of the identical value), which is what makes restating it on every
-    // rebuild free.
+    if (!term || term.options.fontSize === fontSize) return;
+    // The setter itself skips unchanged values; the alignment, atlas clear and
+    // resize below must also run only for an actual size change.
     term.options.fontSize = fontSize;
     // A new size is a new glyph advance, and so a new fraction of a pixel for
     // the canvas renderer to floor away. Re-align before the fit below, or the

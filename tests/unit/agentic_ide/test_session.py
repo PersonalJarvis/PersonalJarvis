@@ -360,10 +360,10 @@ async def test_a_geometry_change_rebases_an_intact_replay_and_repaints(
 
 
 async def _rejoin_cut_fullscreen_pane(
-    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path, agent: str = "claude"
 ) -> tuple[object, str]:
     """A full-screen agent whose replay lost its start, re-joined at 80x24."""
-    session = await _open(registry, tmp_path, [{"agent": "claude"}])
+    session = await _open(registry, tmp_path, [{"agent": agent}])
     term = session.terminals[0]
     await registry.attach(term.name, 80, 24, _noop_output, _noop_exit)
     pty = term.pty_id
@@ -375,6 +375,32 @@ async def _rejoin_cut_fullscreen_pane(
     fake_pty.resizes.clear()
     await registry.attach(term.name, 80, 24, _noop_output, _noop_exit)
     return term, pty
+
+
+async def test_codex_home_then_erase_stops_repeated_height_nudges(
+    registry: Registry,
+    fake_pty: FakePtyManager,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A real Codex redraw must not cause five down/up size changes."""
+    monkeypatch.setattr(session_mod, "REPAINT_CONFIRM_S", 0.02)
+    monkeypatch.setattr(session_mod, "REPAINT_POLL_S", 0.005)
+    plain_resize = FakePtyManager.resize
+
+    def answer_first_nudge(self: FakePtyManager, tid: str, cols: int, rows: int) -> bool:
+        done = plain_resize(self, tid, cols, rows)
+        if len(self.resizes) == 1:
+            asyncio.get_running_loop().create_task(
+                self.emit(tid, "\x1b[?2026h\x1b[1;1H\x1b[Jnew Codex frame\x1b[?2026l")
+            )
+        return done
+
+    monkeypatch.setattr(FakePtyManager, "resize", answer_first_nudge)
+    _term, pty = await _rejoin_cut_fullscreen_pane(registry, fake_pty, tmp_path, agent="codex")
+    await asyncio.gather(*registry._repaint_checks)
+    sizes = [(cols, rows) for tid, cols, rows in fake_pty.resizes if tid == pty]
+    assert sizes == [(80, 23), (80, 24)]
 
 
 async def test_an_ignored_repaint_nudge_is_sent_again(
