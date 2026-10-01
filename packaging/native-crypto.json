@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "cryptography": {
+    "version": "50.0.2",
+    "url": "https://files.pythonhosted.org/packages/9d/af/182eb91b0df3fe75c4d9f26fe70684569566745f6ba7e5c9c73a862c5252/cryptography-50.0.2.tar.gz",
+    "sha256": "7b46165bb56eb4704e2eaaf86f3c940d19154535d9b0ca7d6d590b04060e00d5"
+  },
+  "openssl": {
+    "version": "4.0.3",
+    "url": "https://github.com/openssl/openssl/releases/download/openssl-4.0.3/openssl-4.0.3.tar.gz",
+    "sha256": "325b5c806167c13b40b1ffeadfe0248197c00eccc4cf123ec1e28d2d2fd216d9"
+  },
+  "rust": "1.92.0",
+  "macos_deployment_target": "13.0",
+  "artifacts": []
+}

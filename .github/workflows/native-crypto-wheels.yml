@@ -1,0 +1,60 @@
+name: Native cryptography wheels
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/native-crypto-wheels.yml
+      - packaging/native-crypto.json
+      - scripts/build_native_crypto.py
+      - tests/contract/test_native_crypto.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            architecture: x64
+            target: macos-x86_64
+          - runner: windows-11-arm
+            architecture: arm64
+            target: windows-arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+          architecture: ${{ matrix.architecture }}
+      - name: Build Intel macOS wheel
+        if: runner.os == 'macOS'
+        run: python scripts/build_native_crypto.py --output out/native-crypto
+      - name: Build native Windows ARM64 wheel
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vsRoot = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products '*' -property installationPath
+          Import-Module (Join-Path $vsRoot 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
+          Enter-VsDevShell -VsInstallPath $vsRoot -SkipAutomaticLocation -DevCmdArguments '-arch=arm64 -host_arch=arm64'
+          python scripts/build_native_crypto.py --output out/native-crypto
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Install the native wheel into a fresh environment
+        shell: bash
+        run: |
+          python -m venv proof
+          if [ "$RUNNER_OS" = Windows ]; then py=proof/Scripts/python; else py=proof/bin/python; fi
+          "$py" -m pip install --only-binary=:all: out/native-crypto/*.whl 'asyncssh[bcrypt]==2.24.0' pytest pytest-asyncio
+          "$py" -m pytest --confcutdir=tests/contract -q tests/contract/test_native_crypto.py
+      - uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        with:
+          name: native-crypto-${{ matrix.target }}
+          path: out/native-crypto/
+          if-no-files-found: error
