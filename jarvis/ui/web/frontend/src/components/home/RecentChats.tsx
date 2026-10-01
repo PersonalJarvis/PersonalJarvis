@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Archive, ChevronDown, MessageSquare, Pin, PinOff, Trash2 } from "lucide-react";
+import { Archive, MessageSquare, Pin, PinOff, Trash2 } from "lucide-react";
 
 import { useAgentChatStore } from "@/store/agentChat";
 import { useT } from "@/i18n";
@@ -8,8 +8,6 @@ import { AllChatsDialog } from "@/components/home/AllChatsDialog";
 import { useChatRows, type ChatRow } from "@/components/home/chatRows";
 import { CONVERSATIONS_REFRESH_MS } from "@/hooks/useConversations";
 
-export const RECENT_CHATS_FOLDED = 15;
-export const RECENT_CHATS_UNFOLDED = 50;
 
 /** Flat sidebar history: pinned conversations first, then the latest chats. */
 const PINNED_KEY = "jarvis.sidebar.pinned-chats.v1";
@@ -37,7 +35,6 @@ export function RecentChats() {
   };
   const pinnedRows = rows.filter((row) => pins.includes(rowKey(row)));
   const recentRows = rows.filter((row) => !pins.includes(rowKey(row)));
-  const [open, setOpen] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
 
   useEffect(() => {
@@ -46,10 +43,10 @@ export function RecentChats() {
     return () => window.clearInterval(id);
   }, [loadSessions]);
 
-  const shown = recentRows.slice(0, open ? RECENT_CHATS_UNFOLDED : RECENT_CHATS_FOLDED);
-  const canExpand = recentRows.length > RECENT_CHATS_FOLDED;
-  // The archive earns its place only once the sidebar cannot show everything.
-  const hidden = recentRows.length - shown.length;
+  // Every chat is listed, the way the Claude app's column lists them: the
+  // sidebar scrolls instead of hiding the history behind "Show all"
+  // (maintainer, 2026-10-01). The archive dialog stays for searching it.
+  const shown = recentRows;
 
   return (
     <>
@@ -79,24 +76,6 @@ export function RecentChats() {
             ))}
           </ul>
         )}
-        {canExpand && (
-          <button
-            type="button"
-            onClick={() => setOpen((v) => !v)}
-            aria-expanded={open}
-            data-testid="recent-chats-more"
-            className={TAIL_ROW}
-          >
-            <ChevronDown
-              aria-hidden
-              className={cn("h-3.5 w-3.5 shrink-0 transition-transform", open && "rotate-180")}
-            />
-            <span className="min-w-0 flex-1 truncate text-sm">
-              {open ? t("sidebar.show_less") : t("sidebar.show_all")}
-            </span>
-            {!open && hidden > 0 && <Count n={hidden} />}
-          </button>
-        )}
         {rows.length > 0 && (
           <button
             type="button"
@@ -106,7 +85,6 @@ export function RecentChats() {
           >
             <Archive aria-hidden className="h-3.5 w-3.5 shrink-0" />
             <span className="min-w-0 flex-1 truncate text-sm">{t("sidebar.see_all_chats")}</span>
-            {open && hidden > 0 && <Count n={hidden} />}
           </button>
         )}
       </div>
@@ -115,20 +93,12 @@ export function RecentChats() {
   );
 }
 
-/** "Show all" and "See all chats": the two quiet rows that close the list. */
+/** "See all chats": the quiet row that closes the list. */
 const TAIL_ROW = cn(
   "flex h-8 w-full items-center gap-3 rounded-lg px-3 text-left transition-colors",
   "text-muted-foreground hover:bg-secondary hover:text-foreground",
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
 );
-
-function Count({ n }: { n: number }) {
-  return (
-    <span className="shrink-0 text-sm tabular-nums text-foreground-faint">
-      +{n}
-    </span>
-  );
-}
 
 /** One line of the title. The row truncates it to the sidebar's real width. */
 export function compactChatTitle(title: string): string {
