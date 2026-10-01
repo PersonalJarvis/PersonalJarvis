@@ -158,6 +158,8 @@ class TurnHandle:
     output_language: str = ""
     goal_turn: bool = False
     control_service: Any = None
+    #: A continuation keeps the turn's already resolved language and identity.
+    continuation: bool = False
 
 
 # ------------------------------------------------------------ history
