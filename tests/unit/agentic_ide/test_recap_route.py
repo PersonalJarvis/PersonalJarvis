@@ -19,9 +19,11 @@ from jarvis.ui.web import agentic_ide_routes
 
 
 @pytest.fixture
-def client() -> TestClient:
+def client(monkeypatch) -> TestClient:
     ide.reset_registry()
     recap_engine.reset_for_tests()
+    # Model recaps are opt-in; these routes are tested as an install that opted in.
+    monkeypatch.setattr(recap_engine, "_enabled", lambda: True)
     app = FastAPI()
     app.include_router(agentic_ide_routes.router)
     with TestClient(app) as test_client:
