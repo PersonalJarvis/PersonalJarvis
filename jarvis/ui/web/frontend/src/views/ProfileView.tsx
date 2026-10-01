@@ -1,62 +1,53 @@
 /**
- * ProfileView — the file the assistant keeps on you.
+ * ProfileView — what the assistant knows about you, and how to change it.
  *
- * The section answers one question: *what do you know about me, and how do you
- * know it?* Everything on the page is either a fact, the receipt for a fact,
- * or the boundary the assistant will not cross.
+ * One column, read top to bottom like any settings page:
  *
- *   ┌──────────────────────────────────────────────────────────────────┐
- *   │ PageHeader — Profile · refresh · [ The file | Source ]           │
- *   ├──────────────────────────────────────────────────────────────────┤
- *   │ Name · language · timezone · since · conversations   6 of 18     │
- *   ├───────────────────────────────────┬──────────────────────────────┤
- *   │ Entries — five sections, known    │ How the assistant describes  │
- *   │ facts listed, gaps folded into    │ you · your standing rules ·  │
- *   │ one line, every entry showing     │ what is never stored · the   │
- *   │ the date it was learned           │ long-form page in the wiki   │
- *   └───────────────────────────────────┴──────────────────────────────┘
+ *   ┌────────────────────────────────────────────────────────────┐
+ *   │ Photo · name · language · timezone                         │
+ *   │ Since │ Conversations │ Details known │ Last change         │
+ *   ├────────────────────────────────────────────────────────────┤
+ *   │ About you · How {name} talks to you · How you work ·       │
+ *   │ What matters to you — known details as rows, missing ones  │
+ *   │ as one line of "add" chips per group                       │
+ *   ├────────────────────────────────────────────────────────────┤
+ *   │ How {name} sees you — the written portrait + feedback      │
+ *   ├────────────────────────────────────────────────────────────┤
+ *   │ Memory and privacy — rules, wiki page, the file, and what  │
+ *   │ is never recorded                                          │
+ *   └────────────────────────────────────────────────────────────┘
  *
- * Three cards were removed rather than restyled, because no styling makes an
- * empty pipe full: the review queue (the legacy curator has been disabled
- * since 2026-05-17, so it could never fill), the people list (it read
- * `data/workspace/people/`, which is empty — Contacts owns people), and the
- * "would love to know" prompt (it wrote to no endpoint; the gap expander in
- * the ledger now fills fields for real).
+ * The raw file (USER.md) opens in place as a sub-page with a back link,
+ * rather than as a tab: it is the source behind the page, not a peer of it.
  *
- * The raw-file query and its live WS subscription are held HERE rather than in
- * the source tab, because both tabs need it: the source tab renders it, and
- * the file tab parses its audit trail for provenance.
+ * The raw-file query and its live WS subscription are held HERE because both
+ * views need it: the sub-page renders it, and the main page parses its audit
+ * trail for provenance and its Do Not Record list.
  */
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, RefreshCw, UserCircle2 } from "lucide-react";
+import { AlertTriangle, ArrowLeft, RefreshCw, UserCircle2 } from "lucide-react";
 
 import { PageHeader } from "@/components/layout/PageHeader";
-import { TabBar } from "@/components/layout/SectionTabBar";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
-import { DossierHeader } from "@/views/profile/DossierHeader";
-import { EntryLedger } from "@/views/profile/EntryLedger";
-import { NeverStoredCard } from "@/views/profile/NeverStoredCard";
-import { PortraitCard } from "@/views/profile/PortraitCard";
-import { RulesCard } from "@/views/profile/RulesCard";
+import { FieldGroup } from "@/views/profile/FieldGroup";
+import { MemorySection } from "@/views/profile/MemorySection";
+import { PortraitSection } from "@/views/profile/PortraitSection";
+import { ProfileHero } from "@/views/profile/ProfileHero";
 import { SourceCard, useSourceDocument } from "@/views/profile/SourceCard";
-import { WikiCard } from "@/views/profile/WikiCard";
 import { fetchJson, statusOf, type ProfileResponse } from "@/views/profile/api";
+import { PAGE_GROUPS } from "@/views/profile/ledger";
 import { parseObservations } from "@/views/profile/provenance";
 
-type TabId = "file" | "source";
-
-/** Entries left, rail right, and one column below 1280 px. */
-const SPLIT = "grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]";
-/** The rail: a row of cards under the entries until it can stand beside them. */
-const RAIL = "grid gap-5 content-start sm:grid-cols-2 xl:grid-cols-1";
+/** The reading column: wide enough for a row, narrow enough to scan. */
+const COLUMN = "mx-auto w-full max-w-[880px]";
 
 export function ProfileView() {
   const t = useT();
-  const [tab, setTab] = useState<TabId>("file");
+  const [showSource, setShowSource] = useState(false);
 
   const { data, isLoading, error, refetch, isRefetching } = useQuery<ProfileResponse, Error>({
     queryKey: ["profile"],
@@ -72,8 +63,8 @@ export function ProfileView() {
   const meta = (data?.user.meta ?? {}) as Record<string, unknown>;
 
   return (
-    <div className="flex h-full flex-col overflow-hidden bg-background">
-      <div className="shrink-0 px-8">
+    <div className="flex h-full flex-col overflow-y-auto bg-background px-8 pb-10 scrollbar-jarvis">
+      <div className={COLUMN}>
         <PageHeader
           icon={<UserCircle2 />}
           title={t("profile_view.title")}
@@ -84,7 +75,10 @@ export function ProfileView() {
               size="icon"
               variant="ghost"
               className="text-muted-foreground"
-              onClick={() => refetch()}
+              onClick={() => {
+                void refetch();
+                source.refetch();
+              }}
               disabled={isRefetching}
               title={t("profile_view.reload_tooltip")}
               aria-label={t("profile_view.reload_tooltip")}
@@ -92,40 +86,53 @@ export function ProfileView() {
               <RefreshCw className={cn(isRefetching && "animate-spin")} />
             </Button>
           }
-          tabs={
-            <TabBar
-              tabs={[
-                { id: "file", label: t("profile_view.tab_file") },
-                { id: "source", label: t("profile_view.section_source") },
-              ]}
-              active={tab}
-              onChange={(id) => setTab(id as TabId)}
-            />
-          }
         />
-      </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-8 pb-8 pt-6 scrollbar-jarvis">
         {isLoading && <ProfileSkeleton label={t("common.loading")} />}
 
         {error && <ProfileErrorState error={error} onRetry={() => refetch()} />}
 
-        {data && tab === "file" && (
-          <div className="flex flex-col gap-5">
-            <DossierHeader data={data} meta={meta} />
-            <div className={SPLIT}>
-              <EntryLedger meta={meta} observations={observations} />
-              <aside className={RAIL}>
-                <PortraitCard />
-                <RulesCard />
-                <NeverStoredCard raw={raw} />
-                <WikiCard name={data.user.name?.trim() || null} />
-              </aside>
-            </div>
+        {data && showSource && (
+          <div className="flex flex-col gap-4">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="self-start text-muted-foreground"
+              onClick={() => {
+                source.cancelEditing();
+                setShowSource(false);
+              }}
+              data-testid="source-back"
+            >
+              <ArrowLeft aria-hidden />
+              {t("profile_view.back_to_profile")}
+            </Button>
+            <SourceCard doc={source} />
           </div>
         )}
 
-        {data && tab === "source" && <SourceCard doc={source} />}
+        {data && !showSource && (
+          <div className="flex flex-col gap-10">
+            <ProfileHero data={data} meta={meta} />
+            {PAGE_GROUPS.map((g) => (
+              <FieldGroup
+                key={g.id}
+                id={g.id}
+                fields={g.fields}
+                meta={meta}
+                observations={observations}
+              />
+            ))}
+            <PortraitSection />
+            <MemorySection
+              name={data.user.name?.trim() || null}
+              raw={raw}
+              fileUpdatedMs={source.data?.mtime_ms ?? null}
+              onOpenSource={() => setShowSource(true)}
+            />
+          </div>
+        )}
       </div>
     </div>
   );
@@ -136,47 +143,42 @@ export function ProfileView() {
 // ----------------------------------------------------------------------
 
 /**
- * The real layout at its real height with skeleton bars. A centred spinner in
- * an empty window is the state that reads as "broken", because it throws away
- * every bit of structure the section is about to have — and a zero in a slot
- * that has not loaded yet is worse, because it reads as a fact.
+ * The real layout at its real height with skeleton bars. A zero in a slot
+ * that has not loaded yet would read as a fact, so there are none.
  */
 function ProfileSkeleton({ label }: { label: string }) {
   return (
-    <div role="status" aria-busy="true" aria-label={label} className="flex flex-col gap-5">
-      <div className="flex items-center gap-5 border-b border-border pb-5">
-        <div className="h-16 w-16 shrink-0 animate-pulse rounded-full bg-secondary" />
-        <div className="flex min-w-0 flex-1 flex-col gap-2">
-          <div className="h-6 w-56 max-w-full animate-pulse rounded-md bg-secondary" />
-          <div className="h-3 w-72 max-w-full animate-pulse rounded-full bg-secondary" />
+    <div role="status" aria-busy="true" aria-label={label} className="flex flex-col gap-10">
+      <div className="rounded-xl border border-border bg-card">
+        <div className="flex items-center gap-5 p-6">
+          <div className="h-20 w-20 shrink-0 animate-pulse rounded-full bg-secondary" />
+          <div className="flex min-w-0 flex-1 flex-col gap-2.5">
+            <div className="h-6 w-48 max-w-full animate-pulse rounded-md bg-secondary" />
+            <div className="h-3.5 w-64 max-w-full animate-pulse rounded-full bg-secondary" />
+          </div>
         </div>
-        <div className="hidden h-3 w-32 shrink-0 animate-pulse rounded-full bg-secondary sm:block" />
-      </div>
-
-      <div className={SPLIT}>
-        <div className="rounded-lg border border-border bg-card">
-          {[0, 1, 2, 3, 4].map((i) => (
-            <div key={i} className="border-b border-border px-5 py-4 last:border-b-0">
-              <div className="h-4 w-32 animate-pulse rounded-md bg-secondary" />
-              <div className="mt-3 flex flex-col gap-2">
-                <div className="h-3 w-full animate-pulse rounded-full bg-secondary" />
-                <div className="h-3 w-2/3 animate-pulse rounded-full bg-secondary" />
-              </div>
-            </div>
-          ))}
-        </div>
-        <div className={RAIL}>
-          {[0, 1, 2].map((i) => (
-            <div key={i} className="rounded-lg border border-border bg-card p-5">
-              <div className="h-4 w-28 animate-pulse rounded-md bg-secondary" />
-              <div className="mt-4 flex flex-col gap-2">
-                <div className="h-3 w-full animate-pulse rounded-full bg-secondary" />
-                <div className="h-3 w-4/5 animate-pulse rounded-full bg-secondary" />
-              </div>
+        <div className="grid grid-cols-2 border-t border-border sm:grid-cols-4">
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="px-5 py-4">
+              <div className="h-3 w-16 animate-pulse rounded-full bg-secondary" />
+              <div className="mt-2 h-5 w-20 animate-pulse rounded-md bg-secondary" />
             </div>
           ))}
         </div>
       </div>
+      {[0, 1].map((i) => (
+        <div key={i} className="flex flex-col gap-3">
+          <div className="h-5 w-40 animate-pulse rounded-md bg-secondary" />
+          <div className="divide-y divide-border rounded-xl border border-border bg-card">
+            {[0, 1, 2].map((j) => (
+              <div key={j} className="flex items-center justify-between px-5 py-4">
+                <div className="h-3.5 w-28 animate-pulse rounded-full bg-secondary" />
+                <div className="h-3.5 w-24 animate-pulse rounded-full bg-secondary" />
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -194,7 +196,7 @@ function ProfileErrorState({ error, onRetry }: { error: Error; onRetry: () => vo
     return (
       <EmptyState
         icon={<UserCircle2 />}
-        title={t("profile_view.header_unnamed")}
+        title={t("profile_view.unavailable_title")}
         description={t("profile_view.no_user_hint")}
         actions={
           <Button size="sm" variant="outline" onClick={onRetry}>
@@ -207,7 +209,7 @@ function ProfileErrorState({ error, onRetry }: { error: Error; onRetry: () => vo
   }
 
   return (
-    <div className="flex items-start gap-3 rounded-lg border border-destructive/20 bg-destructive/[0.12] p-5">
+    <div className="flex items-start gap-3 rounded-xl border border-destructive/20 bg-destructive/[0.12] p-5">
       <AlertTriangle aria-hidden className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
       <div className="min-w-0 flex-1">
         <p className="text-base font-medium text-foreground-strong">
