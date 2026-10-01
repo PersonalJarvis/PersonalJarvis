@@ -13,7 +13,13 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, rsa
 from cryptography.hazmat.primitives.serialization import pkcs12
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
-from cryptography.x509.verification import PolicyBuilder, Store, VerificationError
+from cryptography.x509.verification import (
+    Criticality,
+    ExtensionPolicy,
+    PolicyBuilder,
+    Store,
+    VerificationError,
+)
 from packaging.version import Version
 
 NOW = dt.datetime(2026, 10, 1, tzinfo=dt.UTC)
@@ -30,7 +36,7 @@ def certificate(name, key, *, issuer=None, issuer_key=None, ca=True, dns=None, p
         .serial_number(x509.random_serial_number())
         .not_valid_before(NOW - dt.timedelta(days=1))
         .not_valid_after(NOW + dt.timedelta(days=1))
-        .add_extension(x509.BasicConstraints(ca=ca, path_length=2 if ca else None), True)
+        .add_extension(x509.BasicConstraints(ca=ca, path_length=None), True)
         .add_extension(x509.KeyUsage(True, False, False, False, False, ca, ca, None, None), True)
         .add_extension(x509.SubjectKeyIdentifier.from_public_key(key.public_key()), False)
         .add_extension(
@@ -52,8 +58,9 @@ def test_secure_dependency_versions():
     assert Version(asyncssh.__version__) >= Version("2.24.0")
 
 
-@pytest.mark.parametrize("dns", ["outside.example", "*.example"])
-def test_name_constraints_reject_outside_names_and_wildcards(dns):
+@pytest.mark.parametrize("dns", ["outside.example.test", "*.example.test"])
+@pytest.mark.parametrize("custom_policy", [False, True])
+def test_name_constraints_reject_outside_names_and_wildcards(dns, custom_policy):
     root_key = ec.generate_private_key(ec.SECP256R1())
     root = certificate("Root", root_key)
     intermediate_key = ec.generate_private_key(ec.SECP256R1())
@@ -62,18 +69,23 @@ def test_name_constraints_reject_outside_names_and_wildcards(dns):
         intermediate_key,
         issuer=root,
         issuer_key=root_key,
-        permitted="allowed.example",
+        permitted="allowed.example.test",
     )
     leaf_key = ec.generate_private_key(ec.SECP256R1())
     leaf = certificate(
         "Leaf", leaf_key, issuer=intermediate, issuer_key=intermediate_key, ca=False, dns=dns
     )
-    verifier = (
-        PolicyBuilder()
-        .store(Store([root]))
-        .time(NOW)
-        .build_server_verifier(x509.DNSName("outside.example"))
-    )
+    builder = PolicyBuilder().store(Store([root])).time(NOW)
+    if custom_policy:
+        builder = builder.extension_policies(
+            ca_policy=ExtensionPolicy.permit_all().require_present(
+                x509.BasicConstraints, Criticality.AGNOSTIC, None
+            ),
+            ee_policy=ExtensionPolicy.permit_all().require_present(
+                x509.SubjectAlternativeName, Criticality.AGNOSTIC, None
+            ),
+        )
+    verifier = builder.build_server_verifier(x509.DNSName("outside.example.test"))
     with pytest.raises(VerificationError):
         verifier.verify(leaf, [intermediate])
 
@@ -87,7 +99,7 @@ def test_allowed_certificate_chain_still_verifies():
         intermediate_key,
         issuer=root,
         issuer_key=root_key,
-        permitted="allowed.example",
+        permitted="allowed.example.test",
     )
     leaf_key = ec.generate_private_key(ec.SECP256R1())
     leaf = certificate(
@@ -96,13 +108,13 @@ def test_allowed_certificate_chain_still_verifies():
         issuer=intermediate,
         issuer_key=intermediate_key,
         ca=False,
-        dns="api.allowed.example",
+        dns="api.allowed.example.test",
     )
     chain = (
         PolicyBuilder()
         .store(Store([root]))
         .time(NOW)
-        .build_server_verifier(x509.DNSName("api.allowed.example"))
+        .build_server_verifier(x509.DNSName("api.allowed.example.test"))
         .verify(leaf, [intermediate])
     )
     assert chain[-1] == root
