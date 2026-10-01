@@ -66,10 +66,10 @@ class MoveMouseTool:
             except OSError as exc:
                 return ToolResult(success=False, output=None, error=str(exc))
 
-        # Non-Windows: resolve the input backend via the capability probe so
-        # Wayland/headless/missing-deps hosts fail with the actionable
-        # ActuationUnavailable message instead of a raw pyautogui error.
-        from jarvis.cu.actuate.base import (
+        # Non-Windows: resolve the input backend via the guarded facade so
+        # macOS yields to physical input while Wayland/headless/missing-deps
+        # still fail with the actionable ActuationUnavailable message.
+        from jarvis.cu.actuate import (
             ActuationUnavailable,
             get_actuator,
             verified_move,
