@@ -12,7 +12,14 @@ and pin the three things that must stay true:
 * without secrets the script behaves exactly as before (ad-hoc, no keychain);
 * with the certificate secrets it imports them and signs, and no secret ever
   reaches the output;
-* a certificate without its password is refused before the long freeze.
+* a certificate without its password is refused before the long freeze;
+* the REAL import branch (not just its DRY_RUN printout) runs the right
+  ``security`` calls in the right order, reads the identity back from the
+  certificate, and always restores the keychain search list and deletes the
+  temporary keychain. That branch is cut out of the script and run against a
+  stand-in ``security`` command, because a runner's keychain cannot be used on
+  every host these tests run on. On a Mac runner the same test runs under the
+  shell macOS ships (bash 3.2).
 """
 
 from __future__ import annotations
@@ -166,3 +173,174 @@ def test_an_identity_alone_keeps_working_on_a_mac_that_already_holds_it(layout: 
     assert result.returncode == 0, result.stderr
     assert "security create-keychain" not in result.stdout
     assert "signing with Developer ID identity" in result.stdout
+
+
+# --- The real import branch, against a stand-in `security` command -----------
+
+_FAKE_SECURITY = """#!/usr/bin/env bash
+# Stand-in for macOS `security`: log every call, answer the two queries.
+printf '%s\\n' "$*" >> "${FAKE_SECURITY_LOG}"
+case "$1" in
+  list-keychains)
+    case " $* " in
+      *" -s "*) ;;
+      *) printf '    "/Users/runner/Library/Keychains/login.keychain-db"\\n'
+         printf '    "/Library/Keychains/System.keychain"\\n' ;;
+    esac ;;
+  find-identity) cat "${FAKE_IDENTITIES_FILE}" ;;
+esac
+exit 0
+"""
+
+_FAKE_UUIDGEN = """#!/usr/bin/env bash
+echo "11111111-2222-3333-4444-555555555555"
+"""
+
+_DEVELOPER_ID_IDENTITIES = (
+    "  1) 0123456789ABCDEF0123456789ABCDEF01234567 "
+    '"Developer ID Application: Example GmbH (ABCDE12345)"\n'
+    "     1 valid identities found\n"
+)
+_APPLE_DEVELOPMENT_IDENTITIES = (
+    '  1) 0123456789ABCDEF0123456789ABCDEF01234567 "Apple Development: Someone (ZZZZZ99999)"\n'
+    "     1 valid identities found\n"
+)
+
+
+def _import_section() -> str:
+    """The certificate-import part of build.sh, cut out by its own markers."""
+    script = BUILD_SH.read_text(encoding="utf-8")
+    start_marker = 'SIGNING_KEYCHAIN=""'
+    end_marker = "import_signing_certificate\n\n# --- 3. Code signing"
+    assert start_marker in script and end_marker in script, (
+        "build.sh was restructured: update the markers that cut out the certificate import"
+    )
+    return script[script.index(start_marker) : script.index(end_marker)]
+
+
+@pytest.fixture
+def stand_in(tmp_path: Path):
+    """A PATH whose `security` and `uuidgen` are logging stand-ins."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name, body in (("security", _FAKE_SECURITY), ("uuidgen", _FAKE_UUIDGEN)):
+        tool = bin_dir / name
+        tool.write_text(body, encoding="utf-8")
+        tool.chmod(0o755)
+    harness = tmp_path / "harness.sh"
+    harness.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "DRY_RUN=0\n"
+        "log() { printf '[macos-build] %s\\n' \"$*\"; }\n"
+        "die() { printf '[macos-build] ERROR: %s\\n' \"$*\" >&2; exit 1; }\n"
+        + _import_section()
+        + '\nimport_signing_certificate\necho "IDENTITY=${APPLE_SIGNING_IDENTITY:-}"\n',
+        encoding="utf-8",
+    )
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    return bin_dir, harness, scratch
+
+
+def _run_import(stand_in, tmp_path: Path, identities: str, **env: str):
+    bin_dir, harness, scratch = stand_in
+    log_file = tmp_path / "security.log"
+    log_file.write_text("", encoding="utf-8")
+    identities_file = tmp_path / "identities.txt"
+    identities_file.write_text(identities, encoding="utf-8")
+    clean = {
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+        "HOME": str(tmp_path),
+        "RUNNER_TEMP": str(scratch),
+        "FAKE_SECURITY_LOG": str(log_file),
+        "FAKE_IDENTITIES_FILE": str(identities_file),
+        "APPLE_CERTIFICATE_P12_BASE64": "VE9QU0VDUkVULVAxMi1QQVlMT0FE",  # TOPSECRET-P12-PAYLOAD
+        "APPLE_CERTIFICATE_PASSWORD": "TOPSECRET-P12-PASSWORD",
+    }
+    clean.update(env)
+    result = subprocess.run(
+        ["bash", str(harness)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=clean,
+        check=False,
+    )
+    calls = [line for line in log_file.read_text(encoding="utf-8").splitlines() if line]
+    return result, calls
+
+
+def test_the_real_import_runs_the_right_calls_in_order_and_cleans_up(
+    stand_in, tmp_path: Path
+) -> None:
+    result, calls = _run_import(stand_in, tmp_path, _DEVELOPER_ID_IDENTITIES)
+
+    assert result.returncode == 0, result.stderr
+    assert [call.split()[0] for call in calls] == [
+        "delete-keychain",  # a leftover of an interrupted earlier run
+        "create-keychain",
+        "set-keychain-settings",
+        "unlock-keychain",
+        "import",
+        "set-key-partition-list",
+        "list-keychains",  # read the existing search list
+        "list-keychains",  # put ours first
+        "find-identity",
+        "list-keychains",  # on exit: restore the search list ...
+        "delete-keychain",  # ... and drop the temporary keychain
+    ]
+    keychain = str(tmp_path / "scratch" / "jarvis-signing.keychain-db")
+    originals = [
+        "/Users/runner/Library/Keychains/login.keychain-db",
+        "/Library/Keychains/System.keychain",
+    ]
+    assert calls[7] == f"list-keychains -d user -s {keychain} {' '.join(originals)}"
+    assert calls[9] == f"list-keychains -d user -s {' '.join(originals)}"
+    assert calls[-1] == f"delete-keychain {keychain}"
+    assert "-T /usr/bin/codesign" in calls[4]
+
+
+def test_the_real_import_reads_the_identity_back_from_the_certificate(
+    stand_in, tmp_path: Path
+) -> None:
+    result, _calls = _run_import(stand_in, tmp_path, _DEVELOPER_ID_IDENTITIES)
+
+    assert result.returncode == 0, result.stderr
+    assert "IDENTITY=Developer ID Application: Example GmbH (ABCDE12345)" in result.stdout
+
+
+def test_a_given_identity_is_not_looked_up_again(stand_in, tmp_path: Path) -> None:
+    result, calls = _run_import(
+        stand_in,
+        tmp_path,
+        _APPLE_DEVELOPMENT_IDENTITIES,
+        APPLE_SIGNING_IDENTITY="Developer ID Application: Given (QQQQQ11111)",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "IDENTITY=Developer ID Application: Given (QQQQQ11111)" in result.stdout
+    assert "find-identity" not in [call.split()[0] for call in calls]
+
+
+def test_a_certificate_without_a_developer_id_identity_fails_and_still_cleans_up(
+    stand_in, tmp_path: Path
+) -> None:
+    result, calls = _run_import(stand_in, tmp_path, _APPLE_DEVELOPMENT_IDENTITIES)
+
+    assert result.returncode != 0
+    assert "Developer ID Application" in result.stderr
+    # The trap still ran: search list restored, temporary keychain dropped.
+    assert calls[-2].startswith("list-keychains -d user -s /Users/runner/")
+    assert calls[-1].startswith("delete-keychain ")
+
+
+def test_the_real_import_never_prints_a_secret_and_leaves_no_certificate_behind(
+    stand_in, tmp_path: Path
+) -> None:
+    result, _calls = _run_import(stand_in, tmp_path, _DEVELOPER_ID_IDENTITIES)
+
+    assert result.returncode == 0, result.stderr
+    for secret in ("TOPSECRET-P12-PAYLOAD", "TOPSECRET-P12-PASSWORD"):
+        assert secret not in result.stdout + result.stderr
+    assert list((tmp_path / "scratch").iterdir()) == []
