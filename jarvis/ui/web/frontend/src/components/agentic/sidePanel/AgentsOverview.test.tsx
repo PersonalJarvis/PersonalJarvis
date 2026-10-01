@@ -42,6 +42,7 @@ function pane(name: string, workspaceId: string, overrides: Partial<WorkspacePan
 }
 
 beforeEach(() => {
+  localStorage.removeItem("jarvis.agenticIde.agentsScope");
   resetWorkspacePanesPoll();
   useIdeSidePanelStore.setState({ spotlight: null });
   usePaneReviewsStore.setState({ reviewed: {} });
@@ -175,5 +176,38 @@ describe("AgentsOverview", () => {
     render(<AgentsOverview />);
     expect(screen.queryByTestId("ide-workspace-agent-row")).toBeNull();
     expect(screen.getByTestId("ide-workspace-agents").textContent).toContain("No agents");
+  });
+
+  it("widens to every workspace of the folder and remembers the choice", () => {
+    useWorkspacePanesStore.setState({
+      panes: [
+        pane("T1", "w1", { activity: "working" }),
+        pane("T1", "w2", { activity: "working", workspace_name: "Blog" }),
+        pane("T1", "w3", { activity: "working", folder: "/code/other" }),
+      ],
+    });
+    const { unmount } = render(<AgentsOverview />);
+    expect(screen.getAllByTestId("ide-workspace-agent-row")).toHaveLength(1);
+
+    fireEvent.click(screen.getByTestId("ide-agents-scope-folder"));
+    const rows = screen.getAllByTestId("ide-workspace-agent-row");
+    expect(rows.map((row) => row.getAttribute("data-workspace"))).toEqual(["w1", "w2"]);
+    expect(rows[1].textContent).toContain("Blog");
+    expect(rows[0].textContent).not.toContain("w1");
+    unmount();
+
+    render(<AgentsOverview />);
+    expect(screen.getByTestId("ide-agents-scope-folder").getAttribute("aria-checked")).toBe("true");
+    expect(screen.getAllByTestId("ide-workspace-agent-row")).toHaveLength(2);
+  });
+
+  it("brings another workspace's pane forward from the folder view", () => {
+    render(<AgentsOverview />);
+    fireEvent.click(screen.getByTestId("ide-agents-scope-folder"));
+    const row = screen
+      .getAllByTestId("ide-workspace-agent-row")
+      .find((entry) => entry.getAttribute("data-workspace") === "w2")!;
+    fireEvent.click(row);
+    expect(useIdeChatStore.getState().paneRequest).toMatchObject({ workspaceId: "w2", pane: "T1" });
   });
 });

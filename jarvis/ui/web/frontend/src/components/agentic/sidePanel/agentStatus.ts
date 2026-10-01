@@ -57,6 +57,34 @@ export function workspaceAgents(panes: WorkspacePaneRow[], workspaceId: string |
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
 }
 
+/** Which agents the Agents tab lists: the workspace at the front, or its whole project folder. */
+export type AgentScope = "workspace" | "folder";
+
+/**
+ * The coding agents of every workspace that shares `workspaceId`'s project
+ * folder — the active workspace first, then the others by name.
+ *
+ * `folder` is the project folder the sidebar groups by; when the caller cannot
+ * name it, the active workspace's own rows supply it.
+ */
+export function folderAgents(
+  panes: WorkspacePaneRow[],
+  workspaceId: string | null,
+  folder?: string | null,
+): WorkspacePaneRow[] {
+  if (!workspaceId) return [];
+  const home = folder || panes.find((pane) => pane.workspace_id === workspaceId)?.folder;
+  if (!home) return workspaceAgents(panes, workspaceId);
+  return panes
+    .filter((pane) => pane.folder === home && !pane.archived && pane.agent !== "shell")
+    .sort(
+      (a, b) =>
+        Number(b.workspace_id === workspaceId) - Number(a.workspace_id === workspaceId) ||
+        a.workspace_name.localeCompare(b.workspace_name, undefined, { numeric: true }) ||
+        a.name.localeCompare(b.name, undefined, { numeric: true }),
+    );
+}
+
 /** "42s" / "3m" / "2h" / "1d" since an epoch-seconds moment; "" when unknown. */
 export function compactSince(at: number | null | undefined, nowMs: number = Date.now()): string {
   if (!at) return "";

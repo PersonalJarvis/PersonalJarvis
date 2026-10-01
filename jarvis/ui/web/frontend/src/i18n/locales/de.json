@@ -5702,6 +5702,12 @@
       "count_other": "{n} Agents",
       "no_workspace": "Wähle einen Workspace, um seine Agents zu sehen.",
       "empty": "In diesem Workspace laufen keine Agents.",
+      "empty_folder": "In diesem Ordner laufen keine Agents.",
+      "scope": {
+        "aria": "Agents anzeigen aus",
+        "workspace": "Dieser Space",
+        "folder": "Ganzer Ordner"
+      },
       "columns": {
         "done": "Fertig",
         "working": "Arbeitet",
