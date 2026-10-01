@@ -63,6 +63,12 @@ registers the desktop launcher, and opens the app. Language, wake phrase, and pr
 OS permissions and hardware capabilities affect voice and desktop control.
 Re-running the installer updates an existing installation.
 
+After installation, open the desktop launcher or start the app from a terminal:
+
+```bash
+jarvis          # full desktop
+```
+
 For a minimal server installation, use `pip install personal-jarvis` and
 `jarvis serve`. Open the local address reported at startup; the default is
 `http://localhost:47821`. Remote browser microphone access requires HTTPS.
