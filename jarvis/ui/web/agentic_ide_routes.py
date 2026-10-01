@@ -1236,6 +1236,7 @@ class TerminalRecap(TerminalActivity):
         default="heuristic",
         description=(
             "Who wrote this recap: 'user' when the user wrote it themselves, "
+            "'cli' when the pane's coding CLI named its own session, "
             "'model' when a brain summarized the pane, 'heuristic' when it was "
             "derived from the transcript by rule — which is what an install with "
             "no reachable provider always gets."
@@ -1244,7 +1245,7 @@ class TerminalRecap(TerminalActivity):
     reason: str = Field(
         default="",
         description=(
-            "Why this recap and not a better one: 'pinned', 'summarized', "
+            "Why this recap and not a better one: 'pinned', 'cli_title', 'summarized', "
             "'disabled', 'not_started', 'warming', 'working', 'queued' or "
             "'unavailable'. The UI turns it into a sentence, so a thin recap "
             "explains itself instead of looking broken."
@@ -1252,7 +1253,9 @@ class TerminalRecap(TerminalActivity):
     )
     writer: str = Field(
         default="",
-        description="The model that wrote it, when one did. Empty otherwise.",
+        description=(
+            "The model that wrote it, or the CLI that named the session. Empty otherwise."
+        ),
     )
     note: str = Field(
         default="",

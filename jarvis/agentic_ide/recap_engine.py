@@ -63,7 +63,7 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from . import recap
+from . import cli_title, recap
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from collections.abc import Sequence
@@ -199,12 +199,17 @@ BY_RULES = "heuristic"
 #: The user wrote it themselves, through the pencil in the pane header. It wins
 #: over both of the above and is never overwritten by a background summary.
 BY_USER = "user"
+#: The coding CLI in the pane named its own session (Claude Code's ``ai-title``,
+#: Codex's ``thread_name``, a window title) — :mod:`.cli_title`. Outranks the
+#: model and the rules, and costs nothing: the CLI already paid for it.
+BY_CLI = "cli"
 
 #: Why the recap on screen is the one on screen. Machine-readable on purpose:
 #: the wording belongs to the UI, and the whole point of the field is that
 #: "this line is thin" stops being a mystery. Rendered in the recap card.
 WHY_PINNED = "pinned"  # you wrote it
 WHY_SUMMARIZED = "summarized"  # a model read the pane and wrote it
+WHY_CLI_TITLE = "cli_title"  # the pane's own CLI named the session
 WHY_DISABLED = "disabled"  # model recaps switched off in settings
 WHY_NOT_STARTED = "not_started"  # nothing has run in this pane yet
 WHY_WARMING = "warming"  # too little output so far to summarize
@@ -473,17 +478,18 @@ def _state(key: str) -> _PaneState:
 def _enabled() -> bool:
     """Is the model-written recap switched on for this install?
 
-    Read live rather than cached, so turning it off in ``jarvis.toml`` takes
-    effect on the next poll instead of on the next restart. A config that cannot
-    be loaded answers "on": the deterministic floor is what runs anyway when
-    nothing else works.
+    Off unless the user opted in: the coding CLIs name their sessions
+    themselves (:mod:`.cli_title`), so a second, paid name is not worth a
+    background request. Read live rather than cached, so switching it in
+    ``jarvis.toml`` takes effect on the next poll. A config that cannot be
+    loaded answers "off" — nothing the user did not ask for may bill a key.
     """
     try:
         from jarvis.core.config import load_config
 
-        return bool(getattr(load_config().agentic_ide, "smart_recaps", True))
+        return bool(getattr(load_config().agentic_ide, "smart_recaps", False))
     except Exception:  # noqa: BLE001 - a recap must never break a state read
-        return True
+        return False
 
 
 def _ui_language() -> str:
@@ -575,6 +581,16 @@ def recap_for(term: Any, *, lines: Sequence[str] | None = None) -> SmartRecap:
             generated_at=entry.pinned_at,
             reason=WHY_PINNED,
         )
+    named = cli_title.title_for(term)
+    if named:
+        plain = recap.summarize(term, lines=None if lines is None else list(lines))
+        return SmartRecap(
+            headline=recap.condense(named, MAX_EDIT_HEADLINE),
+            detail=plain.detail,
+            source=BY_CLI,
+            reason=WHY_CLI_TITLE,
+            writer=str(getattr(term, "display_name", "") or ""),
+        )
     if entry is not None and entry.headline:
         return SmartRecap(
             headline=entry.headline,
@@ -625,9 +641,12 @@ def known_headline(term: Any) -> str:
     fact everything there is to say.
     """
     entry = _panes.get(pane_id(term))
+    if entry is not None and entry.pinned_headline:
+        return entry.pinned_headline
+    named = cli_title.title_for(term)
+    if named:
+        return recap.condense(named, MAX_EDIT_HEADLINE)
     if entry is not None:
-        if entry.pinned_headline:
-            return entry.pinned_headline
         if entry.headline:
             return entry.headline
         asked_at = float(getattr(term, "last_prompt_at", None) or 0.0)
@@ -661,6 +680,10 @@ def refresh_soon(term: Any, *, lines: Sequence[str], folder: str = "") -> None:
         # otherwise. Summarizing over it would spend a request to produce a
         # sentence nothing renders.
         if entry.pinned_headline:
+            return
+        # The CLI named this session itself; a summary would buy a second name
+        # that the header never shows.
+        if cli_title.title_for(term):
             return
         now = time.time()
         if entry.inflight or now < entry.quiet_until:
@@ -1262,6 +1285,7 @@ def _floor(term: Any, rows: Sequence[str], why: str, *, note: str = "") -> Smart
 def forget(key: str) -> None:
     """Drop what is remembered about one pane — it has been closed."""
     _panes.pop(key, None)
+    cli_title.forget(key)
 
 
 def reset_for_tests() -> None:
@@ -1272,9 +1296,11 @@ def reset_for_tests() -> None:
     _inflight = 0
     _provider_failures.clear()
     _provider_quiet_until.clear()
+    cli_title.reset_for_tests()
 
 
 __all__ = [
+    "BY_CLI",
     "BY_MODEL",
     "BY_RULES",
     "BY_USER",
@@ -1290,6 +1316,7 @@ __all__ = [
     "NO_PROVIDER_NOTE",
     "PROVIDER_FAILURES_BEFORE_QUIET",
     "PROVIDER_QUIET_S",
+    "WHY_CLI_TITLE",
     "WHY_DISABLED",
     "WHY_NOT_STARTED",
     "WHY_PINNED",

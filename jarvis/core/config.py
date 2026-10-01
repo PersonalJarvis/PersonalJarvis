@@ -4289,12 +4289,12 @@ class AgenticIdeConfig(BaseModel):
     )
 
     smart_recaps: bool = Field(
-        default=True,
+        default=False,
         description=(
-            "Let a model write each pane's header recap — what the pane set out "
-            "to do, where it stands, what is outstanding. Off falls back to the "
-            "transcript-derived one, which costs nothing and says much less. An "
-            "install with no reachable provider gets the fallback either way."
+            "Let a model write a pane's header title when its coding CLI has not "
+            "named the session itself. Off (the default) uses the CLI's own title "
+            "(Claude Code, Codex) and otherwise the pane's first or last prompt, "
+            "which costs nothing. On spends background model requests."
         ),
     )
 

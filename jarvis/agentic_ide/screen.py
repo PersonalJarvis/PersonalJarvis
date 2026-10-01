@@ -64,6 +64,7 @@ class ScreenBuffer:
         "_scroll_top",
         "_scroll_bottom",
         "_wrap_pending",
+        "title",
     )
 
     def __init__(self, cols: int = 100, rows: int = 30, scrollback: int = 800) -> None:
@@ -79,6 +80,10 @@ class ScreenBuffer:
         self._scroll_top = 0
         self._scroll_bottom = self.rows - 1
         self._wrap_pending = False
+        # The window title the program last set (OSC 0 / OSC 2), verbatim.
+        # Coding CLIs name their session there themselves — Claude Code writes
+        # "✳ <topic>" — which is a pane title nobody has to pay a model for.
+        self.title = ""
 
     # ------------------------------------------------------------------ grid
     def _blank_row(self) -> list[str]:
@@ -194,8 +199,10 @@ class ScreenBuffer:
             j = start + 2
             while j < n:
                 if data[j] == "\x07":
+                    self._osc(data[start + 2 : j])
                     return j - start + 1
                 if data[j] == "\x1b" and j + 1 < n and data[j + 1] == "\\":
+                    self._osc(data[start + 2 : j])
                     return j - start + 2
                 if data[j] == "\x1b":
                     return 0 if j + 1 >= n else j - start + 1
@@ -222,6 +229,12 @@ class ScreenBuffer:
             return 2
         # Anything else (7/8 save-restore cursor, =/>, ...) — skip the two bytes.
         return 2
+
+    def _osc(self, body: str) -> None:
+        """Keep a window-title change; every other OSC carries no screen content."""
+        code, sep, text = body.partition(";")
+        if sep and code in {"0", "2"}:
+            self.title = text
 
     def _handle_csi(self, data: str, start: int) -> int:
         n = len(data)
