@@ -94,7 +94,8 @@ describe("Agentic IDE project flow", () => {
     act(() => useIdeProjectsStore.getState().newWorkspace("p1"));
     const dialog = await screen.findByRole("dialog", { name: "New workspace" });
     // Keeping the checkout is the default, so the git choices sit folded behind one summary line.
-    fireEvent.click(await within(dialog).findByRole("button", { name: /Git options/ }));
+    await waitFor(() => expect((within(dialog).getByRole("button", { name: "Git options" }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Git options" }));
     fireEvent.click(await within(dialog).findByRole("radio", { name: /New worktree/ }));
     expect((within(dialog).getByLabelText("Branch name") as HTMLInputElement).value).toBe("agent/brave-river-0001");
     fireEvent.click(screen.getByRole("button", { name: "Create workspace" }));
@@ -153,6 +154,29 @@ describe("Agentic IDE project flow", () => {
     expect(screen.getByRole("dialog", { name: "Add coding agent" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Codex" }));
     await waitFor(() => expect(api.addTerminal).toHaveBeenCalledWith({ workspace_id: "w1", agent: "codex", direction: "down" }, { onMessage: expect.any(Function) }));
+  });
+
+  it("splits with a plain terminal even when no coding CLI is installed", async () => {
+    api.fetchIdeAgents.mockResolvedValue({ agents: [
+      { ...agent, installed: false },
+      { ...agent, name: "shell", display_name: "Plain Terminal", kind: "shell", accepts_prompts: false },
+      { ...agent, name: "harness", display_name: "Browser Harness", accepts_prompts: false },
+    ] });
+    const session = { id: "w1", folder: "/code/app", project: { name: "App" },
+      terminals: [{ key: "t1", name: "T1", display_name: "Plain Terminal" }], layout: balancedLayout(["t1"]) };
+    api.fetchIdeState.mockResolvedValue({ ...emptyState, active: true, active_id: "w1", session });
+    api.fetchIdeProjects.mockResolvedValue({ projects: [project], active_workspace_id: "w1" });
+    api.addTerminal.mockResolvedValue(session);
+    render(<AgenticIdeView />);
+    fireEvent.click(await screen.findByRole("button", { name: "Pane add" }));
+    const dialog = screen.getByRole("dialog", { name: "Add coding agent" });
+    expect(within(dialog).queryByRole("button", { name: "Codex" })).toBeNull();
+    expect(within(dialog).queryByRole("button", { name: "Browser Harness" })).toBeNull();
+    fireEvent.change(within(dialog).getByRole("combobox", { name: "Split next to" }), { target: { value: "T1" } });
+    fireEvent.click(within(dialog).getByRole("radio", { name: "Split right" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Plain Terminal" }));
+    await waitFor(() => expect(api.addTerminal).toHaveBeenCalledWith(
+      { workspace_id: "w1", agent: "shell", anchor: "T1", direction: "right" }, { onMessage: expect.any(Function) }));
   });
 
   it("lets the user choose which pane to split and in which direction", async () => {

@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 from jarvis.core.paths import repo_root
 from jarvis.terminal.pty_manager import PtyManager
 from jarvis.workspace.agents import (
+    PLAIN_TERMINAL,
     build_agent_argv,
     build_install_argv,
     coding_agent_names,
@@ -167,7 +168,18 @@ async def workspace_pty(ws: WebSocket, key: str) -> None:
     # app was running is a legitimate answer here, and the import-time snapshot
     # this used to test against could never contain one.
     known = set(coding_agent_names())
-    if agent:
+    if agent == PLAIN_TERMINAL and not install:
+        # Pin a tab to the workspace it was opened in, never the active one.
+        from jarvis.agentic_ide.session import get_registry
+
+        workspace_id = qp.get("workspace_id")
+        workspace = get_registry().get(workspace_id) if workspace_id else None
+        if workspace is None:
+            await ws.close(code=4404, reason="workspace not found")
+            return
+        cwd = str(workspace.folder)
+        argv = build_agent_argv(PLAIN_TERMINAL)
+    elif agent:
         if agent not in known:
             await ws.close(code=4400, reason="unknown agent")
             return
@@ -219,9 +231,8 @@ async def workspace_pty(ws: WebSocket, key: str) -> None:
         await ws.close(code=4500, reason="spawn failed")
         return
 
-    await ws.send_json({"t": "ready"})
-
     try:
+        await ws.send_json({"t": "ready"})
         while True:
             try:
                 msg = await ws.receive_json()
@@ -231,8 +242,9 @@ async def workspace_pty(ws: WebSocket, key: str) -> None:
                 # AP-20: an unclean teardown raises RuntimeError, not
                 # WebSocketDisconnect — treat any read error as terminal.
                 break
-            except Exception:  # noqa: BLE001, S112 - malformed frame; keep the PTY alive
-                continue
+            except Exception:  # noqa: BLE001
+                log.debug("Workspace terminal receive failed", exc_info=True)
+                break
             kind = msg.get("t")
             if kind == "i":
                 mgr.write(session.terminal_id, str(msg.get("d", "")))
