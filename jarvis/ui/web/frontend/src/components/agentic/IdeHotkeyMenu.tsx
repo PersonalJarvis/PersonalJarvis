@@ -22,6 +22,8 @@ interface Props {
 type View = IdeHotkeyStep | { menu: "rename" };
 
 const LEADER = ["Ctrl", "B"];
+/** How long Ctrl must be held alone before the hint shows; quick Ctrl+C/V never flash it. */
+export const CTRL_HINT_DELAY_MS = 400;
 
 function Cap({ children }: { children: React.ReactNode }) {
   return <kbd className="inline-flex min-w-[1.5rem] items-center justify-center rounded-md border border-border bg-muted px-1.5 py-0.5 font-mono text-[11px] font-medium text-foreground shadow-[inset_0_-1px_0_rgba(0,0,0,0.12)]">{children}</kbd>;
@@ -41,8 +43,13 @@ export function IdeHotkeyMenu({ enabled, agents, pane, onAction, onRenamePane, o
   latest.current = { view, keyed, pane, onAction, onPassThrough, enabled };
   // The element that had the keyboard before the menu opened gets it back.
   const returnFocus = useRef<HTMLElement | null>(null);
+  // Opens the menu from outside the key handler (the Ctrl hint chip).
+  const openRef = useRef<() => void>(() => {});
+  // Ctrl held on its own for a moment: a small chip says what B does next, so
+  // the chord can be found without knowing it (see CTRL_HINT_DELAY_MS).
+  const [ctrlHint, setCtrlHint] = useState(false);
 
-  useEffect(() => { if (!enabled) setView(null); }, [enabled]);
+  useEffect(() => { if (!enabled) { setView(null); setCtrlHint(false); } }, [enabled]);
 
   useEffect(() => {
     const close = (restore: boolean) => {
@@ -51,9 +58,27 @@ export function IdeHotkeyMenu({ enabled, agents, pane, onAction, onRenamePane, o
       returnFocus.current = null;
       if (restore && target?.isConnected) target.focus();
     };
+    openRef.current = () => {
+      dropHint();
+      returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      setView({ menu: "root" });
+    };
+    const onKeyUp = (event: KeyboardEvent) => { if (event.key === "Control") dropHint(); };
+    let hintTimer: number | undefined;
+    const dropHint = () => {
+      window.clearTimeout(hintTimer);
+      hintTimer = undefined;
+      setCtrlHint(false);
+    };
     const onKeyDown = (event: KeyboardEvent) => {
       const { view: current, keyed: agentKeys, enabled: on } = latest.current;
       if (!on || event.isComposing) return;
+      if (event.key === "Control") {
+        // Auto-repeat sends keydown again and again; one timer is enough.
+        if (!current && hintTimer === undefined) hintTimer = window.setTimeout(() => setCtrlHint(true), CTRL_HINT_DELAY_MS);
+      } else {
+        dropHint();
+      }
       if (isLeaderChord(event)) {
         event.preventDefault();
         event.stopPropagation();
@@ -97,14 +122,27 @@ export function IdeHotkeyMenu({ enabled, agents, pane, onAction, onRenamePane, o
       close(false);
     };
     window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("keyup", onKeyUp, true);
+    window.addEventListener("blur", dropHint);
     window.addEventListener("pointerdown", onPointerDown, true);
     return () => {
+      dropHint();
       window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("keyup", onKeyUp, true);
+      window.removeEventListener("blur", dropHint);
       window.removeEventListener("pointerdown", onPointerDown, true);
     };
   }, []);
 
-  if (!view) return null;
+  if (!view) {
+    if (!ctrlHint) return null;
+    return <button type="button" data-ide-hotkey-hint onMouseDown={(event) => { event.preventDefault(); openRef.current(); }}
+      className="fixed bottom-6 left-1/2 z-[90] flex -translate-x-1/2 items-center gap-2 rounded-full border border-border bg-popover px-3 py-1.5 text-xs text-popover-foreground shadow-lg">
+      <Keyboard className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+      <Cap>Ctrl</Cap><span className="text-muted-foreground">+</span><Cap>B</Cap>
+      <span>opens the IDE key menu</span>
+    </button>;
+  }
 
   const crumbs = view.menu === "workspace" ? ["W"] : view.menu === "direction"
     ? [keyed.find((agent) => agent.name === view.agent)?.key.toUpperCase() ?? "?"] : [];

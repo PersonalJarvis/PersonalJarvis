@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import { IdeHotkeyMenu } from "./IdeHotkeyMenu";
+import { CTRL_HINT_DELAY_MS, IdeHotkeyMenu } from "./IdeHotkeyMenu";
 import type { IdeHotkeyAction } from "./ideHotkeys";
 
 const AGENTS = [{ name: "claude", label: "Claude Code" }, { name: "codex", label: "Codex" }];
@@ -65,6 +65,34 @@ describe("IdeHotkeyMenu", () => {
     key({ key: "c", code: "KeyC" });
     expect(screen.queryByRole("dialog", { name: "IDE shortcuts" })).toBeNull();
     expect(terminalKeys).toEqual(["b", "c"]);
+  });
+
+  describe("the Ctrl hint", () => {
+    afterEach(() => { vi.useRealTimers(); });
+
+    it("shows what B does once Ctrl is held alone, and opens the menu on click", () => {
+      vi.useFakeTimers();
+      const { key } = setup();
+      key({ key: "Control", code: "ControlLeft", ctrlKey: true });
+      act(() => { vi.advanceTimersByTime(CTRL_HINT_DELAY_MS); });
+      const hint = screen.getByRole("button", { name: /opens the IDE key menu/ });
+      act(() => { fireEvent.mouseDown(hint); });
+      expect(screen.getByRole("dialog", { name: "IDE shortcuts" })).toBeTruthy();
+    });
+
+    it("never flashes during a quick Ctrl+C, and leaves when Ctrl is let go", () => {
+      vi.useFakeTimers();
+      const { key } = setup();
+      key({ key: "Control", code: "ControlLeft", ctrlKey: true });
+      key({ key: "c", code: "KeyC", ctrlKey: true });
+      act(() => { vi.advanceTimersByTime(CTRL_HINT_DELAY_MS * 2); });
+      expect(screen.queryByRole("button", { name: /opens the IDE key menu/ })).toBeNull();
+      key({ key: "Control", code: "ControlLeft", ctrlKey: true });
+      act(() => { vi.advanceTimersByTime(CTRL_HINT_DELAY_MS); });
+      expect(screen.getByRole("button", { name: /opens the IDE key menu/ })).toBeTruthy();
+      act(() => { fireEvent.keyUp(window, { key: "Control", code: "ControlLeft" }); });
+      expect(screen.queryByRole("button", { name: /opens the IDE key menu/ })).toBeNull();
+    });
   });
 
   it("Escape closes the menu", () => {
