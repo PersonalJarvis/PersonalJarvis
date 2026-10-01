@@ -136,6 +136,9 @@ def test_runtime_default_is_not_a_year_old(model_id, registry) -> None:
 def _assert_model_is_current(model_id: str, registry: httpx.Client) -> None:
     name, _, requested_tag = model_id.partition(":")
     response = registry.get(f"https://ollama.com/library/{name}/tags")
+    if response.status_code >= 500:
+        # An ollama.com outage says nothing about our defaults; a 404 still fails.
+        pytest.skip(f"ollama.com answered {response.status_code} for {name}")
     assert response.status_code == 200
     tags = parse_tags_html(response.text, name)
     tag = requested_tag or "latest"
