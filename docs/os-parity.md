@@ -718,26 +718,37 @@ Windows and Linux: no TCC, no signing identity, the rows read "not required"
 as before.
 
 **Fix pass 2026-10-01 (macOS: the downloaded app, and what is worth asking
-for, BUG-222/223/224).** Three findings from a Mac that fought its permissions.
+for, BUG-222/223/224).** Four findings behind a report of a Mac that asked for
+far too many permissions.
 (1) The `.dmg` app carries its own bundle id (`ai.personaljarvis.desktop`) and
 the permission port accepted only the managed bundle's id, so the downloaded app
 read every grant as unusable: no microphone capture, no hotkeys, no request
 buttons. Both ids are now installed identities (`ACCEPTED_BUNDLE_IDS`), reset
-targets the running app's id, and `jarvis permissions` finds either app.
-(2) The published `.dmg` was ad-hoc signed and not notarized (the v2.5.0 build
+targets the running app's id (and refuses from any other process), and
+`jarvis permissions` finds either app.
+(2) The published v2.5.0 image — opened and read on Linux, not run on a Mac —
+had no `AVFoundation` module in its frozen archive (the port loads it by name, so
+the microphone permission reads "unavailable" for good) and `LSBackgroundOnly` in
+its `Info.plist` (PyInstaller sets it when the last executable is a console one).
+`jarvis.spec` and the macOS job now cover both, and
+`scripts/ci/check_frozen_macos_app.py` fails a build that regresses; those build
+changes have not yet run on a macOS runner.
+(3) The published `.dmg` was ad-hoc signed and not notarized (the v2.5.0 build
 log says so), and the workflow's certificate secrets were never imported by
-`build.sh`: it now imports them into a throw-away keychain, so the Apple
-secrets (five required, the signing identity optional) are what is still missing
-to attempt a Developer-ID-signed, notarized image — a path that has never run;
-until then the first launch needs **System Settings > Privacy & Security >
-Open Anyway** (macOS 15) and an update can re-ask the permissions.
-(3) The snapshot now says which rows a feature the user turned on needs
+`build.sh`: it now imports them into a throw-away keychain, before the long
+freeze, so the Apple secrets (five required, the signing identity optional) are
+what is still missing to attempt a Developer-ID-signed, notarized image — a path
+that has never run; until then the first launch needs **System Settings >
+Privacy & Security > Open Anyway** (macOS 15) and an update can re-ask the
+permissions.
+(4) The snapshot now says which rows a feature the user turned on needs
 (`wanted`, `features[...].active`): Music/Spotify Automation is optional until
 "Mute music while dictating" is on, the banner and "Set up everything" skip
 optional rows, and the banner can be put off with "Not now". **Not verified:**
-all of it ran against faked native frameworks and a `DRY_RUN` rehearsal on
-Linux; no Mac, no Apple account and no real notarization were available.
-Windows and Linux are unchanged — no TCC, no signing identity.
+all of it ran against faked native frameworks, a `DRY_RUN` rehearsal and a
+stand-in `security` command on Linux; no Mac, no Apple account and no real
+notarization were available. Windows and Linux are unchanged — no TCC, no
+signing identity.
 
 ## Audit verdict summary
 

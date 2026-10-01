@@ -15514,26 +15514,48 @@ safe in destructors); `__del__` only enqueues and takes no lock. The worker is
 started in ordinary code (`LockedRecognizer.__init__`, `release_recognizer`).
 Guard: `tests/unit/plugins/wake/test_vosk_native.py::test_dropping_the_proxy_inside_an_executor_submit_does_not_deadlock`.
 
-## BUG-222: the downloaded macOS app could not use a single permission — it was never accepted as "the installed app" (HIGH, FIXED 2026-10-01, unit-tested only)
+## BUG-222: the downloaded macOS app could not use a single permission — it was never accepted as "the installed app", it shipped without the microphone framework, and its Info.plist said background-only (HIGH, FIXED IN CODE 2026-10-01; the build changes still need one macOS build)
 
-**Symptom (reproduced against the port with faked macOS frameworks; not yet
-observed on a Mac).** Run as the `.dmg` app with every grant present, the
-permission screens read every feature "not ready", refuse microphone capture
-(wake word and voice dead), tell the user to relaunch the app from its installed
-location — where it already is — and offer no **Allow** or **Open Settings**
-button. With no request button, a user has no in-app way to be asked at all, and
-enabling the app by hand in System Settings would not change the verdict.
+**Symptom (the identity part reproduced against the port with faked macOS
+frameworks; none of it observed on a Mac).** Run as the `.dmg` app with every
+grant present, the permission screens read every feature "not ready", refuse
+microphone capture (wake word and voice dead), tell the user to relaunch the app
+from its installed location — where it already is — and offer no **Allow** or
+**Open Settings** button. With no request button, a user has no in-app way to be
+asked at all, and enabling the app by hand in System Settings would not change
+the verdict.
 
-**Cause.** `SystemPermissionPort` accepted exactly one bundle id,
-`com.personal-jarvis.desktop`, the managed local bundle. The `.dmg` build
-(`jarvis.spec`) has its own id, `ai.personaljarvis.desktop` — deliberately
-different, because BUG-218 keeps the managed installer from rebuilding over it.
-Run against the port with every grant present, the `.dmg` identity gave
-`stable=False`, all six features `identity_ready=False`,
-`runtime_access_granted(microphone)` false and every `can_request` /
-`can_open_settings` false. The gate fails closed by design (granting Terminal or
-a bare Python would be unsafe), so one wrong constant disabled the whole
-permission surface — and nothing ever ran the port as the `.dmg` app.
+**Cause, three layers.** The first is code; the other two were read off the
+published v2.5.0 arm64 image (extracted and opened on Linux — its `Info.plist`,
+and the module table of the archive frozen into its executable, read with
+PyInstaller's own reader):
+
+1. **Identity.** `SystemPermissionPort` accepted exactly one bundle id,
+   `com.personal-jarvis.desktop`, the managed local bundle. The `.dmg` build
+   (`jarvis.spec`) has its own id, `ai.personaljarvis.desktop` — deliberately
+   different, because BUG-218 keeps the managed installer from rebuilding over
+   it. Run against the port with every grant present, the `.dmg` identity gave
+   `stable=False`, all six features `identity_ready=False`,
+   `runtime_access_granted(microphone)` false and every `can_request` /
+   `can_open_settings` false. The gate fails closed by design (granting Terminal
+   or a bare Python would be unsafe), so one wrong constant disabled the whole
+   permission surface — and nothing ever ran the port as the `.dmg` app.
+2. **No `AVFoundation` in the frozen app.** The port loads its frameworks by
+   NAME (`SystemPermissionPort._load("AVFoundation")`), which PyInstaller's
+   static analysis cannot follow, and the macOS job installed `.[desktop,dev]`
+   without the `desktop-macos` extra that carries `pyobjc-framework-AVFoundation`
+   (no other direct dependency requires it), so there was nothing on the build
+   machine for a hidden import to collect either. The published image's module
+   table has no `AVFoundation`. By the code path the microphone permission then
+   reads "unavailable" for good, and the voice gate has nothing to open on.
+3. **`LSBackgroundOnly` in the published `Info.plist`.** PyInstaller sets it to
+   true whenever the last executable of the `COLLECT` is a console one, and the
+   `jarvis` CLI is. LaunchServices reads the key as "this app has no Dock icon,
+   no menu bar and no windows". Whether the published app showed its window
+   regardless has not been observed.
+
+No headless smoke run can see layers 2 and 3: it starts the executable directly
+instead of the way a user does.
 
 **Fix.**
 
@@ -15541,24 +15563,49 @@ permission surface — and nothing ever ran the port as the `.dmg` app.
   identity; `permissions.ACCEPTED_BUNDLE_IDS` is what the identity gate, the
   `jarvis permissions` CLI and the UI's "expected id" now use. Anything else
   (Terminal, Python, an app that merely shares the name) is still refused.
-- `tccutil reset` targets the id of the app that is RUNNING. It is scoped to one
-  bundle id, so resetting the managed id would have left the `.dmg` app's own
-  rows untouched (the documented behaviour of `tccutil`; not observed).
+- `tccutil reset` targets the id of the app that is RUNNING, and `reset` refuses
+  outright from any process that is not the installed app (it used to fall back
+  to the managed id, which would have wiped the rows of a different app). It is
+  scoped to one bundle id, so resetting the managed id would have left the
+  `.dmg` app's own rows untouched (the documented behaviour of `tccutil`; not
+  observed).
 - `jarvis permissions request|open-settings` find the `.dmg` app instead of
   reporting "app not found" (`installed_macos_app_bundle_path`).
+- `jarvis.spec` collects `AVFoundation` on macOS and sets `LSBackgroundOnly` to
+  `False` explicitly; the macOS job installs `.[desktop,desktop-macos,dev]`.
+- `scripts/ci/check_frozen_macos_app.py` runs on the built `.app` in the macOS
+  job and fails the build when the bundle id is not the accepted one, the plist
+  is background-only, the executable or the microphone usage string is missing,
+  or the frozen archive lacks one of `AVFoundation`, `ApplicationServices`,
+  `AppKit`, `Foundation`, `Quartz`, `objc`. Run by hand against the published
+  v2.5.0 arm64 image it exits 1 and names exactly the two defects above.
 
 **Guards.** `tests/unit/platform/test_permissions.py` (the `.dmg` identity is
 stable and gets its buttons back, foreign ids are refused, reset hits the right
-id), `tests/unit/setup/test_macos_dmg_identity.py` (the literal in `jarvis.spec`
-equals the branding constant, the two ids stay distinct, the lookup),
-`tests/unit/cli_ctl/test_commands_permissions.py`.
+id and refuses from a stranger), `tests/unit/setup/test_macos_dmg_identity.py`
+(the literal in `jarvis.spec` equals the branding constant, the two ids stay
+distinct, the lookup), `tests/unit/cli_ctl/test_commands_permissions.py`,
+`tests/unit/ci/test_check_frozen_macos_app.py`.
 
 **Verification.** Unit level only, on Linux, against faked AppKit / Quartz /
-AVFoundation; the new `.dmg` tests fail on the old code. Nothing was run on a Mac.
+AVFoundation; the new `.dmg` tests fail on the old code, and the probe fails on
+the published image. Nothing was run on a Mac, and the new `jarvis.spec` and
+workflow steps have not been run on a macOS runner: the probe exists so the first
+such build proves them or fails loudly.
+
+**Known limits, not changed here.** `Contents/MacOS/jarvis` (the CLI inside the
+bundle) resolves to the same main bundle, so started from a terminal it would be
+read as the app although macOS attributes that process to the terminal — the
+same for the managed bundle. The Control key's Keychain-ownership migration
+(`jarvis/core/control_key.py`) recognises only the managed bundle id, so for the
+`.dmg` app that step is skipped and an item created by an earlier ad-hoc build
+may ask once more (read from the code; not observed).
 
 **Class rule.** A fail-closed identity gate needs a test that runs it as EVERY
 shipped identity. An id duplicated in a build spec that cannot import the
-constant needs a parity test, or it drifts silently.
+constant needs a parity test, or it drifts silently. A module a runtime loads by
+NAME is invisible to a freezer: assert it in the built artifact, not in the
+source.
 
 ## BUG-223: every public macOS download was ad-hoc signed — the first launch was blocked and every update forgot every grant (HIGH, FIXED IN CODE 2026-10-01; signing still needs the maintainer's Apple account)
 
@@ -15593,13 +15640,16 @@ bundle id — across versions, so its grants can persist. (BUG-218 calls the
 ad-hoc.)
 
 **Fix.** `packaging/macos/build.sh` imports the certificate into a throw-away
-keychain when both secrets are present (search list restored and keychain
-deleted on exit), reads the signing identity from it when
-`APPLE_SIGNING_IDENTITY` is not given, and refuses a certificate without its
-password before the long freeze. No secret reaches the log. Without secrets
-nothing changes. **Still open, by nature:** the Apple secrets (five required,
-`APPLE_SIGNING_IDENTITY` optional; `docs/desktop-installers.md` §4) have to be
-added before a build can be signed and notarized, and that path has never run.
+keychain when both secrets are present, reads the signing identity from it when
+`APPLE_SIGNING_IDENTITY` is not given, and does all of that BEFORE the web bundle
+and the ~12-minute freeze, so a certificate that cannot be used fails in
+seconds. An exit trap removes the decoded certificate file, puts the user
+keychain search list back (captured before the throw-away keychain is created)
+and deletes the keychain — also after a failed import. No secret reaches the
+log. Without secrets nothing changes. **Still open, by nature:** the Apple
+secrets (five required, `APPLE_SIGNING_IDENTITY` optional;
+`docs/desktop-installers.md` §4) have to be added before a build can be signed
+and notarized, and that path has never run.
 
 **Guards.** `tests/unit/packaging/test_macos_build_script.py` rehearses the
 script with `DRY_RUN=1` in a scratch copy of the layout (unchanged ad-hoc path
@@ -15609,8 +15659,12 @@ identity read back from the certificate, search list restored and keychain
 deleted on success and on failure, no certificate file left behind.
 
 **Verification.** Off a Mac only: `bash -n`, ShellCheck `-S style`, the tests
-above. Not run: a real keychain, `codesign`, `notarytool`, `stapler`, or the
-bash 3.2 parse gate (`scripts/ci/check_shell_bash32.py` needs a Mac or Docker).
+above. They were also run under GNU bash 3.2.39 — the macOS shell's series (macOS
+itself ships 3.2.57), taken from an old Ubuntu package because this sandbox has
+neither a Mac nor Docker: `scripts/ci/check_shell_bash32.py --require` parses
+every tracked script, and the 12 build-script tests execute `build.sh` under it.
+Not run: a real keychain, `codesign`, `notarytool`, `stapler`, or anything on
+macOS itself.
 
 ## BUG-224: macOS asked for Music and Spotify control — and opened both apps — for a feature that is off (MEDIUM, FIXED 2026-10-01, unit-tested only)
 
@@ -15632,15 +15686,21 @@ and hand it to every operation, so the status and each request/reset/open
 response agree. The banner, the guided "Set up everything" flow and the
 Settings poll consider only wanted rows; Settings still lists every row, with
 an "Optional" tag, so it can be allowed by hand. The banner also gained
-"Not now": per row, expiring after a week, and a row that turns up later (a
-feature switched on afterwards) shows again. The "macOS treats the app as new"
-note retires when the WANTED grants are back — an Automation row nobody asked
-for no longer keeps it alive.
+"Not now": per row, expiring after a week (re-read at every status refresh, so
+a window that stays open for days still brings it back), and a row that turns up
+later (a feature switched on afterwards) shows again; when the browser storage
+refuses the write the choice is kept in memory for that window. Switching "Mute
+music" on or off asks every open permission view to re-read the status, so the
+Automation row follows the switch without waiting for a focus event. The "macOS
+treats the app as new" note retires when the WANTED grants are back — an
+Automation row nobody asked for no longer keeps it alive.
 
 **Guards.** `tests/unit/platform/test_permissions.py` (policy, shared
 permissions stay wanted, operations report the same policy, the note retires),
-`tests/unit/ui/web/test_permissions_routes.py`, `usePermissions.test.tsx`,
-`PermissionsAlertBanner.test.tsx`, `PermissionsPanel.test.tsx`,
+`tests/unit/ui/web/test_permissions_routes.py`, `usePermissions.test.tsx`
+(an optional row does not poll), `useMuteMusic.test.tsx`,
+`PermissionsAlertBanner.test.tsx` (expiry on refresh, unwritable storage, a
+restart that stays visible), `PermissionsPanel.test.tsx`,
 `src/lib/permissionsBannerDismissal.test.ts`.
 
 **Verification.** Unit tests with faked native frameworks, vitest, a production

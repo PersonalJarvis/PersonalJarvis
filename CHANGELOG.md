@@ -11,11 +11,12 @@ versioning per [SemVer](https://semver.org/).
 
 ### Changed
 
-- **macOS asks only for what you use.** "Set up everything" and the warning banner no longer demand the Music/Spotify Automation permission (or open those apps to ask) while "Mute music while dictating" is off; such rows stay in Settings, marked **Optional**. The banner has a **Not now** button that puts its rows off for a week.
+- **macOS asks only for what you use.** "Set up everything" and the warning banner no longer demand the Music/Spotify Automation permission (or open those apps to ask) while "Mute music while dictating" is off; such rows stay in Settings, marked **Optional**, and follow the switch as soon as you flip it. The banner has a **Not now** button that puts its rows off for a week.
 
 ### Fixed
 
 - **macOS: the downloaded app is recognised as an installed app.** The `.dmg` app was never accepted as one, so (checked against faked macOS frameworks, not yet on a Mac) its microphone, shortcuts and Computer Use stayed disabled even with every permission granted, and no Allow button was offered. It is now recognised, `jarvis permissions` finds it, and "Ask again" targets its own permission records.
+- **macOS: the downloaded app is built to be able to use its permissions.** The v2.5.0 image (read on Linux, not run on a Mac) was missing the microphone framework in its frozen archive and was marked background-only in its `Info.plist`. The build now includes the framework, clears the flag, and a new check fails the macOS job if either comes back (not yet run on a macOS runner).
 - **macOS: the release workflow is prepared to sign and notarize the image.** `packaging/macos/build.sh` now imports the Developer ID certificate secrets the workflow already passed along (rehearsed and run against a stand-in keychain command, not yet end to end). Until the Apple secrets are added the image stays ad-hoc signed: the first launch needs Open Anyway and an update can ask for the permissions again.
 - Restore the installation-guide link on the PyPI package page and unblock package publication.
 

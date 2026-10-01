@@ -122,12 +122,28 @@ The wizard itself is `packaging/windows/PersonalJarvis.iss`:
 # -> dist/installers/PersonalJarvis-macOS-<arm64|x64>.dmg
 ```
 
-Owned by `packaging/macos/`. It reads `APPLE_SIGNING_IDENTITY`, `APPLE_ID`,
+Owned by `packaging/macos/`. It reads `APPLE_CERTIFICATE_P12_BASE64` and
+`APPLE_CERTIFICATE_PASSWORD` (imported into a throw-away keychain before the long
+freeze, so an unusable certificate fails early), `APPLE_SIGNING_IDENTITY`
+(optional: read from the imported certificate when absent), `APPLE_ID`,
 `APPLE_TEAM_ID` and `APPLE_APP_SPECIFIC_PASSWORD`; with none of them set it
 ad-hoc signs, skips notarization and prints a one-line notice. The `.app`'s
 identity (bundle id, minimum system version, and the microphone / speech /
 camera / Apple-Events usage strings macOS requires before it will let the
 process touch those APIs) comes from the `BUNDLE` block in `jarvis.spec`.
+
+Two things in that block are easy to get wrong and invisible to a headless smoke
+run, so the macOS job checks the finished bundle
+(`python scripts/ci/check_frozen_macos_app.py --app "dist/Personal Jarvis.app"`):
+
+- `LSBackgroundOnly` must be `False`. PyInstaller sets it to true whenever the
+  last executable of the bundle is a console one (the `jarvis` CLI is), and
+  LaunchServices then treats the app as having no Dock icon and no windows.
+- The pyobjc frameworks the permission code loads by name (`AVFoundation`
+  above all) must be in the frozen archive. That needs the `desktop-macos` extra
+  on the build machine; the macOS job installs it.
+
+The v2.5.0 image shipped with both defects (BUG-222).
 
 ### Linux
 
@@ -165,6 +181,10 @@ step has been rehearsed (`DRY_RUN`) and run against a stand-in `security`
 command, but not yet against a real keychain or with an Apple account.
 `packaging/macos/README.md` lists how to obtain the certificate.
 
+A run started by hand from a branch (`workflow_dispatch`) builds the installers
+without publishing a release, which is the way to try the macOS job, its
+certificate import and the app probe before tagging.
+
 On Windows the workflow signs the **setup executable**. That is the file the
 browser marks with Mark-of-the-Web, so it is the signature SmartScreen weighs;
 files the installer then writes carry no MOTW of their own. Signing the inner
@@ -180,8 +200,10 @@ PyInstaller bootloaders, and can be added the same way.
 manually via `workflow_dispatch`):
 
 1. `windows`, `macos` (arm64 + x64) and `linux` each install Python 3.12 and
-   Node 22, `pip install -e ".[desktop,dev]"`, run their OS build script and
-   upload the artifact.
+   Node 22, `pip install -e ".[desktop,dev]"` (macOS adds `desktop-macos`), run
+   their OS build script and upload the artifact. The macOS jobs also read the
+   finished `.app` with `scripts/ci/check_frozen_macos_app.py` before the
+   headless smoke test.
 2. `release` downloads all of them, refuses to continue if any promised asset is
    missing, verifies the tag equals `jarvis.__version__`, writes
    `installers-SHA256SUMS.txt` (plain `sha256sum` format, flat file names),
