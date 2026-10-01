@@ -285,3 +285,48 @@ async def test_translation_keeps_the_whole_text_pass(
     assert calls[0].get("translate_to") == "en"
     assert not calls[0].get("preceding_text")
     assert _audit(events, "polish_mode") == "whole"
+
+
+async def test_stalled_prefix_worker_is_retired_without_reformatting_completed_text(
+    _no_preview: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import jarvis.dictation.polish as polish
+    import jarvis.speech.pipeline as pipeline_mod
+
+    monkeypatch.setattr(pipeline_mod, "_DICTATION_PREFIX_POLISH_WAIT_S", 0.03)
+    blocked, retired = asyncio.Event(), asyncio.Event()
+    calls: list[dict[str, Any]] = []
+
+    async def format_piece(raw: str, **kwargs: Any) -> PolishOutcome:
+        calls.append({"raw": raw, **kwargs})
+        if len(calls) == 2:
+            blocked.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                retired.set()
+        elif len(calls) > 2:
+            assert retired.is_set(), "replacement overlapped the retired formatter"
+        return PolishOutcome(text=raw.upper(), status="applied")
+
+    monkeypatch.setattr(polish, "polish_transcript", format_piece)
+    mic = _FakeMic(_voiced(12.0))
+    pipe, events = _session_pipeline(_ScriptedSTT(), mic)
+    task = asyncio.create_task(pipe._dictation_session())
+    try:
+        await asyncio.wait_for(mic.delivered.wait(), timeout=3)
+        await asyncio.wait_for(blocked.wait(), timeout=3)
+        pipe._dictation_stop_event.set()
+        await asyncio.wait_for(task, timeout=3)
+    finally:
+        if not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    assert retired.is_set()
+    assert len(calls) == 3
+    assert "alpha" not in calls[-1]["raw"]
+    assert calls[-1]["preceding_text"].startswith("ALPHA")
+    assert _final(events).text.count("ALPHA") == 1
+    assert _audit(events, "polish_mode") == "incremental"

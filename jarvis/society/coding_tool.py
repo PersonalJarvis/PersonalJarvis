@@ -174,9 +174,18 @@ class CodingSessionTool:
             record = {"fingerprint": fingerprint}
             await self.runtime.store.set_meta(key, json.dumps(record))
         # Cancellation leaves a durable pending record. Retrying cannot repeat the side effect.
-        result = await self._perform(
-            gateway, args, owner_session, trace_id=str(getattr(ctx, "trace_id", ""))
-        )
+        from jarvis.core.delegation import current_delegation_origin, origin_metadata
+
+        config = getattr(ctx, "config", None) or {}
+        origin = origin_metadata(language=str(config.get("output_language") or ""))
+        owns_result = self.agent_id == "jarvis" and args.get("action") in {"send", "respond"}
+        token = current_delegation_origin.set(origin if owns_result else None)
+        try:
+            result = await self._perform(
+                gateway, args, owner_session, trace_id=str(getattr(ctx, "trace_id", ""))
+            )
+        finally:
+            current_delegation_origin.reset(token)
         record["result"] = {
             "success": result.success,
             "output": result.output,

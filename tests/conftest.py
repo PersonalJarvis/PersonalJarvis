@@ -243,23 +243,6 @@ def _app_action_state_in_tmp(tmp_path_factory, monkeypatch):  # noqa: ANN001
 
 
 @pytest.fixture(autouse=True)
-def _report_readback_canned_only():
-    """Keep spoken report readbacks off the real flash provider.
-
-    ``jarvis.voice.report_readback`` builds its composer from the host's own
-    ``jarvis.toml`` on first use, which in a test would be a real model call.
-    A bare composer speaks the deterministic canned line; suites that test the
-    phrasing hand in their own composer on top of this.
-    """
-    from jarvis.voice import report_readback
-    from jarvis.voice.contextual_readback import ReadbackComposer
-
-    report_readback.set_composer(ReadbackComposer())
-    yield
-    report_readback.set_composer(None)
-
-
-@pytest.fixture(autouse=True)
 def _reset_bus():
     """Reset the global default bus before and after each test."""
     reset_default_bus()

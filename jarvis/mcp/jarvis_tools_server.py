@@ -236,7 +236,7 @@ def build_server() -> Any:
                 f"{name} is not available from the chat — you ARE the worker. Do the work yourself."
             )
         try:
-            from jarvis.agent_chat.tool_context import restore_turn
+            from jarvis.agent_chat.tool_context import required_turn_id, restore_turn
 
             entry = (await _session_wire_catalog()).get(name)
             if entry is None:
@@ -244,6 +244,13 @@ def build_server() -> Any:
             name = str(entry.name)
             with restore_turn(CHAT_SESSION_REF.get()):
                 turn = current_chat_turn.get()
+                if required_turn_id.get() is not None and turn is None:
+                    return types.CallToolResult(
+                        content=[types.TextContent(
+                            type="text", text="The requesting chat turn has ended."
+                        )],
+                        isError=True,
+                    )
                 from jarvis.core.task_agent import scope_for
 
                 task_scope = scope_for(CHAT_SESSION_REF.get())

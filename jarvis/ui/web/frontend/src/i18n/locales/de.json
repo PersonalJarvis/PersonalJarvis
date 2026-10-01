@@ -1620,7 +1620,8 @@
       "zoom_in": "Terminaltext größer",
       "zoom_out": "Terminaltext kleiner",
       "zoom_reset": "Terminaltextgröße zurücksetzen",
-      "open_overlay": "Diese Liste öffnen"
+      "open_overlay": "Diese Liste öffnen",
+      "ide_menu": "Tastenmenü der Agentic IDE (zweimal: Strg+B an das Fenster)"
     }
   },
   "board_view": {
