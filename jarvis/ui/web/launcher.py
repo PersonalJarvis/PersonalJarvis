@@ -1165,7 +1165,7 @@ def _is_older(holder: str, ours: str) -> bool:
         return False
     try:
         return Version(holder) < Version(ours)
-    except InvalidVersion:
+    except InvalidVersion:  # an unparsable version proves nothing, so no hand-off wait
         return False
 
 
@@ -1237,7 +1237,7 @@ def _wait_out_an_older_holder(
     while now() < deadline:
         try:
             return acquire()
-        except _desktop_app.SingleInstanceError:
+        except _desktop_app.SingleInstanceError:  # still held by the old app: poll again
             sleep(0.5)
     logger.warning("launcher: the older v{} never quit — normal recovery takes over", holder)
     return None
