@@ -82,6 +82,30 @@ def _copy_attr(element: Any, attribute: str) -> Any:
         return None
 
 
+def _attribute_settable(element: Any, attribute: str) -> bool | None:
+    """Return whether ``attribute`` is writable, or ``None`` when AX could not tell us."""
+    checker = getattr(element, "is_attribute_settable", None)
+    if callable(checker):
+        try:
+            value = checker(attribute)
+            return None if value is None else bool(value)
+        except Exception:  # noqa: BLE001
+            logger.debug("AX fake/wrapper settable probe failed: %s", attribute, exc_info=True)
+            return None
+    try:
+        from ApplicationServices import (  # type: ignore[import-not-found] # noqa: PLC0415
+            AXUIElementIsAttributeSettable,
+        )
+    except (ImportError, ModuleNotFoundError):
+        return None
+    try:
+        err, settable = AXUIElementIsAttributeSettable(element, attribute, None)
+        return bool(settable) if err == 0 else None
+    except Exception:  # noqa: BLE001
+        logger.debug("AXUIElementIsAttributeSettable failed: %s", attribute, exc_info=True)
+        return None
+
+
 def _set_attr(element: Any, attribute: str, value: Any) -> bool:
     setter = getattr(element, "set_attribute_value", None)
     if callable(setter):
@@ -327,13 +351,17 @@ def try_focus_at(
     permission_check: Callable[[], bool] | None = None,
     element_at_point: Callable[[int, int], Any | None] | None = None,
     read_attr: Callable[[Any, str], Any] | None = None,
+    attribute_settable: Callable[[Any, str], bool | None] | None = None,
     set_attr: Callable[[Any, str, Any], bool] | None = None,
 ) -> SemanticPressResult:
     """Focus a matched editable AX element without moving the pointer.
 
     This is deliberately limited to the canonical ``Edit`` role. Buttons,
     menus and other controls retain their click semantics and use AXPress or
-    the verified pointer fallback instead.
+    the verified pointer fallback instead. A definitively non-settable focus
+    attribute is an unsupported semantic operation and may fall back to a
+    verified pointer click; an indeterminate probe or a failed write is treated
+    as an unavailable semantic target and therefore fails closed.
     """
     if expected_role.casefold() != "edit":
         return SemanticPressResult(
@@ -357,11 +385,25 @@ def try_focus_at(
             "mismatch",
             "foreground window changed before the semantic Accessibility focus action",
         )
+
+    settable_probe = attribute_settable or _attribute_settable
+    settable = settable_probe(matched, _AX_FOCUSED)
+    if settable is False:
+        return SemanticPressResult(
+            "unsupported",
+            "the matched editable Accessibility element does not expose writable AXFocused",
+        )
+    if settable is None:
+        return SemanticPressResult(
+            "unavailable",
+            "macOS could not verify that AXFocused is writable on the matched element",
+        )
+
     setter = set_attr or _set_attr
     if not setter(matched, _AX_FOCUSED, True):
         return SemanticPressResult(
-            "unsupported",
-            "the matched editable Accessibility element cannot be focused semantically",
+            "unavailable",
+            "macOS rejected AXFocused for the matched editable Accessibility element",
         )
     return SemanticPressResult(
         "performed",
