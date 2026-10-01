@@ -9,6 +9,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { zoomIntentFor } from "@/components/agentic/terminalZoom";
+import { isLeaderChord } from "@/components/agentic/ideHotkeys";
 import {
   SHORTCUTS,
   SHORTCUT_AREAS,
@@ -117,6 +118,19 @@ describe("the quick switcher entry", () => {
     expect(eventMatchesChord({ ...base, ctrlKey: true }, defaultQuickSwitchCombo("pc"))).toBe(true);
     expect(eventMatchesChord({ ...base, altKey: true }, defaultQuickSwitchCombo("mac"))).toBe(true);
   });
+});
+
+describe("the IDE key menu chord", () => {
+  for (const isMac of [true, false]) {
+    it(`opens the menu on ${isMac ? "macOS" : "PC"} exactly as declared`, () => {
+      const entry = shortcutsForArea("workspace").find(
+        (s) => s.labelKey === "shortcut_overlay.workspace.ide_menu",
+      ) as FixedShortcut;
+      expect(entry.keys).toEqual(["Ctrl", "B"]);
+      expect(keyLabel(entry.keys[0], isMac)).toBe("Ctrl");
+      expect(isLeaderChord({ key: "b", code: "KeyB", ctrlKey: true, metaKey: false, altKey: false, shiftKey: false })).toBe(true);
+    });
+  }
 });
 
 describe("keyLabel", () => {

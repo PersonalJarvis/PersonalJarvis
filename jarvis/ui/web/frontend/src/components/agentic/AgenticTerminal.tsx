@@ -127,6 +127,7 @@ import {
 import { installPasteBridge } from "./terminalPaste";
 import { installCopyBridge } from "./terminalCopy";
 import { createKeyEventChain } from "./terminalKeyChain";
+import { PANE_INPUT_EVENT, type PaneInputDetail } from "./ideHotkeys";
 import { installNewlineBridge } from "./terminalNewline";
 import { cancelPaneReflow, queuePaneReflow } from "./paneReflowQueue";
 import {
@@ -2517,6 +2518,19 @@ export function AgenticTerminal({
     window.setTimeout(focusTerminal, 120);
   }, [onToggleMaximize, onFocus]);
   const toggleMaximizeAndFocus = onToggleMaximize ? toggleMaximizeAndFocusPane : undefined;
+
+  // Keys the IDE's key menu sends on to this pane: Ctrl+B twice types one
+  // Ctrl+B, the way tmux passes its own prefix through (see ./ideHotkeys).
+  useEffect(() => {
+    const onInput = (event: Event) => {
+      const detail = (event as CustomEvent<PaneInputDetail>).detail;
+      if (detail?.pane !== name || (workspaceId && detail.workspaceId !== workspaceId)) return;
+      termRef.current?.input(detail.data);
+      termRef.current?.focus();
+    };
+    window.addEventListener(PANE_INPUT_EVENT, onInput);
+    return () => window.removeEventListener(PANE_INPUT_EVENT, onInput);
+  }, [name, workspaceId]);
 
   /*
    * Catch up the instant a drag lets go.
