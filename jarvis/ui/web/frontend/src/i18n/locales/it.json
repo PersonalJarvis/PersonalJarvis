@@ -1,0 +1,97 @@
+{
+  "languages_view": {
+    "title": "Lingue",
+    "subtitle": "Scegli la lingua dell’interfaccia e la lingua in cui risponde {name}.",
+    "ui_section": "Lingua dell’interfaccia",
+    "ui_hint": "Influisce su ogni etichetta, pulsante e messaggio dell’app.",
+    "reply_section": "Lingua delle risposte",
+    "reply_hint": "La lingua in cui {name} parla quando ti risponde. Nomi propri, identificatori di codice e termini tecnici restano nella forma originale.",
+    "stt_section": "Lingua di riconoscimento vocale",
+    "stt_hint": "La lingua in cui la tua voce viene riconosciuta e convertita in testo. Automatico la rileva per te. Dopo averla cambiata, termina qualsiasi chiamata Realtime e riavvia Jarvis per la modalità Pipeline.",
+    "options": {
+      "auto": {
+        "label": "Automatico",
+        "description": "Usa la lingua che stai usando."
+      },
+      "en": {
+        "label": "English",
+        "description": "Usa l’inglese per ogni etichetta e pulsante."
+      },
+      "de": {
+        "label": "Deutsch (Tedesco)",
+        "description": "Usa il tedesco per ogni etichetta e pulsante."
+      },
+      "es": {
+        "label": "Español (Spagnolo)",
+        "description": "Usa lo spagnolo per ogni etichetta e pulsante."
+      },
+      "it": {
+        "label": "Italiano",
+        "description": "Usa l'italiano per ogni etichetta e pulsante."
+      }
+    },
+    "reply_options": {
+      "auto": "{name} usa la stessa lingua in cui parli o scrivi.",
+      "en": "{name} risponde in inglese.",
+      "de": "{name} risponde in tedesco.",
+      "es": "{name} risponde in spagnolo."
+    },
+    "stt_options": {
+      "auto": "Rileva automaticamente la lingua che parli.",
+      "en": "Riconosci sempre la tua voce come inglese.",
+      "de": "Riconosci sempre la tua voce come tedesco.",
+      "es": "Riconosci sempre la tua voce come spagnolo."
+    }
+  },
+  "slash": {
+    "locale": "it",
+    "commands": {
+      "help": "Apri guida comandi",
+      "clear": "Pulisci la vista; mantieni il contesto",
+      "history": "Mostra messaggi precedenti",
+      "plan": "Leggi e pianifica senza modifiche",
+      "build": "Implementa il piano concordato",
+      "goal": "Lavora verso un obiettivo verificabile",
+      "status": "Mostra attività e obiettivo correnti",
+      "stop": "Interrompi il lavoro e metti in pausa l’obiettivo",
+      "continue": "Continua il lavoro interrotto",
+      "recap": "Riassumi lo stato attuale",
+      "find": "Cerca in questa chat",
+      "model": "Scegli un modello",
+      "remember": "Salva un ricordo",
+      "message": "Invia un messaggio interno",
+      "review": "Esamina l’ultimo risultato",
+      "routines": "Gestisci le routine di questo agente"
+    },
+    "help": "Comandi chat",
+    "plan_active": "Modalità piano · sola lettura",
+    "goal_active": "Obiettivo in esecuzione",
+    "goal_paused": "Obiettivo in pausa",
+    "goal_blocked": "Obiettivo bloccato",
+    "goal_complete": "Obiettivo completato",
+    "goal_cleared": "Obiettivo cancellato",
+    "steps": "passaggi",
+    "stop": "Stop",
+    "continue": "Continue",
+    "clear_goal": "Cancella obiettivo",
+    "working": "Al lavoro",
+    "status": "Stato",
+    "find": "Risultati ricerca",
+    "routines": "Routine",
+    "close": "Close",
+    "mode": "Modalità",
+    "task": "Attività",
+    "no_task": "Nessuna attività corrente",
+    "goal": "Obiettivo",
+    "no_matches": "Nessun messaggio corrispondente",
+    "command_done": "Comando completato",
+    "backend_unavailable": "Questi comandi richiedono la connessione backend aggiornata",
+    "session_loading": "La chat è ancora in caricamento",
+    "session_changed": "La chat attiva è cambiata",
+    "no_arguments": "Questo comando non accetta argomenti",
+    "attachments_loading": "Attendi che gli allegati abbiano terminato l’elaborazione.",
+    "build_active": "Modalità build",
+    "control_turn": "Lavoro agente",
+    "verifying": "Esecuzione terminata; verifica del risultato."
+  }
+}
