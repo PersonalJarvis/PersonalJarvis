@@ -1620,7 +1620,8 @@
       "zoom_in": "Larger terminal text",
       "zoom_out": "Smaller terminal text",
       "zoom_reset": "Reset terminal text size",
-      "open_overlay": "Open this list"
+      "open_overlay": "Open this list",
+      "ide_menu": "Agentic IDE key menu: new panes, panes, workspaces"
     }
   },
   "board_view": {
