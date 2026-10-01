@@ -22,7 +22,11 @@ one click.
   strip appears while Jarvis listens, thinks or talks, while notification cards
   are up, and while the pointer is on the pet. With the pet "None", or with
   **Always show the buttons** on (My Pets → Customize, `[ui] pet_strip_always`),
-  it always shows. From left to right:
+  it always shows. It is drawn in the pets' pixel art (`ui/orb/pixel_strip.py`,
+  at the sprite's own pixel size): chunky cream buttons with the sprites' dark
+  outline and a thick bottom edge, hand-placed pixel glyphs in dark ink, red
+  when muted, and three sky-blue pixel bars for the talk indicator; the
+  geometry and hit areas are `controls.pet_strip_layout`'s. From left to right:
   - bell: done cards on or off for this run (see *Cards*). Off
     shows a red, struck-through bell and sends the cards on screen away; on
     rings the bell. Like the speaker mute it never survives a restart, so a

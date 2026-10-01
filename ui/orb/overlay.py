@@ -92,6 +92,7 @@ from ui.orb.drag_persistence import (
 )
 from ui.orb.notice_stack import PetNoticeStack
 from ui.orb.pet_renderer import PET_TARGET_EDGE_PX, PetRenderer, dpi_ratio_for
+from ui.orb.pixel_strip import render_pet_strip_pixel
 from ui.orb.taskbar import (
     MascotAnchor,
     compute_mascot_position,
@@ -2038,6 +2039,8 @@ class PetControlStrip(OrbControlRow):
         keep_visible: Callable[[], bool] | None = None,
     ) -> None:
         self._scale = float(scale)
+        #: Screen pixels per art pixel: the strip is pixel art at the sprite's size.
+        self._art_px = max(1, int(round(3 * self._scale)))
         self._keep_visible = keep_visible
         self._on_drag_press = on_drag_press
         self._on_drag_motion = on_drag_motion
@@ -2059,9 +2062,17 @@ class PetControlStrip(OrbControlRow):
         return orb_controls.pet_strip_size(self._scale)
 
     def _render_frame(self) -> Image.Image:
-        return orb_controls.render_pet_strip(
-            self._state, self._scale, tuple(int(c) for c in COLOR_KEY_RGB)
+        return render_pet_strip_pixel(
+            self._state, self._scale, self._art_px, tuple(int(c) for c in COLOR_KEY_RGB)
         )
+
+    def set_art_px(self, art_px: int) -> None:
+        """Draw the strip's pixel art at the pet sprite's pixel size."""
+        art_px = max(1, int(art_px))
+        if art_px == self._art_px:
+            return
+        self._art_px = art_px
+        self._repaint()
 
     def _hit(self, x: float, y: float) -> str | None:
         return orb_controls.pet_hit_test(x, y, self._scale)
@@ -2693,6 +2704,7 @@ class OrbOverlay:
         row = self._controls
         if isinstance(row, PetControlStrip):
             row.set_scale(scale)
+            row.set_art_px(self._thought_art_px())
         notices = self._notices
         if notices is not None:
             strip_w, _strip_h = orb_controls.pet_strip_size(scale)
@@ -2990,6 +3002,7 @@ class OrbOverlay:
         )
         if isinstance(row, PetControlStrip):
             row.set_state(mic_muted=self._mic_muted, notify_off=not self._notify_enabled)
+            row.set_art_px(self._thought_art_px())
         self._controls = row
 
     def _on_orb_pointer_enter(self, _event: tk.Event | None = None) -> None:
