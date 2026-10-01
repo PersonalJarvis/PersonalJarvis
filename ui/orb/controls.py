@@ -369,19 +369,23 @@ def render_row(
 # The desktop pet (``docs/pets.md``) carries its controls in the shape the
 # Codex companion made familiar: a bell in its own filled disc, then ONE filled
 # pill holding microphone mute, the talk orb and the speaker, with thin
-# low-contrast dividers. Same hard-edge rules as the row above: every
-# silhouette that meets the colour key goes through a binary mask, every glyph
-# and the orb's gradient are drawn at 4x and downscaled INSIDE the opaque
-# surface, so their antialiasing never meets the key.
+# low-contrast dividers, then the phone in its own disc — green to call Jarvis,
+# red to hang up, the colours every phone app uses for exactly those two. Same
+# hard-edge rules as the row above: every silhouette that meets the colour key
+# goes through a binary mask, every glyph and the orb's gradient are drawn at
+# 4x and downscaled INSIDE the opaque surface, so their antialiasing never
+# meets the key.
 
 #: The strip's actions, left to right. The voice orb's ``ACTIONS`` stay as they
 #: are; the two layouts never share a hit-test.
-PET_ACTIONS: tuple[str, ...] = ("bell", "mic_mute", "orb", "speaker")
+PET_ACTIONS: tuple[str, ...] = ("bell", "mic_mute", "orb", "speaker", "call")
+#: The actions inside the pill, left to right.
+PET_PILL_ACTIONS: tuple[str, ...] = ("mic_mute", "orb", "speaker")
 
 #: Unscaled geometry, in logical pixels at 100 % display scaling and
 #: ``pet_scale`` 1.0 — sized against the companion figure (about 180 px), so the
 #: strip is roughly 0.3 x the figure's width tall, as in the Codex app.
-#: ``PET_SLOT`` is the pill's height and the bell disc's diameter.
+#: ``PET_SLOT`` is the pill's height and the bell and phone discs' diameter.
 PET_SLOT = 50
 PET_ICON_SLOT = 46
 PET_ORB_SLOT = 52
@@ -469,6 +473,21 @@ PET_RING_PHASES = 14
 PET_RING_STEP_S = 0.04
 PET_RING_DEG = 16.0
 
+#: The phone disc: a call button is green and a hang-up button red in every
+#: phone app, so the disc borrows that language instead of the strip's
+#: near-black. A shade lighter under the pointer; the handset is white.
+PET_CALL_FILL = (22, 163, 74)
+PET_CALL_FILL_HOVER = (34, 197, 94)
+PET_HANGUP_FILL = (220, 38, 38)
+PET_HANGUP_FILL_HOVER = (239, 68, 68)
+PET_CALL_ICON = (255, 255, 255)
+#: Pressing call rings the handset: the bell's damped swing, played
+#: ``PET_CALL_RING_PASSES`` times so it reads as a phone ringing out.
+PET_CALL_RING_PASSES = 2
+#: The handset's turn from its hang-up pose (lying flat, ends down) to its
+#: call pose (tilted, earpiece up) — the same 135 degrees phone apps animate.
+PET_CALL_TILT_DEG = -135.0
+
 
 def _spx(value: float, scale: float) -> int:
     """One unscaled length at ``scale``, never below one pixel."""
@@ -483,6 +502,8 @@ class PetStripLayout:
     height: int
     #: The bell disc: centre and radius.
     pen: tuple[float, float, float]
+    #: The phone disc: centre and radius.
+    call: tuple[float, float, float]
     #: The pill's bounding box ``(x0, y0, x1, y1)``, x1/y1 exclusive.
     pill: tuple[int, int, int, int]
     #: Each pill action's horizontal span ``(x0, x1)`` inside the window.
@@ -512,18 +533,20 @@ def pet_strip_layout(scale: float = 1.0) -> PetStripLayout:
     slots: list[tuple[str, int, int]] = []
     dividers: list[int] = []
     x = pill_x0 + inset
-    for index, action in enumerate(PET_ACTIONS[1:]):
+    for index, action in enumerate(PET_PILL_ACTIONS):
         slots.append((action, x, x + widths[action]))
         x += widths[action]
-        if index < 2:
+        if index < len(PET_PILL_ACTIONS) - 1:
             dividers.append(x)
             x += divider
-    width = pill[2] + pad
+    call = (pill[2] + gap + pen_r, pad + pen_r, pen_r)
+    width = pill[2] + gap + slot + pad
     height = slot + 2 * pad
     return PetStripLayout(
         width=width,
         height=height,
         pen=pen,
+        call=call,
         pill=pill,
         slots=tuple(slots),
         dividers=tuple(dividers),
@@ -552,7 +575,7 @@ def _inside_stadium(x: float, y: float, box: tuple[int, int, int, int]) -> bool:
 def pet_hit_test(x: float, y: float, scale: float = 1.0) -> str | None:
     """Which pet action a click at ``(x, y)`` lands on, or ``None``.
 
-    Outside the bell disc and the pill is nothing — that empty area is where the
+    Outside the bell disc, the pill and the phone disc is nothing — that empty area is where the
     user grabs the strip to drag the pet (the only handle when the pet is
     "None"). Inside the pill every pixel belongs to a slot: a divider resolves
     to the nearer neighbour instead of eating the click.
@@ -561,6 +584,9 @@ def pet_hit_test(x: float, y: float, scale: float = 1.0) -> str | None:
     pcx, pcy, pr = layout.pen
     if math.hypot(x - pcx, y - pcy) <= pr:
         return "bell"
+    ccx, ccy, cr = layout.call
+    if math.hypot(x - ccx, y - ccy) <= cr:
+        return "call"
     if not _inside_stadium(x, y, layout.pill):
         return None
     best: str | None = None
@@ -596,8 +622,8 @@ class PetStripState:
     mic_muted: bool = False
     #: The assistant's voice is muted for this session.
     speaker_muted: bool = False
-    #: A conversation is running — the talk control hangs up instead of
-    #: starting one.
+    #: A conversation is running — the talk control and the phone hang up
+    #: instead of starting one.
     active: bool = False
     #: The voice level step (``quantize_level``); drawn only in ``voice``.
     level: int = 0
@@ -610,6 +636,9 @@ class PetStripState:
     notify_off: bool = False
     #: The bell's swing step (``ring_angle``); 0 is at rest.
     ring: int = 0
+    #: The handset's ringing step, counted across ``PET_CALL_RING_PASSES``
+    #: swings (``call_ring_angle``); 0 is at rest.
+    call_ring: int = 0
 
 
 # -- glyphs ------------------------------------------------------------------
@@ -723,6 +752,49 @@ def _glyph_bell(pen: _Pen, color: _Rgb, *, angle: float = 0.0, slashed: bool = F
         pen.lines([turn(point) for point in line], color)
     if slashed:
         _glyph_slash(pen, color)
+
+
+def call_ring_angle(phase: int) -> float:
+    """The handset's shake in degrees at ``phase``: the bell's swing, repeated."""
+    if phase <= 0 or phase >= PET_RING_PHASES * PET_CALL_RING_PASSES:
+        return 0.0
+    return ring_angle(phase % PET_RING_PHASES)
+
+
+@functools.lru_cache(maxsize=1)
+def _handset_outline() -> tuple[tuple[tuple[float, float], ...], ...]:
+    """The handset in its hang-up pose on the 24-unit grid: a flat bow, ends down.
+
+    Three polylines — the grip and the two stubby ear and mouth pieces — drawn
+    with a heavy stroke, so the handset reads as one solid shape at 20 px.
+    """
+    grip = tuple(_arc_points(12, 17.2, 8.2, 207, 333, steps=14))
+    left = grip[0]
+    right = grip[-1]
+    ear = (left, (left[0] - 0.9, left[1] + 3.0))
+    mouth = (right, (right[0] + 0.9, right[1] + 3.0))
+    return (grip, ear, mouth)
+
+
+def _glyph_phone(pen: _Pen, color: _Rgb, *, hangup: bool, shake: float = 0.0) -> None:
+    """The handset: tilted to call, lying flat to hang up; ``shake`` rings it."""
+    a = math.radians((0.0 if hangup else PET_CALL_TILT_DEG) + shake)
+    cos_a, sin_a = math.cos(a), math.sin(a)
+    pivot_u, pivot_v = 12.0, 14.0
+
+    def turn(point: tuple[float, float]) -> tuple[float, float]:
+        # Turned about the handset's own middle, then centred on the grid.
+        du, dv = point[0] - pivot_u, point[1] - pivot_v
+        return (12.0 + du * cos_a - dv * sin_a, 12.0 + du * sin_a + dv * cos_a)
+
+    base = pen.width
+    grip, ear, mouth = _handset_outline()
+    pen.width = max(1, int(round(base * 1.6)))
+    pen.lines([turn(point) for point in grip], color)
+    pen.width = max(1, int(round(base * 2.4)))
+    pen.lines([turn(point) for point in ear], color)
+    pen.lines([turn(point) for point in mouth], color)
+    pen.width = base
 
 
 def _glyph_mic(pen: _Pen, color: _Rgb) -> None:
@@ -922,6 +994,27 @@ def _draw_indicator(
         layer.paste(stroke, (x0, y0), _stroke_mask(width, h))
 
 
+def _render_call_disc(state: PetStripState, diameter: int, scale: float) -> Image.Image:
+    """The phone disc: green with a tilted handset, red with a flat one."""
+    size = diameter * _SS
+    hovered = state.hovered == "call"
+    if state.active:
+        fill = PET_HANGUP_FILL_HOVER if hovered else PET_HANGUP_FILL
+    else:
+        fill = PET_CALL_FILL_HOVER if hovered else PET_CALL_FILL
+    layer = Image.new("RGB", (size, size), fill)
+    d = ImageDraw.Draw(layer)
+    box = _spx(PET_SLOT, scale) * PET_ICON_BOX * _SS
+    stroke = PET_ICON_STROKE * max(0.5, scale) * _SS
+    _glyph_phone(
+        _Pen(d, size / 2.0, size / 2.0, box, stroke),
+        PET_CALL_ICON,
+        hangup=state.active,
+        shake=call_ring_angle(state.call_ring),
+    )
+    return layer.resize((diameter, diameter), Image.Resampling.LANCZOS)
+
+
 def _render_pen_disc(state: PetStripState, diameter: int, scale: float) -> Image.Image:
     size = diameter * _SS
     hovered = state.hovered == "bell"
@@ -993,6 +1086,10 @@ def render_pet_strip(
     x0, y0, x1, y1 = layout.pill
     pill = _render_pill(state, layout, scale)
     frame.paste(pill, (x0, y0), _binary_stadium_mask(x1 - x0, y1 - y0))
+    ccx, ccy, cr = layout.call
+    call_d = int(round(cr * 2))
+    call = _render_call_disc(state, call_d, scale)
+    frame.paste(call, (int(round(ccx - cr)), int(round(ccy - cr))), _disc_mask(call_d))
     return frame
 
 

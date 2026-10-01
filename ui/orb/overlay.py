@@ -2007,7 +2007,7 @@ class PetControlStrip(OrbControlRow):
     strip at rest never repaints.
     """
 
-    GUARDED_ACTIONS: tuple[str, ...] = ("orb",)
+    GUARDED_ACTIONS: tuple[str, ...] = ("orb", "call")
     #: Longer than the orb row's: the pointer crosses a gap between the
     #: figure and the strip, and a strip that vanishes on the way is a miss.
     HOVER_GRACE_MS = 600
@@ -2107,6 +2107,7 @@ class PetControlStrip(OrbControlRow):
         phase: int | None = None,
         notify_off: bool | None = None,
         ring: int | None = None,
+        call_ring: int | None = None,
     ) -> None:
         """Update what the strip says, repainting only on a real change."""
         _ = can_attach  # the pet strip has no attach control
@@ -2121,6 +2122,7 @@ class PetControlStrip(OrbControlRow):
             hovered=current.hovered,
             notify_off=current.notify_off if notify_off is None else bool(notify_off),
             ring=current.ring if ring is None else int(ring),
+            call_ring=current.call_ring if call_ring is None else int(call_ring),
         )
         if state == current:
             return
@@ -2301,6 +2303,8 @@ class OrbOverlay:
         #: The notification cards' window, created with the first card.
         self._notices: PetNoticeStack | None = None
         self._ring_after_id: str | None = None
+        #: The phone disc's ringing timer, like the bell's.
+        self._call_ring_after_id: str | None = None
         #: The monitor's display scale (1.0 at 100 %), read once the root exists.
         self._dpi_ratio = 1.0
         # Frame-loop bookkeeping: ONE pending tick at most, and for renderers
@@ -3069,6 +3073,34 @@ class OrbOverlay:
             self._do_compose()
         elif action == "mic_mute":
             self._do_mic_mute()
+        elif action == "call":
+            self._do_call()
+
+    def _do_call(self) -> None:
+        """The phone disc: call Jarvis (ringing as it dials), or hang up."""
+        if self._mode not in ("listen", "think", "speak"):
+            self._ring_phone()
+        self._do_talk_or_hangup()
+
+    def _ring_phone(self, phase: int = 1) -> None:
+        """Shake the handset: one strip frame per ``PET_RING_STEP_S``."""
+        root = self._root
+        row = self._controls
+        if root is None or not isinstance(row, PetControlStrip):
+            self._call_ring_after_id = None
+            return
+        if phase == 1 and self._call_ring_after_id is not None:
+            try:
+                root.after_cancel(self._call_ring_after_id)
+            except tk.TclError:
+                logging.getLogger("jarvis.orb").debug("phone timer cancel failed", exc_info=True)
+        if phase >= orb_controls.PET_RING_PHASES * orb_controls.PET_CALL_RING_PASSES:
+            self._call_ring_after_id = None
+            row.set_state(call_ring=0)
+            return
+        row.set_state(call_ring=phase)
+        delay = int(orb_controls.PET_RING_STEP_S * 1000)
+        self._call_ring_after_id = root.after(delay, lambda: self._ring_phone(phase + 1))
 
     def _do_bell_toggle(self) -> None:
         """The bell: notifications on or off for this run (Tk thread).

@@ -237,6 +237,17 @@ def test_the_bell_toggles_reports_and_clears(monkeypatch: pytest.MonkeyPatch) ->
     assert seen == [False, True]
 
 
+def test_the_phone_calls_when_idle_and_hangs_up_in_a_call() -> None:
+    pet, _strip, _column = _pet()
+    calls: list[str] = []
+    pet.set_on_talk(lambda: calls.append("talk"))
+    pet.set_on_hangup(lambda: calls.append("hangup"))
+    pet._on_control_action("call")
+    pet._mode = "listen"
+    pet._on_control_action("call")
+    assert calls == ["talk", "hangup"]
+
+
 def test_the_thinking_line_shows_the_current_step_else_the_heading() -> None:
     pet, _strip, column = _pet()
     pet.show_status("Planning", "Search the web")

@@ -1,4 +1,4 @@
-import { Mic, SquarePen, Volume2 } from "lucide-react";
+import { Mic, Phone, SquarePen, Volume2 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
@@ -11,6 +11,9 @@ import { cn } from "@/lib/utils";
 const STRIP_FILL = "#171b26";
 const STRIP_ICON = "#e8e9ee";
 const STRIP_DIVIDER = "#303748";
+/** The phone disc's call green (`PET_CALL_FILL`); it turns red during a call. */
+const CALL_FILL = "#16a34a";
+const CALL_ICON = "#ffffff";
 /** The glossy talk orb: lit from the top left, deep blue at the rim. */
 const ORB_GRADIENT =
   "radial-gradient(circle at 32% 30%, #e6f1ff 0 7%, #a9d0ff 15%, #4a7cf5 55%, #2747c8 100%)";
@@ -18,7 +21,8 @@ const ORB_GRADIENT =
 /**
  * A still picture of the control strip the desktop pet carries: the pen in
  * its own filled disc (new chat), then one filled pill holding the
- * microphone, the talk orb and the speaker, split by faint dividers. Shown on
+ * microphone, the talk orb and the speaker, split by faint dividers, then the
+ * green phone that calls Jarvis (red to hang up during a call). Shown on
  * the settings page so the user knows what sits under the pet before
  * switching it on.
  *
@@ -71,6 +75,13 @@ export function PetControlStripPreview({
         <span className={cn("grid place-items-center", slot)}>
           <Volume2 className={icon} strokeWidth={2} />
         </span>
+      </span>
+      <span
+        data-testid="pet-strip-call"
+        className={cn("grid place-items-center rounded-full", height, disc)}
+        style={{ backgroundColor: CALL_FILL, color: CALL_ICON }}
+      >
+        <Phone className={icon} strokeWidth={2} />
       </span>
     </div>
   );

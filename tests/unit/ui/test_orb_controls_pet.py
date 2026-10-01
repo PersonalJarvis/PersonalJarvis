@@ -25,6 +25,8 @@ def _centre(action: str, scale: float = 1.0) -> tuple[float, float]:
     layout = controls.pet_strip_layout(scale)
     if action == "bell":
         return layout.pen[0], layout.pen[1]
+    if action == "call":
+        return layout.call[0], layout.call[1]
     for name, x0, x1 in layout.slots:
         if name == action:
             return (x0 + x1) / 2.0, (layout.pill[1] + layout.pill[3]) / 2.0
@@ -44,13 +46,16 @@ def test_every_pet_action_is_reachable_at_its_centre(scale: float) -> None:
 
 def test_the_voice_orb_row_keeps_its_own_actions() -> None:
     assert controls.ACTIONS == ("attach", "mic", "close", "speaker")
-    assert controls.PET_ACTIONS == ("bell", "mic_mute", "orb", "speaker")
+    assert controls.PET_ACTIONS == ("bell", "mic_mute", "orb", "speaker", "call")
 
 
 def test_the_gap_between_pen_and_pill_is_a_drag_handle_not_a_button() -> None:
     layout = controls.pet_strip_layout(1.0)
     gap_x = (layout.pen[0] + layout.pen[2] + layout.pill[0]) / 2.0
     assert controls.pet_hit_test(gap_x, layout.height / 2.0) is None
+    # So is the gap between the pill and the phone.
+    call_gap_x = (layout.pill[2] + layout.call[0] - layout.call[2]) / 2.0
+    assert controls.pet_hit_test(call_gap_x, layout.height / 2.0) is None
     # The padding band above the controls is empty too.
     assert controls.pet_hit_test(_centre("orb")[0], 0.5) is None
 
@@ -335,3 +340,43 @@ def test_hover_lifts_a_round_patch_not_the_whole_slot() -> None:
     # The slot's top corner stays the plain fill; its middle edge lightens.
     assert hovered.getpixel((sx0 + 1, y0 + 1)) == plain.getpixel((sx0 + 1, y0 + 1))
     assert hovered.getpixel(((sx0 + sx1) // 2, y0 + 5)) == controls.PET_FILL_HOVER
+
+
+# --- the phone: call and hang up ---------------------------------------------
+
+
+def _call_centre_pixel(state: controls.PetStripState) -> tuple[int, int, int]:
+    frame = controls.render_pet_strip(state, 1.0)
+    cx, cy, r = controls.pet_strip_layout(1.0).call
+    # Just inside the rim: the disc's fill, clear of the handset.
+    return frame.getpixel((int(cx), int(cy - r + 2)))
+
+
+def test_the_phone_is_green_to_call_and_red_to_hang_up() -> None:
+    assert _call_centre_pixel(controls.PetStripState()) == controls.PET_CALL_FILL
+    assert _call_centre_pixel(controls.PetStripState(active=True)) == controls.PET_HANGUP_FILL
+    hovered = controls.PetStripState(active=True, hovered="call")
+    assert _call_centre_pixel(hovered) == controls.PET_HANGUP_FILL_HOVER
+
+
+def _handset_pixels(state: controls.PetStripState) -> list[tuple[int, int, int]]:
+    frame = controls.render_pet_strip(state, 2.0)
+    cx, cy, r = controls.pet_strip_layout(2.0).call
+    box = (int(cx - r * 0.6), int(cy - r * 0.6), int(cx + r * 0.6), int(cy + r * 0.6))
+    return list(frame.crop(box).getdata())
+
+
+def test_the_handset_turns_flat_to_hang_up() -> None:
+    call = [px == controls.PET_CALL_ICON for px in _handset_pixels(controls.PetStripState())]
+    hangup = [
+        px == controls.PET_CALL_ICON for px in _handset_pixels(controls.PetStripState(active=True))
+    ]
+    assert any(call) and any(hangup) and call != hangup
+
+
+def test_pressing_call_rings_the_handset_and_then_it_rests() -> None:
+    rest = _handset_pixels(controls.PetStripState())
+    assert _handset_pixels(controls.PetStripState(call_ring=4)) != rest
+    end = controls.PET_RING_PHASES * controls.PET_CALL_RING_PASSES
+    assert controls.call_ring_angle(0) == 0.0 == controls.call_ring_angle(end)
+    assert any(controls.call_ring_angle(p) != 0.0 for p in range(1, end))
