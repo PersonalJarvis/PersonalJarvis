@@ -1,10 +1,16 @@
 <<<<<<<< HEAD:jarvis/ui/web/dist/assets/FolderPicker-B2tF8T20.js
+<<<<<<<< HEAD:jarvis/ui/web/dist/assets/FolderPicker-B2tF8T20.js
 import{l as ze,r,cR as K,cS as Ie,cT as We,cU as Be,at as Ue,j as e,ad as ue,L as I,S as Ge,X as he,b9 as q,ai as Ve,c as L,aa as qe,cV as Ke,aE as Fe,an as Te,cW as Xe,cX as Qe,cY as Ye}from"./index-DK8nKeII.js";import{w as Ze}from"./nativeDrop-Dgg14NZY.js";import{F as fe,I as $,B as J,S as De}from"./controls-CsWBrh8M.js";import{E as Je}from"./eye-off-BK-ylINf.js";import{S as et}from"./star-COJdtHJ0.js";import{a as tt}from"./corner-down-left-BXx-Q_pO.js";/**
 |||||||| parent of e44eec7d8 (chore(ui): rebuild frontend bundle for the IDE key menu):jarvis/ui/web/dist/assets/FolderPicker-kIES5jD9.js
 import{l as ze,r,cR as K,cS as Ie,cT as We,cU as Be,at as Ue,j as e,ad as ue,L as I,S as Ge,X as he,b9 as q,ai as Ve,c as L,aa as qe,cV as Ke,aE as Fe,an as Te,cW as Xe,cX as Qe,cY as Ye}from"./index-DRGNN6w7.js";import{w as Ze}from"./nativeDrop-wUeCA6ob.js";import{F as fe,I as $,B as J,S as De}from"./controls-BZup4VX1.js";import{E as Je}from"./eye-off-Ddb31WQ_.js";import{S as et}from"./star-Bfn90pN1.js";import{a as tt}from"./corner-down-left-jYBGVWCd.js";/**
 ========
 import{q as ze,r,cS as K,cT as Ie,cU as We,cV as Be,at as Ue,j as e,ad as ue,L as I,S as qe,X as he,b9 as V,ai as Ge,g as L,aa as Ve,cW as Ke,aE as Fe,an as Te,cX as Xe,cY as Ze,cZ as Qe}from"./index-BtFTJLvF.js";import{w as Ye}from"./nativeDrop-CJhCUKWq.js";import{F as fe,I as $,B as J,S as De}from"./controls-BquVY3E9.js";import{E as Je}from"./eye-off-Bj4rzaQg.js";import{S as et}from"./star-DlVR0adl.js";import{a as tt}from"./corner-down-left-BZ6bZaxz.js";/**
 >>>>>>>> e44eec7d8 (chore(ui): rebuild frontend bundle for the IDE key menu):jarvis/ui/web/dist/assets/FolderPicker-DTgMdW_e.js
+|||||||| parent of ebd50ee8d (chore(ui): rebuild frontend bundle for the Ctrl+B key menu):jarvis/ui/web/dist/assets/FolderPicker-DTgMdW_e.js
+import{q as ze,r,cS as K,cT as Ie,cU as We,cV as Be,at as Ue,j as e,ad as ue,L as I,S as qe,X as he,b9 as V,ai as Ge,g as L,aa as Ve,cW as Ke,aE as Fe,an as Te,cX as Xe,cY as Ze,cZ as Qe}from"./index-BtFTJLvF.js";import{w as Ye}from"./nativeDrop-CJhCUKWq.js";import{F as fe,I as $,B as J,S as De}from"./controls-BquVY3E9.js";import{E as Je}from"./eye-off-Bj4rzaQg.js";import{S as et}from"./star-DlVR0adl.js";import{a as tt}from"./corner-down-left-BZ6bZaxz.js";/**
+========
+import{q as ze,r,cS as K,cT as Ie,cU as We,cV as Be,at as Ue,j as e,ad as ue,L as I,S as qe,X as he,b9 as V,ai as Ge,g as L,aa as Ve,cW as Ke,aE as Fe,an as Te,cX as Xe,cY as Ze,cZ as Qe}from"./index-CwJDK0Jq.js";import{w as Ye}from"./nativeDrop-BX7yqL5G.js";import{F as fe,I as $,B as J,S as De}from"./controls-Cta8FkiH.js";import{E as Je}from"./eye-off-BCabTOUY.js";import{S as et}from"./star-CANX3i-s.js";import{a as tt}from"./corner-down-left-VMMqqMMq.js";/**
+>>>>>>>> ebd50ee8d (chore(ui): rebuild frontend bundle for the Ctrl+B key menu):jarvis/ui/web/dist/assets/FolderPicker-Bgdunk9H.js
  * @license lucide-react v0.445.0 - ISC
  *
  * This source code is licensed under the ISC license.

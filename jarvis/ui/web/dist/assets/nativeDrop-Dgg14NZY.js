@@ -1,10 +1,16 @@
 <<<<<<<< HEAD:jarvis/ui/web/dist/assets/nativeDrop-Dgg14NZY.js
+<<<<<<<< HEAD:jarvis/ui/web/dist/assets/nativeDrop-Dgg14NZY.js
 import{l as w,r as p,j as u,by as A,c as g,at as P}from"./index-DK8nKeII.js";/**
 |||||||| parent of e44eec7d8 (chore(ui): rebuild frontend bundle for the IDE key menu):jarvis/ui/web/dist/assets/nativeDrop-wUeCA6ob.js
 import{l as w,r as p,j as u,by as A,c as g,at as P}from"./index-DRGNN6w7.js";/**
 ========
 import{q as w,r as p,j as u,by as A,g,at as P}from"./index-BtFTJLvF.js";/**
 >>>>>>>> e44eec7d8 (chore(ui): rebuild frontend bundle for the IDE key menu):jarvis/ui/web/dist/assets/nativeDrop-CJhCUKWq.js
+|||||||| parent of ebd50ee8d (chore(ui): rebuild frontend bundle for the Ctrl+B key menu):jarvis/ui/web/dist/assets/nativeDrop-CJhCUKWq.js
+import{q as w,r as p,j as u,by as A,g,at as P}from"./index-BtFTJLvF.js";/**
+========
+import{q as w,r as p,j as u,by as A,g,at as P}from"./index-CwJDK0Jq.js";/**
+>>>>>>>> ebd50ee8d (chore(ui): rebuild frontend bundle for the Ctrl+B key menu):jarvis/ui/web/dist/assets/nativeDrop-BX7yqL5G.js
  * @license lucide-react v0.445.0 - ISC
  *
  * This source code is licensed under the ISC license.

@@ -1,10 +1,16 @@
 <<<<<<<< HEAD:jarvis/ui/web/dist/assets/frame-BYpsUAL7.js
+<<<<<<<< HEAD:jarvis/ui/web/dist/assets/frame-BYpsUAL7.js
 import{l as e}from"./index-DK8nKeII.js";/**
 |||||||| parent of e44eec7d8 (chore(ui): rebuild frontend bundle for the IDE key menu):jarvis/ui/web/dist/assets/frame-BqMwYpzU.js
 import{l as e}from"./index-DRGNN6w7.js";/**
 ========
 import{q as e}from"./index-BtFTJLvF.js";/**
 >>>>>>>> e44eec7d8 (chore(ui): rebuild frontend bundle for the IDE key menu):jarvis/ui/web/dist/assets/frame-19HOGF_o.js
+|||||||| parent of ebd50ee8d (chore(ui): rebuild frontend bundle for the Ctrl+B key menu):jarvis/ui/web/dist/assets/frame-19HOGF_o.js
+import{q as e}from"./index-BtFTJLvF.js";/**
+========
+import{q as e}from"./index-CwJDK0Jq.js";/**
+>>>>>>>> ebd50ee8d (chore(ui): rebuild frontend bundle for the Ctrl+B key menu):jarvis/ui/web/dist/assets/frame-Bkr-reCX.js
  * @license lucide-react v0.445.0 - ISC
  *
  * This source code is licensed under the ISC license.

@@ -1,10 +1,16 @@
 <<<<<<<< HEAD:jarvis/ui/web/dist/assets/ProviderLogo-CKeix_CW.js
+<<<<<<<< HEAD:jarvis/ui/web/dist/assets/ProviderLogo-CKeix_CW.js
 import{_ as u,a as m,b as f,c as p,d as b,e as h,f as y,g as x,h as w,i as k,j,k as z,l as N,m as L,n as q,o as M,p as W,q as C,r as D,s as P,t as R,u as H,v as O,w as S}from"./xai-ELXAGfWY.js";import{l as U,j as i,c as n,U as $}from"./index-DK8nKeII.js";/**
 |||||||| parent of e44eec7d8 (chore(ui): rebuild frontend bundle for the IDE key menu):jarvis/ui/web/dist/assets/ProviderLogo-BsKz3SE3.js
 import{_ as u,a as m,b as f,c as p,d as b,e as h,f as y,g as x,h as w,i as k,j,k as z,l as N,m as L,n as q,o as M,p as W,q as C,r as D,s as P,t as R,u as H,v as O,w as S}from"./xai-ELXAGfWY.js";import{l as U,j as i,c as n,U as $}from"./index-DRGNN6w7.js";/**
 ========
 import{_ as u,a as m,b as f,c as p,d as b,e as h,f as y,g as x,h as w,i as k,j,k as z,l as N,m as q,n as L,o as M,p as W,q as C,r as D,s as P,t as R,u as H,v as O,w as S}from"./xai-ELXAGfWY.js";import{q as U,j as i,g as n,U as $}from"./index-BtFTJLvF.js";/**
 >>>>>>>> e44eec7d8 (chore(ui): rebuild frontend bundle for the IDE key menu):jarvis/ui/web/dist/assets/ProviderLogo-DZEZNrfE.js
+|||||||| parent of ebd50ee8d (chore(ui): rebuild frontend bundle for the Ctrl+B key menu):jarvis/ui/web/dist/assets/ProviderLogo-DZEZNrfE.js
+import{_ as u,a as m,b as f,c as p,d as b,e as h,f as y,g as x,h as w,i as k,j,k as z,l as N,m as q,n as L,o as M,p as W,q as C,r as D,s as P,t as R,u as H,v as O,w as S}from"./xai-ELXAGfWY.js";import{q as U,j as i,g as n,U as $}from"./index-BtFTJLvF.js";/**
+========
+import{_ as u,a as m,b as f,c as p,d as b,e as h,f as y,g as x,h as w,i as k,j,k as z,l as N,m as q,n as L,o as M,p as W,q as C,r as D,s as P,t as R,u as H,v as O,w as S}from"./xai-ELXAGfWY.js";import{q as U,j as i,g as n,U as $}from"./index-CwJDK0Jq.js";/**
+>>>>>>>> ebd50ee8d (chore(ui): rebuild frontend bundle for the Ctrl+B key menu):jarvis/ui/web/dist/assets/ProviderLogo-DoE9ungp.js
  * @license lucide-react v0.445.0 - ISC
  *
  * This source code is licensed under the ISC license.

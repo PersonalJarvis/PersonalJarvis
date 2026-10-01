@@ -1,10 +1,16 @@
 <<<<<<<< HEAD:jarvis/ui/web/dist/assets/lightbulb-DM_68GRY.js
+<<<<<<<< HEAD:jarvis/ui/web/dist/assets/lightbulb-DM_68GRY.js
 import{l as t}from"./index-DK8nKeII.js";/**
 |||||||| parent of e44eec7d8 (chore(ui): rebuild frontend bundle for the IDE key menu):jarvis/ui/web/dist/assets/lightbulb-Bc9eCT6g.js
 import{l as t}from"./index-DRGNN6w7.js";/**
 ========
 import{q as t}from"./index-BtFTJLvF.js";/**
 >>>>>>>> e44eec7d8 (chore(ui): rebuild frontend bundle for the IDE key menu):jarvis/ui/web/dist/assets/lightbulb-DwEMPcnQ.js
+|||||||| parent of ebd50ee8d (chore(ui): rebuild frontend bundle for the Ctrl+B key menu):jarvis/ui/web/dist/assets/lightbulb-DwEMPcnQ.js
+import{q as t}from"./index-BtFTJLvF.js";/**
+========
+import{q as t}from"./index-CwJDK0Jq.js";/**
+>>>>>>>> ebd50ee8d (chore(ui): rebuild frontend bundle for the Ctrl+B key menu):jarvis/ui/web/dist/assets/lightbulb-BFV4bD6-.js
  * @license lucide-react v0.445.0 - ISC
  *
  * This source code is licensed under the ISC license.

@@ -1,10 +1,16 @@
 <<<<<<<< HEAD:jarvis/ui/web/dist/assets/sliders-horizontal-DfS92zo6.js
+<<<<<<<< HEAD:jarvis/ui/web/dist/assets/sliders-horizontal-DfS92zo6.js
 import{l as y}from"./index-DK8nKeII.js";/**
 |||||||| parent of e44eec7d8 (chore(ui): rebuild frontend bundle for the IDE key menu):jarvis/ui/web/dist/assets/sliders-horizontal-CvFDpuu4.js
 import{l as y}from"./index-DRGNN6w7.js";/**
 ========
 import{q as y}from"./index-BtFTJLvF.js";/**
 >>>>>>>> e44eec7d8 (chore(ui): rebuild frontend bundle for the IDE key menu):jarvis/ui/web/dist/assets/sliders-horizontal-BfTaSryI.js
+|||||||| parent of ebd50ee8d (chore(ui): rebuild frontend bundle for the Ctrl+B key menu):jarvis/ui/web/dist/assets/sliders-horizontal-BfTaSryI.js
+import{q as y}from"./index-BtFTJLvF.js";/**
+========
+import{q as y}from"./index-CwJDK0Jq.js";/**
+>>>>>>>> ebd50ee8d (chore(ui): rebuild frontend bundle for the Ctrl+B key menu):jarvis/ui/web/dist/assets/sliders-horizontal-CSuB9WQH.js
  * @license lucide-react v0.445.0 - ISC
  *
  * This source code is licensed under the ISC license.

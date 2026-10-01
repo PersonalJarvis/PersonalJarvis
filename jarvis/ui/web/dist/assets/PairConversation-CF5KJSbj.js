@@ -1,10 +1,16 @@
 <<<<<<<< HEAD:jarvis/ui/web/dist/assets/PairConversation-CF5KJSbj.js
+<<<<<<<< HEAD:jarvis/ui/web/dist/assets/PairConversation-CF5KJSbj.js
 import{l as M,r as n,j as e,u as R,cq as q,X as A,c as k,cr as B}from"./index-DK8nKeII.js";import{C as D}from"./WorkTrace-DqWsy594.js";import{L as H}from"./lock-BEiVw-M-.js";/**
 |||||||| parent of e44eec7d8 (chore(ui): rebuild frontend bundle for the IDE key menu):jarvis/ui/web/dist/assets/PairConversation-BYXk5iNQ.js
 import{l as M,r as n,j as e,u as R,cq as q,X as A,c as k,cr as B}from"./index-DRGNN6w7.js";import{C as D}from"./WorkTrace-DGsfAcXh.js";import{L as H}from"./lock-DdLIP8Bs.js";/**
 ========
 import{q as M,r as n,j as e,u as R,cq as q,X as A,g as k,cr as B}from"./index-BtFTJLvF.js";import{C as D}from"./WorkTrace-CGeEkPul.js";import{L as H}from"./lock-BKspT7Fm.js";/**
 >>>>>>>> e44eec7d8 (chore(ui): rebuild frontend bundle for the IDE key menu):jarvis/ui/web/dist/assets/PairConversation-DbNewkOJ.js
+|||||||| parent of ebd50ee8d (chore(ui): rebuild frontend bundle for the Ctrl+B key menu):jarvis/ui/web/dist/assets/PairConversation-DbNewkOJ.js
+import{q as M,r as n,j as e,u as R,cq as q,X as A,g as k,cr as B}from"./index-BtFTJLvF.js";import{C as D}from"./WorkTrace-CGeEkPul.js";import{L as H}from"./lock-BKspT7Fm.js";/**
+========
+import{q as M,r as n,j as e,u as R,cq as q,X as A,g as k,cr as B}from"./index-CwJDK0Jq.js";import{C as D}from"./WorkTrace-BKyucy2d.js";import{L as H}from"./lock-D5mwPJIo.js";/**
+>>>>>>>> ebd50ee8d (chore(ui): rebuild frontend bundle for the Ctrl+B key menu):jarvis/ui/web/dist/assets/PairConversation-DvTpUBhU.js
  * @license lucide-react v0.445.0 - ISC
  *
  * This source code is licensed under the ISC license.

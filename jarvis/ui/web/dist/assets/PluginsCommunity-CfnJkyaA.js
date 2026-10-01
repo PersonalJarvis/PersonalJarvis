@@ -1,10 +1,16 @@
 <<<<<<<< HEAD:jarvis/ui/web/dist/assets/PluginsCommunity-CfnJkyaA.js
+<<<<<<<< HEAD:jarvis/ui/web/dist/assets/PluginsCommunity-CfnJkyaA.js
 import{l as H,r as u,aj as Z,j as e,c as y,a8 as P,ag as Y,Z as X,d as ee,J as B,ab as _,W as f,ao as te,ap as z,aa as se,S as re,L as N,a7 as S,Y as Q,B as ne}from"./index-DK8nKeII.js";import{P as U}from"./branding-DGZ3DZY3.js";/**
 |||||||| parent of e44eec7d8 (chore(ui): rebuild frontend bundle for the IDE key menu):jarvis/ui/web/dist/assets/PluginsCommunity-BcTmSVhB.js
 import{l as H,r as u,aj as Z,j as e,c as y,a8 as P,ag as Y,Z as X,d as ee,J as B,ab as _,W as f,ao as te,ap as z,aa as se,S as re,L as N,a7 as S,Y as Q,B as ne}from"./index-DRGNN6w7.js";import{P as U}from"./branding-DGZ3DZY3.js";/**
 ========
 import{q as J,r as u,aj as Z,j as e,g as y,a8 as P,ag as Y,Z as X,k as ee,O as B,ab as _,W as f,ao as te,ap as z,aa as se,S as re,L as N,a7 as S,Y as Q,T as ne}from"./index-BtFTJLvF.js";import{P as U}from"./branding-DGZ3DZY3.js";/**
 >>>>>>>> e44eec7d8 (chore(ui): rebuild frontend bundle for the IDE key menu):jarvis/ui/web/dist/assets/PluginsCommunity--7TRx5Sg.js
+|||||||| parent of ebd50ee8d (chore(ui): rebuild frontend bundle for the Ctrl+B key menu):jarvis/ui/web/dist/assets/PluginsCommunity--7TRx5Sg.js
+import{q as J,r as u,aj as Z,j as e,g as y,a8 as P,ag as Y,Z as X,k as ee,O as B,ab as _,W as f,ao as te,ap as z,aa as se,S as re,L as N,a7 as S,Y as Q,T as ne}from"./index-BtFTJLvF.js";import{P as U}from"./branding-DGZ3DZY3.js";/**
+========
+import{q as J,r as u,aj as Z,j as e,g as y,a8 as P,ag as Y,Z as X,k as ee,O as B,ab as _,W as f,ao as te,ap as z,aa as se,S as re,L as N,a7 as S,Y as Q,T as ne}from"./index-CwJDK0Jq.js";import{P as U}from"./branding-DGZ3DZY3.js";/**
+>>>>>>>> ebd50ee8d (chore(ui): rebuild frontend bundle for the Ctrl+B key menu):jarvis/ui/web/dist/assets/PluginsCommunity-CKvhiC22.js
  * @license lucide-react v0.445.0 - ISC
  *
  * This source code is licensed under the ISC license.
