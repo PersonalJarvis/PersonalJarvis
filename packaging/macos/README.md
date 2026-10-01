@@ -31,10 +31,24 @@ maintainer's Mac and both GitHub runners:
 
 | Variable | Meaning |
 |---|---|
-| `APPLE_SIGNING_IDENTITY` | `Developer ID Application: NAME (TEAMID)` |
+| `APPLE_SIGNING_IDENTITY` | `Developer ID Application: NAME (TEAMID)` — optional on CI, where it is read from the imported certificate |
 | `APPLE_ID` | Apple ID used for notarization |
 | `APPLE_TEAM_ID` | 10-character team identifier |
 | `APPLE_APP_SPECIFIC_PASSWORD` | app-specific password for that Apple ID |
+| `APPLE_CERTIFICATE_P12_BASE64` | CI only: the exported Developer ID Application certificate (`.p12`, with its chain), base64 encoded |
+| `APPLE_CERTIFICATE_PASSWORD` | CI only: the password chosen when exporting it |
+
+A GitHub runner starts with an empty keychain, so `codesign` cannot find a
+Developer ID identity there until the certificate is imported. With the two
+`APPLE_CERTIFICATE_*` variables set, `build.sh` imports it into a temporary
+keychain (removed again on exit, search list restored), reads the signing
+identity back from it when `APPLE_SIGNING_IDENTITY` is not given, and never
+prints a secret. A Mac that already holds the identity in its login keychain
+needs neither variable. Getting the certificate needs an Apple Developer Program
+membership: create a *Developer ID Application* certificate in the developer
+portal, export it from Keychain Access as `.p12` together with its chain, encode
+it with `base64 -i certificate.p12 | pbcopy`, and store the six values as GitHub
+Actions secrets.
 
 With the identity set, the script signs every nested Mach-O object inside the
 bundle before sealing the bundle itself (Apple's guidance is inside-out;
@@ -56,12 +70,17 @@ That build is fine for local testing and must not be published.
 ## First launch
 
 * **Signed and notarized build:** a normal double-click. Nothing to explain.
-* **Unsigned or ad-hoc build:** macOS refuses the first double-click
-  ("Personal Jarvis can't be opened because Apple cannot check it for malicious
-  software"). The way through is **right-click (or Control-click) the app in
-  Finder, choose Open, then Open again in the dialog**. macOS remembers the
-  decision for that copy of the app. Alternatively
-  `xattr -dr com.apple.quarantine "/Applications/Personal Jarvis.app"`.
+* **Unsigned or ad-hoc build** (every image published so far): macOS refuses the
+  first double-click ("Personal Jarvis can't be opened because Apple cannot
+  check it for malicious software"). On macOS 15 and later, open **System
+  Settings > Privacy & Security**, scroll to the message about Personal Jarvis,
+  choose **Open Anyway** and confirm with your password. Up to macOS 14,
+  **right-click (or Control-click) the app in Finder, choose Open, then Open
+  again** also works. macOS remembers the decision for that copy of the app.
+  Alternatively `xattr -dr com.apple.quarantine "/Applications/Personal Jarvis.app"`.
+  An ad-hoc signature is a hash of the app's bytes, so every update is a new app
+  to macOS and every permission is asked for again; only a Developer ID
+  signature keeps one identity across versions.
 
 ## Permission prompts
 
@@ -78,6 +97,13 @@ for each one at the moment it needs it, through Apple's own prompts:
 * **Accessibility / Input monitoring** — global hotkeys and Computer-Use input.
 * **Automation (Apple events)** — controlling other apps, e.g. the media
   session.
+
+The downloaded app is its own app to macOS: bundle id `ai.personaljarvis.desktop`
+(`jarvis.spec`), separate from the managed bundle the source installer builds
+(`com.personal-jarvis.desktop`). Both are accepted as "the installed app" by the
+permission screens, and each keeps its own grants. Rows no enabled feature needs
+(Music/Spotify Automation while "Mute music while dictating" is off) are shown as
+optional and never asked for unprompted.
 
 Each of these needs *both* an entitlement in
 `packaging/macos/entitlements.plist` and a usage-description string in the
@@ -123,12 +149,13 @@ path has to enter through one bundle identity.
 
 ## What has NOT been verified
 
-Nobody has run this script on a Mac yet. What has been checked:
-`bash -n`, ShellCheck 0.11.0 at `-S style` with zero findings, and a full
-`DRY_RUN=1` rehearsal of both the unsigned and the signed/notarized path,
-including a check that the app-specific password never reaches the output.
-
-A real run - PyInstaller on macOS, `codesign`, `notarytool`, `hdiutil`,
-Gatekeeper on a downloaded image, and the permission prompts - needs the macOS
-CI job or a physical Mac and is the last gate before the first public macOS
-release.
+The macOS CI runners build and publish the **ad-hoc** images (PyInstaller,
+`codesign -s -`, `hdiutil`; the v2.5.0 build log shows it). The signed and
+notarized path has never run for real: it needs the six secrets above, and with
+them the first real `codesign`, `notarytool` and `stapler` pass, Gatekeeper on a
+downloaded image, and the permission prompts of a signed app are all still to be
+seen. What has been checked off a Mac: `bash -n`, ShellCheck 0.11.0 at `-S style`
+with zero findings, and a `DRY_RUN=1` rehearsal of the unsigned path, the
+certificate import and the signed/notarized path
+(`tests/unit/packaging/test_macos_build_script.py`), including that no secret
+reaches the output.

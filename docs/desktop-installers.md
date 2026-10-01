@@ -150,11 +150,17 @@ working installer and says, in one line, that it is unsigned.
 | Platform | Mechanism                    | Secrets                                                                                                     |
 | -------- | ---------------------------- | ----------------------------------------------------------------------------------------------------------- |
 | Windows  | Azure Trusted Signing        | `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_SIGNING_ENDPOINT`, `AZURE_CODE_SIGNING_ACCOUNT`, `AZURE_CERTIFICATE_PROFILE` |
-| macOS    | Developer ID + notarization  | `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_APP_SPECIFIC_PASSWORD`                          |
+| macOS    | Developer ID + notarization  | `APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_CERTIFICATE_P12_BASE64`, `APPLE_CERTIFICATE_PASSWORD` (and optionally `APPLE_SIGNING_IDENTITY`; `build.sh` reads it from the imported certificate) |
 | Linux    | none (AppImage is unsigned)  | -                                                                                                             |
 
 Private key material only ever exists as a GitHub Actions secret (AP-29); no
 signing step ever reads a file from the repository.
+
+Without the macOS secrets the published `.dmg` is ad-hoc signed and not
+notarized: macOS blocks the first launch (System Settings > Privacy & Security >
+Open Anyway) and treats every update as a new app, so every permission is asked
+for again. `packaging/macos/build.sh` imports the certificate into a temporary
+keychain on the runner; `packaging/macos/README.md` lists how to obtain it.
 
 On Windows the workflow signs the **setup executable**. That is the file the
 browser marks with Mark-of-the-Web, so it is the signature SmartScreen weighs;
