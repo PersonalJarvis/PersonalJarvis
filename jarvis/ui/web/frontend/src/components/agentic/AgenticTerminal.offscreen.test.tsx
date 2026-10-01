@@ -39,7 +39,7 @@ vi.mock("@xterm/xterm", () => ({
     options: Record<string, unknown> = {};
     unicode = { activeVersion: "" };
     buffer = {
-      active: { type: "normal", baseY: 0, viewportY: 0 },
+      active: { type: "normal", baseY: 0, viewportY: 0, cursorX: 0, cursorY: 0, getLine: () => undefined },
     };
     // A pane takes over the terminal's protocol replies on mount, because the
     // backend answers those instead (see ./terminalQueries). A stand-in without
@@ -63,6 +63,9 @@ vi.mock("@xterm/xterm", () => ({
     getSelection() {
       return "";
     }
+    getSelectionPosition() { return undefined; }
+    onSelectionChange() { return { dispose() {} }; }
+    onRender() { return { dispose() {} }; }
     onData() {
       return { dispose() {} };
     }
