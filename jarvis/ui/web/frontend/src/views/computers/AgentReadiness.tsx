@@ -5,16 +5,19 @@
  *
  * Nothing is installed unasked: the install button names exactly what it
  * installs, runs as a job on the server and streams its log here. Copying
- * this computer's CLI login to the server is its own explicit button.
+ * this computer's CLI login to the server is its own explicit button, and so
+ * is a Claude token — the login that works over SSH on a Mac, whose Keychain
+ * is locked there.
  */
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, Check, Download, KeyRound, Loader2, RefreshCw, X } from "lucide-react";
+import { Bot, Check, Download, KeyRound, Loader2, RefreshCw, Ticket, X } from "lucide-react";
 import { Panel } from "@/components/extensions/primitives";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { readinessApi, type Computer, type InstallJob, type ToolId } from "@/lib/computersApi";
+import { inputClass } from "./parts";
 
 const TOOL_LABELS: Record<ToolId, string> = {
   tmux: "tmux",
@@ -44,6 +47,8 @@ export function AgentReadiness({ computer }: { computer: Computer }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [tokenOpen, setTokenOpen] = useState(false);
+  const [token, setToken] = useState("");
 
   useEffect(() => {
     if (readiness.data?.install) setJob(readiness.data.install);
@@ -94,9 +99,30 @@ export function AgentReadiness({ computer }: { computer: Computer }) {
     }
   }
 
+  async function saveToken() {
+    setBusy("token");
+    setError(null);
+    setNotice(null);
+    try {
+      await readinessApi.saveClaudeToken(computer.id, token.trim());
+      setToken("");
+      setTokenOpen(false);
+      setNotice(t("computers.ready_token_saved"));
+      await qc.invalidateQueries({ queryKey: key });
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   const data = readiness.data;
   // A Windows computer needs Git for Windows instead of tmux, and an admin, not root.
   const windows = data?.os === "Windows" || computer.facts?.os_id === "windows";
+  // Homebrew needs no root; only a Linux package manager does.
+  const needsRoot =
+    !!data && !data.root && !data.sudo && data.package_manager !== "brew" &&
+    missing.some((id) => (windows ? id === "git" || id === "node" : id === "tmux" || id === "git"));
   return (
     <div data-testid="computer-readiness">
     <Panel className="p-5">
@@ -151,7 +177,9 @@ export function AgentReadiness({ computer }: { computer: Computer }) {
                   <span className="min-w-0 flex-1">
                     <span className="block text-sm font-medium text-foreground-strong">{TOOL_LABELS[tool.id]}</span>
                     <span className="block truncate text-xs text-muted-foreground">
-                      {!tool.installed
+                      {tool.outdated
+                        ? t("computers.ready_too_old").replace("{version}", tool.version ?? "")
+                        : !tool.installed
                         ? t("computers.ready_missing")
                         : !loggedIn
                           ? t("computers.ready_not_logged_in")
@@ -171,10 +199,53 @@ export function AgentReadiness({ computer }: { computer: Computer }) {
                       {t("computers.ready_copy_login")}
                     </Button>
                   )}
+                  {tool.id === "claude" && loginNeeded && !loggedIn && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      disabled={busy !== null}
+                      aria-expanded={tokenOpen}
+                      onClick={() => setTokenOpen((open) => !open)}
+                      data-testid="readiness-token-toggle"
+                    >
+                      <Ticket />
+                      {t("computers.ready_token_button")}
+                    </Button>
+                  )}
                 </li>
               );
             })}
           </ul>
+
+          {tokenOpen && (
+            <form
+              className="mt-4 rounded-lg border border-border p-3"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void saveToken();
+              }}
+            >
+              <p className="mb-2 text-xs text-muted-foreground">{t("computers.ready_token_hint")}</p>
+              <div className="flex gap-2">
+                <input
+                  type="password"
+                  className={cn(inputClass, "h-9 min-w-0 flex-1 font-mono text-xs")}
+                  value={token}
+                  onChange={(event) => setToken(event.target.value)}
+                  placeholder={t("computers.ready_token_placeholder")}
+                  aria-label={t("computers.ready_token_placeholder")}
+                  autoComplete="off"
+                  spellCheck={false}
+                  data-testid="readiness-token-input"
+                />
+                <Button type="submit" size="sm" disabled={busy !== null || token.trim().length < 20}>
+                  {busy === "token" ? <Loader2 className="animate-spin" /> : <Check />}
+                  {t("computers.ready_token_save")}
+                </Button>
+              </div>
+            </form>
+          )}
 
           {missing.length > 0 && job?.state !== "running" && (
             <div className="mt-4 flex flex-wrap items-center gap-3">
@@ -185,7 +256,7 @@ export function AgentReadiness({ computer }: { computer: Computer }) {
                   missing.map((id) => TOOL_LABELS[id]).join(", "),
                 )}
               </Button>
-              {!data.root && !data.sudo && (
+              {needsRoot && (
                 <span className="text-xs text-muted-foreground">
                   {t(windows ? "computers.ready_needs_admin" : "computers.ready_needs_root")}
                 </span>

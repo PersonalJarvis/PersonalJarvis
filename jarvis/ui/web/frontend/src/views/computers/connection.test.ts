@@ -59,6 +59,11 @@ describe("setupPrompt", () => {
     expect(prompt).toContain("*S-1-5-32-544:F");
     expect(prompt).not.toContain('"Administrators:F"');
     expect(prompt).toContain("Git for Windows");
+    // A Mac: awake for its agents, Homebrew tools, and a token login (Keychain is locked over SSH).
+    expect(prompt).toContain("pmset -a sleep 0");
+    expect(prompt).toContain("brew install tmux git");
+    expect(prompt).toContain("CLAUDE_CODE_OAUTH_TOKEN");
+    expect(prompt).toContain("~/.config/jarvis/agent.env");
     expect(prompt).not.toContain("BEGIN OPENSSH PRIVATE KEY");
     expect(prompt.trim().endsWith(`${CONNECT_MARKER} <account>@<address>:<port>`)).toBe(true);
   });
