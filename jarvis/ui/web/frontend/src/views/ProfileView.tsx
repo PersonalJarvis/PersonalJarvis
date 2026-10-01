@@ -24,7 +24,7 @@
  * views need it: the sub-page renders it, and the main page parses its audit
  * trail for provenance and its Do Not Record list.
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, ArrowLeft, RefreshCw, UserCircle2 } from "lucide-react";
 
@@ -43,11 +43,17 @@ import { PAGE_GROUPS } from "@/views/profile/ledger";
 import { parseObservations } from "@/views/profile/provenance";
 
 /** The reading column: wide enough for a row, narrow enough to scan. */
-const COLUMN = "mx-auto w-full max-w-[880px]";
+const COLUMN = "mx-auto w-full max-w-[760px]";
 
 export function ProfileView() {
   const t = useT();
   const [showSource, setShowSource] = useState(false);
+  // Switching between the page and the file sub-page starts at the top; the
+  // scroll position of a long page would otherwise hide the back link.
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    scrollRef.current?.scrollTo?.({ top: 0 });
+  }, [showSource]);
 
   const { data, isLoading, error, refetch, isRefetching } = useQuery<ProfileResponse, Error>({
     queryKey: ["profile"],
@@ -63,7 +69,10 @@ export function ProfileView() {
   const meta = (data?.user.meta ?? {}) as Record<string, unknown>;
 
   return (
-    <div className="flex h-full flex-col overflow-y-auto bg-background px-8 pb-10 scrollbar-jarvis">
+    <div
+      ref={scrollRef}
+      className="flex h-full flex-col overflow-y-auto bg-background px-8 pb-10 scrollbar-jarvis"
+    >
       <div className={COLUMN}>
         <PageHeader
           icon={<UserCircle2 />}

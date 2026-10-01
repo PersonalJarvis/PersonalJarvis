@@ -18,16 +18,18 @@ import { Check, Pencil, Plus, Quote, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useT } from "@/i18n";
+import { useT, useUiLanguage } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
 import { useFieldEdit, type FieldOp } from "@/views/profile/api";
 import {
   CHOICE_FIELDS,
+  LANGUAGE_FIELDS,
   LIST_SUGGESTIONS,
   SCALE_FIELDS,
   fieldKind,
   isEmptyValue,
+  languageName,
   scaleValue,
   type ClusterId,
 } from "@/views/profile/ledger";
@@ -42,10 +44,22 @@ export function readableDate(iso: string): string {
   return d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
 }
 
-/** The label a choice value shows, or the raw value when it is off-vocabulary. */
-function choiceLabel(t: T, field: string, value: string): string {
-  return CHOICE_FIELDS[field]?.includes(value) ? t(`profile_view.choices.${field}.${value}`) : value;
+/**
+ * What a stored value shows: a choice by its label, a language code by its
+ * name, anything else (including off-vocabulary curator text) verbatim.
+ */
+function choiceLabel(t: T, field: string, value: string, ui = "en"): string {
+  if (CHOICE_FIELDS[field]?.includes(value) || LIST_CHOICE_FIELDS.has(field)) {
+    const key = `profile_view.choices.${field}.${value}`;
+    const label = t(key);
+    if (label !== key) return label;
+  }
+  if (LANGUAGE_FIELDS.has(field)) return languageName(value, ui);
+  return value;
 }
+
+/** List fields whose suggested items carry translated labels. */
+const LIST_CHOICE_FIELDS: ReadonlySet<string> = new Set(Object.keys(LIST_SUGGESTIONS));
 
 function ScaleMeter({ value }: { value: number }) {
   return (
@@ -63,6 +77,7 @@ function ScaleMeter({ value }: { value: number }) {
 /** The resting value, right-aligned in the row. */
 function ValueView({ field, value }: { field: string; value: unknown }) {
   const t = useT();
+  const ui = useUiLanguage();
   const kind = fieldKind(field);
 
   if (kind === "list") {
@@ -73,7 +88,7 @@ function ValueView({ field, value }: { field: string; value: unknown }) {
             key={String(item)}
             className="rounded-md border border-border bg-secondary px-2 py-0.5 text-sm text-foreground"
           >
-            {choiceLabel(t, field, String(item))}
+            {choiceLabel(t, field, String(item), ui)}
           </span>
         ))}
       </span>
@@ -99,7 +114,7 @@ function ValueView({ field, value }: { field: string; value: unknown }) {
   }
   return (
     <span className="text-right text-base text-foreground [overflow-wrap:anywhere]">
-      {choiceLabel(t, field, String(value))}
+      {choiceLabel(t, field, String(value), ui)}
     </span>
   );
 }
@@ -331,37 +346,41 @@ export function FieldRow({
 
     return (
       <div data-testid={`field-${field}`} className="bg-secondary/40 px-5 py-4">
-        <div className="flex items-baseline justify-between gap-4">
-          <p className="text-base font-medium text-foreground-strong">{label}</p>
-          {scaleHint && <p className="text-sm text-muted-foreground">{scaleHint}</p>}
-        </div>
-        <div className="mt-3">{editor}</div>
-        <div className="mt-3 flex items-center justify-between gap-2">
-          {!empty ? (
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              className="text-muted-foreground hover:text-destructive"
-              disabled={busy}
-              onClick={() => mutate("clear")}
-            >
-              {t("profile_view.field_clear")}
-            </Button>
-          ) : (
-            <span />
-          )}
-          <span className="flex items-center gap-2">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-base font-medium text-foreground-strong">{label}</p>
+            {scaleHint && <p className="mt-0.5 text-sm text-muted-foreground">{scaleHint}</p>}
+          </div>
+          <span className="-my-1 flex shrink-0 items-center gap-1">
+            {!empty && (
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="text-muted-foreground hover:text-destructive"
+                disabled={busy}
+                onClick={() => mutate("clear")}
+              >
+                {t("profile_view.field_clear")}
+              </Button>
+            )}
             <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={close}>
               {typed ? t("profile_view.raw_cancel") : t("profile_view.field_done")}
             </Button>
-            {typed && (
+          </span>
+        </div>
+        <div className="mt-3">
+          {typed ? (
+            <div className="flex items-center gap-2">
+              {editor}
               <Button type="button" size="sm" disabled={busy} onClick={saveText}>
                 <Check aria-hidden />
                 {t("profile_view.raw_save")}
               </Button>
-            )}
-          </span>
+            </div>
+          ) : (
+            editor
+          )}
         </div>
       </div>
     );
