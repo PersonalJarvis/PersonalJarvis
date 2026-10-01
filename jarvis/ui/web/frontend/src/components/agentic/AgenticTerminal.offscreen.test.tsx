@@ -63,6 +63,8 @@ vi.mock("@xterm/xterm", () => ({
     getSelection() {
       return "";
     }
+    getSelectionPosition() { return undefined; }
+    onSelectionChange() { return { dispose() {} }; }
     onData() {
       return { dispose() {} };
     }
