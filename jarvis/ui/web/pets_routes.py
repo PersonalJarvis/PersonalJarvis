@@ -8,7 +8,7 @@ Endpoints (mounted by the WebServer in ``_build_app()``):
     GET    /api/pets/{id}/sheet.png    → a pet's sprite sheet.
     PUT    /api/pets/active            → pick the active pet (or "none"); saved
                                          to ``[ui] pet_id`` and applied live.
-    PUT    /api/pets/settings          → size and status bubble; saved, applied.
+    PUT    /api/pets/settings          → size, status bubble, always-on strip; saved, applied.
     POST   /api/pets/visibility        → hide / show the pet (this run only).
     POST   /api/pets                   → create a pet from an uploaded sheet.
     DELETE /api/pets/{id}              → delete a user-created pet.
@@ -122,10 +122,13 @@ class ActiveBody(BaseModel):
 
 
 class SettingsBody(BaseModel):
-    """Both optional; only the ones sent are changed."""
+    """All optional; only the ones sent are changed."""
 
     scale: float | None = Field(default=None, description="Size multiplier, 0.5–2.0")
     bubble: bool | None = Field(default=None, description="Show the status bubble")
+    strip_always: bool | None = Field(
+        default=None, description="Keep the control strip up even at rest"
+    )
 
 
 class VisibilityBody(BaseModel):
@@ -156,6 +159,10 @@ def _configured_scale(request: Request) -> float:
 
 def _configured_bubble(request: Request) -> bool:
     return bool(getattr(_ui(request), "pet_bubble", True))
+
+
+def _configured_strip_always(request: Request) -> bool:
+    return bool(getattr(_ui(request), "pet_strip_always", False))
 
 
 def _pet_visible(request: Request) -> bool:
@@ -287,6 +294,7 @@ def _state(request: Request, active: str) -> dict[str, Any]:
         "active": active,
         "scale": _configured_scale(request),
         "bubble": _configured_bubble(request),
+        "strip_always": _configured_strip_always(request),
         "visible": _pet_visible(request),
     }
 
@@ -389,9 +397,11 @@ async def put_active(body: ActiveBody, request: Request) -> dict[str, Any]:
 
 @router.put("/settings")
 async def put_settings(body: SettingsBody, request: Request) -> dict[str, Any]:
-    """Change the pet's size and / or its status bubble; saved and applied live."""
-    if body.scale is None and body.bubble is None:
-        raise HTTPException(status_code=400, detail="Send 'scale', 'bubble' or both.")
+    """Change the pet's size, status bubble or always-on strip; saved and applied live."""
+    if body.scale is None and body.bubble is None and body.strip_always is None:
+        raise HTTPException(
+            status_code=400, detail="Send at least one of 'scale', 'bubble', 'strip_always'."
+        )
     _refuse_on_secondary_instance()
 
     from jarvis.core import config_writer
@@ -414,9 +424,22 @@ async def put_settings(body: SettingsBody, request: Request) -> dict[str, Any]:
         except Exception as exc:  # noqa: BLE001 — the live apply is still worth trying
             persisted = False
             log.warning("pet_bubble persist failed (live apply still attempted): %s", exc)
+    if body.strip_always is not None:
+        _set_ui_value(request, "pet_strip_always", bool(body.strip_always))
+        try:
+            await asyncio.to_thread(
+                config_writer.set_pet_strip_always, bool(body.strip_always), path=_config_path()
+            )
+        except Exception as exc:  # noqa: BLE001 — the live apply is still worth trying
+            persisted = False
+            log.warning("pet_strip_always persist failed (live apply still attempted): %s", exc)
 
     applied_live, detail = await _apply(
-        request, "set_pet_look", _configured_scale(request), _configured_bubble(request)
+        request,
+        "set_pet_look",
+        _configured_scale(request),
+        _configured_bubble(request),
+        _configured_strip_always(request),
     )
     active = _configured_pet_id(request)
     await _publish_changed(request, active, source="settings")

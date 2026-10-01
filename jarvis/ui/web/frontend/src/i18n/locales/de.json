@@ -5945,6 +5945,8 @@
     "size_hint": "Wie groß das Pet auf deinem Desktop ist.",
     "bubble_label": "Status-Blase",
     "bubble_hint": "Kurze Zeilen unter dem Pet, die zeigen, was {name} gerade tut.",
+    "strip_label": "Knöpfe immer anzeigen",
+    "strip_hint": "Aus: Die Knöpfe unter dem Pet erscheinen nur, während {name} zuhört, nachdenkt oder spricht, oder wenn du auf das Pet zeigst.",
     "shortcut_hint": "Blendet das Pet aus oder holt es wieder nach vorn.",
     "my_pets": "Meine Pets",
     "create": "Pet erstellen",

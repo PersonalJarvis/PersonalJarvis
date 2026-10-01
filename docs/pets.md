@@ -18,7 +18,11 @@ one click.
 - **The figure.** It reacts to Jarvis in real time (see *States*). It can be
   dragged anywhere, and its position is remembered per monitor
   (`[overlay.mascot] position_*`, shared with the mascot).
-- **The control strip** under the figure, from left to right:
+- **The control strip** under the figure. At rest only the figure shows; the
+  strip appears while Jarvis listens, thinks or talks, while notification cards
+  are up, and while the pointer is on the pet. With the pet "None", or with
+  **Always show the buttons** on (My Pets → Customize, `[ui] pet_strip_always`),
+  it always shows. From left to right:
   - bell: notifications on or off for this run (see *Notifications*). Off
     shows a red, struck-through bell and sends the cards on screen away; on
     rings the bell. Like the speaker mute it never survives a restart, so a
@@ -247,7 +251,7 @@ name.
 | Method | Meaning |
 |---|---|
 | `set_pet(pet_id)` | Swap the figure live; `"none"` shows the strip only |
-| `set_pet_look(scale, bubble)` | Apply size and card on/off live |
+| `set_pet_look(scale, bubble, strip_always)` | Apply size, card on/off and the always-on strip live |
 | `set_pet_outcome(kind)` | Play the one-shot `success` or `error` |
 | `set_pet_action(kind)` | `working` / `searching` for the running tool step, `None` when it ended |
 | `set_pet_busy(busy)` | An agent task is running in the background |
@@ -285,6 +289,7 @@ Control-strip actions: `bell` (handled in the surface, reported through
 | `[ui] pet_id` | `gigi` | Active pet (built-in id, `u…` id or `none`) |
 | `[ui] pet_scale` | `1.0` | Size multiplier, 0.5–2.0 |
 | `[ui] pet_bubble` | `true` | Show the thinking card |
+| `[ui] pet_strip_always` | `false` | Keep the control strip up even at rest |
 | `[trigger] hotkey_pet_toggle` | `alt+win+p` | Hide / show the pet; empty disables it |
 
 ### REST (`jarvis/ui/web/pets_routes.py`)
@@ -295,7 +300,7 @@ Control-strip actions: `bell` (handled in the surface, reported through
 | `GET /api/pets/{id}/sheet.png` | The sprite sheet |
 | `GET /api/pets/template.png` | The empty sprite-sheet template (48 px cells, rows in state order) |
 | `PUT /api/pets/active` | `{pet_id}` → saves `[ui] pet_id`, applies live |
-| `PUT /api/pets/settings` | `{scale?, bubble?}` → saves, applies live |
+| `PUT /api/pets/settings` | `{scale?, bubble?, strip_always?}` → saves, applies live |
 | `POST /api/pets/visibility` | `{visible}` → runtime only |
 | `POST /api/pets` | multipart: `sheet` (PNG), `name`, `description`, optional `manifest` (JSON), optional `frame_size` → the new pet |
 | `DELETE /api/pets/{id}` | user-created pets only |

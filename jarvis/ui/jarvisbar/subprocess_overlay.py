@@ -715,6 +715,7 @@ class SubprocessMascotOverlay(SubprocessBarOverlay):
         pet_id: str | None = None,
         pet_scale: float = 1.0,
         pet_bubble: bool = True,
+        pet_strip_always: bool = False,
     ) -> None:
         super().__init__()
         self._mascot_path = mascot_path
@@ -727,6 +728,7 @@ class SubprocessMascotOverlay(SubprocessBarOverlay):
         self._pet_id = pet_id
         self._pet_scale = float(pet_scale)
         self._pet_bubble = bool(pet_bubble)
+        self._pet_strip_always = bool(pet_strip_always)
         self._speaker_muted = False
         self._user_visible = True
         self._on_compose: Callable[[], None] | None = None
@@ -742,6 +744,7 @@ class SubprocessMascotOverlay(SubprocessBarOverlay):
             "pet_id": self._pet_id,
             "pet_scale": self._pet_scale,
             "pet_bubble": self._pet_bubble,
+            "pet_strip_always": self._pet_strip_always,
         }
 
     @property
@@ -763,16 +766,24 @@ class SubprocessMascotOverlay(SubprocessBarOverlay):
         self._pet_id = str(pet_id or "")
         self._send({"op": "set_pet", "pet_id": self._pet_id})
 
-    def set_pet_look(self, scale: float | None = None, bubble: bool | None = None) -> None:
+    def set_pet_look(
+        self,
+        scale: float | None = None,
+        bubble: bool | None = None,
+        strip_always: bool | None = None,
+    ) -> None:
         if scale is not None:
             self._pet_scale = float(scale)
         if bubble is not None:
             self._pet_bubble = bool(bubble)
+        if strip_always is not None:
+            self._pet_strip_always = bool(strip_always)
         self._send(
             {
                 "op": "set_pet_look",
                 "scale": None if scale is None else float(scale),
                 "bubble": None if bubble is None else bool(bubble),
+                "strip_always": None if strip_always is None else bool(strip_always),
             }
         )
 

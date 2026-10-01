@@ -5945,6 +5945,8 @@
     "size_hint": "Qué tan grande se ve la mascota en tu escritorio.",
     "bubble_label": "Burbuja de estado",
     "bubble_hint": "Líneas breves bajo la mascota que dicen qué está haciendo {name}.",
+    "strip_label": "Mostrar siempre los botones",
+    "strip_hint": "Desactivado: los botones bajo la mascota solo aparecen mientras {name} escucha, piensa o habla, o al señalar la mascota.",
     "shortcut_hint": "Oculta la mascota o la trae de nuevo al frente.",
     "my_pets": "Mis mascotas",
     "create": "Crear mascota",

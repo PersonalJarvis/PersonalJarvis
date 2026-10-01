@@ -562,6 +562,7 @@ def test_mascot_init_line_declares_surface_and_mascot_path(monkeypatch) -> None:
         "pet_id": None,
         "pet_scale": 1.0,
         "pet_bubble": True,
+        "pet_strip_always": False,
     }
     assert surface._ready.is_set()  # scripted ready event consumed
     assert surface._visible is False  # sticky=False mascot starts withdrawn

@@ -18,7 +18,7 @@ Protocol (UTF-8, one JSON object per line):
   ``"jarvis_bar"`` (default) or ``"mascot"`` (the OrbOverlay window, whose look
   comes from the optional ``"style"`` key — ``"mascot"``, ``"voice_orb"`` or
   ``"pet"`` — plus optional ``"mascot_path"``, ``"pet_id"``, ``"pet_scale"`` and
-  ``"pet_bubble"`` passthroughs).
+  ``"pet_bubble"`` and ``"pet_strip_always"`` passthroughs).
   stdin EOF means the parent died or shut down → the host stops the bar and
   exits, so no ownerless bar can linger on the user's desktop.
 - child → parent (stdout): events — ``{"event": "ready"}`` once the surface
@@ -165,11 +165,13 @@ def dispatch(surface: Any, msg: dict[str, Any]) -> bool:
     elif op == "set_pet_look":
         scale = msg.get("scale")
         bubble = msg.get("bubble")
+        strip = msg.get("strip_always")
         _call(
             surface,
             "set_pet_look",
             None if scale is None else float(scale),
             None if bubble is None else bool(bubble),
+            None if strip is None else bool(strip),
         )
     elif op == "set_pet_outcome":
         _call(surface, "set_pet_outcome", str(msg.get("kind", "")))
@@ -389,6 +391,7 @@ def _build_surface(cfg: dict[str, Any]) -> Any:
             pet_id=cfg.get("pet_id") or None,
             pet_scale=1.0 if pet_scale is None else float(pet_scale),
             pet_bubble=bool(cfg.get("pet_bubble", True)),
+            pet_strip_always=bool(cfg.get("pet_strip_always", False)),
         )
     kwargs = {
         key: cfg[key]

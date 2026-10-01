@@ -5978,6 +5978,8 @@
     "size_hint": "How big the pet is on your desktop.",
     "bubble_label": "Status bubble",
     "bubble_hint": "Short lines under the pet that say what {name} is doing.",
+    "strip_label": "Always show the buttons",
+    "strip_hint": "Off: the buttons under the pet appear only while {name} listens, thinks or talks, or when you point at the pet.",
     "shortcut_hint": "Hides the pet, or brings it back to the front.",
     "my_pets": "My pets",
     "create": "Create pet",

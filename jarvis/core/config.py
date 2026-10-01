@@ -2207,6 +2207,9 @@ class UIConfig(BaseModel):
     pet_scale: float = 1.0
     # Show the status bubble under the pet's control strip.
     pet_bubble: bool = True
+    # Keep the pet's control strip on screen at all times. Off (default): it
+    # shows only while Jarvis listens, thinks or talks, or under the pointer.
+    pet_strip_always: bool = False
     # Remembered "open with" choice for Outputs artifacts: an opener id
     # ("default" = OS default app, "browser", or an editor key like "code").
     # Empty = ask via the chooser dialog on first open. Desktop-only.

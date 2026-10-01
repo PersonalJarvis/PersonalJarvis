@@ -1464,6 +1464,11 @@ def set_pet_bubble(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     _patch_table(path, "ui", "pet_bubble", bool(enabled))
 
 
+def set_pet_strip_always(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Persist ``[ui] pet_strip_always`` (keep the pet's control strip up)."""
+    _patch_table(path, "ui", "pet_strip_always", bool(enabled))
+
+
 def set_bar_follow_cursor_monitor(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Persist ``[ui] bar_follow_cursor_monitor`` (the 'follow the mouse to the
     active monitor' toggle).

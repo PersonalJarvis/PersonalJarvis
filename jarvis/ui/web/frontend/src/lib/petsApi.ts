@@ -23,6 +23,8 @@ export interface PetsState {
   active: string;
   scale: number;
   bubble: boolean;
+  /** The control strip stays up even at rest (`[ui] pet_strip_always`). */
+  strip_always: boolean;
   visible: boolean;
   pets: Pet[];
 }
@@ -30,6 +32,7 @@ export interface PetsState {
 export interface PetSettingsPatch {
   scale?: number;
   bubble?: boolean;
+  strip_always?: boolean;
 }
 
 export interface CreatePetInput {

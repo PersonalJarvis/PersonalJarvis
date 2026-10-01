@@ -3445,6 +3445,7 @@ class DesktopApp:
             "pet_id": str(getattr(ui, "pet_id", DEFAULT_PET_ID) or DEFAULT_PET_ID),
             "pet_scale": _clamp_pet_scale(getattr(ui, "pet_scale", 1.0)),
             "pet_bubble": bool(getattr(ui, "pet_bubble", True)),
+            "pet_strip_always": bool(getattr(ui, "pet_strip_always", False)),
         }
 
     def _hide_on_idle_for(self, style: str) -> bool:
@@ -3493,21 +3494,27 @@ class DesktopApp:
         return {"ok": True, "applied_live": self._pet_call("set_pet", pet)}
 
     def set_pet_look(
-        self, scale: float | None = None, bubble: bool | None = None
+        self,
+        scale: float | None = None,
+        bubble: bool | None = None,
+        strip_always: bool | None = None,
     ) -> dict[str, object]:
-        """Apply the pet's size and status-bubble switch live (``PUT /api/pets/settings``)."""
+        """Apply the pet's size, bubble and strip switch live (``PUT /api/pets/settings``)."""
         from loguru import logger
 
         clamped = None if scale is None else _clamp_pet_scale(scale)
         flag = None if bubble is None else bool(bubble)
+        strip = None if strip_always is None else bool(strip_always)
         try:
             if clamped is not None:
                 self.cfg.ui.pet_scale = clamped
             if flag is not None:
                 self.cfg.ui.pet_bubble = flag
+            if strip is not None:
+                self.cfg.ui.pet_strip_always = strip
         except Exception as exc:  # noqa: BLE001
             logger.warning("pet look not stored in config: {}", exc)
-        return {"ok": True, "applied_live": self._pet_call("set_pet_look", clamped, flag)}
+        return {"ok": True, "applied_live": self._pet_call("set_pet_look", clamped, flag, strip)}
 
     def set_pet_visible(self, visible: bool) -> dict[str, object]:
         """Hide or show the pet for this run (``POST /api/pets/visibility``).

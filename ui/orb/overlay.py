@@ -2634,6 +2634,7 @@ class OrbOverlay:
         pet_id: str | None = None,
         pet_scale: float | None = 1.0,
         pet_bubble: bool = True,
+        pet_strip_always: bool = False,
     ) -> None:
         """
         style: one of :data:`ORB_STYLES` — ``"mascot"`` (the Gigi ghost),
@@ -2643,6 +2644,7 @@ class OrbOverlay:
         mascot_path: optional explicit path, otherwise via ENV or the default asset.
         pet_id / pet_scale / pet_bubble: the pet style's ``[ui]`` settings — which
         pet, its size multiplier (0.5–2.0) and whether the status bubble shows.
+        pet_strip_always: keep the pet's control strip up even at rest.
         ENV-Override: ``JARVIS_ORB_STYLE=mascot|voice_orb`` selects the look;
         unknown values are ignored.
         """
@@ -2688,6 +2690,8 @@ class OrbOverlay:
         self._pet_id = str(pet_id or DEFAULT_PET_ID).strip() or DEFAULT_PET_ID
         self._pet_scale = _clamp_pet_scale(1.0 if pet_scale is None else pet_scale)
         self._pet_bubble = bool(pet_bubble)
+        #: ``[ui] pet_strip_always``: the strip stays up even at rest.
+        self._pet_strip_always = bool(pet_strip_always)
         #: Mirrors ``VoiceMuteChanged`` for the strip's microphone control.
         self._mic_muted = False
         #: Hidden by the shortcut or the settings page — lasts until restart.
@@ -3392,11 +3396,12 @@ class OrbOverlay:
     def _pet_strip_wanted(self) -> bool:
         """Should the pet's strip be up right now?
 
-        Only while it is useful: Jarvis is listening, thinking or talking, the
+        Always when the user asked for it (``[ui] pet_strip_always``). Else
+        only while it is useful: Jarvis is listening, thinking or talking, the
         pointer is on the figure or the strip, or the pet is "None" (the strip
         is all there is, so hiding it would leave nothing to hover).
         """
-        if self._pet_id == NO_PET_ID:
+        if self._pet_strip_always or self._pet_id == NO_PET_ID:
             return True
         if self._mode in PET_VOICE_MODES or self._mode in PET_THINK_MODES:
             return True
@@ -4229,12 +4234,19 @@ class OrbOverlay:
         self._note_activity()
         self._enqueue_ui(lambda: self._apply_pet(pet))
 
-    def set_pet_look(self, scale: float | None = None, bubble: bool | None = None) -> None:
-        """Apply the pet's size multiplier and bubble on/off live. Thread-safe."""
+    def set_pet_look(
+        self,
+        scale: float | None = None,
+        bubble: bool | None = None,
+        strip_always: bool | None = None,
+    ) -> None:
+        """Apply the pet's size, bubble and always-on strip live. Thread-safe."""
         if scale is not None:
             self._pet_scale = _clamp_pet_scale(scale)
         if bubble is not None:
             self._pet_bubble = bool(bubble)
+        if strip_always is not None:
+            self._pet_strip_always = bool(strip_always)
         self._note_activity()
         self._enqueue_ui(self._apply_pet_look)
 
@@ -4352,6 +4364,7 @@ class OrbOverlay:
             renderer.set_look(pet_scale=self._pet_scale)
             self._refit_pet_window()
         self._sync_pet_strip_scale()
+        self._sync_controls_visibility()  # the always-on switch may have flipped
 
     def _apply_outcome(self, kind: str) -> None:
         renderer = self._renderer

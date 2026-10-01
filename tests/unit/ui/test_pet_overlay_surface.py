@@ -106,8 +106,8 @@ class _PetSurface:
     def set_pet(self, pet_id: str) -> None:
         self.calls.append(("set_pet", pet_id))
 
-    def set_pet_look(self, scale, bubble) -> None:
-        self.calls.append(("set_pet_look", scale, bubble))
+    def set_pet_look(self, scale, bubble, strip_always=None) -> None:
+        self.calls.append(("set_pet_look", scale, bubble, strip_always))
 
     def set_visible(self, visible: bool) -> None:
         self.pet_user_hidden = not visible
@@ -168,7 +168,10 @@ def test_set_pet_look_clamps_and_applies() -> None:
     assert result == {"ok": True, "applied_live": True}
     assert app.cfg.ui.pet_scale == 2.0
     assert app.cfg.ui.pet_bubble is False
-    assert surface.calls[-1] == ("set_pet_look", 2.0, False)
+    assert surface.calls[-1] == ("set_pet_look", 2.0, False, None)
+    app.set_pet_look(strip_always=True)
+    assert app.cfg.ui.pet_strip_always is True
+    assert surface.calls[-1] == ("set_pet_look", None, None, True)
 
 
 def test_pet_methods_degrade_without_a_pet_surface() -> None:
@@ -563,6 +566,35 @@ def test_the_pointer_on_the_strip_keeps_it_up() -> None:
     pet._mode = "idle"
     strip.pointer_inside = True
     assert pet._pet_strip_wanted() is True
+
+
+def test_the_always_on_switch_keeps_the_strip_up_at_rest() -> None:
+    pet, strip = _pet_with_strip()
+    pet._mode = "idle"
+    pet.set_pet_look(strip_always=True)
+    assert pet._pet_strip_wanted() is True
+    pet._sync_controls_visibility()
+    assert strip.calls == ["show"]
+    pet.set_pet_look(strip_always=False)
+    assert pet._pet_strip_wanted() is False
+
+
+def test_the_macos_proxy_carries_the_always_on_strip() -> None:
+    from jarvis.ui.jarvisbar import host
+
+    proxy = SubprocessMascotOverlay(style="pet", pet_strip_always=True)
+    assert proxy._init_payload()["pet_strip_always"] is True
+    sent: list[dict] = []
+    proxy._send = sent.append  # type: ignore[method-assign]
+    proxy.set_pet_look(strip_always=False)
+    looks: list[tuple] = []
+
+    class _Look:
+        def set_pet_look(self, scale, bubble, strip_always) -> None:
+            looks.append((scale, bubble, strip_always))
+
+    host.dispatch(_Look(), sent[-1])
+    assert looks == [(None, None, False)]
 
 
 def test_the_figureless_pet_always_keeps_its_strip() -> None:
