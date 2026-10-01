@@ -35,24 +35,43 @@ export function VoiceGlow({ active }: { active: boolean }) {
       });
       return;
     }
+    // Two cascaded smoothers: an envelope (quick rise, slow fall — a voice,
+    // not a meter) and a short glide on top of it, so the ~30 Hz level
+    // samples never reach the light as steps. Both are time-based, so the
+    // motion feels the same at 60 Hz, 144 Hz or after a dropped frame.
+    let envelope = 0;
     let level = 0;
+    let last = -1;
     let frame = 0;
+    // Each pool's sway position is ACCUMULATED, never computed as
+    // sin(time * speed(level)). That form multiplied the level by the time
+    // since page load (thousands of seconds), so the smallest change in
+    // loudness threw every pool to a random spot on each frame — the
+    // jumping, glitching light. Accumulating keeps the path continuous: the
+    // voice only changes how fast the pools travel, never where they are.
+    const sway = BLOBS.map((b) => b.phase);
+    const breath = BLOBS.map((b) => b.phase * 2);
     const tick = (now: number) => {
+      const dt = last < 0 ? 0 : Math.min(0.1, (now - last) / 1000);
+      last = now;
       const target = Math.max(voiceOutputLevelRef.current ?? 0, readVoiceInputLevel(now));
-      // Rise fast, fall slowly — a voice, not a meter.
-      level += (target - level) * (target > level ? 0.3 : 0.06);
-      const t = now / 1000;
+      envelope += (target - envelope) * (1 - Math.exp(-dt / (target > envelope ? 0.06 : 0.45)));
+      level += (envelope - level) * (1 - Math.exp(-dt / 0.12));
+      // Lift quiet speech so a normal voice visibly moves the light.
+      const voice = Math.min(1, Math.pow(level, 0.7));
       BLOBS.forEach((b, i) => {
         const el = blobs[i];
         if (!el) return;
-        // Sway: a slow drift always, wider and quicker while someone speaks.
-        const sway = Math.sin(t * b.speed * (1 + level * 1.5) + b.phase) * (b.drift + level * 9);
-        // Flicker: each pool breathes on its own, more so with the voice.
-        const flicker = 0.5 + 0.5 * Math.sin(t * b.speed * 3.1 + b.phase * 2);
-        el.style.opacity = String(Math.min(1, 0.45 + level * 0.5 + flicker * (0.08 + level * 0.25)));
+        // Sway: a slow drift always, a little quicker and wider with the voice.
+        sway[i] += dt * b.speed * (1 + voice * 1.2);
+        breath[i] += dt * b.speed * 1.3;
+        const x = Math.sin(sway[i]) * (b.drift + voice * 5);
+        // Breathing: each pool brightens and dims softly on its own.
+        const glow = 0.5 + 0.5 * Math.sin(breath[i]);
+        el.style.opacity = String(Math.min(1, 0.5 + voice * 0.45 + glow * 0.08).toFixed(3));
         el.style.transform =
-          `translateX(calc(-50% + ${sway.toFixed(2)}%)) ` +
-          `scale(${(1 + level * 0.12).toFixed(3)}, ${(1 + level * b.lift).toFixed(3)})`;
+          `translateX(calc(-50% + ${x.toFixed(2)}%)) ` +
+          `scale(${(1 + voice * 0.1).toFixed(3)}, ${(1 + voice * b.lift).toFixed(3)})`;
       });
       frame = requestAnimationFrame(tick);
     };
@@ -68,18 +87,22 @@ export function VoiceGlow({ active }: { active: boolean }) {
           ref={(el) => {
             blobRefs.current[i] = el;
           }}
-          // The fade only eases the rest <-> call hand-over. While a call runs
+          // The fade only eases the rest <-> call hand-over (light AND shape, so
+          // a hang-up mid-word settles instead of snapping back). While a call runs
           // the frame loop writes opacity every frame, and a transition there
           // restarted a 500 ms fade per frame — the light lagged the voice and
           // the browser re-planned a transition 60 times a second.
-          className={cn("absolute bottom-0 origin-bottom", !active && "transition-opacity duration-500")}
+          className={cn(
+            "absolute bottom-0 origin-bottom will-change-[transform,opacity]",
+            !active && "transition-[opacity,transform] duration-700 ease-out",
+          )}
           style={{
             left: `${b.x}%`,
             width: b.width,
             height: b.height,
             transform: "translateX(-50%)",
             opacity: 0.3,
-            background: `radial-gradient(ellipse 50% 70% at 50% 100%, rgb(var(--accent-rgb) / ${b.alpha}), rgb(var(--accent-rgb) / ${b.alpha / 3}) 45%, transparent 75%)`,
+            background: glowGradient(b.alpha),
           }}
         />
       ))}
@@ -93,3 +116,25 @@ const BLOBS = [
   { x: 40, width: "min(420px, 55%)", height: "80%", alpha: 0.22, speed: 0.6, phase: 2.1, drift: 5, lift: 0.5 },
   { x: 60, width: "min(420px, 55%)", height: "75%", alpha: 0.2, speed: 0.75, phase: 4.2, drift: 5, lift: 0.55 },
 ] as const;
+
+/**
+ * One pool's light: a bell-shaped falloff from the bottom edge. With only a
+ * bright core and a hard stop the ellipse's rim showed as an arc and the
+ * pools read as shapes; many gently decaying stops blend into a haze.
+ */
+function glowGradient(alpha: number): string {
+  const stops = [
+    [1, 0],
+    [0.86, 12],
+    [0.66, 24],
+    [0.45, 36],
+    [0.27, 48],
+    [0.14, 59],
+    [0.06, 69],
+    [0.02, 78],
+    [0, 88],
+  ]
+    .map(([k, at]) => `rgb(var(--accent-rgb) / ${(alpha * k).toFixed(3)}) ${at}%`)
+    .join(", ");
+  return `radial-gradient(ellipse 50% 70% at 50% 100%, ${stops})`;
+}
