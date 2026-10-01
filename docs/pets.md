@@ -35,7 +35,15 @@ one click.
     listening, dictating or talking, and carry a travelling highlight while
     thinking or transcribing;
   - speaker: silence the assistant's voice for this session (TTS volume 0,
-    mirrored from `VoiceSpeakerMuteChanged`).
+    mirrored from `VoiceSpeakerMuteChanged`);
+  - phone (its own disc, in the bell's look): call Jarvis — the handset rings
+    while it dials — or, during a conversation, hang up (the handset lies
+    flat).
+- **On the phone**: while a voice conversation runs (listen / think / speak)
+  the pet holds a small pixel-art handset to the right side of its head
+  (`pet_renderer.with_phone`), drawn at the pack's own pixel factor and found
+  per frame, so it follows a bobbing head. Every pack gets it; no sprite row
+  is needed.
 - **The thought bubble** above the pet's head while Jarvis thinks, drawn in
   the pets' pixel art: a white pixel cloud with a dark outline and two small
   puffs trailing down to the head. Bobbing dots while Jarvis just thinks, the

@@ -90,6 +90,109 @@ _ACT_KEY = "act:"
 
 _ColorKey = tuple[int, int, int]
 
+#: The handset a pet holds to its ear while a voice conversation runs — the
+#: figure's half of the strip's phone button. Pixel art in source pixels,
+#: drawn at the pet's own factor so it matches every pack's pixel grid. The
+#: open side (earpiece and mouthpiece) faces the pet; the spine is on the right.
+#: ``O`` outline, ``B`` body, ``H`` highlight, ``.`` transparent.
+PHONE_SPRITE: tuple[str, ...] = (
+    ".OOOOO.",
+    "OWWWHWO",
+    "OWWWWWO",
+    ".OOOWWO",
+    "....OWO",
+    "....OWO",
+    "....OHO",
+    "....OWO",
+    ".OOOWWO",
+    "OWWWWWO",
+    "OWWWHWO",
+    ".OOOOO.",
+)
+#: The strip's glyph white and its sky-blue accent inside a near-black
+#: outline: light enough to read against a dark desktop and a dark pet alike.
+PHONE_COLORS: dict[str, tuple[int, int, int]] = {
+    "O": (13, 17, 23),
+    "W": (232, 233, 238),
+    "H": (126, 186, 255),
+}
+#: Where the ear is looked for: a band of the figure's height, from the top.
+PHONE_EAR_BAND = (0.22, 0.5)
+#: The earpiece's top, as a share of the figure's height from its top.
+PHONE_TOP = 0.2
+#: How many source pixels of the earpiece overlap the side of the head.
+PHONE_OVERLAP = 3
+#: Voice modes in which the pet is "on the phone" — the same set that turns
+#: the strip's phone button into hang-up.
+CALL_MODES: frozenset[str] = frozenset({"listen", "think", "speak"})
+
+
+def _figure_rows(frame: Image.Image, factor: int, key: _ColorKey) -> list[list[bool]]:
+    """Which source pixels of a scaled, colour-keyed frame are painted."""
+    width, height = frame.size
+    f = max(1, int(factor))
+    px = frame.load()
+    half = f // 2
+    return [
+        [px[x * f + half, y * f + half][:3] != key for x in range(width // f)]
+        for y in range(height // f)
+    ]
+
+
+def _head_edge(row: list[bool]) -> int | None:
+    """The head's right edge on one row: walk out from the centre column.
+
+    Walking (and tolerating one-pixel gaps) instead of taking the rightmost
+    painted pixel keeps loose sparkles or floating marks beside a pet from
+    being mistaken for its ear.
+    """
+    x = len(row) // 2
+    if not any(row[max(0, x - 2) : x + 3]):
+        return None
+    edge = None
+    while x < len(row):
+        if row[x]:
+            edge = x
+        elif not (x + 1 < len(row) and row[x + 1]):
+            break
+        x += 1
+    return edge
+
+
+def with_phone(frame: Image.Image, factor: int, key: _ColorKey) -> Image.Image:
+    """``frame`` with the handset held at the right side of the pet's head.
+
+    The ear is the rightmost painted pixel in the head band of THIS frame, so
+    the phone follows a bobbing head. The prop is clamped inside the frame:
+    the window never grows for it, and nothing is drawn off-screen.
+    """
+    rows = _figure_rows(frame, factor, key)
+    painted = [y for y, row in enumerate(rows) if any(row)]
+    if not painted:
+        return frame
+    top, bottom = painted[0], painted[-1]
+    fig_h = bottom - top + 1
+    band = range(top + int(fig_h * PHONE_EAR_BAND[0]), top + max(1, int(fig_h * PHONE_EAR_BAND[1])))
+    ear = max((e for e in (_head_edge(rows[y]) for y in band) if e is not None), default=None)
+    if ear is None:
+        return frame
+    width_s = len(rows[0]) if rows else 0
+    sprite_w = len(PHONE_SPRITE[0])
+    x0 = min(ear + 1 - PHONE_OVERLAP, width_s - sprite_w)
+    y0 = min(top + int(fig_h * PHONE_TOP), len(rows) - len(PHONE_SPRITE))
+    if x0 < 0 or y0 < 0:
+        return frame
+    out = frame.copy()
+    f = max(1, int(factor))
+    for sy, line in enumerate(PHONE_SPRITE):
+        for sx, cell in enumerate(line):
+            color = PHONE_COLORS.get(cell)
+            if color is None:
+                continue
+            x, y = (x0 + sx) * f, (y0 + sy) * f
+            out.paste(color, (x, y, x + f, y + f))
+    return out
+
 
 def dpi_ratio_for(points_per_inch: float | None, platform: str = sys.platform) -> float:
     """The display scale factor from what Tk reports as one inch, in pixels.
@@ -308,6 +411,9 @@ class PetRenderer:
         self._level = 0.0
         self._level_at = -math.inf
         self._smoothed = 0.0
+        #: A voice conversation runs: the pet holds the phone to its ear.
+        self._on_call = False
+        self._phone_frames: dict[Hashable, Image.Image] = {}
         self.load(pet_id)
 
     # -- pack ------------------------------------------------------------
@@ -343,6 +449,7 @@ class PetRenderer:
 
     def _rescale(self) -> None:
         self._frames = {}
+        self._phone_frames = {}
         self._act_names: tuple[str, ...] = ()
         self._act = None
         self._blank = None
@@ -432,6 +539,12 @@ class PetRenderer:
 
     def on_mode(self, mode: str) -> None:
         self._machine.on_mode(mode)
+        self._on_call = str(mode) in CALL_MODES
+
+    @property
+    def on_call(self) -> bool:
+        """The pet is holding the phone (a voice conversation runs)."""
+        return self._on_call
 
     def on_outcome(self, kind: str) -> None:
         self._machine.on_outcome(kind)
@@ -542,7 +655,7 @@ class PetRenderer:
         if self._pack is None:
             return ("none", self._size)
         resolved, _spec, index, _elapsed, _driven = self._current()
-        return (self._pet_id, self._factor, resolved, index)
+        return (self._pet_id, self._factor, resolved, index, self._on_call)
 
     def next_frame_delay_ms(self, t: float = 0.0) -> int:
         """How long the overlay may sleep before the next repaint is due."""
@@ -588,4 +701,12 @@ class PetRenderer:
             if self._blank is None:
                 self._blank = Image.new("RGB", self._size, self._color_key)
             return self._blank
-        return sequence[min(index, len(sequence) - 1)]
+        frame = sequence[min(index, len(sequence) - 1)]
+        if not self._on_call:
+            return frame
+        cache_key = (resolved, min(index, len(sequence) - 1))
+        held = self._phone_frames.get(cache_key)
+        if held is None:
+            held = with_phone(frame, self._factor, self._color_key)
+            self._phone_frames[cache_key] = held
+        return held

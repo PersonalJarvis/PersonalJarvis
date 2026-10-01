@@ -420,7 +420,7 @@ def test_a_live_level_drives_the_talking_frame() -> None:
     renderer.on_mode("speak")
     renderer.feed_level(0.9, clock.now)
     key = renderer.frame_key()
-    assert key[-1] == 3  # loud: the widest mouth
+    assert key[3] == 3  # loud: the widest mouth
     assert renderer.next_frame_delay_ms() == pr.LEVEL_POLL_MS + 2
     # The same smoothed level gives the same key: no repaint.
     assert renderer.frame_key() == key
@@ -428,7 +428,7 @@ def test_a_live_level_drives_the_talking_frame() -> None:
     for _ in range(8):
         clock.now += 0.05
         renderer.feed_level(0.0, clock.now)
-    assert renderer.frame_key()[-1] == 0
+    assert renderer.frame_key()[3] == 0
     # The voice stopped arriving: back to the swing at the manifest rate.
     clock.now += pr.LEVEL_FRESH_S + 0.05
     assert renderer.next_frame_delay_ms() <= 105
@@ -441,7 +441,7 @@ def test_garbage_levels_are_ignored() -> None:
     renderer.feed_level(None, clock.now)
     renderer.feed_level(float("nan"), clock.now)
     renderer.feed_level("loud", clock.now)  # type: ignore[arg-type]
-    assert renderer.frame_key()[-1] in range(4)
+    assert renderer.frame_key()[3] in range(4)
 
 
 # --- idle acts ----------------------------------------------------------------
@@ -489,14 +489,14 @@ def test_an_idle_pet_plays_an_act_after_a_while_and_returns_to_idle() -> None:
     clock.now += first_delay - 0.01
     assert renderer.frame_key()[2] == "idle"
     clock.now += 0.02
-    assert renderer.frame_key()[2:] == ("act:wave", 0)
+    assert renderer.frame_key()[2:4] == ("act:wave", 0)
     clock.now += 0.11
-    assert renderer.frame_key()[2:] == ("act:wave", 1)
+    assert renderer.frame_key()[2:4] == ("act:wave", 1)
     clock.now += 0.25  # past the act's 0.3 s
     assert renderer.frame_key()[2] == "idle"
     clock.now += gap + 0.01
     # Never the same act twice in a row.
-    assert renderer.frame_key()[2:] == ("act:hop", 0)
+    assert renderer.frame_key()[2:4] == ("act:hop", 0)
 
 
 def test_any_other_state_cancels_the_act() -> None:
@@ -533,3 +533,50 @@ def test_a_pet_without_acts_just_idles() -> None:
     renderer, _ = _renderer(clock)
     clock.now += 120.0
     assert renderer.frame_key()[2] == "idle"
+
+
+# --- on the phone ------------------------------------------------------------
+
+_KEY = (255, 0, 255)
+
+
+def _keyed_figure(factor: int = 3) -> Image.Image:
+    """A 30 x 30 source-pixel window with a 16 x 24 figure in the middle."""
+    frame = Image.new("RGB", (30 * factor, 30 * factor), _KEY)
+    frame.paste((200, 60, 60), (7 * factor, 3 * factor, 23 * factor, 27 * factor))
+    return frame
+
+
+def _phone_pixels(frame: Image.Image) -> int:
+    white = pr.PHONE_COLORS["W"]
+    return sum(1 for px in frame.getdata() if px[:3] == white)
+
+
+def test_the_phone_is_held_at_the_side_of_the_head_inside_the_frame() -> None:
+    frame = _keyed_figure()
+    held = pr.with_phone(frame, 3, _KEY)
+    assert held.size == frame.size
+    assert _phone_pixels(frame) == 0  # the cached original is never painted on
+    box = Image.new("1", held.size)
+    box.putdata([px[:3] == pr.PHONE_COLORS["W"] for px in held.getdata()])
+    x0, y0, _x1, y1 = box.getbbox()
+    # Earpiece overlapping the figure's right edge (source x 22), in its top half.
+    assert 18 * 3 <= x0 <= 23 * 3
+    assert 3 * 3 <= y0 and y1 <= 27 * 3
+
+
+def test_an_empty_frame_gets_no_phone() -> None:
+    blank = Image.new("RGB", (60, 60), _KEY)
+    assert pr.with_phone(blank, 2, _KEY) is blank
+
+
+def test_a_voice_conversation_puts_the_phone_to_the_ear_and_ending_it_puts_it_away() -> None:
+    renderer = pr.PetRenderer("gigi")
+    idle_key = renderer.frame_key()
+    assert _phone_pixels(renderer.render()) == 0
+    renderer.on_mode("speak")
+    assert renderer.on_call and renderer.frame_key() != idle_key
+    assert _phone_pixels(renderer.render()) > 0
+    renderer.on_mode("idle")
+    assert not renderer.on_call
+    assert _phone_pixels(renderer.render()) == 0
