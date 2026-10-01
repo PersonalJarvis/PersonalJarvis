@@ -3,7 +3,9 @@
 A check runs ONE script over SSH that prints labelled sections (hostname, OS,
 cores, memory, disk, uptime, load). It only reads — nothing is installed or
 changed. Linux answers every section of :data:`PROBE_SCRIPT`; macOS answers
-through its own tools; a Windows OpenSSH server gets
+through its own tools (``vm_stat`` for memory, ``kern.boottime`` for uptime,
+the Data volume for disk — ``/`` is the small sealed system volume there); a
+Windows OpenSSH server gets
 :data:`WINDOWS_PROBE_SCRIPT` (PowerShell, sent on stdin), which prints the
 same sections in the same shapes, so one parser reads all three. Windows has
 no load average; that section stays empty.
@@ -22,10 +24,26 @@ echo "@@os"; cat /etc/os-release 2>/dev/null
 echo "@@darwin"; sw_vers 2>/dev/null
 echo "@@nproc"; nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null \
   || sysctl -n hw.ncpu 2>/dev/null
-echo "@@meminfo"; head -n 3 /proc/meminfo 2>/dev/null
+echo "@@meminfo"
+if [ -r /proc/meminfo ]; then head -n 3 /proc/meminfo
+elif command -v vm_stat >/dev/null 2>&1; then
+  vm_stat | awk -v page="$(sysctl -n hw.pagesize 2>/dev/null)" \
+    -v total="$(sysctl -n hw.memsize 2>/dev/null)" '
+    /Pages free/ {f=$3} /Pages inactive/ {i=$3} /Pages speculative/ {s=$3}
+    END { gsub(/\./, "", f); gsub(/\./, "", i); gsub(/\./, "", s)
+          if (total > 0 && page > 0) {
+            printf "MemTotal: %.0f kB\n", total / 1024
+            printf "MemAvailable: %.0f kB\n", (f + i + s) * page / 1024 } }'
+fi
 echo "@@memsize"; sysctl -n hw.memsize 2>/dev/null
-echo "@@df"; df -Pk / 2>/dev/null | tail -n 1
-echo "@@uptime"; cat /proc/uptime 2>/dev/null
+echo "@@df"; d=/; [ -d /System/Volumes/Data ] && d=/System/Volumes/Data
+df -Pk "$d" 2>/dev/null | tail -n 1
+echo "@@uptime"
+if [ -r /proc/uptime ]; then cat /proc/uptime
+else
+  b=$(sysctl -n kern.boottime 2>/dev/null | sed -n 's/.*sec = \([0-9]*\).*/\1/p')
+  [ -n "$b" ] && echo $(( $(date +%s) - b ))
+fi
 echo "@@loadavg"; cat /proc/loadavg 2>/dev/null || sysctl -n vm.loadavg 2>/dev/null
 echo "@@end"
 """.strip()

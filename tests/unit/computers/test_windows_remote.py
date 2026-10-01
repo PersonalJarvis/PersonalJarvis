@@ -22,7 +22,7 @@ import pytest
 from jarvis.agent_chat import remote_cli
 from jarvis.computers import identity, remote_os, service, toolbox
 from jarvis.computers.probe import WINDOWS_PROBE_SCRIPT, parse_probe
-from jarvis.computers.remote_terminal import SshPtyPool, windows_pane_argv
+from jarvis.computers.remote_terminal import SshPtyPool, pane_argv
 from jarvis.computers.service import ComputerService
 from jarvis.computers.ssh import authorize_key_script_windows
 from jarvis.computers.store import ComputerStore
@@ -171,11 +171,15 @@ def test_command_lines_quote_the_program_once() -> None:
 
 def test_launcher_keeps_every_argument_intact() -> None:
     argv = ["claude", "--print", 'a "b" & c', "café Ω ✓", "multi\nline", "/help", "100%PATH%"]
-    script = remote_os.launcher_script(f"{HOME}/jarvis-agents/scout", argv, {"CI": "1"})
+    host = remote_os.RemoteHost(os="windows", home=HOME, bash=GIT_BASH)
+    script = remote_os.launcher_script(host, f"{HOME}/jarvis-agents/scout", argv, {"CI": "1"})
     lines = script.splitlines()
-    assert lines[0] == f"cd -- {HOME}/jarvis-agents/scout || exit 97"
+    agent_env = '"$HOME/.config/jarvis/agent.env"'
+    assert lines[0] == f"[ -f {agent_env} ] && . {agent_env}"
+    assert lines[1] == f"cd -- {HOME}/jarvis-agents/scout || exit 97"
     assert "export CI=1" in lines
     assert "MSYS_NO_PATHCONV=1" in script
+    assert "PATH=" not in script, "Git Bash brings the Windows PATH itself"
     exec_line = script.split("exec ", 1)[1]
     assert shlex.split(exec_line) == argv
     assert remote_os.launcher_name("society:scout/x") == "society-scout-x.sh"
@@ -226,8 +230,9 @@ def test_powershell_workspace_quotes_the_folder() -> None:
     script = remote.powershell_in_workspace("scout", "Get-ChildItem", relative="it's/sub")
     assert "Join-Path $HOME 'jarvis-agents\\scout\\it''s\\sub'" in script
     assert "\nGet-ChildItem\n" in script
-    assert windows_pane_argv(("bash", "-l")) == ("powershell.exe", "-NoLogo")
-    assert windows_pane_argv(("claude", "--resume", "x")) == ("claude", "--resume", "x")
+    windows = remote_os.RemoteHost(os="windows", bash=GIT_BASH)
+    assert pane_argv(windows, ("bash", "-l")) == ("powershell.exe", "-NoLogo")
+    assert pane_argv(windows, ("claude", "--resume", "x")) == ("claude", "--resume", "x")
 
 
 # -- over SSH -------------------------------------------------------------------------
@@ -344,7 +349,8 @@ async def test_agent_shell_runs_in_git_bash_or_powershell(
     result = await backend.run("ls -la", cwd=tmp_path, timeout_s=30)
     assert result.ok and "bash-ran" in result.output
     kind, script = box.scripts[-1]
-    assert kind == "bash" and script.endswith("&& ls -la")
+    assert kind == "bash" and script.rstrip().endswith("ls -la")
+    assert 'cd "$HOME"/jarvis-agents/scout || exit 97' in script
     assert backend.where == "Desk (Windows, Git Bash)"
 
     box.bash = False
