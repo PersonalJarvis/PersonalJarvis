@@ -274,6 +274,19 @@ class StatusFeed:
             return None
         return self._show(self._pending, now)
 
+    def wait_s(self) -> float | None:
+        """Seconds until :meth:`flush` can show the held-back pair, or ``None``.
+
+        ``None`` means nothing is held back. A caller that slept the full
+        interval may still get a small positive value: a timer can wake a few
+        milliseconds before the clock says the interval is over.
+        """
+        if self._pending is None:
+            return None
+        if self._last_at is None:
+            return 0.0
+        return max(0.0, self._min_interval - (self._clock() - self._last_at))
+
     def reset(self) -> None:
         """Forget the last shown and the throttled pair."""
         self._last = None

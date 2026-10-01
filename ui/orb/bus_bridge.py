@@ -979,12 +979,21 @@ class OrbBusBridge:
             return
 
         async def _flush() -> None:
-            try:
-                await asyncio.sleep(PET_STATUS_MIN_INTERVAL_S)
-            except asyncio.CancelledError:
-                return
-            if not self._wants_card():
-                return
+            # A timer can wake a few milliseconds before the feed's clock
+            # says the interval is over (coarse Windows timers); then the
+            # feed still holds the pair back, so sleep the rest instead of
+            # dropping the last thought of the burst.
+            delay: float | None = PET_STATUS_MIN_INTERVAL_S
+            while delay is not None:
+                try:
+                    await asyncio.sleep(delay + 0.005 if delay else 0)
+                except asyncio.CancelledError:
+                    return
+                if not self._wants_card():
+                    return
+                delay = self._status_feed.wait_s()
+                if delay == 0.0:
+                    break
             shown = self._status_feed.flush()
             if shown is not None:
                 self._card_visible = True

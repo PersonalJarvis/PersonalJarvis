@@ -201,10 +201,29 @@ class PetStore:
             _write_atomic(staging / SHEET_NAME, _encode_png(sheet))
             text = json.dumps(manifest.to_json(), indent=2, ensure_ascii=False) + "\n"
             _write_atomic(staging / MANIFEST_NAME, text.encode("utf-8"))
-            os.replace(staging, self.root / manifest.id)
+            _replace_with_retry(staging, self.root / manifest.id)
         except OSError as exc:
             shutil.rmtree(staging, ignore_errors=True)
             raise PetManifestError("The pet could not be saved.") from exc
+
+
+#: Attempts and pause for the final rename. On Windows a virus scanner or the
+#: search indexer briefly holds a file it just saw written, and renaming its
+#: folder fails with "access denied" until it lets go.
+_REPLACE_ATTEMPTS = 5
+_REPLACE_PAUSE_S = 0.1
+
+
+def _replace_with_retry(src: Path, dst: Path) -> None:
+    for attempt in range(_REPLACE_ATTEMPTS):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if attempt == _REPLACE_ATTEMPTS - 1:
+                raise
+            _log.debug("pet folder rename held by another process, retrying: %s", src)
+            time.sleep(_REPLACE_PAUSE_S * (attempt + 1))
 
 
 def _decode_sheet(sheet_bytes: bytes) -> Image.Image:

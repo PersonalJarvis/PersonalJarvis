@@ -95,6 +95,22 @@ def test_feed_dedupes_and_rate_limits() -> None:
     assert feed.flush() is None
 
 
+def test_feed_says_how_long_a_held_back_pair_still_waits() -> None:
+    clock = FakeClock()
+    clock.now = 1.0
+    feed = StatusFeed(clock=clock, min_interval_s=0.3)
+    assert feed.wait_s() is None  # nothing held back
+    feed.offer("Plan", "First.")
+    feed.offer("Plan", "Second.")
+    clock.now = 1.29  # a timer that woke just before the interval ended
+    assert feed.flush() is None
+    assert feed.wait_s() == pytest.approx(0.01)
+    clock.now = 1.3
+    assert feed.wait_s() == 0.0
+    assert feed.flush() == ("Plan", "Second.")
+    assert feed.wait_s() is None
+
+
 def test_feed_force_bypasses_interval_not_dedupe() -> None:
     clock = FakeClock()
     feed = StatusFeed(clock=clock)
