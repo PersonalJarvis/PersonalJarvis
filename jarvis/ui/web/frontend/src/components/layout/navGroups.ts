@@ -9,7 +9,7 @@
  * A second hand-written list anywhere would be the classic drift trap (AP-4):
  * a section added here would silently never appear on the deck.
  */
-import type { LucideIcon } from "lucide-react";
+import { KeyRound, type LucideIcon } from "lucide-react";
 import { OllamaIcon } from "@/components/icons/OllamaIcon";
 import {
   AgentsIcon,
@@ -26,7 +26,6 @@ import {
   FeedbackIcon,
   InspectorIcon,
   InstructionsIcon,
-  KeyIcon,
   MarketplaceIcon,
   MicrophoneIcon,
   PermissionsIcon,
@@ -35,9 +34,9 @@ import {
   SettingsIcon,
   ShortcutsIcon,
   SocialsIcon,
+  SpeechIcon,
   SpendIcon,
   TerminalIcon,
-  VoiceIcon,
   WikiIcon,
 } from "@/components/icons/sectionIcons";
 import type { SectionId } from "@/store/events";
@@ -214,7 +213,7 @@ export const NAV_GROUPS: NavItem[][] = [
     {
       id: "apikeys",
       labelKey: "nav.apikeys",
-      icon: KeyIcon,
+      icon: KeyRound,
       matchIds: ["apikeys", "telephony", "telephony-setup"],
     },
     // Local models sit directly under API Keys: the same "which brain" question,
@@ -237,7 +236,7 @@ export const NAV_GROUPS: NavItem[][] = [
     {
       id: "dictation",
       labelKey: "nav.voice",
-      icon: VoiceIcon,
+      icon: SpeechIcon,
       matchIds: [
         "dictation",
         "dictionary",

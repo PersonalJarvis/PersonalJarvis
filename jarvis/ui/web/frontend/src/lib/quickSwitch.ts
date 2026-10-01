@@ -22,12 +22,11 @@
  * locale, plus a few English synonyms, while the row shows the label of the
  * active language.
  */
-import type { LucideIcon } from "lucide-react";
+import { KeyRound, type LucideIcon } from "lucide-react";
 import {
   ChatIcon,
   ConnectorIcon,
   DictionaryIcon,
-  KeyIcon,
   LanguageIcon,
   PaneGridIcon,
   PhoneIcon,
@@ -186,7 +185,7 @@ function expand(item: NavItem): QuickSwitchEntry[] {
         tab("dictionary", "nav.dictionary", DictionaryIcon, "nav.voice"),
         tab("voice-shortcuts", "nav.voice_shortcuts", ShortcutsIcon, "nav.voice"),
         tab("voice-language", "nav.voice_language", LanguageIcon, "nav.voice"),
-        tab("voice-api-keys", "nav.voice_api_keys", KeyIcon, "nav.voice"),
+        tab("voice-api-keys", "nav.voice_api_keys", KeyRound, "nav.voice"),
       ];
     default:
       return [entry(item)];

@@ -88,6 +88,19 @@ export const VoiceIcon = defineIcon(
   </>,
 );
 
+/**
+ * A head in profile speaking: the dictation section, where the user talks and
+ * Jarvis writes. Kept apart from the waveform, which marks live voice mode.
+ */
+export const SpeechIcon = defineIcon(
+  "SpeechIcon",
+  <>
+    <path d="M5.5 20.5v-2.4A6.5 6.5 0 0 1 3.5 13.3V11a6 6 0 0 1 11.3-2.8l1 2.8a.5.5 0 0 1-.47.7H14.5v2.5a2 2 0 0 1-2 2H11v4.3" />
+    <path d="M18 9.5a3.6 3.6 0 0 1 0 5" />
+    <path d="M20.25 7.5a6.8 6.8 0 0 1 0 9" />
+  </>,
+);
+
 /** A studio microphone: recordings and their transcripts. */
 export const MicrophoneIcon = defineIcon(
   "MicrophoneIcon",
@@ -330,17 +343,6 @@ export const ComputersIcon = defineIcon(
     <path d="M7.5 16.5h.01" />
     <path d="M12.5 7.5h4" />
     <path d="M12.5 16.5h4" />
-  </>,
-);
-
-/** A key. */
-export const KeyIcon = defineIcon(
-  "KeyIcon",
-  <>
-    <circle cx="8" cy="15.5" r="4" />
-    <path d="m10.85 12.65 8.65-8.65" />
-    <path d="m16.5 7 2.5 2.5" />
-    <path d="m14.25 9.25 1.75 1.75" />
   </>,
 );
 
