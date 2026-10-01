@@ -45,6 +45,15 @@ def test_german_description_works_too():
     }
 
 
+def test_italian_description_works_too():
+    focus = derive_focus(
+        "Assistente personale",  # i18n-allow: sample agent title
+        "Leggi la posta e aggiungi gli appuntamenti al calendario.",  # i18n-allow: sample
+        CATALOG,
+    )
+    assert set(focus[:2]) == {"plugin:gmail", "plugin:google_calendar"}
+
+
 def test_mcp_server_name_is_reachable_without_a_table_entry():
     focus = derive_focus("Notebook helper", "Use NotebookLM for every question.", CATALOG)
     assert focus[0] == "mcp:notebooklm/ask"
@@ -74,6 +83,19 @@ def test_approval_rules_from_the_boundary_phrase():
         ["plugin:gmail", "cli:gh"],
     )
     assert rules_de["require_approval"] == [
+        "cli:gh:close",
+        "cli:gh:create",
+        "cli:gh:merge",
+        "plugin:gmail:send",
+    ]
+
+
+def test_italian_approval_boundary_is_enforced():
+    rules = derive_approval_rules(
+        "Invia email solo dopo approvazione.",  # i18n-allow: sample description
+        ["plugin:gmail", "cli:gh"],
+    )
+    assert rules["require_approval"] == [
         "cli:gh:close",
         "cli:gh:create",
         "cli:gh:merge",
