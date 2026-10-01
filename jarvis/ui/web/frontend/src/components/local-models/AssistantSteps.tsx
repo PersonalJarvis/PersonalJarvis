@@ -23,6 +23,7 @@ import type { ReasoningBlock, ToolBlock, TurnBlock } from "@/components/agentcha
 import { fill, useT } from "@/i18n";
 import type { ApprovalDecision } from "@/lib/agentChatApi";
 import { cn } from "@/lib/utils";
+import "@/components/agentchat/WorkTrace.css";
 
 /** Tool name → i18n key of its sentence. Unknown tools fall back to the name. */
 const STEP_KEYS: Record<string, string> = {
@@ -74,12 +75,16 @@ function toneOf(block: TurnBlock): Tone {
   return block.output === null ? "run" : "done";
 }
 
+/** The step's node on the rail (components/agentchat/WorkTrace.css). */
 function Mark({ tone }: { tone: Tone }) {
-  if (tone === "run") return <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />;
-  if (tone === "fail") return <X className="h-3 w-3 text-destructive" />;
-  if (tone === "ask")
-    return <span className="h-1.5 w-1.5 rounded-full bg-foreground" />;
-  return <Check className="h-3 w-3 text-muted-foreground" />;
+  return (
+    <span aria-hidden className={cn("trace-node", tone === "run" && "trace-node-live")}>
+      {tone === "run" ? <span className="trace-dot" />
+        : tone === "fail" ? <X className="h-3.5 w-3.5 text-destructive" />
+        : tone === "ask" ? <span className="trace-dot text-foreground" />
+        : <Check className="h-3.5 w-3.5" />}
+    </span>
+  );
 }
 
 function StepRow({
@@ -99,21 +104,19 @@ function StepRow({
   const [open, setOpen] = useState(false);
   const hasDetail = Boolean(detail && detail.trim());
   return (
-    <li className="group/step" data-testid="assistant-step" data-tone={tone}>
-      <div className="flex items-baseline gap-2">
-        <span className="flex h-4 w-4 shrink-0 translate-y-[2px] items-center justify-center">
-          <Mark tone={tone} />
-        </span>
+    <li className="trace-step group/step pb-0.5" data-testid="assistant-step" data-tone={tone}>
+      <div className="flex items-start gap-3 py-1 text-sm leading-6">
+        <Mark tone={tone} />
         <span
           className={cn(
-            "text-meta ",
-            tone === "fail" ? "text-destructive" : "text-foreground/90",
+            "min-w-0",
+            tone === "fail" ? "text-destructive" : "text-foreground-secondary",
           )}
         >
-          {label}
+          {tone === "run" ? <span className="trace-shimmer">{label}</span> : label}
         </span>
         {meta && (
-          <span className="font-mono text-micro tabular-nums text-muted-foreground">
+          <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
             {meta}
           </span>
         )}
@@ -122,7 +125,7 @@ function StepRow({
             type="button"
             onClick={() => setOpen((v) => !v)}
             className={cn(
-              "ml-auto shrink-0 rounded px-1 text-micro text-muted-foreground",
+              "ml-auto shrink-0 rounded px-1 text-xs text-muted-foreground",
               "transition-colors group-hover/step:text-muted-foreground hover:!text-foreground",
               "focus-visible:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               open && "!text-muted-foreground",
@@ -133,7 +136,7 @@ function StepRow({
         )}
       </div>
       {open && hasDetail && (
-        <pre className="ml-6 mt-1.5 max-h-56 overflow-auto rounded-md border border-border bg-muted p-2.5 font-mono text-micro text-muted-foreground">
+        <pre className="mb-1.5 ml-7 max-h-56 overflow-auto whitespace-pre-wrap rounded-md bg-muted/60 px-3 py-2 font-mono text-xs leading-5 text-foreground-secondary [overflow-wrap:anywhere]">
           {detail}
         </pre>
       )}
@@ -174,7 +177,7 @@ function ToolStep({
   return (
     <StepRow tone={tone} label={label} meta={seconds(block.durationMs)} detail={detail}>
       {tone === "ask" && block.approval && onDecide && (
-        <div className="ml-6 mt-2 flex flex-wrap items-center gap-3 rounded-lg bg-secondary px-3 py-2">
+        <div className="mb-1.5 ml-7 mt-1 flex flex-wrap items-center gap-3">
           <span className="text-meta text-foreground">{block.approval.summary}</span>
           <div className="ml-auto flex gap-1.5">
             <button
@@ -253,24 +256,30 @@ export function AssistantSteps({
         aria-expanded={open}
         disabled={pinned}
         className={cn(
-          "-mx-1 inline-flex items-center gap-1.5 rounded-md px-1 py-0.5",
-          "text-xs text-muted-foreground",
+          "inline-flex items-center gap-2 rounded-full border border-border py-1 pl-2.5 pr-2",
+          "text-xs leading-5 text-muted-foreground transition-colors",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-          !pinned && "hover:text-foreground",
+          !pinned && "hover:border-border-strong hover:bg-secondary hover:text-foreground",
         )}
       >
+        {live ? (
+          <Loader2 className="h-3 w-3 shrink-0 text-accent motion-safe:animate-spin" />
+        ) : (
+          <span aria-hidden className="trace-dot shrink-0" />
+        )}
+        <span className={live ? "trace-shimmer" : undefined}>
+          {live ? t("local_models.assistant.steps.working") : summary}
+        </span>
         <ChevronRight
           className={cn(
-            "h-3.5 w-3.5 shrink-0 transition-transform",
+            "h-3 w-3 shrink-0 opacity-60 transition-transform",
             open && "rotate-90",
             pinned && "hidden",
           )}
         />
-        {live && <Loader2 className="h-3 w-3 shrink-0 animate-spin text-muted-foreground" />}
-        <span>{live ? t("local_models.assistant.steps.working") : summary}</span>
       </button>
       {open && (
-        <ul className="mt-2 flex flex-col gap-2 border-l border-border pl-3.5">
+        <ul className="trace-rail mt-1.5 pl-[5px]">
           {steps.map((block) =>
             block.kind === "tool" ? (
               <ToolStep key={block.callId} block={block} onDecide={onDecide} />

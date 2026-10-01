@@ -183,3 +183,50 @@ describe("work trace", () => {
     expect(splitConversationTurn([tool("a")])).toEqual({ work: [tool("a")], answer: [], after: [] });
   });
 });
+
+describe("rail look", () => {
+  it("threads thoughts, tools and the state line on one rail by default", () => {
+    const { container } = render(<WorkTrace {...props} blocks={[thought, tool("a", { name: "exec_command" })]} />);
+    expect(screen.getByTestId("work-trace").getAttribute("data-look")).toBe("rail");
+    const rails = container.querySelectorAll(".trace-rail");
+    expect(rails).toHaveLength(1);
+    const steps = rails[0].querySelectorAll(":scope > .trace-step");
+    expect(steps).toHaveLength(3);
+    expect(steps[2].querySelector("[role='status']")?.textContent).toContain("Done");
+  });
+
+  it("breaks the rail around a reply so narration stands on its own", () => {
+    const { container } = render(<WorkTrace {...props} blocks={[tool("a", { name: "exec_command" }), reply("mid", "Halfway there."), tool("b", { name: "exec_command" })]} />);
+    const rails = container.querySelectorAll(".trace-rail");
+    expect(rails).toHaveLength(2);
+    expect(rails[0].textContent).not.toContain("Halfway there.");
+  });
+
+  it("marks the working step and the live state line with the shimmer", () => {
+    const { container } = render(<WorkTrace {...props} status="running" durationMs={null} blocks={[tool("a", { name: "exec_command", output: null })]} />);
+    const running = container.querySelector('[data-state="running"]')!;
+    expect(running.querySelector(".trace-shimmer")?.textContent).toBe("Run command");
+    expect(running.querySelector(".trace-node-live")).toBeTruthy();
+    expect(screen.getByRole("status").querySelector(".trace-shimmer")?.textContent).toBe("Working");
+  });
+
+  it("drops the shimmer once the turn is finished", () => {
+    const { container } = render(<WorkTrace {...props} blocks={[tool("a", { name: "exec_command" })]} />);
+    expect(container.querySelector(".trace-shimmer")).toBeNull();
+    expect(container.querySelector(".trace-node-live")).toBeNull();
+  });
+
+  it("keeps the classic rows for the Agentic IDE", () => {
+    const { container } = render(<WorkTrace {...props} look="classic" blocks={[thought, tool("a")]} />);
+    expect(screen.getByTestId("work-trace").hasAttribute("data-look")).toBe(false);
+    expect(container.querySelector(".trace-rail")).toBeNull();
+    expect(screen.getByRole("status").className).toMatch(/border-t/);
+  });
+
+  it("shows the services a folded conversation turn used on its toggle", () => {
+    const blocks = [tool("linear", { name: "mcp__codex_apps__linear_list_issues" }), reply("done", "Three issues are open.")];
+    render(<WorkTrace {...props} conversation blocks={blocks} />);
+    const toggle = screen.getByRole("button", { name: "Thought for 12s" });
+    expect(toggle.querySelector("img, [data-logo]")).toBeTruthy();
+  });
+});

@@ -14,3 +14,117 @@
   margin-right: 0;
   width: 100%;
 }
+
+/* ── The rail look (2026-10-01) ─────────────────────────────────────────
+   Every step of a turn hangs on one hairline thread. A step's node sits in
+   a 16 px column centred on its first line: rows are 4 px + a 24 px line, so
+   the node's centre is 16 px down. The thread runs in two segments per step
+   — above the node and from below the node to the step's end — so it leaves
+   a small gap around every node and passes behind opened details without a
+   frame of its own. Only colour tokens; both themes read the same ladder. */
+.trace-rail {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+.trace-rail > .trace-step {
+  position: relative;
+  min-width: 0;
+}
+.trace-rail > .trace-step::before,
+.trace-rail > .trace-step::after {
+  content: "";
+  position: absolute;
+  left: 7.5px;
+  width: 1px;
+  background: hsl(var(--border-strong));
+  pointer-events: none;
+}
+.trace-rail > .trace-step::before {
+  top: 0;
+  height: 6px;
+}
+.trace-rail > .trace-step::after {
+  top: 26px;
+  bottom: 0;
+}
+.trace-rail > .trace-step:first-child::before,
+.trace-rail > .trace-step:last-child::after {
+  display: none;
+}
+
+.trace-node {
+  display: flex;
+  height: 1.5rem;
+  width: 1rem;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  color: hsl(var(--muted-foreground));
+}
+.trace-node-live {
+  color: hsl(var(--accent));
+}
+.trace-dot {
+  display: block;
+  height: 5px;
+  width: 5px;
+  border-radius: 9999px;
+  background: currentColor;
+  opacity: 0.6;
+}
+.trace-node-live .trace-dot {
+  opacity: 1;
+  box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.18);
+  animation: trace-node-pulse 1.6s ease-in-out infinite;
+}
+
+/* The words of the step that is working: a slow light sweep over muted ink,
+   the way the Claude app marks "Thinking". */
+.trace-shimmer {
+  background-image: linear-gradient(
+    90deg,
+    hsl(var(--muted-foreground)) 0%,
+    hsl(var(--muted-foreground)) 38%,
+    hsl(var(--foreground-strong)) 50%,
+    hsl(var(--muted-foreground)) 62%,
+    hsl(var(--muted-foreground)) 100%
+  );
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: trace-shimmer 2.4s linear infinite;
+}
+
+/* A live scratchpad that has outgrown its box fades in from the top: the
+   newest line stays pinned at the bottom, older lines dissolve upward. */
+.trace-scratch-live {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, black 2.5rem);
+  mask-image: linear-gradient(to bottom, transparent 0, black 2.5rem);
+}
+
+/* The opened conversation fold lines its thread up under the pill's mark. */
+.trace-fold-open {
+  padding-left: 5px;
+}
+
+@keyframes trace-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -150% 0; }
+}
+@keyframes trace-node-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px rgb(var(--accent-rgb) / 0.12); }
+  50% { box-shadow: 0 0 0 4px rgb(var(--accent-rgb) / 0.24); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .trace-shimmer {
+    animation: none;
+    background-image: none;
+    color: hsl(var(--foreground));
+  }
+  .trace-node-live .trace-dot {
+    animation: none;
+  }
+}

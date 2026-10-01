@@ -5,7 +5,7 @@ import { InternalMessageBubble, type InternalParticipant } from "./InternalMessa
 import { MessageWithChips } from "./ToolChoiceChips";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { effortLabel } from "./AgentComposer";
-import { TurnTrace, type Decide } from "./WorkTrace";
+import { TurnTrace, type Decide, type TraceLook } from "./WorkTrace";
 import type { TimelineItem, TurnItem, TextBlock } from "./reduce";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
@@ -19,6 +19,7 @@ export function AgentTimeline({
   recipientName,
   agentsById,
   bubbles = false,
+  traceLook = "rail",
 }: {
   items: TimelineItem[];
   assistantName: string;
@@ -36,6 +37,8 @@ export function AgentTimeline({
    * keeps the labelled document look (the default).
    */
   bubbles?: boolean;
+  /** How turns draw their work; the Agentic IDE keeps the classic rows. */
+  traceLook?: TraceLook;
 }) {
   const t = useT();
   const stamps = bubbles ? timeStamps(items) : null;
@@ -192,6 +195,7 @@ export function AgentTimeline({
         providerLabel={providerLabel(item.provider)}
         onDecide={onDecide}
         bubbles={bubbles}
+        traceLook={traceLook}
       />
     );
   }
@@ -232,8 +236,8 @@ function stampLabel(at: Date, now: Date): string {
   return `${date}, ${time}`;
 }
 
-const Turn = memo(function Turn({ turn, assistantName, providerLabel, onDecide, bubbles = false }: {
-  turn: TurnItem; assistantName: string; providerLabel: string; onDecide: Decide; bubbles?: boolean;
+const Turn = memo(function Turn({ turn, assistantName, providerLabel, onDecide, bubbles = false, traceLook }: {
+  turn: TurnItem; assistantName: string; providerLabel: string; onDecide: Decide; bubbles?: boolean; traceLook: TraceLook;
 }) {
   const t = useT();
   return <div className="flex min-w-0 flex-col gap-3" data-testid="agent-turn" data-message-id={turn.id} data-status={turn.status}>
@@ -245,7 +249,7 @@ const Turn = memo(function Turn({ turn, assistantName, providerLabel, onDecide, 
         {turn.effort ? <span>{effortLabel(turn.effort, t)}</span> : null}
       </div>
     )}
-    <TurnTrace turn={turn} onDecide={onDecide} renderText={(text, id) => <Prose block={{ kind: "text", text, id }} />} />
+    <TurnTrace turn={turn} look={traceLook} onDecide={onDecide} renderText={(text, id) => <Prose block={{ kind: "text", text, id }} />} />
   </div>;
 });
 
