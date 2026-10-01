@@ -6,6 +6,8 @@ const terminalHarness = vi.hoisted(() => ({
   host: { current: null as HTMLElement | null },
   observe: vi.fn(),
   fit: vi.fn(),
+  clearTextureAtlas: vi.fn(),
+  spacingAtOpen: [] as unknown[],
   /** What the terminal reports after a fit — a test moves it to grow the pane. */
   size: { cols: 80, rows: 24 },
   /** Every frame the pane hands its socket. Returns whether it went out. */
@@ -107,6 +109,7 @@ vi.mock("@xterm/xterm", () => ({
     loadAddon() {}
     open(host: HTMLElement) {
       terminalHarness.open(host);
+      terminalHarness.spacingAtOpen.push(this.options.letterSpacing);
       terminalHarness.host.current = host;
     }
     focus() {
@@ -153,7 +156,7 @@ vi.mock("@xterm/xterm", () => ({
       terminalHarness.resize(cols, rows);
     }
     dispose() {}
-    clearTextureAtlas() {}
+    clearTextureAtlas() { terminalHarness.clearTextureAtlas(this); }
   },
 }));
 
@@ -720,7 +723,7 @@ describe("AgenticTerminal layout", () => {
     expect(region?.className).not.toContain("invisible");
   });
 
-  it("waits for a promised repaint rather than showing the broken tail", () => {
+  it.each(["\x1b[2", "\x1b[1;1H\x1b["])("waits for a promised repaint and recognizes split erases: %j", (eraseStart) => {
     // A replay the server marks as needing a repaint cannot rebuild the screen
     // by itself. A busy agent may answer the repaint request late (the server
     // repeats it after half a second), and revealing on quiet in between showed
@@ -752,7 +755,7 @@ describe("AgenticTerminal layout", () => {
 
     // The erase arrives split across two chunks; the quiet window follows it.
     act(() => {
-      terminalHarness.handlers.current?.onOutput?.("\x1b[2" as never);
+      terminalHarness.handlers.current?.onOutput?.(eraseStart as never);
       terminalHarness.handlers.current?.onOutput?.("Jthe repainted screen" as never);
     });
     expect(region?.className).toContain("invisible");
@@ -2641,6 +2644,8 @@ describe("renaming a pane", () => {
 describe("terminal text size across a rebuild", () => {
   beforeEach(() => {
     terminalHarness.instances.length = 0;
+    terminalHarness.clearTextureAtlas.mockClear();
+    terminalHarness.spacingAtOpen.length = 0;
     globalThis.ResizeObserver = ResizeObserverHarness;
   });
 
@@ -2649,6 +2654,51 @@ describe("terminal text size across a rebuild", () => {
   });
 
   const newest = () => terminalHarness.instances[terminalHarness.instances.length - 1];
+
+  it.each(["light", "dark"] as const)("keeps the glyph cache warm when opening and restarting %s panes", (appearance) => {
+    const pane = (name: string, restartToken = 0) => (
+      <AgenticTerminal key={name} name={name} displayName="Codex" appearance={appearance} fontSize={13} restartToken={restartToken} />
+    );
+    const view = render(<>{pane("First")}</>);
+    expect(terminalHarness.clearTextureAtlas).not.toHaveBeenCalled();
+    const first = newest();
+
+    view.rerender(<>{pane("First")}{pane("Second")}</>);
+    expect(terminalHarness.instances).toHaveLength(2);
+    expect(terminalHarness.instances[0]).toBe(first);
+    expect(terminalHarness.clearTextureAtlas).not.toHaveBeenCalled();
+
+    view.rerender(<>{pane("First")}{pane("Second", 1)}</>);
+    expect(terminalHarness.instances).toHaveLength(3);
+    expect(terminalHarness.clearTextureAtlas).not.toHaveBeenCalled();
+  });
+
+  it("still refreshes glyphs on real theme and font changes without reconnecting", () => {
+    const view = render(<AgenticTerminal name="Dana" displayName="Codex" appearance="dark" fontSize={13} />);
+    const terminal = newest();
+    terminalHarness.clearTextureAtlas.mockClear();
+
+    view.rerender(<AgenticTerminal name="Dana" displayName="Codex" appearance="light" fontSize={13} />);
+    expect(terminalHarness.clearTextureAtlas).toHaveBeenCalledTimes(1);
+    expect(newest().options.theme).not.toBeUndefined();
+
+    view.rerender(<AgenticTerminal name="Dana" displayName="Codex" appearance="light" fontSize={18} />);
+    expect(terminalHarness.clearTextureAtlas).toHaveBeenCalledTimes(2);
+    expect(newest().options.fontSize).toBe(18);
+    expect(newest()).toBe(terminal);
+    expect(terminalHarness.instances).toHaveLength(1);
+  });
+
+  it("aligns fractional font cells before opening the renderer and measuring the first grid", () => {
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      font: "",
+      measureText: () => ({ width: 249.6 }),
+    } as unknown as CanvasRenderingContext2D);
+
+    render(<AgenticTerminal name="Dana" displayName="Codex" appearance="dark" fontSize={13} />);
+    expect(terminalHarness.spacingAtOpen).toEqual([1]);
+    expect(terminalHarness.clearTextureAtlas).not.toHaveBeenCalled();
+  });
 
   it("keeps the xterm canvas clear over the shared translucent pane shell", () => {
     render(
