@@ -2,6 +2,7 @@ import { ChatCommandPanel, useChatCommands } from "./ChatCommands";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowUp,
+  AudioLines,
   Bot,
   Brain,
   FolderCode,
@@ -36,6 +37,7 @@ import { ComposerChipField, type ComposerChipFieldHandle } from "@/components/ag
 import type { ToolChoice } from "@/components/agentchat/toolChoices";
 import { useAppshotClaim } from "@/components/agentchat/useAppshotClaim";
 import { GigiMark } from "@/components/GigiMark";
+import { useVoiceModeSwitch } from "@/components/home/assistantStatus";
 import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
@@ -79,6 +81,15 @@ import { cn } from "@/lib/utils";
  *
  * A pick applies to the open session at once (the backend patches it and
  * the next turn runs on it); with no session open it seeds the next one.
+ *
+ * The front page (`jarvis` surface) draws the same controls the quiet way
+ * (2026-10-01, judged against the Claude app's composer): the text on top,
+ * and one row under it — a round "+" and the permission glyph on the left;
+ * on the right ONE brain pick (provider and model in one list), the effort
+ * as a muted word, dictation, and one round button that is voice mode while
+ * the box is empty, Send once there is something to send, and Stop while a
+ * turn runs. The IDE keeps the labelled pills: there a folder, a stance and
+ * a model are things a person checks before every run.
  */
 export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   const t = useT();
@@ -130,6 +141,9 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   const cancel = useAgentChat((s) => s.cancel);
   const loadCatalog = useAgentChat((s) => s.loadCatalog);
   const loadHealth = useAgentChat((s) => s.loadHealth);
+  // Not an aliased narrowing: the IDE branch below still names the surface.
+  const minimal: boolean = String(surface) === "jarvis";
+  const voiceMode = useVoiceModeSwitch();
 
   useEffect(() => {
     if (!catalog) void loadCatalog();
@@ -188,7 +202,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
     onAttachProblem,
   );
   // A shortcut appshot parked for "the next message" joins this one.
-  useAppshotClaim(files.attachFiles, surface === "jarvis");
+  useAppshotClaim(files.attachFiles, surface === "jarvis", activeSessionId ?? "new");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const pasteRescue = usePasteRescue();
 
@@ -281,6 +295,52 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   // greyed with its "connect" hint, so the list is a map and not a void. No
   // "active" marker either — that word is the voice sub-agent's, and the
   // pick here is its own thing: what you choose here is what the chat runs.
+  // A provider's mark plus its live health dot — the same face in the IDE's
+  // provider list and in the front page's brain pick.
+  const providerIcon = useCallback(
+    (p: ProviderOption) => {
+      const live = liveHealthFor(p, health[p.id]);
+      const broken = p.connected && live?.status === "error";
+      const working = p.connected && live?.status === "ok";
+      return (
+        <span className="relative inline-flex shrink-0">
+          {/* A coding CLI installed on this machine wears its own mark; a
+              catalog row wears its provider family's. Both are real brand
+              files — the fallback either would otherwise take is a letter
+              in a box, and a letter is not a logo. */}
+          {p.agentMark ? (
+            <AgentMark
+              agent={p.agentMark}
+              label={p.label}
+              logoUrl={p.logoUrl}
+              variant="plain"
+              size="sm"
+            />
+          ) : (
+            <ProviderLogo providerId={p.id} label={p.label} size="sm" />
+          )}
+          {(broken || working) && (
+            <span
+              data-testid={`provider-health-${p.id}`}
+              data-health={live?.status}
+              title={live?.detail || undefined}
+              aria-label={
+                broken
+                  ? healthReasonLabel(live?.reason ?? "", t)
+                  : t("agent_chat.provider_health_ok")
+              }
+              className={cn(
+                "absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full ring-2 ring-popover",
+                broken ? "bg-destructive" : "bg-muted-foreground",
+              )}
+            />
+          )}
+        </span>
+      );
+    },
+    [health, t],
+  );
+
   const providerGroups = useMemo<ComboboxGroup[]>(() => {
     const anyConnected = providers.some((p) => p.connected);
     const shown = anyConnected ? providers.filter((p) => p.connected) : providers;
@@ -293,7 +353,6 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
       // not paint "Key rejected" on that CLI.
       const live = liveHealthFor(p, health[p.id]);
       const broken = p.connected && live?.status === "error";
-      const working = p.connected && live?.status === "ok";
       return {
         value: p.id,
         label: p.label,
@@ -308,41 +367,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
         // and refusing the click would strand someone whose account recovered
         // a minute ago. The dot and the reason are the honest part.
         disabled: !p.connected,
-        icon: (
-          <span className="relative inline-flex shrink-0">
-            {/* A coding CLI installed on this machine wears its own mark; a
-                catalog row wears its provider family's. Both are real brand
-                files — the fallback either would otherwise take is a letter
-                in a box, and a letter is not a logo. */}
-            {p.agentMark ? (
-              <AgentMark
-                agent={p.agentMark}
-                label={p.label}
-                logoUrl={p.logoUrl}
-                variant="plain"
-                size="sm"
-              />
-            ) : (
-              <ProviderLogo providerId={p.id} label={p.label} size="sm" />
-            )}
-            {(broken || working) && (
-              <span
-                data-testid={`provider-health-${p.id}`}
-                data-health={live?.status}
-                title={live?.detail || undefined}
-                aria-label={
-                  broken
-                    ? healthReasonLabel(live?.reason ?? "", t)
-                    : t("agent_chat.provider_health_ok")
-                }
-                className={cn(
-                  "absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full ring-2 ring-popover",
-                  broken ? "bg-destructive" : "bg-muted-foreground",
-                )}
-              />
-            )}
-          </span>
-        ),
+        icon: providerIcon(p),
         searchText: `${p.family} ${p.runner}`,
       };
     };
@@ -362,7 +387,50 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
         });
     }
     return groups;
-  }, [providers, health, t]);
+  }, [providers, health, providerIcon, t]);
+
+  // The front page's single brain pick: every offered provider as a group,
+  // its default first, then its models (live when loaded, else curated).
+  const brainGroups = useMemo<ComboboxGroup[]>(() => {
+    if (!minimal) return [];
+    const anyConnected = providers.some((p) => p.connected);
+    const shown = anyConnected ? providers.filter((p) => p.connected) : providers;
+    return shown.map((p) => {
+      const live = liveModels[p.id];
+      const models = p.models_source === "live" && live && live.length ? live : (p.curated_models ?? []);
+      const icon = providerIcon(p);
+      const disabled = !p.connected;
+      const hint = disabled
+        ? p.cli_installed === false
+          ? t("agent_chat.provider_not_installed")
+          : t("agent_chat.provider_connect")
+        : undefined;
+      return {
+        id: p.id,
+        label: p.label,
+        options: [
+          {
+            value: brainValue(p.id, ""),
+            label: p.label,
+            hint: hint ?? t("agent_chat.model_default"),
+            icon,
+            disabled,
+            searchText: p.family,
+          },
+          ...models
+            .filter((m) => m.id)
+            .map((m) => ({
+              value: brainValue(p.id, m.id),
+              label: m.label || m.id,
+              hint: hint ?? m.note,
+              icon,
+              disabled,
+              searchText: `${p.label} ${m.id}`,
+            })),
+        ],
+      };
+    });
+  }, [minimal, providers, liveModels, providerIcon, t]);
 
   const modelList = useMemo(() => {
     if (!provider) return [];
@@ -482,8 +550,10 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
       // the thing it looks like is a target people miss.
       {...files.dragHandlers}
       className={cn(
-        "relative flex flex-col gap-2 rounded-2xl border border-border-strong bg-card p-3 shadow-rim transition-[border-color,box-shadow]",
-        "focus-within:border-primary/40",
+        "relative flex flex-col transition-[border-color,box-shadow]",
+        minimal
+          ? "gap-1.5 rounded-[22px] border border-border bg-card px-3 pb-2.5 pt-3 shadow-rim focus-within:border-border-strong"
+          : "gap-2 rounded-2xl border border-border-strong bg-card p-3 shadow-rim focus-within:border-primary/40",
         files.dragging && "border-primary/60",
       )}
     >
@@ -491,7 +561,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
         <div
           data-testid="composer-drop-overlay"
           aria-hidden
-          className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-2xl border-2 border-dashed border-primary/70 bg-card text-sm font-medium text-primary"
+          className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-[inherit] border-2 border-dashed border-primary/70 bg-card text-sm font-medium text-primary"
         >
           {t("agent_chat.attach_drop_hint")}
         </div>
@@ -532,8 +602,166 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
           pasteRescue.onPaste();
           files.onPaste(e);
         }}
-        className="max-h-[50vh] text-reading scrollbar-jarvis"
+        className={cn("max-h-[50vh] text-reading scrollbar-jarvis", minimal && "min-h-[52px] px-1.5")}
       />
+      {minimal ? (
+        <div className="flex items-center gap-1" data-testid="composer-row">
+          <ComposerAddMenu
+            key={activeSessionId ?? "new"}
+            compact
+            anchorRef={cardRef}
+            provider={draft.provider}
+            model={draft.model}
+            cwd={draft.cwd}
+            stance={draft.permissionMode}
+            selected={selectedTools}
+            onChange={setSelectedTools}
+            onInsert={(row) => fieldRef.current?.insertChip(row)}
+            onAttach={() => fileInputRef.current?.click()}
+            onFolder={() => void onPickFolder()}
+            onConnect={(row) =>
+              setActiveSection(
+                row.category === "mcp" ? "mcps" : row.category === "skills" ? "skills" : "plugins",
+              )
+            }
+            disabled={!connected || busy}
+          />
+          {provider && permissionModes.length > 0 && (
+            <span title={locks?.permissionMode ?? permissionDescription} className="inline-flex">
+              <Combobox
+                iconOnly
+                value={permissionValue}
+                groups={permissionGroups}
+                onChange={(v) => void setDraft({ permissionMode: v })}
+                ariaLabel={t("agent_chat.pick_permission")}
+                fallbackLabel={t("agent_chat.pick_permission")}
+                disabled={Boolean(locks?.permissionMode)}
+                testId="composer-permission"
+                triggerHint={false}
+                className="h-8 w-8 justify-center gap-0 rounded-full bg-transparent p-0 text-muted-foreground shadow-none hover:bg-secondary focus-visible:ring-1 [&_svg]:h-4 [&_svg]:w-4"
+              />
+            </span>
+          )}
+          {hasPlan && (
+            <button
+              type="button"
+              role="switch"
+              aria-checked={planOn}
+              aria-label={planOn ? t("agent_chat.mode_plan") : t("agent_chat.mode_build")}
+              data-testid="composer-plan"
+              onClick={() => void setPlan(!planOn)}
+              disabled={Boolean(locks?.permissionMode)}
+              title={locks?.permissionMode ?? (planOn ? t("agent_chat.plan_hint") : t("agent_chat.build_hint"))}
+              className={cn(
+                "inline-flex h-8 items-center gap-1.5 rounded-full text-xs font-medium transition-colors disabled:opacity-50",
+                planOn
+                  ? "bg-accent-soft px-3 text-accent"
+                  : "w-8 justify-center text-muted-foreground hover:bg-secondary hover:text-foreground",
+              )}
+            >
+              <NotebookPen className="h-4 w-4" aria-hidden />
+              {planOn && t("agent_chat.mode_plan")}
+            </button>
+          )}
+          <span className="flex-1" />
+          <Pick
+            testId="composer-model"
+            ariaLabel={t("agent_chat.pick_model")}
+            value={brainValue(draft.provider, draft.model)}
+            groups={brainGroups}
+            onChange={(v) => {
+              const [nextProvider, nextModel] = splitBrainValue(v);
+              void setDraft(
+                nextProvider !== draft.provider ? { provider: nextProvider, model: nextModel } : { model: nextModel },
+              );
+            }}
+            fallbackLabel={
+              catalogError
+                ? t("agent_chat.catalog_unavailable")
+                : provider
+                  ? draft.model || provider.label
+                  : t("agent_chat.pick_provider")
+            }
+            searchPlaceholder={t("agent_chat.search_models")}
+            disabled={!catalog || (Boolean(locks?.provider) && Boolean(locks?.model))}
+            title={locks?.model ?? locks?.provider}
+            className="max-w-[240px]"
+          />
+          {provider && effortLevels.length > 1 && (
+            <Pick
+              testId="composer-effort"
+              ariaLabel={t("agent_chat.pick_effort")}
+              value={draft.effort}
+              groups={effortGroups}
+              onChange={(v) => void setDraft({ effort: v })}
+              fallbackLabel={effortLabel(draft.effort, t)}
+              disabled={Boolean(locks?.effort)}
+              title={locks?.effort}
+              muted
+            />
+          )}
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="sr-only"
+            tabIndex={-1}
+            onChange={(event) => {
+              const picked = Array.from(event.currentTarget.files ?? []);
+              event.currentTarget.value = "";
+              if (picked.length > 0) files.attachFiles(picked);
+            }}
+          />
+          <DictationButton
+            dictating={dictating}
+            onToggle={toggleDictation}
+            disabled={!connected}
+            startLabel={t("chats_view.dictation_start")}
+            stopLabel={t("chats_view.dictation_stop")}
+            shape="round"
+          />
+          {live && !commands.isCommand && !(commands.canSteer && value.trim()) ? (
+            <button
+              type="button"
+              onClick={() => void cancel()}
+              aria-label={t("agent_chat.stop")}
+              title={t("agent_chat.stop")}
+              data-testid="composer-stop"
+              className="ml-0.5 inline-flex h-8 w-8 items-center justify-center rounded-full bg-foreground text-background transition-colors hover:bg-foreground/85"
+            >
+              <Square className="h-3 w-3 fill-current" />
+            </button>
+          ) : value.trim() || files.attachments.length > 0 || dictating || commands.isCommand ? (
+            <button
+              type="button"
+              onClick={() => (dictating ? stopDictationAndSend() : void onSend())}
+              disabled={!canSend && !canFinishDictation}
+              aria-label={t("agent_chat.send")}
+              data-testid="composer-send"
+              className={cn(
+                "ml-0.5 inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors",
+                canSend || canFinishDictation
+                  ? "bg-foreground text-background hover:bg-foreground/85"
+                  : "bg-secondary text-muted-foreground",
+              )}
+            >
+              <ArrowUp className="h-4 w-4" strokeWidth={2.5} />
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={voiceMode.enter}
+              disabled={voiceMode.busy}
+              aria-label={t("assistant_chat.voice_enter")}
+              title={fill(t("assistant_chat.voice_enter_hint"), { name: assistantName })}
+              data-testid="composer-voice-mode"
+              className="ml-0.5 inline-flex h-8 w-8 items-center justify-center rounded-full bg-foreground text-background transition-colors hover:bg-foreground/85 disabled:opacity-60"
+            >
+              <AudioLines className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+      ) : (
       <div className="flex flex-wrap items-center gap-1">
         {surface === "jarvis" && (
           <ComposerAddMenu
@@ -753,6 +981,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
           </button>
         )}
       </div>
+      )}
       {backendOutdated && (
         <div
           className="flex items-center gap-2 px-1 text-xs text-muted-foreground"
@@ -879,6 +1108,7 @@ function Pick({
   disabled,
   title,
   className,
+  muted = false,
 }: {
   testId: string;
   ariaLabel: string;
@@ -891,6 +1121,8 @@ function Pick({
   disabled?: boolean;
   title?: string;
   className?: string;
+  /** Muted ink — a secondary pick beside a primary one (the effort word). */
+  muted?: boolean;
 }) {
   // The Combobox draws the selected option's own icon; the leading glyph here
   // is the column's, shown when the option has none (model, effort, permission).
@@ -913,13 +1145,26 @@ function Pick({
         testId={testId}
         triggerHint={false}
         className={cn(
-          "h-7 w-auto max-w-[200px] gap-1.5 rounded-lg border-transparent bg-transparent py-0 pr-1.5 text-xs font-medium text-foreground shadow-none",
+          "h-7 w-auto max-w-[200px] gap-1.5 rounded-lg border-transparent bg-transparent py-0 pr-1.5 text-xs font-medium shadow-none",
+          muted ? "text-muted-foreground" : "text-foreground",
           "hover:border-transparent hover:bg-secondary focus-visible:ring-1",
           icon && !selectedHasIcon ? "pl-7" : "pl-1.5",
         )}
       />
     </span>
   );
+}
+
+const BRAIN_SEP = "\u0001";
+
+/** One value for a provider + model pair in the front page's brain pick. */
+export function brainValue(provider: string, model: string): string {
+  return `${provider}${BRAIN_SEP}${model}`;
+}
+
+export function splitBrainValue(value: string): [string, string] {
+  const at = value.indexOf(BRAIN_SEP);
+  return at < 0 ? [value, ""] : [value.slice(0, at), value.slice(at + 1)];
 }
 
 export function effortLabel(level: string, t: (key: string) => string): string {

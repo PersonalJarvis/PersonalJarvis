@@ -4,7 +4,6 @@ import { CircleAlert, FileText, ImageIcon } from "lucide-react";
 import { InternalMessageBubble, type InternalParticipant } from "./InternalMessageBubble";
 import { MessageWithChips } from "./ToolChoiceChips";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
-import { GigiMark } from "@/components/GigiMark";
 import { effortLabel } from "./AgentComposer";
 import { TurnTrace, type Decide } from "./WorkTrace";
 import type { TimelineItem, TurnItem, TextBlock } from "./reduce";
@@ -30,10 +29,11 @@ export function AgentTimeline({
   /** Sender faces by agent id, where the caller has a roster. */
   agentsById?: Record<string, InternalParticipant>;
   /**
-   * The front page's messenger look (2026-10-01): your words in a signal-blue
-   * bubble on the right, the assistant's answers in card bubbles on the left
-   * under a small face, and a centred time stamp wherever the conversation
-   * paused. The Agentic IDE keeps the document look (the default).
+   * The front page's conversation look (2026-10-01, after the Claude app):
+   * your words in a soft rounded bubble on the right, the assistant's answer
+   * as plain text with no name-and-model header above it, and a quiet
+   * centred time stamp wherever the conversation paused. The Agentic IDE
+   * keeps the labelled document look (the default).
    */
   bubbles?: boolean;
 }) {
@@ -80,7 +80,7 @@ export function AgentTimeline({
             className={cn(
               "text-reading",
               bubbles
-                ? "jarvis-chat-out max-w-[78%] rounded-3xl rounded-br-lg px-4 py-2.5"
+                ? "jarvis-user-bubble max-w-[80%] rounded-[20px] px-4 py-2.5"
                 : "jarvis-user-bubble max-w-[85%] rounded-lg px-4 py-3",
             )}
           >
@@ -237,28 +237,15 @@ const Turn = memo(function Turn({ turn, assistantName, providerLabel, onDecide, 
 }) {
   const t = useT();
   return <div className="flex min-w-0 flex-col gap-3" data-testid="agent-turn" data-message-id={turn.id} data-status={turn.status}>
-    <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-      {bubbles ? <GigiMark size={20} className="rounded-full" /> : null}
-      <span className="font-medium text-foreground">{assistantName}</span>
-      <ProviderLogo providerId={turn.provider} label={providerLabel} size="sm" />
-      <span>{providerLabel}{turn.model ? ` · ${turn.model}` : ""}</span>
-      {turn.effort ? <span>{effortLabel(turn.effort, t)}</span> : null}
-    </div>
-    <TurnTrace
-      turn={turn}
-      onDecide={onDecide}
-      renderText={(text, id) =>
-        bubbles ? (
-          text.trim() ? (
-            <div className="w-fit max-w-full rounded-3xl rounded-tl-lg bg-card px-5 py-1.5" data-testid="agent-bubble">
-              <Prose block={{ kind: "text", text, id }} />
-            </div>
-          ) : null
-        ) : (
-          <Prose block={{ kind: "text", text, id }} />
-        )
-      }
-    />
+    {!bubbles && (
+      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+        <span className="font-medium text-foreground">{assistantName}</span>
+        <ProviderLogo providerId={turn.provider} label={providerLabel} size="sm" />
+        <span>{providerLabel}{turn.model ? ` · ${turn.model}` : ""}</span>
+        {turn.effort ? <span>{effortLabel(turn.effort, t)}</span> : null}
+      </div>
+    )}
+    <TurnTrace turn={turn} onDecide={onDecide} renderText={(text, id) => <Prose block={{ kind: "text", text, id }} />} />
   </div>;
 });
 

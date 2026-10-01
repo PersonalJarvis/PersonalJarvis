@@ -147,9 +147,9 @@ export function VoiceStage() {
 }
 
 /**
- * One line of the lane, drawn as a chat bubble so voice mode reads like the
- * chat it lives in: your words on the right in the signal hue, the
- * assistant's on the left on a card. A LIVE line (words still being said, an
+ * One line of the lane, drawn the way the chat draws a turn so voice mode
+ * reads like the chat it lives in: your words in a soft bubble on the
+ * right, the assistant's as plain text on the left. A LIVE line (words still being said, an
  * answer still being produced) is dimmed and italic with a cursor; the
  * finished line it becomes is the same words, settled. The speaker's name
  * stays for screen readers only — the side says who spoke.
@@ -174,8 +174,8 @@ function TranscriptLine({
       <span className="sr-only">{who}: </span>
       <span
         className={cn(
-          "max-w-[80%] whitespace-pre-wrap px-4 py-2.5 text-lg leading-snug",
-          user ? "jarvis-chat-out rounded-3xl rounded-br-lg" : "rounded-3xl rounded-tl-lg bg-card text-foreground",
+          "max-w-[80%] whitespace-pre-wrap text-lg leading-snug",
+          user ? "jarvis-user-bubble rounded-[20px] px-4 py-2.5" : "py-1 text-foreground",
           live && "italic opacity-70",
         )}
       >

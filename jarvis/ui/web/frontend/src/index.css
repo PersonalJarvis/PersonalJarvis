@@ -561,16 +561,6 @@ label,
     --popover-foreground: 0 0% 9%;
     --user-bubble: 0 0% 96%; /* #F5F5F5 — the speaker: quiet lift, strong ink */
     --user-bubble-foreground: 0 0% 9%;
-    /* Front-page chat: the outbound bubble wears the signal hue, and the
-       assistant card's two vivid tiles (Soul = standing instructions,
-       Memory = the wiki) carry their own gradient pair. */
-    --chat-bubble-out: 212 92% 45%;
-    --chat-bubble-out-foreground: 0 0% 100%;
-    --soul-from: 347 83% 52%;
-    --soul-to: 14 92% 56%;
-    --memory-from: 224 86% 52%;
-    --memory-to: 194 92% 48%;
-    --vivid-card-foreground: 0 0% 100%;
     --surface-raised: 0 0% 93%; /* #EDEDED — pressed/selected rows, code blocks */
     --border: 0 0% 90%; /* #E5E5E5 — hairline */
     --border-strong: 0 0% 82%; /* #D1D1D1 — input borders, focused card, float rim */
@@ -763,13 +753,6 @@ label,
     --popover-foreground: 0 0% 98%;
     --user-bubble: 0 0% 16%; /* #292929 — the speaker: a quiet, legible lift */
     --user-bubble-foreground: 0 0% 98%;
-    --chat-bubble-out: 212 100% 56%;
-    --chat-bubble-out-foreground: 0 0% 100%;
-    --soul-from: 347 86% 56%;
-    --soul-to: 14 94% 58%;
-    --memory-from: 226 92% 60%;
-    --memory-to: 194 96% 50%;
-    --vivid-card-foreground: 0 0% 100%;
 
     /* --- Rims. A rim is LIGHTER than the fill it encloses ------------------
        On near-black a dark border around a dark fill reads as a wireframe
@@ -995,32 +978,6 @@ body {
   .jarvis-user-bubble {
     background: hsl(var(--user-bubble));
     color: hsl(var(--user-bubble-foreground));
-  }
-
-  /* The front page's chat bubbles (AgentTimeline `bubbles`). */
-  .jarvis-chat-out {
-    background: hsl(var(--chat-bubble-out));
-    color: hsl(var(--chat-bubble-out-foreground));
-  }
-  .jarvis-chat-out a {
-    color: inherit;
-  }
-
-  /* The assistant card's vivid tiles: a gradient pair plus a soft light
-     bloom in the top corner, so the tile reads as an object, not a swatch. */
-  .jarvis-tile-soul,
-  .jarvis-tile-memory {
-    color: hsl(var(--vivid-card-foreground));
-  }
-  .jarvis-tile-soul {
-    background:
-      radial-gradient(120% 90% at 100% 0%, hsl(var(--vivid-card-foreground) / 0.22), transparent 55%),
-      linear-gradient(140deg, hsl(var(--soul-from)), hsl(var(--soul-to)));
-  }
-  .jarvis-tile-memory {
-    background:
-      radial-gradient(120% 90% at 100% 0%, hsl(var(--vivid-card-foreground) / 0.22), transparent 55%),
-      linear-gradient(140deg, hsl(var(--memory-from)), hsl(var(--memory-to)));
   }
 
   /* Selected nav row — the lift surface across the WHOLE row, plus strong ink

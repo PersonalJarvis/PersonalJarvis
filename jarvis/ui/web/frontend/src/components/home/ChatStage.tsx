@@ -14,9 +14,8 @@ import { VoiceThreadStage } from "@/components/home/VoiceThreadStage";
 import type { ApprovalDecision } from "@/lib/agentChatApi";
 import { fill, useT } from "@/i18n";
 import { folderLeaf } from "@/lib/folderPath";
-import { AudioLines, FolderCode } from "lucide-react";
-import { useVoiceModeSwitch } from "@/components/home/assistantStatus";
-import { useWakeWord } from "@/hooks/useWakeWord";
+import { useHistoryPolling } from "@/hooks/useHistoryPolling";
+import { FolderCode } from "lucide-react";
 
 /**
  * The chat stage — the typed half of the front page: Jarvis with a keyboard.
@@ -79,8 +78,8 @@ function ChatStageContent() {
 
   useEffect(() => {
     if (!catalog) void loadCatalog();
-    void loadSessions();
-  }, [catalog, loadCatalog, loadSessions]);
+  }, [catalog, loadCatalog]);
+  useHistoryPolling(loadSessions);
 
   const providerLabel = useCallback(
     (id: string) => catalog?.providers.find((p) => p.id === id)?.label ?? id,
@@ -203,19 +202,20 @@ function ChatStageContent() {
   // chat is coding sessions and never shows a spoken thread.
   if (surface === "jarvis" && voiceThreadId && !activeSessionId) return <VoiceThreadStage />;
 
+  // The front page opens the way the Claude app does: one short line and
+  // the composer, a little above the middle, nothing else to read first.
   if (!hasContent) {
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center" data-testid="chat-stage" data-empty="true">
-        <div className="flex w-full max-w-[720px] flex-1 flex-col justify-center gap-8 px-6 pb-20">
-          {isJarvis ? (
-            <Greeting subtitle={subtitle} />
-          ) : (
-            <FolderHeadline folder={cwd} subtitle={subtitle} />
-          )}
-          <div className="flex flex-col gap-4">
-            <AgentComposer autoFocus />
-            {isJarvis && <TalkInvitation />}
-          </div>
+        <div
+          className={
+            isJarvis
+              ? "flex w-full max-w-[680px] flex-1 flex-col justify-center gap-7 px-6 pb-[14vh]"
+              : "flex w-full max-w-[720px] flex-1 flex-col justify-center gap-8 px-6 pb-20"
+          }
+        >
+          {isJarvis ? <Greeting /> : <FolderHeadline folder={cwd} subtitle={subtitle} />}
+          <AgentComposer autoFocus />
         </div>
       </div>
     );
@@ -226,7 +226,7 @@ function ChatStageContent() {
       <ScrollArea ref={setRoot} className="min-h-0 w-full flex-1">
         <div
           ref={columnRef}
-          className="relative mx-auto flex w-full max-w-[720px] flex-col gap-5 px-6 pb-6 pt-8"
+          className="relative mx-auto flex w-full max-w-[720px] flex-col gap-6 px-6 pb-6 pt-8"
         >
           <AgentTimeline
             items={items}
@@ -263,34 +263,6 @@ function FolderHeadline({ folder, subtitle }: { folder: string; subtitle: string
         <span>{fill(t("agent_chat.empty_title_agent"), { folder: folderLeaf(folder) })}</span>
       </h1>
       <p className="mt-2 max-w-md text-base text-muted-foreground">{subtitle}</p>
-    </div>
-  );
-}
-
-/**
- * Under the empty front-page composer: the way into voice mode, for someone
- * who would rather talk. The same switch as the top bar's button
- * (useVoiceModeSwitch) — and, when a wake word is set, the reminder that
- * saying it works from anywhere.
- */
-function TalkInvitation() {
-  const t = useT();
-  const voice = useVoiceModeSwitch();
-  const { config } = useWakeWord();
-  const wake = config?.phrase.trim() || "";
-  return (
-    <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-sm text-muted-foreground" data-testid="chat-talk-invitation">
-      <button
-        type="button"
-        onClick={voice.enter}
-        disabled={voice.busy}
-        data-testid="chat-talk-invitation-start"
-        className="flex items-center gap-2 rounded-full px-3 py-1.5 font-medium text-foreground transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
-      >
-        <AudioLines aria-hidden className="h-4 w-4 text-accent" />
-        {t("assistant_chat.talk_cta")}
-      </button>
-      {wake && <span>{fill(t("assistant_chat.talk_cta_wake"), { wake })}</span>}
     </div>
   );
 }

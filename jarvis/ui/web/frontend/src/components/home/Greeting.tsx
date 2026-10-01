@@ -32,8 +32,8 @@ export function Greeting({
       )}
       data-testid="home-greeting"
     >
-      <h1 className="flex items-center gap-3 text-2xl font-semibold text-foreground-strong [text-wrap:balance]">
-        <GigiMark size={36} />
+      <h1 className="flex items-center gap-3 font-display text-2xl text-foreground-strong [text-wrap:balance]">
+        <GigiMark size={34} className="rounded-[10px]" />
         <span>{text}</span>
       </h1>
       {subtitle && !muted && (
