@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import os
 import threading
+import time
 from pathlib import Path
 
 #: Guards the registry itself. Held only long enough to look up or insert.
@@ -83,4 +84,25 @@ def store_lock(path: Path | str) -> threading.RLock:
         return lock
 
 
-__all__ = ["lock_key", "store_lock"]
+# Windows antivirus and indexers briefly hold a freshly written file open, so
+# os.replace onto it can fail with WinError 5/32 even under our own lock. A
+# short bounded retry rides that out; any other error still fails at once.
+_REPLACE_RETRY_DELAYS_S: tuple[float, ...] = (0.0, 0.02, 0.05, 0.1, 0.2, 0.4)
+
+
+def replace_with_retry(src: str | Path, dst: Path) -> None:
+    """``os.replace`` that tolerates a short-lived sharing lock on ``dst``."""
+    last_error: PermissionError | None = None
+    for delay_s in _REPLACE_RETRY_DELAYS_S:
+        if delay_s:
+            time.sleep(delay_s)
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError as exc:  # transient share lock: retried, re-raised at the end
+            last_error = exc
+    if last_error is not None:
+        raise last_error
+
+
+__all__ = ["lock_key", "replace_with_retry", "store_lock"]
