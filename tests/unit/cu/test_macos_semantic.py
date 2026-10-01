@@ -64,11 +64,71 @@ def test_focus_edit_sets_axfocused(monkeypatch: pytest.MonkeyPatch) -> None:
         permission_check=lambda: True,
         element_at_point=lambda _x, _y: element,
         read_attr=_reader,
+        attribute_settable=lambda _element, attr: attr == "AXFocused",
         set_attr=lambda target, attr, value: writes.append((target, attr, value)) or True,
     )
 
     assert result.status == "performed"
     assert writes == [(element, "AXFocused", True)]
+
+
+def test_focus_non_settable_edit_allows_verified_pointer_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(macos_semantic.sys, "platform", "darwin")
+    element = {"AXTitle": "Search", "AXRole": "AXTextField", "AXParent": None}
+
+    result = macos_semantic.try_focus_at(
+        10,
+        10,
+        expected_name="search",
+        expected_role="Edit",
+        permission_check=lambda: True,
+        element_at_point=lambda _x, _y: element,
+        read_attr=_reader,
+        attribute_settable=lambda _element, _attr: False,
+        set_attr=lambda *_args: pytest.fail("non-settable focus must not be written"),
+    )
+
+    assert result.status == "unsupported"
+
+
+def test_focus_probe_error_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(macos_semantic.sys, "platform", "darwin")
+    element = {"AXTitle": "Search", "AXRole": "AXTextField", "AXParent": None}
+
+    result = macos_semantic.try_focus_at(
+        10,
+        10,
+        expected_name="search",
+        expected_role="Edit",
+        permission_check=lambda: True,
+        element_at_point=lambda _x, _y: element,
+        read_attr=_reader,
+        attribute_settable=lambda _element, _attr: None,
+        set_attr=lambda *_args: pytest.fail("indeterminate focus must not be written"),
+    )
+
+    assert result.status == "unavailable"
+
+
+def test_focus_write_failure_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(macos_semantic.sys, "platform", "darwin")
+    element = {"AXTitle": "Search", "AXRole": "AXTextField", "AXParent": None}
+
+    result = macos_semantic.try_focus_at(
+        10,
+        10,
+        expected_name="search",
+        expected_role="Edit",
+        permission_check=lambda: True,
+        element_at_point=lambda _x, _y: element,
+        read_attr=_reader,
+        attribute_settable=lambda _element, _attr: True,
+        set_attr=lambda _element, _attr, _value: False,
+    )
+
+    assert result.status == "unavailable"
 
 
 def test_focus_non_edit_is_not_used(monkeypatch: pytest.MonkeyPatch) -> None:
