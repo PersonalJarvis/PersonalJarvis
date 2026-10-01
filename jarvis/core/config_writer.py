@@ -1165,6 +1165,24 @@ def set_autostart(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     _patch_table(path, "autostart", "enabled", bool(enabled))
 
 
+def set_autostart_background_only(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Persist ``[autostart] background_only`` (login starts only the agent service).
+
+    Toml-only, same rationale as :func:`set_autostart`; the caller re-applies
+    the OS entry so its command line follows the new mode.
+    """
+    _patch_table(path, "autostart", "background_only", bool(enabled))
+
+
+def set_background_keep_running(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Persist ``[background] keep_agents_running`` in jarvis.toml.
+
+    Toml-only, same rationale as :func:`set_autostart`: the drift-guard does
+    not track it. Read at quit time, so it applies without a restart.
+    """
+    _patch_table(path, "background", "keep_agents_running", bool(enabled))
+
+
 def set_wiki_vault_root(vault_root: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Persist ``[wiki_integration] vault_root`` in jarvis.toml (AP-7).
 

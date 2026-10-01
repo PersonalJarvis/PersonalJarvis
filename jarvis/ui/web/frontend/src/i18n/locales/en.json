@@ -2542,6 +2542,17 @@
       "instant_start_enabled_toast": "Instant start enabled — {name} will launch right after login.",
       "instant_start_declined_toast": "Permission was declined — {name} still starts via the shortcut (may be delayed)."
     },
+    "background_agents": {
+      "title": "Keep agents running after closing",
+      "description": "When you close {name}, a small background service keeps your routines and chat channels (Telegram, Discord) running. Opening the app takes over again. It only starts when there is something to keep.",
+      "keeps_now": "Closing now keeps: {what}.",
+      "keeps_nothing": "Right now there is nothing to keep — closing stops everything.",
+      "routines": "{count} routine(s)",
+      "login_title": "At login, start only the background agents",
+      "login_description": "Runs routines and chat channels after a restart without opening the window. Needs \"Launch app at login\".",
+      "service_active": "You are looking at the background service. Open the desktop app to take over.",
+      "saved_toast": "Saved."
+    },
     "overlay_style": {
       "title": "Display style",
       "description": "Choose how {name} appears on screen during voice activity. The bar is the slim default; the mascot is the classic companion; the voice orb is a glowing sphere; the pet is a pixel companion that stays on screen; or hide it entirely. Every floating style can be dragged to any monitor.",

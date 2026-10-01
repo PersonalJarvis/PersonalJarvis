@@ -2364,6 +2364,24 @@ class AutostartConfig(BaseModel):
     # (7 = minimized/tray, 1 = normal); the logon scheduled task launches visibly
     # regardless. macOS/Linux ignore it.
     start_minimized: bool = False
+    # At login, start only the background agent service (routines, chat
+    # channels) instead of the desktop window. Read by
+    # ``jarvis.autostart.command.resolve_launch_spec``.
+    background_only: bool = False
+
+
+class BackgroundConfig(BaseModel):
+    """What keeps running after the desktop app is closed.
+
+    ``keep_agents_running``: on quit, the desktop hands its routines and chat
+    channels (Telegram, Discord) to a windowless background service, which
+    hands them back the next time the app opens. The service is only started
+    when there is work to keep (a scheduled routine or a running channel).
+    Read by :mod:`jarvis.core.background_service`.
+    """
+
+    model_config = ConfigDict(extra="allow")
+    keep_agents_running: bool = True
 
 
 class TelemetryConfig(BaseModel):
@@ -4466,6 +4484,8 @@ class JarvisConfig(BaseModel):
     # Cross-platform login autostart (Windows .lnk / macOS LaunchAgent / Linux
     # XDG .desktop). Default ON; headless host = graceful no-op.
     autostart: AutostartConfig = Field(default_factory=AutostartConfig)
+    # Background agent service after the window closes (routines, channels).
+    background: BackgroundConfig = Field(default_factory=BackgroundConfig)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     # ``validation_alias`` back-compat: old installs use [sub_agents];

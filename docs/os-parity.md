@@ -69,6 +69,29 @@ Server without winget. Covered by `tests/unit/computers/test_posix_remote.py`,
 `tests/unit/society/test_remote_placement.py` against scripted SSH servers.
 
 
+## Background agent service (2026-10-01, T3)
+
+Quitting the desktop app with an armed routine or a running chat channel hands
+the app to a windowless service (`launcher --background-service`), which hands
+it back when the app opens again (`docs/background-service.md`). The service
+is the headless backend, so it boots wherever `--headless` boots, including a
+bare `python:3.11-slim`.
+
+- **Spawn:** Windows uses `DETACHED_PROCESS | CREATE_NO_WINDOW |
+  CREATE_BREAKAWAY_FROM_JOB` with `pythonw.exe`, and WMI
+  `Win32_Process.Create` when the app's job refuses breakaway (the PTY host's
+  route). macOS and Linux use `start_new_session`. A frozen build re-enters
+  its own executable with `--background-service` first.
+- **Tray:** Windows and Linux desktops with a notification area show a pystray
+  icon (Open / Stop background agents). macOS shows none (status items need
+  the main thread) and logs one line; a host without a display logs one line.
+- **Login:** `[autostart] background_only` puts `--background-service` into the
+  login entry on all three (Task Scheduler / startup shortcut, LaunchAgent via
+  LaunchServices `--args`, XDG `.desktop`).
+- **Verified:** Windows 11 live (detached spawn, parent wait, routine fired,
+  hand-back 2.4 s). macOS and Linux: same code paths, unit-tested, not run live
+  from this machine.
+
 ## Persistent Agentic IDE terminals (2026-09-28, T3)
 
 Coding-agent panes now live in a separate PTY host process

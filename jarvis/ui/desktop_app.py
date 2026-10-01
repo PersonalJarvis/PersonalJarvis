@@ -3197,6 +3197,7 @@ class DesktopApp:
                 logger.critical(
                     "Backend stopped in background mode ({}); exiting the owned shell.", reason,
                 )
+                self._skip_background_handoff = True
                 self._user_requested_quit = True
                 self._arm_force_exit(after_s=20.0)
                 threading.Thread(
@@ -3846,6 +3847,7 @@ class DesktopApp:
             return (False, f"{type(exc).__name__}: {exc}")
 
         def _mark_quit() -> None:
+            self._skip_background_handoff = True
             self._user_requested_quit = True
 
         def _quit_soon() -> None:
@@ -3890,6 +3892,7 @@ class DesktopApp:
             return False
 
         def _mark_quit() -> None:
+            self._skip_background_handoff = True
             self._user_requested_quit = True
 
         def _quit_soon() -> None:
@@ -5865,6 +5868,7 @@ class DesktopApp:
         # False → normal return, so callers still get an exit code.
         if self._user_requested_quit:
             self._arm_force_exit(after_s=20.0)
+            self._hand_off_to_background_service()
         code = self.shutdown()
         if self._user_requested_quit:
             with suppress(Exception):
@@ -6274,6 +6278,25 @@ class DesktopApp:
             self._overlay_close_thread.start()
         if backstop:
             self._arm_force_exit(after_s=self._CLOSE_QUIT_BACKSTOP_S)
+
+    def _hand_off_to_background_service(self) -> None:
+        """On a real quit, start the background agent service if there is work.
+
+        Routines and chat channels would otherwise stop with the window; the
+        service (``jarvis.core.background_service``) waits for this process to
+        exit, takes over the lock and keeps them running until the app opens
+        again. A restart, a declined Terms gate or a failed backend set
+        ``_skip_background_handoff`` — those must not leave anything behind.
+        """
+        if getattr(self, "_skip_background_handoff", False):
+            return
+        server = getattr(self, "_server", None)
+        state = getattr(getattr(server, "app", None), "state", None)
+        if state is None:
+            return
+        from jarvis.core.background_service import hand_off_on_quit
+
+        hand_off_on_quit(state, getattr(server, "cfg", None) or self.cfg)
 
     def _stop_overlay(self) -> None:
         """Take the on-screen bar or mascot down. Idempotent, never raises."""

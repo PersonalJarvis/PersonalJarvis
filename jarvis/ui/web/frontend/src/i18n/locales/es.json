@@ -2509,6 +2509,17 @@
       "instant_start_enabled_toast": "Inicio instantáneo activado: {name} se iniciará justo después de iniciar sesión.",
       "instant_start_declined_toast": "Se denegó el permiso: {name} sigue iniciándose mediante el acceso directo (puede retrasarse)."
     },
+    "background_agents": {
+      "title": "Mantener los agentes activos al cerrar",
+      "description": "Al cerrar {name}, un pequeño servicio en segundo plano mantiene activas tus rutinas y canales de chat (Telegram, Discord). Al abrir la app, esta vuelve a tomar el control. Solo se inicia cuando hay algo que mantener.",
+      "keeps_now": "Al cerrar ahora se mantiene: {what}.",
+      "keeps_nothing": "Ahora mismo no hay nada que mantener: cerrar lo detiene todo.",
+      "routines": "{count} rutina(s)",
+      "login_title": "Al iniciar sesión, iniciar solo los agentes en segundo plano",
+      "login_description": "Ejecuta rutinas y canales de chat tras reiniciar sin abrir la ventana. Requiere \"Iniciar la app al iniciar sesión\".",
+      "service_active": "Estás viendo el servicio en segundo plano. Abre la app de escritorio para tomar el control.",
+      "saved_toast": "Guardado."
+    },
     "overlay_style": {
       "title": "Estilo de visualización",
       "description": "Elige cómo aparece {name} en pantalla durante la actividad de voz. La barra es el valor predeterminado; la mascota es el acompañante clásico; el orbe de voz es una esfera luminosa; la mascota es un compañero de píxeles que permanece en pantalla; o ocúltalo por completo. Cualquier estilo flotante se puede arrastrar a cualquier monitor.",
