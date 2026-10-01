@@ -1,4 +1,4 @@
-"""Exercise the release shell against fake Git/GitHub commands, without publishing."""
+"""Exercise release shell boundaries without a repository, credentials or network."""
 
 from __future__ import annotations
 
@@ -12,27 +12,47 @@ import yaml
 
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 
+_SHA = "1" * 40
+_FAKES = r"""
+git() {
+  printf 'git %s\n' "$*" >> "$TRACE_FILE"
+  case "$1" in
+    rev-parse)
+      if [ "$2" = HEAD ]; then printf '%s\n' "$FAKE_SHA";
+      else printf '%s\n' "$TAG_SHA"; fi ;;
+    merge-base) return "$ANCESTOR_EXIT" ;;
+    show-ref) return "$TAG_EXISTS" ;;
+    checkout) : > checked-out ;;
+  esac
+  return 0
+}
+gh() {
+  printf 'gh %s\n' "$*" >> "$TRACE_FILE"
+  case "$1 $2" in
+    'pr create') printf 'https://github.com/example/project/pull/1\n' ;;
+    'pr merge') return "$LAND_EXIT" ;;
+    'workflow run') return 0 ;;
+    'run list') printf '123\n' ;;
+    'run view') printf '\n' ;;
+    'run watch') return "$WATCH_EXIT" ;;
+    api\ *) printf '%s\n' "$GATE_STATE" ;;
+    *) return 2 ;;
+  esac
+}
+python() {
+  printf 'python %s\n' "$*" >> "$TRACE_FILE"
+  if [ "$1" = -c ]; then
+    if [ -f checked-out ]; then printf '%s\n' "$RESUME_VERSION";
+    else printf '%s\n' "$BASE_VERSION"; fi
+  else return "$ADMIT_EXIT"; fi
+}
+"""
 
-@pytest.mark.parametrize(
-    "watch_exit,gate_state,land_exit,success",
-    [
-        (0, "success", 0, True),
-        (1, "failure", 0, False),
-        (0, "in_progress", 0, False),
-        (0, "success", 1, False),
-    ],
-)
-def test_only_a_green_candidate_can_land_and_publish(
-    tmp_path: Path,
-    watch_exit: int,
-    gate_state: str,
-    land_exit: int,
-    success: bool,
-) -> None:
+
+def _exercise(tmp_path: Path, step_names: list[str], **overrides: str):
     bash = shutil.which("bash")
     if os.name == "nt":
-        # System32/bash.exe enters WSL, which does not preserve this test's
-        # Windows environment or paths. Use the runner's Git Bash instead.
+        # System32/bash.exe enters WSL instead of the runner's Windows shell.
         git = shutil.which("git")
         roots = (Path(git).parent, Path(git).parent.parent / "bin") if git else ()
         bash = next(
@@ -42,34 +62,14 @@ def test_only_a_green_candidate_can_land_and_publish(
         pytest.skip("the workflow shell requires Bash")
     root = Path(__file__).resolve().parents[3]
     workflow = yaml.safe_load((root / ".github/workflows/release-cut.yml").read_text("utf-8"))
-    step = next(
-        step
-        for step in workflow["jobs"]["cut"]["steps"]
-        if step.get("name") == "Check the version commit before landing and tagging"
-    )
+    steps = {step.get("name"): step for step in workflow["jobs"]["cut"]["steps"]}
     trace = tmp_path / "commands.txt"
-    # Functions shadow commands only inside this disposable shell. No real
-    # repository, credentials, GitHub API, or release is touched by this test.
-    fakes = r"""
-git() {
-  printf 'git %s\n' "$*" >> "$TRACE_FILE"
-  if [ "$1" = rev-parse ]; then printf '%040d\n' 1; fi
-  if [ "$1 $2 $3" = 'push origin HEAD:main' ]; then return "$LAND_EXIT"; fi
-  return 0
-}
-gh() {
-  printf 'gh %s\n' "$*" >> "$TRACE_FILE"
-  case "$1 $2" in
-    'workflow run') return 0 ;;
-    'run list') printf '123\n' ;;
-    'run watch') return "$WATCH_EXIT" ;;
-    api\ *) printf '%s\n' "$GATE_STATE" ;;
-    *) return 2 ;;
-  esac
-}
-"""
     script = tmp_path / "release-test.sh"
-    script.write_text(fakes + step["run"], encoding="utf-8", newline="\n")
+    script.write_text(
+        _FAKES + "\n".join(steps[name]["run"] for name in step_names),
+        encoding="utf-8",
+        newline="\n",
+    )
     result = subprocess.run(
         [bash, "--noprofile", "--norc", "-e", "-o", "pipefail", script.name],
         cwd=tmp_path,
@@ -77,13 +77,27 @@ gh() {
             **os.environ,
             "V": "1.2.3",
             "GITHUB_RUN_ID": "77",
+            "GITHUB_RUN_ATTEMPT": "2",
             "GITHUB_REPOSITORY": "example/project",
             "TRACE_FILE": trace.name,
+            "GITHUB_OUTPUT": "outputs.txt",
+            "GITHUB_STEP_SUMMARY": "summary.txt",
+            "RUNNER_TEMP": ".",
             "PATH": "",
             "BASH_ENV": "/dev/null",
-            "WATCH_EXIT": str(watch_exit),
-            "GATE_STATE": gate_state,
-            "LAND_EXIT": str(land_exit),
+            "TOKEN_IS_BOT": "true",
+            "WATCH_EXIT": "0",
+            "GATE_STATE": "success",
+            "LAND_EXIT": "0",
+            "ADMIT_EXIT": "0",
+            "ANCESTOR_EXIT": "0",
+            "FAKE_SHA": _SHA,
+            "RESUME_SHA": _SHA,
+            "BASE_VERSION": "1.2.3",
+            "RESUME_VERSION": "1.2.3",
+            "TAG_EXISTS": "1",
+            "TAG_SHA": _SHA,
+            **overrides,
         },
         capture_output=True,
         text=True,
@@ -91,20 +105,72 @@ gh() {
         timeout=15,
         creationflags=NO_WINDOW_CREATIONFLAGS,
     )
-    assert trace.exists(), result.stdout + result.stderr
-    commands = trace.read_text("utf-8").splitlines()
+    commands = trace.read_text("utf-8").splitlines() if trace.exists() else []
+    return result, commands
+
+
+@pytest.mark.parametrize(
+    "overrides,success",
+    [
+        ({}, True),
+        ({"WATCH_EXIT": "1"}, False),
+        ({"GATE_STATE": "in_progress"}, False),
+        ({"LAND_EXIT": "1"}, False),
+        ({"ADMIT_EXIT": "1"}, False),
+    ],
+)
+def test_only_a_green_candidate_can_land_and_publish(tmp_path, overrides, success):
+    result, commands = _exercise(
+        tmp_path,
+        [
+            "Check the version commit before landing and tagging",
+            "Tag the admitted release",
+        ],
+        **overrides,
+    )
     assert (result.returncode == 0) is success, result.stdout + result.stderr
-    candidate = "git push origin HEAD:refs/heads/release-cut/v1.2.3-77"
+    candidate = "git push origin HEAD:refs/heads/release-cut/v1.2.3-77-2"
     watch = "gh run watch 123 --exit-status --interval 30"
+    merge = f"gh pr merge release-cut/v1.2.3-77-2 --merge --match-head-commit {_SHA}"
     assert commands.index(candidate) < commands.index(watch)
-    if watch_exit or gate_state != "success":
-        assert "git push origin HEAD:main" not in commands
+    assert any("--event pull_request" in command for command in commands)
+    assert "git push origin HEAD:main" not in commands
+    if overrides.get("WATCH_EXIT") or overrides.get("GATE_STATE"):
+        assert merge not in commands
     if success:
-        assert commands.index(watch) < commands.index("git push origin HEAD:main")
-        assert commands.index("git push origin HEAD:main") < commands.index(
-            "git tag -a v1.2.3 -m v1.2.3"
-        )
+        assert commands.index(watch) < commands.index(merge)
+        assert commands.index(merge) < commands.index("git tag -a v1.2.3 -m v1.2.3")
         assert commands[-1] == "git push origin v1.2.3"
+    else:
+        assert not any(command.startswith("git tag ") for command in commands)
+
+
+@pytest.mark.parametrize(
+    "overrides,success",
+    [
+        ({}, True),
+        ({"RESUME_SHA": "refs/heads/unmerged"}, False),
+        ({"ANCESTOR_EXIT": "1"}, False),
+        ({"RESUME_VERSION": "1.2.2"}, False),
+        ({"ADMIT_EXIT": "1"}, False),
+        ({"TAG_EXISTS": "0", "TAG_SHA": "2" * 40}, False),
+    ],
+)
+def test_resume_requires_merged_current_version_and_admission(tmp_path, overrides, success):
+    result, commands = _exercise(
+        tmp_path,
+        [
+            "Select an already merged version commit",
+            "Tag the admitted release",
+        ],
+        **overrides,
+    )
+    assert (result.returncode == 0) is success, result.stdout + result.stderr
+    if overrides.get("ANCESTOR_EXIT") or overrides.get("RESUME_SHA"):
+        assert not any(command.startswith("git checkout ") for command in commands)
+    if success:
+        assert commands[-1] == "git push origin v1.2.3"
+        assert (tmp_path / "outputs.txt").read_text("utf-8") == "version=1.2.3\n"
     else:
         assert not any(command.startswith("git tag ") for command in commands)
         assert "git push origin v1.2.3" not in commands
