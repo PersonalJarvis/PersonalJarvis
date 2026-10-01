@@ -71,14 +71,10 @@ export function stepsFor(platform: string | null): SetupStepId[] {
 
 /**
  * Where a resumed setup starts. The backend remembers the last step, so a
- * window reload lands where the user was — never past the consent.
+ * window reload lands where the user was; a fresh start (or an unknown, old
+ * step id) begins at the welcome.
  */
-export function resumeStep(
-  steps: readonly SetupStepId[],
-  saved: string | null,
-  termsAccepted: boolean,
-): SetupStepId {
-  if (!termsAccepted) return "welcome";
+export function resumeStep(steps: readonly SetupStepId[], saved: string | null): SetupStepId {
   const hit = steps.find((id) => id === saved);
-  return hit && hit !== "welcome" ? hit : (steps[1] ?? "welcome");
+  return hit ?? "welcome";
 }

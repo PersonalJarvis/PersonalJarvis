@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowLeft, Cloud, CreditCard, Lock, Monitor, Terminal } from "lucide-react";
+import { ArrowLeft, Lock } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { MascotGigi, type MascotAction } from "@/components/MascotGigi";
 import { Switch } from "@/components/ui/switch";
@@ -14,7 +14,7 @@ import { useEventStore } from "@/store/events";
 import { planKeysComplete, slotEffective, startableProviders } from "../brainPlans";
 import { ProgressDots } from "../ProgressDots";
 import { Spotlight } from "../tour/Spotlight";
-import { CheckLine, PrimaryAction, QuietAction, Status } from "../ui";
+import { PrimaryAction, QuietAction, Status } from "../ui";
 import { resumeStep, SETUP_STEPS, stepsFor, type SetupStepId } from "./setupSteps";
 import { useAnchorRect } from "./useAnchorRect";
 
@@ -40,12 +40,13 @@ const LANGS: UiLanguage[] = ["en", "de", "es"];
  * Settings, on macOS the permissions —
  * and waits there with a small card. The dim takes clicks, the hole does
  * not: only the part being set up can be used, so nothing else starts before
- * setup is done. Every step but the consent has a way on without doing it.
+ * setup is done. Every step has a way on without doing it. There is no
+ * consent gate: it is an open-source app, the welcome only picks a language.
  *
- * The last step completes onboarding; the backend then restarts the app once
- * and the tour of the app follows. `preview` (a replay) never completes and
- * never restarts — it only walks the steps and hands over to the tour.
- * `startAt` lets a replay from Settings begin past the consent.
+ * The last step hands over to the tour of the app straight away; the gate
+ * completes onboarding (and restarts the app once) when the tour ends.
+ * `preview` (a replay) never writes — it only walks the steps and hands over
+ * to the tour. `startAt` lets a replay from Settings begin at the API Keys.
  */
 export function SetupTour({
   onb,
@@ -67,7 +68,7 @@ export function SetupTour({
   const [stepId, setStepId] = useState<SetupStepId>(() =>
     preview
       ? (startAt ?? "welcome")
-      : resumeStep(stepsFor(null), onb.state?.current_step ?? null, Boolean(onb.state?.terms.accepted)),
+      : resumeStep(stepsFor(null), onb.state?.current_step ?? null),
   );
   const [skipped, setSkipped] = useState<string[]>(() => onb.state?.skipped_steps ?? []);
   const [cue, setCue] = useState(0);
@@ -100,6 +101,17 @@ export function SetupTour({
     if (nav.activeSection !== step.section) nav.setActiveSection(step.section);
   }, [ready, step.section, step.apiKeysTab, stepId]);
 
+  // Keep the app on this step's place. The dim blocks every click, so a
+  // drift is something else moving the app (a section restored late in
+  // boot) — the card would then describe a page that is not on screen.
+  useEffect(() => {
+    if (!ready || !step.section) return;
+    const target = step.section;
+    return useEventStore.subscribe((state) => {
+      if (state.activeSection !== target) state.setActiveSection(target);
+    });
+  }, [ready, step.section]);
+
   // Later visits to the API Keys page open on its own default tab again.
   useEffect(() => clearApiKeysTabRequest, []);
 
@@ -118,7 +130,7 @@ export function SetupTour({
 
   const index = Math.max(0, steps.indexOf(stepId));
   const nextId = steps[index + 1] ?? null;
-  // Never back behind the consent, nor behind where a replay started.
+  // Never back to the welcome, nor behind where a replay started.
   const firstId = preview && startAt ? startAt : steps[1];
   const prevId = index > 1 && stepId !== firstId ? steps[index - 1] : null;
 
@@ -175,12 +187,12 @@ export function SetupTour({
           </div>
         </div>
         <div className="mt-4">
-          {stepId === "welcome" && <WelcomeStep onb={onb} preview={preview} onAccepted={() => { cheer(); next(); }} />}
+          {stepId === "welcome" && <WelcomeStep onStart={() => { cheer(); next(); }} />}
           {stepId === "keys" && <KeysStep next={next} later={later} cheer={cheer} />}
           {stepId === "subscriptions" && <SubscriptionsStep next={next} later={later} />}
           {stepId === "voice" && <VoiceStep next={next} later={later} />}
           {stepId === "permissions" && <PermissionsStep next={next} />}
-          {stepId === "ready" && <ReadyStep onb={onb} preview={preview} onFinished={onFinished} />}
+          {stepId === "ready" && <ReadyStep preview={preview} onFinished={onFinished} />}
         </div>
         {footer}
       </div>
@@ -190,69 +202,9 @@ export function SetupTour({
 
 /* ------------------------------------------------------------------ steps */
 
-function WelcomeStep({ onb, preview, onAccepted }: { onb: Onb; preview: boolean; onAccepted: () => void }) {
+function WelcomeStep({ onStart }: { onStart: () => void }) {
   const t = useT();
   const lang = useUiLanguage();
-  const [accepted, setAccepted] = useState(Boolean(onb.state?.terms.accepted));
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [declined, setDeclined] = useState(false);
-  const [terms, setTerms] = useState<string | null>(null);
-  const [showTerms, setShowTerms] = useState(false);
-
-  async function toggleTerms() {
-    setShowTerms((v) => !v);
-    if (terms !== null) return;
-    try {
-      const res = await fetch("/api/onboarding/terms");
-      setTerms(res.ok ? ((await res.json()) as { text: string }).text : "");
-    } catch {
-      setTerms("");
-    }
-  }
-
-  async function proceed() {
-    if (!accepted || busy) return;
-    setBusy(true);
-    setError(null);
-    try {
-      if (!preview) await onb.acceptTerms();
-      onAccepted();
-    } catch {
-      setError(t("first_run.welcome.accept_failed"));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function decline() {
-    // The goodbye shows first: the backend ends the process right after it answers.
-    setDeclined(true);
-    if (preview) return;
-    try {
-      await fetch("/api/onboarding/decline-terms", { method: "POST" });
-    } catch {
-      // A warming backend cannot hold the goodbye back; the window closes either way.
-    }
-  }
-
-  if (declined) {
-    return (
-      <div className="space-y-1" data-testid="onboarding-declined">
-        <p className="text-sm font-medium text-foreground">{t("first_run.welcome.declined_title")}</p>
-        <p className="text-sm leading-relaxed text-muted-foreground">{t("first_run.welcome.declined_body")}</p>
-      </div>
-    );
-  }
-
-  const facts: { key: string; Icon: typeof Terminal }[] = [
-    { key: "commands", Icon: Terminal },
-    { key: "screen", Icon: Monitor },
-    { key: "cloud", Icon: Cloud },
-    { key: "costs", Icon: CreditCard },
-    { key: "mistakes", Icon: AlertTriangle },
-  ];
-
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-0.5 self-start rounded-full border border-border p-0.5" role="radiogroup" aria-label={t("first_run.welcome.language")}>
@@ -273,42 +225,7 @@ function WelcomeStep({ onb, preview, onAccepted }: { onb: Onb; preview: boolean;
           </button>
         ))}
       </div>
-
-      <ul className="space-y-1.5 rounded-xl border border-border bg-background px-3.5 py-3" data-testid="onboarding-facts">
-        {facts.map(({ key, Icon }) => (
-          <li key={key} className="flex items-start gap-2.5 text-sm leading-snug text-foreground">
-            <Icon aria-hidden className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-            <span>{t(`first_run.welcome.fact_${key}`)}</span>
-          </li>
-        ))}
-      </ul>
-
-      <div className="space-y-1.5">
-        <CheckLine checked={accepted} onChange={setAccepted} testId="onboarding-accept">
-          {t("first_run.welcome.accept")}
-        </CheckLine>
-        <QuietAction onClick={() => void toggleTerms()} className="ml-7 text-xs underline underline-offset-4">
-          {showTerms ? t("first_run.welcome.hide_terms") : t("first_run.welcome.read_terms")}
-        </QuietAction>
-        {showTerms && (
-          <pre className="ml-7 max-h-32 overflow-y-auto whitespace-pre-wrap rounded-lg border border-border bg-background p-2.5 font-sans text-xs leading-relaxed text-muted-foreground scrollbar-jarvis">
-            {terms || t("first_run.welcome.terms_loading")}
-          </pre>
-        )}
-      </div>
-
-      {error && <Status tone="error">{error}</Status>}
-
-      <div className="space-y-2">
-        <PrimaryAction onClick={() => void proceed()} disabled={!accepted} busy={busy}>
-          {t("first_run.welcome.start")}
-        </PrimaryAction>
-        <div className="text-center">
-          <QuietAction onClick={() => void decline()} testId="onboarding-decline" className="text-xs">
-            {t("first_run.welcome.decline")}
-          </QuietAction>
-        </div>
-      </div>
+      <PrimaryAction onClick={onStart}>{t("first_run.welcome.start")}</PrimaryAction>
     </div>
   );
 }
@@ -547,18 +464,15 @@ function ReviewRow({ label, value, ok }: { label: string; value: ReactNode; ok: 
 }
 
 /**
- * What is set up, read back from the app itself, then the start. Completing
- * restarts the app once so every choice takes effect together; the tour of
- * the app follows the restart.
+ * What is set up, read back from the app itself, then on to the tour. The
+ * one restart that switches every choice on comes when the tour ends.
  */
-function ReadyStep({ onb, preview, onFinished }: { onb: Onb; preview: boolean; onFinished: () => void }) {
+function ReadyStep({ preview, onFinished }: { preview: boolean; onFinished: () => void }) {
   const t = useT();
   const { providers } = useProviders();
   const { config } = useWakeWord();
   const subscriptions = useConnectedSubscriptions(0);
   const [autostart, setAutostart] = useState<{ enabled: boolean; supported: boolean } | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -586,22 +500,6 @@ function ReadyStep({ onb, preview, onFinished }: { onb: Onb; preview: boolean; o
       });
     } catch {
       // The optimistic value stays; Settings is where it can be fixed.
-    }
-  }
-
-  async function start() {
-    if (busy) return;
-    if (preview) {
-      onFinished();
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    try {
-      await onb.complete();
-    } catch {
-      setError(t("first_run.ready.start_failed"));
-      setBusy(false);
     }
   }
 
@@ -639,9 +537,8 @@ function ReadyStep({ onb, preview, onFinished }: { onb: Onb; preview: boolean; o
       <p className="text-xs leading-relaxed text-muted-foreground">
         {preview ? t("first_run.ready.preview_note") : t("first_run.ready.restart_note")}
       </p>
-      {error && <Status tone="error">{error}</Status>}
-      <PrimaryAction onClick={() => void start()} busy={busy} testId="onboarding-start">
-        {busy ? t("first_run.ready.starting") : t("first_run.ready.start")}
+      <PrimaryAction onClick={onFinished} testId="onboarding-start">
+        {t("first_run.ready.start")}
       </PrimaryAction>
     </div>
   );

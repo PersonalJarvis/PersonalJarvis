@@ -50,6 +50,9 @@ export function OnboardingGate({ activeSection }: { activeSection?: string } = {
   // Bumped by each Settings replay; > 0 means a setup preview is requested,
   // and the value remounts the guide so every replay starts fresh.
   const [setupReplay, setSetupReplay] = useState(0);
+  // A real first run ends setup straight into the tour; onboarding is
+  // completed — and the app restarted once — only when that tour ends.
+  const [completeAfterTour, setCompleteAfterTour] = useState(false);
   const forced = useMemo(() => param("onboarding") === "force", []);
 
   useEffect(() => {
@@ -93,6 +96,7 @@ export function OnboardingGate({ activeSection }: { activeSection?: string } = {
           preview={asked && onb.state.completed}
           startAt={replaying && onb.state.completed ? "keys" : undefined}
           onFinished={() => {
+            if (!(asked && onb.state?.completed)) setCompleteAfterTour(true);
             setSetupReplay(0);
             setDismissed(true);
             setTourDone(false);
@@ -113,7 +117,17 @@ export function OnboardingGate({ activeSection }: { activeSection?: string } = {
           onDone={() => {
             setTourDone(true);
             setTourRequested(false);
-            void onb.completeTour();
+            void (async () => {
+              await onb.completeTour();
+              if (!completeAfterTour) return;
+              setCompleteAfterTour(false);
+              try {
+                await onb.complete();
+              } catch (e) {
+                // The next start resumes setup at its last step, so nothing is lost.
+                console.warn("onboarding: completing after the tour failed", e);
+              }
+            })();
           }}
         />
       </Suspense>
