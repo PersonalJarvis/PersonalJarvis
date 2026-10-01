@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AppWindow, Download, RotateCw } from "lucide-react";
+import { AppWindow, Download } from "lucide-react";
 
 import { useEventStore, type SectionId } from "@/store/events";
 import {
@@ -22,19 +22,18 @@ import { openExternalUrl } from "@/lib/openExternal";
  * The window's title strip, on every screen.
  *
  * It is one thin row at the top of the window: drag the empty part to move
- * the window, and the right end holds the app buttons (theme, restart, and
- * an update when one exists) immediately beside minimize, maximize and close.
- * Sections do not grow a second bar for those buttons.
+ * the window, and the right end holds the app buttons (theme and detach)
+ * immediately beside minimize, maximize and close. Sections do not grow a
+ * second bar for those buttons. The title-strip restart button was removed on
+ * 2026-10-01 as unused.
  *
- * The backend already ships the self-restart machinery: restart and update
- * POST to ``/api/settings/restart-app``, which spawns a detached relauncher
- * (see jarvis/ui/relauncher.py). On a headless host that endpoint returns 503
- * and we recover with an honest toast.
- *
- * A restart tears down the whole app mid-task, so both buttons honor the
- * mission guard (409 → arm a force override) rather than killing live missions
- * silently. We avoid a native ``window.confirm`` on purpose — it blocks the
- * pywebview loop.
+ * The update flow still restarts the app: it POSTs to
+ * ``/api/settings/restart-app``, which spawns a detached relauncher (see
+ * jarvis/ui/relauncher.py). On a headless host that endpoint returns 503 and
+ * we recover with an honest toast. A restart tears down the whole app
+ * mid-task, so it honors the mission guard (409 → arm a force override)
+ * rather than killing live missions silently. We avoid a native
+ * ``window.confirm`` on purpose — it blocks the pywebview loop.
  */
 const CONFIRM_TIMEOUT_MS = 4000;
 
@@ -65,7 +64,7 @@ const CHROME_BUTTON =
 const CHROME_QUIET = "text-muted-foreground hover:bg-secondary hover:text-foreground";
 
 /**
- * A control waiting for a second, deliberate click — "confirm restart",
+ * A control waiting for a second, deliberate click — the update panel's
  * "restart anyway". Amber is the product's "needs attention" hue and this is
  * the only place in the shell that earns it: the guard already refused once.
  */
@@ -74,9 +73,8 @@ const CHROME_ARMED = "bg-warning text-background";
 export function TopBar({ navToggle }: {
   /**
    * The sidebar toggle the caption owns. State lives in the shell (App.tsx):
-   * the sidebar header no longer carries its own button — it moved here, next
-   * to back/forward, so the leading controls sit in the empty caption corner
-   * on every section.
+   * the sidebar header no longer carries its own button — it moved here, into
+   * the empty caption corner, so it is on every section.
    */
   navToggle?: { collapsed: boolean; onToggle: () => void };
 } = {}) {
@@ -126,7 +124,6 @@ export function TopBarActions() {
     <>
       <ThemeToggle />
       <DetachButton />
-      <RestartButton />
     </>
   );
 }
@@ -213,123 +210,6 @@ function DetachButton() {
       className={clsx(CHROME_BUTTON, "w-8 justify-center px-0", CHROME_QUIET)}
     >
       <AppWindow aria-hidden className="h-4 w-4" />
-    </button>
-  );
-}
-
-function RestartButton() {
-  const t = useT();
-  const pushToast = useEventStore((s) => s.pushToast);
-  const [confirming, setConfirming] = useState(false);
-  const [restarting, setRestarting] = useState(false);
-  // Set when the backend refused the restart (HTTP 409) because missions are
-  // running: the next click resends the POST with ``force=true``.
-  const [forceArmed, setForceArmed] = useState(false);
-  const resetTimer = useRef<number | null>(null);
-
-  const clearResetTimer = useCallback(() => {
-    if (resetTimer.current !== null) {
-      clearTimeout(resetTimer.current);
-      resetTimer.current = null;
-    }
-  }, []);
-
-  // Drop a pending "disarm" timer if the bar is ever unmounted.
-  useEffect(() => clearResetTimer, [clearResetTimer]);
-
-  async function doRestart(force: boolean) {
-    clearResetTimer();
-    setRestarting(true);
-    try {
-      const url = force
-        ? "/api/settings/restart-app?force=true"
-        : "/api/settings/restart-app";
-      const res = await fetch(url, { method: "POST" });
-      if (res.status === 409) {
-        // The mission guard refused: a restart would kill live missions. Don't
-        // kill them silently — surface the count and arm a force-restart so the
-        // next click is the user's explicit override.
-        let count = 0;
-        try {
-          const body = await res.json();
-          count = body?.detail?.missions?.length ?? 0;
-        } catch {
-          /* malformed body — still arm the override */
-        }
-        setRestarting(false);
-        setConfirming(false);
-        setForceArmed(true);
-        clearResetTimer();
-        resetTimer.current = window.setTimeout(() => {
-          setForceArmed(false);
-          resetTimer.current = null;
-        }, CONFIRM_TIMEOUT_MS);
-        pushToast("warning", `${count} ${t("topbar.restart_missions_running")}`);
-        return;
-      }
-      if (!res.ok) throw new Error(`restart-failed:${res.status}`);
-      // On success the window goes away — keep the spinning state; never clear
-      // it, so the user doesn't see the button flip back before the app dies.
-      pushToast("info", t("topbar.restarting"));
-    } catch {
-      // Headless host (503) or a transient failure: recover the control so the
-      // user isn't left with a dead button.
-      setRestarting(false);
-      setConfirming(false);
-      setForceArmed(false);
-      pushToast("error", t("topbar.restart_failed"));
-    }
-  }
-
-  function onClick() {
-    if (restarting) return;
-    if (forceArmed) {
-      // The guard already refused once; this click is the explicit override.
-      void doRestart(true);
-      return;
-    }
-    if (!confirming) {
-      // First click only arms the confirmation; auto-disarm after a few
-      // seconds so a stray click never leaves a primed restart button behind.
-      setConfirming(true);
-      clearResetTimer();
-      resetTimer.current = window.setTimeout(() => {
-        setConfirming(false);
-        resetTimer.current = null;
-      }, CONFIRM_TIMEOUT_MS);
-      return;
-    }
-    void doRestart(false);
-  }
-
-  const label = restarting
-    ? t("topbar.restarting")
-    : forceArmed
-      ? t("topbar.restart_force")
-      : confirming
-        ? t("topbar.restart_confirm")
-        : t("topbar.restart");
-
-  const showLabel = confirming || forceArmed || restarting;
-
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={restarting}
-      title={t("topbar.restart_hint")}
-      aria-label={label}
-      className={clsx(
-        CHROME_BUTTON,
-        showLabel ? "px-3" : "w-8 justify-center px-0",
-        confirming || forceArmed ? CHROME_ARMED : CHROME_QUIET,
-      )}
-    >
-      <RotateCw
-        aria-hidden
-        className={cn("h-4 w-4", restarting && "animate-spin")}
-      />
-      {showLabel ? label : null}
     </button>
   );
 }
