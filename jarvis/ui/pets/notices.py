@@ -3,8 +3,7 @@
 The pet's done cards are about Jarvis and nothing else. A card appears when:
 
 * a typed chat with Jarvis finished a turn (``JarvisChatTurnFinished``) — the
-  card is what was asked over the start of Jarvis's answer, like the Codex
-  companion's confirmation;
+  card is what was asked over the start of Jarvis's answer;
 * a task Jarvis itself started finished: a background Jarvis-Agent task
   (``JarvisAgentBackgroundCompleted``) or a coding job Jarvis delegated to an
   agent (``DelegationResultReady``).

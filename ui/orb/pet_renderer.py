@@ -49,8 +49,8 @@ from ui.orb import controls as orb_controls
 log = logging.getLogger("jarvis.orb")
 
 #: The visible figure's larger side at 100 % display scaling and ``pet_scale``
-#: 1.0, in logical pixels — about the size of the companion in the Codex app,
-#: so the control strip under it (``controls.PET_SLOT``) reads as its own.
+#: 1.0, in logical pixels — a desk companion's size, big enough that the
+#: control strip under it (``controls.PET_SLOT``) reads as its own.
 PET_TARGET_FIGURE_PX = 180
 
 #: Nominal window edge before a pack is loaded (the real size replaces it).

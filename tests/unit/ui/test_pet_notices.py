@@ -1,11 +1,12 @@
-"""The desktop pet's card column and bell (docs/pets.md "Cards").
+"""The desktop pet's thought bubble, done cards and bell (docs/pets.md).
 
 Pins, without a real window: which events become done cards (Jarvis only) and
-how they read, the column's model and geometry (thinking line on top, newest
-card in front, two peeking, fanned out on hover, mirrored upward), the springs,
-the card renderer (see-through surface, soft shadow, hard edges on a colour
-key), the bell glyph and toggle, the overlay's thinking-line routing, the
-bridge, the chat service's announcement, and the macOS proxy / host round trip.
+how they read, the column's model and geometry (newest card in front, two
+peeking, fanned out on hover), the springs, the card renderer (see-through
+surface, soft shadow, hard edges on a colour key), the pixel-art thought
+bubble (dots or words, puffs that end at the head, the pop-in order), the
+bell glyph and toggle, the overlay's routing, the bridge, the chat service's
+announcement, and the macOS proxy / host round trip.
 """
 
 from __future__ import annotations
@@ -26,9 +27,10 @@ from jarvis.core.events import (
 )
 from jarvis.ui.jarvisbar.subprocess_overlay import SubprocessMascotOverlay
 from jarvis.ui.pets import notices
-from ui.orb import controls, pet_cards
+from ui.orb import controls, pet_cards, thought_bubble
 from ui.orb import notice_stack as ns
 from ui.orb.bus_bridge import OrbBusBridge
+from ui.orb.layered_surface import flatten_for_key
 from ui.orb.overlay import OrbOverlay
 
 KEY = (255, 0, 255)
@@ -91,11 +93,10 @@ def test_a_twin_refreshes_and_cards_expire_unless_paused() -> None:
     assert notice.kind == "done"
 
 
-def test_the_thinking_line_sits_on_top_and_cards_peek_below() -> None:
-    status, slots = ns.column_layout(40, [60, 60, 60, 60], expanded=False, scale=1.0)
-    assert status == ns.Slot(0.0, 1.0, 1.0)
+def test_the_newest_card_is_in_front_and_older_ones_peek_below() -> None:
+    slots = ns.column_layout([60, 60, 60, 60], expanded=False, scale=1.0)
     front = slots[0]
-    assert front.y == 40 + ns.CARD_GAP and front.size == 1.0 and front.opacity == 1.0
+    assert front.y == 0 and front.size == 1.0 and front.opacity == 1.0
     # Each card behind is smaller and fainter, its bottom a step lower.
     assert slots[1].size < 1.0 and slots[1].opacity < 1.0
     bottoms = [s.y + 60 * s.size for s in slots[:3]]
@@ -104,8 +105,7 @@ def test_the_thinking_line_sits_on_top_and_cards_peek_below() -> None:
 
 
 def test_fanned_out_cards_form_a_column() -> None:
-    status, slots = ns.column_layout(None, [60, 80], expanded=True, scale=1.0)
-    assert status is None
+    slots = ns.column_layout([60, 80], expanded=True, scale=1.0)
     assert [s.y for s in slots] == [0, 60 + ns.CARD_GAP]
     assert all(s.size == 1.0 and s.opacity == 1.0 for s in slots)
 
@@ -133,12 +133,11 @@ def test_a_done_card_is_see_through_with_a_soft_shadow() -> None:
     assert card.getpixel((0, 0))[3] == 0
 
 
-def test_cards_fit_their_text_and_never_outgrow_the_limit() -> None:
-    short = pet_cards.render_card("status", "Thinking …", "", scale=1.0, max_width=360)
+def test_done_cards_share_one_width_and_wrap_the_answer() -> None:
+    short = pet_cards.render_card("done", "Hi", "Hello", scale=1.0, max_width=300)
     long = pet_cards.render_card("done", "word " * 40, "word " * 80, scale=1.0, max_width=300)
     pad = 2 * pet_cards.SHADOW_PAD
-    assert short.width - pad < 200
-    assert long.width - pad <= 300
+    assert short.width == long.width == 300 + pad
     assert long.height - pad < 120  # title on one line, the answer on two
 
 
@@ -151,22 +150,57 @@ def test_text_helpers_ellipsize_and_wrap() -> None:
 
 def test_a_keyed_frame_has_hard_edges_only() -> None:
     card = pet_cards.render_card("done", "Hi", "Hello", scale=1.0, max_width=360)
-    flat = pet_cards.flatten_for_key(card, KEY)
+    flat = flatten_for_key(card, KEY, pet_cards.FILL_SOLID)
     colours = {c for _n, c in flat.getcolors(flat.width * flat.height)}
     pinkish = {c for c in colours if c != KEY and c[0] > 200 and c[2] > 200 and c[1] < 80}
     assert KEY in colours and not pinkish
 
 
-def test_the_icon_ticks_itself_and_the_sweep_moves() -> None:
+def test_the_icon_ticks_itself() -> None:
     empty = pet_cards.render_icon("done", 0, 20)
     full = pet_cards.render_icon("done", pet_cards.ICON_FRAMES, 20)
     assert empty.getchannel("A").getextrema()[1] == 0
     assert full.getchannel("A").getextrema()[1] == 255
-    line = pet_cards.render_card("status", "Thinking …", "", scale=1.0, max_width=360)
-    a = pet_cards.shimmer(line, 4, 1.0)
-    b = pet_cards.shimmer(line, 12, 1.0)
+
+
+# --- the thought bubble ------------------------------------------------------------
+
+
+def test_the_bubble_is_pixel_art_in_the_pets_palette() -> None:
+    image, layout = thought_bubble.render_bubble("", art_px=4, scale=1.0, now=0.0)
+    alpha = image.getchannel("A")
+    assert set(alpha.getdata()) <= {0, 255}  # hard sprite edges, no soft alpha
+    colours = {c[:3] for _n, c in image.getcolors(image.width * image.height) if c[3]}
+    palette = {
+        thought_bubble.OUTLINE,
+        thought_bubble.FILL,
+        thought_bubble.SHADE,
+        thought_bubble.HIGHLIGHT,
+        thought_bubble.INK,
+    }
+    assert colours <= palette
+    # Every art pixel is a whole block of screen pixels.
+    assert image.width % 4 == 0 and image.height % 4 == 0
+    # The smallest puff ends near the bottom left, where the head is.
+    tip_x, tip_y = layout.tip
+    assert tip_x < image.width / 2 and tip_y > layout.body[3]
+
+
+def test_dots_bob_and_words_widen_the_cloud() -> None:
+    a, _ = thought_bubble.render_bubble("", art_px=3, scale=1.0, now=0.0)
+    b, _ = thought_bubble.render_bubble("", art_px=3, scale=1.0, now=thought_bubble.DOT_STEP_S)
     assert a.tobytes() != b.tobytes()
-    assert a.getchannel("A").tobytes() == line.getchannel("A").tobytes()
+    words, _ = thought_bubble.render_bubble("Search the web", art_px=3, scale=1.0, now=0.0)
+    assert words.width > a.width
+    long, _ = thought_bubble.render_bubble("word " * 80, art_px=3, scale=1.0, now=0.0)
+    assert long.width < thought_bubble.MAX_TEXT_W + 30 * 3
+
+
+def test_the_puffs_pop_in_before_the_cloud_and_leave_after_it() -> None:
+    steps = [thought_bubble.entrance(t, leaving=False) for t in (0.0, 0.13, 0.25, 0.4)]
+    assert steps == [(0, False), (1, False), (2, False), (2, True)]
+    assert thought_bubble.entrance(0.0, leaving=True) == (2, True)
+    assert thought_bubble.entrance(thought_bubble.LEAVE_S, leaving=True) == (0, False)
 
 
 # --- the bell ----------------------------------------------------------------------
@@ -199,18 +233,17 @@ class _Strip:
 
 
 class _Column:
+    """Records what the overlay asks of its card column and thought bubble."""
+
     def __init__(self) -> None:
         self.calls: list[tuple] = []
         self.count = 0
 
-    def set_status(self, line: str) -> None:
+    def set_text(self, line: str) -> None:
         self.calls.append(("status", line))
 
-    def clear_status(self, linger: float) -> None:
-        self.calls.append(("clear", linger))
-
-    def clear(self) -> None:
-        self.calls.append(("clear_cards",))
+    def clear(self, linger: float | None = None) -> None:
+        self.calls.append(("clear", linger) if linger is not None else ("clear_cards",))
 
 
 def _pet() -> tuple[OrbOverlay, _Strip, _Column]:
@@ -218,7 +251,9 @@ def _pet() -> tuple[OrbOverlay, _Strip, _Column]:
     strip, column = _Strip(), _Column()
     pet._controls = strip  # type: ignore[assignment]
     pet._notices = column  # type: ignore[assignment]
+    pet._thought = column  # type: ignore[assignment]
     pet._card_column = lambda: column  # type: ignore[method-assign]
+    pet._thought_bubble = lambda: column  # type: ignore[method-assign]
     pet._enqueue_ui = lambda fn: fn()  # type: ignore[method-assign]
     return pet, strip, column
 
@@ -248,15 +283,21 @@ def test_the_phone_calls_when_idle_and_hangs_up_in_a_call() -> None:
     assert calls == ["talk", "hangup"]
 
 
-def test_the_thinking_line_shows_the_current_step_else_the_heading() -> None:
+def test_the_bubble_says_the_step_else_the_heading_else_dots() -> None:
     pet, _strip, column = _pet()
     pet.show_status("Planning", "Search the web")
-    pet.show_status("Thinking …", "")
+    pet.show_status("Planning", "")
+    pet.show_status("Denkt nach …", "")  # the bare label: the dots say it
     pet.clear_status(2.0)
-    assert column.calls == [("status", "Search the web"), ("status", "Thinking …"), ("clear", 2.0)]
+    assert column.calls == [
+        ("status", "Search the web"),
+        ("status", "Planning"),
+        ("status", ""),
+        ("clear", 2.0),
+    ]
 
 
-def test_no_thinking_line_when_the_card_is_switched_off() -> None:
+def test_no_bubble_when_it_is_switched_off() -> None:
     pet, _strip, column = _pet()
     pet._pet_bubble = False
     pet.show_status("Thinking …", "")

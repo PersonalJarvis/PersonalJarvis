@@ -1,20 +1,14 @@
-"""The pet's cards, drawn: the thinking line and the "done" card.
+"""The pet's done cards, drawn.
 
-Two looks, one material — the Codex companion's: a dark, slightly
-see-through surface with a hairline rim, soft rounded corners and a soft
-shadow.
+A Jarvis turn or a task Jarvis started has finished: a small green check (a
+red cross when it failed) and a bold title — what was asked — over the first
+line or two of the answer, on a dark, slightly see-through surface with a
+hairline rim, soft rounded corners and a soft shadow.
 
-* **status** — one muted line while Jarvis thinks ("Thinking …", "Search the
-  web"). A light sweeps across the words while the line is up, so a long
-  thought reads as alive without a spinner.
-* **done** / **error** — a Jarvis turn or a task Jarvis started has finished:
-  a small green check (red cross) and a bold title — what was asked — over
-  the first line or two of the answer.
-
-Everything is pure PIL and returns RGBA with real alpha, ready for a
-per-pixel-alpha window (:mod:`jarvis.platform.layered_window`). Where only a
-colour key exists, :func:`flatten_for_key` turns the same image into hard
-edges on an opaque fill, so a card never grows a pink fringe.
+Everything is pure PIL and returns RGBA with real alpha, ready for
+:class:`ui.orb.layered_surface.AlphaWindow`, which flattens it onto a colour
+key where a platform has no per-pixel alpha. The text helpers (:func:`font`,
+:func:`ellipsize`, :func:`wrap`) serve the thought bubble too.
 """
 
 from __future__ import annotations
@@ -30,11 +24,10 @@ from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 _Rgb = tuple[int, int, int]
 _Rgba = tuple[int, int, int, int]
 
-#: What a card shows. ``status`` is the live thinking line.
-CARD_KINDS: tuple[str, ...] = ("status", "done", "error")
+#: What a card shows.
+CARD_KINDS: tuple[str, ...] = ("done", "error")
 
 #: Unscaled geometry (logical px at 100 % and ``pet_scale`` 1.0).
-STATUS_HEIGHT = 40
 PAD_X = 16
 PAD_Y = 11
 LINE_GAP = 3
@@ -50,7 +43,6 @@ SHADOW_ALPHA = 110
 #: Font sizes in px.
 TITLE_PX = 14.5
 BODY_PX = 14.0
-STATUS_PX = 14.0
 #: Lines of the answer under a done card's title.
 DETAIL_LINES = 2
 
@@ -63,9 +55,6 @@ FILL_SOLID: _Rgb = (30, 30, 33)
 RIM_SOLID: _Rgb = (58, 58, 63)
 TITLE: _Rgb = (242, 242, 245)
 BODY: _Rgb = (190, 191, 198)
-STATUS: _Rgb = (150, 151, 158)
-#: The sweep's brightest point on the status line.
-STATUS_SHINE: _Rgb = (236, 237, 242)
 ICON_FILL: dict[str, _Rgb] = {"done": (34, 197, 94), "error": (239, 68, 68)}
 ICON_MARK: dict[str, _Rgb] = {"done": (10, 26, 16), "error": (40, 8, 8)}
 #: Hover lifts a card a shade.
@@ -73,10 +62,6 @@ HOVER_LIFT = 10
 
 #: The icon draws itself in this many steps (the check is ticked).
 ICON_FRAMES = 10
-#: Sweep positions across the status line per pass.
-SHIMMER_STEPS = 24
-SHIMMER_PERIOD_S = 1.6
-
 _SS = 3  # supersampling for the card silhouette
 
 
@@ -293,28 +278,14 @@ def render_card(
     """One card as RGBA, shadow included (``SHADOW_PAD`` on every side).
 
     A done card is always ``max_width`` wide, so stacked cards line up edge
-    to edge; the thinking line fits its text. ``content=False`` draws the
+    to edge. ``content=False`` draws the
     surface alone — a card peeking out behind another must not show its
     text through the see-through card in front.
 
-    ``status`` cards ignore ``detail`` handling of their own: the caller
-    passes the one line to show as ``title``. Pure and cached — never mutate
-    the result.
+    Pure and cached — never mutate the result.
     """
     pad_x, pad_y = _px(PAD_X, scale), _px(PAD_Y, scale)
     max_inner = max(40, max_width - 2 * pad_x)
-    if kind == "status":
-        f = font("regular", _px(STATUS_PX, scale))
-        text = ellipsize(" ".join(title.split()), f, max_inner)
-        width = max(_px(MIN_WIDTH, scale), int(math.ceil(_text_w(f, text))) + 2 * pad_x)
-        height = _px(STATUS_HEIGHT, scale)
-        radius = min(height // 2, _px(RADIUS, scale))
-        card = _surface(min(width, max_width), height, radius, round(scale, 3), hovered).copy()
-        pad = _px(SHADOW_PAD, scale)
-        ImageDraw.Draw(card).text(
-            (pad + pad_x, pad + height / 2.0), text, font=f, fill=STATUS + (255,), anchor="lm"
-        )
-        return card
     title_font = font("semibold", _px(TITLE_PX, scale))
     body_font = font("regular", _px(BODY_PX, scale))
     icon_d = _px(ICON, scale)
@@ -354,70 +325,18 @@ def render_card(
     return card
 
 
-@functools.lru_cache(maxsize=64)
-def _sweep_gain(width: int, height: int, head: int, band: int) -> Image.Image:
-    """The sweep's brightness across the card: a soft band centred on ``head``."""
-    row = Image.new("L", (width, 1), 0)
-    px = row.load()
-    for x in range(width):
-        d = (x - head) / max(1, band)
-        px[x, 0] = int(255 * math.exp(-d * d * 2.5))
-    return row.resize((width, height))
-
-
-def shimmer(card: Image.Image, step: int, scale: float) -> Image.Image:
-    """A status card with the light sweep at ``step`` of ``SHIMMER_STEPS``.
-
-    The text pixels (where the card is brighter than its fill) are re-tinted
-    along a soft band moving left to right; nothing else changes.
-    """
-    pad = _px(SHADOW_PAD, scale)
-    width, height = card.size
-    band = max(8.0, (width - 2 * pad) * 0.28)
-    head = -band + (width + 2 * band) * ((step % SHIMMER_STEPS) / SHIMMER_STEPS)
-    gain = _sweep_gain(width, height, int(round(head)), int(round(band)))
-    rgb = card.convert("RGB")
-    lum = rgb.convert("L")
-    text = lum.point(lambda v: 255 if v > STATUS[0] - 40 else 0)
-    shine = Image.new("RGBA", card.size, STATUS_SHINE + (255,))
-    sweep = ImageChops.multiply(gain, text)
-    out = card.copy()
-    shine.putalpha(ImageChops.multiply(sweep, card.getchannel("A")))
-    out.alpha_composite(shine)
-    out.putalpha(card.getchannel("A"))  # the sweep tints; it never changes coverage
-    return out
-
-
 def card_box(image: Image.Image, scale: float) -> tuple[int, int, int, int]:
     """The card's own rectangle inside its shadow-padded image."""
     pad = _px(SHADOW_PAD, scale)
     return pad, pad, image.width - pad, image.height - pad
 
 
-def flatten_for_key(image: Image.Image, key: _Rgb) -> Image.Image:
-    """``image`` for a colour-keyed window: opaque card, keyed outside.
-
-    Pixels at least half covered become the card over its solid fill; the
-    rest become the key — a hard edge, so no blended pixel survives as a
-    fringe. The shadow and the see-through are lost on purpose.
-    """
-    alpha = image.getchannel("A")
-    solid = Image.new("RGBA", image.size, FILL_SOLID + (255,))
-    solid.alpha_composite(image)
-    hard = alpha.point(lambda v: 255 if v >= 200 else 0)
-    out = Image.new("RGB", image.size, key)
-    out.paste(solid.convert("RGB"), (0, 0), hard)
-    return out
-
-
 __all__ = [
     "CARD_KINDS",
     "card_box",
     "ellipsize",
-    "flatten_for_key",
     "font",
     "render_card",
     "render_icon",
-    "shimmer",
     "wrap",
 ]

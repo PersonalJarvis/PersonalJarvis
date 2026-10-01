@@ -98,6 +98,7 @@ from ui.orb.taskbar import (
     get_taskbar_info,
     get_tray_notify_rect,
 )
+from ui.orb.thought_bubble import PetThoughtBubble
 from ui.orb.voice_orb import VoiceOrbRenderer
 
 #: The looks this window can wear (ONE definition, in jarvis.ui.overlay_styles):
@@ -259,10 +260,9 @@ ORB_BUBBLE_THEME = BubbleTheme(
 )
 
 
-#: The pet's status card — the agent card of the Codex companion: a dark pill
-#: with a hairline border, a bold light title and a muted detail line, no tail
-#: and no italics. It reports what Jarvis is thinking or doing; it is not the
-#: pet talking. ``header`` is the title colour, ``text`` the detail colour.
+#: The comment bubble's look while the pet is the style: a dark pill with a
+#: hairline border, a bold light title and a muted detail line, no tail and no
+#: italics. ``header`` is the title colour, ``text`` the detail colour.
 PET_BUBBLE_THEME = BubbleTheme(
     bg="#1E1F22",
     border="#3A3B40",
@@ -285,7 +285,7 @@ def bubble_theme_for_style(style: str) -> BubbleTheme:
     return MASCOT_BUBBLE_THEME
 
 
-#: The default linger of the pet's ``clear_status`` (its thinking line).
+#: The default linger of the pet's ``clear_status`` (its thought bubble).
 PET_STATUS_LINGER_S = 1.5
 PET_BUBBLE_GAP = 8
 #: The notification cards are this many times the strip's width.
@@ -295,6 +295,16 @@ PET_NOTICE_WIDTH_PER_STRIP = 1.5
 # Magenta color key — Tkinter renders this color pixel-perfect transparent
 COLOR_KEY_HEX = "#FF00FF"
 COLOR_KEY_RGB = np.array([255, 0, 255], dtype=np.uint8)
+
+
+def _is_bare_thinking_label(text: str) -> bool:
+    """Is ``text`` only the generic "Thinking …" label (in any interface language)?"""
+    try:
+        from ui.orb.bus_bridge import PET_CARD_LABELS  # noqa: PLC0415 — lazy, optional
+    except Exception:  # noqa: BLE001 — without the labels, words are shown as words
+        return False
+    word = text.rstrip(" .…")
+    return any(word == label.rstrip(" .…") for label in PET_CARD_LABELS["thinking"].values())
 
 
 def key_to_alpha(img: Image.Image) -> Image.Image:
@@ -2302,6 +2312,8 @@ class OrbOverlay:
         self._on_notify_toggle: Callable[[bool], None] | None = None
         #: The notification cards' window, created with the first card.
         self._notices: PetNoticeStack | None = None
+        #: The thought bubble above the pet's head, created when Jarvis first thinks.
+        self._thought: PetThoughtBubble | None = None
         self._ring_after_id: str | None = None
         #: The phone disc's ringing timer, like the bell's.
         self._call_ring_after_id: str | None = None
@@ -2806,6 +2818,9 @@ class OrbOverlay:
         notices = self._notices
         if notices is not None and notices.window is not None:
             windows.append(notices.window)
+        thought = self._thought
+        if thought is not None and thought.window is not None:
+            windows.append(thought.window)
         for window in windows:
             try:
                 if force or is_healthy(window) is not True:
@@ -3605,6 +3620,8 @@ class OrbOverlay:
         if self._notices is not None:
             # The pet's cards hang off the pet; they go with it.
             self._notices.hide()
+        if self._thought is not None:
+            self._thought.hide()
         if self._root is not None:
             try:
                 self._root.withdraw()
@@ -3647,6 +3664,10 @@ class OrbOverlay:
                 self._notices = None
                 if notices is not None:
                     notices.destroy()
+                thought = self._thought
+                self._thought = None
+                if thought is not None:
+                    thought.destroy()
             except Exception:  # noqa: BLE001 — teardown must reach root.destroy
                 logging.getLogger("jarvis.orb").debug("notice stack teardown failed", exc_info=True)
             try:
@@ -3833,10 +3854,53 @@ class OrbOverlay:
         return center_x, below_y, above_y, limit, screen_w
 
     def _sync_notice_anchor(self, *, refresh_limit: bool = True) -> None:
+        """Bring the cards and the thought bubble to where the pet is now."""
+        if self._style != "pet":
+            return
+        thought = self._thought
+        if thought is not None:
+            thought.set_look(art_px=self._thought_art_px(), scale=self._pet_strip_scale())
+            thought.set_anchor(*self._thought_anchor())
         notices = self._notices
-        if notices is None or self._style != "pet":
+        if notices is None:
             return
         notices.set_anchor(self._notice_anchor(refresh_limit=refresh_limit))
+
+    def _thought_art_px(self) -> int:
+        """Screen pixels per art pixel: the pet sprite's own, so the bubble
+        is drawn at exactly the figure's pixel size."""
+        renderer = self._renderer
+        if isinstance(renderer, PetRenderer) and renderer.has_figure:
+            return max(1, int(renderer.factor))
+        return max(2, int(round(3 * self._pet_strip_scale())))
+
+    def _thought_anchor(self) -> tuple[int, int, int]:
+        """``(head_x, head_y, screen_w)``: where the bubble's puffs end, just
+        above and right of the middle of the pet's head."""
+        head_x = self._mascot_x + int(self._win_w * 0.6)
+        head_y = self._mascot_y + int(self._win_h * 0.08)
+        try:
+            screen_w = int(self._root.winfo_screenwidth()) if self._root is not None else 1920
+        except tk.TclError:
+            screen_w = 1920
+        return head_x, head_y, screen_w
+
+    def _thought_bubble(self) -> PetThoughtBubble | None:
+        """The bubble, built on first use; ``None`` when the pet cannot show it."""
+        if self._style != "pet" or self._root is None:
+            return None
+        if self._user_hidden or not self._window_mapped():
+            return None
+        if self._thought is None:
+            try:
+                self._thought = PetThoughtBubble(
+                    self._root, art_px=self._thought_art_px(), scale=self._pet_strip_scale()
+                )
+            except tk.TclError:
+                logging.getLogger("jarvis.orb").debug("thought bubble unavailable", exc_info=True)
+                return None
+        self._thought.set_anchor(*self._thought_anchor())
+        return self._thought
 
     def set_pet(self, pet_id: str) -> None:
         """Swap the figure live; ``"none"`` keeps the strip without a figure. Thread-safe."""
@@ -3892,10 +3956,11 @@ class OrbOverlay:
         self._kick_frame()
 
     def show_status(self, title: str = "", detail: str = "") -> None:
-        """Show or update the pet's thinking line. Thread-safe.
+        """Show or update what Jarvis is thinking, in the thought bubble. Thread-safe.
 
-        One muted line, like the Codex companion's: the current step when
-        there is one (``detail``), else the heading (``title``).
+        The current step when there is one (``detail``), else the heading
+        (``title``) — except the bare "Thinking …" label, which the bubble
+        says with its bobbing dots instead of words.
         """
         if self._style != "pet":
             return
@@ -3903,6 +3968,8 @@ class OrbOverlay:
         if not self._pet_bubble:
             return
         line = " ".join(str(detail or "").split()) or " ".join(str(title or "").split())
+        if not detail and _is_bare_thinking_label(line):
+            line = ""
         self._enqueue_ui(lambda: self._apply_status(line))
 
     def clear_status(self, linger_s: float = PET_STATUS_LINGER_S) -> None:
@@ -3915,8 +3982,8 @@ class OrbOverlay:
             linger = PET_STATUS_LINGER_S
 
         def _apply() -> None:
-            if self._notices is not None:
-                self._notices.clear_status(linger)
+            if self._thought is not None:
+                self._thought.clear(linger)
 
         self._enqueue_ui(_apply)
 
@@ -3973,8 +4040,8 @@ class OrbOverlay:
     def _apply_pet_look(self) -> None:
         if self._style != "pet":
             return
-        if not self._pet_bubble and self._notices is not None:
-            self._notices.clear_status(0.0)
+        if not self._pet_bubble and self._thought is not None:
+            self._thought.hide()
         renderer = self._renderer
         if isinstance(renderer, PetRenderer):
             renderer.set_look(pet_scale=self._pet_scale)
@@ -4015,14 +4082,10 @@ class OrbOverlay:
     def _apply_status(self, line: str) -> None:
         if not self._pet_bubble:
             return
-        # No card floating over an empty desktop: it belongs to the pet.
-        notices = self._card_column()
-        if notices is None:
-            return
-        if line:
-            notices.set_status(line)
-        else:
-            notices.clear_status(0.0)
+        # No bubble over an empty desktop: it belongs to the pet.
+        thought = self._thought_bubble()
+        if thought is not None:
+            thought.set_text(line)
 
     def _status_anchor(self, *, refresh_limit: bool = True) -> tuple[int, int, int, int]:
         """``(center_x, below_y, above_y, limit_bottom)`` for the status card."""
@@ -4246,6 +4309,8 @@ class OrbOverlay:
         if style != "pet" and self._notices is not None:
             # Notifications are the pet's; the other looks have no bell.
             self._notices.hide()
+        if style != "pet" and self._thought is not None:
+            self._thought.hide()
         self._ensure_controls()
         self._sync_controls_visibility()
         self._kick_frame()

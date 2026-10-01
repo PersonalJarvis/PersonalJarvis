@@ -366,8 +366,8 @@ def render_row(
 
 
 # --- The pet's control strip ------------------------------------------------
-# The desktop pet (``docs/pets.md``) carries its controls in the shape the
-# Codex companion made familiar: a bell in its own filled disc, then ONE filled
+# The desktop pet (``docs/pets.md``) carries its controls in a compact row:
+# a bell in its own filled disc, then ONE filled
 # pill holding microphone mute, the talk orb and the speaker, with thin
 # low-contrast dividers, then the phone in its own disc — green to call Jarvis,
 # red to hang up, the colours every phone app uses for exactly those two. Same
@@ -384,7 +384,7 @@ PET_PILL_ACTIONS: tuple[str, ...] = ("mic_mute", "orb", "speaker")
 
 #: Unscaled geometry, in logical pixels at 100 % display scaling and
 #: ``pet_scale`` 1.0 — sized against the companion figure (about 180 px), so the
-#: strip is roughly 0.3 x the figure's width tall, as in the Codex app.
+#: strip is roughly 0.3 x the figure's width tall.
 #: ``PET_SLOT`` is the pill's height and the bell and phone discs' diameter.
 PET_SLOT = 50
 PET_ICON_SLOT = 46

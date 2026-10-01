@@ -36,14 +36,16 @@ one click.
     thinking or transcribing;
   - speaker: silence the assistant's voice for this session (TTS volume 0,
     mirrored from `VoiceSpeakerMuteChanged`).
-- **The card column** under the strip (above the pet when there is no room
-  below), in the Codex companion's material — a dark, slightly see-through
-  surface with a hairline rim, soft corners and a soft shadow (see *Cards*):
-  - the **thinking line** while Jarvis thinks: one muted line, the current
-    step, with a light sweeping across it. Never the live transcript, never
-    the reply. It can be switched off (`[ui] pet_bubble`);
-  - **done cards** when Jarvis answered a typed chat or a job Jarvis started
-    came back: a check, what was asked, the start of the answer.
+- **The thought bubble** above the pet's head while Jarvis thinks, drawn in
+  the pets' pixel art: a white pixel cloud with a dark outline and two small
+  puffs trailing down to the head. Bobbing dots while Jarvis just thinks, the
+  current step ("Search the web") while it works. Never the live transcript,
+  never the reply. It can be switched off (`[ui] pet_bubble`). See *The
+  thought bubble*.
+- **Done cards** under the strip (above the pet when there is no room below):
+  a dark, slightly see-through surface with a hairline rim, soft corners and a
+  soft shadow, when Jarvis answered a typed chat or a job Jarvis started came
+  back — a check, what was asked, the start of the answer (see *Cards*).
 - **The pet "None"** (`pet_id = "none"`) shows the control strip and the
   cards without a figure.
 
@@ -55,12 +57,13 @@ Wayland, global shortcuts are a no-op, as for every other shortcut.
 
 ## Cards
 
-One window (`ui/orb/notice_stack.py`) holds the thinking line on top and the
-done cards below it; `ui/orb/pet_cards.py` draws them. On Windows the window
-carries real per-pixel alpha (`jarvis/platform/layered_window.py`,
-`UpdateLayeredWindow`): the desktop shows faintly through the cards, shadows
-and fades are soft. Elsewhere, or when Windows refuses a frame, the same frame
-is flattened onto the colour key: opaque cards with hard edges, no shadow.
+One window (`ui/orb/notice_stack.py`) holds the done cards;
+`ui/orb/pet_cards.py` draws them. Both it and the thought bubble show their
+frames through `ui/orb/layered_surface.py`: on Windows with real per-pixel
+alpha (`jarvis/platform/layered_window.py`, `UpdateLayeredWindow`) — the
+desktop shows faintly through the cards, shadows and fades are soft —
+elsewhere, or when Windows refuses a frame, flattened onto the colour key:
+opaque with hard edges, no shadow.
 
 Done cards are about Jarvis and nothing else (`jarvis/ui/pets/notices.py`):
 
@@ -77,20 +80,29 @@ Done cards are always the column's width, so they stack edge to edge: the
 newest in front, up to two older ones peeking out behind it, each a step
 smaller and fainter and showing its surface only; at most three are kept.
 Hovering fans them into a column; leaving folds them back. A click sends the
-card under the pointer away. A card leaves on its own after 9 s (`error`
-14 s), never while the pointer rests on the stack; the same card twice within
-3 s refreshes instead of stacking. Cards drift in and fade on springs, and the
+card under the pointer away. A card leaves on its own after 9 s (`error` 14
+s), never while the pointer rests on the stack; the same card twice within 3 s
+refreshes instead of stacking. Cards drift in and fade on springs, and the
 check ticks itself in. The column repaints at ~60 fps only while something
-moves, at 20 fps while only the thinking line's sweep moves, and not at all at
-rest. Done cards are dropped while the bell is off, the pet is hidden, or the
-look is not the pet; the strip stays in sight while they show.
+moves and not at all at rest. Done cards are dropped while the bell is off,
+the pet is hidden, or the look is not the pet; the strip stays in sight while
+they show.
 
-## The thinking line
+## The thought bubble
 
-The line mirrors Jarvis's real thinking, fed by bus events in
+`ui/orb/thought_bubble.py` draws it at the pet sprite's own pixel size
+(`PetRenderer.factor`), nearest-neighbour like the sprites: a white cloud with
+the pets' dark outline (`#1B1622`), a shaded bottom row and a corner highlight,
+and two puffs whose smallest ends just above the pet's head. It pops in puff by
+puff, then the cloud, floats up and down by one art pixel, and pops out in
+reverse. The bare "Thinking …" label shows as three dots bobbing in turn; any
+other line is the cloud's text (ellipsized at 230 px). It repaints at ~16 fps
+while up and not at all otherwise.
+
+What it says mirrors Jarvis's real thinking, fed by bus events in
 `ui/orb/bus_bridge.py` and condensed by `jarvis/ui/pets/status_line.py`:
 
-The surface shows ONE line: the detail when there is one, else the title.
+The bubble shows ONE line: the detail when there is one, else the title.
 
 | Source | Title | Detail |
 |---|---|---|
@@ -269,7 +281,7 @@ name.
 | `set_pet_outcome(kind)` | Play the one-shot `success` or `error` |
 | `set_pet_action(kind)` | `working` / `searching` for the running tool step, `None` when it ended |
 | `set_pet_busy(busy)` | An agent task is running in the background |
-| `show_status(title, detail="")` | Show or update the thinking line (already condensed) |
+| `show_status(title, detail="")` | Show or update the thought bubble (already condensed) |
 | `clear_status(linger_s=1.5)` | Take the card down after `linger_s` |
 | `wants_status_lines` (attribute) | True only for the pet: the bridge feeds the card to nothing else |
 | `set_muted(muted)` | Mirror the microphone mute on the strip |
@@ -302,7 +314,7 @@ Control-strip actions: `bell` (handled in the surface, reported through
 | `[ui] orb_style` | `jarvis_bar` | `pet` selects the pet |
 | `[ui] pet_id` | `gigi` | Active pet (built-in id, `u…` id or `none`) |
 | `[ui] pet_scale` | `1.0` | Size multiplier, 0.5–2.0 |
-| `[ui] pet_bubble` | `true` | Show the thinking line |
+| `[ui] pet_bubble` | `true` | Show the thought bubble |
 | `[ui] pet_strip_always` | `false` | Keep the control strip up even at rest |
 | `[trigger] hotkey_pet_toggle` | `alt+win+p` | Hide / show the pet; empty disables it |
 
