@@ -136,6 +136,7 @@ import {
   PARKED_RECHECK_MS,
 } from "./offscreenBuffer";
 import { installQuerySuppression } from "./terminalQueries";
+import { installSynchronizedOutput } from "./terminalSynchronizedOutput";
 import {
   bindTerminalScrollRegion,
   captureWheelForTerminalHistory,
@@ -1054,6 +1055,7 @@ export function AgenticTerminal({
       // The fallback renderer starts on an empty surface.
       term.refresh(0, term.rows - 1);
     });
+    const synchronizedOutput = installSynchronizedOutput(term);
     termRef.current = term;
     fitRef.current = fit;
     setTerminalEpoch((current) => current + 1);
@@ -1524,6 +1526,7 @@ export function AgenticTerminal({
         setTailReady(false);
         armCurtainWatchdog();
       }
+      synchronizedOutput.reset();
       term.reset();
       // A normal-buffer CLI's replay is its whole scrollback — up to the
       // server's 128 KB (see `ReplayBuffer`) — and xterm parses it in time
@@ -2289,6 +2292,7 @@ export function AgenticTerminal({
       disposePasteBridge();
       disposeNewlineBridge();
       disposeQuerySuppression();
+      synchronizedOutput.dispose();
       try {
         socket?.close();
       } catch {
