@@ -337,6 +337,7 @@ class AgentChatService:
         permission_mode: str = "",
         title: str = "",
         surface: str = DEFAULT_SURFACE,
+        account_id: str = "",
     ) -> AgentChatSession:
         row = provider_row(provider)
         if row is None and not supports_api_runner(provider):
@@ -361,6 +362,7 @@ class AgentChatService:
             permission_mode=permission_mode,
             title=title,
             surface=surface,
+            account_id=account_id,
         )
 
     def is_running(self, session_id: str) -> bool:
@@ -635,6 +637,12 @@ class AgentChatService:
         cancel = asyncio.Event()
         run = _Running(turn_id, cancel)
         self._running[session_id] = run
+        if session.surface == "jarvis" and direct_user and incoming is None and not control_owned:
+            from .store import ChatSelection
+
+            self.store.save_chat_selection(
+                ChatSelection(session.provider, session.model, session.effort, session.account_id)
+            )
         from jarvis.core.tool_read_only import set_chat_read_only
 
         set_chat_read_only(session_id, session.permission_mode in ("plan", "read-only"))

@@ -66,6 +66,22 @@ export interface AgentChatCatalog {
   providers: AgentChatProvider[];
   default_cwd: string;
   shell: string;
+  selection?: ChatSelection | null;
+}
+
+export interface ChatSelection {
+  provider: string;
+  model: string;
+  effort: string;
+  account_id?: string;
+}
+
+export async function saveChatSelection(selection: ChatSelection): Promise<ChatSelection> {
+  return json(await fetch("/api/agent-chat/selection", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(selection),
+  }), "selection-save-failed");
 }
 
 /**
@@ -311,6 +327,7 @@ export async function fetchAgentChatSessions(
 
 export interface CreateSessionInput {
   provider: string;
+  account_id?: string;
   model?: string;
   effort?: string | null;
   cwd?: string | null;
