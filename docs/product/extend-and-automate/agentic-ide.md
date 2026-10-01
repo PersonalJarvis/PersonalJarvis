@@ -116,6 +116,32 @@ closes when the whole line is done. The dialog says so while you type.
 - Close one pane, a selection, or all panes of one coding-agent type only after
   reviewing the confirmation. Closing stops those processes.
 
+### Keyboard: the Key Menu
+
+Press **Ctrl+B** (also on a Mac), then one more key, the way tmux and herdr
+work. A bar at the bottom of the window turns on and says **PREFIX** with the
+keys you can press next; `?` shows all of them, Esc or any other key goes
+back to typing. The chord is taken before the focused pane sees it, so it
+works while you type in an agent. To send Ctrl+B itself to the agent (Claude
+Code's "run in background"), press it twice. Holding Ctrl alone for a moment
+shows a small reminder of the chord.
+
+| Keys after Ctrl+B | What happens |
+| --- | --- |
+| Agent letter, then an arrow | Open that agent beside the focused pane, in the arrow's direction. Enter puts it in the even grid instead. |
+| `C` · `X` · `O` · `K` · `L` · `G` · `A` · `U` | Claude Code · Codex · OpenCode · Kimi Code · GLM · Grok Build · Antigravity · Cursor CLI (only installed ones are listed) |
+| `V` · `-` | Split the focused pane right · below, with the same agent |
+| `+` | Open the full Add coding agent dialog |
+| Arrows / Shift+arrows | Focus the neighboring pane / swap with it |
+| `Z` · `R` · `F` · `Q` · `E` | Maximize · rename · fork · close the focused pane · even out the layout |
+| `1`–`9` · `N` · `P` | Go to workspace 1–9 · next · previous workspace |
+| `Shift+N` · `Shift+W` · `Shift+D` | New · rename · close workspace |
+| `W`, then `N` · `T` · `R` · `Q` · `G` · `O` · `P` | New workspace · new worktree workspace · rename · close · Git panel · options · connect a project folder |
+| `M` · `?` | Show or hide the voice bubble · show every key |
+
+Escape closes the menu and Backspace goes back one step. Example:
+**Ctrl+B, C, →** opens Claude Code to the right of the focused pane.
+
 For voice, name the pane and action: “Tell T2 to review the failing tests” or
 “What is terminal three doing?” Near matches trigger a confirmation instead of
 a guess. An explicit background-mission request still goes to Jarvis-Agents.
