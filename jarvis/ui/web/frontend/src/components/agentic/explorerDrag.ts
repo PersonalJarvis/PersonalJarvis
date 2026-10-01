@@ -36,7 +36,7 @@ export function absoluteWorkspacePath(root: string, path: string): string {
   // These are server-listed names, not padded text input. Trimming a name
   // could select a different file before the receipt validator sees it.
   const base = root.replace(/[\\/]+$/, "");
-  const relative = path.replace(/^[\\/]+/, "");
+  const relative = path;
   if (!base) return "";
   if (!relative) return root;
   return isWindowsRoot(base)
@@ -56,7 +56,7 @@ export function absoluteWorkspacePath(root: string, path: string): string {
  * which is the one shape a bare `file:///` prefix would silently corrupt.
  */
 export function workspaceFileUri(absolute: string): string {
-  const posix = absolute.replace(/\\/g, "/");
+  const posix = isWindowsRoot(absolute) ? absolute.replace(/\\/g, "/") : absolute;
   const encoded = posix
     .split("/")
     .map((segment) => encodeURIComponent(segment))
