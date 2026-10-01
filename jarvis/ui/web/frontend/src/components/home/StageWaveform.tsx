@@ -85,8 +85,7 @@ import { cn } from "@/lib/utils";
  * Canvas rather than DOM capsules: forty to sixty shapes repainted every
  * frame are cheap on a 2D context and would be layout work as elements.
  * Every colour is read from the theme tokens on the element itself, so the
- * drawing follows light/dark and the wallpaper floor without a single
- * literal. Reduced motion keeps the information (a level meter) and drops
+ * drawing follows light/dark without a single literal. Reduced motion keeps the information (a level meter) and drops
  * the decoration (no breathing, no sweep, no scroll).
  */
 export function StageWaveform({

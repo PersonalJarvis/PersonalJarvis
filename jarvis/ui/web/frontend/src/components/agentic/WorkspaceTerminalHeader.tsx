@@ -1,6 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ComponentType, type CSSProperties, type MouseEvent, type PointerEvent, type SVGProps } from "react";
 import { createPortal } from "react-dom";
-import { Check, GitBranch, Maximize2, Minimize2, MoreHorizontal, Plus, Server, X } from "lucide-react";
+import { Check, FolderInput, GitBranch, Maximize2, Minimize2, MoreHorizontal, Plus, Server, X } from "lucide-react";
 import { AgentMark } from "./AgentMark";
 import { BranchIcon } from "./branchIcon";
 import { usePaneTitle } from "@/store/paneRecaps";
@@ -39,6 +39,8 @@ interface Props {
   computerName?: string;
   /** "Run on …" / "Bring back" entries for the pane's menu. */
   placementItems?: { label: string; run: () => void }[];
+  /** "Move to <workspace>" entries: the pane joins another open workspace, still running. */
+  workspaceItems?: { label: string; run: () => void }[];
   /**
    * `bar` is the card's title bar. `tile` is the minimal tile's: the same
    * title and controls in a slimmer, square row, closer to a multiplexer's
@@ -66,7 +68,7 @@ export function WorkspaceTerminalHeader({
   name, workspaceId, promptCount = 0, agent, agentLogoUrl, displayName, status, appearance, arranging = false,
   maximized = false, addDisabled = false, onArrangeStart, onActivate, onToggleMaximize,
   onAdd, onClose, onRename, onOpenConversation, onOpenChat, onRestart, onFork, branch,
-  computerName, placementItems, variant = "bar", focused = false,
+  computerName, placementItems, workspaceItems, variant = "bar", focused = false,
 }: Props) {
   const brand = PANE_BRAND[appearance];
   // The pane's goal in a few words, in place of its call-sign; the call-sign
@@ -190,6 +192,7 @@ export function WorkspaceTerminalHeader({
         onOpenConversation && { label: "Conversation history", run: onOpenConversation },
         onOpenChat && { label: "Open as chat", run: onOpenChat },
         stopped && onRestart && { label: "Restart agent", run: onRestart },
+        ...(workspaceItems ?? []).map((item, index) => ({ ...item, Icon: FolderInput, separated: index === 0 })),
         ...(placementItems ?? []).map((item, index) => ({ ...item, Icon: Server, separated: index === 0 })),
       ] as (MenuItem | false | undefined | null)[]).filter((item): item is MenuItem => Boolean(item)).map((item) =>
         <button type="button" role="menuitem" key={item.label} onClick={() => choose(item.run)}

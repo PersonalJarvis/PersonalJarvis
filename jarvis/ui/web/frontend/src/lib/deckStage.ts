@@ -1,6 +1,6 @@
 /**
  * The deck's centre stage: how large the orb reticle is for the room it has,
- * and the vignette the wallpaper gets under it.
+ * and the vignette the background gets under it.
  */
 
 const ORB_MIN = 200;
@@ -29,7 +29,7 @@ export function orbSizeFor(width: number, height: number): number {
  * ran off the top and bottom edges while still at a third of its opacity and
  * was cut there, so the "soft pool" was a rectangle with two straight edges.
  * On the dark deck that read as a slightly darker box; in light mode, where
- * the ground colour is near-white over a dark wallpaper, it was a bright slab
+ * the ground colour is near-white, it was a bright slab
  * behind the mascot — the same defect the orb PNG had, from the other side.
  * On its own square element nothing can clip it.
  */
@@ -38,10 +38,9 @@ export function stageWashSize(size: number): number {
 }
 
 /**
- * The stage under the centre: the wallpaper darkens softly around the mascot,
- * in the theme's own ground colour (so it is a light pool in light mode), and
- * the mascot stands on a stage instead of on whatever the wallpaper puts
- * there. Sized off the reticle so it reads the same at every stage size, and
+ * The stage under the centre: the background darkens softly around the
+ * mascot, in the theme's own ground colour (so it is a light pool in light
+ * mode), and the mascot stands on a stage instead of on the bare ground. Sized off the reticle so it reads the same at every stage size, and
  * centred on its own element (see `stageWashSize`).
  */
 export function stageVignette(size: number): string {

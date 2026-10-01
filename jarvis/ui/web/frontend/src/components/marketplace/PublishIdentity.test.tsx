@@ -29,10 +29,9 @@ import {
 } from "@/components/marketplace/PublishIdentity";
 import { setUiLanguage } from "@/i18n";
 
-const SIGNED_OUT: PublishIdentityWire = { enabled: true, wallpapers_enabled: true, signed_in: false };
+const SIGNED_OUT: PublishIdentityWire = { enabled: true, signed_in: false };
 const SIGNED_IN: PublishIdentityWire = {
   enabled: true,
-  wallpapers_enabled: true,
   signed_in: true,
   login: "octocat",
   avatar_url: null,
@@ -125,7 +124,7 @@ describe("PublisherChip", () => {
   });
 
   it("renders nothing when publishing is disabled in this deployment", async () => {
-    stubServer({ enabled: false, wallpapers_enabled: false, signed_in: false });
+    stubServer({ enabled: false, signed_in: false });
     renderWith(<PublisherChip onSignIn={() => undefined} />);
     await waitFor(() => expect((fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThan(0));
     await waitFor(() => expect(screen.queryByTestId("publisher-chip-signed-out")).toBeNull());

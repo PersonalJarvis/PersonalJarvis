@@ -6,13 +6,13 @@ import { describe, expect, it } from "vitest";
 /**
  * The shell must not build a stacking context around the section stage.
  *
- * A full-screen overlay inside a view (the wallpaper preview, a view's own
+ * A full-screen overlay inside a view (an image preview, a view's own
  * dialog and its scrim) is `position: fixed` and climbs to z-40/z-50/z-70 to
  * cover the app. All of that is void the moment an ANCESTOR between it and the
  * shell root carries a z-index of its own: the overlay is then trapped at the
  * ancestor's level, and the nav column beside it (z-20) paints straight over
  * it — which is how the sidebar logo, the assistant name and the voice state
- * ended up printed on top of the wallpaper preview's own header.
+ * ended up printed on top of a full-screen preview's own header.
  *
  * The chain guarded here is the whole path from the shell root down to a
  * section: <main> in App.tsx, the SectionStage it wraps the section in, and

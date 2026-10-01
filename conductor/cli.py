@@ -93,7 +93,7 @@ async def cmd_show(args: argparse.Namespace) -> int:
 
 async def cmd_add(args: argparse.Namespace) -> int:
     path = Path(args.yaml_file)
-    if not path.exists():
+    if not await asyncio.to_thread(path.exists):
         print(f"File not found: {path}", file=sys.stderr)
         return 1
 
@@ -134,31 +134,34 @@ async def cmd_run(args: argparse.Namespace) -> int:
             except json.JSONDecodeError as exc:
                 print(f"--input-json parse error: {exc}", file=sys.stderr)
                 return 1
-        run_id = await runner.trigger(args.id, trigger="manual",
-                                       input_data=input_data)
-        print(f"Run started: {run_id}", file=sys.stderr)
+        try:
+            run_id = await runner.trigger(args.id, trigger="manual",
+                                          input_data=input_data)
+            print(f"Run started: {run_id}", file=sys.stderr)
 
-        # Poll until terminal state
-        for _ in range(args.timeout * 2):
-            await asyncio.sleep(0.5)
+            # Poll until terminal state.
+            for _ in range(args.timeout * 2):
+                await asyncio.sleep(0.5)
+                run = await store.get_run(run_id)
+                if run and run["state"] in ("completed", "failed", "cancelled"):
+                    break
+            else:
+                print("Timeout waiting for terminal state", file=sys.stderr)
+                return 2
+
             run = await store.get_run(run_id)
-            if run and run["state"] in ("completed", "failed", "cancelled"):
-                break
-        else:
-            print("Timeout waiting for terminal state", file=sys.stderr)
-            return 2
-
-        run = await store.get_run(run_id)
-        if run is None:
-            return 2
-        if run["state"] == "completed":
-            print(run["output"])
-            return 0
-        print(f"Run failed: {run.get('error') or 'unknown'}",
-              file=sys.stderr)
-        if run["output"]:
-            print(run["output"])
-        return 1
+            if run is None:
+                return 2
+            if run["state"] == "completed":
+                print(run["output"])
+                return 0
+            print(f"Run failed: {run.get('error') or 'unknown'}",
+                  file=sys.stderr)
+            if run["output"]:
+                print(run["output"])
+            return 1
+        finally:
+            await runner.aclose()
     return await _with_store(_run)
 
 

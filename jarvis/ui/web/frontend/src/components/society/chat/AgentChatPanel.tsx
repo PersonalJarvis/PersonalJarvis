@@ -1020,11 +1020,11 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
     setValue: (next) => { setValue(next); fieldRef.current?.setText(next); },
     onModel: () => composerRef.current?.querySelector<HTMLButtonElement>("[data-chat-model-trigger]")?.click(),
   });
-  const dictation = useComposerDictation(value, (next) => {
+  const dictation = useComposerDictation((next) => {
     const text = typeof next === "function" ? next(value) : next;
     setValue(text);
     fieldRef.current?.setText(text);
-  });
+  }, () => void submit());
   const timeline = useAgentChat((s) => s.timeline);
   const sending = useAgentChat((s) => s.busy);
   // `busy` on this composer also covers "session not open yet". Stop is only
@@ -1254,7 +1254,7 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
               : t("society.chat.placeholder").replace("{0}", agent.name)
           }
           disabled={false}
-          onSubmit={() => void submit()}
+          onSubmit={() => (dictation.dictating ? dictation.stopAndSend() : void submit())}
           onDraftChange={onDraftChange}
           onPasteFiles={attachments.onPaste}
           onKeyDown={(e) => {
@@ -1314,8 +1314,10 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
         ) : (
           <button
             type="button"
-            onClick={() => void submit()}
-            disabled={modelSaving || (!value.trim() && selectedTools.length === 0)}
+            // While recording, Send ends the dictation and sends once the
+            // words land, so it is live before the box holds any text.
+            onClick={() => (dictation.dictating ? dictation.stopAndSend() : void submit())}
+            disabled={modelSaving || (!value.trim() && selectedTools.length === 0 && !dictation.dictating)}
             aria-label={t("society.chat.send")}
             data-testid="composer-send"
             className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground disabled:opacity-40"

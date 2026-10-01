@@ -116,6 +116,11 @@ class RunBody(BaseModel):
     timeout_s: float = Field(default=60.0, ge=1, le=300)
 
 
+class ClaudeTokenBody(BaseModel):
+    #: What ``claude setup-token`` prints; passed through, never stored here.
+    token: str = Field(min_length=20, max_length=512)
+
+
 class PasswordBody(BaseModel):
     password: str = Field(min_length=1, max_length=1024)
 
@@ -450,3 +455,17 @@ async def copy_login(computer_id: str, body: CopyLoginBody) -> dict[str, Any]:
     except ComputerError as exc:
         raise _fail(exc) from exc
     return {"copied": body.agent}
+
+
+@router.post("/{computer_id}/claude-token")
+async def save_claude_token(computer_id: str, body: ClaudeTokenBody) -> dict[str, Any]:
+    """Log Claude Code in for the agents there with a ``claude setup-token`` token.
+
+    The one login that works over SSH on a Mac (its Keychain stays locked in
+    SSH sessions). Written owner-only on that computer; nothing is kept here.
+    """
+    try:
+        await toolbox.save_claude_token(computer_id, body.token)
+    except ComputerError as exc:
+        raise _fail(exc) from exc
+    return {"saved": "claude"}

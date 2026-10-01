@@ -8,13 +8,11 @@ import {
   FileText,
   FolderUp,
   Github,
-  Image as ImageIcon,
   Loader2,
   PencilLine,
   Plug,
   Search,
   Sparkles,
-  Upload,
   UploadCloud,
   X,
 } from "lucide-react";
@@ -27,13 +25,6 @@ import {
   PublisherAvatar,
   usePublishIdentity,
 } from "@/components/marketplace/PublishIdentity";
-import { PublishWallpaperDialog } from "@/components/wallpaper/PublishWallpaperDialog";
-import { thumbUrlFor, type WallpaperEntry } from "@/hooks/useWallpaperCatalog";
-import {
-  uploadAsEntry,
-  useUploadMutations,
-  useWallpaperUploads,
-} from "@/hooks/useWallpaperUploads";
 import { fill, useLocaleChunk, useT } from "@/i18n";
 import { openExternalUrl } from "@/lib/openExternal";
 import { cn } from "@/lib/utils";
@@ -61,9 +52,8 @@ import {
 // A full-height overlay over the storefront with a rail of four stations on
 // the left (who · what · check · live) and the work on the right. The author
 // never starts at an empty form: the entry screen offers the ways a package
-// can arrive — drop the folder, import it from a public GitHub repo, write it
-// by hand, or pick one of your own wallpapers — and "the folder is the
-// classification" (publishing-plan.md §2): what is inside decides whether it
+// can arrive — drop the folder, import it from a public GitHub repo, or write
+// it by hand — and "the folder is the classification" (publishing-plan.md §2): what is inside decides whether it
 // becomes a skill or a plugin card.
 //
 // Anyone may publish: whatever passes the automated checks goes live with no
@@ -93,7 +83,7 @@ interface SubmitResultWire {
 }
 
 type Kind = "skill" | "plugin";
-type Stage = "source" | "github" | "wallpapers" | "form" | "done";
+type Stage = "source" | "github" | "form" | "done";
 
 interface Draft {
   kind: Kind;
@@ -206,23 +196,14 @@ function draftToBody(
   return { body };
 }
 
-/**
- * The studio. `initialStage` lets a caller open it straight at a lane — the
- * wallpaper picker's "Share" lands in the wallpapers station, for example.
- */
-export function PublishStudio({
-  onClose,
-  initialStage = "source",
-}: {
-  onClose: () => void;
-  initialStage?: Stage;
-}) {
+/** The studio: a full-height overlay that walks one package to "live". */
+export function PublishStudio({ onClose }: { onClose: () => void }) {
   const t = useT();
   const localeReady = useLocaleChunk("marketplace");
   const queryClient = useQueryClient();
   const identity = usePublishIdentity();
 
-  const [stage, setStage] = useState<Stage>(initialStage);
+  const [stage, setStage] = useState<Stage>("source");
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [prefill, setPrefill] = useState<{
     origin: string;
@@ -398,7 +379,6 @@ export function PublishStudio({
               <p className="truncate text-sm font-semibold text-foreground">
                 {stage === "source" && t("marketplace.studio_h_source")}
                 {stage === "github" && t("marketplace.studio_h_github")}
-                {stage === "wallpapers" && t("marketplace.studio_h_wallpapers")}
                 {stage === "form" && t("marketplace.studio_h_form")}
                 {stage === "done" && t("marketplace.studio_h_done")}
               </p>
@@ -426,17 +406,13 @@ export function PublishStudio({
                 <PublishedCard result={result} onPublishAnother={startOver} t={t} />
               ) : (
                 <div className="space-y-5">
-                  {stage !== "wallpapers" && (
-                    <PublishIdentityCard identity={identity.data} loading={identity.isLoading} />
-                  )}
+                  <PublishIdentityCard identity={identity.data} loading={identity.isLoading} />
 
                   {stage === "source" && (
                     <SourcePicker
                       onFolder={applyFolderDraft}
                       onGithub={() => setStage("github")}
                       onBlank={startBlank}
-                      onWallpapers={() => setStage("wallpapers")}
-                      wallpapersEnabled={identity.data?.wallpapers_enabled !== false}
                       t={t}
                     />
                   )}
@@ -447,10 +423,6 @@ export function PublishStudio({
                       onImported={applyFolderDraft}
                       t={t}
                     />
-                  )}
-
-                  {stage === "wallpapers" && (
-                    <WallpaperLane identityLoading={identity.isLoading} identity={identity.data} t={t} />
                   )}
 
                   {stage === "form" && (
@@ -523,15 +495,11 @@ function SourcePicker({
   onFolder,
   onGithub,
   onBlank,
-  onWallpapers,
-  wallpapersEnabled,
   t,
 }: {
   onFolder: (draft: FolderDraft, origin: string) => void;
   onGithub: () => void;
   onBlank: (kind: Kind) => void;
-  onWallpapers: () => void;
-  wallpapersEnabled: boolean;
   t: Translate;
 }) {
   const [dragOver, setDragOver] = useState(false);
@@ -695,17 +663,6 @@ function SourcePicker({
             </Button>
           </div>
         </div>
-
-        {wallpapersEnabled && (
-          <Door
-            icon={<ImageIcon className="h-4 w-4" />}
-            title={t("marketplace.studio_door_wallpaper")}
-            hint={t("marketplace.studio_door_wallpaper_hint")}
-            onClick={onWallpapers}
-            testId="studio-door-wallpaper"
-            className="md:col-span-2"
-          />
-        )}
       </div>
 
       {dropError && (
@@ -1080,152 +1037,6 @@ function GithubImportPanel({
           )}
         </div>
       )}
-    </section>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// The wallpaper lane: your own pictures, one click from published.
-// ---------------------------------------------------------------------------
-
-function WallpaperLane({
-  identity,
-  identityLoading,
-  t,
-}: {
-  identity: ReturnType<typeof usePublishIdentity>["data"];
-  identityLoading: boolean;
-  t: Translate;
-}) {
-  const { data: uploads, isLoading } = useWallpaperUploads();
-  const [shareItem, setShareItem] = useState<WallpaperEntry | null>(null);
-  const own = useMemo(
-    () => (uploads ?? []).filter((u) => u.source !== "marketplace").map(uploadAsEntry),
-    [uploads],
-  );
-  // Adding a picture right here, not only in the Wallpaper section: the same
-  // upload the picker uses (it lands in "Yours" there too), and the share
-  // dialog opens on it straight away — drop, title, publish, three steps.
-  const { add } = useUploadMutations();
-  const [dragOver, setDragOver] = useState(false);
-  const imagePickerRef = useRef<HTMLInputElement | null>(null);
-  const addAndShare = (file: File | undefined) => {
-    if (!file) return;
-    add.mutate(file, { onSuccess: (upload) => setShareItem(uploadAsEntry(upload)) });
-  };
-  return (
-    <section className="space-y-4">
-      <PublishIdentityCard
-        identity={identity}
-        loading={identityLoading}
-        blurb={t("marketplace.share_identity_blurb")}
-      />
-      <div
-        role="button"
-        tabIndex={0}
-        aria-label={t("marketplace.studio_wallpapers_add")}
-        data-testid="studio-wallpaper-drop"
-        onClick={() => imagePickerRef.current?.click()}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") imagePickerRef.current?.click();
-        }}
-        onDragOver={(e) => {
-          e.preventDefault();
-          setDragOver(true);
-        }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={(e) => {
-          e.preventDefault();
-          setDragOver(false);
-          addAndShare(e.dataTransfer.files?.[0]);
-        }}
-        className={cn(
-          "flex cursor-pointer items-center gap-4 rounded-2xl border border-dashed p-4 text-left transition-colors",
-          "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-          dragOver
-            ? "bg-secondary"
-            : "border-border bg-gradient-to-br from-primary/10 via-card to-card hover:border-border-strong",
-        )}
-      >
-        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary text-primary-foreground">
-          {add.isPending ? (
-            <Loader2 className="h-5 w-5 animate-spin" />
-          ) : (
-            <Upload className="h-5 w-5" />
-          )}
-        </span>
-        <span className="min-w-0">
-          <span className="block font-display text-sm font-semibold tracking-tight text-foreground">
-            {t("marketplace.studio_wallpapers_add")}
-          </span>
-          <span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">
-            {t("marketplace.studio_wallpapers_add_hint")}
-          </span>
-        </span>
-        <input
-          ref={imagePickerRef}
-          type="file"
-          accept="image/png,image/jpeg,image/webp,image/gif,image/bmp"
-          className="hidden"
-          data-testid="studio-wallpaper-file-input"
-          onChange={(e) => {
-            addAndShare(e.currentTarget.files?.[0]);
-            e.currentTarget.value = "";
-          }}
-        />
-      </div>
-      {add.error && (
-        <p className="flex items-start gap-2 rounded-md bg-secondary px-2 py-1.5 text-xs text-destructive">
-          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          {add.error.message}
-        </p>
-      )}
-      <div className="flex flex-wrap items-baseline gap-2">
-        <span className="text-xs font-semibold text-foreground">
-          {t("marketplace.studio_wallpapers_label")}
-        </span>
-        <span className="text-micro text-muted-foreground">
-          {t("marketplace.studio_wallpapers_hint")}
-        </span>
-      </div>
-      {isLoading ? (
-        <p className="flex items-center gap-2 text-xs text-muted-foreground">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          {t("marketplace.loading")}
-        </p>
-      ) : own.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-border p-6 text-center">
-          <ImageIcon className="mx-auto mb-2 h-5 w-5 text-muted-foreground" />
-          <p className="text-xs text-muted-foreground">{t("marketplace.studio_wallpapers_empty")}</p>
-        </div>
-      ) : (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3" data-testid="studio-own-wallpapers">
-          {own.map((entry) => (
-            <button
-              key={entry.id}
-              type="button"
-              onClick={() => setShareItem(entry)}
-              className="group relative aspect-[16/10] overflow-hidden rounded-xl bg-secondary text-left transition-colors hover:border-border-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              <img
-                src={thumbUrlFor(entry)}
-                alt=""
-                loading="lazy"
-                className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
-              />
-              <span className="absolute inset-x-0 bottom-0 flex items-center gap-2 bg-gradient-to-t from-black/75 to-transparent p-3">
-                <span className="min-w-0 flex-1 truncate text-xs font-medium text-white">
-                  {entry.title}
-                </span>
-                <span className="rounded-full bg-white/15 px-2 py-0.5 text-micro font-medium text-white backdrop-blur">
-                  {t("marketplace.share_cta")}
-                </span>
-              </span>
-            </button>
-          ))}
-        </div>
-      )}
-      {shareItem && <PublishWallpaperDialog item={shareItem} onClose={() => setShareItem(null)} />}
     </section>
   );
 }

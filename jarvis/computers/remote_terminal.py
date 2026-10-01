@@ -17,6 +17,12 @@ A dropped connection is not an exit: the pool reconnects with jittered backoff
 (AP-33) and re-attaches to the still-running tmux session. Only a session that
 is really gone on the server reports the pane closed.
 
+The pane is started by a launcher file uploaded first
+(``remote_os.pane_launcher_script``): the SSH command line holds only its
+name, so a fish or zsh login shell cannot re-read it, and the launcher puts
+the user's own ``PATH`` in front — tmux from Homebrew and a CLI in
+``~/.local/bin`` are found on a Mac and a Linux server alike.
+
 A Windows computer has no tmux. There a pane runs its agent directly in the
 SSH terminal (ConPTY), started by a small Git Bash launcher uploaded first
 (``jarvis.computers.remote_os``), and non-interactive commands run in Git Bash
@@ -60,41 +66,17 @@ def tmux_session_name(identity: str) -> str:
     return "jv-" + _NAME_RE.sub("-", identity)[:48]
 
 
-def tmux_command(
-    name: str, argv: tuple[str, ...] | list[str], cwd: str, cols: int, rows: int
-) -> str:
-    """Create-or-attach the pane's tmux session, quiet and full-screen.
+def pane_argv(host: remote_os.RemoteHost, argv: tuple[str, ...] | list[str]) -> tuple[str, ...]:
+    """A pane's argv on ``host``: a plain terminal is that computer's own shell.
 
-    ``-A`` attaches when the session already exists, so the same command both
-    starts a new agent and re-joins a running one; the agent's argv is only
-    used for a new session. The status line and mouse capture are off — the
-    pane is the agent's screen, not tmux's.
+    The IDE asks for ``bash -l``; a Mac user's shell is zsh, and Windows has
+    PowerShell.
     """
-    agent = shlex.join(argv)
-    session = shlex.quote(name)
-    return (
-        f"tmux -u new-session -A -s {session} -x {cols} -y {rows} -c {shlex.quote(cwd)} "
-        f"{shlex.quote(agent)} "
-        f"\\; set-option -t {session} status off "
-        f"\\; set-option -t {session} mouse off "
-        f"\\; set-option -t {session} escape-time 0"
-    )
-
-
-def windows_pane_argv(argv: tuple[str, ...] | list[str]) -> tuple[str, ...]:
-    """A pane's argv for a Windows computer: the login shell becomes PowerShell."""
-    if tuple(argv) == ("bash", "-l"):
+    if tuple(argv) != ("bash", "-l"):
+        return tuple(argv)
+    if host.windows:
         return ("powershell.exe", "-NoLogo")
-    return tuple(argv)
-
-
-def login_shell(command: str) -> str:
-    """Run through a login shell so user-installed CLIs (npm, nvm) are on PATH."""
-    quoted = shlex.quote(command)
-    return (
-        "if command -v bash >/dev/null 2>&1; "
-        f"then exec bash -lc {quoted}; else exec sh -lc {quoted}; fi"
-    )
+    return (host.login_shell or host.bash or "sh", "-l")
 
 
 @dataclass
@@ -172,12 +154,8 @@ class SshPtyPool:
         """
         if self._home is None:
             host = await self.host()
-            if host.windows:
-                self._home = host.home or "C:/Users/Public"
-            else:
-                session = await self.connection()
-                result = await session.conn.run('printf %s "$HOME"', check=False)
-                self._home = str(result.stdout or "").strip() or "/root"
+            fallback = "C:/Users/Public" if host.windows else "/root"
+            self._home = host.home or fallback
         return self._home
 
     async def sftp_path(self, path: str) -> str:
@@ -186,35 +164,27 @@ class SshPtyPool:
     async def run(self, command: str, *, timeout_s: float = 60.0) -> tuple[int, str, str]:
         """One non-interactive command on the shared connection.
 
-        A POSIX computer runs it in a login shell; a Windows one in Git Bash,
-        from stdin.
+        Sent on stdin to sh/bash (Git Bash on Windows) behind the user's own
+        ``PATH`` — never to the login shell, which may be fish or cmd.
         """
         host = await self.host()
         session = await self.connection()
-        if host.windows:
-            if not host.bash:
-                raise ComputerError(
-                    "This Windows computer needs Git for Windows first. "
-                    + remote_os.GIT_FOR_WINDOWS_HINT,
-                    status=409,
-                )
-            result = await asyncio.wait_for(
-                session.conn.run(
-                    host.bash_script_command(),
-                    input=command,
-                    check=False,
-                    encoding="utf-8",
-                    errors="replace",
-                ),
-                timeout=timeout_s,
+        if host.windows and not host.bash:
+            raise ComputerError(
+                "This Windows computer needs Git for Windows first. "
+                + remote_os.GIT_FOR_WINDOWS_HINT,
+                status=409,
             )
-        else:
-            result = await asyncio.wait_for(
-                session.conn.run(
-                    login_shell(command), check=False, encoding="utf-8", errors="replace"
-                ),
-                timeout=timeout_s,
-            )
+        result = await asyncio.wait_for(
+            session.conn.run(
+                host.script_command(),
+                input=remote_os.env_preamble(host) + command,
+                check=False,
+                encoding="utf-8",
+                errors="replace",
+            ),
+            timeout=timeout_s,
+        )
         code = result.exit_status if result.exit_status is not None else -1
         return code, str(result.stdout or ""), str(result.stderr or "")
 
@@ -244,10 +214,15 @@ class SshPtyPool:
         identity = str((meta or {}).get("history_id") or shell_id)
         name = tmux_session_name(identity)
         host = await self.host()
-        if host.windows:
-            command = await self._windows_launcher(host, name, shell_argv, cwd)
-        else:
-            command = login_shell(tmux_command(name, tuple(shell_argv), cwd, cols, rows))
+        if not self._tmux_checked and not host.windows:
+            code, _out, _err = await self.run("command -v tmux >/dev/null", timeout_s=20)
+            if code != 0:
+                raise ComputerError(
+                    "tmux is not installed on this computer. Open Computers, then Prepare.",
+                    status=409,
+                )
+            self._tmux_checked = True
+        command = await self._launcher(host, name, pane_argv(host, shell_argv), cwd, cols, rows)
         pane = _Pane(
             terminal_id=uuid4().hex,
             tmux_name=name,
@@ -258,14 +233,6 @@ class SshPtyPool:
             on_closed=on_closed,
             on_probe=on_probe,
         )
-        if not self._tmux_checked and not host.windows:
-            code, _out, _err = await self.run("command -v tmux >/dev/null", timeout_s=20)
-            if code != 0:
-                raise ComputerError(
-                    "tmux is not installed on this computer. Open Computers, then Prepare.",
-                    status=409,
-                )
-            self._tmux_checked = True
         # A new viewer of the SAME tmux session replaces the old channel; the
         # agent inside is untouched (``tmux new-session -A`` re-joins it).
         for other_id, other in list(self._panes.items()):
@@ -353,22 +320,33 @@ class SshPtyPool:
 
     # -- internals ---------------------------------------------------------------
 
-    async def _windows_launcher(
+    async def _launcher(
         self,
         host: remote_os.RemoteHost,
         name: str,
-        shell_argv: tuple[str, ...] | list[str],
+        argv: tuple[str, ...],
         cwd: str,
+        cols: int,
+        rows: int,
     ) -> str:
-        """Upload the pane's Git Bash launcher; the command that starts it."""
-        if not host.bash:
+        """Upload the pane's launcher; the command line that starts it.
+
+        POSIX: create-or-attach the tmux session (re-used verbatim on every
+        re-attach). Windows: the agent itself, in Git Bash.
+        """
+        if host.windows and not host.bash:
             raise ComputerError(
                 "This Windows computer needs Git for Windows first. "
                 + remote_os.GIT_FOR_WINDOWS_HINT,
                 status=409,
             )
         relative = f"{remote_os.LAUNCH_DIR}/{remote_os.launcher_name(name)}"
-        script = remote_os.launcher_script(cwd, windows_pane_argv(shell_argv))
+        if host.windows:
+            script = remote_os.launcher_script(host, cwd, argv)
+        else:
+            script = remote_os.pane_launcher_script(
+                host, name=name, self_path=relative, cwd=cwd, argv=argv, cols=cols, rows=rows
+            )
         session = await self.connection()
         try:
             await remote_os.upload_text(session, host, relative, script)

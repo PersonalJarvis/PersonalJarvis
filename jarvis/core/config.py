@@ -4083,12 +4083,6 @@ class MarketplaceConfig(BaseModel):
     # retired, so a stock install offers no Publish button instead of firing
     # a request at a host that answers nothing.
     publish_endpoint: str = ""
-    # Where the in-app Wallpapers view publishes a picture. A lane of its own
-    # because the payload is multipart image bytes, not a JSON manifest — but
-    # the same identity, the same registry, the same feed. Empty string hides
-    # "Share to community" in the wallpaper picker — the default, for the same
-    # reason as ``publish_endpoint`` above.
-    publish_wallpaper_endpoint: str = ""
     # Client id of the marketplace GitHub App (public by design — device flow
     # needs no secret, which is why a downloadable binary can use it).
     publish_github_client_id: str = "Iv23li1YcX62KJO67whO"

@@ -1,39 +1,73 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
-## Connected computers that run Windows (2026-09-30, T3)
+## Connected computers on Linux, macOS and Windows (2026-10-01, T3)
 
 This one is about the REMOTE side: the machine Jarvis connects to under
-Computers, whatever OS Jarvis itself runs on. Linux and macOS computers take
-the POSIX paths they always took. A Windows computer with the OpenSSH server
-runs commands in `cmd.exe` (or PowerShell as its `DefaultShell`), which runs
-no POSIX shell and mangles its own command line: every non-ASCII letter
-arrived as two U+FFFD characters, a line break ends the command, and the line
-stops at 8 191 characters. `jarvis/computers/remote_os.py` asks each computer
-once (one `echo` that sh, cmd and PowerShell answer differently) and then:
+Computers, whatever OS Jarvis itself runs on. `jarvis/computers/remote_os.py`
+asks each computer once which shell it speaks (one `echo` that sh, cmd and
+PowerShell answer differently) and, on Linux and macOS, which `PATH` the
+user's own login shell builds (`$SHELL -ilc`, then `-lc`, between markers so
+rc-file chatter cannot leak in). Two rules then hold on every OS:
 
-| Feature | Linux / macOS computer | Windows computer |
-|---|---|---|
-| Health check and facts | POSIX probe | PowerShell probe on stdin, same sections; no load average |
-| Planting the app's key (password login) | `~/.ssh/authorized_keys` | PowerShell: `administrators_authorized_keys` for admins, ACL by SID (works on a German Windows), UTF-8 without BOM |
-| Readiness and install | tmux, git, Node, CLIs; apt/dnf/yum/apk/pacman/brew | git (Git for Windows), Node, CLIs; winget and npm; "admin" instead of root |
-| Society agent's CLI turn | `exec env … <cli>` on the command line; cancel = hang up | system prompt uploaded as a file, CLI started by a Git Bash launcher uploaded over SFTP; cancel ends the launcher's process tree with `taskkill /T` first, because hanging up ends only cmd and bash and left the CLI running (measured) |
-| Society agent's shell tool | sh in `~/jarvis-agents/<id>` | Git Bash in the same folder; PowerShell when Git for Windows is missing |
-| IDE panes | tmux session; survives app close and network loss, re-attached | no tmux: the agent runs in the SSH terminal (ConPTY) and ends with the channel; a plain terminal is PowerShell |
-| IDE folder sync, conversation copy | POSIX scripts | the same scripts in Git Bash; SFTP paths as `/C:/…` |
-| Keep working when this PC closes | offered | not offered (and refused on quit): its agents would stop with the connection |
+- **Nothing of substance travels on the SSH command line.** The server hands
+  that line to the user's login shell — bash, zsh, fish, tcsh or `cmd.exe` —
+  and each parses it differently: fish has no `if …; then`, and `cmd.exe`
+  turned every non-ASCII letter into two U+FFFD characters, ends at a line
+  break and stops at 8 191 characters (measured). Scripts go on stdin to
+  `/bin/bash -s` (or `/bin/sh -s`); programs that need stdin or a terminal
+  start from a launcher file uploaded over SFTP (`/bin/sh <file>`, Git Bash on
+  Windows). The only lines a login shell ever parses are that `echo`, the two
+  script runners and a launcher's name (pinned by
+  `test_no_script_ever_reaches_the_login_shell`).
+- **Programs are found the way the user's own terminal finds them.** Over SSH
+  the search path is short: `~/.local/bin` (Claude Code's own installer) and
+  `/opt/homebrew/bin` (Homebrew on Apple silicon) were missing, so a turn said
+  "Install claude" while the readiness panel said it was installed. Every
+  script and launcher now starts with the login shell's `PATH`, plus the
+  well-known install folders that exist.
 
-Git for Windows is the one prerequisite beyond the SSH server, and every
-feature that needs it says so in one sentence. Verified live against a
-Windows 11 Pro VM (German locale): facts, readiness, a CLI start through the
-launcher, a cancelled turn leaving no process behind, an agent shell command
-with non-ASCII output, a PowerShell pane (closing it, or the app, ends its
-program there), and a git folder sent over and brought back with an edit made
-there. Covered
-by `tests/unit/computers/test_windows_remote.py` against a scripted Windows
-SSH server. Not verified live: planting the key with a password (unit-tested
-only; the VM already had the key), a Windows computer whose `DefaultShell` is
-PowerShell (handled by prefixing `&`, unit-tested only), the winget install
-leg, and a Windows Server install without winget.
+| Feature | Linux | macOS | Windows |
+|---|---|---|---|
+| Health check and facts | POSIX probe | same probe; uptime from `kern.boottime`, memory from `vm_stat`, disk from the Data volume | PowerShell probe on stdin, same sections; no load average |
+| Planting the app's key (password login) | `~/.ssh/authorized_keys` | same | `administrators_authorized_keys` for admins, ACL by SID (works on a German Windows), UTF-8 without BOM |
+| Readiness: what counts as there | tmux, git, a CLI and its login; Node.js below 18 counts as missing (Ubuntu 22.04 ships 12) | Homebrew tools; Apple's placeholder `git` (no command-line tools) counts as missing and is never run — it opens an install dialog on the Mac's screen | git (Git for Windows), Node.js, CLIs; no tmux |
+| Install | tmux/git from the distribution (root or password-less sudo); Claude Code from its own installer into `~/.local/bin` (no Node.js, no root); Node.js from nodejs.org into `~/.local` (no root) when Codex needs it; Codex through npm into `~/.local` | everything through Homebrew, without root (it refuses root); without Homebrew the panel says to install it | winget and npm; needs an administrator login |
+| Claude Code login for the agents | `~/.claude/.credentials.json` or "Use my login" | the Keychain is locked in SSH sessions (documented by Anthropic): a `claude setup-token` token saved owner-only in `~/.config/jarvis/agent.env`, read by every launcher ("Use a token" in the readiness panel) | `~/.claude/.credentials.json`; the token works too |
+| Society agent's CLI turn | launcher + prompt file; cancel ends the process group the SSH server gave the command, then hangs up | same | Git Bash launcher; cancel ends the tree with `taskkill /T` — hanging up ends only cmd and bash and left the CLI running (measured) |
+| Society agent's shell tool | bash in `~/jarvis-agents/<id>`; each step stops on its own failure, so `cd x; ls` can no longer run half in the home folder; a timeout ends the command there | same | Git Bash in the same folder; PowerShell when Git for Windows is missing |
+| IDE panes | tmux, started by an uploaded launcher; survives app close and network loss, re-attached; a missing folder stops with a sentence instead of starting the agent in the home folder | same, tmux from Homebrew; a plain terminal is the user's zsh | no tmux: the agent runs in the SSH terminal (ConPTY) and ends with the channel; a plain terminal is PowerShell |
+| IDE folder sync, conversation copy | POSIX scripts on stdin | same | the same scripts in Git Bash; SFTP paths as `/C:/…` |
+| Keep working when this PC closes | offered | offered (keep the Mac awake: `pmset`, in the setup prompt) | not offered, and refused on quit |
+
+The SSH connect timeout is 20 s: a busy machine took longer than the old 12 s
+to log in. The setup prompt a coding agent runs on the target computer covers
+each OS: Remote Login and `pmset` on a Mac, Homebrew with tmux and git, and the
+Claude token saved straight into `~/.config/jarvis/agent.env`.
+
+Verified live:
+
+- **Windows 11 Pro** (German locale; this development PC reached over its LAN
+  address): facts, readiness, a CLI start through the launcher, a cancelled
+  turn leaving no process behind, an agent shell command with non-ASCII
+  output, a PowerShell pane (closing it, or the app, ends its program there),
+  and a git folder sent over and brought back with an edit made there.
+- **Linux** (Ubuntu 24.04 in Docker with a real OpenSSH server), as a zsh user
+  whose tmux lives in `/opt/homebrew/bin` and whose Claude Code lives in
+  `~/.local/bin` (both only on the rc files' `PATH`, as on a Mac) and as a
+  fish user: both found through the login `PATH`; readiness, an agent shell
+  command, a CLI turn with the runner's real argv and stream-json stdin, a
+  cancelled turn ending its process, a pane in the user's own shell that
+  survives the app quitting and is re-attached, a missing pane folder, and
+  the token file written with mode 600.
+
+Not verified live: a real Mac (the Keychain behaviour and `vm_stat`/
+`kern.boottime` parsing are covered by tests and Anthropic's documentation
+only), the install jobs on any OS (unit-tested scripts), planting a key with
+a password on Windows, a Windows `DefaultShell` of PowerShell, and Windows
+Server without winget. Covered by `tests/unit/computers/test_posix_remote.py`,
+`test_windows_remote.py`, `test_remote_terminal.py` and
+`tests/unit/society/test_remote_placement.py` against scripted SSH servers.
+
 
 ## Persistent Agentic IDE terminals (2026-09-28, T3)
 
@@ -620,7 +654,7 @@ experiences today.
 | P-31 | Low | Detached views | The "own window" detach (Agentic IDE / Voice into a second pywebview window) creates the window at RUNTIME, after `webview.start()`. pywebview documents runtime multi-window, and the code path is OS-neutral (worker-thread create, distinct title, shared backend), but it has only been RUN against the Windows/WebView2 backend; whether the cocoa and GTK backends accept a runtime `create_window` is unverified from this machine. Browser-lock auth in the second window additionally relies on a shared cookie jar, which is verified for WebView2 only | `jarvis/ui/desktop_app.py::open_detached_window`, `jarvis/platform/probes.py::webview_backend_available`, `jarvis/ui/web/desktop_routes.py` | Every failure is honest and keeps the feature usable: a shell whose backend refuses the runtime create answers `ok: false` with the solo URL and the frontend opens it in the user's real browser tab (via open-external); plain-browser clients open the tab directly; headless answers `no_desktop_shell` the same way. macOS/Linux desktop live check pending: detach, close main, reattach, tray-reopen — on success this row shrinks to the cookie-jar note or disappears |
 | P-33 | Low | Music control (YouTube Music) | With the default **background player** (`jarvis/platform/music_player.py` + `music_player_host.py`: a pywebview companion window with its own persistent profile, driven over stdin/stdout JSON lines) pause / resume / next / previous / volume / "what is playing" go through the player's page directly and need only a display plus the `[desktop]` extra (pywebview) — verified live on Windows/WebView2 (a hidden window does NOT start media; minimized does, hence the minimized start); macOS WKWebView and Linux GTK/Qt WebKit are the same code, unverified from this machine, and autoplay policy there may need one press of play (the tool shows the window and says so). In **browser mode**, and wherever the player cannot run, the same verbs go through the OS media session — the registry the keyboard's media keys use — because Google publishes no remote-playback API. Windows reads and steers it through WinRT (`winrt-Windows.Media.Control`, in the `[desktop]` extra; measured live 2026-08-18 against YouTube Music in Chrome, including the two-tabs-same-app-id case) and falls back to blind media keys without the extra. Linux has no binding in the base install and needs the `playerctl` CLI (MPRIS); macOS has no public API at all and needs the Homebrew `nowplaying-cli`, whose MediaRemote access Apple has been narrowing on recent releases | `jarvis/platform/media_session.py::make_media_session_controller`, `WindowsMediaSession`, `LinuxMediaSession`, `MacMediaSession`, `jarvis/plugins/tool/youtube_music_rest.py::_control` | Playing (search + open the `music.youtube.com` deep link) works on every desktop OS. Without the CLI, `now_playing` and the transport verbs answer with the exact install command instead of a fake success, and the play deep link plus the library actions (like, playlists) stay fully usable. Headless: no player exists, so the tool returns the link and says so. Linux `playerctl` and macOS `nowplaying-cli` backends are unit-tested with fake CLI output, not live-run from this machine |
 | P-34 | Low | Drop-path bridge | The desktop shell reports the REAL path of a file or folder dropped onto the UI (`jarvis-native-drop` DOM event from `jarvis/ui/native_drop.py`, consumed by `src/lib/nativeDrop.ts` in the Agentic IDE folder picker). Built on pywebview's own cross-platform drop handling (`pywebviewFullPath` — WebView2 on Windows, WKWebView on macOS, WebKitGTK on Linux); live-verified for a dropped FOLDER on Windows/WebView2 only | `jarvis/ui/native_drop.py::register_native_drop`, `jarvis/ui/desktop_app.py::_register_native_drop`, `jarvis/ui/web/frontend/src/lib/nativeDrop.ts` | Honest degradation everywhere: without the announcement (plain browser, headless, a shell whose backend does not resolve paths) the picker falls back to searching for the dropped NAME after 2 s, exactly as before. macOS/Linux live check pending: drop a folder onto the folder step and confirm the exact path is used without a candidate list |
-| P-35 | Low | Desktop shell | The embedded browser's profile is PERSISTENT (`webview.start(private_mode=False, storage_path=<data>/webview)`) so the frontend's `localStorage` — wallpaper pick, deck/classic surface, pane sizes, favourites, theme cache — survives a restart (2026-08-18: pywebview's default private mode parked the WebView2 profile in a fresh `%TEMP%` folder per launch and the interface forgot every pick). The same call is honoured by every pywebview backend (Edge `UserDataFolder`, WebKitGTK `WebsiteDataManager`, Qt profile path, Cocoa's default persistent data store) but has only been RUN against Windows/WebView2 | `jarvis/ui/desktop_app.py::webview_storage_dir` | Honest everywhere: a checkout without a writable data directory falls back to the per-user directory, then to private mode with a logged warning — the interface still works, it only forgets its cosmetic picks. macOS/Linux live check pending: pick a wallpaper, restart, confirm it is still there |
+| P-35 | Low | Desktop shell | The embedded browser's profile is PERSISTENT (`webview.start(private_mode=False, storage_path=<data>/webview)`) so the frontend's `localStorage` — deck/classic surface, pane sizes, favourites, theme cache — survives a restart (2026-08-18: pywebview's default private mode parked the WebView2 profile in a fresh `%TEMP%` folder per launch and the interface forgot every pick). The same call is honoured by every pywebview backend (Edge `UserDataFolder`, WebKitGTK `WebsiteDataManager`, Qt profile path, Cocoa's default persistent data store) but has only been RUN against Windows/WebView2 | `jarvis/ui/desktop_app.py::webview_storage_dir` | Honest everywhere: a checkout without a writable data directory falls back to the per-user directory, then to private mode with a logged warning — the interface still works, it only forgets its cosmetic picks. macOS/Linux live check pending: resize a pane, restart, confirm the size is still there |
 | P-36 | Low | Coding-CLI panes | DeepSeek Harness is the one registered CLI whose interface is NOT the terminal. Upstream removed its terminal front door and publishes no `@deepseek-ai/dsh-tui*` bundle (checked 2026-08-22), so the two shipped profiles are `web` — a server the pane boots, whose UI opens in the default browser — and `headless`, which answers one task and exits. The pane therefore runs and is detected like every other entry, but declines the keystroke channel (`accepts_typed_prompts=False`), so the prompt bar, voice fan-out and CLI never type into it, and it has no transcript, recap or conversation resume | `jarvis/workspace/agents.py` (the `deepseek-harness` entry), `jarvis/agentic_ide/session.py::accepts_prompts`, upstream `apps/cli/README.md` | Identical on all three OSes — one npm package, one Node entrypoint, no native binary and no OS-specific installer. The one difference is not ours: on a host with no browser (headless Linux, an SSH launch) the harness prints its URL instead of opening it, which is the honest degradation and leaves the pane usable over a forwarded port |
 
 | P-37 | Low | Dev instance | A second desktop app from the same checkout (`--instance dev` / `JARVIS_INSTANCE=dev`, see `docs/dev-instance.md`) is built OS-neutral — own `data-dev/`, ports +100, own single-instance lock, window title, DEV-badged icon, no wake word / global hotkeys / chat channels / autostart / on-screen overlay (the dev app boots the NullOverlay at runtime and its overlay-style route answers 409, so a pick there can never rewrite the shared `jarvis.toml`) — but only the WINDOWS identity layer has been run live: AUMID `PersonalJarvis.PersonalJarvis.Dev`, Start-Menu shortcut `Personal Jarvis Dev.lnk`, branded `PersonalJarvisDev.exe`, tray tooltip. Linux gets its own `.desktop` entry + `StartupWMClass` through the same code path (unverified live). macOS has NO separate bundle for the dev instance: the dock shows the default app's bundle icon, and an in-app restart of the dev instance re-enters through the interpreter directly (`build_launch_command` skips the LaunchServices bundle for a non-default instance, because `open -a` would not carry `JARVIS_INSTANCE` and would bring it back as a second default app) — so the restarted dev app has no TCC attachment of its own | `jarvis/core/instance.py`, `jarvis/ui/icon_utils.py` (instance-bound constants), `jarvis/ui/relauncher.py::build_launch_command` | Windows: full parity, verified live. Linux desktop: expected parity (title, icon, tray, data, ports), entry unverified. macOS: functional (data, ports, title, ambient duties, in-app restart), dock icon degrades as described — the dev window is still told apart by its title and the DEV tag in the sidebar |

@@ -21,12 +21,11 @@ import { setUiLanguage } from "@/i18n";
 
 const SIGNED_IN: PublishIdentityWire = {
   enabled: true,
-  wallpapers_enabled: true,
   signed_in: true,
   login: "octocat",
   avatar_url: null,
 };
-const SIGNED_OUT: PublishIdentityWire = { enabled: true, wallpapers_enabled: true, signed_in: false };
+const SIGNED_OUT: PublishIdentityWire = { enabled: true, signed_in: false };
 
 function stubServer(identity: PublishIdentityWire, opts?: { validateErrors?: unknown[] }) {
   const calls: { url: string; body?: unknown }[] = [];
@@ -41,11 +40,6 @@ function stubServer(identity: PublishIdentityWire, opts?: { validateErrors?: unk
         body: typeof init?.body === "string" ? JSON.parse(init.body) : init?.body,
       });
       if (url === "/api/marketplace/publish/identity" && method === "GET") return json(identity);
-      if (url === "/api/wallpapers/uploads" && method === "POST") {
-        // The picker's own upload route: the dropped picture comes back as a
-        // fresh "own" upload the lane can hand straight to the share dialog.
-        return json({ id: "u0000000000000003", title: "Dropped", theme: "dark", createdAt: 3, source: "own" });
-      }
       if (url === "/api/marketplace/publish/validate") {
         return json({ ok: !(opts?.validateErrors?.length), errors: opts?.validateErrors ?? [] });
       }
@@ -70,21 +64,6 @@ function stubServer(identity: PublishIdentityWire, opts?: { validateErrors?: unk
           201,
         );
       }
-      if (url === "/api/wallpapers/uploads") {
-        return json({
-          items: [
-            { id: "u0000000000000001", title: "Harbour At Dawn", theme: "light", createdAt: 1, source: "own" },
-            {
-              id: "u0000000000000002",
-              title: "Borrowed",
-              theme: "dark",
-              createdAt: 2,
-              source: "marketplace",
-              publisher: "someone",
-            },
-          ],
-        });
-      }
       if (url.startsWith("/api/marketplace/publish/status")) return json({ live: true });
       return json({});
     }),
@@ -92,11 +71,11 @@ function stubServer(identity: PublishIdentityWire, opts?: { validateErrors?: unk
   return calls;
 }
 
-function renderStudio(onClose = () => undefined, initialStage?: "source" | "wallpapers") {
+function renderStudio(onClose = () => undefined) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <PublishStudio onClose={onClose} initialStage={initialStage} />
+      <PublishStudio onClose={onClose} />
     </QueryClientProvider>,
   );
 }
@@ -108,12 +87,12 @@ afterEach(() => {
 });
 
 describe("PublishStudio", () => {
-  it("opens on the doors, with the wallpaper lane among them", async () => {
+  it("opens on the package doors, with no wallpaper lane", async () => {
     stubServer(SIGNED_IN);
     renderStudio();
     expect(await screen.findByTestId("studio-door-folder")).toBeTruthy();
     expect(screen.getByTestId("studio-door-github")).toBeTruthy();
-    expect(screen.getByTestId("studio-door-wallpaper")).toBeTruthy();
+    expect(screen.queryByTestId("studio-door-wallpaper")).toBeNull();
     // The rail lights the "what" station once somebody is signed in.
     await screen.findByText(/Signed in as @octocat/);
   });
@@ -176,20 +155,8 @@ describe("PublishStudio", () => {
     expect((screen.getByTestId("studio-publish") as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("lists only the owner's own pictures in the wallpaper lane", async () => {
-    stubServer(SIGNED_IN);
-    renderStudio(() => undefined, "wallpapers");
-    const grid = await screen.findByTestId("studio-own-wallpapers");
-    expect(grid.textContent).toContain("Harbour At Dawn");
-    // An installed community picture is somebody else's work — not offered.
-    expect(grid.textContent).not.toContain("Borrowed");
-
-    fireEvent.click(screen.getByRole("button", { name: /Harbour At Dawn/ }));
-    expect(await screen.findByTestId("publish-wallpaper-dialog")).toBeTruthy();
-  });
-
   it("says so when publishing is disabled in this deployment", async () => {
-    stubServer({ enabled: false, wallpapers_enabled: false, signed_in: false });
+    stubServer({ enabled: false, signed_in: false });
     renderStudio();
     expect(await screen.findByText(/Publishing is disabled/)).toBeTruthy();
   });
@@ -212,19 +179,6 @@ describe("PublishStudio", () => {
     await screen.findByTestId("studio-form");
     // Read as a skill, name from the frontmatter — not a plugin with a missing manifest.
     expect((screen.getByTestId("studio-name") as HTMLInputElement).value).toBe("todo-triage");
-  });
-
-  it("takes a dropped picture in the wallpaper lane and opens the share form on it", async () => {
-    const calls = stubServer(SIGNED_IN);
-    renderStudio(() => undefined, "wallpapers");
-    const drop = await screen.findByTestId("studio-wallpaper-drop");
-    const file = new File(["png-bytes"], "sunset.png", { type: "image/png" });
-    fireEvent.drop(drop, { dataTransfer: { files: [file] } });
-
-    expect(await screen.findByTestId("publish-wallpaper-dialog")).toBeTruthy();
-    const upload = calls.find((c) => c.url === "/api/wallpapers/uploads" && c.body instanceof FormData);
-    expect(upload).toBeTruthy();
-    expect((upload?.body as FormData).get("file")).toBeInstanceOf(File);
   });
 
   it("speaks German when the UI does", async () => {

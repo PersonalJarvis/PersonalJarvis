@@ -14,6 +14,13 @@ versioning per [SemVer](https://semver.org/).
 - Center API Keys settings and show provider cards in two columns when the
   window is wide enough, with a single column in narrower windows.
 
+### Removed
+
+- Remove wallpapers. The app always paints its flat theme colour; the
+  Wallpaper page in Settings, the bundled pictures, the wallpaper library
+  download and uploads are gone. The marketplace no longer lists, installs
+  or publishes wallpapers — it carries plugins and skills only.
+
 ---
 
 ## [2.3.2] — 2026-09-23

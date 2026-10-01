@@ -23,11 +23,10 @@ import { cn } from "@/lib/utils";
 // ---------------------------------------------------------------------------
 // One identity for everything the app publishes.
 //
-// Packages and wallpapers are two lanes with two endpoints, but a person signs
-// in once — so the sign-in lives here rather than inside either surface. Every
-// surface reads the same query key, which means signing in from the wallpaper
-// picker leaves the marketplace signed in and the other way round, with no
-// state to keep in step.
+// A person signs in once — so the sign-in lives here rather than inside any
+// one surface. Every surface reads the same query key, which means signing in
+// anywhere leaves every other surface signed in too, with no state to keep in
+// step.
 //
 // The flow is GitHub's DEVICE flow: the app shows a code, the user types it at
 // github.com/login/device, and the app polls until GitHub reports approval.
@@ -40,8 +39,6 @@ import { cn } from "@/lib/utils";
 export interface PublishIdentityWire {
   /** Package publishing (plugins and skills) is configured. */
   enabled: boolean;
-  /** The wallpaper lane is configured — a fork may run one without the other. */
-  wallpapers_enabled?: boolean;
   signed_in: boolean;
   login?: string;
   avatar_url?: string | null;
@@ -468,7 +465,7 @@ export function PublisherChip({
   }, [open]);
 
   const data = identity.data;
-  if (data && !data.enabled && !data.wallpapers_enabled) return null;
+  if (data && !data.enabled) return null;
 
   if (identity.isLoading || !ready) {
     return <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" aria-hidden />;

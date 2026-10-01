@@ -27,7 +27,8 @@ log = logging.getLogger(__name__)
 
 SshErrorKind = Literal["unreachable", "timeout", "auth", "host_key_changed", "protocol"]
 
-CONNECT_TIMEOUT_S = 12.0
+#: A busy machine (measured: a loaded Windows box) needed more than 12 s to log in.
+CONNECT_TIMEOUT_S = 20.0
 #: Keepalive probes: a silent connection counts as dead after about 45 s.
 KEEPALIVE_INTERVAL_S = 15
 KEEPALIVE_COUNT_MAX = 3

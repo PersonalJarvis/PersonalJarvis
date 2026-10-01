@@ -1,8 +1,8 @@
 """Reading a community entry BEFORE installing it.
 
 The contents route is what makes the "nobody reviewed this" badge actionable:
-it hands over the published bytes themselves. These tests pin the three kinds
-(plugin manifests, skill text, wallpaper picture), the size ceiling, and the
+it hands over the published bytes themselves. These tests pin both kinds
+(plugin manifests, skill text), the size ceiling, and the
 rule that a failed download degrades to an honest message instead of an
 exception.
 """
@@ -68,14 +68,13 @@ def _index_payload() -> dict[str, Any]:
                 "source_url": "https://github.com/PersonalJarvis/marketplace",
             }
         ],
+        # A registry build from before wallpapers were retired may still
+        # publish the section; the contents route must treat it as unknown.
         "wallpapers": [
             {
                 "name": "rain-antenna-city",
                 "title": "Rain Antenna City",
-                "description": "Neon rooftops in the rain",
-                "publisher": "octocat",
                 "raw_url": "https://raw.example/wallpapers/rain-antenna-city.webp",
-                "theme": "dark",
             }
         ],
     }
@@ -165,44 +164,11 @@ async def test_unreachable_skill_file_degrades_to_a_message(
 
 
 @pytest.mark.asyncio
-async def test_wallpaper_contents_are_the_picture(community_env: Path) -> None:
+async def test_a_wallpaper_left_in_the_feed_has_no_contents(community_env: Path) -> None:
+    """Wallpapers are no longer a marketplace kind — an old feed entry is unknown."""
     async with _client() as client:
         resp = await client.get("/api/marketplace/community/rain-antenna-city/contents")
-    data = resp.json()
-    assert data["kind"] == "wallpaper"
-    assert data["files"] == []
-    assert data["image_url"] == "https://raw.example/wallpapers/rain-antenna-city.webp"
-
-
-@pytest.mark.asyncio
-async def test_a_wallpaper_published_as_image_url_still_previews(
-    community_env: Path,
-) -> None:
-    """The published registry emits `image_url`, not `raw_url`.
-
-    Judging the preview by `raw_url` alone told every real wallpaper that it
-    "publishes no downloadable image" — while the install, which asks for
-    `download_url`, would have fetched it happily.
-    """
-    payload = _index_payload()
-    payload["wallpapers"] = [
-        {
-            "name": "moonlit-wave",
-            "title": "Moonlit Wave",
-            "publisher": "octocat",
-            "image_url": "https://pages.example/wallpapers/moonlit-wave/wallpaper.webp",
-        }
-    ]
-    community_source._CACHE_PATH.write_text(
-        json.dumps({"fetched_at": time.time(), "index": payload}), encoding="utf-8"
-    )
-
-    async with _client() as client:
-        resp = await client.get("/api/marketplace/community/moonlit-wave/contents")
-
-    data = resp.json()
-    assert data["image_url"].endswith("moonlit-wave/wallpaper.webp")
-    assert data["error"] is None
+    assert resp.status_code == 404
 
 
 @pytest.mark.asyncio

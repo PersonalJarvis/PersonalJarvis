@@ -503,7 +503,7 @@ function BoardCentre({
       {/* The same layoutId as the standby's orb: when the board takes over,
           the orb travels here instead of blinking — and lands with a ring. */}
       <div className="relative isolate">
-        {/* The wash that lifts the centre off the wallpaper. It rides on the
+        {/* The wash that lifts the centre off the background. It rides on the
             orb, on a square of its own, because it used to be a background
             on the column above — where the column's straight top and bottom
             cut the circle while it was still opaque (deckStage.ts). */}

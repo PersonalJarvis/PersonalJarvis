@@ -2,7 +2,7 @@
 
 pywebview defaults to ``private_mode=True`` — a fresh WebView2 profile in
 ``%TEMP%`` per launch — and everything the frontend stores in ``localStorage``
-(the wallpaper pick, the deck/classic surface, pane sizes, favourites, the
+(the deck/classic surface, pane sizes, favourites, the
 theme cache the boot script paints the first frame from) died with the
 process. Forensic 2026-08-18: after every restart the interface wore light
 chrome over the dark bundled artwork, because the light pick was gone while

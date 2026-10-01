@@ -3,7 +3,7 @@
  *
  * It follows the familiar editor explorer shape without importing another
  * product's chrome: compact rows, folders first, one gold selection mark, and
- * the app's own translucent panel token over the shared wallpaper.
+ * the app's own panel token.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import {

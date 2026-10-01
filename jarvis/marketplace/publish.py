@@ -10,11 +10,8 @@ token belongs to OUR App (confused-deputy check), derives the publisher from
 it, and opens the registry PR as the bot — one publishing implementation for
 web and app.
 
-Two lanes share that one identity. A **package** (plugin or skill) travels
-as JSON to ``/submit``; a **wallpaper** travels as multipart image bytes to
-``/submit-wallpaper``, where the endpoint slugifies the title into a name and
-commits straight to the public registry. Both end up in the same feed the
-store reads back.
+A package (plugin or skill) travels as JSON to ``/submit`` and ends up in
+the same feed the store reads back.
 
 Validation here MIRRORS the endpoint's rules (``_lib/validate.ts``, itself a
 mirror of the registry CI) for instant field-level feedback in the form. It
@@ -26,7 +23,6 @@ a bad submission merge.
 from __future__ import annotations
 
 import asyncio
-import io
 import json
 import logging
 import re
@@ -72,15 +68,6 @@ _UA = {"User-Agent": "Personal-Jarvis/1.0"}
 _NAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9.-]{0,62}[a-z0-9])?$")
 _SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
 MAX_FILE_BYTES = 128 * 1024
-# The wallpaper lane's own limits, mirrored from the endpoint's
-# functions/_lib/wallpapers.ts. Same reasoning as the rules above: a mirror
-# that drifts costs a duplicate error message, never a bad publish — the
-# endpoint re-checks all of it and the registry CI re-checks it again.
-MAX_WALLPAPER_BYTES = 8 * 1024 * 1024
-MAX_TITLE_CHARS = 80
-# Redistribution licenses only. A wallpaper published here is copied onto
-# stranger's machines, so "all rights reserved" has no meaning in this lane.
-WALLPAPER_LICENSES = ("CC0-1.0", "CC-BY-4.0", "CC-BY-SA-4.0")
 # Re-exported under this module's existing name, but the VALUE comes from
 # agent_plugins_loader — the install-time authority — so the two numbers
 # cannot silently drift apart.
@@ -245,119 +232,6 @@ def validate_draft(draft: dict[str, Any]) -> tuple[dict[str, Any] | None, list[F
     return value, []
 
 
-def validate_wallpaper_draft(
-    draft: Mapping[str, Any],
-) -> tuple[dict[str, str] | None, list[FieldError]]:
-    """Normalize and check a wallpaper submission's text fields.
-
-    The image itself is checked separately (``prepare_wallpaper_image``) —
-    bytes and metadata fail for different reasons and the form wants to say
-    which. There is no ``name`` or ``version`` field here on purpose: the
-    endpoint slugifies the title into a free name and stamps 1.0.0, so a
-    client that invented either would only be describing something the server
-    ignores.
-    """
-    errors: list[FieldError] = []
-    title = str(draft.get("title") or "").strip()
-    if not title:
-        errors.append(FieldError("a title is required", "title"))
-    elif _utf16_len(title) > MAX_TITLE_CHARS:
-        errors.append(FieldError(f"title longer than {MAX_TITLE_CHARS} characters", "title"))
-    elif not re.search(r"[a-z0-9]", title.lower()):
-        # The endpoint slugifies the title and refuses an empty slug. Saying
-        # so here, in the words the endpoint uses, beats a 422 after upload.
-        errors.append(FieldError("the title needs at least a few letters or digits", "title"))
-
-    description = str(draft.get("description") or "").strip()
-    if _utf16_len(description) > MAX_DESCRIPTION_CHARS:
-        errors.append(
-            FieldError(f"description longer than {MAX_DESCRIPTION_CHARS} characters", "description")
-        )
-
-    license_id = str(draft.get("license") or "").strip()
-    if license_id not in WALLPAPER_LICENSES:
-        errors.append(FieldError("pick one of the redistribution licenses", "license"))
-
-    theme = str(draft.get("theme") or "").strip()
-    if theme not in ("light", "dark", ""):
-        errors.append(FieldError("theme must be 'light' or 'dark'", "theme"))
-
-    if draft.get("rights") is not True:
-        # Not decoration: this is the uploader's own statement, recorded in a
-        # submission published under their name. Nobody inspects the picture
-        # before it goes live, which is exactly why the statement is required.
-        errors.append(
-            FieldError(
-                "confirm that you hold the rights and the image is legal to publish", "rights"
-            )
-        )
-
-    if errors:
-        return None, errors
-    value = {"title": title, "license": license_id, "rights": "yes"}
-    if description:
-        value["description"] = description
-    if theme:
-        value["theme"] = theme
-    return value, []
-
-
-def prepare_wallpaper_image(data: bytes) -> tuple[bytes, str]:
-    """Re-encode a picture into the bytes that will be published.
-
-    Returns ``(webp_bytes, "wallpaper.webp")``. Nothing the caller supplied
-    survives the round trip: Pillow decodes and re-encodes, so EXIF (GPS
-    included), a forged header and anything appended past the image data are
-    all gone. That is the same guarantee the website's uploader gives with a
-    canvas, and the registry build re-encodes a third time — no byte an
-    uploader crafted is ever served as-is.
-
-    Raises ``SubmitError`` with a sentence meant for the person uploading.
-    """
-    if not data:
-        raise SubmitError(422, "that file is empty", "file")
-    try:
-        from PIL import Image
-    except ImportError as exc:  # pragma: no cover - Pillow is a hard dependency
-        raise SubmitError(503, "image support is unavailable on this install", "file") from exc
-
-    try:
-        with Image.open(io.BytesIO(data)) as probe:
-            probe.verify()
-        with Image.open(io.BytesIO(data)) as source:
-            source.load()
-            prepared = source.convert("RGB")
-    except Exception as exc:  # noqa: BLE001 - any decode failure means "not an image"
-        raise SubmitError(422, "that file is not an image the app can read", "file") from exc
-
-    # 4K cap, matching the picker's own store and the website's uploader.
-    max_width = 3840
-    if prepared.width > max_width:
-        height = max(1, round(prepared.height * max_width / prepared.width))
-        prepared = prepared.resize((max_width, height), Image.Resampling.LANCZOS)
-
-    # Step down the quality until it fits rather than refusing a picture the
-    # user cannot fix by hand — a 4K photograph can exceed 8 MB at q82, and
-    # "export a smaller one" is not an instruction a wallpaper picker can act
-    # on. The floor is deliberate: below q50 the result is not worth shipping.
-    encoded = b""
-    for quality in (82, 70, 60, 50):
-        buffer = io.BytesIO()
-        prepared.save(buffer, "WEBP", quality=quality, method=4)
-        encoded = buffer.getvalue()
-        if len(encoded) <= MAX_WALLPAPER_BYTES:
-            break
-    prepared.close()
-    if len(encoded) > MAX_WALLPAPER_BYTES:
-        raise SubmitError(
-            413,
-            f"even re-encoded, that image stays over "
-            f"{MAX_WALLPAPER_BYTES // (1024 * 1024)} MB — publish a smaller one",
-            "file",
-        )
-    return encoded, "wallpaper.webp"
-
-
 def _validate_bundled_skills(
     raw: Any, *, plugin_name: str
 ) -> tuple[list[dict[str, str]], list[FieldError]]:
@@ -465,19 +339,6 @@ def publish_endpoint() -> str:
         from jarvis.core.config import MarketplaceConfig
 
         return MarketplaceConfig().publish_endpoint
-
-
-def publish_wallpaper_endpoint() -> str:
-    """The configured wallpaper endpoint (empty string = lane disabled)."""
-    from jarvis.core.config import load_config
-
-    try:
-        return str(load_config().marketplace.publish_wallpaper_endpoint).strip()
-    except Exception:  # noqa: BLE001 - config trouble must not kill the picker
-        log.warning("publish: could not read config for the wallpaper endpoint")
-        from jarvis.core.config import MarketplaceConfig
-
-        return MarketplaceConfig().publish_wallpaper_endpoint
 
 
 def make_device_handler() -> DeviceFlowHandler:
@@ -614,51 +475,6 @@ async def submit(
     raise SubmitError(r.status_code, error, field if isinstance(field, str) else None)
 
 
-async def submit_wallpaper(
-    fields: Mapping[str, str],
-    image: bytes,
-    filename: str = "wallpaper.webp",
-    store: TokenStore | None = None,
-    transport: httpx.AsyncBaseTransport | None = None,
-) -> dict[str, Any]:
-    """POST an already-validated wallpaper; returns ``{"name": ...}``.
-
-    Multipart rather than JSON because the payload is image bytes, but the
-    identity chain is the one ``submit`` uses: the token travels as
-    ``Authorization: Bearer``, the endpoint proves it belongs to the
-    marketplace App and derives the publisher from it. Nothing
-    identity-shaped is in the form.
-    """
-    endpoint = publish_wallpaper_endpoint()
-    if not endpoint:
-        raise SubmitError(503, "wallpaper publishing is disabled in this deployment")
-    store = store or TokenStore()
-    tokens = await asyncio.to_thread(store.load, PUBLISHER_TOKEN_ID)
-    if tokens is None:
-        raise SubmitError(401, "sign in with GitHub first")
-    try:
-        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT, transport=transport) as client:
-            r = await client.post(
-                endpoint,
-                data=dict(fields),
-                files={"file": (filename, image, "image/webp")},
-                headers={**_UA, "Authorization": f"Bearer {tokens.access}"},
-            )
-    except httpx.HTTPError as exc:
-        raise SubmitError(502, f"the publish endpoint is unreachable: {exc}") from exc
-    try:
-        body = r.json()
-    except ValueError:
-        body = {}
-    if r.status_code == 201:
-        # The endpoint slugified the title into the name — the caller could
-        # not have known it in advance, and it is what the live check needs.
-        return {"name": str(body.get("name") or "")}
-    error = str(body.get("error") or f"publish failed (HTTP {r.status_code})")
-    field = body.get("field")
-    raise SubmitError(r.status_code, error, field if isinstance(field, str) else None)
-
-
 async def live_status(name: str, version: str, *, force: bool = False) -> dict[str, Any]:
     """Whether ``name`` at ``version`` is in the community index yet.
 
@@ -670,7 +486,7 @@ async def live_status(name: str, version: str, *, force: bool = False) -> dict[s
     index, status = await community_source.get_index(force=force)
     live = False
     if index is not None:
-        entries: list[Any] = [*index.plugins, *index.skills, *index.wallpapers]
+        entries: list[Any] = [*index.plugins, *index.skills]
         for entry in entries:
             if entry.name == name and (entry.version or "") == version:
                 live = True

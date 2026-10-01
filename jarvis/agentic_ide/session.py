@@ -3651,6 +3651,12 @@ class Registry:
         term = session.find(key)
         return None if term is None else (session, term)
 
+    def _owner_of(self, term: Terminal) -> Session | None:
+        """The open workspace that holds ``term`` right now, if any."""
+        return next(
+            (s for s in self._sessions.values() if any(t is term for t in s.terminals)), None
+        )
+
     @asynccontextmanager
     async def _cold_start_slot(
         self, ready: Callable[[], Awaitable[bool]] | None = None
@@ -3984,23 +3990,31 @@ class Registry:
                     # grid; they follow the new one now, not at their next
                     # unrelated window resize.
                     _announce_geometry(term, cols, rows, except_viewer=on_output)
-            needs_repaint = term.replay.truncated
+            # A frame still owed since an earlier resize counts like a cut
+            # tail: what is kept was drawn for another size, so a fresh paint
+            # has to be asked for even though this viewer changes nothing.
+            needs_repaint = term.replay.truncated or term.replay.awaiting_frame
             if geometry_changed and is_coding_agent(term.agent):
                 # A cursor-addressed TUI stream is meaningful only at the size
                 # that produced it. Replaying the old geometry after a grid
                 # re-layout leaves status rows and command fragments behind
-                # the new paint. Keep the terminal modes, drop those drawing
-                # bytes, and let the live agent rebuild one clean screen below.
+                # the new paint, so a new replay epoch starts here and the live
+                # agent is asked to rebuild one clean screen below. An agent
+                # that paints whole frames keeps its old one meanwhile: the
+                # viewer waits for the new frame's erase, and shows the old one
+                # rather than an empty pane if the agent never answers (see
+                # ``ReplayBuffer.rebase_for_resize``).
                 replay = term.replay.rebase_for_resize()
                 needs_repaint = True
             else:
                 replay = term.replay.text()
             if replay:
                 # Hand over either the stream that drew the current screen, or
-                # (after a geometry change) the terminal-mode prologue that a
-                # clean repaint must draw on. A coding agent's TUI is a painted
-                # surface, not a log: the viewer needs one of those two rebuild
-                # paths rather than an append to whatever it held before.
+                # (after a geometry change) the old frame or the terminal-mode
+                # prologue that a clean repaint must draw on. A coding agent's
+                # TUI is a painted surface, not a log: the viewer needs one of
+                # those rebuild paths rather than an append to whatever it held
+                # before.
                 #
                 # On the replay channel when the viewer offered one — see the
                 # docstring for what appending it to a screen that already had
@@ -4203,14 +4217,19 @@ class Registry:
                 )
                 term.resume = None
                 term.resumed = False
+                # By identity and in the workspace that holds it NOW: the pane
+                # may have been moved to another tab since it started
+                # (`transfer_terminal`), and its old key there may already
+                # belong to a different pane.
+                owner = self._owner_of(term) or session
                 try:
                     await self.attach(
-                        key,
+                        "pane:" + term.history_id,
                         cols,
                         rows,
                         term.viewer_output or on_output,
                         term.viewer_exit or on_exit,
-                        workspace_id=session.id,
+                        workspace_id=owner.id,
                     )
                 except SessionError as exc:
                     logger.warning("Agentic IDE: {} could not be restarted: {}", term.name, exc)
@@ -5067,7 +5086,9 @@ class Registry:
         if is_coding_agent(term.agent):
             # Future viewers must not replay cursor moves produced for the old
             # grid into the new one. The live viewer already has its screen;
-            # this only starts a clean replay epoch for the next reconnect.
+            # this only starts a clean replay epoch for the next reconnect —
+            # one that still shows the old frame, and asks for a new one, when
+            # the agent lets this resize pass unanswered.
             term.replay.rebase_for_resize()
         term.transcript.resize(cols, rows)
         return True
@@ -6056,6 +6077,130 @@ class Registry:
             )
             return moved
 
+    async def transfer_terminal(
+        self, wanted: str, *, workspace_id: str | None, target_workspace_id: str
+    ) -> tuple[Session, Session, Terminal]:
+        """Move pane ``wanted`` out of its workspace into another OPEN one.
+
+        For the chat that was started in the wrong tab. The agent is neither
+        stopped nor restarted: its process, scrollback, conversation and
+        prompt history all belong to the pane (``history_id``), not to the
+        workspace, so moving it is the same re-parenting a workspace switch
+        already relies on — the new workspace's grid attaches a viewer and
+        re-joins the running agent.
+
+        What does change is only what is scoped to ONE workspace:
+
+        * the call-sign and key, which are unique per tab — a "T2" moving into
+          a tab that already has a T2 takes the lowest free number there, a
+          custom name keeps itself unless it is taken (``_unique_name``);
+        * the folder. The agent keeps working where it was started; a pane
+          moved into a workspace on ANOTHER folder records that folder as its
+          own (the field a worktree fork uses), so a later restart resumes the
+          same conversation in the same place instead of an empty chat in the
+          new folder. Moved back home, the field empties again.
+
+        Returns ``(source, target, terminal)``. Moving a pane into the tab it is
+        already in is a no-op, not an error — a drop the user took back.
+        """
+        async with self._lock:
+            source = self.get(workspace_id)
+            if source is None:
+                raise SessionError(
+                    "That workspace is not open."
+                    if workspace_id is not None
+                    else "No Agentic-IDE session is running."
+                )
+            term = source.find(wanted)
+            if term is None:
+                known = ", ".join(t.name for t in source.terminals) or "none"
+                raise SessionError(f"No terminal called {wanted!r}. Running: {known}.")
+            target = self._sessions.get(target_workspace_id)
+            if target is None:
+                raise SessionError(
+                    "That workspace is not open. Open it first, then move the terminal there."
+                )
+            if target.id == source.id:
+                return source, target, term
+            if len(target.terminals) >= MAX_TERMINALS:
+                raise SessionError(
+                    f"{target.name} already has the maximum of {MAX_TERMINALS} terminals."
+                )
+            if term.placing:
+                raise SessionError(
+                    f"{term.name} is still being set up on its computer. "
+                    "Move it once it has started there."
+                )
+
+            old_key, old_name = term.key, term.name
+            cwd = term.cwd(source.folder)
+            term.folder = "" if _same_folder(cwd, target.folder) else cwd
+
+            # Out of the old workspace the way a close takes a pane out, minus
+            # the kill: its rectangle folds away and its bell entries go (they
+            # are "jump to this pane" buttons keyed by the old tab and key).
+            source.terminals.remove(term)
+            source.layout = layout_tree.remove_pane(source.layout, old_key)
+            self._renumber(source)
+            names = {normalize(old_name), normalize(old_key)}
+
+            def _left(pointer: str) -> bool:
+                """Does a remembered selection of the old tab name the moved pane?"""
+                return bool(pointer) and (
+                    pointer == f"pane:{term.history_id}" or normalize(pointer) in names
+                )
+
+            if _left(source.surface_terminal):
+                source.surface_terminal = ""
+            if _left(source.surface_prompt_target):
+                source.surface_prompt_target = ""
+            if _left(source.focused):
+                source.focused = ""
+            opening.forget(old_key)
+            try:
+                from . import notifications
+
+                notifications.center().forget_pane(source.id, old_key)
+            except Exception as exc:  # noqa: BLE001 - never fail a move on bookkeeping
+                logger.warning(
+                    "Agentic IDE: could not clear notifications for a moved pane: {}", exc
+                )
+            # The screens watching it belong to the old tab's grid, which drops
+            # the pane on its next read. The new tab's grid attaches its own
+            # viewer and takes the "re-join a running agent" path in `attach`.
+            term.viewer_output = None
+            term.viewer_exit = None
+            term.watchers.clear()
+            term.prompt_viewers.clear()
+
+            # Into the new one with a call-sign and key that are free there.
+            term.name = _unique_name(old_name, {normalize(t.name) for t in target.terminals})
+            keys = {t.key for t in target.terminals}
+            key = old_key if old_key not in keys else (normalize(term.name) or "t")
+            stem, suffix = key, 2
+            while key in keys:
+                key = f"{stem}{suffix}"
+                suffix += 1
+            term.key = key
+            target.terminals.append(term)
+            # It joins the workspace edge like an anchor-less add: no pane was
+            # chosen to sit beside, and every pane then gets an even share.
+            target.layout = layout_tree.append_pane(target.layout, term.key)
+            columns, rows = layout_tree.grid_span(target.layout)
+            if columns > MAX_GRID_COLUMNS or rows > MAX_GRID_ROWS:
+                self._row_major_grid(target)
+            target.layout = layout_tree.evened(target.layout)
+            self._renumber(target)
+            await self._persist()
+            logger.info(
+                "Agentic IDE: moved terminal {} from workspace {} to {} as {}",
+                old_name,
+                source.name,
+                target.name,
+                term.name,
+            )
+            return source, target, term
+
     async def refold(self, depth: int) -> Session:
         """Re-deal every pane into columns ``depth`` deep, in reading order.
 
@@ -6941,6 +7086,18 @@ def _prevailing_agent(session: Session) -> str:
         if term.agent and counts[term.agent] == most:
             return term.agent
     return "claude"
+
+
+def _same_folder(left: str, right: str) -> bool:
+    """Do two folder strings the registry already holds name one place?
+
+    Compared as text, without touching the disk: both sides were resolved when
+    their workspace or pane was opened, so only spelling (separators, and case
+    on the platforms whose filesystem ignores it) can still differ.
+    """
+    if not left or not right:
+        return False
+    return os.path.normcase(os.path.normpath(left)) == os.path.normcase(os.path.normpath(right))
 
 
 def _unique_name(wanted: str, used: set[str]) -> str:

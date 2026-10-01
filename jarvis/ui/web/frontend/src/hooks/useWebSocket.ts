@@ -360,6 +360,9 @@ export function useWebSocket(): void {
           } else {
             const store = useEventStore.getState();
             const forThisWindow = isForThisWindow(p, store.dictating);
+            // Signalled after the text has landed (below), so a composer
+            // sending on it reads the finished box.
+            queueMicrotask(() => useEventStore.getState().noteDictationFinal());
             const delivered = forThisWindow
               ? deliverDictationText(text)
               : "none";
@@ -643,10 +646,7 @@ export function useWebSocket(): void {
           // restarted. Reload the lane that changed, wherever it came from.
           const p = env.payload as { kind?: string };
           void queryClient.invalidateQueries({ queryKey: ["marketplace-community"] });
-          if (p.kind === "wallpaper") {
-            // Prefix match: catalog, uploads and library all hang off this key.
-            void queryClient.invalidateQueries({ queryKey: ["wallpapers"] });
-          } else if (p.kind === "skill") {
+          if (p.kind === "skill") {
             void queryClient.invalidateQueries({ queryKey: ["skills"] });
           } else if (p.kind === "plugin") {
             void queryClient.invalidateQueries({ queryKey: ["marketplace-plugins"] });

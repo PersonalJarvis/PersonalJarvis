@@ -398,6 +398,19 @@ class MoveTerminalRequest(BaseModel):
     )
 
 
+class TransferTerminalRequest(BaseModel):
+    """Which open workspace a pane should belong to from now on."""
+
+    workspace_id: str | None = Field(
+        default=None,
+        description="Workspace the pane is in now; defaults to the workspace on screen.",
+    )
+    target_workspace_id: str = Field(
+        min_length=1,
+        description="Open workspace to move the pane into.",
+    )
+
+
 class RefoldRequest(BaseModel):
     """How deep the workspace's columns should be from now on."""
 
@@ -2912,6 +2925,42 @@ async def move_terminal(name: str, req: MoveTerminalRequest) -> dict:
         "position": req.position,
         "terminal": term.to_dict(),
         "state": get_registry().state(),
+    }
+
+
+@router.post(
+    "/terminals/{name}/transfer",
+    summary="Move a terminal into another open workspace",
+)
+async def transfer_terminal(request: Request, name: str, req: TransferTerminalRequest) -> dict:
+    """Move pane ``name`` out of its workspace into ``target_workspace_id``.
+
+    The agent keeps running — same process, same conversation, same folder —
+    and only changes which tab it is listed and drawn in. Its call-sign may
+    change when the target tab already has a pane by that name; the answer
+    says which name it carries now. Moving a pane into the tab it is already
+    in succeeds and changes nothing.
+    """
+    registry = get_registry()
+    try:
+        source, target, term = await registry.transfer_terminal(
+            name, workspace_id=req.workspace_id, target_workspace_id=req.target_workspace_id
+        )
+    except SessionError as exc:
+        # A pane or workspace that is not there is not found; a full or busy
+        # target is a conflict the caller can resolve and retry.
+        message = str(exc)
+        status = 404 if message.startswith("No terminal called") else 409
+        raise HTTPException(status_code=status, detail=message) from exc
+    if source.id != target.id:
+        await _announce_workspace(request, source, "updated")
+        await _announce_workspace(request, target, "updated")
+    return {
+        "ok": True,
+        "terminal": term.to_dict(),
+        "source_workspace_id": source.id,
+        "target_workspace_id": target.id,
+        "state": registry.state(),
     }
 
 

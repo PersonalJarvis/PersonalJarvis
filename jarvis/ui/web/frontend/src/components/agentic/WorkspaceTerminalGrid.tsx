@@ -4,7 +4,7 @@ import { AgentMark } from "./AgentMark";
 import { ForkPaneDialog, type ForkMode, type ForkSource } from "./ForkPaneDialog";
 import type { PaneSplitDirection } from "./WorkspaceTerminalHeader";
 import type { SessionState, TerminalState } from "@/lib/agenticIdeApi";
-import { forkTerminal, moveTerminal, placeTerminal, renameTerminal, type PaneMovePosition } from "@/lib/agenticIdeApi";
+import { forkTerminal, moveTerminal, placeTerminal, renameTerminal, transferTerminal, type PaneMovePosition } from "@/lib/agenticIdeApi";
 import { useComputerChoices } from "@/hooks/useComputers";
 import { useThemeValue } from "@/hooks/useTheme";
 import { useEventStore } from "@/store/events";
@@ -57,12 +57,18 @@ interface Props {
    * or rounded cards. The reader picks it in Workspace options.
    */
   paneStyle?: PaneStyle;
+  /** Every open workspace; a pane can be moved into any of the others. */
+  workspaces?: readonly WorkspaceChoice[];
 }
 
+interface WorkspaceChoice { id: string; name: string }
 interface DropTarget { id: string; position: PaneMovePosition; allowed: boolean }
-interface DragFeedback { id: string; target: DropTarget | null; x: number; y: number }
+interface DragFeedback { id: string; target: DropTarget | null; x: number; y: number; workspace?: WorkspaceChoice | null }
 
-export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSelect, selected, maxPanes = MAX_WORKSPACE_PANES, fontSize, appearance, disabled = false, onMutationStart, onMutationEnd, paneStyle: look = "classic" }: Props) {
+/** The attribute a sidebar row carries when a dragged pane may be dropped on it. */
+const WORKSPACE_DROP = "data-pane-drop-workspace";
+
+export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSelect, selected, maxPanes = MAX_WORKSPACE_PANES, fontSize, appearance, disabled = false, onMutationStart, onMutationEnd, paneStyle: look = "classic", workspaces = [] }: Props) {
   const theme = useThemeValue();
   const pushToast = useEventStore((state) => state.pushToast);
   // The pane an agent card in the side panel pointed at, framed in blue.
@@ -189,6 +195,34 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
     }
   }, [pushToast]);
 
+  // "Move to <workspace>", from the pane menu or by dropping the pane on a
+  // workspace in the sidebar: the pane leaves this grid and joins that tab
+  // with its agent still running, and that tab's grid re-joins it.
+  const [transferring, setTransferring] = useState<string | null>(null);
+  const transfer = useCallback(async (sourceId: string, target: WorkspaceChoice) => {
+    const owner = latest.current.session;
+    const terminal = owner.terminals.find((entry) => idOf(entry) === sourceId);
+    if (!terminal || target.id === owner.id || saveInFlight.current || latest.current.disabled) return;
+    saveInFlight.current = true;
+    latest.current.onMutationStart?.();
+    setTransferring(sourceId);
+    try {
+      const result = await transferTerminal(terminal.history_id ? `pane:${terminal.history_id}` : terminal.name, owner.id, target.id);
+      if (!mounted.current) return;
+      const next = result.state.session;
+      if (next && latest.current.session === owner && next.id === owner.id) latest.current.onChanged(next);
+      const renamed = result.terminal.name !== terminal.name ? ` as ${result.terminal.name}` : "";
+      pushToast("success", `${terminal.name} moved to ${target.name}${renamed}. Its agent keeps running.`);
+      setAnnouncement(`${terminal.name} moved to ${target.name}${renamed}.`);
+    } catch (error) {
+      if (mounted.current) pushToast("error", (error as Error).message);
+    } finally {
+      saveInFlight.current = false;
+      latest.current.onMutationEnd?.();
+      if (mounted.current) setTransferring(null);
+    }
+  }, [pushToast]);
+
   const startDrag = useCallback((id: string, event: React.PointerEvent) => {
     if (event.button !== 0 || latest.current.disabled || dragCleanup.current || saveInFlight.current) return;
     const handle = event.currentTarget;
@@ -214,14 +248,32 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
       }
       return null;
     };
+    // A workspace row in the sidebar under the pointer. It is lit straight on
+    // the DOM: the sidebar is another component, and this is one attribute
+    // for the length of a drag, not state it needs to own.
+    let litRow: HTMLElement | null = null;
+    const workspaceAt = (x: number, y: number): WorkspaceChoice | null => {
+      const row = document.elementFromPoint?.(x, y)?.closest<HTMLElement>(`[${WORKSPACE_DROP}]`) ?? null;
+      const targetId = row?.getAttribute(WORKSPACE_DROP) ?? "";
+      const hit = row && targetId && targetId !== latest.current.session.id ? row : null;
+      if (hit !== litRow) {
+        litRow?.removeAttribute("data-pane-drop-active");
+        hit?.setAttribute("data-pane-drop-active", "true");
+        litRow = hit;
+      }
+      return hit ? { id: targetId, name: hit.getAttribute("data-pane-drop-name") || "that workspace" } : null;
+    };
     const onMove = (motion: PointerEvent) => {
       if (motion.pointerId !== pointer) return;
       if (!armed && Math.hypot(motion.clientX - initialX, motion.clientY - initialY) <= 5) return;
       armed = true;
       motion.preventDefault();
-      setDrag({ id, target: targetAt(motion.clientX, motion.clientY), x: motion.clientX, y: motion.clientY });
+      const workspace = workspaceAt(motion.clientX, motion.clientY);
+      setDrag({ id, target: workspace ? null : targetAt(motion.clientX, motion.clientY), workspace, x: motion.clientX, y: motion.clientY });
     };
     const cleanup = () => {
+      litRow?.removeAttribute("data-pane-drop-active");
+      litRow = null;
       window.removeEventListener("pointermove", onMove, true);
       window.removeEventListener("pointerup", onUp, true);
       window.removeEventListener("pointercancel", onCancel, true);
@@ -235,9 +287,11 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
     const onKey = (key: KeyboardEvent) => { if (key.key === "Escape") { key.preventDefault(); key.stopPropagation(); cleanup(); } };
     const onUp = (release: PointerEvent) => {
       if (release.pointerId !== pointer) return;
-      const target = targetAt(release.clientX, release.clientY);
+      const workspace = armed ? workspaceAt(release.clientX, release.clientY) : null;
+      const target = workspace ? null : targetAt(release.clientX, release.clientY);
       cleanup();
-      if (armed && target?.allowed) void move(id, target.id, target.position);
+      if (armed && workspace) void transfer(id, workspace);
+      else if (armed && target?.allowed) void move(id, target.id, target.position);
     };
     dragCleanup.current = cleanup;
     window.addEventListener("pointermove", onMove, { capture: true, passive: false });
@@ -245,7 +299,7 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
     window.addEventListener("pointercancel", onCancel, true);
     window.addEventListener("blur", cleanup);
     window.addEventListener("keydown", onKey, true);
-  }, [move]);
+  }, [move, transfer]);
 
   const rename = async (terminal: TerminalState, name: string) => {
     const owner = latest.current.session;
@@ -396,6 +450,8 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
             splitDisabled={tiles.length >= maxPanes} onSplit={(direction) => onAdd(terminal.name, direction)}
             branch={terminal.branch || undefined}
             computerName={computerName(terminal)} placementItems={placementItems(terminal)}
+            workspaceItems={transferring || saving || disabled ? [] : workspaces.filter((workspace) => workspace.id !== session.id)
+              .map((workspace) => ({ label: `Move to ${workspace.name}`, run: () => void transfer(id, workspace) }))}
             onFork={terminal.accepts_prompts === false ? undefined : () => setForking({ name: terminal.name, agent: terminal.agent, displayName: terminal.display_name, workspaceId: session.id })} />
           {drag?.target?.id === id && <div aria-hidden="true" data-testid="dock-preview" data-position={drag.target.position}
             className={cn("pointer-events-none absolute z-20 flex items-center justify-center border-2 p-2", minimal ? "rounded-none" : "rounded-xl", drag.target.allowed ? "border-ring/70 bg-accent/[0.15]" : "border-destructive bg-background/80",
@@ -428,6 +484,7 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
     {drag && dragged && <div aria-hidden="true" className="pointer-events-none fixed z-[100] flex items-center gap-2 rounded-lg border border-border bg-popover px-3 py-2 text-sm font-medium text-popover-foreground shadow-xl"
       style={{ left: drag.x + 14, top: drag.y + 14 }}>
       <AgentMark agent={dragged.agent} label={dragged.display_name} variant="plain" />{dragged.name}
+      {drag.workspace && <span className="font-normal text-muted-foreground">Move to {drag.workspace.name}</span>}
     </div>}
     <span className="sr-only" role="status">{announcement}</span>
     <ForkPaneDialog source={forking} busy={forkBusy} onCancel={() => setForking(null)} onConfirm={(choice) => void fork(choice)} />

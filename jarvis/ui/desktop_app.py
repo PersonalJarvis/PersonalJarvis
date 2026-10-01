@@ -998,8 +998,8 @@ def webview_storage_dir(
 
     pywebview starts in ``private_mode`` by default: the WebView2 profile lives
     in a fresh ``%TEMP%\tmpXXXX`` folder that nobody deletes, and everything the
-    frontend keeps in ``localStorage`` — the chosen wallpaper, the deck/classic
-    surface, pane sizes, favourites, the theme cache the boot script paints the
+    frontend keeps in ``localStorage`` — the deck/classic surface, pane sizes,
+    favourites, the theme cache the boot script paints the
     first frame from — dies with the process (forensic 2026-08-18: light chrome
     on the dark bundled artwork after every restart, because the light pick was
     gone while the theme itself survived on the backend). The profile therefore
@@ -1011,8 +1011,8 @@ def webview_storage_dir(
     checkouts running side by side must not fight over one browser profile. A
     read-only checkout falls back to the per-user data directory, exactly like
     the credential store does; if neither can be created the caller keeps
-    pywebview's private mode — a wallpaper that does not survive a restart is
-    not worth failing the boot over.
+    pywebview's private mode — a layout that does not survive a restart is not
+    worth failing the boot over.
     """
     candidates: list[Path] = [
         (data_dir if data_dir is not None else DATA_DIR) / WEBVIEW_PROFILE_DIRNAME
@@ -5649,7 +5649,7 @@ class DesktopApp:
         # the UI: degrade to the browser-UI fallback. No-op on Windows/macOS
         # where the native backend starts normally.
         # The browser profile is persistent (see webview_storage_dir): the
-        # frontend's localStorage — wallpaper, surface, pane sizes, theme cache
+        # frontend's localStorage — surface, pane sizes, theme cache
         # — must survive a restart, and pywebview's default private mode throws
         # it away with the process. Only when no directory can be written does
         # the shell fall back to that private mode, and says so.
@@ -5662,8 +5662,8 @@ class DesktopApp:
 
             _profile_logger.warning(
                 "No writable directory for the WebView profile — the browser "
-                "runs in private mode and the interface forgets its wallpaper "
-                "and layout on every restart."
+                "runs in private mode and the interface forgets its layout "
+                "on every restart."
             )
         # Read by ``_begin_quit_from_close``: a force-exit backstop armed at the
         # X only makes sense while a real window loop is tearing down.

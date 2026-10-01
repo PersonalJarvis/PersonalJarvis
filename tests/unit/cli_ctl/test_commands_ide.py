@@ -78,3 +78,15 @@ def test_close_terminals_exits_nonzero_when_any_terminal_remains_open(capture_ap
 
     assert result.exit_code == 1
     assert '"failed"' in result.stdout
+
+
+def test_move_terminal_names_both_workspaces(capture_api) -> None:
+    result = runner.invoke(
+        app, ["ide", "move-terminal", "T2", "ide_blog", "--workspace", "ide_jarvis"]
+    )
+
+    assert result.exit_code == 0
+    call = capture_api["calls"][-1]
+    assert call["method"] == "POST"
+    assert call["path"] == "/api/agentic-ide/terminals/T2/transfer"
+    assert call["body"] == {"target_workspace_id": "ide_blog", "workspace_id": "ide_jarvis"}

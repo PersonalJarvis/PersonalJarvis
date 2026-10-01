@@ -2305,10 +2305,10 @@ class MarketplaceItemInstalled(Event):
     exactly the lane that changed.
 
     ``ready`` mirrors the install reply's own field: True when the thing is
-    usable right now (a wallpaper, a skill that validated), False when it
+    usable right now (a skill that validated), False when it
     still needs the user (a plugin waiting to be connected).
     """
-    kind: str = ""  # "skill" | "plugin" | "wallpaper"
+    kind: str = ""  # "skill" | "plugin"
     item_id: str = ""
     title: str = ""
     ready: bool = False

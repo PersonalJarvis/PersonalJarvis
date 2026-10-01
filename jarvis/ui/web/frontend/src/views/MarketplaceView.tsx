@@ -10,7 +10,6 @@ import {
   Package,
   RefreshCw,
   Search,
-  Sparkles,
   Store,
   UploadCloud,
   Wand2,
@@ -35,7 +34,6 @@ import {
   type CommunityPluginWire,
   type CommunityResponse,
   type CommunitySkillWire,
-  type CommunityWallpaperWire,
   type EntryContentsWire,
 } from "@/views/PluginsCommunity";
 
@@ -44,10 +42,10 @@ import {
 //
 // Everything published by the community used to be reachable only by knowing
 // where to look: plugins behind the "Community" tab of Skills & Tools, skills
-// in a second list, wallpapers in a third screen entirely. Somebody who never
-// opened those three places never learned the marketplace exists.
+// in a second list. Somebody who never opened those places never learned the
+// marketplace exists.
 //
-// This screen is the storefront: one index, one search across all three kinds,
+// This screen is the storefront: one index, one search across both kinds,
 // and — the part that matters — a landing that says where the thing WENT, with
 // a jump into the section that now holds it. Installing is not the end of the
 // errand; using the thing is.
@@ -61,7 +59,7 @@ import {
 /** The public storefront — the same catalogue, on the web. */
 const MARKETPLACE_WEB_URL = "https://github.com/PersonalJarvis/marketplace";
 
-type Kind = "plugin" | "skill" | "wallpaper";
+type Kind = "plugin" | "skill";
 type KindFilter = "all" | Kind | "mine";
 
 /** One entry of any kind, flattened into what the storefront draws. */
@@ -76,8 +74,6 @@ interface Entry {
   categories: string[];
   sourceUrl?: string | null;
   installed: boolean;
-  /** Wallpapers only — the published preview image. */
-  thumbUrl?: string | null;
   /** Plugins only — the brand tile. */
   logoUrl?: string | null;
   logoColor?: string | null;
@@ -99,15 +95,12 @@ interface Entry {
   seedConflict?: boolean;
   /** Skills only: a portable Agent Skill states the agents it also runs in. */
   portableAgents?: string[] | null;
-  /** Wallpapers only. */
-  license?: string | null;
 }
 
 /** Where an installed entry of this kind now lives in the app. */
 const HOME_SECTION: Record<Kind, SectionId> = {
   plugin: "plugins",
   skill: "skills",
-  wallpaper: "wallpaper",
 };
 
 function pluginEntry(p: CommunityPluginWire): Entry {
@@ -146,22 +139,6 @@ function skillEntry(s: CommunitySkillWire): Entry {
     sourceUrl: s.source_url,
     installed: Boolean(s.installed),
     portableAgents: s.flavor === "portable" ? (s.compatible_agents ?? []) : null,
-  };
-}
-
-function wallpaperEntry(w: CommunityWallpaperWire): Entry {
-  return {
-    kind: "wallpaper",
-    name: w.name,
-    title: w.title || w.name,
-    description: w.description ?? "",
-    publisher: w.publisher,
-    version: w.version,
-    categories: w.categories ?? [],
-    sourceUrl: w.source_url,
-    installed: Boolean(w.installed),
-    thumbUrl: w.thumb_url ?? w.raw_url ?? null,
-    license: w.license ?? null,
   };
 }
 
@@ -258,7 +235,6 @@ export function MarketplaceView() {
       queryClient.invalidateQueries({ queryKey: ["marketplace-community"] });
       queryClient.invalidateQueries({ queryKey: ["marketplace-plugins"] });
       queryClient.invalidateQueries({ queryKey: ["skills"] });
-      queryClient.invalidateQueries({ queryKey: ["wallpaper-catalog"] });
     },
   });
 
@@ -267,7 +243,6 @@ export function MarketplaceView() {
     return [
       ...(data.plugins ?? []).map(pluginEntry),
       ...(data.skills ?? []).map(skillEntry),
-      ...(data.wallpapers ?? []).map(wallpaperEntry),
     ];
   }, [data]);
 
@@ -287,7 +262,6 @@ export function MarketplaceView() {
     [entries, kindFilter, needle, login],
   );
 
-  const wallpapers = visible.filter((e) => e.kind === "wallpaper");
   const plugins = visible.filter((e) => e.kind === "plugin");
   const skills = visible.filter((e) => e.kind === "skill");
 
@@ -361,7 +335,6 @@ export function MarketplaceView() {
             all: entries.length,
             plugin: entries.filter((e) => e.kind === "plugin").length,
             skill: entries.filter((e) => e.kind === "skill").length,
-            wallpaper: entries.filter((e) => e.kind === "wallpaper").length,
             mine: mineCount,
           }}
           showMine={login !== null}
@@ -416,25 +389,6 @@ export function MarketplaceView() {
               onPublish={() => setStudioOpen(true)}
               t={t}
             />
-          )}
-
-          {wallpapers.length > 0 && (
-            <Shelf
-              title={t("marketplace.shelf_wallpapers")}
-              hint={t("marketplace.shelf_wallpapers_hint")}
-              count={wallpapers.length}
-            >
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                {wallpapers.map((entry) => (
-                  <WallpaperTile
-                    key={entry.name}
-                    entry={entry}
-                    onOpen={() => setOpenEntry(entry)}
-                    t={t}
-                  />
-                ))}
-              </div>
-            </Shelf>
           )}
 
           {plugins.length > 0 && (
@@ -511,8 +465,7 @@ function subtitleFor(
   if (loading) return t("marketplace.loading");
   if (!data) return "";
   if (data.status === "disabled") return t("marketplace.status_disabled");
-  const total =
-    (data.plugins?.length ?? 0) + (data.skills?.length ?? 0) + (data.wallpapers?.length ?? 0);
+  const total = (data.plugins?.length ?? 0) + (data.skills?.length ?? 0);
   const parts = [fill(t("marketplace.subtitle_count"), { count: total })];
   if (data.revision != null) {
     parts.push(fill(t("marketplace.subtitle_revision"), { revision: data.revision }));
@@ -548,7 +501,6 @@ function FilterChips({
     { id: "all", label: t("marketplace.filter_all") },
     { id: "plugin", label: t("marketplace.filter_plugins") },
     { id: "skill", label: t("marketplace.filter_skills") },
-    { id: "wallpaper", label: t("marketplace.filter_wallpapers") },
   ];
   if (showMine) chips.push({ id: "mine", label: t("marketplace.filter_mine") });
   return (
@@ -597,54 +549,6 @@ function Shelf({
       </div>
       {children}
     </section>
-  );
-}
-
-function WallpaperTile({
-  entry,
-  onOpen,
-  t,
-}: {
-  entry: Entry;
-  onOpen: () => void;
-  t: Translate;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onOpen}
-      className={cn(
-        "group relative block aspect-[16/10] w-full overflow-hidden rounded-xl",
-        "bg-secondary text-left",
-        "transition-colors hover:border-border-strong",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong/60",
-      )}
-    >
-      {entry.thumbUrl ? (
-        <img
-          src={entry.thumbUrl}
-          alt=""
-          loading="lazy"
-          className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
-        />
-      ) : (
-        <div className="grid h-full w-full place-items-center">
-          <Sparkles className="h-5 w-5 text-muted-foreground" />
-        </div>
-      )}
-      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 via-black/35 to-transparent p-3">
-        <p className="truncate text-sm font-medium text-white">{entry.title}</p>
-        {entry.publisher && (
-          <p className="truncate text-micro text-white/70">{entry.publisher}</p>
-        )}
-      </div>
-      {entry.installed && (
-        <span className="absolute right-2 top-2 flex items-center gap-1 rounded-full bg-black/60 px-2 py-0.5 text-micro font-medium text-white backdrop-blur">
-          <Check className="h-3 w-3" />
-          {t("marketplace.installed")}
-        </span>
-      )}
-    </button>
   );
 }
 
@@ -801,7 +705,6 @@ function Hero({
   const counts = {
     plugins: data?.plugins?.length ?? 0,
     skills: data?.skills?.length ?? 0,
-    wallpapers: data?.wallpapers?.length ?? 0,
   };
   return (
     <section
@@ -841,10 +744,9 @@ function Hero({
             )}
           </div>
         </div>
-        <dl className="grid grid-cols-3 gap-3 sm:gap-4">
+        <dl className="grid grid-cols-2 gap-3 sm:gap-4">
           <Stat value={counts.plugins} label={t("marketplace.filter_plugins")} />
           <Stat value={counts.skills} label={t("marketplace.filter_skills")} />
-          <Stat value={counts.wallpapers} label={t("marketplace.filter_wallpapers")} />
         </dl>
       </div>
     </section>
@@ -973,14 +875,6 @@ function EntryDrawer({
 
         <ScrollArea className="min-h-0 flex-1">
           <div className="space-y-5 px-5 py-4">
-            {entry.thumbUrl && (
-              <img
-                src={entry.thumbUrl}
-                alt=""
-                className="w-full rounded-lg border border-border object-cover"
-              />
-            )}
-
             {entry.description && (
               <p className="text-sm leading-relaxed text-foreground">
                 {entry.description}
@@ -1130,10 +1024,6 @@ function Destination({ entry, t }: { entry: Entry; t: Translate }) {
           ? entry.portableAgents.join(", ")
           : t("marketplace.portable_any"),
     });
-  }
-
-  if (entry.license) {
-    rows.push({ label: t("marketplace.license"), value: entry.license });
   }
 
   if (rows.length === 0) return null;

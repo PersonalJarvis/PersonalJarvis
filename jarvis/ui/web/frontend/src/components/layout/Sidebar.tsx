@@ -543,7 +543,7 @@ export function Sidebar({
       {/* The footer is one button now, not a popup: it opens the Settings hub
           on the Profile tab. The hub carries every former popup entry
           (Profile, {name}.md, Contacts, Spend, Socials, API Keys, Local
-          models, Settings, Wallpaper, Feedback) in its own left navigation.
+          models, Settings, Feedback) in its own left navigation.
           The attention dot stays — a failing provider, or a local setup that
           needs care, must be visible without opening anything. */}
       <div className="shrink-0 border-t border-border p-2">

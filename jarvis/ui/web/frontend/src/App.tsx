@@ -45,57 +45,20 @@ import { OnboardingGate } from "@/components/onboarding/OnboardingGate";
 import { installDictationFocusTracker } from "@/lib/dictationTarget";
 import { SubscriptionRealtimeTransportBroker } from "@/components/voice/SubscriptionRealtimeTransportBroker";
 import { BrowserRealtimeControl } from "@/components/voice/BrowserRealtimeControl";
-import { useDesktopWallpaper } from "@/hooks/useDesktopWallpaper";
-import { installWallpaperSync, useWallpaperStore } from "@/store/wallpaper";
 import { cn } from "@/lib/utils";
 
 /** Where the collapsed/expanded choice for the nav sidebar is remembered. */
 const NAV_COLLAPSED_KEY = "jarvis.sidebar.collapsed.v1";
 
 /**
- * The shared visual ground for every app section.
- *
- * The image and its theme veil are separate layers: the artwork can stay crisp
- * while light and dark mode independently tune contrast through semantic theme
- * channels in index.css. Focused workspaces keep their content surfaces on top.
- *
- * Which artwork is shown belongs to the user — see the Wallpaper section. The
- * picture that ships with the app remains the default, and the one every
- * failure path returns to. The artwork stays a pure scene with no mascot
- * composited on top.
- */
-function DesktopWallpaper() {
-  const wallpaperUrl = useDesktopWallpaper();
-  const background = useWallpaperStore((state) => state.background);
-  // A flat theme colour is the default ground (lib/backgroundMode.ts): the
-  // picture and its veil exist only once a wallpaper is switched on.
-  // index.css keys the readability floor on the same choice.
-  if (background !== "wallpaper") return null;
-  return (
-    <div
-      aria-hidden
-      data-testid="jarvis-desktop-wallpaper"
-      className="pointer-events-none absolute inset-0 -z-10 overflow-hidden"
-    >
-      <div
-        className="jarvis-desktop-wallpaper absolute inset-0"
-        style={{ backgroundImage: `url(${wallpaperUrl})` }}
-      />
-      <div className="jarvis-desktop-wallpaper-veil absolute inset-0" />
-    </div>
-  );
-}
-
-/**
  * The surface the active section is drawn on.
  *
  * Two grounds, because the app has two kinds of screen. Everything the app
- * writes itself sits on the wallpaper and gets the readability floor that comes
- * with it (`.jarvis-section-stage` in index.css). The Visualization section
- * shows pictures somebody ELSE produced — a rendered chart, a diagram, a framed
- * page — and the same floor damages those: an inherited text halo lands on the
- * labels inside an SVG, and busy artwork behind a transparent PNG makes it
- * impossible to tell what the picture actually looks like.
+ * writes itself sits on the section stage (`.jarvis-section-stage`). The
+ * Visualization section shows pictures somebody ELSE produced — a rendered
+ * chart, a diagram, a framed page — so it gets one quiet opaque ground with no
+ * inherited text shadow, and a transparent PNG is judged against one flat
+ * colour (`.jarvis-visualization-stage` in index.css).
  *
  * The choice belongs to the shell rather than to the view. The stage is the
  * surface a section is laid out ON, and it has to hold in BOTH shapes this
@@ -103,7 +66,7 @@ function DesktopWallpaper() {
  * detached window where the section is the whole screen.
  *
  * Exported for its own test: rendering the whole shell to assert one class
- * would drag in the WebSocket, the wallpaper sync and the onboarding gate.
+ * would drag in the WebSocket and the onboarding gate.
  */
 export function SectionStage({
   visualization,
@@ -172,13 +135,6 @@ export default function App() {
    * including the terminals of the Agentic IDE.
    */
   useEffect(() => installDictationFocusTracker(), []);
-
-  /*
-   * Follow the wallpaper choice across windows. Picking one in the main window
-   * should not leave a detached window wearing the previous picture until it
-   * happens to reload.
-   */
-  useEffect(() => installWallpaperSync(), []);
 
   /*
    * Resync the detached-window registry once per document. The WS events keep
@@ -327,7 +283,6 @@ export default function App() {
   if (solo) {
     return (
       <div className="jarvis-nav-surface relative isolate flex h-screen w-screen overflow-hidden text-foreground">
-        <DesktopWallpaper />
         {brokerMounted && <SubscriptionRealtimeTransportBroker />}
         <BrowserRealtimeControl controlOnly />
         {/* The caption paints nothing: the window ground is the sidebar gray,
@@ -358,7 +313,6 @@ export default function App() {
     <div className="jarvis-nav-surface relative isolate flex h-screen w-screen overflow-hidden text-foreground">
       {brokerMounted && <SubscriptionRealtimeTransportBroker />}
       <BrowserRealtimeControl controlOnly />
-      <DesktopWallpaper />
 
       {!hideNavigation && <>
       <Sidebar
@@ -381,16 +335,15 @@ export default function App() {
         The stage column carries NO z-index, and must not get one back.
 
         A positive z-index here makes <main> its own stacking context, and
-        then every full-screen overlay a section renders inside it — the
-        wallpaper preview, the view dialogs, their scrims — is trapped at
-        THAT level however high its own z-index climbs. The nav column
-        beside it (z-20) then paints over the overlay: the sidebar logo,
-        the assistant name and the voice state landed on top of the
-        wallpaper preview's own header, one line of text over the other.
+        then every full-screen overlay a section renders inside it — an image
+        preview, the view dialogs, their scrims — is trapped at THAT level
+        however high its own z-index climbs. The nav column beside it (z-20)
+        then paints over the overlay: the sidebar logo, the assistant name and
+        the voice state landed on top of a full-screen preview's own header,
+        one line of text over the other.
 
-        `relative` alone is all the column needs: it stays above the
-        wallpaper layer because that one is negative (-z-10), and the
-        overlays inside reach the app's real dialog levels. Guarded by
+        `relative` alone is all the column needs, and the overlays inside
+        reach the app's real dialog levels. Guarded by
         components/layout/overlay-stacking.test.ts.
       */}
       <main className="relative flex min-w-0 flex-1 flex-col">

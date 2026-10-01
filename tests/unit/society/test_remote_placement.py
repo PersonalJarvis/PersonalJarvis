@@ -8,6 +8,7 @@ started there with a rewritten argv and read back line by line.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -63,8 +64,10 @@ def computers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> ComputerServic
 
 
 @pytest.fixture
-async def ssh_server():  # noqa: ANN201
-    server = FakeSshServer()
+async def ssh_server(tmp_path: Path):  # noqa: ANN201
+    home = tmp_path / "remote-home"
+    home.mkdir()
+    server = FakeSshServer(sftp_root=home)
     await server.start()
     try:
         yield server
@@ -149,7 +152,7 @@ async def test_shell_runs_inside_the_remote_workspace(
     tmp_path: Path, vps, ssh_server: FakeSshServer
 ) -> None:  # noqa: ANN001
     async def handler(command: str, process: Any) -> bool:
-        if command.startswith("mkdir -p"):
+        if "ls -la" in command:
             process.stdout.write("hello from the vps\n")
             process.stderr.write("a warning\n")
             process.exit(0)
@@ -168,8 +171,12 @@ async def test_shell_runs_inside_the_remote_workspace(
     assert result.ok
     assert "hello from the vps" in result.output and "a warning" in result.output
     sent = ssh_server.state.commands[-1]
-    assert '"$HOME"/jarvis-agents/scout/sub' in sent
-    assert sent.endswith("&& ls -la")
+    # The login shell's PATH comes first, then each step stops on its own failure:
+    # `cd x; ls` can no longer run its second half in the home folder.
+    assert sent.startswith("PATH=/usr/local/bin:/usr/bin:/bin:")
+    assert 'cd "$HOME"/jarvis-agents/scout/sub || exit 97' in sent
+    assert sent.rstrip().endswith("ls -la")
+    assert backend.where == "VPS (Linux, bash)"
 
 
 async def test_shell_reports_an_unreachable_computer(tmp_path: Path, computers) -> None:  # noqa: ANN001
@@ -239,7 +246,7 @@ async def test_cli_turn_streams_from_the_remote_process(vps, ssh_server: FakeSsh
             process.stdout.write("/root/jarvis-agents/scout\nfound\n")
             process.exit(0)
             return True
-        if "exec env" in command:
+        if "exec claude" in command:
             prompt = await process.stdin.readline()
             process.stdout.write(json.dumps({"type": "echo", "got": prompt.strip()}) + "\n")
             process.stdout.write(json.dumps({"type": "result", "result": "done"}) + "\n")
@@ -253,9 +260,17 @@ async def test_cli_turn_streams_from_the_remote_process(vps, ssh_server: FakeSsh
         agent_id="scout",
         runner="claude-cli",
         binary="claude",
-        argv=[r"C:\bin\claude.exe", "--print", "--output-format", "stream-json"],
+        argv=[
+            r"C:\bin\claude.exe",
+            "--print",
+            "--output-format",
+            "stream-json",
+            "--append-system-prompt-file",
+            r"C:\tmp\identity.md",
+        ],
         local_cwd=r"C:\ws",
         env={"PATH": r"C:\secret-path"},
+        system_prompt_files={r"C:\tmp\identity.md": "You are Scout."},
     )
     proc.stdin.write(b"hello there\n")
     await proc.stdin.drain()
@@ -267,9 +282,59 @@ async def test_cli_turn_streams_from_the_remote_process(vps, ssh_server: FakeSsh
     assert first == {"type": "echo", "got": "hello there"}
     assert second["type"] == "result"
     assert code == 0
+    # Started by an uploaded launcher: the login shell never reads the turn.
     launched = ssh_server.state.commands[-1]
-    assert "cd /root/jarvis-agents/scout && exec env CI=1 NO_COLOR=1 claude --print" in launched
+    assert launched.startswith("PATH=/usr/local/bin:/usr/bin:/bin:")
+    assert '. "$HOME/.config/jarvis/agent.env"' in launched
+    assert "cd -- /root/jarvis-agents/scout || exit 97" in launched
+    assert "export CI=1" in launched and "export NO_COLOR=1" in launched
+    prompt_file = "/home/test/jarvis-agents/.launch/scout-prompt-0.md"
+    assert (
+        "exec claude --print --output-format stream-json "
+        f"--append-system-prompt-file {prompt_file}" in launched
+    )
     assert "secret-path" not in launched
+    uploaded = (ssh_server.sftp_root / "jarvis-agents/.launch/scout-prompt-0.md").read_text()
+    assert uploaded.startswith("You are Scout.") and '"VPS"' in uploaded
+
+
+async def test_a_cancelled_turn_ends_its_process_group(vps, ssh_server: FakeSshServer) -> None:  # noqa: ANN001
+    """Hanging up does not reliably end a CLI that never writes: stop it first."""
+    stopped = asyncio.Event()
+
+    async def handler(command: str, process: Any) -> bool:
+        if "command -v" in command:
+            process.stdout.write("/root/jarvis-agents/scout\nfound\n")
+            process.exit(0)
+            return True
+        if "exec claude" in command:
+            await stopped.wait()
+            process.exit(143)
+            return True
+        if "kill -TERM" in command:
+            stopped.set()
+            process.exit(0)
+            return True
+        return False
+
+    ssh_server.state.handler = handler
+    proc = await remote_cli.spawn(
+        vps.id,
+        agent_id="scout",
+        runner="claude-cli",
+        binary="claude",
+        argv=["claude", "--print"],
+        local_cwd="/ws",
+        env={},
+    )
+    launcher = next(c for c in ssh_server.state.commands if "exec claude" in c)
+    assert "ps -o pgid= -p $$" in launcher
+    assert 'echo "${g:-$$}" > "$HOME"/jarvis-agents/.launch/scout.pid' in launcher
+
+    proc.kill()
+    assert await asyncio.wait_for(proc.wait(), timeout=30) == 143
+    stop = next(c for c in ssh_server.state.commands if "kill -TERM" in c)
+    assert 'kill -TERM -- "-$p"' in stop and "jarvis-agents/.launch/scout.pid" in stop
 
 
 async def test_missing_cli_on_the_remote_is_a_clear_sentence(
@@ -293,7 +358,7 @@ async def test_missing_cli_on_the_remote_is_a_clear_sentence(
             local_cwd="/work",
             env={},
         )
-    assert "Install codex on VPS" in str(caught.value)
+    assert "codex was not found on VPS" in str(caught.value)
 
 
 async def test_placement_follows_the_society_roster(monkeypatch: pytest.MonkeyPatch) -> None:

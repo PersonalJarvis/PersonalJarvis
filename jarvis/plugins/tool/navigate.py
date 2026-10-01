@@ -53,7 +53,6 @@ KNOWN: frozenset[str] = frozenset(
         "contacts",
         "feedback",
         "agent-instructions",
-        "wallpaper",
         # Appshots: the shortcut and destination for showing the front window.
         "appshots",
         # Jarvis actions: which app actions Jarvis may run, ask for or never run.
@@ -71,8 +70,8 @@ KNOWN: frozenset[str] = frozenset(
         # grid" an unknown section to the brain.
         "agentic-ide-classic",
         "chat-workspace",
-        # The marketplace, in the app: community plugins, skills and wallpapers
-        # in one storefront.
+        # The marketplace, in the app: community plugins and skills in one
+        # storefront.
         "marketplace",
     }
 )
@@ -198,11 +197,6 @@ _ALIASES: dict[str, str] = {
     "ausgaben": "visualization",  # i18n-allow: input vocab
     "ergebnisse": "visualization",  # i18n-allow: input vocab
     "resultados": "visualization",  # i18n-allow: input vocab
-    "wallpapers": "wallpaper",
-    "background": "wallpaper",
-    "hintergrund": "wallpaper",  # i18n-allow: input vocab
-    "hintergrundbild": "wallpaper",  # i18n-allow: input vocab
-    "fondo de pantalla": "wallpaper",  # i18n-allow: input vocab
     "appshot": "appshots",
     "jarvis actions": "jarvis-actions",
     "jarvis aktionen": "jarvis-actions",  # i18n-allow: speech-input vocabulary

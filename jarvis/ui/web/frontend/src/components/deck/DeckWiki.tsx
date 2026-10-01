@@ -275,8 +275,9 @@ export function WikiCard({ className }: { className?: string }) {
 
 /**
  * The map at the whole window. A HUD overlay, not a modal dialog: a thin
- * bracket frame, a title strip with the counts, and the scene — the wallpaper
- * still shows through the WebGL background the way it does everywhere else.
+ * bracket frame, a title strip with the counts, and the scene — the app's
+ * ground still shows through the WebGL background the way it does everywhere
+ * else.
  */
 function WikiExpanded({
   graphData,

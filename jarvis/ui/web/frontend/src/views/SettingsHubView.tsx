@@ -22,7 +22,7 @@ import { cn } from "@/lib/utils";
  * (General · System · Activity) and the selected section on the right:
  *
  *   General: Settings, Appshots, Profile, {name}.md, Contacts, Socials
- *   System: Computers, API Keys, Local models, Wallpaper
+ *   System: Computers, API Keys, Local models, Jarvis actions
  *   Activity: Spend, Feedback
  *
  * Same merged-section pattern as VoiceHubView / ClisHubView: the active
@@ -77,9 +77,6 @@ const LocalModelsTab = lazy(() =>
 const ComputersTab = lazy(() =>
   import("@/views/ComputersView").then((m) => ({ default: m.ComputersView })),
 );
-const WallpaperTab = lazy(() =>
-  import("@/views/WallpaperView").then((m) => ({ default: m.WallpaperView })),
-);
 const JarvisActionsTab = lazy(() =>
   import("@/views/JarvisActionsView").then((m) => ({ default: m.JarvisActionsView })),
 );
@@ -95,7 +92,7 @@ const FeedbackTab = lazy(() =>
   })),
 );
 
-/** The eleven entries of the left navigation, in display order. */
+/** The twelve entries of the left navigation, in display order. */
 type HubNavId =
   | "settings"
   | "appshots"
@@ -107,7 +104,6 @@ type HubNavId =
   | "local-models"
   | "computers"
   | "jarvis-actions"
-  | "wallpaper"
   | "costs"
   | "feedback";
 
@@ -118,7 +114,7 @@ const HUB_NAV_GROUPS: readonly { labelKey: string; ids: readonly HubNavId[] }[] 
   },
   {
     labelKey: "settings_hub.group_system",
-    ids: ["computers", "apikeys", "local-models", "jarvis-actions", "wallpaper"],
+    ids: ["computers", "apikeys", "local-models", "jarvis-actions"],
   },
   {
     labelKey: "settings_hub.group_activity",
@@ -136,7 +132,6 @@ const TAB_CONTENT: Record<HubNavId | "telephony-setup", LazyExoticComponent<Comp
   "telephony-setup": TelephonySetupTab,
   "local-models": LocalModelsTab,
   computers: ComputersTab,
-  wallpaper: WallpaperTab,
   appshots: AppshotsTab,
   "jarvis-actions": JarvisActionsTab,
   costs: CostsTab,
@@ -167,8 +162,6 @@ function resolveHubTab(active: string): { content: HubNavId | "telephony-setup";
       return { content: "local-models", highlight: "local-models" };
     case "computers":
       return { content: "computers", highlight: "computers" };
-    case "wallpaper":
-      return { content: "wallpaper", highlight: "wallpaper" };
     case "appshots":
       return { content: "appshots", highlight: "appshots" };
     case "jarvis-actions":
@@ -229,7 +222,7 @@ export function SettingsHubView({ onClose }: { onClose: () => void }) {
   const matches = (item: NavItem) =>
     needle === "" || resolveNavLabel(t, item).toLowerCase().includes(needle);
 
-  // Eleven entries — filtered inline; no memo needed at this size.
+  // Twelve entries — filtered inline; no memo needed at this size.
   const visibleGroups = HUB_NAV_GROUPS.map((group) => ({
     ...group,
     items: group.ids.map(findNavItem).filter(matches),
@@ -423,7 +416,7 @@ export function SettingsHubView({ onClose }: { onClose: () => void }) {
  *
  * Centred with `inset-0` + `m-auto` rather than a translate: a transform would
  * turn the dialog into the containing block of every `position: fixed` layer a
- * tab renders inline (the wallpaper preview, view-level dialogs) and trap them
+ * tab renders inline (an image preview, view-level dialogs) and trap them
  * inside the window instead of covering the screen.
  */
 export function SettingsHubDialog({ onClose }: { onClose: () => void }) {
