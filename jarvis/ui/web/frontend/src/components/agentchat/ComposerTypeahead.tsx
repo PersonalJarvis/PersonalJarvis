@@ -3,6 +3,8 @@ import { createPortal } from "react-dom";
 import { Bot, FileText, Folder, Sparkles, TerminalSquare } from "lucide-react";
 
 import { groupRuns, type TypeaheadItem } from "@/components/agentchat/typeahead";
+import { ToolChoiceIcon } from "@/components/agentchat/ToolChoiceChips";
+import { toolIdentityStyle } from "@/components/agentchat/toolIdentity";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
@@ -116,6 +118,10 @@ export function ComposerTypeahead({
               runningIndex += 1;
               const active = index === activeIndex;
               const Icon = kindIcon(item.kind);
+              // A named thing (an agent, a plugin) reads by its name first,
+              // the way the agents' own picker shows it; a file or a command
+              // keeps the terse `@value` row.
+              const named = Boolean(item.choice) || (item.kind === "agent" && item.label !== item.value);
               return (
                 <div
                   key={`${item.group}:${item.value}`}
@@ -130,13 +136,32 @@ export function ComposerTypeahead({
                     active ? "bg-primary/15 text-foreground" : "text-foreground",
                   )}
                 >
-                  <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
-                  <span className="shrink-0 font-mono text-meta">
-                    <span className="text-muted-foreground">{trigger}</span>
-                    {item.value}
-                  </span>
-                  {item.hint && (
-                    <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{item.hint}</span>
+                  {item.choice ? (
+                    <span className="tool-identity inline-flex shrink-0" style={toolIdentityStyle(item.choice)} aria-hidden>
+                      <ToolChoiceIcon row={item.choice} size={16} />
+                    </span>
+                  ) : (
+                    <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                  )}
+                  {named ? (
+                    <span className="flex min-w-0 flex-1 items-baseline gap-2">
+                      <span className="shrink-0 font-medium">{item.label}</span>
+                      <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                        {trigger}
+                        {item.value}
+                      </span>
+                      {item.hint && <span className="min-w-0 truncate text-xs text-muted-foreground">{item.hint}</span>}
+                    </span>
+                  ) : (
+                    <>
+                      <span className="shrink-0 font-mono text-meta">
+                        <span className="text-muted-foreground">{trigger}</span>
+                        {item.value}
+                      </span>
+                      {item.hint && (
+                        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{item.hint}</span>
+                      )}
+                    </>
                   )}
                 </div>
               );
@@ -150,6 +175,8 @@ export function ComposerTypeahead({
 }
 
 function groupLabel(group: string, t: (key: string) => string): string {
+  // Catalog rows head their runs with the Add menu's own category names.
+  if (group.startsWith("tool:")) return t(`chat_tools.${group.slice(5)}`);
   switch (group) {
     case "project":
       return t("agent_chat.typeahead_group_project");
@@ -161,6 +188,8 @@ function groupLabel(group: string, t: (key: string) => string): string {
       return t("agent_chat.typeahead_group_jarvis");
     case "agents":
       return t("agent_chat.typeahead_group_agents");
+    case "teammates":
+      return t("nav.agents");
     case "files":
       return t("agent_chat.typeahead_group_files");
     default:

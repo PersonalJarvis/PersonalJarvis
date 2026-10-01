@@ -235,6 +235,8 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
     provider: draft.provider,
     cwd: draft.cwd,
     triggers,
+    model: draft.model,
+    stance: draft.permissionMode,
   }, fieldRef);
 
   const running = runningTurn(timeline) !== null;
