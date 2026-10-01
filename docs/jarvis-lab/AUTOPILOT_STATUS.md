@@ -22,3 +22,5 @@ Current workstream priority:
 2. MacAgentBench coverage for takeover and fail-closed degradation;
 3. upstream alignment and regression checks;
 4. next highest-priority architecture gap that is not blocked on physical macOS testing.
+
+The scheduled pass is intentionally limited to the platform-supported maximum cadence of once per hour; it is not a continuously resident daemon.
