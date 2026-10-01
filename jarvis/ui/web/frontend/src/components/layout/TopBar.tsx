@@ -376,15 +376,89 @@ function withDetail(message: string, detail: string | null): string {
   return `${message} (${trimmed.slice(0, 180)})`;
 }
 
+
 /**
- * Shown when the backend reports a managed install with a newer published
- * release (``status.update_available``) — or with a staged-but-not-installed
- * transaction (``status.pending_update``) left behind by an earlier attempt.
- * One click stages the new code (`POST /api/update/apply`) and then restarts
- * to install it, reusing the same mission-guard (409 → force) flow as the
- * restart button. Hovering reveals the release notes. On a dev tree / manual
- * clone the status is ``managed: false``, so this renders nothing and can
- * never trigger a self-update.
+ * Release notes arrive as GitHub Markdown. The panel shows them as plain
+ * prose, so heading hashes, bold markers and list bullets are dropped rather
+ * than printed as literal punctuation.
+ */
+function plainNotes(notes: string): string {
+  return notes
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map((line) =>
+      line
+        .replace(/^\s{0,3}#{1,6}\s+/, "")
+        .replace(/^\s*[-*+]\s+/, "• ")
+        .replace(/\*\*(.+?)\*\*/g, "$1")
+        .replace(/`([^`]+)`/g, "$1"),
+    )
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
+    .slice(0, 800);
+}
+
+/** Geometry of the progress ring that replaces the icon while an update runs. */
+const RING_RADIUS = 6.5;
+const RING_LENGTH = 2 * Math.PI * RING_RADIUS;
+
+/**
+ * A 16 px ring that fills with the update percentage — the whole progress
+ * indicator the title strip needs, at the size of the icon it replaces, so a
+ * running update never pushes the neighbouring buttons around.
+ */
+function ProgressRing({ percent, spinning }: { percent: number; spinning: boolean }) {
+  const clamped = Math.min(100, Math.max(0, percent));
+  return (
+    <svg
+      aria-hidden
+      viewBox="0 0 16 16"
+      className={cn("h-4 w-4 -rotate-90", spinning && "animate-spin")}
+    >
+      <circle
+        cx="8"
+        cy="8"
+        r={RING_RADIUS}
+        fill="none"
+        strokeWidth="2"
+        className="stroke-border-strong"
+      />
+      <circle
+        cx="8"
+        cy="8"
+        r={RING_RADIUS}
+        fill="none"
+        strokeWidth="2"
+        strokeLinecap="round"
+        className="stroke-accent transition-[stroke-dashoffset] duration-300 ease-out"
+        strokeDasharray={RING_LENGTH}
+        strokeDashoffset={RING_LENGTH * (1 - clamped / 100)}
+      />
+    </svg>
+  );
+}
+
+/**
+ * The update entry point in the title strip.
+ *
+ * At rest it is one more quiet icon among theme, detach and restart: a download
+ * glyph with a small accent dot. That is the whole announcement — an update is
+ * good news, not an alarm, and most of the time the user is busy with
+ * something else. Clicking opens a small panel with the version, the release
+ * notes and the one action, so a stray click can never start a restart.
+ *
+ * It renders only when the backend reports a managed install with a newer
+ * published release (``status.update_available``) — or with a
+ * staged-but-not-installed transaction (``status.pending_update``) left behind
+ * by an earlier attempt. "Update & restart" stages the new code
+ * (`POST /api/update/apply`) and then restarts to install it, reusing the same
+ * mission-guard (409 → force) flow as the restart button. On a dev tree or
+ * manual clone the status is ``managed: false``, so this renders nothing and
+ * can never trigger a self-update.
+ *
+ * While the update runs, the icon becomes a progress ring and the panel (if
+ * open) shows the percentage, the server's sub-status and a thin bar.
  */
 function UpdateButton() {
   const t = useT();
@@ -392,11 +466,12 @@ function UpdateButton() {
   const { status } = useUpdate();
   const [busy, setBusy] = useState(false);
   const [forceArmed, setForceArmed] = useState(false);
-  const [showNotes, setShowNotes] = useState(false);
+  const [open, setOpen] = useState(false);
   const [progress, setProgress] = useState<UpdateProgress | null>(null);
   const [restarting, setRestarting] = useState(false);
   const resetTimer = useRef<number | null>(null);
   const rollbackNotified = useRef<string | null>(null);
+  const rootRef = useRef<HTMLDivElement | null>(null);
 
   // Poll the progress side channel for as long as the apply request is in
   // flight. It stops on its own when the button leaves the busy state, and a
@@ -416,6 +491,27 @@ function UpdateButton() {
       window.clearInterval(id);
     };
   }, [busy]);
+
+  // The panel closes on a click outside it or on Escape, like every other
+  // floating layer — but never mid-update by accident: the progress lives
+  // there, and the ring on the button keeps reporting either way.
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const root = rootRef.current;
+      if (root && event.target instanceof Node && root.contains(event.target)) return;
+      setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
 
   const clearResetTimer = useCallback(() => {
     if (resetTimer.current !== null) {
@@ -456,23 +552,51 @@ function UpdateButton() {
   if (!hasOffer && !hasStaged) return null;
   const shownVersion = status.latest ?? status.pending_update?.version ?? null;
 
+  // The mission guard refused (a quit would kill live missions): surface the
+  // count and arm a force override, so the next click is the user's explicit
+  // decision — never a silent kill.
+  function armForce(count: number) {
+    setBusy(false);
+    setProgress(null);
+    setForceArmed(true);
+    setOpen(true);
+    clearResetTimer();
+    resetTimer.current = window.setTimeout(() => {
+      setForceArmed(false);
+      resetTimer.current = null;
+    }, CONFIRM_TIMEOUT_MS);
+    pushToast("warning", `${count} ${t("topbar.restart_missions_running")}`);
+  }
+
   async function run(force: boolean) {
     clearResetTimer();
     setBusy(true);
     setRestarting(false);
     setProgress(null);
-    setShowNotes(false);
 
     // 1. Stage the new code. The server re-verifies the managed-install guard,
     // so a spoofed client can't force a reset on an unmanaged checkout. This is
     // idempotent — with a transaction already staged it succeeds even offline.
     try {
-      const applyRes = await fetch("/api/update/apply", { method: "POST" });
+      const applyRes = await fetch(
+        force ? "/api/update/apply?force=true" : "/api/update/apply",
+        { method: "POST" },
+      );
       const applyBody = (await applyRes.json().catch(() => ({}))) as {
-        detail?: string;
+        detail?: unknown;
+        restart_required?: boolean;
         deps_warning?: string | null;
         desktop_integration_warning?: string | null;
       };
+      const missionGuard = applyBody.detail as
+        | { error?: string; missions?: unknown[] }
+        | undefined;
+      if (applyRes.status === 409 && missionGuard?.error === "missions_running") {
+        // A native install quits for the installer, so the server runs the
+        // mission guard BEFORE downloading. Same override as the restart.
+        armForce(missionGuard.missions?.length ?? 0);
+        return;
+      }
       if (!applyRes.ok) {
         // 403 unmanaged / 409 nothing newer / 502 git or GitHub failure — the
         // backend's detail says WHICH, and the user must get to see it.
@@ -483,7 +607,9 @@ function UpdateButton() {
           "error",
           withDetail(
             t("topbar.update_failed"),
-            applyBody.detail ?? `HTTP ${applyRes.status}`,
+            typeof applyBody.detail === "string"
+              ? applyBody.detail
+              : `HTTP ${applyRes.status}`,
           ),
         );
         return;
@@ -493,6 +619,14 @@ function UpdateButton() {
       }
       if (applyBody.desktop_integration_warning) {
         pushToast("warning", t("topbar.update_desktop_warning"));
+      }
+      if (applyBody.restart_required === false) {
+        // A native installer took over and the server is already closing
+        // this app; the new version starts by itself once it is gone. A
+        // restart on top would race the installer for the program files.
+        setRestarting(true);
+        pushToast("info", t("topbar.update_restarting"));
+        return;
       }
     } catch {
       setBusy(false);
@@ -524,18 +658,7 @@ function UpdateButton() {
           } catch {
             /* malformed body — still arm the override */
           }
-          setBusy(false);
-          setProgress(null);
-          setForceArmed(true);
-          clearResetTimer();
-          resetTimer.current = window.setTimeout(() => {
-            setForceArmed(false);
-            resetTimer.current = null;
-          }, CONFIRM_TIMEOUT_MS);
-          pushToast(
-            "warning",
-            `${count} ${t("topbar.restart_missions_running")}`,
-          );
+          armForce(count);
           return;
         }
         if (restartRes.ok) {
@@ -570,7 +693,7 @@ function UpdateButton() {
     );
   }
 
-  function onClick() {
+  function onInstall() {
     if (busy) return;
     void run(forceArmed);
   }
@@ -579,78 +702,134 @@ function UpdateButton() {
   // the restart — the one phase nothing can measure, because the thing that
   // would report it is the thing shutting down.
   const percent = restarting ? 100 : (progress?.percent ?? 0);
-  const label = restarting
+  const busyLabel = restarting
     ? t("topbar.update_restarting")
-    : busy
-      ? fill(t("topbar.updating_percent"), { percent })
-      : forceArmed
-        ? t("topbar.restart_force")
-        : hasOffer
-          ? t("topbar.update_available")
-          : t("topbar.update_finish_restart");
+    : fill(t("topbar.updating_percent"), { percent });
+  const title = hasOffer ? t("topbar.update_available") : t("topbar.update_finish_restart");
+  const buttonLabel = busy
+    ? busyLabel
+    : shownVersion
+      ? `${title} · v${shownVersion}`
+      : title;
+  const actionLabel = forceArmed
+    ? t("topbar.restart_force")
+    : hasOffer
+      ? t("topbar.update_now")
+      : t("topbar.update_finish_restart");
+  const notes = status.notes ? plainNotes(status.notes) : "";
 
   return (
-    <div
-      className="relative"
-      onMouseEnter={() => !busy && status.notes && setShowNotes(true)}
-      onMouseLeave={() => setShowNotes(false)}
-    >
+    <div ref={rootRef} className="relative">
       <button
         type="button"
-        onClick={onClick}
-        disabled={busy}
-        title={busy ? (progress?.detail ?? label) : t("topbar.update_hint")}
-        // The button doubles as the progress bar while it runs, so it carries
-        // the ARIA role of one — a screen reader announces the same percentage
-        // the fill shows. Outside an update those attributes must be absent,
-        // not zeroed, or it reads as a bar stuck at 0 %.
+        onClick={() => setOpen((v) => !v)}
+        title={busy ? (progress?.detail ?? busyLabel) : buttonLabel}
+        aria-label={buttonLabel}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        data-testid="update-button"
+        // While it runs, the button carries the ARIA role of the progress bar
+        // its ring draws — a screen reader announces the same percentage.
+        // Outside an update those attributes must be absent, not zeroed, or it
+        // reads as a bar stuck at 0 %.
         role={busy ? "progressbar" : undefined}
         aria-valuemin={busy ? 0 : undefined}
         aria-valuemax={busy ? 100 : undefined}
         aria-valuenow={busy ? percent : undefined}
         className={clsx(
           CHROME_BUTTON,
-          "relative overflow-hidden px-3",
-          // The one offer in the bar, so it is the one thing here with a fill
-          // of its own: an object on the chrome, answering the pointer one
-          // step up. It used to be accent-tinted TEXT on an accent-tinted
-          // wash, which put the loudest ink in the window on a button most
-          // users never need.
-          forceArmed ? CHROME_ARMED : "bg-card text-foreground hover:bg-secondary",
+          "relative w-8 justify-center px-0",
+          open ? "bg-secondary text-foreground" : CHROME_QUIET,
         )}
       >
-        {busy && (
-          <span
-            aria-hidden
-            data-testid="update-progress-fill"
-            // The bar is the next surface UP from the button's own, so it
-            // stays readable whether the button is resting or hovered — and
-            // it is a named token, not a tint of one.
-            className="absolute inset-y-0 left-0 bg-popover transition-[width] duration-300 ease-out"
-            style={{ width: `${percent}%` }}
-          />
-        )}
-        <Download
-          aria-hidden
-          className={cn("relative h-4 w-4", busy && "animate-pulse")}
-        />
-        <span className="relative tabular-nums">{label}</span>
-        {!busy && !forceArmed && shownVersion && (
-          <span className="relative rounded-full bg-secondary px-1.5 text-micro tabular-nums text-muted-foreground">
-            v{shownVersion}
-          </span>
+        {busy ? (
+          <ProgressRing percent={percent} spinning={restarting} />
+        ) : (
+          <>
+            <Download aria-hidden className="h-4 w-4" />
+            {/* The whole announcement: one accent dot, like an unread mark. */}
+            <span
+              aria-hidden
+              data-testid="update-dot"
+              className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-accent"
+            />
+          </>
         )}
       </button>
-      {showNotes && status.notes && (
+      {open && (
         // A floating layer: the float surface, the float shadow, and no border
         // of its own — the shadow already carries the rim.
-        <div className="absolute right-0 top-full z-50 mt-2 w-80 rounded-lg bg-popover p-block text-left shadow-float">
-          <div className="mb-2 text-title font-semibold text-foreground-strong">
-            {t("topbar.update_available")} · v{shownVersion}
+        <div
+          role="dialog"
+          aria-label={title}
+          data-testid="update-panel"
+          className="absolute right-0 top-full z-50 mt-1.5 w-72 rounded-lg bg-popover p-3 text-left shadow-float"
+        >
+          <div className="flex items-baseline justify-between gap-3">
+            <span className="text-meta font-semibold text-foreground-strong">
+              {busy ? busyLabel : title}
+            </span>
+            {shownVersion && (
+              <span className="shrink-0 text-micro tabular-nums text-muted-foreground">
+                v{shownVersion}
+              </span>
+            )}
           </div>
-          <div className="max-h-64 overflow-y-auto whitespace-pre-wrap text-meta text-muted-foreground">
-            {status.notes.slice(0, 800)}
-          </div>
+          {busy ? (
+            <>
+              <div className="mt-2.5 h-1 overflow-hidden rounded-full bg-secondary">
+                <div
+                  aria-hidden
+                  data-testid="update-progress-fill"
+                  className="h-full rounded-full bg-accent transition-[width] duration-300 ease-out"
+                  style={{ width: `${percent}%` }}
+                />
+              </div>
+              {progress?.detail && !restarting && (
+                <div className="mt-1.5 truncate text-micro tabular-nums text-muted-foreground">
+                  {progress.detail}
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <div className="mt-0.5 text-micro text-muted-foreground">
+                {fill(t("topbar.update_current_version"), { version: status.current })}
+              </div>
+              {notes && (
+                <div className="mt-2.5 max-h-48 overflow-y-auto whitespace-pre-wrap border-t border-border pt-2.5 text-micro leading-relaxed text-muted-foreground">
+                  {notes}
+                </div>
+              )}
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-x-2 gap-y-2">
+                <span className="min-w-0 text-micro text-muted-foreground">
+                  {t("topbar.update_restart_note")}
+                </span>
+                <div className="ml-auto flex shrink-0 items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setOpen(false)}
+                    className="h-7 rounded-md px-2.5 text-micro font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    {t("topbar.update_later")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onInstall}
+                    data-testid="update-install"
+                    className={clsx(
+                      "h-7 rounded-md px-2.5 text-micro font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      forceArmed
+                        ? CHROME_ARMED
+                        : "bg-primary text-primary-foreground hover:bg-primary/90",
+                    )}
+                  >
+                    {actionLabel}
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>
