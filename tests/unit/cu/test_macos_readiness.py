@@ -29,6 +29,14 @@ class _Tree:
         return SimpleNamespace(nodes=(object(), object()))
 
 
+def _quiet_handoff():
+    return SimpleNamespace(
+        available=True,
+        recent=False,
+        detail="last physical input was 2.000s ago",
+    )
+
+
 @pytest.mark.asyncio
 async def test_ready_report_requires_all_native_layers() -> None:
     permissions = {
@@ -40,6 +48,7 @@ async def test_ready_report_requires_all_native_layers() -> None:
         permission_port=_Port(permissions),
         tree_source=_Tree(),
         actuator_factory=lambda: SimpleNamespace(name="fake-macos"),
+        human_activity_probe=_quiet_handoff,
         platform="darwin",
     )
 
@@ -48,6 +57,7 @@ async def test_ready_report_requires_all_native_layers() -> None:
     assert by_id["semantic:ax-tree"].ok is True
     assert "2 nodes" in by_id["semantic:ax-tree"].detail
     assert by_id["actuation:backend"].ok is True
+    assert by_id["handoff:hardware-input"].ok is True
 
 
 @pytest.mark.asyncio
@@ -65,6 +75,7 @@ async def test_missing_accessibility_skips_semantic_probe() -> None:
         permission_port=_Port(permissions),
         tree_source=_MustNotObserve(),
         actuator_factory=lambda: SimpleNamespace(name="fake-macos"),
+        human_activity_probe=_quiet_handoff,
         platform="darwin",
     )
 
@@ -84,12 +95,62 @@ async def test_missing_event_posting_skips_actuator_probe() -> None:
         permission_port=_Port(permissions),
         tree_source=_Tree(),
         actuator_factory=lambda: pytest.fail("actuator must not be created without Input Control"),
+        human_activity_probe=_quiet_handoff,
         platform="darwin",
     )
 
     assert report.ready is False
     by_id = {check.id: check for check in report.checks}
     assert by_id["actuation:backend"].ok is False
+
+
+@pytest.mark.asyncio
+async def test_missing_hardware_handoff_marks_readiness_incomplete() -> None:
+    permissions = {
+        PermissionId.SCREEN_RECORDING,
+        PermissionId.ACCESSIBILITY,
+        PermissionId.EVENT_POSTING,
+    }
+    report = await probe_macos_readiness(
+        permission_port=_Port(permissions),
+        tree_source=_Tree(),
+        actuator_factory=lambda: SimpleNamespace(name="fake-macos"),
+        human_activity_probe=lambda: SimpleNamespace(
+            available=False,
+            recent=False,
+            detail="Quartz unavailable",
+        ),
+        platform="darwin",
+    )
+
+    assert report.ready is False
+    by_id = {check.id: check for check in report.checks}
+    assert by_id["handoff:hardware-input"].ok is False
+
+
+@pytest.mark.asyncio
+async def test_recent_human_input_does_not_make_capability_unready() -> None:
+    permissions = {
+        PermissionId.SCREEN_RECORDING,
+        PermissionId.ACCESSIBILITY,
+        PermissionId.EVENT_POSTING,
+    }
+    report = await probe_macos_readiness(
+        permission_port=_Port(permissions),
+        tree_source=_Tree(),
+        actuator_factory=lambda: SimpleNamespace(name="fake-macos"),
+        human_activity_probe=lambda: SimpleNamespace(
+            available=True,
+            recent=True,
+            detail="physical input 0.020s ago; yielding to the user",
+        ),
+        platform="darwin",
+    )
+
+    assert report.ready is True
+    by_id = {check.id: check for check in report.checks}
+    assert by_id["handoff:hardware-input"].ok is True
+    assert "user is active now" in by_id["handoff:hardware-input"].detail
 
 
 @pytest.mark.asyncio
