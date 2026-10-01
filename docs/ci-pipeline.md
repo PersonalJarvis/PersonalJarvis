@@ -107,10 +107,13 @@ dirty worktree and never stashes or force-pushes.
 A release happens **only** when the maintainer asks for one.
 
 * **`release-cut.yml`** (manual): refuses unless main is green, bumps
-  `pyproject.toml` + `jarvis/__init__.py`, moves the `[Unreleased]` notes (or
+  `pyproject.toml`, `jarvis/__init__.py` and `uv.lock`, moves the `[Unreleased]` notes (or
   the Conventional Commits since the last tag) into a dated CHANGELOG section
-  (`scripts/ci/cut_release.py`), commits, dispatches CI, tags, and dispatches
-  the three publishing workflows on the tag.
+  (`scripts/ci/cut_release.py`), and commits on a unique candidate branch.
+  It dispatches full CI for that exact commit, waits for success, then
+  fast-forwards protected main, tags, and dispatches the three publishing
+  workflows on the tag. A failed check or concurrent main update prevents
+  tagging and publication; no branch-protection bypass is needed.
 * **`release-gate.yml`** is the first job of `release.yml` (PyPI),
   `desktop-installers.yml` and `sign-installer.yml`. It admits a tag only
   when tag, versions and CHANGELOG agree, the commit is on main, and

@@ -7,7 +7,7 @@
 #   2. bumps pyproject.toml + jarvis/__init__.py and writes the CHANGELOG
 #      section (scripts/ci/cut_release.py: [Unreleased] notes, or the
 #      Conventional Commits since the last tag),
-#   3. commits "chore(release): publish vX.Y.Z" to main, dispatches CI for it,
+#   3. checks the version commit on a candidate branch, then fast-forwards main,
 #   4. pushes the annotated tag and dispatches the three publishing workflows
 #      on it (PyPI, desktop installers, signed installer). Each of them starts
 #      with release-gate.yml, which waits for CI on the release commit.
@@ -48,7 +48,7 @@ jobs:
     name: cut release
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 180
     outputs:
       version: ${{ steps.bump.outputs.version }}
     env:
@@ -76,7 +76,7 @@ jobs:
           new="$(python scripts/ci/cut_release.py "${arg[@]}" --notes-out "$RUNNER_TEMP/notes.md" | tail -1)"
           echo "version=$new" >> "$GITHUB_OUTPUT"
           git diff --stat
-      - name: Commit, dispatch CI, tag
+      - name: Check the version commit before landing and tagging
         env:
           V: ${{ steps.bump.outputs.version }}
         run: |
@@ -84,8 +84,27 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add pyproject.toml jarvis/__init__.py uv.lock CHANGELOG.md
           git commit -m "chore(release): publish v$V"
+          sha="$(git rev-parse HEAD)"
+          candidate="release-cut/v${V}-${GITHUB_RUN_ID}"
+          git push origin "HEAD:refs/heads/$candidate"
+          gh workflow run ci.yml --ref "$candidate" -f full=true -f include_macos=false
+          # GITHUB_TOKEN pushes do not trigger CI, and protected main requires
+          # checks BEFORE the push. Dispatch on this immutable candidate first.
+          ci_run=""
+          for attempt in {1..60}; do
+            ci_run="$(gh run list --workflow ci.yml --branch "$candidate" --commit "$sha" \
+              --event workflow_dispatch --json databaseId --jq '.[0].databaseId // empty')"
+            [ -n "$ci_run" ] && break
+            sleep 5
+          done
+          [ -n "$ci_run" ] || { echo "::error::Candidate CI did not start."; exit 1; }
+          gh run watch "$ci_run" --exit-status --interval 30
+          state="$(gh api "repos/$GITHUB_REPOSITORY/commits/$sha/check-runs?check_name=CI%20gate" \
+            --jq '(.check_runs | max_by(.id)) | if .status == "completed" then .conclusion else (.status // "missing") end')"
+          [ "$state" = "success" ] || { echo "::error::Candidate CI gate is $state."; exit 1; }
+          # A concurrent main update rejects this ordinary fast-forward push.
+          # No tag or publishing workflow is created when landing fails.
           git push origin HEAD:main
-          gh workflow run ci.yml --ref main -f full=true -f include_macos=false
           git tag -a "v$V" -m "v$V"
           git push origin "v$V"
       - name: Dispatch the publishing workflows on the tag
