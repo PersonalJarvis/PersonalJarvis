@@ -9,6 +9,10 @@ versioning per [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+---
+
+## [2.5.0] — 2026-10-01
+
 ### Added
 
 - Desktop pets with six built-in characters, animated reactions, a compact control strip, and configurable appearance and size.
