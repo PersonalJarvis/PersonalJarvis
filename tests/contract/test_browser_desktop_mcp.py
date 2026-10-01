@@ -12,6 +12,7 @@ from jarvis.core.protocols import SupervisorToolRequest, ToolResult
 async def test_desktop_bootstrap_publishes_the_mcp_endpoint(monkeypatch):
     from jarvis.agent_chat import jarvis_harness
     from jarvis.core import runtime_refs
+    from jarvis.core.bus import EventBus
     from jarvis.ui.web.server import WebServer
 
     urls = []
@@ -26,6 +27,7 @@ async def test_desktop_bootstrap_publishes_the_mcp_endpoint(monkeypatch):
         raise ProbeFinished()
 
     probe = SimpleNamespace(
+        bus=EventBus(),
         cfg=SimpleNamespace(ui=SimpleNamespace(admin_api_port=48123)),
         _voice_ready=True,
         _schedule_anyio_pool_warm=finish,
