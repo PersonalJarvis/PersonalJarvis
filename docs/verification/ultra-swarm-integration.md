@@ -1,5 +1,51 @@
 # Ultra Agent Swarm integration evidence
 
+## October 1 main integration
+
+T3 integration: the branch had fallen 503 commits behind main and could not
+merge. Main revision `daca63cb4` is now merged. Of 316 conflicted paths, 258
+were generated bundle files; those were taken from main and rebuilt. The 58
+source conflicts were resolved as follows:
+
+- Exception-comment conflicts in 33 files took main's wording (AP-30 holds on
+  both sides).
+- Both sides had independently moved select menus to `BrandedSelect`, made
+  interface languages lazy, and offloaded blocking chat-control handlers.
+  Main's versions were kept. The branch's separate `coreLocales` loader and
+  its test setup file were removed.
+- Combined resolutions keep both sides: the Society runtime keeps main's
+  usable-plugin cache plus Swarm's request bridge and fenced shutdown, with
+  conversation storage closed off the event loop. Capability selection keeps
+  main's `is_never_granted` spelling check plus the reserved `swarm-` owner
+  namespace. The macOS and Linux installer jobs wait for main's release
+  admission gate and still honour the manual Windows-only diagnostic.
+- Main's new `run-app-action` router tool can reach `/api/swarm` routes. Every
+  mutating Swarm route carries `x-jarvis-dangerous`, so the tool asks first. The
+  tool is also in Society `NEVER_GRANTED` and the worker forbidden list, so the
+  reviewed-plan launch boundary is unchanged.
+
+Fallout from main's newer contracts was fixed. The three Swarm preparation
+commands and `swarm-preparation` gained voice aliases in all three locales; the
+command reference was regenerated. The watchdog keeps the branch's logged
+ownership-marker failures. Tests were brought up to date for main's browser-call
+start retraction, its WebServer bootstrap probe and the installer admission
+gate. A multipart test now asserts the rejection itself instead of a
+library-specific message.
+
+Local evidence on Windows: 707 Swarm-focused Python tests passed (1 skip). The
+complete frontend suite passed 5,387 tests across 592 files, and the
+production build succeeded. Targeted reruns of every CI-reported new failure
+pass. A broader local unit run was stopped by the host's memory-pressure guard
+at 27 % and is not counted. Remaining CI-only failures in
+`test_agent_login_flow`, `test_codex_auth` and `test_segment_and_history` touch
+files identical to main and are treated as unrelated timing failures, not as
+fixed.
+
+Still open, unchanged by this integration: native installer requalification
+on the merged revision, the native one-key live proof (no
+`SWARM_INSTALL_TEST_KEY` repository secret exists), the final combined
+browser journey, and the ordinary-agent unrestricted host-shell scope decision.
+
 ## September 27 native follow-up
 
 T2 follow-up: existing installer lifecycle and HTTP handlers. Windows and Linux
