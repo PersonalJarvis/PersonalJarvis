@@ -31,6 +31,14 @@ if len(sys.argv) == 3 and sys.argv[1] == "--audio-device-probe":
 
     raise SystemExit(_audio_device_probe_main(sys.argv[2]))
 
+# The restart helper of a frozen build. ``python -m jarvis.ui.relauncher`` is
+# what a source install spawns; a frozen executable has no ``-m``, so it is
+# re-entered with this private flag instead (see relauncher.RELAUNCHER_FLAG).
+if len(sys.argv) >= 2 and sys.argv[1] == "--relauncher":
+    from jarvis.ui.relauncher import main as _relauncher_main
+
+    raise SystemExit(_relauncher_main(sys.argv[2:]))
+
 # Windows Terminal defaults to cp1252 — which breaks Unicode (box-drawing,
 # emojis, ✓/✗). Force utf-8 before printing anything.
 if sys.platform == "win32":

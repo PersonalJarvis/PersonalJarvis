@@ -3792,6 +3792,7 @@ class DesktopApp:
             desktop_launch_args,
             detached_creationflags,
             fresh_user_env,
+            relauncher_command,
             run_restart_quit_sequence,
             spawn_detached,
         )
@@ -3805,14 +3806,9 @@ class DesktopApp:
             import jarvis as _jarvis
 
             repo_root = str(Path(_jarvis.__file__).resolve().parent.parent)
-            argv = [
-                sys.executable,
-                "-m",
-                "jarvis.ui.relauncher",
-                str(os.getpid()),
-                repo_root,
-                *desktop_launch_args(),
-            ]
+            # ``python -m`` on a source install, the frozen executable's own
+            # helper flag on a native install (which has no ``-m``).
+            argv = relauncher_command(os.getpid(), repo_root, desktop_launch_args())
             if drop_elevation:
                 from jarvis.platform.deescalate import spawn_unelevated
 

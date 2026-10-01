@@ -71,7 +71,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from jarvis.core.branding import (
     MANAGED_INSTALL_MARKER,
@@ -910,14 +910,66 @@ async def _frozen_status(current: str) -> dict[str, object]:
     return result
 
 
-async def _apply_frozen() -> dict[str, object]:
+def _running_missions(request: Request | None) -> list[str]:
+    """IDs of the missions an app quit would kill right now (empty on doubt)."""
+    if request is None:
+        return []
+    kontrollierer = getattr(request.app.state, "kontrollierer", None)
+    list_running = getattr(kontrollierer, "running_mission_ids", None)
+    if not callable(list_running):
+        return []
+    try:
+        return [str(mid) for mid in list_running()]
+    except Exception:  # noqa: BLE001 — a wedged guard must not block the update
+        log.warning("[update] could not list running missions", exc_info=True)
+        return []
+
+
+def _quit_for_update(request: Request | None) -> bool:
+    """Close the desktop app so the handed-over installer can take its place.
+
+    The native handover only starts the new version once THIS process is gone
+    (the single-instance lock), so a successful handover must be followed by a
+    quit. Returns False on a host without a desktop window (``jarvis serve``):
+    the user then restarts by hand, and the response says so.
+    """
+    if request is None:
+        return False
+    desktop = getattr(request.app.state, "desktop_app", None)
+    quit_fn = getattr(desktop, "request_quit", None)
+    if not callable(quit_fn):
+        return False
+    try:
+        return bool(quit_fn())
+    except Exception:  # noqa: BLE001 — reported to the caller as "restart by hand"
+        log.warning("[update] could not quit for the update", exc_info=True)
+        return False
+
+
+async def _apply_frozen(
+    request: Request | None = None, *, force: bool = False
+) -> dict[str, object]:
     """Download, verify and install the native installer for this machine.
 
     Fail-CLOSED at every step: an unresolvable release, a missing asset, a
     missing or mismatching SHA-256 all raise before anything is executed. The
     running app keeps working on the old version in every failure case.
+
+    A successful handover ends this app (the installer replaces it), so the
+    same mission guard as ``/api/settings/restart-app`` runs FIRST — before a
+    single byte is downloaded — and refuses with 409 unless ``force`` is set.
     """
     _progress.begin(INSTALL_KIND_FROZEN)
+    if not force:
+        running = _running_missions(request)
+        if running:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "missions_running",
+                    "missions": [{"id": mid, "title": ""} for mid in running],
+                },
+            )
     current = _running_version()
     asset_name = _frozen_asset_name()
     if asset_name is None:
@@ -1009,6 +1061,10 @@ async def _apply_frozen() -> dict[str, object]:
 
     # The native installer restarts the app itself, so this run is complete.
     _progress.finish(version=release_version, restart_required=False)
+    # The new version starts once this process is gone — so go.
+    quitting = _quit_for_update(request)
+    if not quitting:
+        handover = f"{handover} — restart Personal Jarvis to finish the update"
 
     # The download is deliberately NOT deleted: on Windows the installer that
     # replaces this app is running from it right now. The OS reclaims the temp
@@ -1021,11 +1077,13 @@ async def _apply_frozen() -> dict[str, object]:
     return {
         "ok": True,
         "prepared": True,
-        # The handover restarts the app itself (Inno's /RESTARTAPPLICATIONS,
-        # `open` on macOS, re-exec on Linux), so no caller-driven restart is
-        # required. The field is honest about that; a caller that restarts
-        # anyway is harmless because the single-instance lock still holds.
+        # The handover relaunches the app itself once this process exits
+        # (the installer's /RELAUNCH=1 run on Windows, a wait-then-exec helper
+        # on macOS and Linux), and this route already scheduled that exit. A
+        # caller must NOT restart on top: on a frozen build that would race
+        # the installer for the program files.
         "restart_required": False,
+        "quitting": quitting,
         "kind": INSTALL_KIND_FROZEN,
         "version": release_version,
         "release_tag": release_tag,
@@ -1147,7 +1205,7 @@ async def update_progress() -> dict[str, object]:
 
 
 @router.post("/apply", openapi_extra={"x-jarvis-dangerous": True})
-async def update_apply() -> dict[str, object]:
+async def update_apply(request: Request, force: bool = False) -> dict[str, object]:
     """Prepare the latest version and report progress while doing it.
 
     Dispatches on the install kind: a FROZEN install downloads and hands over
@@ -1166,7 +1224,7 @@ async def update_apply() -> dict[str, object]:
     async with _apply_lock:
         try:
             if is_frozen():
-                return await _apply_frozen()
+                return await _apply_frozen(request, force=force)
             return await _apply_managed()
         except HTTPException as exc:
             _progress.fail(str(exc.detail))
