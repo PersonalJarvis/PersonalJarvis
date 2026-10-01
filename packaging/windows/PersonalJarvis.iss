@@ -8,9 +8,12 @@
 ;   * A fixed AppId. Every future release reuses it, so Windows recognises the
 ;     new setup as the SAME application and upgrades in place instead of leaving
 ;     two entries in "Installed apps".
-;   * CloseApplications=yes. The updater runs this file with /CLOSEAPPLICATIONS
-;     /RESTARTAPPLICATIONS, so Restart Manager closes the running app, the files
-;     are replaced, and Personal Jarvis comes back by itself.
+;   * CloseApplications=yes. The in-app updater quits the app and runs this
+;     file with /SILENT /SUPPRESSMSGBOXES /CLOSEAPPLICATIONS /RELAUNCH=1, so
+;     Restart Manager closes anything still holding a file, the files are
+;     replaced, and the second [Run] entry starts Personal Jarvis again.
+;     (/RESTARTAPPLICATIONS would only restart apps registered with
+;     RegisterApplicationRestart, which this one is not.)
 ;   * The uninstaller removes the program directory ONLY. Settings, memory,
 ;     skills and logs live in %LOCALAPPDATA%\Jarvis and are deliberately kept, so
 ;     an uninstall/reinstall cycle does not destroy the user's data.
@@ -99,6 +102,10 @@ Name: "{userdesktop}\{#AppName}"; Filename: "{app}\{#GuiExeName}"; WorkingDir: "
 
 [Run]
 Filename: "{app}\{#GuiExeName}"; Description: "{cm:LaunchProgram,{#AppName}}"; WorkingDir: "{app}"; Flags: nowait postinstall skipifsilent
+; The in-app updater's relaunch. A silent upgrade skips the entry above, so
+; without this one the app would quit for the update and never come back.
+; runasoriginaluser: an all-users install runs elevated, the app must not.
+Filename: "{app}\{#GuiExeName}"; WorkingDir: "{app}"; Flags: nowait runasoriginaluser; Check: RelaunchRequested
 
 [Messages]
 ConfirmUninstall=Do you really want to remove %1?%n%nYour settings, memory, skills and logs are NOT deleted - they stay in {#UserDataDirDisplay}.
@@ -246,4 +253,10 @@ procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usPostUninstall then
     RemoveDirFromUserPath(ExpandConstant('{app}'));
+end;
+
+{ True when the in-app updater passed /RELAUNCH=1 (see the [Run] section). }
+function RelaunchRequested: Boolean;
+begin
+  Result := ExpandConstant('{param:RELAUNCH|0}') = '1';
 end;

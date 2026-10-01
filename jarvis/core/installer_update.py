@@ -502,6 +502,7 @@ def apply_installer(
     app_path: Path | None = None,
     appimage_path: Path | None = None,
     relaunch: bool = True,
+    wait_for_pid: int | None = None,
 ) -> str:
     """Install the verified ``installer`` and hand control to the new version.
 
@@ -509,9 +510,15 @@ def apply_installer(
     :class:`InstallerUpdateError` when the platform is unsupported or the
     handover could not be completed — the running app then keeps working on the
     old version, which is always better than a half-replaced install.
+
+    The caller must QUIT the running app once this returns. The new version is
+    started only after ``wait_for_pid`` (default: this process) has exited:
+    started any earlier, it would find the single-instance lock still held,
+    focus the old window and exit — leaving the user on the old version.
     """
     active_platform = sys.platform if platform_name is None else platform_name
     active_runner = SubprocessCommandRunner() if runner is None else runner
+    old_pid = os.getpid() if wait_for_pid is None else wait_for_pid
 
     if not installer.is_file():
         raise InstallerUpdateError(f"{installer} does not exist")
@@ -524,6 +531,7 @@ def apply_installer(
             runner=active_runner,
             app_path=app_path if app_path is not None else _running_macos_app(),
             relaunch=relaunch,
+            wait_for_pid=old_pid,
         )
     if active_platform.startswith("linux"):
         return _handover_linux(
@@ -531,24 +539,38 @@ def apply_installer(
             runner=active_runner,
             appimage_path=(appimage_path if appimage_path is not None else _running_appimage()),
             relaunch=relaunch,
+            wait_for_pid=old_pid,
         )
     raise InstallerUpdateError(f"no installer handover exists for platform {active_platform!r}")
+
+
+# The Inno Setup parameter that tells the installer to start the app again
+# once the files are in place (see the RelaunchRequested check in
+# packaging/windows/PersonalJarvis.iss).
+WINDOWS_RELAUNCH_PARAM = "/RELAUNCH=1"
 
 
 def _handover_windows(installer: Path, *, runner: CommandRunner) -> str:
     """Start the Inno Setup wizard silently and let it replace the running app.
 
-    ``/CLOSEAPPLICATIONS`` + ``/RESTARTAPPLICATIONS`` are what make this feel
-    like Chrome: Restart Manager closes Personal Jarvis, the files are replaced,
-    and the app comes back on its own. ``/NORESTART`` guarantees the machine is
-    never rebooted behind the user's back.
+    The app quits right after this returns; ``/CLOSEAPPLICATIONS`` lets
+    Restart Manager close anything still holding a file (the detached terminal
+    host, a slow shutdown). ``/SUPPRESSMSGBOXES`` keeps a silent upgrade from
+    stopping on a dialog nobody asked for, and ``/NORESTART`` guarantees the
+    machine is never rebooted behind the user's back.
+
+    The app comes back through ``/RELAUNCH=1``, which the installer's own
+    ``[Run]`` entry honours. ``/RESTARTAPPLICATIONS`` is deliberately absent: it
+    only restarts apps registered with ``RegisterApplicationRestart``, which
+    this one is not, so it promised a relaunch that never happened.
     """
     command = [
         str(installer),
         "/SILENT",
+        "/SUPPRESSMSGBOXES",
         "/CLOSEAPPLICATIONS",
-        "/RESTARTAPPLICATIONS",
         "/NORESTART",
+        WINDOWS_RELAUNCH_PARAM,
     ]
     try:
         runner.spawn_detached(command)
@@ -564,6 +586,7 @@ def _handover_macos(
     runner: CommandRunner,
     app_path: Path | None,
     relaunch: bool,
+    wait_for_pid: int,
 ) -> str:
     """Mount the DMG, swap the running ``.app`` for the one inside, relaunch."""
     if app_path is None:
@@ -615,13 +638,15 @@ def _handover_macos(
 
     if relaunch:
         try:
-            runner.spawn_detached(["open", "-n", str(app_path)])
+            runner.spawn_detached(
+                relaunch_after_exit_command(wait_for_pid, ["open", "-n", str(app_path)])
+            )
         except OSError as exc:
             raise InstallerUpdateError(
                 f"the update was installed but could not be relaunched: {exc}"
             ) from exc
     log.info("[update] replaced %s from %s", app_path, dmg.name)
-    return f"{app_path.name} was replaced and relaunched"
+    return f"{app_path.name} was replaced; it restarts as soon as this window closes"
 
 
 def _handover_linux(
@@ -630,6 +655,7 @@ def _handover_linux(
     runner: CommandRunner,
     appimage_path: Path | None,
     relaunch: bool,
+    wait_for_pid: int,
 ) -> str:
     """Atomically swap the running AppImage for the downloaded one, relaunch."""
     if appimage_path is None:
@@ -656,13 +682,41 @@ def _handover_linux(
 
     if relaunch:
         try:
-            runner.spawn_detached([str(appimage_path)])
+            runner.spawn_detached(
+                relaunch_after_exit_command(wait_for_pid, [str(appimage_path)])
+            )
         except OSError as exc:
             raise InstallerUpdateError(
                 f"the update was installed but could not be relaunched: {exc}"
             ) from exc
     log.info("[update] replaced %s", appimage_path)
-    return f"{appimage_path.name} was replaced and relaunched"
+    return f"{appimage_path.name} was replaced; it restarts as soon as this window closes"
+
+
+# How long the relaunch waiter gives the old app to exit (240 x 0.5 s). Past
+# that it launches anyway: the new instance then finds the old one still
+# holding the lock and simply focuses it, which is harmless.
+RELAUNCH_WAIT_TICKS = 240
+
+# POSIX sh, so it exists on every macOS and Linux box — including a frozen
+# build that ships no Python of its own outside the bundle. ``$1`` is the PID
+# to outlive, the rest is the command to exec.
+_WAIT_THEN_EXEC = (
+    'pid="$1"; shift; n=0; '
+    f'while kill -0 "$pid" 2>/dev/null && [ "$n" -lt {RELAUNCH_WAIT_TICKS} ]; '
+    "do sleep 0.5; n=$((n+1)); done; "
+    'exec "$@"'
+)
+
+
+def relaunch_after_exit_command(pid: int, command: Sequence[str]) -> list[str]:
+    """Argv that waits for ``pid`` to exit, then execs ``command`` (POSIX only).
+
+    Spawned detached right before the app quits. The single-instance lock only
+    frees once the old process is gone, so the new version must not start a
+    moment earlier — otherwise it focuses the dying window and exits.
+    """
+    return ["/bin/sh", "-c", _WAIT_THEN_EXEC, "jarvis-relaunch", str(pid), *command]
 
 
 def _replace_directory(source: Path, target: Path) -> None:
