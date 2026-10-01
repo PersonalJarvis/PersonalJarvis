@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 
+import { cn } from "@/lib/utils";
 import { readVoiceInputLevel } from "@/lib/voiceInputLevel";
 import { voiceOutputLevelRef } from "@/lib/voiceOutputLevel";
 
@@ -67,7 +68,11 @@ export function VoiceGlow({ active }: { active: boolean }) {
           ref={(el) => {
             blobRefs.current[i] = el;
           }}
-          className="absolute bottom-0 origin-bottom transition-opacity duration-500"
+          // The fade only eases the rest <-> call hand-over. While a call runs
+          // the frame loop writes opacity every frame, and a transition there
+          // restarted a 500 ms fade per frame — the light lagged the voice and
+          // the browser re-planned a transition 60 times a second.
+          className={cn("absolute bottom-0 origin-bottom", !active && "transition-opacity duration-500")}
           style={{
             left: `${b.x}%`,
             width: b.width,
