@@ -93,6 +93,35 @@ HIDDEN_SURFACES: frozenset[str] = frozenset({"society"})
 router = APIRouter(prefix="/api/agent-chat", tags=["agent-chat"])
 
 
+class ChatSelectionBody(BaseModel):
+    provider: str = Field(min_length=1)
+    model: str = ""
+    effort: str = ""
+    account_id: str = ""
+
+
+@router.put("/selection", summary="Remember the model for new Jarvis chats and agents")
+async def save_chat_selection(body: ChatSelectionBody, request: Request) -> dict[str, str]:
+    from jarvis.agent_chat.store import ChatSelection
+
+    provider = body.provider.strip().lower()
+    if not offers("jarvis", provider):
+        raise HTTPException(400, "This provider is not offered on the Jarvis chat")
+    if body.account_id:
+        from jarvis import agent_accounts
+        from jarvis.agent_chat.catalog import provider_row
+
+        account = agent_accounts.resolve(body.account_id)
+        row = provider_row(provider)
+        if account is None or row is None or account.platform != row.agent:
+            raise HTTPException(400, "This subscription account does not belong to the provider")
+    selection = ChatSelection(
+        provider, body.model.strip(), normalize_effort(provider, body.effort), body.account_id
+    )
+    _service(request).store.save_chat_selection(selection)
+    return selection.to_dict()
+
+
 @router.get("/commands", summary="List chat slash commands and their availability")
 def list_chat_commands(request: Request, session_id: str | None = None) -> dict[str, Any]:
     try:
@@ -132,6 +161,7 @@ _WS_PING_S = 20.0
 
 class CreateSessionBody(BaseModel):
     provider: str
+    account_id: str = ""
     model: str = ""
     effort: str | None = None
     cwd: str | None = None
@@ -326,6 +356,11 @@ async def get_catalog(
         "providers": rows,
         "default_cwd": svc.default_cwd(surface),
         "shell": shell_label(),
+        "selection": (
+            selection.to_dict()
+            if surface == "jarvis" and (selection := svc.store.chat_selection()) is not None
+            else None
+        ),
     }
 
 
@@ -677,6 +712,14 @@ def list_sessions(
 @router.post("/sessions", status_code=201)
 def create_session(body: CreateSessionBody, request: Request) -> dict[str, Any]:
     svc = _service(request)
+    if body.account_id:
+        from jarvis import agent_accounts
+        from jarvis.agent_chat.catalog import provider_row
+
+        account = agent_accounts.resolve(body.account_id)
+        row = provider_row(body.provider)
+        if account is None or row is None or account.platform != row.agent:
+            raise HTTPException(400, "This subscription account does not belong to the provider")
     ladder = ladder_key(body.surface, resolve_runner(body.provider, surface=body.surface))
     if body.permission_mode and not is_permission_mode(ladder, body.permission_mode):
         raise HTTPException(
@@ -696,9 +739,16 @@ def create_session(body: CreateSessionBody, request: Request) -> dict[str, Any]:
             permission_mode=normalize_permission(ladder, body.permission_mode),
             title=body.title,
             surface=body.surface,
+            account_id=body.account_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if session.surface == "jarvis":
+        from jarvis.agent_chat.store import ChatSelection
+
+        svc.store.save_chat_selection(
+            ChatSelection(session.provider, session.model, session.effort, session.account_id)
+        )
     d = session.to_dict()
     d["running"] = False
     return d
@@ -744,6 +794,8 @@ async def patch_session(
                 detail=f"provider {picked!r} is not offered on the {existing.surface!r} chat",
             )
         fields["provider"] = picked
+        if picked != existing.provider:
+            fields["account_id"] = ""
         # A provider change resets the vendor conversation: the new CLI cannot
         # resume the old one's id.
         fields["vendor_session"] = ""
@@ -800,6 +852,12 @@ async def patch_session(
         raise HTTPException(status_code=409, detail="Agent chat is working")
     session = svc.store.update_session(session_id, **fields)
     assert session is not None
+    if session.surface == "jarvis" and {"provider", "model", "effort"}.intersection(fields):
+        from jarvis.agent_chat.store import ChatSelection
+
+        svc.store.save_chat_selection(
+            ChatSelection(session.provider, session.model, session.effort, session.account_id)
+        )
     if current.surface == "society" and body.permission_mode is not None:
         svc.store.set_permission_override(session_id, session.permission_mode)
     if current.surface == "society":
