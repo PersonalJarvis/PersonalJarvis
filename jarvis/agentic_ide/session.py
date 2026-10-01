@@ -1099,6 +1099,9 @@ class Terminal:
     resized_while_booting: bool = False
     prompts_sent: int = 0
     last_prompt: str = ""
+    # Runtime-only ownership of a result requested through Jarvis, never a UI field.
+    delegation_result: Any = None
+    delegation_probe_at: float = 0.0
     # The current process's records are kept as a fallback if the local history
     # file cannot be written. The full durable history is loaded only when its
     # UI is opened, never in the workspace-state hot path.
@@ -1145,14 +1148,6 @@ class Terminal:
     # bursts — for work nobody had asked for. A pane nobody has given an
     # instruction cannot have finished one, and this is how that is known.
     last_submit_at: float | None = None
-    # Is the job this pane is working on one the user gave THROUGH Jarvis (a
-    # spoken order, the IDE prompt bar)? Then Jarvis owes the user a spoken
-    # "here is what it did" when the pane stops (see `.voice_readback`). Set by
-    # the prompt paths that ask for it, cleared by a job typed in by hand and by
-    # the readback itself. Ephemeral: a restored pane owes nobody anything.
-    voice_readback: bool = False
-    # The user's own words for that job — what the readback is about.
-    voice_readback_request: str = ""
     # Did the last prompt actually leave the input line? None = none sent yet.
     submitted: bool | None = None
     # A hand-pressed Enter on an injected prompt is being checked against the
@@ -4722,11 +4717,6 @@ class Registry:
             else:
                 term.last_submit_at = term.last_input_at
                 term.submit_generation = term.process_generation
-                if term.reading().activity != "asking":
-                    # A new job typed by hand is the user's own, and nobody
-                    # asked Jarvis to report on it. Answering the pane's
-                    # question keeps the Jarvis job (and its readback) alive.
-                    term.voice_readback = False
             # And the pane's conversation may have just begun, which for most
             # coding CLIs is the first moment its id exists on disk at all. A
             # pane driven only by hand never goes through `send_prompt`, so
@@ -6437,13 +6427,12 @@ class Registry:
         require_idle: bool = False,
         expected_input: str = "",
         allow_question: bool = False,
-        readback: bool = False,
+        followup: dict[str, str] | None = None,
     ) -> Terminal:
         """Serialize deliveries and pin the pane before the first await.
 
-        ``readback`` marks the job as one the user gave through Jarvis, so its
-        end is reported by voice (see :mod:`.voice_readback`). Callers that
-        supervise the pane themselves (a society agent) leave it off.
+        Explicit Jarvis voice requests retain a result receipt. Direct pane input
+        and work supervised by another agent keep their existing reporting owner.
         """
         found = self.find_terminal(wanted, workspace_id)
         if found is None:
@@ -6469,6 +6458,11 @@ class Registry:
                     has_submission and activity != "waiting"
                 ):
                     raise SessionError("The selected coding agent is busy; nothing was sent.")
+            pending = None
+            if followup is not None and followup.get("reply_surface") in {"voice", "chat"}:
+                from .followthrough import prepare
+
+                pending = await prepare(term, text, typed, followup)
             return await self._send_prompt_locked(
                 identity,
                 text,
@@ -6477,7 +6471,7 @@ class Registry:
                 attachments=attachments,
                 expected_input=expected_input,
                 allow_question=allow_question,
-                readback=readback,
+                pending_result=pending,
             )
 
     @staticmethod
@@ -6496,7 +6490,7 @@ class Registry:
         attachments: Sequence[Any] = (),
         expected_input: str = "",
         allow_question: bool = False,
-        readback: bool = False,
+        pending_result: Any = None,
     ) -> Terminal:
         """Type ``text`` into a terminal, press Enter, and CONFIRM it was sent.
 
@@ -6642,11 +6636,10 @@ class Registry:
         term.manual_submit_pending = False
         term.manual_submit_token += 1
         term.submitted = submitted
+        from .followthrough import submitted as track_result
+
+        track_result(term, pending_result)
         term.sent_multiline = multiline and submitted is True
-        # Whoever sent THIS job decides whether its end is reported by voice; a
-        # supervising agent's follow-up replaces a Jarvis job and its readback.
-        term.voice_readback = readback
-        term.voice_readback_request = (typed or payload).strip() if readback else ""
         from .prompt_receipts import receipts_for
 
         history_entry = prompt_history.PromptHistoryEntry(

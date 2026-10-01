@@ -410,7 +410,14 @@ async def test_cancel_mid_stream_stops_the_harness(
 
     token = CancelToken()
     run_task = asyncio.create_task(runner.run(tid, token))
-    await asyncio.sleep(0.05)  # the stream is now pending with no chunks
+    # Wait for the dispatch itself, not a fixed delay: on a slow CI runner
+    # 50 ms ended before the runner reached the harness, so the cancel
+    # landed pre-dispatch and the harness was never asked to stop.
+    for _ in range(200):
+        if hm.dispatched:
+            break
+        await asyncio.sleep(0.01)
+    assert hm.dispatched  # the stream is now pending with no chunks
     token.cancel("user_cancel")
     await asyncio.wait_for(run_task, timeout=2.0)
 

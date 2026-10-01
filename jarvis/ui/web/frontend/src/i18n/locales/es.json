@@ -1414,7 +1414,17 @@
     "title": "Run Inspector",
     "subtitle": "Análisis para desarrolladores por run: entorno, decisiones, latencia, E/S de herramientas y el flujo bruto de eventos.",
     "empty": "Selecciona un run para analizar.",
+    "empty_hint": "Selecciona un run a la izquierda para ver sus turnos, decisiones, latencia y eventos sin procesar.",
+    "empty_title": "Aún no hay runs registrados",
+    "empty_body": "Cada sesión de voz o chat aparece aqué con su registro completo de análisis.",
     "unavailable": "El grabador de runs está desactivado.",
+    "unavailable_body": "Activa el grabador de runs en Ajustes para registrar lo que hizo cada sesión.",
+    "search": "Buscar runs…",
+    "no_matches": "Ningún run coincide con esta búsqueda.",
+    "no_turns": "Este run no contiene ningún turno completado.",
+    "loading": "Cargando runs…",
+    "back": "Volver",
+    "latency": "latencia",
     "export_raw": "Exportar bruto (JSON)",
     "full_transcript": "Conversación completa",
     "deep_dive": "Métricas y análisis",
@@ -1429,6 +1439,27 @@
       "tools": "Herramientas",
       "errors": "Errores",
       "events": "Eventos"
+    },
+    "tab": {
+      "turns": "Turnos",
+      "environment": "Entorno",
+      "metrics": "Métricas",
+      "errors": "Errores",
+      "session_events": "Eventos de sesión"
+    },
+    "errors": {
+      "empty": "No se registraron errores."
+    },
+    "metrics": {
+      "think": "Pensar",
+      "speak": "Hablar",
+      "tokens_in": "Tokens de entrada",
+      "tokens_out": "Tokens de salida",
+      "interruptions": "Interrupciones",
+      "worst_latency": "Latencia máxima",
+      "cost_by_provider": "Coste por proveedor",
+      "recorded_events": "Eventos registrados",
+      "tool_usage": "Uso de herramientas"
     },
     "environment": "Entorno del run",
     "session_events": "Eventos a nivel de sesión",
@@ -1459,7 +1490,9 @@
       "cache_hit": "acierto",
       "cache_miss": "fallo",
       "interrupted": "interrumpido",
-      "context": "contexto"
+      "context": "contexto",
+      "turns": "turnos",
+      "tokens": "tokens"
     },
     "env": {
       "mode": "Modo",

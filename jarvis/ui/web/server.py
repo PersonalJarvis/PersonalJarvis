@@ -199,6 +199,20 @@ class WebServer:
         self.app: FastAPI = self._build_app()
         self.app.state.refresh_scheduler = None
 
+    async def _forward_delegation_to_chat(self, event: Any) -> None:
+        """Persist a result in its originating chat without starting another model turn."""
+        service = getattr(self.app.state, "agent_chat", None)
+        if service is None:
+            return
+        session = service.store.get_session(event.session_id)
+        if session is None or session.surface != "jarvis":
+            return
+        await service.post_notice(event.session_id, {
+            "kind": "coding_result", "agent_name": event.agent_name,
+            "assignment_id": event.request_id, "status": event.status,
+            "text": event.text, "report": event.report,
+        })
+
     async def _forward_preamble_to_chat(self, event: AnnouncementRequested) -> None:
         """Bridge AnnouncementRequested(kind="preamble") → MessageSent.
 
@@ -339,6 +353,8 @@ class WebServer:
         from .agentic_ide_git_routes import router as agentic_ide_git_router
         from .agentic_ide_routes import router as agentic_ide_router
         from .antigravity_routes import router as antigravity_router
+        from .app_actions_routes import router as app_actions_router
+        from .appshot_routes import router as appshot_router
         from .board_routes import (
             board_router as board_meta_router,
         )
@@ -394,8 +410,6 @@ class WebServer:
         from .provider_routes import router as provider_router
         from .review_routes import router as review_router
         from .routine_hooks_routes import router as routine_hooks_router
-        from .app_actions_routes import router as app_actions_router
-        from .appshot_routes import router as appshot_router
         from .screen_context_routes import router as screen_context_router
         from .self_mod_routes import router as self_mod_router
         from .sessions_routes import router as sessions_router
@@ -3495,7 +3509,7 @@ class WebServer:
             workflow_services=workflow_services,
         )
         scheduler = TaskScheduler(
-            store=store, bus=self.bus, runner=runner, workflow_services=workflow_services
+            store=store, bus=self.bus, runner=runner, workflow_services=workflow_services,
         )
         scheduler.bind_bus()
         await scheduler.hydrate()
@@ -3885,6 +3899,11 @@ class WebServer:
             except Exception:  # noqa: BLE001 — the name is cosmetic
                 return "Jarvis"
 
+        from jarvis.core.events import DelegationResultReady
+
+        # Install on first chat use, keeping result tracking off the boot path.
+        self.bus.unsubscribe(DelegationResultReady, self._forward_delegation_to_chat)
+        self.bus.subscribe(DelegationResultReady, self._forward_delegation_to_chat)
         return AgentChatService(store, assistant_name=_name, bus=lambda: self.bus)
 
     async def stop(self) -> None:

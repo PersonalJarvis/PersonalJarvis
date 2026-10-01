@@ -5199,7 +5199,11 @@ def _install_file_cred_backend(reason: str, *, retain_platform_backend: bool = T
 
         keyring.set_keyring(_FileKeyringBackend())
         if not _FILE_BACKEND_ACTIVE:
-            logging.getLogger(__name__).warning(
+            # A headless host normally has no platform vault. Keep that
+            # expected fallback out of every short CLI invocation, while a
+            # previously usable vault failing still deserves a warning.
+            logging.getLogger(__name__).log(
+                logging.WARNING if retain_platform_backend else logging.INFO,
                 "OS credential store unusable (%s) — API keys are stored in a local "
                 "0600 file under %s. Configure a Secret Service / Keychain for "
                 "OS-encrypted storage.",
