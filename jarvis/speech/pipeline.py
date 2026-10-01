@@ -392,11 +392,13 @@ _READBACK_KINDS: frozenset[str] = frozenset(
 
 #: Readback sources that never speak outside a call (see ``_is_agent_reply``).
 #: A mission the user just asked for is not here: its answer may still punch
-#: through the hangup gate (AD-OE5/OE6). A coding pane or a Jarvis agent that
-#: finishes is not here either: since 2026-09-30 neither is spoken at all, only
-#: shown (pane badge and bell, the agent chat notice).
+#: through the hangup gate (AD-OE5/OE6). Explicit delegations wait for a call
+#: and a conversational pause; their results never open a call themselves.
 _HELD_FOR_CALL_SOURCES: frozenset[str] = frozenset(
     {
+        "society.lead",
+        "agentic_ide.readback",
+        "delegation.batch",
         "tasks.runner",
         "workflows.runner",
         "workflows.scheduler",
@@ -3826,11 +3828,14 @@ class SpeechPipeline:
         ):
             self._last_answer_floor_monotonic = time.monotonic()
         self._turn_state = new_state
+        if new_state is TurnTakingState.LISTENING:
+            self._schedule_delegation_results()
         if new_state is TurnTakingState.IDLE:
-            retry = getattr(self, "_agent_reply_retry_task", None)
-            if retry is not None and retry is not asyncio.current_task():
-                retry.cancel()
-                await asyncio.gather(retry, return_exceptions=True)
+            for task_name in ("_agent_reply_retry_task", "_delegation_result_task"):
+                retry = getattr(self, task_name, None)
+                if retry is not None and retry is not asyncio.current_task():
+                    retry.cancel()
+                    await asyncio.gather(retry, return_exceptions=True)
         await self._transition(self._supervisor_state_for_turn(new_state))
         # Turn-boundary: the floor has cleared → flush any announcements that
         # were deferred while the user was speaking (AD-OE6 zero-silent-drop).
@@ -4973,8 +4978,23 @@ class SpeechPipeline:
                         "Realtime announcement context mirror failed",
                         exc_info=True,
                     )
+        from jarvis.core.delegation import RESULT_SOURCES, ResultInbox
+
+        if event.source_layer in RESULT_SOURCES:
+            inbox = getattr(self, "_delegation_inbox", None)
+            if inbox is None:
+                inbox = self._delegation_inbox = ResultInbox()
+            inbox.add(event)
+            self._schedule_delegation_results()
+            return
         if is_agent_reply:
             if event == getattr(self, "_agent_reply_inflight", None):
+                return
+            if (
+                event.source_layer == "delegation.batch"
+                and self._turn_state is not TurnTakingState.LISTENING
+            ):
+                self._defer_agent_reply(event)
                 return
             if self._agent_reply_needs_session():
                 self._defer_agent_reply(event)
@@ -5387,6 +5407,8 @@ class SpeechPipeline:
                         chunks,
                         should_play=lambda: (
                             not self._agent_reply_needs_session()
+                            and (event.source_layer != "delegation.batch"
+                                 or self._turn_state is TurnTakingState.LISTENING)
                             if is_agent_reply
                             else getattr(self, "_turn_state", TurnTakingState.IDLE)
                             is not TurnTakingState.JARVIS_SPEAKING
@@ -5428,6 +5450,49 @@ class SpeechPipeline:
             return False
         session = getattr(self, "_active_realtime_handle", None)
         return session is not None
+
+    def _schedule_delegation_results(self) -> None:
+        """One coalescing task; a user's conversation always keeps the floor."""
+        inbox = getattr(self, "_delegation_inbox", None)
+        task = getattr(self, "_delegation_result_task", None)
+        if (
+            inbox is None or not inbox.pending
+            or (task is not None and not task.done())
+            or self._agent_reply_needs_session()
+            or self._turn_state is not TurnTakingState.LISTENING
+            or getattr(self, "_agent_reply_inflight", None) is not None
+        ):
+            return
+        self._delegation_result_task = asyncio.create_task(
+            self._flush_delegation_results(), name="delegation-results"
+        )
+
+    async def _flush_delegation_results(self) -> None:
+        from jarvis.core.delegation import BATCH_WINDOW_S
+
+        event = None
+        try:
+            await asyncio.sleep(BATCH_WINDOW_S)
+            if (
+                self._agent_reply_needs_session()
+                or self._turn_state is not TurnTakingState.LISTENING
+                or getattr(self, "_agent_reply_inflight", None) is not None
+            ):
+                return
+            event = self._delegation_inbox.take()
+            if event is not None:
+                await self._on_announcement(event)
+        except asyncio.CancelledError:
+            if event is not None:
+                self._defer_agent_reply(event)
+            raise
+        except Exception:
+            if event is not None:
+                self._defer_agent_reply(event)
+            log.warning("Delegation result delivery deferred", exc_info=True)
+        finally:
+            self._delegation_result_task = None
+            self._schedule_delegation_results()
 
     async def _deliver_announcement_via_realtime(
         self,

@@ -655,6 +655,10 @@ async def deliver(
         receipt = (
             {"typed": utterance, "attachments": pending_attachments} if send is None else {}
         )
+        if send is None and cancel_on_hangup:
+            from jarvis.core.delegation import origin_metadata
+
+            receipt["followup"] = origin_metadata()
         try:
             sent = await send_fn(term.name, text, **receipt)
         except asyncio.CancelledError:

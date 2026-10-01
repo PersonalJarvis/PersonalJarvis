@@ -1099,6 +1099,9 @@ class Terminal:
     resized_while_booting: bool = False
     prompts_sent: int = 0
     last_prompt: str = ""
+    # Runtime-only ownership of a result requested through Jarvis, never a UI field.
+    delegation_result: Any = None
+    delegation_probe_at: float = 0.0
     # The current process's records are kept as a fallback if the local history
     # file cannot be written. The full durable history is loaded only when its
     # UI is opened, never in the workspace-state hot path.
@@ -6424,11 +6427,12 @@ class Registry:
         require_idle: bool = False,
         expected_input: str = "",
         allow_question: bool = False,
+        followup: dict[str, str] | None = None,
     ) -> Terminal:
         """Serialize deliveries and pin the pane before the first await.
 
-        How the job ends is shown on the pane (status badge, bell entry), never
-        spoken: no pane result is read aloud (maintainer decision 2026-09-30).
+        Explicit Jarvis voice requests retain a result receipt. Direct pane input
+        and work supervised by another agent keep their existing reporting owner.
         """
         found = self.find_terminal(wanted, workspace_id)
         if found is None:
@@ -6454,6 +6458,11 @@ class Registry:
                     has_submission and activity != "waiting"
                 ):
                     raise SessionError("The selected coding agent is busy; nothing was sent.")
+            pending = None
+            if followup is not None and followup.get("reply_surface") in {"voice", "chat"}:
+                from .followthrough import prepare
+
+                pending = await prepare(term, text, typed, followup)
             return await self._send_prompt_locked(
                 identity,
                 text,
@@ -6462,6 +6471,7 @@ class Registry:
                 attachments=attachments,
                 expected_input=expected_input,
                 allow_question=allow_question,
+                pending_result=pending,
             )
 
     @staticmethod
@@ -6480,6 +6490,7 @@ class Registry:
         attachments: Sequence[Any] = (),
         expected_input: str = "",
         allow_question: bool = False,
+        pending_result: Any = None,
     ) -> Terminal:
         """Type ``text`` into a terminal, press Enter, and CONFIRM it was sent.
 
@@ -6625,6 +6636,9 @@ class Registry:
         term.manual_submit_pending = False
         term.manual_submit_token += 1
         term.submitted = submitted
+        from .followthrough import submitted as track_result
+
+        track_result(term, pending_result)
         term.sent_multiline = multiline and submitted is True
         from .prompt_receipts import receipts_for
 

@@ -179,6 +179,9 @@ class WebServer:
         # unchanged. See docs/superpowers/specs/2026-05-11-pre-thinking-ack-
         # flash-brain-design.md §4.
         self.bus.subscribe(AnnouncementRequested, self._forward_preamble_to_chat)
+        from jarvis.core.events import DelegationResultReady
+
+        self.bus.subscribe(DelegationResultReady, self._forward_delegation_to_chat)
         from jarvis.core import runtime_refs
         from jarvis.missions.tool_approvals import (
             MissionToolApprovalCoordinator,
@@ -195,6 +198,20 @@ class WebServer:
         runtime_refs.set_mission_tool_auto_approver(self._mission_tool_auto_approver)
         self.app: FastAPI = self._build_app()
         self.app.state.refresh_scheduler = None
+
+    async def _forward_delegation_to_chat(self, event: Any) -> None:
+        """Persist a result in its originating chat without starting another model turn."""
+        service = getattr(self.app.state, "agent_chat", None)
+        if service is None:
+            return
+        session = service.store.get_session(event.session_id)
+        if session is None or session.surface != "jarvis":
+            return
+        await service.post_notice(event.session_id, {
+            "kind": "coding_result", "agent_name": event.agent_name,
+            "assignment_id": event.request_id, "status": event.status,
+            "text": event.text, "report": event.report,
+        })
 
     async def _forward_preamble_to_chat(self, event: AnnouncementRequested) -> None:
         """Bridge AnnouncementRequested(kind="preamble") → MessageSent.
@@ -336,6 +353,8 @@ class WebServer:
         from .agentic_ide_git_routes import router as agentic_ide_git_router
         from .agentic_ide_routes import router as agentic_ide_router
         from .antigravity_routes import router as antigravity_router
+        from .app_actions_routes import router as app_actions_router
+        from .appshot_routes import router as appshot_router
         from .board_routes import (
             board_router as board_meta_router,
         )
@@ -391,8 +410,6 @@ class WebServer:
         from .provider_routes import router as provider_router
         from .review_routes import router as review_router
         from .routine_hooks_routes import router as routine_hooks_router
-        from .app_actions_routes import router as app_actions_router
-        from .appshot_routes import router as appshot_router
         from .screen_context_routes import router as screen_context_router
         from .self_mod_routes import router as self_mod_router
         from .sessions_routes import router as sessions_router
@@ -401,9 +418,9 @@ class WebServer:
         from .setup_routes import router as setup_router
         from .skills_routes import router as skills_router
         from .socials_routes import router as socials_router
-        from .society_routes import router as society_router
         from .society_browser_routes import router as society_browser_router
         from .society_figure_routes import router as society_figure_router
+        from .society_routes import router as society_router
         from .starter_plan_routes import router as starter_plan_router
         from .sub_agents_routes import router as sub_agents_router
         from .tasks_routes import router as tasks_router
@@ -3453,7 +3470,10 @@ class WebServer:
         from jarvis.harness.manager import HarnessManager
 
         def workflow_services():
-            return (getattr(self.app.state, "workflow_store", None), getattr(self.app.state, "workflow_runner", None))
+            return (
+                getattr(self.app.state, "workflow_store", None),
+                getattr(self.app.state, "workflow_runner", None),
+            )
 
         runner = TaskRunner(
             store=store,
@@ -3466,7 +3486,9 @@ class WebServer:
             owned_action_guard=self._guard_society_routine_action,
             workflow_services=workflow_services,
         )
-        scheduler = TaskScheduler(store=store, bus=self.bus, runner=runner, workflow_services=workflow_services)
+        scheduler = TaskScheduler(
+            store=store, bus=self.bus, runner=runner, workflow_services=workflow_services,
+        )
         scheduler.bind_bus()
         await scheduler.hydrate()
 

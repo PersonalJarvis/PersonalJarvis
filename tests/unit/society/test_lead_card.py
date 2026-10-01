@@ -12,8 +12,7 @@ society. The card is the fix, and these tests pin its contract:
 5. the rule block says what "agent" means and where the old system went;
 6. the realtime helper hands the planner the live names;
 7. the lead picks the fitting agent for a nameless delegation;
-8. a lead-assigned RESULT reaches the person as a chat notice, never spoken
-   (no background result is read aloud since 2026-09-30).
+8. a lead-assigned RESULT reaches its chat and a requested voice conversation.
 """
 
 from __future__ import annotations
@@ -227,15 +226,18 @@ async def test_a_lead_assigned_result_reaches_the_person(rt: SocietyRuntime):
     assert payload["agent_name"] == "Gmail agent"
     assert payload["status"] == "done"
     assert payload["text"] == "Invoice answered."
-    # Shown, never spoken (2026-09-30): no announcement, no phrasing model call.
+    # The active voice conversation receives evidence, with no extra composer call.
     published = rt.published  # type: ignore[attr-defined]
-    assert [e for e in published if type(e).__name__ == "AnnouncementRequested"] == []
+    spoken = [e for e in published if type(e).__name__ == "AnnouncementRequested"]
+    assert len(spoken) == 1
+    assert "Answer the invoice mail" in spoken[0].report
+    assert "Invoice answered" in spoken[0].report
 
 
 async def test_an_agent_answer_to_the_lead_reaches_the_person(rt: SocietyRuntime):
     """Live 2026-09-09: the ack promised a report, the ANSWER arrived, and
     nothing reached the person. The lead's incoming message is owed a notice
-    too — in the chat, not by voice."""
+    too, with the original task context for the active voice model."""
     import asyncio
 
     chat: FakeChat = rt.chat  # type: ignore[attr-defined]
@@ -272,8 +274,7 @@ async def test_an_agent_answer_to_the_lead_reaches_the_person(rt: SocietyRuntime
     assert payload["agent_name"] == "Gmail agent"
     assert payload["msg_type"] == "answer"
     assert payload["text"] == "Invoice answered."
-    # Shown, never spoken (2026-09-30).
-    assert [e for e in published if type(e).__name__ == "AnnouncementRequested"] == []
+    assert len([e for e in published if type(e).__name__ == "AnnouncementRequested"]) == 1
 
 
 def test_no_model_phrases_a_background_report_anymore() -> None:

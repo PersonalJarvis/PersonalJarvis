@@ -1089,16 +1089,36 @@ def _entry(entry_id: str) -> notifications.Notification:
     )
 
 
-def test_a_finished_pane_job_is_shown_never_spoken() -> None:
-    """Maintainer decision 2026-09-30: how a pane's job ended is shown (badge,
-    bell entry) and never read aloud. The spoken readback also cost a model
-    call on an API key per job; nothing may bring it back unnoticed."""
+def test_manual_pane_jobs_remain_silent_and_no_paid_composer_returns() -> None:
+    """Only explicit Jarvis requests opt into floor-aware result delivery."""
     import importlib.util
     import inspect
 
     from jarvis.speech.pipeline import _HELD_FOR_CALL_SOURCES
 
     assert importlib.util.find_spec("jarvis.agentic_ide.voice_readback") is None
-    assert "readback" not in inspect.signature(Registry.send_prompt).parameters
-    assert not hasattr(notifications.watcher(), "take_readbacks")
-    assert "agentic_ide.readback" not in _HELD_FOR_CALL_SOURCES
+    assert inspect.signature(Registry.send_prompt).parameters["followup"].default is None
+    assert importlib.util.find_spec("jarvis.voice.report_readback") is None
+    assert "agentic_ide.readback" in _HELD_FOR_CALL_SOURCES
+
+
+@pytest.mark.parametrize("tracked", [False, True])
+async def test_result_tracking_is_independent_of_the_optional_bell(registry, tmp_path, tracked):
+    watcher = notifications.watcher()
+    _session, term = await _pane(registry, tmp_path)
+    pending = object() if tracked else None
+    term.delegation_result = pending
+    _draw(term, REAL_WORKING)
+    term.last_submit_at = 999.0
+    term.submit_generation = term.process_generation
+    term.last_output_at = 1000.0
+    watcher.poll(registry, now=1000.5, emit=False)
+    term.transcript.clear()
+    _draw(term, REAL_FINISHED)
+    _quiet_since(term, 1002.0)
+    watcher.poll(registry, now=1002.5, emit=False)
+    watcher.poll(registry, now=1010.0, emit=False)
+    watcher.poll(registry, now=1010.0 + notifications.SETTLE_S + 1, emit=False)
+    assert notifications.center().list() == []
+    assert watcher.take_results() == ([("completed", term, pending)] if tracked else [])
+    assert watcher.take_results() == []
