@@ -53,9 +53,10 @@ class ClickElementTool:
         "substring) and optional role (e.g. Button, Edit, ListItem) or "
         "automation_id. Observes the live accessibility tree and activates "
         "the matched element without model-guessed pixel coordinates. On "
-        "macOS, a normal left click uses native AXPress when the control "
-        "supports it; otherwise the verified pointer backend is used. Prefer "
-        "this over the raw 'click' tool whenever the target has a visible label."
+        "macOS, a normal left click uses native AXPress; editable fields use "
+        "AXFocused when AXPress is unavailable. Only unsupported semantic "
+        "actions fall back to the verified pointer backend. Prefer this over "
+        "the raw 'click' tool whenever the target has a visible label."
     )
     schema: dict[str, Any] = {
         "type": "object",
@@ -239,21 +240,26 @@ class ClickElementTool:
             )
 
         # 5. Accessibility-first on macOS. AXPress acts on the semantic control,
-        # not on pixels. Only an explicitly unsupported action falls back to
-        # pointer input; identity/permission failures fail closed.
+        # not on pixels. Editable controls often expose no AXPress, so AXFocused
+        # is the second semantic path. Only an explicitly unsupported semantic
+        # operation falls back to pointer input; identity/permission failures
+        # fail closed.
         if sys.platform == "darwin" and button == "left" and not double:
-            from jarvis.cu.macos_semantic import try_press_at
+            from jarvis.cu.macos_semantic import try_focus_at, try_press_at
 
+            semantic_kwargs = {
+                "expected_name": matched.name or name_needle,
+                "expected_role": matched.role or role_needle,
+                "expected_automation_id": matched.automation_id or automation_id,
+                "pre_action_check": lambda: _window_signature_matches(
+                    expected_signature,
+                ),
+            }
             semantic = await asyncio.to_thread(
                 try_press_at,
                 cx,
                 cy,
-                expected_name=matched.name or name_needle,
-                expected_role=matched.role or role_needle,
-                expected_automation_id=matched.automation_id or automation_id,
-                pre_action_check=lambda: _window_signature_matches(
-                    expected_signature,
-                ),
+                **semantic_kwargs,
             )
             if semantic.performed:
                 return ToolResult(
@@ -266,9 +272,26 @@ class ClickElementTool:
             if semantic.status != "unsupported":
                 return ToolResult(success=False, output=None, error=semantic.detail)
 
+            if (matched.role or role_needle).casefold() == "edit":
+                focused = await asyncio.to_thread(
+                    try_focus_at,
+                    cx,
+                    cy,
+                    **semantic_kwargs,
+                )
+                if focused.performed:
+                    return ToolResult(
+                        success=True,
+                        output=(
+                            f"Focused Edit '{matched.name}' with native macOS AXFocused"
+                        ),
+                    )
+                if focused.status != "unsupported":
+                    return ToolResult(success=False, output=None, error=focused.detail)
+
         # 6. Verified pointer fallback — native on Windows, capability-gated
-        # elsewhere. On macOS this is used only when AXPress is unsupported or
-        # the requested gesture is not a normal left click.
+        # elsewhere. On macOS this is used only when semantic activation/focus
+        # is unsupported or the requested gesture is not a normal left click.
         if os.name == "nt":
             try:
                 await asyncio.to_thread(
