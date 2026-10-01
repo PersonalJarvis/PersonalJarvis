@@ -156,12 +156,14 @@ _UPDATER_PREFIXES = (
     "tests/unit/core/test_installer_update",
     "tests/unit/install/test_installer_update",
     "tests/unit/ui/test_relauncher",
+    "tests/unit/ui/web/test_launcher_update_handoff",
     "tests/unit/ui/web/test_update_routes",
     "tests/unit/web/test_update_",
 )
 _UPDATER_FILES = {
     "jarvis/__main__.py",
     "jarvis/ui/desktop_app.py",
+    "jarvis/ui/web/launcher.py",
     "jarvis/ui/web/settings_routes.py",
     ".github/workflows/desktop-installers.yml",
 } | _DEPS_FILES
