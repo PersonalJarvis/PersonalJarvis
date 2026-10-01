@@ -53,7 +53,8 @@ def _permission_check(port: Any, permission_id: Any, label: str) -> ReadinessChe
             detail=f"{label} is ready",
         )
     try:
-        state = getattr(port.state(permission_id), "value", port.state(permission_id))
+        raw_state = port.state(permission_id)
+        state = getattr(raw_state, "value", raw_state)
     except Exception:  # noqa: BLE001
         state = "not granted"
     return ReadinessCheck(
