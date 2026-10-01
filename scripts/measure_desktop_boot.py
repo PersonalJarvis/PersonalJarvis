@@ -1,38 +1,21 @@
 #!/usr/bin/env python
-"""Reproducible cold-boot timing harness for the Personal Jarvis **desktop** app.
+"""Fresh-process desktop-backend timing, without creating a browser window.
 
-Why this is separate from ``measure_boot.py``
----------------------------------------------
-``measure_boot.py`` measures the *headless* path (``_run_headless``), which
-already uses the fast-boot bootstrap (commit 6379222e) and serves in ~200 ms.
-But the user runs the **desktop** app (``run.bat`` -> pywebview + voice + orb),
-whose backend thread (``DesktopApp._run_backend``) does NOT use the bootstrap:
-it runs the full ``server.start()`` synchronously before the backend serves
-``/api/health``. The desktop shell (``DesktopApp.run``) blocks in
-``_wait_for_backend`` (polling ``/api/health`` for a 200) before it calls
-``webview.create_window`` — so "the window appears" == "the backend serves".
+The default auto mode follows the launcher's JARVIS_DESKTOP_FASTBOOT flag. HTML
+served, app-interactive (ASGI delegated), and local voice-usable are separate
+anchors. The harness acknowledges shell paint synthetically; it does not
+measure rendering, a real conversation or first useful audio.
 
-This harness measures exactly that gate: ``spawn -> /api/health serving``, via
-``scripts/_desktop_boot_driver.py`` (which runs ``_run_backend`` with NO GUI
-window and NO microphone). The anchor is the ``BOOT_READY_MS=`` sentinel the
-desktop ``_run_backend`` prints (gated behind ``JARVIS_BOOT_PROFILE=1``) the
-moment the backend is serving.
-
-Isolation is identical to ``measure_boot.py`` (shared ``.boot-bench/`` dirs,
-``data/`` wiped per run, seeded frozen vault) so the factor stays honest and
-comparable. Writes ``desktop-boot-latest.json`` every run and freezes
-``desktop-boot-baseline.json`` on the first run.
-
-Usage
------
-    python scripts/measure_desktop_boot.py
-    python scripts/measure_desktop_boot.py --python /path/to/python --runs 5 --warmup 1
+Storage/ports are separate, but credentials and configured services are real.
+This is not a hermetic sandbox and must not be used as a harmless second app.
+For a parent-controlled real desktop restart, use the budget guard's --evidence.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import logging
 import statistics
 import subprocess
 import sys
@@ -43,16 +26,17 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-# Reuse the proven isolation + seeding helpers from the headless harness so the
+# Reuse source pinning and separate storage from the headless harness so the
 # two benches do identical work and the factor is directly comparable.
 from measure_boot import (  # noqa: E402
-    DATA_DIR,
     DEFAULT_PAGES,
     DEFAULT_PYTHON,
-    ISO_DIR,
     NO_WINDOW_CREATIONFLAGS,
+    _assert_child_source,
     _bench_env,
+    _desktop_boot_mode,
     _free_port,
+    _fresh_run_dirs,
     _terminate,
     seed_vault,
 )
@@ -66,29 +50,22 @@ TTU_BASELINE_PATH = REPO_ROOT / "desktop-ttu-baseline.json"
 TTU_LATEST_PATH = REPO_ROOT / "desktop-ttu-latest.json"
 
 
-def run_one(python: str, timeout: float, mode: str = "legacy", voice: bool = False) -> dict:
-    """Spawn one isolated desktop-backend cold boot and measure the HONEST
-    user-perceived anchor: ``spawn -> /api/health responds 200``.
+def run_one(
+    python: str, timeout: float, mode: str = "auto", voice: bool = False,
+    interactive: bool = False,
+) -> dict:
+    """Measure HTML delivery and the requested later readiness anchors.
 
-    That is the literal gate the desktop shell uses — ``DesktopApp.run`` blocks
-    in ``_wait_for_backend`` (an ``/api/health`` poll) before it creates the
-    pywebview window — so "the window appears" == "/api/health responds 200".
-    We poll it exactly like ``_wait_for_backend`` does (a real HTTP response,
-    not merely a bound socket — a bound-but-loop-blocked bootstrap would NOT
-    answer, which is the point). The ``BOOT_READY_MS=`` stdout print is kept as
-    a secondary in-process cross-check (it marks the bootstrap *bind*, which can
-    precede a responsive health endpoint).
+    Child clock marks are diagnostic only. All primary durations are observed
+    from the parent's spawn timestamp; HTML delivery is not browser paint.
     """
-    import shutil
     import urllib.request
 
-    shutil.rmtree(DATA_DIR, ignore_errors=True)
-    shutil.rmtree(ISO_DIR, ignore_errors=True)
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    ISO_DIR.mkdir(parents=True, exist_ok=True)
+    mode = _desktop_boot_mode(mode)
+    data_dir, isolation_dir = _fresh_run_dirs()
 
     port = _free_port()
-    env = _bench_env(port)
+    env = _bench_env(port, data_dir, isolation_dir)
     # The desktop driver reads the port from this env (no --port CLI exists for
     # the desktop path); _bench_env already pins isolation + JARVIS_VOICE=0.
     env["JARVIS_DESKTOP_BENCH_PORT"] = str(port)
@@ -99,9 +76,10 @@ def run_one(python: str, timeout: float, mode: str = "legacy", voice: bool = Fal
         # the same clock as BOOT_READY_MS). Overrides _bench_env's voice-off.
         env["JARVIS_VOICE"] = "1"
 
+    identity = _assert_child_source(python, env)
     cmd = [python, str(DRIVER)]
     result: dict = {
-        "wall_ms": None,           # spawn -> /api/health 200 (PRIMARY = window appears)
+        "wall_ms": None,           # spawn -> GET / delivers HTML; not paint
         "boot_ready_ms": None,     # in-process bootstrap-bind print (secondary)
         "boot_ready_wall_ms": None,
         "voice_ready_ms": None,        # pipeline-started print (secondary)
@@ -112,6 +90,9 @@ def run_one(python: str, timeout: float, mode: str = "legacy", voice: bool = Fal
         "app_interactive_wall_ms": None,  # (spawn -> app usable, end to end)
         "phases": {},
         "port": port,
+        "mode": mode,
+        "source_identity": identity,
+        "artifact_dir": str(data_dir.parent),
     }
     health_ok = threading.Event()
     voice_ok = threading.Event()
@@ -211,11 +192,16 @@ def run_one(python: str, timeout: float, mode: str = "legacy", voice: bool = Fal
                                 )
                                 with urllib.request.urlopen(req, timeout=2.0):  # noqa: S310
                                     pass
-                            except Exception:  # noqa: BLE001 — ack is best-effort
-                                pass
+                            except Exception as exc:  # noqa: BLE001 - bounded best-effort ack
+                                logging.getLogger(__name__).debug(
+                                    "Synthetic paint acknowledgement failed: %s",
+                                    type(exc).__name__,
+                                )
                             return
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001 - connection may not exist during startup
+                logging.getLogger(__name__).debug(
+                    "Shell not served yet: %s", type(exc).__name__
+                )
             time.sleep(0.05)
 
     th = threading.Thread(target=reader, daemon=True)
@@ -223,11 +209,12 @@ def run_one(python: str, timeout: float, mode: str = "legacy", voice: bool = Fal
     pt = threading.Thread(target=poller, daemon=True)
     pt.start()
 
-    got = health_ok.wait(timeout)
+    deadline = t_spawn + timeout
+    got = health_ok.wait(max(0.0, deadline - time.perf_counter()))
+    if (interactive or voice) and got:
+        got = interactive_ok.wait(max(0.0, deadline - time.perf_counter()))
     if voice and got:
-        # TTU mode: the run needs the VOICE anchor and the end-to-end
-        # interactive anchor (set_app) — both, in either order.
-        got = voice_ok.wait(timeout) and interactive_ok.wait(timeout)
+        got = voice_ok.wait(max(0.0, deadline - time.perf_counter()))
     _terminate(proc)
     th.join(timeout=3)
     pt.join(timeout=3)
@@ -237,6 +224,8 @@ def run_one(python: str, timeout: float, mode: str = "legacy", voice: bool = Fal
             f"desktop cold boot did not reach its anchor within {timeout:.0f}s "
             f"(port {port}, voice={voice}) — check the driver / instrumentation"
         )
+    if (interactive or voice) and result["app_interactive_wall_ms"] is None:
+        raise RuntimeError("App-interactive anchor missing from desktop boot")
     if voice and result["voice_usable_wall_ms"] is None:
         raise RuntimeError(
             f"voice stack never printed VOICE_USABLE_MS within {timeout:.0f}s "
@@ -296,8 +285,19 @@ def _summarize(runs: list[dict], *, python: str, pages: int) -> dict:
         "wall_ms_runs": [round(w, 1) for w in walls],
         "boot_ready_ms_runs": [round(r, 1) for r in readies],
         "phase_medians_ms": {k: round(v, 1) for k, v in phase_medians.items()},
-        "anchor": "spawn -> /api/health responds 200 (= DesktopApp._wait_for_backend success = window creation point)",
-        "secondary_anchor": "median_bind_wall_ms = spawn -> BOOT_READY print (bootstrap bind; may precede a responsive health endpoint)",
+        "anchor": "spawn -> GET / delivers shell HTML (not browser paint)",
+        "app_interactive_anchor": "spawn -> APP_INTERACTIVE stdout observation (ASGI delegated)",
+        "voice_anchor": (
+            "spawn -> VOICE_USABLE stdout observation "
+            "(local readiness, not a voice round trip)"
+        ),
+        "mode": runs[0].get("mode"),
+        "source_identities": [r.get("source_identity") for r in runs],
+        "artifact_dirs": [r.get("artifact_dir") for r in runs],
+        "secondary_anchor": (
+            "median_bind_wall_ms = spawn -> BOOT_READY print "
+            "(bootstrap bind; may precede a responsive health endpoint)"
+        ),
     }
 
 
@@ -308,23 +308,31 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--warmup", type=int, default=1, help="discarded warmup boots")
     ap.add_argument("--timeout", type=float, default=120.0, help="per-boot ready timeout (s)")
     ap.add_argument("--pages", type=int, default=DEFAULT_PAGES, help="vault pages to seed")
-    ap.add_argument("--mode", default="legacy", choices=["legacy", "fastboot"], help="desktop boot path to measure")
+    ap.add_argument(
+        "--mode", default="auto", choices=["auto", "legacy", "fastboot"],
+        help="desktop boot path to measure",
+    )
     ap.add_argument(
         "--voice",
         action="store_true",
         help=(
             "TTU mode: boot WITH the voice stack and anchor the run on "
-            "VOICE_READY_MS (wake loop armed) instead of the window anchor. "
+            "VOICE_USABLE_MS (local readiness), plus app-interactive. "
             "Writes desktop-ttu-{baseline,latest}.json."
         ),
     )
+    ap.add_argument(
+        "--interactive", action="store_true",
+        help="Wait for ASGI app delegation even when local voice is disabled",
+    )
+    ap.add_argument("--output", type=Path, help="Write the result to this explicit artifact file")
     args = ap.parse_args(argv)
     if args.voice and args.timeout < 240.0:
         # The voice stack loads a local STT model on the stt_match path; give
         # cold runs generous headroom so a slow box does not flake the bench.
         args.timeout = 240.0
     baseline_path = TTU_BASELINE_PATH if args.voice else BASELINE_PATH
-    latest_path = TTU_LATEST_PATH if args.voice else LATEST_PATH
+    latest_path = args.output or (TTU_LATEST_PATH if args.voice else LATEST_PATH)
 
     if not Path(args.python).exists():
         print(f"WARNING: interpreter not found at {args.python}; using as-is", flush=True)
@@ -334,19 +342,25 @@ def main(argv: list[str] | None = None) -> int:
 
     for i in range(args.warmup):
         print(f"[harness] warmup {i + 1}/{args.warmup} ...", flush=True)
-        r = run_one(args.python, args.timeout, args.mode, voice=args.voice)
+        r = run_one(
+            args.python, args.timeout, args.mode,
+            voice=args.voice, interactive=args.interactive,
+        )
         print(f"[harness]   warmup wall={r['wall_ms']:.0f}ms", flush=True)
 
     runs: list[dict] = []
     for i in range(args.runs):
-        r = run_one(args.python, args.timeout, args.mode, voice=args.voice)
+        r = run_one(
+            args.python, args.timeout, args.mode,
+            voice=args.voice, interactive=args.interactive,
+        )
         runs.append(r)
         _br = r["boot_ready_ms"]
         _br_s = f"{_br:.0f}ms" if _br is not None else "n/a"
         _vr = r.get("voice_usable_wall_ms")
         _vr_s = f" voice_usable={_vr:.0f}ms" if _vr is not None else ""
         print(
-            f"[harness] run {i + 1}/{args.runs}: health200={r['wall_ms']:.0f}ms "
+            f"[harness] run {i + 1}/{args.runs}: shell_html={r['wall_ms']:.0f}ms "
             f"bind={_br_s}{_vr_s}",
             flush=True,
         )
@@ -361,7 +375,7 @@ def main(argv: list[str] | None = None) -> int:
     latest_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
     froze_baseline = False
-    if not baseline_path.exists():
+    if args.output is None and not baseline_path.exists():
         baseline_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
         froze_baseline = True
 
@@ -369,8 +383,14 @@ def main(argv: list[str] | None = None) -> int:
         return f"{v:.0f} ms" if v is not None else "n/a"
 
     print("\n=== DESKTOP BOOT TIMING SUMMARY ===", flush=True)
-    print(f"median spawn->/api/health 200    : {_ms(summary['median_wall_ms'])}  (PRIMARY: window appears)", flush=True)
-    print(f"median bootstrap-bind print      : {_ms(summary['median_bind_wall_ms'])}  (secondary)", flush=True)
+    print(
+        f"median spawn->shell HTML        : {_ms(summary['median_wall_ms'])}"
+        "  (transport only; no browser paint)", flush=True,
+    )
+    print(
+        f"median bootstrap-bind print      : {_ms(summary['median_bind_wall_ms'])}"
+        "  (secondary)", flush=True,
+    )
     if args.voice:
         _vu_med = _ms(summary["median_voice_usable_wall_ms"])
         print(
@@ -378,6 +398,7 @@ def main(argv: list[str] | None = None) -> int:
             flush=True,
         )
         print(f"voice-usable runs: {summary['voice_usable_wall_ms_runs']}", flush=True)
+    if args.interactive or args.voice:
         _ai_med = _ms(summary["median_app_interactive_wall_ms"])
         print(
             f"median spawn->APP_INTERACTIVE    : {_ai_med}  (UI data answered)",

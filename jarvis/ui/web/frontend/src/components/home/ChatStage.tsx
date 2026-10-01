@@ -14,6 +14,7 @@ import { VoiceThreadStage } from "@/components/home/VoiceThreadStage";
 import type { ApprovalDecision } from "@/lib/agentChatApi";
 import { fill, useT } from "@/i18n";
 import { folderLeaf } from "@/lib/folderPath";
+import { useHistoryPolling } from "@/hooks/useHistoryPolling";
 import { FolderCode } from "lucide-react";
 
 /**
@@ -77,8 +78,8 @@ function ChatStageContent() {
 
   useEffect(() => {
     if (!catalog) void loadCatalog();
-    void loadSessions();
-  }, [catalog, loadCatalog, loadSessions]);
+  }, [catalog, loadCatalog]);
+  useHistoryPolling(loadSessions);
 
   const providerLabel = useCallback(
     (id: string) => catalog?.providers.find((p) => p.id === id)?.label ?? id,

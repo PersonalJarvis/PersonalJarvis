@@ -3,19 +3,31 @@ import { useCallback, useEffect } from "react";
 import { useEventStore, type ChatMessage, type ConversationKind } from "@/store/events";
 import { useHomeStore } from "@/store/home";
 import { requestVoiceHangup } from "@/lib/voiceApi";
+import { HISTORY_REFRESH_MS, useHistoryPolling } from "@/hooks/useHistoryPolling";
 import {
   deleteTextConversation,
   detailToMessages,
   detailToTraces,
   fetchConversations,
+  invalidateConversations,
   resumeConversation,
   startNewVoiceRun,
 } from "@/lib/chatsApi";
 
 /** How often the history list is re-read while a poller is mounted. */
-export const CONVERSATIONS_REFRESH_MS = 5000;
+export const CONVERSATIONS_REFRESH_MS = HISTORY_REFRESH_MS;
 
 let selectionGeneration = 0;
+let observedVoiceEvent = "";
+
+/** Stable across sidebar/rail mounts: one polling owner writes the shared list. */
+async function refreshConversations(): Promise<void> {
+  try {
+    useEventStore.getState().setConversations(await fetchConversations());
+  } catch {
+    // Offline / restarting: retain the last list until the next bounded read.
+  }
+}
 
 /** Wait for the real session boundary rather than treating an accepted stop as completion. */
 function waitForVoiceIdle(): Promise<void> {
@@ -49,25 +61,21 @@ export function useConversations({ poll = false }: { poll?: boolean } = {}) {
   const conversations = useEventStore((s) => s.conversations);
   const activeThreadId = useEventStore((s) => s.activeThreadId);
   const activeKind = useEventStore((s) => s.activeKind);
-  const setConversations = useEventStore((s) => s.setConversations);
   const setActiveConversation = useEventStore((s) => s.setActiveConversation);
   const setMessages = useEventStore((s) => s.setMessages);
   const seedThinkingTraces = useEventStore((s) => s.seedThinkingTraces);
 
-  const refresh = useCallback(async () => {
-    try {
-      setConversations(await fetchConversations());
-    } catch {
-      /* offline / headless — leave the list as-is */
-    }
-  }, [setConversations]);
-
+  const refresh = refreshConversations;
+  const voiceEvent = useEventStore((s) => s.events.find((event) =>
+    event.name === "VoiceSessionStarted" || event.name === "VoiceSessionEnded")?.id ?? "");
   useEffect(() => {
-    if (!poll) return;
-    void refresh();
-    const id = window.setInterval(() => void refresh(), CONVERSATIONS_REFRESH_MS);
-    return () => window.clearInterval(id);
-  }, [poll, refresh]);
+    if (!poll || !voiceEvent || voiceEvent === observedVoiceEvent) return;
+    observedVoiceEvent = voiceEvent;
+    invalidateConversations();
+    // The shared visible poll catches up within one interval. Invalidating an
+    // in-flight read also prevents its pre-event snapshot replacing fresh data.
+  }, [poll, voiceEvent]);
+  useHistoryPolling(refresh, poll);
 
   /**
    * Make a conversation the active one and resume it on the backend (the
