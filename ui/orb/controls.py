@@ -367,7 +367,7 @@ def render_row(
 
 # --- The pet's control strip ------------------------------------------------
 # The desktop pet (``docs/pets.md``) carries its controls in the shape the
-# Codex companion made familiar: a pen in its own filled disc, then ONE filled
+# Codex companion made familiar: a bell in its own filled disc, then ONE filled
 # pill holding microphone mute, the talk orb and the speaker, with thin
 # low-contrast dividers. Same hard-edge rules as the row above: every
 # silhouette that meets the colour key goes through a binary mask, every glyph
@@ -376,12 +376,12 @@ def render_row(
 
 #: The strip's actions, left to right. The voice orb's ``ACTIONS`` stay as they
 #: are; the two layouts never share a hit-test.
-PET_ACTIONS: tuple[str, ...] = ("compose", "mic_mute", "orb", "speaker")
+PET_ACTIONS: tuple[str, ...] = ("bell", "mic_mute", "orb", "speaker")
 
 #: Unscaled geometry, in logical pixels at 100 % display scaling and
 #: ``pet_scale`` 1.0 — sized against the companion figure (about 180 px), so the
 #: strip is roughly 0.3 x the figure's width tall, as in the Codex app.
-#: ``PET_SLOT`` is the pill's height and the pen disc's diameter.
+#: ``PET_SLOT`` is the pill's height and the bell disc's diameter.
 PET_SLOT = 50
 PET_ICON_SLOT = 46
 PET_ORB_SLOT = 52
@@ -462,6 +462,13 @@ PET_CLOUD_SOFTNESS = 0.8
 #: resting or unlit stroke still reads as sky.
 PET_INDICATOR_NIGHT = (24, 44, 84)
 
+#: The bell rings when a notification arrives: a damped swing about its crown,
+#: ``PET_RING_PHASES`` steps of ``PET_RING_STEP_S``, peak ``PET_RING_DEG``
+#: degrees. Phase 0 is the bell at rest, so a still strip stays one cached frame.
+PET_RING_PHASES = 14
+PET_RING_STEP_S = 0.04
+PET_RING_DEG = 16.0
+
 
 def _spx(value: float, scale: float) -> int:
     """One unscaled length at ``scale``, never below one pixel."""
@@ -474,7 +481,7 @@ class PetStripLayout:
 
     width: int
     height: int
-    #: The pen disc: centre and radius.
+    #: The bell disc: centre and radius.
     pen: tuple[float, float, float]
     #: The pill's bounding box ``(x0, y0, x1, y1)``, x1/y1 exclusive.
     pill: tuple[int, int, int, int]
@@ -545,7 +552,7 @@ def _inside_stadium(x: float, y: float, box: tuple[int, int, int, int]) -> bool:
 def pet_hit_test(x: float, y: float, scale: float = 1.0) -> str | None:
     """Which pet action a click at ``(x, y)`` lands on, or ``None``.
 
-    Outside the pen disc and the pill is nothing — that empty area is where the
+    Outside the bell disc and the pill is nothing — that empty area is where the
     user grabs the strip to drag the pet (the only handle when the pet is
     "None"). Inside the pill every pixel belongs to a slot: a divider resolves
     to the nearer neighbour instead of eating the click.
@@ -553,7 +560,7 @@ def pet_hit_test(x: float, y: float, scale: float = 1.0) -> str | None:
     layout = pet_strip_layout(scale)
     pcx, pcy, pr = layout.pen
     if math.hypot(x - pcx, y - pcy) <= pr:
-        return "compose"
+        return "bell"
     if not _inside_stadium(x, y, layout.pill):
         return None
     best: str | None = None
@@ -599,6 +606,10 @@ class PetStripState:
     phase: int = 0
     #: Which control the pointer is over, if any.
     hovered: str | None = None
+    #: The user switched notifications off with the bell (this run only).
+    notify_off: bool = False
+    #: The bell's swing step (``ring_angle``); 0 is at rest.
+    ring: int = 0
 
 
 # -- glyphs ------------------------------------------------------------------
@@ -639,18 +650,79 @@ class _Pen:
             self.cap((x + rr * math.cos(a), y + rr * math.sin(a)), color)
 
 
-def _glyph_compose(pen: _Pen, color: _Rgb) -> None:
-    """A square with a pencil writing into its corner — "new message"."""
-    pen.lines([(12, 3), (5, 3)], color)
-    pen.arc(5, 5, 2, 180, 270, color)
-    pen.lines([(3, 5), (3, 19)], color)
-    pen.arc(5, 19, 2, 90, 180, color)
-    pen.lines([(5, 21), (19, 21)], color)
-    pen.arc(19, 19, 2, 0, 90, color)
-    pen.lines([(21, 19), (21, 12)], color)
-    pen.lines(
-        [(18.4, 2.6), (21.4, 5.6), (12.4, 14.6), (8.6, 15.4), (9.4, 11.6), (18.4, 2.6)], color
+def _cubic(
+    p0: tuple[float, float],
+    p1: tuple[float, float],
+    p2: tuple[float, float],
+    p3: tuple[float, float],
+    steps: int = 10,
+) -> list[tuple[float, float]]:
+    """A cubic bezier sampled into ``steps + 1`` points."""
+    out = []
+    for i in range(steps + 1):
+        t = i / steps
+        a, b, c, d = (1 - t) ** 3, 3 * (1 - t) ** 2 * t, 3 * (1 - t) * t * t, t**3
+        out.append(
+            (
+                a * p0[0] + b * p1[0] + c * p2[0] + d * p3[0],
+                a * p0[1] + b * p1[1] + c * p2[1] + d * p3[1],
+            )
+        )
+    return out
+
+
+def _arc_points(
+    cu: float, cv: float, r: float, start: float, end: float, steps: int = 12
+) -> list[tuple[float, float]]:
+    """A circular arc (degrees, y down like PIL) sampled into points."""
+    return [
+        (
+            cu + r * math.cos(math.radians(start + (end - start) * i / steps)),
+            cv + r * math.sin(math.radians(start + (end - start) * i / steps)),
+        )
+        for i in range(steps + 1)
+    ]
+
+
+@functools.lru_cache(maxsize=1)
+def _bell_outline() -> tuple[tuple[tuple[float, float], ...], ...]:
+    """The bell as polylines on the 24-unit grid (lucide's ``bell``).
+
+    Polylines rather than PIL arcs so the whole glyph can swing: a rotated
+    point list is still a bell, a rotated ``d.arc`` box is not.
+    """
+    body = (
+        _cubic((3, 17), (3, 17), (6, 15), (6, 8))
+        + _arc_points(12, 8, 6, 180, 360)[1:]
+        + _cubic((18, 8), (18, 15), (21, 17), (21, 17))[1:]
     )
+    body.append((3, 17))
+    clapper = _arc_points(12, 20.03, 1.94, 151.2, 28.8, steps=8)
+    return (tuple(body), tuple(clapper))
+
+
+def ring_angle(phase: int) -> float:
+    """The bell's swing in degrees at ``phase`` — a damped back-and-forth."""
+    if phase <= 0 or phase >= PET_RING_PHASES:
+        return 0.0
+    t = phase / PET_RING_PHASES
+    return PET_RING_DEG * math.sin(t * 3.0 * 2.0 * math.pi) * (1.0 - t) ** 1.5
+
+
+def _glyph_bell(pen: _Pen, color: _Rgb, *, angle: float = 0.0, slashed: bool = False) -> None:
+    """A bell, swung by ``angle`` degrees about its crown; struck through when off."""
+    a = math.radians(angle)
+    cos_a, sin_a = math.cos(a), math.sin(a)
+    pivot_u, pivot_v = 12.0, 2.0
+
+    def turn(point: tuple[float, float]) -> tuple[float, float]:
+        du, dv = point[0] - pivot_u, point[1] - pivot_v
+        return (pivot_u + du * cos_a - dv * sin_a, pivot_v + du * sin_a + dv * cos_a)
+
+    for line in _bell_outline():
+        pen.lines([turn(point) for point in line], color)
+    if slashed:
+        _glyph_slash(pen, color)
 
 
 def _glyph_mic(pen: _Pen, color: _Rgb) -> None:
@@ -684,8 +756,14 @@ def _draw_glyph(
     stroke: float,
     state: PetStripState,
 ) -> None:
-    if action == "compose":
-        _glyph_compose(_Pen(d, cx, cy, box, stroke), PET_ICON)
+    if action == "bell":
+        color = PET_ICON_MUTED if state.notify_off else PET_ICON
+        _glyph_bell(
+            _Pen(d, cx, cy, box, stroke),
+            color,
+            angle=ring_angle(state.ring),
+            slashed=state.notify_off,
+        )
     elif action == "mic_mute":
         color = PET_ICON_MUTED if state.mic_muted else PET_ICON
         pen = _Pen(d, cx, cy, box, stroke)
@@ -846,12 +924,12 @@ def _draw_indicator(
 
 def _render_pen_disc(state: PetStripState, diameter: int, scale: float) -> Image.Image:
     size = diameter * _SS
-    hovered = state.hovered == "compose"
+    hovered = state.hovered == "bell"
     layer = Image.new("RGB", (size, size), PET_FILL_HOVER if hovered else PET_FILL)
     d = ImageDraw.Draw(layer)
     box = _spx(PET_SLOT, scale) * PET_ICON_BOX * _SS
     stroke = PET_ICON_STROKE * max(0.5, scale) * _SS
-    _draw_glyph("compose", d, size / 2.0, size / 2.0, box, stroke, state)
+    _draw_glyph("bell", d, size / 2.0, size / 2.0, box, stroke, state)
     return layer.resize((diameter, diameter), Image.Resampling.LANCZOS)
 
 

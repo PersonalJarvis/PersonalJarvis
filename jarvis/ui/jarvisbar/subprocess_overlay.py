@@ -730,6 +730,8 @@ class SubprocessMascotOverlay(SubprocessBarOverlay):
         self._speaker_muted = False
         self._user_visible = True
         self._on_compose: Callable[[], None] | None = None
+        #: The pet's bell, mirrored from the host's ``notify_toggle`` events.
+        self._notifications_enabled = True
 
     def _init_payload(self) -> dict[str, Any]:
         return {
@@ -809,7 +811,23 @@ class SubprocessMascotOverlay(SubprocessBarOverlay):
     def set_on_compose(self, callback: Callable[[], None] | None) -> None:
         self._on_compose = callback
 
+    def push_notice(self, kind: str = "info", title: str = "", detail: str = "") -> None:
+        self._send(
+            {"op": "push_notice", "kind": str(kind), "title": str(title), "detail": str(detail)}
+        )
+
+    @property
+    def notifications_enabled(self) -> bool:
+        return self._notifications_enabled
+
+    def set_notifications_enabled(self, enabled: bool) -> None:
+        self._notifications_enabled = bool(enabled)
+        self._send({"op": "set_notifications_enabled", "enabled": self._notifications_enabled})
+
     def _dispatch_event(self, msg: dict[str, Any]) -> None:
+        if msg.get("event") == "notify_toggle":
+            self._notifications_enabled = bool(msg.get("enabled", True))
+            return
         if msg.get("event") != "compose":
             super()._dispatch_event(msg)
             return
@@ -828,6 +846,8 @@ class SubprocessMascotOverlay(SubprocessBarOverlay):
             self._send({"op": "set_speaker_muted", "muted": True})
         if not self._user_visible:
             self._send({"op": "set_visible", "visible": False})
+        if not self._notifications_enabled:
+            self._send({"op": "set_notifications_enabled", "enabled": False})
 
     def set_style(self, style: str) -> None:
         """Re-style the hosted orb window live (mascot <-> voice orb).

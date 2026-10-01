@@ -19,7 +19,10 @@ one click.
   dragged anywhere, and its position is remembered per monitor
   (`[overlay.mascot] position_*`, shared with the mascot).
 - **The control strip** under the figure, from left to right:
-  - pen: raise the main window and open a new chat (`ComposeRequested`);
+  - bell: notifications on or off for this run (see *Notifications*). Off
+    shows a red, struck-through bell and sends the cards on screen away; on
+    rings the bell. Like the speaker mute it never survives a restart, so a
+    bell forgotten off cannot hide tomorrow's "your agent is done";
   - microphone: mute Jarvis's microphone (`VoiceMuteToggleRequested`, mirrored
     from `VoiceMuteChanged`);
   - talk indicator (three strokes, the Jarvis bar's equalizer cut down to
@@ -38,11 +41,43 @@ one click.
 - **The pet "None"** (`pet_id = "none"`) shows the control strip and the
   card without a figure.
 
+- **Notification cards** under the strip (under the thinking card when one
+  shows; above the pet when there is no room below). See *Notifications*.
+
 The pet stays on screen while Jarvis is idle. The global shortcut
 (`[trigger] hotkey_pet_toggle`, default `alt+win+p`) hides it or brings it
 back and to the front; hiding lasts until the next app start. The shortcut is
 changed on the My Pets page (Customize); an empty value switches it off. On
 Wayland, global shortcuts are a no-op, as for every other shortcut.
+
+## Notifications
+
+When something happens that the user waits for while looking elsewhere, the
+bell swings and a card drops out from under the strip: a round icon (a check
+that ticks itself for `done`, `!` for `attention`, a cross for `error`, a bell
+for `info`), a bold title and one muted detail line. What becomes a card is
+decided in `jarvis/ui/pets/notices.py` (titles per interface language):
+
+| Source | Card |
+| --- | --- |
+| Agentic IDE pane entry (`NotificationCenter.subscribe`) | `<agent> finished` / `needs your answer` / `exited` / `could not start` |
+| `JarvisAgentBackgroundCompleted` | Background task done / failed |
+| `MissionCompleted` | Mission complete / failed / timed out (a cancel stays quiet) |
+| `DelegationResultReady` | `<agent> has a result` |
+| `ActionApprovalRequired` | Approval needed (not when a chat answers its own card) |
+| `WorkflowCompleted` | Routine finished / failed |
+| `ErrorOccurred(recoverable=False)` | Something went wrong |
+
+Cards stack (`ui/orb/notice_stack.py`): the newest in front, up to two older
+ones peeking out behind it, narrower and darker; at most four are kept.
+Hovering the stack fans it out into a column; leaving folds it back. A click
+dismisses the card under the pointer, which slides away. Every card leaves on
+its own (`done` 8 s, `error` 14 s, `attention` 20 s, `info` 6 s), never while
+the pointer rests on the stack. The same card twice within 3 s refreshes
+instead of stacking. Motion runs on springs at ~60 fps only while something
+moves; a resting stack costs a timer every 400 ms. Cards are dropped while the
+bell is off, the pet is hidden, or the look is not the pet. The strip stays in
+sight while cards show.
 
 ## The thinking card
 
@@ -223,16 +258,20 @@ name.
 | `set_speaker_muted(muted)` | Mirror the speaker mute on the strip |
 | `set_visible(visible)` | Hide or show the whole pet (shortcut, settings) |
 | `toggle_visible()` | Shortcut action: hide, or show and raise |
+| `push_notice(kind, title, detail)` | One notification card; rings the bell |
+| `set_notifications_enabled(enabled)` | Switch the bell without a click (a respawned host) |
+| `set_on_notifications_toggle(cb)` | `cb(enabled)` after the bell was clicked |
 
-Control-strip actions reported back through callbacks: `compose`, `mic_mute`,
-`talk`/`hangup` (the orb) and `speaker`.
+Control-strip actions: `bell` (handled in the surface, reported through
+`set_on_notifications_toggle`; the macOS host sends it up as `notify_toggle`),
+`mic_mute`, `talk`/`hangup` (the orb) and `speaker`.
 
 ### Events (`jarvis/core/events.py`)
 
 - `VoiceSpeakerMuteChanged(muted, source)`: published by
   `SpeechPipeline.set_tts_volume` when the muted-ness flips.
-- `ComposeRequested(source)`: the pen control; DesktopApp raises the window,
-  the frontend opens a new chat.
+- `ComposeRequested(source)`: a new typed chat; DesktopApp raises the
+  window, the frontend opens a new chat. (The strip's pen became the bell.)
 - `PetVisibilityToggleRequested(source)`: the `pet_toggle` shortcut; the
   bridge calls `surface.toggle_visible()`.
 - `PetChanged(pet_id, scale, bubble, visible, source)`: published by the pets

@@ -23,7 +23,7 @@ KEY = (255, 0, 255)
 
 def _centre(action: str, scale: float = 1.0) -> tuple[float, float]:
     layout = controls.pet_strip_layout(scale)
-    if action == "compose":
+    if action == "bell":
         return layout.pen[0], layout.pen[1]
     for name, x0, x1 in layout.slots:
         if name == action:
@@ -44,7 +44,7 @@ def test_every_pet_action_is_reachable_at_its_centre(scale: float) -> None:
 
 def test_the_voice_orb_row_keeps_its_own_actions() -> None:
     assert controls.ACTIONS == ("attach", "mic", "close", "speaker")
-    assert controls.PET_ACTIONS == ("compose", "mic_mute", "orb", "speaker")
+    assert controls.PET_ACTIONS == ("bell", "mic_mute", "orb", "speaker")
 
 
 def test_the_gap_between_pen_and_pill_is_a_drag_handle_not_a_button() -> None:

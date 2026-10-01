@@ -24,7 +24,7 @@ Protocol (UTF-8, one JSON object per line):
 - child → parent (stdout): events — ``{"event": "ready"}`` once the surface
   is initialized, plus user interactions (``talk``, ``hangup``,
   ``mute_toggle``, ``feedback``, ``show_window``, ``drop``, and the pet's
-  ``compose``). Logging goes to stderr so stdout stays pure protocol.
+  ``compose`` and ``notify_toggle``). Logging goes to stderr so stdout stays pure protocol.
 
 ``drop`` is the one round trip: the child forwards a file/text dropped on the
 hosted surface, the parent runs the intake (the brain lives there), and the
@@ -192,6 +192,16 @@ def dispatch(surface: Any, msg: dict[str, Any]) -> bool:
         _call(surface, "set_visible", bool(msg.get("visible", True)))
     elif op == "toggle_visible":
         _call(surface, "toggle_visible")
+    elif op == "push_notice":
+        _call(
+            surface,
+            "push_notice",
+            str(msg.get("kind") or "info"),
+            str(msg.get("title") or ""),
+            str(msg.get("detail") or ""),
+        )
+    elif op == "set_notifications_enabled":
+        _call(surface, "set_notifications_enabled", bool(msg.get("enabled", True)))
     else:
         log.warning("bar-host: unknown op %r", op)
     return True
@@ -270,6 +280,7 @@ class _EchoBar:
     def set_on_show_window(self, cb: Any) -> None: ...
     def set_on_speaker_toggle(self, cb: Any) -> None: ...
     def set_on_compose(self, cb: Any) -> None: ...
+    def set_on_notifications_toggle(self, cb: Any) -> None: ...
 
     def __getattr__(self, name: str) -> Any:
         if name.startswith("__"):
@@ -448,6 +459,13 @@ def _wire_surface_events(surface: Any) -> None:
     # The pet's pen: raising the window (and the new chat) happens in the
     # parent, where the bus and the window live.
     _call(surface, "set_on_compose", lambda: emit("compose"))
+    # The pet's bell lives in this process; the parent only mirrors its state
+    # so a respawned host comes back with the bell as the user left it.
+    _call(
+        surface,
+        "set_on_notifications_toggle",
+        lambda enabled: emit("notify_toggle", enabled=bool(enabled)),
+    )
     _wire_drop_forwarding()
 
 

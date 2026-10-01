@@ -90,6 +90,7 @@ from ui.orb.drag_persistence import (
     save_position_to_toml,
     screens_from_tk,
 )
+from ui.orb.notice_stack import PetNoticeStack
 from ui.orb.pet_renderer import PET_TARGET_EDGE_PX, PetRenderer, dpi_ratio_for
 from ui.orb.taskbar import (
     MascotAnchor,
@@ -308,6 +309,8 @@ PET_CARD_READING_LINGER_S = 6.0
 #: The default linger of ``clear_status``.
 PET_STATUS_LINGER_S = 1.5
 PET_BUBBLE_GAP = 8
+#: The notification cards are this many times the strip's width.
+PET_NOTICE_WIDTH_PER_STRIP = 1.5
 PET_BUBBLE_ELLIPSIS = "…"
 
 
@@ -1317,6 +1320,9 @@ class OrbCommentBubble:
         self._status_clear_pending = False
         self._status_max_w: int | None = None
         self._ui_scale = 1.0
+        #: Called after the status card appeared, moved, resized or went away,
+        #: so whatever hangs below it (the notification stack) can follow.
+        self.on_status_change: Callable[[], None] | None = None
         self._build()
 
     def update_anchor(self, orb_x: int, orb_y: int, screen_w: int) -> None:
@@ -1688,6 +1694,25 @@ class OrbCommentBubble:
     def status_showing(self) -> bool:
         return self._status_showing
 
+    def status_box(self) -> tuple[int, int, int, int] | None:
+        """``(x, y, width, height)`` of the status card on screen, or ``None``."""
+        size = self._status_size
+        anchor = self._status_anchor
+        if not self._status_showing or size is None or anchor is None:
+            return None
+        x, y = self._status_position(size[0], size[1], anchor)
+        return x, y, size[0], size[1]
+
+    def _notify_status_change(self) -> None:
+        # getattr: tests build bubbles without __init__.
+        callback = getattr(self, "on_status_change", None)
+        if callback is None:
+            return
+        try:
+            callback()
+        except Exception:  # noqa: BLE001 — a follower must not break the card
+            logging.getLogger("jarvis.orb").debug("status change hook failed", exc_info=True)
+
     @property
     def window(self) -> tk.Toplevel | None:
         return self._top
@@ -1957,6 +1982,7 @@ class OrbCommentBubble:
             return False
         self._status_showing = True
         self._status_size = (width, height)
+        self._notify_status_change()
         return True
 
     def _cancel_timers(self) -> None:
@@ -1975,9 +2001,12 @@ class OrbCommentBubble:
 
     def hide(self) -> None:
         self._cancel_clear()
+        was_showing = self._status_showing
         self._status_showing = False
         self._status_expanded = False
         self._status_size = None
+        if was_showing:
+            self._notify_status_change()
         if self._top is None:
             return
         if self._dismiss_after_id is not None:
@@ -2480,6 +2509,8 @@ class PetControlStrip(OrbControlRow):
         level: int | None = None,
         motion: str | None = None,
         phase: int | None = None,
+        notify_off: bool | None = None,
+        ring: int | None = None,
     ) -> None:
         """Update what the strip says, repainting only on a real change."""
         _ = can_attach  # the pet strip has no attach control
@@ -2492,6 +2523,8 @@ class PetControlStrip(OrbControlRow):
             motion=current.motion if motion is None else str(motion),
             phase=current.phase if phase is None else int(phase),
             hovered=current.hovered,
+            notify_off=current.notify_off if notify_off is None else bool(notify_off),
+            ring=current.ring if ring is None else int(ring),
         )
         if state == current:
             return
@@ -2660,6 +2693,14 @@ class OrbOverlay:
         #: Hidden by the shortcut or the settings page — lasts until restart.
         self._user_hidden = False
         self._on_compose: Callable[[], None] | None = None
+        #: The bell: notifications show (True) or stay quiet. Runtime only,
+        #: like the speaker mute — a silenced bell forgotten overnight would
+        #: hide tomorrow's "your agent is done" without a trace.
+        self._notify_enabled = True
+        self._on_notify_toggle: Callable[[bool], None] | None = None
+        #: The notification cards' window, created with the first card.
+        self._notices: PetNoticeStack | None = None
+        self._ring_after_id: str | None = None
         #: The monitor's display scale (1.0 at 100 %), read once the root exists.
         self._dpi_ratio = 1.0
         # Frame-loop bookkeeping: ONE pending tick at most, and for renderers
@@ -2940,6 +2981,7 @@ class OrbOverlay:
             theme=bubble_theme_for_style(self._style),
         )
         self._comment_bubble.set_ui_scale(self._dpi_ratio)
+        self._comment_bubble.on_status_change = self._sync_notice_anchor
         self._ensure_controls()
         if self._style == "pet":
             self._sync_pet_strip_scale()
@@ -3042,6 +3084,11 @@ class OrbOverlay:
             bubble.set_ui_scale(scale)
             strip_w, _strip_h = orb_controls.pet_strip_size(scale)
             bubble.set_status_max_width(int(round(strip_w * PET_CARD_MAX_WIDTH_PER_STRIP)))
+        notices = self._notices
+        if notices is not None:
+            strip_w, _strip_h = orb_controls.pet_strip_size(scale)
+            notices.set_scale(scale, int(round(strip_w * PET_NOTICE_WIDTH_PER_STRIP)))
+            self._sync_notice_anchor()
 
     def _clamp_position(
         self, x: int, y: int, monitor_geo: tuple[int, int, int, int]
@@ -3065,6 +3112,7 @@ class OrbOverlay:
                 bubble.update_anchor(x, y, screen_w)
         if self._controls is not None:
             self._controls.update_anchor(x, y)
+        self._sync_notice_anchor(refresh_limit=False)
 
     def _read_dpi_ratio(self) -> float:
         """The monitor's display scale as Tk sees it (1.0 at 100 %)."""
@@ -3241,6 +3289,7 @@ class OrbOverlay:
             self._controls.update_anchor(self._mascot_x, self._mascot_y)
         if self._style == "pet" and self._comment_bubble is not None:
             self._comment_bubble.move_status(self._status_anchor())
+        self._sync_notice_anchor()
 
         self._manual_pinned = True
         try:
@@ -3331,7 +3380,7 @@ class OrbOverlay:
             speaker_muted=self._speaker_muted,
         )
         if isinstance(row, PetControlStrip):
-            row.set_state(mic_muted=self._mic_muted)
+            row.set_state(mic_muted=self._mic_muted, notify_off=not self._notify_enabled)
         self._controls = row
 
     def _on_orb_pointer_enter(self, _event: tk.Event | None = None) -> None:
@@ -3350,6 +3399,10 @@ class OrbOverlay:
         if self._pet_id == NO_PET_ID:
             return True
         if self._mode in PET_VOICE_MODES or self._mode in PET_THINK_MODES:
+            return True
+        notices = self._notices
+        if notices is not None and notices.count:
+            # The bell rang for these cards; it stays in sight while they do.
             return True
         row = self._controls
         return self._pointer_over_orb or (row is not None and row.pointer_inside)
@@ -3421,10 +3474,55 @@ class OrbOverlay:
             self._do_close()
         elif action == "speaker":
             self._do_speaker_toggle()
+        elif action == "bell":
+            self._do_bell_toggle()
         elif action == "compose":
             self._do_compose()
         elif action == "mic_mute":
             self._do_mic_mute()
+
+    def _do_bell_toggle(self) -> None:
+        """The bell: notifications on or off for this run (Tk thread).
+
+        Off sends the cards on screen away at once; on rings the bell so the
+        click is answered by something that moves.
+        """
+        self._notify_enabled = not self._notify_enabled
+        row = self._controls
+        if isinstance(row, PetControlStrip):
+            row.set_state(notify_off=not self._notify_enabled)
+        if self._notify_enabled:
+            self._ring_bell()
+        elif self._notices is not None:
+            self._notices.clear()
+        callback = self._on_notify_toggle
+        if callback is not None:
+            try:
+                callback(self._notify_enabled)
+            except Exception:  # noqa: BLE001 — a bad callback must not kill the Tk loop
+                logging.getLogger("jarvis.orb").debug(
+                    "notify toggle callback failed", exc_info=True
+                )
+
+    def _ring_bell(self, phase: int = 1) -> None:
+        """Swing the bell once: one strip frame per ``PET_RING_STEP_S``."""
+        root = self._root
+        row = self._controls
+        if root is None or not isinstance(row, PetControlStrip):
+            self._ring_after_id = None
+            return
+        if phase == 1 and self._ring_after_id is not None:
+            try:
+                root.after_cancel(self._ring_after_id)
+            except tk.TclError:
+                logging.getLogger("jarvis.orb").debug("bell timer cancel failed", exc_info=True)
+        if phase >= orb_controls.PET_RING_PHASES:
+            self._ring_after_id = None
+            row.set_state(ring=0)
+            return
+        row.set_state(ring=phase)
+        delay = int(orb_controls.PET_RING_STEP_S * 1000)
+        self._ring_after_id = root.after(delay, lambda: self._ring_bell(phase + 1))
 
     def _do_compose(self) -> None:
         """The pen: raise the main window on a fresh chat (``ComposeRequested``).
@@ -3886,6 +3984,8 @@ class OrbOverlay:
         if self._style == "pet" and self._comment_bubble is not None:
             # The pet's status bubble hangs off the pet; it goes with it.
             self._comment_bubble.hide()
+        if self._notices is not None:
+            self._notices.hide()
         if self._root is not None:
             try:
                 self._root.withdraw()
@@ -3923,6 +4023,13 @@ class OrbOverlay:
                 logging.getLogger("jarvis.orb").debug(
                     "orb control row teardown failed", exc_info=True
                 )
+            try:
+                notices = self._notices
+                self._notices = None
+                if notices is not None:
+                    notices.destroy()
+            except Exception:  # noqa: BLE001 — teardown must reach root.destroy
+                logging.getLogger("jarvis.orb").debug("notice stack teardown failed", exc_info=True)
             try:
                 root.destroy()
             except Exception:  # noqa: BLE001 — the process may be exiting anyway
@@ -4026,6 +4133,94 @@ class OrbOverlay:
     def set_on_compose(self, callback: Callable[[], None] | None) -> None:
         """Inject the pen control's action (the bridge publishes ``ComposeRequested``)."""
         self._on_compose = callback
+
+    @property
+    def notifications_enabled(self) -> bool:
+        """Is the bell on (notifications show)?"""
+        return self._notify_enabled
+
+    def set_on_notifications_toggle(self, callback: Callable[[bool], None] | None) -> None:
+        """Called on the Tk thread with the new state after the bell was clicked."""
+        self._on_notify_toggle = callback
+
+    def set_notifications_enabled(self, enabled: bool) -> None:
+        """Switch the bell without a click (a respawned host restoring it). Thread-safe."""
+        flag = bool(enabled)
+
+        def _apply() -> None:
+            self._notify_enabled = flag
+            row = self._controls
+            if isinstance(row, PetControlStrip):
+                row.set_state(notify_off=not flag)
+            if not flag and self._notices is not None:
+                self._notices.clear()
+
+        self._enqueue_ui(_apply)
+
+    def push_notice(self, kind: str = "info", title: str = "", detail: str = "") -> None:
+        """Show one notification card under the pet and ring the bell. Thread-safe.
+
+        ``kind`` is ``done``, ``attention``, ``error`` or ``info``. Dropped
+        while the bell is off, the pet is hidden, or the look is not the pet.
+        """
+        if self._style != "pet":
+            return
+        kind_text = str(kind or "info")
+        title_text = str(title or "")
+        detail_text = str(detail or "")
+        self._enqueue_ui(lambda: self._apply_notice(kind_text, title_text, detail_text))
+
+    def _apply_notice(self, kind: str, title: str, detail: str) -> None:
+        if self._style != "pet" or not self._notify_enabled or self._root is None:
+            return
+        if self._user_hidden or not self._window_mapped():
+            return
+        notices = self._notices
+        if notices is None:
+            scale = self._pet_strip_scale()
+            strip_w, _strip_h = orb_controls.pet_strip_size(scale)
+            try:
+                notices = PetNoticeStack(
+                    self._root,
+                    scale=scale,
+                    width=int(round(strip_w * PET_NOTICE_WIDTH_PER_STRIP)),
+                )
+            except tk.TclError:
+                logging.getLogger("jarvis.orb").debug("notice stack unavailable", exc_info=True)
+                return
+            self._notices = notices
+        self._sync_notice_anchor()
+        notices.push(kind, title, detail)
+        self._sync_controls_visibility()
+        self._ring_bell()
+
+    def _notice_anchor(self, *, refresh_limit: bool = True) -> tuple[int, int, int, int, int]:
+        """``(center_x, below_y, above_y, limit_bottom, screen_w)`` for the cards.
+
+        Like the status card's, pushed past the status card when one shows:
+        the cards hang under it, or stand above it when it sits over the pet.
+        """
+        center_x, below_y, above_y, limit = self._status_anchor(refresh_limit=refresh_limit)
+        gap = max(1, int(round(PET_BUBBLE_GAP * self._pet_strip_scale())))
+        bubble = self._comment_bubble
+        box = bubble.status_box() if bubble is not None else None
+        if box is not None:
+            _x, y, _w, h = box
+            if y >= below_y - 1:
+                below_y = y + h + gap
+            else:
+                above_y = y - gap
+        try:
+            screen_w = int(self._root.winfo_screenwidth()) if self._root is not None else 1920
+        except tk.TclError:
+            screen_w = 1920
+        return center_x, below_y, above_y, limit, screen_w
+
+    def _sync_notice_anchor(self, *, refresh_limit: bool = True) -> None:
+        notices = self._notices
+        if notices is None or self._style != "pet":
+            return
+        notices.set_anchor(self._notice_anchor(refresh_limit=refresh_limit))
 
     def set_pet(self, pet_id: str) -> None:
         """Swap the figure live; ``"none"`` keeps the strip without a figure. Thread-safe."""
@@ -4416,6 +4611,9 @@ class OrbOverlay:
         # ghost's yellow bubble (and vice versa).
         if self._comment_bubble is not None:
             self._comment_bubble.set_theme(bubble_theme_for_style(style))
+        if style != "pet" and self._notices is not None:
+            # Notifications are the pet's; the other looks have no bell.
+            self._notices.hide()
         self._ensure_controls()
         self._sync_controls_visibility()
         self._kick_frame()
