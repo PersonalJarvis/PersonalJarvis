@@ -10,10 +10,14 @@ from typing import Any
 def _key(report: dict[str, Any]) -> str:
     suite = report.get("suite", "?")
     parts = [suite]
-    for field in ("model", "engine", "tts", "voice", "num_gpu", "with_tools"):
+    for field in ("model", "engine", "tts", "voice", "num_gpu", "with_tools", "case_set",
+                  "options", "tts_options"):
         value = report.get(field)
-        if value not in (None, False, ""):
+        if value not in (None, False, "", {}):
             parts.append(f"{field}={value}")
+    languages = sorted({i.get("language") for i in report.get("items", []) if i.get("language")})
+    if languages:
+        parts.append("lang=" + ",".join(languages))
     return " ".join(parts)
 
 

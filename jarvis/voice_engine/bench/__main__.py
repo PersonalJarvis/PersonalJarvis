@@ -65,6 +65,10 @@ def build_parser() -> argparse.ArgumentParser:
     llm.add_argument("--tools", action="store_true", help="declare the bench tool set")
     common(tools := sub.add_parser("tools", help="tool-call accuracy"), llm=True)
     tools.add_argument("--limit", type=int, default=None, help="cases per language")
+    tools.add_argument("--set", dest="case_set", default="main", choices=["main", "hard"],
+                       help="hard = utterances that must not end the call or grab the screen")
+    regrade_tools = sub.add_parser("regrade-tools", help="re-score tools reports")
+    regrade_tools.add_argument("reports", type=Path, nargs="+")
     common(e2e := sub.add_parser("e2e", help="speech end to first audio"), llm=True)
     e2e.add_argument("--tts", default="pocket", choices=["piper", "pocket", "qwen3"])
     e2e.add_argument("--voice", default="piper", choices=["piper", "pocket"])
@@ -106,6 +110,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "regrade":
         print(suites.regrade(args.report))
         return 0
+    if args.command == "regrade-tools":
+        for report in args.reports:
+            print(suites.regrade_tools(report))
+        return 0
     if args.command == "stt":
         payload = suites.run_stt(args.languages, args.voices)
     elif args.command == "tts":
@@ -117,7 +125,8 @@ def main(argv: list[str] | None = None) -> int:
                                  num_gpu=args.num_gpu, base_url=args.base_url)
     elif args.command == "tools":
         payload = suites.run_tools(args.model, args.languages, limit=args.limit,
-                                   num_gpu=args.num_gpu, base_url=args.base_url)
+                                   num_gpu=args.num_gpu, base_url=args.base_url,
+                                   case_set=args.case_set)
     elif args.command == "e2e":
         payload = suites.run_e2e(args.model, args.tts, args.languages, voice_kind=args.voice,
                                  num_gpu=args.num_gpu, base_url=args.base_url,

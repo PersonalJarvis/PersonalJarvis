@@ -72,3 +72,41 @@ def test_percentiles() -> None:
     assert percentile([5.0], 95) == 5.0
     assert percentile([1, 2, 3, 4], 50) == pytest.approx(2.5)
     assert summary([1, 2, 3])["n"] == 3
+
+
+def test_german_arguments_may_be_translated_or_transliterated() -> None:
+    case = _case(language="de", tool="get_weather", accept=(),
+                 checks={"location": {"contains": ["münchen", "munich"]}})  # i18n-allow
+    for city in ("München", "Muenchen", "Munich, Bavaria"):  # i18n-allow: city names
+        verdict = corpus.grade(case, [{"name": "get_weather", "arguments": {"location": city}}])
+        assert verdict["verdict"] == "correct", city
+
+
+def test_the_expected_tool_may_follow_a_harmless_first_call() -> None:
+    case = _case(tool="play_music", accept=(), checks={"query": {"contains": "focus"}})
+    calls = [{"name": "open_app", "arguments": {"name": "Spotify"}},
+             {"name": "play_music", "arguments": {"query": "Focus playlist"}}]
+    verdict = corpus.grade(case, calls)
+    assert verdict["verdict"] == "correct" and verdict["note"] == "extra calls"
+
+
+def test_answers_without_a_call_are_told_apart() -> None:
+    case = _case()
+    assert corpus.grade(case, [], '{"name": "set_timer", "arguments": {}}')["verdict"] == (
+        "malformed"
+    )
+    assert corpus.grade(case, [], "I've set a timer for ten minutes.")["verdict"] == "invented"
+    assert corpus.grade(case, [], "For how many minutes?")["verdict"] == "clarify"
+    assert corpus.grade(case, [], "Okay.")["verdict"] == "missed"
+    german = _case(language="de")
+    claim = "Ich habe den Timer gestellt."  # i18n-allow: graded fixture
+    assert corpus.grade(german, [], claim)["verdict"] == "invented"
+
+
+@pytest.mark.parametrize("language", corpus.LANGUAGES)
+def test_hard_negatives_flag_a_destructive_call(language: str) -> None:
+    hard = corpus.tool_cases(language, "hard")
+    assert len(hard) >= 6
+    thanks = next(c for c in hard if c.tool is None and "end_call" in c.forbidden)
+    assert corpus.grade(thanks, [{"name": "end_call", "arguments": {}}])["verdict"] == "forbidden"
+    assert corpus.grade(thanks, [])["verdict"] == "correct"

@@ -225,7 +225,8 @@ async def test_an_incomplete_verdict_waits_before_finalising() -> None:
     started = time.monotonic()
     await _say(session)
     await out.wait(p.TRANSCRIPT_INPUT)
-    assert time.monotonic() - started >= 0.2
+    # 200 ms wait; Windows timers may wake a tick early.
+    assert time.monotonic() - started >= 0.15
 
 
 @pytest.mark.asyncio
@@ -236,3 +237,66 @@ async def test_a_request_without_a_pending_turn_is_ignored() -> None:
     await asyncio.sleep(0.1)
     assert llm.calls == [] and p.RESPONSE_DONE not in out.types()
     session.close()
+
+
+class SilentEdgesTts(FakeTts):
+    """A voice that pads every clause with 0.5 s of near-silence at both ends."""
+
+    def stream(self, text: str, *, stop: threading.Event | None = None) -> Iterator[np.ndarray]:
+        yield np.full(12_000, 0.001, dtype=np.float32)  # 0.5 s lead-in
+        yield np.full(4_800, 0.2, dtype=np.float32)  # 0.2 s voice
+        yield np.full(12_000, 0.001, dtype=np.float32)  # 0.5 s tail
+
+
+@pytest.mark.asyncio
+async def test_voice_silence_is_trimmed_and_clauses_get_a_set_pause() -> None:
+    llm = FakeLlm([(["One.", "Two."], [])])
+    session, out, _ = _session(llm, tts=SilentEdgesTts())
+    await _say(session)
+    await out.wait(p.TRANSCRIPT_INPUT)
+    session.on_response_request("en")
+    await out.wait(p.RESPONSE_DONE)
+    metrics = (await out.wait(p.METRICS))["turn"]
+    # Two clauses of 0.2 s voice (+20 ms onset/decay each) and one 250 ms
+    # pause after the full stop; none of the 2 s of padding is played.
+    assert 600 <= metrics["audio_ms"] <= 760
+
+
+class CountingTurn(FakeTurn):
+    def __init__(self, values: list[float]) -> None:
+        super().__init__()
+        self.values = values
+        self.calls = 0
+
+    def probability(self, audio16k: np.ndarray) -> float:
+        self.calls += 1
+        return self.values[min(self.calls - 1, len(self.values) - 1)]
+
+
+@pytest.mark.asyncio
+async def test_transcription_starts_early_and_is_reused() -> None:
+    llm = FakeLlm([(["Fine."], [])])
+    session, out, stt = _session(llm)
+    await _say(session)
+    await out.wait(p.TRANSCRIPT_INPUT)
+    assert stt.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_an_incomplete_verdict_is_rescored_instead_of_waited_out() -> None:
+    llm = FakeLlm([(["Sure."], [])])
+    stt = FakeStt()
+    tts = FakeTts()
+    turn = CountingTurn([0.1, 0.9])
+    models = EngineModels(vad_factory=FakeVad, turn=turn, stt=stt, tts_for=lambda _l: tts,
+                          llm=llm)
+    out = Collector()
+    session = ConversationSession(
+        slot=1, session_id="s1", models=models, emit=out, loop=asyncio.get_running_loop(),
+        config=EngineConfig(incomplete_wait_ms=3000, reevaluate_ms=100), language="en",
+    )
+    started = time.monotonic()
+    await _say(session, tail=0.6)
+    await out.wait(p.TRANSCRIPT_INPUT)
+    assert time.monotonic() - started < 2.5
+    assert turn.calls == 2

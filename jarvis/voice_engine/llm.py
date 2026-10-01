@@ -36,6 +36,9 @@ class LlmResult:
     eval_tokens: int = 0
     eval_s: float = 0.0
     load_s: float = 0.0
+    # Reasoning text a model produced although thinking was switched off; it
+    # delays the first token without being spoken, so the bench reports it.
+    thinking_chars: int = 0
     error: str = ""
 
     @property
@@ -44,7 +47,11 @@ class LlmResult:
 
     @property
     def prefill_tps(self) -> float:
-        return self.prompt_tokens / self.prompt_eval_s if self.prompt_eval_s > 0 else 0.0
+        # prompt_eval_count includes the tokens served from the prefix cache
+        # (measured on Ollama 0.35: 260 counted, 256 cached, 49 ms), so only
+        # the remainder was actually evaluated.
+        evaluated = self.prompt_tokens - self.prompt_cached_tokens
+        return evaluated / self.prompt_eval_s if self.prompt_eval_s > 0 and evaluated > 0 else 0.0
 
 
 class OllamaChat:
@@ -98,6 +105,27 @@ class OllamaChat:
             }
             for entry in payload.get("models", [])
         ]
+
+    def prime(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None) -> float:
+        """Evaluate a prompt prefix now so the next turn starts from the cache.
+
+        Hybrid models (Qwen3.5) resume only from the end of an earlier prompt,
+        not from any shared prefix, so a new conversation pays the full system
+        and tool prompt unless that exact prefix was evaluated before. One
+        token of generation is enough to leave the checkpoint behind.
+        """
+        payload: dict[str, Any] = {
+            "model": self.model, "messages": messages, "stream": False,
+            "keep_alive": self._keep_alive, "options": {**self._options, "num_predict": 1},
+        }
+        if tools:
+            payload["tools"] = tools
+        if self._think_supported:
+            payload["think"] = False
+        started = time.perf_counter()
+        response = self._post("/api/chat", payload)
+        response.read()
+        return time.perf_counter() - started
 
     def warm(self) -> float:
         """Load the model with the voice profile; returns seconds spent."""
@@ -165,6 +193,7 @@ class OllamaChat:
                     break
                 message = event.get("message") or {}
                 delta = message.get("content") or ""
+                result.thinking_chars += len(message.get("thinking") or "")
                 now = time.perf_counter() - started
                 if delta:
                     if result.t_first_token is None:

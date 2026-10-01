@@ -304,43 +304,85 @@ def run_llm(model: str, languages: list[str], *, with_tools: bool, num_gpu: int 
 
 
 def run_tools(model: str, languages: list[str], *, limit: int | None, num_gpu: int | None,
-              base_url: str) -> dict[str, Any]:
+              base_url: str, case_set: str = "main") -> dict[str, Any]:
     llm = OllamaChat(model, base_url=base_url, num_gpu=num_gpu, temperature=0.0)
     llm.warm()
     tools = corpus.tools()
     items: list[dict[str, Any]] = []
     for language in languages:
         system = {"role": "system", "content": corpus.load(language)["system_prompt"]}
-        cases = corpus.tool_cases(language)
+        llm.chat([system, {"role": "user", "content": "Hi."}], tools=tools)  # warm-up
+        cases = corpus.tool_cases(language, case_set)
         if limit:
             step = max(1, len(cases) // limit)
             cases = cases[::step][:limit]
         for case in cases:
             result = llm.chat([system, {"role": "user", "content": case.utterance}], tools=tools)
-            verdict = corpus.grade(case, result.tool_calls)
+            verdict = corpus.grade(case, result.tool_calls, result.text)
             items.append({
                 "language": language, "utterance": case.utterance, "expected": case.tool,
-                "calls": result.tool_calls, "text": result.text[:200], "error": result.error,
+                "calls": result.tool_calls, "text": result.text[:400], "error": result.error,
+                "thinking_chars": result.thinking_chars,
                 "decision_ms": _ms(result.t_done), **verdict,
             })
-    groups = {}
+    return {"model": model, "num_gpu": num_gpu, "case_set": case_set, "temperature": 0.0,
+            "groups": tool_groups(items, languages), "items": items}
+
+
+_VERDICTS = ("correct", "wrong_args", "wrong_tool", "missed", "malformed", "invented",
+             "clarify", "unneeded", "forbidden")
+
+
+def tool_groups(items: list[dict[str, Any]], languages: list[str]) -> dict[str, Any]:
+    groups: dict[str, Any] = {}
     for language in languages:
         rows = [i for i in items if i["language"] == language]
+        if not rows:
+            continue
         needed = [r for r in rows if r["expected"] is not None]
-        direct = [r for r in rows if r["expected"] is None]
+        per_tool: dict[str, list[bool]] = {}
+        for row in needed:
+            per_tool.setdefault(row["expected"], []).append(row["verdict"] == "correct")
         groups[language] = {
             "cases": len(rows),
             "accuracy": round(sum(r["verdict"] == "correct" for r in rows) / len(rows), 3),
             "tool_accuracy": round(
                 sum(r["verdict"] == "correct" for r in needed) / len(needed), 3
             ) if needed else None,
-            "missed": sum(r["verdict"] == "missed" for r in rows),
-            "wrong_tool": sum(r["verdict"] == "wrong_tool" for r in rows),
-            "wrong_args": sum(r["verdict"] == "wrong_args" for r in rows),
-            "unneeded": sum(r["verdict"] == "unneeded" for r in direct),
+            "tool_accuracy_macro": round(
+                float(np.mean([np.mean(v) for v in per_tool.values()])), 3
+            ) if per_tool else None,
+            "per_tool": {k: round(float(np.mean(v)), 3) for k, v in sorted(per_tool.items())},
+            **{v: sum(r["verdict"] == v for r in rows) for v in _VERDICTS if v != "correct"},
+            "alternatives": sum(r.get("note") == "accepted alternative" for r in rows),
+            "thinking_items": sum(1 for r in rows if r.get("thinking_chars")),
             "decision_ms": summary(r["decision_ms"] for r in rows),
         }
-    return {"model": model, "num_gpu": num_gpu, "groups": groups, "items": items}
+    return groups
+
+
+def regrade_tools(report_path: Path) -> Path:
+    """Re-score a tools report with the current corpus and grader (stored calls)."""
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    case_set = report.get("case_set", "main")
+    lookup = {
+        (case.language, case.utterance): case
+        for language in corpus.LANGUAGES
+        for case in corpus.tool_cases(language, case_set)
+    }
+    for item in report["items"]:
+        case = lookup.get((item["language"], item["utterance"]))
+        if case is None:
+            item["verdict"] = "unknown_case"
+            continue
+        for key in ("note", "failed", "args", "detail"):
+            item.pop(key, None)
+        item.update(corpus.grade(case, item.get("calls") or [], item.get("text") or ""))
+    languages = sorted({i["language"] for i in report["items"]})
+    report["groups"] = tool_groups(report["items"], languages)
+    report["regraded_with"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    return report_path
 
 
 # ── End to end ───────────────────────────────────────────────────────────────

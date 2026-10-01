@@ -38,7 +38,9 @@ class RuntimeConfig:
     llm_base_url: str = "http://127.0.0.1:11434"
     llm_num_ctx: int = 8192
     llm_keep_alive: str = "30m"
-    llm_temperature: float = 0.3
+    # Low, like the bench's tool runs: a voice turn wants the same tool for the
+    # same request, not variety (plan section 4.6).
+    llm_temperature: float = 0.2
     engine: EngineConfig = field(default_factory=EngineConfig)
 
     @classmethod

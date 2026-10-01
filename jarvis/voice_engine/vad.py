@@ -70,11 +70,15 @@ class Endpointer:
         off_threshold: float = 0.35,
         min_speech_ms: int = 160,
         silence_ms: int = 200,
+        early_ms: int = 0,
     ) -> None:
         self.on_threshold = on_threshold
         self.off_threshold = off_threshold
         self.min_speech_frames = max(1, min_speech_ms // FRAME_MS)
         self.silence_frames = max(1, silence_ms // FRAME_MS)
+        # ``silence_early`` fires once per pause after ``early_ms`` of quiet, so
+        # the transcription can start before the turn decision is due.
+        self.early_frames = max(1, early_ms // FRAME_MS) if early_ms else 0
         self.reset()
 
     def reset(self) -> None:
@@ -108,7 +112,10 @@ class Endpointer:
             self._unvoiced += 1
             if not self.in_speech:
                 self._voiced = 0
-            elif not self.in_silence and self._unvoiced >= self.silence_frames:
-                self.in_silence = True
-                return VadEvent("silence_start", now)
+            elif not self.in_silence:
+                if self._unvoiced >= self.silence_frames:
+                    self.in_silence = True
+                    return VadEvent("silence_start", now)
+                if self.early_frames and self._unvoiced == self.early_frames:
+                    return VadEvent("silence_early", now)
         return None

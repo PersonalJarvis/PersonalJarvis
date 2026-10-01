@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import threading
 import time
 import uuid
@@ -95,6 +96,13 @@ class EngineConfig:
     preroll_ms: int = 300
     turn_threshold: float = 0.5
     incomplete_wait_ms: int = 1000
+    # Re-score the turn at this spacing while waiting on an "incomplete"
+    # verdict: more trailing silence often turns it into "complete".
+    reevaluate_ms: int = 300
+    # Start transcribing after this much quiet, ahead of the turn decision.
+    early_stt_ms: int = 96
+    # Amplitude below which synthesized audio counts as silence (about -42 dBFS).
+    tts_silence: float = 0.008
     max_utterance_s: float = 30.0
     output_frame_ms: int = 40
     max_history_messages: int = 24
@@ -149,7 +157,8 @@ class ConversationSession:
         self._turn_pause_ms = turn_pause_ms or None
         self._vad = models.vad_factory()
         silence = self._turn_pause_ms or self._config.silence_ms
-        self._endpointer = Endpointer(min_speech_ms=self._config.min_speech_ms, silence_ms=silence)
+        self._endpointer = Endpointer(min_speech_ms=self._config.min_speech_ms, silence_ms=silence,
+                                      early_ms=self._config.early_stt_ms)
         self._barge = Endpointer(min_speech_ms=self._config.barge_in_ms, silence_ms=silence)
         preroll_frames = max(1, self._config.preroll_ms // FRAME_MS)
         self._preroll: deque[np.ndarray] = deque(maxlen=preroll_frames)
@@ -157,6 +166,7 @@ class ConversationSession:
         self._utterance: list[np.ndarray] = []
         self._last_voiced_at = 0.0
         self._decision: asyncio.Task[None] | None = None
+        self._speculative: asyncio.Task[tuple[str, float]] | None = None
         self._decision_epoch = 0
         self._awaiting_request = False
         self._pending_user_text = ""
@@ -172,6 +182,7 @@ class ConversationSession:
             role = item.get("role")
             if role in ("user", "assistant") and item.get("text"):
                 self._messages.append({"role": role, "content": str(item["text"])})
+        self._prime()
 
     # ── inputs from the adapter ─────────────────────────────────────────────
 
@@ -234,6 +245,7 @@ class ConversationSession:
         if language:
             self._set_language(language)
         self._messages[0] = {"role": "system", "content": self._system_text()}
+        self._prime()
 
     def close(self) -> None:
         self._closed = True
@@ -261,6 +273,8 @@ class ConversationSession:
         self._barge.reset()
         if probability >= self._endpointer.on_threshold:
             self._last_voiced_at = now
+            # Speech resumed inside a short pause: an early transcript is stale.
+            self._speculative = None
         event = self._endpointer.feed(probability)
         if event is not None and event.kind == "speech_start":
             # The frames that proved speech are in the pre-roll; the utterance
@@ -275,12 +289,15 @@ class ConversationSession:
             if self._endpointer.in_speech and too_long:
                 self._start_decision(force=True)
             return
-        if event.kind == "silence_start":
+        if event.kind == "silence_early":
+            self._speculative = self._loop.create_task(self._transcribe(self._utterance_audio()))
+        elif event.kind == "silence_start":
             self._start_decision(force=False)
         elif event.kind == "silence_end":
             # The user resumed before the turn was taken: the pending decision
             # describes a sentence that is still growing.
             self._decision_epoch += 1
+            self._speculative = None
 
     def _begin_utterance(self, now: float, *, carry_preroll: bool) -> None:
         if self._awaiting_request:
@@ -298,25 +315,41 @@ class ConversationSession:
     def _utterance_seconds(self) -> float:
         return sum(f.size for f in self._utterance) / INPUT_RATE
 
+    def _utterance_audio(self) -> np.ndarray:
+        if not self._utterance:
+            return np.zeros(0, dtype=np.float32)
+        return np.concatenate(self._utterance)
+
+    async def _transcribe(self, audio: np.ndarray) -> tuple[str, float]:
+        return await asyncio.to_thread(
+            self._locked, "stt", self._models.stt.transcribe, _with_noise_tail(audio)
+        )
+
     def _start_decision(self, *, force: bool) -> None:
         self._decision_epoch += 1
         epoch = self._decision_epoch
-        audio = np.concatenate(self._utterance) if self._utterance else np.zeros(0, np.float32)
+        audio = self._utterance_audio()
+        stt = self._speculative or self._loop.create_task(self._transcribe(audio))
+        self._speculative = None
         speech_end = self._last_voiced_at
         if self._decision is not None and not self._decision.done():
             self._decision.cancel()
-        self._decision = self._loop.create_task(self._decide(epoch, audio, speech_end, force))
+        self._decision = self._loop.create_task(
+            self._decide(epoch, audio, speech_end, force, stt)
+        )
 
-    async def _decide(self, epoch: int, audio: np.ndarray, speech_end: float, force: bool) -> None:
+    async def _decide(self, epoch: int, audio: np.ndarray, speech_end: float, force: bool,
+                      stt: asyncio.Task[tuple[str, float]]) -> None:
         started = time.monotonic()
-        stt_job = asyncio.to_thread(self._locked, "stt", self._models.stt.transcribe, audio)
         turn_job = (
             asyncio.to_thread(self._locked, "turn", self._models.turn.probability, audio)
             if not force
             else _ready(1.0)
         )
         try:
-            (text, stt_ms), (probability, turn_ms) = await asyncio.gather(stt_job, turn_job)
+            (text, stt_ms), (probability, turn_ms) = await asyncio.gather(stt, turn_job)
+        except asyncio.CancelledError:
+            raise
         except Exception:
             log.exception("transcription or turn decision failed")
             self._emit.json({"type": p.ERROR, "session": self.session_id, "code": "stt_failed",
@@ -330,11 +363,22 @@ class ConversationSession:
             "p_complete": round(float(probability), 3),
             "decision_ms": round((time.monotonic() - started) * 1000.0, 1),
         })
-        if probability < self._config.turn_threshold and not force:
-            await asyncio.sleep(self._config.incomplete_wait_ms / 1000.0)
+        waited = 0
+        while (not force and probability < self._config.turn_threshold
+               and waited < self._config.incomplete_wait_ms):
+            step = min(self._config.reevaluate_ms, self._config.incomplete_wait_ms - waited)
+            await asyncio.sleep(step / 1000.0)
+            waited += step
             if epoch != self._decision_epoch:
                 return
-            self._turn_metrics["waited_incomplete_ms"] = self._config.incomplete_wait_ms
+            probability, _ms = await asyncio.to_thread(
+                self._locked, "turn", self._models.turn.probability, self._utterance_audio()
+            )
+            if epoch != self._decision_epoch:
+                return
+        if waited:
+            self._turn_metrics["waited_incomplete_ms"] = waited
+            self._turn_metrics["p_complete_final"] = round(float(probability), 3)
         self._finalize(text)
 
     def _finalize(self, text: str) -> None:
@@ -447,31 +491,64 @@ class ConversationSession:
 
     async def _speak(self, response: _Response, speech: asyncio.Queue[str | None]) -> None:
         tts = self._models.tts_for(self._language)
+        previous = ""
         while True:
             clause = await speech.get()
             if clause is None or response.cancel.is_set():
                 return
+            clause = speakable(clause)
+            if not clause:
+                continue
             entry = _Clause(text=clause, start_ms=response.audio_ms)
             response.clauses.append(entry)
             self._emit.json({"type": p.TRANSCRIPT_OUTPUT, "session": self.session_id,
                              "delta": clause + " "})
-            await asyncio.to_thread(self._synthesize, tts, clause, response)
+            pause_ms = _pause_after(previous) if previous else 0
+            await asyncio.to_thread(self._synthesize, tts, clause, response, pause_ms)
             entry.end_ms = response.audio_ms
+            previous = clause
 
-    def _synthesize(self, tts: TtsModel, text: str, response: _Response) -> None:
+    def _synthesize(self, tts: TtsModel, text: str, response: _Response, pause_ms: int) -> None:
+        """Stream one clause, dropping the voice's own silence at both ends.
+
+        Voices pad clauses with up to a second of near-silence at the start
+        and a few hundred milliseconds at the end; played as is, the first
+        word arrives late and clauses drift apart. The lead-in is dropped, a
+        quiet stretch is held back until it proves to be a pause inside the
+        clause (then it is played) or the clause ends (then it is dropped), and
+        the gap between clauses is a deliberate ``pause_ms``.
+        """
         frame = OUTPUT_RATE * self._config.output_frame_ms // 1000
+        keep = OUTPUT_RATE // 50  # 20 ms of onset and decay around the voice
+        threshold = self._config.tts_silence
+        out = np.zeros(0, dtype=np.float32)
+        quiet = np.zeros(0, dtype=np.float32)
+        started = False
         with self._models.lock(f"tts:{getattr(tts, 'name', 'tts')}:{self._language}"):
-            pending = np.zeros(0, dtype=np.float32)
             for chunk in tts.stream(text, stop=response.cancel):
                 if response.cancel.is_set():
                     return
                 audio = resample(np.asarray(chunk, dtype=np.float32), tts.sample_rate, OUTPUT_RATE)
-                pending = np.concatenate([pending, audio])
-                while pending.size >= frame:
-                    piece, pending = pending[:frame], pending[frame:]
+                loud = np.flatnonzero(np.abs(audio) > threshold)
+                if not started:
+                    if loud.size == 0:
+                        continue
+                    audio = audio[max(0, int(loud[0]) - keep):]
+                    loud = loud - loud[0] + min(int(loud[0]), keep)
+                    started = True
+                    if pause_ms:
+                        out = np.zeros(OUTPUT_RATE * pause_ms // 1000, dtype=np.float32)
+                if loud.size == 0:
+                    quiet = np.concatenate([quiet, audio])
+                    continue
+                cut = min(audio.size, int(loud[-1]) + 1 + keep)
+                out = np.concatenate([out, quiet, audio[:cut]])
+                quiet = audio[cut:]
+                while out.size >= frame:
+                    piece, out = out[:frame], out[frame:]
                     self._loop.call_soon_threadsafe(self._send_audio, response, piece)
-            if pending.size and not response.cancel.is_set():
-                self._loop.call_soon_threadsafe(self._send_audio, response, pending)
+            if out.size and not response.cancel.is_set():
+                self._loop.call_soon_threadsafe(self._send_audio, response, out)
 
     def _send_audio(self, response: _Response, samples: np.ndarray) -> None:
         if response.cancel.is_set() or self._closed:
@@ -507,6 +584,22 @@ class ConversationSession:
                          "self_initiated": self_initiated, "audio_ms": round(response.audio_ms)})
 
     # ── helpers ────────────────────────────────────────────────────────────
+
+    def _prime(self) -> None:
+        """Pre-evaluate system prompt and tools so the first turn hits the cache."""
+        prime = getattr(self._models.llm, "prime", None)
+        if not callable(prime):
+            return
+        prefix = [self._bounded_messages()[0]]
+
+        def run() -> None:
+            try:
+                prime(prefix, self._tools or None)
+            except Exception:
+                # Priming only saves latency; a failure leaves the cold path.
+                log.warning("priming the LLM prompt cache failed", exc_info=True)
+
+        self._loop.run_in_executor(None, run)
 
     def _locked(self, name: str, fn: Callable[..., Any], *args: Any) -> tuple[Any, float]:
         with self._models.lock(name):
@@ -555,6 +648,39 @@ class ConversationSession:
 
 async def _ready(value: float) -> tuple[float, float]:
     return value, 0.0
+
+
+_NOISE = np.random.default_rng(7)
+
+
+_MARKDOWN = re.compile(r"(\*\*|__|\*|`+|^#+\s*|^\s*[-*•]\s+|\[([^\]]*)\]\([^)]*\))", re.M)
+
+
+def speakable(text: str) -> str:
+    """Drop Markdown a model may emit; a voice must not read asterisks aloud."""
+    cleaned = _MARKDOWN.sub(lambda m: m.group(2) or "", text)
+    return " ".join(cleaned.split())
+
+
+def _pause_after(clause: str) -> int:
+    """Gap before the next clause, from how the previous one ended."""
+    end = clause.rstrip()[-1:]
+    if end in ".!?…":
+        return 250
+    if end in ",;:–—":
+        return 150
+    return 100
+
+
+def _with_noise_tail(audio: np.ndarray, seconds: float = 0.15) -> np.ndarray:
+    """Close the segment with a little room noise (about -60 dBFS).
+
+    The recogniser clips the last word of a segment that ends abruptly; a short
+    noise floor behaves like the microphone it stands in for, where digital
+    zeros made it invent words in the bench.
+    """
+    tail = (_NOISE.standard_normal(int(seconds * INPUT_RATE)) * 0.001).astype(np.float32)
+    return np.concatenate([np.asarray(audio, dtype=np.float32), tail])
 
 
 def _ollama_tools(declarations: list[dict[str, Any]]) -> list[dict[str, Any]]:
