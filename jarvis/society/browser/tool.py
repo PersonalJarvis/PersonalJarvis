@@ -26,7 +26,12 @@ from .session import DEFAULT_MAX_STEPS, MAX_STEPS_CEILING, BrowserJobs, BrowserU
 
 log = logging.getLogger(__name__)
 
-__all__ = ["BROWSER_TOOL_NAME", "BrowserTool", "task_needs_approval"]
+__all__ = [
+    "BROWSER_TOOL_NAME",
+    "BrowserTool",
+    "task_needs_approval",
+    "task_requires_desktop_handoff",
+]
 
 BROWSER_TOOL_NAME: Final[str] = "society_browser"
 CAPABILITY_ID: Final[str] = "core:browser"
@@ -93,10 +98,46 @@ _ASK_VERBS: Final[re.Pattern[str]] = re.compile(
     re.I,
 )
 
+# Browser-Use owns web PAGE semantics. Native browser chrome, OS file pickers
+# and cross-app desktop transitions belong to Computer-Use. This deterministic
+# boundary prevents two independent input stacks from fighting over the same
+# window and mirrors the Agent-S/UFO specialist handoff: web specialist first,
+# desktop specialist only for operating-system UI.
+_DESKTOP_HANDOFF_RE: Final[re.Pattern[str]] = re.compile(
+    r"("
+    r"address\s*bar|omnibox|browser\s+toolbar|bookmarks?\s+bar|browser\s+menu|"
+    r"extension\s+(?:icon|button|menu)|downloads?\s+(?:shelf|bubble|toolbar)|"
+    r"native\s+(?:file|open|save)\s+(?:picker|dialog)|file\s+picker|save\s+as\s+dialog|"
+    r"title\s*bar|resize\s+(?:the\s+)?browser\s+window|move\s+(?:the\s+)?browser\s+window|"
+    r"minimi[sz]e\s+(?:the\s+)?browser|maximi[sz]e\s+(?:the\s+)?browser|"
+    r"switch\s+(?:to|between)\s+(?:another\s+)?app|drag\s+.*\s+between\s+apps|"
+    r"finder\s+(?:window|dialog)|dock\s+icon|"
+    r"adressleiste|browser[- ]menü|lesezeichenleiste|datei(?:auswahl|dialog)|"
+    r"fenster\s+(?:verschieben|verkleinern|maximieren|minimieren)|app\s+wechseln|"
+    r"barra\s+degli\s+indirizzi|barra\s+(?:degli\s+)?strumenti\s+del\s+browser|"
+    r"menu\s+del\s+browser|icona\s+(?:dell['’]?estensione|estensione)|"
+    r"finestra\s+di\s+dialogo\s+(?:file|apri|salva)|selettore\s+file|salva\s+con\s+nome|"
+    r"barra\s+del\s+titolo|(?:sposta|ridimensiona|minimizza|massimizza)\s+la\s+finestra|"
+    r"cambia\s+app|passa\s+(?:a|all['’])\s*(?:un['’]?altra\s+)?app|"
+    r"trascina\s+.*\s+tra\s+app|finestra\s+finder|icona\s+nel\s+dock"
+    r")",
+    re.I,
+)
+
 
 def task_needs_approval(task: str) -> bool:
     """Whether the task text asks for an action a person should confirm."""
     return bool(_ASK_VERBS.search(task or ""))
+
+
+def task_requires_desktop_handoff(task: str) -> bool:
+    """Whether a task explicitly targets native browser/desktop UI.
+
+    Normal page work (URLs, links, forms, tabs opened through CDP) stays with
+    Browser-Use. Only explicit operating-system/browser-chrome wording crosses
+    this boundary, keeping false handoffs low.
+    """
+    return bool(_DESKTOP_HANDOFF_RE.search(task or ""))
 
 
 def _failure(reason: FailureReason, detail: str, **extra: Any) -> ToolResult:
@@ -116,12 +157,14 @@ class BrowserTool:
         "Give one clear task (what to achieve, where, what to return) and optionally the "
         "URL to start at. The run is capped (max_steps); it returns the final result, the "
         "pages visited and any errors. Tasks that send, buy, delete or publish ask the user "
-        "first. This is the live browser shown in your Options rail. Use this tool "
-        "when the user selects Browser or asks to operate the visible browser, and "
-        "for web tasks without a suitable connected API. Otherwise prefer a connected "
-        "plugin or CLI when one exists for the service. If your own earlier call is "
-        "still finishing, call this tool again: that run is replaced. If it is waiting "
-        "for approval, leave it running. Do not cancel the browser over HTTP."
+        "first. This tool owns webpage/DOM work. Do NOT use it for the browser address bar, "
+        "toolbar, extension buttons, native file dialogs, moving/resizing the browser window "
+        "or cross-app desktop work; those belong to core:computer-use. This is the live "
+        "browser shown in your Options rail. Use this tool when the user selects Browser or "
+        "asks to operate the visible webpage, and for web tasks without a suitable connected "
+        "API. Otherwise prefer a connected plugin or CLI when one exists for the service. If "
+        "your own earlier call is still finishing, call this tool again: that run is replaced. "
+        "If it is waiting for approval, leave it running. Do not cancel the browser over HTTP."
     )
     schema: dict[str, Any] = {
         "type": "object",
@@ -189,6 +232,19 @@ class BrowserTool:
         task = str(args.get("task") or "").strip()
         if not task:
             return _failure(FailureReason.BLOCKED_BY_POLICY, "task is required")
+        if task_requires_desktop_handoff(task):
+            return ToolResult(
+                success=False,
+                output={
+                    "reason": "desktop_handoff",
+                    "handoff": "core:computer-use",
+                    "retry": "choose_tool",
+                },
+                error=(
+                    "This task targets native browser chrome or desktop UI. "
+                    "Use core:computer-use instead of society_browser."
+                ),
+            )
         if self._jobs._python is None:
             from .bridge import execute_live
 
