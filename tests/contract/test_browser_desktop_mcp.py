@@ -27,6 +27,9 @@ async def test_desktop_bootstrap_publishes_the_mcp_endpoint(monkeypatch):
 
     probe = SimpleNamespace(
         cfg=SimpleNamespace(ui=SimpleNamespace(admin_api_port=48123)),
+        app=SimpleNamespace(state=SimpleNamespace()),
+        _stopping=False,
+        _shutdown_complete=False,
         _voice_ready=True,
         _schedule_anyio_pool_warm=finish,
     )

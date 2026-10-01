@@ -96,7 +96,7 @@ router = APIRouter(prefix="/api/agent-chat", tags=["agent-chat"])
 @router.get("/commands", summary="List chat slash commands and their availability")
 def list_chat_commands(request: Request, session_id: str | None = None) -> dict[str, Any]:
     try:
-        return await asyncio.to_thread(_service(request).controls.catalog, session_id)
+        return _service(request).controls.catalog(session_id)
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
 
