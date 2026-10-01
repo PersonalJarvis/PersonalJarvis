@@ -5992,6 +5992,9 @@
       },
       "pip": {
         "description": "Ein Baby mit Schnuller: plappert beim Sprechen, schläft unter einer Decke."
+      },
+      "ember": {
+        "description": "Ein Babydrache: bläst beim Nachdenken Rauchringe, speit bei Erfolg Feuer."
       }
     },
     "create_dialog": {

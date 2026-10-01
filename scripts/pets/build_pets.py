@@ -4199,7 +4199,832 @@ PIP = PetDesign(
     },
 )
 
-PETS: tuple[PetDesign, ...] = (GIGI, MISO, BREW, BOLT, MOCHI, SHELLY, PIP)
+# -- Ember: the baby dragon ---------------------------------------------------------
+#
+# A fresh hatchling: a chubby red dragon with a big round head, huge shiny
+# eyes, two little golden horns, a bit of its eggshell still sitting on its
+# head like a cap, stubby wings, a cream belly with scale plates and a short
+# tail with a spade tip. Fire is its whole vocabulary: it puffs smoke while it
+# idles, blows smoke rings while it thinks, sparks fly when it talks loudly,
+# it breathes a real little flame when something works, hiccups a sooty cloud
+# when something fails, forges at a tiny anvil, searches by the light of a
+# flame cupped in its claws and naps curled up in the rest of its egg.
+
+EMBER_SCALE = hexc("#e8505b")
+EMBER_SCALE_LIGHT = hexc("#ff8a80")
+EMBER_SCALE_DARK = hexc("#b0303f")
+EMBER_BELLY = hexc("#ffe2ad")
+EMBER_BELLY_DARK = hexc("#f0b871")
+EMBER_WING = hexc("#ffad7a")
+EMBER_WING_DARK = hexc("#e57a52")
+EMBER_HORN = hexc("#ffd45c")
+EMBER_HORN_LIGHT = hexc("#fff1b8")
+EMBER_HORN_DARK = hexc("#cf9628")
+EMBER_EYE = hexc("#2a1830")
+#: The warm reflection low in each eye: a dragon's eyes hold a little fire.
+EMBER_EYE_SHINE = hexc("#ffb347")
+EMBER_BLUSH = hexc("#ffb0c0")
+EMBER_NOSTRIL = hexc("#7a1f2b")
+#: Fire from the outside in: red edge, orange, yellow, a white-hot core.
+EMBER_FIRE = (hexc("#ff4a1c"), hexc("#ff9a1f"), hexc("#ffd84a"), hexc("#fff6cf"))
+#: Smoke: a mid grey that holds on dark AND light desktops, and a lighter
+#: one for smoke on its way out.
+EMBER_SMOKE = hexc("#9b95a6")
+EMBER_SMOKE_LIGHT = hexc("#cdc8d6")
+EMBER_SOOT = hexc("#4a4450")
+EMBER_SOOT_LIGHT = hexc("#6e6878")
+EMBER_SHELL = hexc("#fbf3e2")
+EMBER_SHELL_DARK = hexc("#d6c6a6")
+EMBER_SHELL_SPOT = hexc("#ff9f8f")
+EMBER_STEEL = (hexc("#7a8294"), hexc("#a9b1c2"), hexc("#4f5566"))
+EMBER_WOOD = hexc("#9a6238")
+#: Searching: the light the cupped flame throws around it.
+EMBER_GLOW = hexc("#ffe9a3")
+
+#: The top-left of each 5 x 6 eye; looks move the whole eye a pixel.
+_EMBER_EYE_AT: tuple[Px, Px] = ((15, 14), (28, 14))
+_EMBER_LOOK: dict[str, Px] = {
+    "open": (0, 0),
+    "wide": (0, 0),
+    "look_left": (-1, 0),
+    "look_right": (1, 0),
+    "up_left": (-1, -1),
+    "up_right": (1, -1),
+    "down": (0, 1),
+}
+#: Closed-eye shapes on the 5 x 6 eye box (the right eye is mirrored).
+_EMBER_LIDS: dict[str, tuple[str, ...]] = {
+    "closed": (".....", ".....", ".....", "#...#", ".###.", "....."),
+    "sleep": (".....", ".....", ".....", "#...#", ".###.", "....."),
+    "happy": (".....", ".###.", "#...#", ".....", ".....", "....."),
+    #: Scrunched shut after a sooty cough: > <.
+    "squint": (".....", "##...", "..##.", "....#", "..##.", "##..."),
+    "x": (".....", "#...#", ".#.#.", "..#..", ".#.#.", "#...#"),
+}
+#: Ear-fin tips (left fin; the right one is mirrored) per mood.
+_EMBER_FIN_TIPS: dict[str, tuple[float, float]] = {
+    "rest": (7.5, 13.5),
+    "perk": (7.5, 9.0),
+    "flick": (6.0, 16.5),
+    "droop": (9.0, 22.5),
+}
+#: Wing tips (left wing; the right one is mirrored) per wing pose.
+_EMBER_WING_TIPS: dict[str, tuple[float, float]] = {
+    "rest": (8.5, 23.5),
+    "flap": (8.5, 19.5),
+    "half": (6.5, 20.5),
+    "up": (11.5, 16.5),
+    "spread": (3.5, 22.5),
+    "down": (5.5, 31.5),
+    "droop": (10.5, 36.5),
+}
+_EMBER_HORN = polygon([(15.5, 11.5), (12.5, 4.5), (20.0, 9.5)])
+_EMBER_CAP = ("..###..", ".##o##.", "#######", "#.#.#.#")
+_EMBER_SPADE = ("..#..", ".###.", "#####", ".###.", "..#..")
+
+#: Idle: where Ember looks, the wing flutter, the spade's sway and the age
+#: of the smoke puff that leaves its nostrils over the seven breathing cells.
+_EMBER_IDLE_LOOK = ("open", "open", "open", "look_left", "open", "open", "open")
+_EMBER_IDLE_WING = ("rest", "rest", "flap", "half", "rest", "rest", "rest")
+_EMBER_IDLE_TAIL = (0, 0, 1, 2, 2, 1, 0)
+_EMBER_IDLE_PUFF: tuple[int | None, ...] = (None, None, None, None, 0, 1, 2)
+#: Listening: the head tilts towards the voice and back.
+_EMBER_TILT = (0, 1, 1, 1, 1, 0)
+#: Success: a hop low enough for the horns to stay in the cell, and how far
+#: the fire breath reaches per frame (path points shown).
+_EMBER_HOP = (0, -1, -2, -3, -2, -1, 0, 0)
+_EMBER_BREATH_LEN = (0, 3, 6, 9, 9, 7, 0, 0)
+#: Error: the hiccup's jolt, the shake after the cough, and the face.
+_EMBER_HIC = (0, -2, 0, 0, 0, 0)
+_EMBER_SHAKE = (0, 0, -1, 1, -1, 0)
+_EMBER_ERROR_EYES = ("wide", "wide", "squint", "squint", "x", "open")
+_EMBER_ERROR_MOUTH = ("puff", "o", "cough", "cough", "frown", "frown")
+#: Working: the hammer per frame (True = down on the anvil), and the two
+#: frames Ember breathes on the work piece to heat it again.
+_EMBER_STRIKE = (False, True, False, True, False, False, False, True)
+_EMBER_HEAT = (False, False, False, False, True, True, False, False)
+#: Held: the swing from the cursor, the frantic wing beat and tail wiggle.
+_EMBER_SWAY = (-1, 0, 1, 1, 0, -1)
+_EMBER_HELD_WINGS = ("up", "spread", "down", "up", "spread", "down")
+_EMBER_HELD_TAIL = (-2, 0, 2, 2, 0, -2)
+
+
+def ember_pose(state: str, i: int) -> Pose:
+    pose = base_pose(state, i)
+    if state == "idle":
+        if i < len(_EMBER_IDLE_LOOK):
+            return replace(pose, eyes=_EMBER_IDLE_LOOK[i])
+        return pose
+    if state == "success":
+        roar = _EMBER_BREATH_LEN[i] > 0
+        return replace(pose, dy=_EMBER_HOP[i], mouth="roar" if roar else "smile")
+    if state == "error":
+        return Pose(
+            state,
+            i,
+            dx=_EMBER_SHAKE[i],
+            dy=_EMBER_HIC[i],
+            eyes=_EMBER_ERROR_EYES[i],
+            mouth=_EMBER_ERROR_MOUTH[i],
+        )
+    if state == "sleeping":
+        # Curled up in the egg: the wing does the breathing, not a stretch.
+        return Pose(state, i, eyes="sleep", mouth="closed")
+    if state == "working":
+        return replace(pose, mouth="tongue")
+    if state == "searching":
+        sweep = SEARCH_SWEEP[i % len(SEARCH_SWEEP)]
+        lean = (sweep > 2) - (sweep < -2)
+        return Pose(state, i, dx=lean, eyes=SEARCH_EYES[i], mouth="o")
+    if state == "held":
+        return Pose(state, i, dx=_EMBER_SWAY[i % len(_EMBER_SWAY)], eyes="wide", mouth="o")
+    return pose
+
+
+def _ember_scales(f: Frame, mask: Mask, depth: int = 2) -> None:
+    f.part(mask, _shade(mask, EMBER_SCALE, EMBER_SCALE_LIGHT, EMBER_SCALE_DARK, depth))
+
+
+def _ember_in_cell(mask: Iterable[Px]) -> Mask:
+    """``mask`` clipped so that it AND its outline stay inside the cell."""
+    return {(x, y) for x, y in mask if 1 <= x < CELL - 1 and 1 <= y < CELL - 1}
+
+
+def _ember_hand(f: Frame, x: float, y: float, r: float = 2.6) -> None:
+    hand = ellipse(x + 0.5, y + 0.5, r, r)
+    _ember_scales(f, hand, 1)
+    f.paint(
+        {(math.floor(x) - 1, math.floor(y + r)), (math.floor(x) + 1, math.floor(y + r))} & hand,
+        EMBER_BELLY,
+    )
+
+
+def _ember_arm(f: Frame, shoulder: Px, hand: Px) -> None:
+    """A stubby arm from ``shoulder`` to a round claw at ``hand``."""
+    _ember_scales(f, thick(line(*shoulder, *hand)), 1)
+    _ember_hand(f, *hand)
+
+
+def _ember_wing(f: Frame, tip_name: str, *, right: bool, root: Px = (18, 29)) -> None:
+    """A stubby bat wing from the shoulder ``root``: a peach membrane with a
+    scalloped trailing edge, a thin bone along its leading edge and a tiny
+    golden claw at the tip."""
+    tx, ty = _EMBER_WING_TIPS[tip_name]
+    rx, ry = root[0] + 0.5, root[1] + 0.5
+    bx, by = rx, ry + 8.0
+    ex, ey = bx - tx, by - ty
+    length = math.hypot(ex, ey)
+    nx, ny = ey / length, -ex / length
+    if nx * (tx + ex / 2 - rx) + ny * (ty + ey / 2 - ry) < 0:
+        nx, ny = -nx, -ny
+    edge = [
+        (tx + ex * t + nx * bump, ty + ey * t + ny * bump)
+        for t, bump in ((0.2, 2.4), (0.36, 0.8), (0.56, 2.8), (0.74, 1.0), (0.9, 2.0))
+    ]
+    membrane = polygon([(rx, ry), (tx, ty), *edge, (bx, by)])
+    tip = (math.floor(tx), math.floor(ty))
+    bone = line(root[0], root[1], *tip)
+    if right:
+        membrane, bone, tip = mirrored(membrane), mirrored(bone), (2 * CX - 1 - tip[0], tip[1])
+    f.part(membrane, shade(membrane, EMBER_WING, dark=EMBER_WING_DARK, dark_depth=1))
+    f.paint(bone, EMBER_SCALE_DARK)
+    f.part({tip}, EMBER_HORN)
+
+
+def _ember_spade(f: Frame, x: int, y: int) -> None:
+    """The spade at the tail's end, centred on ``(x, y)``."""
+    spade = from_rows(x - 2, y - 2, _EMBER_SPADE)
+    f.part(spade, _shade(spade, EMBER_SCALE, EMBER_SCALE_LIGHT, EMBER_SCALE_DARK, 1))
+
+
+def _ember_tail(f: Frame, sway: int = 0, lift: int = 0) -> None:
+    """The short tail curling up behind the right hip, spade on the end."""
+    tip = (41 + sway, 33 - lift)
+    tail = thick(polyline([(30, 42), (35, 43), (39, 41), (41 + sway // 2, 37 - lift // 2), tip]))
+    _ember_scales(f, tail, 1)
+    _ember_spade(f, tip[0], tip[1] - 2)
+
+
+def _ember_feet(f: Frame, lift: tuple[int, int] = (0, 0)) -> None:
+    for side, up in enumerate(lift):
+        foot = ellipse(17.5, 44.5 - up, 3.6, 2.3)
+        claws = {(15, 46 - up), (17, 46 - up), (19, 46 - up)}
+        if side:
+            foot, claws = mirrored(foot), mirrored(claws)
+        _ember_scales(f, foot, 1)
+        f.paint(claws & foot, EMBER_BELLY)
+
+
+def _ember_belly(f: Frame, cx: float, cy: float, rx: float, ry: float) -> Mask:
+    """The cream belly with its plates: one darker line every third row."""
+    belly = ellipse(cx, cy, rx, ry)
+    top = min(y for _x, y in belly)
+    f.paint(belly, EMBER_BELLY)
+    f.paint({(x, y) for x, y in belly if (y - top) % 3 == 2}, EMBER_BELLY_DARK)
+    return belly
+
+
+def _ember_eyes(f: Frame, style: str) -> None:
+    for side, (x, y) in enumerate(_EMBER_EYE_AT):
+        if style in _EMBER_LIDS:
+            rows = _EMBER_LIDS[style]
+            if side:
+                rows = tuple(r[::-1] for r in rows)
+            f.paint(from_rows(x, y, rows), OUTLINE)
+            continue
+        lx, ly = _EMBER_LOOK[style]
+        x, y = x + lx, y + ly
+        top, h = (y - 2, 8) if style == "wide" else (y - 1, 7)
+        f.paint(_oval(x, top, 5, h), EMBER_EYE)
+        f.paint(rect(x + 2, top + 1, x + 3, top + 2), FX_WHITE)
+        f.paint({(x + 1, top + h - 2)}, FX_WHITE)
+        f.paint(rect(x + 2, top + h - 2, x + 3, top + h - 2), EMBER_EYE_SHINE)
+
+
+def _ember_mouth(f: Frame, pose: Pose) -> None:
+    mouth = pose.mouth
+    if mouth in ("rest", "smile"):
+        draw_mouth(f, "rest", 21, 25, 6)
+        f.paint({(25, 27)}, FX_WHITE)  # one tiny fang
+    elif mouth == "closed":
+        f.paint(rect(22, 26, 25, 26), OUTLINE)
+    elif mouth == "tongue":
+        f.paint(rect(21, 26, 25, 26), OUTLINE)
+        f.paint({(25, 27), (26, 27)}, TONGUE)  # concentrating
+        f.paint({(26, 26)}, OUTLINE)
+    elif mouth == "o":
+        f.paint(rect(23, 25, 24, 27), MOUTH_DARK)
+        f.paint({(23, 25), (24, 25)}, OUTLINE)
+    elif mouth == "puff":
+        # Cheeks puffed round with a hiccup that is on its way.
+        f.paint({(23, 26), (24, 26)}, OUTLINE)
+    elif mouth == "cough":
+        draw_mouth(f, "open", 21, 25, 6)
+    elif mouth == "roar":
+        draw_mouth(f, "wide", 20, 25, 8)
+        f.paint({(21, 26), (26, 26)}, FX_WHITE)
+    elif mouth == "frown":
+        draw_mouth(f, "frown", 21, 25, 6)
+    else:
+        draw_mouth(f, mouth, 21, 25, 6)
+        if pose.state == "talking" and mouth in ("open", "wide"):
+            # A loud word: the tongue glows like a coal.
+            f.paint(rect(22, 27, 25, 27), EMBER_FIRE[1])
+            if mouth == "wide":
+                f.paint(rect(23, 27, 24, 28), EMBER_FIRE[2])
+
+
+def _ember_head(
+    f: Frame,
+    pose: Pose,
+    fins: tuple[str, str] = ("rest", "rest"),
+    *,
+    cap: int | None = 0,
+    soot: bool = False,
+) -> None:
+    """Fins, horns, the round head and the face (head centred on (CX, 18)).
+
+    ``cap`` lifts the eggshell cap that many pixels; ``None`` leaves it off.
+    """
+    for k, name in enumerate(fins):
+        tip = _EMBER_FIN_TIPS[name]
+        fin = polygon([(13.5, 14.5), tip, (12.5, 21.5)])
+        if k:
+            fin = mirrored(fin)
+        f.part(fin, shade(fin, EMBER_WING, dark=EMBER_WING_DARK, dark_depth=1))
+    for horn in (_EMBER_HORN, mirrored(_EMBER_HORN)):
+        f.part(horn, _shade(horn, EMBER_HORN, EMBER_HORN_LIGHT, EMBER_HORN_DARK, 1))
+    head = ellipse(CX, 18, 12.5, 10.5)
+    _ember_scales(f, head)
+    if cap is not None:
+        f.glyph(
+            20,
+            5 - cap,
+            _EMBER_CAP,
+            {"#": EMBER_SHELL, "o": EMBER_SHELL_SPOT},
+        )
+    puffed = pose.mouth == "puff"
+    muzzle = ellipse(CX, 23.5, 7.0 if puffed else 5.5, 3.6 if puffed else 3.2)
+    f.paint(muzzle, EMBER_SCALE_LIGHT)
+    cheek = rect(12, 20, 15, 23) if puffed else rect(13, 21, 15, 22)
+    f.paint(cheek | mirrored(cheek), EMBER_BLUSH)
+    if soot:
+        f.paint({(19, 22), (20, 23), (29, 21), (30, 22), (28, 23), (14, 20), (33, 19)}, EMBER_SOOT)
+    _ember_eyes(f, pose.eyes)
+    f.paint({(22, 22), (25, 22)}, EMBER_NOSTRIL)
+    _ember_mouth(f, pose)
+
+
+def draw_ember(f: Frame, pose: Pose) -> None:
+    if pose.state == "sleeping":
+        _draw_ember_curled(f, pose)
+    elif pose.state == "held":
+        _draw_ember_dangling(f, pose)
+    else:
+        _draw_ember_sitting(f, pose)
+
+
+def _ember_wings_for(pose: Pose) -> tuple[str, str]:
+    state, i = pose.state, pose.i
+    if state == "idle":
+        name = _EMBER_IDLE_WING[i] if i < len(_EMBER_IDLE_WING) else "rest"
+        return name, name
+    if state == "listening":
+        return "half", "half"
+    if state == "talking":
+        return ("rest", "rest", "flap", "half")[i % 4], ("rest", "rest", "flap", "half")[i % 4]
+    if state == "success":
+        name = "spread" if 1 <= i <= 5 else "up" if i == 6 else "rest"
+        return name, name
+    if state == "error":
+        name = "up" if i == 1 else "droop" if i >= 3 else "rest"
+        return name, name
+    if state == "searching":
+        sweep = SEARCH_SWEEP[i % len(SEARCH_SWEEP)]
+        return ("half", "rest") if sweep < -2 else ("rest", "half") if sweep > 2 else ("rest",) * 2
+    return "rest", "rest"
+
+
+def _ember_tail_for(pose: Pose) -> tuple[int, int]:
+    state, i = pose.state, pose.i
+    if state == "idle":
+        return (_EMBER_IDLE_TAIL[i] if i < len(_EMBER_IDLE_TAIL) else -1), 0
+    if state == "listening":
+        return 1, 2
+    if state == "thinking":
+        return (0, 1, 1, 0, 0, -1, -1, 0)[i % 8], 0
+    if state == "success":
+        return 1, 3 if pose.dy <= -2 else 1
+    if state == "error":
+        return -1, -3
+    if state == "working":
+        return (0, 1, 0, 1, 2, 2, 1, 0)[i % 8], 0
+    return 0, 0
+
+
+def _ember_arms(pose: Pose) -> tuple[tuple[Px, Px], ...]:
+    """(shoulder, claw) of each arm of the sitting dragon."""
+    state, i = pose.state, pose.i
+    rest = (((16, 32), (14, 37)), ((31, 32), (33, 37)))
+    if state == "thinking":
+        tap = 1 if i % 4 in (1, 2) else 0
+        return rest[0], ((31, 32), (29, 28 + tap))
+    if state == "talking":
+        lift = (0, 0, 2, 4)[i % 4]
+        return ((16, 32), (13, 37 - lift)), ((31, 32), (34, 37 - lift))
+    if state == "success":
+        if pose.dy <= -2:
+            return ((16, 32), (10, 28)), ((31, 32), (37, 28))
+        return rest
+    if state == "error":
+        if i in (2, 3):
+            return rest[0], ((31, 32), (29, 30))  # a claw up to the coughing mouth
+        return ((16, 32), (15, 38)), ((31, 32), (32, 38))
+    if state in ("working", "searching"):
+        return ()  # drawn with the anvil / the cupped flame
+    return rest
+
+
+def _draw_ember_sitting(f: Frame, pose: Pose) -> None:
+    state, i = pose.state, pose.i
+    left_wing, right_wing = _ember_wings_for(pose)
+    sway, lift = _ember_tail_for(pose)
+    fins = ("rest", "rest")
+    if state == "listening":
+        fins = ("perk", "perk")
+    elif state == "idle" and i >= len(_EMBER_IDLE_LOOK):
+        fins = ("flick", "rest")  # the accent: a blink and a fin twitch
+    elif state == "error":
+        fins = ("perk", "perk") if i < 2 else ("droop", "droop")
+    elif state == "success":
+        fins = ("perk", "perk")
+    elif state == "talking" and i == 3:
+        fins = ("perk", "perk")
+    tilt = _EMBER_TILT[i % len(_EMBER_TILT)] if state == "listening" else 0
+    kick = (0, 0)
+    if state == "success" and pose.dy <= -2:
+        kick = (1, 1)
+    with f.offset(pose.dx, min(pose.dy, 0)):
+        _ember_feet(f, kick)
+    with f.offset(pose.dx, pose.dy):
+        _ember_tail(f, sway, lift)
+        _ember_wing(f, left_wing, right=False)
+        _ember_wing(f, right_wing, right=True)
+        body = ellipse(CX, 37, 10, 8)
+        _ember_scales(f, body)
+        _ember_belly(f, CX, 38.5, 6, 5.5)
+        if state == "thinking":
+            _ember_belly_glow(f, i)
+        for shoulder, hand in _ember_arms(pose):
+            _ember_arm(f, shoulder, hand)
+        cap = 0
+        if state == "success":
+            cap = (0, 1, 1, 0, 1, 1, 0, 0)[i % 8]  # the cap jiggles on the hop
+        with f.offset(tilt, 0):
+            _ember_head(f, pose, fins, cap=cap, soot=state == "error" and i >= 3)
+        if state == "thinking":
+            # The tapping claw sits in front of the chin.
+            tap = 1 if i % 4 in (1, 2) else 0
+            _ember_hand(f, 29, 28 + tap)
+
+
+#: Thinking: how hot the coal in the belly glows (0 dim .. 3 white-hot).
+_EMBER_GLOW_PHASE = (0, 1, 2, 3, 3, 2, 1, 0)
+
+
+def _ember_belly_glow(f: Frame, i: int) -> None:
+    """A little coal glowing in the belly while Ember thinks: it brightens and
+    dims like a breath on embers."""
+    level = _EMBER_GLOW_PHASE[i % len(_EMBER_GLOW_PHASE)]
+    cx, cy = 23, 38
+    f.paint(rect(cx, cy, cx + 1, cy + 1), EMBER_FIRE[min(level, 3)] if level else EMBER_FIRE[0])
+    if level >= 2:
+        f.paint({(cx - 1, cy), (cx + 2, cy + 1), (cx, cy - 1), (cx + 1, cy + 2)}, EMBER_FIRE[1])
+    if level >= 3:
+        f.paint({(cx - 1, cy + 1), (cx + 2, cy), (cx + 1, cy - 1), (cx, cy + 2)}, EMBER_FIRE[0])
+
+
+def _draw_ember_dangling(f: Frame, pose: Pose) -> None:
+    """Held: lifted by the scruff, legs dangling, wings beating like mad and the
+    tail wiggling."""
+    i = pose.i
+    lag = -pose.dx
+    wing = _EMBER_HELD_WINGS[i % len(_EMBER_HELD_WINGS)]
+    wiggle = _EMBER_HELD_TAIL[i % len(_EMBER_HELD_TAIL)]
+    with f.offset(pose.dx, 0):
+        tail = thick(polyline([(27, 38), (31, 41), (34 + wiggle // 2, 43), (37 + wiggle, 42)]))
+        _ember_scales(f, tail, 1)
+        _ember_spade(f, 39 + wiggle, 41)
+        kick = (i % 2, 1 - i % 2)
+        for hip, up, out in (((20, 38), kick[0], -1), ((27, 38), kick[1], 1)):
+            foot = (hip[0] + out + lag, 43 - up)
+            _ember_scales(f, thick(line(*hip, *foot)), 1)
+            claw = ellipse(foot[0] + 0.5 + out, foot[1] + 1.0, 2.6, 1.8)
+            _ember_scales(f, claw, 1)
+        with f.offset(0, -2):
+            _ember_wing(f, wing, right=False)
+            _ember_wing(f, wing, right=True)
+        body = ellipse(CX, 34, 8.5, 7)
+        _ember_scales(f, body)
+        _ember_belly(f, CX, 35, 5, 4.5)
+        _ember_arm(f, (17, 31), (13, 35 + (i % 2)))
+        _ember_arm(f, (30, 31), (34, 35 + (1 - i % 2)))
+        with f.offset(0, -3):
+            _ember_head(f, pose, ("perk", "perk"), cap=None)
+
+
+#: Sleeping: the tail tip twitches over the rim in a dream.
+_EMBER_SLEEP_TIP = ((41, 42), (41, 42), (42, 41), (42, 41), (41, 42), (40, 43))
+
+
+def _draw_ember_curled(f: Frame, pose: Pose) -> None:
+    """Asleep, curled up in the bottom half of its own egg: the chin on the rim,
+    a wing pulled over the back like a blanket and the tail hanging out."""
+    i = pose.i
+    rise = SLEEP_BREATH[i % len(SLEEP_BREATH)]
+    back = ellipse(29, 34 - rise, 11, 7)
+    _ember_scales(f, back)
+    wing = polygon(
+        [(19.5, 32.5), (26.5, 26.5 - rise), (34.5, 26.5 - rise), (39.5, 30.5 - rise), (38.5, 34.5)]
+    )
+    wing -= ellipse(36.5, 35.5, 2, 2) | ellipse(31.5, 35.5, 2, 2)
+    f.part(wing, _shade(wing, EMBER_WING, EMBER_SCALE_LIGHT, EMBER_WING_DARK, 1))
+    f.paint(line(27, 28 - rise, 30, 33) | line(34, 28 - rise, 35, 32), EMBER_WING_DARK)
+    shell = ellipse(CX, 38, 16, 10) & rect(0, 34, CELL - 1, CELL - 2)
+    shell -= {(x, 34) for x in range(CELL) if (x // 2) % 2}
+    f.part(shell, _shade(shell, EMBER_SHELL, FX_WHITE, EMBER_SHELL_DARK, 2))
+    f.paint({(14, 40), (15, 40), (31, 42), (36, 38), (22, 44)} & shell, EMBER_SHELL_SPOT)
+    tip = _EMBER_SLEEP_TIP[i % len(_EMBER_SLEEP_TIP)]
+    tail = thick(polyline([(36, 35), (39, 36), (tip[0], tip[1] - 3)]))
+    _ember_scales(f, tail, 1)
+    _ember_spade(f, *tip)
+    # The head rests on the rim, turned to the left.
+    for horn in (
+        polygon([(14.5, 26.5), (17.5, 19.5), (19.5, 25.5)]),
+        polygon([(19.5, 27.5), (24.5, 21.5), (23.5, 28.5)]),
+    ):
+        f.part(horn, _shade(horn, EMBER_HORN, EMBER_HORN_LIGHT, EMBER_HORN_DARK, 1))
+    head = ellipse(16, 32, 9.5, 7)
+    _ember_scales(f, head)
+    snout = ellipse(9, 34, 4, 2.5)
+    f.paint(snout, EMBER_SCALE_LIGHT)
+    f.paint({(7, 33)}, EMBER_NOSTRIL)
+    f.paint(rect(14, 35, 16, 35), EMBER_BLUSH)
+    f.paint(from_rows(13, 29, _EMBER_LIDS["sleep"][2:5]), OUTLINE)
+    f.paint(from_rows(19, 29, _EMBER_LIDS["sleep"][2:5]), OUTLINE)
+    _ember_hand(f, 21, 37)  # a claw holding on to the rim
+
+
+# -- Ember's effects ----------------------------------------------------------
+
+
+def _ember_puff(f: Frame, x: float, y: float, r: float, color: RGBA = EMBER_SMOKE) -> None:
+    """One round smoke puff with a lighter top-left, kept inside the cell."""
+    puff = _ember_in_cell(ellipse(x, y, r, r * 0.85))
+    if not puff:
+        return
+    light = EMBER_SMOKE_LIGHT if color == EMBER_SMOKE else FX_WHITE
+    f.part(
+        puff, {p: light if (p[0] - 1, p[1] - 1) not in puff and p[1] < y else color for p in puff}
+    )
+
+
+def _ember_flame(f: Frame, path: Sequence[tuple[float, float]], radii: Sequence[float]) -> None:
+    """Fire along ``path`` (base to tip) with a radius per point, coloured in
+    layers from the edge in: red, orange, yellow and a white-hot core."""
+    mask: Mask = set()
+    for (x, y), r in zip(path, radii, strict=False):
+        mask |= ellipse(x, y, r, r)
+    mask = _ember_in_cell(mask)
+    rings = (mask, eroded(mask), eroded(mask, 2), eroded(mask, 3))
+    colors = {p: EMBER_FIRE[k] for k, ring in enumerate(rings) for p in ring}
+    f.part(mask, colors)
+
+
+def _ember_spark(f: Frame, x: int, y: int, hot: bool = True) -> None:
+    if 1 <= x < CELL - 1 and 1 <= y < CELL - 1:
+        f.part({(x, y)}, EMBER_FIRE[2] if hot else EMBER_FIRE[1])
+
+
+def _ember_idle_fx(f: Frame, pose: Pose) -> None:
+    """A lazy "hmph": wisps curl from the nostrils, then a puff of smoke on
+    either side drifts up and away past the cheeks."""
+    i = pose.i
+    age = _EMBER_IDLE_PUFF[i] if i < len(_EMBER_IDLE_PUFF) else None
+    if age is None:
+        return
+    with f.offset(pose.dx, pose.dy - pose.stretch):
+        if age == 0:
+            f.paint({(22, 21), (21, 20), (25, 21), (26, 20)}, EMBER_SMOKE_LIGHT)
+            return
+        color = EMBER_SMOKE if age < 2 else EMBER_SMOKE_LIGHT
+        for side in (-1, 1):
+            _ember_puff(f, CX + side * (8 + 4 * age), 26 - 4 * age, 0.9 + 0.5 * age, color)
+
+
+def _ember_listening_fx(f: Frame, pose: Pose) -> None:
+    """Sound arcs ripple in towards the perked fins."""
+    with f.offset(pose.dx, pose.dy):
+        fx_arcs(f, pose.i, (9, 15), (38, 15))
+
+
+#: Thinking: two smoke rings in flight, born four frames apart.
+_EMBER_RINGS = 2
+
+
+def _ember_thinking_fx(f: Frame, pose: Pose) -> None:
+    """Smoke rings rise from the nostrils, grow and fade as they drift up."""
+    for k in range(_EMBER_RINGS):
+        age = (pose.i - 4 * k) % 8
+        cx = 37.0 + 0.7 * age
+        cy = 25.0 - 2.7 * age
+        rx = 1.4 + 0.45 * age
+        ry = rx * 0.7
+        ring = ellipse(cx, cy, rx, ry) - ellipse(cx, cy, rx - 1.0, ry - 1.0)
+        ring = _ember_in_cell(ring)
+        if age < 3:
+            color = EMBER_SMOKE
+        elif age < 6:
+            color = EMBER_SMOKE_LIGHT
+        else:
+            color = EMBER_SMOKE_LIGHT
+            ring = {p for p in ring if (p[0] + p[1]) % 2 == 0}
+        f.paint(ring, color)
+
+
+def _ember_talking_fx(f: Frame, pose: Pose) -> None:
+    """Louder words throw sparks out of the mouth; the loudest a flicker of flame."""
+    with f.offset(pose.dx, pose.dy):
+        if pose.i >= 2:
+            _ember_spark(f, 18, 29)
+            _ember_spark(f, 29, 29, hot=False)
+        if pose.i >= 3:
+            _ember_spark(f, 15, 31, hot=False)
+            _ember_spark(f, 32, 32)
+            _ember_flame(f, ((19.5, 28.5), (17.5, 29.5)), (1.0, 0.8))
+            _ember_flame(f, ((28.5, 28.5), (30.5, 29.5)), (1.0, 0.8))
+
+
+#: Success: the fire breath's path, from the mouth's right corner out and up.
+_EMBER_BREATH_PATH = (
+    (28.0, 27.0),
+    (31.0, 26.5),
+    (34.0, 25.0),
+    (36.5, 22.5),
+    (38.5, 19.5),
+    (40.0, 16.0),
+    (41.0, 12.5),
+    (41.5, 9.0),
+    (41.5, 5.5),
+)
+_EMBER_BREATH_R = (1.2, 1.8, 2.3, 2.8, 3.1, 3.2, 2.8, 2.0, 1.2)
+
+
+def _ember_success_fx(f: Frame, pose: Pose) -> None:
+    """A proud little fire breath that roars up and out, then breaks into
+    a smoke puff and sparkles."""
+    i = pose.i
+    n = _EMBER_BREATH_LEN[i]
+    dy = pose.dy
+    if n:
+        path = [(x, y + dy) for x, y in _EMBER_BREATH_PATH[:n]]
+        radii = list(_EMBER_BREATH_R[:n])
+        # The newest point is the flickering tip.
+        radii[-1] = min(radii[-1], 1.4 if i % 2 else 1.8)
+        _ember_flame(f, path, radii)
+        if n >= 6:
+            for x, y in ((44, 14 + i), (37, 9 + i), (45, 22 - i)):
+                _ember_spark(f, x, y + dy, hot=bool(i % 2))
+    if i == 6:
+        _ember_puff(f, 41, 9, 3.0)
+        _ember_puff(f, 37, 15, 2.0, EMBER_SMOKE_LIGHT)
+    fx_sparkles(f, i, ((7, 10, 2), (12, 4, 4), (5, 25, 5)))
+
+
+#: Error: the cough cloud, (x, y, r) puffs per frame, drifting up and left.
+_EMBER_COUGH: tuple[tuple[tuple[float, float, float], ...], ...] = (
+    (),
+    ((20.0, 29.0, 1.2),),
+    ((17.0, 28.0, 3.0), (13.0, 26.0, 2.6), (20.0, 30.0, 2.0)),
+    ((13.0, 24.0, 3.6), (8.0, 22.0, 3.0), (16.0, 28.0, 2.4)),
+    ((9.0, 19.0, 3.4), (5.0, 18.0, 2.4), (12.0, 23.0, 2.0)),
+    ((6.0, 14.0, 2.6), (9.0, 18.0, 1.6)),
+)
+
+
+def _ember_error_fx(f: Frame, pose: Pose) -> None:
+    """A hiccup that should have been fire: only a sooty cough cloud comes out,
+    a lone spark drops, and a red "!" pops up."""
+    i = pose.i
+    if i >= 1:
+        fx_bang(f, 42, 3)
+    if i == 1:
+        f.paint({(36, 12), (38, 10), (37, 14)}, ARC)  # hic!
+    for k, (x, y, r) in enumerate(_EMBER_COUGH[i]):
+        color = EMBER_SOOT if (k == 0 and i < 4) else EMBER_SOOT_LIGHT
+        puff = _ember_in_cell(ellipse(x + pose.dx, y, r, r * 0.85))
+        f.part(puff, {p: EMBER_SOOT_LIGHT if (p[0] + p[1]) % 5 == 0 else color for p in puff})
+    if 2 <= i <= 5:
+        _ember_spark(f, 27 + pose.dx, 30 + 3 * (i - 2), hot=i < 4)
+
+
+def _ember_sleeping_fx(f: Frame, pose: Pose) -> None:
+    """Smoky z marks drift up out of the egg; each exhale puffs from the nose."""
+    i = pose.i
+    drift = _Z_DRIFT[i % len(_Z_DRIFT)]
+    for index in _Z_PHASES[i % len(_Z_PHASES)]:
+        dx, dy, rows = _ZS[index]
+        f.glyph(28 + dx, 19 + dy + drift, rows, {"#": EMBER_SMOKE_LIGHT})
+    if i in (4, 5):
+        _ember_puff(f, 4.5 - (i - 4), 29 - 3 * (i - 4), 1.8 + 0.5 * (i - 4), EMBER_SMOKE)
+
+
+_EMBER_SPARK_DIRS = ((-1.0, -0.5), (-0.6, -1.0), (0.5, -1.0), (1.0, -0.4))
+
+
+def _ember_working_fx(f: Frame, pose: Pose) -> None:
+    """A tiny anvil with a glowing work piece: the hammer comes down, sparks
+    fly off every strike, and now and then Ember breathes on the piece to
+    heat it again."""
+    i = pose.i
+    struck = _EMBER_STRIKE[i % 8]
+    heat = _EMBER_HEAT[i % 8]
+    after = _EMBER_STRIKE[(i - 1) % 8]
+    steel, steel_light, steel_dark = EMBER_STEEL
+    horn = polygon([(14.5, 36.5), (6.5, 37.0), (14.5, 39.5)])
+    face = rect(14, 37, 34, 39)
+    waist = rect(19, 40, 29, 42)
+    foot = rounded_rect(15, 43, 33, 46, 1)
+    anvil = horn | face | waist | foot
+    f.part(anvil, _shade(anvil, steel, steel_light, steel_dark, 1))
+    f.paint(rect(15, 39, 34, 39) | rect(16, 46, 32, 46), steel_dark)
+    # The work piece: white-hot after a breath, cooling to orange.
+    glow = 3 if heat else (2 if struck or after else 1)
+    piece = rect(19, 35, 28, 36)
+    f.part(piece, {p: EMBER_FIRE[glow] if p[1] == 35 else EMBER_FIRE[glow - 1] for p in piece})
+    # The left claw holds the piece down.
+    _ember_arm(f, (16, 32), (17, 35))
+    # The right claw swings the hammer.
+    if struck:
+        hand = (32, 33)
+        head = rect(22, 29, 25, 34)
+        handle = line(26, 31, 31, 32)
+    else:
+        hand = (38, 27)
+        head = rect(35, 14, 41, 17)
+        handle = line(38, 18, 38, 25)
+    _ember_arm(f, (31, 32), hand)
+    f.part(handle, EMBER_WOOD)
+    f.part(head, _shade(head, steel, steel_light, steel_dark, 1))
+    _ember_hand(f, *hand)
+    if heat:
+        n = 3 if i % 8 == 4 else 4
+        path = ((24.0, 28.5), (24.0, 30.5), (24.0, 32.5), (24.0, 34.0))[:n]
+        _ember_flame(f, path, (1.4, 1.8, 1.6, 1.2)[:n])
+    if struck:
+        # Clang: a star at either side of the hammer and sparks flying up.
+        f.glyph(17, 31, _SPARK_S, _SPARK_PALETTE)
+        f.glyph(28, 31, _SPARK_S, _SPARK_PALETTE)
+        for dx, dy in _EMBER_SPARK_DIRS:
+            _ember_spark(f, math.floor(24 + 6 * dx), math.floor(33 + 5 * dy))
+    elif after:
+        for dx, dy in _EMBER_SPARK_DIRS:
+            _ember_spark(f, math.floor(24 + 8 * dx), math.floor(34 + 7 * dy), hot=False)
+
+
+#: Searching: the light rays the flame throws ahead, (angle in degrees from
+#: the way Ember looks, length).
+_EMBER_RAYS = ((-35, 3), (0, 4), (35, 3))
+
+
+def _ember_searching_fx(f: Frame, pose: Pose) -> None:
+    """A flame held up in one claw like a lantern: Ember sweeps it from side to
+    side, raised beside the face, its light throwing rays ahead, and at the
+    far right something glints."""
+    i = pose.i
+    sweep = SEARCH_SWEEP[i % len(SEARCH_SWEEP)]
+    hx = CX + round(sweep * 1.6) + pose.dx
+    hy = 39 - abs(sweep) * 2 // 3
+    flicker = i % 2
+    if hx < CX:
+        _ember_hand(f, 33 + pose.dx, 37)  # the free claw rests on the belly
+        _ember_arm(f, (16 + pose.dx, 32), (hx, hy))
+    else:
+        _ember_hand(f, 14 + pose.dx, 37)
+        _ember_arm(f, (31 + pose.dx, 32), (hx, hy))
+    sway = 0.5 if flicker else -0.5
+    _ember_flame(
+        f,
+        (
+            (hx + 0.5, hy - 1.5),
+            (hx + 0.5, hy - 3.5),
+            (hx + 0.5 + sway, hy - 5.5),
+            (hx + 0.5 - sway, hy - 7.5),
+        ),
+        (2.2, 2.0, 1.4, 0.8),
+    )
+    look = (sweep > 2) - (sweep < -2)
+    if look:
+        cx, cy = hx + 0.5, hy - 4.0
+        for angle, length in _EMBER_RAYS:
+            a = math.radians(angle)
+            dx, dy = round(math.cos(a) * look, 6), round(math.sin(a), 6)
+            start = 4 + flicker
+            ray = {
+                (math.floor(cx + dx * r), math.floor(cy + dy * r))
+                for r in range(start, start + length - flicker)
+            }
+            f.paint(_ember_in_cell(ray), EMBER_FIRE[1])
+    if sweep == max(SEARCH_SWEEP):
+        fx_sparkles(f, 1, ((43, 13, 0),))
+
+
+def _ember_held_fx(f: Frame, pose: Pose) -> None:
+    """Startled puffs of smoke from the nostrils and swing streaks."""
+    sway = pose.dx
+    with f.offset(sway, 0):
+        if sway < 0:
+            f.paint(line(39, 26, 39, 32) | line(41, 28, 41, 31), ARC_FADE)
+        elif sway > 0:
+            f.paint(line(8, 26, 8, 32) | line(6, 28, 6, 31), ARC_FADE)
+    if pose.i % 2 == 0:
+        _ember_puff(f, 12 + sway, 22, 1.3)
+        _ember_puff(f, 36 + sway, 22, 1.3)
+    else:
+        _ember_puff(f, 9 + sway, 19, 1.9, EMBER_SMOKE_LIGHT)
+        _ember_puff(f, 39 + sway, 19, 1.9, EMBER_SMOKE_LIGHT)
+
+
+EMBER = PetDesign(
+    id="ember",
+    name="Ember",
+    description="A baby dragon fresh from its egg who blows smoke rings and breathes tiny flames.",
+    draw=draw_ember,
+    pose=ember_pose,
+    waist=40,
+    anchors=Anchors(
+        arcs_left=(8, 21),
+        arcs_right=(39, 21),
+        dots=(19, 3),
+        zzz=(28, 19),
+        bang=(42, 3),
+        sparkles=((7, 10, 2), (12, 4, 4), (5, 25, 5)),
+    ),
+    fx={
+        "idle": _ember_idle_fx,
+        "listening": _ember_listening_fx,
+        "thinking": _ember_thinking_fx,
+        "talking": _ember_talking_fx,
+        "success": _ember_success_fx,
+        "error": _ember_error_fx,
+        "sleeping": _ember_sleeping_fx,
+        "working": _ember_working_fx,
+        "searching": _ember_searching_fx,
+        "held": _ember_held_fx,
+    },
+)
+
+PETS: tuple[PetDesign, ...] = (GIGI, MISO, BREW, BOLT, MOCHI, SHELLY, PIP, EMBER)
 
 
 # ---------------------------------------------------------------------------

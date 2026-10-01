@@ -227,6 +227,7 @@ committed PNGs match the script). User-created pets live in
 | `mochi` | Mochi | A jelly blob that wobbles while listening |
 | `shelly` | Shelly | A snail: the shell spins while thinking, it withdraws to sleep |
 | `pip` | Pip | A baby: babbles while talking, cries on errors, naps under a blanket |
+| `ember` | Ember | A baby dragon: smoke rings while thinking, a fire breath on success, a sooty cough on errors, naps in its eggshell |
 
 ## Adding a pet
 

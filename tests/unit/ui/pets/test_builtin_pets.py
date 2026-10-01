@@ -17,7 +17,7 @@ from jarvis.ui.pets.states import DEFAULT_PET_ID, PET_STATES
 REPO_ROOT = Path(__file__).resolve().parents[4]
 BUILD_SCRIPT = REPO_ROOT / "scripts" / "pets" / "build_pets.py"
 PACKAGE_DIR = REPO_ROOT / "jarvis" / "ui" / "pets"
-EXPECTED_PETS = ("gigi", "miso", "brew", "bolt", "mochi", "shelly", "pip")
+EXPECTED_PETS = ("gigi", "miso", "brew", "bolt", "mochi", "shelly", "pip", "ember")
 
 
 def _builder() -> ModuleType:
