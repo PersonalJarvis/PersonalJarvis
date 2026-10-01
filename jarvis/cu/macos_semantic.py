@@ -2,7 +2,7 @@
 
 The regular Computer-Use actuator can always fall back to verified pointer input,
 but a labelled control should be activated through the Accessibility API when
-macOS exposes a native action.  That keeps actions attached to the semantic UI
+macOS exposes a native action. That keeps actions attached to the semantic UI
 element instead of to pixels and mirrors the Accessibility-first rule used by
 the vision stack.
 
@@ -65,6 +65,7 @@ def _copy_attr(element: Any, attribute: str) -> Any:
         try:
             return getter(attribute)
         except Exception:  # noqa: BLE001
+            logger.debug("AX fake/wrapper attribute read failed: %s", attribute, exc_info=True)
             return None
     try:
         from ApplicationServices import (  # type: ignore[import-not-found] # noqa: PLC0415
@@ -76,6 +77,7 @@ def _copy_attr(element: Any, attribute: str) -> Any:
         err, value = AXUIElementCopyAttributeValue(element, attribute, None)
         return value if err == 0 else None
     except Exception:  # noqa: BLE001
+        logger.debug("AXUIElementCopyAttributeValue failed: %s", attribute, exc_info=True)
         return None
 
 
@@ -103,6 +105,7 @@ def _action_names(element: Any) -> tuple[str, ...] | None:
             value = getter()
             return tuple(str(item) for item in value)
         except Exception:  # noqa: BLE001
+            logger.debug("AX fake/wrapper action-list read failed", exc_info=True)
             return None
     try:
         from ApplicationServices import (  # type: ignore[import-not-found] # noqa: PLC0415
@@ -116,6 +119,7 @@ def _action_names(element: Any) -> tuple[str, ...] | None:
             return None
         return tuple(str(item) for item in names)
     except Exception:  # noqa: BLE001
+        logger.debug("AXUIElementCopyActionNames failed", exc_info=True)
         return None
 
 
@@ -125,6 +129,7 @@ def _perform_action(element: Any, action: str) -> bool:
         try:
             return bool(performer(action))
         except Exception:  # noqa: BLE001
+            logger.debug("AX fake/wrapper action failed: %s", action, exc_info=True)
             return False
     try:
         from ApplicationServices import (  # type: ignore[import-not-found] # noqa: PLC0415
@@ -140,7 +145,13 @@ def _perform_action(element: Any, action: str) -> bool:
 
 
 def _label(element: Any, read_attr: Callable[[Any, str], Any]) -> str:
-    for attr in (_AX_TITLE, _AX_DESCRIPTION, _AX_VALUE):
+    native_role = str(read_attr(element, _AX_ROLE) or "").casefold()
+    # Never inspect the current value of a secure text field. The vision tree
+    # follows the same rule, so semantic re-identification cannot leak a secret.
+    attributes = (_AX_TITLE, _AX_DESCRIPTION)
+    if native_role != "axsecuretextfield":
+        attributes += (_AX_VALUE,)
+    for attr in attributes:
         value = read_attr(element, attr)
         if value not in (None, ""):
             return str(value)
@@ -170,6 +181,7 @@ def _matches(
 
             actual_role = normalize_role(native_role, "darwin") or native_role
         except Exception:  # noqa: BLE001
+            logger.debug("macOS role normalization failed", exc_info=True)
             actual_role = native_role.removeprefix("AX")
         if actual_role.casefold() != expected_role.casefold():
             return False
