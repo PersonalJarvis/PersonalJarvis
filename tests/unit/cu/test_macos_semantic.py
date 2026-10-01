@@ -45,6 +45,46 @@ def test_press_matches_named_parent_and_uses_axpress(
     assert calls == [(parent, "AXPress")]
 
 
+def test_focus_edit_sets_axfocused(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(macos_semantic.sys, "platform", "darwin")
+    element = {
+        "AXTitle": "Search",
+        "AXRole": "AXTextField",
+        "AXIdentifier": "search-field",
+        "AXParent": None,
+    }
+    writes: list[tuple[object, str, object]] = []
+
+    result = macos_semantic.try_focus_at(
+        10,
+        10,
+        expected_name="search",
+        expected_role="Edit",
+        expected_automation_id="search-field",
+        permission_check=lambda: True,
+        element_at_point=lambda _x, _y: element,
+        read_attr=_reader,
+        set_attr=lambda target, attr, value: writes.append((target, attr, value)) or True,
+    )
+
+    assert result.status == "performed"
+    assert writes == [(element, "AXFocused", True)]
+
+
+def test_focus_non_edit_is_not_used(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(macos_semantic.sys, "platform", "darwin")
+
+    result = macos_semantic.try_focus_at(
+        10,
+        10,
+        expected_name="save",
+        expected_role="Button",
+        permission_check=lambda: pytest.fail("non-edit focus must stop before probing macOS"),
+    )
+
+    assert result.status == "unsupported"
+
+
 def test_unsupported_action_is_the_only_pointer_fallback_status(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
