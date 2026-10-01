@@ -21,21 +21,22 @@ def _ctx() -> ExecutionContext:
 
 
 class _Vision:
+    def __init__(self, node: UIANode | None = None) -> None:
+        self._node = node or UIANode(
+            role="Button",
+            name="Save",
+            automation_id="save-button",
+            bounds=(10, 20, 100, 40),
+            enabled=True,
+        )
+
     async def observe(self) -> Observation:
         return Observation(
             trace_id=uuid4(),
             timestamp_ns=0,
             screenshot_path=None,
             screenshot_hash="",
-            nodes=(
-                UIANode(
-                    role="Button",
-                    name="Save",
-                    automation_id="save-button",
-                    bounds=(10, 20, 100, 40),
-                    enabled=True,
-                ),
-            ),
+            nodes=(self._node,),
             window_title="Test",
         )
 
@@ -44,10 +45,7 @@ def _stable_signature() -> tuple[object, ...]:
     return ("handle", 11, (0, 0, 800, 600))
 
 
-@pytest.mark.asyncio
-async def test_native_axpress_short_circuits_pointer_fallback(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def _macos(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("jarvis.plugins.tool.click_element.sys.platform", "darwin")
     monkeypatch.setattr("jarvis.plugins.tool.click_element.os.name", "posix")
     monkeypatch.setattr(
@@ -58,6 +56,13 @@ async def test_native_axpress_short_circuits_pointer_fallback(
         "jarvis.plugins.tool.click_element._window_signature_matches",
         lambda _expected: True,
     )
+
+
+@pytest.mark.asyncio
+async def test_native_axpress_short_circuits_pointer_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _macos(monkeypatch)
     monkeypatch.setattr(
         "jarvis.cu.macos_semantic.try_press_at",
         lambda *_args, **_kwargs: SemanticPressResult(
@@ -80,15 +85,50 @@ async def test_native_axpress_short_circuits_pointer_fallback(
 
 
 @pytest.mark.asyncio
+async def test_edit_field_uses_axfocused_when_axpress_is_unsupported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _macos(monkeypatch)
+    monkeypatch.setattr(
+        "jarvis.cu.macos_semantic.try_press_at",
+        lambda *_args, **_kwargs: SemanticPressResult(
+            "unsupported",
+            "no AXPress",
+        ),
+    )
+    monkeypatch.setattr(
+        "jarvis.cu.macos_semantic.try_focus_at",
+        lambda *_args, **_kwargs: SemanticPressResult(
+            "performed",
+            "focused with AXFocused",
+        ),
+    )
+    monkeypatch.setattr(
+        "jarvis.cu.actuate.base.get_actuator",
+        lambda: pytest.fail("pointer fallback must not run after AXFocused"),
+    )
+    edit = UIANode(
+        role="Edit",
+        name="Search",
+        automation_id="search-field",
+        bounds=(10, 20, 200, 40),
+        enabled=True,
+    )
+
+    result = await ClickElementTool(vision_source=_Vision(edit)).execute(
+        {"name": "search", "role": "Edit"},
+        _ctx(),
+    )
+
+    assert result.success is True
+    assert "AXFocused" in (result.output or "")
+
+
+@pytest.mark.asyncio
 async def test_semantic_identity_mismatch_refuses_pointer_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("jarvis.plugins.tool.click_element.sys.platform", "darwin")
-    monkeypatch.setattr("jarvis.plugins.tool.click_element.os.name", "posix")
-    monkeypatch.setattr(
-        "jarvis.plugins.tool.click_element._foreground_window_signature",
-        _stable_signature,
-    )
+    _macos(monkeypatch)
     monkeypatch.setattr(
         "jarvis.cu.macos_semantic.try_press_at",
         lambda *_args, **_kwargs: SemanticPressResult(
