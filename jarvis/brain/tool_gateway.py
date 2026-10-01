@@ -107,6 +107,7 @@ class BrainSupervisorToolGateway:
         from jarvis.harness.computer_use_context import peek_computer_use_context
         from jarvis.plugins.tool.appshot import AppshotTool
         from jarvis.plugins.tool.live_screen import LiveScreenTool
+        from jarvis.plugins.tool.product_help import ProductHelpTool
 
         tools = self._live_tools()
         context = peek_computer_use_context()
@@ -118,6 +119,9 @@ class BrainSupervisorToolGateway:
         # its effect and sound. Voice-only — a brain turn gets the same
         # picture from its own Screen Context step.
         tools["take_appshot"] = AppshotTool()
+        # The live prompt carries only a short product brief; exact how-to
+        # answers come from the built-in guide on demand.
+        tools["product_help"] = ProductHelpTool()
         if self._workspace_tool is not None:
             # Live delegates coding to one addressed service. The old prompt
             # tools silently choose an ambient pane and cannot safely coexist.

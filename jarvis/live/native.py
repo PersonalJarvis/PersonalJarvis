@@ -13,6 +13,7 @@ from uuid import uuid4
 
 from jarvis.core.paths import user_data_dir
 from jarvis.core.runtime_refs import get_supervisor_tool_gateway
+from jarvis.live.product import PRODUCT_BRIEF
 from jarvis.live.runtime import claim, register, unregister
 from jarvis.live.session import LiveVoiceSession
 from jarvis.live.state import LiveLedger, TranscriptFragment
@@ -54,7 +55,11 @@ class NativeLiveVoiceSession(LiveVoiceSession):
                 language=self._language,
                 voice=getattr(settings, "voice", "") or "",
                 instructions=(
-                    "You are Personal Jarvis. " + language_rule + "Use your tools directly "
+                    "You are Personal Jarvis. "
+                    + PRODUCT_BRIEF
+                    + " "
+                    + language_rule
+                    + "Use your tools directly "
                     "for actions, private information and current facts. Use discover_tools and "
                     "call_tool for any tool not declared directly. For computer control, capture "
                     "screen_snapshot, inspect the image, call the desktop primitives, and verify "
