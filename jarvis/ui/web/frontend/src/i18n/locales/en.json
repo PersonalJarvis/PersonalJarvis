@@ -5845,6 +5845,8 @@
     "style_notice_body": "Your display style is “{0}”. Switch to the pet to see it on your desktop. The pet you pick below is kept either way.",
     "use_pet": "Use pet on desktop",
     "style_saved": "The pet is now on your desktop.",
+    "enabled_label": "Pet on desktop",
+    "style_off_saved": "The pet is off. The Jarvis bar is back on your desktop.",
     "restart_hint": "Saved. Restart {name} to bring the pet to your desktop.",
     "load_error": "Your pets could not be loaded: {0}",
     "save_error": "That did not save: {0}",

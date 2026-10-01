@@ -201,6 +201,43 @@ describe("PetsView", () => {
     expect(screen.queryByTestId("pets-style-notice")).toBeNull();
   });
 
+  it("turns the pet off from the header switch and keeps the chosen pet", async () => {
+    const { calls } = stubServer();
+    renderView();
+
+    const toggle = await screen.findByTestId("pets-enabled");
+    await waitFor(() => expect(toggle.getAttribute("aria-checked")).toBe("true"));
+    fireEvent.click(toggle);
+
+    await waitFor(() =>
+      expect(calls).toContainEqual({
+        method: "PUT",
+        url: "/api/settings/overlay-style",
+        body: { style: "jarvis_bar", persist: true },
+      }),
+    );
+    expect(calls.some((call) => call.url === "/api/pets/active")).toBe(false);
+  });
+
+  it("turns the pet on from the header switch", async () => {
+    const { calls } = stubServer({ style: "jarvis_bar" });
+    renderView();
+
+    const toggle = await screen.findByTestId("pets-enabled");
+    await waitFor(() => expect((toggle as HTMLButtonElement).disabled).toBe(false));
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    expect(screen.queryByTestId("pets-visibility")).toBeNull();
+    fireEvent.click(toggle);
+
+    await waitFor(() =>
+      expect(calls).toContainEqual({
+        method: "PUT",
+        url: "/api/settings/overlay-style",
+        body: { style: "pet", persist: true },
+      }),
+    );
+  });
+
   it("shows no style notice while the pet is already the display style", async () => {
     stubServer();
     renderView();

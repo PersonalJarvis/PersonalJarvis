@@ -5812,6 +5812,8 @@
     "style_notice_body": "Tu estilo de visualización es «{0}». Cambia a la mascota para verla en tu escritorio. La mascota que elijas abajo se guarda de todos modos.",
     "use_pet": "Usar mascota en el escritorio",
     "style_saved": "La mascota ya está en tu escritorio.",
+    "enabled_label": "Mascota en el escritorio",
+    "style_off_saved": "La mascota está apagada. La barra de Jarvis vuelve a tu escritorio.",
     "restart_hint": "Guardado. Reinicia {name} para ver la mascota en tu escritorio.",
     "load_error": "No se pudieron cargar tus mascotas: {0}",
     "save_error": "No se pudo guardar: {0}",

@@ -5812,6 +5812,8 @@
     "style_notice_body": "Dein Anzeige-Stil ist „{0}“. Wechsle zum Pet, um es auf deinem Desktop zu sehen. Das Pet, das du unten auswählst, bleibt so oder so gespeichert.",
     "use_pet": "Pet auf dem Desktop nutzen",
     "style_saved": "Das Pet ist jetzt auf deinem Desktop.",
+    "enabled_label": "Pet auf dem Desktop",
+    "style_off_saved": "Das Pet ist aus. Die Jarvis-Leiste ist wieder auf deinem Desktop.",
     "restart_hint": "Gespeichert. Starte {name} neu, damit das Pet auf deinem Desktop erscheint.",
     "load_error": "Deine Pets konnten nicht geladen werden: {0}",
     "save_error": "Das wurde nicht gespeichert: {0}",

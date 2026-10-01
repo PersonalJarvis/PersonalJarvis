@@ -104,12 +104,17 @@ export function PetsView() {
     return localized !== key ? localized : pet.description;
   };
 
-  async function switchToPetStyle() {
+  /**
+   * The master switch: ON makes the pet the desktop overlay style, OFF hands
+   * the desktop back to the default Jarvis bar. The chosen pet is kept either
+   * way, so switching back on brings the same pet back.
+   */
+  async function setPetEnabled(enabled: boolean) {
     setSwitchingStyle(true);
     try {
-      const result = await overlay.saveStyle("pet");
+      const result = await overlay.saveStyle(enabled ? "pet" : "jarvis_bar");
       if (result.applied_live) {
-        pushToast("success", t("pets.style_saved"));
+        pushToast("success", t(enabled ? "pets.style_saved" : "pets.style_off_saved"));
       } else {
         setNeedsRestart(true);
       }
@@ -162,17 +167,31 @@ export function PetsView() {
               : t("pets.subtitle_no_shortcut")
           }
           actions={
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              data-testid="pets-visibility"
-              disabled={!data || !styleIsPet || setVisible.isPending}
-              onClick={toggleVisible}
-            >
-              {data?.visible === false ? <Eye aria-hidden /> : <EyeOff aria-hidden />}
-              {data?.visible === false ? t("pets.show") : t("pets.hide")}
-            </Button>
+            <div className="flex items-center gap-3">
+              {styleIsPet && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  data-testid="pets-visibility"
+                  disabled={!data || setVisible.isPending}
+                  onClick={toggleVisible}
+                >
+                  {data?.visible === false ? <Eye aria-hidden /> : <EyeOff aria-hidden />}
+                  {data?.visible === false ? t("pets.show") : t("pets.hide")}
+                </Button>
+              )}
+              <label className="flex items-center gap-2.5 rounded-lg border border-border bg-card px-3 py-1.5">
+                <span className="text-sm font-medium text-foreground">{t("pets.enabled_label")}</span>
+                <Switch
+                  data-testid="pets-enabled"
+                  checked={styleIsPet}
+                  disabled={!overlay.config || switchingStyle}
+                  aria-label={t("pets.enabled_label")}
+                  onCheckedChange={(next) => void setPetEnabled(next)}
+                />
+              </label>
+            </div>
           }
         />
 
@@ -197,7 +216,7 @@ export function PetsView() {
               type="button"
               data-testid="pets-use-pet"
               disabled={switchingStyle}
-              onClick={() => void switchToPetStyle()}
+              onClick={() => void setPetEnabled(true)}
             >
               {switchingStyle && <Loader2 className="animate-spin" aria-hidden />}
               {t("pets.use_pet")}
