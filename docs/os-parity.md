@@ -130,6 +130,18 @@ Protocol references: [AsyncSSH port forwarding](https://asyncssh.readthedocs.io/
 [Kimi MCP configuration](https://github.com/MoonshotAI/kimi-cli/blob/main/README.md),
 [Cursor MCP](https://docs.cursor.com/en/cli/mcp).
 
+## Browser profile sharing and Chrome connection
+
+Profile assignments and extension pairing use portable SQLite and Python.
+The Chrome extension connects through authenticated loopback HTTP/WebSocket on
+Windows, macOS and Linux; no native host or Windows service is required.
+Opening a connected browser requires visible, unlocked Chrome with the
+extension installed. Without it, the app remains usable and reports the browser
+as disconnected instead of launching a fallback. The extension currently needs
+manual unpacked installation. Fake transport, registry and UI checks do not
+prove native Chrome behavior on these platforms, actual OS-reboot persistence,
+or real X publication. See [browser profiles](browser-profiles.md) for scope.
+
 ## Connected computers on Linux, macOS and Windows (2026-10-01, T3)
 
 This one is about the REMOTE side: the machine Jarvis connects to under

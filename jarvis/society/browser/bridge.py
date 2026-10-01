@@ -195,6 +195,15 @@ async def execute_live(
         current = await runtime.roster.get(caller.agent_id)
         if current is None or str(current.state) != "active":
             return {"ok": False, "error": "Agent is not active"}
+        active_session = live.sessions.get(caller.agent_id)
+        binding = getattr(active_session, "profile_binding", None)
+        if binding is not None:
+            try:
+                selected = await asyncio.to_thread(live.profiles.resolve, current)
+            except ValueError:
+                return {"ok": False, "error": "Browser profile was disconnected"}
+            if selected.access_key != binding.access_key or active_session.closed:
+                return {"ok": False, "error": "Browser profile changed; start a new task"}
         if "core:browser" in current.denies or (
             str(current.grant_mode) == "allowlist" and "core:browser" not in current.grants
         ):

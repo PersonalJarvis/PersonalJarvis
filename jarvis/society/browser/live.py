@@ -17,6 +17,7 @@ from jarvis.core.process_tree import ProcessTree, make_process_tree
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 
 from . import install
+from .profiles import BrowserProfiles, ProfileBinding
 
 log = logging.getLogger(__name__)
 RPC = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
@@ -84,6 +85,8 @@ class LiveSession:
     closed: bool = False
     stderr_tail: str = ""
     window_upgrade_pending: bool = False
+    profile_binding: ProfileBinding | None = None
+    profile_lease: Any = None
 
     async def send(self, value: dict[str, Any]) -> None:
         data = (json.dumps(value, ensure_ascii=True) + "\n").encode()
@@ -251,6 +254,9 @@ class LiveSession:
                     # Keep reader/RPC handles available for a later close retry.
                     reaping.cancel()
                     raise TimeoutError("browser process cleanup incomplete")
+                if self.profile_lease is not None:
+                    self.profile_lease.release()
+                    self.profile_lease = None
 
 
 async def claim_browser(session: LiveSession, chat_session_id: str) -> None:
@@ -309,6 +315,11 @@ class LiveSessions:
         self.idle_tasks: dict[str, asyncio.Task] = {}
         self._closing_tasks: dict[str, asyncio.Task[None]] = {}
         self.stopped_turns: dict[tuple[str, str], None] = {}
+        self.profiles = BrowserProfiles(data_dir)
+        from .chrome import ChromeConnections
+
+        self.chrome = ChromeConnections()
+        self.profile_start_lock = asyncio.Lock()
 
     def stop_turn(self, agent_id: str, trace_id: str) -> None:
         if trace_id:
@@ -337,6 +348,7 @@ class LiveSessions:
                     not session.subscribers
                     and not session.run_lock.locked()
                     and not session.control_owner
+                    and not session.state.get("manual", False)
                 ):
                     if self.sessions.get(session.agent_id) is session:
                         self.sessions.pop(session.agent_id, None)
@@ -351,6 +363,141 @@ class LiveSessions:
         self.idle_tasks[session.agent_id] = asyncio.create_task(expire())
 
     async def ensure(self, agent: Any, *, window_view: bool = False) -> LiveSession:
+        """Select the saved identity before opening any browser or reusing a tab."""
+        async with self.profile_start_lock:
+            binding = await asyncio.to_thread(self.profiles.resolve, agent)
+            profile_key = "legacy-attach" if binding.kind == "attach" else binding.key
+            for other_id, other in list(self.sessions.items()):
+                previous = getattr(other, "profile_binding", None)
+                if previous is None:
+                    continue
+                same_profile = previous.key == binding.key or (
+                    previous.kind == binding.kind == "attach"
+                )
+                changed = other_id == agent.agent_id and previous.access_key != binding.access_key
+                if changed or (same_profile and other_id != agent.agent_id):
+                    if (
+                        other.run_lock.locked()
+                        or other.control_owner
+                        or other.subscribers
+                        or other.state.get("manual", False)
+                    ):
+                        raise RuntimeError(
+                            "This profile is in use. Stop its task or return manual control first."
+                        )
+                    # The active panel follows the newly assigned owner. It must
+                    # never keep accepting input into the old account.
+                    other.publish({"kind": "disconnected"})
+                    await other.close()
+                    self.sessions.pop(other_id, None)
+            old = self.sessions.get(agent.agent_id)
+            if (
+                old
+                and not old.closed
+                and old.profile_binding is not None
+                and old.profile_binding.access_key == binding.access_key
+            ):
+                old.profile_agent = agent
+                old.profile_binding = binding
+                if binding.kind == "chrome":
+                    return old
+                lease = old.profile_lease
+                old.profile_lease = None
+                try:
+                    session = await self._ensure_managed(agent, binding, window_view=window_view)
+                    session.profile_binding = binding
+                    session.profile_lease = lease
+                    return session
+                except BaseException:
+                    if lease is not None:
+                        lease.release()
+                    raise
+            if old:
+                await old.close()
+                self.sessions.pop(agent.agent_id, None)
+            from filelock import FileLock, Timeout
+
+            lock_dir = self.data_dir / "society" / "browser-locks"
+            lock_dir.mkdir(parents=True, exist_ok=True)
+            lease = FileLock(str(lock_dir / f"{profile_key}.lock"), thread_local=False)
+            try:
+                lease.acquire(timeout=0)
+            except Timeout:
+                raise RuntimeError(
+                    "This browser profile is already open in another Jarvis instance"
+                ) from None
+            try:
+                if binding.kind == "chrome":
+                    from .extension_session import create_chrome_session
+
+                    session = await create_chrome_session(
+                        self.chrome,
+                        profile_id=binding.profile_id,
+                        agent_id=agent.agent_id,
+                        allowed_domains=list(binding.domains),
+                        workspace=self.data_dir / "society" / agent.agent_id / "workspace",
+                    )
+                    self.sessions[agent.agent_id] = session
+                else:
+                    session = await self._ensure_managed(agent, binding, window_view=window_view)
+                session.profile_binding = binding
+                session.profile_agent = agent
+                session.profile_lease = lease
+                self.release_when_idle(session)
+                return session
+            except BaseException:
+                lease.release()
+                raise
+
+    async def invalidate_profiles(self, agent_ids: set[str] | None = None) -> None:
+        """Disconnect stale viewers; a settings change never reuses the old identity."""
+        async with self.profile_start_lock:
+            await self._invalidate_profiles(agent_ids)
+
+    async def configure_profiles(
+        self,
+        fn: Any,
+        *args: Any,
+        agent_ids: set[str] | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Serialize durable reassignment with session creation and invalidate old owners."""
+        async with self.profile_start_lock:
+            result = await asyncio.to_thread(fn, *args, **kwargs)
+            await self._invalidate_profiles(agent_ids, changed_only=True)
+            return result
+
+    async def _invalidate_profiles(
+        self,
+        agent_ids: set[str] | None,
+        *,
+        changed_only: bool = False,
+    ) -> None:
+        for aid, session in list(self.sessions.items()):
+            if agent_ids is not None and aid not in agent_ids:
+                continue
+            prior = getattr(session, "profile_binding", None)
+            agent = getattr(session, "profile_agent", None)
+            if changed_only and prior is not None and agent is not None:
+                try:
+                    current = await asyncio.to_thread(self.profiles.resolve, agent)
+                except ValueError:
+                    current = None  # Revoked identities must invalidate the old session.
+                if current is not None and current.access_key == prior.access_key:
+                    session.profile_binding = current
+                    continue
+            self.stop_turn(aid, session.active_trace)
+            session.publish({"kind": "disconnected"})
+            await session.close()
+            self.sessions.pop(aid, None)
+
+    async def _ensure_managed(
+        self,
+        agent: Any,
+        binding: ProfileBinding,
+        *,
+        window_view: bool = False,
+    ) -> LiveSession:
         agent_id = agent.agent_id
         idle = self.idle_tasks.pop(agent_id, None)
         if idle:
@@ -398,17 +545,15 @@ class LiveSessions:
                 result = await session.command(
                     "ensure",
                     {
-                        "profile_dir": str(folder / "browser-profile"),
+                        "profile_dir": str(binding.path),
                         "window_view": window_view,
                         "workspace": str(folder / "workspace"),
                         "executable": str(install.browser_executable(self.data_dir)),
                         "icon_path": str(
                             Path(__file__).parents[2] / "assets" / "icons" / "jarvis.ico"
                         ),
-                        "allowed_domains": list(agent.browser_allowed_domains),
-                        "cdp_url": self.cdp_url
-                        if str(getattr(agent, "browser_mode", "own")) == "attach"
-                        else "",
+                        "allowed_domains": list(binding.domains),
+                        "cdp_url": self.cdp_url if binding.kind == "attach" else "",
                     },
                     timeout=90,
                 )
@@ -449,7 +594,11 @@ class LiveSessions:
         session.subscribers.discard(queue)
         if not session.closed:
             if session.control_owner == owner:
-                await session.command("takeover", {"enabled": False})
+                # A lost viewer is not permission to resume observing a real
+                # Chrome login. Keep it paused until a person explicitly returns.
+                binding = getattr(session, "profile_binding", None)
+                if binding is None or binding.kind != "chrome":
+                    await session.command("takeover", {"enabled": False})
                 session.control_owner = None
                 if session.window_upgrade_pending:
                     session.publish({"kind": "disconnected"})
@@ -469,7 +618,8 @@ class LiveSessions:
                     result = await session.command(op, args, timeout=610)
                 except BaseException:
                     try:
-                        if not session.closed:
+                        binding = getattr(session, "profile_binding", None)
+                        if not session.closed and (binding is None or binding.kind != "chrome"):
                             await session.command("takeover", {"enabled": False}, timeout=5)
                     finally:
                         session.control_owner = None
@@ -512,7 +662,7 @@ class LiveSessions:
             session.active_trace = trace_id
             session.active_chat = chat_session_id
             try:
-                return await session.command(
+                result = await session.command(
                     "run",
                     {
                         "task": task,
@@ -523,7 +673,17 @@ class LiveSessions:
                     },
                     timeout=600,
                 )
+                if result.get("uncertain"):
+                    self.stop_turn(agent.agent_id, trace_id)
+                return result
             except BaseException:
+                binding = getattr(session, "profile_binding", None)
+                if (
+                    binding is not None
+                    and binding.kind == "chrome"
+                    and (session.closed or getattr(session, "action_uncertain", False))
+                ):
+                    self.stop_turn(agent.agent_id, trace_id)
                 if not session.closed:
                     await session.command("cancel", timeout=5)
                 raise
@@ -580,9 +740,10 @@ class LiveSessions:
                 if (
                     task.done()
                     and (task.cancelled() or task.exception() is None)
-                    and session.proc.returncode is not None
+                    and (not hasattr(session, "proc") or session.proc.returncode is not None)
                     and all(job.done() for job in (*session.tasks, *session.readers))
                 ):
                     self.sessions.pop(key, None)
             if pending:
                 raise TimeoutError("browser sessions cleanup incomplete")
+            await self.chrome.close()

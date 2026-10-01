@@ -493,6 +493,26 @@ def _relay_indicator_present(scope: Scope) -> bool:
     return False
 
 
+def chrome_transport_allowed(scope: Scope) -> bool:
+    """Only the two extension transport endpoints have independent pairing auth."""
+    kind = scope.get("type")
+    path = scope.get("path")
+    method = str(scope.get("method", "GET")).upper()
+    if not (
+        (kind == "http" and path == "/api/society/browser/chrome/pair" and method == "POST")
+        or (kind == "websocket" and path == "/api/society/browser/chrome/connect")
+    ):
+        return False
+    if not is_loopback_request(scope) or _relay_indicator_present(scope):
+        return False
+    origins = _headers(scope, "origin")
+    # An extension's privileged fetch may omit Origin; ordinary webpages must
+    # never use this path. The route still requires a one-time code or token.
+    return not origins or (
+        len(origins) == 1 and bool(re.fullmatch(r"chrome-extension://[a-p]{32}", origins[0]))
+    )
+
+
 def open_access_granted(scope: Scope) -> bool:
     """True when the optional browser lock is OFF and the request is local.
 
@@ -1093,6 +1113,11 @@ class SurfaceSecurity:
 
         # A supplied Origin is never advisory: malformed, null, or foreign
         # values fail even on otherwise-public static and health requests.
+        if chrome_transport_allowed(scope):
+            # These exact local transports authenticate their first payload;
+            # the extension never receives the general app control credential.
+            await self.app(scope, receive, send)
+            return
         if not self.origin_is_trusted(scope):
             await reject_origin(scope, send, receive)
             return

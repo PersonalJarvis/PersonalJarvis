@@ -81,8 +81,12 @@ async def ensure_agent_browser(agent_id: str, request: Request) -> dict[str, Any
     from jarvis.society.browser import install
 
     rt = await _runtime(request)
-    if await rt.roster.resolve(agent_id) is None:
+    agent = await rt.roster.resolve(agent_id)
+    if agent is None:
         raise HTTPException(404, "Agent not found")
+    status = await asyncio.to_thread(rt.browser.status_for, agent)
+    if status.get("mode") in {"chrome", "unavailable"}:
+        return status
     install.start_install(rt.data_dir)
     return install.snapshot(rt.data_dir)
 
@@ -96,7 +100,8 @@ async def agent_browser_open(agent_id: str, request: Request) -> dict[str, Any]:
         raise HTTPException(404, "Agent not found")
     session = rt.browser.live.sessions.get(agent.agent_id)
     is_open = session is not None and not session.closed
-    return {"open": is_open, "running": is_open and session.run_lock.locked()}
+    status = await asyncio.to_thread(rt.browser.status_for, agent)
+    return {**status, "open": is_open, "running": is_open and session.run_lock.locked()}
 
 
 @router.post("/browser/repair", openapi_extra={"x-jarvis-dangerous": True})
@@ -213,14 +218,15 @@ async def agent_browser_live(websocket: WebSocket, agent_id: str) -> None:
             except (ValueError, RuntimeError) as exc:
                 # Invalid controls are visibly rejected without closing a healthy stream.
                 await send({"kind": "control", "ok": False, "error": str(exc)[:500]})
-    except Exception:
+    except Exception as exc:
         log.debug("Browser view disconnected for %s", agent_id, exc_info=True)
         with contextlib.suppress(Exception):
             if session is None:
                 await send(
                     {
                         "kind": "error",
-                        "error": "Browser startup failed. Retry or repair the installation.",
+                        "error": str(exc)[:300] if isinstance(exc, (RuntimeError, ValueError))
+                        else "Browser startup failed. Retry or repair the installation.",
                     }
                 )
             await websocket.close(code=1011)
