@@ -13,7 +13,12 @@ class WorkspaceOrchestrationTool:
     risk_tier = "monitor"
     is_action_tool = True
     description = (
-        "Route coding tasks to Projects > Workspaces > coding agents. Inspect the current graph; "
+        "Route coding tasks to Projects > Workspaces > coding agents. "
+        "When the user asks for a NEW agent, terminal or session (for example 'spawn two "
+        "Claude Code agents in the VMs workspace'), call create: it opens count new panes of "
+        "the named cli in the named or visible workspace and, with prompt, hands each the "
+        "task. Never reuse an existing agent and never use spawn_worker for that. "
+        "Inspect the current graph; "
         "resolve explicit project/workspace/agent references (names or IDs) before sending. "
         "With no named workspace resolve uses the visible workspace, and selects an idle agent "
         "without requiring a focused terminal. On needs_clarification pick from the returned "
@@ -30,7 +35,10 @@ class WorkspaceOrchestrationTool:
         "type": "object",
         "additionalProperties": False,
         "properties": {
-            "action": {"type": "string", "enum": ["inspect", "resolve", "send", "context"]},
+            "action": {
+                "type": "string",
+                "enum": ["inspect", "resolve", "send", "context", "create"],
+            },
             **{
                 key: {"type": "string"}
                 for key in (
@@ -50,6 +58,23 @@ class WorkspaceOrchestrationTool:
                 "description": "request_id from resolve; keep it unchanged on retries.",
             },
             "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+            "cli": {
+                "type": "string",
+                "description": (
+                    "create: the coding CLI as the user said it, e.g. 'Claude Code' or "
+                    "'Codex'; omitted, the workspace's usual CLI."
+                ),
+            },
+            "count": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 16,
+                "description": "create: how many new agents to open (default 1).",
+            },
+            "name": {
+                "type": "string",
+                "description": "create: optional name for a single new agent.",
+            },
         },
         "required": ["action"],
     }
@@ -65,7 +90,12 @@ class WorkspaceOrchestrationTool:
             "level": "read" if self.risk_tier_for_args(args) == "safe" else "modify",
             "project": str(args.get("project_id") or args.get("project") or ""),
             "workspace": str(args.get("workspace_id") or args.get("workspace") or ""),
-            "agent": str(args.get("terminal_id") or args.get("agent") or ""),
+            "agent": str(args.get("terminal_id") or args.get("agent") or "")
+            or (
+                f"{args.get('count') or 1} new {args.get('cli') or 'agent'}"
+                if args.get("action") == "create"
+                else ""
+            ),
             "task": str(args.get("prompt") or "")[:240],
         }
 

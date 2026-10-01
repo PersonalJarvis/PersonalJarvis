@@ -356,3 +356,83 @@ async def test_an_unmatched_reference_lists_every_open_workspace(rig):
     names = {c["workspace"] for c in result["candidates"]}
     assert names == {"Personal Jarvis", "Other project"}
     assert "Something else entirely" in result["reason"]
+
+
+@pytest.fixture
+def runnable(monkeypatch):
+    from jarvis.agentic_ide import session as session_mod
+
+    monkeypatch.setattr(session_mod, "agent_argv", lambda name: (f"/usr/bin/{name}",))
+
+
+async def test_new_agents_open_in_the_named_background_workspace(rig, runnable):
+    # Live 2026-10-01: "spawn a new Claude Code agent in the VMs workspace"
+    # became an invisible mission worker; no pane ever appeared there.
+    orchestrator, registry, sessions = rig
+    owner = registry.sessions[0]
+    owner.name = "VM`s"
+    before_active = registry.active_id
+    existing = [t.history_id for t in owner.terminals]
+    published = []
+
+    async def publish(event):
+        published.append(event)
+
+    orchestrator.publish = publish
+    result = await orchestrator.run(
+        {"action": "create", "workspace": "VMs Workspace", "cli": "Claude Cotec", "count": 2}
+    )
+    assert result["status"] == "created", result
+    assert result["workspace_id"] == owner.id
+    assert [a["cli"] for a in result["agents"]] == ["claude", "claude"]
+    assert len(owner.terminals) == len(existing) + 2
+    assert [t.history_id for t in owner.terminals[: len(existing)]] == existing
+    assert registry.active_id == before_active
+    assert not sessions.calls
+    assert published and published[0].session_id == owner.id
+    assert len(published[0].names) == 2
+
+
+async def test_a_new_agent_with_a_task_is_briefed_through_a_receipted_send(rig, runnable):
+    orchestrator, registry, sessions = rig
+    result = await orchestrator.run(
+        {
+            "action": "create",
+            "workspace": "Personal Jarvis",
+            "cli": "Claude Code",
+            "prompt": "Deep-dive the update path",
+        }
+    )
+    assert result["status"] == "created", result
+    new_pane = result["agents"][0]["terminal_id"]
+    assert [d["status"] for d in result["deliveries"]] == ["accepted"]
+    assert sessions.calls[0]["terminal_id"] == new_pane
+    assert sessions.calls[0]["prompt"] == "Deep-dive the update path"
+
+
+async def test_an_unknown_cli_asks_instead_of_opening_a_substitute(rig, runnable):
+    owner = rig[1].sessions[0]
+    count = len(owner.terminals)
+    result = await rig[0].run(
+        {"action": "create", "workspace": "Personal Jarvis", "cli": "Banana"}
+    )
+    assert result["status"] == "needs_clarification" and result["kind"] == "cli"
+    assert len(owner.terminals) == count
+
+
+async def test_no_idle_agent_points_to_create(rig):
+    for term in rig[1].session.terminals:
+        term.activity = "working"
+    result = await rig[0].run({"action": "resolve"})
+    assert result["status"] == "unavailable"
+    assert "create" in result["reason"]
+
+
+def test_create_is_a_logged_action_with_a_valid_live_schema(rig):
+    import jsonschema
+
+    tool = WorkspaceOrchestrationTool(rig[0])
+    args = {"action": "create", "workspace": "VMs", "cli": "Codex", "count": 3, "prompt": "x"}
+    jsonschema.validate(args, tool.schema)
+    assert tool.risk_tier_for_args(args) == "monitor"
+    assert tool.describe_args(args)["agent"] == "3 new Codex"

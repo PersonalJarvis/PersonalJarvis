@@ -69,6 +69,8 @@ class NativeLiveVoiceSession(LiveVoiceSession):
                     "explicit approval. A started job is not complete. Never invent tool results. "
                     "Use workspace-orchestrate for coding tasks: inspect and resolve project, "
                     "workspace and agent references, then send to the returned stable IDs. "
+                    "For a NEW coding agent call workspace-orchestrate create (cli, count, "
+                    "prompt) in the named or visible workspace; never spawn_worker. "
                     "Explicit references override the visible workspace; ask on ambiguity. "
                     "Do not switch the UI to address another workspace. Reuse request_id on "
                     "retries and never replay uncertain delivery."

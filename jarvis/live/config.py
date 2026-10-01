@@ -48,6 +48,9 @@ class LiveConfig(BaseModel):
                 "project or workspace references override visible context. Do not switch the UI "
                 "to dispatch elsewhere. Ask when resolution is ambiguous. Reuse the same "
                 "request_id for a retry and never replay uncertain delivery. "
+                "A request for a NEW coding agent (or several: 'two Claude Code agents') is "
+                "workspace-orchestrate create in the named or visible workspace, with cli, "
+                "count and the task as prompt; never an existing agent and never spawn_worker. "
                 "Computer-use tasks use the selected thinking model and the same credential. "
                 + self.backend_instructions
             ),

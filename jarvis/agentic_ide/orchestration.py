@@ -12,14 +12,20 @@ import hashlib
 import re
 import threading
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from typing import Any
 from uuid import UUID, uuid4
 
 from jarvis.core.protocols import CodingSessionGateway
 from jarvis.live.state import LiveLedger
 
-from .session import Registry, SessionError, accepts_prompts
+from .session import (
+    MAX_TERMINALS,
+    Registry,
+    SessionError,
+    accepts_prompts,
+    terminals_added_event,
+)
 from .workspace_catalog import project_graph
 
 
@@ -44,8 +50,39 @@ _NEAR_MISS = 3
 _TARGET_KEYS = ("project_id", "workspace_id", "terminal_id")
 
 
+# An apostrophe inside a name joins, it does not split: the workspace "VM`s"
+# is spoken "VMs" (live 2026-10-01), and "vm s" never matched "vms".
+_JOINERS = re.compile("['`\u00b4\u2018\u2019]")
+# Words around a spoken CLI name that never name the CLI ("Claude Code agent").
+_CLI_FILLER = frozenset(
+    {
+        "agent", "agents", "agenten", "terminal", "terminals", "session", "sessions",
+        "pane", "panes", "coding", "cli", "new",
+    }
+)  # fmt: skip
+
+
 def _words(text: str) -> list[str]:
-    return [w for w in re.sub(r"[\W_]+", " ", text.casefold()).split() if w not in _FILLER]
+    joined = _JOINERS.sub("", text.casefold())
+    return [w for w in re.sub(r"[\W_]+", " ", joined).split() if w not in _FILLER]
+
+
+def _coding_cli(spoken: str) -> str | None:
+    """The coding CLI a spoken or typed name means, or ``None``.
+
+    Reads it the way the spoken spawn path does (``intent.canonical_agent``),
+    then forgives what a transcript wraps around the name or garbles after it:
+    "Claude Code agent" and "Claude Cotec" both mean a Claude Code pane.
+    """
+    from .intent import canonical_agent
+
+    words = [w for w in re.split(r"[\s_-]+", spoken.casefold()) if w]
+    kept = [w for w in words if w not in _CLI_FILLER] or words
+    for attempt in (" ".join(words), " ".join(kept), *kept[:1]):
+        found = canonical_agent(attempt) if attempt else None
+        if found and accepts_prompts(found):
+            return found
+    return None
 
 
 def _score(reference: str, ids: Iterable[str], names: Iterable[str]) -> int:
@@ -111,6 +148,8 @@ class WorkspaceOrchestrator:
         # request_id -> (target IDs, issued at, prompt sent under it or "")
         self._issued: dict[str, tuple[dict[str, str], float, str]] = {}
         self._issued_lock = threading.Lock()
+        # Announces new panes to the open UI; set by the runtime that owns a bus.
+        self.publish: Callable[[Any], Awaitable[Any]] | None = None
 
     def graph(self) -> dict[str, Any]:
         from jarvis.workspace.agents import pty_available
@@ -143,11 +182,13 @@ class WorkspaceOrchestrator:
             ),
         }
 
-    def resolve(self, args: dict[str, Any], graph: dict[str, Any]) -> dict[str, Any]:
+    def _workspace(
+        self, args: dict[str, Any], graph: dict[str, Any], agent_ref: str
+    ) -> tuple[dict[str, Any], dict[str, Any]] | dict[str, Any]:
+        """The one open (project, workspace) a request names, or the reply saying why not."""
         projects = graph["projects"]
         project_ref = str(args.get("project") or "")
         workspace_ref = str(args.get("workspace") or "")
-        agent_ref = str(args.get("agent") or "")
         project_found = False
         if project_ref:
             matched = _best(project_ref, projects, lambda p: ((p["id"], p["path"]), (p["name"],)))
@@ -200,6 +241,14 @@ class WorkspaceOrchestrator:
                 "project_id": project["id"],
                 "workspace_id": workspace["id"],
             }
+        return project, workspace
+
+    def resolve(self, args: dict[str, Any], graph: dict[str, Any]) -> dict[str, Any]:
+        agent_ref = str(args.get("agent") or "")
+        picked = self._workspace(args, graph, agent_ref)
+        if isinstance(picked, dict):
+            return picked
+        project, workspace = picked
         agents = [a for a in workspace["agents"] if a["accepts_tasks"]]
         if agent_ref:
             named = _best(agent_ref, agents, lambda a: ((a["id"],), (a["name"],)))
@@ -221,22 +270,22 @@ class WorkspaceOrchestrator:
         if not agents:
             return {
                 "status": "unavailable",
-                "reason": "No idle coding agent is available in this workspace.",
+                # Without the way forward the model asked the user whether to
+                # borrow another workspace's agent or wait (live 2026-10-01).
+                "reason": (
+                    "No idle coding agent is available in this workspace. To start a new one "
+                    "here, call create with these IDs; never borrow another workspace's agent."
+                ),
                 "project_id": project["id"],
                 "workspace_id": workspace["id"],
             }
         agent = agents[0]
-        request_id = uuid4().hex
         target = {
             "project_id": project["id"],
             "workspace_id": workspace["id"],
             "terminal_id": agent["id"],
         }
-        with self._issued_lock:
-            now = time.monotonic()
-            for stale in [k for k, (_, at, _) in self._issued.items() if now - at > _RESOLVE_TTL_S]:
-                del self._issued[stale]
-            self._issued[request_id] = (target, now, "")
+        request_id = self._issue(target)
         return {
             "status": "resolved",
             "request_id": request_id,
@@ -248,6 +297,125 @@ class WorkspaceOrchestrator:
             },
             "selection": "explicit_agent" if agent_ref else "first_idle_agent",
         }
+
+    def _issue(self, target: dict[str, str]) -> str:
+        """Mint a request_id for ``target`` and remember it for id repair."""
+        request_id = uuid4().hex
+        with self._issued_lock:
+            now = time.monotonic()
+            for stale in [k for k, (_, at, _) in self._issued.items() if now - at > _RESOLVE_TTL_S]:
+                del self._issued[stale]
+            self._issued[request_id] = (target, now, "")
+        return request_id
+
+    async def create(self, args: dict[str, Any], *, trace_id: str = "") -> dict[str, Any]:
+        """Open new coding agents in one workspace, then optionally brief them.
+
+        A request for a NEW agent must never land on an existing pane, nor on a
+        background mission worker the workspace cannot show (live 2026-10-01:
+        "spawn a new Claude Code agent in the VMs workspace" became an
+        invisible worker in a separate checkout). The panes join the named or
+        visible workspace, the open view is told so they appear at once, and a
+        given prompt reaches each new pane through the ordinary receipted send,
+        which starts the agent even when its workspace is not on screen.
+        """
+        graph = await asyncio.to_thread(self.graph)
+        refs = {
+            "project": str(args.get("project_id") or args.get("project") or ""),
+            "workspace": str(args.get("workspace_id") or args.get("workspace") or ""),
+        }
+        picked = self._workspace(refs, graph, "")
+        if isinstance(picked, dict):
+            return picked
+        project, workspace = picked
+        spoken_cli = str(args.get("cli") or "").strip()
+        cli = _coding_cli(spoken_cli) if spoken_cli else None
+        if spoken_cli and cli is None:
+            from jarvis.workspace import agents as workspace_agents
+
+            return {
+                "status": "needs_clarification",
+                "kind": "cli",
+                "reason": f"'{spoken_cli}' is not a coding CLI this app can open.",
+                "candidates": [
+                    a.name for a in workspace_agents.coding_agents() if accepts_prompts(a.name)
+                ],
+            }
+        try:
+            count = int(args.get("count") or 1)
+        except (TypeError, ValueError):
+            count = 1
+        count = max(1, min(count, MAX_TERMINALS))
+        name = str(args.get("name") or "").strip()
+        try:
+            if count == 1 and name:
+                created = [
+                    await self.registry.add_terminal(
+                        workspace_id=workspace["id"], agent=cli, name=name
+                    )
+                ]
+                capped = False
+            else:
+                created, capped = await self.registry.add_terminals(
+                    count, agent=cli, workspace_id=workspace["id"]
+                )
+        except SessionError as exc:
+            return {
+                "status": "not_accepted",
+                "reason": str(exc),
+                "project_id": project["id"],
+                "workspace_id": workspace["id"],
+            }
+        owner = self.registry.get(workspace["id"])
+        if self.publish is not None and owner is not None and created:
+            try:
+                await self.publish(
+                    terminals_added_event(owner, created, source_layer="agentic_ide.orchestration")
+                )
+            except Exception as exc:  # noqa: BLE001 - the panes exist either way
+                from loguru import logger
+
+                logger.warning("New coding agents were not announced to the UI: {}", exc)
+        targets = [
+            {
+                "project_id": project["id"],
+                "workspace_id": workspace["id"],
+                "terminal_id": "pane:" + term.history_id,
+            }
+            for term in created
+        ]
+        result: dict[str, Any] = {
+            "status": "created",
+            "project": project["name"],
+            "workspace": workspace["name"],
+            "project_id": project["id"],
+            "workspace_id": workspace["id"],
+            "agents": [
+                {"terminal_id": target["terminal_id"], "name": term.name, "cli": term.agent}
+                for target, term in zip(targets, created, strict=True)
+            ],
+            "requested": count,
+            "capped": capped,
+        }
+        prompt = str(args.get("prompt") or "").strip()
+        if prompt:
+            result["deliveries"] = list(
+                await asyncio.gather(
+                    *(
+                        self.run(
+                            {
+                                "action": "send",
+                                **target,
+                                "request_id": self._issue(target),
+                                "prompt": prompt,
+                            },
+                            trace_id=trace_id,
+                        )
+                        for target in targets
+                    )
+                )
+            )
+        return result
 
     @staticmethod
     def _choice(
@@ -344,6 +512,8 @@ class WorkspaceOrchestrator:
         if action in {"inspect", "resolve"}:
             graph = await asyncio.to_thread(self.graph)
             return graph if action == "inspect" else self.resolve(args, graph)
+        if action == "create":
+            return await self.create(args, trace_id=trace_id)
         if action not in {"send", "context"}:
             raise ValueError("Unknown workspace orchestration action.")
         target, request_id = self._reconcile(args, action)

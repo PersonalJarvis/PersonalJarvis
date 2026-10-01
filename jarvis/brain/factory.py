@@ -845,6 +845,10 @@ def _register_runtime_manager(manager: Any) -> None:
                 from jarvis.agentic_ide.orchestration import get_orchestrator
 
                 orchestrator = await asyncio.to_thread(get_orchestrator)
+                bus = getattr(manager, "_bus", None)
+                if orchestrator.publish is None and bus is not None:
+                    # New panes must reach the open workspace view at once.
+                    orchestrator.publish = bus.publish
                 return await orchestrator.run(args, trace_id=trace_id)
 
         async def session_tool(session_id: str) -> Any:
