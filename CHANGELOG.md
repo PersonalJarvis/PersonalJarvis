@@ -9,6 +9,12 @@ versioning per [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Restore the installation-guide link on the PyPI package page and unblock package publication.
+
+This patch includes all v2.5.0 features: desktop pets, profile and keyboard-shortcut settings, workspace shell tabs, improved terminal editing, task recovery, native updates, and subscription-bound background work.
+
 ---
 
 ## [2.5.0] — 2026-10-01
