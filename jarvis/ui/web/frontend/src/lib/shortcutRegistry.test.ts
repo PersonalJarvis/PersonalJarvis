@@ -9,6 +9,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { zoomIntentFor } from "@/components/agentic/terminalZoom";
+import { isLeaderChord } from "@/components/agentic/ideHotkeys";
 import {
   SHORTCUTS,
   SHORTCUT_AREAS,
@@ -100,6 +101,18 @@ describe("fixed chords agree with the matcher that implements them", () => {
       }),
     ).toBe(true);
   });
+});
+
+describe("the IDE key menu chord", () => {
+  for (const isMac of [true, false]) {
+    it(`opens the menu on ${isMac ? "macOS" : "PC"} exactly as declared`, () => {
+      const entry = shortcutsForArea("workspace").find(
+        (s) => s.labelKey === "shortcut_overlay.workspace.ide_menu",
+      ) as FixedShortcut;
+      expect(entry.keys).toEqual(["Mod", "Shift", "B"]);
+      expect(isLeaderChord({ key: "B", code: "KeyB", ctrlKey: !isMac, metaKey: isMac, altKey: false, shiftKey: true }, isMac)).toBe(true);
+    });
+  }
 });
 
 describe("keyLabel", () => {

@@ -12,6 +12,8 @@ import { IdeSidePanelFrame } from "@/components/agentic/sidePanel/IdeSidePanel";
 import { GRID_LIMIT_HINT, MAX_WORKSPACE_PANES, canSplitFit, fitsWorkspace, isBalancedWorkspace } from "@/components/agentic/workspaceDocking";
 import { AgentMark } from "@/components/agentic/AgentMark";
 import { CloseAgentDialog, type CloseTarget } from "@/components/agentic/CloseAgentDialog";
+import { IdeHotkeyMenu } from "@/components/agentic/IdeHotkeyMenu";
+import { PANE_COMMAND_EVENT, type IdeHotkeyAction, type PaneCommand, type PaneCommandDetail } from "@/components/agentic/ideHotkeys";
 import { GitCheckoutPicker } from "@/components/agentic/git/GitCheckoutPicker";
 import { GitPanelDialog } from "@/components/agentic/git/GitPanelDialog";
 import { KEEP_CHECKOUT, prepareGit, type GitPlan } from "@/lib/gitApi";
@@ -465,6 +467,71 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const stopWorkspace = () => {
     if (session) setCloseRequest({ kind: "workspace", workspaceId: session.id });
   };
+  // Ctrl+Shift+B, then a key (see components/agentic/ideHotkeys): the IDE's
+  // key menu. Pane commands go to the grid that owns the pane; the rest are
+  // the same calls the buttons and the sidebar make.
+  const hotkeysEnabled = onScreen && !dialogOpen && !optionsOpen && !gitOpen && !closeRequest;
+  const hotkeyAgents = installed.map((agent) => ({ name: agent.name, label: agent.display_name }));
+  const sendPaneCommand = (command: PaneCommand) => {
+    if (!session || !selected) return;
+    const detail: PaneCommandDetail = { workspaceId: session.id, pane: selected, command };
+    window.dispatchEvent(new CustomEvent(PANE_COMMAND_EVENT, { detail }));
+  };
+  const openWorkspaces = state?.workspaces ?? [];
+  const goToWorkspace = (index: number) => {
+    const target = openWorkspaces[index];
+    if (!target) { pushToast("info", `There is no workspace ${index + 1}.`); return; }
+    if (target.id !== session?.id) void activateFromTree(target.id);
+  };
+  const runHotkey = (hotkey: IdeHotkeyAction) => {
+    switch (hotkey.kind) {
+      case "spawn": {
+        if (!session) { setProjectDialog(true); return; }
+        if (session.terminals.length >= maxPanes) { pushToast("error", `This workspace is full (${maxPanes} agents). Close a pane, or open another workspace.`); return; }
+        const anchor = session.terminals.find((terminal) => terminal.name === selected);
+        const fits = Boolean(anchor && hotkey.direction && canSplitFit(session.layout, session.terminals, anchor.key, hotkey.direction, maxPanes));
+        if (anchor && hotkey.direction && !fits) pushToast("info", `No room beside ${anchor.name} there; the new agent joins the even grid.`);
+        addAgent(hotkey.agent, session.id, fits ? anchor!.name : undefined, fits ? hotkey.direction! : "down",
+          anchor ? anchor.computer_id || null : workspaceRunsOn(session.terminals));
+        return;
+      }
+      case "agent-picker": openAgentPicker(); return;
+      case "focus-pane": sendPaneCommand({ kind: "focus", direction: hotkey.direction }); return;
+      case "swap-pane": sendPaneCommand({ kind: "swap", direction: hotkey.direction }); return;
+      case "maximize-pane": sendPaneCommand({ kind: "maximize" }); return;
+      case "fork-pane": sendPaneCommand({ kind: "fork" }); return;
+      case "rename-pane": return; // the menu asks for the name itself
+      case "close-pane": {
+        const terminal = session?.terminals.find((entry) => entry.name === selected);
+        if (terminal) closeAgent(terminal);
+        return;
+      }
+      case "balance": balanceLayout(); return;
+      case "toggle-voice": setVoiceOpen((current) => { const next = !current; storeVoiceBubbleOpen(next); return next; }); return;
+      case "workspace-index": goToWorkspace(hotkey.index); return;
+      case "workspace-step": {
+        if (openWorkspaces.length < 2) return;
+        const at = Math.max(0, openWorkspaces.findIndex((workspace) => workspace.id === session?.id));
+        goToWorkspace((at + hotkey.step + openWorkspaces.length) % openWorkspaces.length);
+        return;
+      }
+      case "new-workspace": {
+        const project = projects.find((entry) => entry.id === session?.project_id);
+        if (!project) { setProjectDialog(true); return; }
+        setWorkspaceProject(project); setWorkspaceName(""); setWorkspaceAgents([installed[0]?.name ?? ""]);
+        setWorkspaceGit(KEEP_CHECKOUT); setWorkspaceComputer(storedRunOn(project.id));
+        return;
+      }
+      case "new-worktree-workspace": newWorktreeWorkspace(); return;
+      case "rename-workspace":
+        if (session) { setRenameValue(session.name ?? session.project.name); setRenameOpen(true); }
+        return;
+      case "close-workspace": stopWorkspace(); return;
+      case "git-panel": if (session) setGitOpen(true); return;
+      case "workspace-options": if (session) setOptionsOpen(true); return;
+      case "connect-project": setProjectDialog(true); return;
+    }
+  };
   const closeTarget: CloseTarget | null = !closeRequest ? null
     : closeRequest.kind === "terminal"
       ? { kind: "terminal", name: closeRequest.terminal.name, agent: closeRequest.terminal.agent, displayName: closeRequest.terminal.display_name }
@@ -498,6 +565,8 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
       </IdeSidePanelFrame>
     </main>
 
+    <IdeHotkeyMenu enabled={hotkeysEnabled} agents={hotkeyAgents} pane={session ? selected : ""} onAction={runHotkey}
+      onRenamePane={(name) => sendPaneCommand({ kind: "rename", name })} />
     <VoiceBubble open={voiceOpen} onClose={closeVoice} onScreen={onScreen} onJumpToPane={jumpToPane} promptTarget={selected} />
 
     {agentPicker && <div className="fixed inset-0 z-[80] flex items-center justify-center bg-background/75 p-4 backdrop-blur-sm"
