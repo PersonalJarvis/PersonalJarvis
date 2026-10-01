@@ -1621,6 +1621,9 @@
       "zoom_in": "Texto del terminal más grande",
       "zoom_out": "Texto del terminal más pequeño",
       "zoom_reset": "Restablecer el tamaño del texto",
+      "app_zoom_in": "Acercar toda la aplicación",
+      "app_zoom_out": "Alejar toda la aplicación",
+      "app_zoom_reset": "Restablecer el zoom de la aplicación al 100 %",
       "open_overlay": "Abrir esta lista",
       "quick_switch": "Saltar rápido a cualquier sección"
     }
@@ -2670,6 +2673,21 @@
       "problem_os_reserved": "Tu sistema operativo se reserva esta combinación, así que nunca llega a Jarvis. Elige otra.",
       "problem_app_reserved": "Jarvis ya usa esta combinación (copiar, pegar, deshacer o la búsqueda de Wiki y Docs). Elige otra.",
       "problem_voice_taken": "Un atajo de voz ya usa exactamente esta combinación y se activa antes que el cambio rápido. Elige otra."
+    },
+    "app_zoom": {
+      "title": "Zoom",
+      "description": "Agranda o reduce todo lo que hay en la ventana de Jarvis, como Ctrl + Más en un navegador. Funciona con teclados alemanes e ingleses: Más y Menos se leen como el carácter que escribes, esté donde esté la tecla.",
+      "level_label": "Tamaño actual",
+      "in_label": "Acercar",
+      "out_label": "Alejar",
+      "reset_label": "Volver al 100 %",
+      "problem_typing_key": "Esta tecla sola haría zoom cada vez que la escribes. Añade Ctrl, Alt o Command, o usa una tecla de función como F9.",
+      "problem_os_reserved": "La tecla Windows pertenece al sistema (Windows + Más abre la lupa). Elige una combinación con Ctrl o Alt.",
+      "problem_duplicate": "Otro paso de zoom ya usa exactamente esta combinación.",
+      "problem_quick_switch": "El cambio rápido ya usa exactamente esta combinación.",
+      "note_terminal": "En el Agentic IDE, Ctrl + Más y Ctrl + Menos cambian en su lugar el tamaño del texto de los terminales.",
+      "note_browser": "En una pestaña del navegador se aplica el zoom del propio navegador; estas teclas solo hacen zoom en la ventana de escritorio de Jarvis.",
+      "note_unsupported": "Esta ventana no puede hacer zoom en este sistema. Las teclas quedan libres."
     },
     "keybinds": {
       "title": "Atajos de voz",

@@ -58,12 +58,13 @@ export interface FixedShortcut extends ShortcutBase {
 
 /**
  * An in-app shortcut whose chord is a per-device preference (the quick
- * switcher). Like a rebindable entry it carries no keys — the overlay reads the
- * live setting, including whether the shortcut is switched off.
+ * switcher, the whole-app zoom). Like a rebindable entry it carries no keys —
+ * the overlay reads the live setting, including whether the shortcut is
+ * switched off.
  */
 export interface AppSettingShortcut extends ShortcutBase {
   kind: "app";
-  setting: "quick_switch";
+  setting: "quick_switch" | "app_zoom_in" | "app_zoom_out" | "app_zoom_reset";
 }
 
 export type Shortcut = RebindableShortcut | FixedShortcut | AppSettingShortcut;
@@ -118,6 +119,24 @@ export const SHORTCUTS: readonly Shortcut[] = [
     area: "workspace",
     setting: "quick_switch",
     labelKey: "shortcut_overlay.workspace.quick_switch",
+  },
+  {
+    kind: "app",
+    area: "workspace",
+    setting: "app_zoom_in",
+    labelKey: "shortcut_overlay.workspace.app_zoom_in",
+  },
+  {
+    kind: "app",
+    area: "workspace",
+    setting: "app_zoom_out",
+    labelKey: "shortcut_overlay.workspace.app_zoom_out",
+  },
+  {
+    kind: "app",
+    area: "workspace",
+    setting: "app_zoom_reset",
+    labelKey: "shortcut_overlay.workspace.app_zoom_reset",
   },
 ] as const;
 

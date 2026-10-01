@@ -1621,6 +1621,9 @@
       "zoom_in": "Terminaltext größer",
       "zoom_out": "Terminaltext kleiner",
       "zoom_reset": "Terminaltextgröße zurücksetzen",
+      "app_zoom_in": "Ganze App vergrößern",
+      "app_zoom_out": "Ganze App verkleinern",
+      "app_zoom_reset": "App-Zoom auf 100 % zurücksetzen",
       "open_overlay": "Diese Liste öffnen",
       "quick_switch": "Schnell zu jedem Bereich springen"
     }
@@ -2670,6 +2673,21 @@
       "problem_os_reserved": "Dein Betriebssystem behält diese Kombination für sich, sie kommt nie bei Jarvis an. Wähle eine andere.",
       "problem_app_reserved": "Jarvis nutzt diese Kombination schon (Kopieren, Einfügen, Rückgängig oder die Wiki- und Docs-Suche). Wähle eine andere.",
       "problem_voice_taken": "Ein Sprach-Kürzel nutzt genau diese Kombination schon und reagiert vor der Schnellsuche. Wähle eine andere."
+    },
+    "app_zoom": {
+      "title": "Zoom",
+      "description": "Macht alles im Jarvis-Fenster größer oder kleiner, so wie Strg + Plus im Browser. Funktioniert mit deutscher und englischer Tastatur: Plus und Minus werden als das Zeichen gelesen, das du tippst, egal wo die Taste liegt.",
+      "level_label": "Aktuelle Größe",
+      "in_label": "Hineinzoomen",
+      "out_label": "Herauszoomen",
+      "reset_label": "Zurück auf 100 %",
+      "problem_typing_key": "Diese Taste allein würde bei jedem Tippen zoomen. Nimm Strg, Alt oder Command dazu — oder eine Funktionstaste wie F9.",
+      "problem_os_reserved": "Die Windows-Taste gehört dem System (Windows + Plus öffnet die Bildschirmlupe). Wähle eine Kombination mit Strg oder Alt.",
+      "problem_duplicate": "Ein anderer Zoom-Schritt nutzt genau diese Kombination schon.",
+      "problem_quick_switch": "Die Schnellsuche nutzt genau diese Kombination schon.",
+      "note_terminal": "Im Agentic IDE ändern Strg + Plus und Strg + Minus stattdessen die Schriftgröße der Terminals.",
+      "note_browser": "In einem Browser-Tab gilt der Zoom des Browsers — diese Tasten zoomen nur das Jarvis-Desktopfenster.",
+      "note_unsupported": "Dieses Fenster kann auf diesem System nicht zoomen. Die Tasten bleiben frei."
     },
     "keybinds": {
       "title": "Sprach-Tastenkürzel",

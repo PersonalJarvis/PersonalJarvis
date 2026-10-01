@@ -1654,6 +1654,9 @@
       "zoom_in": "Larger terminal text",
       "zoom_out": "Smaller terminal text",
       "zoom_reset": "Reset terminal text size",
+      "app_zoom_in": "Zoom the whole app in",
+      "app_zoom_out": "Zoom the whole app out",
+      "app_zoom_reset": "Reset the app zoom to 100 %",
       "open_overlay": "Open this list",
       "quick_switch": "Quick switch to any section"
     }
@@ -2703,6 +2706,21 @@
       "problem_os_reserved": "Your operating system keeps this combination for itself, so it never reaches Jarvis. Pick another one.",
       "problem_app_reserved": "Jarvis already uses this combination (copy, paste, undo or the Wiki and Docs search). Pick another one.",
       "problem_voice_taken": "A voice shortcut already uses exactly this combination, and it fires before the quick switcher can. Pick another one."
+    },
+    "app_zoom": {
+      "title": "Zoom",
+      "description": "Make everything in the Jarvis window bigger or smaller, the way Ctrl + Plus zooms a browser. Works with German and English keyboards: Plus and Minus are read as the characters you type, wherever they sit.",
+      "level_label": "Current size",
+      "in_label": "Zoom in",
+      "out_label": "Zoom out",
+      "reset_label": "Back to 100 %",
+      "problem_typing_key": "This key alone would zoom every time you type it. Add Ctrl, Alt or Command — or use a function key such as F9.",
+      "problem_os_reserved": "The Windows key belongs to the system (Windows + Plus opens the magnifier). Pick a chord with Ctrl or Alt.",
+      "problem_duplicate": "Another zoom step already uses exactly this combination.",
+      "problem_quick_switch": "The quick switcher already uses exactly this combination.",
+      "note_terminal": "In the Agentic IDE, Ctrl + Plus and Ctrl + Minus change the terminal text size instead.",
+      "note_browser": "In a browser tab, your browser's own zoom applies — these keys only zoom the Jarvis desktop window.",
+      "note_unsupported": "This window cannot zoom on this system. The keys are left alone."
     },
     "keybinds": {
       "title": "Voice Keybinds",

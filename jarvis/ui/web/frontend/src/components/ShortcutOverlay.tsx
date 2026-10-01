@@ -15,6 +15,8 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { Keyboard, X } from "lucide-react";
 import { useKeybinds } from "@/hooks/useHotkey";
 import { useQuickSwitchSettings } from "@/store/quickSwitchSettings";
+import { useAppZoomSettings } from "@/store/appZoomSettings";
+import { appZoomCaps, type AppZoomIntent } from "@/lib/appZoom";
 import { detectKeyboardPlatform } from "@/views/settings/keyboardLayout";
 import {
   SHORTCUT_AREAS,
@@ -25,6 +27,12 @@ import {
 } from "@/lib/shortcutRegistry";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
+
+const APP_ZOOM_SETTING_INTENT: Record<string, AppZoomIntent | undefined> = {
+  app_zoom_in: "in",
+  app_zoom_out: "out",
+  app_zoom_reset: "reset",
+};
 
 /** One keycap. Colours come from theme tokens, so it reads in both modes. */
 function Cap({ children }: { children: React.ReactNode }) {
@@ -72,6 +80,7 @@ function ShortcutRow({ shortcut, isMac }: { shortcut: Shortcut; isMac: boolean }
   const t = useT();
   const { config } = useKeybinds();
   const quickSwitch = useQuickSwitchSettings();
+  const appZoom = useAppZoomSettings();
 
   let chord: React.ReactNode;
   if (shortcut.kind === "fixed") {
@@ -90,11 +99,14 @@ function ShortcutRow({ shortcut, isMac }: { shortcut: Shortcut; isMac: boolean }
     );
   } else if (shortcut.kind === "app") {
     // A per-device setting: show what this machine uses, or that it is off.
-    chord = quickSwitch.enabled && quickSwitch.combo ? (
-      <Chord keys={comboTokens(quickSwitch.combo)} isMac={isMac} />
+    const zoomIntent = APP_ZOOM_SETTING_INTENT[shortcut.setting];
+    const on = zoomIntent ? appZoom.enabled : quickSwitch.enabled;
+    const combo = zoomIntent ? appZoom.bindings[zoomIntent] : quickSwitch.combo;
+    chord = on && combo ? (
+      zoomIntent ? <Chord keys={appZoomCaps(combo)} isMac={false} /> : <Chord keys={comboTokens(combo)} isMac={isMac} />
     ) : (
       <span className="text-xs italic text-muted-foreground">
-        {t(quickSwitch.enabled ? "shortcut_overlay.unassigned" : "shortcut_overlay.off")}
+        {t(on ? "shortcut_overlay.unassigned" : "shortcut_overlay.off")}
       </span>
     );
   } else {

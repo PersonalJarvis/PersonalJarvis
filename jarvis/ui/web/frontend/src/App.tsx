@@ -48,6 +48,7 @@ const QuickSwitcher = lazy(() =>
 );
 import { eventMatchesChord } from "@/lib/quickSwitchChord";
 import { useQuickSwitchSettings } from "@/store/quickSwitchSettings";
+import { useAppZoom } from "@/hooks/useAppZoom";
 import { useQuickSwitcher } from "@/store/quickSwitcher";
 import { JarvisDock } from "@/components/JarvisDock";
 import { CliConnectPoller } from "@/components/CliConnectPoller";
@@ -153,6 +154,12 @@ export default function App() {
   useAssistantNameSeed();
   useCodingMode();
   useFileDropGuard();
+  /*
+   * Ctrl + `+` / `-` / `0` zoom the whole window, like a browser — real engine
+   * zoom through the desktop shell. Chords and on/off live under Settings →
+   * Keyboard shortcuts. See hooks/useAppZoom.
+   */
+  useAppZoom();
   /*
    * A reload puts the user back on the section they were on.
    *

@@ -4947,6 +4947,19 @@ class DesktopApp:
                 logger.exception("Could not read whether the window is maximized")
         return run_window_command(window, action, maximized=maximized)
 
+    def set_window_zoom(self, factor: float, view: str | None) -> dict[str, Any]:
+        """Zoom one live window's page. Worker-thread safe.
+
+        A detached view targets that window. Anything else targets the main
+        window. See ``jarvis.ui.window_zoom`` for the per-engine details.
+        """
+        from jarvis.ui.window_zoom import set_window_zoom
+
+        window = self._detached_windows.get(view) if view else None
+        if window is None:
+            window = self._window
+        return set_window_zoom(window, factor)
+
     def _arm_window_frame(self, window: Any) -> None:
         """Let a frameless Windows window still be resized from its edges.
 

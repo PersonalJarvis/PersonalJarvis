@@ -144,6 +144,22 @@ audio are not established by the portable tests. See
 [workspace architecture](igentic-workspaces.md) for the product and execution
 contract.
 
+## Whole-window zoom (2026-10-01, T2)
+
+Ctrl + `+` / `-` / `0` (Command on macOS; rebindable under Settings → Keyboard
+shortcuts) zoom the whole app window. The level goes to the WebView engine,
+never to CSS `zoom`, so `100vh` layouts reflow instead of overflowing:
+Windows sets WebView2 `ZoomFactor` on the UI thread, macOS 11+ sets
+WKWebView `pageZoom` on the main thread, Linux sets WebKitGTK
+`zoom_level` on the GLib loop (`jarvis/ui/window_zoom.py`). The Qt backend,
+macOS 10.x, a browser tab and a headless server answer `ok: false`; the page
+then leaves the keys alone (a browser keeps its own zoom). `+` and `-` are
+matched by the character typed, so German and US layouts both work
+(`lib/appZoom.ts`). Windows verified live on the Dev instance; macOS and
+Linux branches are unit-tested with fakes only. Tests:
+`tests/unit/ui/test_window_zoom.py`, `src/lib/appZoom.test.ts`,
+`src/hooks/useAppZoom.test.tsx`.
+
 ## Window caption (2026-09-21, T2)
 
 The desktop window is frameless on Windows, macOS and Linux. The page draws
