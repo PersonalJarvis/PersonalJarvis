@@ -2669,6 +2669,21 @@ describe("terminal text size across a rebuild", () => {
     );
   });
 
+  it("draws a light pane opaque so its glyphs get subpixel smoothing", () => {
+    render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="light"
+        fontSize={13}
+      />,
+    );
+
+    expect(newest().options.allowTransparency).toBe(false);
+    expect((newest().options.theme as Record<string, unknown>).background).toBe("#fcfbf8");
+    expect(newest().options.fontWeight).toBe(600);
+  });
+
   it("lets a TUI canvas fill fall through to the glass instead of covering it", () => {
     render(
       <AgenticTerminal

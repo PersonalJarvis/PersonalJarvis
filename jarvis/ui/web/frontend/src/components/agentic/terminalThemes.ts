@@ -28,9 +28,12 @@ import type { ITheme } from "@xterm/xterm";
  * ground: darker, more saturated hues, with the "bright" row kept genuinely
  * distinguishable rather than lighter.
  *
- * The xterm canvas itself stays transparent. The stable reading ground comes
- * from the translucent pane shell below it, so the desktop artwork remains
- * visible without stacking two dark fills into an effectively opaque panel.
+ * On a dark pane the xterm canvas stays transparent. The stable reading
+ * ground comes from the translucent pane shell below it, so the desktop
+ * artwork remains visible without stacking two dark fills into an effectively
+ * opaque panel. A light pane is opaque instead: glyphs rasterised onto a
+ * transparent canvas lose subpixel smoothing, and dark ink on paper drawn
+ * that way reads thin and grey.
  * A TUI that still paints its own `bg_base` on every cell (Grok Build's
  * fullscreen themes do) is cleared on the way into xterm — see
  * ./terminalGlass — so that fill becomes the same default background Claude
@@ -60,9 +63,10 @@ export const MINIMUM_CONTRAST_RATIO = 4.5;
 
 /** Warm-paper contrast palette for light mode. */
 export const LIGHT_TERMINAL_THEME: ITheme = {
-  // Alpha 0 = still transparent; the RGB is the light shell's paper tone so
-  // the minimum-contrast maths measures against the ground actually shown.
-  background: "rgba(252, 251, 248, 0)",
+  // Opaque, unlike the dark theme: a light pane draws with
+  // `allowTransparency` off so its glyphs get subpixel smoothing (see
+  // ./AgenticTerminal), and the paper here is the ground the reader sees.
+  background: "#fcfbf8",
   foreground: "#18181c",
   cursor: "#0a0a0a",
   cursorAccent: "#fcfbf8",
@@ -97,7 +101,8 @@ export const LIGHT_TERMINAL_THEME: ITheme = {
  */
 export const DARK_TERMINAL_THEME: ITheme = {
   // #12141a at alpha 0 — the deep-slate ground the backend also reports to the
-  // CLI (jarvis/agentic_ide/terminal_input.py); see the light theme's note.
+  // CLI (jarvis/agentic_ide/terminal_input.py), and the ground the
+  // minimum-contrast maths measures against.
   background: "rgba(18, 20, 26, 0)",
   foreground: "#f4f4f6",
   cursor: "#ffffff",
@@ -311,7 +316,9 @@ export const PANE_SOLID: Record<TerminalAppearance, string> = {
 
 export const PANE_CHROME: Record<TerminalAppearance, PaneChrome> = {
   light: {
-    shell: "rgba(252, 251, 248, 0.86)",
+    // Opaque to match the light terminal canvas, which must be opaque for
+    // crisp glyphs; a translucent shell would leave a seam round the text.
+    shell: "rgb(252, 251, 248)",
     border: "rgba(38,37,30,0.2)",
     float: "#ffffff",
     edge: {

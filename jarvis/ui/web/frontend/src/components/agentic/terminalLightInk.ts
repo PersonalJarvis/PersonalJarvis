@@ -183,24 +183,71 @@ function rewriteColon(token: string): string | null {
   return rgb ? emit(kind, adapt(kind, rgb)) : null;
 }
 
+/** One SGR parameter list re-inked, plus what it did to the pane's pen. */
+interface PenState {
+  /** SGR 2 (faint) is on. */
+  faint: boolean;
+  /** The CLI set its own foreground (ANSI, 256 or truecolor). */
+  fgExplicit: boolean;
+  /** We are drawing faint text in {@link FAINT_INK} on the CLI's behalf. */
+  injected: boolean;
+}
+
+/**
+ * The ink faint text gets on a light pane: #6e6e72, 4.9:1 on paper.
+ *
+ * xterm draws SGR 2 as the foreground at half opacity, and on an opaque light
+ * canvas that lands near #c8c8c8 — 1.6:1, the faint version numbers, paths
+ * and hints Codex and Claude Code print became all but invisible
+ * (maintainer, 2026-10-01). So a light pane never hands xterm the faint
+ * attribute; faint text on the default foreground is drawn in this grey
+ * instead, which keeps the hierarchy and stays readable.
+ */
+const FAINT_INK = "38;2;110;110;114";
+
+function isAnsiForeground(token: string): boolean {
+  const n = Number(token);
+  return token !== "" && ((n >= 30 && n <= 37) || (n >= 90 && n <= 97));
+}
+
 /**
  * Walk one SGR parameter list and re-ink every truecolor / 256-colour
- * foreground and background. Underline colour (`58`) is consumed so its
- * channel values are never read as setters, and otherwise left alone.
+ * foreground and background, updating `pen` as it goes. Underline colour
+ * (`58`) is consumed so its channel values are never read as setters, and
+ * otherwise left alone. Faint (`2`) is replaced by {@link FAINT_INK}.
  */
-export function rewriteLightInkSgr(params: string): string {
+export function rewriteLightInkSgr(params: string, pen: PenState = freshPen()): string {
   const tokens = params.split(";");
   const out: string[] = [];
   for (let i = 0; i < tokens.length; i += 1) {
     const token = tokens[i];
     if (token.includes(":")) {
+      if (token.startsWith("38:")) pen.fgExplicit = true;
       out.push(rewriteColon(token) ?? token);
       continue;
     }
+    if (token === "0" || token === "") {
+      pen.faint = false;
+      pen.fgExplicit = false;
+      pen.injected = false;
+      out.push(token);
+      continue;
+    }
+    if (token === "2") {
+      pen.faint = true;
+      continue;
+    }
+    if (token === "22") pen.faint = false;
+    if (token === "39") {
+      pen.fgExplicit = false;
+      pen.injected = false;
+    }
+    if (isAnsiForeground(token)) pen.fgExplicit = true;
     if (token !== "38" && token !== "48" && token !== "58") {
       out.push(token);
       continue;
     }
+    if (token === "38") pen.fgExplicit = true;
     const mode = tokens[i + 1];
     if (mode === "2" && i + 4 < tokens.length) {
       const payload = tokens.slice(i + 1, i + 5);
@@ -217,22 +264,48 @@ export function rewriteLightInkSgr(params: string): string {
     }
     out.push(token);
   }
+  if (pen.faint && !pen.fgExplicit) {
+    if (!pen.injected) {
+      out.push(FAINT_INK);
+      pen.injected = true;
+    }
+  } else if (pen.injected) {
+    // Faint ended, or the CLI chose its own colour: hand the pen back.
+    if (!pen.fgExplicit) out.push("39");
+    pen.injected = false;
+  }
   return out.join(";");
+}
+
+function freshPen(): PenState {
+  return { faint: false, fgExplicit: false, injected: false };
 }
 
 const SGR = /\x1b\[([0-9;:]*)m/g;
 
 /**
- * Re-ink complete SGR sequences in `text` for a light pane.
+ * A re-inker for one light pane: call it on every chunk headed for xterm.
  *
- * A CSI split across two PTY reads is left for xterm, the same as
- * ./terminalGlass does; the contrast floor covers that rare chunk.
+ * Stateful because faint is: SGR 2 and the `22` that ends it usually arrive
+ * in different sequences, and the grey drawn in its place has to be taken
+ * back exactly when the CLI's faint would have ended. A CSI split across two
+ * PTY reads is left for xterm, the same as ./terminalGlass does.
  */
+export function createLightPaneInk(): (text: string) => string {
+  const pen = freshPen();
+  return (text: string) => {
+    if (!text.includes("\x1b[")) return text;
+    return text.replace(SGR, (full, params: string) => {
+      const next = rewriteLightInkSgr(params, pen);
+      if (next === params) return full;
+      // A list that only switched faint on, while our grey already stands,
+      // has nothing left to say — and `ESC[m` would mean reset.
+      return next === "" ? "" : `\x1b[${next}m`;
+    });
+  };
+}
+
+/** Stateless one-shot form, for a chunk with no history. */
 export function inkForLightPane(text: string): string {
-  if (!text.includes("\x1b[")) return text;
-  return text.replace(SGR, (full, params: string) => {
-    if (!params.includes("38") && !params.includes("48")) return full;
-    const next = rewriteLightInkSgr(params);
-    return next === params ? full : `\x1b[${next}m`;
-  });
+  return createLightPaneInk()(text);
 }

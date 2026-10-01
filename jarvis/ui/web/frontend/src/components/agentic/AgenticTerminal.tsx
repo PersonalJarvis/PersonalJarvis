@@ -89,7 +89,7 @@ import {
   type TerminalAppearance,
 } from "./terminalThemes";
 import { clearTuiCanvasFill } from "./terminalGlass";
-import { inkForLightPane } from "./terminalLightInk";
+import { createLightPaneInk } from "./terminalLightInk";
 import {
   extractPaneDrop,
   extractPasteFiles,
@@ -956,10 +956,13 @@ export function AgenticTerminal({
     const activateLink = createTerminalLinkActivator(linkOptions);
     const term = new Terminal({
       convertEol: false,
-      // The pane shell supplies the shared section glass. xterm otherwise
-      // paints an opaque canvas over it, hiding both that glass and the desktop
-      // artwork even when the surrounding React container is translucent.
-      allowTransparency: true,
+      // A dark pane keeps the canvas clear so the shared section glass and the
+      // desktop artwork show through. A light pane is opaque: xterm rasterises
+      // glyphs on a transparent canvas with greyscale anti-aliasing only, and
+      // dark ink on paper drawn that way reads thin and grey — on a 4K screen
+      // at 100 % scaling, barely legible (maintainer, 2026-10-01). On an
+      // opaque ground the glyph atlas gets the system's subpixel smoothing.
+      allowTransparency: appearanceRef.current !== "light",
       // A CLI configured for the other ground paints truecolor a palette can
       // never remap — dark-theme white text into a light pane. This floor
       // nudges any unreadable foreground toward legibility; the theme's
@@ -1235,6 +1238,9 @@ export function AgenticTerminal({
      */
     let resumeResize: (() => void) | null = null;
 
+    /** This pane's light-ground re-inker; it tracks the CLI's faint state. */
+    const lightInk = createLightPaneInk();
+
     /** Hand bytes to xterm, keeping the count of what is still being parsed. */
     const writeToTerminal = (text: string, afterWrite?: () => void) => {
       parsing += 1;
@@ -1243,7 +1249,7 @@ export function AgenticTerminal({
       // the way into xterm — see ./terminalGlass. A light pane also re-inks
       // the dark-theme truecolor most CLIs paint — see ./terminalLightInk.
       const glass = clearTuiCanvasFill(text);
-      term.write(appearanceRef.current === "light" ? inkForLightPane(glass) : glass, () => {
+      term.write(appearanceRef.current === "light" ? lightInk(glass) : glass, () => {
         parsing = Math.max(0, parsing - 1);
         afterWrite?.();
         // The parser is between chunks — the one safe moment to reflow.
@@ -2426,6 +2432,8 @@ export function AgenticTerminal({
     const term = termRef.current;
     if (!term) return;
     term.options.theme = themeFor(appearance);
+    // Opaque on paper for subpixel-smoothed glyphs — see the constructor.
+    term.options.allowTransparency = appearance !== "light";
     // A light pane draws one cut heavier (TERMINAL_FONT_WEIGHT_LIGHT). Every
     // cut has the same advance, so the grid stays put and only glyphs change.
     const weights = terminalFontWeights(appearance);

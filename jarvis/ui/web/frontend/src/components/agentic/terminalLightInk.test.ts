@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { inkForLightPane, lightGroundFor, lightInkFor, rewriteLightInkSgr } from "./terminalLightInk";
+import {
+  createLightPaneInk,
+  inkForLightPane,
+  lightGroundFor,
+  lightInkFor,
+  rewriteLightInkSgr,
+} from "./terminalLightInk";
 
 function lum([r, g, b]: readonly number[]): number {
   const ch = (v: number) => {
@@ -91,5 +97,47 @@ describe("inkForLightPane", () => {
     const out = inkForLightPane("\x1b[38;2;255;255;255mhi\x1b[0m");
     expect(out).toMatch(/^\x1b\[38;2;\d+;\d+;\d+mhi\x1b\[0m$/);
     expect(out).not.toContain("255;255;255");
+  });
+});
+
+describe("faint text on a light pane", () => {
+  it("draws faint default-colour text in a readable grey instead of half opacity", () => {
+    const ink = createLightPaneInk();
+    expect(ink("\x1b[2mv0.159.3\x1b[22m done")).toBe(
+      "\x1b[38;2;110;110;114mv0.159.3\x1b[22;39m done",
+    );
+  });
+
+  it("takes the grey back on a full reset", () => {
+    const ink = createLightPaneInk();
+    expect(ink("\x1b[2mhint\x1b[0m")).toBe("\x1b[38;2;110;110;114mhint\x1b[0m");
+  });
+
+  it("keeps the state across chunks", () => {
+    const ink = createLightPaneInk();
+    expect(ink("\x1b[2mhi")).toBe("\x1b[38;2;110;110;114mhi");
+    expect(ink("nt\x1b[22m")).toBe("nt\x1b[22;39m");
+  });
+
+  it("leaves a CLI's own colour alone while faint is on", () => {
+    const ink = createLightPaneInk();
+    expect(ink("\x1b[2;31mred\x1b[22;39m")).toBe("\x1b[31mred\x1b[22;39m");
+  });
+
+  it("re-applies the grey when the CLI drops its colour but stays faint", () => {
+    const ink = createLightPaneInk();
+    ink("\x1b[2;31mred");
+    expect(ink("\x1b[39mgrey")).toBe("\x1b[39;38;2;110;110;114mgrey");
+  });
+
+  it("drops a repeated faint switch instead of emitting a reset", () => {
+    const ink = createLightPaneInk();
+    ink("\x1b[2ma");
+    expect(ink("\x1b[2mb")).toBe("b");
+  });
+
+  it("passes plain resets through", () => {
+    const ink = createLightPaneInk();
+    expect(ink("\x1b[mx\x1b[1my")).toBe("\x1b[mx\x1b[1my");
   });
 });
