@@ -1097,9 +1097,9 @@ async def test_warm_transport_never_raises(monkeypatch) -> None:
 
 
 # ── Boot-time prespawn (prespawn_transport capability) ───────────────────
-def test_local_realtime_does_not_load_models_for_an_unselected_fallback() -> None:
-    """Local fallback configuration alone must not reserve the user's GPU/RAM."""
-    assert LocalRealtimeProvider.eager_warm_as_fallback is False
+def test_local_realtime_warms_an_explicitly_configured_fallback() -> None:
+    """A failed cloud primary must not leave the selected fallback cold (#256)."""
+    assert LocalRealtimeProvider.eager_warm_as_fallback is True
 
 
 async def test_prespawn_spawns_and_arms_the_monitor_without_waiting(
