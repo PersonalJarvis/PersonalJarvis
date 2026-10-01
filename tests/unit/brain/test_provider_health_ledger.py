@@ -7,7 +7,9 @@ an outcome ages.
 """
 from __future__ import annotations
 
+import asyncio
 import json
+import threading
 from pathlib import Path
 
 import pytest
@@ -27,13 +29,13 @@ class _Clock:
 class _CountingLedger(ledger.ProviderHealthLedger):
     """Counts disk writes so the 'no write per call' rule is checkable."""
 
-    def __init__(self, path: Path, clock: _Clock) -> None:
-        super().__init__(path, clock=clock)
+    def __init__(self, path: Path, clock: _Clock, **kwargs) -> None:  # noqa: ANN003
+        super().__init__(path, clock=clock, **kwargs)
         self.writes = 0
 
-    def _persist(self, payload):  # noqa: ANN001, ANN202
+    def _write_file(self, payload):  # noqa: ANN001, ANN202
         self.writes += 1
-        super()._persist(payload)
+        super()._write_file(payload)
 
 
 @pytest.fixture
@@ -91,6 +93,37 @@ def test_an_unknown_modality_is_refused(record) -> None:
 def test_a_failure_is_classified_like_the_test_button(record, error, expected) -> None:
     record.record_failure("grok", ledger.MODALITY_BRAIN, error)
     assert record.get("grok", ledger.MODALITY_BRAIN).status == expected
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        RuntimeError("tool gmail failed: the credit card field is empty"),
+        ValueError("budget spreadsheet not found on the network drive"),
+        "payment reminder could not be parsed",
+    ],
+)
+def test_marker_words_from_a_tool_or_app_error_are_not_evidence(record, error) -> None:
+    """Only the provider's own answer counts: a false no_credits would never
+    expire, and these words turn up in tool and app errors all the time."""
+    assert record.record_failure("openai", ledger.MODALITY_BRAIN, error) is False
+    assert record.get("openai", ledger.MODALITY_BRAIN) is None
+
+
+def test_a_provider_sdk_error_without_a_status_code_still_counts(record) -> None:
+    class APIConnectionError(Exception):  # the name every OpenAI-compatible SDK uses
+        pass
+
+    record.record_failure("openai", ledger.MODALITY_BRAIN, APIConnectionError("Connection error."))
+    assert record.get("openai", ledger.MODALITY_BRAIN).status == pt.UNREACHABLE
+
+
+def test_the_test_button_keeps_the_lenient_classifier(record) -> None:
+    """An explicit test is a provider call by construction."""
+    record.record_failure(
+        "openai", ledger.MODALITY_BRAIN, "credit balance too low", source=ledger.SOURCE_TEST
+    )
+    assert record.get("openai", ledger.MODALITY_BRAIN).status == pt.NO_CREDITS
 
 
 def test_no_error_body_or_secret_reaches_the_file(record, tmp_path: Path) -> None:
@@ -229,3 +262,141 @@ def test_module_helpers_never_raise_into_the_call_path(monkeypatch) -> None:
     ledger.set_ledger(_Broken(None))
     ledger.record_success("openai", ledger.MODALITY_BRAIN)
     ledger.record_failure("openai", ledger.MODALITY_BRAIN, RuntimeError("x"))
+
+
+# ── a key replaced elsewhere ─────────────────────────────────────────────────
+
+
+def test_a_credential_failure_is_voided_by_a_key_changed_elsewhere(record) -> None:
+    """The terminal setup wizard runs in another process: no listener fires
+    here, but the next read with the new key's fingerprint voids the verdict."""
+    record.record("openai", ledger.MODALITY_BRAIN, pt.BAD_KEY)
+    old = ledger.credential_fingerprint("sk-old")
+    new = ledger.credential_fingerprint("sk-new")
+
+    # First read stamps the failure with the key it was judged against.
+    assert record.effective("openai", ledger.MODALITY_BRAIN, credential=old).status == pt.BAD_KEY
+    assert record.get("openai", ledger.MODALITY_BRAIN).credential == old
+    # Same key again: still red.
+    assert record.effective("openai", ledger.MODALITY_BRAIN, credential=old).status == pt.BAD_KEY
+    # A different key: the stale verdict is gone for good.
+    assert record.effective("openai", ledger.MODALITY_BRAIN, credential=new) is None
+    assert record.get("openai", ledger.MODALITY_BRAIN) is None
+
+
+def test_the_fingerprint_is_not_the_key() -> None:
+    fingerprint = ledger.credential_fingerprint("sk-proj-SECRET123")
+    assert "SECRET123" not in fingerprint
+    assert len(fingerprint) == 16
+    assert ledger.credential_fingerprint("") == ""
+
+
+# ── listeners ────────────────────────────────────────────────────────────────
+
+
+def test_listeners_hear_status_changes_only(record) -> None:
+    heard: list[tuple[str, str, str]] = []
+    record.add_listener(lambda p, m, s: heard.append((p, m, s)))
+
+    record.record("grok", ledger.MODALITY_BRAIN, pt.OK)
+    record.record("grok", ledger.MODALITY_BRAIN, pt.OK)  # unchanged: silent
+    record.record("grok", ledger.MODALITY_BRAIN, pt.NO_CREDITS)
+    record.forget(["grok"])
+
+    assert heard == [
+        ("grok", "brain", pt.OK),
+        ("grok", "brain", pt.NO_CREDITS),
+        ("", "", ""),  # bulk change
+    ]
+
+
+def test_a_failing_listener_never_costs_the_record(record) -> None:
+    def _boom(*_args: str) -> None:
+        raise RuntimeError("listener down")
+
+    record.add_listener(_boom)
+    assert record.record("grok", ledger.MODALITY_BRAIN, pt.OK) is True
+
+
+def test_changes_reach_the_bus_from_any_thread(tmp_path: Path) -> None:
+    """The web server bridges the record onto the bus; the /ws fan-out then
+    carries it to every window. A record made on a voice worker thread must
+    arrive too."""
+    from jarvis.core.bus import EventBus
+    from jarvis.core.events import ProviderHealthChanged
+
+    async def scenario() -> list[ProviderHealthChanged]:
+        bus = EventBus()
+        seen: list[ProviderHealthChanged] = []
+
+        async def _on(event: ProviderHealthChanged) -> None:
+            seen.append(event)
+
+        bus.subscribe(ProviderHealthChanged, _on)
+        ledger.set_ledger(ledger.ProviderHealthLedger(tmp_path / "h.json"))
+        ledger.publish_changes_to(bus, asyncio.get_running_loop())
+        worker = threading.Thread(
+            target=ledger.record_failure,
+            args=("elevenlabs", ledger.MODALITY_TTS, "HTTP 402 Payment Required"),
+        )
+        worker.start()
+        worker.join()
+        for _ in range(100):
+            if seen:
+                break
+            await asyncio.sleep(0.01)
+        return seen
+
+    seen = asyncio.run(scenario())
+
+    assert [(e.provider, e.modality, e.status) for e in seen] == [
+        ("elevenlabs", "tts", pt.NO_CREDITS)
+    ]
+
+
+# ── background disk I/O ──────────────────────────────────────────────────────
+
+
+def test_background_mode_never_writes_on_the_callers_thread(tmp_path: Path, clock) -> None:
+    """AP-9: the voice path records every sentence; the file is written on
+    the record's own writer thread, in order, never on the caller's."""
+    path = tmp_path / "provider_health.json"
+    record = _CountingLedger(path, clock, background_io=True)
+    record.start_loading()
+    caller = threading.current_thread()
+    writers: list[threading.Thread] = []
+    original = record._write_file
+
+    def _spy(payload):  # noqa: ANN001, ANN202
+        writers.append(threading.current_thread())
+        original(payload)
+
+    record._write_file = _spy  # type: ignore[method-assign]
+    record.record("grok", ledger.MODALITY_BRAIN, pt.BAD_KEY)
+    record.record("openai", ledger.MODALITY_BRAIN, pt.OK)
+    record.flush()
+
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert {o["provider"] for o in saved["outcomes"]} == {"grok", "openai"}
+    assert writers and all(thread is not caller for thread in writers)
+
+
+def test_background_load_merges_the_file_without_losing_newer_outcomes(
+    tmp_path: Path, clock
+) -> None:
+    path = tmp_path / "provider_health.json"
+    first = ledger.ProviderHealthLedger(path, clock=clock)
+    first.record("grok", ledger.MODALITY_BRAIN, pt.NO_CREDITS)
+    first.record("elevenlabs", ledger.MODALITY_TTS, pt.OK)
+
+    reborn = ledger.ProviderHealthLedger(path, clock=clock, background_io=True)
+    # A real call lands before the file has been read: it must win.
+    reborn.record("grok", ledger.MODALITY_BRAIN, pt.OK)
+    reborn.start_loading()
+    reborn.flush()
+
+    assert reborn.get("grok", ledger.MODALITY_BRAIN).status == pt.OK
+    assert reborn.get("elevenlabs", ledger.MODALITY_TTS).status == pt.OK
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    by_provider = {o["provider"]: o["status"] for o in saved["outcomes"]}
+    assert by_provider == {"grok": pt.OK, "elevenlabs": pt.OK}

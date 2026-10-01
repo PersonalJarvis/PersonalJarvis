@@ -442,9 +442,11 @@ _HEALTH_TTL_S: Final[float] = 300.0
 #: this runs out is reported ``unknown`` and draws no dot.
 _HEALTH_SWEEP_S: Final[float] = 20.0
 
-#: surface -> (checked_at, health-record version, rows). Process-local, like
-#: every other short cache in the routes; a restart simply re-sweeps.
-_health_cache: dict[str, tuple[float, int, list[ProviderHealthRow]]] = {}
+#: surface -> (checked_at, (health-record version, credential generation), rows).
+#: Process-local, like every other short cache in the routes; a restart simply
+#: re-sweeps. Keyed on both counters so a new real-call outcome AND any key
+#: saved or deleted — through whichever path — drop the sweep at once.
+_health_cache: dict[str, tuple[float, tuple[int, int], list[ProviderHealthRow]]] = {}
 
 #: Vendor CLI runners. Their credential is a subscription login, not a key,
 #: so the API-Keys one-token probe is the wrong check: the dual Claude row
@@ -608,9 +610,10 @@ async def get_provider_health(
     """
     _service(request)  # 503 like every other route when the chat is off
     from jarvis.brain.provider_health_ledger import ledger_version
+    from jarvis.core.config import secret_generation
 
     now = time.monotonic()
-    version = ledger_version()
+    version = (ledger_version(), secret_generation())
     cached = _health_cache.get(surface)
     if (
         cached

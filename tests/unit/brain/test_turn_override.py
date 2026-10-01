@@ -162,6 +162,53 @@ async def test_a_failing_override_turn_does_not_dead_list_the_provider_for_the_v
     assert (PICK, PICK_MODEL) not in mgr._dead_provider_models
 
 
+class _RejectedKeyBrain(FakeBrain):
+    """The chat seat's own key is rejected — with a real provider-shaped 401."""
+
+    async def complete(self, req: Any):  # type: ignore[no-untyped-def]
+        raise RuntimeError("Error code: 401 - invalid x-api-key")
+        yield  # pragma: no cover — makes this an async generator
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("seat", ["answers", "rejects"])
+async def test_an_override_turn_never_writes_the_brain_tabs_health(seat: str) -> None:
+    """A chat runs on its own credential scope and model: its bad key must not
+    paint the Brain tab red, and its good key must not erase a real bad_key."""
+    from jarvis.brain import provider_health_ledger as ledger
+
+    mgr = _manager()
+    ledger.get_ledger().record(PICK, ledger.MODALITY_BRAIN, "bad_key")  # the voice's truth
+    scoped = FakeBrain(text_response="CHAT") if seat == "answers" else _RejectedKeyBrain()
+    mgr._brain_cache[(f"{PICK}@agent", PICK_MODEL)] = scoped
+    mgr._brain_cache[(PICK, PICK_MODEL)] = FakeBrain(text_response="unused")
+
+    await mgr.generate(
+        "Erzähl mir bitte etwas über die Geschichte von Rom",  # i18n-allow: a substantive turn
+        use_history=False,
+        turn_override=TurnOverride(provider=PICK, model=PICK_MODEL),
+    )
+
+    outcome = ledger.get_ledger().get(PICK, ledger.MODALITY_BRAIN)
+    assert outcome is not None and outcome.status == "bad_key"
+
+
+@pytest.mark.asyncio
+async def test_a_voice_turn_feeds_the_brain_tabs_health() -> None:
+    from jarvis.brain import provider_health_ledger as ledger
+
+    mgr = _manager()
+    chain = mgr._build_fallback_chain("fast")
+    for provider, model in chain:
+        mgr._brain_cache[(provider, model)] = FakeBrain(text_response="VOICE")
+
+    await mgr.generate("hallo", use_history=False)
+
+    lead = chain[0][0]
+    outcome = ledger.get_ledger().get(lead, ledger.MODALITY_BRAIN)
+    assert outcome is not None and outcome.status == "ok"
+
+
 @pytest.mark.asyncio
 async def test_a_fall_through_to_the_pick_never_announces_a_brain_switch() -> None:
     """Review 2026-08-25: the router lead falls through to the pick at chain index 1,

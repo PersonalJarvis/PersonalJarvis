@@ -24,7 +24,11 @@ from jarvis.ui.web.server import WebServer
 
 
 class _InMemorySecretStore:
-    """Simulates the keyring via a dict — wired into cfg via monkeypatch."""
+    """Simulates the keyring via a dict — wired into cfg via monkeypatch.
+
+    Like the real ``set_secret``/``delete_secret``, a successful write or
+    delete announces the changed slot (revision, generation, listeners).
+    """
 
     def __init__(self) -> None:
         self.data: dict[str, str] = {}
@@ -33,11 +37,17 @@ class _InMemorySecretStore:
         return self.data.get(key)
 
     def set(self, key: str, value: str) -> bool:
+        from jarvis.core import config as cfg_mod
+
         self.data[key] = value
+        cfg_mod._mark_secret_changed(key)
         return True
 
     def delete(self, key: str) -> bool:
+        from jarvis.core import config as cfg_mod
+
         self.data.pop(key, None)
+        cfg_mod._mark_secret_changed(key)
         return True
 
 
@@ -504,6 +514,68 @@ def test_saving_a_key_forgets_what_the_old_key_did(
     assert record.get("openai-live", ledger.MODALITY_REALTIME) is None
     # An unrelated provider keeps its history.
     assert record.get("elevenlabs", ledger.MODALITY_TTS) is not None
+
+
+def test_a_key_saved_through_any_path_forgets_and_refreshes_in_one_place(
+    server_with_brain: WebServer,
+    secret_store: _InMemorySecretStore,
+) -> None:
+    """The Control API, CLI connect flows and the setup wizard all save through
+    ``set_secret``; none of them calls a health route. The ONE listener on the
+    credential store forgets the old verdict and the rollup cache follows."""
+    from jarvis.brain import provider_health_ledger as ledger
+    from jarvis.core import config as cfg_mod
+
+    secret_store.data["openai_api_key"] = "sk-old"
+    ledger.get_ledger().record("openai", ledger.MODALITY_BRAIN, "bad_key")
+    with TestClient(server_with_brain.app) as client:
+        before = client.get("/api/providers/section-health").json()
+        # e.g. PUT /api/control/secrets/openai_api_key → cfg_mod.set_secret
+        assert cfg_mod.set_secret("openai_api_key", "sk-new") is True
+        after = client.get("/api/providers/section-health").json()
+
+    assert before["sections"]["brain"]["status"] == "error"
+    assert after["cached"] is False
+    assert after["sections"]["brain"]["status"] == "unknown"
+    assert after["sections"]["brain"]["reason"] == "unverified"
+
+
+def test_a_key_replaced_in_another_process_voids_the_stale_verdict(
+    server_with_brain: WebServer,
+    secret_store: _InMemorySecretStore,
+) -> None:
+    """The terminal wizard writes the keyring from its own process: no listener
+    fires here. The credential failure carries the fingerprint of the key it
+    was judged against, and a different key voids it on the next read."""
+    from jarvis.brain import provider_health_ledger as ledger
+
+    secret_store.data["openai_api_key"] = "sk-old"
+    ledger.get_ledger().record("openai", ledger.MODALITY_BRAIN, "bad_key")
+    with TestClient(server_with_brain.app) as client:
+        before = client.get("/api/providers/section-health").json()
+        secret_store.data["openai_api_key"] = "sk-new"  # no in-process write
+        after = client.get("/api/providers/section-health?refresh=true").json()
+
+    assert before["sections"]["brain"]["status"] == "error"
+    assert after["sections"]["brain"]["status"] == "unknown"
+    assert ledger.get_ledger().get("openai", ledger.MODALITY_BRAIN) is None
+
+
+def test_a_transient_outcome_is_amber_not_red(
+    server_with_brain: WebServer,
+    secret_store: _InMemorySecretStore,
+) -> None:
+    """A throttle or a blip has usually passed (or a fallback answered):
+    degraded, never the red of a rejected key."""
+    from jarvis.brain import provider_health_ledger as ledger
+
+    secret_store.data["openai_api_key"] = "sk-test"
+    ledger.get_ledger().record("openai", ledger.MODALITY_BRAIN, "rate_limited")
+    with TestClient(server_with_brain.app) as client:
+        body = client.get("/api/providers/section-health").json()
+
+    assert body["sections"]["brain"]["status"] == "needs_setup"
+    assert body["sections"]["brain"]["reason"] == "rate_limited"
 
 
 def test_list_providers_exposes_credential_help_and_billing(

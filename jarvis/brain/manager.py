@@ -11947,10 +11947,13 @@ class BrainManager:
                 msg = str(exc)
                 kind = _classify_provider_error(msg, default="init_fail")
                 # The status dots read what real turns did; the record keeps
-                # only the classification, never this message (AP-34).
-                _health_ledger.record_failure(
-                    prov_name, _health_ledger.MODALITY_BRAIN, exc, model=model
-                )
+                # only the classification, never this message (AP-34). An
+                # overridden turn (an agent chat) runs on its own credential
+                # scope and model, so it is not the Brain tab's evidence.
+                if turn_override is None:
+                    _health_ledger.record_failure(
+                        prov_name, _health_ledger.MODALITY_BRAIN, exc, model=model
+                    )
                 # On missing_key: remove provider from the chain for the rest
                 # of the session. Prevents each voice turn from running 8x
                 # sequentially against the same missing keys. Never for an
@@ -12323,9 +12326,10 @@ class BrainManager:
                 # tool was actually called this turn.
                 _turn_executed = set(executed)
                 used_provider, used_model = prov_name, model
-                _health_ledger.record_success(
-                    prov_name, _health_ledger.MODALITY_BRAIN, model=model
-                )
+                if turn_override is None:
+                    _health_ledger.record_success(
+                        prov_name, _health_ledger.MODALITY_BRAIN, model=model
+                    )
 
                 # Bug C Fix (2026-04-29) — BrainTurnStarted/Completed publishen
                 # NUR wenn der Brain-Call erfolgreich war (Stream lieferte
@@ -12430,9 +12434,10 @@ class BrainManager:
                 # router bricked the whole turn even though OpenRouter was funded
                 # — AP-22). Only a genuinely transient 429 takes the cooldown path.
                 kind = _classify_provider_error(msg, default="call_fail")
-                _health_ledger.record_failure(
-                    prov_name, _health_ledger.MODALITY_BRAIN, exc, model=model
-                )
+                if turn_override is None:
+                    _health_ledger.record_failure(
+                        prov_name, _health_ledger.MODALITY_BRAIN, exc, model=model
+                    )
                 if kind == "rate_limit":
                     self._rate_tracker.mark_rate_limited(prov_name, model)
                     log.warning("Rate-Limited %s(%s) — 30s Cooldown aktiviert", prov_name, model)

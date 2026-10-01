@@ -1504,6 +1504,56 @@ def _outcome_detail(label: str, outcome: _health_ledger.Outcome) -> str:
     return f"{label}: {what} {where} ({age})"
 
 
+def _credential_slots(provider_id: str) -> list[tuple[str, str | None]]:
+    """The keyring slots (with ENV fallback) a provider card reads, in order."""
+    chain = list(cfg_mod.PROVIDER_SECRET_CANDIDATES.get(provider_id, ()))
+    spec = get_spec(provider_id)
+    known = {slot for slot, _env in chain}
+    if spec is not None:
+        chain.extend((slot, None) for slot in spec.secret_keys if slot not in known)
+    return chain
+
+
+def _current_credential_fingerprint(spec: ProviderSpec) -> str | None:
+    """Fingerprint of the key ``spec`` would use now; ``None`` without one.
+
+    Blocking (keyring reads) — call off the event loop.
+    """
+    for slot, env in _credential_slots(spec.id):
+        try:
+            value = cfg_mod.get_secret(slot, env)
+        except Exception as exc:  # noqa: BLE001 — an unreadable keyring voids nothing
+            log.info("health: credential read for %s failed: %s", spec.id, exc)
+            return None
+        if value:
+            return _health_ledger.credential_fingerprint(value)
+    return None
+
+
+def _providers_reading_slots(slots: tuple[str, ...] | list[str]) -> list[str]:
+    """Every provider card that reads any of ``slots`` — its own key slots and
+    its resolution chain (a realtime card falls back to the family key)."""
+    wanted = {slot for slot in slots if slot}
+    return [
+        spec.id
+        for spec in PROVIDERS
+        if wanted & {slot for slot, _env in _credential_slots(spec.id)}
+    ]
+
+
+def _forget_outcomes_of_changed_slot(slot: str) -> None:
+    """Secret-change listener: what the old key did says nothing about the new.
+
+    Registered once with ``jarvis.core.config`` so EVERY in-process write path
+    (API-Keys routes, Control API, CLI connect flows, the setup wizard) forgets
+    in one place instead of each route remembering to.
+    """
+    _health_ledger.forget_providers(_providers_reading_slots((slot,)))
+
+
+cfg_mod.add_secret_change_listener(_forget_outcomes_of_changed_slot)
+
+
 def _record_test_verdict(spec: ProviderSpec, status: str, *, model: str | None = None) -> None:
     """Feed an explicit test's verdict into the passive health record.
 
@@ -1622,7 +1672,13 @@ async def _tier_section_health(
             detail=f"{spec.label}: connected or configured",
             subject_id=spec.id,
         )
-    outcome = _health_ledger.effective_outcome(spec.id, modality)
+    credential: str | None = None
+    if _health_ledger.has_credential_failure(spec.id):
+        # A key-level failure is only true of the key it was judged against:
+        # one replaced outside this process (the terminal setup wizard, an
+        # edited keyring) must void it. Read off the loop, and only then.
+        credential = await asyncio.to_thread(_current_credential_fingerprint, spec)
+    outcome = _health_ledger.effective_outcome(spec.id, modality, credential=credential)
     if outcome is None:
         if getattr(spec, "auth_mode", None) != "api_key":
             return SectionHealth(
@@ -1638,7 +1694,7 @@ async def _tier_section_health(
             subject_id=spec.id,
         )
     return SectionHealth(
-        status=_section_health.section_status_for_test(outcome.status, configured=True),
+        status=_section_health.section_status_for_outcome(outcome.status),
         reason=outcome.status,
         detail=_outcome_detail(spec.label, outcome),
         subject_id=spec.id,
@@ -1973,8 +2029,11 @@ def _section_health_fingerprint(
         ("dictation-polish", "1" if _polish_enabled(cfg) else "0"),
         ("dictation-provider", str(getattr(dictation, "polish_provider", None) or "")),
         ("advanced-reachable", repr(reachable)),
-        # A newly recorded real-call outcome supersedes the cached rollup.
+        # A newly recorded real-call outcome supersedes the cached rollup, and
+        # so does any credential write/delete — whichever path made it
+        # (API-Keys, Control API, CLI connect, setup wizard).
         ("health-ledger", str(_health_ledger.ledger_version())),
+        ("secrets", str(cfg_mod.secret_generation())),
     )
     return tuple((key, subjects.get(key) or "") for key in _SECTION_HEALTH_KEYS) + configuration
 
@@ -4156,19 +4215,6 @@ def _secret_slot_labels(slots: tuple[str, ...]) -> list[str]:
     return list(labels)
 
 
-def _providers_reading_slots(slots: tuple[str, ...] | list[str]) -> list[str]:
-    """Every provider card that reads any of ``slots`` — its own key slots and
-    its resolution chain (a realtime card falls back to the family key)."""
-    wanted = {slot for slot in slots if slot}
-    found: list[str] = []
-    for spec in PROVIDERS:
-        reads = set(spec.secret_keys)
-        reads.update(slot for slot, _env in cfg_mod.PROVIDER_SECRET_CANDIDATES.get(spec.id, ()))
-        if reads & wanted:
-            found.append(spec.id)
-    return found
-
-
 @router.post("/secrets/{key}", openapi_extra={"x-jarvis-dangerous": True})
 async def set_secret_value(key: str, body: SecretBody, request: Request) -> dict[str, Any]:
     """Save a key for its whole provider family, or ask which scope was meant.
@@ -4207,8 +4253,8 @@ async def set_secret_value(key: str, body: SecretBody, request: Request) -> dict
                 slot,
             )
     touched = (*plan.writes, *plan.deletes)
-    # What the old key did says nothing about the new one.
-    _health_ledger.forget_providers(_providers_reading_slots(touched))
+    # (The health record forgets what the old key did through the
+    # secret-change listener set_secret/delete_secret call.)
     for slot in plan.writes:
         await _emit(request, SecretConfigured(key=slot, action="set"))
     for slot in plan.deletes:
@@ -4236,7 +4282,6 @@ async def delete_secret_value(key: str, request: Request) -> dict[str, Any]:
                 "credential store may be locked or unavailable."
             ),
         )
-    _health_ledger.forget_providers(_providers_reading_slots((key,)))
     await _emit(request, SecretConfigured(key=key, action="delete"))
     _invalidate_section_health_state(request)
     return {"ok": True, "key": key}

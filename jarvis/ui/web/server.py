@@ -2574,6 +2574,13 @@ class WebServer:
         from jarvis.core import runtime_refs as _runtime_refs
 
         _runtime_refs.set_api_base_url(f"http://127.0.0.1:{resolved_port}")
+        # Announce each change of the passive provider-health record on the bus;
+        # the existing /ws fan-out carries it to every open window, whose status
+        # dots then re-read (no poll, no extra socket — AP-33). Registering is
+        # cheap: nothing is read or started until the first outcome arrives.
+        from jarvis.brain.provider_health_ledger import publish_changes_to
+
+        publish_changes_to(self.bus, asyncio.get_running_loop())
         if start_serving:
             assert_bind_safe(host, _control_key.get_control_key())
             config = uvicorn.Config(

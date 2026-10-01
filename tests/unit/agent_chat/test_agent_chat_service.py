@@ -321,6 +321,37 @@ def test_provider_health_sweep_sends_nothing_to_any_provider(tmp_path: Path, mon
     assert recorder.calls == []
 
 
+def test_provider_health_sweep_is_dropped_when_any_key_changes(tmp_path: Path, monkeypatch):
+    """A key saved or deleted — through the API-Keys page, the Control API, a
+    CLI connect flow — must show on the next open, not after five minutes,
+    even when the health record had nothing for that provider."""
+    import jarvis.ui.web.agent_chat_routes as routes
+    from jarvis.core import config as cfg_mod
+    from jarvis.ui.web import provider_routes
+
+    present = {"grok": False}
+    monkeypatch.setattr(
+        provider_routes, "_is_credential_present", lambda spec, *_: present.get(spec.id, True)
+    )
+    monkeypatch.setattr(
+        routes, "_cli_login_snapshot", lambda runner: ("ok", "ok", f"{runner}: signed in")
+    )
+    monkeypatch.setattr("jarvis.agent_chat.service._claude_cli_installed", lambda: False)
+    monkeypatch.setattr(routes, "_health_cache", {})
+
+    with TestClient(_app(tmp_path)) as client:
+        first = client.get("/api/agent-chat/provider-health?surface=jarvis").json()
+        present["grok"] = True
+        cfg_mod._mark_secret_changed("grok_api_key")  # what set_secret does after a write
+        second = client.get("/api/agent-chat/provider-health?surface=jarvis").json()
+
+    before = {r["provider"]: r for r in first["providers"]}
+    after = {r["provider"]: r for r in second["providers"]}
+    assert before["grok"]["status"] == "needs_setup"
+    assert second["cached"] is False
+    assert after["grok"]["status"] == "unknown"
+
+
 class _CliStatus:
     def __init__(self, connected: bool, mode: str, message: str = "") -> None:
         self.connected = connected

@@ -5048,6 +5048,15 @@ _PLATFORM_KEYRING_BACKEND: Any | None = None
 _LAST_KEYRING_FAILED_SLOT: str | None = None
 _SECRET_REVISION_LOCK = threading.Lock()
 _SECRET_REVISIONS: dict[str, int] = {}
+# Bumped by every in-process credential write or delete, whatever the slot:
+# caches that depend on "which keys exist" key on it instead of each write
+# path having to remember to drop them.
+_SECRET_GENERATION: int = 0
+# Called with the slot name after every successful write or delete. The ONE
+# place a credential change is observable in-process — every save path (the
+# API-Keys routes, the Control API, CLI connect flows, the setup wizard) goes
+# through ``set_secret`` / ``delete_secret``.
+_SECRET_CHANGE_LISTENERS: list[Any] = []
 
 
 def secret_revision(key: str) -> int:
@@ -5061,9 +5070,39 @@ def secret_revision(key: str) -> int:
         return _SECRET_REVISIONS.get(key, 0)
 
 
+def secret_generation() -> int:
+    """How many credential writes/deletes this process has seen (any slot)."""
+    with _SECRET_REVISION_LOCK:
+        return _SECRET_GENERATION
+
+
+def add_secret_change_listener(listener: Any) -> None:
+    """Call ``listener(slot)`` after every successful secret write or delete.
+
+    Idempotent per callable. A listener must be cheap and must not raise; a
+    failing one is logged and skipped so a credential save never fails on it.
+    """
+    with _SECRET_REVISION_LOCK:
+        if listener not in _SECRET_CHANGE_LISTENERS:
+            _SECRET_CHANGE_LISTENERS.append(listener)
+
+
 def _mark_secret_changed(key: str) -> None:
+    global _SECRET_GENERATION
     with _SECRET_REVISION_LOCK:
         _SECRET_REVISIONS[key] = _SECRET_REVISIONS.get(key, 0) + 1
+        _SECRET_GENERATION += 1
+        listeners = list(_SECRET_CHANGE_LISTENERS)
+    for listener in listeners:
+        try:
+            listener(key)
+        except Exception:  # noqa: BLE001 — the credential IS saved; a follower failing must not undo that
+            logging.getLogger(__name__).warning(
+                "secret-change listener %r failed for slot %s",
+                getattr(listener, "__qualname__", listener),
+                key,
+                exc_info=True,
+            )
 
 
 # Serializes _FileCredStore's load-mutate-save cycle so two in-process
