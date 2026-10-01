@@ -70,3 +70,41 @@ def test_invalid_quartz_age_is_advisory(value: object) -> None:
 def test_negative_grace_is_rejected() -> None:
     with pytest.raises(ValueError):
         human_activity.macos_human_activity(platform="darwin", grace_s=-0.01)
+
+
+def test_actuator_wrapper_refuses_recent_hardware_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import jarvis.cu.actuate as actuate
+
+    monkeypatch.setattr(actuate.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        human_activity,
+        "human_input_allows_automation",
+        lambda: (False, "physical input 0.010s ago; yielding to the user"),
+    )
+    monkeypatch.setattr(
+        actuate,
+        "_base_get_actuator",
+        lambda: pytest.fail("backend must not be resolved while the user is active"),
+    )
+
+    with pytest.raises(actuate.ActuationUnavailable, match="recent physical"):
+        actuate.get_actuator()
+
+
+def test_actuator_wrapper_allows_quiet_macos(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import jarvis.cu.actuate as actuate
+
+    sentinel = object()
+    monkeypatch.setattr(actuate.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        human_activity,
+        "human_input_allows_automation",
+        lambda: (True, "last physical input was 2.000s ago"),
+    )
+    monkeypatch.setattr(actuate, "_base_get_actuator", lambda: sentinel)
+
+    assert actuate.get_actuator() is sentinel
