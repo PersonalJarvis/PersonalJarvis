@@ -56,11 +56,14 @@ export function SetupTour({
   onb,
   preview,
   onFinished,
+  onSkipAll,
   startAt,
 }: {
   onb: Onb;
   preview: boolean;
   onFinished: () => void;
+  /** "Skip setup" on the welcome: ends the whole first-run guide. */
+  onSkipAll?: () => void;
   startAt?: SetupStepId;
 }) {
   const t = useT();
@@ -194,7 +197,7 @@ export function SetupTour({
           </div>
         </div>
         <div className="mt-4">
-          {stepId === "welcome" && <WelcomeStep onStart={() => { cheer(); next(); }} />}
+          {stepId === "welcome" && <WelcomeStep onStart={() => { cheer(); next(); }} onSkipAll={onSkipAll} />}
           {stepId === "keys" && <KeysStep next={next} later={later} cheer={cheer} />}
           {stepId === "subscriptions" && <SubscriptionsStep next={next} later={later} />}
           {stepId === "voice" && <VoiceStep next={next} later={later} />}
@@ -209,7 +212,7 @@ export function SetupTour({
 
 /* ------------------------------------------------------------------ steps */
 
-function WelcomeStep({ onStart }: { onStart: () => void }) {
+function WelcomeStep({ onStart, onSkipAll }: { onStart: () => void; onSkipAll?: () => void }) {
   const t = useT();
   const lang = useUiLanguage();
   return (
@@ -233,6 +236,13 @@ function WelcomeStep({ onStart }: { onStart: () => void }) {
         ))}
       </div>
       <PrimaryAction onClick={onStart}>{t("first_run.welcome.start")}</PrimaryAction>
+      {onSkipAll && (
+        <div className="text-center">
+          <QuietAction onClick={onSkipAll} testId="setup-skip-all" className="text-xs">
+            {t("first_run.welcome.skip_all")}
+          </QuietAction>
+        </div>
+      )}
     </div>
   );
 }
@@ -274,6 +284,11 @@ function KeysStep({ next, later, cheer }: { next: () => void; later: () => void;
   }, []);
 
   const withKey = providers.filter((p) => (p.secret_keys?.length ?? 0) > 0 && slotEffective(p));
+  // Live voice (talk and get an instant answer) needs a key one of the
+  // realtime starter plans runs on; any other key still runs chat and the
+  // classic voice (speech to text, answer read aloud).
+  const startableNow = startableProviders(providers);
+  const liveVoice = plans.some((p) => p.mode === "realtime" && planKeysComplete(p, startableNow));
   const localBrain = providers.some((p) => p.tier === "brain" && p.active && (p.secret_keys?.length ?? 0) === 0);
   const hasKey = withKey.length > 0 || localBrain;
 
@@ -325,6 +340,19 @@ function KeysStep({ next, later, cheer }: { next: () => void; later: () => void;
         <Status tone="muted" testId="setup-keys-waiting">{t("first_run.keys.waiting")}</Status>
       )}
       {partial && <Status tone="warning">{fill(t("first_run.keys.partial"), { parts: partial })}</Status>}
+      {hasKey && !connecting && (
+        <Status tone={liveVoice ? "ok" : "muted"} testId="setup-keys-live">
+          {liveVoice ? t("first_run.keys.live_ready") : t("first_run.keys.live_missing")}
+        </Status>
+      )}
+      {!hasKey && (
+        <p className="text-xs leading-relaxed text-muted-foreground" data-testid="setup-keys-nokey">
+          {t("first_run.keys.no_key")}
+        </p>
+      )}
+      {hasKey && !connecting && (
+        <p className="text-xs leading-relaxed text-muted-foreground">{t("first_run.keys.next_hint")}</p>
+      )}
       <p className="flex items-start gap-1.5 text-xs leading-relaxed text-muted-foreground">
         <Lock aria-hidden className="mt-0.5 h-3 w-3 shrink-0" />
         {t("first_run.keys.security")}

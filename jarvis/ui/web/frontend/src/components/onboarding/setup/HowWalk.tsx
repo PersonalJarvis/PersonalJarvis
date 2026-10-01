@@ -52,11 +52,38 @@ export const HOW_BEATS: readonly HowBeat[] = [
 ];
 
 const BUBBLE_W = 500;
+const BEAT_KEY = "jarvis.setup.howBeat";
+
+/** The beat to resume on: a remount (a reload, a late locale load) keeps the place. */
+function readBeat(): number {
+  try {
+    const n = Number(window.sessionStorage.getItem(BEAT_KEY));
+    return Number.isInteger(n) && n > 0 && n < HOW_BEATS.length ? n : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function saveBeat(n: number | null): void {
+  try {
+    if (n === null) window.sessionStorage.removeItem(BEAT_KEY);
+    else window.sessionStorage.setItem(BEAT_KEY, String(n));
+  } catch {
+    // Storage may be blocked; the walk then starts over after a reload.
+  }
+}
 
 export function HowWalk({ onDone }: { onDone: () => void }) {
   const t = useT();
   const pet = useGuidePet();
-  const [index, setIndex] = useState(0);
+  const [index, setIndexRaw] = useState(readBeat);
+  const setIndex = useCallback((update: (i: number) => number) => {
+    setIndexRaw((i) => {
+      const n = update(i);
+      saveBeat(n);
+      return n;
+    });
+  }, []);
   const beat = HOW_BEATS[index];
   const last = index === HOW_BEATS.length - 1;
 
@@ -72,10 +99,15 @@ export function HowWalk({ onDone }: { onDone: () => void }) {
 
   const rect = useAnchorRect(beat.anchor, false, beat.id);
 
+  const done = useCallback(() => {
+    saveBeat(null);
+    onDone();
+  }, [onDone]);
+
   const next = useCallback(() => {
-    if (last) onDone();
-    else setIndex((i) => i + 1);
-  }, [last, onDone]);
+    if (last) done();
+    else setIndex((i) => Math.min(HOW_BEATS.length - 1, i + 1));
+  }, [last, done, setIndex]);
 
   // Arrow keys move through the walk.
   useEffect(() => {
@@ -85,7 +117,7 @@ export function HowWalk({ onDone }: { onDone: () => void }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [next]);
+  }, [next, setIndex]);
 
   const text = fill(t(`first_run.how.beats.${beat.id}`), { pet: pet?.name ?? "Gigi" });
 
@@ -122,11 +154,26 @@ export function HowWalk({ onDone }: { onDone: () => void }) {
                 {t("first_run.how.prev")}
               </QuietAction>
             )}
-            <span className="ml-auto text-xs text-muted-foreground">
-              {fill(t("first_run.how.beat_of"), { current: index + 1, total: HOW_BEATS.length })}
+            {/* Progress inside this one setup step: dots, no second number
+                next to the setup's own "2 of 6". */}
+            <span
+              className="ml-auto flex items-center gap-1"
+              role="img"
+              aria-label={fill(t("first_run.how.beat_of"), { current: index + 1, total: HOW_BEATS.length })}
+              data-testid="how-progress"
+            >
+              {HOW_BEATS.map((b, i) => (
+                <span
+                  key={b.id}
+                  className={cn(
+                    "h-1.5 rounded-full transition-all duration-200",
+                    i === index ? "w-4 bg-accent" : i < index ? "w-1.5 bg-foreground/50" : "w-1.5 bg-border-strong",
+                  )}
+                />
+              ))}
             </span>
             {!last && (
-              <QuietAction onClick={onDone} className="text-xs" testId="how-skip">
+              <QuietAction onClick={done} className="text-xs" testId="how-skip">
                 {t("first_run.how.skip")}
               </QuietAction>
             )}

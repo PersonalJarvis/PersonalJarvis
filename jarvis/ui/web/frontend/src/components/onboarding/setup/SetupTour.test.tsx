@@ -285,3 +285,17 @@ it("starts a replay from Settings at the explainer", async () => {
   await waitFor(() => expect(screen.getByTestId("setup-card").dataset.step).toBe("how"));
   expect(screen.queryByTestId("setup-back")).toBeNull();
 });
+
+it("lets the welcome skip the whole setup", async () => {
+  const onSkipAll = vi.fn();
+  render(<SetupTour onb={fakeOnb()} preview={false} onFinished={vi.fn()} onSkipAll={onSkipAll} />);
+  fireEvent.click(await screen.findByTestId("setup-skip-all"));
+  expect(onSkipAll).toHaveBeenCalled();
+});
+
+it("says what a key is for: live voice needs OpenAI or Gemini", async () => {
+  providers = [{ ...openai, configured: true, secrets_set: { openai_api_key: true } }];
+  render(<SetupTour onb={fakeOnb({ ...accepted, current_step: "keys" })} preview={false} onFinished={vi.fn()} />);
+  const live = await screen.findByTestId("setup-keys-live");
+  await waitFor(() => expect(live.dataset.tone).toBe("ok"));
+});

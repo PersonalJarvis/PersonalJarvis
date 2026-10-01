@@ -384,6 +384,7 @@ export function JarvisAgentSection({
           title="Coding CLIs"
           hint="sign in with a subscription — no key"
           testId="agent-group-clis"
+          tourId="apikeys-subscriptions"
         >
           {codexRow && (
             <CodexConnectionCard
@@ -638,16 +639,19 @@ function AgentGroup({
   title,
   hint,
   testId,
+  tourId,
   children,
 }: {
   icon: LucideIcon;
   title: string;
   hint: string;
   testId?: string;
+  /** A stable hook for the first-run guide (`data-tour`). */
+  tourId?: string;
   children: React.ReactNode;
 }) {
   return (
-    <div data-testid={testId} className="space-y-2">
+    <div data-testid={testId} data-tour={tourId} className="space-y-2">
       <div className="flex min-w-0 items-center gap-2 px-0.5 text-xs">
         <Icon aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-primary" />
         <span className="font-display text-meta font-semibold tracking-tight">{title}</span>

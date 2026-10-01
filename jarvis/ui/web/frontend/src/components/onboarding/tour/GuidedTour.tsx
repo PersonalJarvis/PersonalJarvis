@@ -216,7 +216,7 @@ export function GuidedTour({ onDone }: { onDone: () => void }) {
   return (
     <Spotlight rect={rect} placement={step.placement} cardWidth={460}>
       <div role="dialog" aria-live="polite" aria-label={t("app_tour.label")} data-testid="tour-card" data-step={step.id}>
-        <PetSays key={step.id} text={t(`app_tour.steps.${step.id}`)} state={step.pet} px={80} testId="tour-text">
+        <PetSays key={step.id} text={t(`app_tour.steps.${step.id}`)} state={step.pet} px={96} testId="tour-text">
           <div className="mt-3 flex items-center gap-3">
             <button
               ref={nextButton}

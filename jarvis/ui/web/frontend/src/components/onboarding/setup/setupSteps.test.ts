@@ -45,7 +45,8 @@ describe("setup steps", () => {
     for (const id of SETUP_STEP_IDS) {
       const anchor = SETUP_STEPS[id].anchor;
       if (!anchor) continue;
-      const literal = code.includes(`data-tour="${anchor}"`);
+      // A literal hook, or one handed to a component as its `tourId`.
+      const literal = code.includes(`data-tour="${anchor}"`) || code.includes(`tourId="${anchor}"`);
       // Settings groups get theirs from a template: data-tour={`settings-${section.id}`}.
       const group = anchor.startsWith("settings-") && code.includes("data-tour={`settings-${section.id}`}");
       expect(literal || group, anchor).toBe(true);
@@ -56,8 +57,7 @@ describe("setup steps", () => {
     const code = sources(SRC)
       .filter((f) => !f.includes(join("components", "onboarding")))
       .map((f) => readFileSync(f, "utf8"))
-      .join("
-");
+      .join("\n");
     for (const beat of HOW_BEATS) {
       if (!beat.anchor) continue;
       const literal = code.includes(`data-tour="${beat.anchor}"`);
