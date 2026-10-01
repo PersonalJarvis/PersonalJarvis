@@ -86,9 +86,10 @@ def test_codex_npm_shim_is_bypassed_with_absolute_node(tmp_path, monkeypatch) ->
 
     argv = session_mod.agent_argv("codex")
 
-    assert tuple(os.path.normcase(part) for part in argv) == tuple(
+    assert tuple(os.path.normcase(part) for part in argv[:2]) == tuple(
         os.path.normcase(str(path)) for path in (node_exe, codex_js)
     )
+    assert argv[2:] == ("-c", "check_for_update_on_startup=false")
     assert not any(part.lower().endswith((".cmd", ".bat")) for part in argv)
 
 
