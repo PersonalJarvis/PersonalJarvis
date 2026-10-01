@@ -255,8 +255,21 @@ begin
     RemoveDirFromUserPath(ExpandConstant('{app}'));
 end;
 
-{ True when the in-app updater passed /RELAUNCH=1 (see the [Run] section). }
+{ True when the in-app updater asked for the app to come back (see the [Run]
+  section). Updaters up to v2.4.x passed /RESTARTAPPLICATIONS instead of
+  /RELAUNCH=1 and nothing relaunched the app; honouring that flag too means
+  an install updating FROM one of those versions also comes back. }
 function RelaunchRequested: Boolean;
+var
+  I: Integer;
 begin
   Result := ExpandConstant('{param:RELAUNCH|0}') = '1';
+  if Result then
+    Exit;
+  for I := 1 to ParamCount do
+    if CompareText(ParamStr(I), '/RESTARTAPPLICATIONS') = 0 then
+    begin
+      Result := True;
+      Exit;
+    end;
 end;
