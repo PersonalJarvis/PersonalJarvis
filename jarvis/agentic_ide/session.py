@@ -3951,7 +3951,13 @@ class Registry:
             hosted = self._hosted_for(manager).get(term.history_id)
             if hosted is not None:
                 await self._adopt_one(manager, term, hosted)
-        if appearance in THEME_COLOURS:
+        # Only a viewer that takes the pane over — or one starting its agent —
+        # may change what the CLI is told about the screen. A background viewer
+        # (an office monitor, a forgotten browser tab in light mode) used to
+        # overwrite it, and Claude Code on theme "auto" then fixed its whole
+        # palette for light: user messages on a white bar inside a dark pane.
+        running = bool(term.pty_id and manager.has(term.pty_id))
+        if appearance in THEME_COLOURS and (claim_owner or not running):
             term.queries.appearance = appearance
             if term.pty_id and hasattr(manager, "set_appearance"):
                 # A hosted agent's emulator queries are answered in the host,
