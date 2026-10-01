@@ -7,11 +7,17 @@ import { readHomeSurface } from "@/lib/homeSurface";
 /**
  * The front page is ONE chat with a voice mode inside it (2026-10-01). What
  * is under test is the shell: it opens on the chat, voice mode swaps in the
- * spoken stage with a way back to typing, and the mode is remembered. Both
+ * spoken stage and hands it the way back to typing, and the mode is remembered. Both
  * stages are stubbed; the composer's voice button is ChatStage's own test.
  */
 vi.mock("@/components/home/VoiceStage", () => ({
-  VoiceStage: () => <div data-testid="voice">voice</div>,
+  VoiceStage: ({ onExit }: { onExit?: () => void }) => (
+    <div data-testid="voice">
+      <button type="button" data-testid="voice-mode-exit" onClick={onExit}>
+        back
+      </button>
+    </div>
+  ),
 }));
 vi.mock("@/components/home/ChatStage", () => ({
   ChatStage: () => <div data-testid="chat">chat</div>,
