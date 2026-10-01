@@ -30,6 +30,13 @@ REASONING_SNAPSHOT_INTERVAL_S = 0.3
 _REASONING_ITEMS_MAX = 16
 
 
+def _pipeline_input_muted() -> bool:
+    """Jarvis's microphone mute. The speech pipeline is its only writer."""
+    from jarvis.core.runtime_refs import get_speech_pipeline
+
+    return bool(getattr(get_speech_pipeline(), "is_muted", False))
+
+
 def _summary_index(event: dict) -> int:
     """The summary part a reasoning-summary event belongs to (0 when absent)."""
     try:
@@ -104,6 +111,11 @@ class LiveVoiceSession:
         self._mic_feedback_owned = False
         self._mic_feedback_warning = False
         self._input_active = False
+        # The mute on the pet strip, the Jarvis Bar or the orb. A browser call
+        # owns its microphone in the WebView, out of reach of the pipeline's own
+        # capture gate, so the session drops the frames and tells the page.
+        self._input_muted = False
+        self._watching_input_mute = False
         self._media_timeout: asyncio.TimerHandle | None = None
         self._active_model = ""
         self._archive_turn_id = str(uuid4())
@@ -510,6 +522,7 @@ class LiveVoiceSession:
             if self._closing:
                 return
             await self._take_startup_input(message)
+            self._watch_input_mute()
             await self._send_json(
                 {
                     "type": "audio_ready",
@@ -521,6 +534,7 @@ class LiveVoiceSession:
                     "requires_webrtc_answer": bool(offer),
                     "webrtc_answer_sdp": self._connection.answer_sdp,
                     "continuous": True,
+                    "input_muted": self._input_muted,
                 }
             )
         except BaseException as exc:
@@ -594,11 +608,44 @@ class LiveVoiceSession:
             if prefix is not None:
                 await self._send_json(prefix)
 
+    def _watch_input_mute(self) -> None:
+        """Adopt the current microphone mute and follow it until the call ends."""
+        self._input_muted = _pipeline_input_muted()
+        if self._bus is None or self._watching_input_mute:
+            return
+        from jarvis.core.events import VoiceMuteChanged
+
+        self._bus.subscribe(VoiceMuteChanged, self._on_input_mute_changed)
+        self._watching_input_mute = True
+
+    def _stop_watching_input_mute(self) -> None:
+        if not self._watching_input_mute or self._bus is None:
+            return
+        from jarvis.core.events import VoiceMuteChanged
+
+        self._bus.unsubscribe(VoiceMuteChanged, self._on_input_mute_changed)
+        self._watching_input_mute = False
+
+    async def _on_input_mute_changed(self, event: Any) -> None:
+        """Drop the user's audio from now on and let the page silence its track.
+
+        Dropping frames here covers the PCM socket. A WebRTC call sends its
+        audio straight to the provider, so only the page can silence that one.
+        """
+        self._input_muted = bool(event.muted)
+        if self._closing:
+            return
+        try:
+            await self._send_json({"type": "input_mute", "muted": self._input_muted})
+        except Exception:  # noqa: BLE001 — the frames are dropped here regardless
+            log.warning("Voice page missed the microphone mute", exc_info=True)
+
     async def handle_audio_frame(self, pcm: bytes) -> None:
         if (
             self._connection is None
             or self._closing
             or self._recovering
+            or self._input_muted
             or self._connection.answer_sdp
         ):
             return
@@ -1137,6 +1184,7 @@ class LiveVoiceSession:
         if self._ended:
             return
         self._ended = True
+        self._stop_watching_input_mute()
         self._clear_media_levels()
         from jarvis.live.runtime import unregister
 
