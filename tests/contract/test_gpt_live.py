@@ -213,6 +213,75 @@ async def test_approval_requires_new_unambiguous_confirmation(ledger):
     assert len(gateway.calls) == 2
 
 
+class _ApprovalGateway(Gateway):
+    async def execute(self, name, args, request):
+        from jarvis.safety.tool_executor import VOICE_CONFIRM_SENTINEL
+
+        self.calls.append((name, args, request))
+        return ToolResult(False, {}, VOICE_CONFIRM_SENTINEL)
+
+    async def execute_confirmed(self, trace, request):
+        self.calls.append(("confirmed", {}, request))
+        return ToolResult(True, {"verified": True})
+
+
+async def _pending_approval(runtime):
+    request = {"name": "write-file", "arguments_json": '{"text":"hello"}'}
+    result = await runtime.execute("c", "call_tool", request, 0)
+    assert "confirm_action" in result["next_step"]
+    runtime.revision = 1
+    return result["approval_id"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("answer", ["Ja.", "Sí", "Yes"])
+async def test_approval_in_any_locale_survives_an_auto_session_language(ledger, answer):
+    # Live 2026-10-01: an "auto" session resolves to English, which rejected "Ja".
+    gateway = _ApprovalGateway()
+    runtime = LiveTools(gateway, ledger, "s", language="en", backend_model="")
+    approval = await _pending_approval(runtime)
+    runtime.user_text = answer
+    result = await runtime.execute("ok", "confirm_action", {"approval_id": approval}, 1)
+    assert result["success"]
+    assert gateway.calls[-1][0] == "confirmed"
+
+
+@pytest.mark.asyncio
+async def test_veto_still_wins_over_a_listed_affirmation(ledger):
+    runtime = LiveTools(_ApprovalGateway(), ledger, "s", language="en", backend_model="")
+    approval = await _pending_approval(runtime)
+    runtime.user_text = "nein"
+    result = await runtime.execute("no", "confirm_action", {"approval_id": approval}, 1)
+    assert not result["success"]
+
+
+@pytest.mark.asyncio
+async def test_yes_to_a_pending_approval_does_not_hang_up(ledger):
+    gateway = _ApprovalGateway()
+    runtime = LiveTools(gateway, ledger, "s", language="en", backend_model="")
+    approval = await _pending_approval(runtime)
+    runtime.user_text = "Ja"
+    refused = await runtime.execute("bye", "end_call", {}, 1)
+    assert not refused["success"]
+    assert refused["approval_ids"] == [approval]
+    assert not runtime.end_requested
+    runtime.user_text = "Leg auf"  # i18n-allow: spoken hang-up request
+    runtime.revision = 2
+    assert (await runtime.execute("bye2", "end_call", {}, 2))["success"]
+    assert runtime.end_requested
+
+
+@pytest.mark.asyncio
+async def test_built_ins_wrapped_in_call_tool_still_run(ledger):
+    gateway = _ApprovalGateway()
+    runtime = LiveTools(gateway, ledger, "s", language="en", backend_model="")
+    approval = await _pending_approval(runtime)
+    runtime.user_text = "ja bitte"  # i18n-allow: spoken confirmation vocabulary
+    wrapped = {"name": "confirm_action", "arguments_json": f'{{"approval_id":"{approval}"}}'}
+    assert (await runtime.execute("w", "call_tool", wrapped, 1))["success"]
+    assert gateway.calls[-1][0] == "confirmed"
+
+
 @pytest.mark.asyncio
 async def test_gemini_native_core_does_not_dispatch_a_second_model(ledger):
     runtime = LiveTools(Gateway(), ledger, "s", language="en", backend_model="")

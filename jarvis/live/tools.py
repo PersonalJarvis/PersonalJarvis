@@ -21,6 +21,28 @@ log = logging.getLogger(__name__)
 # history inside the 64 KiB message limit of smaller WebRTC clients.
 _CATALOG_BYTE_BUDGET = 24_000
 _DISCOVERY_PAGE_SIZE = 8
+_BUILTIN_TOOLS = frozenset({"discover_tools", "call_tool", "confirm_action", "end_call"})
+# Whole-utterance approvals, keyed to the locale whose veto patterns must vet
+# them. The session language cannot be used: "auto" resolves to English before
+# anyone speaks, which rejected a German "Ja" and stranded the approval.
+_AFFIRMATIONS = {
+    "yes": "en",
+    "yes please": "en",
+    "confirm": "en",
+    "confirmed": "en",
+    "do it": "en",
+    "ja": "de",  # i18n-allow: spoken confirmation vocabulary
+    "ja bitte": "de",  # i18n-allow: spoken confirmation vocabulary
+    "mach das": "de",  # i18n-allow: spoken confirmation vocabulary
+    "bestätigen": "de",  # i18n-allow: spoken confirmation vocabulary
+    "sí": "es",
+    "si": "es",
+    "confirmo": "es",
+}
+_APPROVAL_NEXT_STEP = (
+    "Ask the user to approve this action. After an explicit yes, call confirm_action "
+    "directly (not through call_tool) with this approval_id. A yes is never a hang-up."
+)
 
 
 def _wire_size(value: Any) -> int:
@@ -212,18 +234,28 @@ class LiveTools:
             }
         if ":" in name:
             prefix, suffix = name.split(":", 1)
-            if prefix.isidentifier() and (
-                suffix in self._names
-                or suffix
-                in {
-                    "discover_tools",
-                    "call_tool",
-                    "confirm_action",
-                    "end_call",
-                }
-            ):
+            if prefix.isidentifier() and (suffix in self._names or suffix in _BUILTIN_TOOLS):
                 name = suffix
+        if name == "call_tool" and args.get("name") in _BUILTIN_TOOLS - {"call_tool"}:
+            # Models wrap the session built-ins too. They are not catalog tools,
+            # so the catalog lookup below answered "no longer available".
+            try:
+                inner = json.loads(args.get("arguments_json") or "{}")
+            except ValueError:
+                inner = None
+            if not isinstance(inner, dict):
+                return {"success": False, "error": "Tool arguments must be an object."}
+            name, args = str(args["name"]), inner
         if name == "end_call":
+            if self._pending and self._affirmation_locale() is not None:
+                # Live 2026-10-01: after "Ja" to a pending approval the model
+                # called end_call instead of confirm_action and the call dropped.
+                return {
+                    "success": False,
+                    "error": "The user approved a pending action; they did not ask to hang up.",
+                    "approval_ids": list(self._pending),
+                    "next_step": "Call confirm_action with the approval_id.",
+                }
             self.end_requested = True
             return {"success": True, "status": "closing_voice"}
         if name == "discover_tools":
@@ -261,27 +293,13 @@ class LiveTools:
 
             approval_id = str(args.get("approval_id", ""))
             pending = self._pending.get(approval_id)
-            affirmation = re.sub(r"[^\w\s]", "", self.user_text.casefold()).strip()
+            locale = self._affirmation_locale()
             if (
                 pending is None
                 or self.revision <= pending[3]
-                or affirmation
-                not in {
-                    "yes",
-                    "yes please",
-                    "confirm",
-                    "confirmed",
-                    "do it",
-                    "ja",  # i18n-allow: spoken confirmation vocabulary
-                    "ja bitte",  # i18n-allow: spoken confirmation vocabulary
-                    "mach das",  # i18n-allow: spoken confirmation vocabulary
-                    "bestätigen",  # i18n-allow: spoken confirmation vocabulary
-                    "sí",
-                    "si",
-                    "confirmo",
-                }
+                or locale is None
                 or len(self.user_text.split()) > 5
-                or classify_response(self.user_text, language=self.language) != "confirm"
+                or classify_response(self.user_text, language=locale) != "confirm"
             ):
                 return {"success": False, "error": "This action has not been explicitly approved."}
             trace, _, _, _ = self._pending.pop(approval_id)
@@ -343,8 +361,13 @@ class LiveTools:
                 "tool": canonical,
                 "arguments": args,
                 "impact": result.output,
+                "next_step": _APPROVAL_NEXT_STEP,
             }
         return self._result(result)
+
+    def _affirmation_locale(self) -> str | None:
+        """Locale of a whole-utterance approval in the latest user text, else None."""
+        return _AFFIRMATIONS.get(re.sub(r"[^\w\s]", "", self.user_text.casefold()).strip())
 
     def _request(self, trace: UUID) -> SupervisorToolRequest:
         return SupervisorToolRequest(
