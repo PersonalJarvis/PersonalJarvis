@@ -360,6 +360,9 @@ export function useWebSocket(): void {
           } else {
             const store = useEventStore.getState();
             const forThisWindow = isForThisWindow(p, store.dictating);
+            // Signalled after the text has landed (below), so a composer
+            // sending on it reads the finished box.
+            queueMicrotask(() => useEventStore.getState().noteDictationFinal());
             const delivered = forThisWindow
               ? deliverDictationText(text)
               : "none";

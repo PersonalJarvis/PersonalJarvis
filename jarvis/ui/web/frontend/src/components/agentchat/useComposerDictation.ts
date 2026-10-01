@@ -21,16 +21,51 @@ import { useEventStore } from "@/store/events";
  * The setter is read through a ref: callers pass an inline wrapper (the
  * society composer mirrors into its chip field), and with that wrapper in the
  * effect deps the commit effect would re-run on every render of the composer.
+ *
+ * `stopAndSend` lets Send end a running dictation: the mic stops, and the
+ * composer's `onSend` runs once the final transcript has landed in the box
+ * (or after FINAL_WAIT_MS, so a transcript that never comes cannot strand
+ * the message). `onSend` is also read through a ref, so the call made after
+ * the transcript lands sees the box as it is then, not as it was at click.
  */
+const FINAL_WAIT_MS = 8000;
+
 export function useComposerDictation(
   setValue: (next: string | ((current: string) => string)) => void,
+  onSend?: () => void,
 ) {
   const dictating = useEventStore((s) => s.dictating);
   const dictationCommitSeq = useEventStore((s) => s.dictationCommitSeq);
+  const dictationFinalSeq = useEventStore((s) => s.dictationFinalSeq);
   const setDictating = useEventStore((s) => s.setDictating);
   const lastCommitSeqRef = useRef(dictationCommitSeq);
   const setValueRef = useRef(setValue);
   setValueRef.current = setValue;
+  const onSendRef = useRef(onSend);
+  onSendRef.current = onSend;
+  const sendTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastFinalSeqRef = useRef(dictationFinalSeq);
+
+  const flushSend = useCallback(() => {
+    if (sendTimerRef.current === null) return;
+    clearTimeout(sendTimerRef.current);
+    sendTimerRef.current = null;
+    // A tick later, so the box has re-rendered with the transcript first.
+    setTimeout(() => onSendRef.current?.(), 0);
+  }, []);
+
+  useEffect(() => {
+    if (dictationFinalSeq === lastFinalSeqRef.current) return;
+    lastFinalSeqRef.current = dictationFinalSeq;
+    flushSend();
+  }, [dictationFinalSeq, flushSend]);
+
+  useEffect(
+    () => () => {
+      if (sendTimerRef.current !== null) clearTimeout(sendTimerRef.current);
+    },
+    [],
+  );
 
   useEffect(() => {
     if (dictationCommitSeq === lastCommitSeqRef.current) return;
@@ -58,5 +93,11 @@ export function useComposerDictation(
     else start();
   }, [dictating, start, stop]);
 
-  return { dictating, start, stop, toggle };
+  const stopAndSend = useCallback(() => {
+    if (sendTimerRef.current !== null) return;
+    sendTimerRef.current = setTimeout(flushSend, FINAL_WAIT_MS);
+    stop();
+  }, [flushSend, stop]);
+
+  return { dictating, start, stop, toggle, stopAndSend };
 }

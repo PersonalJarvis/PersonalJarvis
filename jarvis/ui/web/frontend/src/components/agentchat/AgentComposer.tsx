@@ -146,7 +146,8 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
     dictating,
     stop: stopDictation,
     toggle: toggleDictation,
-  } = useComposerDictation(setValue);
+    stopAndSend: stopDictationAndSend,
+  } = useComposerDictation(setValue, () => void onSend());
 
   // Files going in with this message. Held here rather than in the store: they
   // belong to the sentence being typed, and a chat opened elsewhere must not
@@ -441,6 +442,9 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
     (!running || commands.canSteer) &&
     (!busy || commands.canSteer) &&
     Boolean(provider?.connected);
+  // Send while the mic is open ends the dictation and sends once the words
+  // land, so it is live even before the box holds any text.
+  const canFinishDictation = dictating && connected && !live && Boolean(provider?.connected);
   const placeholder = dictating
     ? t("chats_view.dictation_listening")
     : connected
@@ -494,7 +498,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
         placeholder={placeholder}
         disabled={!connected && !commands.enabled}
         autoFocus={autoFocus}
-        onSubmit={() => void onSend()}
+        onSubmit={() => (dictating ? stopDictationAndSend() : void onSend())}
         onDraftChange={(draft) => {
           setValueState(draft.text);
           setSelectedTools(draft.choices);
@@ -715,13 +719,13 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
         ) : (
           <button
             type="button"
-            onClick={() => void onSend()}
-            disabled={!canSend}
+            onClick={() => (dictating ? stopDictationAndSend() : void onSend())}
+            disabled={!canSend && !canFinishDictation}
             aria-label={t("agent_chat.send")}
             data-testid="composer-send"
             className={cn(
               "inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors",
-              canSend
+              canSend || canFinishDictation
                 ? "bg-foreground/70 text-primary-foreground hover:bg-primary/90"
                 : "bg-secondary text-muted-foreground",
             )}

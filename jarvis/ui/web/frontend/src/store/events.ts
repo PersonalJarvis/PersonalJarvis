@@ -504,6 +504,10 @@ interface EventStore {
   dictationText: string;
   dictationCommitSeq: number;
   dictationCommitText: string;
+  // Bumped on EVERY final transcript this window owns, whichever route it
+  // took (pasted into the focused field, or committed to the composer). A
+  // composer that ended a dictation with "send" waits on it.
+  dictationFinalSeq: number;
   pendingTerminalCommand: PendingTerminalCommand | null;
   cliConnectCoach: CliConnectCoach | null;
   // When the user installs a CLI from within ClisView (clicking
@@ -559,6 +563,7 @@ interface EventStore {
   setDictating: (b: boolean) => void;
   setDictationInterim: (text: string) => void;
   commitDictation: (text: string) => void;
+  noteDictationFinal: () => void;
   setPendingTerminalCommand: (cmd: PendingTerminalCommand | null) => void;
   setCliConnectCoach: (coach: CliConnectCoach | null) => void;
   setPendingInstallCliName: (name: string | null) => void;
@@ -631,6 +636,7 @@ export const useEventStore = create<EventStore>((set, get) => ({
   dictationText: "",
   dictationCommitSeq: 0,
   dictationCommitText: "",
+  dictationFinalSeq: 0,
   pendingTerminalCommand: null,
   cliConnectCoach: null,
   pendingInstallCliName: null,
@@ -843,6 +849,8 @@ export const useEventStore = create<EventStore>((set, get) => ({
   setDictating: (b) =>
     set(b ? { dictating: true, dictationText: "" } : { dictating: false }),
   setDictationInterim: (text) => set({ dictationText: text }),
+  noteDictationFinal: () =>
+    set((s) => ({ dictationFinalSeq: s.dictationFinalSeq + 1 })),
   commitDictation: (text) =>
     set((s) => ({
       dictationCommitText: text,
