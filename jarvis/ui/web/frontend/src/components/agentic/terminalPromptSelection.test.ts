@@ -77,6 +77,13 @@ describe("terminal prompt selection", () => {
     expect(pane.sent).toHaveLength(1);
   });
 
+  it("recognises Claude Code's marker, which is followed by a no-break space", async () => {
+    const pane = await setup("❯ csdadsfasdf");
+    pane.select(2, 15); // a drag past the end of the draft
+    pane.press("Delete");
+    expect(pane.sent).toEqual(["\x7f".repeat(11)]);
+  });
+
   it("deletes a middle selection while leaving the suffix in place", async () => {
     const pane = await setup();
     pane.select(2, 7);
@@ -172,9 +179,44 @@ describe("terminal prompt selection", () => {
 
     it("never joins indented output that is not anchored to the marker row", async () => {
       const pane = await setup("earlier output\r\n  indented result\r\n  more result");
-      pane.select(2, 10, 2);
+      pane.select(2, 10, 1); // output above the caret's line
       pane.press("Backspace");
       expect(pane.sent).toEqual([]);
+      expect(pane.selection()).toBeUndefined();
+    });
+  });
+
+  describe("an input line without a marker", () => {
+    it("edits a shell prompt line, leaving select-all to the shell", async () => {
+      const pane = await setup("PS C:\\work> git status");
+      expect(pane.press("a", { ctrlKey: true }).passthrough).toBe(true);
+      pane.select(12, 15); // "git"
+      pane.press("Backspace");
+      expect(pane.sent).toEqual(["\x1b[D".repeat(7) + "\x7f".repeat(3)]);
+    });
+
+    it("follows a shell line the terminal soft-wrapped", async () => {
+      const pane = await setup("PS C:\\> csdadsfasdf", false, 15);
+      pane.select(8, 4, 0, 1); // "csdadsfasdf", across the wrap
+      pane.press("Delete");
+      expect(pane.sent).toEqual(["\x7f".repeat(11)]);
+    });
+
+    it("leaves a box frame around the input out of the edit", async () => {
+      // OpenCode: the draft sits in a frame drawn with box characters.
+      const pane = await setup("  \u2503  csdadsfasdf    \u2503\x1b[17G");
+      pane.select(0, 25); // the whole row, frame included
+      pane.press("Delete");
+      expect(pane.sent).toEqual(["\x7f".repeat(11)]);
+    });
+
+    it("drops a highlight on output so the next press edits normally", async () => {
+      const pane = await setup("some output\r\nPS> abc");
+      pane.select(0, 4, 0);
+      expect(pane.press("Backspace").passthrough).toBe(false);
+      expect(pane.sent).toEqual([]);
+      expect(pane.selection()).toBeUndefined();
+      expect(pane.press("Backspace").passthrough).toBe(true);
     });
   });
 
@@ -271,7 +313,7 @@ describe("terminal prompt selection", () => {
     pane.cleanup();
   });
 
-  it.each(["shell output", "› [Pasted text 20 lines]", "› [Image #1]"])(
+  it.each(["› [Pasted text 20 lines]", "› [Image #1]"])(
     "leaves an unsupported editor alone: %s", async (output) => {
       const pane = await setup(output);
       expect(pane.press("a", { ctrlKey: true }).passthrough).toBe(true);
