@@ -63,11 +63,11 @@ export const LIGHT_TERMINAL_THEME: ITheme = {
   // Alpha 0 = still transparent; the RGB is the light shell's paper tone so
   // the minimum-contrast maths measures against the ground actually shown.
   background: "rgba(252, 251, 248, 0)",
-  foreground: "#2b2b33",
+  foreground: "#18181c",
   cursor: "#0a0a0a",
   cursorAccent: "#fcfbf8",
   selectionBackground: "#dedcd4",
-  selectionForeground: "#2b2b33",
+  selectionForeground: "#18181c",
   // Cursor Light's terminal slots: the same semantic tones the app's light
   // tokens use (life #007041, fault #BE1744, degraded #A46700, link #0064B0).
   black: "#3a3a3a",

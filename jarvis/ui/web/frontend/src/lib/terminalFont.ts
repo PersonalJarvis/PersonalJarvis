@@ -63,8 +63,30 @@ export const TERMINAL_FONT_WEIGHT = 500;
 /** The weight a TUI's bold spans draw with — still clearly above the body. */
 export const TERMINAL_FONT_WEIGHT_BOLD = 700;
 
-/** The weights xterm paints with: body text, and the bold spans a TUI uses. */
-const WEIGHTS = [TERMINAL_FONT_WEIGHT, TERMINAL_FONT_WEIGHT_BOLD] as const;
+/**
+ * The body weight on a LIGHT pane: SemiBold.
+ *
+ * Dark ink on paper reads thinner than the same glyph lit on black — light
+ * text blooms into its surroundings, dark text is eaten by them — and the
+ * greyscale WebGL pass makes it worse. On a 4K screen the Medium cut on paper
+ * read as faint grey (maintainer, 2026-10-01), so a light pane draws one cut
+ * heavier. The advance width is the same in every JetBrains Mono cut, so the
+ * cell grid does not move.
+ */
+export const TERMINAL_FONT_WEIGHT_LIGHT = 600;
+
+/** Body and bold weight for a pane's appearance. */
+export function terminalFontWeights(appearance: "light" | "dark"): {
+  body: number;
+  bold: number;
+} {
+  return appearance === "light"
+    ? { body: TERMINAL_FONT_WEIGHT_LIGHT, bold: TERMINAL_FONT_WEIGHT_BOLD }
+    : { body: TERMINAL_FONT_WEIGHT, bold: TERMINAL_FONT_WEIGHT_BOLD };
+}
+
+/** The weights xterm paints with: body text per appearance, and bold spans. */
+const WEIGHTS = [TERMINAL_FONT_WEIGHT, TERMINAL_FONT_WEIGHT_LIGHT, TERMINAL_FONT_WEIGHT_BOLD] as const;
 
 /** Measured over a run of glyphs so per-character rounding cannot dominate. */
 const SAMPLE = "W".repeat(32);

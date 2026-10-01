@@ -115,8 +115,8 @@ export function lightInkFor(rgb: Rgb): Rgb {
   const mirrored = 1 - l;
   const next =
     s < NEUTRAL_SATURATION
-      ? clamp(mirrored, 0.13, 0.4)
-      : clamp(mirrored, 0.24, 0.38);
+      ? clamp(mirrored, 0.1, 0.36)
+      : clamp(mirrored, 0.22, 0.34);
   return toRgb(h, s, next);
 }
 
