@@ -113,11 +113,10 @@ import { attachTerminalBridge } from "@/lib/editActions";
 import { robustCopy, robustPaste } from "@/lib/clipboard";
 import {
   TERMINAL_FONT_STACK,
-  TERMINAL_FONT_WEIGHT,
-  TERMINAL_FONT_WEIGHT_BOLD,
   alignTerminalCells,
   syncTerminalFont,
   terminalFontSettled,
+  terminalFontWeights,
   whenTerminalFontReady,
 } from "@/lib/terminalFont";
 import {
@@ -971,10 +970,11 @@ export function AgenticTerminal({
       // module exists to prevent.
       fontFamily: TERMINAL_FONT_STACK,
       fontSize: fontSizeRef.current,
-      // Medium body text — see TERMINAL_FONT_WEIGHT for why Regular reads thin
-      // and grey under the WebGL renderer next to a native terminal.
-      fontWeight: TERMINAL_FONT_WEIGHT,
-      fontWeightBold: TERMINAL_FONT_WEIGHT_BOLD,
+      // Medium body text, SemiBold on a light pane — see TERMINAL_FONT_WEIGHT
+      // and TERMINAL_FONT_WEIGHT_LIGHT for why Regular reads thin and grey
+      // under the WebGL renderer next to a native terminal.
+      fontWeight: terminalFontWeights(appearanceRef.current).body,
+      fontWeightBold: terminalFontWeights(appearanceRef.current).bold,
       // The font's own line height, like a standalone terminal. JetBrains Mono
       // already carries 1.32em of leading; at 1.2 on top a row was ~1.6em tall,
       // so a pane showed large text gaps between small glyphs. At 1.0 the larger
@@ -2426,6 +2426,11 @@ export function AgenticTerminal({
     const term = termRef.current;
     if (!term) return;
     term.options.theme = themeFor(appearance);
+    // A light pane draws one cut heavier (TERMINAL_FONT_WEIGHT_LIGHT). Every
+    // cut has the same advance, so the grid stays put and only glyphs change.
+    const weights = terminalFontWeights(appearance);
+    term.options.fontWeight = weights.body;
+    term.options.fontWeightBold = weights.bold;
     clearTerminalTextureAtlas(term);
   }, [appearance, terminalEpoch]);
 
