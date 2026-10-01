@@ -8,6 +8,8 @@ import { useFileDropGuard } from "@/hooks/useFileDropGuard";
 import { useAgentChatStore } from "@/store/agentChat";
 import { useEventStore } from "@/store/events";
 import type { AgentChatCatalog } from "@/lib/agentChatApi";
+import { WORKSPACE_PATH_TYPE } from "@/components/agentic/paneDrop";
+import { NATIVE_DROP_EVENT } from "@/lib/nativeDrop";
 
 /**
  * Files in the chat composer — the drop, the paste, and what travels with the
@@ -198,6 +200,39 @@ describe("chat composer attachments", () => {
     expect(send).toHaveBeenCalledWith("what is wrong here", [ATTACHMENT]);
     // Cleared on send: the next message must not silently re-send the picture.
     expect(screen.queryByTestId("chat-attachment-shot.png")).toBeNull();
+  });
+
+  it.each([WORKSPACE_PATH_TYPE, "text/uri-list", "text/plain"])(
+    "does not request a local attachment from foreign %s data",
+    async (type) => {
+      composer();
+      await act(async () => {
+        fireEvent.drop(screen.getByTestId("agent-composer"), {
+          dataTransfer: {
+            ...transfer([]),
+            types: [type],
+            getData: (format: string) => format === type ? "file:///private/secret.txt" : "",
+          },
+        });
+      });
+      expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/attachments"))).toBe(false);
+    },
+  );
+
+  it("uses offered bytes even when a native hint names another local file", async () => {
+    vi.stubGlobal("__JARVIS_EMBEDDED_DESKTOP", true);
+    composer();
+    const png = new File(["offered bytes"], "shot.png", { type: "image/png" });
+    await act(async () => {
+      fireEvent.drop(screen.getByTestId("agent-composer"), { dataTransfer: transfer([png]) });
+      window.dispatchEvent(new CustomEvent(NATIVE_DROP_EVENT, {
+        detail: { paths: ["/private/shot.png"], names: ["shot.png"] },
+      }));
+    });
+    await waitFor(() => expect(screen.getByTestId("chat-attachment-shot.png")).toBeDefined());
+    const [, init] = fetchMock.mock.calls.find(([url]) => String(url).includes("/attachments")) as [string, RequestInit];
+    expect((init.body as FormData).get("paths")).toBeNull();
+    expect((init.body as FormData).getAll("files")).toHaveLength(1);
   });
 
   it("lets a picture alone be the whole message", async () => {
