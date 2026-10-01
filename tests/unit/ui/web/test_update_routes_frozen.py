@@ -216,7 +216,9 @@ def _capture_install(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         path.write_bytes(b"verified installer")
         return path
 
-    async def _download(asset: Any, checksums: Any, *, dest_dir: Path) -> Path:
+    async def _download(
+        asset: Any, checksums: Any, *, dest_dir: Path, on_progress: Any = None
+    ) -> Path:
         seen["asset"] = asset
         seen["checksums"] = checksums
         return _write_verified(dest_dir, asset.name)
@@ -305,7 +307,9 @@ def test_apply_surfaces_a_verification_failure(
     _patch_frozen(monkeypatch)
     _patch_latest(monkeypatch, _release("1.6.0"))
 
-    async def _download(asset: Any, checksums: Any, *, dest_dir: Path) -> Path:
+    async def _download(
+        asset: Any, checksums: Any, *, dest_dir: Path, on_progress: Any = None
+    ) -> Path:
         raise InstallerUpdateError("PersonalJarvis-Setup-x64.exe failed its SHA-256 check")
 
     def _never(installer: Path) -> str:
