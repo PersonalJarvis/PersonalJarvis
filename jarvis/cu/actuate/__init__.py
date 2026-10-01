@@ -11,11 +11,11 @@ type_text` + `cursor_pos` read-back) with a backend per platform:
 
 The backends are pure input dispatch: no overlay, no risk gating. The CU
 tools remain the ToolExecutor-gated choke points (AP-3) and delegate their
-raw input to this package.
+raw input to this package. On macOS the common facade adds a per-action
+physical-input ownership guard, so even a caller that caches the returned
+actuator yields when the user takes over mouse or keyboard.
 """
 from __future__ import annotations
-
-import sys
 
 from jarvis.cu.actuate.base import (
     LANDING_TOLERANCE,
@@ -27,36 +27,32 @@ from jarvis.cu.actuate.base import (
     verified_drag,
     verified_move,
 )
+from jarvis.cu.actuate.handoff import (
+    HumanInputTakeover,
+    guard_actuator,
+    require_human_input_clear,
+)
 
 
 def get_actuator() -> Actuator:
-    """Resolve an actuator, yielding first when a person is using the Mac.
+    """Resolve the platform backend and apply the macOS takeover boundary.
 
-    The physical-input probe is macOS-only and advisory when Quartz is
-    unavailable.  A positive hardware signal is different: it means the user
-    is actively interacting, so Computer-Use refuses this action instead of
-    fighting for mouse/keyboard ownership.  The next planner retry can proceed
-    after the short quiet period.
+    Ownership is checked by the returned actuator immediately before each
+    mutating primitive, not only here. This is deliberate: long-lived screen
+    runners cache their actuator, and a person can start using the Mac after
+    that cache was created.
     """
-    if sys.platform == "darwin":
-        from jarvis.cu.human_activity import human_input_allows_automation
-
-        allowed, detail = human_input_allows_automation()
-        if not allowed:
-            raise ActuationUnavailable(
-                "Pausing macOS Computer-Use because recent physical mouse or "
-                f"keyboard activity was detected ({detail}). Retry when the "
-                "user has stopped interacting."
-            )
-    return _base_get_actuator()
+    return guard_actuator(_base_get_actuator())
 
 
 __all__ = [
     "ActResult",
     "ActuationUnavailable",
     "Actuator",
+    "HumanInputTakeover",
     "LANDING_TOLERANCE",
     "get_actuator",
+    "require_human_input_clear",
     "verified_click",
     "verified_drag",
     "verified_move",
