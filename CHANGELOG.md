@@ -17,6 +17,7 @@ versioning per [SemVer](https://semver.org/).
 
 - Restore the installation-guide link on the PyPI package page and unblock package publication.
 - Build Linux installers through the official Ubuntu archive when the runner's default mirror stalls.
+- Publish the Debian installer alongside the AppImage and other desktop packages.
 
 This patch includes all v2.5.0 features: desktop pets, profile and keyboard-shortcut settings, workspace shell tabs, improved terminal editing, task recovery, native updates, and subscription-bound background work.
 

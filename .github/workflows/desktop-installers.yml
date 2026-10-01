@@ -432,4 +432,5 @@ jobs:
             installers/PersonalJarvis-macOS-arm64.dmg
             installers/PersonalJarvis-macOS-x64.dmg
             installers/PersonalJarvis-Linux-x86_64.AppImage
+            installers/personal-jarvis_*_amd64.deb
             installers/installers-SHA256SUMS.txt
