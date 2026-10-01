@@ -5842,9 +5842,7 @@ def _endpoint_route_from_mapping(
     providers = brain.get("providers") if isinstance(brain, dict) else None
     prov = providers.get(provider_id) if isinstance(providers, dict) else None
     override = prov.get("base_url") if isinstance(prov, dict) else None
-    return _EndpointRoute(
-        base_url=override or vendor_default_base_url, via_proxy=False
-    )
+    return _EndpointRoute(base_url=override or vendor_default_base_url, via_proxy=False)
 
 
 def _cached_endpoint_route(
@@ -6094,7 +6092,10 @@ def delete_secret(key: str) -> bool:
 
 
 def ensure_project_root_cwd() -> Path:
-    """Pin the process working directory to the project root. Returns the CWD.
+    """Pin the process to its writable runtime root. Returns the CWD.
+
+    Source installs use the project root. Frozen installs use the configuration
+    profile's directory; bundled resources stay on the import path only.
 
     Several persistence paths are resolved relative to ``os.getcwd()`` under the
     historical assumption that the desktop app always launches from the repo
@@ -6124,20 +6125,26 @@ def ensure_project_root_cwd() -> Path:
     """
     import logging
 
+    from .frozen import is_frozen
+    from .paths import runtime_root
+
     root = str(PROJECT_ROOT)
     if root not in sys.path:
         # First, mirroring the `python -m` cwd seeding the working boots had.
         sys.path.insert(0, root)
 
-    if Path.cwd() != PROJECT_ROOT:
+    working_root = runtime_root() if is_frozen() else PROJECT_ROOT
+    if Path.cwd() != working_root:
         try:
-            os.chdir(PROJECT_ROOT)
+            if is_frozen():
+                working_root.mkdir(parents=True, exist_ok=True)
+            os.chdir(working_root)
             logging.getLogger(__name__).info(
-                "Pinned working directory to project root: %s", PROJECT_ROOT
+                "Pinned working directory to runtime root: %s", working_root
             )
         except OSError as exc:
             logging.getLogger(__name__).warning(
-                "Could not pin CWD to project root %s: %s", PROJECT_ROOT, exc
+                "Could not pin CWD to runtime root %s: %s", working_root, exc
             )
     return Path.cwd()
 

@@ -13,4 +13,3 @@ const PATTERNS = [
 export function containsCredential(value: string): boolean {
   return PATTERNS.some((pattern) => pattern.test(value));
 }
-

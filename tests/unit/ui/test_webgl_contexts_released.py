@@ -10,10 +10,13 @@ broken-canvas placeholder on 2026-08-21 (AP-32).
 These tests protect the mechanism, not one component: the gate has to stay
 green on the shipped tree AND still catch a fresh offender.
 """
+
 from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+
+import pytest
 
 _REPO = Path(__file__).resolve().parents[3]
 _GATE = _REPO / "scripts" / "ci" / "check_webgl_contexts_released.py"
@@ -56,8 +59,7 @@ def test_a_type_only_import_is_not_a_mounted_scene(tmp_path: Path):
     """The deck card names the library's types without ever owning a context."""
     gate = _load_gate()
     (tmp_path / "TypesOnly.tsx").write_text(
-        'import type { NodeObject } from "react-force-graph-3d";\n'
-        "export type N = NodeObject;\n",
+        'import type { NodeObject } from "react-force-graph-3d";\nexport type N = NodeObject;\n',
         encoding="utf-8",
     )
 
@@ -74,3 +76,28 @@ def test_releasing_by_hand_also_passes(tmp_path: Path):
     )
 
     assert gate.offenders(tmp_path) == []
+
+
+@pytest.mark.parametrize(
+    ("called", "releases", "accepted"),
+    [(True, True, True), (False, True, False), (True, False, False)],
+)
+def test_scoped_hook_requires_a_call_and_actual_release_evidence(
+    tmp_path: Path, called: bool, releases: bool, accepted: bool
+):
+    gate = _load_gate()
+    hook = "export function useTeamSurface() {\n"
+    if releases:
+        hook += "  canvas.getContext('webgl')?.getExtension('WEBGL_lose_context')?.loseContext();\n"
+    hook += "}\n"
+    (tmp_path / "useTeamSurface.ts").write_text(hook, encoding="utf-8")
+    scene = (
+        'import { Canvas } from "@react-three/fiber";\n'
+        'import { useTeamSurface as useLocalSurface } from "./useTeamSurface";\n'
+        "export function TeamView() {\n"
+        + ("  useLocalSurface();\n" if called else "")
+        + "  return <Canvas />;\n}\n"
+    )
+    (tmp_path / "TeamView.tsx").write_text(scene, encoding="utf-8")
+    found = gate.offenders(tmp_path)
+    assert (found == []) is accepted

@@ -27,12 +27,15 @@ class _FakeBus:
     def subscribe(self, *args: object, **kwargs: object) -> None:
         pass
 
+    def subscribe_all(self, *args: object, **kwargs: object) -> None:
+        pass
+
     async def publish(self, event: object) -> None:
         pass
 
 
 class _FakeState:
-    """Nimmt beliebige Attribut-Zuweisung (mirrors Starlette State)."""
+    """Accept arbitrary attribute assignments, matching Starlette State."""
 
 
 class _FakeApp:
@@ -46,7 +49,7 @@ class _FakeApp:
 
 
 # ---------------------------------------------------------------------------
-# Mock WebServer — zentrales Lifecycle-Testsubjekt
+# Fake WebServer — the lifecycle test subject
 # ---------------------------------------------------------------------------
 
 

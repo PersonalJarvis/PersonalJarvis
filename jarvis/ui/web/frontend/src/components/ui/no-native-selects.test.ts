@@ -19,9 +19,13 @@ describe("dropdown design guard", () => {
     const violations: string[] = [];
 
     for (const path of sourceFiles(SOURCE_ROOT)) {
+      const text = readFileSync(path, "utf8");
+      // Valid intrinsic JSX allows whitespace after "<". Only candidates
+      // need an AST; imports and selection-state names cannot open a popup.
+      if (!/<\s*select\b/.test(text)) continue;
       const source = ts.createSourceFile(
         path,
-        readFileSync(path, "utf8"),
+        text,
         ts.ScriptTarget.Latest,
         true,
         ts.ScriptKind.TSX,

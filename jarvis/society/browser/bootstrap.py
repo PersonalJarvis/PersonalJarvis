@@ -8,6 +8,7 @@ import json
 import os
 import platform
 import shutil
+import ssl
 import sys
 import urllib.request
 import zipfile
@@ -32,7 +33,16 @@ def ensure_uv(root: Path) -> str:
         else ("arm64" if sys.platform == "darwin" and arm else "aarch64" if arm else "x86_64")
     )
     family = "win_" if os.name == "nt" else "macosx" if sys.platform == "darwin" else "manylinux"
-    with urllib.request.urlopen(f"https://pypi.org/pypi/uv/{UV_VERSION}/json", timeout=30) as res:
+    # Frozen OpenSSL may have no system CA bundle. Keep explicit trust
+    # overrides authoritative and otherwise add the certificates we ship.
+    context = ssl.create_default_context()
+    if not os.environ.get("SSL_CERT_FILE") and not os.environ.get("SSL_CERT_DIR"):
+        import certifi
+
+        context.load_verify_locations(cafile=certifi.where())
+    with urllib.request.urlopen(
+        f"https://pypi.org/pypi/uv/{UV_VERSION}/json", timeout=30, context=context
+    ) as res:
         metadata = json.load(res)
     wheels = [
         x
@@ -47,7 +57,7 @@ def ensure_uv(root: Path) -> str:
         or urlsplit(wheel["url"]).hostname != "files.pythonhosted.org"
     ):
         raise RuntimeError("Unexpected Python bootstrap download host")
-    with urllib.request.urlopen(wheel["url"], timeout=120) as res:  # noqa: S310 — HTTPS host checked
+    with urllib.request.urlopen(wheel["url"], timeout=120, context=context) as res:  # noqa: S310 — HTTPS host checked
         blob = res.read(100_000_000)
     if hashlib.sha256(blob).hexdigest() != wheel["digests"]["sha256"]:
         raise RuntimeError("Python bootstrap checksum mismatch")

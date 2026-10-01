@@ -188,9 +188,15 @@ def boot(executable: Path, profile: Path, output: Path, key: str, timeout: float
                     time.sleep(1)
                     continue
                 phase = status.get("phase")
-                if phase != last_phase:
-                    print(f"{output.name}: browser phase={phase}", flush=True)
-                    last_phase = phase
+                # Percent and step text locate a stalled setup without logs.
+                progress = (phase, status.get("percent"), status.get("detail"))
+                if progress != last_phase:
+                    print(
+                        f"{output.name}: browser phase={phase} percent={progress[1]} "
+                        f"step={progress[2]!r} after {time.monotonic() - started:.0f}s",
+                        flush=True,
+                    )
+                    last_phase = progress
                 if status.get("error"):
                     raise RuntimeError(
                         "Frozen app automatic browser provisioning failed; inspect its log"

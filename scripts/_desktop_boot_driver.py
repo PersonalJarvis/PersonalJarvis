@@ -18,11 +18,14 @@ NOT a production entry point — used only by ``scripts/measure_desktop_boot.py`
 
 from __future__ import annotations
 
-import asyncio
 import os
+import sys
 import time
+from pathlib import Path
 
 _T0 = time.perf_counter()
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(_REPO_ROOT))
 
 
 def _boot_ready() -> None:

@@ -45,7 +45,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from jarvis.dictation._locks import store_lock
+from jarvis.dictation._locks import replace_with_retry, store_lock
 
 if TYPE_CHECKING:  # import-time cost stays zero on the dictation hot path
     from jarvis.dictation.stats import DictationStats
@@ -489,7 +489,7 @@ class DictationHistory:
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 json.dump(payload, fh, ensure_ascii=False, indent=2)
-            os.replace(tmp_name, self._path)
+            replace_with_retry(tmp_name, self._path)
         except Exception:
             try:
                 os.unlink(tmp_name)

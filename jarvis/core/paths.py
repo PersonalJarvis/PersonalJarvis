@@ -12,6 +12,7 @@ go through the getters defined here.
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import sysconfig
@@ -133,6 +134,16 @@ def repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def runtime_root() -> Path:
+    """Anchor writable relative paths outside a frozen app's resource bundle."""
+    from .frozen import is_frozen
+
+    if not is_frozen():
+        return repo_root()
+    configured = os.environ.get("JARVIS_CONFIG", "").strip()
+    return Path(configured).expanduser().absolute().parent if configured else user_data_dir()
+
+
 def default_doc_roots() -> list[Path]:
     """Default discovery roots for the documentation registry.
 
@@ -228,8 +239,10 @@ def ensure_session_output_dir(slug: str) -> tuple[Path, Path]:
                 timeout=5.0,
                 creationflags=NO_WINDOW_CREATIONFLAGS,
             )
-        except Exception:  # noqa: BLE001
-            pass  # Mirror is nice-to-have, not a fatal failure
+        except Exception as exc:  # noqa: BLE001 - the canonical output path remains usable
+            logging.getLogger(__name__).debug(
+                "Desktop output mirror is unavailable (%s)", type(exc).__name__
+            )
     return canonical, mirror
 
 

@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
+
+log = logging.getLogger(__name__)
 
 _active: dict[str, Any] = {}
 _opening: set[str] = set()
@@ -101,7 +104,7 @@ async def run_browser_call(
         while active() and not hangup.is_set():
             await wait_change()
     except TimeoutError:
-        # The caller receives an explicit error outcome for this bounded wait.
+        log.warning("Browser voice media did not attach before its startup deadline")
         return "error"
     finally:
         startup.discard(session_id)

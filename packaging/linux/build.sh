@@ -3,6 +3,8 @@
 # Build the distributable Linux AppImage for Personal Jarvis.
 #
 #   packaging/linux/build.sh
+#   Build environment: python3 -m pip install -e '.[desktop,dev,swarm-distributed]'
+#   The shared spec rejects missing Swarm drivers before freezing.
 #
 # Output (per the release contract):
 #   dist/installers/PersonalJarvis-Linux-x86_64.AppImage

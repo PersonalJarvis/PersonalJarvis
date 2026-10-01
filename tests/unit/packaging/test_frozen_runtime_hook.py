@@ -102,21 +102,41 @@ def test_apply_never_overwrites_an_existing_user_config(
 
 
 def test_apply_respects_an_explicit_override(
-    hook: ModuleType, frozen_bundle: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+    hook: ModuleType,
+    frozen_bundle: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     meipass, home = frozen_bundle
     (meipass / "jarvis.toml").write_text("bundled\n", encoding="utf-8")
-    monkeypatch.setenv("JARVIS_CONFIG", "D:/scratch/jarvis.toml")
-    monkeypatch.setenv("JARVIS_DATA_DIR", "D:/scratch/data")
+    config_path = tmp_path / "scratch" / "jarvis.toml"
+    data_path = tmp_path / "separate-data"
+    monkeypatch.setenv("JARVIS_CONFIG", str(config_path))
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(data_path))
 
     hook._apply()
 
     import os
 
-    assert os.environ["JARVIS_CONFIG"] == "D:/scratch/jarvis.toml"
-    assert os.environ["JARVIS_DATA_DIR"] == "D:/scratch/data"
+    assert Path(os.environ["JARVIS_CONFIG"]) == config_path
+    assert Path(os.environ["JARVIS_DATA_DIR"]) == data_path
     # No seeding happens for an overridden path.
     assert not (home / "jarvis.toml").exists()
+
+
+def test_relative_overrides_keep_identity_after_changing_directory(
+    hook, frozen_bundle, monkeypatch, tmp_path
+):
+    import os
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("JARVIS_CONFIG", "scratch/jarvis.toml")
+    monkeypatch.setenv("JARVIS_DATA_DIR", "custom-state")
+    hook._apply()
+    monkeypatch.chdir(frozen_bundle[0])
+    hook._apply()
+    assert Path(os.environ["JARVIS_CONFIG"]) == tmp_path / "scratch" / "jarvis.toml"
+    assert Path(os.environ["JARVIS_DATA_DIR"]) == tmp_path / "custom-state"
 
 
 def test_apply_does_nothing_outside_a_frozen_bundle(

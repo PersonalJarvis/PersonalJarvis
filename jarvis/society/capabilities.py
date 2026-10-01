@@ -163,7 +163,10 @@ def capability_id_for_tool(tool_name: str) -> str | None:
     """The catalog id of a brain tool name; ``None`` for never-granted tools."""
     if tool_name in {"society_browser", "society_browser_action"}:
         return "core:browser"
-    if is_never_granted(tool_name):
+    # Expanded owner commands bypass the virtual loader's own name. Keep the
+    # reserved Swarm owner namespace out even when a specialist grants all tools.
+    # Separately bound society_request_swarm can only queue an authorization request.
+    if is_never_granted(tool_name) or tool_name.startswith("swarm-"):
         return None
     if tool_name.startswith("cli_"):
         return f"cli:{tool_name[4:]}"

@@ -45,6 +45,7 @@ from .memory import resolve_society_vault
 from .roster import AgentRecord, canonical_session_id
 from .routine_runner import is_routine_session
 from .runtime import current_runtime
+from .swarm_port import RequestSwarmTool
 
 log = logging.getLogger(__name__)
 
@@ -345,6 +346,7 @@ def society_tools(cfg: Any, brain: Any, session: Any) -> dict[str, Tool]:
     tools.update(
         {
             MessageAgentTool.name: cast(Tool, MessageAgentTool(rt, agent_id)),
+            RequestSwarmTool.name: cast(Tool, RequestSwarmTool(rt, agent_id)),
             WikiNoteTool.name: cast(Tool, WikiNoteTool(rt, agent_id, vault_root=_vault_root(cfg))),
             MemoryRecallTool.name: cast(
                 Tool, MemoryRecallTool(rt, agent_id, vault_root=_vault_root(cfg))

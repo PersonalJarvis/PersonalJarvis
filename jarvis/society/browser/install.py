@@ -8,6 +8,7 @@ import logging
 import os
 import platform
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -25,6 +26,51 @@ PROTOCOL_VERSION = 2
 _LOCK = threading.RLock()
 _STATES: dict[str, dict[str, Any]] = {}
 _THREADS: dict[str, threading.Thread] = {}
+_CANCEL: dict[str, threading.Event] = {}
+_STOPPING: set[str] = set()
+_CONTEXT = threading.local()
+
+
+class InstallCancelled(RuntimeError):
+    """The owning application stopped this background installation."""
+
+
+def _check_cancelled() -> None:
+    event = getattr(_CONTEXT, "cancel", None)
+    if event is not None and event.is_set():
+        raise InstallCancelled("Browser setup was canceled")
+
+
+def request_stop(data_dir: Path) -> None:
+    """Fence new setup jobs and signal the current owner without waiting."""
+    key = str(install_root(data_dir))
+    with _LOCK:
+        _STOPPING.add(key)
+        event = _CANCEL.get(key)
+        if event is not None:
+            event.set()
+
+
+def wait_stopped(data_dir: Path, timeout: float = 5.0) -> None:
+    """Join the actual installer thread; cancellation of an asyncio waiter is insufficient."""
+    key = str(install_root(data_dir))
+    with _LOCK:
+        thread = _THREADS.get(key)
+    if thread is not None and thread.is_alive():
+        if thread is threading.current_thread():
+            raise RuntimeError("The browser installer cannot join itself")
+        thread.join(timeout)
+        if thread.is_alive():
+            raise TimeoutError("Browser installer shutdown is incomplete")
+
+
+def resume_installation(data_dir: Path) -> None:
+    """A new application owner may admit setup after the previous one drained."""
+    key = str(install_root(data_dir))
+    with _LOCK:
+        if key in _STOPPING and (thread := _THREADS.get(key)) and thread.is_alive():
+            raise RuntimeError("Previous browser installer shutdown is incomplete")
+        _STOPPING.discard(key)
 
 
 def install_root(data_dir: Path | None = None) -> Path:
@@ -208,24 +254,46 @@ def _run(cmd: list[str], *, env: dict[str, str], timeout: float = 900) -> str:
 
     tree = make_process_tree("browser-install")
     process_options: dict[str, Any] = {"start_new_session": True} if os.name != "nt" else {}
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        env=env,
-        creationflags=NO_WINDOW_CREATIONFLAGS,
-        **process_options,
-    )
+    with _LOCK:
+        _check_cancelled()
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=env,
+            creationflags=NO_WINDOW_CREATIONFLAGS,
+            **process_options,
+        )
     try:
         tree.assign(proc.pid)
-        output, _ = proc.communicate(timeout=timeout)
+        deadline = time.monotonic() + timeout
+        while True:
+            _check_cancelled()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(cmd, timeout)
+            try:
+                output, _ = proc.communicate(timeout=min(0.2, remaining))
+                break
+            except subprocess.TimeoutExpired:
+                # Poll cancellation without resetting this command's deadline.
+                continue
+        _check_cancelled()
         if proc.returncode:
             raise RuntimeError(f"Browser setup failed: {output[-1800:]}")
         return output
     finally:
+        if os.name == "posix" and proc.poll() is None:
+            # This thread has not reaped the group leader, so its PID cannot be
+            # reused. Finish its whole group before the application can exit.
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass  # The owned process group exited between poll and signal.
         tree.close()
         if proc.poll() is None:
             proc.kill()
@@ -277,7 +345,9 @@ def ensure_installed(
 
     root = install_root(data_dir)
     root.mkdir(parents=True, exist_ok=True)
+    _check_cancelled()
     with FileLock(str(root / "install.lock"), timeout=960):
+        _check_cancelled()
         if is_installed(data_dir) and not repair:
             return snapshot(data_dir)
         env = worker_env(data_dir, for_installer=True)
@@ -288,7 +358,7 @@ def ensure_installed(
             request = managed_python_request(sys.platform, platform.machine())
             if (
                 not getattr(sys, "frozen", False)
-                and (3, 11) <= sys.version_info[:2] < (3, 14)
+                and sys.version_info[:2] == (3, 12)
                 and request == "3.12"
             ):
                 _run([sys.executable, "-m", "venv", str(runtime)], env=env)
@@ -381,8 +451,20 @@ def ensure_installed(
             }
             temporary = root / f"installed-{uuid.uuid4().hex}.json"
             temporary.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+            _check_cancelled()
             os.replace(temporary, root / "installed.json")
             _set(data_dir, phase="done", percent=100, detail="Browser ready", error="", retry_at=0)
+        except InstallCancelled:
+            _set(
+                data_dir,
+                phase="idle",
+                percent=0,
+                detail="Browser setup stopped",
+                error="",
+                retry_at=0,
+            )
+            log.info("Managed browser setup stopped by its owner")
+            raise
         except Exception as exc:
             log.exception("Managed browser setup failed")
             _set(
@@ -399,6 +481,8 @@ def ensure_installed(
 def start_install(data_dir: Path | None = None, *, repair: bool = False) -> tuple[bool, str]:
     key = str(install_root(data_dir))
     with _LOCK:
+        if key in _STOPPING:
+            return False, "browser setup is shutting down"
         thread = _THREADS.get(key)
         if thread and thread.is_alive():
             return False, "setup already running"
@@ -407,11 +491,17 @@ def start_install(data_dir: Path | None = None, *, repair: bool = False) -> tupl
         if _STATES.get(key, {}).get("retry_at", 0) > time.time() and not repair:
             return False, "waiting to retry browser setup"
 
+        cancel = threading.Event()
+        _CANCEL[key] = cancel
+
         def work() -> None:
+            _CONTEXT.cancel = cancel
             try:
                 ensure_installed(data_dir, repair=repair)
             except Exception:
                 log.debug("Background setup failed; state carries the error", exc_info=True)
+            finally:
+                del _CONTEXT.cancel
 
         thread = threading.Thread(target=work, name="browser-setup", daemon=True)
         _THREADS[key] = thread
@@ -424,6 +514,8 @@ def _reset_for_tests() -> None:
     with _LOCK:
         _STATES.clear()
         _THREADS.clear()
+        _CANCEL.clear()
+        _STOPPING.clear()
 
 
 if __name__ == "__main__":

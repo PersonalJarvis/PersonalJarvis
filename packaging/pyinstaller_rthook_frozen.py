@@ -95,5 +95,10 @@ def _apply() -> None:
     if not _is_set("JARVIS_DATA_DIR"):
         os.environ["JARVIS_DATA_DIR"] = str(home / "data")
 
+    # Resolve overrides before the app changes CWD. A relative scratch profile
+    # must keep its original identity across startup and repeated initialization.
+    for name in ("JARVIS_CONFIG", "JARVIS_DATA_DIR"):
+        os.environ[name] = str(Path(os.environ[name]).expanduser().absolute())
+
 
 _apply()

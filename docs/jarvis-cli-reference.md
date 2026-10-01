@@ -229,6 +229,32 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 - `jarvis socials edit <social_id> --json-body --yes --dry-run` — Edit a social link (partial).
 - `jarvis socials list` — List social links.
 
+## swarm
+
+- `jarvis swarm archive <team_id> --expected-version --expected-storage-generation --yes --dry-run` — Archive the selected team with explicit owner authorization.
+- `jarvis swarm cancel <team_id> --expected-version --expected-storage-generation --yes --dry-run` — Cancel the selected team with explicit owner authorization.
+- `jarvis swarm clarify <team_id> --expected-storage-generation --request-key --yes --dry-run` — Begin or retry clarification for an existing unlaunched team.
+- `jarvis swarm create <spec_file> --yes --dry-run` — Create from a UTF-8 TeamCreate JSON file (up to 1 MiB); budgets are decimal strings.
+- `jarvis swarm delete <team_id> --request-key --expected-version --expected-storage-generation --yes --dry-run` — Delete exactly this team workspace while retaining published results.
+- `jarvis swarm export <team_id> --output --request-key --expected-version --force --timeout --yes --dry-run` — Create and stream a verified portable backup into the selected file.
+- `jarvis swarm launch <team_id> --expected-revision --expected-storage-generation --digest --request-key --yes --dry-run` — Approve the exact saved plan and launch it without replacing its tasks.
+- `jarvis swarm list --limit --offset` — List explicitly created teams, without creating any team storage.
+- `jarvis swarm pause <team_id> --expected-version --expected-storage-generation --yes --dry-run` — Pause the selected team with explicit owner authorization.
+- `jarvis swarm plan <team_id> <answers_file> --expected-revision --expected-storage-generation --request-key --yes --dry-run` — Submit a JSON question-ID/answer object and generate a saved plan for review.
+- `jarvis swarm preparation <team_id>` — Read saved questions, answers, plan revision and approval digest.
+- `jarvis swarm prepare <spec_file> --yes --dry-run` — Create clarification questions from a TeamCreate JSON file; never launch workers.
+- `jarvis swarm records <team_id> <kind> --limit --offset` — Inspect one bounded page of team-local work, messages or evidence.
+- `jarvis swarm restore <file> --request-key --replace-team-id --timeout --yes --dry-run` — Stream an owner-authorized restore; reuse the operation key when retrying.
+- `jarvis swarm restores` — List validated restores that can be resumed after an interrupted replacement.
+- `jarvis swarm resume <team_id> --expected-version --expected-storage-generation --yes --dry-run` — Resume the selected team with explicit owner authorization.
+- `jarvis swarm resume-restore <restore_id> --yes --dry-run` — Resume one owned, previously validated restore operation.
+- `jarvis swarm retention <team_id> --before-days --yes --dry-run` — Prune expired messages, orphan staging, old backups and recovery quarantines.
+- `jarvis swarm show <team_id>` — Read one team's saved state and exact accounting.
+- `jarvis swarm start <team_id> --expected-version --expected-storage-generation --yes --dry-run` — Start the selected team with explicit owner authorization.
+- `jarvis swarm stop <team_id> --expected-version --expected-storage-generation --yes --dry-run` — Stop the selected team with explicit owner authorization.
+- `jarvis swarm storage <team_id>` — Inspect selected team backups, pending restores and storage limits.
+- `jarvis swarm world <team_id> --group` — Read a bounded team-local world snapshot.
+
 ## system
 
 - `jarvis system audio-devices --output --input` — List audio devices, or pick where the voice plays / which mic listens.
