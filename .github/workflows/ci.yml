@@ -415,7 +415,8 @@ jobs:
   test-report:
     name: test report + floor
     needs: [detect, tests-linux]
-    if: always() && needs.detect.outputs.python == 'true' && needs.tests-linux.result != 'cancelled'
+    # Preserve failure reporting without keeping superseded PR runs alive.
+    if: ${{ !cancelled() && needs.detect.outputs.python == 'true' && needs.tests-linux.result != 'cancelled' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -667,7 +668,7 @@ jobs:
       - browser
       - macos-desktop
       - installer
-    if: always()
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
