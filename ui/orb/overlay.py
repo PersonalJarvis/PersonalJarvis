@@ -67,6 +67,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageTk
 
 from jarvis.core.config import DEFAULT_CONFIG_FILE as JARVIS_TOML_PATH
 from jarvis.core.win32_dpi import ensure_dpi_awareness as _ensure_dpi_awareness
+from jarvis.platform import layered_window
 from jarvis.ui.jarvisbar.modes import MODES
 from jarvis.ui.overlay_styles import LEGACY_STYLE_ALIASES, ORB_STYLES, PERSISTENT_ORB_STYLES
 from jarvis.ui.pets.states import DEFAULT_PET_ID, NO_PET_ID, ONE_SHOT_STATES
@@ -2122,6 +2123,10 @@ class OrbControlRow:
     def _row_y(self) -> int:
         return self._orb_y + self._orb_h + orb_controls.ROW_GAP_FROM_ORB
 
+    def _render_rgba(self) -> Image.Image | None:
+        """The row with real alpha, for a per-pixel-alpha window; None = keyed only."""
+        return None
+
     # -- wiring ---------------------------------------------------------
 
     def set_on_action(self, callback: Callable[[str], None] | None) -> None:
@@ -2133,6 +2138,10 @@ class OrbControlRow:
         top.overrideredirect(True)
         top.wm_attributes("-topmost", True)
         self._mac_transparent = False
+        # A Windows window fed through UpdateLayeredWindow (real per-pixel
+        # alpha); 0 = the colour-key path. The two modes exclude each other,
+        # so a window that gets one never gets ``-transparentcolor``.
+        self._alpha_hwnd = 0
         if sys.platform == "darwin":
             try:
                 top.wm_attributes("-transparent", True)
@@ -2144,7 +2153,19 @@ class OrbControlRow:
                 )
                 top.configure(bg=COLOR_KEY_HEX)
         else:
-            top.wm_attributes("-transparentcolor", COLOR_KEY_HEX)
+            first = self._render_rgba()
+            if first is not None and layered_window.per_pixel_alpha_supported():
+                top.update_idletasks()
+                hwnd = layered_window.tk_toplevel_hwnd(top)
+                # The first frame goes in right away: Windows refuses the very
+                # first UpdateLayeredWindow (error 87) once the window has been
+                # withdrawn, and accepts every later one after this.
+                if layered_window.enable_per_pixel_alpha(hwnd) and layered_window.update_layered(
+                    hwnd, first
+                ):
+                    self._alpha_hwnd = hwnd
+            if not self._alpha_hwnd:
+                top.wm_attributes("-transparentcolor", COLOR_KEY_HEX)
             top.configure(bg=COLOR_KEY_HEX)
         _hide_tk_window_from_task_switcher(top)
         _exclude_tk_window_from_capture(top)
@@ -2225,9 +2246,26 @@ class OrbControlRow:
     def _repaint(self) -> None:
         if self._canvas is None:
             return
+        if self._alpha_hwnd:
+            rgba = self._render_rgba()
+            if rgba is not None and layered_window.update_layered(self._alpha_hwnd, rgba):
+                return
+            # Windows refused the frame: fall back to the colour key for good.
+            logging.getLogger("jarvis.orb").warning(
+                "per-pixel alpha refused; the control strip falls back to the colour key"
+            )
+            self._alpha_hwnd = 0
+            if self._top is not None:
+                try:
+                    self._top.wm_attributes("-transparentcolor", COLOR_KEY_HEX)
+                except tk.TclError:
+                    logging.getLogger("jarvis.orb").debug(
+                        "colour-key fallback failed", exc_info=True
+                    )
         try:
-            frame = self._render_frame()
-            image = key_to_alpha(frame) if self._mac_transparent else frame
+            rgba = self._render_rgba() if self._mac_transparent else None
+            frame = rgba if rgba is not None else self._render_frame()
+            image = key_to_alpha(frame) if self._mac_transparent and rgba is None else frame
             self._photo = ImageTk.PhotoImage(image, master=self._canvas)
             if self._image_id is None:
                 self._image_id = self._canvas.create_image(0, 0, anchor="nw", image=self._photo)
@@ -2251,6 +2289,9 @@ class OrbControlRow:
         except tk.TclError:
             return
         self._visible = True
+        if self._alpha_hwnd:
+            # A layered window shows its last bitmap; hand it the current one.
+            self._repaint()
 
     def hide(self) -> None:
         self._cancel_pending_hide()
@@ -2423,6 +2464,10 @@ class PetControlStrip(OrbControlRow):
         return orb_controls.render_pet_strip(
             self._state, self._scale, tuple(int(c) for c in COLOR_KEY_RGB)
         )
+
+    def _render_rgba(self) -> Image.Image | None:
+        # No background: the glyphs and the indicator float on the desktop.
+        return orb_controls.render_pet_strip_rgba(self._state, self._scale)
 
     def _hit(self, x: float, y: float) -> str | None:
         return orb_controls.pet_hit_test(x, y, self._scale)
