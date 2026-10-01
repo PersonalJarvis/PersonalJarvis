@@ -95,6 +95,108 @@ if [ -n "${APPLE_CERTIFICATE_P12_BASE64:-}" ] && [ -z "${APPLE_CERTIFICATE_PASSW
   die "APPLE_CERTIFICATE_P12_BASE64 is set but APPLE_CERTIFICATE_PASSWORD is not"
 fi
 
+# --- 0b. Developer ID certificate (CI runners) -------------------------------
+#
+# codesign can only use an identity that lives in a keychain, and a GitHub
+# runner starts with none: APPLE_SIGNING_IDENTITY alone made every signed build
+# fail with "no identity found" while the workflow passed the certificate
+# secrets along to a script that never read them. The certificate is imported
+# into a throw-away keychain that is removed (and the search list restored) when
+# the script exits, so it never outlives the build. It happens FIRST, before the
+# long freeze: a wrong password or a certificate without a Developer ID identity
+# should cost seconds, not a finished PyInstaller run. No command that carries a
+# secret goes through run(), which echoes its argv.
+
+SIGNING_KEYCHAIN=""
+SIGNING_CERT_FILE=""
+ORIGINAL_KEYCHAINS=()
+
+decode_base64() {
+  # macOS spells the flag --decode on current releases and -D on older ones.
+  if base64 --decode </dev/null >/dev/null 2>&1; then base64 --decode; else base64 -D; fi
+}
+
+# Runs on EVERY exit - success, `die`, `set -e`, a signal - so a failed import
+# cannot leave the decoded certificate (the private key, password-protected) or
+# the temporary keychain behind on a machine that is not thrown away afterwards.
+cleanup_signing_material() {
+  [ -z "${SIGNING_CERT_FILE}" ] || rm -f "${SIGNING_CERT_FILE}"
+  [ -n "${SIGNING_KEYCHAIN}" ] || return 0
+  if [ "${#ORIGINAL_KEYCHAINS[@]}" -gt 0 ]; then
+    security list-keychains -d user -s "${ORIGINAL_KEYCHAINS[@]}" >/dev/null 2>&1 || true
+  fi
+  security delete-keychain "${SIGNING_KEYCHAIN}" >/dev/null 2>&1 || true
+}
+trap cleanup_signing_material EXIT
+
+import_signing_certificate() {
+  [ -n "${APPLE_CERTIFICATE_P12_BASE64:-}" ] || return 0
+
+  local scratch keychain cert_file keychain_password line identities
+  scratch="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
+  scratch="${scratch%/}"
+  keychain="${scratch}/jarvis-signing.keychain-db"
+  cert_file="${scratch}/jarvis-signing-certificate.p12"
+
+  log "importing the Developer ID certificate into a temporary keychain"
+  if [ "${DRY_RUN}" = "1" ]; then
+    printf '+ security list-keychains -d user   # remembered, restored on exit\n'
+    printf '+ security create-keychain -p <redacted> %q\n' "${keychain}"
+    printf '+ security import <redacted .p12> -k %q -P <redacted> -T /usr/bin/codesign\n' "${keychain}"
+    printf '+ security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k <redacted> %q\n' "${keychain}"
+    printf '+ security list-keychains -d user -s %q <the existing keychains>\n' "${keychain}"
+    APPLE_SIGNING_IDENTITY="${APPLE_SIGNING_IDENTITY:-<identity read from the imported certificate>}"
+    return 0
+  fi
+
+  SIGNING_KEYCHAIN="${keychain}"
+  SIGNING_CERT_FILE="${cert_file}"
+  keychain_password="$(uuidgen)"
+
+  # Remember the user's search list BEFORE creating anything: `create-keychain`
+  # adds the new keychain to it. `security` prints each path indented and
+  # quoted; strip both with sed (bash 3.2 treats quotes inside ${var#...}
+  # patterns differently from newer shells).
+  while IFS= read -r line; do
+    [ -z "${line}" ] || ORIGINAL_KEYCHAINS+=("${line}")
+  done < <(security list-keychains -d user | sed 's/^[[:space:]]*"//; s/"[[:space:]]*$//')
+
+  # A keychain left behind by an interrupted earlier run would fail the create.
+  security delete-keychain "${keychain}" >/dev/null 2>&1 || true
+  security create-keychain -p "${keychain_password}" "${keychain}"
+  # Stay unlocked for the whole build (6 h), even across an idle period.
+  security set-keychain-settings -lut 21600 "${keychain}"
+  security unlock-keychain -p "${keychain_password}" "${keychain}"
+
+  # Owner-only: the file holds the (password-protected) private key.
+  (umask 077 && printf '%s' "${APPLE_CERTIFICATE_P12_BASE64}" | decode_base64 > "${cert_file}")
+  security import "${cert_file}" -k "${keychain}" -P "${APPLE_CERTIFICATE_PASSWORD}" \
+    -T /usr/bin/codesign -T /usr/bin/security
+  rm -f "${cert_file}"
+  # Without this macOS asks (via a dialog nobody can answer on a runner) whether
+  # codesign may use the private key.
+  security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
+    -k "${keychain_password}" "${keychain}" >/dev/null
+
+  # codesign looks identities up through the search list: put ours first.
+  security list-keychains -d user -s "${keychain}" \
+    ${ORIGINAL_KEYCHAINS[@]+"${ORIGINAL_KEYCHAINS[@]}"}
+
+  if [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
+    identities="$(security find-identity -v -p codesigning "${keychain}")"
+    APPLE_SIGNING_IDENTITY="$(
+      printf '%s\n' "${identities}" \
+        | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p' \
+        | head -n 1
+    )"
+    [ -n "${APPLE_SIGNING_IDENTITY}" ] \
+      || die "the imported certificate holds no valid 'Developer ID Application' identity - an Apple Development or App Store certificate cannot sign an app distributed outside the App Store, and the .p12 must be exported together with its certificate chain"
+    log "signing identity read from the certificate: ${APPLE_SIGNING_IDENTITY}"
+  fi
+}
+
+import_signing_certificate
+
 # --- 1. Web bundle ----------------------------------------------------------
 
 if [ -d "${FRONTEND_DIST}" ] && [ -f "${FRONTEND_DIST}/index.html" ]; then
@@ -169,96 +271,6 @@ if building; then
   log "bundle executable: ${BUNDLE_EXECUTABLE}"
 fi
 log "app bundle: ${APP_BUNDLE}"
-
-# --- 2b. Developer ID certificate (CI runners) ------------------------------
-#
-# codesign can only use an identity that lives in a keychain, and a GitHub
-# runner starts with none: APPLE_SIGNING_IDENTITY alone made every signed build
-# fail with "no identity found" while the workflow passed the certificate
-# secrets along to a script that never read them. The certificate is imported
-# into a throw-away keychain that is removed (and the search list restored) when
-# the script exits, so it never outlives the build. No command that carries a
-# secret goes through run(), which echoes its argv.
-
-SIGNING_KEYCHAIN=""
-ORIGINAL_KEYCHAINS=()
-
-decode_base64() {
-  # macOS spells the flag --decode on current releases and -D on older ones.
-  if base64 --decode </dev/null >/dev/null 2>&1; then base64 --decode; else base64 -D; fi
-}
-
-remove_signing_keychain() {
-  [ -n "${SIGNING_KEYCHAIN}" ] || return 0
-  if [ "${#ORIGINAL_KEYCHAINS[@]}" -gt 0 ]; then
-    security list-keychains -d user -s "${ORIGINAL_KEYCHAINS[@]}" >/dev/null 2>&1 || true
-  fi
-  security delete-keychain "${SIGNING_KEYCHAIN}" >/dev/null 2>&1 || true
-}
-trap remove_signing_keychain EXIT
-
-import_signing_certificate() {
-  [ -n "${APPLE_CERTIFICATE_P12_BASE64:-}" ] || return 0
-
-  local scratch keychain cert_file keychain_password line identities
-  scratch="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
-  scratch="${scratch%/}"
-  keychain="${scratch}/jarvis-signing.keychain-db"
-  cert_file="${scratch}/jarvis-signing-certificate.p12"
-
-  log "importing the Developer ID certificate into a temporary keychain"
-  if [ "${DRY_RUN}" = "1" ]; then
-    printf '+ security create-keychain -p <redacted> %q\n' "${keychain}"
-    printf '+ security import <redacted .p12> -k %q -P <redacted> -T /usr/bin/codesign\n' "${keychain}"
-    printf '+ security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k <redacted> %q\n' "${keychain}"
-    printf '+ security list-keychains -d user -s %q <the existing keychains>\n' "${keychain}"
-    APPLE_SIGNING_IDENTITY="${APPLE_SIGNING_IDENTITY:-<identity read from the imported certificate>}"
-    return 0
-  fi
-
-  SIGNING_KEYCHAIN="${keychain}"
-  keychain_password="$(uuidgen)"
-  # A keychain left behind by an interrupted earlier run would fail the create.
-  security delete-keychain "${keychain}" >/dev/null 2>&1 || true
-  security create-keychain -p "${keychain_password}" "${keychain}"
-  # Stay unlocked for the whole build (6 h), even across an idle period.
-  security set-keychain-settings -lut 21600 "${keychain}"
-  security unlock-keychain -p "${keychain_password}" "${keychain}"
-
-  # Owner-only: the file holds the (password-protected) private key.
-  (umask 077 && printf '%s' "${APPLE_CERTIFICATE_P12_BASE64}" | decode_base64 > "${cert_file}")
-  security import "${cert_file}" -k "${keychain}" -P "${APPLE_CERTIFICATE_PASSWORD}" \
-    -T /usr/bin/codesign -T /usr/bin/security
-  rm -f "${cert_file}"
-  # Without this macOS asks (via a dialog nobody can answer on a runner) whether
-  # codesign may use the private key.
-  security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
-    -k "${keychain_password}" "${keychain}" >/dev/null
-
-  # codesign looks identities up through the search list: put ours first and
-  # remember the rest so it can be restored on exit.
-  # `security` prints each path indented and quoted; strip both with sed (bash
-  # 3.2 treats quotes inside ${var#...} patterns differently from newer shells).
-  while IFS= read -r line; do
-    [ -z "${line}" ] || ORIGINAL_KEYCHAINS+=("${line}")
-  done < <(security list-keychains -d user | sed 's/^[[:space:]]*"//; s/"[[:space:]]*$//')
-  security list-keychains -d user -s "${keychain}" \
-    ${ORIGINAL_KEYCHAINS[@]+"${ORIGINAL_KEYCHAINS[@]}"}
-
-  if [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
-    identities="$(security find-identity -v -p codesigning "${keychain}")"
-    APPLE_SIGNING_IDENTITY="$(
-      printf '%s\n' "${identities}" \
-        | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p' \
-        | head -n 1
-    )"
-    [ -n "${APPLE_SIGNING_IDENTITY}" ] \
-      || die "the imported certificate holds no valid 'Developer ID Application' identity - an Apple Development or App Store certificate cannot sign an app distributed outside the App Store, and the .p12 must be exported together with its certificate chain"
-    log "signing identity read from the certificate: ${APPLE_SIGNING_IDENTITY}"
-  fi
-}
-
-import_signing_certificate
 
 # --- 3. Code signing --------------------------------------------------------
 

@@ -116,7 +116,7 @@ def test_the_certificate_secrets_are_imported_and_the_app_is_signed_with_it(
         "security create-keychain",
         "security import",
         "security set-key-partition-list",
-        "security list-keychains",
+        "security list-keychains -d user -s",
         "codesign --force --deep --timestamp --options runtime",
     ]
     positions = [out.index(marker) for marker in markers]
@@ -188,6 +188,7 @@ case "$1" in
          printf '    "/Library/Keychains/System.keychain"\\n' ;;
     esac ;;
   find-identity) cat "${FAKE_IDENTITIES_FILE}" ;;
+  import) [ -z "${FAKE_IMPORT_FAILS:-}" ] || exit 1 ;;
 esac
 exit 0
 """
@@ -211,7 +212,7 @@ def _import_section() -> str:
     """The certificate-import part of build.sh, cut out by its own markers."""
     script = BUILD_SH.read_text(encoding="utf-8")
     start_marker = 'SIGNING_KEYCHAIN=""'
-    end_marker = "import_signing_certificate\n\n# --- 3. Code signing"
+    end_marker = "import_signing_certificate\n\n# --- 1. Web bundle"
     assert start_marker in script and end_marker in script, (
         "build.sh was restructured: update the markers that cut out the certificate import"
     )
@@ -278,13 +279,13 @@ def test_the_real_import_runs_the_right_calls_in_order_and_cleans_up(
 
     assert result.returncode == 0, result.stderr
     assert [call.split()[0] for call in calls] == [
+        "list-keychains",  # remember the search list BEFORE creating anything
         "delete-keychain",  # a leftover of an interrupted earlier run
         "create-keychain",
         "set-keychain-settings",
         "unlock-keychain",
         "import",
         "set-key-partition-list",
-        "list-keychains",  # read the existing search list
         "list-keychains",  # put ours first
         "find-identity",
         "list-keychains",  # on exit: restore the search list ...
@@ -298,7 +299,7 @@ def test_the_real_import_runs_the_right_calls_in_order_and_cleans_up(
     assert calls[7] == f"list-keychains -d user -s {keychain} {' '.join(originals)}"
     assert calls[9] == f"list-keychains -d user -s {' '.join(originals)}"
     assert calls[-1] == f"delete-keychain {keychain}"
-    assert "-T /usr/bin/codesign" in calls[4]
+    assert "-T /usr/bin/codesign" in calls[5]
 
 
 def test_the_real_import_reads_the_identity_back_from_the_certificate(
@@ -344,3 +345,20 @@ def test_the_real_import_never_prints_a_secret_and_leaves_no_certificate_behind(
     for secret in ("TOPSECRET-P12-PAYLOAD", "TOPSECRET-P12-PASSWORD"):
         assert secret not in result.stdout + result.stderr
     assert list((tmp_path / "scratch").iterdir()) == []
+
+
+def test_a_failed_import_leaves_neither_the_certificate_nor_the_keychain_behind(
+    stand_in, tmp_path: Path
+) -> None:
+    """A wrong password aborts at `security import`; the trap must still clean up.
+
+    On a runner the machine is thrown away; on a maintainer's Mac it is not, and
+    the decoded certificate is the private key.
+    """
+    result, calls = _run_import(stand_in, tmp_path, _DEVELOPER_ID_IDENTITIES, FAKE_IMPORT_FAILS="1")
+
+    assert result.returncode != 0
+    assert list((tmp_path / "scratch").iterdir()) == []
+    assert calls[-2].startswith("list-keychains -d user -s /Users/runner/")
+    assert calls[-1].startswith("delete-keychain ")
+    assert "find-identity" not in [call.split()[0] for call in calls]
