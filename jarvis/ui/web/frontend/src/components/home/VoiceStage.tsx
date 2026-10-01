@@ -14,6 +14,7 @@ import { Greeting } from "@/components/home/Greeting";
 import { GigiMark } from "@/components/GigiMark";
 import { VoiceComposer } from "@/components/home/VoiceComposer";
 import { VoiceGlow } from "@/components/home/VoiceGlow";
+import { useSpokenCursor } from "@/components/home/useSpokenCursor";
 import { TurnSteps, traceWorthShowing } from "@/components/home/TurnSteps";
 import { traceModel } from "@/lib/thinkingSteps";
 
@@ -28,7 +29,10 @@ import { traceModel } from "@/lib/thinkingSteps";
  * says what is happening and carries Start / Stop. Behind it a soft light
  * rises from the bottom edge and breathes with the voices
  * (components/home/VoiceGlow); while the assistant thinks or speaks, its
- * mark pulses under the last line. `onExit`, where the host page has a typed
+ * mark pulses under the last line. While the answer is being spoken, the
+ * words not yet said stay grey and light up as the voice reaches them
+ * (components/home/useSpokenCursor — an estimate from the playback level,
+ * since no voice path reports a per-word position). `onExit`, where the host page has a typed
  * half, puts the way back to the keyboard into the composer.
  *
  * Empty, it is one centred column: the greeting and the voice composer.
@@ -83,6 +87,14 @@ export function VoiceStage({ onExit }: { onExit?: () => void } = {}) {
       ? liveReply
       : "";
   const hasLines = lines.length > 0 || Boolean(liveLine) || Boolean(liveAnswer);
+  // The answer the voice is saying right now: the growing snapshot, or —
+  // once its final line has landed while the audio still plays — that line.
+  const speaking = active && voiceState === "speaking";
+  const lastIsAnswer = !liveAnswer && lastLine?.who === "assistant";
+  const spoken = useSpokenCursor(
+    liveAnswer || (lastIsAnswer ? lastLine.text : ""),
+    speaking,
+  );
 
   const { rootRef, contentRef, atEnd, jumpToEnd, follow } = useStickToBottom();
   useLayoutEffect(follow, [follow, lines, liveLine, liveAnswer]);
@@ -118,7 +130,7 @@ export function VoiceStage({ onExit }: { onExit?: () => void } = {}) {
           className="mx-auto flex w-full max-w-[720px] flex-col gap-6 px-6 pb-6 pt-8"
           aria-live="polite"
         >
-          {lines.map((m) =>
+          {lines.map((m, i) =>
             m.who === "steps" ? (
               <div key={m.id} className="max-w-[85%] pl-1" data-testid="transcript-steps">
                 <TurnSteps
@@ -136,11 +148,14 @@ export function VoiceStage({ onExit }: { onExit?: () => void } = {}) {
                 who={m.who === "user" ? t("home.transcript_you") : assistantName}
                 text={m.text}
                 user={m.who === "user"}
+                spoken={lastIsAnswer && i === lines.length - 1 ? spoken : null}
               />
             ),
           )}
           {liveLine && <TranscriptLine who={t("home.transcript_you")} text={liveLine} user live />}
-          {liveAnswer && <TranscriptLine who={assistantName} text={liveAnswer} user={false} live />}
+          {liveAnswer && (
+            <TranscriptLine who={assistantName} text={liveAnswer} user={false} live spoken={spoken} />
+          )}
           {active && (voiceState === "thinking" || voiceState === "speaking") && (
             <div className="pl-0.5" data-testid="voice-turn-indicator" aria-hidden>
               <GigiMark size={22} className="rounded-md animate-pulse motion-reduce:animate-none" />
@@ -163,20 +178,25 @@ export function VoiceStage({ onExit }: { onExit?: () => void } = {}) {
  * right — italic, because they were heard — the assistant's as plain text
  * on the left. A LIVE line (words still being said, an
  * answer still being produced) is dimmed and italic with a cursor; the
- * finished line it becomes is the same words, settled. The speaker's name
- * stays for screen readers only — the side says who spoke.
+ * finished line it becomes is the same words, settled. `spoken`, while the
+ * voice is saying this line, splits it: the words already said in full ink,
+ * the rest grey. The speaker's name stays for screen readers only — the side
+ * says who spoke.
  */
 function TranscriptLine({
   who,
   text,
   user,
   live = false,
+  spoken = null,
 }: {
   who: string;
   text: string;
   user: boolean;
   live?: boolean;
+  spoken?: number | null;
 }) {
+  const reading = !user && spoken !== null;
   return (
     <div
       className={cn("flex", user ? "justify-end" : "justify-start")}
@@ -188,11 +208,20 @@ function TranscriptLine({
         className={cn(
           "max-w-[80%] whitespace-pre-wrap text-reading",
           user ? "jarvis-user-bubble rounded-[20px] px-4 py-2.5 italic" : "text-foreground",
-          live && (user ? "opacity-70" : "text-muted-foreground"),
+          live && !reading && (user ? "opacity-70" : "text-muted-foreground"),
         )}
       >
-        {text}
-        {live && (
+        {reading ? (
+          <>
+            <span data-testid="spoken-part">{text.slice(0, spoken)}</span>
+            <span className="text-muted-foreground transition-colors" data-testid="unspoken-part">
+              {text.slice(spoken)}
+            </span>
+          </>
+        ) : (
+          text
+        )}
+        {live && !reading && (
           <span
             className="ml-0.5 inline-block h-[1em] w-0.5 translate-y-0.5 animate-pulse bg-current motion-reduce:animate-none"
             aria-hidden
