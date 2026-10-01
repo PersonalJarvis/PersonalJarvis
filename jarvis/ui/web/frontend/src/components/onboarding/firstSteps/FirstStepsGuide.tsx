@@ -24,14 +24,14 @@ import {
 const PET: Record<QuestId, PetState> = {
   wake: "listening",
   ask: "idle",
-  tool: "working",
-  screen: "searching",
+  tool: "thinking",
+  screen: "thinking",
   memory: "thinking",
-  artifact: "working",
-  agent: "working",
+  artifact: "thinking",
+  agent: "thinking",
   team: "success",
-  plugin: "searching",
-  ide: "working",
+  plugin: "thinking",
+  ide: "thinking",
 };
 
 /** How often the guide re-checks the live state for the current quest. */

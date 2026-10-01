@@ -26,8 +26,8 @@ type Onb = ReturnType<typeof useOnboarding>;
 const PET: Record<SetupStepId, PetState> = {
   welcome: "success",
   how: "talking",
-  keys: "searching",
-  subscriptions: "working",
+  keys: "thinking",
+  subscriptions: "thinking",
   voice: "listening",
   permissions: "idle",
   ready: "success",
