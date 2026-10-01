@@ -104,8 +104,7 @@ def list_chat_commands(request: Request, session_id: str | None = None) -> dict[
 @router.get("/sessions/{session_id}/control", summary="Read this chat's mode and goal state")
 def get_chat_control(session_id: str, request: Request) -> dict[str, Any]:
     try:
-        state = await asyncio.to_thread(_service(request).controls.state, session_id)
-        return state.model_dump()
+        return _service(request).controls.state(session_id).model_dump()
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
 
