@@ -2,7 +2,7 @@
   "format": "jarvis-pet/1",
   "id": "gigi",
   "name": "Gigi",
-  "description": "The Jarvis ghost, eight bits tall, with glowing golden eyes.",
+  "description": "The Jarvis ghost, eight bits tall: it floats, glitches while it thinks.",
   "frame_size": 48,
   "sheet": "sheet.png",
   "animations": {

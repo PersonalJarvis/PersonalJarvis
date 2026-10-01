@@ -31,7 +31,7 @@ import math
 import sys
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -528,7 +528,12 @@ _SPARK_L = ("..#..", "..#..", "##o##", "..#..", "..#..")
 _SPARK_PALETTE = {"#": SPARK, "o": SPARK_CORE}
 
 
-def fx_sparkles(f: Frame, i: int, spots: Sequence[tuple[int, int, int]]) -> None:
+def fx_sparkles(
+    f: Frame,
+    i: int,
+    spots: Sequence[tuple[int, int, int]],
+    palette: Mapping[str, RGBA] = _SPARK_PALETTE,
+) -> None:
     """Sparkles at ``(x, y, first_frame)`` centres: small, big, small, gone."""
     for x, y, start in spots:
         age = i - start
@@ -536,7 +541,7 @@ def fx_sparkles(f: Frame, i: int, spots: Sequence[tuple[int, int, int]]) -> None
             continue
         rows = _SPARK_L if age in (1, 2) else _SPARK_S
         half = len(rows) // 2
-        f.glyph(x - half, y - half, rows, _SPARK_PALETTE)
+        f.glyph(x - half, y - half, rows, palette)
 
 
 _Z_SMALL = ("####", "..#.", ".#..", "####")
@@ -635,96 +640,175 @@ class PetDesign:
 
 
 # -- Gigi: the Jarvis ghost ---------------------------------------------------
+#
+# Drawn after the brand mark (``assets/icons/jarvis-gigi-256.png``, docs/BRAND.md):
+# a black body with a white edge, a rounded head with straight sides, white
+# oval eyes with black pupils, grey cheek marks, two grey bands with a small
+# "o" mouth between them, thin hanging arms, three sharp teeth along the hem
+# and loose grey bits around it. A ghost floats, so Gigi bobs instead of
+# breathing, and the hem flows sideways one pixel a frame.
 
-GIGI_BODY = hexc("#262a33")
-GIGI_RIM = hexc("#e2ad3a")
-GIGI_PLATE = hexc("#14161c")
-GIGI_GLOSS = hexc("#4d5465")
-GIGI_BELT = hexc("#9a7a30")
-GIGI_GOLD = hexc("#ffcf45")
-GIGI_EYES = EyeStyle(
-    w=4, h=6, iris=GIGI_GOLD, pupil=hexc("#0b0c10"), glint=hexc("#fffbe6"), lid=GIGI_GOLD
-)
+GIGI_BODY = hexc("#111114")
+GIGI_WHITE = hexc("#f4f4f6")
+GIGI_PUPIL = hexc("#0b0b0d")
+GIGI_BAND = hexc("#4b4d55")
+GIGI_CHEEK = hexc("#5c5f68")
+GIGI_BIT = hexc("#9a9ca4")
+GIGI_EYES = EyeStyle(w=4, h=6, iris=GIGI_WHITE, pupil=GIGI_PUPIL, glint=None, lid=GIGI_WHITE)
+#: Brand sparkles: white with a bright core instead of the shared gold.
+GIGI_SPARK = {"#": hexc("#d9dbe2"), "o": hexc("#ffffff")}
+
+#: The body box: columns 11-36 (symmetric about CX), head from row 9, full
+#: width down to row 36, then the toothed hem.
+_GIGI_X0, _GIGI_X1, _GIGI_TOP, _GIGI_SKIRT = 11, 36, 9, 36
+_GIGI_RADIUS = 9
+#: Hem depth per column within one tooth (period 9): sharp tips, narrow valleys,
+#: about three teeth across the body like the brand mark.
+_GIGI_TOOTH = (1, 2, 3, 5, 6, 5, 3, 2, 1)
+#: The idle float: up a pixel and back over the seven ordinary idle cells.
+_GIGI_FLOAT = (0, 0, -1, -1, -1, 0, 0)
+_GIGI_THINK_FLOAT = (0, 0, -1, -1, -1, -1, 0, 0)
 
 
 def _gigi_body(phase: int) -> Mask:
-    dome = {p for p in ellipse(CX, 25, 14, 14) if p[1] <= 24}
-    torso = rect(10, 25, 37, 38)
-    teeth: Mask = set()
-    for k in range(4):
-        apex = 13 + 7 * k + phase
-        for r in range(4):
-            for x in range(apex - (3 - r), apex + (3 - r) + 1):
-                if 10 <= x <= 37:
-                    teeth.add((x, 39 + r))
-    return dome | torso | teeth
+    """The silhouette; ``phase`` slides the hem's teeth sideways."""
+    body: Mask = set()
+    left_c = (_GIGI_X0 + _GIGI_RADIUS, _GIGI_TOP + _GIGI_RADIUS)
+    right_c = (_GIGI_X1 + 1 - _GIGI_RADIUS, _GIGI_TOP + _GIGI_RADIUS)
+    for y in range(_GIGI_TOP, _GIGI_SKIRT + 1):
+        for x in range(_GIGI_X0, _GIGI_X1 + 1):
+            px, py = x + 0.5, y + 0.5
+            if py < left_c[1]:
+                centre = left_c if px < left_c[0] else right_c if px > right_c[0] else None
+                if centre is not None and math.hypot(px - centre[0], py - centre[1]) > _GIGI_RADIUS:
+                    continue
+            body.add((x, y))
+    period = len(_GIGI_TOOTH)
+    for x in range(_GIGI_X0, _GIGI_X1 + 1):
+        depth = _GIGI_TOOTH[(x - _GIGI_X0 + phase) % period]
+        body |= {(x, _GIGI_SKIRT + k) for k in range(1, depth + 1)}
+    return body
 
 
+def _gigi_hem_phase(pose: Pose) -> int:
+    """One pixel of drift per frame, looping cleanly over each looping row.
+
+    Talking frames are picked by the voice level, not in order, and the error
+    shake is busy enough: both keep the hem still.
+    """
+    if pose.state in ("talking", "error"):
+        return 0
+    frames = len(_GIGI_FLOAT) if pose.state == "idle" else FRAME_COUNTS[pose.state]
+    return pose.i * len(_GIGI_TOOTH) // frames
+
+
+#: Thin arms hanging from the upper band, left side (the right one is mirrored).
+#: The first pixel sits in the body's outline column so the arm joins the edge.
 _GIGI_ARMS = {
-    "rest": from_rows(6, 29, ("###.", "####", "####", ".###")),
-    "up": from_rows(5, 19, ("##..", "###.", ".###", "..##")),
-    "droop": from_rows(7, 32, ("###", "###", "###", ".##")),
+    "rest": frozenset({(10, 26), (9, 26), (8, 27), (7, 28), (7, 29), (7, 30)}),
+    "up": frozenset({(10, 26), (9, 26), (8, 25), (7, 24), (7, 23), (7, 22)}),
+    "droop": frozenset({(10, 27), (9, 28), (9, 29), (9, 30)}),
 }
 
 
 def _gigi_arm_style(pose: Pose) -> str:
-    return {"success": "up", "sleeping": "droop"}.get(pose.state, "rest")
+    if pose.state == "success":
+        return "up"
+    if pose.state == "error":
+        return "up" if pose.i % 2 == 0 else "rest"  # flailing
+    if pose.state == "sleeping":
+        return "droop"
+    return "rest"
+
+
+#: The loose bits around the brand mark.
+_GIGI_BITS: tuple[Mask, ...] = (
+    rect(6, 19, 7, 19),
+    rect(4, 26, 4, 27),
+    {(8, 35)},
+    rect(40, 21, 41, 22),
+    {(42, 28)},
+    rect(39, 36, 40, 36),
+)
+
+
+def _gigi_bits(f: Frame, pose: Pose) -> None:
+    """Idle bits twinkle one or two at a time; thinking and errors make them jitter."""
+    if pose.state in ("success", "sleeping"):
+        return
+    for k, bit in enumerate(_GIGI_BITS):
+        if pose.state in ("thinking", "error"):
+            f.paint(shifted(bit, (pose.i + 2 * k) % 3 - 1, 0), GIGI_BIT)
+        elif (pose.i + k) % 4 != 0:
+            f.paint(bit, GIGI_BIT)
+
+
+def gigi_pose(state: str, i: int) -> Pose:
+    pose = base_pose(state, i)
+    if state == "idle" and i < len(_GIGI_FLOAT):
+        return replace(pose, dy=_GIGI_FLOAT[i], stretch=0)
+    if state == "listening":
+        return replace(pose, dy=-1 - (1 if 1 <= i <= 3 else 0), stretch=0)
+    if state == "thinking":
+        return replace(pose, dy=_GIGI_THINK_FLOAT[i])
+    return pose
 
 
 def draw_gigi(f: Frame, pose: Pose) -> None:
-    phase = (pose.i // 2) % 2 if pose.state in ("idle", "sleeping") else pose.i % 2
     with f.offset(pose.dx, pose.dy):
+        body = _gigi_body(_gigi_hem_phase(pose))
+        f.part(body, shade(body, GIGI_BODY, rim=GIGI_WHITE))
         arm = _GIGI_ARMS[_gigi_arm_style(pose)]
-        f.part(arm, GIGI_GOLD)
-        f.part(mirrored(arm), GIGI_GOLD)
-        body = _gigi_body(phase)
-        glowing = pose.state == "thinking" and (pose.i // 2) % 2 == 1
-        f.part(body, shade(body, GIGI_BODY, rim=GIGI_GOLD if glowing else GIGI_RIM))
-        f.paint(ellipse(CX, 22, 10, 7), GIGI_PLATE)
-        f.paint({(14, 16), (15, 15), (16, 14), (17, 14), (18, 13)}, GIGI_GLOSS)
-        f.paint(rect(11, 31, 36, 31), GIGI_BELT)
+        for side in (set(arm), mirrored(arm)):
+            f.paint(outer_ring(side) - body, OUTLINE)
+            f.paint(side, GIGI_WHITE)
+        f.paint(rect(12, 26, 35, 26) | rect(12, 34, 35, 34), GIGI_BAND)
+        cheek = rect(13, 22, 15, 23)
+        f.paint(cheek | mirrored(cheek), GIGI_CHEEK)
         draw_eyes(f, pose.eyes, (17, 18), (27, 18), GIGI_EYES)
         _gigi_mouth(f, pose.mouth)
+        _gigi_bits(f, pose)
 
 
 def _gigi_mouth(f: Frame, style: str) -> None:
-    ring = from_rows(22, 34, (".##.", "#..#", ".##."))
-    if style == "rest":
-        f.paint(ring, GIGI_GOLD)
+    """The brand's small "o", white on the black body, between the two bands."""
+    if style in ("rest", "open"):
+        f.paint(from_rows(22, 28, (".##.", "#..#", "#..#", ".##.")), GIGI_WHITE)
     elif style == "closed":
-        f.paint(rect(22, 35, 25, 35), GIGI_GOLD)
+        f.paint(rect(22, 30, 25, 30), GIGI_WHITE)
     elif style == "half":
-        f.paint(ring, GIGI_GOLD)
-        f.paint(rect(23, 35, 24, 35), GIGI_PLATE)
-    elif style == "open":
-        mid = from_rows(22, 33, (".##.", "#..#", "#..#", ".##."))
-        f.paint(rect(23, 34, 24, 35), GIGI_PLATE)
-        f.paint(mid, GIGI_GOLD)
+        f.paint(from_rows(22, 29, (".##.", "#..#", ".##.")), GIGI_WHITE)
     elif style == "wide":
-        big = from_rows(21, 32, (".####.", "#....#", "#....#", "#....#", ".####."))
-        f.paint(rect(22, 33, 25, 35), GIGI_PLATE)
-        f.paint(big, GIGI_GOLD)
+        rows = (".####.", "#....#", "#....#", "#....#", ".####.")
+        f.paint(from_rows(21, 28, rows), GIGI_WHITE)
     elif style == "smile":
-        f.paint(from_rows(21, 34, ("#....#", ".####.")), GIGI_GOLD)
+        f.paint(from_rows(21, 29, ("#....#", ".####.")), GIGI_WHITE)
     elif style == "frown":
-        f.paint(from_rows(21, 34, (".####.", "#....#")), GIGI_GOLD)
+        f.paint(from_rows(21, 29, (".####.", "#....#")), GIGI_WHITE)
     else:
         raise KeyError(style)
 
 
+GIGI_ANCHORS = Anchors(
+    arcs_left=(9, 16),
+    arcs_right=(38, 16),
+    dots=(19, 4),
+    zzz=(37, 15),
+    bang=(40, 5),
+    sparkles=((6, 14, 1), (41, 11, 2), (5, 34, 3), (42, 32, 3)),
+)
+
 GIGI = PetDesign(
     id="gigi",
     name="Gigi",
-    description="The Jarvis ghost, eight bits tall, with glowing golden eyes.",
+    description="The Jarvis ghost, eight bits tall: it floats, glitches while it thinks.",
     draw=draw_gigi,
-    anchors=Anchors(
-        arcs_left=(10, 15),
-        arcs_right=(37, 15),
-        dots=(19, 5),
-        zzz=(37, 14),
-        bang=(40, 5),
-        sparkles=((6, 12, 1), (41, 9, 2), (5, 32, 3), (42, 30, 3)),
-    ),
+    pose=gigi_pose,
+    anchors=GIGI_ANCHORS,
+    # An empty row between the mouth and the lower band: the hop's squash and
+    # stretch repeat or drop it without touching the face.
+    waist=33,
+    fx={"success": lambda f, pose: fx_sparkles(f, pose.i, GIGI_ANCHORS.sparkles, GIGI_SPARK)},
 )
 
 
