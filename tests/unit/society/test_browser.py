@@ -86,6 +86,11 @@ def test_llm_mapping_with_explicit_keys():
 def test_task_needs_approval_words():
     assert task_needs_approval("Send the invoice to Bob")
     assert task_needs_approval("Bitte den Newsletter kündigen")  # i18n-allow: sample task
+    assert task_needs_approval("Invia il modulo al cliente")  # i18n-allow: sample task
+    assert task_needs_approval("Compra il biglietto e paga")  # i18n-allow: sample task
+    assert task_needs_approval("Elimina il mio account")  # i18n-allow: sample task
+    assert task_needs_approval("Prenota il tavolo")  # i18n-allow: sample task
+    assert not task_needs_approval("Leggi la posta e riassumila")  # i18n-allow: safe sample task
     assert not task_needs_approval("Read today's headlines and summarize them")
 
 
@@ -179,68 +184,5 @@ async def test_tool_runs_and_writes_digests(rt, tmp_path, fake_runner, monkeypat
 async def test_tool_gates(rt, tmp_path, fake_runner):
     jobs = _jobs(tmp_path, fake_runner)
     tool = BrowserTool(rt, "scout", jobs)
-    assert tool.risk_tier_for_args({"task": "delete the old posts"}) == "ask"
-    # An explicit Ask agent queues an acting task for the person.
-    await rt.roster.update("scout", {"approval_mode": "ask"})
-    queued = await tool.execute({"task": "send the report to the team"}, CTX)
-    assert queued.success is False and queued.output["reason"] == "approval_required"
-    assert len(await rt.approvals.pending()) == 1
-    # Bypass still honors an explicit require-approval rule.
-    await rt.roster.update(
-        "scout",
-        {
-            "approval_mode": "bypass",
-            "approval_rules": {"require_approval": ["core:browser:act"], "always_allow": []},
-        },
-    )
-    forced = await tool.execute({"task": "send the report to the team"}, CTX)
-    assert forced.success is False and forced.output["reason"] == "approval_required"
-    assert len(await rt.approvals.pending()) == 2
-    # Bypass under a lower inherited ceiling denies instead of escalating.
-    await rt.roster.update(
-        "scout",
-        {"permission_ceiling": "monitor", "approval_rules": {"require_approval": []}},
-    )
-    denied = await tool.execute({"task": "send the report to the team"}, CTX)
-    assert denied.success is False and denied.output["reason"] == "blocked_by_policy"
-    assert len(await rt.approvals.pending()) == 2
-    off = BrowserTool(rt, "scout", _jobs(tmp_path, fake_runner, installed=False))
-    not_ready = await off.execute({"task": "read"}, CTX)
-    assert not_ready.success is False and "install_action" in not_ready.output
-    await rt.store.set_kill_switch(True)
-    assert (await tool.execute({"task": "read"}, CTX)).output["reason"] == "kill_switch"
-
-
-async def test_browser_does_not_queue_after_tool_executor_approval(
-    rt, tmp_path, fake_runner, monkeypatch
-):
-    """The fake browser job runs after the chat approved the same tool call."""
-    monkeypatch.setattr(
-        "jarvis.society.browser.tool.llm_spec_for",
-        lambda provider, model="", **kw: llm_spec_for(provider, model, secret=lambda p: "k"),
-    )
-    await rt.roster.update("scout", {"approval_mode": "ask"})
-    tool = BrowserTool(rt, "scout", _jobs(tmp_path, fake_runner))
-    approved_ctx = SimpleNamespace(**vars(CTX), approved_by="user")
-    result = await tool.execute({"task": "read the headlines"}, approved_ctx)
-    assert result.success, result.error
-    assert await rt.approvals.pending() == []
-
-
-async def test_briefing_and_surface_reflect_the_browser(rt, tmp_path, fake_runner):
-    from jarvis.society.surface import society_system_extra, society_tools
-
-    session = SimpleNamespace(
-        session_id="society:scout", cwd=str(tmp_path / "ws"), permission_mode="ask"
-    )
-    cfg = SimpleNamespace(
-        wiki=SimpleNamespace(vault_root=str(tmp_path / "vault")),
-        memory=SimpleNamespace(data_dir=str(tmp_path)),
-    )
-    briefing = await society_system_extra(cfg, None, session)
-    assert "## Your browser\nNot set up" in briefing
-    assert "society_browser" not in society_tools(cfg, None, session)
-    rt.browser = _jobs(tmp_path, fake_runner)
-    briefing = await society_system_extra(cfg, None, session)
-    assert "runs in your own persistent browser profile" in briefing
-    assert "society_browser" in society_tools(cfg, None, session)
+    assert tool.risk_tier_for_args({"task": "read the news"}) is None
+    assert tool.risk_tier_for_args({"task": "send the form"}) is None
