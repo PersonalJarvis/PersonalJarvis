@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 import { PaneResizer } from "@/components/layout/PaneResizer";
 import { treeLayout, treeLeaves, type LayoutNode, type PaneSeam } from "./treeLayout";
 import { useTreeSizes } from "./useTreeSizes";
+import { PANE_COMMAND_EVENT, neighborInDirection, type PaneCommandDetail } from "./ideHotkeys";
 import { DOCK_LABELS, GRID_LIMIT_HINT, MAX_GRID_COLUMNS, MAX_GRID_ROWS, MAX_WORKSPACE_PANES, dockPosition, fitsWorkspace, layoutSpan, paneStyle, previewDock, workspaceLayout } from "./workspaceDocking";
 
 const GAP = 8;
@@ -335,6 +336,44 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
     const inFlight = sizes.liveTree.current;
     if (inFlight) paintDragged(inFlight);
   });
+  // The IDE's key menu (see ./ideHotkeys) acts on the selected pane of the
+  // workspace on screen. The handler is rebuilt each render so it reads the
+  // current layout; the listener itself is added once.
+  const paneCommand = useRef<(detail: PaneCommandDetail) => void>(() => {});
+  paneCommand.current = ({ pane, command }) => {
+    const index = tiles.findIndex((terminal) => terminal.name === pane);
+    const terminal = tiles[index];
+    if (!terminal) return;
+    const id = idOf(terminal);
+    const focusPane = (target: TerminalState) => {
+      onSelect(target.name);
+      const typeInto = () => paneNodes.current.get(idOf(target))?.querySelector<HTMLElement>("textarea")?.focus();
+      requestAnimationFrame(typeInto);
+    };
+    if (command.kind === "focus" || command.kind === "swap") {
+      const neighbor = neighborInDirection(layout.boxes, index, command.direction);
+      const target = neighbor === null ? undefined : tiles[neighbor];
+      if (!target) { setAnnouncement(`No pane ${command.direction === "up" ? "above" : command.direction === "down" ? "below" : `to the ${command.direction}`} of ${terminal.name}.`); return; }
+      if (command.kind === "swap") { void move(id, idOf(target)); return; }
+      setMaximized(null);
+      focusPane(target);
+      return;
+    }
+    if (command.kind === "maximize") { setMaximized((current) => current === id ? null : id); focusPane(terminal); return; }
+    if (command.kind === "fork") {
+      if (terminal.accepts_prompts !== false) setForking({ name: terminal.name, agent: terminal.agent, displayName: terminal.display_name, workspaceId: session.id });
+      return;
+    }
+    if (command.kind === "rename") void rename(terminal, command.name);
+  };
+  useEffect(() => {
+    const onCommand = (event: Event) => {
+      const detail = (event as CustomEvent<PaneCommandDetail>).detail;
+      if (detail?.workspaceId === latest.current.session.id) paneCommand.current(detail);
+    };
+    window.addEventListener(PANE_COMMAND_EVENT, onCommand);
+    return () => window.removeEventListener(PANE_COMMAND_EVENT, onCommand);
+  }, []);
   const showSeams = !visibleMaximized && !drag && !saving && !disabled && !optimistic && tiles.length > 1;
   const dragged = drag ? session.terminals.find((terminal) => idOf(terminal) === drag.id) : null;
 
@@ -361,22 +400,9 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
             if (!event.altKey || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
             event.preventDefault();
             if (visibleMaximized) return;
-            const box = layout.boxes[index];
-            if (!box) return;
-            const horizontal = event.key === "ArrowLeft" || event.key === "ArrowRight";
-            const sign = event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 1;
-            const center = horizontal ? box.x + box.w / 2 : box.y + box.h / 2;
-            const crossCenter = horizontal ? box.y + box.h / 2 : box.x + box.w / 2;
-            const candidates = tiles.map((entry, at) => ({ entry, box: layout.boxes[at] })).filter((candidate) => candidate.box && idOf(candidate.entry) !== id)
-              .map((candidate) => ({ ...candidate,
-                distance: ((horizontal ? candidate.box!.x + candidate.box!.w / 2 : candidate.box!.y + candidate.box!.h / 2) - center) * sign,
-                crossDistance: Math.abs((horizontal ? candidate.box!.y + candidate.box!.h / 2 : candidate.box!.x + candidate.box!.w / 2) - crossCenter),
-                overlap: horizontal
-                  ? Math.min(box.y + box.h, candidate.box!.y + candidate.box!.h) - Math.max(box.y, candidate.box!.y)
-                  : Math.min(box.x + box.w, candidate.box!.x + candidate.box!.w) - Math.max(box.x, candidate.box!.x),
-              }))
-              .filter((candidate) => candidate.distance > 0.001 && candidate.overlap > 0.001).sort((a, b) => a.distance - b.distance || a.crossDistance - b.crossDistance);
-            if (candidates[0]) void move(id, idOf(candidates[0].entry));
+            const direction = ({ ArrowLeft: "left", ArrowRight: "right", ArrowUp: "up", ArrowDown: "down" } as const)[event.key as "ArrowLeft"];
+            const neighbor = neighborInDirection(layout.boxes, index, direction);
+            if (neighbor !== null && tiles[neighbor]) void move(id, idOf(tiles[neighbor]));
           }}
           style={paneStyle(visibleMaximized === id ? { x: 0, y: 0, w: 1, h: 1 } : layout.boxes[index]!)}
           className={cn("min-h-0 min-w-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
