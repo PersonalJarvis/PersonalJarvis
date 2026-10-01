@@ -2554,6 +2554,15 @@ class WebServer:
         callable (the fast-boot bootstrap in launcher.py serves a holding app on
         the port and delegates to ``self.app`` once this init chain completes).
         """
+        # Just-in-time permissions: the service publishes PermissionNeeded /
+        # PermissionResolved through this bus, from any thread, onto this loop.
+        # FIRST, so a consumer that asks while the rest of start() runs is heard.
+        # It stores two references and probes nothing (AP-26); the desktop app
+        # already did the same right after the ctor, before the speech task.
+        from jarvis.platform.permission_service import attach_bus as _attach_permission_bus
+
+        _attach_permission_bus(self.bus, asyncio.get_running_loop())
+
         import uvicorn
 
         # Boot profiling (opt-in via JARVIS_BOOT_PROFILE=1; zero behavior change

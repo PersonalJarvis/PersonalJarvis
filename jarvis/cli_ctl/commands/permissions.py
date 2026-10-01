@@ -78,9 +78,21 @@ def _activate_macos_app_for_tcc() -> None:
 
 
 @app.command()
-def status() -> None:
-    """Show permission and feature readiness without caching native state."""
-    invoke.run("GET", "/api/permissions/status")
+def status(
+    include_automation: Annotated[
+        bool,
+        typer.Option(
+            "--include-automation",
+            help="Also read the Automation row (asks a running Music or Spotify).",
+        ),
+    ] = False,
+) -> None:
+    """Show each macOS privacy permission and what is waiting on one. Never prompts."""
+    invoke.run(
+        "GET",
+        "/api/permissions/status",
+        params={"include": "automation"} if include_automation else None,
+    )
 
 
 @app.command()
@@ -89,17 +101,29 @@ def request(
         PermissionId,
         typer.Argument(help="Permission to request from macOS."),
     ],
+    allow_outside_app: Annotated[
+        bool,
+        typer.Option(
+            "--allow-outside-app",
+            help=(
+                "Jarvis is not the installed app: macOS records the grant for the app "
+                "that started it (a terminal, an IDE). Pass this only to confirm that."
+            ),
+        ),
+    ] = False,
     yes: bool = options.yes_opt(),
     dry_run: bool = options.dry_opt(),
 ) -> None:
-    """Show the native macOS prompt for one permission."""
+    """Ask macOS for one permission through the same service the app uses."""
     invoke.run(
         "POST",
         f"/api/permissions/{permission_id.value}/request",
+        body={"allow_outside_app": True} if allow_outside_app else None,
         assume_yes=yes,
         dry_run=dry_run,
         dangerous=True,
-        before_request=_activate_macos_app_for_tcc,
+        # The installed app is the grantee unless the caller said otherwise.
+        before_request=None if allow_outside_app else _activate_macos_app_for_tcc,
     )
 
 

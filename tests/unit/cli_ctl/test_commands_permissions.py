@@ -43,6 +43,61 @@ def test_request_with_yes_uses_permission_path(monkeypatch, capture_api):
     assert call["path"] == "/api/permissions/screen_recording/request"
 
 
+def test_status_reads_the_automation_row_only_on_request(capture_api):
+    plain = runner.invoke(app, ["permissions", "status"])
+    with_automation = runner.invoke(app, ["permissions", "status", "--include-automation"])
+
+    assert plain.exit_code == 0 and with_automation.exit_code == 0
+    first, second = capture_api["calls"][-2:]
+    assert first["path"] == second["path"] == "/api/permissions/status"
+    assert first["query"] == {}
+    assert second["query"] == {"include": "automation"}
+
+
+def test_request_sends_no_body_unless_the_outside_app_flag_is_given(monkeypatch, capture_api):
+    monkeypatch.setattr(
+        "jarvis.cli_ctl.commands.permissions._activate_macos_app_for_tcc", lambda: None
+    )
+
+    result = runner.invoke(app, ["permissions", "request", "microphone", "--yes"])
+
+    assert result.exit_code == 0
+    assert capture_api["calls"][-1]["body"] is None  # the app is the grantee unless told otherwise
+
+
+def test_request_outside_app_confirmation_is_sent_and_skips_the_installed_app_activation(
+    monkeypatch, capture_api
+):
+    activations: list[str] = []
+    monkeypatch.setattr(
+        "jarvis.cli_ctl.commands.permissions._activate_macos_app_for_tcc",
+        lambda: activations.append("activate"),
+    )
+
+    result = runner.invoke(
+        app, ["permissions", "request", "microphone", "--allow-outside-app", "--yes"]
+    )
+
+    assert result.exit_code == 0
+    call = capture_api["calls"][-1]
+    assert call["path"] == "/api/permissions/microphone/request"
+    assert call["body"] == {"allow_outside_app": True}
+    # The grant goes to the app that started Jarvis: foregrounding the installed
+    # bundle would be pointless, and without one it would abort the command.
+    assert activations == []
+
+
+def test_request_outside_app_dry_run_shows_the_consent_flag_and_sends_nothing(capture_api):
+    result = runner.invoke(
+        app,
+        ["--json", "permissions", "request", "microphone", "--allow-outside-app", "--dry-run"],
+    )
+
+    assert result.exit_code == 0
+    assert capture_api["calls"] == []
+    assert "allow_outside_app" in result.stdout
+
+
 def test_request_activates_app_after_confirmation(monkeypatch, capture_api):
     calls: list[str] = []
     monkeypatch.setattr(

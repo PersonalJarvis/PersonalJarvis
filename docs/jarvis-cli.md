@@ -153,6 +153,31 @@ while a configured role still points at it, unless `--reassign` names another
 installed model — then the roles are rewritten first, and the delete runs only
 on a valid config. `--json` before the group prints the untouched API payload.
 
+## macOS privacy permissions from the terminal
+
+Personal Jarvis asks macOS for a permission at the moment a feature first needs
+it, never at launch. The `permissions` group is the terminal view of that:
+
+```bash
+jarvis permissions status                          # read only: never prompts, never blocks
+jarvis permissions status --include-automation     # also read Music/Spotify (they must be running)
+jarvis permissions request microphone --yes        # ask now, through the same service the app uses
+jarvis permissions open-settings microphone --yes  # open the matching System Settings pane
+```
+
+`status` prints each permission (`granted`, `not_determined`, `denied`, `restricted`,
+`not_required` off macOS, ...) and `needed`, the features currently waiting on one.
+`request` answers at once with an outcome (`granted`, `pending` while macOS may be
+showing its dialog, `needs_settings`, `denied`, `unavailable`); the person's answer
+arrives afterwards, so run `status` again. A denial is final from macOS's side: it
+does not ask a second time, and `request` does not pretend otherwise. When Jarvis
+is not running as the installed app, `request` asks nothing and says so; confirm
+with `--allow-outside-app` only if the grant may go to the app that started Jarvis
+(a terminal, an IDE). An AI agent driving the CLI must never answer a macOS
+dialog on the user's behalf. Both `request` and `open-settings` are rate limited by
+the server (HTTP 429). Off macOS every permission reads `not_required` and
+`request` does nothing.
+
 ## Safety model
 
 The CLI is agent-first, so it stays out of your way for safe work and only gates

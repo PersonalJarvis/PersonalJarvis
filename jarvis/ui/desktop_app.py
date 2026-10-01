@@ -2013,6 +2013,15 @@ class DesktopApp:
         self._server = server
         _db_mark("webserver_ctor")
 
+        # Just-in-time permissions: hand the service the bus and this loop BEFORE
+        # the speech task below can ask for the microphone. WebServer.start() does
+        # the same on its first line, but it runs behind the wake-model gate, i.e.
+        # AFTER _start_speech_and_orb. Two references are stored, nothing is probed
+        # and no OS dialog can follow from here (AP-26; design 3.6).
+        from jarvis.platform.permission_service import attach_bus as _attach_permission_bus
+
+        _attach_permission_bus(server.bus, loop)
+
         # Hang the core state off the loop — thread-local, referenced only here.
         supervisor = Supervisor(bus=server.bus)
         # Persist text chats to data/chats.db (next to sessions.db) so the Chats
