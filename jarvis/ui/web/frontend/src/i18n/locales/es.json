@@ -165,6 +165,7 @@
     "group_system": "Sistema",
     "agent_instructions": "{name}.md",
     "appshots": "Appshots",
+    "shortcuts": "Atajos de teclado",
     "pets": "Mis mascotas",
     "jarvis_actions": "Acciones de Jarvis",
     "marketplace": "Marketplace",
@@ -1567,6 +1568,24 @@
       "error": "error"
     }
   },
+  "shortcuts_view": {
+    "title": "Atajos de teclado",
+    "description": "Todas las combinaciones de teclas que Jarvis escucha, en un solo lugar. Pulsa una combinación para ver qué hace.",
+    "tester_title": "Prueba una combinación",
+    "tester_hint": "Pulsa cualquier tecla: aparece aquí junto con lo que hace en Jarvis.",
+    "tester_modifiers": "Mantén pulsado y añade una tecla.",
+    "tester_free": "Libre: nada en Jarvis usa esta combinación.",
+    "section_app": "En la app",
+    "section_app_hint": "Funciona mientras la ventana de Jarvis está delante.",
+    "section_calls": "Llamadas",
+    "section_calls_hint": "Empieza y termina una llamada de voz desde cualquier app de este ordenador.",
+    "section_dictation": "Dictado",
+    "section_dictation_hint": "Habla en la ventana que esté delante. Se cambia en la sección de voz.",
+    "edit_in_voice": "Cambiar",
+    "section_workspace": "Terminales y espacio de trabajo",
+    "section_workspace_hint": "Teclas fijas para los terminales de agentes y esta app.",
+    "footer": "Las teclas de llamada, colgar y dictado funcionan en todo este ordenador. El cambio rápido y las teclas del espacio de trabajo solo dentro de la ventana de Jarvis."
+  },
   "shortcut_overlay": {
     "title": "Atajos de teclado",
     "description": "Pulsa ? en cualquier lugar para abrir esta lista. Las teclas de voz se configuran en Ajustes.",
@@ -1574,7 +1593,7 @@
     "or": "o",
     "unassigned": "sin asignar",
     "off": "desactivado",
-    "footer": "Cambia las teclas de voz en Ajustes → Teclado.",
+    "footer": "Cámbialos en Ajustes → Atajos de teclado.",
     "area": {
       "voice": "Voz",
       "workspace": "Espacio de trabajo"

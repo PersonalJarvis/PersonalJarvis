@@ -75,6 +75,8 @@ KNOWN: frozenset[str] = frozenset(
         "marketplace",
         # My Pets: the desktop pet, its look, and the pets the user created.
         "pets",
+        # Keyboard shortcuts: every shortcut in one place, with a key tester.
+        "shortcuts",
     }
 )
 
@@ -247,6 +249,17 @@ _ALIASES: dict[str, str] = {
     "diktat-tastenkürzel": "voice-shortcuts",  # i18n-allow: input vocab
     "diktat-tasten": "voice-shortcuts",  # i18n-allow: input vocab
     "atajos de dictado": "voice-shortcuts",  # i18n-allow: input vocab
+    # The Keyboard shortcuts page (Settings hub). The dictation-only words
+    # above keep landing on the voice tab.
+    "keyboard shortcuts": "shortcuts",
+    "shortcuts": "shortcuts",
+    "hotkeys": "shortcuts",
+    "keybinds": "shortcuts",
+    "key bindings": "shortcuts",
+    "tastenkürzel": "shortcuts",  # i18n-allow: input vocab
+    "tastenkombinationen": "shortcuts",  # i18n-allow: input vocab
+    "atajos de teclado": "shortcuts",  # i18n-allow: input vocab
+    "atajos": "shortcuts",  # i18n-allow: input vocab
     "dictation language": "voice-language",
     "diktat-sprache": "voice-language",  # i18n-allow: input vocab
     "idioma de dictado": "voice-language",  # i18n-allow: input vocab

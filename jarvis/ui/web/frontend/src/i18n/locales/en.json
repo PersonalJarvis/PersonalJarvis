@@ -165,6 +165,7 @@
     "group_system": "System",
     "agent_instructions": "{name}.md",
     "appshots": "Appshots",
+    "shortcuts": "Keyboard shortcuts",
     "pets": "My Pets",
     "jarvis_actions": "Jarvis actions",
     "marketplace": "Marketplace",
@@ -1600,6 +1601,24 @@
       "error": "error"
     }
   },
+  "shortcuts_view": {
+    "title": "Keyboard shortcuts",
+    "description": "Every key combination Jarvis listens for, in one place. Press any combination to see what it does.",
+    "tester_title": "Try a combination",
+    "tester_hint": "Press any keys — they show up here with what they do in Jarvis.",
+    "tester_modifiers": "Keep holding and add a key.",
+    "tester_free": "Free — nothing in Jarvis uses this combination.",
+    "section_app": "In the app",
+    "section_app_hint": "Works while the Jarvis window is in front.",
+    "section_calls": "Calls",
+    "section_calls_hint": "Start and end a voice call — from any app on this computer.",
+    "section_dictation": "Dictation",
+    "section_dictation_hint": "Speak into whatever window is in front. Changed in the voice section.",
+    "edit_in_voice": "Change",
+    "section_workspace": "Terminals and workspace",
+    "section_workspace_hint": "Fixed keys for the agent terminals and this app.",
+    "footer": "Call, hang-up and dictation keys work everywhere on this computer. The quick switcher and the workspace keys only work inside the Jarvis window."
+  },
   "shortcut_overlay": {
     "title": "Keyboard shortcuts",
     "description": "Press ? anywhere to open this list. Voice keys are configurable in Settings.",
@@ -1607,7 +1626,7 @@
     "or": "or",
     "unassigned": "not assigned",
     "off": "off",
-    "footer": "Rebind the voice keys under Settings → Keyboard.",
+    "footer": "Change them under Settings → Keyboard shortcuts.",
     "area": {
       "voice": "Voice",
       "workspace": "Workspace"

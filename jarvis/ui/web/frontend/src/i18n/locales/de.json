@@ -165,6 +165,7 @@
     "group_system": "System",
     "agent_instructions": "{name}.md",
     "appshots": "Appshots",
+    "shortcuts": "Tastenkürzel",
     "pets": "Meine Pets",
     "jarvis_actions": "Jarvis-Aktionen",
     "marketplace": "Marketplace",
@@ -1567,6 +1568,24 @@
       "error": "fehler"
     }
   },
+  "shortcuts_view": {
+    "title": "Tastenkürzel",
+    "description": "Alle Tastenkombinationen, auf die Jarvis hört, an einem Ort. Drück eine Kombination und sieh, was sie tut.",
+    "tester_title": "Kombination ausprobieren",
+    "tester_hint": "Drück beliebige Tasten — sie erscheinen hier, zusammen mit dem, was sie in Jarvis tun.",
+    "tester_modifiers": "Halten und eine Taste dazunehmen.",
+    "tester_free": "Frei — nichts in Jarvis nutzt diese Kombination.",
+    "section_app": "In der App",
+    "section_app_hint": "Funktioniert, solange das Jarvis-Fenster vorne ist.",
+    "section_calls": "Anrufe",
+    "section_calls_hint": "Sprachanruf starten und beenden — aus jedem Programm auf diesem Computer.",
+    "section_dictation": "Diktat",
+    "section_dictation_hint": "In das Fenster sprechen, das gerade vorne ist. Geändert wird es im Sprachbereich.",
+    "edit_in_voice": "Ändern",
+    "section_workspace": "Terminals und Arbeitsbereich",
+    "section_workspace_hint": "Feste Tasten für die Agenten-Terminals und diese App.",
+    "footer": "Anruf-, Auflege- und Diktat-Tasten funktionieren überall auf diesem Computer. Die Schnellsuche und die Arbeitsbereich-Tasten nur im Jarvis-Fenster."
+  },
   "shortcut_overlay": {
     "title": "Tastenkürzel",
     "description": "Drücke überall ?, um diese Liste zu öffnen. Die Sprachtasten lassen sich in den Einstellungen ändern.",
@@ -1574,7 +1593,7 @@
     "or": "oder",
     "unassigned": "nicht belegt",
     "off": "aus",
-    "footer": "Sprachtasten änderst du unter Einstellungen → Tastatur.",
+    "footer": "Ändern kannst du sie unter Einstellungen → Tastenkürzel.",
     "area": {
       "voice": "Sprache",
       "workspace": "Arbeitsbereich"
