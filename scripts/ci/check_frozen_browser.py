@@ -2,7 +2,9 @@
 
 Run after packaging, with --executable pointing at the built launcher. Two
 headless boots share a fresh scratch profile; no source imports, account keys,
-desktop input, or existing user state are passed to the child application.
+desktop input, or existing user state are passed to the child application. On
+macOS each boot also asks the running app for its permission status, which is
+the only way to see whether its pyobjc frameworks loaded (BUG-222).
 """
 
 from __future__ import annotations
@@ -31,6 +33,7 @@ sys.path.insert(0, str(ROOT))
 from jarvis.core.config_writer import _WRITE_LOCK, _atomic_write  # noqa: E402
 from jarvis.core.instance import DEV_PORT_OFFSET  # noqa: E402
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS, wait_procs  # noqa: E402
+from jarvis.platform.permissions import ACCEPTED_BUNDLE_IDS  # noqa: E402
 
 
 def isolated_env(profile: Path, port: int, key: str) -> dict[str, str]:
@@ -118,6 +121,42 @@ def request_json(port: int, path: str, key: str) -> dict:
         connection.close()
 
 
+def check_macos_permissions(port: int, key: str) -> dict:
+    """On macOS, prove the running app can read its own microphone permission.
+
+    The permission port loads its pyobjc frameworks by NAME, which a freezer
+    cannot follow, and reports a framework that did not load as "unavailable"
+    without any error: the v2.5.0 .dmg shipped without AVFoundation and could
+    never read its microphone permission (BUG-222). Whether the module is in
+    the archive is checked statically by check_frozen_macos_app.py; this asks
+    the app itself, which also catches a framework whose own dependencies were
+    left out. Elsewhere there is nothing to ask.
+    """
+    if sys.platform != "darwin":
+        return {}
+    try:
+        snapshot = request_json(port, "/api/permissions/status", key)
+    except ProbeHTTPError as exc:
+        if exc.code == 404:
+            # Not "still starting": waiting for the deadline would only hide it.
+            raise RuntimeError("Frozen app does not serve /api/permissions/status") from None
+        raise
+    rows = [row for row in snapshot.get("permissions", []) if isinstance(row, dict)]
+    microphone = next((row.get("status") for row in rows if row.get("id") == "microphone"), None)
+    if microphone in (None, "unavailable"):
+        raise RuntimeError(
+            f"Frozen app cannot read its microphone permission (status {microphone!r}): "
+            "the pyobjc AVFoundation framework did not load"
+        )
+    bundle_id = (snapshot.get("app_identity") or {}).get("bundle_id")
+    if bundle_id not in ACCEPTED_BUNDLE_IDS:
+        raise RuntimeError(
+            f"Frozen app runs as {bundle_id!r}, which the permission port does not accept "
+            f"(expected one of {', '.join(ACCEPTED_BUNDLE_IDS)})"
+        )
+    return {"microphone_permission": microphone, "bundle_id": bundle_id}
+
+
 def capture_frame(port: int, key: str, output: Path) -> dict:
     started = time.monotonic()
     with connect(
@@ -176,6 +215,8 @@ def boot(executable: Path, profile: Path, output: Path, key: str, timeout: float
                         if health.get("instance") != "dev":
                             raise RuntimeError("Frozen probe reached the wrong app instance")
                         report["healthy_seconds"] = round(time.monotonic() - started, 3)
+                    if "permissions" not in report and "healthy_seconds" in report:
+                        report["permissions"] = check_macos_permissions(port, key)
                     status = request_json(port, "/api/society/browser/status", key)
                 except ProbeHTTPError as exc:
                     if exc.code not in {503, 404}:
