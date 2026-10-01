@@ -174,7 +174,13 @@ def dispatch(surface: Any, msg: dict[str, Any]) -> bool:
     elif op == "set_pet_outcome":
         _call(surface, "set_pet_outcome", str(msg.get("kind", "")))
     elif op == "show_status":
-        _call(surface, "show_status", str(msg.get("header", "")), str(msg.get("line", "")))
+        # "header"/"line" are the keys an older parent still sends.
+        title = msg.get("title", msg.get("header", ""))
+        detail = msg.get("detail", msg.get("line", ""))
+        _call(surface, "show_status", str(title or ""), str(detail or ""))
+    elif op == "clear_status":
+        linger = msg.get("linger_s")
+        _call(surface, "clear_status", 1.5 if linger is None else float(linger))
     elif op == "set_speaker_muted":
         _call(surface, "set_speaker_muted", bool(msg.get("muted", False)))
     elif op == "set_visible":

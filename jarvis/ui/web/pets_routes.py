@@ -227,6 +227,9 @@ def _pet_json(manifest: Any) -> dict[str, Any]:
             "frames": spec.frames,
             "fps": spec.fps,
             "loop": spec.loop,
+            # 0 / 1 when the row has no accent (every cell on every loop).
+            "accent_frames": int(getattr(spec, "accent_frames", 0)),
+            "accent_every": int(getattr(spec, "accent_every", 1)),
         }
     return {
         "id": manifest.id,

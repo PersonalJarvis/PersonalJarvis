@@ -104,3 +104,16 @@ def test_template_cells_read_as_empty() -> None:
     with Image.open(PACKAGE_DIR / "template" / "template.png") as image:
         alpha = image.convert("RGBA").getchannel("A")
     assert max(alpha.tobytes()) < 128
+
+
+@pytest.mark.parametrize("pet_id", EXPECTED_PETS)
+def test_the_renderer_conventions_hold(pet_id: str) -> None:
+    """Idle blinks on its last cell every few breaths; talking opens up a row."""
+    pack = load_pet(builtin_root() / pet_id, builtin=True)
+    idle = pack.manifest.animations["idle"]
+    assert idle.loop and idle.accent_frames == 1 and idle.accent_every >= 2
+    assert pack.manifest.animations["talking"].frames == 4
+    # Closed to widest: every talking frame differs from the one before it.
+    talking = pack.frames["talking"]
+    for before, after in zip(talking, talking[1:], strict=False):
+        assert before.tobytes() != after.tobytes()

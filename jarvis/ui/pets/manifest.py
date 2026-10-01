@@ -41,6 +41,9 @@ MAX_NAME_CHARS = 40
 MAX_DESCRIPTION_CHARS = 140
 MIN_FPS = 1
 MAX_FPS = 12
+#: Upper bound of ``accent_every``: an accent (a blink) at least once per this
+#: many loops, so it never disappears for good.
+MAX_ACCENT_EVERY = 12
 
 #: Largest sheet edge in pixels, and the largest sheet file in bytes.
 MAX_SHEET_EDGE = 512
@@ -53,12 +56,22 @@ class PetManifestError(ValueError):
 
 @dataclass(frozen=True)
 class AnimationSpec:
-    """One state's animation: a row of ``frames`` cells played at ``fps``."""
+    """One state's animation: a row of ``frames`` cells played at ``fps``.
+
+    ``accent_frames`` (optional) marks the LAST cells of a looping row as an
+    accent — a blink, a wink — that plays only once every ``accent_every``
+    loops instead of on every pass. Without it an eight-frame idle at six
+    frames per second would blink every 1.3 s; with ``accent_frames: 1`` and
+    ``accent_every: 3`` the pet breathes on the first seven cells and blinks
+    every few seconds. ``0`` (the default) plays every cell on every loop.
+    """
 
     row: int
     frames: int
     fps: int
     loop: bool
+    accent_frames: int = 0
+    accent_every: int = 1
 
 
 @dataclass(frozen=True)
@@ -106,16 +119,20 @@ class PetManifest:
             "frame_size": self.frame_size,
             "sheet": self.sheet,
             "animations": {
-                state: {
-                    "row": spec.row,
-                    "frames": spec.frames,
-                    "fps": spec.fps,
-                    "loop": spec.loop,
-                }
+                state: spec_json(spec)
                 for state in PET_STATES
                 if (spec := self.animations.get(state)) is not None
             },
         }
+
+
+def spec_json(spec: AnimationSpec) -> dict:
+    """One animation as it is written to ``pet.json`` (accent keys only when used)."""
+    out: dict = {"row": spec.row, "frames": spec.frames, "fps": spec.fps, "loop": spec.loop}
+    if spec.accent_frames > 0:
+        out["accent_frames"] = spec.accent_frames
+        out["accent_every"] = spec.accent_every
+    return out
 
 
 def _int_field(data: Mapping, key: str, where: str) -> int:
@@ -142,7 +159,29 @@ def _parse_animation(state: str, raw: object) -> AnimationSpec:
     loop = raw.get("loop", state not in ONE_SHOT_STATES)
     if not isinstance(loop, bool):
         raise PetManifestError(f"{where}: 'loop' must be true or false.")
-    return AnimationSpec(row=row, frames=frames, fps=fps, loop=loop)
+    accent_frames = 0
+    accent_every = 1
+    if "accent_frames" in raw or "accent_every" in raw:
+        accent_frames = _int_field(raw, "accent_frames", where)
+        accent_every = _int_field(raw, "accent_every", where)
+        if not 0 <= accent_frames < frames:
+            raise PetManifestError(
+                f"{where}: 'accent_frames' must leave at least one ordinary frame."
+            )
+        if not 1 <= accent_every <= MAX_ACCENT_EVERY:
+            raise PetManifestError(
+                f"{where}: 'accent_every' must be between 1 and {MAX_ACCENT_EVERY}."
+            )
+        if not loop and accent_frames:
+            raise PetManifestError(f"{where}: an accent needs a looping animation.")
+    return AnimationSpec(
+        row=row,
+        frames=frames,
+        fps=fps,
+        loop=loop,
+        accent_frames=accent_frames,
+        accent_every=accent_every,
+    )
 
 
 def parse_manifest(data: object, *, builtin: bool) -> PetManifest:

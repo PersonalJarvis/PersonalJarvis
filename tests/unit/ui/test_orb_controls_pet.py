@@ -245,3 +245,48 @@ def test_concurrent_toggles_never_lose_the_remembered_volume(pipeline: _Pipeline
     for worker in workers:
         worker.join(timeout=10.0)
     assert pipeline._volume == pytest.approx(0.7)
+
+
+# --- the Codex-like look: filled discs, a glossy orb, proportions --------------------
+
+
+def test_the_pen_and_the_pill_are_filled_without_a_ring() -> None:
+    frame = controls.render_pet_strip(controls.PetStripState(), 1.0)
+    layout = controls.pet_strip_layout(1.0)
+    pcx, pcy, pr = layout.pen
+    # Just inside the disc's edge is the fill itself, not a lighter border.
+    edge = frame.getpixel((int(pcx), int(pcy - pr + 2)))
+    assert edge == controls.PET_FILL
+    x0, y0, x1, y1 = layout.pill
+    assert frame.getpixel(((x0 + x1) // 2, y0 + 1)) == controls.PET_FILL
+
+
+def test_the_orb_fills_most_of_the_pill_height() -> None:
+    frame = controls.render_pet_strip(controls.PetStripState(), 2.0)
+    layout = controls.pet_strip_layout(2.0)
+    action, sx0, sx1 = layout.slots[1]
+    assert action == "orb"
+    x0, y0, x1, y1 = layout.pill
+    cx = (sx0 + sx1) // 2
+    column = [frame.getpixel((cx, y)) for y in range(y0, y1)]
+    blue = [px for px in column if px[2] > 150 and px[2] > px[0] + 40]
+    share = len(blue) / (y1 - y0)
+    assert 0.7 <= share <= 0.9
+
+
+def test_the_strip_is_about_a_third_of_the_figure_tall() -> None:
+    from ui.orb.pet_renderer import PET_TARGET_FIGURE_PX
+
+    _w, h = controls.pet_strip_size(1.0)
+    assert 0.25 <= h / PET_TARGET_FIGURE_PX <= 0.35
+
+
+def test_hover_lifts_a_round_patch_not_the_whole_slot() -> None:
+    plain = controls.render_pet_strip(controls.PetStripState(), 1.0)
+    hovered = controls.render_pet_strip(controls.PetStripState(hovered="speaker"), 1.0)
+    layout = controls.pet_strip_layout(1.0)
+    _action, sx0, sx1 = layout.slots[2]
+    _x0, y0, _x1, _y1 = layout.pill
+    # The slot's top corner stays the plain fill; its middle edge lightens.
+    assert hovered.getpixel((sx0 + 1, y0 + 1)) == plain.getpixel((sx0 + 1, y0 + 1))
+    assert hovered.getpixel(((sx0 + sx1) // 2, y0 + 5)) == controls.PET_FILL_HOVER

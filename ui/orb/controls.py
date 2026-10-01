@@ -366,34 +366,57 @@ def render_row(
 
 
 # --- The pet's control strip ------------------------------------------------
-# The desktop pet (``docs/pets.md``) carries its controls in a different shape:
-# a pen disc on its own, then ONE pill holding microphone mute, the talk orb and
-# the speaker, separated by thin dividers. Same hard-edge rules as the row
-# above: every silhouette that meets the colour key goes through a binary mask,
-# every glyph is drawn at 4x and downscaled INSIDE its opaque surface.
+# The desktop pet (``docs/pets.md``) carries its controls in the shape the
+# Codex companion made familiar: a pen in its own filled disc, then ONE filled
+# pill holding microphone mute, the talk orb and the speaker, with thin
+# low-contrast dividers. Same hard-edge rules as the row above: every
+# silhouette that meets the colour key goes through a binary mask, every glyph
+# and the orb's gradient are drawn at 4x and downscaled INSIDE the opaque
+# surface, so their antialiasing never meets the key.
 
 #: The strip's actions, left to right. The voice orb's ``ACTIONS`` stay as they
 #: are; the two layouts never share a hit-test.
 PET_ACTIONS: tuple[str, ...] = ("compose", "mic_mute", "orb", "speaker")
 
-#: Unscaled geometry, in pixels at 100 % display scaling.
-PET_SLOT = 28
-PET_PEN_GAP = 6
+#: Unscaled geometry, in logical pixels at 100 % display scaling and
+#: ``pet_scale`` 1.0 — sized against the companion figure (about 180 px), so the
+#: strip is roughly 0.3 x the figure's width tall, as in the Codex app.
+#: ``PET_SLOT`` is the pill's height and the pen disc's diameter.
+PET_SLOT = 50
+PET_ICON_SLOT = 46
+PET_ORB_SLOT = 52
+PET_PEN_GAP = 8
 PET_DIVIDER_W = 1
-PET_PILL_INSET = 4
-PET_STRIP_PADDING = 4
+PET_PILL_INSET = 7
+PET_STRIP_PADDING = 2
 #: Vertical distance from the figure's bottom edge to the strip.
-PET_STRIP_GAP_FROM_FIGURE = 4
+PET_STRIP_GAP_FROM_FIGURE = 10
+#: The glyphs' box and stroke, as a share of ``PET_SLOT`` (a 21 px icon with a
+#: 2 px stroke at 100 %).
+PET_ICON_BOX = 0.42
+PET_ICON_STROKE = 2.0
 #: How many steps the orb's pulse is quantised into. A handful is enough to
 #: read as "breathing with the voice" and bounds how often the strip repaints.
 PET_LEVEL_STEPS = 6
+#: The orb's diameter as a share of the pill's height: at rest, and the extra
+#: it swells by at full level while listening or talking.
+PET_ORB_REST_SHARE = 0.80
+PET_ORB_PULSE_SHARE = 0.08
 
-#: The talk orb's colours: a small bluish sphere, brighter while engaged.
-PET_ORB_REST = (74, 124, 230)
-PET_ORB_ACTIVE = (98, 152, 255)
-PET_ORB_HIGHLIGHT = (170, 200, 255)
-#: The divider between pill slots — a shade above the border so it reads.
-PET_DIVIDER = (44, 44, 44)
+#: Fill of the pen disc and the pill: a dark navy-black, and a shade lighter
+#: under the pointer.
+PET_FILL = (23, 27, 38)
+PET_FILL_HOVER = (36, 42, 58)
+#: Glyphs: near-white; a muted control turns red-ish.
+PET_ICON = (232, 233, 238)
+PET_ICON_MUTED = (248, 113, 113)
+#: The divider between pill slots — just above the fill, never a hard line.
+PET_DIVIDER = (48, 55, 72)
+#: The talk orb: a glossy sphere lit from the top left.
+PET_ORB_HIGHLIGHT = (169, 208, 255)
+PET_ORB_MID = (74, 124, 245)
+PET_ORB_RIM = (39, 71, 200)
+PET_ORB_SPECULAR = (230, 241, 255)
 
 
 def _spx(value: float, scale: float) -> int:
@@ -403,7 +426,7 @@ def _spx(value: float, scale: float) -> int:
 
 @dataclass(frozen=True)
 class PetStripLayout:
-    """Where everything sits inside the strip window, at one display scale."""
+    """Where everything sits inside the strip window, at one scale."""
 
     width: int
     height: int
@@ -419,23 +442,28 @@ class PetStripLayout:
 
 @functools.lru_cache(maxsize=16)
 def pet_strip_layout(scale: float = 1.0) -> PetStripLayout:
-    """The strip's geometry at ``scale`` (the monitor's DPI ratio)."""
+    """The strip's geometry at ``scale`` (DPI ratio times ``pet_scale``)."""
     pad = _spx(PET_STRIP_PADDING, scale)
     slot = _spx(PET_SLOT, scale)
     gap = _spx(PET_PEN_GAP, scale)
     divider = _spx(PET_DIVIDER_W, scale)
     inset = _spx(PET_PILL_INSET, scale)
+    widths = {
+        "mic_mute": _spx(PET_ICON_SLOT, scale),
+        "orb": _spx(PET_ORB_SLOT, scale),
+        "speaker": _spx(PET_ICON_SLOT, scale),
+    }
     pen_r = slot / 2.0
     pen = (pad + pen_r, pad + pen_r, pen_r)
     pill_x0 = pad + slot + gap
-    pill_w = 2 * inset + 3 * slot + 2 * divider
+    pill_w = 2 * inset + sum(widths.values()) + 2 * divider
     pill = (pill_x0, pad, pill_x0 + pill_w, pad + slot)
     slots: list[tuple[str, int, int]] = []
     dividers: list[int] = []
     x = pill_x0 + inset
     for index, action in enumerate(PET_ACTIONS[1:]):
-        slots.append((action, x, x + slot))
-        x += slot
+        slots.append((action, x, x + widths[action]))
+        x += widths[action]
         if index < 2:
             dividers.append(x)
             x += divider
@@ -525,105 +553,186 @@ class PetStripState:
     hovered: str | None = None
 
 
-def _draw_pen(d: ImageDraw.ImageDraw, cx: float, cy: float, r: float, color, w: int) -> None:
-    """A pencil on the diagonal, tip at the bottom left — "write something"."""
-    dx, dy = math.cos(-math.pi / 4), math.sin(-math.pi / 4)
-    nx, ny = -dy, dx
-    half = r * 0.17
+# -- glyphs ------------------------------------------------------------------
+# Drawn on a 24-unit grid (the line-icon convention the app's lucide icons use)
+# mapped onto a square box centred on the slot, with round caps and joins.
 
-    def p(u: float, v: float) -> tuple[float, float]:
-        return (cx + u * r * dx + v * nx, cy + u * r * dy + v * ny)
 
-    d.polygon(
-        [p(0.70, -half), p(0.70, half), p(-0.45, half), p(-0.78, 0.0), p(-0.45, -half)],
-        outline=color,
-        width=w,
+class _Pen:
+    """Maps 24-unit icon coordinates onto a supersampled layer."""
+
+    def __init__(self, d: ImageDraw.ImageDraw, cx: float, cy: float, box: float, width: float):
+        self.d = d
+        self.cx = cx
+        self.cy = cy
+        self.unit = box / 24.0
+        self.width = max(1, int(round(width)))
+
+    def p(self, u: float, v: float) -> tuple[float, float]:
+        return (self.cx + (u - 12.0) * self.unit, self.cy + (v - 12.0) * self.unit)
+
+    def cap(self, point: tuple[float, float], color: _Rgb) -> None:
+        r = self.width / 2.0
+        x, y = point
+        self.d.ellipse([x - r, y - r, x + r, y + r], fill=color)
+
+    def lines(self, points: Sequence[tuple[float, float]], color: _Rgb) -> None:
+        mapped = [self.p(u, v) for u, v in points]
+        self.d.line(mapped, fill=color, width=self.width, joint="curve")
+        self.cap(mapped[0], color)
+        self.cap(mapped[-1], color)
+
+    def arc(self, cu: float, cv: float, r: float, start: float, end: float, color: _Rgb) -> None:
+        x, y = self.p(cu, cv)
+        rr = r * self.unit
+        self.d.arc([x - rr, y - rr, x + rr, y + rr], start, end, fill=color, width=self.width)
+        for angle in (start, end):
+            a = math.radians(angle)
+            self.cap((x + rr * math.cos(a), y + rr * math.sin(a)), color)
+
+
+def _glyph_compose(pen: _Pen, color: _Rgb) -> None:
+    """A square with a pencil writing into its corner — "new message"."""
+    pen.lines([(12, 3), (5, 3)], color)
+    pen.arc(5, 5, 2, 180, 270, color)
+    pen.lines([(3, 5), (3, 19)], color)
+    pen.arc(5, 19, 2, 90, 180, color)
+    pen.lines([(5, 21), (19, 21)], color)
+    pen.arc(19, 19, 2, 0, 90, color)
+    pen.lines([(21, 19), (21, 12)], color)
+    pen.lines(
+        [(18.4, 2.6), (21.4, 5.6), (12.4, 14.6), (8.6, 15.4), (9.4, 11.6), (18.4, 2.6)], color
     )
-    # The ferrule: where the eraser meets the body.
-    d.line([p(0.42, -half), p(0.42, half)], fill=color, width=w)
+
+
+def _glyph_mic(pen: _Pen, color: _Rgb) -> None:
+    pen.arc(12, 5, 3, 180, 360, color)
+    pen.lines([(9, 5), (9, 12)], color)
+    pen.lines([(15, 5), (15, 12)], color)
+    pen.arc(12, 12, 3, 0, 180, color)
+    pen.lines([(19, 10), (19, 12)], color)
+    pen.arc(12, 12, 7, 0, 180, color)
+    pen.lines([(5, 12), (5, 10)], color)
+    pen.lines([(12, 19), (12, 22)], color)
+
+
+def _glyph_speaker(pen: _Pen, color: _Rgb, *, waves: bool) -> None:
+    pen.lines([(11, 5), (6, 9), (2, 9), (2, 15), (6, 15), (11, 19), (11, 5)], color)
+    if waves:
+        pen.arc(12, 12, 5, -45, 45, color)
+        pen.arc(12, 12, 10, -45, 45, color)
+
+
+def _glyph_slash(pen: _Pen, color: _Rgb) -> None:
+    pen.lines([(3, 3), (21, 21)], color)
+
+
+def _draw_glyph(
+    action: str,
+    d: ImageDraw.ImageDraw,
+    cx: float,
+    cy: float,
+    box: float,
+    stroke: float,
+    state: PetStripState,
+) -> None:
+    if action == "compose":
+        _glyph_compose(_Pen(d, cx, cy, box, stroke), PET_ICON)
+    elif action == "mic_mute":
+        color = PET_ICON_MUTED if state.mic_muted else PET_ICON
+        pen = _Pen(d, cx, cy, box, stroke)
+        _glyph_mic(pen, color)
+        if state.mic_muted:
+            _glyph_slash(pen, color)
+    elif action == "speaker":
+        color = PET_ICON_MUTED if state.speaker_muted else PET_ICON
+        pen = _Pen(d, cx, cy, box, stroke)
+        _glyph_speaker(pen, color, waves=not state.speaker_muted)
+        if state.speaker_muted:
+            _glyph_slash(pen, color)
+
+
+def _lerp(a: _Rgb, b: _Rgb, t: float) -> _Rgb:
+    t = max(0.0, min(1.0, t))
+    return (
+        int(round(a[0] + (b[0] - a[0]) * t)),
+        int(round(a[1] + (b[1] - a[1]) * t)),
+        int(round(a[2] + (b[2] - a[2]) * t)),
+    )
 
 
 def _draw_orb(
     d: ImageDraw.ImageDraw,
     cx: float,
     cy: float,
-    r: float,
-    *,
-    active: bool,
-    level: int,
+    radius: float,
 ) -> None:
-    """The talk orb: a small sphere that swells with the voice while engaged."""
-    pulse = (level / PET_LEVEL_STEPS) if active else 0.0
-    radius = r * (0.46 + 0.30 * pulse)
-    body = PET_ORB_ACTIVE if active else PET_ORB_REST
-    d.ellipse([cx - radius, cy - radius, cx + radius, cy + radius], fill=body)
-    shine = radius * 0.38
-    sx, sy = cx - radius * 0.32, cy - radius * 0.32
-    d.ellipse([sx - shine, sy - shine, sx + shine, sy + shine], fill=PET_ORB_HIGHLIGHT)
+    """A glossy sphere: concentric discs drifting toward a top-left light.
+
+    The outermost disc is the deep rim colour, the innermost the highlight; the
+    centres slide toward the light as they shrink, which reads as a lit ball.
+    PIL only — no numpy on this import path.
+    """
+    steps = max(8, int(radius))
+    lx, ly = cx - radius * 0.38, cy - radius * 0.40
+    for k in range(steps, 0, -1):
+        t = k / steps  # 1 at the rim, toward 0 at the light
+        r = radius * t
+        ox = lx + (cx - lx) * t
+        oy = ly + (cy - ly) * t
+        if t > 0.55:
+            color = _lerp(PET_ORB_MID, PET_ORB_RIM, (t - 0.55) / 0.45)
+        else:
+            color = _lerp(PET_ORB_HIGHLIGHT, PET_ORB_MID, t / 0.55)
+        d.ellipse([ox - r, oy - r, ox + r, oy + r], fill=color)
+    shine = radius * 0.16
+    sx, sy = cx - radius * 0.42, cy - radius * 0.46
+    d.ellipse([sx - shine, sy - shine * 0.8, sx + shine, sy + shine * 0.8], fill=PET_ORB_SPECULAR)
 
 
-def _slash(d: ImageDraw.ImageDraw, cx: float, cy: float, r: float, color, w: int) -> None:
-    s = r * 0.74
-    d.line([(cx - s, cy + s), (cx + s, cy - s)], fill=color, width=w)
+def _orb_radius(state: PetStripState, pill_height: float) -> float:
+    pulse = (state.level / PET_LEVEL_STEPS) if state.active else 0.0
+    share = PET_ORB_REST_SHARE + PET_ORB_PULSE_SHARE * max(0.0, min(1.0, pulse))
+    return pill_height * share / 2.0
 
 
-def _pet_icon_color(action: str, state: PetStripState) -> _Rgb:
-    if state.hovered == action:
-        return BTN_ICON_HOVER
-    return BTN_ICON
-
-
-def _render_pen_disc(state: PetStripState, diameter: int) -> Image.Image:
+def _render_pen_disc(state: PetStripState, diameter: int, scale: float) -> Image.Image:
     size = diameter * _SS
     hovered = state.hovered == "compose"
-    layer = Image.new("RGB", (size, size), BTN_BG_HOVER if hovered else BTN_BG)
+    layer = Image.new("RGB", (size, size), PET_FILL_HOVER if hovered else PET_FILL)
     d = ImageDraw.Draw(layer)
-    stroke = max(1, round(1.0 * _SS))
-    d.ellipse(
-        [stroke, stroke, size - 1 - stroke, size - 1 - stroke], outline=BTN_BORDER, width=stroke
-    )
-    glyph_w = max(1, round(1.35 * _SS))
-    _draw_pen(d, size / 2.0, size / 2.0, size * 0.30, _pet_icon_color("compose", state), glyph_w)
+    box = _spx(PET_SLOT, scale) * PET_ICON_BOX * _SS
+    stroke = PET_ICON_STROKE * max(0.5, scale) * _SS
+    _draw_glyph("compose", d, size / 2.0, size / 2.0, box, stroke, state)
     return layer.resize((diameter, diameter), Image.Resampling.LANCZOS)
 
 
-def _render_pill(state: PetStripState, layout: PetStripLayout) -> Image.Image:
+def _render_pill(state: PetStripState, layout: PetStripLayout, scale: float) -> Image.Image:
     x0, y0, x1, y1 = layout.pill
     width, height = x1 - x0, y1 - y0
     w_ss, h_ss = width * _SS, height * _SS
-    layer = Image.new("RGB", (w_ss, h_ss), BTN_BG)
+    layer = Image.new("RGB", (w_ss, h_ss), PET_FILL)
     d = ImageDraw.Draw(layer)
-    stroke = max(1, round(1.0 * _SS))
-    glyph_w = max(1, round(1.35 * _SS))
     for action, sx0, sx1 in layout.slots:
         if state.hovered == action:
-            d.rectangle([(sx0 - x0) * _SS, 0, (sx1 - x0) * _SS - 1, h_ss - 1], fill=BTN_BG_HOVER)
+            # A soft round lift under the pointer, like the pen disc's.
+            hx = ((sx0 + sx1) / 2.0 - x0) * _SS
+            hr = h_ss * 0.46
+            d.ellipse([hx - hr, h_ss / 2.0 - hr, hx + hr, h_ss / 2.0 + hr], fill=PET_FILL_HOVER)
     for dx, (_action, next_x0, _next_x1) in zip(layout.dividers, layout.slots[1:], strict=False):
         d.rectangle(
-            [(dx - x0) * _SS, h_ss * 0.22, (next_x0 - x0) * _SS - 1, h_ss * 0.78],
+            [(dx - x0) * _SS, h_ss * 0.28, (next_x0 - x0) * _SS - 1, h_ss * 0.72],
             fill=PET_DIVIDER,
         )
-    d.rounded_rectangle(
-        [stroke, stroke, w_ss - 1 - stroke, h_ss - 1 - stroke],
-        radius=(h_ss - 2 * stroke) / 2.0,
-        outline=BTN_BORDER,
-        width=stroke,
-    )
     cy = h_ss / 2.0
+    box = height * PET_ICON_BOX * _SS
+    stroke = PET_ICON_STROKE * max(0.5, scale) * _SS
     for action, sx0, sx1 in layout.slots:
         cx = ((sx0 + sx1) / 2.0 - x0) * _SS
-        radius = (sx1 - sx0) * _SS * 0.30
-        colour = _pet_icon_color(action, state)
-        if action == "mic_mute":
-            _draw_mic(d, cx, cy, radius, colour, glyph_w, slashed=False)
-            if state.mic_muted:
-                _slash(d, cx, cy, radius, BTN_ICON_OFF, glyph_w)
-        elif action == "orb":
-            _draw_orb(d, cx, cy, radius * 1.4, active=state.active, level=state.level)
+        if action == "orb":
+            _draw_orb(d, cx, cy, _orb_radius(state, h_ss))
         else:
-            _draw_speaker(d, cx, cy, radius, colour, glyph_w, muted=False)
-            if state.speaker_muted:
-                _slash(d, cx, cy, radius, BTN_ICON_OFF, glyph_w)
+            _draw_glyph(action, d, cx, cy, box, stroke, state)
     return layer.resize((width, height), Image.Resampling.LANCZOS)
 
 
@@ -653,10 +762,10 @@ def render_pet_strip(
     frame = Image.new("RGB", (layout.width, layout.height), color_key)
     pcx, pcy, pr = layout.pen
     diameter = int(round(pr * 2))
-    pen = _render_pen_disc(state, diameter)
+    pen = _render_pen_disc(state, diameter, scale)
     frame.paste(pen, (int(round(pcx - pr)), int(round(pcy - pr))), _disc_mask(diameter))
     x0, y0, x1, y1 = layout.pill
-    pill = _render_pill(state, layout)
+    pill = _render_pill(state, layout, scale)
     frame.paste(pill, (x0, y0), _binary_stadium_mask(x1 - x0, y1 - y0))
     return frame
 

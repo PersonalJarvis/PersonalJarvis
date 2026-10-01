@@ -49,6 +49,9 @@ export interface PetAnimation {
   frames: number;
   fps: number;
   loop: boolean;
+  /** The row's last cells are an accent (a blink) shown once every `accent_every` loops. */
+  accent_frames?: number;
+  accent_every?: number;
 }
 
 /**

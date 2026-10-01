@@ -169,3 +169,44 @@ def test_check_sheet_size_limits() -> None:
     for width, height in ((0, 10), (513, 10), (10, 513)):
         with pytest.raises(PetManifestError):
             check_sheet_size(width, height)
+
+
+# --- the optional accent (a blink every few loops) -------------------------------
+
+
+def test_an_accent_parses_and_round_trips() -> None:
+    animations = _animations(frames=8, accent_frames=1, accent_every=3)
+    manifest = parse_manifest(_data(animations=animations), builtin=True)
+    idle = manifest.animations["idle"]
+    assert (idle.accent_frames, idle.accent_every) == (1, 3)
+    assert manifest.to_json()["animations"]["idle"]["accent_frames"] == 1
+    assert parse_manifest(manifest.to_json(), builtin=True) == manifest
+
+
+def test_no_accent_keeps_the_file_shape() -> None:
+    manifest = parse_manifest(_data(), builtin=True)
+    assert manifest.animations["idle"].accent_frames == 0
+    assert "accent_frames" not in manifest.to_json()["animations"]["idle"]
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"accent_frames": 4},  # the whole row: nothing ordinary left
+        {"accent_frames": -1, "accent_every": 2},
+        {"accent_frames": 1, "accent_every": 0},
+        {"accent_frames": 1, "accent_every": 13},
+        {"accent_frames": 1},  # needs both keys
+        {"accent_frames": True, "accent_every": 2},
+    ],
+)
+def test_accent_rule_rejections(changes: dict) -> None:
+    with pytest.raises(PetManifestError):
+        parse_manifest(_data(animations=_animations(**changes)), builtin=True)
+
+
+def test_an_accent_needs_a_looping_row() -> None:
+    animations = _animations()
+    animations["success"].update({"accent_frames": 1, "accent_every": 2})
+    with pytest.raises(PetManifestError):
+        parse_manifest(_data(animations=animations), builtin=True)

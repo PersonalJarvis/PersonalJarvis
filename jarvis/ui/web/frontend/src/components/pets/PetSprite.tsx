@@ -15,10 +15,12 @@ import { cn } from "@/lib/utils";
  * scaled with a transform.
  *
  * Frames advance on a small timer that writes the background position
- * directly (no React render per frame), at the manifest's fps. A looping row
- * wraps; a one-shot row holds its last frame. The timer stops while the sprite
- * is off-screen, and under `prefers-reduced-motion` the sprite shows frame 0
- * and never moves.
+ * directly (no React render per frame), at the manifest's fps — the same
+ * order the desktop plays (`spriteFrameAt`): a looping row wraps and shows its
+ * accent cells (a blink) only every few loops, a one-shot row holds its last
+ * frame, and the talking row (drawn closed to widest) swings back and forth.
+ * The timer stops while the sprite is off-screen, and under
+ * `prefers-reduced-motion` the sprite shows frame 0 and never moves.
  */
 export function PetSprite({
   pet,
@@ -47,6 +49,9 @@ export function PetSprite({
   const frames = animation?.frames ?? 1;
   const fps = animation?.fps ?? 1;
   const loop = animation?.loop ?? true;
+  const accentFrames = animation?.accent_frames ?? 0;
+  const accentEvery = animation?.accent_every ?? 1;
+  const swing = state === "talking";
   const drawable = animation !== null;
 
   useEffect(() => {
@@ -57,22 +62,32 @@ export function PetSprite({
     };
     place(0);
     if (frames <= 1 || reduced || !onScreen) return;
-    let frame = 0;
+    let step = 0;
     const timer = window.setInterval(() => {
-      frame += 1;
-      if (frame >= frames) {
-        if (!loop) {
-          window.clearInterval(timer);
-          return;
-        }
-        frame = 0;
+      step += 1;
+      if (!loop && !swing && step >= frames) {
+        window.clearInterval(timer);
+        return;
       }
-      place(frame);
+      place(spriteFrameAt(step, frames, { loop, accentFrames, accentEvery, swing }));
     }, 1000 / Math.max(1, fps));
     return () => window.clearInterval(timer);
     // Primitives only: the animation object is rebuilt on every render, and
     // depending on it would restart the row each time a parent repaints.
-  }, [drawable, row, frames, fps, loop, size, reduced, onScreen, pet.sheet_url]);
+  }, [
+    drawable,
+    row,
+    frames,
+    fps,
+    loop,
+    accentFrames,
+    accentEvery,
+    swing,
+    size,
+    reduced,
+    onScreen,
+    pet.sheet_url,
+  ]);
 
   return (
     <div
@@ -102,6 +117,39 @@ export function PetSprite({
       )}
     </div>
   );
+}
+
+/**
+ * The frame for timer `step` — the desktop renderer's order
+ * (`ui/orb/pet_renderer.py`): a swing goes 0, 1, …, n-1, …, 1; a one-shot
+ * holds its last cell; a looping row with an accent plays its ordinary cells
+ * `accentEvery` times, then the accent cells once.
+ */
+export function spriteFrameAt(
+  step: number,
+  frames: number,
+  {
+    loop = true,
+    accentFrames = 0,
+    accentEvery = 1,
+    swing = false,
+  }: { loop?: boolean; accentFrames?: number; accentEvery?: number; swing?: boolean } = {},
+): number {
+  const count = Math.max(1, Math.floor(frames));
+  const at = Math.max(0, Math.floor(step));
+  if (count === 1) return 0;
+  if (swing) {
+    const period = 2 * (count - 1);
+    const position = at % period;
+    return position < count ? position : period - position;
+  }
+  if (!loop) return Math.min(at, count - 1);
+  const accent = Math.max(0, Math.min(count - 1, Math.floor(accentFrames)));
+  if (accent === 0) return at % count;
+  const base = count - accent;
+  const every = Math.max(1, Math.floor(accentEvery));
+  const position = at % (base * every + accent);
+  return position < base * every ? position % base : base + (position - base * every);
 }
 
 /** The largest whole-number factor that keeps a frame within `maxPx`. */

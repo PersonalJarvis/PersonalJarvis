@@ -3,8 +3,14 @@
 
 Every pet is drawn procedurally into 48 x 48 cells: shape helpers build
 masks, a shared shading pass gives every body the same light/dark rim, and a
-per-state pose table moves the figure (bob, hop, shake). One row per state in
-``PET_STATES`` order, one ``pet.json`` per pet (``docs/pets.md``).
+per-state pose table moves the figure — a 1 px breath (the body above its
+waist stretches and settles), a hop that squashes on landing, a shake. One row
+per state in ``PET_STATES`` order, one ``pet.json`` per pet (``docs/pets.md``).
+
+Two conventions the renderer relies on: the idle row's LAST cell is a blink,
+declared as an accent (``accent_frames``/``accent_every``) so it plays every
+few seconds instead of on every breath; and the talking row is ordered from a
+closed mouth to the widest one, so the live voice level can pick the frame.
 
 The output is deterministic: no randomness, no timestamps, a fixed PNG
 encoder setting. ``tests/unit/ui/pets/test_builtin_pets.py`` regenerates
@@ -69,6 +75,10 @@ Z_BLUE = hexc("#a5c8ff")
 #: Sound arcs are 1 px strokes; an outline around each would read as hatching
 #: on a light desktop, so they are a mid blue that holds on dark AND light.
 ARC = hexc("#3d9be0")
+#: An arc on its way out: lighter, so the ripple fades instead of blinking off.
+ARC_FADE = hexc("#93c8f0")
+SWEAT = hexc("#9fd8ff")
+SWEAT_SHINE = hexc("#e8f6ff")
 BLUSH = hexc("#ff8fa3")
 MOUTH_DARK = hexc("#3b1f2b")
 TONGUE = hexc("#ff7a8a")
@@ -288,27 +298,33 @@ class Frame:
 
 FRAME_COUNTS: dict[str, int] = {
     "idle": 8,
-    "listening": 4,
-    "thinking": 6,
+    "listening": 6,
+    "thinking": 8,
     "talking": 4,
-    "success": 6,
-    "error": 4,
-    "sleeping": 4,
+    "success": 8,
+    "error": 6,
+    "sleeping": 6,
 }
 FPS: dict[str, int] = {
-    "idle": 4,
+    "idle": 6,
     "listening": 8,
     "thinking": 8,
     "talking": 10,
     "success": 10,
-    "error": 8,
-    "sleeping": 2,
+    "error": 9,
+    "sleeping": 3,
 }
-IDLE_BOB = (0, 0, -1, -1, 0, 0, -1, -1)
-IDLE_BLINK_FRAME = 5
-HOP = (0, -3, -5, -3, 0, 0)
-SHAKE = (-2, 2, -2, 0)
-TALK_MOUTHS = ("closed", "half", "open", "half")
+#: The idle row's blink: its last cell, once every third breath.
+IDLE_ACCENT = {"accent_frames": 1, "accent_every": 3}
+#: One slow breath over the seven ordinary idle cells (1 = a pixel taller).
+IDLE_BREATH = (0, 0, 1, 1, 1, 0, 0)
+SLEEP_BREATH = (0, 0, 1, 1, 0, 0)
+#: The success hop: a squash to push off, up, down, a squash to land.
+HOP = (0, -2, -4, -5, -4, -2, 0, 0)
+HOP_STRETCH = (-1, 1, 1, 0, 0, 1, -1, 0)
+SHAKE = (-2, 2, -2, 2, -1, 0)
+#: Closed to widest: the renderer picks one by the live voice level.
+TALK_MOUTHS = ("closed", "half", "open", "wide")
 
 
 @dataclass(frozen=True)
@@ -319,26 +335,29 @@ class Pose:
     dy: int = 0
     eyes: str = "open"
     mouth: str = "rest"
+    #: 1 = the body above its waist one pixel taller, -1 = one shorter.
+    stretch: int = 0
 
 
 def base_pose(state: str, i: int) -> Pose:
     if state == "idle":
-        eyes = "closed" if i == IDLE_BLINK_FRAME else "open"
-        return Pose(state, i, dy=IDLE_BOB[i], eyes=eyes)
+        if i >= len(IDLE_BREATH):
+            return Pose(state, i, eyes="closed")  # the blink (the accent cell)
+        return Pose(state, i, stretch=IDLE_BREATH[i])
     if state == "listening":
-        return Pose(state, i, dy=-1, eyes="wide")
+        # Attentive: lifted and standing tall, eyes wide.
+        return Pose(state, i, dy=-1, eyes="wide", stretch=1)
     if state == "thinking":
-        return Pose(
-            state, i, dy=0 if i < 3 else -1, eyes="up_left" if i < 3 else "up_right", mouth="closed"
-        )
+        early = i < 4
+        return Pose(state, i, eyes="up_left" if early else "up_right", mouth="closed")
     if state == "talking":
-        return Pose(state, i, dy=0 if i % 2 == 0 else -1, mouth=TALK_MOUTHS[i])
+        return Pose(state, i, dy=0 if i < 2 else -1, mouth=TALK_MOUTHS[i])
     if state == "success":
-        return Pose(state, i, dy=HOP[i], eyes="happy", mouth="smile")
+        return Pose(state, i, dy=HOP[i], eyes="happy", mouth="smile", stretch=HOP_STRETCH[i])
     if state == "error":
         return Pose(state, i, dx=SHAKE[i], eyes="x", mouth="frown")
     if state == "sleeping":
-        return Pose(state, i, dy=1, eyes="sleep", mouth="closed")
+        return Pose(state, i, dy=1, eyes="sleep", mouth="closed", stretch=SLEEP_BREATH[i])
     raise KeyError(state)
 
 
@@ -447,6 +466,10 @@ def draw_mouth(
         f.paint(rect(x, y, x + w - 1, y + 2) - {(x, y + 2), (x + w - 1, y + 2)}, inside)
         f.paint(rect(x + 1, y + 2, x + w - 2, y + 2), TONGUE)
         f.paint(rect(x, y, x + w - 1, y), color)
+    elif style == "wide":
+        f.paint(rect(x, y, x + w - 1, y + 3) - {(x, y + 3), (x + w - 1, y + 3)}, inside)
+        f.paint(rect(x + 1, y + 2, x + w - 2, y + 3), TONGUE)
+        f.paint(rect(x, y, x + w - 1, y), color)
     else:
         raise KeyError(style)
 
@@ -459,28 +482,43 @@ _ARC_S = ((0, -2), (1, -1), (1, 0), (0, 1))
 _ARC_M = ((0, -3), (1, -2), (2, -1), (2, 0), (1, 1), (0, 2))
 _ARC_L = ((0, -4), (1, -3), (2, -2), (2, -1), (2, 0), (2, 1), (1, 2), (0, 3))
 _ARCS = ((0, _ARC_S), (3, _ARC_M), (6, _ARC_L))
-#: Which arcs show in listening frame i: a ripple moving outward.
-_ARC_PHASES = ((0,), (0, 1), (0, 1, 2), (1, 2))
+#: Which arcs show in listening frame i, and whether each is fading: a ripple
+#: that grows outward, fades from the inside and leaves a beat of silence.
+_ARC_PHASES: tuple[tuple[tuple[int, bool], ...], ...] = (
+    ((0, False),),
+    ((0, False), (1, False)),
+    ((0, False), (1, False), (2, False)),
+    ((0, True), (1, False), (2, False)),
+    ((1, True), (2, True)),
+    (),
+)
 
 
 def fx_arcs(f: Frame, i: int, left: Px, right: Px) -> None:
     """Sound arcs rippling out from ``left`` (leftwards) and ``right`` (rightwards)."""
-    shown: Mask = set()
-    for index in _ARC_PHASES[i % len(_ARC_PHASES)]:
+    for index, fading in _ARC_PHASES[i % len(_ARC_PHASES)]:
         off, arc = _ARCS[index]
-        shown |= {(right[0] + off + ax, right[1] + ay) for ax, ay in arc}
+        shown = {(right[0] + off + ax, right[1] + ay) for ax, ay in arc}
         shown |= {(left[0] - off - ax, left[1] + ay) for ax, ay in arc}
-    f.paint(shown, ARC)
+        f.paint(shown, ARC_FADE if fading else ARC)
 
 
 def fx_dots(f: Frame, i: int, x: int, y: int) -> None:
-    """Three thinking dots starting at ``(x, y)``; one hops per frame."""
-    active = i % 3
+    """Three thinking dots orbiting a point above the head (``(x, y)`` is the
+    old row's left end; the orbit centres where its middle dot sat).
+
+    One full turn takes eight frames; a dot on the near side of the orbit is
+    bright, one going round the back dims — a little planet of thoughts.
+    """
+    cx, cy = x + 4.5, y + 0.5
     dots: dict[Px, RGBA] = {}
     for k in range(3):
-        lift = 1 if k == active else 0
-        color = FX_WHITE if k == active else FX_DIM
-        for p in rect(x + 4 * k, y - lift, x + 4 * k + 1, y - lift + 1):
+        angle = 2.0 * math.pi * (i / 8.0 + k / 3.0)
+        dx = round(math.cos(angle) * 7.0, 6)
+        dy = round(math.sin(angle) * 2.0, 6)
+        px, py = math.floor(cx + dx), math.floor(cy + dy)
+        color = FX_WHITE if dy >= 0 else FX_DIM
+        for p in rect(px, py, px + 1, py + 1):
             dots[p] = color
     f.part(set(dots), dots)
 
@@ -491,10 +529,10 @@ _SPARK_PALETTE = {"#": SPARK, "o": SPARK_CORE}
 
 
 def fx_sparkles(f: Frame, i: int, spots: Sequence[tuple[int, int, int]]) -> None:
-    """Sparkles at ``(x, y, first_frame)`` centres: small, big, then small again."""
+    """Sparkles at ``(x, y, first_frame)`` centres: small, big, small, gone."""
     for x, y, start in spots:
         age = i - start
-        if age < 0:
+        if age < 0 or age > 4:
             continue
         rows = _SPARK_L if age in (1, 2) else _SPARK_S
         half = len(rows) // 2
@@ -506,14 +544,17 @@ _Z_BIG = ("#####", "...#.", "..#..", ".#...", "#####")
 _Z_PALETTE = {"#": Z_BLUE}
 #: (dx, dy, glyph) of each z relative to the anchor, lowest first.
 _ZS = ((0, 0, _Z_SMALL), (5, -6, _Z_BIG), (2, -12, _Z_SMALL))
-#: Which z marks show in sleeping frame i: they rise one by one.
-_Z_PHASES = ((0,), (0, 1), (0, 1, 2), (1, 2))
+#: Which z marks show in sleeping frame i: they rise one by one, drift up a
+#: pixel while they float, and the oldest leaves first.
+_Z_PHASES = ((0,), (0,), (0, 1), (0, 1), (1, 2), (2,))
+_Z_DRIFT = (0, -1, 0, -1, 0, -1)
 
 
 def fx_zzz(f: Frame, i: int, x: int, y: int) -> None:
+    drift = _Z_DRIFT[i % len(_Z_DRIFT)]
     for index in _Z_PHASES[i % len(_Z_PHASES)]:
         dx, dy, rows = _ZS[index]
-        f.glyph(x + dx, y + dy, rows, _Z_PALETTE)
+        f.glyph(x + dx, y + dy + drift, rows, _Z_PALETTE)
 
 
 _BANG = ("##", "##", "##", "##", "..", "##")
@@ -521,6 +562,14 @@ _BANG = ("##", "##", "##", "##", "..", "##")
 
 def fx_bang(f: Frame, x: int, y: int) -> None:
     f.glyph(x, y, _BANG, {"#": RED})
+
+
+_DROP = (".#.", "###", "#o#", ".#.")
+
+
+def fx_sweat(f: Frame, i: int, x: int, y: int) -> None:
+    """A sweat drop that slides down the side of the head, a pixel a frame."""
+    f.glyph(x, y + min(i, 4), _DROP, {"#": SWEAT, "o": SWEAT_SHINE})
 
 
 @dataclass(frozen=True)
@@ -533,6 +582,9 @@ class Anchors:
     zzz: Px
     bang: Px
     sparkles: tuple[tuple[int, int, int], ...]
+    #: Where the error's sweat drop starts (its top-left); next to the "!"
+    #: unless a pet says otherwise.
+    sweat: Px | None = None
 
 
 def draw_effects(f: Frame, pose: Pose, a: Anchors) -> None:
@@ -547,6 +599,9 @@ def draw_effects(f: Frame, pose: Pose, a: Anchors) -> None:
         fx_sparkles(f, pose.i, a.sparkles)
     elif pose.state == "error":
         fx_bang(f, *a.bang)
+        sx, sy = a.sweat if a.sweat is not None else (a.bang[0] - 6, a.bang[1] + 7)
+        with f.offset(pose.dx, 0):
+            fx_sweat(f, pose.i, sx, sy)
     elif pose.state == "sleeping":
         fx_zzz(f, pose.i, *a.zzz)
 
@@ -571,6 +626,9 @@ class PetDesign:
     fps: Mapping[str, int] | None = None
     #: Per-state effects that replace the shared one (a pet's own motif).
     fx: Mapping[str, Effect] = field(default_factory=dict)
+    #: The waist: the row the breath stretches the body above. Everything
+    #: below it (feet, paws, the foot of a teapot) stays planted.
+    waist: int = 31
 
     def counts(self) -> Mapping[str, int]:
         return {**FRAME_COUNTS, **(self.frame_counts or {})}
@@ -620,7 +678,8 @@ def draw_gigi(f: Frame, pose: Pose) -> None:
         f.part(arm, GIGI_GOLD)
         f.part(mirrored(arm), GIGI_GOLD)
         body = _gigi_body(phase)
-        f.part(body, shade(body, GIGI_BODY, rim=GIGI_RIM))
+        glowing = pose.state == "thinking" and (pose.i // 2) % 2 == 1
+        f.part(body, shade(body, GIGI_BODY, rim=GIGI_GOLD if glowing else GIGI_RIM))
         f.paint(ellipse(CX, 22, 10, 7), GIGI_PLATE)
         f.paint({(14, 16), (15, 15), (16, 14), (17, 14), (18, 13)}, GIGI_GLOSS)
         f.paint(rect(11, 31, 36, 31), GIGI_BELT)
@@ -638,8 +697,12 @@ def _gigi_mouth(f: Frame, style: str) -> None:
         f.paint(ring, GIGI_GOLD)
         f.paint(rect(23, 35, 24, 35), GIGI_PLATE)
     elif style == "open":
-        big = from_rows(22, 33, (".##.", "#..#", "#..#", "#..#", ".##."))
-        f.paint(rect(23, 34, 24, 36), GIGI_PLATE)
+        mid = from_rows(22, 33, (".##.", "#..#", "#..#", ".##."))
+        f.paint(rect(23, 34, 24, 35), GIGI_PLATE)
+        f.paint(mid, GIGI_GOLD)
+    elif style == "wide":
+        big = from_rows(21, 32, (".####.", "#....#", "#....#", "#....#", ".####."))
+        f.paint(rect(22, 33, 25, 35), GIGI_PLATE)
         f.paint(big, GIGI_GOLD)
     elif style == "smile":
         f.paint(from_rows(21, 34, ("#....#", ".####.")), GIGI_GOLD)
@@ -755,12 +818,14 @@ MISO = PetDesign(
     name="Miso",
     description="A ginger cat whose ears perk up when you talk and who naps curled in a loaf.",
     draw=draw_miso,
+    waist=33,
     anchors=Anchors(
         arcs_left=(10, 18),
         arcs_right=(37, 18),
         dots=(19, 3),
         zzz=(31, 22),
         bang=(40, 4),
+        sweat=(33, 12),
         sparkles=((6, 12, 1), (41, 9, 2), (5, 32, 3), (42, 30, 3)),
     ),
 )
@@ -782,9 +847,9 @@ BREW_AXIS = 22
 
 
 def _brew_lid_lift(pose: Pose) -> int:
-    if pose.state == "talking" and pose.i % 2 == 1:
-        return 2
-    if pose.state == "success" and pose.i in (1, 2, 3):
+    if pose.state == "talking":
+        return (0, 0, 1, 2)[pose.i]
+    if pose.state == "success" and pose.i in (2, 3, 4):
         return 2
     return 0
 
@@ -823,18 +888,23 @@ def brew_thinking(f: Frame, pose: Pose) -> None:
         fx_dots(f, pose.i, 14, 7)
         puffs = []
         for k in range(3):
-            phase = (pose.i + 2 * k) % 6
-            puffs.append((42 + phase % 2, 16 - 2 * phase, phase >= 2))
+            phase = (pose.i + 3 * k) % 8
+            if phase < 6:
+                puffs.append((42 + phase % 2, 16 - 2 * phase, phase >= 2))
         _brew_puffs(f, puffs)
 
 
 def brew_talking(f: Frame, pose: Pose) -> None:
     """The whistle: a quick jet of steam from the spout while the lid rattles."""
     with f.offset(pose.dx, pose.dy):
-        if pose.i % 2:
-            _brew_puffs(f, ((43, 16, False), (44, 12, True)))
-        else:
-            _brew_puffs(f, ((43, 16, True), (45, 12, False)))
+        # More steam the wider the mouth: nothing, a wisp, a puff, a jet.
+        jets = (
+            (),
+            ((43, 17, False),),
+            ((43, 16, True), (45, 12, False)),
+            ((43, 16, True), (44, 12, True), (45, 8, False)),
+        )
+        _brew_puffs(f, jets[pose.i])
 
 
 BREW = PetDesign(
@@ -848,9 +918,11 @@ BREW = PetDesign(
         dots=(14, 7),
         zzz=(31, 14),
         bang=(38, 4),
+        sweat=(31, 21),
         sparkles=((5, 14, 1), (40, 10, 2), (4, 40, 3), (41, 34, 3)),
     ),
     fx={"thinking": brew_thinking, "talking": brew_talking},
+    waist=39,
 )
 
 
@@ -935,12 +1007,14 @@ BOLT = PetDesign(
     name="Bolt",
     description="A plucky battery that charges up while it thinks and runs flat when it sleeps.",
     draw=draw_bolt,
+    waist=23,
     anchors=Anchors(
         arcs_left=(12, 15),
         arcs_right=(35, 15),
         dots=(19, 2),
         zzz=(36, 14),
         bang=(38, 3),
+        sweat=(35, 9),
         sparkles=((6, 10, 1), (41, 8, 2), (5, 36, 3), (42, 34, 3)),
     ),
     pose=bolt_pose,
@@ -959,9 +1033,9 @@ MOCHI_INK = hexc("#3b1f2b")
 MOCHI_EYES = EyeStyle(w=3, h=4, iris=MOCHI_INK, glint=FX_WHITE, lid=MOCHI_INK)
 
 #: (wider, lower, sway) per listening frame: the wobble.
-_MOCHI_WOBBLE = ((0, 0, 0), (1, 1, 1), (0, 0, 0), (-1, -1, -1))
-#: (wider, lower) per talking frame: squish with every syllable.
-_MOCHI_SQUISH = ((0, 0), (1, 1), (2, 2), (1, 1))
+_MOCHI_WOBBLE = ((0, 0, 0), (1, 1, 1), (1, 1, 1), (0, 0, 0), (-1, -1, -1), (-1, -1, -1))
+#: (wider, lower) per talking frame, closed to widest: the louder, the squishier.
+_MOCHI_SQUISH = ((0, 0), (1, 0), (1, 1), (2, 2))
 
 
 def mochi_pose(state: str, i: int) -> Pose:
@@ -981,11 +1055,9 @@ def _mochi_shape(pose: Pose) -> tuple[int, int, int]:
     if pose.state == "success":
         if pose.dy < 0:
             return (-1, -2, 0)
-        return (2, 2, 0) if pose.i == 4 else (0, 0, 0)
+        return (2, 2, 0) if pose.stretch < 0 else (0, 0, 0)
     if pose.state == "sleeping":
         return (2, 3, 0)
-    if pose.state == "idle" and pose.dy < 0:
-        return (-1, -1, 0)
     return (0, 0, 0)
 
 
@@ -1021,9 +1093,11 @@ MOCHI = PetDesign(
         dots=(19, 15),
         zzz=(34, 17),
         bang=(39, 7),
+        sweat=(33, 22),
         sparkles=((6, 14, 1), (41, 12, 2), (4, 38, 3), (43, 36, 3)),
     ),
     pose=mochi_pose,
+    waist=39,
 )
 
 
@@ -1092,7 +1166,8 @@ def draw_shelly(f: Frame, pose: Pose) -> None:
     look = {"listening": "perk", "success": "perk", "error": "droop"}.get(pose.state, "rest")
     sway = (0, 1, 1, 0)[(pose.i // 2) % 4] if pose.state == "idle" else 0
     tips = tuple((x + sway, y) for x, y in _SHELLY_TIPS[look])
-    phase = -pose.i * (2.0 * math.pi / 6.0) if pose.state == "thinking" else 0.0
+    turn = FRAME_COUNTS["thinking"]
+    phase = -pose.i * (2.0 * math.pi / turn) if pose.state == "thinking" else 0.0
     with f.offset(pose.dx, pose.dy):
         for base, tip in zip(_SHELLY_STALK_BASES, tips, strict=True):
             f.part(line(*base, *tip), SHELLY_BODY)
@@ -1123,12 +1198,14 @@ SHELLY = PetDesign(
     name="Shelly",
     description="A patient snail whose shell spins while it thinks and who hides inside to sleep.",
     draw=draw_shelly,
+    waist=38,
     anchors=Anchors(
         arcs_left=(8, 6),
         arcs_right=(21, 7),
         dots=(27, 8),
         zzz=(35, 15),
         bang=(40, 4),
+        sweat=(17, 24),
         sparkles=((3, 26, 1), (41, 10, 2), (3, 40, 3), (44, 28, 3)),
     ),
 )
@@ -1141,16 +1218,37 @@ PETS: tuple[PetDesign, ...] = (GIGI, MISO, BREW, BOLT, MOCHI, SHELLY)
 # ---------------------------------------------------------------------------
 
 
+def breathe(body: Image.Image, stretch: int, waist: int) -> Image.Image:
+    """Stretch (``1``) or squash (``-1``) everything above ``waist`` by a pixel.
+
+    Stretching lifts the rows above the waist and repeats the waist row under
+    them; squashing drops the waist row and lowers the rows above it. The
+    feet never move, and a 1 px change reads as a breath at any scale.
+    """
+    if stretch == 0 or not 2 <= waist < body.height:
+        return body
+    out = body.copy()
+    if stretch > 0:
+        out.paste(body.crop((0, 1, body.width, waist)), (0, 0))
+    else:
+        out.paste(body.crop((0, 0, body.width, waist - 1)), (0, 1))
+        out.paste((0, 0, 0, 0), (0, 0, body.width, 1))
+    return out
+
+
 def render_frame(pet: PetDesign, state: str, i: int) -> Image.Image:
     pose = pet.pose(state, i)
-    f = Frame()
-    pet.draw(f, pose)
+    body = Frame()
+    pet.draw(body, pose)
+    image = breathe(body.image(), pose.stretch, pet.waist + pose.dy)
+    fx = Frame()
     own = pet.fx.get(state)
     if own is not None:
-        own(f, pose)
+        own(fx, pose)
     else:
-        draw_effects(f, pose, pet.anchors)
-    return f.image()
+        draw_effects(fx, pose, pet.anchors)
+    image.alpha_composite(fx.image())
+    return image
 
 
 def build_sheet(pet: PetDesign) -> Image.Image:
@@ -1173,15 +1271,21 @@ def build_manifest(pet: PetDesign) -> dict:
         "frame_size": CELL,
         "sheet": "sheet.png",
         "animations": {
-            state: {
-                "row": row,
-                "frames": counts[state],
-                "fps": fps[state],
-                "loop": state not in ONE_SHOT_STATES,
-            }
-            for row, state in enumerate(PET_STATES)
+            state: _animation(state, row, counts, fps) for row, state in enumerate(PET_STATES)
         },
     }
+
+
+def _animation(state: str, row: int, counts: Mapping[str, int], fps: Mapping[str, int]) -> dict:
+    spec = {
+        "row": row,
+        "frames": counts[state],
+        "fps": fps[state],
+        "loop": state not in ONE_SHOT_STATES,
+    }
+    if state == "idle":
+        spec.update(IDLE_ACCENT)
+    return spec
 
 
 #: Row tints of the template, one per state (alpha stays below the loader's
@@ -1214,13 +1318,7 @@ def build_template() -> tuple[Image.Image, dict]:
         "frame_size": CELL,
         "sheet": "template.png",
         "animations": {
-            state: {
-                "row": row,
-                "frames": FRAME_COUNTS[state],
-                "fps": FPS[state],
-                "loop": state not in ONE_SHOT_STATES,
-            }
-            for row, state in enumerate(PET_STATES)
+            state: _animation(state, row, FRAME_COUNTS, FPS) for row, state in enumerate(PET_STATES)
         },
     }
     return sheet, manifest

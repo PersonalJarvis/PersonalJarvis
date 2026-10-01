@@ -4,7 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const motion = vi.hoisted(() => ({ reduced: false }));
 vi.mock("framer-motion", () => ({ useReducedMotion: () => motion.reduced }));
 
-import { PetSprite, integerScaleFor } from "@/components/pets/PetSprite";
+import { PetSprite, integerScaleFor, spriteFrameAt } from "@/components/pets/PetSprite";
+import { PetControlStripPreview } from "@/components/pets/PetControlStripPreview";
 import { resolvePetAnimation, type PetAnimation } from "@/lib/petStates";
 
 const ANIMATIONS: Record<string, PetAnimation> = {
@@ -90,5 +91,37 @@ describe("integerScaleFor", () => {
     expect(integerScaleFor(48, 168)).toBe(3);
     expect(integerScaleFor(32, 96)).toBe(3);
     expect(integerScaleFor(64, 40)).toBe(1);
+  });
+});
+
+describe("spriteFrameAt (the desktop's playback order)", () => {
+  it("plays a blink accent once every few loops", () => {
+    const seen = Array.from({ length: 23 }, (_, step) =>
+      spriteFrameAt(step, 8, { accentFrames: 1, accentEvery: 3 }),
+    );
+    expect(seen.slice(0, 21)).toEqual([0, 1, 2, 3, 4, 5, 6, 0, 1, 2, 3, 4, 5, 6, 0, 1, 2, 3, 4, 5, 6]);
+    expect(seen[21]).toBe(7);
+    expect(seen[22]).toBe(0);
+  });
+
+  it("swings the talking row back and forth", () => {
+    const seen = Array.from({ length: 8 }, (_, step) => spriteFrameAt(step, 4, { swing: true }));
+    expect(seen).toEqual([0, 1, 2, 3, 2, 1, 0, 1]);
+  });
+
+  it("holds a one-shot on its last frame and wraps a plain loop", () => {
+    expect(spriteFrameAt(9, 3, { loop: false })).toBe(2);
+    expect(spriteFrameAt(5, 4)).toBe(1);
+    expect(spriteFrameAt(3, 1)).toBe(0);
+  });
+});
+
+describe("PetControlStripPreview", () => {
+  it("is a decorative picture with the glossy orb", () => {
+    render(<PetControlStripPreview />);
+    const strip = screen.getByTestId("pet-strip-preview");
+    expect(strip.getAttribute("aria-hidden")).toBe("true");
+    expect(strip.querySelector("button")).toBeNull();
+    expect(screen.getByTestId("pet-strip-orb").style.backgroundImage).toContain("radial-gradient");
   });
 });

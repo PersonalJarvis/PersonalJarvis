@@ -104,25 +104,23 @@ def _renderer(clock: _Clock, **kwargs) -> tuple[pr.PetRenderer, list[int]]:
 # --- pure helpers -------------------------------------------------------------
 
 
-def test_a_48_pixel_sheet_is_drawn_at_exactly_3x_at_100_percent() -> None:
-    assert pr.pixel_factor(48, 1.0, 1.0) == 3
-
-
-def test_other_sheet_sizes_land_near_the_same_on_screen_size() -> None:
-    assert pr.pixel_factor(32, 1.0, 1.0) * 32 == pytest.approx(pr.PET_TARGET_EDGE_PX, abs=16)
-    assert pr.pixel_factor(64, 1.0, 1.0) * 64 == pytest.approx(pr.PET_TARGET_EDGE_PX, abs=16)
+@pytest.mark.parametrize("extent", [24, 30, 36, 40, 48, 64])
+def test_every_figure_lands_near_the_target_size_at_100_percent(extent: int) -> None:
+    on_screen = pr.pixel_factor(extent, 1.0, 1.0) * extent
+    assert on_screen == pytest.approx(pr.PET_TARGET_FIGURE_PX, abs=extent / 2)
 
 
 def test_the_factor_follows_dpi_and_user_size_and_rounds_half_up() -> None:
-    assert pr.pixel_factor(48, 1.5, 1.0) == 5  # 4.5 -> 5, never banker's 4
-    assert pr.pixel_factor(48, 2.0, 1.0) == 6
-    assert pr.pixel_factor(48, 1.0, 2.0) == 6
-    assert pr.pixel_factor(48, 1.0, 0.5) == 2
+    assert pr.pixel_factor(40, 1.0, 1.0) == 5  # 4.5 -> 5, never banker's 4
+    assert pr.pixel_factor(40, 1.5, 1.0) == 7
+    assert pr.pixel_factor(40, 2.0, 1.0) == 9
+    assert pr.pixel_factor(40, 1.0, 2.0) == 9
+    assert pr.pixel_factor(40, 1.0, 0.5) == 2
 
 
 def test_the_factor_never_drops_below_one_and_survives_garbage() -> None:
     assert pr.pixel_factor(64, 0.1, 0.1) == 1
-    assert pr.pixel_factor(48, float("nan"), 1.0) == 3
+    assert pr.pixel_factor(48, float("nan"), 1.0) == 4
     assert pr.pixel_factor("x", 1.0, 1.0) == 1  # type: ignore[arg-type]
 
 
@@ -158,15 +156,16 @@ def test_every_frame_is_scaled_once_at_load_and_never_while_painting() -> None:
     renderer, calls = _renderer(clock)
     scaled_at_load = len(calls)
     assert scaled_at_load == sum(len(v) for v in _Pack().frames.values())
-    assert set(calls) == {3}
+    assert set(calls) == {4}
     for _ in range(50):
         clock.now += 0.07
         renderer.render()
         renderer.frame_key()
         renderer.next_frame_delay_ms()
     assert len(calls) == scaled_at_load
-    assert renderer.size == (144, 144)
-    assert renderer.render().size == (144, 144)
+    # The fake frames fill their whole cell: no crop, 48 px at 4x.
+    assert renderer.size == (192, 192)
+    assert renderer.render().size == (192, 192)
 
 
 def test_a_new_size_rescales_and_reports_the_change() -> None:
@@ -174,8 +173,8 @@ def test_a_new_size_rescales_and_reports_the_change() -> None:
     renderer, calls = _renderer(clock)
     calls.clear()
     assert renderer.set_look(pet_scale=2.0) is True
-    assert renderer.size == (288, 288)
-    assert set(calls) == {6}
+    assert renderer.size == (384, 384)
+    assert set(calls) == {8}
     assert renderer.set_look(pet_scale=2.0) is False  # same size, no window change
 
 
@@ -284,7 +283,7 @@ def test_switching_pets_keeps_the_state_machine() -> None:
     renderer.on_mode("listen")
     renderer.load("miso")
     assert renderer.state() == "listening"
-    assert renderer.size == (160, 160)  # 32 px at the nearest factor (5x)
+    assert renderer.size == (192, 192)  # 32 px at the nearest factor (6x)
     assert renderer.frame_key()[0] == "miso"
 
 
@@ -296,8 +295,10 @@ def test_the_built_in_default_pet_loads_through_the_real_engine() -> None:
     clock = _Clock()
     renderer = pr.PetRenderer("gigi", clock=clock, dpi_ratio=1.0)
     assert renderer.has_figure
-    edge = renderer.size[0]
-    assert renderer.size == (edge, edge)
+    # Cropped to the figure, and the figure is about the target size.
+    target = pr.PET_TARGET_FIGURE_PX
+    assert 0.6 * target <= renderer.figure_width <= 1.25 * target
+    assert renderer.size[0] >= renderer.figure_width
     assert renderer.render().mode == "RGB"
     for mode in ("idle", "listen", "think", "speak", "notice"):
         renderer.on_mode(mode)
@@ -346,3 +347,98 @@ def test_a_frame_that_will_not_scale_leaves_the_strip_only() -> None:
     assert renderer._frames == {}  # noqa: SLF001 — nothing half-filled is kept
     assert renderer.size[1] == 1
     assert renderer.render().size == renderer.size
+
+
+# --- the crop, the blink accent and the voice-driven mouth ---------------------------
+
+
+def _boxed(frame_size: int, box: tuple[int, int, int, int]) -> Image.Image:
+    frame = Image.new("RGBA", (frame_size, frame_size), (0, 0, 0, 0))
+    frame.paste((200, 100, 50, 255), box)
+    return frame
+
+
+class _BoxedPack(_Pack):
+    """Frames with a small opaque figure; the success row adds a far sparkle."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        for state in self.frames:
+            self.frames[state] = tuple(_boxed(48, (14, 10, 34, 40)) for _ in range(2))
+        sparkle = _boxed(48, (14, 10, 34, 40))
+        sparkle.paste((255, 220, 0, 255), (40, 4, 42, 6))
+        self.frames["success"] = (sparkle,)
+
+
+def test_the_crop_is_symmetric_and_covers_every_effect() -> None:
+    pack = _BoxedPack()
+    crop, idle = pr.figure_crop(pack.frames, 48)
+    assert idle == (20, 30)  # the body alone sets the size
+    x0, y0, x1, y1 = crop
+    assert 24 - x0 == x1 - 24  # centred on the cell's middle line
+    assert x1 >= 42 and y0 <= 4  # the sparkle stays inside the window
+    assert y1 == 40  # the window ends at the lowest painted row
+
+
+def test_the_window_is_the_crop_at_the_figure_factor() -> None:
+    clock = _Clock()
+    pack = _BoxedPack()
+    renderer, calls = _renderer(clock, loader=_Loader({"fake": pack}))
+    crop, (idle_w, idle_h) = pr.figure_crop(pack.frames, 48)
+    factor = pr.pixel_factor(max(idle_w, idle_h), 1.0, 1.0)
+    assert set(calls) == {factor}
+    assert renderer.size == ((crop[2] - crop[0]) * factor, (crop[3] - crop[1]) * factor)
+    assert renderer.figure_width == idle_w * factor
+    assert renderer.render().size == renderer.size
+
+
+def test_an_accent_plays_once_every_few_loops() -> None:
+    # Seven breathing frames, then the blink, once every third pass.
+    seen = [
+        pr.frame_index(step / 6.0 + 1e-6, 8, 6, True, accent_frames=1, accent_every=3)
+        for step in range(23)
+    ]
+    assert seen[:21] == list(range(7)) * 3
+    assert seen[21] == 7
+    assert seen[22] == 0
+    # Without an accent every cell plays on every loop.
+    assert pr.frame_index(7 / 6.0 + 1e-6, 8, 6, True) == 7
+
+
+def test_the_mouth_follows_the_level_and_swings_without_one() -> None:
+    swing = [pr.ping_pong_index(step / 10.0 + 1e-6, 4, 10) for step in range(8)]
+    assert swing == [0, 1, 2, 3, 2, 1, 0, 1]
+    assert pr.level_frame(0.0, 4) == 0
+    assert pr.level_frame(pr.LEVEL_SILENCE / 2, 4) == 0
+    assert pr.level_frame(pr.LEVEL_SILENCE + 0.01, 4) == 1
+    assert pr.level_frame(1.0, 4) == 3
+
+
+def test_a_live_level_drives_the_talking_frame() -> None:
+    clock = _Clock()
+    renderer, _ = _renderer(clock)
+    renderer.on_mode("speak")
+    renderer.feed_level(0.9, clock.now)
+    key = renderer.frame_key()
+    assert key[-1] == 3  # loud: the widest mouth
+    assert renderer.next_frame_delay_ms() == pr.LEVEL_POLL_MS + 2
+    # The same smoothed level gives the same key: no repaint.
+    assert renderer.frame_key() == key
+    # Quiet: the mouth closes once the smoothing catches up.
+    for _ in range(8):
+        clock.now += 0.05
+        renderer.feed_level(0.0, clock.now)
+    assert renderer.frame_key()[-1] == 0
+    # The voice stopped arriving: back to the swing at the manifest rate.
+    clock.now += pr.LEVEL_FRESH_S + 0.05
+    assert renderer.next_frame_delay_ms() <= 105
+
+
+def test_garbage_levels_are_ignored() -> None:
+    clock = _Clock()
+    renderer, _ = _renderer(clock)
+    renderer.on_mode("speak")
+    renderer.feed_level(None, clock.now)
+    renderer.feed_level(float("nan"), clock.now)
+    renderer.feed_level("loud", clock.now)  # type: ignore[arg-type]
+    assert renderer.frame_key()[-1] in range(4)
