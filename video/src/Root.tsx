@@ -16,8 +16,6 @@ import { PromoVideo } from "./intro/PromoVideo";
 import { TL_PROMO } from "./intro/promo/timeline";
 import { FilmVideo } from "./intro/FilmVideo";
 import { TL_FILM } from "./intro/film/timeline";
-import { LaunchVideo } from "./launch/LaunchVideo";
-import { FPS as LAUNCH_FPS, TOTAL_FRAMES as LAUNCH_FRAMES } from "./launch/theme";
 
 /**
  * Standalone preview of a single tutorial scene, wrapped with the same backdrop
@@ -34,22 +32,6 @@ const MorningOverviewPreview: React.FC = () => (
 export const RemotionRoot: React.FC = () => {
   return (
     <>
-      <Composition
-        id="Launch"
-        component={LaunchVideo}
-        durationInFrames={LAUNCH_FRAMES}
-        fps={LAUNCH_FPS}
-        width={1920}
-        height={1080}
-      />
-      <Composition
-        id="LaunchVertical"
-        component={LaunchVideo}
-        durationInFrames={LAUNCH_FRAMES}
-        fps={LAUNCH_FPS}
-        width={1080}
-        height={1920}
-      />
       <Composition
         id="JarvisVoice"
         component={VoiceVideo}

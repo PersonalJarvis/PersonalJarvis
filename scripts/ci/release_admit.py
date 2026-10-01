@@ -73,13 +73,17 @@ def gate_state(repo: str, sha: str) -> str:
         print(f"[admit] check-run lookup failed: {proc.stderr.strip()[:300]}")
         return "missing"
     runs = json.loads(proc.stdout or "{}").get("check_runs", [])
+    return latest_gate_state(runs)
+
+
+def latest_gate_state(runs: list[dict]) -> str:
+    """A superseded green run cannot admit a newer pending or failed rerun."""
     if not runs:
         return "missing"
-    if any(r.get("status") == "completed" and r.get("conclusion") == "success" for r in runs):
-        return "success"
-    if any(r.get("status") != "completed" for r in runs):
+    latest = max(runs, key=lambda run: int(run.get("id") or 0))
+    if latest.get("status") != "completed":
         return "pending"
-    return "failure"
+    return "success" if latest.get("conclusion") == "success" else "failure"
 
 
 def main(argv: list[str] | None = None) -> int:

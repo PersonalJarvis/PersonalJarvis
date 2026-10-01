@@ -2609,56 +2609,6 @@ class AppshotConfig(BaseModel):
     effect: bool = True
 
 
-class JarvisXConfig(BaseModel):
-    """Top-level ``[jarvisx]`` config — the built-in screenshot and screen recorder.
-
-    Jarvis X is a plain capture tool (``jarvis/jarvisx/``): region, window and
-    full-screen screenshots plus region / full-screen recordings, each on its
-    own global shortcut, saved to a folder and kept in a local library. It
-    never involves the assistant: no Screen Context privacy pipeline, no
-    delivery into a conversation. Every key below is read by
-    ``jarvis.jarvisx`` (AP-31).
-    """
-
-    model_config = {"extra": "allow"}
-
-    #: Master switch: off disarms every shortcut and refuses new captures.
-    #: The library of earlier captures stays browsable.
-    enabled: bool = True
-
-    #: Global shortcuts in the shared hotkey syntax; an empty string turns
-    #: that one shortcut off. The Ctrl+Shift+digit row stays clear of the OS
-    #: screenshot keys (Win+Shift+S, Cmd+Shift+3/4/5) and every other
-    #: Jarvis default.
-    hotkey_region: str = "ctrl+shift+2"
-    hotkey_window: str = "ctrl+shift+3"
-    hotkey_fullscreen: str = "ctrl+shift+1"
-    hotkey_record_region: str = "ctrl+shift+5"
-    hotkey_record_fullscreen: str = "ctrl+shift+6"
-    #: Stops a running recording (pressing its record shortcut again does too).
-    hotkey_stop_recording: str = "ctrl+shift+4"
-
-    #: ``true``: the corner thumbnail stays until it is dismissed. ``false``:
-    #: it fades after ``thumbnail_dismiss_s`` seconds.
-    thumbnail_persist: bool = False
-    #: Clamped to 1..3600 where it is read, so a hand-edited value can never
-    #: make the config unloadable.
-    thumbnail_dismiss_s: int = 30
-
-    #: Folder new captures are saved to. Empty = the user's Pictures folder
-    #: (``Pictures/Jarvis X``), or the Jarvis data folder where there is none.
-    save_dir: str = ""
-
-    #: Also put each new screenshot on the system clipboard.
-    copy_to_clipboard: bool = True
-
-    #: Shutter sound on every capture (also gated by ``[ui].sound_effects``).
-    sound: bool = True
-
-    #: Flash plus the corner thumbnail card after every capture.
-    effect: bool = True
-
-
 class ComputerUseConfig(BaseModel):
     """Top-level ``[computer_use]`` config for the Computer-Use harness.
 
@@ -4456,9 +4406,6 @@ class JarvisConfig(BaseModel):
     # Appshots: the front window as conversation context, on a shortcut or on
     # request (jarvis/appshot/). Captures through Screen Context above.
     appshot: AppshotConfig = Field(default_factory=AppshotConfig)
-    # Jarvis X: the built-in screenshot / screen-recording tool
-    # (jarvis/jarvisx/). Independent of Screen Context and the assistant.
-    jarvisx: JarvisXConfig = Field(default_factory=JarvisXConfig)
     # Phase 5/6 — Computer-Use-POAV-Harness (ADR-0008).
     computer_use: ComputerUseConfig = Field(default_factory=ComputerUseConfig)
     # Low-latency local-action gate. Hidden tools only; never exposed in the

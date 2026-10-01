@@ -11,6 +11,28 @@ versioning per [SemVer](https://semver.org/).
 
 ---
 
+## [2.5.0] — 2026-10-01
+
+### Added
+
+- Quick switcher with a configurable keyboard shortcut and faster section navigation.
+- Move coding terminals between workspaces without restarting the agent.
+- Remote agents retain approved Jarvis tools through scoped SSH forwarding.
+
+### Changed
+
+- Background learning and wiki work use the connected agent seat and respect subscription billing boundaries.
+- Remove default scheduled work and retain user-edited skills during migration.
+- Integrate local desktop updates with the latest published installation and permission fixes.
+
+### Fixed
+
+- Improve dictation delivery, retained terminal rendering, and delegation result routing.
+- Require release tags for publishing and reject superseded CI successes during release admission.
+- Require explicit opt-in for live realtime integration calls and keep shell scripts portable across checkouts.
+
+---
+
 ## [2.4.4] — 2026-09-30
 
 ### Added

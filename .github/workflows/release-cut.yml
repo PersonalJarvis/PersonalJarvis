@@ -63,7 +63,7 @@ jobs:
       - name: main must be green
         run: |
           state="$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?check_name=CI%20gate" \
-            --jq '[.check_runs[] | select(.status=="completed")][0].conclusion // "missing"')"
+            --jq '(.check_runs | max_by(.id)) | if .status == "completed" then .conclusion else (.status // "missing") end')"
           echo "CI gate on $GITHUB_SHA: $state"
           [ "$state" = "success" ] || { echo "::error::main is not green ($state) - no release."; exit 1; }
       - name: Bump version + CHANGELOG

@@ -35,6 +35,8 @@ verify-wave6.sh              text eol=lf
 
 # POSIX launcher (parity twin of run.bat) — CRLF breaks the shebang.
 run.sh                       text eol=lf
+# Every POSIX script must parse after a Windows checkout as well.
+*.sh                         text eol=lf
 
 # The supply-chain documentation, workflows, and in-toto layout are
 # also pinned to LF so any future inclusion in the signed-artifact

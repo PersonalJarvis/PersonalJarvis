@@ -340,6 +340,39 @@ def test_train_updates_only_conflicting_or_stale_red_branches():
 # --------------------------------------------------------------------------- release
 
 
+@pytest.mark.parametrize("status,conclusion,expected", [
+    ("completed", "failure", "failure"),
+    ("completed", "cancelled", "failure"),
+    ("completed", "success", "success"),
+    ("in_progress", None, "pending"),
+    ("queued", None, "pending"),
+])
+def test_release_admission_uses_newest_run(status, conclusion, expected):
+    from scripts.ci.release_admit import latest_gate_state
+
+    old = {"id": 10, "status": "completed", "conclusion": "success"}
+    new = {"id": 11, "status": status, "conclusion": conclusion}
+    assert latest_gate_state([old, new]) == expected
+    assert latest_gate_state([new, old]) == expected
+    assert latest_gate_state([]) == "missing"
+
+
+@pytest.mark.parametrize("filename,job", [
+    ("release.yml", "publish"),
+    ("sign-installer.yml", "provenance"),
+    ("sign-installer.yml", "release"),
+])
+def test_publication_requires_a_tag(filename, job):
+    import yaml
+
+    workflow = yaml.safe_load(
+        (Path(__file__).resolve().parents[3] / ".github/workflows" / filename).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert workflow["jobs"][job]["if"] == "github.ref_type == 'tag'"
+
+
 def test_bump_and_commit_notes():
     assert cut_release.bump("2.3.2", "patch") == "2.3.3"
     assert cut_release.bump("2.3.2", "minor") == "2.4.0"

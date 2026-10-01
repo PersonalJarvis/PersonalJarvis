@@ -51,20 +51,10 @@ class AudioEffectsService:
         self, _event: ScreenCaptureGrabbed
     ) -> None:
         """Schedule and return; EventBus publication must never wait on audio."""
-        # Every shared-service capture is an appshot to the user, so the
-        # Appshots page's "play sound" switch owns this cue.
-        self.play_capture_cue(section="appshot")
-
-    def play_capture_cue(self, *, section: str) -> None:
-        """Play the capture click-clack once, gated by ``[<section>].sound``.
-
-        Must be called on the event loop; returns at once. ``[ui].sound_effects``
-        silences it for every section. A cue already playing absorbs the call.
-        """
         current = self._capture_task
         if current is not None and not current.done():
             return
-        task = asyncio.create_task(self._play_capture(section), name="screen-capture-cue")
+        task = asyncio.create_task(self._play_capture(), name="screen-capture-cue")
         self._capture_task = task
 
         def _clear(done: asyncio.Task[None]) -> None:
@@ -73,12 +63,14 @@ class AudioEffectsService:
 
         task.add_done_callback(_clear)
 
-    async def _play_capture(self, section: str) -> None:
+    async def _play_capture(self) -> None:
         try:
             config = await asyncio.to_thread(self._load_config)
             if not bool(getattr(getattr(config, "ui", None), "sound_effects", True)):
                 return
-            if not bool(getattr(getattr(config, section, None), "sound", True)):
+            # Every shared-service capture is an appshot to the user, so the
+            # Appshots page's "play sound" switch owns this cue.
+            if not bool(getattr(getattr(config, "appshot", None), "sound", True)):
                 return
             player = self._bound_player()
             if player is None:
