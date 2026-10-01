@@ -103,3 +103,8 @@ Neither failure was hidden or added to a baseline. The final focused pane and
 integration rerun passed 68 tests; changed Python files passed Ruff and the
 documentation passed the privacy scan. The four required routing, output-filter,
 hangup-parity and turn-language guards are included in the second broad run.
+
+After integrating with GitHub main `2971510a5`, 102 focused lifecycle, Society,
+workspace, speech and integration checks passed again. The existing guard against
+claiming success from an empty agent report was preserved during integration.
+CLI route coverage passed; the terminal-prompt route keeps its public schema.
