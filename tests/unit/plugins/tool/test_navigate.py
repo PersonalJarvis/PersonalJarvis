@@ -69,6 +69,13 @@ async def test_canonical_id_publishes_navigate(tool: NavigateTool, bus: Recordin
         ("outputs", "visualization"),
         ("Ausgaben", "visualization"),
         ("ergebnisse", "visualization"),
+        # My Pets: the id itself and the phrases that name the app's own pet.
+        ("pets", "pets"),
+        ("My Pets", "pets"),
+        ("desktop pet", "pets"),
+        ("Haustier", "pets"),  # i18n-allow: input vocab
+        ("meine pets", "pets"),  # i18n-allow: input vocab
+        ("mis mascotas", "pets"),  # i18n-allow: input vocab
     ],
 )
 async def test_alias_normalizes_to_id(

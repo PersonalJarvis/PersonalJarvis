@@ -58,7 +58,7 @@ function lazyPropView<P>(
 
 // Views are named exports, hence the explicit React.lazy default unwrap.
 // The Settings hub — Profile, {name}.md, Contacts, Socials, API Keys, Local
-// models, Wallpaper, Spend and Feedback behind one left-nav dialog. The hub
+// models, Spend and Feedback behind one left-nav dialog. The hub
 // statically owns only its shell; every tab stays its own lazy chunk (see
 // SettingsHubView), so this one import replaces the eleven per-view imports
 // below without merging their chunks back together.

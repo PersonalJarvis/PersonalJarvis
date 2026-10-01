@@ -452,8 +452,8 @@ function BootTitle({ text, animate }: { text: string; animate: boolean }) {
  * Bezel, tick scale, the four gate arcs at the compass points (dashed while
  * pending, drawn solid when true, dim and short when honestly off), the
  * sweep while the wake word is being listened for, and the one-shot ping.
- * All strokes are the theme accent under the HUD halo so they read on any
- * wallpaper in either appearance.
+ * All strokes are the theme accent under the HUD halo so they read on the
+ * ground in either appearance.
  */
 function StandbyRing({
   size,

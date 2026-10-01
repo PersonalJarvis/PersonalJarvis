@@ -841,9 +841,13 @@ async def backfill_wiki(
             skip_reason = str(getattr(scheduler_result, "skip_reason", "unknown"))
             break
         stage2 = runtime.journal.capture_decision_summary(review_keys)
-        if label in {"judge-unavailable", "judge-truncated"} or label.startswith(
-            "journal-transient:"
-        ):
+        # ``judge-deferred``: the wiki must wait (subscription not usable,
+        # runaway-guard backoff or daily cap). Repeating now changes nothing.
+        if label in {
+            "judge-unavailable",
+            "judge-truncated",
+            "judge-deferred",
+        } or label.startswith("journal-transient:"):
             skip_reason = label
             break
 

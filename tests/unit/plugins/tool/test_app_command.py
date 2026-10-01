@@ -55,8 +55,8 @@ def _fake_app(calls: dict) -> FastAPI:
     async def marketplace_install(item_id: str) -> dict:
         calls["marketplace_install"] = item_id
         return {
-            "ok": True, "kind": "wallpaper", "id": item_id,
-            "title": "Rain Antenna City", "state": "installed",
+            "ok": True, "kind": "skill", "id": item_id,
+            "title": "Three Bullet Brief", "state": "installed",
             "ready": True, "next_action": "none",
         }
 
@@ -393,7 +393,7 @@ def test_a_one_word_state_is_not_mistaken_for_a_snapshot() -> None:
     """
     from jarvis.plugins.tool.app_command import _without_snapshots
 
-    trimmed = _without_snapshots({"ok": True, "kind": "wallpaper", "state": "installed"})
+    trimmed = _without_snapshots({"ok": True, "kind": "skill", "state": "installed"})
 
     assert trimmed["state"] == "installed"
 
@@ -416,19 +416,19 @@ def test_installing_from_the_marketplace_needs_a_spoken_confirmation() -> None:
     assert tools["marketplace-browse"].risk_tier == "monitor"
 
 
-async def test_installing_a_wallpaper_by_name_reports_what_landed() -> None:
+async def test_installing_a_skill_by_name_reports_what_landed() -> None:
     """The prompt path is the CLI path: same route, same honest answer."""
     calls: dict = {}
     tools = _tools(calls)
 
     result = await tools["marketplace-install"].execute(
-        {"item_id": "rain-antenna-city"}, SimpleNamespace()
+        {"item_id": "three-bullet-brief"}, SimpleNamespace()
     )
 
     assert result.success is True
-    assert calls["marketplace_install"] == "rain-antenna-city"
+    assert calls["marketplace_install"] == "three-bullet-brief"
     response = result.output["response"]
-    assert response["kind"] == "wallpaper"
+    assert response["kind"] == "skill"
     # What the user asks next is "did it work" — the answer must carry the
     # verdict, not just an `ok: true` the model would have to interpret.
     assert response["state"] == "installed"

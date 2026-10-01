@@ -16,6 +16,8 @@ import {
   voiceInputLevelRef,
 } from "@/lib/voiceInputLevel";
 import { useEventStore } from "@/store/events";
+import { useHomeStore } from "@/store/home";
+import { SPEAKER_MUTE_EVENT } from "@/lib/speakerMute";
 
 /** Minimal mock for WebSocket (mirrors __tests__/ws.test.ts). */
 class MockWebSocket {
@@ -379,6 +381,61 @@ describe("useWebSocket VoiceBootStatus handling", () => {
       invalidate.mockRestore();
     },
   );
+
+  it("opens an empty typed chat when the desktop pet's pen asks for one", async () => {
+    useEventStore.setState({
+      solo: false,
+      activeSection: "settings",
+      activeKind: "text",
+      activeThreadId: "old-thread",
+    });
+    useHomeStore.setState({ surface: "voice" });
+    render(<Harness />);
+    await Promise.resolve();
+
+    MockWebSocket.last!.deliver(envelope("ComposeRequested", { source: "pet" }));
+
+    expect(useEventStore.getState().activeSection).toBe("chats");
+    expect(useEventStore.getState().activeThreadId).toBeNull();
+    expect(useHomeStore.getState().surface).toBe("chat");
+  });
+
+  it("keeps a detached window on its section when the pen asks for a chat", async () => {
+    useEventStore.setState({ solo: true, activeSection: "visualization" });
+    render(<Harness />);
+    await Promise.resolve();
+
+    MockWebSocket.last!.deliver(envelope("ComposeRequested", { source: "pet" }));
+
+    expect(useEventStore.getState().activeSection).toBe("visualization");
+  });
+
+  it("relays a speaker mute from anywhere to the window", async () => {
+    const seen: unknown[] = [];
+    const listener = (event: Event) => seen.push((event as CustomEvent).detail);
+    window.addEventListener(SPEAKER_MUTE_EVENT, listener);
+    render(<Harness />);
+    await Promise.resolve();
+
+    MockWebSocket.last!.deliver(envelope("VoiceSpeakerMuteChanged", { muted: true, source: "pet" }));
+    MockWebSocket.last!.deliver(envelope("VoiceSpeakerMuteChanged", { source: "garbled" }));
+
+    window.removeEventListener(SPEAKER_MUTE_EVENT, listener);
+    expect(seen).toEqual([{ muted: true }]);
+  });
+
+  it("re-reads the pets after a PetChanged event", async () => {
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    render(<Harness />);
+    await Promise.resolve();
+
+    MockWebSocket.last!.deliver(
+      envelope("PetChanged", { pet_id: "miso", scale: 1, bubble: true, visible: true, source: "api" }),
+    );
+
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["pets"] });
+    invalidate.mockRestore();
+  });
 });
 
 describe("useWebSocket connection state (welcome-gated + warming)", () => {

@@ -309,6 +309,8 @@ export interface ToolState {
   id: ToolId;
   installed: boolean;
   version: string | null;
+  /** Installed but too old to use (Node.js below 18); counts as missing. */
+  outdated?: boolean;
 }
 
 export interface InstallJob {
@@ -330,6 +332,8 @@ export interface Readiness {
   os: string | null;
   ready: boolean;
   checked_at: number;
+  arch?: string | null;
+  fetch?: string | null;
   install: InstallJob | null;
 }
 
@@ -341,4 +345,7 @@ export const readinessApi = {
     request<{ install: InstallJob | null }>(`/${encodeURIComponent(id)}/install`).then((r) => r.install),
   copyLogin: (id: string, agent: "claude" | "codex") =>
     request<{ copied: string }>(`/${encodeURIComponent(id)}/copy-login`, post({ agent })),
+  /** Log Claude Code in for the agents there with a `claude setup-token` token. */
+  saveClaudeToken: (id: string, token: string) =>
+    request<{ saved: string }>(`/${encodeURIComponent(id)}/claude-token`, post({ token })),
 };

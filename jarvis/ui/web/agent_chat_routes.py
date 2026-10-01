@@ -434,19 +434,20 @@ class ProviderHealthResponse(BaseModel):
     cached: bool = False
 
 
-#: How long one sweep stands. A key does not go bad between two clicks, and
-#: the sweep costs one real request per provider — 9 s to 16 s each on the
-#: maintainer's box (measured 2026-08-26), which is why nothing waits for it.
+#: How long one sweep stands. The sweep sends nothing to any provider (it
+#: reads key presence, CLI login state and the passive record of real calls),
+#: but the CLI login reads are not free, so a sweep is reused for a while — and
+#: dropped the moment the health record changes (see ``get_provider_health``).
 _HEALTH_TTL_S: Final[float] = 300.0
-#: The whole sweep's ceiling. A provider still thinking when this runs out is
-#: reported ``unknown`` and draws no dot: a seat that cannot answer a one-token
-#: request inside this is not a seat someone should be told is fine, but
-#: neither is a slow network proof that a key is bad.
+#: The whole sweep's ceiling. A row whose (local) check has not finished when
+#: this runs out is reported ``unknown`` and draws no dot.
 _HEALTH_SWEEP_S: Final[float] = 20.0
 
-#: surface -> (checked_at, rows). Process-local, like every other short cache
-#: in the routes; a restart simply re-sweeps on first use.
-_health_cache: dict[str, tuple[float, list[ProviderHealthRow]]] = {}
+#: surface -> (checked_at, (health-record version, credential generation), rows).
+#: Process-local, like every other short cache in the routes; a restart simply
+#: re-sweeps. Keyed on both counters so a new real-call outcome AND any key
+#: saved or deleted — through whichever path — drop the sweep at once.
+_health_cache: dict[str, tuple[float, tuple[int, int], list[ProviderHealthRow]]] = {}
 
 #: Vendor CLI runners. Their credential is a subscription login, not a key,
 #: so the API-Keys one-token probe is the wrong check: the dual Claude row
@@ -561,7 +562,7 @@ async def _one_provider_health(cfg: Any, provider_id: str, *, surface: str) -> P
     from jarvis.ui.web.provider_routes import provider_health
 
     try:
-        health = await provider_health(cfg, provider_id, probe=True)
+        health = await provider_health(cfg, provider_id)
     except TimeoutError:
         return ProviderHealthRow(
             provider=provider_id, status="unknown", reason="timeout", detail="No answer in time"
@@ -594,22 +595,34 @@ async def get_provider_health(
     2026-08-26, four of nine connected rows were in one of those states, and
     the picker offered all nine as if they were equal.
 
-    API / brain seats run the real one-token check the API-Keys screen's tab
-    dots use (``provider_routes.provider_health``). A vendor CLI seat does
-    not: it spends a subscription login, so this reports that login instead.
-    The dual Claude row is why the split exists — its catalog id is
-    ``claude-api``, and the API-Keys probe would otherwise paint "Key
-    rejected" on a Claude Code seat that is signed in.
+    API / brain seats report what the API-Keys screen's tab dots report
+    (``provider_routes.provider_health``): key presence plus the outcome of
+    that provider's last REAL call. Nothing here sends a request — until
+    2026-09-30 every open of the chat spent a paid one-token completion per
+    keyed provider. A seat never used since its key was saved is ``unknown``
+    and draws no dot. A vendor CLI seat spends a subscription login, so this
+    reports that login instead. The dual Claude row is why the split exists —
+    its catalog id is ``claude-api``, and the API-key verdict would otherwise
+    paint "Key rejected" on a Claude Code seat that is signed in.
 
     Nothing waits for this: the composer paints from the catalog and folds
     these in when they land. A row that does not finish inside the sweep
     ceiling comes back ``unknown`` and is drawn exactly as it was before.
     """
     _service(request)  # 503 like every other route when the chat is off
+    from jarvis.brain.provider_health_ledger import ledger_version
+    from jarvis.core.config import secret_generation
+
     now = time.monotonic()
+    version = (ledger_version(), secret_generation())
     cached = _health_cache.get(surface)
-    if cached and not refresh and (now - cached[0]) < _HEALTH_TTL_S:
-        return ProviderHealthResponse(providers=cached[1], checked_at=cached[0], cached=True)
+    if (
+        cached
+        and not refresh
+        and cached[1] == version
+        and (now - cached[0]) < _HEALTH_TTL_S
+    ):
+        return ProviderHealthResponse(providers=cached[2], checked_at=cached[0], cached=True)
 
     from jarvis.ui.web.provider_routes import _resolve_cfg
 
@@ -637,7 +650,7 @@ async def get_provider_health(
                 provider=pid, status="unknown", reason="timeout", detail="No answer in time"
             )
         )
-    _health_cache[surface] = (now, rows)
+    _health_cache[surface] = (now, version, rows)
     return ProviderHealthResponse(providers=rows, checked_at=now, cached=False)
 
 

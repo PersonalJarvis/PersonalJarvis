@@ -21,8 +21,6 @@ https://github.com/user-attachments/assets/9930ca95-5015-4ade-9a16-975c77d179fd
 
 Want to try Personal Jarvis later? **Star this repository** to keep it handy.
 
-![Flow from a user request through Jarvis to the computer, browser, apps, agents, models, and services, then back as a result with run history.](https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/brand/request-to-result.svg)
-
 **Why it is different:** Jarvis coordinates the tools you already have. A request
 can move from voice or chat to [computer use](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/computer-use.md),
 [Codex or Claude Code](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/agentic-ide.md), [local or hosted models](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/personalize-and-connect/local-ai-providers.md),
@@ -73,12 +71,20 @@ For a minimal server installation, use `pip install personal-jarvis` and
 `jarvis serve`. Open the local address reported at startup; the default is
 `http://localhost:47821`. Remote browser microphone access requires HTTPS.
 See the [headless deployment guide](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/headless-vps-deployment.md).
+Manual pip/pipx installs on Intel macOS and Windows ARM64 also need the
+[native package index](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/start-here/install-personal-jarvis.md#install-the-isolated-pypi-package);
+the recommended installer configures it automatically.
 
 The idea is simple: one place on your computer where you say what you need, and it happens. You talk to Jarvis or type to it, and it works out whether to just answer, do something on your computer for you, or pass the job to an agent that keeps at it while you get on with your day. You can always see what it's doing, and it asks before it touches anything that matters.
 
 It runs on your own machine with whichever model you like, local ones included, and it's free. There's no account to create, and nothing sends your data anywhere you didn't connect yourself.
 
 ## One request, several ways to get it done
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/brand/how-a-request-runs-dark.svg" />
+  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/brand/how-a-request-runs-light.svg" alt="You ask by voice or chat. Jarvis picks a route: answer directly, act on your desktop, browser, apps and tools, or hand longer work to an agent. Every action passes a risk check of safe, monitor, ask you, or block, and the result comes back with every step saved in history." width="100%" />
+</picture>
 
 | Stage | What Jarvis connects |
 |---|---|

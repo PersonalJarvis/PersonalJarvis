@@ -617,8 +617,7 @@ Self-mod writeup: [`docs/self_mod.md`](docs/self_mod.md) — 8 mutable settings 
 - **Auto-push-EOD:** Task Scheduler 22:00 default. Tags `safety/eod-*` per branch, skips active Jarvis-Agent worktrees (modified within last 30 min).
 - **Wiki triggers** (ADR-0014 contract — all classified silent vs loud):
   - `WikiContextInjector` (silent) — runs before every brain turn
-  - `VoiceFactBridge` ack path (loud) — `ResponseGenerated` with ack keyword, async via `asyncio.create_task`
-  - `VoiceFactBridge` aggressive path (loud, rate-limited 60s default, opt-out `aggressive_mode=false`)
+  - `VoiceFactBridge` ack path (loud) — `ResponseGenerated` with ack keyword, async via `asyncio.create_task`; the automatic per-turn review and the end-of-call sweep were removed 2026-09-30
   - `SessionRollupWorker` (loud) — `IdleEntered` past `session_idle_threshold_minutes`, writes one Markdown page per session
 - **Preflight:** mandatory in every new worktree before any code edit.
 

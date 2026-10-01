@@ -372,7 +372,7 @@ describe("VisualizationView", () => {
 });
 
 describe("SectionStage", () => {
-  it("drops the wallpaper readability halo for the visualization section", () => {
+  it("gives the visualization section its own opaque stage", () => {
     const { container, rerender } = render(
       <SectionStage visualization={false}>
         <span>section</span>
@@ -387,8 +387,7 @@ describe("SectionStage", () => {
     );
     const stage = container.firstElementChild;
     expect(stage?.className).toContain("jarvis-visualization-stage");
-    // Never both: the halo is inherited by every descendant, which is exactly
-    // what must not happen over a rendered page.
+    // Never both: a rendered page is judged against one flat ground only.
     expect(stage?.className).not.toContain("jarvis-section-stage");
   });
 });

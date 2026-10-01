@@ -13,6 +13,7 @@ durable review receipt for a later attempt.
 
 from __future__ import annotations
 
+import inspect
 import logging
 import os
 import shutil
@@ -165,25 +166,40 @@ class AgentSkills:
         return sorted(out, key=lambda s: s["slug"])
 
 
-CreatorFactory = Callable[[AgentRecord, AgentSkills], Any | None]
+#: ``(agent, skills) -> creator | None``, or an awaitable of that (the real
+#: factory resolves the agent's seat off the event loop).
+CreatorFactory = Callable[[AgentRecord, AgentSkills], Any]
 
 
 def default_creator_factory(cfg_getter: Callable[[], Any]) -> CreatorFactory:
-    """The real creator: Jarvis' brain + the agent's registry (None without a brain)."""
+    """The real creator: the agent's OWN seat + its private registry.
 
-    def _factory(agent: AgentRecord, skills: AgentSkills) -> Any | None:
+    The skill is authored on exactly the provider, model and auth mode the
+    agent's chat runs on (``seat_brain``; maintainer decision 2026-09-30),
+    never on Jarvis' active provider or the resolver ladder. ``None`` when
+    that seat cannot be built: the agent then learns nothing this time.
+    """
+
+    async def _factory(agent: AgentRecord, skills: AgentSkills) -> Any | None:
         from jarvis.agent_chat.runner_brain import brain_manager
         from jarvis.skills.creator_service import SkillCreatorService, build_authoring_context
 
-        brain = brain_manager()
-        if brain is None:
+        from .seat_brain import SeatUnavailable, agent_brain
+
+        try:
+            seat = await agent_brain(cfg_getter(), agent, caller="society-skill")
+        except SeatUnavailable as exc:
+            log.info("society learning: %s has no usable seat (%s)", agent.agent_id, exc)
             return None
         return SkillCreatorService(
-            brain=brain,
+            brain=seat,
             registry=skills.registry,
-            config=cfg_getter(),
             user_skills_root=skills.root,
-            context=build_authoring_context(brain_manager=brain, registry=skills.registry),
+            # The tool inventory only; no provider of Jarvis' own is asked.
+            context=build_authoring_context(
+                brain_manager=brain_manager(), registry=skills.registry
+            ),
+            seat_only=True,
         )
 
     return _factory
@@ -232,6 +248,8 @@ class LearningPass:
             return None
         skills = rt.skills_for(agent.agent_id)
         creator = self._creator_factory(agent, skills)
+        if inspect.isawaitable(creator):
+            creator = await creator
         if creator is None:
             log.info("society learning: no brain available; %s learns nothing", agent.agent_id)
             return None

@@ -4,8 +4,8 @@ import type { BoardSlot } from "@/lib/deckStandby";
  * The board's depth — the "Schaukasten" (display case).
  *
  * The mission deck used to be a flat grid of instruments on top of the
- * wallpaper (maintainer, 2026-08-22: it does not look good, it is not creative).
- * The wallpaper stays exactly what it is — the back wall — and the board
+ * background (maintainer, 2026-08-22: it does not look good, it is not creative).
+ * The background stays exactly what it is — the back wall — and the board
  * gains DEPTH in front of it instead: every slot stands on its own plane at
  * a distance from the wall, turned a few degrees toward the centre, and the
  * whole case sways a little with the pointer so the eye reads the distances.
@@ -27,7 +27,7 @@ export const DECK_PERSPECTIVE_PX = 1400;
 export const PARALLAX_MAX_PX = 9;
 
 export interface SlotDepth {
-  /** Distance in front of (+) or behind (−) the wallpaper plane, in px. */
+  /** Distance in front of (+) or behind (−) the back wall, in px. */
   z: number;
   /** Turn toward the centre, in degrees (left slots +, right slots −). */
   rotateY: number;

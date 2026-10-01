@@ -9,10 +9,12 @@ vi.mock("./AgenticTerminal", () => ({ AgenticTerminal: (props: {
   name: string; onToggleMaximize: () => void; onRestart: () => void; restartToken: number;
   onFocus: () => void;
   active?: boolean; focused?: boolean;
+  onSwapWithFocused?: () => void;
   onArrangeStart?: (event: React.PointerEvent) => void;
   headerMode?: string; markFocus?: boolean;
 }) => <div onMouseDown={props.onFocus} data-testid={`pane-${props.name}`} data-header-mode={props.headerMode} data-mark-focus={String(props.markFocus)} data-active={String(props.active)} data-focused={String(props.focused)}>
   <button onClick={props.onToggleMaximize}>Maximize {props.name}</button>
+  <button disabled={!props.onSwapWithFocused} onClick={props.onSwapWithFocused}>Swap {props.name}</button>
   <button type="button" data-ide-drag-handle="true" onPointerDown={props.onArrangeStart}>Move {props.name}</button>
   <button onClick={props.onRestart}>Restart {props.name}</button>
   <output data-testid={`restart-${props.name}`}>{props.restartToken}</output>
@@ -63,6 +65,17 @@ it("parks retained terminals and releases keyboard focus while their workspace i
   expect(screen.getByTestId("pane-T1")).toBe(pane);
   expect(pane.getAttribute("data-active")).toBe("false");
   expect(pane.getAttribute("data-focused")).toBe("false");
+});
+
+it("swaps the context pane with the selected pane by stable identity", async () => {
+  api.move.mockResolvedValue(makeSession());
+  const { rerender } = render(<WorkspaceTerminalGrid {...props} selected="T1" session={makeSession()} />);
+  expect((screen.getByRole("button", { name: "Swap T1" }) as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "Swap T3" }));
+  await waitFor(() => expect(api.move).toHaveBeenCalledExactlyOnceWith("pane:T3", "pane:T1", "swap"));
+  await waitFor(() => expect((screen.getByRole("button", { name: "Swap T3" }) as HTMLButtonElement).disabled).toBe(false));
+  rerender(<WorkspaceTerminalGrid {...props} selected="T1" disabled session={makeSession()} />);
+  expect((screen.getByRole("button", { name: "Swap T3" }) as HTMLButtonElement).disabled).toBe(true);
 });
 
 it("swaps immediately, persists once and preserves mounted terminal nodes", async () => {

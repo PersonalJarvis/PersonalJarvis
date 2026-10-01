@@ -3,16 +3,15 @@
  *
  * Installing used to be a one-way trip: the thing landed somewhere on disk and
  * no view could say it had arrived, let alone where it came from. These tests
- * pin the three places that now answer that — a plugin in Plugins, a skill in
- * Skills, a picture in Wallpaper — because "it installed fine" is worth
- * nothing to somebody who cannot find it.
+ * pin the places that now answer that — a plugin in Plugins, a skill in
+ * Skills — because "it installed fine" is worth nothing to somebody who
+ * cannot find it.
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { PluginsView } from "@/views/PluginsView";
-import { uploadAsEntry } from "@/hooks/useWallpaperUploads";
 
 function client() {
   return new QueryClient({
@@ -114,37 +113,5 @@ describe("an installed community plugin is findable", () => {
     // …and the publisher rides along in the title, so the mark answers
     // "from whom" and not just "from somewhere".
     expect(marks[0].getAttribute("title")).toContain("octocat");
-  });
-});
-
-describe("wallpapers keep their two origins apart", () => {
-  it("files an installed picture under Marketplace, not under Yours", () => {
-    const installed = uploadAsEntry({
-      id: "ua1b2c3d4e5f60718",
-      title: "Moonlit Wave",
-      theme: "dark",
-      createdAt: 1,
-      source: "marketplace",
-      sourceId: "moonlit-wave",
-      publisher: "octocat",
-    });
-    expect(installed.style).toBe("marketplace");
-    expect(installed.styleLabel).toBe("Marketplace");
-    expect(installed.fromMarketplace).toBe(true);
-    expect(installed.publisher).toBe("octocat");
-    // Removable and re-themeable like any stored picture.
-    expect(installed.isUpload).toBe(true);
-  });
-
-  it("leaves a picture the owner brought as theirs", () => {
-    const own = uploadAsEntry({
-      id: "ub1b2c3d4e5f60718",
-      title: "My Photo",
-      theme: "light",
-      createdAt: 2,
-    });
-    expect(own.style).toBe("yours");
-    expect(own.styleLabel).toBe("Yours");
-    expect(own.fromMarketplace).toBe(false);
   });
 });

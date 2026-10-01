@@ -9,6 +9,40 @@ versioning per [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Restore the installation-guide link on the PyPI package page and unblock package publication.
+
+This patch includes all v2.5.0 features: desktop pets, profile and keyboard-shortcut settings, workspace shell tabs, improved terminal editing, task recovery, native updates, and subscription-bound background work.
+
+---
+
+## [2.5.0] — 2026-10-01
+
+### Added
+
+- Desktop pets with six built-in characters, animated reactions, a compact control strip, and configurable appearance and size.
+- A redesigned profile page and a dedicated Keyboard Shortcuts page in Settings.
+- Quick section switching, an Agentic IDE key menu, and multiple workspace shell tabs.
+- Move running coding terminals between workspaces in the same folder without restarting the agent.
+- Remote agents retain approved Jarvis tools through scoped SSH forwarding.
+
+### Changed
+
+- First-run guidance helps users connect an agent subscription and configure their wake phrase.
+- Agents continue requested work, recover incomplete tool steps, and use question cards when essential information is missing.
+- Background learning and wiki work use the connected agent seat and respect subscription billing boundaries.
+- Provider health indicators read actual call outcomes without sending paid test requests.
+- Built-in routines no longer start scheduled work without the user's setup; edited skills are preserved during migration.
+
+### Fixed
+
+- Native application updates and restarts preserve the installation and return the app to the desktop.
+- Dictation delivery, retained terminal rendering, and delegated result reporting are more reliable.
+- Stricter per-chat approval settings survive changes to agent defaults.
+- Release publishing requires a tag and the newest successful CI result; version bumps keep the dependency lock consistent.
+- Cancelled CI runs release their queued aggregation work, and live realtime tests require explicit opt-in.
+
 ---
 
 ## [2.4.4] — 2026-09-30
@@ -156,6 +190,13 @@ versioning per [SemVer](https://semver.org/).
 - Silent exception handlers and blocking async routes introduced since 2.3.2
   are logged, explained or moved off the event loop; native select popups are
   replaced by the branded dropdown.
+
+### Removed
+
+- Remove wallpapers. The app always paints its flat theme colour; the
+  Wallpaper page in Settings, the bundled pictures, the wallpaper library
+  download and uploads are gone. The marketplace no longer lists, installs
+  or publishes wallpapers — it carries plugins and skills only.
 
 ---
 

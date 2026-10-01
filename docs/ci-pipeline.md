@@ -25,7 +25,7 @@ agent branch ──► pull request ──► CI (lanes) ──► CI gate ─�
 | `tests windows` | Four shards on full runs; on a pull request one runner takes only the tests the diff can reach. | `scripts/ci/select_tests.py` |
 | `tests macos 1..3` | Nightly and manual runs only (~10x runner cost). | — |
 | `test report + floor` | Sums all Linux shards, enforces the min-passed floor, lists baselined failures that now pass, and on main refreshes the per-file duration cache that balances the shards. | `scripts/ci/ratchet_tests.py` |
-| Lanes | `frontend`, `jarvisctl`, `deps`, `realtime` (3 OS + slim container), `dragdrop`, `browser`, `macOS desktop`, `installer smoke` — each only when its paths change. | — |
+| Lanes | `frontend`, `jarvisctl`, `deps`, `realtime` (3 OS + slim container), `updater` (3 OS: in-app update, native handover, restart helper), `dragdrop`, `browser`, `macOS desktop`, `installer smoke` — each only when its paths change. | — |
 | `CI gate` | Aggregates every job. **The only required check.** Skipped lanes pass; the nightly run is strict and fails on any skip. | `scripts/ci/required_results.py` |
 
 ### Known failures: the ratchet
@@ -107,10 +107,19 @@ dirty worktree and never stashes or force-pushes.
 A release happens **only** when the maintainer asks for one.
 
 * **`release-cut.yml`** (manual): refuses unless main is green, bumps
-  `pyproject.toml` + `jarvis/__init__.py`, moves the `[Unreleased]` notes (or
+  `pyproject.toml`, `jarvis/__init__.py` and `uv.lock`, moves the `[Unreleased]` notes (or
   the Conventional Commits since the last tag) into a dated CHANGELOG section
-  (`scripts/ci/cut_release.py`), commits, dispatches CI, tags, and dispatches
-  the three publishing workflows on the tag.
+  (`scripts/ci/cut_release.py`), and commits on a unique candidate branch.
+  It opens a candidate PR, waits for its `pull_request` CI, merges normally,
+  tags the admitted version commit, and dispatches the publishing workflows.
+  GitHub does not count `workflow_dispatch` job checks toward protected-branch
+  requirements ([GitHub documentation](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks#checks-from-some-workflow-jobs-are-not-evaluated)).
+  When repository policy blocks bot-created PRs, the workflow prints the
+  candidate compare link for a maintainer to open; an optional existing
+  `INTEGRATION_TOKEN` follows the merge train's token convention.
+  The optional `resume_sha` input finishes an already merged version commit
+  after an interrupted cut. It requires a full SHA on main, the current version,
+  and successful release admission; it cannot move an existing tag.
 * **`release-gate.yml`** is the first job of `release.yml` (PyPI),
   `desktop-installers.yml` and `sign-installer.yml`. It admits a tag only
   when tag, versions and CHANGELOG agree, the commit is on main, and

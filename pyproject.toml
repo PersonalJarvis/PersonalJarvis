@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "personal-jarvis"
-version = "2.4.4"
+version = "2.5.0"
 description = "Turn your computer into an AI agent that coordinates apps, tools, models, and other agents"
 requires-python = ">=3.11,<3.15"
 readme = "README.md"
@@ -65,21 +65,9 @@ dependencies = [
     # malformed vision JSON; without it the repair path silently degrades on
     # every fresh install (found 2026-07-18, was never declared).
     "json-repair>=0.30",
-    # cryptography stopped publishing the wheels these two targets need, and
-    # not at the same release: win_arm64 ends at 46.0.3, and the macosx
-    # universal2 wheel that covers Intel macOS ends at 48.0.1. Re-verified
-    # against PyPI on 2026-08-26 (latest 50.0.1) - neither architecture has
-    # returned. Both are supported cells of the installer matrix, so each keeps
-    # the newest release that still ships its architecture; a fix no wheel
-    # delivers would only trade a dormant advisory for a broken install.
-    # Every OTHER platform must stay >=50: PYSEC-2026-3552 (PKCS#7 decrypt
-    # Bleichenbacher oracle) affects 44.0.0-49.x and is fixed only in 50.0.0,
-    # and without an explicit floor the universal resolver widens the Intel-mac
-    # 48.0.1 pin onto the mainstream branch. The floor's marker is the exact
-    # complement of the two pins so exactly one branch applies everywhere.
-    "cryptography==46.0.3; sys_platform == 'win32' and platform_machine == 'ARM64'",
-    "cryptography==48.0.1; sys_platform == 'darwin' and platform_machine == 'x86_64'",
-    "cryptography>=50; (sys_platform != 'win32' or platform_machine != 'ARM64') and (sys_platform != 'darwin' or platform_machine != 'x86_64')",
+    # Current security fixes on every architecture. The reviewed native index
+    # supplies Intel macOS and Windows ARM64 wheels without end-user compilers.
+    "cryptography>=50.0.2",
     "pydantic>=2.9,<3.0",
     "pydantic-settings>=2.6",
     "pyyaml>=6.0",
@@ -91,7 +79,7 @@ dependencies = [
     # headless python:3.11-slim without a system ssh client. The bcrypt extra
     # is what unlocks a passphrase-protected OpenSSH key (ssh-keygen's default
     # format), so a user's own protected key can be added at all.
-    "asyncssh[bcrypt]>=2.21",
+    "asyncssh[bcrypt]>=2.24.0",
     # Security floor for a transitive dependency (mcp, twilio): 2.13.0 carries
     # ten advisories fixed in 2.14.0 (CVE-2026-101917, CVE-2026-102265..102274).
     "pyjwt>=2.14.0",
@@ -877,6 +865,13 @@ jarvis = [
     # Wiki bootstrap templates for a new vault (memory/wiki/__init__.py's
     # TEMPLATES_DIR + integration.py's schema.md read).
     "memory/wiki/templates/*.md",
+    # Built-in desktop pets and the sprite-sheet template, read at runtime via
+    # Path(__file__) (jarvis/ui/pets/loader.py). Scoped to the two file kinds
+    # a pet folder holds.
+    "ui/pets/builtin/*/*.json",
+    "ui/pets/builtin/*/*.png",
+    "ui/pets/template/*.json",
+    "ui/pets/template/*.png",
     # Built-in skills: SKILL.md plus their reference/asset/script support
     # files (e.g. skill-creator ships references/, scripts/, agents/,
     # assets/ alongside its SKILL.md). Extension-scoped rather than
@@ -929,3 +924,12 @@ markers = [
     "integration: Integration tests that spawn real subprocesses or hit live external services (e.g. Codex CLI ChatGPT OAuth). Self-skip when prerequisites are missing; run explicitly via `pytest -m integration`.",
     "real_tcc_gate: opts a Computer-Use test back into the real macOS Screen-Recording gate that tests/unit/cu/conftest.py neutralizes by default.",
 ]
+
+# Only cryptography may resolve through the reviewed native wheel index.
+[[tool.uv.index]]
+name = "native-crypto"
+url = "https://personaljarvis.github.io/PersonalJarvis/native-crypto/50.0.2-1/simple/"
+explicit = true
+
+[tool.uv.sources]
+cryptography = { index = "native-crypto" }

@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import en from "@/i18n/locales/onboarding/en.json";
-import { cutout, placeCard, TOUR_STEPS } from "./tourSteps";
+import { cutout, fitToView, padded, placeCard, TOUR_STEPS } from "./tourSteps";
 
 const SRC = join(__dirname, "..", "..", "..");
 
@@ -84,5 +84,19 @@ describe("placeCard", () => {
 
   it("centres the card without an element", () => {
     expect(placeCard(null, "below", card, view)).toEqual({ x: 480, y: 320 });
+  });
+});
+
+describe("fitToView", () => {
+  const view = { w: 1280, h: 800 };
+
+  it("pulls a whole-page ring back inside the window", () => {
+    const ring = fitToView(padded({ x: 0, y: 32, w: 1280, h: 768 }), view);
+    expect(ring).toEqual({ x: 6, y: 24, w: 1268, h: 770 });
+  });
+
+  it("leaves a ring that already fits untouched", () => {
+    const ring = padded({ x: 100, y: 100, w: 200, h: 40 });
+    expect(fitToView(ring, view)).toEqual(ring);
   });
 });

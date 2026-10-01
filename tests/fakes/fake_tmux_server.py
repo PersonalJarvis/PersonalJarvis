@@ -1,15 +1,16 @@
 """An in-process SSH server that behaves like a VPS running tmux.
 
 Built on :class:`tests.fakes.fake_ssh_server.FakeSshServer` (real asyncssh,
-127.0.0.1, random port). Only the handful of commands the IDE's remote panes
-send are understood:
+127.0.0.1, random port, SFTP into a folder that plays the home). Only the
+handful of commands the IDE's remote panes send are understood — read from the
+uploaded pane launcher or the script sent on stdin, as a real server would run
+them:
 
 * ``tmux ... new-session -A -s NAME ...`` — creates (or re-joins) session NAME
   and becomes its screen: prints ``ready NAME`` and echoes every keystroke back
   as ``echo:<data>`` until the session is killed.
 * ``tmux has-session -t NAME`` — exit 0 while NAME lives, 1 after.
 * ``tmux kill-session -t NAME`` — ends NAME (and the screen attached to it).
-* ``printf %s "$HOME"`` — ``/home/test``.
 
 ``drop_connections()`` cuts every client connection WITHOUT ending the tmux
 sessions, which is what a flaky network or a sleeping laptop does.
@@ -19,6 +20,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import asyncssh
@@ -40,8 +42,8 @@ class TmuxState:
 
 
 class FakeTmuxServer(FakeSshServer):
-    def __init__(self, state: FakeSshState | None = None) -> None:
-        super().__init__(state)
+    def __init__(self, state: FakeSshState | None = None, *, sftp_root: Path) -> None:
+        super().__init__(state, sftp_root=sftp_root)
         self.tmux = TmuxState()
         self._connections: list[Any] = []
 
@@ -52,12 +54,13 @@ class FakeTmuxServer(FakeSshServer):
             server_host_keys=[self.host_key],
             server_factory=lambda: _Server(self.state),
             process_factory=self._process,
+            sftp_factory=self.sftp_factory(),
             line_editor=False,
         )
         self.port = self._acceptor.sockets[0].getsockname()[1]
 
     async def _process(self, process: asyncssh.SSHServerProcess) -> None:
-        command = process.command or ""
+        command = await self.resolve(process)
         self.state.commands.append(command)
         self._connections.append(process.channel.get_connection())
         if (match := _NEW.search(command)) is not None:
@@ -73,11 +76,7 @@ class FakeTmuxServer(FakeSshServer):
                 screen.exit(0)
             process.exit(0)
             return
-        if 'printf %s "$HOME"' in command:
-            process.stdout.write("/home/test")
-            process.exit(0)
-            return
-        await super()._process(process)
+        await self.answer(command, process)
 
     async def _screen(self, process: asyncssh.SSHServerProcess, name: str) -> None:
         if name in self.tmux.alive:

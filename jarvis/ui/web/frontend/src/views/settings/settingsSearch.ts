@@ -19,7 +19,6 @@ const SEARCH_GROUPS = [
   { id: "volume", keys: ["volume"] },
   { id: "audio-devices", keys: ["audio_devices"] },
   { id: "music", keys: ["music", "music_group_title"] },
-  { id: "keybinds", keys: ["keybinds"] },
   { id: "more", keys: ["rows", "team_proxy", "codex_title", "safety_title"] },
   { id: "overlay-taskbar", keys: ["overlay_style", "bar_size", "overlay_taskbar_group_title"] },
 ] as const;
@@ -30,8 +29,9 @@ const SEARCH_PAGES = [
   { id: "contacts", keys: ["contacts"] },
   { id: "socials", keys: ["socials"] },
   { id: "apikeys", keys: ["apikeys_view", "apikeys_voice", "apikeys_model", "apikeys_cu_model"] },
-  { id: "wallpaper", keys: ["home.background_label", "home.background_hint"] },
   { id: "appshots", keys: ["appshots"] },
+  { id: "shortcuts", keys: ["shortcuts_view", "settings_view.keybinds", "settings_view.quick_switch"] },
+  { id: "pets", keys: ["pets"] },
   { id: "jarvis-actions", keys: ["jarvis_actions"] },
   { id: "costs", keys: ["costs_view"] },
   { id: "feedback", keys: ["feedback"] },

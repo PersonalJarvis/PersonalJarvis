@@ -1,14 +1,16 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CommunityTab, type CommunityResponse } from "@/views/PluginsCommunity";
 
 // What the reader must be able to see BEFORE installing: the actual text a
-// skill would hand the assistant, and the actual picture a wallpaper installs.
+// skill would hand the assistant.
 const SKILL_TEXT = "---\nname: three-point-check\n---\n\nAlways answer in three bullets.\n";
 
-const COMMUNITY: CommunityResponse = {
+// A registry build from before wallpapers were retired may still publish the
+// section; the tab must not render it.
+const COMMUNITY = {
   status: "fresh",
   plugins: [],
   skills: [
@@ -38,7 +40,7 @@ const COMMUNITY: CommunityResponse = {
       installed: false,
     },
   ],
-};
+} as CommunityResponse;
 
 function installFetchMock() {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -59,16 +61,8 @@ function installFetchMock() {
           files: [
             { path: "SKILL.md", size: 72, text: SKILL_TEXT, truncated: false },
           ],
-          image_url: null,
           error: null,
         }),
-      } as Response;
-    }
-    if (url === "/api/marketplace/community/install/rain-antenna-city") {
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({ ok: true, kind: "wallpaper", id: "rain-antenna-city" }),
       } as Response;
     }
     throw new Error(`unexpected fetch ${method} ${url}`);
@@ -124,26 +118,12 @@ describe("reading an entry before installing it", () => {
     ).toBeDefined();
   });
 
-  it("lists wallpapers and installs the previewed one by name", async () => {
-    const fetchMock = installFetchMock();
+  it("does not list wallpapers an older feed still publishes", async () => {
+    installFetchMock();
     renderTab();
 
-    fireEvent.click(await screen.findByTitle(/Preview Rain Antenna City/i));
-    // The picture at full size IS the disclosure for a wallpaper.
-    const preview = await screen.findByAltText("Rain Antenna City");
-    expect(preview.getAttribute("src")).toBe(
-      "https://raw.example/wallpapers/rain-antenna-city.webp",
-    );
-
-    // Scoped to the dialog: the skill card behind it carries an Install too.
-    const dialog = screen.getByRole("dialog");
-    fireEvent.click(within(dialog).getByRole("button", { name: "Install" }));
-    await waitFor(() =>
-      expect(
-        fetchMock.mock.calls.some(
-          ([u]) => String(u) === "/api/marketplace/community/install/rain-antenna-city",
-        ),
-      ).toBe(true),
-    );
+    expect(await screen.findByTitle(/Read what Three Point Check/i)).toBeDefined();
+    expect(screen.queryByText("Rain Antenna City")).toBeNull();
+    expect(screen.queryByText("Wallpapers")).toBeNull();
   });
 });

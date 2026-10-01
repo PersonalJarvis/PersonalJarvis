@@ -47,7 +47,6 @@ def _fail(exc: ApiError) -> typer.Exit:
 _SECTIONS: tuple[tuple[str, str], ...] = (
     ("skills", "skill"),
     ("plugins", "plugin"),
-    ("wallpapers", "wallpaper"),
 )
 
 
@@ -90,15 +89,10 @@ _BLURBS = {
         "A connector to an outside service. Installing it only puts it on your "
         "list — it stays powerless until you connect your account."
     ),
-    "wallpaper": (
-        "A picture for the app background. It is re-encoded on the way in, "
-        "exactly like one you would drag in yourself."
-    ),
 }
 _LANDS_IN = {
     "skill": "your skills",
     "plugin": "your plugin list",
-    "wallpaper": "your wallpapers",
 }
 
 
@@ -140,11 +134,6 @@ def _report_installed(payload: dict[str, Any]) -> int:
         _field("File", str(payload["location"]))
 
     if payload.get("ready"):
-        if kind == "wallpaper":
-            _field("Status", "in your wallpapers now — open Wallpaper to pick it")
-            _field("From", "shown there as a Marketplace picture")
-            render.line()
-            return 0
         _field(
             "Status",
             "ready to use — Jarvis picked it up already, no restart needed",
@@ -178,10 +167,6 @@ def _report_already_there(kind: str, item_id: str, client: Any) -> int:
     render.line(f"[green]Already installed:[/green] [bold]{item_id}[/bold]")
     render.line()
     _field("Kind", kind)
-    if kind == "wallpaper":
-        _field("Status", "in your wallpapers — open Wallpaper to pick it")
-        render.line()
-        return 0
     if kind == "skill":
         try:
             detail = client.request("GET", f"/api/skills/{item_id}")
@@ -222,7 +207,7 @@ def install(
     yes: bool = options.yes_opt(),
     dry_run: bool = options.dry_opt(),
 ) -> None:
-    """Install a marketplace entry by name — skill, plugin or wallpaper — and report it.
+    """Install a marketplace entry by name — skill or plugin — and report it.
 
     At a terminal this shows what the entry is and asks once before installing,
     then states plainly whether the thing is usable now or still needs a step.

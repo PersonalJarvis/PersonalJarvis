@@ -1,9 +1,8 @@
-"""Conversation observer (Wave-2 B3): voice + chat turns feed the journal.
+"""Conversation observer: explicitly saved voice + chat turns feed the journal.
 
-Pins four contracts:
+Pins five contracts:
 
-1. A completed voice turn flows extractor -> journal; the legacy direct
-   ``curator.ingest`` path is NOT called when an extractor is attached.
+1. A voice turn the brain acknowledged ("Noted.") flows extractor -> journal.
 2. A chat turn (``MessageSent(role="user")`` + ``ResponseGenerated``)
    feeds the same journal.
 3. The same turn text delivered via BOTH event paths is journaled once
@@ -11,9 +10,8 @@ Pins four contracts:
    server's MessageSent mirror).
 4. AP-9: the bus handlers return immediately; extraction happens in a
    fire-and-forget background task, never awaited on the voice path.
-
-Plus: without an extractor the bridge falls back to the legacy direct
-``curator.ingest`` path unchanged.
+5. A turn the brain did NOT acknowledge is never reviewed: the automatic
+   per-turn review was removed on 2026-09-30.
 """
 from __future__ import annotations
 
@@ -96,21 +94,6 @@ class FakeRegistry:
         return self._brain
 
 
-class FakeCurator:
-    def __init__(self) -> None:
-        self.ingested: list[str] = []
-
-    async def ingest(self, source_content: str, source_label: str) -> Any:
-        self.ingested.append(source_content)
-
-        class _R:
-            applied: list = []
-            skipped_due_to_recent_edit: list = []
-            failed_validation: list = []
-
-        return _R()
-
-
 def _config() -> JarvisConfig:
     return JarvisConfig(
         brain=BrainConfig(
@@ -128,10 +111,9 @@ def _stack(tmp_path: Path, *, brain_sleep_s: float = 0.0):
     extractor = ConversationFactExtractor(
         config=_config(), journal=journal, registry=FakeRegistry(brain),
     )
-    curator = FakeCurator()
-    bridge = VoiceFactBridge(bus=bus, curator=curator, config=None, extractor=extractor)
+    bridge = VoiceFactBridge(bus=bus, extractor=extractor)
     bridge.start()
-    return bus, journal, curator, bridge, brain
+    return bus, journal, None, bridge, brain
 
 
 async def _drain(
@@ -149,7 +131,7 @@ async def _drain(
 
 @pytest.mark.asyncio
 async def test_voice_turn_feeds_journal_not_direct_ingest(tmp_path: Path) -> None:
-    bus, journal, curator, bridge, _brain = _stack(tmp_path)
+    bus, journal, _unused, bridge, _brain = _stack(tmp_path)
     try:
         await bus.publish(TranscriptFinal(
             transcript=Transcript(text=FACT_SENTENCE, language="en", confidence=0.95),
@@ -162,12 +144,11 @@ async def test_voice_turn_feeds_journal_not_direct_ingest(tmp_path: Path) -> Non
     rows = journal.pending()
     assert rows and rows[0].fact == "Lena moved to Hamburg."
     assert rows[0].source_label.startswith("voice-fact:")
-    assert curator.ingested == [], "extractor mode must not call curator.ingest directly"
 
 
 @pytest.mark.asyncio
 async def test_chat_turn_feeds_same_journal(tmp_path: Path) -> None:
-    bus, journal, curator, bridge, _brain = _stack(tmp_path)
+    bus, journal, _unused, bridge, _brain = _stack(tmp_path)
     try:
         await bus.publish(MessageSent(thread_id="t1", role="user", text=FACT_SENTENCE))
         await bus.publish(ResponseGenerated(text="Noted.", language="en"))
@@ -178,7 +159,6 @@ async def test_chat_turn_feeds_same_journal(tmp_path: Path) -> None:
     rows = journal.pending()
     assert rows and rows[0].fact == "Lena moved to Hamburg."
     assert rows[0].source_label.startswith("chat-fact:")
-    assert curator.ingested == []
 
 
 @pytest.mark.asyncio
@@ -245,21 +225,19 @@ async def test_ap9_handlers_return_before_extraction_completes(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
-async def test_without_extractor_legacy_direct_ingest_still_fires(tmp_path: Path) -> None:
-    bus = EventBus()
-    curator = FakeCurator()
-    bridge = VoiceFactBridge(bus=bus, curator=curator, config=None, extractor=None)
-    bridge.start()
+async def test_unacknowledged_turns_are_never_reviewed(tmp_path: Path) -> None:
+    """No automatic per-turn review: without an acknowledgement nothing bills."""
+    bus, journal, _unused, bridge, brain = _stack(tmp_path)
     try:
         await bus.publish(TranscriptFinal(
             transcript=Transcript(text=FACT_SENTENCE, language="en", confidence=0.95),
         ))
-        await bus.publish(ResponseGenerated(text="Noted.", language="en"))
-        for _ in range(100):  # up to ~2 s
-            if curator.ingested:
-                break
-            await asyncio.sleep(0.02)
+        await bus.publish(ResponseGenerated(text="Hamburg is lovely.", language="en"))
+        await bus.publish(MessageSent(thread_id="t1", role="user", text=FACT_SENTENCE * 2))
+        await bus.publish(ResponseGenerated(text="Tell me more!", language="en"))
+        await asyncio.sleep(0.3)
     finally:
         bridge.stop()
 
-    assert curator.ingested, "fallback path must keep the legacy direct ingest alive"
+    assert brain.call_count == 0
+    assert journal.backlog_count() == 0

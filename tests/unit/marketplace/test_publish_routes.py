@@ -88,26 +88,9 @@ async def test_identity_reports_disabled_deployment(
     client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(publish, "publish_endpoint", lambda: "")
-    monkeypatch.setattr(publish, "publish_wallpaper_endpoint", lambda: "")
     async with client:
         state = (await client.get("/api/marketplace/publish/identity")).json()
-    assert state == {"enabled": False, "wallpapers_enabled": False, "signed_in": False}
-
-
-@pytest.mark.asyncio
-async def test_the_two_lanes_are_reported_separately(
-    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A fork may run one lane without the other, and each surface hides its
-    own button accordingly — so one flag cannot speak for both."""
-    monkeypatch.setattr(publish, "publish_endpoint", lambda: "")
-    monkeypatch.setattr(publish, "publish_wallpaper_endpoint", lambda: "https://pj.example/w")
-    async with client:
-        state = (await client.get("/api/marketplace/publish/identity")).json()
-    assert state["enabled"] is False
-    assert state["wallpapers_enabled"] is True
-    # Still reports sign-in state: the wallpaper lane needs the same identity.
-    assert "signed_in" in state
+    assert state == {"enabled": False, "signed_in": False}
 
 
 @pytest.mark.asyncio

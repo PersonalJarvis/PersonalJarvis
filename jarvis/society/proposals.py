@@ -1,12 +1,12 @@
-"""Configuration by chat: the agent PROPOSES a change to itself, the person
-CONFIRMS it on a card in the chat, and only then does anything change.
+"""Configuration by chat: explicit requests apply inline; suggestions use a card.
 
 A proposal is an ordinary row in the approvals queue whose capability is
 ``core:config:<kind>`` and whose ``action`` carries the typed payload — no new
 table, no new enum, no new chat event kind. The card rides a ``notice`` event
 (``payload.kind == "proposal"``), its outcome a second one
-(``payload.kind == "proposal_resolved"``). Nothing here applies a change:
-:func:`apply` runs only from the resolve route once the person said yes.
+(``payload.kind == "proposal_resolved"``). A validated current user request
+can resolve inline without a pending card or a second agent conversation.
+Permission changes still require confirmation.
 
 Kinds (agent-definition §3.5):
 
@@ -317,6 +317,7 @@ async def propose(
     payload: Any,
     reason: str,
     session_id: str,
+    resume_in_place: bool = False,
 ) -> Approval:
     """Validate, queue, and show the card. Raises :class:`ProposalRefused`."""
     clean = validate(kind, payload, catalog=rt.catalog())
@@ -336,13 +337,15 @@ async def propose(
             "payload": clean,
             "reason": _text(reason, limit=600),
             "session_id": session_id,
+            **({"resume_in_place": True} if resume_in_place else {}),
         },
         summary=summarize(kind, clean),
     )
-    try:
-        await rt.post_chat_notice(agent, proposal_notice(agent, item))
-    except Exception:  # noqa: BLE001 — the queue holds the proposal; the card is a projection
-        log.warning("society: proposal card not posted for %s", agent.agent_id, exc_info=True)
+    if not resume_in_place:
+        try:
+            await rt.post_chat_notice(agent, proposal_notice(agent, item))
+        except Exception:  # noqa: BLE001 — the queue holds the proposal; the card is a projection
+            log.warning("society: proposal card not posted for %s", agent.agent_id, exc_info=True)
     return item
 
 

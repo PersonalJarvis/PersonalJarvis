@@ -341,7 +341,11 @@ def test_an_untruncated_replay_is_still_verbatim() -> None:
 
 
 def test_rebasing_for_a_resize_drops_old_drawing_but_preserves_modes() -> None:
-    """A TUI stream is geometry-bound; its negotiated terminal state is not."""
+    """A TUI stream is geometry-bound; its negotiated terminal state is not.
+
+    For an agent that has never painted a whole frame (Codex repaints with
+    partial erases), the old drawing would show through the new one.
+    """
     buffer = ReplayBuffer()
     buffer.feed("\x1b[?1049h\x1b[?1006hOLD STATUS ROW")
 
@@ -353,9 +357,73 @@ def test_rebasing_for_a_resize_drops_old_drawing_but_preserves_modes() -> None:
     assert "\x1b[?1006h" in prologue
     assert prologue.endswith("\x1b[0m")
     assert buffer.truncated is False
+    assert buffer.awaiting_frame is False
 
     buffer.feed("NEW SCREEN")
     assert buffer.text() == prologue + "NEW SCREEN"
+
+
+def test_a_whole_frame_painter_keeps_its_last_frame_until_the_next_one() -> None:
+    """Never trade the only picture of a pane for an empty one.
+
+    Dropping the old frame on a resize left nothing to replay, and an agent too
+    busy or too starved to answer the repaint request left every pane of a
+    workspace an empty black rectangle (2026-09-30). Claude Code repaints a
+    resize with a whole-screen erase, so the old frame cannot linger once the
+    new one arrives.
+    """
+    buffer = ReplayBuffer()
+    buffer.feed("\x1b[?1049h\x1b[?1006h\x1b[2J\x1b[HOLD FRAME")
+
+    replay = buffer.rebase_for_resize()
+
+    assert "OLD FRAME" in replay, "the replay still draws the last frame"
+    assert replay == buffer.text()
+    assert buffer.awaiting_frame is True, "and a new frame is owed"
+
+    buffer.feed("\x1b[2J\x1b[HNEW FRAME")
+
+    assert buffer.awaiting_frame is False
+    assert "OLD FRAME" not in buffer.text()
+    assert buffer.text().endswith("\x1b[2J\x1b[HNEW FRAME")
+
+
+def test_a_frame_owed_since_a_resize_survives_further_resizes() -> None:
+    """A dragged seam resizes many times; the picture must survive all of them."""
+    buffer = ReplayBuffer()
+    buffer.feed("\x1b[?1049h\x1b[2J\x1b[HOLD FRAME")
+
+    buffer.rebase_for_resize()
+    buffer.feed("\x1b[5;1Hspinner")
+    replay = buffer.rebase_for_resize()
+
+    assert "OLD FRAME" in replay and replay.endswith("spinner")
+    assert buffer.awaiting_frame is True
+
+
+def test_an_erase_split_across_reads_still_ends_the_wait() -> None:
+    """A PTY read may cut the new frame's erase after any byte."""
+    buffer = ReplayBuffer()
+    buffer.feed("\x1b[?1049h\x1b[2J\x1b[HOLD FRAME")
+    buffer.rebase_for_resize()
+
+    buffer.feed("tail\x1b[")
+    buffer.feed("2J\x1b[HNEW FRAME")
+
+    assert buffer.awaiting_frame is False
+
+
+def test_a_new_process_does_not_inherit_whole_frame_painting() -> None:
+    """The next agent in a pane is judged by its own repaints."""
+    buffer = ReplayBuffer()
+    buffer.feed("\x1b[?1049h\x1b[2J\x1b[Hclaude frame")
+    buffer.clear()
+    buffer.feed("\x1b[?1049hcodex screen")
+
+    replay = buffer.rebase_for_resize()
+
+    assert "codex screen" not in replay
+    assert buffer.awaiting_frame is False
 
 
 def test_a_replay_forgets_the_modes_when_it_is_cleared() -> None:

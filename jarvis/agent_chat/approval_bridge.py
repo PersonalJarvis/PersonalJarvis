@@ -172,6 +172,8 @@ class ChatApprovalBridge:
         if grant.stance == "always_ask" or grant.force_ask(name, args or {}):
             return None
         if grant.stance == "bypass":
+            if grant.force_ask(name, args or {}):
+                return None
             return "chat-bypass"
         if name in grant.always_allowed:
             return "user"

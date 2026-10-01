@@ -145,6 +145,7 @@ export const ACTION_LABEL_KEY: Record<KeybindAction, string> = {
   dictate: "settings_view.keybinds.dictate_label",
   dictate_toggle: "settings_view.keybinds.dictate_toggle_label",
   paste_last: "settings_view.keybinds.paste_last_label",
+  pet_toggle: "settings_view.keybinds.pet_toggle_label",
 };
 
 /**
@@ -871,6 +872,9 @@ export function KeybindRow({
     <button
       type="button"
       data-testid={`combo-field-${action}`}
+      // App-level chords (the quick switcher) stand down while this is set, so
+      // the keys being recorded reach the recorder instead of opening something.
+      data-keybind-recording={capturing ? "true" : undefined}
       onClick={() => setCapturing((c) => !c)}
       disabled={loading}
       className={`flex min-h-[34px] flex-wrap items-center gap-1 rounded-md border px-3 py-1.5 text-left text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-border-strong disabled:opacity-50 ${

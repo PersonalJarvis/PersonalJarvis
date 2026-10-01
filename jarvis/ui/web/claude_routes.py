@@ -26,6 +26,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
+from jarvis.brain import background_policy
 from jarvis.claude_auth import ClaudeAuthService, claude_install_command
 from jarvis.core.interactive_terminal import InteractiveTerminalUnavailable
 
@@ -111,4 +112,7 @@ async def claude_logout() -> dict[str, Any]:
     ok, error = await asyncio.to_thread(service.logout_blocking)
     if not ok:
         raise HTTPException(status_code=500, detail=error or "Claude logout failed")
+    # A deliberate sign-out ends subscription mode for background work now,
+    # not after the 30-day memory in background_policy.
+    await asyncio.to_thread(background_policy.forget, "claude-cli")
     return {"ok": True, "message": "Claude was disconnected"}

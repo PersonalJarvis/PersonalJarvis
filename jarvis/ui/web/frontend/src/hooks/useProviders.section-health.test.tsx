@@ -214,4 +214,64 @@ describe("provider-bound section health", () => {
     expect(result.current.health.brain).toBeUndefined();
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it("re-reads after a key save without forcing a server-side recompute", async () => {
+    // The rollup never probes a provider; every window hears a key save, so
+    // the follow-up is a plain read of what the server already knows.
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse(
+        responseFor({ status: "unknown", reason: "unverified", detail: "", subject_id: "openai" }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    renderHook(() => useSectionHealth());
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent("jarvis:secret-configured", { detail: { key: "openai_api_key" } }),
+      );
+    });
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const urls = fetchMock.mock.calls.map((call) => String(call[0]));
+    expect(urls.every((url) => !url.includes("refresh=true"))).toBe(true);
+  });
+
+  it("re-reads when the server pushes a changed outcome, keeping the dots meanwhile", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse(
+          responseFor({ status: "unknown", reason: "unverified", detail: "", subject_id: "openai" }),
+        ),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(
+          responseFor({
+            status: "error",
+            reason: "bad_key",
+            detail: "OpenAI: the key was rejected on its last real call (just now)",
+            subject_id: "openai",
+          }),
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => useSectionHealth());
+    await waitFor(() => expect(result.current.health.brain?.reason).toBe("unverified"));
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent("jarvis:provider-health-changed", {
+          detail: { provider: "openai", modality: "brain", status: "bad_key" },
+        }),
+      );
+    });
+    // Nothing about the selection changed: the current dot stays until the read lands.
+    expect(result.current.health.brain?.reason).toBe("unverified");
+
+    await waitFor(() => expect(result.current.health.brain?.status).toBe("error"));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[1][0])).not.toContain("refresh=true");
+  });
 });

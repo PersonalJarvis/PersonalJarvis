@@ -217,9 +217,8 @@ export interface PaneChrome {
  * Chrome (pane frame) colours that go with each terminal theme.
  *
  * Every value below is one of the app's own surface-ladder steps, expressed as
- * an alpha over the pane's ground so it still composites correctly when a
- * wallpaper is showing through the shell. On a flat ground they resolve to the
- * tokens by name: `border` lands on `--border`, `edge.exited` a step below it,
+ * an alpha over the pane's ground, so on the app's flat ground they resolve to
+ * the tokens by name: `border` lands on `--border`, `edge.exited` a step below it,
  * `PaneBrand.chip` on `--secondary`, `PaneBrand.accentSoft` on
  * `--border-strong`. The table exists because a pane's appearance is a
  * SEPARATE setting from the app theme — a light pane inside a dark app is a
@@ -349,7 +348,7 @@ export interface PaneTileChrome {
  * A multiplexer grid is separated by its lines alone — no radius, no
  * elevation — so the resting edge is a full step brighter than
  * the card style's hairline (herdr draws it in a mid grey). Otherwise every
- * edge would dissolve into the wallpaper and the grid would read as one
+ * edge would dissolve into the ground and the grid would read as one
  * block of text.
  *
  * The focused pane wears the app's signal hue (`--accent`: #3D8BFF dark,

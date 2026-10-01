@@ -416,6 +416,25 @@ async def test_a_failing_reviewer_is_not_retried_on_every_turn(book: JarvisNoteb
     assert loop.pending() == {"voice:g": 3}
 
 
+async def test_a_seat_that_keeps_failing_drops_the_turns(book: JarvisNotebook) -> None:
+    from jarvis.memory.learning import loop as loop_module
+
+    failures = loop_module._MAX_FAILURES
+    reviewer = ScriptedReviewer(*([None] * (failures + 1)))
+    loop = JarvisLearningLoop(book, reviewer, review_every_turns=50, idle_review_seconds=0)
+    loop.record("voice:z", _voice("I usually work late in the evening on weekdays"))
+    for _ in range(failures - 1):
+        assert await loop.review("voice:z") == 0
+        assert loop.pending() == {"voice:z": 1}  # handed back for the next try
+    assert await loop.review("voice:z") == 0
+    assert loop.pending() == {}  # given up: only the Jarvis seat is ever asked
+    assert len(reviewer.prompts) == failures
+    # A later turn starts a fresh count instead of inheriting the old failures.
+    loop.record("voice:z", _voice("I always stop at noon on Fridays for football"))
+    assert await loop.review("voice:z") == 0
+    assert loop.pending() == {"voice:z": 1}
+
+
 class BlockingReviewer:
     def __init__(self) -> None:
         self.started = asyncio.Event()

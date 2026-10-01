@@ -156,9 +156,8 @@ export function ProviderLogo({
         //
         // The tile is a LIFT surface with no rim. It used to be a --background
         // fill inside a --border outline: the room itself, which on a card is
-        // a child darker than its parent, and which the wallpaper path
-        // converges to transparent — between them, that is why a logo tile
-        // could render as an empty outline. A nested tile steps UP, and once
+        // a child darker than its parent — that is why a logo tile could
+        // render as an empty outline. A nested tile steps UP, and once
         // it has a real fill the outline is what was standing in for one.
         small
           ? "inline-flex h-4 w-4 shrink-0 items-center justify-center overflow-hidden rounded-full"

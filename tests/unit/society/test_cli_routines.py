@@ -128,6 +128,11 @@ async def test_explicit_cli_request_schedules_and_reads_back(world, quote):
     try:
         result = json.loads(await call(world, "society_propose_change", args(quote)))
         assert result["applied"] is True
+        assert result["proposal"]["action"]["resume_in_place"] is True
+        events = await world.rt.store.events_since()
+        assert not any(str(e.msg_type) == "RELEASE" and e.to_agent == "scout" for e in events)
+        notices = world.rt.chat_service().notices
+        assert not any(n.get("kind") == "proposal" for _, n in notices)
         saved = json.loads(await call(world, "society_routines"))
         assert saved["timezone"] == "America/New_York"
         assert len(saved["routines"]) == 1

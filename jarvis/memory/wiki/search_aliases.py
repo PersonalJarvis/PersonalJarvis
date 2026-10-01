@@ -34,6 +34,7 @@ crosses to another family instead of bricking the feature (AP-22).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from typing import Any
@@ -248,6 +249,7 @@ async def generate_aliases(
     registry: Any,
     languages: tuple[str, ...] | None = None,
     timeout_s: float = 30.0,
+    count_against_daily_cap: bool = True,
 ) -> list[str]:
     """Search terms for one page, or ``[]`` when no provider is reachable.
 
@@ -255,38 +257,55 @@ async def generate_aliases(
     the whole chain exhausted, a malformed answer — returns an empty list with
     a logged reason, because a page without aliases is merely as findable as
     it is today, while a raising generator would block the write itself.
+
+    Nobody waits on this call, so it bills only what background work may bill
+    (:mod:`jarvis.brain.background_policy`): in subscription mode with no
+    usable subscription the page is simply written without aliases. Write-time
+    calls count against the wiki's daily call cap
+    (:mod:`jarvis.memory.wiki.background_guard`); the explicit, user-started
+    vault backfill passes ``count_against_daily_cap=False``.
     """
     if not title.strip() and not body.strip():
         return []
     langs = languages or target_languages(cfg)
 
+    from jarvis.brain.background_policy import BackgroundDeferred  # noqa: PLC0415
     from jarvis.core.protocols import BrainMessage, BrainRequest  # noqa: PLC0415
+    from jarvis.memory.wiki.background_guard import guard  # noqa: PLC0415
     from jarvis.memory.wiki.provider_chain import (  # noqa: PLC0415
-        background_wiki_providers,
-        build_wiki_provider_chain,
+        build_background_wiki_chain,
         complete_with_fallback,
     )
 
     # Same key-aware chain the curator uses: lead with the configured wiki
     # provider, then every other registered provider that actually holds a
-    # credential (AP-22 — never a single-provider brick).
+    # credential (AP-22 — never a single-provider brick) and may bill
+    # background work.
     try:
-        available = set(registry.available())
+        if count_against_daily_cap:
+            # Background write-time call: no alias lookup inside the runaway
+            # guard's backoff window or past the daily cap.
+            guard.check_ready(cfg)
         curator = getattr(getattr(getattr(cfg, "memory", None), "wiki", None), "curator", None)
         primary = str(getattr(curator, "provider", "") or "").strip() or str(
             getattr(getattr(cfg, "brain", None), "primary", "") or ""
         )
-        chain = build_wiki_provider_chain(
+        # Provider selection may run vendor login probes (seconds of subprocess):
+        # keep it off the event loop (AP-9).
+        background = await asyncio.to_thread(
+            build_background_wiki_chain,
+            registry=registry,
+            config=cfg,
             primary=primary,
             model_override="",
-            available=available,
-            credential_ready=background_wiki_providers(
-                available=available, config=cfg
-            ),
         )
+    except BackgroundDeferred as exc:
+        log.info("search_aliases: no aliases for %r now — %s", title, exc)
+        return []
     except Exception:  # noqa: BLE001 — a broken chain build must not block a write
         log.warning("search_aliases: could not build a provider chain", exc_info=True)
         return []
+    chain = background.chain
     if not chain:
         log.info(
             "search_aliases: no credential-ready provider — page indexed "
@@ -315,7 +334,17 @@ async def generate_aliases(
             timeout_s=timeout_s,
             label="wiki-search-aliases",
             aggregate=aggregate,
+            provider_options=background.provider_options,
+            before_attempt=(
+                guard.hook(cfg, "search-aliases") if count_against_daily_cap else None
+            ),
+            # Aliases are optional: a subscription that is busy right now is
+            # not a broken wiki and must not paint the red banner.
+            record_chain_failure=not background.subscription_mode,
         )
+    except BackgroundDeferred as exc:
+        log.info("search_aliases: no aliases for %r now — %s", title, exc)
+        return []
     except Exception:  # noqa: BLE001 — degrade to no aliases, never fail the write
         log.warning("search_aliases: alias call raised", exc_info=True)
         return []
@@ -460,8 +489,15 @@ async def backfill_vault(
 
             title_match = re.search(r"^\s{0,3}#\s+(.+)", body, re.MULTILINE)
             title = title_match.group(1).strip() if title_match else path.stem
+            # Started explicitly by the user (route/CLI), so it does not eat
+            # the daily cap that protects unattended background work; the
+            # billing policy still applies to every page.
             generated = await generate_aliases(
-                title=title, body=body, cfg=cfg, registry=registry
+                title=title,
+                body=body,
+                cfg=cfg,
+                registry=registry,
+                count_against_daily_cap=False,
             )
             if not generated:
                 summary["no_aliases"] += 1

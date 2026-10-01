@@ -345,7 +345,7 @@ describe("Sidebar settings-hub entry", () => {
   test("the profile button stays lit while any hub section is on screen", () => {
     // It IS the hub's entry point, so it carries "you are here" for all of
     // the hub's sections — including ones only reachable from inside the hub.
-    useEventStore.setState({ activeSection: "wallpaper" });
+    useEventStore.setState({ activeSection: "local-models" });
     renderSidebar();
 
     expect(screen.getByTestId("sidebar-profile-toggle").className).toMatch(
@@ -716,7 +716,7 @@ describe("compact sidebar navigation", () => {
   });
 
   test("the profile button opens the hub — hub tabs are the hub's own tests", () => {
-    // No popup anymore: entries like Wallpaper live in the hub's left nav
+    // No popup anymore: entries like Spend live in the hub's left nav
     // (see SettingsHubView.test), so one click on the profile button is the
     // whole interaction and it lands on the Profile tab.
     renderSidebar();

@@ -154,6 +154,7 @@ import { PromptReceipt } from "./PromptReceipt";
 import { PromptHistoryButton } from "./PromptHistoryButton";
 import { PaneConversationDialog } from "./PaneConversationDialog";
 import { WorkspaceTerminalHeader } from "./WorkspaceTerminalHeader";
+import { usePaneContextMenu } from "./usePaneContextMenu";
 import { useT } from "@/i18n";
 
 /**
@@ -490,6 +491,7 @@ export interface PaneRecapActions {
 }
 
 interface AgenticTerminalProps {
+  onSwapWithFocused?: () => void;
   /** Terminal call-sign — also the WS path segment. */
   name: string;
   /**
@@ -526,6 +528,8 @@ interface AgenticTerminalProps {
   computerName?: string;
   /** Compact header only: "Run on …" / "Bring back" menu entries. */
   placementItems?: { label: string; run: () => void }[];
+  /** Compact header only: "Move to <workspace>" menu entries. */
+  workspaceItems?: { label: string; run: () => void }[];
   /** Registry identity and optional custom logo for the compact header. */
   agent?: string;
   agentLogoUrl?: string;
@@ -657,6 +661,7 @@ interface AgenticTerminalProps {
 }
 
 export function AgenticTerminal({
+  onSwapWithFocused,
   name,
   workspaceId,
   displayName,
@@ -666,6 +671,7 @@ export function AgenticTerminal({
   branch,
   computerName,
   placementItems,
+  workspaceItems,
   agent,
   agentLogoUrl,
   recap,
@@ -699,6 +705,7 @@ export function AgenticTerminal({
   layoutBusy = false,
   sizeLead = false,
 }: AgenticTerminalProps) {
+  const paneMenu = usePaneContextMenu(headerMode === "compact" || headerMode === "minimal");
   const containerRef = useRef<HTMLDivElement | null>(null);
   const terminalRegionRef = useRef<HTMLDivElement | null>(null);
   const terminalRegionId = useId();
@@ -2643,6 +2650,10 @@ export function AgenticTerminal({
   const minimal = headerMode === "minimal";
   const tile = PANE_TILE[appearance];
   const headerProps = {
+    contextMenuRequest: paneMenu.request,
+    sendRightClicks: paneMenu.sendRightClicks,
+    onToggleSendRightClicks: paneMenu.toggleSendRightClicks,
+    onSwapWithFocused,
     name,
     workspaceId,
     promptCount,
@@ -2667,6 +2678,7 @@ export function AgenticTerminal({
     branch,
     computerName,
     placementItems,
+    workspaceItems,
   };
 
   return (
@@ -2809,6 +2821,7 @@ export function AgenticTerminal({
       >
         <div
           ref={containerRef}
+          {...paneMenu.handlers}
           data-testid={`agentic-terminal-host-${name}`}
           // Read by ./index.css, which anchors the contents to the bottom for
           // the length of a drag — see the rule there for why that is the side

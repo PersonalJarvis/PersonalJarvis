@@ -18,7 +18,7 @@
  * pointed at the same server are the same page. So the separator is read off
  * the workspace root the server sent, never off `navigator`.
  */
-import { WORKSPACE_PATH_TYPE } from "./paneDrop";
+import { setWorkspaceDragPaths } from "./paneDrop";
 
 /** A drive letter (`C:\…`) or a UNC share (`\\server\…`) — Windows either way. */
 function isWindowsRoot(root: string): boolean {
@@ -33,10 +33,12 @@ function isWindowsRoot(root: string): boolean {
  * draggable" — better than a path rooted at nothing.
  */
 export function absoluteWorkspacePath(root: string, path: string): string {
-  const base = root.trim().replace(/[\\/]+$/, "");
-  const relative = path.trim().replace(/^[\\/]+/, "");
+  // These are server-listed names, not padded text input. Trimming a name
+  // could select a different file before the receipt validator sees it.
+  const base = root.replace(/[\\/]+$/, "");
+  const relative = path;
   if (!base) return "";
-  if (!relative) return root.trim();
+  if (!relative) return root;
   return isWindowsRoot(base)
     ? `${base}\\${relative.replace(/\//g, "\\")}`
     : `${base}/${relative}`;
@@ -45,7 +47,7 @@ export function absoluteWorkspacePath(root: string, path: string): string {
 /**
  * The same path as a `file://` URI, for drop targets outside this page.
  *
- * Only the OUTSIDE case needs this — a pane reads {@link WORKSPACE_PATH_TYPE}
+ * Only the OUTSIDE case needs this — a pane reads its internal drag receipt
  * and never has to parse a URL. It is offered anyway because a drag that
  * carries `text/uri-list` is a drag another application can accept, and
  * withholding it would make the explorer a dead end everywhere but here.
@@ -54,7 +56,7 @@ export function absoluteWorkspacePath(root: string, path: string): string {
  * which is the one shape a bare `file:///` prefix would silently corrupt.
  */
 export function workspaceFileUri(absolute: string): string {
-  const posix = absolute.replace(/\\/g, "/");
+  const posix = isWindowsRoot(absolute) ? absolute.replace(/\\/g, "/") : absolute;
   const encoded = posix
     .split("/")
     .map((segment) => encodeURIComponent(segment))
@@ -79,7 +81,7 @@ export interface WorkspaceEntryDrag {
  *
  * Three formats for three audiences, all describing the same file:
  *
- * * {@link WORKSPACE_PATH_TYPE} — the panes, verbatim and lossless.
+ * * An internal receipt — the panes, verbatim and lossless.
  * * `text/uri-list` — other applications, and the pane's own arming check,
  *   which is what makes the drop overlay appear as the row crosses a pane.
  * * `text/plain` — anything that only takes text: a chat composer, an editor,
@@ -91,7 +93,7 @@ export function setWorkspaceEntryDrag(
 ): boolean {
   const absolute = absoluteWorkspacePath(entry.root, entry.path);
   if (!absolute) return false;
-  dt.setData(WORKSPACE_PATH_TYPE, absolute);
+  if (!setWorkspaceDragPaths(dt, [absolute])) return false;
   dt.setData("text/uri-list", workspaceFileUri(absolute));
   dt.setData("text/plain", absolute);
   // "copy" and not "move": the file stays where it is. A "move" cursor over a

@@ -58,7 +58,6 @@ from .schema import (
 )
 from .spa_build import build_is_complete, holding_page_html, recover_conflicted_index
 from .surface_security import SurfaceSecurity, set_browser_login_required
-from .wallpapers import register_wallpaper_routes
 
 if TYPE_CHECKING:
     import uvicorn
@@ -166,8 +165,6 @@ class WebServer:
         self._task_cancel_token: Any | None = None
         # Phase B5 wiki write-wiring handle — shutdown() called in stop().
         self._wiki_integration_handle: Any | None = None
-        # Periodic evidence-safe realtime wiki backfill — cancelled in stop().
-        self._wiki_backfill_task: asyncio.Task[None] | None = None
         # Phase B3 wiki live-reload watchdog handle — shutdown() called in stop().
         self._wiki_watcher: Any | None = None
         self._channel_chat_bridge: Any | None = None
@@ -402,6 +399,7 @@ class WebServer:
         from .onboarding_routes import router as onboarding_router
         from .outputs_routes import router as outputs_router
         from .permissions_routes import router as permissions_router
+        from .pets_routes import router as pets_router
         from .preview_routes import router as preview_router
         from .profile_routes import router as profile_router
         from .provider_routes import router as provider_router
@@ -561,6 +559,8 @@ class WebServer:
         app.include_router(contacts_router)
         # Settings -> Computers: the user's own servers and local VMs over SSH.
         app.include_router(computers_router)
+        # Desktop pets — the `pet` overlay style's pets, look and visibility.
+        app.include_router(pets_router)
         app.include_router(dictionary_router)
         # Dictation mode — hold to speak, text lands in the focused field.
         # Mounted so every action is also `jarvis api dictation <op>`, which is
@@ -804,11 +804,11 @@ class WebServer:
         """
         try:
             from jarvis.board.aggregator import BoardAggregator
+            from jarvis.board.bio_brain import BIO_TIMEOUT_S, resolve_bio_brain
             from jarvis.board.evaluator import AchievementEvaluator
             from jarvis.board.profile import BioGenerator, BioStore
             from jarvis.board.scheduler import BioScheduler
             from jarvis.board.store import BoardStore
-            from jarvis.brain.resolver import resolve_frontier_brain
             from jarvis.core.paths import board_db_path, user_data_dir, user_logs_dir
 
             db_path = board_db_path()
@@ -848,7 +848,9 @@ class WebServer:
                 # Lazy: capture cfg + bus from the closure, so a later
                 # provider switch via the UI takes effect immediately
                 # (the resolver invalidates its cache via ConfigReloaded).
-                return resolve_frontier_brain(cfg, bus=self.bus)
+                # Background billing rule: subscription or local model once a
+                # subscription is connected, never a per-token key.
+                return resolve_bio_brain(cfg, bus=self.bus)
 
             bio_generator = BioGenerator(
                 brain_resolver=_bio_brain_resolver,
@@ -860,14 +862,14 @@ class WebServer:
                 self_mod_log_path=self_mod_log,
                 temperature=bio_cfg.temperature,
                 max_tokens=bio_cfg.max_tokens,
+                timeout_s=BIO_TIMEOUT_S,
             )
+            # Hook-driven: rewrites the bio on unlocked achievements, never on
+            # a timer or at boot.
             scheduler = BioScheduler(
                 generator=bio_generator,
-                db_path=db_path,
-                bus=self.bus,
                 bio_store=bio_store,
-                board_store=store,
-                cold_start_min_days=bio_cfg.cold_start_min_days,
+                bus=self.bus,
             )
 
             self._board_aggregator = aggregator
@@ -1601,11 +1603,6 @@ class WebServer:
             available options — no "command not found" on spawn.
             """
             return {"shells": [{"id": s.id, "label": s.label} for s in discover_shells()]}
-
-        # The wallpaper picker. Registered here, with the REST routes, rather
-        # than beside the static mounts: those are skipped entirely in dev mode,
-        # and the picker has to work against the Vite dev server too.
-        register_wallpaper_routes(app)
 
     # ------------------------------------------------------------------
     # WebSocket
@@ -2588,6 +2585,13 @@ class WebServer:
         from jarvis.core import runtime_refs as _runtime_refs
 
         _runtime_refs.set_api_base_url(f"http://127.0.0.1:{resolved_port}")
+        # Announce each change of the passive provider-health record on the bus;
+        # the existing /ws fan-out carries it to every open window, whose status
+        # dots then re-read (no poll, no extra socket — AP-33). Registering is
+        # cheap: nothing is read or started until the first outcome arrives.
+        from jarvis.brain.provider_health_ledger import publish_changes_to
+
+        publish_changes_to(self.bus, asyncio.get_running_loop())
         if start_serving:
             assert_bind_safe(host, _control_key.get_control_key())
             config = uvicorn.Config(
@@ -2807,10 +2811,9 @@ class WebServer:
             except Exception as exc:  # noqa: BLE001
                 logger.opt(exception=exc).warning("AchievementEvaluator.attach() failed")
 
-        # Bio scheduler — weekly + master achievement trigger.
-        # The brain isn't finalized here yet (app.state.brain usually
-        # arrives later). BioGenerator.brain stays None until the caller
-        # sets it — the scheduler handles a None brain gracefully.
+        # Bio scheduler — subscribes to achievement unlocks only. It starts no
+        # task and generates nothing here; the brain is resolved per
+        # generation, when a board event actually asks for one.
         if self._bio_scheduler is not None:
             try:
                 self._bio_scheduler.start()
@@ -3231,82 +3234,19 @@ class WebServer:
             config=wiki_cfg,
             brain_caller=None,  # curator uses BrainProviderRegistry internally
             scheduler_factory=_wiki_scheduler_factory,
-            voice_bridge_config=self.cfg.memory.wiki.voice_bridge,
         )
         self._wiki_integration_handle = handle
         logger.info("wiki_integration: bootstrap_wiki_integration succeeded")
-        # Safety net for realtime turns whose live capture was missed (empty
-        # provider input transcript, crash, provider outage): sweep persisted
-        # sessions periodically. Idempotent via durable review keys, so a
-        # session already reviewed live is skipped, never re-journaled. The
-        # manual POST /api/wiki/backfill stays the explicit control.
-        if self._wiki_backfill_task is None:
-            self._wiki_backfill_task = asyncio.create_task(
-                self._wiki_auto_backfill_loop(), name="wiki-auto-backfill"
-            )
+        # No periodic re-review of voice sessions: the six-hourly auto-backfill
+        # was removed on 2026-09-30 together with the per-turn and end-of-call
+        # extraction (it billed paid keys while nobody was at the PC). The
+        # manual POST /api/wiki/backfill is the explicit control.
         try:
             from jarvis.memory.wiki.health import health as _wiki_health
 
             _wiki_health.record_bootstrap(True)
         except Exception:  # noqa: BLE001 — health recording must never break boot
             logger.debug("wiki health.record_bootstrap(True) failed", exc_info=True)
-
-    async def _wiki_auto_backfill_loop(
-        self,
-        *,
-        initial_delay_s: float = 300.0,
-        interval_s: float = 6 * 3600.0,
-    ) -> None:
-        """Periodically sweep persisted realtime sessions into the wiki.
-
-        The live per-turn capture silently loses a turn whenever the realtime
-        provider delivers no input transcript, and the session-end sweep dies
-        with whichever layer misses its teardown. ``backfill_realtime_sessions``
-        re-reads the persisted voice turns and runs the same evidence-bound
-        pipeline, idempotent across retries via durable review keys — so this
-        loop only ever pays for sessions live capture actually missed. First
-        run is delayed well past boot readiness (AP-26); every pass is bounded
-        (2 days, 20 sessions).
-        """
-        from jarvis.memory.wiki.backfill import backfill_realtime_sessions
-        from jarvis.memory.wiki.integration import get_running_capture_runtime
-
-        await asyncio.sleep(initial_delay_s)
-        while True:
-            try:
-                runtime = get_running_capture_runtime()
-                store = getattr(self.app.state, "session_store", None)
-                if runtime is None or store is None or runtime.scheduler is None:
-                    logger.debug(
-                        "wiki auto-backfill: capture runtime or session store "
-                        "not ready — skipping this pass"
-                    )
-                else:
-                    result = await backfill_realtime_sessions(
-                        store=store,
-                        extractor=runtime.extractor,
-                        days=2,
-                        max_sessions=20,
-                        dry_run=False,
-                    )
-                    if result.sessions_reviewed or result.candidates_journaled:
-                        logger.info(
-                            "wiki auto-backfill: reviewed {} session(s), journaled {} candidate(s)",
-                            result.sessions_reviewed,
-                            result.candidates_journaled,
-                        )
-                    else:
-                        logger.debug(
-                            "wiki auto-backfill: nothing eligible "
-                            "(scanned={}, already_reviewed={})",
-                            result.sessions_scanned,
-                            result.sessions_already_reviewed,
-                        )
-            except asyncio.CancelledError:
-                raise
-            except Exception:  # noqa: BLE001 — the safety net must never crash the app
-                logger.opt(exception=True).warning("wiki auto-backfill pass failed")
-            await asyncio.sleep(interval_s)
 
     def _init_wiki_boot_index(self, *, background: bool = False) -> None:
         """Rebuild the derived FTS view against the active vault.
@@ -3994,12 +3934,6 @@ class WebServer:
                 self._board_aggregator.close()
             except Exception as exc:  # noqa: BLE001
                 logger.opt(exception=exc).debug("Board-Aggregator close(): {}", exc)
-
-        # Stop the periodic realtime backfill before the wiki runtime goes away.
-        backfill_task = getattr(self, "_wiki_backfill_task", None)
-        if backfill_task is not None:
-            backfill_task.cancel()
-            self._wiki_backfill_task = None
 
         # Phase B5 wiki write-wiring: unsubscribe + drain in-flight rollup task.
         wiki_handle = getattr(self, "_wiki_integration_handle", None)

@@ -18,6 +18,11 @@ stores the last bootstrapped package version. On a mismatch, missing skills
 are copied in again (existing ones are left alone). That's how, e.g., a new
 builtin skill added in a later version automatically arrives without
 destroying user customizations.
+
+Retirement: a builtin that no longer ships still has its bootstrap copy in
+every existing install. An UNEDITED copy is removed (``_RETIRED_SHIPPED_HASHES``
+recognises every version that shipped); a copy the user changed is theirs and
+stays as an ordinary personal skill.
 """
 from __future__ import annotations
 
@@ -61,6 +66,24 @@ _V2_SHIPPED_HASHES: dict[str, str] = {
     "plugin-supabase": "554bb9de1823cbe832054940b29b7a87f6f4aa2aebae76c9e812ef585e78c2d7",
     "plugin-vercel": "92b3a53072addffa35af4090733c29c07d9f220198ec28f7109035d13bf83c73",
     "skill-creator": "fce6f964195f51427a850ddf1663e44143585454e3b3b59e1b5f0d2f1a742d33",
+}
+
+#: Builtins that no longer ship, with the SHA-256 of every ``SKILL.md`` version
+#: that did, hashed with LF line endings (``_lf_sha256``) so a CRLF checkout on
+#: Windows matches too. A user copy that still equals one of them was never
+#: edited and is retired; any other copy is the user's own and stays.
+#:
+#: ``morning-routine`` (retired 2026-09-30): its cron trigger ran a full brain
+#: turn at 07:00 every day on every install. Routines are the user's to make.
+_RETIRED_SHIPPED_HASHES: dict[str, frozenset[str]] = {
+    "morning-routine": frozenset({
+        "200f90780791f9fdc43fa59cc24ed0ff2244aac048ccda57d8bca039a09140c7",
+        "2dad2ff68f71c9246e2a94bb62a25b3b665c43170747e0b0921ba0b6f0e3773b",
+        "84dc027591bfbe2c93088c2797c45f94b4bc33d937f56ea49f55b78a8215c600",
+        "881e3c4f924d09b16f47b2f46e6898849b2ae0326119bd74e112d99a6d162109",
+        "d0c22152edb314afe12aaa9a5879affad9b8244cd295dc00d612cb7138caf928",
+        "fdec29775663499c0e771d4e6325ffd73d9d283e9633e0e914654e6a56b9bd29",
+    }),
 }
 
 
@@ -137,6 +160,9 @@ def ensure_user_skills_dir() -> Path:
         if added:
             upgraded.append(f"{name} (+{','.join(added)})")
 
+    # Before the manifest is rewritten: its entry is one way a retired copy is
+    # recognised as unedited.
+    retired, kept_retired = _retire_unshipped(dst_root, shipped)
     _write_shipped_hashes(dst_root, new_manifest)
     _write_version_marker(dst_root)
     if copied:
@@ -151,11 +177,79 @@ def ensure_user_skills_dir() -> Path:
     if upgraded:
         log.info("bootstrap: %d builtin skills got new resources: %s",
                  len(upgraded), ", ".join(upgraded))
+    if retired:
+        log.info("bootstrap: %d unedited builtin skills no longer ship, removed: %s",
+                 len(retired), ", ".join(retired))
+    if kept_retired:
+        log.info("bootstrap: %d retired builtin skills were edited, kept as "
+                 "personal skills: %s", len(kept_retired), ", ".join(kept_retired))
     return dst_root
 
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _lf_sha256(data: bytes) -> str:
+    """SHA-256 of ``data`` with CRLF folded to LF — the same text on any OS."""
+    return hashlib.sha256(data.replace(b"\r\n", b"\n")).hexdigest()
+
+
+def _retire_unshipped(
+    dst_root: Path, shipped: dict[str, str]
+) -> tuple[list[str], list[str]]:
+    """Remove the unedited user copies of builtins that no longer ship.
+
+    Only the shipped ``SKILL.md`` goes; the folder follows when nothing else is
+    left in it, so a file the user put there is never deleted. Returns
+    ``(retired, kept_because_edited)``.
+    """
+    retired: list[str] = []
+    kept: list[str] = []
+    for name, hashes in _RETIRED_SHIPPED_HASHES.items():
+        if name in BUILTIN_SKILL_NAMES:
+            continue  # shipped again: the normal refresh owns it
+        dst = dst_root / name
+        dst_md = dst / "SKILL.md"
+        try:
+            raw = dst_md.read_bytes()
+        except FileNotFoundError:  # Already absent: no retired skill remains to remove.
+            continue
+        except OSError as exc:
+            log.warning("retired builtin skill '%s' unreadable, left alone: %s", name, exc)
+            continue
+        manifest_hash = shipped.get(name)
+        unedited = (
+            manifest_hash is not None and hashlib.sha256(raw).hexdigest() == manifest_hash
+        ) or _lf_sha256(raw) in hashes
+        if not unedited:
+            kept.append(name)
+            continue
+        try:
+            dst_md.unlink()
+        except OSError as exc:
+            log.warning("retire builtin skill '%s' failed: %s", name, exc)
+            continue
+        try:
+            dst.rmdir()
+        except OSError:
+            # Something the user added still lives there; it stays theirs.
+            log.debug("retired skill folder '%s' kept: not empty", name)
+        _forget_prefs(name)
+        retired.append(name)
+    return retired, kept
+
+
+def _forget_prefs(name: str) -> None:
+    """Drop a retired skill's on/off, order and auto-fire entries, as a delete does."""
+    try:
+        from . import prefs
+
+        current = prefs.load_prefs()
+        if name in current.order or name in current.state or name in current.autofire:
+            prefs.remove_skill(name)
+    except Exception as exc:  # noqa: BLE001 - a stale pref entry only costs tidiness
+        log.warning("could not drop the preferences of retired skill '%s': %s", name, exc)
 
 
 def _load_shipped_hashes(dst_root: Path) -> dict[str, str]:

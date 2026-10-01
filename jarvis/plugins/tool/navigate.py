@@ -53,7 +53,6 @@ KNOWN: frozenset[str] = frozenset(
         "contacts",
         "feedback",
         "agent-instructions",
-        "wallpaper",
         # Appshots: the shortcut and destination for showing the front window.
         "appshots",
         # Jarvis actions: which app actions Jarvis may run, ask for or never run.
@@ -71,9 +70,13 @@ KNOWN: frozenset[str] = frozenset(
         # grid" an unknown section to the brain.
         "agentic-ide-classic",
         "chat-workspace",
-        # The marketplace, in the app: community plugins, skills and wallpapers
-        # in one storefront.
+        # The marketplace, in the app: community plugins and skills in one
+        # storefront.
         "marketplace",
+        # My Pets: the desktop pet, its look, and the pets the user created.
+        "pets",
+        # Keyboard shortcuts: every shortcut in one place, with a key tester.
+        "shortcuts",
     }
 )
 
@@ -198,11 +201,6 @@ _ALIASES: dict[str, str] = {
     "ausgaben": "visualization",  # i18n-allow: input vocab
     "ergebnisse": "visualization",  # i18n-allow: input vocab
     "resultados": "visualization",  # i18n-allow: input vocab
-    "wallpapers": "wallpaper",
-    "background": "wallpaper",
-    "hintergrund": "wallpaper",  # i18n-allow: input vocab
-    "hintergrundbild": "wallpaper",  # i18n-allow: input vocab
-    "fondo de pantalla": "wallpaper",  # i18n-allow: input vocab
     "appshot": "appshots",
     "jarvis actions": "jarvis-actions",
     "jarvis aktionen": "jarvis-actions",  # i18n-allow: speech-input vocabulary
@@ -251,6 +249,17 @@ _ALIASES: dict[str, str] = {
     "diktat-tastenkürzel": "voice-shortcuts",  # i18n-allow: input vocab
     "diktat-tasten": "voice-shortcuts",  # i18n-allow: input vocab
     "atajos de dictado": "voice-shortcuts",  # i18n-allow: input vocab
+    # The Keyboard shortcuts page (Settings hub). The dictation-only words
+    # above keep landing on the voice tab.
+    "keyboard shortcuts": "shortcuts",
+    "shortcuts": "shortcuts",
+    "hotkeys": "shortcuts",
+    "keybinds": "shortcuts",
+    "key bindings": "shortcuts",
+    "tastenkürzel": "shortcuts",  # i18n-allow: input vocab
+    "tastenkombinationen": "shortcuts",  # i18n-allow: input vocab
+    "atajos de teclado": "shortcuts",  # i18n-allow: input vocab
+    "atajos": "shortcuts",  # i18n-allow: input vocab
     "dictation language": "voice-language",
     "diktat-sprache": "voice-language",  # i18n-allow: input vocab
     "idioma de dictado": "voice-language",  # i18n-allow: input vocab
@@ -266,6 +275,18 @@ _ALIASES: dict[str, str] = {
     "marktplatz": "marketplace",  # i18n-allow: input vocab
     "mercado": "marketplace",  # i18n-allow: input vocab
     "tienda": "marketplace",  # i18n-allow: input vocab
+    # My Pets. Only phrases that name the app's own pet: the bare word "pets"
+    # is already the section id, and anything broader ("animals") would pull
+    # ordinary questions about animals onto a settings page.
+    "my pets": "pets",
+    "my pet": "pets",
+    "desktop pet": "pets",
+    "desktop pets": "pets",
+    "haustier": "pets",  # i18n-allow: input vocab
+    "meine pets": "pets",  # i18n-allow: input vocab
+    "mein haustier": "pets",  # i18n-allow: input vocab
+    "mis mascotas": "pets",  # i18n-allow: input vocab
+    "mascota de escritorio": "pets",  # i18n-allow: input vocab
 }
 
 

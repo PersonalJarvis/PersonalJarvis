@@ -20,9 +20,9 @@ fail-closed:
 - size and count ceilings are checked against the archive's own headers
   BEFORE anything is written, so a zip bomb never reaches the disk.
 
-The caller decides what the staged folder means (a skill, a plugin, a
-wallpaper); this module only guarantees that the folder is a faithful,
-harmless copy of what was uploaded.
+The caller decides what the staged folder means (a skill or a plugin); this
+module only guarantees that the folder is a faithful, harmless copy of what
+was uploaded.
 """
 from __future__ import annotations
 

@@ -60,7 +60,7 @@ _PROBE_TIMEOUT_S = 25.0
 
 
 async def _probe(opened: Session, host: remote_os.RemoteHost) -> CommandResult:
-    """The health script in the language the computer speaks."""
+    """The health script in the language the computer speaks, sent on stdin."""
     if host.windows:
         return await remote_os.run_powershell(
             # PowerShell alone took 6 s to start on a busy Windows VM.
@@ -68,7 +68,7 @@ async def _probe(opened: Session, host: remote_os.RemoteHost) -> CommandResult:
             WINDOWS_PROBE_SCRIPT,
             timeout_s=_PROBE_TIMEOUT_S * 2,
         )
-    return await run_command(opened, PROBE_SCRIPT, timeout_s=_PROBE_TIMEOUT_S)
+    return await remote_os.run_script(opened, host, PROBE_SCRIPT, timeout_s=_PROBE_TIMEOUT_S)
 
 
 class ComputerError(Exception):
@@ -351,7 +351,9 @@ class ComputerService:
         try:
             async with self.session(computer_id) as opened:
                 try:
-                    host = await remote_os.remote_host(computer_id, opened)
+                    # A check asks afresh: a CLI installed since may live in a
+                    # folder the remembered PATH does not have yet.
+                    host = await remote_os.remote_host(computer_id, opened, refresh=True)
                     result = await _probe(opened, host)
                 except SshError as exc:
                     # A probe that times out or loses the channel is a health
@@ -431,8 +433,8 @@ class ComputerService:
                     opened, authorize_key_script_windows(identity.public_key_line()), timeout_s=30
                 )
             else:
-                result = await run_command(
-                    opened, authorize_key_command(identity.public_key_line()), timeout_s=20
+                result = await remote_os.run_script(
+                    opened, host, authorize_key_command(identity.public_key_line()), timeout_s=20
                 )
         except SshError as exc:
             raise ComputerError(exc.message, status=502, kind=exc.kind) from exc

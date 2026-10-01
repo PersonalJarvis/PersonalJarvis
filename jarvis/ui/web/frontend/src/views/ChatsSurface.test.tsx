@@ -21,7 +21,7 @@ vi.mock("@/components/home/ChatStage", () => ({
   ChatStage: () => <div data-testid="chat">chat</div>,
 }));
 
-const STORAGE_KEY = "jarvis.home.surface.v1";
+const STORAGE_KEY = "jarvis.home.surface.v2";
 
 describe("ChatsSurface (the front page)", () => {
   beforeEach(() => {
@@ -31,14 +31,15 @@ describe("ChatsSurface (the front page)", () => {
 
   afterEach(cleanup);
 
-  it("opens on the voice stage by default", () => {
+  it("opens on the chat stage by default", async () => {
     render(<ChatsSurface />);
-    expect(screen.getByTestId("voice")).toBeTruthy();
-    expect(screen.queryByTestId("chat")).toBeNull();
-    expect(screen.getByTestId("home-view").getAttribute("data-surface")).toBe("voice");
+    expect(await screen.findByTestId("chat")).toBeTruthy();
+    expect(screen.queryByTestId("voice")).toBeNull();
+    expect(screen.getByTestId("home-view").getAttribute("data-surface")).toBe("chat");
   });
 
   it("switches to the chat stage from the sidebar switch and remembers it", async () => {
+    useHomeStore.setState({ surface: "voice" });
     render(
       <>
         <SurfaceSwitch />
@@ -75,10 +76,17 @@ describe("ChatsSurface (the front page)", () => {
     expect(window.localStorage.getItem(STORAGE_KEY)).toBe("voice");
   });
 
-  it("lands on voice when the stored value is corrupt", () => {
+  it("lands on chat when the stored value is corrupt", async () => {
     window.localStorage.setItem(STORAGE_KEY, "garbage");
     useHomeStore.setState({ surface: readHomeSurface() });
     render(<ChatsSurface />);
-    expect(screen.getByTestId("voice")).toBeTruthy();
+    expect(await screen.findByTestId("chat")).toBeTruthy();
+  });
+
+  it("migrates the old voice-first preference to chat once", () => {
+    window.localStorage.setItem("jarvis.home.surface.v1", "voice");
+    expect(readHomeSurface()).toBe("chat");
+    window.localStorage.setItem(STORAGE_KEY, "voice");
+    expect(readHomeSurface()).toBe("voice");
   });
 });

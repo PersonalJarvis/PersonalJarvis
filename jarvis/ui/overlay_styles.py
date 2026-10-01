@@ -20,9 +20,15 @@ BAR_STYLE = "jarvis_bar"
 
 #: Styles drawn by the floating orb window (``ui.orb.overlay.OrbOverlay``):
 #: ``mascot`` is the Gigi ghost, ``voice_orb`` the procedural weather sphere —
-#: the desktop twin of the in-app orb. Both live in the SAME frameless,
-#: always-on-top window, so both can be dragged onto any monitor.
-ORB_STYLES: tuple[str, ...] = ("mascot", "voice_orb")
+#: the desktop twin of the in-app orb — and ``pet`` an animated pixel-art
+#: companion with its own control strip (``jarvis.ui.pets``). All three live in
+#: the SAME frameless, always-on-top window, so all can be dragged onto any
+#: monitor and swapped live without a restart.
+ORB_STYLES: tuple[str, ...] = ("mascot", "voice_orb", "pet")
+
+#: Orb-window styles that stay on screen while Jarvis is idle. The others pop
+#: up only for a conversation.
+PERSISTENT_ORB_STYLES: tuple[str, ...] = ("pet",)
 
 #: No on-screen overlay at all.
 HIDDEN_STYLE = "none"

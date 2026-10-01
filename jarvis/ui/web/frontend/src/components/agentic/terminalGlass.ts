@@ -3,7 +3,7 @@
  *
  * xterm is already clear (`allowTransparency` + a transparent theme
  * background in ./terminalThemes). Claude Code and a plain shell leave the
- * default background alone, so the wallpaper shows through the pane shell.
+ * default background alone, so the pane shell shows through.
  * A ratatui TUI such as Grok Build paints every cell with its theme's
  * `bg_base` — a solid RGB, not the default — and that one colour is what
  * turns the pane into an opaque card.
@@ -153,7 +153,7 @@ export function rewriteCanvasFillSgr(params: string): string {
 
 /**
  * Replace canvas-fill cell backgrounds with the terminal default, so the
- * pane shell (and the wallpaper under it) shows through.
+ * pane shell shows through.
  *
  * Complete SGR sequences only — a CSI split across two PTY reads is left
  * for xterm, the same as every other escape this pane does not rewrite.

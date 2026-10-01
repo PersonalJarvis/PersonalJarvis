@@ -12,15 +12,17 @@ import asyncio
 
 import pytest
 
-from jarvis.computers import identity, remote_terminal
+from jarvis.computers import identity, remote_os, remote_terminal
 from jarvis.computers.remote_terminal import SshPtyPool, tmux_session_name
 from jarvis.computers.service import ComputerService
 from tests.fakes.fake_tmux_server import FakeTmuxServer
 
 
 @pytest.fixture
-async def tmux_server():  # noqa: ANN201
-    server = FakeTmuxServer()
+async def tmux_server(tmp_path):  # noqa: ANN001, ANN201
+    home = tmp_path / "remote-home"
+    home.mkdir()
+    server = FakeTmuxServer(sftp_root=home)
     await server.start()
     try:
         yield server
@@ -158,14 +160,33 @@ async def test_close_kills_the_session_and_a_server_side_end_reports_closed(
     assert other.closed == [0]
 
 
-def test_tmux_command_is_create_or_attach_and_quiet() -> None:
-    command = remote_terminal.tmux_command(
-        "jv-x", ("claude", "--resume", "a b"), "/srv/my app", 80, 24
+def test_pane_launcher_is_create_or_attach_quiet_and_runs_the_agent_itself() -> None:
+    host = remote_os.RemoteHost(home="/home/u", path="/opt/homebrew/bin:/usr/bin")
+    script = remote_os.pane_launcher_script(
+        host,
+        name="jv-x",
+        self_path="jarvis-agents/.launch/jv-x.sh",
+        cwd="/srv/my app",
+        argv=("claude", "--resume", "a b"),
+        cols=80,
+        rows=24,
     )
-    assert "new-session -A -s jv-x" in command
-    assert "status off" in command
-    assert "'/srv/my app'" in command
+    assert 'PATH=/opt/homebrew/bin:/usr/bin:"$PATH"' in script
+    assert "new-session -A -s jv-x -x 80 -y 24 -c '/srv/my app'" in script
+    assert "status off" in script
+    # tmux hands its command to the login shell: only `sh <this file> run` goes there.
+    assert '"sh \\"$self\\" run"' in script
+    assert "exec claude --resume 'a b'" in script
+    assert "|| { printf 'The folder %s is missing" in script
     assert remote_terminal.tmux_session_name("a/b c") == "jv-a-b-c"
+
+
+def test_a_plain_terminal_is_the_computers_own_shell() -> None:
+    mac = remote_os.RemoteHost(login_shell="/bin/zsh", system="Darwin")
+    assert remote_terminal.pane_argv(mac, ("bash", "-l")) == ("/bin/zsh", "-l")
+    windows = remote_os.RemoteHost(os="windows", bash="C:/Git/bin/bash.exe")
+    assert remote_terminal.pane_argv(windows, ("bash", "-l")) == ("powershell.exe", "-NoLogo")
+    assert remote_terminal.pane_argv(mac, ("claude",)) == ("claude",)
 
 
 async def test_two_workspaces_same_call_sign_stay_apart(

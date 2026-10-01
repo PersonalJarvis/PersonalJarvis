@@ -18,6 +18,7 @@ import {
   type FixedShortcut,
 } from "./shortcutRegistry";
 import { shouldOpenShortcutOverlay } from "./shortcutOverlayTrigger";
+import { eventMatchesChord, defaultQuickSwitchCombo } from "./quickSwitchChord";
 
 /** Turn a declared chord into the event the matcher would see. */
 function eventFor(keys: string[], isMac: boolean) {
@@ -103,6 +104,22 @@ describe("fixed chords agree with the matcher that implements them", () => {
   });
 });
 
+describe("the quick switcher entry", () => {
+  it("is read from the live setting, never spelled out", () => {
+    const entry = shortcutsForArea("workspace").find(
+      (s) => s.labelKey === "shortcut_overlay.workspace.quick_switch",
+    );
+    expect(entry?.kind).toBe("app");
+    expect(entry).not.toHaveProperty("keys");
+  });
+
+  it("defaults to a chord the matcher accepts on both platforms", () => {
+    const base = { code: "Space", ctrlKey: false, metaKey: false, altKey: false, shiftKey: false };
+    expect(eventMatchesChord({ ...base, ctrlKey: true }, defaultQuickSwitchCombo("pc"))).toBe(true);
+    expect(eventMatchesChord({ ...base, altKey: true }, defaultQuickSwitchCombo("mac"))).toBe(true);
+  });
+});
+
 describe("the IDE key menu chord", () => {
   for (const isMac of [true, false]) {
     it(`opens the menu on ${isMac ? "macOS" : "PC"} exactly as declared`, () => {
@@ -110,13 +127,19 @@ describe("the IDE key menu chord", () => {
         (s) => s.labelKey === "shortcut_overlay.workspace.ide_menu",
       ) as FixedShortcut;
       expect(entry.keys).toEqual(["Ctrl", "B"]);
-      expect(keyLabel(entry.keys[0], isMac)).toBe("Ctrl");
+      expect(keyLabel(entry.keys[0], isMac)).toBe(isMac ? "⌃" : "Ctrl");
       expect(isLeaderChord({ key: "b", code: "KeyB", ctrlKey: true, metaKey: false, altKey: false, shiftKey: false })).toBe(true);
     });
   }
 });
 
 describe("keyLabel", () => {
+  it("prints Mac glyphs for saved modifier names", () => {
+    expect(keyLabel("Alt", true)).toBe("⌥");
+    expect(keyLabel("Ctrl", true)).toBe("⌃");
+    expect(keyLabel("Cmd", true)).toBe("⌘");
+  });
+
   it("draws the platform modifier the way each keyboard prints it", () => {
     expect(keyLabel("Mod", true)).toBe("⌘");
     expect(keyLabel("Mod", false)).toBe("Ctrl");
@@ -124,6 +147,7 @@ describe("keyLabel", () => {
 
   it("passes every other token through untouched", () => {
     expect(keyLabel("F9", true)).toBe("F9");
+    expect(keyLabel("Alt", false)).toBe("Alt");
     expect(keyLabel("+", false)).toBe("+");
   });
 });

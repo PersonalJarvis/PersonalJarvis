@@ -452,6 +452,21 @@ class SecretConfigured(Event):
 
 
 @dataclass(frozen=True, slots=True)
+class ProviderHealthChanged(Event):
+    """The passive provider-health record changed (a real call's outcome).
+
+    Trigger only: open windows re-read their status dots with a plain GET, so
+    a key that just failed for real shows without anyone reloading. Carries
+    the classified status, never an error body or a secret (AP-34). All three
+    fields are empty for a bulk change (the record loaded from disk, or a
+    credential change forgot several providers at once).
+    """
+    provider: str = ""
+    modality: str = ""
+    status: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class UiLanguageChanged(Event):
     """Fired when the interface (display) language changes.
 
@@ -1114,6 +1129,59 @@ class VoiceMuteChanged(Event):
     construction.
     """
     muted: bool = False
+    source: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class VoiceSpeakerMuteChanged(Event):
+    """Authoritative broadcast that the assistant's voice went silent or audible.
+
+    Speaker mute is TTS volume 0 for the running session (nothing is written
+    to ``jarvis.toml`` by a mute). Every writer — the orb/pet speaker disc, the
+    in-app speaker button through ``PUT /api/settings/tts-volume`` — ends in
+    ``SpeechPipeline.set_tts_volume``, and that one choke point publishes this
+    event whenever the muted-ness flips. Surfaces mirror it; none of them keeps
+    its own truth.
+    """
+    muted: bool = False
+    source: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ComposeRequested(Event):
+    """A surface asked for a fresh typed conversation.
+
+    Publishers: the pet's pen control, wired through ``OrbBusBridge``. The
+    DesktopApp raises the main window; the frontend (``useWebSocket``) starts
+    a new chat and focuses the composer. Null-safe when no window exists.
+    """
+    source: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class PetVisibilityToggleRequested(Event):
+    """The pet shortcut fired: hide the pet, or show it and bring it forward.
+
+    Publishers: the ``pet_toggle`` hotkey (``[trigger].hotkey_pet_toggle``),
+    dispatched by the speech pipeline like every other shortcut. ``OrbBusBridge``
+    forwards it to ``surface.toggle_visible()``; a surface without that method
+    (the bar, ``NullOverlay``) ignores it.
+    """
+    source: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class PetChanged(Event):
+    """The active desktop pet or its look settings changed.
+
+    Emitted by ``jarvis/ui/web/pets_routes.py`` after the value is on disk and
+    applied live, so every open settings page redraws from one event. ``pet_id``
+    is a built-in id, a custom ``u…`` id, or ``"none"`` (control strip only).
+    """
+    pet_id: str = ""
+    scale: float = 1.0
+    bubble: bool = True
+    visible: bool = True
     source: str = ""
 
 
@@ -2302,10 +2370,10 @@ class MarketplaceItemInstalled(Event):
     exactly the lane that changed.
 
     ``ready`` mirrors the install reply's own field: True when the thing is
-    usable right now (a wallpaper, a skill that validated), False when it
+    usable right now (a skill that validated), False when it
     still needs the user (a plugin waiting to be connected).
     """
-    kind: str = ""  # "skill" | "plugin" | "wallpaper"
+    kind: str = ""  # "skill" | "plugin"
     item_id: str = ""
     title: str = ""
     ready: bool = False

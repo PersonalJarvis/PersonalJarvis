@@ -77,6 +77,7 @@ class ConversationArchive:
                 session TEXT NOT NULL, turn_id TEXT NOT NULL, events TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'pending', PRIMARY KEY(session,turn_id));
         """)
+        self._migrate_reviews()
         try:
             self._db.execute("CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(text)")
             self.fts_available = True
@@ -89,6 +90,23 @@ class ConversationArchive:
                 "WHERE id NOT IN (SELECT rowid FROM messages_fts)"
             )
         self._db.commit()
+
+    def _migrate_reviews(self) -> None:
+        """Idempotent column migrations for archives created by older builds.
+
+        ``attempts`` and ``retry_after_ms`` make the review retry budget
+        durable: a review's failed attempts survive a restart, so an app
+        restart never hands a failing seat a fresh set of calls.
+        """
+        existing = {str(row[1]) for row in self._db.execute("PRAGMA table_info(reviews)")}
+        if "attempts" not in existing:
+            self._db.execute("ALTER TABLE reviews ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0")
+            log.info("conversation archive: migration applied - added reviews.attempts")
+        if "retry_after_ms" not in existing:
+            self._db.execute(
+                "ALTER TABLE reviews ADD COLUMN retry_after_ms INTEGER NOT NULL DEFAULT 0"
+            )
+            log.info("conversation archive: migration applied - added reviews.retry_after_ms")
 
     def close(self) -> None:
         with self._lock:
@@ -197,22 +215,61 @@ class ConversationArchive:
         return bool(cursor.rowcount)
 
     def pending_reviews(self) -> list[dict[str, Any]]:
+        """Pending reviews, oldest first, with their durable retry state:
+        ``attempts`` (failed attempts so far) and ``retry_after_ms`` (not due
+        before this wall-clock time; 0 = due now)."""
         with self._lock:
             rows = self._db.execute(
-                "SELECT session,turn_id,events FROM reviews WHERE status='pending' ORDER BY rowid"
+                "SELECT session,turn_id,events,attempts,retry_after_ms FROM reviews "
+                "WHERE status='pending' ORDER BY rowid"
             ).fetchall()
         result = []
         for row in rows:
             stored = json.loads(row[2])
             if isinstance(stored, list):
                 stored = {"events": stored, "direct_user": False}
-            result.append({"session": row[0], "turn_id": row[1], **stored})
+            result.append(
+                {
+                    "session": row[0],
+                    "turn_id": row[1],
+                    **stored,
+                    "attempts": int(row[3] or 0),
+                    "retry_after_ms": int(row[4] or 0),
+                }
+            )
         return result
+
+    def fail_review(self, session: str, turn_id: str, *, retry_after_ms: int) -> int:
+        """Count one failed attempt and hold the review until ``retry_after_ms``.
+
+        Returns the review's failed attempts so far (0 when it is no longer
+        pending, e.g. finished or dropped meanwhile).
+        """
+        with self._lock, self._db:
+            self._db.execute(
+                "UPDATE reviews SET attempts=attempts+1, retry_after_ms=? "
+                "WHERE session=? AND turn_id=? AND status='pending'",
+                (int(retry_after_ms), session, turn_id),
+            )
+            row = self._db.execute(
+                "SELECT attempts FROM reviews WHERE session=? AND turn_id=? AND status='pending'",
+                (session, turn_id),
+            ).fetchone()
+        return int(row[0]) if row is not None else 0
 
     def finish_review(self, session: str, turn_id: str) -> None:
         with self._lock, self._db:
             self._db.execute(
                 "UPDATE reviews SET status='done' WHERE session=? AND turn_id=?", (session, turn_id)
+            )
+
+    def drop_review(self, session: str, turn_id: str) -> None:
+        """Give up on a pending review: it is kept, marked, and never retried."""
+        with self._lock, self._db:
+            self._db.execute(
+                "UPDATE reviews SET status='dropped' WHERE session=? AND turn_id=? "
+                "AND status='pending'",
+                (session, turn_id),
             )
 
     def review_counts(self, agent_id: str) -> dict[str, int]:

@@ -148,6 +148,82 @@ async def test_a_replay_at_another_size_promises_a_repaint(
     assert back.repaint_flags == [True]
 
 
+async def _whole_frame_pane(pool: FakePtyManager, folder: Path):  # noqa: ANN202 - internal fixture
+    """A pane whose agent paints whole frames, the way Claude Code does."""
+    registry = ide.Registry(pty_manager=pool)
+    session = await registry.start(str(folder), [{"agent": "claude"}])
+    term = session.terminals[0]
+    first = Viewer()
+    await registry.attach(
+        term.key,
+        80,
+        24,
+        first.on_output,
+        _gone,
+        workspace_id=session.id,
+        on_replay=first.on_replay,
+    )
+    await pool.emit(term.pty_id, "\x1b[?1049h\x1b[2J\x1b[H┌─ Claude Code ─┐\r\n")
+    return registry, session, term, first
+
+
+async def test_a_replay_at_another_size_keeps_the_last_frame(
+    pool: FakePtyManager, tmp_path: Path
+) -> None:
+    """An agent that does not answer the repaint must not leave the pane black.
+
+    Every pane of a workspace came back as an empty rectangle while its agents
+    were too starved to repaint (2026-09-30): the replay at the new size held
+    only the terminal modes. It now holds the last frame; the viewer still
+    waits for the repaint and shows that frame only if none arrives.
+    """
+    registry, session, term, _first = await _whole_frame_pane(pool, tmp_path)
+    back = Viewer()
+
+    await registry.attach(
+        term.key,
+        100,
+        30,
+        back.on_output,
+        _gone,
+        workspace_id=session.id,
+        on_replay=back.on_replay,
+    )
+
+    assert "┌─ Claude Code ─┐" in "".join(back.replay)
+    assert back.repaint_flags == [True]
+
+
+async def test_a_resize_left_unanswered_still_rejoins_with_a_picture(
+    pool: FakePtyManager, tmp_path: Path
+) -> None:
+    """A resize the agent never answered must not empty the next replay.
+
+    The pane is resized while its viewer is away; the agent lets it pass. The
+    next viewer arrives at that same size, so nothing about its own geometry
+    asks for a repaint — the owed frame has to, or it re-joins an empty screen
+    with no nudge at all.
+    """
+    registry, session, term, first = await _whole_frame_pane(pool, tmp_path)
+    assert registry.resize(term.key, 100, 30, session.id, viewer=first.on_output)
+    pool.resizes.clear()
+    back = Viewer()
+
+    await registry.attach(
+        term.key,
+        100,
+        30,
+        back.on_output,
+        _gone,
+        workspace_id=session.id,
+        on_replay=back.on_replay,
+    )
+
+    assert "┌─ Claude Code ─┐" in "".join(back.replay)
+    assert back.repaint_flags == [True]
+    assert pool.resizes, "and the agent is asked again for the frame it owes"
+
+
 async def test_live_output_after_a_rejoin_is_still_output(
     pool: FakePtyManager, tmp_path: Path
 ) -> None:

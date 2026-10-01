@@ -284,9 +284,10 @@ export type PaneActivity =
  * Who wrote the recap on screen.
  *
  * `"user"` outranks both machines: a pane the user has labelled themselves
- * keeps that label until they clear it.
+ * keeps that label until they clear it. `"cli"` is the title the pane's own
+ * coding CLI gave its session (Claude Code, Codex) — free, and next in line.
  */
-export type RecapSource = "user" | "model" | "heuristic";
+export type RecapSource = "user" | "cli" | "model" | "heuristic";
 
 /**
  * Why this recap and not a better one.
@@ -297,6 +298,7 @@ export type RecapSource = "user" | "model" | "heuristic";
  */
 export type RecapReason =
   | "pinned"
+  | "cli_title"
   | "summarized"
   | "disabled"
   | "not_started"
@@ -1492,6 +1494,81 @@ export async function moveTerminal(
   if (!body.state.session)
     throw new Error("The workspace closed while moving a terminal.");
   return body.state.session;
+}
+
+/** Which side of a pane in the target workspace a moved pane goes on. */
+export type TransferSide = "left" | "right" | "above" | "below";
+
+/** Where in the target grid a moved pane lands: beside `anchor`, on `side`. */
+export interface TransferPlacement {
+  /** A pane of the TARGET workspace: its call-sign or `pane:<history_id>`. */
+  anchor: string;
+  side: TransferSide;
+}
+
+/** One open workspace's shape: what a placement map draws. */
+export interface WorkspaceLayoutView {
+  id: string;
+  name: string;
+  layout: LayoutNode | null;
+  terminals: (Pick<TerminalState, "key" | "name" | "agent" | "display_name" | "history_id"> & {
+    /** What the pane's header shows: its goal in a few words, or empty. */
+    title?: string;
+  })[];
+  max_terminals: number;
+}
+
+/** The split tree and panes of an open workspace that may not be on screen. */
+export async function fetchWorkspaceLayout(workspaceId: string): Promise<WorkspaceLayoutView> {
+  return getJson<WorkspaceLayoutView>(`/api/agentic-ide/workspaces/${encodeURIComponent(workspaceId)}/layout`);
+}
+
+/** What moving a pane into another workspace answers with. */
+export interface TerminalTransfer {
+  /** The pane as it is now — its call-sign may have changed in the new tab. */
+  terminal: TerminalState;
+  source_workspace_id: string;
+  target_workspace_id: string;
+  state: IdeState;
+}
+
+/**
+ * Move a running pane into another open workspace.
+ *
+ * The agent is not restarted: its process, conversation and folder stay as
+ * they are, and only the tab that lists and draws it changes. The pane keeps
+ * its call-sign unless the target tab already has one by that name — the
+ * answer's `terminal.name` is the one it answers to now. With a `placement`
+ * it shares that pane's room in the target grid; without, it joins the edge.
+ */
+export async function transferTerminal(
+  name: string,
+  workspaceId: string,
+  targetWorkspaceId: string,
+  placement?: TransferPlacement | null,
+): Promise<TerminalTransfer> {
+  const res = await fetch(
+    `/api/agentic-ide/terminals/${encodeURIComponent(name)}/transfer`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        workspace_id: workspaceId,
+        target_workspace_id: targetWorkspaceId,
+        ...(placement ? { anchor: placement.anchor, side: placement.side } : {}),
+      }),
+    },
+  );
+  if (!res.ok) {
+    const message = await detail(res);
+    // The route's own 404 names the missing pane; a bare "Not Found" (or a
+    // 405) means the backend serving this view predates the route.
+    if (res.status === 405 || (res.status === 404 && message === "Not Found")) {
+      throw new Error("This view is newer than the backend — restart the app and try again.");
+    }
+    throw new Error(message);
+  }
+  return (await res.json()) as TerminalTransfer;
 }
 
 /**

@@ -1,6 +1,23 @@
 # ADR-0014 — Memory-Trigger Contract (silent vs loud failure discipline)
 
-**Status:** Accepted · **Date:** 2026-05-14 · **Phase:** B8 (Memory Hardening)
+**Status:** Accepted, amended 2026-09-30 · **Date:** 2026-05-14 · **Phase:** B8 (Memory Hardening)
+
+> **Amendment 2026-09-30 — automatic review removed.** The aggressive path
+> (every user turn reviewed without an acknowledgement), the realtime
+> end-of-call sweep with its held-back per-turn extractions, and the
+> six-hourly auto-backfill are removed. They spent paid API keys around the
+> clock: ~300 wiki calls on keys in 30 days, ~5 EUR in three hours while
+> nobody was at the PC. `[memory.wiki.voice_bridge]` is no longer read (old
+> tables still validate). What the user triggers explicitly stays: the
+> acknowledgement path, the `wiki-ingest` tool, the memory-save skill and the
+> manual backfill. Every model call the wiki still makes on its own bills only
+> what background work may bill (`jarvis/brain/background_policy.py`: once a
+> subscription is connected, subscriptions and local models only; a failing
+> subscription makes the work wait) and passes the runaway guard in
+> `jarvis/memory/wiki/background_guard.py` (backoff plus a daily cap on the
+> number of calls, `[wiki_integration] max_background_llm_calls_per_day`,
+> default 200). Section 3 below is superseded; the inventory table is
+> updated.
 
 > Note: this ADR shares the 0014 prefix with
 > `0014-flash-brain-suppress-if-fast.md` (Voice UX hardening). The
@@ -75,8 +92,7 @@ removing or renaming a trigger requires amending this ADR.
 | Trigger | Subscribes to | Side effect | Failure class |
 |---|---|---|---|
 | `WikiContextInjector` | direct call before each brain turn | prepends `## Wiki context` to system prompt | **silent fallback** — missing context degrades gracefully to unaltered prompt |
-| `VoiceFactBridge` (ack path) | `ResponseGenerated` with ack keyword | calls `WikiCurator.ingest()` in background | **loud regression** — every ingest failure increments `voice_turns_ingested_ack` discrepancy and is exception-logged |
-| `VoiceFactBridge` (aggressive path) | `ResponseGenerated` without ack, > 30 chars | calls `WikiCurator.ingest()` in background, rate-limited | **loud regression** — same as ack path, plus rate-limit logged at DEBUG |
+| `VoiceFactBridge` (ack path) | `ResponseGenerated` / `VoiceTurnCompleted` with ack keyword | Stage-1 extraction into the candidate journal in background; held and retried while the wiki must wait for a subscription | **loud regression** — every extraction failure is exception-logged; a wait shows on the wiki health strip |
 | `SessionRollupWorker` | `IdleEntered` past `session_idle_threshold_minutes` | writes one session Markdown page | **loud regression** — failure increments `session_rollups_failed` and is WARNING-logged |
 
 New triggers (planned in B6: external-source ingest, Jarvis-Agents
@@ -127,7 +143,12 @@ The two classes are mutually exclusive. A trigger cannot be silent
 on some failures and loud on others — that ambiguity is what masked
 the 2026-05-13 outage.
 
-### 3. Aggressive-mode safety contract
+### 3. Aggressive-mode safety contract (superseded 2026-09-30)
+
+The aggressive path this section governed was removed; see the amendment at
+the top. Any future trigger that fires without an explicit acknowledgement
+must additionally obey the background billing rule and the wiki runaway
+guard. The original text is kept for history.
 
 Any second-path ingest mode that fires without an explicit
 acknowledgement signal (today: `VoiceFactBridge` aggressive path;

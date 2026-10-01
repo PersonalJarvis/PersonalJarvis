@@ -85,6 +85,7 @@ from jarvis.agentic_ide import (
     drop_analysis,
     drops,
     git_changes,
+    layout_tree,
     native_picker,
     notifications,
     prompt_attachments,
@@ -395,6 +396,30 @@ class MoveTerminalRequest(BaseModel):
             "'left'/'right'/'above'/'below' put the moved pane on that side "
             "OF THE TARGET, splitting the target's own rectangle in half."
         ),
+    )
+
+
+class TransferTerminalRequest(BaseModel):
+    """Which open workspace a pane should belong to from now on."""
+
+    workspace_id: str | None = Field(
+        default=None,
+        description="Workspace the pane is in now; defaults to the workspace on screen.",
+    )
+    target_workspace_id: str = Field(
+        min_length=1,
+        description="Open workspace to move the pane into.",
+    )
+    anchor: str | None = Field(
+        default=None,
+        description=(
+            "A pane of the target workspace to put the moved one beside "
+            "(call-sign or 'pane:<history_id>'). Omitted, it joins the edge."
+        ),
+    )
+    side: Literal["left", "right", "above", "below"] = Field(
+        default="right",
+        description="Which side of the anchor pane it goes on; ignored without one.",
     )
 
 
@@ -1236,6 +1261,7 @@ class TerminalRecap(TerminalActivity):
         default="heuristic",
         description=(
             "Who wrote this recap: 'user' when the user wrote it themselves, "
+            "'cli' when the pane's coding CLI named its own session, "
             "'model' when a brain summarized the pane, 'heuristic' when it was "
             "derived from the transcript by rule — which is what an install with "
             "no reachable provider always gets."
@@ -1244,7 +1270,7 @@ class TerminalRecap(TerminalActivity):
     reason: str = Field(
         default="",
         description=(
-            "Why this recap and not a better one: 'pinned', 'summarized', "
+            "Why this recap and not a better one: 'pinned', 'cli_title', 'summarized', "
             "'disabled', 'not_started', 'warming', 'working', 'queued' or "
             "'unavailable'. The UI turns it into a sentence, so a thin recap "
             "explains itself instead of looking broken."
@@ -1252,7 +1278,9 @@ class TerminalRecap(TerminalActivity):
     )
     writer: str = Field(
         default="",
-        description="The model that wrote it, when one did. Empty otherwise.",
+        description=(
+            "The model that wrote it, or the CLI that named the session. Empty otherwise."
+        ),
     )
     note: str = Field(
         default="",
@@ -1474,7 +1502,7 @@ async def get_agents(quick: bool = False) -> AgentsResponse:
 
 
 def _quick_agent_catalog() -> AgentsResponse:
-    """Resolve launchable coding agents without executing any CLI probe."""
+    """Resolve launchable terminals, including plain shells, without CLI probes."""
     from jarvis.workspace import agents as workspace_agents
     from jarvis.workspace import launch_picks
 
@@ -1492,7 +1520,7 @@ def _quick_agent_catalog() -> AgentsResponse:
             accepts_prompts=accepts_prompts(spec.name),
             **launch_picks.offered(spec.name),
         )
-        for spec in workspace_agents.coding_agents()
+        for spec in workspace_agents.list_agents()
     ]
     return AgentsResponse(
         terminal_available=workspace_agents.pty_available(),
@@ -2912,6 +2940,81 @@ async def move_terminal(name: str, req: MoveTerminalRequest) -> dict:
         "position": req.position,
         "terminal": term.to_dict(),
         "state": get_registry().state(),
+    }
+
+
+@router.get(
+    "/workspaces/{workspace_id}/layout",
+    summary="Where every pane of one open workspace sits",
+)
+def get_workspace_layout(workspace_id: str) -> dict:
+    """The split tree and the panes of ``workspace_id``, without anything else.
+
+    ``/state`` draws only the workspace on screen. Placing a pane INTO another
+    tab needs that tab's shape, and its full state (transcripts, recaps,
+    prompt statistics per pane) is the wrong price for a small map.
+    """
+    session = get_registry().get(workspace_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="That workspace is not open.")
+    return {
+        "id": session.id,
+        "name": session.name,
+        "layout": layout_tree.to_dict(session.layout) if session.layout else None,
+        "terminals": [
+            {
+                "key": t.key,
+                "name": t.name,
+                "agent": t.agent,
+                "display_name": t.display_name,
+                "history_id": t.history_id,
+                # What the pane's header shows, from memory — never a
+                # scrollback walk, so a map of a dozen panes stays cheap.
+                "title": recap_engine.known_headline(t),
+            }
+            for t in session.terminals
+        ],
+        "max_terminals": MAX_TERMINALS,
+    }
+
+
+@router.post(
+    "/terminals/{name}/transfer",
+    summary="Move a terminal into another open workspace",
+)
+async def transfer_terminal(request: Request, name: str, req: TransferTerminalRequest) -> dict:
+    """Move pane ``name`` out of its workspace into ``target_workspace_id``.
+
+    The agent keeps running — same process, same conversation, same folder —
+    and only changes which tab it is listed and drawn in. Its call-sign may
+    change when the target tab already has a pane by that name; the answer
+    says which name it carries now. Moving a pane into the tab it is already
+    in succeeds and changes nothing.
+    """
+    registry = get_registry()
+    try:
+        source, target, term = await registry.transfer_terminal(
+            name,
+            workspace_id=req.workspace_id,
+            target_workspace_id=req.target_workspace_id,
+            anchor=req.anchor,
+            side=req.side,
+        )
+    except SessionError as exc:
+        # A pane or workspace that is not there is not found; a full or busy
+        # target is a conflict the caller can resolve and retry.
+        message = str(exc)
+        status = 404 if message.startswith("No terminal called") else 409
+        raise HTTPException(status_code=status, detail=message) from exc
+    if source.id != target.id:
+        await _announce_workspace(request, source, "updated")
+        await _announce_workspace(request, target, "updated")
+    return {
+        "ok": True,
+        "terminal": term.to_dict(),
+        "source_workspace_id": source.id,
+        "target_workspace_id": target.id,
+        "state": registry.state(),
     }
 
 

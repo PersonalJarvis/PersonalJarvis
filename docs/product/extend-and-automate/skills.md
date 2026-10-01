@@ -15,15 +15,9 @@ tags: [skills, automation, triggers, safety, extensions]
 related: [plugins, mcp-connections, jarvis-agents, safety-and-approvals]
 ---
 
-A skill is a saved playbook for Jarvis. It describes how you want a recurring
-kind of work handled, such as how to prepare a briefing, organize notes, or
-review a file. When a request matches, Jarvis loads the playbook and follows it
-with the capabilities already available in the app.
-
-Skills are useful when the method matters as much as the result. They do not
-create access to an app, add a missing action, or store a service credential.
-Connect those capabilities separately, then let the skill explain when and how
-to use them.
+A skill is a saved playbook for recurring work, such as briefings or file
+reviews. Jarvis follows it with the capabilities you have connected. Skills
+do not grant app access, add actions, or store credentials.
 
 ## Choose the Right Building Block
 
@@ -35,10 +29,7 @@ to use them.
 | **MCP connection** | Tools supplied by an external service through Model Context Protocol (MCP) | A skill needs to read from or act in a connected service |
 | **Jarvis-Agent** | An isolated background worker for longer, reviewed work | The task needs several substantial steps or should continue outside the conversation |
 
-A skill can tell Jarvis to use a command, plugin, or connected tool. A skill
-marked for mission execution can hand its instructions to a Jarvis-Agent. The
-skill remains the method; the other building block supplies the action or does
-the work.
+Skills can use connected tools or hand mission instructions to a Jarvis-Agent.
 
 ## Before You Start
 
@@ -225,7 +216,10 @@ spoken-language filter.
 
 Scheduled triggers can exist in an installed skill, but the scheduler starts
 with the voice pipeline, so they do not run in a headless API-only session or
-while Jarvis is stopped. Hotkey definitions can be stored and displayed, but no
+while Jarvis is stopped. No built-in skill carries a schedule: a skill runs on
+its own only when you gave it a schedule yourself. Earlier versions shipped a
+morning-routine skill that ran every morning; an update removes it unless you
+edited it, in which case it stays as your own skill. Hotkey definitions can be stored and displayed, but no
 live skill-hotkey handler is connected to them; do not rely on one to start
 work.
 

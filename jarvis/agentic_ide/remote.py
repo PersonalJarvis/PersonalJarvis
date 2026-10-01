@@ -307,10 +307,22 @@ def remote_folder_for(home: str, local_folder: Path) -> str:
 # ---------------------------------------------------------------------------
 
 
+# Two separate commands, never `mkdir -p "$DEST" && cd "$DEST"`: `set -e` does
+# not stop on a failure inside an && list, so a mkdir that failed left the
+# script running in the server's home folder — where it ran `git init` and a
+# forced checkout. On a computer that was this very PC, that home-folder repo
+# made every git tool treat the whole user profile as one project (a Codex
+# snapshot then ran `git add -A` over it for minutes and starved the machine).
+# The home check is the second line of defence: the copy has its own folder.
 _APPLY = r"""
 set -e
 DEST={dest}; BUNDLE={bundle}; REF={ref}; BASE={base}; BRANCH={branch}; SNAP={snap}
-mkdir -p "$DEST" && cd "$DEST"
+mkdir -p "$DEST"
+cd "$DEST"
+if [ "$(pwd -P)" = "$(cd "$HOME" && pwd -P)" ]; then
+  echo "refusing to set up the code in the home folder itself" >&2
+  exit 1
+fi
 [ -d .git ] || git init -q
 if git rev-parse -q --verify HEAD >/dev/null && [ -n "$(git status --porcelain)" ]; then
   export GIT_INDEX_FILE="$(mktemp)"; git read-tree HEAD; git add -A; t=$(git write-tree)

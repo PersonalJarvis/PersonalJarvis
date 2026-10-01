@@ -45,6 +45,7 @@ import "./officeFloors.css";
 import { OfficeMinimap } from "./OfficeMinimap";
 import { OfficeCompass } from "./OfficeCompass";
 import { OfficeFullMap } from "./OfficeFullMap";
+import { OfficeFrameDriver } from "./OfficeFrameDriver";
 
 // Only loaded when a host without its own create dialog (the IDE's side panel) spawns an agent.
 const CreateAgentDialog = lazy(() => import("../create/CreateAgentDialog").then((m) => ({ default: m.CreateAgentDialog })));
@@ -361,8 +362,9 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
             <Suspense fallback={<div className="office-fallback" role="status">{t("society.office.loading")}</div>}>
               <Canvas shadows="percentage" camera={{ fov: CAMERA_FOV, near: 0.2, far: 800, position: [30, 30, 30] }} dpr={dpr}
                 gl={{ antialias: true, alpha: true, preserveDrawingBuffer: import.meta.env.DEV }}
-                frameloop={!awake ? "never" : "always"}
+                frameloop={!awake ? "never" : compact ? "demand" : "always"}
                 onPointerMissed={() => select(null)}>
+                <OfficeFrameDriver enabled={awake && compact} />
                 <OfficeScene floor={floor} occupants={occupants} ready={ready} layout={layout} grid={grid} walkers={walkers} agents={agents} newcomers={newcomers}
                   awake={awake} reduced={reduced} overview={overview} player={{ look: playerLook(profile), name: playerName }}
                   selection={selection} nearby={nearby} chats={chats} onOpenScreen={openScreen}

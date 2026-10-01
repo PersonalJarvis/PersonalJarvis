@@ -31,9 +31,9 @@ transcription abandoned mid-stream still consumed the audio the provider read.
 Every measured call reports from a ``finally``, so an abandoned generator, a
 cancellation and an exception all still reach the ledger.
 
-Wrapping is free when nothing is listening: ``meter_tts(provider, None)``
-returns the very same object, so an install with no cost sink pays nothing —
-not an attribute lookup, not a stack frame.
+The wrapper also feeds the passive provider-health record behind the status
+dots (the outcome of every real speech call), so it wraps even when there is
+no cost sink: ``meter_tts(provider, None)`` reports health and skips usage.
 
 Pricing lives next door in :mod:`jarvis.costs.speech_rates`; this module only
 counts. Nothing here initialises at import time (AP-26).
@@ -171,7 +171,7 @@ class _MeteredProvider:
     def __init__(
         self,
         provider: Any,
-        sink: UsageSink,
+        sink: UsageSink | None,
         *,
         trace_id: TraceIdSource = None,
     ) -> None:
@@ -199,8 +199,11 @@ class _MeteredProvider:
         """Hand one record to the sink. Never raises, never blocks.
 
         Called from a ``finally``, which may be running during
-        ``GeneratorExit`` — so this is synchronous throughout.
+        ``GeneratorExit`` — so this is synchronous throughout. Without a sink
+        (no bus to publish spend on) there is nothing to report.
         """
+        if self._sink is None:
+            return
         try:
             trace = self._trace_id
             trace_id = str(trace() or "") if callable(trace) else str(trace or "")
@@ -228,6 +231,44 @@ class _MeteredProvider:
                 )
             else:
                 log.debug("Speech usage sink failed again (%s).", exc)
+
+    def _report_health(
+        self,
+        *,
+        failure: BaseException | None,
+        answered: bool,
+    ) -> None:
+        """Feed the passive provider-health record behind the status dots.
+
+        The dots never probe a provider (a probe bills the key); they read what
+        real calls did, and this wrapper sees every real speech call. A failure
+        is recorded against the provider that was asked, a success against the
+        vendor that actually spoke. A provider that swallows its own error
+        (``last_failure``, when it exposes one) is charged with it whether a
+        fallback then spoke or nothing came out at all. Only the
+        classification is kept (AP-34).
+
+        Never raises: like the usage report, health bookkeeping must not cost
+        an utterance, so a failure here is logged and dropped on purpose.
+        """
+        try:
+            from jarvis.brain import provider_health_ledger as ledger
+
+            modality = ledger.MODALITY_TTS if self._stage == STAGE_TTS else ledger.MODALITY_STT
+            asked = self.name
+            if failure is not None:
+                ledger.record_failure(asked, modality, failure)
+                return
+            absorbed = getattr(self._inner, "last_failure", None)
+            if absorbed:
+                ledger.record_failure(asked, modality, str(absorbed))
+            if not answered:
+                return
+            spoke = self._provider_label() or asked
+            if not absorbed or spoke.casefold() != asked.casefold():
+                ledger.record_success(spoke, modality)
+        except Exception as exc:  # noqa: BLE001 — see docstring: speech must not pay
+            log.debug("Speech health record failed (%s).", exc)
 
     def _provider_label(self) -> str:
         """Who actually did the work.
@@ -279,10 +320,14 @@ class MeteredTTS(_MeteredProvider):
             kwargs["language_code"] = language_code
 
         audio_ms = 0.0
+        failure: Exception | None = None
         try:
             async for chunk in self._inner.synthesize(text, **kwargs):
                 audio_ms += _chunk_ms(chunk)
                 yield chunk
+        except Exception as exc:
+            failure = exc
+            raise
         finally:
             # Reached on exhaustion, on an exception, on cancellation, and on
             # the ``aclose()`` of a generator the caller walked away from. The
@@ -292,6 +337,9 @@ class MeteredTTS(_MeteredProvider):
                 chars=chars,
                 audio_ms=audio_ms,
             )
+            # Audio arrived = the provider answered, even if the caller then
+            # walked away; a cancellation with no audio is no evidence at all.
+            self._report_health(failure=failure, answered=audio_ms > 0)
 
     def _tts_rate_key(self, voice: str | None) -> str:
         """The identifier the TTS rate actually depends on.
@@ -317,14 +365,22 @@ class MeteredSTT(_MeteredProvider):
 
     async def transcribe(self, audio: AsyncIterator[Any], *args: Any, **kwargs: Any) -> Any:
         counter = _CountingAudio(audio)
+        failure: Exception | None = None
+        answered = False
         try:
-            return await self._inner.transcribe(counter, *args, **kwargs)
+            result = await self._inner.transcribe(counter, *args, **kwargs)
+            answered = True
+            return result
+        except Exception as exc:
+            failure = exc
+            raise
         finally:
             self._report(
                 model_or_voice=self._stt_rate_key(),
                 chars=0,
                 audio_ms=counter.audio_ms,
             )
+            self._report_health(failure=failure, answered=answered)
 
     # An async generator for the same reason ``synthesize`` is one: the
     # implementations are generators, callers iterate the return value without
@@ -333,15 +389,22 @@ class MeteredSTT(_MeteredProvider):
         self, audio: AsyncIterator[Any], *args: Any, **kwargs: Any
     ) -> AsyncIterator[Any]:
         counter = _CountingAudio(audio)
+        failure: Exception | None = None
+        answered = False
         try:
             async for transcript in self._inner.stream_transcribe(counter, *args, **kwargs):
+                answered = True
                 yield transcript
+        except Exception as exc:
+            failure = exc
+            raise
         finally:
             self._report(
                 model_or_voice=self._stt_rate_key(),
                 chars=0,
                 audio_ms=counter.audio_ms,
             )
+            self._report_health(failure=failure, answered=answered)
 
     def __getattr__(self, name: str) -> Any:
         # ``transcribe_pcm`` is the path the live microphone really takes —
@@ -368,14 +431,22 @@ class MeteredSTT(_MeteredProvider):
         """
         rate = int(args[0]) if args else int(kwargs.get("sample_rate", DEFAULT_PCM_SAMPLE_RATE))
         audio_ms = pcm_duration_ms(pcm_bytes or b"", rate)
+        failure: Exception | None = None
+        answered = False
         try:
-            return await self._inner.transcribe_pcm(pcm_bytes, *args, **kwargs)
+            result = await self._inner.transcribe_pcm(pcm_bytes, *args, **kwargs)
+            answered = True
+            return result
+        except Exception as exc:
+            failure = exc
+            raise
         finally:
             self._report(
                 model_or_voice=self._stt_rate_key(),
                 chars=0,
                 audio_ms=audio_ms,
             )
+            self._report_health(failure=failure, answered=answered)
 
     def _stt_rate_key(self) -> str:
         """The model that priced this transcription.
@@ -394,15 +465,17 @@ class MeteredSTT(_MeteredProvider):
 def meter_tts(provider: Any, sink: UsageSink | None, *, trace_id: TraceIdSource = None) -> Any:
     """Wrap a TTS provider so every ``synthesize`` lands in the ledger.
 
-    Returns ``provider`` itself when there is nothing to report to, or when it
-    is already wrapped — an install without a cost sink pays nothing at all.
+    Wrapped even without a cost ``sink``: the provider-health record behind
+    the status dots listens to every real call either way (without a sink
+    only the usage report is skipped). An already wrapped provider is
+    returned as is.
 
     Typed ``Any`` in and ``Any`` out, like ``wrap_stt_with_dictionary`` next
     door and for the same reason: ``TTSProvider.synthesize`` is declared with
     ``async def`` while every implementation (including this wrapper) is an
     async generator, so the nominal type does not describe the real contract.
     """
-    if provider is None or sink is None or isinstance(provider, MeteredTTS):
+    if provider is None or isinstance(provider, MeteredTTS):
         return provider
     return MeteredTTS(provider, sink, trace_id=trace_id)
 
@@ -416,10 +489,10 @@ def meter_stt(provider: Any, sink: UsageSink | None, *, trace_id: TraceIdSource 
     decoding the container, and decoding to price it is exactly the kind of
     work that must never appear here.
 
-    Returns ``provider`` itself when ``sink`` is ``None`` or it is already
-    wrapped.
+    Wrapped even without a cost ``sink`` (see :func:`meter_tts`); an already
+    wrapped provider is returned as is.
     """
-    if provider is None or sink is None or isinstance(provider, MeteredSTT):
+    if provider is None or isinstance(provider, MeteredSTT):
         return provider
     return MeteredSTT(provider, sink, trace_id=trace_id)
 

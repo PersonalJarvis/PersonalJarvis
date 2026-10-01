@@ -31,6 +31,9 @@ import { WSAudioLevel, WSEventEnvelope, WSWelcome } from "@/schema/ws";
 import { useI18nStore, hydrateUiLanguage, hydrateReplyLanguage, translate } from "@/i18n";
 import { hydrateUiTheme } from "@/hooks/useTheme";
 import { announceDictationSettings } from "@/hooks/usePromptMode";
+import { petKeys } from "@/hooks/usePets";
+import { focusChatComposer, startNewTextChat } from "@/lib/newChat";
+import { SPEAKER_MUTE_EVENT } from "@/lib/speakerMute";
 
 let singleton: WSClient | null = null;
 
@@ -309,6 +312,31 @@ export function useWebSocket(): void {
           void queryClient.invalidateQueries({ queryKey: ["society", "roster"] });
         }
 
+        // The desktop pet's pen: the backend already raised this window; land
+        // on an empty typed chat with the caret in the composer. A detached
+        // solo window is pinned to its section and stays where it is.
+        if (env.event_name === "ComposeRequested" && !useEventStore.getState().solo) {
+          startNewTextChat();
+          focusChatComposer();
+        }
+
+        // The assistant's voice was muted or unmuted somewhere else (the
+        // pet's speaker disc, another window); in-app speaker toggles follow.
+        if (env.event_name === "VoiceSpeakerMuteChanged") {
+          const p = env.payload as { muted?: unknown };
+          if (typeof p.muted === "boolean") {
+            window.dispatchEvent(
+              new CustomEvent(SPEAKER_MUTE_EVENT, { detail: { muted: p.muted } }),
+            );
+          }
+        }
+
+        // The active pet, its look or its visibility changed (this window,
+        // another one, the shortcut): the My Pets page re-reads the list.
+        if (env.event_name === "PetChanged") {
+          void queryClient.invalidateQueries({ queryKey: petKeys.all });
+        }
+
         if (env.event_name === "TranscriptionUpdate") {
           const p = env.payload as { text?: string; is_final?: boolean };
           if (typeof p.text === "string") {
@@ -360,6 +388,9 @@ export function useWebSocket(): void {
           } else {
             const store = useEventStore.getState();
             const forThisWindow = isForThisWindow(p, store.dictating);
+            // Signalled after the text has landed (below), so a composer
+            // sending on it reads the finished box.
+            queueMicrotask(() => useEventStore.getState().noteDictationFinal());
             const delivered = forThisWindow
               ? deliverDictationText(text)
               : "none";
@@ -456,6 +487,15 @@ export function useWebSocket(): void {
         if (env.event_name === "SecretConfigured") {
           // Trigger only — ApiKeysView refreshes its own provider list.
           window.dispatchEvent(new CustomEvent("jarvis:secret-configured", { detail: env.payload }));
+        }
+
+        if (env.event_name === "ProviderHealthChanged") {
+          // Trigger only — a real call just changed a provider's recorded
+          // health. The status dots (tabs, sidebar, dock, chat picker) re-read
+          // with a plain GET; nothing here or there probes a provider.
+          window.dispatchEvent(
+            new CustomEvent("jarvis:provider-health-changed", { detail: env.payload }),
+          );
         }
 
         if (env.event_name === "DictationPromptModeChanged") {
@@ -634,10 +674,7 @@ export function useWebSocket(): void {
           // restarted. Reload the lane that changed, wherever it came from.
           const p = env.payload as { kind?: string };
           void queryClient.invalidateQueries({ queryKey: ["marketplace-community"] });
-          if (p.kind === "wallpaper") {
-            // Prefix match: catalog, uploads and library all hang off this key.
-            void queryClient.invalidateQueries({ queryKey: ["wallpapers"] });
-          } else if (p.kind === "skill") {
+          if (p.kind === "skill") {
             void queryClient.invalidateQueries({ queryKey: ["skills"] });
           } else if (p.kind === "plugin") {
             void queryClient.invalidateQueries({ queryKey: ["marketplace-plugins"] });

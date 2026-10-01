@@ -817,6 +817,8 @@ def resolve_browser_brain(
 
     CLI aliases are read from the chat catalog; capabilities are probed on the
     constructor. Browser inference never changes the voice provider/cache.
+    An agent's background memory work resolves its seat here too
+    (``jarvis/society/seat_brain.py``).
     """
     import inspect
 
@@ -840,7 +842,10 @@ def resolve_browser_brain(
         kwargs["prefer_subscription"] = True
     if "subscription_text_only" in parameters:
         kwargs["subscription_text_only"] = True
-    cfg = config.brain.providers.get(name)
+    # A bare config (a headless runtime, a test) has no provider table; the
+    # plugin then resolves its endpoint itself.
+    providers = getattr(getattr(config, "brain", None), "providers", None) or {}
+    cfg = providers.get(name)
     if cfg and cfg.base_url and "base_url" in parameters:
         kwargs["base_url"] = cfg.base_url
     return registry.instantiate(name, **kwargs)

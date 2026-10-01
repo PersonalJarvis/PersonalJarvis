@@ -63,7 +63,7 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from . import recap
+from . import cli_title, recap
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from collections.abc import Sequence
@@ -199,12 +199,17 @@ BY_RULES = "heuristic"
 #: The user wrote it themselves, through the pencil in the pane header. It wins
 #: over both of the above and is never overwritten by a background summary.
 BY_USER = "user"
+#: The coding CLI in the pane named its own session (Claude Code's ``ai-title``,
+#: Codex's ``thread_name``, a window title) — :mod:`.cli_title`. Outranks the
+#: model and the rules, and costs nothing: the CLI already paid for it.
+BY_CLI = "cli"
 
 #: Why the recap on screen is the one on screen. Machine-readable on purpose:
 #: the wording belongs to the UI, and the whole point of the field is that
 #: "this line is thin" stops being a mystery. Rendered in the recap card.
 WHY_PINNED = "pinned"  # you wrote it
 WHY_SUMMARIZED = "summarized"  # a model read the pane and wrote it
+WHY_CLI_TITLE = "cli_title"  # the pane's own CLI named the session
 WHY_DISABLED = "disabled"  # model recaps switched off in settings
 WHY_NOT_STARTED = "not_started"  # nothing has run in this pane yet
 WHY_WARMING = "warming"  # too little output so far to summarize
@@ -473,17 +478,18 @@ def _state(key: str) -> _PaneState:
 def _enabled() -> bool:
     """Is the model-written recap switched on for this install?
 
-    Read live rather than cached, so turning it off in ``jarvis.toml`` takes
-    effect on the next poll instead of on the next restart. A config that cannot
-    be loaded answers "on": the deterministic floor is what runs anyway when
-    nothing else works.
+    Off unless the user opted in: the coding CLIs name their sessions
+    themselves (:mod:`.cli_title`), so a second, paid name is not worth a
+    background request. Read live rather than cached, so switching it in
+    ``jarvis.toml`` takes effect on the next poll. A config that cannot be
+    loaded answers "off" — nothing the user did not ask for may bill a key.
     """
     try:
         from jarvis.core.config import load_config
 
-        return bool(getattr(load_config().agentic_ide, "smart_recaps", True))
+        return bool(getattr(load_config().agentic_ide, "smart_recaps", False))
     except Exception:  # noqa: BLE001 - a recap must never break a state read
-        return True
+        return False
 
 
 def _ui_language() -> str:
@@ -575,6 +581,16 @@ def recap_for(term: Any, *, lines: Sequence[str] | None = None) -> SmartRecap:
             generated_at=entry.pinned_at,
             reason=WHY_PINNED,
         )
+    named = cli_title.title_for(term)
+    if named:
+        plain = recap.summarize(term, lines=None if lines is None else list(lines))
+        return SmartRecap(
+            headline=recap.condense(named, MAX_EDIT_HEADLINE),
+            detail=plain.detail,
+            source=BY_CLI,
+            reason=WHY_CLI_TITLE,
+            writer=str(getattr(term, "display_name", "") or ""),
+        )
     if entry is not None and entry.headline:
         return SmartRecap(
             headline=entry.headline,
@@ -625,9 +641,12 @@ def known_headline(term: Any) -> str:
     fact everything there is to say.
     """
     entry = _panes.get(pane_id(term))
+    if entry is not None and entry.pinned_headline:
+        return entry.pinned_headline
+    named = cli_title.title_for(term)
+    if named:
+        return recap.condense(named, MAX_EDIT_HEADLINE)
     if entry is not None:
-        if entry.pinned_headline:
-            return entry.pinned_headline
         if entry.headline:
             return entry.headline
         asked_at = float(getattr(term, "last_prompt_at", None) or 0.0)
@@ -661,6 +680,10 @@ def refresh_soon(term: Any, *, lines: Sequence[str], folder: str = "") -> None:
         # otherwise. Summarizing over it would spend a request to produce a
         # sentence nothing renders.
         if entry.pinned_headline:
+            return
+        # The CLI named this session itself; a summary would buy a second name
+        # that the header never shows.
+        if cli_title.title_for(term):
             return
         now = time.time()
         if entry.inflight or now < entry.quiet_until:
@@ -808,9 +831,12 @@ def _resolve_brains() -> list[Any]:
     """The brains that could write the recap, best first. Empty when none can.
 
     Resolution goes through ``jarvis.brain.resolver`` so this module never grows
-    its own opinion about providers (AP-21/AP-22): whatever keys the user has
-    are what write the recap, and an install with none gets an empty list and
-    the deterministic floor. More than one candidate comes back because the
+    its own opinion about providers (AP-21/AP-22): a connected subscription
+    writes the recap; on an install that never connected one, whatever keys the
+    user has write it; an install in subscription mode whose subscription cannot
+    answer right now, or one with nothing at all, gets an empty list and the
+    deterministic floor (``background_policy``). More than one candidate comes
+    back because the
     ordinary failure is CALL-time — a depleted key instantiates fine and only
     429s when asked to write — and the retry must cross to a different family.
     """
@@ -826,6 +852,15 @@ def _resolve_brains() -> list[Any]:
         subscription = _resolve_subscription(config)
         if subscription is not None:
             return [subscription]
+        if _subscription_install():
+            # A subscription is connected (or was, within the policy's
+            # memory) but cannot write right now: wait for it. The title
+            # floor covers the pane meanwhile; no key is instantiated.
+            logger.info(
+                "Agentic IDE recap: the subscription cannot write right now — "
+                "using the plain title instead of an API key"
+            )
+            return []
         candidates: list[Any] = []
         for brain in frontier_brain_candidates(config):
             candidates.append(brain)
@@ -834,9 +869,32 @@ def _resolve_brains() -> list[Any]:
     except Exception as exc:  # noqa: BLE001 - no brain is an answer, not an error
         logger.info("Agentic IDE recap: no brain reachable ({})", exc)
         return []
-    # Reached only with no subscription connected: the keyed families are
-    # then the whole chain, so a single-key install still gets model recaps.
+    # Reached only on an install that never connected a subscription: the
+    # keyed families are then the whole chain, so a single-key install still
+    # gets model recaps.
     return candidates
+
+
+def _subscription_install() -> bool:
+    """Whether recaps may only run on subscriptions (``background_policy``).
+
+    True while any subscription is signed in or was seen signed in within the
+    policy's memory window. Probes vendor CLIs, so it runs only from
+    :func:`_resolve_brains`, which is always called off the event loop. A
+    broken probe answers True: the plain title is a safe fallback, a paid key
+    is not.
+    """
+    try:
+        from jarvis.brain.background_policy import background_providers
+        from jarvis.brain.provider_registry import BrainProviderRegistry
+
+        names = sorted(BrainProviderRegistry().available())
+        return background_providers(names).subscription_mode
+    except Exception:  # noqa: BLE001 - failing closed is the handling, logged here
+        logger.opt(exception=True).warning(
+            "Agentic IDE recap: background billing check failed — no API key is used"
+        )
+        return True
 
 
 def _resolve_subscription(config: Any) -> Any | None:
@@ -1262,6 +1320,7 @@ def _floor(term: Any, rows: Sequence[str], why: str, *, note: str = "") -> Smart
 def forget(key: str) -> None:
     """Drop what is remembered about one pane — it has been closed."""
     _panes.pop(key, None)
+    cli_title.forget(key)
 
 
 def reset_for_tests() -> None:
@@ -1272,9 +1331,11 @@ def reset_for_tests() -> None:
     _inflight = 0
     _provider_failures.clear()
     _provider_quiet_until.clear()
+    cli_title.reset_for_tests()
 
 
 __all__ = [
+    "BY_CLI",
     "BY_MODEL",
     "BY_RULES",
     "BY_USER",
@@ -1290,6 +1351,7 @@ __all__ = [
     "NO_PROVIDER_NOTE",
     "PROVIDER_FAILURES_BEFORE_QUIET",
     "PROVIDER_QUIET_S",
+    "WHY_CLI_TITLE",
     "WHY_DISABLED",
     "WHY_NOT_STARTED",
     "WHY_PINNED",

@@ -384,6 +384,10 @@ class LocalFinalSTT:
             self._spawn_in_flight = False
         if worker is None:
             self._last_refusal = "the dictation worker did not come up"
+            # A cold build can outlast the retry interval. Start the cooldown
+            # when it fails, or the very next transcription launches another
+            # full build immediately after the warm-up already timed out.
+            self._next_attempt_at = time.monotonic() + _RETRY_AFTER_S
             return None
         device = str(getattr(worker, "device", "") or "")
         if device == "cpu" and not self._allow_cpu:

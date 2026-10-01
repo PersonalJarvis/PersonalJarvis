@@ -18,9 +18,11 @@ import asyncio
 import json
 import logging
 import time
-from typing import TYPE_CHECKING, Any, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 from ..jobs import HANDLERS
+from ..jobs.http import HttpHandler
 from .notify import NEWS_EVENT, classify_run, failures_to_announce
 from .schema import JobSpec
 
@@ -44,6 +46,8 @@ class Runner:
     ) -> None:
         self._store = store
         self._on_event = on_event
+        self._http_handler = HttpHandler()
+        self._tasks: set[asyncio.Task[None]] = set()
         # Job ids whose current breakage THIS runner announced as "failing".
         # A recovery is only news when the breakage was (see ``notify.py``);
         # in-memory on purpose — a "working again" about an outage nobody in
@@ -52,6 +56,15 @@ class Runner:
 
     def set_callback(self, on_event: EventCallback) -> None:
         self._on_event = on_event
+
+    async def aclose(self) -> None:
+        """Stop owned runs before closing the HTTP pool and the host's store."""
+        tasks = list(self._tasks)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        await self._http_handler.aclose()
 
     # ------------------------------------------------------------------
 
@@ -69,10 +82,12 @@ class Runner:
         run_id = await self._store.create_run(
             job_id, trigger=trigger, input_data=input_data,
         )
-        asyncio.create_task(
+        task = asyncio.create_task(
             self._run(job_row, run_id, trigger, input_data or {}),
             name=f"conductor-run-{run_id[:8]}",
         )
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
         return run_id
 
     # ------------------------------------------------------------------
@@ -115,7 +130,7 @@ class Runner:
             )
             return
 
-        handler = HANDLERS.get(spec.type)
+        handler = self._http_handler if spec.type == "http" else HANDLERS.get(spec.type)
         if handler is None:
             await self._store.update_run(
                 run_id, state="failed",

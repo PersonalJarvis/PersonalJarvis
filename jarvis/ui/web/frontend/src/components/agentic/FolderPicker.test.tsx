@@ -17,8 +17,11 @@ import {
   extractDropPayload,
   isAbsolutePath,
   joinPath,
+  lastUsedLabel,
+  leafName,
   looksLikePath,
   normalizeTypedPath,
+  pathCrumbs,
   resolveTypedPath,
   separatorOf,
   splitTypedPath,
@@ -177,7 +180,7 @@ describe("FolderPicker", () => {
 
     const card = await screen.findByText("/home/ruben/webshop");
     expect(screen.getByText("Recent folders")).toBeTruthy();
-    expect(screen.getByTestId("recent-folder-star")).toBeTruthy();
+    expect(screen.getByTestId("recent-folder-icon")).toBeTruthy();
     fireEvent.click(card);
     expect(onSelect).toHaveBeenCalledWith("/home/ruben/webshop");
     expect(onSelectRecent).toHaveBeenCalledWith(
@@ -377,6 +380,7 @@ describe("typing a path", () => {
     render(<FolderPicker selected={null} onSelect={vi.fn()} />);
     await screen.findByText("webshop");
 
+    fireEvent.click(screen.getByTestId("edit-path"));
     fireEvent.change(screen.getByTestId("folder-path-input"), {
       target: { value: "web" },
     });
@@ -396,6 +400,7 @@ describe("typing a path", () => {
     render(<FolderPicker selected={null} onSelect={vi.fn()} />);
     await screen.findByText("webshop");
 
+    fireEvent.click(screen.getByTestId("edit-path"));
     const input = screen.getByTestId("folder-path-input") as HTMLInputElement;
     fireEvent.change(input, { target: { value: "web" } });
     await screen.findByTestId("path-suggestions");
@@ -454,6 +459,7 @@ describe("typing a path", () => {
     render(<FolderPicker selected={null} onSelect={onSelect} />);
     await screen.findByText("webshop");
 
+    fireEvent.click(screen.getByTestId("edit-path"));
     const input = screen.getByTestId("folder-path-input");
     fireEvent.change(input, { target: { value: "notes" } });
     fireEvent.keyDown(input, { key: "Enter" });
@@ -466,6 +472,7 @@ describe("typing a path", () => {
     render(<FolderPicker selected={null} onSelect={onSelect} />);
     await screen.findByText("webshop");
 
+    fireEvent.click(screen.getByTestId("edit-path"));
     const input = screen.getByTestId("folder-path-input");
     fireEvent.change(input, { target: { value: "/srv/deploy" } });
     fireEvent.keyDown(input, { key: "Enter" });
@@ -492,6 +499,7 @@ describe("typing a path", () => {
     render(<FolderPicker selected={null} onSelect={onSelect} />);
     await screen.findByText("webshop");
 
+    fireEvent.click(screen.getByTestId("edit-path"));
     const input = screen.getByTestId("folder-path-input");
     fireEvent.change(input, { target: { value: "nope" } });
     fireEvent.keyDown(input, { key: "Enter" });
@@ -638,5 +646,139 @@ describe("hidden folders", () => {
     fireEvent.click(screen.getByTestId("toggle-hidden"));
 
     await waitFor(() => expect(api.fetchFolders).toHaveBeenLastCalledWith(null, true));
+  });
+});
+
+describe("the address bar", () => {
+  it("splits a path into crumbs that keep their root", () => {
+    expect(pathCrumbs("C:\\Users\\me")).toEqual([
+      { label: "C:", path: "C:\\" },
+      { label: "Users", path: "C:\\Users" },
+      { label: "me", path: "C:\\Users\\me" },
+    ]);
+    expect(pathCrumbs("/home/ruben")).toEqual([
+      { label: "/", path: "/" },
+      { label: "home", path: "/home" },
+      { label: "ruben", path: "/home/ruben" },
+    ]);
+    // A server alone is not a folder anyone can open: the share is the root.
+    expect(pathCrumbs("\\\\server\\share\\dir")).toEqual([
+      { label: "\\\\server\\share", path: "\\\\server\\share" },
+      { label: "dir", path: "\\\\server\\share\\dir" },
+    ]);
+    expect(leafName("C:\\Users\\me\\")).toBe("me");
+    expect(leafName("/")).toBe("/");
+  });
+
+  it("opens a crumb and chooses it, the same as opening a folder", async () => {
+    vi.mocked(api.fetchFolders).mockImplementation(async (target) => ({
+      ...LISTING,
+      path: target ?? "/home/ruben",
+      parent: "/home",
+    }));
+    const onSelect = vi.fn();
+    render(<FolderPicker selected={null} onSelect={onSelect} />);
+    await screen.findByText("webshop");
+
+    fireEvent.click(screen.getByRole("button", { name: "home" }));
+
+    await waitFor(() => expect(onSelect).toHaveBeenCalledWith("/home"));
+    expect(api.fetchFolders).toHaveBeenLastCalledWith("/home", false);
+  });
+
+  it("chooses the folder above when going up", async () => {
+    // The folder on screen is the folder chosen — going up must not leave the
+    // choice behind on a folder that is no longer shown.
+    vi.mocked(api.fetchFolders).mockImplementation(async (target) => ({
+      ...LISTING,
+      path: target ?? "/home/ruben",
+      parent: "/home",
+    }));
+    const onSelect = vi.fn();
+    render(<FolderPicker selected={null} onSelect={onSelect} />);
+    await screen.findByText("webshop");
+
+    fireEvent.click(screen.getByRole("button", { name: "Go up one folder" }));
+
+    await waitFor(() => expect(onSelect).toHaveBeenCalledWith("/home"));
+  });
+
+  it("gives Escape to the path field, which puts the crumbs back", async () => {
+    render(<FolderPicker selected={null} onSelect={vi.fn()} />);
+    await screen.findByText("webshop");
+
+    fireEvent.click(screen.getByTestId("edit-path"));
+    const input = screen.getByTestId("folder-path-input");
+    // The host dialog checks for this before closing itself on Escape.
+    expect(input.closest("[data-escape-local]")).toBeTruthy();
+    fireEvent.keyDown(input, { key: "Escape" });
+
+    await waitFor(() => expect(screen.queryByTestId("folder-path-input")).toBeNull());
+    expect(screen.getByText("Rubens MacBook")).toBeTruthy();
+  });
+});
+
+describe("the chosen folder", () => {
+  it("is named under the list", async () => {
+    render(<FolderPicker selected="/home/ruben/webshop" onSelect={vi.fn()} />);
+    const strip = await screen.findByTestId("folder-selection");
+    expect(strip.textContent).toContain("webshop");
+    expect(strip.textContent).toContain("/home/ruben/webshop");
+  });
+
+  it("says plainly when nothing is chosen yet", async () => {
+    render(<FolderPicker selected={null} onSelect={vi.fn()} />);
+    expect((await screen.findByTestId("folder-selection")).textContent).toMatch(
+      /no folder chosen/i,
+    );
+  });
+
+  it("is left to a host that reports it itself", async () => {
+    render(<FolderPicker selected="/x" onSelect={vi.fn()} showSelection={false} />);
+    await screen.findByText("webshop");
+    expect(screen.queryByTestId("folder-selection")).toBeNull();
+  });
+});
+
+describe("recent folders", () => {
+  it("belong to the start view, not to every folder", async () => {
+    vi.mocked(api.fetchRecents).mockResolvedValue({
+      device_name: "Rubens MacBook",
+      recents: [
+        {
+          path: "/home/ruben/shop",
+          name: "shop",
+          terminals: 1,
+          agents: {},
+          last_used: 1,
+          exists: true,
+        },
+      ],
+    });
+    vi.mocked(api.fetchFolders).mockImplementation(async (target) => ({
+      ...LISTING,
+      path: target ?? null,
+      parent: target ? "/home/ruben" : null,
+    }));
+    render(<FolderPicker selected={null} onSelect={vi.fn()} />);
+    expect(await screen.findByText("Recent folders")).toBeTruthy();
+
+    fireEvent.click(screen.getByText("notes"));
+
+    await waitFor(() => expect(screen.queryByText("Recent folders")).toBeNull());
+  });
+
+  it("say when they were last used, in words", () => {
+    const now = new Date(2026, 8, 30, 10, 0).getTime();
+    expect(lastUsedLabel(now / 1000, now)).toBe("Today");
+    expect(lastUsedLabel(new Date(2026, 8, 29, 23, 0).getTime() / 1000, now)).toBe(
+      "Yesterday",
+    );
+    // Milliseconds are read as well as the seconds the backend stores.
+    expect(lastUsedLabel(new Date(2026, 8, 26, 12, 0).getTime(), now)).toBe("4 days ago");
+    expect(lastUsedLabel(new Date(2026, 8, 16, 12, 0).getTime() / 1000, now)).toBe(
+      "2 weeks ago",
+    );
+    expect(lastUsedLabel(0, now)).toBe("");
   });
 });

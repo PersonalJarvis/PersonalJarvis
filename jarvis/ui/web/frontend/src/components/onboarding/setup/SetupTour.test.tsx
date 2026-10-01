@@ -3,6 +3,7 @@ import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { _resetProvidersCacheForTests } from "@/hooks/useProviders";
 import type { useOnboarding } from "@/hooks/useOnboarding";
 import { loadLocaleChunk } from "@/i18n";
+import { requestedApiKeysTab } from "@/lib/apiKeysTab";
 import { useEventStore } from "@/store/events";
 import { SetupTour } from "./SetupTour";
 
@@ -36,6 +37,8 @@ const plan = {
 };
 
 let providers = [openai];
+let agentRows: Array<{ jarvis: string; label?: string; oauth_connected?: boolean }> = [];
+let wakeWord = { phrase: "", enabled: false };
 let calls: Array<{ url: string; method: string }> = [];
 
 function stubFetch() {
@@ -49,7 +52,8 @@ function stubFetch() {
       if (url === "/api/permissions/status") return reply({ platform: "win32" });
       if (url === "/api/providers") return reply({ providers });
       if (url === "/api/setup/starter-plans") return reply({ plans: [plan], selected: null, custom_id: "custom" });
-      if (url === "/api/settings/wake-word") return reply({ phrase: "", enabled: false });
+      if (url === "/api/settings/wake-word") return reply(wakeWord);
+      if (url === "/api/jarvis-agent/status") return reply({ mapping: agentRows });
       if (url === "/api/settings/autostart") return reply({ enabled: false, supported: true });
       return reply({ ok: true });
     }),
@@ -88,6 +92,8 @@ beforeAll(async () => {
 
 beforeEach(() => {
   providers = [{ ...openai, secrets_set: {} }];
+  agentRows = [];
+  wakeWord = { phrase: "", enabled: false };
   _resetProvidersCacheForTests();
   useEventStore.getState().setActiveSection("chats");
   stubFetch();
@@ -120,9 +126,47 @@ it("waits for a key, and lets the user go on later", async () => {
   await screen.findByTestId("setup-keys-waiting");
   expect((screen.getByTestId("onboarding-primary") as HTMLButtonElement).disabled).toBe(true);
   fireEvent.click(screen.getByTestId("setup-keys-later"));
+  await waitFor(() => expect(screen.getByTestId("setup-card").dataset.step).toBe("subscriptions"));
+  expect(onb.saveStep).toHaveBeenLastCalledWith("subscriptions", ["keys"]);
+});
+
+it("opens the Agents tab and waits for a subscription", async () => {
+  const onb = fakeOnb({ ...accepted, current_step: "subscriptions" });
+  render(<SetupTour onb={onb} preview={false} onFinished={vi.fn()} />);
+  const status = await screen.findByTestId("setup-subscriptions-status");
+  expect(useEventStore.getState().activeSection).toBe("apikeys");
+  expect(requestedApiKeysTab()).toBe("subagents");
+  expect((screen.getByTestId("onboarding-primary") as HTMLButtonElement).disabled).toBe(true);
+  expect(status.textContent).not.toContain("Claude");
+  fireEvent.click(screen.getByTestId("setup-subscriptions-later"));
   await waitFor(() => expect(screen.getByTestId("setup-card").dataset.step).toBe("voice"));
-  expect(onb.saveStep).toHaveBeenLastCalledWith("voice", ["keys"]);
+  expect(onb.saveStep).toHaveBeenLastCalledWith("voice", ["subscriptions"]);
   await waitFor(() => expect(useEventStore.getState().activeSection).toBe("settings"));
+  expect(requestedApiKeysTab()).toBeNull();
+});
+
+it("lets the user on once a subscription is signed in", async () => {
+  agentRows = [{ jarvis: "claude-api", label: "Claude (API-Key)", oauth_connected: true }];
+  render(<SetupTour onb={fakeOnb({ ...accepted, current_step: "subscriptions" })} preview={false} onFinished={vi.fn()} />);
+  await waitFor(() => expect(screen.getByTestId("setup-subscriptions-status").textContent).toContain("Claude"));
+  expect((screen.getByTestId("onboarding-primary") as HTMLButtonElement).disabled).toBe(false);
+});
+
+it("asks for a wake word before going on, with a way to leave it for later", async () => {
+  const onb = fakeOnb({ ...accepted, current_step: "voice" });
+  render(<SetupTour onb={onb} preview={false} onFinished={vi.fn()} />);
+  await screen.findByTestId("setup-voice-later");
+  expect((screen.getByTestId("onboarding-primary") as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(screen.getByTestId("setup-voice-later"));
+  await waitFor(() => expect(screen.getByTestId("setup-card").dataset.step).toBe("ready"));
+  expect(onb.saveStep).toHaveBeenLastCalledWith("ready", ["voice"]);
+});
+
+it("goes on from the wake word once one is saved", async () => {
+  wakeWord = { phrase: "Hey George", enabled: true };
+  render(<SetupTour onb={fakeOnb({ ...accepted, current_step: "voice" })} preview={false} onFinished={vi.fn()} />);
+  await waitFor(() => expect((screen.getByTestId("onboarding-primary") as HTMLButtonElement).disabled).toBe(false));
+  expect(screen.queryByTestId("setup-voice-later")).toBeNull();
 });
 
 it("switches on the plan a key saved during the step completes", async () => {
@@ -167,8 +211,10 @@ it("walks a replay from the start and never writes, completes or restarts", asyn
   });
   await waitFor(() => expect(screen.getByTestId("setup-card").dataset.step).toBe("keys"));
   fireEvent.click(await screen.findByTestId("setup-keys-later"));
+  await waitFor(() => expect(screen.getByTestId("setup-card").dataset.step).toBe("subscriptions"));
+  fireEvent.click(await screen.findByTestId("setup-subscriptions-later"));
   await waitFor(() => expect(screen.getByTestId("setup-card").dataset.step).toBe("voice"));
-  fireEvent.click(screen.getByTestId("onboarding-primary"));
+  fireEvent.click(await screen.findByTestId("setup-voice-later"));
   const start = await screen.findByTestId("onboarding-start");
   await act(async () => {
     fireEvent.click(start);
@@ -185,4 +231,11 @@ it("dims the app and keeps its card above every dialog", async () => {
   const layer = screen.getByTestId("tour-layer");
   expect(layer.hasAttribute("data-tour-layer")).toBe(true);
   expect(screen.getByTestId("tour-dim").className).toContain("pointer-events-auto");
+});
+
+it("starts a replay from Settings at the API Keys page, with no way back to the consent", async () => {
+  const onb = fakeOnb({ ...accepted, completed: true });
+  render(<SetupTour onb={onb} preview startAt="keys" onFinished={vi.fn()} />);
+  await waitFor(() => expect(screen.getByTestId("setup-card").dataset.step).toBe("keys"));
+  expect(screen.queryByTestId("setup-back")).toBeNull();
 });

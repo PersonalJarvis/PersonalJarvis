@@ -7,6 +7,15 @@
 > agents learn through their `USER.md`/`MEMORY.md` notebooks and the turn
 > review in `jarvis/society/review.py`. Jarvis' own learning is
 > `docs/jarvis-learning.md`.
+>
+> **Seat rule (2026-09-30):** an agent's turn review and skill learning run
+> on exactly that agent's seat — the provider, model and auth mode its chat
+> uses (`jarvis/society/seat_brain.py`). No other provider, subscription or
+> key is asked. A review whose seat keeps failing costs at most four seat
+> calls in total, spaced by a jittered backoff, and is then dropped (status
+> `dropped`) with one log line. The attempt count and next due time are
+> stored on the review row, so neither a burst of turns nor a restart adds
+> calls; concurrent drain requests are coalesced into one extra pass.
 
 Tier: **T3 capability**. Jarvis and every Society agent use the same portable
 learning loop, with separate ownership, files, review locks and provider scopes.

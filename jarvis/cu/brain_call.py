@@ -430,6 +430,7 @@ async def call_vision_brain(
                     provider, model, idx,
                 )
             _log_serving(provider, model)
+            selector.record_success(provider, model)
             return reply
 
     # Stale-dead-flag resilience: retry every REGISTERED vision provider once,
@@ -463,6 +464,7 @@ async def call_vision_brain(
                     provider, model,
                 )
                 _log_serving(provider, model)
+                selector.record_success(provider, model)
                 return reply
 
     raise CUNoVisionProviderError(

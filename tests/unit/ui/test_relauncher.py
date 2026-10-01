@@ -287,6 +287,14 @@ def test_main_spawns_branded_exe_with_the_loop_guard(monkeypatch, tmp_path):
     monkeypatch.setattr(relauncher.sys, "executable", str(tmp_path / "python.exe"))
     monkeypatch.setattr(relauncher.sys, "_base_executable", "", raising=False)
     monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    # Faking win32 must not reach the real registry: on a macOS or Linux runner
+    # there is no winreg module to read the persisted user environment from.
+    real_fresh_user_env = relauncher.fresh_user_env
+    monkeypatch.setattr(
+        relauncher,
+        "fresh_user_env",
+        lambda base=None: real_fresh_user_env(base, _read_persisted=lambda: None),
+    )
     spawned: list[dict] = []
 
     def fake_spawn(cmd, **kwargs):

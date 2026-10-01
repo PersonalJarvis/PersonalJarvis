@@ -1,6 +1,5 @@
 import { useEffect, useRef, type RefObject } from "react";
 import { useReducedMotion } from "framer-motion";
-import { useDesktopWallpaper } from "@/hooks/useDesktopWallpaper";
 import {
   PERSPECTIVE_ORIGIN,
   driftCompensation,
@@ -30,12 +29,9 @@ import {
  *     planes at the board's edges drift outward and are clipped.
  *
  * `DeckFloor` is the ground the case stands on: a plane laid flat under the
- * board, receding from the viewer to the wallpaper, carrying a blurred,
- * upside-down echo of the picture — the mascot and the planes stand on a
- * floor that reflects the wall behind them, which is what turns a picture
- * with things in front of it into a room. It takes the theme's ground colour
- * (so it is dark glass under the wave and pale stone under the terrace) and
- * the current wallpaper URL, nothing else.
+ * board, receding from the viewer — the mascot and the planes stand on a
+ * floor instead of floating in the air. It takes the theme's ground colour
+ * and nothing else.
  */
 export function useDeckParallax<T extends HTMLElement>(
   ref: RefObject<T | null>,
@@ -106,10 +102,8 @@ export function useDeckParallax<T extends HTMLElement>(
 }
 
 export function DeckFloor() {
-  const wallpaperUrl = useDesktopWallpaper();
   return (
     <div aria-hidden data-testid="deck-floor" className="deck-floor">
-      <div className="deck-floor-echo" style={{ backgroundImage: `url(${wallpaperUrl})` }} />
       <div className="deck-floor-sheen" />
     </div>
   );

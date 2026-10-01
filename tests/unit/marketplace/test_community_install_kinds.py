@@ -1,7 +1,7 @@
-"""Install-by-name across all three published kinds, and the origin it records.
+"""Install-by-name across the published kinds, and the origin it records.
 
-A marketplace page prints one line to copy for a plugin, a skill, and a
-wallpaper alike. These tests pin the part the user actually sees afterwards:
+A marketplace page prints one line to copy for a plugin and a skill alike.
+These tests pin the part the user actually sees afterwards:
 the thing lands in the right store, and it is marked as having come from the
 marketplace — which is the only way any view can say so later.
 
@@ -11,7 +11,6 @@ redirected into tmp. The network is never touched.
 
 from __future__ import annotations
 
-import io
 import json
 import time
 from pathlib import Path
@@ -19,13 +18,10 @@ from typing import Any
 
 import httpx
 import pytest
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 
 from jarvis.marketplace import catalog_data, community_source
 from jarvis.marketplace.usage_cards import loader as cards_loader
-from jarvis.ui.web import marketplace_routes
-from jarvis.ui.web import wallpapers as wallpapers_mod
-from jarvis.ui.web.marketplace_routes import _download_image
 from jarvis.ui.web.marketplace_routes import router as market_router
 from jarvis.ui.web.skills_routes import router as skills_router
 
@@ -60,35 +56,17 @@ def _index_payload() -> dict[str, Any]:
                 "source_url": "https://github.com/PersonalJarvis/marketplace",
             }
         ],
+        # Wallpapers were retired as a marketplace kind. A registry build from
+        # before that may still publish the section, so the fixture keeps one
+        # entry to prove the app ignores it.
         "wallpapers": [
             {
                 "name": "moonlit-wave",
                 "title": "Moonlit Wave",
-                "description": "A dark wave under a full moon",
-                "publisher": "octocat",
-                "version": "1.0.0",
-                # The published registry emits `image_url` + `thumb_url` and
-                # leaves `raw_url` null — pinned here because reading the
-                # wrong field made every published wallpaper uninstallable.
                 "image_url": "https://pages.example/wallpapers/moonlit-wave/wallpaper.webp",
-                "thumb_url": "https://pages.example/wallpapers/moonlit-wave/thumb.webp",
-                "raw_url": None,
-                "license": "CC0-1.0",
-                "width": 1920,
-                "height": 1080,
-                "source_url": "https://github.com/PersonalJarvis/marketplace",
-                "theme": "dark",
             }
         ],
     }
-
-
-def _png_bytes(size: tuple[int, int] = (32, 18)) -> bytes:
-    from PIL import Image
-
-    buffer = io.BytesIO()
-    Image.new("RGB", size, (12, 12, 20)).save(buffer, "PNG")
-    return buffer.getvalue()
 
 
 @pytest.fixture()
@@ -104,9 +82,6 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(catalog_data, "_DEFAULT_CATALOG_PATH", tmp_path / "plugin_catalog.json")
     monkeypatch.setattr(cards_loader, "_DATA_CARDS_DIR", tmp_path / "usage_cards")
     monkeypatch.setattr("jarvis.core.paths.user_skills_dir", lambda: tmp_path / "skills")
-    # The picker's own store: DATA_DIR is read when WallpaperUploads is built,
-    # so patching the module attribute is enough to relocate it.
-    monkeypatch.setattr(wallpapers_mod, "DATA_DIR", tmp_path / "wpdata")
     catalog_data.clear_cache()
     yield tmp_path
     catalog_data.clear_cache()
@@ -114,7 +89,7 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 @pytest.fixture()
 def offline_downloads(monkeypatch: pytest.MonkeyPatch, env: Path) -> None:
-    """Serve both downloads locally: a SKILL.md and an image."""
+    """Serve the SKILL.md download locally."""
     from jarvis.skills.finder import SkillFinder
 
     async def fake_skill_install(self: Any, candidate: Any) -> Path:
@@ -124,11 +99,7 @@ def offline_downloads(monkeypatch: pytest.MonkeyPatch, env: Path) -> None:
         target.write_text(_SKILL_MD, encoding="utf-8")
         return target
 
-    async def fake_image(raw_url: str, limit_bytes: int, **_: Any) -> bytes:
-        return _png_bytes()
-
     monkeypatch.setattr(SkillFinder, "install", fake_skill_install)
-    monkeypatch.setattr(marketplace_routes, "_download_image", fake_image)
 
 
 def _client(env: Path, bus: Any = None) -> httpx.AsyncClient:
@@ -160,120 +131,26 @@ class _RecordingBus:
 
 
 # ----------------------------------------------------------------------
-# Wallpapers
+# Wallpapers are no longer a published kind
 # ----------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_browse_lists_published_wallpapers(env: Path) -> None:
+async def test_a_feed_that_still_lists_wallpapers_is_browsed_without_them(env: Path) -> None:
+    """An older registry build may still carry `wallpapers`; the app ignores it."""
     async with _client(env) as client:
         resp = await client.get("/api/marketplace/community")
-    paper = resp.json()["wallpapers"][0]
-    assert paper["name"] == "moonlit-wave"
-    assert paper["title"] == "Moonlit Wave"
-    assert paper["installed"] is False
-    # The picture the install would fetch, whichever field the publisher used.
-    assert paper["image_url"].endswith("wallpaper.webp")
-    assert paper["raw_url"] == paper["image_url"]
-    assert paper["thumb_url"].endswith("thumb.webp")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "wallpapers" not in body
+    assert [s["name"] for s in body["skills"]] == ["three-point-check"]
 
 
 @pytest.mark.asyncio
-async def test_the_download_url_comes_from_the_published_field(env: Path) -> None:
-    """Regression: the registry emits `image_url`, not `raw_url`.
-
-    Reading only `raw_url` left every published wallpaper with no download at
-    all — browsable, and refused the moment anyone pressed install.
-    """
-    index, _ = await community_source.get_index()
-    paper = index.wallpapers[0]
-    assert paper.raw_url is None
-    assert paper.download_url == paper.image_url
-
-
-@pytest.mark.asyncio
-async def test_a_non_https_image_url_is_dropped(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The server fetches this URL — plain http would be an SSRF primitive."""
-    from jarvis.marketplace.community_source import CommunityWallpaperEntry
-
-    entry = CommunityWallpaperEntry(
-        name="x", image_url="http://plain.example/a.webp", thumb_url="http://plain.example/t.webp"
-    )
-    assert entry.image_url is None
-    assert entry.download_url is None
-
-
-@pytest.mark.asyncio
-async def test_install_stores_a_wallpaper_with_its_origin(
-    env: Path, offline_downloads: None
-) -> None:
-    from jarvis.ui.web.wallpapers import WallpaperUploads
-
+async def test_a_wallpaper_name_is_not_installable(env: Path) -> None:
     async with _client(env) as client:
         resp = await client.post("/api/marketplace/community/install/moonlit-wave")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["kind"] == "wallpaper"
-        assert data["title"] == "Moonlit Wave"
-        # A picture needs no connect step and no validation: usable at once.
-        assert data["ready"] is True
-        assert data["next_action"] == "none"
-
-        browse = await client.get("/api/marketplace/community")
-        assert browse.json()["wallpapers"][0]["installed"] is True
-
-    stored = WallpaperUploads().list()
-    assert len(stored) == 1
-    item = stored[0]
-    assert item.source == "marketplace"
-    assert item.origin is not None
-    assert item.origin.source_id == "moonlit-wave"
-    assert item.origin.publisher == "octocat"
-    assert item.to_json()["sourceId"] == "moonlit-wave"
-    # Re-encoded on the way in, exactly like a dragged-in file.
-    assert item.path.suffix == ".webp"
-
-
-@pytest.mark.asyncio
-async def test_installing_the_same_wallpaper_twice_409s(
-    env: Path, offline_downloads: None
-) -> None:
-    async with _client(env) as client:
-        first = await client.post("/api/marketplace/community/install/moonlit-wave")
-        assert first.status_code == 200
-        second = await client.post("/api/marketplace/community/install/moonlit-wave")
-    assert second.status_code == 409
-    assert "already" in second.json()["detail"]
-
-
-@pytest.mark.asyncio
-async def test_theme_change_keeps_the_marketplace_origin(
-    env: Path, offline_downloads: None
-) -> None:
-    """Flipping light/dark rewrites the sidecar — the origin must survive it."""
-    from jarvis.ui.web.wallpapers import WallpaperUploads
-
-    async with _client(env) as client:
-        await client.post("/api/marketplace/community/install/moonlit-wave")
-    store = WallpaperUploads()
-    installed = store.list()[0]
-    store.set_theme(installed.id, "light")
-    reread = store.get(installed.id)
-    assert reread is not None
-    assert reread.theme == "light"
-    assert reread.source == "marketplace"
-    assert reread.origin is not None
-    assert reread.origin.source_id == "moonlit-wave"
-
-
-@pytest.mark.asyncio
-async def test_an_ordinary_upload_stays_marked_as_the_owners_own(env: Path) -> None:
-    from jarvis.ui.web.wallpapers import WallpaperUploads
-
-    item = WallpaperUploads().add(_png_bytes(), filename="my-photo.png")
-    assert item.source == "own"
-    assert item.origin is None
-    assert "sourceId" not in item.to_json()
+    assert resp.status_code == 404
 
 
 # ----------------------------------------------------------------------
@@ -282,9 +159,7 @@ async def test_an_ordinary_upload_stays_marked_as_the_owners_own(env: Path) -> N
 
 
 @pytest.mark.asyncio
-async def test_install_writes_a_receipt_for_a_skill(
-    env: Path, offline_downloads: None
-) -> None:
+async def test_install_writes_a_receipt_for_a_skill(env: Path, offline_downloads: None) -> None:
     """A downloaded SKILL.md says nothing about its origin — the receipt does."""
     from jarvis.skills.origin import read_origin
 
@@ -328,91 +203,17 @@ def test_an_unreadable_receipt_costs_the_badge_not_the_skill(env: Path) -> None:
 
 
 # ----------------------------------------------------------------------
-# The image download itself
-# ----------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_download_refuses_an_oversized_image() -> None:
-    """The ceiling is enforced mid-stream, not after the body is absorbed."""
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, content=b"x" * 5000)
-
-    with pytest.raises(HTTPException) as excinfo:
-        await _download_image(
-            "https://raw.example/big.png", 1000, transport=httpx.MockTransport(handler)
-        )
-    assert excinfo.value.status_code == 400
-    assert "larger than" in str(excinfo.value.detail)
-
-
-@pytest.mark.asyncio
-async def test_download_refuses_a_redirect_off_https() -> None:
-    """The index checks the URL it was given; the redirect chain needs it too."""
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.scheme == "https":
-            return httpx.Response(302, headers={"location": "http://plain.example/x.png"})
-        return httpx.Response(200, content=b"never reached")
-
-    with pytest.raises(HTTPException) as excinfo:
-        await _download_image(
-            "https://raw.example/x.png", 10_000, transport=httpx.MockTransport(handler)
-        )
-    assert excinfo.value.status_code == 400
-    assert "non-https" in str(excinfo.value.detail)
-
-
-@pytest.mark.asyncio
-async def test_download_returns_the_bytes_it_was_served() -> None:
-    payload = _png_bytes()
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, content=payload)
-
-    got = await _download_image(
-        "https://raw.example/ok.png", 10_000_000, transport=httpx.MockTransport(handler)
-    )
-    assert got == payload
-
-
-# ----------------------------------------------------------------------
 # Telling the open window about it
 # ----------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_a_wallpaper_install_announces_itself(
-    env: Path, offline_downloads: None
-) -> None:
-    """An install from a terminal has to reach the window that is already open.
+async def test_a_skill_install_announces_its_own_kind(env: Path, offline_downloads: None) -> None:
+    """One event per install: the receiver reloads only the lane that moved.
 
-    Nothing about `jarvis marketplace install` touches the desktop UI, so
-    without this announcement the picker kept showing the library the picture
-    was already in until the app was restarted.
+    An install from a terminal has to reach the window that is already open —
+    nothing about `jarvis marketplace install` touches the desktop UI.
     """
-    from jarvis.core.events import MarketplaceItemInstalled
-
-    bus = _RecordingBus()
-    async with _client(env, bus) as client:
-        resp = await client.post("/api/marketplace/community/install/moonlit-wave")
-    assert resp.status_code == 200
-
-    announced = [e for e in bus.events if isinstance(e, MarketplaceItemInstalled)]
-    assert len(announced) == 1
-    assert announced[0].kind == "wallpaper"
-    assert announced[0].item_id == "moonlit-wave"
-    # The picture is usable the moment it lands — the frontend uses this to
-    # decide whether it can say "done" or has to point at a next step.
-    assert announced[0].ready is True
-
-
-@pytest.mark.asyncio
-async def test_a_skill_install_announces_its_own_kind(
-    env: Path, offline_downloads: None
-) -> None:
-    """One event, three kinds: the receiver reloads only the lane that moved."""
     from jarvis.core.events import MarketplaceItemInstalled
 
     bus = _RecordingBus()
@@ -432,6 +233,6 @@ async def test_an_install_still_works_with_nobody_listening(
 ) -> None:
     """Headless, or early boot: no bus, and the install must not care."""
     async with _client(env) as client:
-        resp = await client.post("/api/marketplace/community/install/moonlit-wave")
+        resp = await client.post("/api/marketplace/community/install/three-point-check")
     assert resp.status_code == 200
-    assert resp.json()["ready"] is True
+    assert resp.json()["kind"] == "skill"

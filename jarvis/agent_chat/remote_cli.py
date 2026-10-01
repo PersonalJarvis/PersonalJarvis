@@ -18,10 +18,13 @@ Jarvis tools travel through a turn-scoped reverse SSH forward. Local MCP
 configuration is replaced with a remote loopback endpoint; the main computer's
 control credential never leaves this process.
 
-A Windows computer cannot take the turn on its command line (``cmd.exe``
-mangles non-ASCII text and line breaks, and stops at 8 191 characters), so
-there the system prompt is uploaded as a file and the CLI is started by a
-small Git Bash launcher uploaded next to it (``jarvis.computers.remote_os``).
+On every OS the turn is started by a small launcher uploaded first, with the
+system prompt as a file next to it (``jarvis.computers.remote_os``): the SSH
+command line goes through the user's login shell — fish re-reads it, and
+``cmd.exe`` mangles non-ASCII text and line breaks — and a prompt on argv
+hits Linux's 128 KiB limit for one argument. The launcher also puts the
+user's own ``PATH`` in front (a CLI in ``~/.local/bin`` or Homebrew is found)
+and reads the per-computer agent settings (a Claude token on a Mac).
 """
 
 from __future__ import annotations
@@ -79,6 +82,15 @@ def _looks_like_launcher(part: str) -> bool:
     return low.endswith((".exe", ".cmd", ".bat", ".ps1", ".js", ".mjs"))
 
 
+def _program_name(part: str) -> str:
+    """``claude`` for ``claude``, ``Claude.EXE`` or ``codex.cmd``."""
+    low = part.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    for suffix in (".exe", ".cmd", ".bat", ".ps1"):
+        if low.endswith(suffix):
+            return low[: -len(suffix)]
+    return low
+
+
 def remote_argv(
     argv: Sequence[str],
     *,
@@ -100,7 +112,10 @@ def remote_argv(
     start = 0
     while start < len(parts) and _looks_like_launcher(parts[start]):
         start += 1
-    if start == 0 and parts and parts[0] == binary:
+    # A turn planned for another computer names its CLI bare ("claude"): the
+    # planner cannot resolve a path there. That name IS the program, not its
+    # first argument — kept, it ran as `claude claude --print …`.
+    if start == 0 and parts and _program_name(parts[0]) == _program_name(binary):
         start = 1
     rest = parts[start:]
     out: list[str] = [binary]
@@ -295,7 +310,7 @@ def placement_note(computer: Any, remote_cwd: str, *, tools_connected: bool = Fa
     )
 
 
-async def _windows_launch(
+async def _launch(
     opened: Any,
     host: Any,
     agent_id: str,
@@ -307,14 +322,19 @@ async def _windows_launch(
     prompts: dict[str, str],
     tool_config: Any = None,
 ) -> str:
-    """Upload the system prompt and a Git Bash launcher; the command that runs it."""
+    """Upload the system prompt and a launcher; the command line that runs it.
+
+    One path for every OS: the command line carries only the launcher's name,
+    so no login shell (fish, zsh, cmd) re-reads the turn, and no command-line
+    limit caps the system prompt.
+    """
     from jarvis.computers import remote_os
 
     uploaded: dict[str, str] = {}
     for index, (local_path, text) in enumerate(prompts.items()):
         name = remote_os.launcher_name(f"{agent_id}-prompt-{index}", ".md")
         relative = f"{remote_os.LAUNCH_DIR}/{name}"
-        await remote_os.upload_text(opened, host, relative, text)
+        await remote_os.upload_text(opened, host, relative, text, private=True)
         uploaded[local_path] = f"{host.home}/{relative}"
     command_argv = remote_argv(
         argv,
@@ -329,9 +349,9 @@ async def _windows_launch(
         command_env.update(tool_config.env)
     launcher = f"{remote_os.LAUNCH_DIR}/{remote_os.launcher_name(agent_id)}"
     script = remote_os.launcher_script(
-        remote_cwd, command_argv, command_env, pid_file=_pid_file(agent_id)
+        host, remote_cwd, command_argv, command_env, pid_file=_pid_file(agent_id)
     )
-    await remote_os.upload_text(opened, host, launcher, script)
+    await remote_os.upload_text(opened, host, launcher, script, private=True)
     return host.launcher_command(launcher)
 
 
@@ -357,7 +377,7 @@ async def spawn(
     """Start the CLI on ``computer_id`` inside the agent's remote workspace."""
     from jarvis.computers import remote_os
     from jarvis.computers.service import ComputerError, get_service
-    from jarvis.computers.ssh import SshError, run_command
+    from jarvis.computers.ssh import SshError
     from jarvis.society.remote import remote_workspace_expr
 
     from .remote_mcp import RemoteMcpBridge, RemoteToolsUnavailable
@@ -385,10 +405,7 @@ async def spawn(
             f"mkdir -p {folder} && cd {folder} && {'pwd -W' if host.windows else 'pwd'} && "
             f"(command -v {shlex.quote(binary)} >/dev/null 2>&1 && echo found || echo missing)"
         )
-        if host.windows:
-            probe = await remote_os.run_bash(opened, host, check, timeout_s=30)
-        else:
-            probe = await run_command(opened, check, timeout_s=20)
+        probe = await remote_os.run_script(opened, host, check, timeout_s=30)
         lines = [line.strip() for line in probe.stdout.splitlines() if line.strip()]
         if len(lines) < 2:
             said = (probe.stderr or probe.stdout).strip().splitlines()
@@ -399,8 +416,9 @@ async def spawn(
         remote_cwd, presence = lines[-2], lines[-1]
         if presence != "found":
             raise RemoteCliUnavailable(
-                f"Install {binary} on {computer.name} (and log in there once), "
-                "or set the agent to run on this computer."
+                f"{binary} was not found on {computer.name}. Install it there (Computers, "
+                "Ready for coding agents) and log in once, or set the agent to run on "
+                "this computer."
             )
         tool_config = None
         if session_id and tools_enabled:
@@ -414,27 +432,10 @@ async def spawn(
             stack.callback(bridge.app.revoke)
         note = placement_note(computer, remote_cwd, tools_connected=tool_config is not None)
         prompts = {path: text + note for path, text in (system_prompt_files or {}).items()}
-        if host.windows:
-            command = await _windows_launch(
-                opened, host, agent_id, argv, binary, local_cwd, remote_cwd, env, prompts,
-                tool_config=tool_config,
-            )
-        else:
-            command_argv = remote_argv(
-                argv,
-                binary=binary,
-                local_cwd=local_cwd,
-                remote_cwd=remote_cwd,
-                system_prompt_files=prompts,
-            )
-            command_env = remote_env(env)
-            if tool_config is not None:
-                command_argv = tool_config.apply(command_argv)
-                command_env.update(tool_config.env)
-            assignments = " ".join(f"{k}={shlex.quote(v)}" for k, v in command_env.items())
-            command = (
-                f"cd {shlex.quote(remote_cwd)} && exec env {assignments} {shlex.join(command_argv)}"
-            )
+        command = await _launch(
+            opened, host, agent_id, argv, binary, local_cwd, remote_cwd, env, prompts,
+            tool_config=tool_config,
+        )
         log.info("agent chat: %s turn for %s runs on %s", runner, agent_id, computer.name)
         process = await opened.conn.create_process(command, encoding=None)
     except RemoteToolsUnavailable as exc:
@@ -446,12 +447,12 @@ async def spawn(
     except BaseException:
         await stack.aclose()
         raise
-    stop = None
-    if host.windows:
-        stop_command = remote_os.stop_script(_pid_file(agent_id))
+    stop_command = remote_os.stop_script(host, _pid_file(agent_id))
 
-        async def stop() -> None:
-            await remote_os.run_bash(opened, host, stop_command, timeout_s=30)
+    async def stop() -> None:
+        # Hanging up does not reliably end the CLI: on Windows it orphans it
+        # (measured), and a POSIX CLI may ignore the hang-up until it writes.
+        await remote_os.run_script(opened, host, stop_command, timeout_s=30)
 
     return RemoteCliProcess(
         process, stack, stop=stop, revoke=bridge.app.revoke if bridge is not None else None,

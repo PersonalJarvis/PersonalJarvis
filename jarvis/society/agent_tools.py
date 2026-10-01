@@ -425,9 +425,8 @@ class MemoryRecallTool:
 class ProposeChangeTool:
     """``society_propose_change`` — configuration by chat (agent-definition §3.5).
 
-    The agent proposes ONE change to itself; the proposal parks in the
-    approvals queue and shows as a card in this chat. Nothing changes until
-    the person confirms it there — proposing is therefore a safe-tier action.
+    An explicit current request can apply in this turn. Inferred changes
+    park on a proposal card until confirmed; permission changes always do.
     """
 
     name: str = PROPOSE_TOOL_NAME
@@ -531,6 +530,7 @@ class ProposeChangeTool:
                 payload=args.get("payload"),
                 reason=str(args.get("reason") or ""),
                 session_id=self._session_id or caller.session_id,
+                resume_in_place=apply_now,
             )
         except ProposalRefused as exc:  # Return the proposal's explicit refusal reason.
             return _failure(exc.reason, exc.detail)

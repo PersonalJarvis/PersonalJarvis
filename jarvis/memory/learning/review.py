@@ -272,63 +272,62 @@ def validate(
 
 
 class ModelReviewer:
-    """Ask the background provider chain for proposals.
+    """Ask the Jarvis lead's own seat for proposals, and nothing else.
 
-    The chain is the wiki's (``provider_chain``): the configured pair first,
-    then every reachable provider, subscriptions before per-token keys while a
-    subscription is connected. A review is background work nobody waits on.
+    The seat is the one the front-page Jarvis chat answers on: the Agents
+    selection's provider, model and auth mode (``society.seat_brain``;
+    maintainer decision 2026-09-30). An explicit ``[memory.learning]``
+    provider (with its model) overrides it. When that one seat cannot answer
+    the review returns ``None``: the loop's backoff retries it and finally
+    drops the turns. No other provider, subscription or key is asked.
     """
 
     def __init__(
         self,
         config: Any,
         *,
-        registry: Any = None,
         system: Callable[[], str] = system_prompt,
         parser: Callable[[str], Any] = parse,
         max_tokens: int = REVIEW_MAX_TOKENS,
-        label: str = "JarvisLearningReview",
+        caller: str = "learning",
     ) -> None:
         self._config = config
-        self._registry = registry
         self._system = system
         self._parse = parser
         self._max_tokens = max_tokens
-        self._label = label
+        self._caller = caller
+
+    def _live_config(self) -> Any:
+        """The config the chat reads its seat from (the brain manager's), else ours."""
+        from jarvis.core.runtime_refs import get_brain_manager
+
+        return getattr(get_brain_manager(), "_config", None) or self._config
+
+    def seat(self, config: Any) -> Any:
+        """The seat this reviewer asks. Blocking (login and key probes)."""
+        from jarvis.society.seat_brain import Seat, jarvis_seat
+
+        cfg = config.memory.learning
+        provider = str(cfg.provider or "").strip()
+        if provider:
+            # The person picked the reviewer for this loop: that provider on
+            # its ordinary credential, with its model or its router-tier one.
+            return Seat(provider, str(cfg.model or "").strip(), runner="brain", agent_key=False)
+        return jarvis_seat(config)
 
     async def __call__(self, prompt: str) -> Any | None:
-        from jarvis.brain.provider_registry import BrainProviderRegistry
+        import asyncio
+
         from jarvis.brain.streaming import aggregate
         from jarvis.core.protocols import BrainMessage, BrainRequest
-        from jarvis.memory.wiki.provider_chain import (
-            background_wiki_providers,
-            build_wiki_provider_chain,
-            complete_with_fallback,
-        )
+        from jarvis.society.seat_brain import SeatUnavailable, seat_brain
 
-        cfg = self._config.memory.learning
-        curator = self._config.memory.wiki.curator
-        registry = self._registry or BrainProviderRegistry()
-        available = set(registry.available())
-        primary = (
-            str(cfg.provider).strip()
-            or str(curator.provider).strip()
-            or str(self._config.brain.primary)
-        )
-        chain = build_wiki_provider_chain(
-            primary=primary,
-            # Without an explicit pick every rung runs its provider's cheap
-            # router-tier model: a short JSON verdict needs no frontier model.
-            model_override=str(cfg.model or ""),
-            available=available,
-            credential_ready=(
-                background_wiki_providers(available=available, config=self._config)
-                if self._registry is None
-                else available
-            ),
-        )
-        if not chain:
-            log.info("learning review: no reachable provider")
+        config = self._live_config()
+        try:
+            seat = await asyncio.to_thread(self.seat, config)
+            brain = await seat_brain(config, seat, caller=self._caller)
+        except SeatUnavailable as exc:
+            log.info("learning review: the Jarvis seat is unavailable (%s)", exc)
             return None
         request = BrainRequest(
             system=self._system(),
@@ -337,27 +336,19 @@ class ModelReviewer:
             max_tokens=self._max_tokens,
             stream=True,
         )
-
-        def _check(agg: Any) -> str | None:
-            try:
-                self._parse(agg.text)
-            except (ValueError, json.JSONDecodeError) as exc:  # reported as the returned reason
-                return f"malformed review: {exc}"
+        try:
+            agg = await asyncio.wait_for(
+                aggregate(brain.complete(request)),
+                timeout=float(config.memory.learning.timeout_s),
+            )
+            result = self._parse(agg.text)
+        except Exception as exc:  # noqa: BLE001 - a failed attempt; the loop retries later
+            # The type only: a provider's error body never reaches a log (AP-34).
+            log.warning(
+                "learning review: the Jarvis seat %s did not answer (%s)",
+                seat.describe(),
+                type(exc).__name__,
+            )
             return None
-
-        result = await complete_with_fallback(
-            registry=registry,
-            chain=chain,
-            request=request,
-            timeout_s=float(cfg.timeout_s),
-            label=self._label,
-            aggregate=aggregate,
-            validate=_check,
-            record_health=False,
-            failure_scope="learning",
-        )
-        if result is None:
-            return None
-        agg, provider = result
-        log.info("learning review answered by %s", provider)
-        return self._parse(agg.text)
+        log.info("learning review answered on the Jarvis seat %s", seat.describe())
+        return result

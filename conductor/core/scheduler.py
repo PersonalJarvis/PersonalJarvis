@@ -54,6 +54,7 @@ class Scheduler:
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(self._task, timeout=2.0)
         self._task = None
+        await self._runner.aclose()
 
     # ------------------------------------------------------------------
 

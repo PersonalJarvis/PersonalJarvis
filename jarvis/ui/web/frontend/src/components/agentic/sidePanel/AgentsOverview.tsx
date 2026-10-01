@@ -17,10 +17,12 @@ import {
   columnFor,
   compactSince,
   dotKindFor,
+  folderAgents,
   stateKeyFor,
   workspaceAgents,
   type AgentColumn,
   type AgentDotKind,
+  type AgentScope,
 } from "./agentStatus";
 
 /** How often the "3m" readings move on; state changes arrive live anyway. */
@@ -33,6 +35,31 @@ function useClock(): number {
     return () => window.clearInterval(timer);
   }, []);
   return now;
+}
+
+const SCOPE_KEY = "jarvis.agenticIde.agentsScope";
+const SCOPES: readonly AgentScope[] = ["workspace", "folder"];
+
+function storedScope(): AgentScope {
+  try {
+    return localStorage.getItem(SCOPE_KEY) === "folder" ? "folder" : "workspace";
+  } catch {
+    return "workspace";
+  }
+}
+
+/** The tab's own filter, remembered per browser: this workspace, or its whole folder. */
+function useAgentScope(): [AgentScope, (scope: AgentScope) => void] {
+  const [scope, setScope] = useState<AgentScope>(storedScope);
+  const choose = (next: AgentScope) => {
+    setScope(next);
+    try {
+      localStorage.setItem(SCOPE_KEY, next);
+    } catch {
+      /* a convenience only: the filter still works for this session */
+    }
+  };
+  return [scope, choose];
 }
 
 /** Ink and a faint fill per state, from the semantic status tokens only. */
@@ -63,7 +90,9 @@ const COLUMN_TONE: Record<AgentColumn, string> = {
  * `store/paneReviews`). A card leads with the agent's brand mark, then its
  * goal, its state and for how long, and when it last printed anything. A click
  * brings the pane forward, frames it in the grid (the `spotlight`) and counts
- * as reviewing it.
+ * as reviewing it. A switch at the top widens the list from the workspace at
+ * the front to every workspace of its project folder; a card from another
+ * workspace names it, and its click brings that workspace forward.
  */
 export function AgentsOverview() {
   const t = useT();
@@ -75,7 +104,16 @@ export function AgentsOverview() {
   const panes = useWorkspacePanes();
   usePaneRecapPoll();
   const recaps = usePaneRecapsStore((state) => state);
-  const mine = workspaceAgents(panes, activeWorkspaceId);
+  const [scope, setScope] = useAgentScope();
+  const activeFolder = useIdeProjectsStore(
+    (state) =>
+      state.projects.flatMap((project) => project.workspaces).find((workspace) => workspace.id === activeWorkspaceId)
+        ?.folder ?? null,
+  );
+  const mine =
+    scope === "folder"
+      ? folderAgents(panes, activeWorkspaceId, activeFolder)
+      : workspaceAgents(panes, activeWorkspaceId);
   const reviewed = usePaneReviewsStore((state) => state.reviewed);
   const markReviewed = usePaneReviewsStore((state) => state.markReviewed);
   const pushToast = useEventStore((state) => state.pushToast);
@@ -109,6 +147,7 @@ export function AgentsOverview() {
     const lastOutput = compactSince(pane.last_output_at, now);
     const recap = recaps.workspaceId === pane.workspace_id ? recaps.byName[pane.name] : undefined;
     const title = paneTitleFrom(recap, pane);
+    const elsewhere = pane.workspace_id !== activeWorkspaceId ? pane.workspace_name : "";
     return (
       <li key={pane.history_id}>
         <button
@@ -119,6 +158,7 @@ export function AgentsOverview() {
           aria-current={selected ? "true" : undefined}
           data-testid="ide-workspace-agent-row"
           data-pane={pane.name}
+          data-workspace={pane.workspace_id}
           data-kind={kind}
           className={cn(
             "group flex w-full items-center rounded-xl border p-3 text-left transition-[border-color,background-color,box-shadow] duration-150",
@@ -149,7 +189,7 @@ export function AgentsOverview() {
                 {title || cli}
               </span>
               <span className="truncate text-[11px] tabular-nums text-muted-foreground">
-                {[title ? cli : "", lastOutput ? fill(t("ide_side_panel.agents.last_output"), { time: lastOutput }) : ""]
+                {[elsewhere, title ? cli : "", lastOutput ? fill(t("ide_side_panel.agents.last_output"), { time: lastOutput }) : ""]
                   .filter(Boolean)
                   .join(" · ")}
               </span>
@@ -193,10 +233,40 @@ export function AgentsOverview() {
       aria-label={t("ide_side_panel.agents.aria")}
       className="flex h-full min-h-0 flex-col"
     >
+      {activeWorkspaceId !== null && (
+        <div
+          role="radiogroup"
+          aria-label={t("ide_side_panel.agents.scope.aria")}
+          data-testid="ide-agents-scope"
+          className="mx-3 mt-3 flex shrink-0 rounded-lg border border-border/60 bg-muted/40 p-0.5"
+        >
+          {SCOPES.map((option) => (
+            <button
+              key={option}
+              type="button"
+              role="radio"
+              aria-checked={scope === option}
+              onClick={() => setScope(option)}
+              data-testid={`ide-agents-scope-${option}`}
+              className={cn(
+                "flex-1 rounded-md px-2 py-1 text-xs font-medium transition-colors duration-150 motion-reduce:transition-none",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                scope === option
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {t(`ide_side_panel.agents.scope.${option}`)}
+            </button>
+          ))}
+        </div>
+      )}
       {activeWorkspaceId === null ? (
         <p className="px-4 py-3 text-sm text-muted-foreground">{t("ide_side_panel.agents.no_workspace")}</p>
       ) : mine.length === 0 ? (
-        <p className="px-4 py-3 text-sm text-muted-foreground">{t("ide_side_panel.agents.empty")}</p>
+        <p className="px-4 py-3 text-sm text-muted-foreground">
+          {t(scope === "folder" ? "ide_side_panel.agents.empty_folder" : "ide_side_panel.agents.empty")}
+        </p>
       ) : (
         <div className="scrollbar-jarvis min-h-0 flex-1 space-y-4 overflow-y-auto px-3 pb-3 pt-3">
           {COLUMN_ORDER.map((column) => {

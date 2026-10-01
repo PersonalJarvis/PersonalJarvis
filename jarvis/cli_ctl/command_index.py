@@ -124,7 +124,7 @@ COMMAND_INDEX: dict[str, tuple[str, ...]] = {
         'message <name> "<text>"',
     ),
     "frontier": ("pending", "ack"),
-    "ide": ("rename-terminal", "close-terminals", "archive-terminal"),
+    "ide": ("rename-terminal", "close-terminals", "archive-terminal", "move-terminal"),
     "local-models": (
         "assistant setup",
         "assistant diagnose",

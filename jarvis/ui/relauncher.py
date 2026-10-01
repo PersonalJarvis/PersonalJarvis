@@ -84,6 +84,112 @@ def _desktop_overrides(*, port: int | None, dev: bool, no_lock: bool) -> tuple[s
     return tuple(args)
 
 
+# The private flag a FROZEN executable answers with this module's ``main``.
+# A PyInstaller build has no ``python -m``: its executable IS the app, and its
+# argument parser rejects ``-m`` outright — so before this flag existed, every
+# Restart (and every update restart) of a native install quit the app and
+# never brought it back. ``jarvis/__main__.py`` dispatches it before any other
+# import.
+RELAUNCHER_FLAG = "--relauncher"
+
+
+def _frozen() -> bool:
+    from jarvis.core.frozen import is_frozen
+
+    return is_frozen()
+
+
+def _enclosing_macos_app(executable: str) -> Path | None:
+    """``/Applications/Personal Jarvis.app`` for an executable inside it."""
+    for parent in Path(executable).resolve().parents:
+        if parent.suffix == ".app":
+            return parent
+    return None
+
+
+def frozen_self_command(
+    executable: str,
+    *,
+    platform_name: str | None = None,
+    environ: dict[str, str] | None = None,
+) -> list[str]:
+    """Argv that starts THIS frozen build again, from where the user installed it.
+
+    * Linux AppImage: ``sys.executable`` lives inside the AppImage's private
+      mount, which disappears with the process that mounted it — so the
+      relaunch goes through ``$APPIMAGE``, the file the user actually runs.
+    * macOS: the bundle is opened through LaunchServices (``open -n``), the
+      same identity the Dock and Finder use, so privacy permissions keep
+      attaching to the app rather than to a bare binary.
+    * Windows (and anything else): the executable itself.
+    """
+    active_platform = sys.platform if platform_name is None else platform_name
+    env = os.environ if environ is None else environ
+    if active_platform.startswith("linux"):
+        appimage = (env.get("APPIMAGE") or "").strip()
+        if appimage:
+            return [appimage]
+    if active_platform == "darwin":
+        app = _enclosing_macos_app(executable)
+        if app is not None:
+            return ["/usr/bin/open", "-n", "-W", str(app)]
+    return [executable]
+
+
+def restart_workdir(
+    source_root: str,
+    *,
+    frozen: bool | None = None,
+    environ: dict[str, str] | None = None,
+) -> str:
+    """Directory the restart helper runs in and reads ``jarvis.toml`` from.
+
+    A source install uses its checkout. A frozen build must not: inside an
+    AppImage the bundle is a private mount that disappears with the old
+    process, so a helper parked there cannot even spawn the new version. Its
+    ``jarvis.toml`` lives in the per-user data directory the runtime hook
+    points ``JARVIS_CONFIG`` at, so that directory is the stable choice.
+    """
+    is_frozen_build = _frozen() if frozen is None else frozen
+    if not is_frozen_build:
+        return source_root
+    env = os.environ if environ is None else environ
+    config = (env.get("JARVIS_CONFIG") or "").strip()
+    if config and Path(config).parent.is_dir():
+        return str(Path(config).parent)
+    return str(Path.home())
+
+
+def relauncher_command(
+    pid: int,
+    cwd: str,
+    launcher_args: tuple[str, ...] = (),
+    *,
+    executable: str | None = None,
+    frozen: bool | None = None,
+    platform_name: str | None = None,
+    environ: dict[str, str] | None = None,
+) -> list[str]:
+    """Argv that starts this module as the detached restart helper.
+
+    A source install runs ``python -m jarvis.ui.relauncher``. A frozen build
+    has no interpreter to hand ``-m`` to, so it re-enters its own executable
+    with :data:`RELAUNCHER_FLAG`. A frozen relaunch boots the bare executable,
+    which takes no desktop overrides, so those are dropped there.
+    """
+    active_executable = sys.executable if executable is None else executable
+    is_frozen_build = _frozen() if frozen is None else frozen
+    if is_frozen_build:
+        helper = frozen_self_command(
+            active_executable, platform_name=platform_name, environ=environ
+        )
+        if helper and helper[0] == "/usr/bin/open":
+            # LaunchServices would start a second app, not the helper.
+            helper = [active_executable]
+        return [*helper, RELAUNCHER_FLAG, str(pid), cwd]
+    return [active_executable, "-m", "jarvis.ui.relauncher", str(pid), cwd, *launcher_args]
+
+
 def build_launch_command(
     executable: str,
     *,
@@ -95,7 +201,13 @@ def build_launch_command(
     never attach TCC access to a raw Python interpreter.  A missing or invalid
     bundle therefore fails closed; the managed installer/repair path owns
     recreating it.
+
+    A frozen build has neither ``-m`` nor the managed bundle; it starts itself
+    again through :func:`frozen_self_command`.
     """
+    if _frozen():
+        return frozen_self_command(executable)
+
     from jarvis.core.instance import current_instance
 
     identity = current_instance()

@@ -78,7 +78,11 @@ from jarvis.agent_chat.permissions import normalize_permission
 from jarvis.agent_chat.runner_api import TurnHandle
 from jarvis.agent_chat.tool_context import register_turn, unregister_turn
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
-from jarvis.core.response_style import KEEP_GOING_ON_TOOL_FAILURE, TASK_EXECUTION_GUIDANCE
+from jarvis.core.response_style import (
+    AGENT_QUESTION_GUIDANCE,
+    KEEP_GOING_ON_TOOL_FAILURE,
+    TASK_EXECUTION_GUIDANCE,
+)
 
 log = logging.getLogger(__name__)
 
@@ -1253,6 +1257,7 @@ def _with_identity(
                 "Use existing connected-account information; ask only for essential "
                 "missing information. "
                 + TASK_EXECUTION_GUIDANCE + "\n"
+                + AGENT_QUESTION_GUIDANCE + "\n"
                 + KEEP_GOING_ON_TOOL_FAILURE
                 + " Existing permission rules still apply.\n"
                 + CONVERSATIONAL_TURN_REMINDER
@@ -2663,7 +2668,7 @@ async def run_cli_turn(
             recovery.declined = True
         return answer
 
-    if session.surface == "society":
+    if session.surface == "society" and not handle.continuation:
         from jarvis.society.reply_preference import resolve_agent_reply_language
 
         handle.output_language = await resolve_agent_reply_language(

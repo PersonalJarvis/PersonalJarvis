@@ -1,15 +1,25 @@
 """Stage-1 conversation fact extractor (Wave 2, ADD-only).
 
-One cheap LLM call per eligible conversation turn extracts 0..N atomic
-candidate facts and appends them to the :class:`CandidateJournal`. This
-stage NEVER touches the vault — a failing or over-eager extractor cannot
-corrupt existing pages; the expensive judgment (ADD/UPDATE/NOOP/INVALIDATE
-against real page bodies) happens later in the batched Stage-2 consolidator.
+One cheap LLM call per reviewed turn extracts 0..N atomic candidate facts
+and appends them to the :class:`CandidateJournal`. This stage NEVER touches
+the vault — a failing or over-eager extractor cannot corrupt existing pages;
+the expensive judgment (ADD/UPDATE/NOOP/INVALIDATE against real page bodies)
+happens later in the batched Stage-2 consolidator.
 
-Provider/model resolve through the SAME hook as the curator
-(``curator_llm._resolve_provider_and_model`` over ``[memory.wiki.curator]``),
-so the Wiki settings card drives both stages — cheap router-tier model by
-default, explicit override wins.
+Since 2026-09-30 a turn is reviewed only when the user explicitly asked for
+it to be kept (the voice bridge's acknowledgement path) or when the user
+starts a backfill. The automatic review of every turn, the end-of-call
+sweep and the periodic auto-backfill were removed: they spent paid API keys
+around the clock for little value.
+
+Provider/model resolve through the SAME ``[memory.wiki.curator]`` pair as
+the curator, so the Wiki settings card drives both stages — cheap
+router-tier model by default, explicit override wins. Nobody waits on the
+answer, so the call bills only what background work may bill
+(:mod:`jarvis.brain.background_policy`) and counts against the wiki's daily
+call cap (:mod:`jarvis.memory.wiki.background_guard`). When it has to wait,
+:class:`~jarvis.brain.background_policy.BackgroundDeferred` reaches the
+caller instead of a key being used.
 
 Stage-1 selection contract (spec §4.2, D1 "completeness with cleanliness"):
 recall-biased — when unsure whether something matters long-term, surface a
@@ -30,16 +40,14 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
+from jarvis.brain.background_policy import BackgroundDeferred
 from jarvis.brain.provider_registry import BrainProviderRegistry
 from jarvis.brain.streaming import aggregate, is_length_truncated
 from jarvis.core.protocols import BrainMessage, BrainRequest
 from jarvis.core.redact import safe_preview
+from jarvis.memory.wiki.background_guard import guard as background_guard
 from jarvis.memory.wiki.constants import DEFAULT_SALIENCE
-from jarvis.memory.wiki.curator_llm import (
-    _extract_json_array,
-    _resolve_provider_and_model,
-    instantiate_curator_brain,
-)
+from jarvis.memory.wiki.curator_llm import _extract_json_array
 from jarvis.memory.wiki.grounding import classify_user_attitude_evidence
 from jarvis.memory.wiki.journal import CandidateFact, normalise_subjects
 from jarvis.memory.wiki.residence import detect_residence_slug
@@ -49,6 +57,7 @@ from jarvis.memory.wiki.telemetry import telemetry
 if TYPE_CHECKING:
     from jarvis.core.config import JarvisConfig
     from jarvis.memory.wiki.journal import CandidateJournal
+    from jarvis.memory.wiki.provider_chain import WikiBackgroundChain
 
 log = logging.getLogger(__name__)
 
@@ -289,9 +298,7 @@ class ConversationFactExtractor:
         self._journal = journal
         self._registry = registry if registry is not None else BrainProviderRegistry()
         self._credential_filter = registry is None
-        self._brain: Any = None
         self._resolved_provider: str | None = None
-        self._resolved_model: str | None = None
         # Wave-2 journal pressure: when attached, an append that pushes the
         # backlog past the threshold fires a background JOURNAL trigger so
         # the Stage-2 consolidator drains a batch (cooldown/lock gated there).
@@ -325,13 +332,26 @@ class ConversationFactExtractor:
     ) -> int:
         """One LLM call -> 0..N facts -> journal. Returns the appended count.
 
-        Never raises: every failure (brain unavailable, timeout, malformed
-        JSON, truncation) degrades to 0 with a logged warning — the
-        conversation must never notice the memory pipeline.
+        Every provider failure (brain unavailable, timeout, malformed JSON,
+        truncation) degrades to 0 with a logged warning — the conversation
+        must never notice the memory pipeline. The one exception is
+        :class:`BackgroundDeferred`: nothing background work may bill can take
+        the call right now, so the caller keeps the turn and retries later.
+        Waiting never uses up a review attempt: a wait known up front is
+        raised before the review is claimed, and a wait that starts mid-chain
+        (the subscription stops answering, the daily cap is reached) hands the
+        claimed attempt back (``CandidateJournal.release_capture``). A review
+        that cannot be claimed is logged with the reason — a WARNING when its
+        failure budget is spent — never dropped silently.
         """
         text = (user_text or "").strip()
         focus_turn_id = (turn_id or turn_hash).strip()
         key = review_key or f"turn:v2:{turn_hash}"
+        background = (
+            await self._background_chain()
+            if self._cfg.enabled and len(text) >= int(self._cfg.min_user_chars)
+            else None
+        )
         if not await self._claim_review(
             review_key=key,
             source_label=source_label,
@@ -340,6 +360,7 @@ class ConversationFactExtractor:
             session_id=session_id,
             turn_id=focus_turn_id,
         ):
+            await self._log_unclaimed(key, source_label=source_label)
             return 0
 
         if not self._cfg.enabled:
@@ -347,7 +368,7 @@ class ConversationFactExtractor:
                 key, status="filtered", error_code="extractor-disabled"
             )
             return 0
-        if len(text) < int(self._cfg.min_user_chars):
+        if len(text) < int(self._cfg.min_user_chars) or background is None:
             await self._finish_review(key, status="filtered", error_code="below-min-chars")
             return 0
 
@@ -360,6 +381,7 @@ class ConversationFactExtractor:
         try:
             outcome = await self._extract(
                 prompt,
+                background=background,
                 system_prompt=self._with_user_slug(_SYSTEM_PROMPT),
                 allowed_evidence={focus_turn_id},
                 fallback_evidence="",
@@ -378,6 +400,12 @@ class ConversationFactExtractor:
             )
         except asyncio.CancelledError:
             await self._finish_review(key, status="failed", error_code="cancelled")
+            raise
+        except BackgroundDeferred:
+            # The daily cap was reached or the subscription stopped answering
+            # mid-chain: nothing was reviewed, so the attempt goes back and
+            # the caller keeps the turn for a later try.
+            await self._release_review(key)
             raise
         except Exception:  # noqa: BLE001 - the conversation must never notice
             log.exception("ConversationFactExtractor: unexpected extraction failure")
@@ -399,7 +427,13 @@ class ConversationFactExtractor:
         source_label: str,
         review_key: str | None = None,
     ) -> int:
-        """Sweep every Realtime turn in stable, independently retryable chunks."""
+        """Sweep every Realtime turn in stable, independently retryable chunks.
+
+        Used only by the user-started backfill. When the wiki has to wait
+        (subscription not usable, backoff, daily cap) the remaining chunks
+        are left unclaimed — or, if the wait started mid-call, marked
+        ``failed`` with ``deferred`` — so a later backfill picks them up.
+        """
         usable = tuple(t for t in turns if t.turn_id and t.user_text.strip())
         base_key = review_key or f"session:v3:{session_id}"
         chunks = self._session_chunks(usable)
@@ -429,6 +463,19 @@ class ConversationFactExtractor:
         seen_facts: set[str] = set()
         for index, (key, chunk) in enumerate(zip(keys, chunks, strict=True)):
             transcript = self._build_session_prompt(chunk)
+            background: WikiBackgroundChain | None = None
+            if self._cfg.enabled:
+                try:
+                    background = await self._background_chain()
+                except BackgroundDeferred as exc:
+                    log.info(
+                        "ConversationFactExtractor: session %s sweep paused at "
+                        "chunk %d — %s",
+                        session_id,
+                        index,
+                        exc,
+                    )
+                    break
             if not await self._claim_review(
                 review_key=key,
                 source_label=f"{source_label}:chunk:{index}",
@@ -437,8 +484,9 @@ class ConversationFactExtractor:
                 session_id=session_id,
                 turn_id="",
             ):
+                await self._log_unclaimed(key, source_label=f"{source_label}:chunk:{index}")
                 continue
-            if not self._cfg.enabled:
+            if background is None:
                 await self._finish_review(
                     key,
                     status="filtered",
@@ -448,6 +496,7 @@ class ConversationFactExtractor:
             try:
                 outcome = await self._extract(
                     transcript,
+                    background=background,
                     system_prompt=self._with_user_slug(_SESSION_SYSTEM_PROMPT),
                     allowed_evidence={t.turn_id for t in chunk.focus},
                     fallback_evidence="",
@@ -462,6 +511,15 @@ class ConversationFactExtractor:
             except asyncio.CancelledError:
                 await self._finish_review(key, status="failed", error_code="cancelled")
                 raise
+            except BackgroundDeferred as exc:
+                await self._release_review(key)
+                log.info(
+                    "ConversationFactExtractor: session %s sweep paused at chunk %d — %s",
+                    session_id,
+                    index,
+                    exc,
+                )
+                break
             except Exception:  # noqa: BLE001
                 log.exception("ConversationFactExtractor: session chunk failed")
                 await self._finish_review(key, status="failed", error_code="unexpected")
@@ -750,6 +808,62 @@ class ConversationFactExtractor:
             )
             return True
 
+    async def _release_review(self, review_key: str) -> None:
+        """Hand a claimed review back: it waited, it did not fail."""
+        try:
+            released = await asyncio.to_thread(self._journal.release_capture, review_key)
+        except Exception:  # noqa: BLE001 - reported below, the wait still propagates
+            log.warning(
+                "ConversationFactExtractor: could not release the waiting review %s",
+                review_key[-24:],
+                exc_info=True,
+            )
+            return
+        if not released:
+            log.warning(
+                "ConversationFactExtractor: waiting review %s was not in progress; "
+                "its attempt could not be handed back",
+                review_key[-24:],
+            )
+
+    async def _log_unclaimed(self, review_key: str, *, source_label: str) -> None:
+        """Say why a review was not started instead of returning 0 silently."""
+        try:
+            status = await asyncio.to_thread(self._journal.capture_status, review_key)
+            attempts = await asyncio.to_thread(self._journal.capture_attempts, review_key)
+        except Exception:  # noqa: BLE001 - the unclaimed review itself is reported below
+            status, attempts = None, 0
+            log.debug(
+                "ConversationFactExtractor: capture status lookup failed", exc_info=True
+            )
+        if status == "failed":
+            log.warning(
+                "ConversationFactExtractor: %s is not reviewed again — it failed %d "
+                "time(s) and its retry budget is spent (review %s)",
+                source_label,
+                attempts,
+                review_key[-24:],
+            )
+        elif status == "started":
+            log.info(
+                "ConversationFactExtractor: %s is already being reviewed (review %s)",
+                source_label,
+                review_key[-24:],
+            )
+        elif status is None:
+            log.warning(
+                "ConversationFactExtractor: %s could not be claimed — the capture "
+                "journal is unavailable (review %s)",
+                source_label,
+                review_key[-24:],
+            )
+        else:
+            log.debug(
+                "ConversationFactExtractor: %s was already reviewed (%s)",
+                source_label,
+                status,
+            )
+
     async def _finish_review(
         self,
         review_key: str,
@@ -833,10 +947,40 @@ class ConversationFactExtractor:
         await self._maybe_trigger_consolidation()
         return appended
 
+    async def _background_chain(self) -> WikiBackgroundChain:
+        """The provider chain this extraction may bill, or raise to make it wait.
+
+        Checks the runaway guard (backoff window, daily cap) and the
+        background billing policy BEFORE any review is claimed, so an install
+        waiting on its subscription never spends a retry attempt. Provider
+        selection may shell out to vendor login probes for seconds, so it
+        runs on a worker thread, never on the voice event loop (AP-9).
+        """
+        return await asyncio.to_thread(self._background_chain_blocking)
+
+    def _background_chain_blocking(self) -> WikiBackgroundChain:
+        from jarvis.memory.wiki.provider_chain import build_background_wiki_chain
+
+        background_guard.check_ready(self._root_cfg)
+        try:
+            return build_background_wiki_chain(
+                registry=self._registry,
+                config=self._root_cfg,
+                primary=(
+                    self._curator_cfg.provider.strip() or self._root_cfg.brain.primary
+                ),
+                model_override=self._curator_cfg.model,
+                credential_filter=self._credential_filter,
+            )
+        except BackgroundDeferred as exc:
+            background_guard.note_waiting(str(exc))
+            raise
+
     async def _extract(
         self,
         user_prompt: str,
         *,
+        background: WikiBackgroundChain,
         system_prompt: str,
         allowed_evidence: set[str],
         fallback_evidence: str,
@@ -854,29 +998,12 @@ class ConversationFactExtractor:
         )
 
         start_ns = time.time_ns()
-        from jarvis.memory.wiki.provider_chain import (
-            background_wiki_providers,
-            build_wiki_provider_chain,
-            complete_with_fallback,
-        )
+        from jarvis.memory.wiki.provider_chain import complete_with_fallback
 
-        # Key-aware fallback (AP-22/23): try the configured provider, then cross
-        # to whatever family is reachable, instead of silently dropping the turn
+        # Key-aware fallback (AP-22/23): the background chain tries the
+        # configured provider, then crosses to whatever family is reachable
+        # AND may bill background work, instead of silently dropping the turn
         # when one provider is throttled / keyless (live 2026-06-30).
-        available = set(self._registry.available())
-        chain = build_wiki_provider_chain(
-            primary=(self._curator_cfg.provider.strip() or self._root_cfg.brain.primary),
-            model_override=self._curator_cfg.model,
-            available=available,
-            credential_ready=(
-                background_wiki_providers(
-                    available=available,
-                    config=self._root_cfg,
-                )
-                if self._credential_filter
-                else available
-            ),
-        )
         rejection_reasons: list[str] = []
 
         def _validate_response(agg: Any) -> str | None:
@@ -920,10 +1047,15 @@ class ConversationFactExtractor:
 
         result = await complete_with_fallback(
             registry=self._registry,
-            chain=chain,
+            chain=background.chain,
             request=request,
             timeout_s=float(self._cfg.timeout_s),
             label="ConversationFactExtractor",
+            provider_options=background.provider_options,
+            # Every attempt counts against the daily runaway cap; reaching it
+            # raises BackgroundDeferred to the caller (nothing is spent).
+            before_attempt=background_guard.hook(self._root_cfg, "extractor"),
+            record_chain_failure=not background.subscription_mode,
             aggregate=aggregate,
             validate=_validate_response,
             # Both reasons are CONTENT verdicts ("this turn holds nothing
@@ -944,6 +1076,16 @@ class ConversationFactExtractor:
                 reason == "empty-needs-second-opinion"
             ),
         )
+        if result is not None or rejection_reasons:
+            # A provider answered: nothing is waiting on a subscription.
+            background_guard.note_progress()
+        elif background.subscription_mode:
+            # Logged out, out of credit, rate limited: the subscription did
+            # not take the turn. Wait and retry later; never a key.
+            background_guard.note_waiting("the subscription did not answer")
+            raise BackgroundDeferred("the subscription did not answer")
+        else:
+            background_guard.note_failure("every wiki provider failed")
         if result is None:
             duration_ms = (time.time_ns() - start_ns) // 1_000_000
             error_code = "provider-chain-failed"
@@ -1295,47 +1437,12 @@ class ConversationFactExtractor:
                 return False
         return True
 
-    def _ensure_brain(self) -> Any:
-        """Lazily instantiate the cheap brain; ``None`` when unavailable."""
-        if self._brain is not None:
-            return self._brain
-        provider, model = _resolve_provider_and_model(self._curator_cfg, self._root_cfg)
-        try:
-            # Thinking disabled for Gemini non-pro: extraction is small,
-            # deterministic JSON output (see instantiate_curator_brain).
-            self._brain = instantiate_curator_brain(
-                self._registry,
-                provider,
-                model,
-                cli_timeout_s=float(self._cfg.timeout_s),
-            )
-            self._resolved_provider = provider
-            self._resolved_model = model
-        except Exception as exc:  # noqa: BLE001
-            log.warning(
-                "ConversationFactExtractor: provider %r unavailable (%s) — "
-                "extraction disabled until next attempt",
-                provider, exc,
-            )
-            self._brain = None
-        return self._brain
-
     def seen_turn(self, turn_hash: str) -> bool:
         """Durable dedupe: True when this turn hash is already journaled."""
         try:
             return self._journal.seen_turn(turn_hash)
         except Exception:  # noqa: BLE001
             return False
-
-    def reset_brain(self) -> None:
-        """Drop the cached brain so the next turn re-resolves provider/model.
-
-        Mirrors the live-apply contract of the Wiki settings route, which
-        clears the curator's cached brain on a provider switch.
-        """
-        self._brain = None
-        self._resolved_provider = None
-        self._resolved_model = None
 
 
 __all__ = ["ConversationContextTurn", "ConversationFactExtractor"]

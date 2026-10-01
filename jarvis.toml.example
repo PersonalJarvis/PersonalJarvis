@@ -31,6 +31,7 @@ name = ""
 [trigger]
 wake_word_enabled = true     # always-on wake listener (needs a mic)
 single_turn_mode = false     # false = conversation stays open until "hang up"/idle
+hotkey_pet_toggle = "alt+win+p"  # hide / show the desktop pet (macOS: cmd+alt+p); "" = off
 
 [trigger.wake_word]
 # Type any phrase you like — no wake word ships with the product (design
@@ -189,11 +190,14 @@ admin_api_port = 47821
 startup_chime = true
 # On-screen overlay shown by default on a desktop install: the slim
 # "jarvis_bar" (the Jarvis bar). Alternatives: "mascot" (the Gigi mascot),
-# "voice_orb" (the procedural voice orb) or "none".
+# "voice_orb" (the procedural voice orb), "pet" (a desktop pet) or "none".
 # This mirrors the built-in default — listed here so the bar is the obvious,
 # self-documented out-of-the-box choice and never silently disappears.
 orb_style = "jarvis_bar"
 bar_persistent = true        # keep the bar visible at all times (not only during a voice session)
+pet_id = "gigi"              # desktop pet (orb_style = "pet"): built-in id, your own u… id, or "none"
+pet_scale = 1.0              # pet size multiplier, 0.5–2.0
+pet_bubble = true            # show the pet's status bubble (what Jarvis is doing)
 
 # ── Memory ──
 [memory]
@@ -205,6 +209,9 @@ data_dir = "./data"          # per-user runtime data (gitignored)
 [wiki_integration]
 enabled = true
 vault_root = "wiki/obsidian-vault"
+# Runaway guard: the most model calls the wiki may make on its own per day
+# (it counts calls, it never shortens a prompt or an answer).
+# max_background_llm_calls_per_day = 200
 
 # ── Login autostart — ON by default; toggle in Settings ──
 # Launches the full desktop app (voice + Orb) at login so the wake listener

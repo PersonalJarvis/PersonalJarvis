@@ -97,7 +97,7 @@ def test_a_second_apply_is_refused_while_one_runs(client: TestClient) -> None:
         task = asyncio.create_task(hold())
         await asyncio.sleep(0.05)
         try:
-            await update_routes.update_apply()
+            await update_routes.update_apply(None)
         except HTTPException as exc:
             return exc.status_code
         finally:
@@ -110,7 +110,7 @@ def test_a_second_apply_is_refused_while_one_runs(client: TestClient) -> None:
 def test_a_failed_apply_always_leaves_a_verdict(monkeypatch: pytest.MonkeyPatch) -> None:
     """Without this the button reads "Updating 42%" until the app is restarted."""
 
-    async def boom() -> dict[str, object]:
+    async def boom(*_args: object, **_kwargs: object) -> dict[str, object]:
         _progress.begin(INSTALL_KIND_FROZEN)
         _progress.advance(PHASE_DOWNLOADING, 0.42)
         raise RuntimeError("the disk went away")
@@ -119,7 +119,7 @@ def test_a_failed_apply_always_leaves_a_verdict(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(update_routes, "_apply_frozen", boom)
 
     with pytest.raises(RuntimeError):
-        asyncio.run(update_routes.update_apply())
+        asyncio.run(update_routes.update_apply(None))
 
     snapshot = _progress.snapshot()
     assert snapshot["phase"] == PHASE_FAILED
@@ -130,14 +130,14 @@ def test_a_failed_apply_always_leaves_a_verdict(monkeypatch: pytest.MonkeyPatch)
 def test_an_http_failure_records_the_servers_own_reason(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def refuse() -> dict[str, object]:
+    async def refuse(*_args: object, **_kwargs: object) -> dict[str, object]:
         raise HTTPException(status_code=502, detail="git fetch failed: host unreachable")
 
     monkeypatch.setattr(update_routes, "is_frozen", lambda: True)
     monkeypatch.setattr(update_routes, "_apply_frozen", refuse)
 
     with pytest.raises(HTTPException):
-        asyncio.run(update_routes.update_apply())
+        asyncio.run(update_routes.update_apply(None))
 
     assert "host unreachable" in str(_progress.snapshot()["error"])
 
@@ -145,7 +145,7 @@ def test_an_http_failure_records_the_servers_own_reason(
 def test_the_lock_is_released_after_a_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     """A lock held by a crashed apply would make the button dead until restart."""
 
-    async def refuse() -> dict[str, object]:
+    async def refuse(*_args: object, **_kwargs: object) -> dict[str, object]:
         raise HTTPException(status_code=502, detail="nope")
 
     monkeypatch.setattr(update_routes, "is_frozen", lambda: True)
@@ -153,7 +153,7 @@ def test_the_lock_is_released_after_a_failure(monkeypatch: pytest.MonkeyPatch) -
 
     async def scenario() -> bool:
         with pytest.raises(HTTPException):
-            await update_routes.update_apply()
+            await update_routes.update_apply(None)
         return update_routes._apply_lock.locked()
 
     assert asyncio.run(scenario()) is False

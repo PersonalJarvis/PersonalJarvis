@@ -84,3 +84,14 @@ def test_logout_ok(monkeypatch):
     resp = client.post("/api/antigravity/logout")
     assert resp.status_code == 200
     assert resp.json()["ok"] is True
+
+
+def test_logout_ends_subscription_mode_for_background_work(monkeypatch):
+    from jarvis.brain import background_policy
+
+    background_policy.note_connected("antigravity")
+    assert background_policy.subscription_mode()
+    st = GoogleCliAuthStatus(installed=True, connected=True)
+    client = _client(monkeypatch, status=st)
+    assert client.post("/api/antigravity/logout").status_code == 200
+    assert not background_policy.subscription_mode()

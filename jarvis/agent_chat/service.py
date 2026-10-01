@@ -169,7 +169,9 @@ class _OpenQuestion:
     ``result`` resolves once the card closes; callers wait on it in slices.
     """
 
-    __slots__ = ("answers", "closing", "result", "session_id", "specs", "turn_id", "wake")
+    __slots__ = (
+        "answers", "closing", "delivered", "result", "session_id", "specs", "turn_id", "wake",
+    )
 
     def __init__(
         self,
@@ -186,6 +188,7 @@ class _OpenQuestion:
         self.closing = ""
         self.wake = asyncio.Event()
         self.result = result
+        self.delivered = False
 
     @property
     def done(self) -> bool:
@@ -733,16 +736,32 @@ class AgentChatService:
                 str(handle.trace_id),
             )
             origin_token = current_chat_turn.set(origin)
-            try:
+            from jarvis.agent_chat.turn_completion import TurnCompletion
+
+            completion = (
+                TurnCompletion(
+                    self, handle, origin.user_text,
+                    allow_correction=origin.direct_user and not read_only,
+                    context=prompt,
+                )
+                if session.surface == "society" and control_runner is None and not native_goal
+                else None
+            )
+            run_handle = (
+                replace(handle, emit=completion.emit, request_approval=completion.ask)
+                if completion is not None else handle
+            )
+
+            async def run_attempt(run_prompt: str) -> None:
                 if control_runner is not None:
-                    vendor = await control_runner(handle, text)
+                    vendor = await control_runner(run_handle, text)
                     if vendor:
                         self.store.update_session(session_id, vendor_session=vendor)
                 elif runner == "brain":
                     async with self._brain_lock:
                         await run_brain_turn(
-                            handle,
-                            prompt,
+                            run_handle,
+                            run_prompt,
                             bridge=self._bridge_for(bus),
                             always_allowed=self.always_allowed(session_id),
                             **({"tool_choices": selected} if selected else {}),
@@ -759,8 +778,8 @@ class AgentChatService:
                     # a surface that combines the two keeps working.
                     as_jarvis = kit.brain_runner and kit.cli_seats
                     vendor = await run_cli_turn(
-                        handle,
-                        prompt + selection_briefing(selected),
+                        run_handle,
+                        run_prompt + selection_briefing(selected),
                         runner,
                         identity=as_jarvis,
                         bridge=self._bridge_for(bus) if as_jarvis else None,
@@ -769,7 +788,7 @@ class AgentChatService:
                     if vendor and vendor != session.vendor_session:
                         self.store.update_session(session_id, vendor_session=vendor)
                 elif runner == "api" and supports_api_runner(session.provider):
-                    await run_api_turn(handle, prompt)
+                    await run_api_turn(run_handle, run_prompt)
                 else:
                     await self._emit(
                         session_id,
@@ -787,6 +806,29 @@ class AgentChatService:
                             },
                         ),
                     )
+
+            try:
+                run_prompt = prompt
+                for _ in range(MAX_ASKS_PER_TURN + 2):
+                    await run_attempt(run_prompt)
+                    if completion is None:
+                        break
+                    continuation = await completion.next_prompt()
+                    if continuation is None:
+                        break
+                    stored = self.store.get_session(session_id)
+                    run_handle = replace(
+                        run_handle,
+                        session=replace(
+                            run_handle.session,
+                            vendor_session=stored.vendor_session if stored else None,
+                        ),
+                        history=self.store.list_events(session_id),
+                        continuation=True,
+                    )
+                    run_prompt = continuation
+                if completion is not None:
+                    await completion.publish()
             except asyncio.CancelledError:
                 await self._emit(
                     session_id,
@@ -796,7 +838,11 @@ class AgentChatService:
                             "turn_id": turn_id,
                             "status": "cancelled",
                             "duration_ms": int((time.monotonic() - started) * 1000),
-                            "usage": {},
+                            "usage": completion.usage if completion is not None else {},
+                            **(
+                                {"cost_usd": completion.cost}
+                                if completion and completion.cost is not None else {}
+                            ),
                             "error": None,
                         },
                     ),
@@ -812,7 +858,11 @@ class AgentChatService:
                             "turn_id": turn_id,
                             "status": "error",
                             "duration_ms": 0,
-                            "usage": {},
+                            "usage": completion.usage if completion is not None else {},
+                            **(
+                                {"cost_usd": completion.cost}
+                                if completion and completion.cost is not None else {}
+                            ),
                             "error": f"{type(exc).__name__}: {exc}",
                         },
                     ),
@@ -1139,7 +1189,9 @@ class AgentChatService:
         if open_q is None or open_q.session_id != session_id:
             raise KeyError(question_id)
         try:
-            return await asyncio.wait_for(asyncio.shield(open_q.result), timeout_s)
+            answers = await asyncio.wait_for(asyncio.shield(open_q.result), timeout_s)
+            open_q.delivered = True
+            return answers
         except TimeoutError:  # still open: the caller polls again
             return None
 
@@ -1149,6 +1201,13 @@ class AgentChatService:
         if open_q is None or open_q.session_id != session_id:
             raise KeyError(question_id)
         return open_q.specs
+
+    def undelivered_questions(self, session_id: str, turn_id: str) -> list[str]:
+        """Cards whose answers have not reached the runner, including just-answered ones."""
+        return [
+            qid for qid, q in self._questions.items()
+            if q.session_id == session_id and q.turn_id == turn_id and not q.delivered
+        ]
 
     async def ask_questions(
         self,
@@ -1172,20 +1231,9 @@ class AgentChatService:
         deadline = loop.time() + timeout_s
         try:
             while not open_q.done:
-                remaining = deadline - loop.time()
-                if remaining <= 0:
-                    log.info(
-                        "agent chat: question %s in %s timed out; recommendations applied",
-                        question_id,
-                        open_q.session_id,
-                    )
-                    open_q.closing = TIMEOUT
-                    break
+                # Inspect stored answers before waiting. A click can arrive
+                # before this watcher starts or while a progress event emits.
                 open_q.wake.clear()
-                try:
-                    await asyncio.wait_for(open_q.wake.wait(), remaining)
-                except TimeoutError:  # the loop re-reads the deadline and closes
-                    continue
                 answered = sum(a is not None for a in open_q.answers)
                 if answered > reported and not open_q.done:
                     reported = answered
@@ -1202,6 +1250,20 @@ class AgentChatService:
                             },
                         ),
                     )
+                    continue
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    log.info(
+                        "agent chat: question %s in %s timed out; recommendations applied",
+                        question_id,
+                        open_q.session_id,
+                    )
+                    open_q.closing = TIMEOUT
+                    break
+                try:
+                    await asyncio.wait_for(open_q.wake.wait(), remaining)
+                except TimeoutError:  # the loop re-reads the deadline and closes
+                    continue
         except asyncio.CancelledError:
             # App shutdown: the card closes with the process.
             open_q.closing = CANCELLED

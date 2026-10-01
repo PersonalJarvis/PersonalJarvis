@@ -249,6 +249,16 @@ class ReplayBuffer:
     clears: int = field(default=0, init=False)
     #: The last bytes of the preceding read, in case it split an erase.
     _clear_scan_tail: str = field(default="", init=False)
+    #: Does the kept drawing belong to a terminal size the agent has since
+    #: left? Set by :meth:`rebase_for_resize` for an agent that paints whole
+    #: frames, cleared by that agent's next whole-screen erase — the fresh
+    #: frame that replaces the old one. A replay taken meanwhile still shows
+    #: the old frame, and its viewer has to ask for the new one.
+    awaiting_frame: bool = field(default=False, init=False)
+    #: Has this process painted a whole frame — an erase while holding the
+    #: screen? Per process, unlike ``clears``: a pane's next agent may repaint
+    #: differently.
+    _paints_frames: bool = field(default=False, init=False)
 
     def feed(self, chunk: str) -> None:
         if not chunk:
@@ -261,6 +271,11 @@ class ReplayBuffer:
         erases = [match for match in _FULL_CLEAR_RE.finditer(scanned) if match.end() > previous]
         self.clears += len(erases)
         self._clear_scan_tail = scanned[-_FULL_CLEAR_SCAN_TAIL:]
+        if erases:
+            # A fresh frame has started, including an erase split across reads.
+            self.awaiting_frame = False
+            if self.holds_screen:
+                self._paints_frames = True
         erase = erases[-1].start() if erases and self.holds_screen else -1
         if erase >= 0:
             # A full-screen agent just emptied its screen, so everything it
@@ -338,19 +353,36 @@ class ReplayBuffer:
         return self._mode_prologue() + "\x1b[0m" + text
 
     def rebase_for_resize(self) -> str:
-        """Forget drawing bytes tied to the old geometry, preserving modes.
+        """Start a new replay epoch for a new terminal size; return the replay.
 
         Cursor-addressed TUI output only has meaning at the terminal size that
         produced it.  Replaying that stream into a differently sized viewer
         leaves old status rows and fragments between the newly painted ones.
-        A resize therefore starts a new replay epoch: the caller sends this
-        returned prologue to a reset viewer, then asks the live TUI to repaint.
+        A resize therefore starts a new replay epoch: the caller sends the
+        returned replay to a reset viewer, then asks the live TUI to repaint.
+
+        **An agent that paints whole frames keeps its old one until the new
+        one arrives.** Claude Code answers a resize with a frame that opens
+        with a whole-screen erase (measured on 2.1.284), so the old drawing
+        cannot leave fragments behind it — the erase wipes it, and the viewer
+        stays hidden until that erase lands. Dropping it instead left the
+        replay with nothing to draw: when the agent was too busy or starved to
+        answer, every pane of a workspace came back as an empty black
+        rectangle and stayed one until the agent next repainted on its own,
+        which for an agent waiting for input is never (reported 2026-09-30,
+        with the machine short of memory and disk). The old frame is kept and
+        ``awaiting_frame`` says a new one is owed. Only an agent that has
+        already shown a whole-screen erase qualifies: Codex repaints with
+        partial erases, so a kept frame would show through its new one.
 
         Private modes survive because most coding CLIs negotiate alternate
         screen and mouse tracking only once, at process startup.  Dropping
         those together with the stale drawing would repair the text while
         silently breaking the pane's mouse and scrollbar.
         """
+        if self.holds_screen and self._paints_frames:
+            self.awaiting_frame = True
+            return self.text()
         return self._rebase("")
 
     def _rebase(self, frame: str) -> str:
@@ -359,6 +391,7 @@ class ReplayBuffer:
         self._chunks.clear()
         self.truncated = False
         self._open_escape = False
+        self.awaiting_frame = False
         self._chunks.append(prologue)
         self._size = len(prologue)
         if frame:
@@ -388,6 +421,8 @@ class ReplayBuffer:
         self._modes.clear()
         self._mode_scan_tail = ""
         self._clear_scan_tail = ""
+        self.awaiting_frame = False
+        self._paints_frames = False
 
 
 __all__ = [

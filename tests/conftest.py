@@ -228,6 +228,26 @@ def _pricing_feed_in_tmp(tmp_path_factory, monkeypatch):  # noqa: ANN001
 
 
 @pytest.fixture(autouse=True)
+def _background_policy_in_tmp(tmp_path_factory, monkeypatch):  # noqa: ANN001
+    """Keep the background billing policy off the developer's real login state.
+
+    The policy remembers a connected subscription in the user-data directory
+    and probes vendor CLIs for their login. Unpinned, a suite run on a machine
+    with a signed-in CLI would flip tests into subscription mode, and a logout
+    route test would erase the developer's real marker. Tests that need a
+    login script it through ``_probe_override``.
+    """
+    from jarvis.brain import background_policy
+
+    root = tmp_path_factory.mktemp("background-policy")
+    monkeypatch.setattr(background_policy, "_marker_path", lambda: root / "subscription_seen.json")
+    monkeypatch.setattr(background_policy, "_registry_probe", lambda _provider: None)
+    background_policy.reset_for_tests()
+    yield
+    background_policy.reset_for_tests()
+
+
+@pytest.fixture(autouse=True)
 def _app_action_state_in_tmp(tmp_path_factory, monkeypatch):  # noqa: ANN001
     """Every registry-command or app-action call records its outcome for the
     Jarvis-actions page; keep that, and the per-action policy, off the
@@ -240,6 +260,20 @@ def _app_action_state_in_tmp(tmp_path_factory, monkeypatch):  # noqa: ANN001
     history.reset_for_tests()
     yield
     history.reset_for_tests()
+
+
+@pytest.fixture(autouse=True)
+def _provider_health_ledger_in_tmp(tmp_path_factory):  # noqa: ANN001
+    """Every real brain/speech/realtime call records its outcome for the
+    status dots; keep that record off the developer's real ``data/state`` and
+    start every test with an empty one."""
+    from jarvis.brain import provider_health_ledger as ledger
+
+    root = tmp_path_factory.mktemp("provider-health")
+    ledger.set_ledger(ledger.ProviderHealthLedger(root / ledger.LEDGER_FILE_NAME))
+    yield root
+    # In-memory, not None: a late background call must not create the real file.
+    ledger.set_ledger(ledger.ProviderHealthLedger(None))
 
 
 @pytest.fixture(autouse=True)

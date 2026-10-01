@@ -27,8 +27,8 @@ export function AvatarButton({
 }: {
   name: string | null;
   hasAvatar: boolean;
-  /** `lg` is the dossier header; `md` keeps the old 56 px for anywhere else. */
-  size?: "md" | "lg";
+  /** `xl` is the profile header; `md` keeps the old 56 px for anywhere else. */
+  size?: "md" | "lg" | "xl";
 }) {
   const t = useT();
   const queryClient = useQueryClient();
@@ -77,7 +77,7 @@ export function AvatarButton({
   };
 
   const busy = upload.isPending || remove.isPending;
-  const box = size === "lg" ? "h-16 w-16" : "h-14 w-14";
+  const box = size === "xl" ? "h-20 w-20" : size === "lg" ? "h-16 w-16" : "h-14 w-14";
   const title = hasAvatar ? t("profile_view.avatar_change") : t("profile_view.avatar_upload");
 
   return (
@@ -111,6 +111,7 @@ export function AvatarButton({
             size="lg"
             src={hasAvatar ? `/api/profile/avatar?t=${bust}` : null}
             alt={t("profile_view.avatar_alt")}
+            className={size === "xl" ? "h-full w-full text-2xl" : undefined}
           />
         ) : hasAvatar ? (
           <img
@@ -120,7 +121,7 @@ export function AvatarButton({
             draggable={false}
           />
         ) : (
-          <UserCircle2 aria-hidden className="h-6 w-6 text-muted-foreground" />
+          <UserCircle2 aria-hidden className={cn("text-muted-foreground", size === "xl" ? "h-9 w-9" : "h-6 w-6")} />
         )}
 
         <span className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-full bg-scrim/70 opacity-0 transition-opacity duration-200 group-hover/avatar:opacity-100 group-focus-visible/avatar:opacity-100">

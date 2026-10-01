@@ -128,6 +128,23 @@ def keyless_local(provider: str) -> bool:
     return _billing(provider) == "local"
 
 
+def _registry_probe(provider: str) -> bool | None:
+    """Ask the provider class whether its subscription login is usable.
+
+    Module-level so the test suite can replace it once for every test: the
+    real probe shells out to the vendor CLI and reads the developer's login.
+    """
+    try:
+        from jarvis.brain.provider_registry import BrainProviderRegistry
+
+        provider_class = BrainProviderRegistry().get_class(provider)
+        probe = getattr(provider_class, "subscription_connected", None)
+        return bool(probe()) if callable(probe) else None
+    except Exception:  # noqa: BLE001 - an unknown answer, not a broken caller
+        log.debug("background policy: login probe failed for %s", provider, exc_info=True)
+        return None
+
+
 def login_state(provider: str) -> bool | None:
     """Memoised subscription-login probe: True, False, or None (unknown)."""
     now = time.monotonic()
@@ -135,19 +152,8 @@ def login_state(provider: str) -> bool | None:
         cached = _probe_cache.get(provider)
         if cached is not None and now - cached[0] < _PROBE_TTL_S:
             return cached[1]
-    result: bool | None
-    if _probe_override is not None:
-        result = _probe_override(provider)
-    else:
-        try:
-            from jarvis.brain.provider_registry import BrainProviderRegistry
-
-            provider_class = BrainProviderRegistry().get_class(provider)
-            probe = getattr(provider_class, "subscription_connected", None)
-            result = bool(probe()) if callable(probe) else None
-        except Exception:  # noqa: BLE001 - an unknown answer, not a broken caller
-            log.debug("background policy: login probe failed for %s", provider, exc_info=True)
-            result = None
+    probe = _probe_override if _probe_override is not None else _registry_probe
+    result = probe(provider)
     with _lock:
         _probe_cache[provider] = (time.monotonic(), result)
     if result is True:

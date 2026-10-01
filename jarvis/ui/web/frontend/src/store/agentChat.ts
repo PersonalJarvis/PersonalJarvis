@@ -441,11 +441,11 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
             })),
           };
           set({ catalog, connections, catalogError: null, backendOutdated });
-          // Deliberately not awaited: the sweep makes one real request per
-          // provider and can take seconds. The composer paints from the
-          // catalog now and the dots appear when the answers arrive.
-          // The society picker has no health dots. Opening its card must not
-          // send model test requests to every configured provider.
+          // Deliberately not awaited: the sweep reads CLI logins and can take
+          // a moment. It never sends a request to a provider — the dots show
+          // the outcome of each seat's last real call. The composer paints
+          // from the catalog now and the dots appear when the answer arrives.
+          // The society picker has no health dots, so it skips the sweep.
           if (surface !== "society") void get().loadHealth();
           // Settle the draft: an empty or unknown provider becomes the active
           // sub-agent (else the first connected one); blank picks take the

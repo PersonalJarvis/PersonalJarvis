@@ -1010,6 +1010,10 @@ class SessionRecorder:
             return
         if kind not in _RAW_EVENT_KINDS:
             return
+        if kind == "ReasoningSummaryUpdated" and getattr(event, "done", True) is False:
+            # A streaming snapshot is superseded within a fraction of a second;
+            # the session keeps the finished summary, not every partial copy.
+            return
         turn_id = (
             self._state.current_turn.turn_id
             if self._state.current_turn is not None

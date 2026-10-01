@@ -14,6 +14,7 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { Keyboard, X } from "lucide-react";
 import { useKeybinds } from "@/hooks/useHotkey";
+import { useQuickSwitchSettings } from "@/store/quickSwitchSettings";
 import { detectKeyboardPlatform } from "@/views/settings/keyboardLayout";
 import {
   SHORTCUT_AREAS,
@@ -70,6 +71,7 @@ function comboTokens(combo: string): string[] {
 function ShortcutRow({ shortcut, isMac }: { shortcut: Shortcut; isMac: boolean }) {
   const t = useT();
   const { config } = useKeybinds();
+  const quickSwitch = useQuickSwitchSettings();
 
   let chord: React.ReactNode;
   if (shortcut.kind === "fixed") {
@@ -85,6 +87,15 @@ function ShortcutRow({ shortcut, isMac }: { shortcut: Shortcut; isMac: boolean }
           </div>
         ))}
       </div>
+    );
+  } else if (shortcut.kind === "app") {
+    // A per-device setting: show what this machine uses, or that it is off.
+    chord = quickSwitch.enabled && quickSwitch.combo ? (
+      <Chord keys={comboTokens(quickSwitch.combo)} isMac={isMac} />
+    ) : (
+      <span className="text-xs italic text-muted-foreground">
+        {t(quickSwitch.enabled ? "shortcut_overlay.unassigned" : "shortcut_overlay.off")}
+      </span>
     );
   } else {
     // The live value, never the default — the whole point of resolving these

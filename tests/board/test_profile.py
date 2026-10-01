@@ -319,6 +319,26 @@ async def test_empty_brain_response_does_not_persist(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_unfinished_reply_keeps_only_whole_sentences(tmp_path: Path) -> None:
+    """A reply that stops mid-word must not become the stored portrait."""
+    jsonl, db = _power_user_db(tmp_path)
+    brain = FakeBrain("You build at night. Five tools a day, and while your Tool-")
+    gen = _make_generator(brain, jsonl, db)
+    result = await gen.generate_bio()
+    assert result is not None
+    assert result["text"] == "You build at night."
+
+
+@pytest.mark.asyncio
+async def test_fragment_without_any_sentence_keeps_old_bio(tmp_path: Path) -> None:
+    jsonl, db = _power_user_db(tmp_path)
+    fragment = FakeBrain("I have watched you for 34 days, and while your Tool-")
+    gen = _make_generator(fragment, jsonl, db)
+    assert await gen.generate_bio() is None
+    assert BioStore(db).latest() is None
+
+
+@pytest.mark.asyncio
 async def test_no_resolver_returns_none(tmp_path: Path) -> None:
     jsonl, db = _power_user_db(tmp_path)
     gen = BioGenerator(

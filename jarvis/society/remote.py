@@ -20,6 +20,7 @@ PowerShell in the same folder (``jarvis.computers.remote_os``).
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import shlex
 import time
@@ -57,10 +58,23 @@ def remote_workspace_expr(agent_id: str, relative: str = "") -> str:
     return '"$HOME"/' + shlex.quote(str(rel))
 
 
-def wrap_in_workspace(agent_id: str, command: str, *, relative: str = "") -> str:
-    """``mkdir -p <ws> && cd <ws> && <command>`` with prompt-free defaults."""
+def wrap_in_workspace(
+    agent_id: str, command: str, *, relative: str = "", record_pid: str = ""
+) -> str:
+    """The script that runs ``command`` in the workspace, with prompt-free defaults.
+
+    Each step stands on its own line and exits when it fails: as one
+    ``mkdir && cd && <command>`` line, a command like ``cd x; ls`` ran its
+    second half in the home folder when the first steps failed. ``record_pid``
+    is a line from ``remote_os.pid_record`` that lets a timeout end the
+    command with everything it started.
+    """
     folder = remote_workspace_expr(agent_id, relative)
-    return f"mkdir -p {folder} && cd {folder} && export CI=1 NO_COLOR=1 && {command}"
+    lines = [f"mkdir -p {folder} || exit 97", f"cd {folder} || exit 97"]
+    if record_pid:
+        lines.append(record_pid.rstrip("\n"))
+    lines += ["export CI=1 NO_COLOR=1", command]
+    return "\n".join(lines) + "\n"
 
 
 def _ps_quote(text: str) -> str:
@@ -103,40 +117,49 @@ class SshShellBackend:
         return "" if text == "." else text
 
     async def run(self, command: str, *, cwd: Path, timeout_s: float) -> ShellResult:
+        from jarvis.computers import remote_os
         from jarvis.computers.service import ComputerError, get_service
+        from jarvis.computers.ssh import SshError
 
         timeout = max(1.0, min(float(timeout_s or DEFAULT_TIMEOUT_S), MAX_TIMEOUT_S))
         relative = self._relative(cwd)
         started = time.perf_counter()
+        pid_file = f"{remote_os.LAUNCH_DIR}/{remote_os.launcher_name(self._agent_id, '.shell.pid')}"
         try:
             async with get_service().session(self._computer_id) as opened:
-                from jarvis.computers import remote_os
-                from jarvis.computers.ssh import SshError, run_command
-
+                host = await self._host(opened)
+                name = get_service().get(self._computer_id).name
+                posix_shell = not host.windows or bool(host.bash)
+                self.where = f"{name} ({_shell_label(host)})"
                 try:
-                    host = await remote_os.remote_host(self._computer_id, opened)
-                    name = get_service().get(self._computer_id).name
-                    if not host.windows:
-                        self.where = f"{name} (bash)"
-                        wrapped = wrap_in_workspace(self._agent_id, command, relative=relative)
-                        result = await run_command(opened, wrapped, timeout_s=timeout)
-                    elif host.bash:
-                        self.where = f"{name} (Windows, Git Bash)"
-                        wrapped = wrap_in_workspace(self._agent_id, command, relative=relative)
-                        result = await remote_os.run_bash(opened, host, wrapped, timeout_s=timeout)
+                    if posix_shell:
+                        wrapped = wrap_in_workspace(
+                            self._agent_id,
+                            command,
+                            relative=relative,
+                            record_pid=remote_os.pid_record(host, pid_file),
+                        )
+                        result = await remote_os.run_script(
+                            opened, host, wrapped, timeout_s=timeout
+                        )
                     else:
-                        self.where = f"{name} (Windows, PowerShell)"
                         script = powershell_in_workspace(self._agent_id, command, relative=relative)
                         result = await remote_os.run_powershell(opened, script, timeout_s=timeout)
                 except SshError as exc:
-                    if exc.kind == "timeout":
-                        return ShellResult(
-                            output=f"Command timed out after {int(timeout)} s",
-                            exit_code=None,
-                            seconds=time.perf_counter() - started,
-                            timed_out=True,
-                        )
-                    raise ComputerError(exc.message, status=502, kind=exc.kind) from exc
+                    if exc.kind != "timeout":
+                        raise ComputerError(exc.message, status=502, kind=exc.kind) from exc
+                    if posix_shell:
+                        # Giving up on the channel does not end the command there.
+                        with contextlib.suppress(SshError):
+                            await remote_os.run_script(
+                                opened, host, remote_os.stop_script(host, pid_file), timeout_s=30
+                            )
+                    return ShellResult(
+                        output=f"Command timed out after {int(timeout)} s",
+                        exit_code=None,
+                        seconds=time.perf_counter() - started,
+                        timed_out=True,
+                    )
         except ComputerError as exc:
             log.info("society: remote shell for %s failed: %s", self._agent_id, exc.message)
             return ShellResult(
@@ -151,6 +174,24 @@ class SshShellBackend:
             exit_code=result.exit_status,
             seconds=time.perf_counter() - started,
         )
+
+    async def _host(self, opened: Any) -> Any:
+        from jarvis.computers import remote_os
+        from jarvis.computers.service import ComputerError
+        from jarvis.computers.ssh import SshError
+
+        try:
+            return await remote_os.remote_host(self._computer_id, opened)
+        except SshError as exc:
+            raise ComputerError(exc.message, status=502, kind=exc.kind) from exc
+
+
+def _shell_label(host: Any) -> str:
+    """ "Windows, Git Bash", "macOS, bash", "Linux, sh" — where a command ran."""
+    if host.windows:
+        return "Windows, Git Bash" if host.bash else "Windows, PowerShell"
+    system = "macOS" if host.mac else (host.system or "POSIX")
+    return f"{system}, {'bash' if host.bash else 'sh'}"
 
 
 def backend_for(agent: Any, workspace: Path) -> ShellBackend:

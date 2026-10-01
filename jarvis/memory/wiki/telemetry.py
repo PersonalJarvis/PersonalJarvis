@@ -46,7 +46,6 @@ log = logging.getLogger(__name__)
 DEFAULT_COUNTERS: tuple[str, ...] = (
     "voice_turns_seen",
     "voice_turns_ingested_ack",
-    "voice_turns_ingested_aggressive",
     "wiki_context_hits",
     "wiki_context_misses",
     "session_rollups_succeeded",

@@ -218,6 +218,8 @@ def test_section_health_includes_realtime_key(monkeypatch):
 
         return SimpleNamespace(status="ok", detail="")
 
+    from jarvis.brain import provider_health_ledger as ledger
+
     monkeypatch.setattr(_pt, "run_provider_test", _fake_run)
     monkeypatch.setattr(cfg_mod, "get_secret", _only_openai_key)
     client = TestClient(_app())
@@ -225,6 +227,15 @@ def test_section_health_includes_realtime_key(monkeypatch):
     assert resp.status_code == 200
     sections = resp.json()["sections"]
     assert "realtime" in sections
+    # Key present, no call yet: silent — the tab never opens a (billed)
+    # session of its own to find out.
+    assert sections["realtime"]["status"] == "unknown"
+    assert sections["realtime"]["reason"] == "unverified"
+
+    # The first real handshake is the evidence.
+    subject = sections["realtime"]["subject_id"]
+    ledger.get_ledger().record(subject, ledger.MODALITY_REALTIME, "ok")
+    sections = client.get("/api/providers/section-health").json()["sections"]
     assert sections["realtime"]["status"] == "ok"
 
 

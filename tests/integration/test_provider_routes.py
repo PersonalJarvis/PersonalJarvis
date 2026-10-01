@@ -24,7 +24,11 @@ from jarvis.ui.web.server import WebServer
 
 
 class _InMemorySecretStore:
-    """Simulates the keyring via a dict — wired into cfg via monkeypatch."""
+    """Simulates the keyring via a dict — wired into cfg via monkeypatch.
+
+    Like the real ``set_secret``/``delete_secret``, a successful write or
+    delete announces the changed slot (revision, generation, listeners).
+    """
 
     def __init__(self) -> None:
         self.data: dict[str, str] = {}
@@ -33,11 +37,17 @@ class _InMemorySecretStore:
         return self.data.get(key)
 
     def set(self, key: str, value: str) -> bool:
+        from jarvis.core import config as cfg_mod
+
         self.data[key] = value
+        cfg_mod._mark_secret_changed(key)
         return True
 
     def delete(self, key: str) -> bool:
+        from jarvis.core import config as cfg_mod
+
         self.data.pop(key, None)
+        cfg_mod._mark_secret_changed(key)
         return True
 
 
@@ -131,8 +141,8 @@ def test_list_providers_returns_full_catalog(server_with_brain: WebServer, secre
 
 
 class _FakeTestResult:
-    """Minimal stand-in for provider_test.ProviderTestResult — the section-health
-    route only reads ``.status`` and ``.detail``."""
+    """Minimal stand-in for provider_test.ProviderTestResult (``.status`` and
+    ``.detail`` are all a caller reads)."""
 
     def __init__(self, status: str = "ok", detail: str = "") -> None:
         self.status = status
@@ -141,9 +151,9 @@ class _FakeTestResult:
 
 @pytest.fixture
 def no_real_provider_test(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Stub the REAL connectivity call so section-health never hits the network
-    (and can't pick up the maintainer's live keyring keys), keeping the test
-    hermetic and fast."""
+    """Belt and braces: section-health no longer runs the connectivity test at
+    all, but if a regression made it do so again, this keeps the suite off the
+    network (and off the maintainer's live keyring keys)."""
     from jarvis.brain import provider_test as _pt
 
     async def _fake_run(spec: Any, cfg: Any, **kwargs: Any) -> _FakeTestResult:  # noqa: ANN401
@@ -222,14 +232,44 @@ def test_section_health_caches_then_refresh_bypasses(
         )
 
 
+def _slow_credential_check(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    is_slow: Any,  # noqa: ANN401
+    started: asyncio.Event,
+    cancelled: asyncio.Event,
+) -> None:
+    """Make the (local, free) credential check of one selection hang.
+
+    The rollup no longer probes anything, so the slowest step left is a
+    credential/login read; the cancellation machinery must still keep a slow
+    one for an OLD selection from blocking or labelling the new one.
+    """
+    from jarvis.ui.web import provider_routes
+
+    original = provider_routes._provider_credential_present_for_binary_async
+
+    async def _check(spec: Any, binary_path: str | None) -> bool:  # noqa: ANN401
+        if is_slow(spec):
+            started.set()
+            try:
+                await asyncio.Future()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+        return await original(spec, binary_path)
+
+    monkeypatch.setattr(provider_routes, "_provider_credential_present_for_binary_async", _check)
+
+
 @pytest.mark.asyncio
 async def test_section_health_switch_cancels_old_provider_without_misattribution(
     server_with_brain: WebServer,
     secret_store: _InMemorySecretStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A slow NVIDIA result must never block or label the new OpenRouter card."""
-    from jarvis.brain import provider_test as provider_test_module
+    """A slow NVIDIA check must never block or label the new OpenRouter card."""
+    from jarvis.brain import provider_health_ledger as ledger
     from jarvis.ui.web import provider_routes
 
     secret_store.data.update(
@@ -238,21 +278,16 @@ async def test_section_health_switch_cancels_old_provider_without_misattribution
             "openrouter_api_key": "sk-or-test",
         }
     )
+    ledger.get_ledger().record("openrouter", ledger.MODALITY_BRAIN, "ok")
     server_with_brain.app.state.brain.active_provider = "nvidia"
     nvidia_started = asyncio.Event()
     nvidia_cancelled = asyncio.Event()
-
-    async def _probe(spec: Any, cfg: Any, **kwargs: Any) -> _FakeTestResult:  # noqa: ANN401
-        if spec.id == "nvidia":
-            nvidia_started.set()
-            try:
-                await asyncio.Future()
-            except asyncio.CancelledError:
-                nvidia_cancelled.set()
-                raise
-        return _FakeTestResult("ok", "")
-
-    monkeypatch.setattr(provider_test_module, "run_provider_test", _probe)
+    _slow_credential_check(
+        monkeypatch,
+        is_slow=lambda spec: spec.id == "nvidia",
+        started=nvidia_started,
+        cancelled=nvidia_cancelled,
+    )
     monkeypatch.setattr(
         provider_routes,
         "_jarvis_agent_section_health",
@@ -277,36 +312,33 @@ async def test_section_health_switch_cancels_old_provider_without_misattribution
 
 
 @pytest.mark.asyncio
-async def test_section_health_model_switch_cancels_old_probe_for_same_provider(
+async def test_section_health_model_switch_cancels_old_check_for_same_provider(
     server_with_brain: WebServer,
     secret_store: _InMemorySecretStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A timeout from an old model must not label a new model on the same card."""
-    from jarvis.brain import provider_test as provider_test_module
+    """A check still running for an old model must not label the new model."""
+    from jarvis.brain import provider_health_ledger as ledger
     from jarvis.core.config import BrainProviderConfig
     from jarvis.ui.web import provider_routes
 
     secret_store.data["openrouter_api_key"] = "sk-or-test"
+    ledger.get_ledger().record("openrouter", ledger.MODALITY_BRAIN, "ok")
     server_with_brain.app.state.brain.active_provider = "openrouter"
     server_with_brain.cfg.brain.providers["openrouter"] = BrainProviderConfig(
         model="slow-model"
     )
     old_started = asyncio.Event()
     old_cancelled = asyncio.Event()
-
-    async def _probe(spec: Any, cfg: Any, **kwargs: Any) -> _FakeTestResult:  # noqa: ANN401
-        selected_model = cfg.brain.providers["openrouter"].model
-        if spec.id == "openrouter" and selected_model == "slow-model":
-            old_started.set()
-            try:
-                await asyncio.Future()
-            except asyncio.CancelledError:
-                old_cancelled.set()
-                raise
-        return _FakeTestResult("ok", "")
-
-    monkeypatch.setattr(provider_test_module, "run_provider_test", _probe)
+    _slow_credential_check(
+        monkeypatch,
+        is_slow=lambda spec: (
+            spec.id == "openrouter"
+            and server_with_brain.cfg.brain.providers["openrouter"].model == "slow-model"
+        ),
+        started=old_started,
+        cancelled=old_cancelled,
+    )
     monkeypatch.setattr(
         provider_routes,
         "_jarvis_agent_section_health",
@@ -329,40 +361,221 @@ async def test_section_health_model_switch_cancels_old_probe_for_same_provider(
     assert old_response.sections["brain"].status == "ok"
 
 
-def test_section_health_computer_use_probes_the_tool_model_pin(
+def test_section_health_computer_use_reads_the_tool_model_outcome(
     server_with_brain: WebServer,
     secret_store: _InMemorySecretStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The Tool Model tab must test the model that tier actually runs.
+    """The Tool Model tab is judged by what tool-model calls did, not brain turns.
 
-    Live macOS fresh-install bug 2026-07-17: the computer-use section probed
-    the provider's general brain model ("" on a fresh install), which collapsed
-    into the plugin's hardcoded default — a retired id that 404'd, painting the
-    Tool Model tab red although the runtime resolution was healthy (AP-23).
+    Its tier runs its own model pin, so a retired tool-model id (404) must turn
+    that tab red while the same provider's brain turns keep answering — and it
+    is learnt from the real call, never from a probe of the page's own.
     """
-    from jarvis.brain import provider_test as provider_test_module
+    from jarvis.brain import provider_health_ledger as ledger
     from jarvis.core.config import BrainProviderConfig, BrainTierConfig
+    from tests.fakes.fake_provider_calls import ProviderCallRecorder
 
+    recorder = ProviderCallRecorder().install(monkeypatch)
     secret_store.data["gemini_api_key"] = "AIza-test"
+    server_with_brain.app.state.brain.active_provider = "gemini"
     server_with_brain.cfg.brain.tool_model = BrainTierConfig(provider="gemini")
     server_with_brain.cfg.brain.providers["gemini"] = BrainProviderConfig(
         model="general-brain-model", tool_model="pinned-tool-model"
     )
+    record = ledger.get_ledger()
+    record.record("gemini", ledger.MODALITY_BRAIN, "ok")
+    record.record("gemini", ledger.MODALITY_TOOL, "model_unavailable", model="pinned-tool-model")
 
-    seen: dict[str, Any] = {}
+    with TestClient(server_with_brain.app) as client:
+        body = client.get("/api/providers/section-health").json()
 
-    async def _probe(spec: Any, cfg: Any, **kwargs: Any) -> _FakeTestResult:  # noqa: ANN401
-        seen[spec.id] = kwargs.get("model")
-        return _FakeTestResult("ok", "")
+    assert body["sections"]["computer-use"]["subject_id"] == "gemini"
+    assert body["sections"]["computer-use"]["status"] == "error"
+    assert body["sections"]["computer-use"]["reason"] == "model_unavailable"
+    assert body["sections"]["brain"]["status"] == "ok"
+    assert recorder.calls == []
+
+
+# Every family a single-key install might hold, so every keyed tier is
+# "configured" — exactly the state in which the rollup used to send a probe.
+_ALL_FAMILY_KEYS = {
+    "openai_api_key": "sk-test",
+    "gemini_api_key": "AIza-test",
+    "openrouter_api_key": "sk-or-test",
+    "grok_api_key": "xai-test",
+    "anthropic_api_key": "sk-ant-test",
+    "nvidia_api_key": "nvapi-test",
+    "groq_api_key": "gsk-test",
+    "elevenlabs_api_key": "el-test",
+    "cartesia_api_key": "ca-test",
+    "inworld_api_key": "iw-test",
+}
+
+
+def test_section_health_and_readiness_send_nothing_to_any_provider(
+    server_with_brain: WebServer,
+    secret_store: _InMemorySecretStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The rollup reads credentials and the passive record — zero provider calls.
+
+    Live 2026-09-30: one TTS synthesis and one billed GPT-Live session start per
+    app start / window reload, from this route alone. Mounting the sidebar,
+    the dock, the ready note and the API-Keys page, forced refresh included,
+    must not reach a provider any more.
+    """
+    from tests.fakes.fake_provider_calls import ProviderCallRecorder
+
+    recorder = ProviderCallRecorder().install(monkeypatch)
+    secret_store.data.update(_ALL_FAMILY_KEYS)
+
+    with TestClient(server_with_brain.app) as client:
+        first = client.get("/api/providers/section-health")
+        forced = client.get("/api/providers/section-health?refresh=true")
+        ready = client.get("/api/setup/readiness?refresh=true")
+
+    assert first.status_code == forced.status_code == ready.status_code == 200
+    assert recorder.calls == []
+    brain = forced.json()["sections"]["brain"]
+    # Set up, never used since: silent, and checked by its first real call.
+    assert brain["status"] == "unknown"
+    assert brain["reason"] == "unverified"
+
+
+def test_section_health_reports_the_last_real_outcome(
+    server_with_brain: WebServer,
+    secret_store: _InMemorySecretStore,
+) -> None:
+    """A real call's outcome shows up on the very next read — no refresh, no probe."""
+    from jarvis.brain import provider_health_ledger as ledger
+
+    secret_store.data["openai_api_key"] = "sk-test"
+    with TestClient(server_with_brain.app) as client:
+        before = client.get("/api/providers/section-health").json()
+        ledger.get_ledger().record("openai", ledger.MODALITY_BRAIN, "bad_key")
+        after = client.get("/api/providers/section-health").json()
+
+    assert before["sections"]["brain"]["status"] == "unknown"
+    assert after["cached"] is False
+    assert after["sections"]["brain"]["status"] == "error"
+    assert after["sections"]["brain"]["reason"] == "bad_key"
+    assert "last real call" in after["sections"]["brain"]["detail"]
+
+
+def test_the_test_button_verdict_feeds_the_record(
+    server_with_brain: WebServer,
+    secret_store: _InMemorySecretStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The user-clicked Test is the one real probe left, and its verdict is
+    what the dots show afterwards — without a second probe on the re-read."""
+    from jarvis.brain import provider_health_ledger as ledger
+    from jarvis.brain import provider_test as provider_test_module
+
+    secret_store.data["openai_api_key"] = "sk-test"
+    probes: list[str] = []
+
+    async def _probe(spec: Any, cfg: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+        probes.append(spec.id)
+        return provider_test_module.ProviderTestResult(spec.id, "no_credits", "HTTP 429")
 
     monkeypatch.setattr(provider_test_module, "run_provider_test", _probe)
 
     with TestClient(server_with_brain.app) as client:
-        body = client.get("/api/providers/section-health?refresh=true").json()
+        verdict = client.post("/api/providers/openai/test").json()
+        body = client.get("/api/providers/section-health").json()
 
-    assert body["sections"]["computer-use"]["subject_id"] == "gemini"
-    assert seen["gemini"] == "pinned-tool-model"
+    assert verdict["status"] == "no_credits"
+    assert probes == ["openai"]
+    outcome = ledger.get_ledger().get("openai", ledger.MODALITY_BRAIN)
+    assert outcome is not None and outcome.source == ledger.SOURCE_TEST
+    assert body["sections"]["brain"]["status"] == "error"
+    assert body["sections"]["brain"]["reason"] == "no_credits"
+
+
+def test_saving_a_key_forgets_what_the_old_key_did(
+    server_with_brain: WebServer,
+    secret_store: _InMemorySecretStore,
+) -> None:
+    """A rejected key's red dot must not outlive the key; the new one starts clean."""
+    from jarvis.brain import provider_health_ledger as ledger
+
+    record = ledger.get_ledger()
+    record.record("openai", ledger.MODALITY_BRAIN, "bad_key")
+    record.record("openai-live", ledger.MODALITY_REALTIME, "bad_key")
+    record.record("elevenlabs", ledger.MODALITY_TTS, "no_credits")
+
+    with TestClient(server_with_brain.app) as client:
+        resp = client.post("/api/secrets/openai_api_key", json={"value": "sk-new"})
+
+    assert resp.status_code == 200
+    assert record.get("openai", ledger.MODALITY_BRAIN) is None
+    assert record.get("openai-live", ledger.MODALITY_REALTIME) is None
+    # An unrelated provider keeps its history.
+    assert record.get("elevenlabs", ledger.MODALITY_TTS) is not None
+
+
+def test_a_key_saved_through_any_path_forgets_and_refreshes_in_one_place(
+    server_with_brain: WebServer,
+    secret_store: _InMemorySecretStore,
+) -> None:
+    """The Control API, CLI connect flows and the setup wizard all save through
+    ``set_secret``; none of them calls a health route. The ONE listener on the
+    credential store forgets the old verdict and the rollup cache follows."""
+    from jarvis.brain import provider_health_ledger as ledger
+    from jarvis.core import config as cfg_mod
+
+    secret_store.data["openai_api_key"] = "sk-old"
+    ledger.get_ledger().record("openai", ledger.MODALITY_BRAIN, "bad_key")
+    with TestClient(server_with_brain.app) as client:
+        before = client.get("/api/providers/section-health").json()
+        # e.g. PUT /api/control/secrets/openai_api_key → cfg_mod.set_secret
+        assert cfg_mod.set_secret("openai_api_key", "sk-new") is True
+        after = client.get("/api/providers/section-health").json()
+
+    assert before["sections"]["brain"]["status"] == "error"
+    assert after["cached"] is False
+    assert after["sections"]["brain"]["status"] == "unknown"
+    assert after["sections"]["brain"]["reason"] == "unverified"
+
+
+def test_a_key_replaced_in_another_process_voids_the_stale_verdict(
+    server_with_brain: WebServer,
+    secret_store: _InMemorySecretStore,
+) -> None:
+    """The terminal wizard writes the keyring from its own process: no listener
+    fires here. The credential failure carries the fingerprint of the key it
+    was judged against, and a different key voids it on the next read."""
+    from jarvis.brain import provider_health_ledger as ledger
+
+    secret_store.data["openai_api_key"] = "sk-old"
+    ledger.get_ledger().record("openai", ledger.MODALITY_BRAIN, "bad_key")
+    with TestClient(server_with_brain.app) as client:
+        before = client.get("/api/providers/section-health").json()
+        secret_store.data["openai_api_key"] = "sk-new"  # no in-process write
+        after = client.get("/api/providers/section-health?refresh=true").json()
+
+    assert before["sections"]["brain"]["status"] == "error"
+    assert after["sections"]["brain"]["status"] == "unknown"
+    assert ledger.get_ledger().get("openai", ledger.MODALITY_BRAIN) is None
+
+
+def test_a_transient_outcome_is_amber_not_red(
+    server_with_brain: WebServer,
+    secret_store: _InMemorySecretStore,
+) -> None:
+    """A throttle or a blip has usually passed (or a fallback answered):
+    degraded, never the red of a rejected key."""
+    from jarvis.brain import provider_health_ledger as ledger
+
+    secret_store.data["openai_api_key"] = "sk-test"
+    ledger.get_ledger().record("openai", ledger.MODALITY_BRAIN, "rate_limited")
+    with TestClient(server_with_brain.app) as client:
+        body = client.get("/api/providers/section-health").json()
+
+    assert body["sections"]["brain"]["status"] == "needs_setup"
+    assert body["sections"]["brain"]["reason"] == "rate_limited"
 
 
 def test_list_providers_exposes_credential_help_and_billing(

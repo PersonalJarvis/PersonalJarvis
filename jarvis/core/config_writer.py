@@ -662,7 +662,7 @@ def set_codex_binary_path(binary_path: str, *, path: Path = DEFAULT_CONFIG_FILE)
 # frontend (jarvis/ui/web/frontend/src/hooks/useHotkey.ts). Keep these layers in
 # sync. The mapped value is BOTH the jarvis.toml key under [trigger] AND the
 # TriggerConfig field name (they are intentionally identical).
-KEYBIND_ACTIONS = ("call", "hangup", "dictate", "dictate_toggle", "paste_last")
+KEYBIND_ACTIONS = ("call", "hangup", "dictate", "dictate_toggle", "paste_last", "pet_toggle")
 KEYBIND_TOML_KEY = {
     "call": "hotkey_call",
     "hangup": "hotkey_hangup",
@@ -683,6 +683,9 @@ KEYBIND_TOML_KEY = {
     # clipboard content and therefore takes the transcript back off the
     # clipboard within a second.
     "paste_last": "hotkey_paste_last",
+    # Hide the desktop pet, or show it and bring it forward (docs/pets.md).
+    # Ships bound; see TriggerConfig.hotkey_pet_toggle for the collision proof.
+    "pet_toggle": "hotkey_pet_toggle",
 }
 
 #: One-time marker under ``[trigger]`` recording that the dictation-shortcut
@@ -1426,6 +1429,39 @@ def set_bar_size_scale(scale: float, *, path: Path = DEFAULT_CONFIG_FILE) -> Non
     if f != f or f in (float("inf"), float("-inf")):  # NaN / ±inf → default
         f = 1.0
     _patch_table(path, "ui", "bar_size_scale", max(0.5, min(2.0, f)))
+
+
+def set_pet_id(pet_id: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Persist ``[ui] pet_id`` (the active desktop pet, docs/pets.md).
+
+    TOML-only (not drift-guarded); the pets route applies it live. Whether the
+    pet exists is the caller's check; a value that is not even id-shaped is
+    refused here, so a bad request can never put a path or garbage into the
+    shared file.
+    """
+    from jarvis.core.config import normalize_pet_id  # noqa: PLC0415
+
+    normalized = normalize_pet_id(pet_id)
+    if normalized is None:
+        raise ValueError(f"not a pet id: {pet_id!r}")
+    _patch_table(path, "ui", "pet_id", normalized)
+
+
+def set_pet_scale(scale: float, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Persist ``[ui] pet_scale`` (the pet size slider), clamped to 0.5–2.0.
+
+    Same sanitizing as :func:`set_bar_size_scale` (``clamp_pet_scale``): a
+    non-numeric or non-finite value is stored as 1.0, never as an out-of-range
+    number.
+    """
+    from jarvis.core.config import clamp_pet_scale  # noqa: PLC0415
+
+    _patch_table(path, "ui", "pet_scale", clamp_pet_scale(scale))
+
+
+def set_pet_bubble(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Persist ``[ui] pet_bubble`` (show the pet's status bubble)."""
+    _patch_table(path, "ui", "pet_bubble", bool(enabled))
 
 
 def set_bar_follow_cursor_monitor(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:

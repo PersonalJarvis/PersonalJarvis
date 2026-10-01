@@ -1,90 +1,60 @@
-"""A fresh install must actually do something on a schedule.
+"""Nothing the app ships runs on a schedule by itself.
 
-Audit AU-02: all three cron seeds shipped ``enabled=False`` and the only
-enabled ones were ManualTrigger, so the WorkflowScheduler polled an empty list
-every 60 seconds forever. Jarvis had a scheduler and nothing to schedule.
-
-Exactly one cron seed is now on — the Morning Briefing, because it is the only
-one that needs nothing a fresh install does not have. The other two need a
-configured Telegram bot (and an authenticated ``gws`` CLI), so enabling them
-would just manufacture failing runs on somebody else's machine.
+The Morning Briefing used to be the one cron seed that shipped switched on: a
+full agent turn at 07:30 every day on every install, spoken aloud. The
+maintainer retired it (2026-09-30) — routines are the user's own to make. New
+installs no longer get it, and an existing install's seeded row is removed
+while it is still exactly what shipped; a row the user edited stays theirs.
 """
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 import pytest
 
+from jarvis.workflows import seed as seed_module
 from jarvis.workflows.schema import (
     BrainPromptStep,
     CronTrigger,
     ManualTrigger,
     SpeakStep,
+    TelegramSendStep,
     WorkflowDef,
 )
-from jarvis.workflows.seed import (
-    MORNING_BRIEFING_TOOLS,
-    SEED_WORKFLOWS,
-    ensure_seed_workflows,
-)
+from jarvis.workflows.seed import SEED_WORKFLOWS, ensure_seed_workflows
 from jarvis.workflows.store import WorkflowStore
 
-_CREDENTIAL_FREE_STEPS = (BrainPromptStep, SpeakStep)
+_BRIEFING_ID = seed_module._WF_MORNING_BRIEFING
+
+#: Stand-in for a shipped v2 prompt; the fixture registers its hash as shipped.
+_SHIPPED_V2_PROMPT = "You are Jarvis, compiling the user's daily briefing.\n"
 
 
-def _seed(name: str):
+def _seed(name: str) -> WorkflowDef:
     return next(wf for wf in SEED_WORKFLOWS if wf.name == name)
 
 
-def test_a_fresh_install_has_something_on_the_clock() -> None:
+def test_no_seed_runs_on_a_schedule_by_default() -> None:
     scheduled = [
-        wf
-        for wf in SEED_WORKFLOWS
-        if isinstance(wf.trigger, CronTrigger) and wf.enabled
-    ]
-    assert scheduled, "no enabled cron seed — the scheduler polls an empty list"
-
-
-def test_the_morning_briefing_is_the_one_that_ships_on() -> None:
-    briefing = _seed("Morning Briefing")
-    assert briefing.enabled
-    assert isinstance(briefing.trigger, CronTrigger)
-
-    others = [
         wf.name
         for wf in SEED_WORKFLOWS
         if isinstance(wf.trigger, CronTrigger) and wf.enabled
     ]
-    assert others == ["Morning Briefing"]
+    assert scheduled == [], f"shipped switched on: {scheduled}"
 
 
-def test_the_morning_briefing_needs_no_credentials() -> None:
-    """Only brain + speak. Nothing that reaches an external account, a shell,
-    or a tool — so nothing that can stall on an approval nobody is there to
-    give during an unattended 07:30 run."""
-    briefing = _seed("Morning Briefing")
-    assert briefing.steps
-    for step in briefing.steps:
-        assert isinstance(step, _CREDENTIAL_FREE_STEPS), (
-            f"{step.kind} step needs something a fresh install may not have"
-        )
-
-
-def test_the_morning_briefing_pins_no_language() -> None:
-    """The one resolver decides the output language, not the seed
-    (AGENTS.md §1). This seed used to hardcode German for every downloader."""
-    briefing = _seed("Morning Briefing")
-    speak = next(s for s in briefing.steps if isinstance(s, SpeakStep))
-    assert speak.language == "auto"
-    prompts = " ".join(
-        s.prompt for s in briefing.steps if isinstance(s, BrainPromptStep)
-    )
-    assert "in German" not in prompts
+def test_the_morning_briefing_is_no_longer_seeded() -> None:
+    assert all(wf.id != _BRIEFING_ID for wf in SEED_WORKFLOWS)
+    assert all(wf.name != "Morning Briefing" for wf in SEED_WORKFLOWS)
 
 
 def test_the_telegram_seeds_stay_off_until_telegram_is_configured() -> None:
     for name in ("Email Digest via Telegram", "Git Standup via Telegram"):
-        assert not _seed(name).enabled, f"{name} needs credentials to work"
+        wf = _seed(name)
+        assert isinstance(wf.trigger, CronTrigger)
+        assert not wf.enabled, f"{name} needs credentials to work"
+        assert any(isinstance(step, TelegramSendStep) for step in wf.steps)
 
 
 def test_the_manual_seeds_are_untouched() -> None:
@@ -95,95 +65,104 @@ def test_the_manual_seeds_are_untouched() -> None:
 
 
 # ----------------------------------------------------------------------
-# BUG-212 — version 2: a briefing, not a greeting
+# Existing installs: the seeded Morning Briefing row is retired
 # ----------------------------------------------------------------------
-
-#: Every grant is a read-side tool: nothing here can send, write or delete,
-#: so an unattended run never waits on an approval nobody is there to give.
-_READ_ONLY_GRANTS = frozenset({"google_calendar", "gmail", "wiki-recall", "search_web"})
-
-
-def test_the_briefing_step_is_an_isolated_turn_with_read_only_tools() -> None:
-    briefing = _seed("Morning Briefing")
-    brain = next(s for s in briefing.steps if isinstance(s, BrainPromptStep))
-    assert brain.tools == MORNING_BRIEFING_TOOLS
-    assert set(brain.tools) <= _READ_ONLY_GRANTS
-    assert brain.model_tier in ("auto", "fast", "deep")
-
-
-def test_the_briefing_prompt_grounds_itself_and_greets_by_time_of_day() -> None:
-    briefing = _seed("Morning Briefing")
-    prompt = next(s.prompt for s in briefing.steps if isinstance(s, BrainPromptStep))
-    assert "tool output" in prompt
-    assert "Never invent" in prompt
-    assert "time of day" in prompt
-    assert "not connected" in prompt, "a disconnected area is skipped, not faked"
-    # Live dev run 2026-09-02 11:43: with "if the user's city is known from
-    # memory" the model reported San Francisco weather to a user in Germany.
-    assert "Never choose a city yourself" in prompt
-    assert "Compose a short, friendly morning announcement" not in prompt
 
 
 @pytest.fixture
-async def store(tmp_path: Path) -> WorkflowStore:
+async def store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> WorkflowStore:
+    monkeypatch.setattr(
+        seed_module,
+        "_SHIPPED_MORNING_BRIEFING_PROMPTS",
+        frozenset({hashlib.sha256(_SHIPPED_V2_PROMPT.encode("utf-8")).hexdigest()}),
+    )
     s = WorkflowStore(tmp_path / "wf.sqlite")
     await s.init()
     yield s
     await s.close()
 
 
-def _v1_morning_briefing(*, enabled: bool) -> WorkflowDef:
-    """The shipped v1 row, the shape an installed box carries in its DB."""
-    v2 = _seed("Morning Briefing")
-    return v2.model_copy(update={
-        "enabled": enabled,
-        "steps": (
-            BrainPromptStep(
-                label="Generate daily summary",
-                prompt=(
-                    "You are Jarvis. It's currently morning. Compose a short, "
-                    "friendly morning announcement (max 3 sentences) in the "
-                    "configured output language."
-                ),
-                max_output_chars=500,
-            ),
-            SpeakStep(label="Play announcement", text="{{prev.output}}", language="auto"),
+def _briefing_row(
+    *,
+    enabled: bool = True,
+    prompt: str = _SHIPPED_V2_PROMPT,
+    cron: str = "30 7 * * *",
+    name: str = "Morning Briefing",
+    created_by: str = "seed",
+) -> WorkflowDef:
+    """The row an installed box carries, shaped like the seed that shipped."""
+    return WorkflowDef(
+        id=_BRIEFING_ID,
+        name=name,
+        description="Daily 07:30 spoken briefing.",
+        trigger=CronTrigger(expression=cron),
+        steps=(
+            BrainPromptStep(label="Compile the briefing", prompt=prompt),
+            SpeakStep(label="Speak the briefing", text="{{prev.output}}", language="auto"),
         ),
-    })
+        enabled=enabled,
+        created_by=created_by,
+    )
 
 
-async def test_the_shipped_v1_row_is_migrated_and_keeps_its_switch(
-    store: WorkflowStore,
-) -> None:
-    """An installed box has the greeting seed in its DB; it must become the
-    briefing without flipping the user's on/off choice."""
-    await store.upsert_workflow(_v1_morning_briefing(enabled=False))
+async def test_the_shipped_briefing_row_is_removed(store: WorkflowStore) -> None:
+    await store.upsert_workflow(_briefing_row(enabled=True))
 
     added = await ensure_seed_workflows(store)
 
-    assert added == len(SEED_WORKFLOWS) - 1
-    row = await store.get_workflow(str(_seed("Morning Briefing").id))
-    assert row is not None
-    assert row["enabled"] == 0, "the user had it off — still off"
-    definition = WorkflowDef.model_validate_json(row["def_json"])
-    brain = next(s for s in definition.steps if isinstance(s, BrainPromptStep))
-    assert brain.tools == MORNING_BRIEFING_TOOLS
+    assert added == len(SEED_WORKFLOWS)
+    assert await store.get_workflow(str(_BRIEFING_ID)) is None
 
 
-async def test_a_users_own_edit_of_the_briefing_is_left_alone(
-    store: WorkflowStore,
-) -> None:
-    edited = _seed("Morning Briefing").model_copy(update={
-        "steps": (
-            BrainPromptStep(prompt="Read me my own notes file and nothing else."),
-            SpeakStep(text="{{prev.output}}", language="auto"),
-        ),
-    })
-    await store.upsert_workflow(edited)
+async def test_a_switched_off_shipped_row_is_removed_too(store: WorkflowStore) -> None:
+    """It no longer ships and a seed cannot be deleted from the desktop."""
+    await store.upsert_workflow(_briefing_row(enabled=False))
 
     await ensure_seed_workflows(store)
 
-    row = await store.get_workflow(str(edited.id))
+    assert await store.get_workflow(str(_BRIEFING_ID)) is None
+
+
+async def test_the_shipped_v1_greeting_row_is_removed(store: WorkflowStore) -> None:
+    v1_prompt = (
+        "You are Jarvis. It's currently morning. Compose a short, friendly "
+        "morning announcement (max 3 sentences) in the configured output language."
+    )
+    await store.upsert_workflow(_briefing_row(prompt=v1_prompt))
+
+    await ensure_seed_workflows(store)
+
+    assert await store.get_workflow(str(_BRIEFING_ID)) is None
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [
+        {"prompt": "Read me my own notes file and nothing else."},
+        {"cron": "0 6 * * 1-5"},
+        {"name": "My mornings"},
+        {"created_by": "user"},
+    ],
+    ids=["own-prompt", "own-schedule", "renamed", "user-created"],
+)
+async def test_a_briefing_the_user_made_their_own_stays(
+    store: WorkflowStore, edit: dict[str, str]
+) -> None:
+    await store.upsert_workflow(_briefing_row(**edit))
+
+    await ensure_seed_workflows(store)
+
+    row = await store.get_workflow(str(_BRIEFING_ID))
     assert row is not None
-    definition = WorkflowDef.model_validate_json(row["def_json"])
-    assert definition.steps[0].prompt == "Read me my own notes file and nothing else."
+    assert row["enabled"] == 1, "the user's switch is not touched either"
+
+
+async def test_retirement_is_idempotent(store: WorkflowStore) -> None:
+    await store.upsert_workflow(_briefing_row())
+
+    await ensure_seed_workflows(store)
+    added_again = await ensure_seed_workflows(store)
+
+    assert added_again == 0
+    assert await store.get_workflow(str(_BRIEFING_ID)) is None
+    assert len(await store.list_workflows()) == len(SEED_WORKFLOWS)

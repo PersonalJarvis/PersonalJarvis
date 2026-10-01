@@ -3784,6 +3784,13 @@ class RealtimeVoiceSession:
         a terminal event through the same session cannot make it healthy.
         """
         status = classify_provider_error(message)
+        # Every realtime provider failure passes here: record its class (never
+        # the message, AP-34) for the Realtime tab's status dot.
+        from jarvis.brain import provider_health_ledger as health_ledger
+
+        health_ledger.record_status(
+            self._provider_id(provider), health_ledger.MODALITY_REALTIME, status
+        )
         if status in _CREDENTIAL_TERMINAL_STATUSES:
             self._blocked_credential_families.add(
                 self._credential_family(provider)
@@ -7935,6 +7942,15 @@ class RealtimeVoiceSession:
             pass
 
     async def _publish_ready(self) -> None:
+        # The accepted handshake is the Realtime tab's evidence: its status dot
+        # reads this instead of opening a (billed) session of its own.
+        from jarvis.brain import provider_health_ledger as health_ledger
+
+        health_ledger.record_success(
+            self.active_provider,
+            health_ledger.MODALITY_REALTIME,
+            model=self._active_model,
+        )
         if self._bus is None:
             return
         try:

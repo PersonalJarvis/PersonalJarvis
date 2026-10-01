@@ -89,7 +89,6 @@ def test_expected_builtin_count() -> None:
     from jarvis.skills.builtin import _PLUGIN_PAIRED_SKILLS
 
     base = {
-        "morning-routine",
         "deep-work-mode",
         "memory-save",
         "skill-creator",
@@ -162,19 +161,15 @@ def test_cli_gcloud_specifics() -> None:
     assert fm.intent_objects == []
 
 
-def test_morning_routine_specifics() -> None:
-    """Instruction-skill model (2026-06-09): no fictional MCP tool names in
-    requires_tools — the body instructs the brain to use whatever calendar/
-    mail/web tools are actually connected."""
-    skill = parse_skill(builtin_skill_path("morning-routine"))
+@pytest.mark.parametrize("name", list(BUILTIN_SKILL_NAMES))
+def test_no_builtin_skill_runs_on_a_schedule(name: str) -> None:
+    """Nothing shipped runs by itself (2026-09-30): the retired morning-routine
+    fired a full brain turn at 07:00 on every install. A schedule is a routine,
+    and routines are the user's own to make."""
+    skill = parse_skill(builtin_skill_path(name))
     fm = skill.frontmatter
     assert fm is not None
-    trig_types = {t.type for t in fm.triggers}
-    assert "voice" in trig_types
-    assert "schedule" in trig_types
-    assert fm.requires_tools == []
-    assert fm.execution == "inline"
-    assert fm.config.get("weather_location") == "Berlin"
+    assert "schedule" not in {t.type for t in fm.triggers}
 
 
 def test_deep_work_mode_specifics() -> None:

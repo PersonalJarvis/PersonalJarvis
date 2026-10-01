@@ -23,7 +23,7 @@ import {
   type WorkspaceFileItem,
   type WorkspaceFilePreviewResponse,
 } from "@/lib/agenticIdeApi";
-import { WORKSPACE_PATH_TYPE } from "@/components/agentic/paneDrop";
+import { setWorkspaceDragPaths } from "@/components/agentic/paneDrop";
 import { AgentMark } from "@/components/agentic/AgentMark";
 import { useEventStore } from "@/store/events";
 import { useIdeChatStore } from "@/store/ideChat";
@@ -68,7 +68,10 @@ const parentPath = (path: string) => path.split("/").slice(0, -1).join("/");
 
 /** Start a drag that a terminal pane turns into a file reference. */
 function startFileDrag(event: DragEvent, absolute: string): void {
-  event.dataTransfer.setData(WORKSPACE_PATH_TYPE, absolute);
+  if (!setWorkspaceDragPaths(event.dataTransfer, [absolute])) {
+    event.preventDefault();
+    return;
+  }
   event.dataTransfer.setData("text/plain", absolute);
   event.dataTransfer.effectAllowed = "copy";
 }

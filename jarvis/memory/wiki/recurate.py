@@ -22,6 +22,7 @@ FTS). Manual invocation only (``jarvis.memory.wiki.cli recurate-profile``)
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
@@ -178,31 +179,36 @@ async def recurate_profile(
         stream=True,
     )
 
+    from jarvis.brain.background_policy import BackgroundDeferred
     from jarvis.memory.wiki.provider_chain import (
-        background_wiki_providers,
-        build_wiki_provider_chain,
+        build_background_wiki_chain,
         complete_with_fallback,
     )
 
     # An injected registry (tests) skips the credential filter — the same
     # convention as WikiCuratorLLM/Consolidator: production uses a fresh
-    # registry and only keeps key-ready provider families in the chain.
+    # registry and only keeps key-ready provider families in the chain. The
+    # background billing policy applies either way: once a subscription is
+    # connected this runs on subscriptions and local models only.
     credential_filter = registry is None
     if registry is None:
         from jarvis.brain.provider_registry import BrainProviderRegistry
 
         registry = BrainProviderRegistry()
-    available = set(registry.available())
-    chain = build_wiki_provider_chain(
-        primary=(wiki_cfg.curator.provider.strip() or config.brain.primary),
-        model_override=wiki_cfg.curator.model,
-        available=available,
-        credential_ready=(
-            background_wiki_providers(available=available, config=config)
-            if credential_filter
-            else available
-        ),
-    )
+    try:
+        # Provider selection may run vendor login probes (seconds of subprocess):
+        # keep it off the event loop (AP-9).
+        background = await asyncio.to_thread(
+            build_background_wiki_chain,
+            registry=registry,
+            config=config,
+            primary=(wiki_cfg.curator.provider.strip() or config.brain.primary),
+            model_override=wiki_cfg.curator.model,
+            credential_filter=credential_filter,
+        )
+    except BackgroundDeferred as exc:  # reported to the caller through report.error
+        report.error = f"waiting for the subscription: {exc}"
+        return report
 
     def _validate_response(agg: Any) -> str | None:
         if is_length_truncated(agg.finish_reason, agg.text):
@@ -217,12 +223,14 @@ async def recurate_profile(
 
     result = await complete_with_fallback(
         registry=registry,
-        chain=chain,
+        chain=background.chain,
         request=request,
         timeout_s=float(wiki_cfg.curator.timeout_s),
         label="RecurateProfile",
         aggregate=aggregate,
         validate=_validate_response,
+        provider_options=background.provider_options,
+        record_chain_failure=not background.subscription_mode,
     )
     if result is None:
         report.error = "no provider produced a valid re-curation proposal"

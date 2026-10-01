@@ -145,3 +145,75 @@ export function displayAddress(
   return first ? first : null;
 }
 
+
+// ----------------------------------------------------------------------
+// Choice fields — the closed vocabularies the profile template documents
+// ----------------------------------------------------------------------
+
+/**
+ * Fields whose value is one of a few words, as written in the USER.md
+ * template comments. The editor offers them as a segmented control; a value
+ * outside the list (the curator wrote free text) still renders verbatim and
+ * stays editable, so nothing on disk is ever hidden by the vocabulary.
+ */
+export const CHOICE_FIELDS: Readonly<Record<string, readonly string[]>> = {
+  verbosity: ["tldr", "normal", "deep-dive"],
+  focus_mode: ["deep-work", "fragment", "mixed"],
+  planning_horizon: ["now", "today", "week", "quarter"],
+  feedback_pref: ["direct-correct", "suggest", "ask-then-act"],
+};
+
+/** 1–5 scales; the template defines both ends, the editor shows five steps. */
+export const SCALE_FIELDS: ReadonlySet<string> = new Set(["directness", "formality"]);
+
+/** Suggested chips for list fields whose template names a vocabulary. */
+export const LIST_SUGGESTIONS: Readonly<Record<string, readonly string[]>> = {
+  humor_types: ["dry", "nerdy", "sarcastic", "warm", "none"],
+  motivations: ["mastery", "autonomy", "impact"],
+};
+
+/** A scale value as an integer 1–5, or null when it is not one. */
+export function scaleValue(value: unknown): number | null {
+  const n = typeof value === "number" ? value : Number(String(value ?? "").trim());
+  return Number.isInteger(n) && n >= 1 && n <= 5 ? n : null;
+}
+
+// ----------------------------------------------------------------------
+// Page groups — how the five clusters are presented
+// ----------------------------------------------------------------------
+
+export type GroupId = "about" | "talk" | "work" | "values";
+
+export interface FieldRef {
+  cid: ClusterId;
+  field: string;
+}
+
+/**
+ * Four groups a reader recognises, built from the five storage clusters.
+ * Relationship holds a single field (how you like feedback), which belongs
+ * with how you work; a section with one row reads as an accident.
+ */
+export const PAGE_GROUPS: readonly { id: GroupId; fields: readonly FieldRef[] }[] = [
+  { id: "about", fields: CLUSTER_FIELD_KEYS.identity.map((field) => ({ cid: "identity", field })) },
+  {
+    id: "talk",
+    fields: CLUSTER_FIELD_KEYS.communication.map((field) => ({ cid: "communication", field })),
+  },
+  {
+    id: "work",
+    fields: [
+      ...CLUSTER_FIELD_KEYS.work_style.map((field) => ({ cid: "work_style" as const, field })),
+      ...CLUSTER_FIELD_KEYS.relationship.map((field) => ({ cid: "relationship" as const, field })),
+    ],
+  },
+  { id: "values", fields: CLUSTER_FIELD_KEYS.values.map((field) => ({ cid: "values", field })) },
+];
+
+/** Whole days between an ISO date and now; null when unparseable. */
+export function daysSince(iso: unknown, now: Date = new Date()): number | null {
+  if (typeof iso !== "string" || !iso.trim()) return null;
+  const then = new Date(iso);
+  if (Number.isNaN(then.getTime())) return null;
+  return Math.max(0, Math.floor((now.getTime() - then.getTime()) / 86_400_000));
+}

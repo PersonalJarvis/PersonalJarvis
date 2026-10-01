@@ -16,8 +16,8 @@ CURRENT_TERMS_VERSION = "1.0"
 
 # Canonical step order — must match SETUP_STEP_IDS in the frontend
 # (components/onboarding/setup/setupSteps.ts). Setup runs INSIDE the real app:
-# each step opens the app's own place for the job (the API Keys page, the
-# wake-word group in Settings) and points at it. The tour of the app runs
+# each step opens the app's own place for the job (the API Keys page and its
+# Agents tab, the wake-word group in Settings) and points at it. The tour of the app runs
 # AFTER the completion restart and is tracked separately
 # (``tour_completed_at`` in jarvis.setup.state).
 # Restart batching (maintainer mandate 2026-07-18): permissions and voice sit
@@ -28,6 +28,7 @@ CURRENT_TERMS_VERSION = "1.0"
 ONBOARDING_STEPS: list[str] = [
     "welcome",
     "keys",
+    "subscriptions",
     "permissions",
     "voice",
     "ready",

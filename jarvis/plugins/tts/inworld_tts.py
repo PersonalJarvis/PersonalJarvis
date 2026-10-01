@@ -201,6 +201,9 @@ class InworldTTS:
         voice_id = self._resolve_voice(text, voice, language_code)
         self.last_voice = voice_id
         self.last_voice_provider = self.name
+        # What this provider failed with when a fallback voice spoke instead
+        # (read by the speech meter for the provider-health dots).
+        self.last_failure: str | None = None
 
         log = logging.getLogger("jarvis.tts.inworld")
 
@@ -230,6 +233,7 @@ class InworldTTS:
             try:
                 pcm = await task
             except _InworldFatalError as exc:
+                self.last_failure = f"{type(exc).__name__}: {exc}"
                 self._quota_blocked_until = time.monotonic() + _QUOTA_COOLDOWN_S
                 log.warning(
                     "Inworld quota/auth error (%s) -- fallback for %.0f min.",

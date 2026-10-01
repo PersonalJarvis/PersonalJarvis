@@ -227,7 +227,7 @@ async def stack(tmp_path: Path):
     )
 
     bus = EventBus()
-    bridge = VoiceFactBridge(bus=bus, curator=curator, config=None, extractor=extractor)
+    bridge = VoiceFactBridge(bus=bus, extractor=extractor)
     bridge.start()
 
     # D4 skeleton, as bootstrap would do it — then age again so the first

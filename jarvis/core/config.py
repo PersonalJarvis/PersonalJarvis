@@ -38,6 +38,10 @@ from jarvis.live.config import LiveConfig
 # wake-engine enum + the default phrase.
 from jarvis.speech.wake_constants import DEFAULT_WAKE_PHRASE, WAKE_ENGINES
 
+# The pet vocabulary module has no imports at all (see its docstring), so it is
+# as safe here as wake_constants.
+from jarvis.ui.pets.states import DEFAULT_PET_ID
+
 from .branding import CONFIG_FILE_NAME, KEYRING_SERVICE_NAME
 from .instance import current_instance
 from .protocols import RiskTier
@@ -423,6 +427,20 @@ class TriggerConfig(BaseModel):
     # A macOS user can record a Command-based combination instead; the
     # validator accepts `cmd+...` on darwin.
     hotkey_paste_last: str = "ctrl+alt+v"
+    # Hide the desktop pet, or show it and bring it to the front (docs/pets.md).
+    # A no-op for every other overlay style. Ships bound, like the dictation
+    # keys, and curated the same way: ``alt+win+p`` passes ``validate_hotkey``
+    # on win32, darwin AND linux with no caution (Win+P alone is the Windows
+    # projection shortcut; with Alt held it is not a shell chord), and its
+    # normalized key set {alt, window, p} is neither a subset nor a superset of
+    # Call / Hangup / both dictation keys / paste-last, the kill switch
+    # (ctrl+alt+shift+k) or the Jarvis X keys (ctrl+shift+1..6), so
+    # ``combos_collide`` accepts all of them at once. It holds ONE Alt key, so
+    # it can never fire the both-Alt appshot gesture (``alt+alt``) either. On
+    # macOS the win token is Command (cmd+alt+p). An empty value disables it;
+    # on Wayland the compositor owns global shortcuts and this is a no-op.
+    # ``tests/unit/core/test_pet_config.py`` pins every one of these claims.
+    hotkey_pet_toggle: str = "alt+win+p"
     wake_word: WakeWordConfig = Field(default_factory=WakeWordConfig)
     # When false (default), the pipeline keeps the mic open after the
     # response (conversation mode) and only hangs up via HANGUP_RE, the idle
@@ -979,6 +997,41 @@ def normalize_force_spawn_mode(value: object) -> str:
     """
     mode = str(value or "").strip().lower()
     return mode if mode in FORCE_SPAWN_MODES else DEFAULT_FORCE_SPAWN_MODE
+
+
+#: The SHAPE every pet id has: a built-in slug (``gigi``), a user-created id
+#: (``u`` + 16 hex digits) or ``none``. The user-created form is a special case
+#: of the slug, so one pattern covers all three (docs/pets.md, sprite format).
+_PET_ID_SHAPE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
+
+
+def normalize_pet_id(value: object) -> str | None:
+    """Lower-cased, trimmed pet id, or ``None`` when it cannot be one.
+
+    Shape only — whether the pet exists is decided where pets are listed. Also
+    the path-traversal guard for every route that turns an id into a folder:
+    the shape admits no separator, no dot and no drive letter.
+    """
+    if not isinstance(value, str):
+        return None
+    pet_id = value.strip().lower()
+    return pet_id if _PET_ID_SHAPE.fullmatch(pet_id) else None
+
+
+def clamp_pet_scale(value: object) -> float:
+    """The pet size multiplier, clamped to 0.5–2.0.
+
+    Same sanitizing as ``bar_size_scale``: a non-numeric or non-finite value
+    becomes 1.0. One definition for the config load, the TOML writer and the
+    pets route, so the three can never disagree about the range.
+    """
+    try:
+        f = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):  # Invalid saved pet scales use the documented 1.0 default.
+        return 1.0
+    if f != f or f in (float("inf"), float("-inf")):  # NaN / ±inf
+        return 1.0
+    return max(0.5, min(2.0, f))
 
 
 class BrainRoutingConfig(BaseModel):
@@ -1753,39 +1806,6 @@ class SchedulerConfig(BaseModel):
     flush_pending_max_age_minutes: int = 10
 
 
-class VoiceBridgeConfig(BaseModel):
-    """``VoiceFactBridge`` settings (Phase B8 — aggressive-ingest mode).
-
-    The bridge has two paths from voice turn -> wiki:
-
-    * **Ack path** (always on): ingest when the brain reply contains an
-      explicit "notiert" / "vermerkt" / ... keyword. Narrow, false-positive
-      free.
-    * **Aggressive path** (this section's toggle): every user turn with
-      at least ``min_user_chars`` characters is handed to the curator
-      regardless of how the brain replied. The curator's prompt is the
-      salience filter -- smalltalk returns an empty list, facts produce
-      pages.
-
-    The aggressive path is the safety net for the case "user states a
-    fact, brain replies conversationally without an ack-keyword". B1 §3.8
-    planned this but never activated it; this section turns it on by
-    default.
-
-    ``rate_limit_seconds`` is an opt-in cost control. The default reviews every
-    eligible completed turn so a second durable fact in the same realtime
-    conversation is not silently discarded.
-    """
-
-    model_config = ConfigDict(extra="allow")
-
-    aggressive_mode: bool = True
-    # Keep this aligned with ExtractorConfig.min_user_chars. Stage 2 remains
-    # the quality gate; a 12-character ownership statement can be durable.
-    min_user_chars: int = 12
-    rate_limit_seconds: int = 0
-
-
 class ExtractorConfig(BaseModel):
     """Settings for the Stage-1 ``ConversationFactExtractor`` (Wave 2).
 
@@ -1793,6 +1813,9 @@ class ExtractorConfig(BaseModel):
     configured here — both curator stages resolve through the single
     ``[memory.wiki.curator]`` provider/model pair (the Wiki settings card
     drives them together). This section only holds the extraction gates.
+    The extractor reviews only explicitly saved turns (the voice bridge's
+    acknowledgement path) and user-started backfills; ``enabled = false``
+    turns both off.
     """
 
     model_config = ConfigDict(extra="allow")
@@ -1815,19 +1838,23 @@ class ExtractorConfig(BaseModel):
 
 
 class WikiMemoryConfig(BaseModel):
-    """Root of the ``[memory.wiki]`` block (Phase B1+B7+B8 + Wave 2).
+    """Root of the ``[memory.wiki]`` block (Phase B1+B7 + Wave 2).
 
-    Holds the Curator LLM section (B1), the session-rollup section (B7),
-    the voice-bridge section (B8 aggressive ingest), and the Stage-1
-    extractor section (Wave 2). Defaults are chosen so a config without
-    the section loads cleanly as ``WikiMemoryConfig()``.
+    Holds the Curator LLM section (B1), the session-rollup section (B7) and
+    the Stage-1 extractor section (Wave 2). Defaults are chosen so a config
+    without the section loads cleanly as ``WikiMemoryConfig()``.
+
+    The former ``[memory.wiki.voice_bridge]`` table (``aggressive_mode``,
+    ``min_user_chars``, ``rate_limit_seconds``) configured the automatic
+    review of every user turn, removed 2026-09-30. An old ``jarvis.toml``
+    that still carries it keeps validating through ``extra="allow"`` (AP-16)
+    and the values are ignored.
     """
 
     model_config = ConfigDict(extra="allow")
 
     curator: WikiCuratorConfig = Field(default_factory=WikiCuratorConfig)
     session_rollup: SessionRollupConfig = Field(default_factory=SessionRollupConfig)
-    voice_bridge: VoiceBridgeConfig = Field(default_factory=VoiceBridgeConfig)
     extractor: ExtractorConfig = Field(default_factory=ExtractorConfig)
 
 
@@ -1876,8 +1903,10 @@ class JarvisLearningConfig(BaseModel):
     #: stays small. At 125 % new entries are refused until the reviewer merges.
     user_budget_chars: int = Field(default=1_500, ge=300, le=40_000)
     memory_budget_chars: int = Field(default=1_000, ge=300, le=40_000)
-    #: Reviewer provider/model. Empty = the wiki curator's provider on its cheap
-    #: model, then every other reachable provider (subscriptions before keys).
+    #: Reviewer override: a brain provider id and, optionally, its model (the
+    #: model applies only together with a provider). Empty = the Jarvis lead's
+    #: own seat, the provider, model and auth mode the front-page Jarvis chat
+    #: answers on; no other provider is ever asked (``society.seat_brain``).
     provider: str = ""
     model: str = ""
     timeout_s: float = Field(default=90.0, ge=5.0, le=600.0)
@@ -2167,6 +2196,17 @@ class UIConfig(BaseModel):
     # a headless / Wayland host with no reliable per-monitor geometry keeps the
     # single-monitor behaviour. See jarvis/ui/jarvisbar/interaction.py.
     bar_follow_cursor_monitor: bool = True
+    # Desktop pet (orb_style = "pet", docs/pets.md). ``pet_id`` is a built-in
+    # id, a user-created ``u…`` id, or "none" (the control strip without a
+    # figure). An id that no longer exists on disk falls back to the default
+    # pet where it is resolved (pets routes / overlay), never here: the
+    # validator only sanitizes the SHAPE so a hand-edited value cannot brick
+    # the load. Vocabulary: jarvis.ui.pets.states.
+    pet_id: str = DEFAULT_PET_ID
+    # Pet size multiplier on top of the monitor DPI scale, 0.5–2.0.
+    pet_scale: float = 1.0
+    # Show the status bubble under the pet's control strip.
+    pet_bubble: bool = True
     # Remembered "open with" choice for Outputs artifacts: an opener id
     # ("default" = OS default app, "browser", or an editor key like "code").
     # Empty = ask via the chooser dialog on first open. Desktop-only.
@@ -2197,6 +2237,19 @@ class UIConfig(BaseModel):
         if f != f or f in (float("inf"), float("-inf")):  # NaN / ±inf
             return 1.0
         return max(0.5, min(2.0, f))
+
+    @field_validator("pet_id", mode="before")
+    @classmethod
+    def _sanitize_pet_id(cls, v: object) -> object:
+        # Lower-case and trim; anything that is not a valid pet id shape (a
+        # typo, a path, a non-string) falls back to the default pet so a
+        # corrupt jarvis.toml can never brick the load. "none" is a valid pick.
+        return normalize_pet_id(v) or DEFAULT_PET_ID
+
+    @field_validator("pet_scale", mode="before")
+    @classmethod
+    def _clamp_pet_scale(cls, v: object) -> object:
+        return clamp_pet_scale(v)
 
 
 class DuckingConfig(BaseModel):
@@ -2495,14 +2548,18 @@ class BoardFederationConfig(BaseModel):
 class BoardBioConfig(BaseModel):
     """Knobs for the AI profile generator (BioGenerator).
 
-    Important: NO provider/model default. The bio dynamically uses the
-    frontier model of the currently configured primary provider
-    (see ``jarvis/brain/resolver.py:resolve_frontier_brain``). A user with
-    only a Gemini API key gets a Gemini bio; a user with Claude configured gets
-    Opus. Multi-provider compliance is mandatory.
+    Important: NO provider/model default. The bio is background work and
+    follows the background billing rule (``jarvis/board/bio_brain.py``): once
+    a subscription is connected it is written on a subscription or a free
+    local model, never a per-token key; a key-only install uses the frontier
+    model of its primary provider. Multi-provider compliance is mandatory.
 
     ``override_provider`` / ``override_model`` are power-user fields for
     explicitly pinning a model for the bio only. Leave empty in 99% of cases.
+
+    The bio is rewritten on board events (achievements) and on request, never
+    on a timer. The retired ``cold_start_min_days`` key still loads from old
+    configs (``extra="allow"``) and is ignored.
     """
 
     model_config = {"extra": "allow"}
@@ -2511,9 +2568,6 @@ class BoardBioConfig(BaseModel):
     max_tokens: int = Field(default=400, ge=80, le=2000)
     override_provider: str | None = None
     override_model: str | None = None
-    # Cold start: trigger the first bio after this minimum age in days
-    # (instead of waiting until Sunday when no bio exists yet).
-    cold_start_min_days: int = Field(default=1, ge=0, le=14)
 
 
 class BoardConfig(BaseModel):
@@ -2990,6 +3044,15 @@ class WikiIntegrationConfig(BaseModel):
     # speaker, which is why this explicit list exists rather than a guess.
     search_alias_languages: list[str] = Field(default_factory=list)
 
+    # Runaway guard on how OFTEN the wiki may call a model on its own per
+    # local day (consolidator judge, split-and-retry halves, write-time search
+    # aliases, explicitly saved turns' extraction). Read by
+    # jarvis/memory/wiki/background_guard.py. It counts calls only — it never
+    # shortens a prompt, a context window or an output budget. When reached,
+    # the work waits until the next day and one log line says so. Generous on
+    # purpose: a normal day needs a handful; values below 1 count as 1.
+    max_background_llm_calls_per_day: int = 200
+
 
 class WikiContextConfig(BaseModel):
     """Configuration for the wiki context injector (B5 Agent C).
@@ -3002,7 +3065,7 @@ class WikiContextConfig(BaseModel):
     and migrate callers off the top-level ``cfg.wiki_context`` field.
 
     ``extra="allow"`` is mandatory and matches every sibling wiki sub-table
-    (WikiCurator/SessionRollup/Scheduler/VoiceBridge/WikiMemory/
+    (WikiCurator/SessionRollup/Scheduler/Extractor/WikiMemory/
     WikiIntegration): a self-mod or drift-guard write of an unknown future
     key must survive validation rather than being silently dropped (AP-16).
     """
@@ -4097,12 +4160,6 @@ class MarketplaceConfig(BaseModel):
     # retired, so a stock install offers no Publish button instead of firing
     # a request at a host that answers nothing.
     publish_endpoint: str = ""
-    # Where the in-app Wallpapers view publishes a picture. A lane of its own
-    # because the payload is multipart image bytes, not a JSON manifest — but
-    # the same identity, the same registry, the same feed. Empty string hides
-    # "Share to community" in the wallpaper picker — the default, for the same
-    # reason as ``publish_endpoint`` above.
-    publish_wallpaper_endpoint: str = ""
     # Client id of the marketplace GitHub App (public by design — device flow
     # needs no secret, which is why a downloadable binary can use it).
     publish_github_client_id: str = "Iv23li1YcX62KJO67whO"
@@ -4289,12 +4346,12 @@ class AgenticIdeConfig(BaseModel):
     )
 
     smart_recaps: bool = Field(
-        default=True,
+        default=False,
         description=(
-            "Let a model write each pane's header recap — what the pane set out "
-            "to do, where it stands, what is outstanding. Off falls back to the "
-            "transcript-derived one, which costs nothing and says much less. An "
-            "install with no reachable provider gets the fallback either way."
+            "Let a model write a pane's header title when its coding CLI has not "
+            "named the session itself. Off (the default) uses the CLI's own title "
+            "(Claude Code, Codex) and otherwise the pane's first or last prompt, "
+            "which costs nothing. On spends background model requests."
         ),
     )
 
@@ -5048,6 +5105,15 @@ _PLATFORM_KEYRING_BACKEND: Any | None = None
 _LAST_KEYRING_FAILED_SLOT: str | None = None
 _SECRET_REVISION_LOCK = threading.Lock()
 _SECRET_REVISIONS: dict[str, int] = {}
+# Bumped by every in-process credential write or delete, whatever the slot:
+# caches that depend on "which keys exist" key on it instead of each write
+# path having to remember to drop them.
+_SECRET_GENERATION: int = 0
+# Called with the slot name after every successful write or delete. The ONE
+# place a credential change is observable in-process — every save path (the
+# API-Keys routes, the Control API, CLI connect flows, the setup wizard) goes
+# through ``set_secret`` / ``delete_secret``.
+_SECRET_CHANGE_LISTENERS: list[Any] = []
 
 
 def secret_revision(key: str) -> int:
@@ -5061,9 +5127,39 @@ def secret_revision(key: str) -> int:
         return _SECRET_REVISIONS.get(key, 0)
 
 
+def secret_generation() -> int:
+    """How many credential writes/deletes this process has seen (any slot)."""
+    with _SECRET_REVISION_LOCK:
+        return _SECRET_GENERATION
+
+
+def add_secret_change_listener(listener: Any) -> None:
+    """Call ``listener(slot)`` after every successful secret write or delete.
+
+    Idempotent per callable. A listener must be cheap and must not raise; a
+    failing one is logged and skipped so a credential save never fails on it.
+    """
+    with _SECRET_REVISION_LOCK:
+        if listener not in _SECRET_CHANGE_LISTENERS:
+            _SECRET_CHANGE_LISTENERS.append(listener)
+
+
 def _mark_secret_changed(key: str) -> None:
+    global _SECRET_GENERATION
     with _SECRET_REVISION_LOCK:
         _SECRET_REVISIONS[key] = _SECRET_REVISIONS.get(key, 0) + 1
+        _SECRET_GENERATION += 1
+        listeners = list(_SECRET_CHANGE_LISTENERS)
+    for listener in listeners:
+        try:
+            listener(key)
+        except Exception:  # noqa: BLE001 — the credential IS saved; a follower failing must not undo that
+            logging.getLogger(__name__).warning(
+                "secret-change listener %r failed for slot %s",
+                getattr(listener, "__qualname__", listener),
+                key,
+                exc_info=True,
+            )
 
 
 # Serializes _FileCredStore's load-mutate-save cycle so two in-process

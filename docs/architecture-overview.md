@@ -54,7 +54,7 @@ subprocess flicker, audio host-API) are catalogued there.
 | **Channels (Web / Telegram / Discord)** | ✅ | `jarvis/channels/` (`base.py` ChannelAdapter, `manager.py`, `bootstrap.py` `bootstrap_channels`, `chat_bridge.py`, `web.py`/`telegram.py`/`discord.py`). Bridges a DM/guild message into the normal Jarvis chat path. Entry points `web` (base), `telegram` (base dep `python-telegram-bot`), `discord` (optional `[channels]` extra, lazy-imported, graceful `ChannelStartError` when absent). Tokens via the OS credential store. |
 | **Friends + Socials** | ✅ | `jarvis/friends/` (`registry.py` `FriendRegistry` on `aiosqlite`, `status_publisher.py`, `status_filter.py`, `messages.py`, `schemas.py`). Routes `friends_routes.py` + `socials_routes.py`; views `FriendsView.tsx`, `frontend/src/views/friends/` + `socials/`. Telegram channel is the live transport (F-FRIENDS F0/F1). |
 | **Contacts + Telephony** | ✅ | `jarvis/contacts/` (`store.py`, `schema.py`, `notify.py`) — contacts mirror to guaranteed Wiki person pages `people/<slug>.md` on `ContactChanged` (PII stays out of the page). Tools `contact-lookup` (safe), `contact-upsert` (monitor, write), `call-contact` (ask, echo-confirm). `jarvis/telephony/` (`outbound.py`, `twiml.py`, `provisioning.py`, `security.py`, `session.py`) places real outbound calls via Twilio. **Twilio is the optional `[telephony]` extra** — routes (`telephony_routes.py`) + `TelephonyManager` degrade gracefully when absent (AD-T8). Views `TelephonyView.tsx`, `frontend/src/views/contacts/`. |
-| **Marketplace plugins** | ✅ | `jarvis/marketplace/` (catalog + `auth/` OAuth + `oauth_callback_server.py` + `plugin_loader.py`/`plugin_registry.py`/`plugin_relevance.py` + `mcp_bridge.py`). The `plugin-tools` entry-point loader expands connected marketplace plugins into live brain tools. Native REST tools where a catalog transport was insufficient: `gmail` (`gmail_rest`, ask — send is consequential) + `vercel` (`vercel_rest`, monitor — read-only). Router-tier, never a spawn (AP-5/AP-14). Route `marketplace_routes.py`; views `MarketplaceView.tsx` (the storefront section: the community index for plugins, skills and wallpapers under one search), `PluginsView.tsx`, `ExtensionsView.tsx`. |
+| **Marketplace plugins** | ✅ | `jarvis/marketplace/` (catalog + `auth/` OAuth + `oauth_callback_server.py` + `plugin_loader.py`/`plugin_registry.py`/`plugin_relevance.py` + `mcp_bridge.py`). The `plugin-tools` entry-point loader expands connected marketplace plugins into live brain tools. Native REST tools where a catalog transport was insufficient: `gmail` (`gmail_rest`, ask — send is consequential) + `vercel` (`vercel_rest`, monitor — read-only). Router-tier, never a spawn (AP-5/AP-14). Route `marketplace_routes.py`; views `MarketplaceView.tsx` (the storefront section: the community index for plugins and skills under one search), `PluginsView.tsx`, `ExtensionsView.tsx`. |
 | **Workflows** | ✅ | `jarvis/workflows/` (`runner.py`, `scheduler.py`, `store.py`, `schema.sql`, `seed.py`). Imperative cron/manual-triggered multi-step pipelines (brain-prompt / harness-dispatch / shell / tool-call / speak steps) — distinct from Phase-6 *missions* (single persistent self-healing action). Route `workflows_routes.py` (CRUD); `bootstrap_workflows` on `app.state`. View `WorkflowsView.tsx`. |
 | **Conductor** | ✅ | **Separate root package `conductor/`** (`api/`, `core/`, `jobs/`, `seed/`, `cli.py`) with its own SQLite store — a YAML-first agentic-workflow canvas (shell/http/agent jobs, cron/webhook/manual triggers, timeline view). Jarvis mounts the Conductor router inside its own FastAPI server → `ConductorView.tsx`. Do not confuse with **Workflows** (imperative, in-`jarvis/`) — Conductor is YAML-first and standalone-capable. |
 | **Jarvis-Agents / Outputs** | ✅ | `jarvis/agents/registry.py` builds an in-RAM agent event tree from the EventBus (harness/Brain/Tool signals; TTL-cached, no DB) → `sub_agents_routes.py` (`/api/sub-agents/tree`) + `SubAgentsView.tsx`. **Outputs** (`outputs_routes.py` + `OutputsView.tsx`) list a mission's *deliverables* from the filesystem (`<repo_parent>/sub-agents-outputs/<slug>/`, NOT a DB). An "artifact" is a `.md`/PDF/HTML/code file a worker produced. Per-artifact download (`Content-Disposition` attachment) / view (server-rendered markdown→HTML under a strict `default-src 'none'` CSP) / desktop-only reveal+open-with-default-app via `jarvis/platform/open_path.py`; native actions are off on headless/VPS (`native_file_actions` launcher flag). |
@@ -72,7 +72,7 @@ Still unrowed (verify with `ls jarvis/ui/web/*routes*.py` + `git log`): `chats`/
 ### 8-Layer model
 
 ```
-L7 UI/UX           Tray, Toasts, Admin-API, Desktop-App (FastAPI+React+pywebview), Orb-Overlay
+L7 UI/UX           Tray, Toasts, Admin-API, Desktop-App (FastAPI+React+pywebview), Orb-Overlay (bar / mascot / voice orb / desktop pet)
 L6 Orchestrator    State-Machine, Router, BrainManager, Supervisor, Mission-Manager
 L5 Harness-Adapter Capability-gated Computer Use and universal Python Script
 L4 Brain           5 providers (Claude-API, OpenRouter, OpenAI, Gemini, NVIDIA) + Ack-Brain sub-second tier
@@ -270,6 +270,7 @@ The six desktop power-user features that were historically Windows-only are now 
 
 - **Dependency reality (AD-14 — do not "fix" this):** `pynput` + `ptyprocess` live in the `[desktop]` extra (`ptyprocess` gated `sys_platform != 'win32'`); `pyobjc-framework-{Quartz,ApplicationServices,Accessibility}` in `[desktop-macos]` (`sys_platform == 'darwin'`). **Linux `pyatspi` is NOT on PyPI — never add it as a pip dependency.** It is GObject-Introspection, distro-packaged (`apt install python3-pyatspi gir1.2-atspi-2.0`), surfaced via the `capabilities.has_ax_tree` runtime probe.
 - **Doctrine intact:** the headless €5-VPS base install ships **none** of these desktop extras and still boots on a fresh `python:3.11-slim` Linux container — every port is extras-gated and degrades to a logged no-op (AD-6) when its capability is absent.
+- **Overlay display styles:** `[ui] orb_style` picks the on-screen surface — the slim Jarvis bar, or one of three looks of the floating orb window (`mascot`, `voice_orb`, `pet`), or none. The vocabulary lives in `jarvis/ui/overlay_styles.py`; `ui/orb/bus_bridge.py` drives every surface from bus events. Orb-window looks swap live; bar ↔ orb window needs a restart (BUG-031). The desktop pet (animated pixel-art sprites, control strip, status bubble) is specified in [`docs/pets.md`](pets.md).
 - **Computer-Use screen indicator (ADR-0028):** while a CU mission drives the
   local mouse/keyboard, a breathing Jarvis-gold border glows on every monitor
   edge with a localized "Esc to cancel" pill. It is a minimal
@@ -320,8 +321,14 @@ This project has an auto-memory at `~/.claude/projects/<your-claude-project-dir>
 The Knowledge Wiki is the long-term memory tier (B0/B1/B5/B7/B8/B9 live). Three router-tier tools: `wiki-recall` (search), `wiki-page-read` (read by vault path), `wiki-ingest` (deterministic save-fact). Vault root configured in `[wiki_integration].vault_root`; default `wiki/obsidian-vault/`. Telemetry snapshot at `GET /api/wiki/telemetry`. Trigger contract in ADR-0014.
 
 Realtime and chat memory use a durable two-stage path. A recall-biased extractor
-reviews each eligible user turn in the background and performs an overlapping,
-chunked whole-session sweep at session end. Candidates carry an exact user-turn
+reviews a turn only when the user explicitly asked to keep it (the brain
+acknowledged the save) or when the user starts a backfill; the automatic review
+of every turn, the end-of-call sweep and the periodic auto-backfill were removed
+on 2026-09-30 because they billed paid keys around the clock. Every model call
+the wiki makes on its own bills only what background work may bill
+(`jarvis/brain/background_policy.py`) and passes the runaway guard in
+`jarvis/memory/wiki/background_guard.py` (backoff plus a daily cap on the number
+of calls, default 200). Candidates carry an exact user-turn
 ID plus a bounded, secret-redacted user-only evidence excerpt in
 `data/jarvis.db`; assistant text can resolve a reference but is never evidence.
 The body-aware consolidator is the binding cleanliness gate: it compares that

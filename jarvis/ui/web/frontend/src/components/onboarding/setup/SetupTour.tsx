@@ -6,6 +6,8 @@ import type { useOnboarding } from "@/hooks/useOnboarding";
 import { switchBrainProvider, useProviders } from "@/hooks/useProviders";
 import { applyStarterPlan, getStarterPlans, selectStarterPlan, type StarterPlan } from "@/hooks/useStarterPlans";
 import { useWakeWord } from "@/hooks/useWakeWord";
+import { fetchAgentConnections } from "@/lib/agentChatApi";
+import { clearApiKeysTabRequest, requestApiKeysTab } from "@/lib/apiKeysTab";
 import { fill, setUiLanguage, useLocaleChunk, useT, useUiLanguage, type UiLanguage } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
@@ -21,6 +23,7 @@ type Onb = ReturnType<typeof useOnboarding>;
 const MASCOT: Record<SetupStepId, MascotAction> = {
   welcome: "wave",
   keys: "look-left",
+  subscriptions: "spin",
   voice: "look-right",
   permissions: "look-left",
   ready: "jump",
@@ -33,7 +36,8 @@ const LANGS: UiLanguage[] = ["en", "de", "es"];
  *
  * There is no setup screen of its own: the window dims, and the guide walks
  * the user to the places where each thing is really set — the API Keys page
- * for one key, the wake-word group in Settings, on macOS the permissions —
+ * for one key, its Agents tab for a subscription, the wake-word group in
+ * Settings, on macOS the permissions —
  * and waits there with a small card. The dim takes clicks, the hole does
  * not: only the part being set up can be used, so nothing else starts before
  * setup is done. Every step but the consent has a way on without doing it.
@@ -41,15 +45,18 @@ const LANGS: UiLanguage[] = ["en", "de", "es"];
  * The last step completes onboarding; the backend then restarts the app once
  * and the tour of the app follows. `preview` (a replay) never completes and
  * never restarts — it only walks the steps and hands over to the tour.
+ * `startAt` lets a replay from Settings begin past the consent.
  */
 export function SetupTour({
   onb,
   preview,
   onFinished,
+  startAt,
 }: {
   onb: Onb;
   preview: boolean;
   onFinished: () => void;
+  startAt?: SetupStepId;
 }) {
   const t = useT();
   const ready = useLocaleChunk("onboarding");
@@ -59,7 +66,7 @@ export function SetupTour({
   // it left off (never past the consent).
   const [stepId, setStepId] = useState<SetupStepId>(() =>
     preview
-      ? "welcome"
+      ? (startAt ?? "welcome")
       : resumeStep(stepsFor(null), onb.state?.current_step ?? null, Boolean(onb.state?.terms.accepted)),
   );
   const [skipped, setSkipped] = useState<string[]>(() => onb.state?.skipped_steps ?? []);
@@ -83,12 +90,18 @@ export function SetupTour({
     };
   }, []);
 
-  // Open the app's own place for this step before pointing at it.
+  // Open the app's own place for this step before pointing at it — on the
+  // API Keys page also the right tab.
   useEffect(() => {
     if (!ready || !step.section) return;
+    if (step.section === "apikeys") requestApiKeysTab(step.apiKeysTab ?? null);
+    else clearApiKeysTabRequest();
     const nav = useEventStore.getState();
     if (nav.activeSection !== step.section) nav.setActiveSection(step.section);
-  }, [ready, step.section, stepId]);
+  }, [ready, step.section, step.apiKeysTab, stepId]);
+
+  // Later visits to the API Keys page open on its own default tab again.
+  useEffect(() => clearApiKeysTabRequest, []);
 
   const rect = useAnchorRect(ready ? step.anchor : undefined, Boolean(step.scrollTo), stepId);
 
@@ -105,7 +118,9 @@ export function SetupTour({
 
   const index = Math.max(0, steps.indexOf(stepId));
   const nextId = steps[index + 1] ?? null;
-  const prevId = index > 1 ? steps[index - 1] : null; // never back behind the consent
+  // Never back behind the consent, nor behind where a replay started.
+  const firstId = preview && startAt ? startAt : steps[1];
+  const prevId = index > 1 && stepId !== firstId ? steps[index - 1] : null;
 
   const next = useCallback(() => {
     if (nextId) goTo(nextId, skipped);
@@ -162,7 +177,8 @@ export function SetupTour({
         <div className="mt-4">
           {stepId === "welcome" && <WelcomeStep onb={onb} preview={preview} onAccepted={() => { cheer(); next(); }} />}
           {stepId === "keys" && <KeysStep next={next} later={later} cheer={cheer} />}
-          {stepId === "voice" && <VoiceStep next={next} />}
+          {stepId === "subscriptions" && <SubscriptionsStep next={next} later={later} />}
+          {stepId === "voice" && <VoiceStep next={next} later={later} />}
           {stepId === "permissions" && <PermissionsStep next={next} />}
           {stepId === "ready" && <ReadyStep onb={onb} preview={preview} onFinished={onFinished} />}
         </div>
@@ -403,8 +419,88 @@ function KeysStep({ next, later, cheer }: { next: () => void; later: () => void;
   );
 }
 
-/** The wake-word group of Settings is open behind the card; the step only says what is set. */
-function VoiceStep({ next }: { next: () => void }) {
+/** Poll interval while the subscriptions step waits for a sign-in. */
+const SUBSCRIPTION_POLL_MS = 3000;
+
+/**
+ * The Agents tab of the API Keys page is open behind the card. Agents run
+ * best on a subscription (Claude, ChatGPT/Codex, …): a flat monthly price
+ * instead of paying per call. The step waits for one to be signed in; the
+ * sign-in itself happens on the tab.
+ */
+function SubscriptionsStep({ next, later }: { next: () => void; later: () => void }) {
+  const t = useT();
+  const connected = useConnectedSubscriptions(SUBSCRIPTION_POLL_MS);
+  const has = connected.length > 0;
+  return (
+    <div className="space-y-3">
+      <Status tone={has ? "ok" : "muted"} testId="setup-subscriptions-status">
+        {has
+          ? fill(t("first_run.subscriptions.connected"), { names: connected.join(", ") })
+          : t("first_run.subscriptions.waiting")}
+      </Status>
+      <p className="text-xs leading-relaxed text-muted-foreground">{t("first_run.subscriptions.why")}</p>
+      <PrimaryAction onClick={next} disabled={!has}>
+        {t("first_run.continue")}
+      </PrimaryAction>
+      {!has && (
+        <div className="text-center">
+          <QuietAction onClick={later} testId="setup-subscriptions-later" className="text-xs">
+            {t("first_run.subscriptions.later")}
+          </QuietAction>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Subscription names for the status rows whose own label names the API side
+ * ("Claude (API-Key)") or is missing; anything else shows its own label.
+ */
+const SUBSCRIPTION_NAMES: Record<string, string> = {
+  "claude-api": "Claude",
+  "openai-codex": "ChatGPT (Codex)",
+  antigravity: "Antigravity",
+  "grok-build": "Grok Build",
+};
+
+/**
+ * Names of the agent providers signed in with a subscription. `pollMs`
+ * re-reads while a step waits for a sign-in; 0 reads once.
+ */
+function useConnectedSubscriptions(pollMs: number): string[] {
+  const [names, setNames] = useState<string[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    let timer = 0;
+    const read = async () => {
+      try {
+        const rows = await fetchAgentConnections();
+        if (!cancelled) {
+          const found = rows.filter((r) => r.oauth_connected).map((r) => SUBSCRIPTION_NAMES[r.jarvis] ?? (r.label || r.jarvis));
+          setNames((prev) => (prev.join("|") === found.join("|") ? prev : found));
+        }
+      } catch {
+        // Best-effort: a warming backend just reads as "nothing connected yet".
+      }
+      if (!cancelled && pollMs > 0) timer = window.setTimeout(() => void read(), pollMs);
+    };
+    void read();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [pollMs]);
+  return names;
+}
+
+/**
+ * The wake-word group of Settings is open behind the card. Continue waits
+ * for a saved wake word; without one the Call shortcut is the way in, so the
+ * step can still be left for later.
+ */
+function VoiceStep({ next, later }: { next: () => void; later: () => void }) {
   const t = useT();
   const { config } = useWakeWord();
   const on = Boolean(config?.enabled && config.phrase.trim());
@@ -413,7 +509,16 @@ function VoiceStep({ next }: { next: () => void }) {
       <Status tone={on ? "ok" : "muted"} testId="setup-voice-status">
         {on ? fill(t("first_run.voice.on"), { phrase: config!.phrase }) : t("first_run.voice.off")}
       </Status>
-      <PrimaryAction onClick={next}>{t("first_run.continue")}</PrimaryAction>
+      <PrimaryAction onClick={next} disabled={!on}>
+        {t("first_run.continue")}
+      </PrimaryAction>
+      {!on && (
+        <div className="text-center">
+          <QuietAction onClick={later} testId="setup-voice-later" className="text-xs">
+            {t("first_run.voice.later")}
+          </QuietAction>
+        </div>
+      )}
     </div>
   );
 }
@@ -450,6 +555,7 @@ function ReadyStep({ onb, preview, onFinished }: { onb: Onb; preview: boolean; o
   const t = useT();
   const { providers } = useProviders();
   const { config } = useWakeWord();
+  const subscriptions = useConnectedSubscriptions(0);
   const [autostart, setAutostart] = useState<{ enabled: boolean; supported: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -507,6 +613,11 @@ function ReadyStep({ onb, preview, onFinished }: { onb: Onb; preview: boolean; o
     <div className="space-y-3">
       <dl className="overflow-hidden rounded-xl border border-border bg-background" data-testid="onboarding-review">
         <ReviewRow label={t("first_run.ready.row_brain")} value={brainOk ? brain!.label : t("first_run.ready.no_key")} ok={brainOk} />
+        <ReviewRow
+          label={t("first_run.ready.row_agents")}
+          value={subscriptions.length > 0 ? subscriptions.join(", ") : t("first_run.ready.no_subscription")}
+          ok={subscriptions.length > 0}
+        />
         <ReviewRow
           label={t("first_run.ready.row_voice")}
           value={wakeOn ? config!.phrase : t("first_run.ready.shortcut")}

@@ -135,7 +135,7 @@ export function setupPrompt(assistantName: string, publicKey: string): string {
 
 1. Make sure an OpenSSH SERVER is installed, running, starts automatically, and is allowed through the firewall on TCP port 22.
    - Linux: install openssh-server with the package manager, then enable and start the ssh/sshd service.
-   - macOS: turn on System Settings > General > Sharing > Remote Login.
+   - macOS: turn on System Settings > General > Sharing > Remote Login. Agents keep working only while the Mac is awake: run sudo pmset -a sleep 0 disksleep 0 autorestart 1 (no sleep, restart after a power cut).
    - Windows: Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0, Start-Service sshd, Set-Service sshd -StartupType Automatic, and allow TCP 22 in Windows Defender Firewall.
 
 2. Authorize exactly this PUBLIC key for the account I normally use on this computer. Do not create, copy or print any private key.
@@ -143,7 +143,10 @@ export function setupPrompt(assistantName: string, publicKey: string): string {
    - Linux/macOS: append it to ~/.ssh/authorized_keys of that account (folder mode 700, file mode 600, owned by that account).
    - Windows: if the account is in the Administrators group, append it to C:\\ProgramData\\ssh\\administrators_authorized_keys (UTF-8 without a byte-order mark) and run: icacls C:\\ProgramData\\ssh\\administrators_authorized_keys /inheritance:r /grant "*S-1-5-32-544:F" /grant "*S-1-5-18:F" (the group SIDs work in every Windows language). Otherwise append it to C:\\Users\\<account>\\.ssh\\authorized_keys.
 
-3. Coding agents will run here later. On Linux or macOS, install tmux and git if they are missing. On Windows, install Git for Windows if it is missing (winget install --id Git.Git -e); the agents use its Git Bash.
+3. Coding agents will run here later.
+   - Linux: install tmux and git if they are missing.
+   - macOS: install Homebrew if it is missing (it also installs the command-line tools), then brew install tmux git. If Claude Code is installed here, run claude setup-token, let me approve it in the browser, and save the token it prints as the line export CLAUDE_CODE_OAUTH_TOKEN='<token>' in ~/.config/jarvis/agent.env (file mode 600): over SSH the Mac's Keychain stays locked, so agents log in with this file. Never print the token back to me.
+   - Windows: install Git for Windows if it is missing (winget install --id Git.Git -e); the agents use its Git Bash.
 
 4. Work out the address another computer can use to reach this one: the local network IP if we are on the same network, otherwise the public IP. If a router port-forward would be needed, tell me in one sentence.
 

@@ -1,17 +1,14 @@
 /**
- * Component tests for the rebuilt Profile section.
+ * Component tests for the Profile section.
  *
- * What these pin is the contract the redesign was built on: the page states
- * facts and folds gaps (rather than printing "not known yet" eighteen times),
- * every known fact can show the sentence it was learned from, and each rail
- * card has a designed empty state instead of a dead box.
- *
- * The three cards that were deleted are guarded too — the review queue, the
- * people list and the "would love to know" prompt were all structurally unable
- * to fill, and a later change should not quietly bring them back.
+ * What these pin: known details are rows and missing ones are one line of
+ * "add" chips (never a wall of "not set"), every known detail can show the
+ * sentence it was learned from, an unnamed profile asks for a name, a portrait
+ * that stops mid-word is never shown as if it were finished, and the raw file
+ * opens as a sub-page. The dead review queue stays deleted.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { ProfileView } from "@/views/ProfileView";
@@ -116,65 +113,89 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("the file states facts and folds gaps", () => {
-  it("shows the known facts and never repeats 'not known yet' for the rest", async () => {
+describe("details", () => {
+  it("shows known details as rows and missing ones as add chips", async () => {
     installFetchMock(BASE_ROUTES);
     renderWithClient(<ProfileView />);
 
     await screen.findByText("Europe/Berlin");
-
-    // Sixteen empty fields exist, and none of them is on the page yet.
+    const missing = await screen.findByTestId("missing-talk");
+    expect(missing.textContent).toContain("Answer length");
+    // No wall of empty rows.
+    expect(screen.queryByTestId("field-verbosity")).toBeNull();
     expect(screen.queryByText("not known yet")).toBeNull();
   });
 
-  it("counts the entries in the header instead of scoring the reader", async () => {
+  it("opens the editor for a missing detail from its chip", async () => {
     installFetchMock(BASE_ROUTES);
     renderWithClient(<ProfileView />);
 
-    const count = await screen.findByTestId("dossier-count");
-    expect(count.textContent).toBe("3 of 18 entries");
-    // The old header asked "Who are you?" over a progress bar.
-    expect(screen.queryByRole("progressbar")).toBeNull();
+    const missing = await screen.findByTestId("missing-talk");
+    fireEvent.click(within(missing).getByRole("button", { name: /Answer length/ }));
+
+    const row = await screen.findByTestId("field-verbosity");
+    expect(within(row).getByRole("radio", { name: "In depth" })).toBeTruthy();
+    // A choice saves on click; a Save button here would clear the value.
+    expect(within(row).queryByRole("button", { name: /Save/ })).toBeNull();
   });
 
-  it("puts the reader's name at the top, not a stage name", async () => {
-    installFetchMock(BASE_ROUTES);
+  it("renders a choice value by its label, not its stored token", async () => {
+    installFetchMock({
+      ...BASE_ROUTES,
+      "/api/profile": () => ({
+        body: {
+          ...PROFILE_OK,
+          user: {
+            ...PROFILE_OK.user,
+            meta: { ...PROFILE_OK.user.meta, communication: { verbosity: "deep-dive" } },
+          },
+        },
+      }),
+    });
     renderWithClient(<ProfileView />);
 
-    const header = await screen.findByTestId("dossier-header");
-    expect(header.textContent).toContain("Ruben");
-    // The board summary lands a tick later; the line grows rather than
-    // reserving a slot with a zero in it.
-    await waitFor(() => expect(header.textContent).toContain("491 conversations"));
-    expect(header.textContent).toContain("since");
+    const row = await screen.findByTestId("field-verbosity");
+    expect(row.textContent).toContain("In depth");
+    expect(row.textContent).not.toContain("deep-dive");
   });
 
-  it("opens a cluster's gaps on demand", async () => {
+  it("counts the known details in the header", async () => {
     installFetchMock(BASE_ROUTES);
     renderWithClient(<ProfileView />);
 
-    const toggle = await screen.findByTestId("gaps-communication");
-    expect(toggle.textContent).toContain("5 open fields");
-    expect(screen.queryByText("Verbosity")).toBeNull();
+    const hero = await screen.findByTestId("profile-hero");
+    expect(hero.textContent).toContain("Ruben");
+    expect(hero.textContent).toContain("3 / 18");
+    await waitFor(() => expect(hero.textContent).toContain("491"));
+  });
 
-    fireEvent.click(toggle);
-    await screen.findByText("Verbosity");
+  it("asks for a name when the file has none", async () => {
+    installFetchMock({
+      ...BASE_ROUTES,
+      "/api/profile": () => ({
+        body: { ...PROFILE_OK, user: { ...PROFILE_OK.user, name: null } },
+      }),
+    });
+    renderWithClient(<ProfileView />);
+
+    const hero = await screen.findByTestId("profile-hero");
+    expect(within(hero).getByPlaceholderText("Your name")).toBeTruthy();
   });
 });
 
 describe("provenance", () => {
-  it("shows the date a fact was learned and the sentence behind it", async () => {
+  it("shows the date a detail was learned and the sentence behind it", async () => {
     installFetchMock(BASE_ROUTES);
     renderWithClient(<ProfileView />);
 
     const source = await screen.findByTestId("entry-source-primary_language");
-    expect(source.textContent).toContain("2026-08-29");
+    expect(source.textContent).toContain("Learned");
 
     fireEvent.click(source);
     await screen.findByText("always answer me in German");
   });
 
-  it("shows no date for a fact the audit trail never mentions", async () => {
+  it("shows no date for a detail the audit trail never mentions", async () => {
     installFetchMock(BASE_ROUTES);
     renderWithClient(<ProfileView />);
 
@@ -183,7 +204,7 @@ describe("provenance", () => {
   });
 });
 
-describe("the rail", () => {
+describe("portrait", () => {
   it("offers to write the portrait when none exists", async () => {
     installFetchMock(BASE_ROUTES);
     renderWithClient(<ProfileView />);
@@ -192,7 +213,7 @@ describe("the rail", () => {
     expect(empty.textContent).toContain("has not written a portrait");
   });
 
-  it("renders the portrait and its feedback when one exists", async () => {
+  it("renders a finished portrait with its feedback", async () => {
     installFetchMock({
       ...BASE_ROUTES,
       "/api/board/bio": () => ({
@@ -206,6 +227,24 @@ describe("the rail", () => {
     expect(screen.getByRole("button", { name: "Fits" })).toBeTruthy();
   });
 
+  it("never shows a portrait that stops mid-word as if it were finished", async () => {
+    installFetchMock({
+      ...BASE_ROUTES,
+      "/api/board/bio": () => ({
+        body: {
+          text: "I have watched you for 34 days, and while your Tool-",
+          generated_at: "2026-09-06T18:00:00Z",
+        },
+      }),
+    });
+    renderWithClient(<ProfileView />);
+
+    await screen.findByTestId("portrait-cut-off");
+    expect(screen.queryByTestId("portrait-text")).toBeNull();
+  });
+});
+
+describe("memory and privacy", () => {
   it("quotes the never-recorded categories out of the file", async () => {
     installFetchMock(BASE_ROUTES);
     renderWithClient(<ProfileView />);
@@ -219,31 +258,30 @@ describe("the rail", () => {
     installFetchMock(BASE_ROUTES);
     renderWithClient(<ProfileView />);
 
-    const empty = await screen.findByTestId("wiki-empty");
-    expect(empty.textContent).toContain("no page about you yet");
+    await waitFor(() =>
+      expect(screen.getByTestId("wiki-empty").textContent).toContain("No page yet"),
+    );
   });
-});
 
-describe("the dead cards stay deleted", () => {
-  it("renders no review queue, no people list and no ask prompt", async () => {
+  it("opens the source file as a sub-page and comes back", async () => {
     installFetchMock(BASE_ROUTES);
     renderWithClient(<ProfileView />);
 
-    await screen.findByTestId("dossier-header");
-    await waitFor(() => expect(screen.queryByTestId("never-stored")).not.toBeNull());
+    const row = await screen.findByTestId("source-row");
+    fireEvent.click(within(row).getByRole("button", { name: /View file/ }));
+    await screen.findByTestId("profile-source-markdown");
 
-    expect(screen.queryByTestId("ask-next")).toBeNull();
-    expect(screen.queryByTestId("reviews-disabled")).toBeNull();
-    expect(screen.queryByTestId("reviews-error")).toBeNull();
-    expect(screen.queryByText("Waiting for your OK")).toBeNull();
-    expect(screen.queryByText("No people known yet")).toBeNull();
+    fireEvent.click(screen.getByTestId("source-back"));
+    await screen.findByTestId("profile-hero");
   });
+});
 
+describe("the dead review queue stays deleted", () => {
   it("never calls the review endpoint", async () => {
     const fetchMock = installFetchMock(BASE_ROUTES);
     renderWithClient(<ProfileView />);
 
-    await screen.findByTestId("dossier-header");
+    await screen.findByTestId("profile-hero");
     const called = fetchMock.mock.calls.map((c) => String(c[0]));
     expect(called.some((u) => u.includes("/api/profile/reviews"))).toBe(false);
   });
@@ -257,7 +295,7 @@ describe("a profile the backend is not serving", () => {
     });
     renderWithClient(<ProfileView />);
 
-    await screen.findByText("No name on file");
-    expect(screen.queryByTestId("dossier-header")).toBeNull();
+    await screen.findByText("Profile not available");
+    expect(screen.queryByTestId("profile-hero")).toBeNull();
   });
 });

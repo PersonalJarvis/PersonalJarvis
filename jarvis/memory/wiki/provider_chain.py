@@ -18,18 +18,33 @@ chain and a working provider existed. The wiki looked dead while the user had
 credit. This module gives the wiki the SAME resilience, plus an HONEST signal
 when the whole chain is exhausted (AP-22 single-provider brick / AP-23
 maintainer-config coupling).
+
+Which providers may join a chain is not only a question of credentials. Wiki
+calls run with nobody waiting on them, so :func:`build_background_wiki_chain`
+admits only what background work may bill
+(:mod:`jarvis.brain.background_policy`): once a subscription is connected,
+subscriptions and keyless local models — and an empty set means the caller
+waits, never that it falls back to a key.
 """
 
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import re
 import threading
 import time
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from typing import Any
 
+from jarvis.brain.background_policy import (
+    BackgroundDeferred,
+    BackgroundProviders,
+    background_providers,
+    subscription_capable,
+)
 from jarvis.core.redact import safe_preview
 from jarvis.costs.ledger import usage_context
 from jarvis.memory.wiki.telemetry import telemetry
@@ -218,30 +233,129 @@ def credential_ready_wiki_providers(
     return ready
 
 
+def background_wiki_decision(
+    *,
+    available: set[str] | frozenset[str],
+    config: Any,
+    credential_filter: bool = True,
+) -> BackgroundProviders:
+    """The background billing verdict over the wiki's credential-ready providers.
+
+    Delegates to :func:`jarvis.brain.background_policy.background_providers`,
+    the one rule for work nobody is waiting on: once a subscription is
+    connected (sticky for 30 days) only subscriptions and keyless local models
+    may bill, and an empty allowed set means WAIT, never "use a key". An
+    install that never connected a subscription keeps its keys, so a
+    single-key download still has a working wiki (AP-21/AP-22).
+
+    ``credential_filter=False`` skips the credential probe (tests inject a
+    scripted registry); the billing rule itself always applies.
+    """
+    ready = (
+        credential_ready_wiki_providers(available=available, config=config)
+        if credential_filter
+        else set(available)
+    )
+    return background_providers(sorted(ready))
+
+
 def background_wiki_providers(
     *,
     available: set[str] | frozenset[str],
     config: Any,
-    is_subscription: Callable[[str], bool] | None = None,
 ) -> set[str]:
-    """Providers wiki background work may bill: subscriptions before any key.
+    """Providers wiki background work may bill right now (see the decision above).
 
-    Memory curation is background work the user never waits on, so while any
-    subscription login is connected it runs ONLY on subscriptions plus keyless
-    local providers and never touches a per-token key (live 2026-09-29: an
-    OpenAI key added for voice paid ~$0.30 of wiki calls after a two-minute
-    chat). With no subscription connected the full credential-ready set stays
-    in play, so a single-key install keeps a working wiki (AP-21/AP-22).
+    Before 2026-09-30 this admitted every stored key whenever no login probe
+    answered ``True`` at that moment — so an expired OAuth token, a crashed
+    CLI probe or a spent plan silently moved memory curation onto paid keys
+    (~300 wiki calls on keys in 30 days). It now returns exactly the policy's
+    allowed set; an empty set in subscription mode means the caller waits.
     """
-    from jarvis.core.config import PROVIDER_SECRET_CANDIDATES
+    return set(background_wiki_decision(available=available, config=config).allowed)
 
-    ready = credential_ready_wiki_providers(available=available, config=config)
-    probe = is_subscription or (lambda name: subscription_login_ready(name) is True)
-    subscriptions = {name for name in ready if probe(name)}
-    if not subscriptions:
-        return ready
-    keyless = {name for name in ready if name not in PROVIDER_SECRET_CANDIDATES}
-    return subscriptions | keyless
+
+def subscription_provider_options(
+    decision: BackgroundProviders,
+    registry: Any,
+) -> dict[str, dict[str, Any]]:
+    """Constructor options that pin allowed subscriptions to their login.
+
+    A dual-billed provider (a subscription login plus an API-key slot, e.g.
+    the ChatGPT-subscription card) decides per call which one it spends; a
+    login that drops between the policy check and the call would otherwise
+    fall through to the key. In subscription mode every allowed provider whose
+    constructor accepts ``prefer_subscription`` gets it, so it fails instead
+    of billing its key. Capability probe on the constructor, never a provider
+    name (AP-21).
+    """
+    if not decision.subscription_mode:
+        return {}
+    options: dict[str, dict[str, Any]] = {}
+    for name in decision.allowed:
+        if not subscription_capable(name):
+            continue
+        get_class = getattr(registry, "get_class", None)
+        if not callable(get_class):
+            continue
+        try:
+            parameters = inspect.signature(get_class(name)).parameters
+        except Exception:  # noqa: BLE001 - an unknown constructor gets no pin
+            log.debug(
+                "wiki background chain: cannot inspect %s for prefer_subscription",
+                name,
+                exc_info=True,
+            )
+            continue
+        if "prefer_subscription" in parameters:
+            options[name] = {"prefer_subscription": True}
+    return options
+
+
+@dataclass(frozen=True, slots=True)
+class WikiBackgroundChain:
+    """An ordered provider chain that background wiki work may bill."""
+
+    chain: list[tuple[str, str | None]]
+    subscription_mode: bool
+    provider_options: dict[str, dict[str, Any]]
+
+
+def build_background_wiki_chain(
+    *,
+    registry: Any,
+    config: Any,
+    primary: str,
+    model_override: str,
+    credential_filter: bool = True,
+) -> WikiBackgroundChain:
+    """Build the chain for one background wiki call, or raise to make it wait.
+
+    Raises :class:`BackgroundDeferred` when the install is in subscription
+    mode and no subscription (or keyless local model) can take the work right
+    now: the caller keeps its work pending and retries later. In key mode an
+    empty chain is returned as before, so the caller's honest chain-failure
+    path still reports "no provider configured".
+    """
+    available = set(registry.available())
+    decision = background_wiki_decision(
+        available=available,
+        config=config,
+        credential_filter=credential_filter,
+    )
+    chain = build_wiki_provider_chain(
+        primary=primary,
+        model_override=model_override,
+        available=available,
+        credential_ready=set(decision.allowed),
+    )
+    if decision.subscription_mode and not chain:
+        raise BackgroundDeferred(decision.reason)
+    return WikiBackgroundChain(
+        chain=chain,
+        subscription_mode=decision.subscription_mode,
+        provider_options=subscription_provider_options(decision, registry),
+    )
 
 
 def build_wiki_provider_chain(
@@ -292,6 +406,8 @@ async def complete_with_fallback(
     provider_options: Mapping[str, Mapping[str, Any]] | None = None,
     record_health: bool = True,
     failure_scope: str = "wiki",
+    before_attempt: Callable[[str], None] | None = None,
+    record_chain_failure: bool = True,
 ) -> tuple[Any, str] | None:
     """Try each ``(provider, model)`` until one returns an aggregated response.
 
@@ -327,6 +443,19 @@ async def complete_with_fallback(
     nor has authority to clear a real capture failure after a later success.
     ``failure_scope`` likewise isolates the short provider cooldown: an image-
     specific 400 must not demote that same provider for ordinary text curation.
+
+    ``before_attempt(provider)`` runs before each provider is instantiated.
+    Background callers pass the runaway guard's call counter here, so every
+    attempt — second opinions and split-and-retry halves included — counts
+    against the daily cap. It may raise
+    :class:`~jarvis.brain.background_policy.BackgroundDeferred`; that
+    propagates unchanged (nothing was spent, the work waits) instead of being
+    treated as a provider failure.
+
+    ``record_chain_failure=False`` keeps a total chain failure off the red
+    health banner while successes still clear it: a subscription-mode caller
+    records a "waiting for your subscription" state instead, because waiting
+    is the designed behaviour there, not a broken wiki.
     """
     from jarvis.memory.wiki.curator_llm import instantiate_curator_brain
 
@@ -352,6 +481,10 @@ async def complete_with_fallback(
         )
 
     for index, (provider, model) in enumerate(ordered):
+        if before_attempt is not None:
+            # Outside every provider try-block on purpose: a runaway-guard
+            # deferral is not a provider failure and must reach the caller.
+            before_attempt(provider)
         try:
             brain = instantiate_curator_brain(
                 registry,
@@ -625,7 +758,7 @@ async def complete_with_fallback(
         )
     except Exception:  # noqa: BLE001 — telemetry must never break the pipeline
         log.debug("%s: telemetry inc failed", label, exc_info=True)
-    if record_health:
+    if record_health and record_chain_failure:
         try:
             from jarvis.memory.wiki.health import health
 
@@ -643,10 +776,14 @@ async def complete_with_fallback(
 
 
 __all__ = [
+    "WikiBackgroundChain",
+    "background_wiki_decision",
     "background_wiki_providers",
+    "build_background_wiki_chain",
     "build_wiki_provider_chain",
     "complete_with_fallback",
     "credential_ready_wiki_providers",
     "reset_provider_failure_memory",
     "subscription_login_ready",
+    "subscription_provider_options",
 ]

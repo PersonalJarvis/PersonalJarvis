@@ -322,9 +322,8 @@ class BoardStore:
     def days_observed(self) -> int:
         """Days since the first day with activity (active_events_count > 0).
 
-        Passed to the prompt by the BioGenerator as ``days_observed`` and
-        used by the BioScheduler as the cold-start threshold. Returns 0 for
-        an empty DB (no cold-start fires).
+        Passed to the prompt by the BioGenerator as ``days_observed`` (a young
+        install gets the shorter cold-start bio). Returns 0 for an empty DB.
         """
         conn = self._connect()
         try:

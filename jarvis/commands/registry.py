@@ -867,8 +867,8 @@ def _build_registry() -> tuple[AppCommand, ...]:
             id="marketplace-browse",
             title="Browse the marketplace",
             description=(
-                "List everything the community marketplace publishes — skills, "
-                "plugins and wallpapers — with the exact name of each entry and "
+                "List everything the community marketplace publishes — skills "
+                "and plugins — with the exact name of each entry and "
                 "whether it is already installed. Use this to find the name "
                 "before installing, and to answer 'what is there to install'."
             ),
@@ -879,15 +879,15 @@ def _build_registry() -> tuple[AppCommand, ...]:
             voice_aliases={
                 "de": (  # i18n-allow: input vocab
                     "was gibt es im marktplatz",
-                    "welche wallpaper kann ich installieren",
+                    "welche skills kann ich installieren",  # i18n-allow: input vocab
                 ),
                 "en": (
                     "what is in the marketplace",
-                    "which wallpapers can i install",
+                    "which skills can i install",
                 ),
                 "es": (  # i18n-allow: input vocab
                     "qué hay en el mercado",
-                    "qué fondos de pantalla puedo instalar",
+                    "qué skills puedo instalar",
                 ),
             },
         ),
@@ -897,10 +897,9 @@ def _build_registry() -> tuple[AppCommand, ...]:
             description=(
                 "Install ONE published marketplace entry by its exact name. The "
                 "kind is resolved by the app, so the same command installs a "
-                "skill, a plugin or a wallpaper. What the user gets differs and "
-                "the answer must say so: a skill is usable right away, a "
-                "wallpaper lands in the wallpaper picker, a plugin only lands on "
-                "the plugin list and stays powerless until the user connects "
+                "skill or a plugin. What the user gets differs and the answer "
+                "must say so: a skill is usable right away, a plugin only lands "
+                "on the plugin list and stays powerless until the user connects "
                 "their account. Look the name up with marketplace-browse first "
                 "rather than guessing it; report the result the tool returns."
             ),
@@ -928,15 +927,15 @@ def _build_registry() -> tuple[AppCommand, ...]:
             ui_section="plugins",
             voice_aliases={
                 "de": (  # i18n-allow: input vocab
-                    "installier das wallpaper",
+                    "installier den skill",
                     "installier das plugin aus dem marktplatz",
                 ),
                 "en": (
-                    "install that wallpaper",
+                    "install that skill",
                     "install that plugin from the marketplace",
                 ),
                 "es": (  # i18n-allow: input vocab
-                    "instala ese fondo de pantalla",
+                    "instala ese skill",
                     "instala ese complemento del mercado",
                 ),
             },

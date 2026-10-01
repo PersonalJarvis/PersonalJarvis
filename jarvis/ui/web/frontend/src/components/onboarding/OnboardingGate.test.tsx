@@ -2,7 +2,9 @@ import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 
 vi.mock("./setup/SetupTour", () => ({
-  SetupTour: ({ preview }: { preview: boolean }) => <div data-testid="guide" data-preview={String(preview)} />,
+  SetupTour: ({ preview, startAt }: { preview: boolean; startAt?: string }) => (
+    <div data-testid="guide" data-preview={String(preview)} data-start={startAt ?? ""} />
+  ),
 }));
 vi.mock("./tour/GuidedTour", () => ({
   GuidedTour: ({ onDone }: { onDone: () => void }) => (
@@ -13,7 +15,7 @@ vi.mock("./tour/GuidedTour", () => ({
 }));
 
 import { OnboardingGate } from "./OnboardingGate";
-import { TOUR_START_EVENT } from "./tourEvents";
+import { SETUP_REPLAY_EVENT, TOUR_START_EVENT } from "./tourEvents";
 
 afterEach(() => {
   cleanup();
@@ -132,4 +134,16 @@ it("replays the setup on a finished install without completing it", async () => 
   } finally {
     window.history.replaceState(null, "", "/");
   }
+});
+
+it("replays setup from the API Keys page on request from Settings", async () => {
+  stub({ ...base, completed: true, tour_completed: true });
+  render(<OnboardingGate activeSection="profile" />);
+  await new Promise((r) => setTimeout(r, 20));
+  expect(screen.queryByTestId("guide")).toBeNull();
+  act(() => {
+    window.dispatchEvent(new CustomEvent(SETUP_REPLAY_EVENT));
+  });
+  await waitFor(() => expect(screen.getByTestId("guide").dataset.preview).toBe("true"));
+  expect(screen.getByTestId("guide").dataset.start).toBe("keys");
 });

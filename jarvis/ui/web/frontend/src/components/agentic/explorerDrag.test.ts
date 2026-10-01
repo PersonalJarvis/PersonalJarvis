@@ -90,7 +90,8 @@ describe("lifting one explorer row into a drag", () => {
     setWorkspaceEntryDrag(dt, { root: "/home/me/project", path: "src" });
     expect(dt.getData("text/uri-list")).toBe("file:///home/me/project/src");
     expect(dt.getData("text/plain")).toBe("/home/me/project/src");
-    expect(dt.getData(WORKSPACE_PATH_TYPE)).toBe("/home/me/project/src");
+    expect(dt.getData(WORKSPACE_PATH_TYPE)).toMatch(/^[0-9a-f]{64}$/);
+    expect(extractPaneDrop(dt).paths).toEqual(["/home/me/project/src"]);
   });
 
   it("carries a FOLDER as readily as a file", () => {
@@ -103,5 +104,27 @@ describe("lifting one explorer row into a drag", () => {
     expect(setWorkspaceEntryDrag(dataTransfer(), { root: "", path: "a.md" })).toBe(
       false,
     );
+  });
+
+  it("encodes a literal POSIX backslash without turning it into a separator", () => {
+    expect(workspaceFileUri("/project/\\.env")).toBe("file:///project/%5C.env");
+  });
+
+  it("does not trim a listed filename into another file before authorization", () => {
+    const dt = dataTransfer();
+    expect(setWorkspaceEntryDrag(dt, { root: "/project", path: ".env " })).toBe(false);
+    expect(extractPaneDrop(dt).paths).toEqual([]);
+  });
+
+  it("preserves spaces inside the complete path", () => {
+    const dt = dataTransfer();
+    expect(setWorkspaceEntryDrag(dt, { root: "/project ", path: " report.txt" })).toBe(true);
+    expect(extractPaneDrop(dt).paths).toEqual(["/project / report.txt"]);
+  });
+
+  it("does not strip a literal POSIX backslash into another filename", () => {
+    const dt = dataTransfer();
+    expect(setWorkspaceEntryDrag(dt, { root: "/project", path: "\\.env" })).toBe(true);
+    expect(extractPaneDrop(dt).paths).toEqual(["/project/\\.env"]);
   });
 });

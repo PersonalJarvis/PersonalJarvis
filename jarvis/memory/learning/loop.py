@@ -21,7 +21,9 @@ their own loop and never feed this one.
 
 Turns stay pending until a review has really looked at them: a failed or
 cancelled review hands them back, and a failing reviewer is retried after a
-growing pause, never on every turn. Nothing here runs on the voice path.
+growing pause, never on every turn. The reviewer asks only the Jarvis lead's
+own seat (``review.ModelReviewer``), so after four failed reviews in a row the
+turns are dropped with one log line. Nothing here runs on the voice path.
 """
 
 from __future__ import annotations
@@ -52,6 +54,10 @@ _MAX_CONVERSATIONS: Final[int] = 32
 #: Pause after a failed review, doubled per consecutive failure up to the cap.
 _BACKOFF_S: Final[float] = 60.0
 _BACKOFF_CAP_S: Final[float] = 3_600.0
+#: Consecutive failed reviews (the first plus three retries after the pause)
+#: after which the turns are dropped. The reviewer asks only the Jarvis seat,
+#: so a seat that keeps failing must not keep its turns forever.
+_MAX_FAILURES: Final[int] = 4
 
 
 @dataclass
@@ -340,7 +346,19 @@ class JarvisLearningLoop:
                 written, answered = await self._review_said(said, reason)
             finally:
                 conversation.reviewing = False
-                if not answered:
+                if not answered and conversation.failures + 1 >= _MAX_FAILURES:
+                    # The seat kept failing: give these turns up (turns that
+                    # arrived meanwhile stay) and start the count afresh.
+                    log.warning(
+                        "learning: dropped %d turn(s) of %s after %d failed reviews; "
+                        "only the Jarvis seat is ever asked",
+                        count,
+                        key,
+                        conversation.failures + 1,
+                    )
+                    conversation.failures = 0
+                    conversation.retry_at = 0.0
+                elif not answered:
                     # Hand the turns back for the next attempt, after a pause.
                     conversation.unreviewed = min(conversation.unreviewed + count, _KEEP_TURNS)
                     conversation.failures += 1
@@ -564,7 +582,7 @@ def start_learning(config: Any, bus: Any) -> JarvisLearningLoop | None:
             system=compact.system_prompt,
             parser=compact.parse,
             max_tokens=compact.COMPACT_MAX_TOKENS,
-            label="JarvisLearningCompaction",
+            caller="learning-compaction",
         ),
     )
     _loop.start(bus)

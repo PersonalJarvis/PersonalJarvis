@@ -8,9 +8,12 @@ shares the ``/api/setup`` prefix.
     GET  /api/setup/readiness              → is the active voice mode fully set up?
     POST /api/setup/readiness/celebrated   → the one-time "all set" note was shown
 
-Readiness reuses the section-health rollup (the real per-tier probes) instead
-of a second opinion: "ready" means every section the mode needs reports
-``ok``. Reads fail open — a broken probe reports not-ready, never a 5xx.
+Readiness reuses the section-health rollup instead of a second opinion. That
+rollup sends nothing to any provider: it reads credential presence and the
+passive record of real calls. "Ready" means every section the mode needs is
+``ok``, or set up but not used yet (``unknown`` / ``unverified`` — its first
+real call checks it). A section with a known failure is never ready. Reads
+fail open — a broken check reports not-ready, never a 5xx.
 """
 
 from __future__ import annotations
@@ -101,6 +104,21 @@ def _voice_mode(request: Request) -> str:
     return mode if mode in ("pipeline", "realtime") else "realtime"
 
 
+def _section_ready(entry: dict[str, Any]) -> bool:
+    """``ok``, or a keyed provider that is set up and simply not used yet.
+
+    The rollup never probes (it would bill the key), so "configured, no real
+    call since" is ``unknown`` with reason ``unverified``. Treating that as
+    not-ready would hold the note back until every tier had been used once.
+    """
+    from .provider_routes import UNVERIFIED_REASON
+
+    status = entry.get("status")
+    if status == "ok":
+        return True
+    return status == "unknown" and entry.get("reason") == UNVERIFIED_REASON
+
+
 @router.get("/readiness")
 async def readiness(request: Request, refresh: bool = False) -> dict[str, Any]:
     """Whether every section the active voice mode needs answers ``ok``.
@@ -131,7 +149,7 @@ async def readiness(request: Request, refresh: bool = False) -> dict[str, Any]:
         sections = {
             name: {"status": "unknown", "reason": "error", "detail": ""} for name in required
         }
-    ready = bool(required) and all(sections[name].get("status") == "ok" for name in required)
+    ready = bool(required) and all(_section_ready(sections[name]) for name in required)
     return {
         "mode": mode,
         "required": list(required),

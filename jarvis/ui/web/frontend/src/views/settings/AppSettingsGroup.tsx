@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Compass, Monitor, Moon, Power, Sun, Zap } from "lucide-react";
-import { TOUR_START_EVENT } from "@/components/onboarding/tourEvents";
+import { SETUP_REPLAY_EVENT } from "@/components/onboarding/tourEvents";
 import { Switch } from "@/components/ui/switch";
 import { useAutostart } from "@/hooks/useAutostart";
 import { useTheme, type ThemePreference } from "@/hooks/useTheme";
@@ -53,7 +53,7 @@ function TourRow() {
             <h4 className="font-medium">{t("app_tour.replay_title")}</h4>
             <button
               type="button"
-              onClick={() => window.dispatchEvent(new CustomEvent(TOUR_START_EVENT))}
+              onClick={() => window.dispatchEvent(new CustomEvent(SETUP_REPLAY_EVENT))}
               data-testid="settings-replay-tour"
               className="inline-flex items-center rounded-md border border-border bg-background px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >

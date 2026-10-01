@@ -50,7 +50,28 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-_MAX_DEFERRED_DRAIN_PASSES = 20
+#: Upper bound on follow-up passes of one journal drain (coalesced requests
+#: plus same-target serialisation). Each pass is a judge call; the drain used
+#: to repeat for as long as new requests kept marking it dirty.
+_MAX_DRAIN_PASSES = 20
+
+#: Consolidator labels after which another pass may run at once: the pass
+#: moved candidates, or found the journal empty (no model call was made, and
+#: a request that arrived meanwhile must still be served). Anything else —
+#: judge deferred/unavailable/truncated/rejected, rows in backoff — ends the
+#: drain: repeating it now would only re-bill the same failure.
+_PROGRESS_LABEL_PREFIXES = (
+    "journal-batch:",
+    "journal-deferred:",
+    "journal-evidence-rejected:",
+    "journal-empty",
+)
+
+
+def _made_progress(result: SchedulerResult) -> bool:
+    return result.triggered and result.curator_output_label.startswith(
+        _PROGRESS_LABEL_PREFIXES
+    )
 
 
 class TriggerSource(StrEnum):
@@ -76,11 +97,12 @@ def fire_journal_trigger(
     ``scheduler.trigger(TriggerSource.JOURNAL)`` call and its done-callback
     logging cannot drift apart between them:
 
-    * the per-turn count-threshold trigger
+    * the extractor's count-threshold trigger after an explicitly saved turn
       (``extractor.ConversationFactExtractor._maybe_trigger_consolidation``),
     * the boot-time backlog drain (``integration.kick_journal_backlog``), and
     * the below-threshold age-based flush
-      (``integration._journal_age_flush_loop``).
+      (``integration._journal_age_flush_loop``), which also waits out the
+      runaway guard's backoff (``background_guard``).
 
     Lives here (a runtime-stdlib-only leaf, next to ``TriggerSource``) so
     ``extractor`` and ``integration`` can both import it without an import
@@ -310,9 +332,15 @@ class CuratorScheduler:
         return active
 
     async def _run_scheduled_journal_trigger(self) -> SchedulerResult:
-        """Run one shared fire task until every late request is observed."""
+        """Run one shared fire task until every late request is observed.
+
+        Bounded by :data:`_MAX_DRAIN_PASSES`; a request still pending after
+        that is served by the next trigger.
+        """
         result = await self.trigger(TriggerSource.JOURNAL)
-        while self._journal_dirty:
+        passes = 0
+        while self._journal_dirty and passes < _MAX_DRAIN_PASSES:
+            passes += 1
             self._journal_dirty = False
             result = await self.trigger(TriggerSource.JOURNAL)
         return result
@@ -369,28 +397,41 @@ class CuratorScheduler:
         return True
 
     async def _drain_journal(self) -> SchedulerResult:
-        """Drain coalesced work and safely serialized same-target candidates."""
+        """Drain coalesced work and safely serialized same-target candidates.
+
+        Bounded twice over: at most :data:`_MAX_DRAIN_PASSES` follow-up
+        passes, and a pass that moved nothing (judge deferred, unavailable,
+        truncated or rejected; rows in backoff; lock held) ends the drain even
+        if new requests arrived meanwhile. The next trigger retries under the
+        runaway guard's backoff instead of this loop re-billing the failure.
+        """
         result = await self._do_trigger(
             TriggerSource.JOURNAL,
             episode_paths=None,
             review_keys=None,
         )
-        deferred_passes = 0
-        while True:
-            deferred = (
-                result.triggered
-                and result.curator_output_label.startswith("journal-deferred:")
-                and deferred_passes < _MAX_DEFERRED_DRAIN_PASSES
+        for _pass in range(_MAX_DRAIN_PASSES):
+            deferred = result.triggered and result.curator_output_label.startswith(
+                "journal-deferred:"
             )
             if not self._journal_dirty and not deferred:
                 break
-            if deferred:
-                deferred_passes += 1
+            if not _made_progress(result):
+                # Late requests are answered by this failed pass: running the
+                # same judge again now cannot succeed where it just did not.
+                self._journal_dirty = False
+                break
             self._journal_dirty = False
             result = await self._do_trigger(
                 TriggerSource.JOURNAL,
                 episode_paths=None,
                 review_keys=None,
+            )
+        else:
+            log.info(
+                "CuratorScheduler: journal drain stopped after %d passes; the "
+                "remaining candidates wait for the next trigger",
+                _MAX_DRAIN_PASSES,
             )
         return result
 

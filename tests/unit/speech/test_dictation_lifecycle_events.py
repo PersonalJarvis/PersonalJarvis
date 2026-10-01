@@ -223,6 +223,43 @@ async def test_a_dictation_killed_mid_flight_still_closes_its_turn(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("immediate", [False, True])
+async def test_discard_cancels_work_and_releases_wake_gate(monkeypatch, immediate):
+    bus = EventBus()
+    seen = _Collector(bus)
+    pipe = _dictation_pipeline(bus)
+    monkeypatch.setattr(pipeline_mod, "MicrophoneCapture", _FakeMic)
+    finishing = asyncio.Event()
+    delivered = []
+
+    async def finish(**kwargs):
+        finishing.set()
+        await asyncio.Event().wait()
+        delivered.append(kwargs)
+        return ""
+
+    pipe._finish_dictation = finish
+    assert pipe.start_dictation()
+    task = pipe._dictation_task
+    if not immediate:
+        await _drain_bus()
+        pipe.stop_dictation()
+        await asyncio.wait_for(finishing.wait(), timeout=2)
+    assert pipe.request_dictation_stop(discard=True)
+    assert pipe.request_dictation_stop(discard=True)
+    try:
+        await asyncio.wait_for(asyncio.shield(task), timeout=2)
+    except asyncio.CancelledError:
+        pass
+    await _drain_bus()
+    assert not delivered
+    assert len(seen.completed) == 1
+    assert seen.completed[0].outcome == "cancelled"
+    assert not pipe.dictation_active()
+    assert pipe._activation_allowed()
+
+
+@pytest.mark.asyncio
 async def test_a_crashing_dictation_publishes_exactly_one_completion(
     monkeypatch,
 ) -> None:

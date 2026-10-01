@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MessageSquare, Mic } from "lucide-react";
+import { MessageSquare } from "lucide-react";
 
 import { NAV_GROUPS, presentNavItem } from "@/components/layout/navGroups";
 
@@ -7,10 +7,10 @@ const chats = NAV_GROUPS.flat().find((i) => i.id === "chats")!;
 const agents = NAV_GROUPS.flat().find((i) => i.id === "agents")!;
 
 describe("presentNavItem", () => {
-  it("names the front page after the face the Voice | Chat switch picked", () => {
+  it("keeps the front page named Chat while voice mode is active", () => {
     const voice = presentNavItem(chats, "voice");
-    expect(voice.labelKey).toBe("sidebar.surface_voice");
-    expect(voice.icon).toBe(Mic);
+    expect(voice.labelKey).toBe("sidebar.surface_chat");
+    expect(voice.icon).toBe(MessageSquare);
 
     const chat = presentNavItem(chats, "chat");
     expect(chat.labelKey).toBe("sidebar.surface_chat");

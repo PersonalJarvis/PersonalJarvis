@@ -90,6 +90,60 @@ def test_matrix_covers_all_advertised_targets_and_python_minors(gate) -> None:
     assert len(gate.TARGETS) * len(gate.PYTHON_VERSIONS) == 24
 
 
+def test_wheel_identity_cannot_be_borrowed_from_another_distribution(gate):
+    forged = _wheel_package(name="another", filename="example-1.0-py3-none-any.whl")
+    with pytest.raises(gate.LockValidationError):
+        gate.validate_pylock(_lock(forged), _target(gate, "linux-x86_64"), "3.11", profile="base")
+    equivalent = _wheel_package(version="1.0.0", filename="example-1.0-py3-none-any.whl")
+    assert (
+        gate.validate_pylock(
+            _lock(equivalent), _target(gate, "linux-x86_64"), "3.11", profile="base"
+        )
+        == frozenset()
+    )
+
+
+def test_reviewed_native_wheel_keeps_target_hash_and_identity_checks(gate, monkeypatch):
+    from scripts import native_crypto_index as index
+
+    records = []
+    for target, tag in index.PLATFORMS.items():
+        filename = f"cryptography-50.0.2-cp311-abi3-{tag}.whl"
+        records.append(
+            {
+                "target": target,
+                "filename": filename,
+                "url": f"{index.PUBLISH_ROOT}/50.0.2-1/files/{filename}",
+                "sha256": "a" * 64,
+            }
+        )
+    monkeypatch.setattr(
+        index,
+        "load_manifest",
+        lambda: {
+            "schema": 1,
+            "build_revision": 1,
+            "cryptography": {"version": "50.0.2"},
+            "artifacts": records,
+        },
+    )
+    row = records[0]
+    package = {
+        "name": "cryptography",
+        "version": "50.0.2",
+        "wheels": [{"url": row["url"], "hashes": {"sha256": row["sha256"]}}],
+    }
+    assert (
+        gate.validate_pylock(_lock(package), _target(gate, "macos-x86_64"), "3.14", profile="base")
+        == frozenset()
+    )
+    with pytest.raises(gate.LockValidationError):
+        gate.validate_pylock(_lock(package), _target(gate, "macos-arm64"), "3.14", profile="base")
+    package["wheels"][0]["hashes"]["sha256"] = "b" * 64
+    with pytest.raises(gate.LockValidationError):
+        gate.validate_pylock(_lock(package), _target(gate, "macos-x86_64"), "3.14", profile="base")
+
+
 def test_inactive_package_is_ignored_but_marker_mutation_fails_closed(gate) -> None:
     target = _target(gate, "linux-x86_64")
     forbidden = _sdist_package(
@@ -173,17 +227,13 @@ def test_desktop_sdist_exception_cannot_drift_into_base(gate) -> None:
         )
     )
     target = _target(gate, "linux-x86_64")
-    assert gate.validate_pylock(data, target, "3.11", profile="full") == frozenset(
-        {"mouseinfo"}
-    )
+    assert gate.validate_pylock(data, target, "3.11", profile="full") == frozenset({"mouseinfo"})
     with pytest.raises(gate.LockValidationError, match="not an audited exception"):
         gate.validate_pylock(data, target, "3.11", profile="base")
 
 
 def test_free_threaded_and_musllinux_wheels_do_not_false_green(gate) -> None:
-    free_threaded = _lock(
-        _wheel_package(filename="example-1.0-cp314t-cp314t-win_arm64.whl")
-    )
+    free_threaded = _lock(_wheel_package(filename="example-1.0-cp314t-cp314t-win_arm64.whl"))
     with pytest.raises(gate.LockValidationError, match="no compatible"):
         gate.validate_pylock(
             free_threaded,
@@ -192,9 +242,7 @@ def test_free_threaded_and_musllinux_wheels_do_not_false_green(gate) -> None:
             profile="base",
         )
 
-    musllinux = _lock(
-        _wheel_package(filename="example-1.0-cp311-cp311-musllinux_1_2_aarch64.whl")
-    )
+    musllinux = _lock(_wheel_package(filename="example-1.0-cp311-cp311-musllinux_1_2_aarch64.whl"))
     with pytest.raises(gate.LockValidationError, match="no compatible"):
         gate.validate_pylock(
             musllinux,
@@ -231,14 +279,14 @@ def test_cell_projects_full_pylock_before_target_dry_run(
             output = Path(command[command.index("--output-file") + 1])
             digest = "a" * 64
             output.write_text(
-                "lock-version = \"1.0\"\n\n"
+                'lock-version = "1.0"\n\n'
                 "[[packages]]\n"
-                "name = \"example\"\n"
-                "version = \"1.0\"\n"
+                'name = "example"\n'
+                'version = "1.0"\n'
                 "wheels = [{ url = "
-                "\"https://files.pythonhosted.org/packages/aa/bb/"
-                "example-1.0-py3-none-any.whl\", "
-                f"hashes = {{ sha256 = \"{digest}\" }} }}]\n",
+                '"https://files.pythonhosted.org/packages/aa/bb/'
+                'example-1.0-py3-none-any.whl", '
+                f'hashes = {{ sha256 = "{digest}" }} }}]\n',
                 encoding="utf-8",
             )
         return gate.CommandResult(0)
@@ -259,7 +307,9 @@ def test_cell_projects_full_pylock_before_target_dry_run(
     full_text = full_requirements.read_text(encoding="utf-8")
     assert "example==1.0 --hash=sha256:" + "a" * 64 in full_text
     for command in commands:
-        assert "--no-config" in command
+        assert command[command.index("--config-file") + 1] == "packaging/native-crypto-uv.toml"
+        assert "--index" not in command
+        assert "--extra-index-url" not in command
         assert command[command.index("--default-index") + 1] == gate.PUBLIC_PYPI
         assert command[command.index("--python-platform") + 1] == "aarch64-pc-windows-msvc"
 

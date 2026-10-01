@@ -1,6 +1,6 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { isTourEvent } from "@/components/onboarding/tourEvents";
-import { lazy, Suspense, useMemo, useRef, useState, type ComponentType, type LazyExoticComponent } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ComponentType, type LazyExoticComponent } from "react";
 import { Loader2, Search, X } from "lucide-react";
 import {
   NAV_FOOTER_ITEMS,
@@ -10,6 +10,7 @@ import {
   type NavItem,
 } from "@/components/layout/navGroups";
 import { useEventStore } from "@/store/events";
+import { useSettingsJump } from "@/store/settingsJump";
 import { useSectionHealth } from "@/hooks/useProviders";
 import { useT, useUiLanguage } from "@/i18n";
 import { isComboboxPanelEvent } from "@/components/ui/combobox";
@@ -21,8 +22,9 @@ import { cn } from "@/lib/utils";
  * floats over the user's current section, with a searchable left navigation
  * (General · System · Activity) and the selected section on the right:
  *
- *   General: Settings, Appshots, Profile, {name}.md, Contacts, Socials
- *   System: Computers, API Keys, Local models, Wallpaper
+ *   General: Settings, Keyboard shortcuts, Appshots, My Pets, Profile,
+ *            {name}.md, Contacts, Socials
+ *   System: Computers, API Keys, Local models, Jarvis actions
  *   Activity: Spend, Feedback
  *
  * Same merged-section pattern as VoiceHubView / ClisHubView: the active
@@ -77,14 +79,17 @@ const LocalModelsTab = lazy(() =>
 const ComputersTab = lazy(() =>
   import("@/views/ComputersView").then((m) => ({ default: m.ComputersView })),
 );
-const WallpaperTab = lazy(() =>
-  import("@/views/WallpaperView").then((m) => ({ default: m.WallpaperView })),
-);
 const JarvisActionsTab = lazy(() =>
   import("@/views/JarvisActionsView").then((m) => ({ default: m.JarvisActionsView })),
 );
 const AppshotsTab = lazy(() =>
   import("@/views/AppshotsView").then((m) => ({ default: m.AppshotsView })),
+);
+const ShortcutsTab = lazy(() =>
+  import("@/views/ShortcutsView").then((m) => ({ default: m.ShortcutsView })),
+);
+const PetsTab = lazy(() =>
+  import("@/views/PetsView").then((m) => ({ default: m.PetsView })),
 );
 const CostsTab = lazy(() =>
   import("@/views/CostsView").then((m) => ({ default: m.CostsView })),
@@ -95,10 +100,12 @@ const FeedbackTab = lazy(() =>
   })),
 );
 
-/** The eleven entries of the left navigation, in display order. */
+/** The entries of the left navigation, in display order. */
 type HubNavId =
   | "settings"
+  | "shortcuts"
   | "appshots"
+  | "pets"
   | "profile"
   | "agent-instructions"
   | "contacts"
@@ -107,18 +114,26 @@ type HubNavId =
   | "local-models"
   | "computers"
   | "jarvis-actions"
-  | "wallpaper"
   | "costs"
   | "feedback";
 
 const HUB_NAV_GROUPS: readonly { labelKey: string; ids: readonly HubNavId[] }[] = [
   {
     labelKey: "settings_hub.group_general",
-    ids: ["settings", "appshots", "profile", "agent-instructions", "contacts", "socials"],
+    ids: [
+      "settings",
+      "shortcuts",
+      "appshots",
+      "pets",
+      "profile",
+      "agent-instructions",
+      "contacts",
+      "socials",
+    ],
   },
   {
     labelKey: "settings_hub.group_system",
-    ids: ["computers", "apikeys", "local-models", "jarvis-actions", "wallpaper"],
+    ids: ["computers", "apikeys", "local-models", "jarvis-actions"],
   },
   {
     labelKey: "settings_hub.group_activity",
@@ -136,8 +151,9 @@ const TAB_CONTENT: Record<HubNavId | "telephony-setup", LazyExoticComponent<Comp
   "telephony-setup": TelephonySetupTab,
   "local-models": LocalModelsTab,
   computers: ComputersTab,
-  wallpaper: WallpaperTab,
   appshots: AppshotsTab,
+  shortcuts: ShortcutsTab,
+  pets: PetsTab,
   "jarvis-actions": JarvisActionsTab,
   costs: CostsTab,
   feedback: FeedbackTab,
@@ -167,10 +183,12 @@ function resolveHubTab(active: string): { content: HubNavId | "telephony-setup";
       return { content: "local-models", highlight: "local-models" };
     case "computers":
       return { content: "computers", highlight: "computers" };
-    case "wallpaper":
-      return { content: "wallpaper", highlight: "wallpaper" };
     case "appshots":
       return { content: "appshots", highlight: "appshots" };
+    case "shortcuts":
+      return { content: "shortcuts", highlight: "shortcuts" };
+    case "pets":
+      return { content: "pets", highlight: "pets" };
     case "jarvis-actions":
       return { content: "jarvis-actions", highlight: "jarvis-actions" };
     case "costs":
@@ -222,6 +240,15 @@ export function SettingsHubView({ onClose }: { onClose: () => void }) {
   const [searchTarget, setSearchTarget] = useState<string | null>(null);
   const { health: sectionHealth } = useSectionHealth();
 
+  // A group picked in the quick switcher while the hub was closed (or open on
+  // another tab) — take it over once; see store/settingsJump.
+  const pendingJump = useSettingsJump((s) => s.target);
+  useEffect(() => {
+    if (pendingJump === null) return;
+    const target = useSettingsJump.getState().take();
+    if (target) setSearchTarget(target);
+  }, [pendingJump]);
+
   const { content, highlight } = resolveHubTab(active);
   const Content = TAB_CONTENT[content];
 
@@ -229,7 +256,7 @@ export function SettingsHubView({ onClose }: { onClose: () => void }) {
   const matches = (item: NavItem) =>
     needle === "" || resolveNavLabel(t, item).toLowerCase().includes(needle);
 
-  // Eleven entries — filtered inline; no memo needed at this size.
+  // Twelve entries — filtered inline; no memo needed at this size.
   const visibleGroups = HUB_NAV_GROUPS.map((group) => ({
     ...group,
     items: group.ids.map(findNavItem).filter(matches),
@@ -423,7 +450,7 @@ export function SettingsHubView({ onClose }: { onClose: () => void }) {
  *
  * Centred with `inset-0` + `m-auto` rather than a translate: a transform would
  * turn the dialog into the containing block of every `position: fixed` layer a
- * tab renders inline (the wallpaper preview, view-level dialogs) and trap them
+ * tab renders inline (an image preview, view-level dialogs) and trap them
  * inside the window instead of covering the screen.
  */
 export function SettingsHubDialog({ onClose }: { onClose: () => void }) {
