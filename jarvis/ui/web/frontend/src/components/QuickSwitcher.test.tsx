@@ -2,7 +2,7 @@
  * The quick switcher end to end: type, Enter, you are there.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 // Radix Dialog and cmdk touch browser APIs jsdom does not ship.
 class ResizeObserverPolyfill {
@@ -156,6 +156,15 @@ describe("QuickSwitcher", () => {
         workspaceId: "ws-2",
       });
       expect(useIdeSidePanelStore.getState().spotlight).toEqual({ workspaceId: "ws-2", pane: "codex-3" });
+    });
+
+    it("selects the top row again when late results push in above it", async () => {
+      renderOpen();
+      // "blog" matches no section and no chat at first; the terminal arrives
+      // with the fetch and must become the selected top row, so Enter opens it.
+      fireEvent.change(screen.getByTestId("quick-switcher-input"), { target: { value: "blog speed" } });
+      const row = await screen.findByTestId("quick-switch-pane-ws-2-codex-3");
+      await waitFor(() => expect(row.getAttribute("data-selected")).toBe("true"));
     });
 
     it("opens with the text typed into the sidebar bar", () => {

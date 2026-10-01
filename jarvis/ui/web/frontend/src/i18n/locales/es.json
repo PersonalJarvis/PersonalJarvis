@@ -1631,6 +1631,7 @@
     "terminal_grid": "Cuadrícula de terminales",
     "sidebar_placeholder": "Buscar en {name}",
     "sidebar_search": "Buscar",
+    "inline_hint": "↑ ↓ elegir · Enter abrir · Esc cerrar",
     "group_chats": "Chats",
     "group_recent_chats": "Chats recientes",
     "group_terminals": "Terminales",

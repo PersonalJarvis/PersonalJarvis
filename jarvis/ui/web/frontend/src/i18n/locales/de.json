@@ -1631,6 +1631,7 @@
     "terminal_grid": "Terminal-Raster",
     "sidebar_placeholder": "{name} durchsuchen",
     "sidebar_search": "Suchen",
+    "inline_hint": "↑ ↓ auswählen · Enter öffnen · Esc schließen",
     "group_chats": "Chats",
     "group_recent_chats": "Letzte Chats",
     "group_terminals": "Terminals",

@@ -349,15 +349,13 @@ describe("Sidebar assistant name header", () => {
     expect(bar()).not.toContain("Nova");
   });
 
-  test("the search bar opens the quick switcher with the typed key", () => {
+  test("the search bar is a field you type into, not a door to a window", () => {
     renderSidebar();
-    const bar = screen.getByTestId("sidebar-search");
-    fireEvent.keyDown(bar, { key: "a" });
-    expect(useQuickSwitcher.getState()).toMatchObject({ open: true, initialQuery: "a" });
-    act(() => useQuickSwitcher.getState().hide());
-    fireEvent.click(bar);
-    expect(useQuickSwitcher.getState()).toMatchObject({ open: true, initialQuery: "" });
-    act(() => useQuickSwitcher.getState().hide());
+    const bar = screen.getByTestId("sidebar-search") as HTMLInputElement;
+    fireEvent.change(bar, { target: { value: "agen" } });
+    expect(bar.value).toBe("agen");
+    // Typing here never opens the Spotlight window in the middle.
+    expect(useQuickSwitcher.getState().open).toBe(false);
   });
 
   test("switching the quick switcher off brings the name row back", () => {

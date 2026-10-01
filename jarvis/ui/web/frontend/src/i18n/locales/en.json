@@ -1664,6 +1664,7 @@
     "terminal_grid": "Terminal grid",
     "sidebar_placeholder": "Search {name}",
     "sidebar_search": "Search",
+    "inline_hint": "↑ ↓ to choose · Enter to open · Esc to close",
     "group_chats": "Chats",
     "group_recent_chats": "Recent chats",
     "group_terminals": "Terminals",
