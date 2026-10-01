@@ -392,13 +392,13 @@ _READBACK_KINDS: frozenset[str] = frozenset(
 
 #: Readback sources that never speak outside a call (see ``_is_agent_reply``).
 #: A mission the user just asked for is not here: its answer may still punch
-#: through the hangup gate (AD-OE5/OE6).
+#: through the hangup gate (AD-OE5/OE6). Explicit delegations wait for a call
+#: and a conversational pause; their results never open a call themselves.
 _HELD_FOR_CALL_SOURCES: frozenset[str] = frozenset(
     {
         "society.lead",
-        # A pane finishing a job Jarvis handed it (jarvis/agentic_ide/
-        # voice_readback.py): spoken inside the call, else at the next one.
         "agentic_ide.readback",
+        "delegation.batch",
         "tasks.runner",
         "workflows.runner",
         "workflows.scheduler",
@@ -1398,10 +1398,14 @@ _DICTATION_TAIL_REREAD_BACK_S = 0.5
 
 # How long the release waits for the incremental polish worker to finish the
 # windows it already has — normally the last one, whose formatting started the
-# moment it was read. One configured polish budget plus a little: past that
-# the formatter is not answering and the whole-text pass (which has its own
-# ceiling and fails open to the raw text) takes over.
+# moment it was read. Past that the worker is retired and its completed prefix
+# is retained, leaving only unfinished text for the bounded final polish pass.
 _DICTATION_PREFIX_POLISH_WAIT_S = 3.0
+
+# Dictation notifications update UI state; they must not inherit the bus's
+# five-second observer timeout before a finished transcript can be delivered.
+_DICTATION_EVENT_TIMEOUT_S = 1.0
+_DICTATION_POLISH_CANCEL_WAIT_S = 0.25
 
 
 class _SessionInputBuffer:
@@ -3828,11 +3832,14 @@ class SpeechPipeline:
         ):
             self._last_answer_floor_monotonic = time.monotonic()
         self._turn_state = new_state
+        if new_state is TurnTakingState.LISTENING:
+            self._schedule_delegation_results()
         if new_state is TurnTakingState.IDLE:
-            retry = getattr(self, "_agent_reply_retry_task", None)
-            if retry is not None and retry is not asyncio.current_task():
-                retry.cancel()
-                await asyncio.gather(retry, return_exceptions=True)
+            for task_name in ("_agent_reply_retry_task", "_delegation_result_task"):
+                retry = getattr(self, task_name, None)
+                if retry is not None and retry is not asyncio.current_task():
+                    retry.cancel()
+                    await asyncio.gather(retry, return_exceptions=True)
         await self._transition(self._supervisor_state_for_turn(new_state))
         # Turn-boundary: the floor has cleared → flush any announcements that
         # were deferred while the user was speaking (AD-OE6 zero-silent-drop).
@@ -4975,8 +4982,23 @@ class SpeechPipeline:
                         "Realtime announcement context mirror failed",
                         exc_info=True,
                     )
+        from jarvis.core.delegation import RESULT_SOURCES, ResultInbox
+
+        if event.source_layer in RESULT_SOURCES:
+            inbox = getattr(self, "_delegation_inbox", None)
+            if inbox is None:
+                inbox = self._delegation_inbox = ResultInbox()
+            inbox.add(event)
+            self._schedule_delegation_results()
+            return
         if is_agent_reply:
             if event == getattr(self, "_agent_reply_inflight", None):
+                return
+            if (
+                event.source_layer == "delegation.batch"
+                and self._turn_state is not TurnTakingState.LISTENING
+            ):
+                self._defer_agent_reply(event)
                 return
             if self._agent_reply_needs_session():
                 self._defer_agent_reply(event)
@@ -5389,6 +5411,8 @@ class SpeechPipeline:
                         chunks,
                         should_play=lambda: (
                             not self._agent_reply_needs_session()
+                            and (event.source_layer != "delegation.batch"
+                                 or self._turn_state is TurnTakingState.LISTENING)
                             if is_agent_reply
                             else getattr(self, "_turn_state", TurnTakingState.IDLE)
                             is not TurnTakingState.JARVIS_SPEAKING
@@ -5430,6 +5454,49 @@ class SpeechPipeline:
             return False
         session = getattr(self, "_active_realtime_handle", None)
         return session is not None
+
+    def _schedule_delegation_results(self) -> None:
+        """One coalescing task; a user's conversation always keeps the floor."""
+        inbox = getattr(self, "_delegation_inbox", None)
+        task = getattr(self, "_delegation_result_task", None)
+        if (
+            inbox is None or not inbox.pending
+            or (task is not None and not task.done())
+            or self._agent_reply_needs_session()
+            or self._turn_state is not TurnTakingState.LISTENING
+            or getattr(self, "_agent_reply_inflight", None) is not None
+        ):
+            return
+        self._delegation_result_task = asyncio.create_task(
+            self._flush_delegation_results(), name="delegation-results"
+        )
+
+    async def _flush_delegation_results(self) -> None:
+        from jarvis.core.delegation import BATCH_WINDOW_S
+
+        event = None
+        try:
+            await asyncio.sleep(BATCH_WINDOW_S)
+            if (
+                self._agent_reply_needs_session()
+                or self._turn_state is not TurnTakingState.LISTENING
+                or getattr(self, "_agent_reply_inflight", None) is not None
+            ):
+                return
+            event = self._delegation_inbox.take()
+            if event is not None:
+                await self._on_announcement(event)
+        except asyncio.CancelledError:
+            if event is not None:
+                self._defer_agent_reply(event)
+            raise
+        except Exception:
+            if event is not None:
+                self._defer_agent_reply(event)
+            log.warning("Delegation result delivery deferred", exc_info=True)
+        finally:
+            self._delegation_result_task = None
+            self._schedule_delegation_results()
 
     async def _deliver_announcement_via_realtime(
         self,
@@ -11815,6 +11882,8 @@ class SpeechPipeline:
         stt_models: list[str] = []
         detected_languages: list[str] = []
         stt_latency_ms = 0.0
+        warmup_wait_ms = 0.0
+        stt_queue_wait_ms = 0.0
         stt_calls = 0
         final_window_count = 0
         # Windows whose transcript stopped at a mid-recording pause and were
@@ -11888,6 +11957,7 @@ class SpeechPipeline:
         prefix_polish_windows = 0
         prefix_polish_deltas = 0
         prefix_polish_failed = False
+        prefix_polish_stopped = False
         prefix_polish_task: asyncio.Task[None] | None = None
 
         def _append_unique(values: list[str], value: object) -> None:
@@ -11994,7 +12064,7 @@ class SpeechPipeline:
             # ``stt_failures`` is appended to, never rebound, so it needs no
             # ``nonlocal`` — the list object itself is the shared state.
             nonlocal stt, stt_error, stt_error_detail, session_language
-            nonlocal stt_calls, stt_latency_ms
+            nonlocal stt_calls, stt_latency_ms, warmup_wait_ms, stt_queue_wait_ms
             ceiling = max(
                 float(getattr(self, "_stt_final_timeout_s", 8.0) or 8.0),
                 (len(pcm) / bytes_per_second)
@@ -12007,8 +12077,14 @@ class SpeechPipeline:
             # Startup/live-switch warm-up and this call share one native task.
             # Joining it avoids both an 11 s cold final decode and a concurrent
             # model call that would return TranscribeBusy (AP-24).
+            queued_at = time.perf_counter()
             async with stt_gate:
-                stt = await self._join_dictation_warmup(stt)
+                stt_queue_wait_ms += (time.perf_counter() - queued_at) * 1000.0
+                warmup_started = time.perf_counter()
+                try:
+                    stt = await self._join_dictation_warmup(stt)
+                finally:
+                    warmup_wait_ms += (time.perf_counter() - warmup_started) * 1000.0
                 if probe:
                     inference_active.set()
                 call_started = time.perf_counter()
@@ -12361,7 +12437,7 @@ class SpeechPipeline:
                         continue
                     last_published = live
                     try:
-                        await self._publish_event(
+                        await self._publish_dictation_event(
                             DictationTranscript(
                                 source_layer="speech.dictation",
                                 text=live,
@@ -12659,7 +12735,7 @@ class SpeechPipeline:
             nonlocal prefix_polish_deltas, prefix_polish_failed
             from jarvis.dictation.merge import merge_transcripts
 
-            while not prefix_polish_failed:
+            while not prefix_polish_failed and not prefix_polish_stopped:
                 reading = final_reads.get(prefix_polish_windows)
                 if reading is None:
                     return
@@ -12677,6 +12753,8 @@ class SpeechPipeline:
                 delta = merged[len(prefix_polish_raw) :].strip()
                 if delta:
                     piece, _status = await _polish_delta(delta, prefix_polish_text)
+                    if prefix_polish_stopped:
+                        return
                     if piece:
                         prefix_polish_text = " ".join(
                             part for part in (prefix_polish_text, piece) if part
@@ -12688,7 +12766,7 @@ class SpeechPipeline:
         def _kick_prefix_polish() -> None:
             """Start the formatting worker unless it is running or given up."""
             nonlocal prefix_polish_task
-            if prefix_polish_failed or not final_quality_pass:
+            if prefix_polish_failed or prefix_polish_stopped or not final_quality_pass:
                 return
             if not bool(getattr(cfg, "polish", True)) or bool(getattr(cfg, "translate", False)):
                 return
@@ -12701,10 +12779,11 @@ class SpeechPipeline:
         async def _settle_prefix_polish() -> None:
             """Let the worker finish the windows it already has — normally the
             last one, started the moment it was read — within one polish budget.
-            Past that the whole-text pass takes over rather than making the
-            user wait on a formatter that is not answering.
+            Past that, retain the completed prefix and retire its worker. The
+            finish path formats only the remaining tail instead of repeating
+            every completed window while the old formatter is still running.
             """
-            nonlocal prefix_polish_failed
+            nonlocal prefix_polish_failed, prefix_polish_stopped
             _kick_prefix_polish()
             task = prefix_polish_task
             if task is None:
@@ -12714,10 +12793,26 @@ class SpeechPipeline:
                     asyncio.shield(task), timeout=_DICTATION_PREFIX_POLISH_WAIT_S
                 )
             except TimeoutError:
-                prefix_polish_failed = True
+                prefix_polish_stopped = True
+                task.cancel()
+                done, _pending = await asyncio.wait(
+                    (task,), timeout=_DICTATION_POLISH_CANCEL_WAIT_S
+                )
+
+                def consume(done_task: asyncio.Task) -> None:
+                    if done_task.cancelled():
+                        return
+                    if done_task.exception() is not None:
+                        log.debug("Retired dictation formatter finished with an error")
+
+                if done:
+                    consume(task)
+                else:
+                    # No late result may mutate the captured prefix above.
+                    task.add_done_callback(consume)
                 log.info(
                     "incremental dictation polish did not finish within %.1fs; "
-                    "formatting the whole text instead.",
+                    "keeping its completed prefix and formatting the remaining tail.",
                     _DICTATION_PREFIX_POLISH_WAIT_S,
                 )
             except asyncio.CancelledError:
@@ -13160,8 +13255,9 @@ class SpeechPipeline:
             # sets an event and does not know when the stream actually stopped.
             # A hangup skips it: nothing will be transcribed, and
             # ``DictationCompleted`` follows immediately.
+            capture_closed_at = time.perf_counter()
             if not hung_up:
-                await self._publish_event(
+                await self._publish_dictation_event(
                     DictationTranscribing(source_layer="speech.dictation")
                 )
 
@@ -13277,6 +13373,10 @@ class SpeechPipeline:
                     f"final_windows:{final_window_count}",
                     f"final_windows_prefetched:{final_prefetched}",
                     f"release_wait_ms:{release_wait_ms}",
+                    f"warmup_wait_ms:{round(warmup_wait_ms)}",
+                    f"stt_queue_wait_ms:{round(stt_queue_wait_ms)}",
+                    "post_recording_wait_ms:"
+                    f"{round((time.perf_counter() - capture_closed_at) * 1000.0)}",
                     f"truncation_repairs:{truncation_repairs}",
                     f"tail_repairs:{tail_repairs}",
                     f"pause_trim_ms:{round(pause_trim_bytes * 1000 / bytes_per_second)}",
@@ -13501,6 +13601,26 @@ class SpeechPipeline:
             return ""
         return counts[0][0]
 
+    async def _publish_dictation_event(self, event: Any) -> bool:
+        """Deliver to healthy observers in order without waiting on a dead UI.
+
+        The bus fans out concurrently, so an unrelated stalled observer cannot
+        delay a healthy recipient. The bounded await still joins cancellation;
+        no publication task is left behind to reorder a later dictation.
+        """
+        try:
+            await asyncio.wait_for(
+                self._publish_event(event), timeout=_DICTATION_EVENT_TIMEOUT_S
+            )
+        except TimeoutError:
+            log.warning(
+                "Dictation event %s exceeded %.1fs; abandoning stalled observers.",
+                type(event).__name__,
+                _DICTATION_EVENT_TIMEOUT_S,
+            )
+            return False
+        return True
+
     async def _finish_dictation(
         self,
         *,
@@ -13575,6 +13695,7 @@ class SpeechPipeline:
         (``[dictation].keep_failed_audio``), which is what a later Restore
         transcribes again.
         """
+        finish_started = time.perf_counter()
         stt_error = normalize_stt_failure(stt_error)
         cleaned = raw_text
         removed_words = 0
@@ -13885,20 +14006,52 @@ class SpeechPipeline:
                 log.debug("dictation target resolution failed", exc_info=True)
                 resolved_target = "insert"
 
-        # Publish the final transcript before inserting: the app's own fields,
-        # the chat composer and the bar all listen for it, and they should
-        # update even if insertion fails.
-        try:
-            await self._publish_event(
-                DictationTranscript(
-                    source_layer="speech.dictation",
-                    text=cleaned,
-                    is_final=True,
-                    target=resolved_target,
+        formatting_ms = round((time.perf_counter() - finish_started) * 1000.0)
+        notification_ms = 0
+        insertion_ms = 0
+        final_notification_status = "complete"
+        insert_result = None
+
+        async def notify_final() -> None:
+            nonlocal notification_ms, final_notification_status
+            started = time.perf_counter()
+            try:
+                complete = await self._publish_dictation_event(
+                    DictationTranscript(
+                        source_layer="speech.dictation",
+                        text=cleaned,
+                        is_final=True,
+                        target=resolved_target,
+                    )
                 )
-            )
+                if not complete:
+                    final_notification_status = "observer_timeout"
+            except Exception:
+                final_notification_status = "failed"
+                log.warning("dictation final publish failed", exc_info=True)
+            finally:
+                notification_ms = round((time.perf_counter() - started) * 1000.0)
+
+        async def insert_external() -> None:
+            nonlocal insert_result, insertion_ms
+            started = time.perf_counter()
+            try:
+                insert_result = await asyncio.to_thread(self._insert_dictation, cleaned)
+            except Exception:
+                log.warning("dictation insertion failed", exc_info=True)
+            finally:
+                insertion_ms = round((time.perf_counter() - started) * 1000.0)
+
+        # Healthy UI clients receive the final text even if OS insertion fails.
+        # An external paste starts alongside notification: its destination must
+        # not drift while an unrelated UI observer is holding up the bus.
+        try:
+            if resolved_target == "insert" and cleaned.strip() and not hung_up:
+                await asyncio.gather(notify_final(), insert_external())
+            else:
+                await notify_final()
         except Exception as exc:  # noqa: BLE001
-            log.debug("dictation final publish failed: %s", exc)
+            log.warning("dictation final delivery failed: %s", exc)
 
         outcome_name = "chat"
         detail = ""
@@ -13923,10 +14076,15 @@ class SpeechPipeline:
                 # an unexplained empty result after the user clearly spoke.
                 detail = rejected_detail
         elif resolved_target == "insert":
-            insert_result = await asyncio.to_thread(self._insert_dictation, cleaned)
-            outcome_name = insert_result.status
-            detail = insert_result.detail
-            method = insert_result.method
+            if insert_result is None:
+                outcome_name = "failed"
+                detail = "The text could not be inserted."
+                if bool(getattr(cfg, "history_enabled", True)):
+                    detail += " It is available in dictation history."
+            else:
+                outcome_name = insert_result.status
+                detail = insert_result.detail
+                method = insert_result.method
 
         # A dictation that delivered SOME words and permanently lost others is
         # not a success, whichever way the surviving fragment was delivered.
@@ -14002,12 +14160,21 @@ class SpeechPipeline:
                 dropped_audio_s,
             )
 
+        delivery_audit = (
+            *stt_audit,
+            f"formatting_wait_ms:{formatting_ms}",
+            f"final_notification_wait_ms:{notification_ms}",
+            f"insertion_wait_ms:{insertion_ms}",
+            f"finish_wait_ms:{round((time.perf_counter() - finish_started) * 1000.0)}",
+            f"final_notification:{final_notification_status}",
+        )
+
         # Mark the turn closed BEFORE the publish attempt: this flag answers
         # "does the teardown still owe a terminal event", and a publish that
         # raised is not a reason to fire a second, contradictory completion.
         self._dictation_completion_published = True
         try:
-            await self._publish_event(
+            await self._publish_dictation_event(
                 DictationCompleted(
                     source_layer="speech.dictation",
                     text=cleaned,
@@ -14028,7 +14195,7 @@ class SpeechPipeline:
                     stt_latency_ms=max(0, int(stt_latency_ms)),
                     stt_calls=max(0, int(stt_calls)),
                     stt_errors=stt_errors,
-                    stt_audit=stt_audit,
+                    stt_audit=delivery_audit,
                     audio_sample_rate_hz=max(0, int(audio_sample_rate_hz)),
                     audio_rms=max(0.0, float(audio_rms)),
                     audio_clipping_ratio=max(0.0, float(audio_clipping_ratio)),
@@ -14059,7 +14226,7 @@ class SpeechPipeline:
             stt_latency_ms=max(0, int(stt_latency_ms)),
             stt_calls=max(0, int(stt_calls)),
             stt_errors=stt_errors,
-            stt_audit=stt_audit,
+            stt_audit=delivery_audit,
             audio_sample_rate_hz=max(0, int(audio_sample_rate_hz)),
             audio_rms=max(0.0, float(audio_rms)),
             audio_clipping_ratio=max(0.0, float(audio_clipping_ratio)),

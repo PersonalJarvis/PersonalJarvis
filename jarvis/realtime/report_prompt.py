@@ -1,8 +1,9 @@
 """The prompt that lets a live voice model reason over an agent's report.
 
-Background results — a coding pane that finished the job Jarvis handed it, a
-Jarvis agent reporting back — carry two things: a short deterministic line
-(what classic TTS speaks) and the agent's full report. A live model is handed
+An announcement that carries an agent's report (``AnnouncementRequested.report``)
+has two things: a short deterministic line (what classic TTS speaks) and the
+agent's full report. Explicit agent and coding-pane delegations attach their
+request and evidence; unsolicited background messages remain quiet. A live model is handed
 both and asked to work out what the user actually needs to hear, instead of
 reading either one out. Every live engine (the realtime wrapper, GPT-Live,
 native Gemini) builds its request here, so they all ask the same thing.
@@ -54,6 +55,12 @@ def report_update_prompt(
         "If the agent asks something, pass the question on clearly. Keep "
         "success, failure and uncertainty exactly as the report states them "
         "and never claim more than it says. "
+        "Several results may be grouped here. Briefly identify each agent or task, "
+        "combine related outcomes, and give blockers or questions priority. "
+        "Do not imply that unfinished sibling tasks are done. A stopped terminal "
+        "or exited process alone is not proof of success; say when its result "
+        "could not be verified. Use the original request and our conversation "
+        "to decide which details matter. "
         "Say it as yourself, in exactly the same voice, tone, and pace as your "
         "previous replies; do not imitate another person and do not change or "
         "dramatize your voice. "

@@ -1,5 +1,57 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
+## Remote agents retain Jarvis tools (2026-10-01, T3)
+
+Remote coding turns carry their Jarvis MCP tools over a reverse forward on
+the existing pinned SSH connection. Both listeners bind to loopback. The
+remote credential belongs to one active chat turn; the Control API key stays
+on the main computer. Session headers cannot change the owner, and stale
+requests cannot acquire the next turn's user context. The existing session
+catalog and ToolExecutor still enforce grants, approvals and cancellation.
+Routine execution chats retain their owner's computer placement.
+
+The transport uses portable AsyncSSH and asyncio/uvicorn, with no native OS
+imports or boot-time initialization. Windows remote launchers and POSIX argv
+receive the remote endpoint through their existing launch paths. Claude,
+Codex, Antigravity, Grok, OpenCode, Kimi and Cursor have MCP configuration
+adapters; other runners fail before starting model work. Project-discovered
+configurations are restored after the turn and cannot overlap in one
+workspace. Native files and society_shell remain remote; Jarvis's browser,
+memory and file-tool workspace remain on the main computer.
+
+Verification: real in-process SSH forwarding tests cover authentication,
+session isolation, expired and revoked credentials, connection refusal,
+cleanup, configuration adapters, and routine creation/readback through MCP
+with a real SQLite store and scheduler. Reopening the store preserves the
+calendar schedule. Existing Windows launcher tests cover the launch path.
+Native macOS/Linux hosts and all seven real vendor CLIs are not qualified
+by those tests; SSH servers must permit TCP forwarding. No browser is
+started by this transport.
+
+Live qualification on Windows: a resumed Claude subscription chat on a
+connected Windows computer discovered the Jarvis tools, created a temporary
+daily 09:00 Europe/Berlin routine, read back its persisted ID and next run,
+deleted it and verified the empty routine list. The final CLI configuration
+uses an explicit HTTP transport type; omitting it hid the server from the
+actual Claude tool catalog despite successful protocol-level tests. Browser
+actions were not executed in this qualification.
+
+Behavioral acceptance uses a fresh agent and an ordinary request to check
+repository issues every day at 09:00, without tool names, an implementation
+sequence or earlier chat history. The agent independently saves the routine,
+reads it back and confirms the next execution without a clarification round.
+The shared execution guidance stays at the front of compact briefings and is
+refreshed on resumed CLI turns. Recoverable tool failures can trigger one
+continuation even after a successful process exit; unrelated successful calls
+do not erase failed task parts. User denials, policy blocks, missing login and
+quota failures do not trigger that continuation. This is a receipt check,
+not a semantic guarantee that every arbitrary user goal was accomplished.
+
+Protocol references: [AsyncSSH port forwarding](https://asyncssh.readthedocs.io/en/latest/),
+[OpenCode MCP](https://opencode.ai/docs/mcp-servers/),
+[Kimi MCP configuration](https://github.com/MoonshotAI/kimi-cli/blob/main/README.md),
+[Cursor MCP](https://docs.cursor.com/en/cli/mcp).
+
 ## Linux CLI discovery and headless credentials (2026-10-01, T2)
 
 The Linux installer exposes `jarvis` and `jarvisctl` through symlinks in
@@ -601,7 +653,7 @@ experiences today.
 |---|---|---|---|---|---|
 | P-29 | Low | Subscription voice | The dedicated ChatGPT-subscription voice login is an interactive browser flow, so a headless Linux host — and a graphical Linux desktop that ships no terminal emulator able to host the login for its full lifetime — can never CONNECT the profile there (an existing login still reports ready and calls work through the browser voice bridge) | `jarvis/codex_app_server.py::_login_required_state`, `_linux_login_terminal_missing`, `start_codex_subscription_login`, `jarvis/codex_auth.py::_LINUX_LOGIN_TERMINALS` | Both cases report the same `lifecycle_unavailable` truth on every surface (card, activation, voice-mode, Test), each with its own actionable reason — "run Jarvis on a desktop" or "install one of these terminals" — and never an enabled Connect button that can only produce an error toast |
 | P-24 | Medium | Dictation shortcut | The global dictation/call shortcut needs `pynput` on Linux/X11, and `pynput` hard-requires `evdev` — which is published **source-only** (verified on PyPI 2026-07-28: evdev 1.9.3 ships an sdist and no wheels) and compiles against the kernel headers. Putting it in `[full]` would break the one advertised install path on a stock `python:3.11-slim`, so it is the opt-in `[desktop-linux]` extra instead. Wayland is a separate, unfixable-by-install case: the compositor owns global shortcuts by design (the XDG `GlobalShortcuts` portal lets the *compositor* assign the keys, and no wlroots compositor implements it at all) | `pyproject.toml` (`desktop-linux`), `jarvis/platform/probes.py::has_hotkey`, `jarvis/trigger/backends/noop.py::explain_unavailable` | X11 without the extra: no global shortcut, and the log/UI now names the actual cause and the exact `pip install` that fixes it (it used to blame Wayland unconditionally). Wayland: no global shortcut at all — bind a compositor shortcut to `jarvis api dictation start`. On both, dictation still works from the Jarvis Bar, the Dictation view and the CLI, and voice still works via the wake word |
-| P-25 | Medium | Dictation insertion | Pasting the transcript into another application is blocked, silently, in three OS-specific situations: Windows UIPI when the foreground window is elevated and Jarvis is not (`SendInput` reports success and the input is discarded), macOS Secure Input while a password field is focused, and Wayland outright (no synthetic input). Detection exists for the first two; Wayland is refused up front. Two further silent failures are Windows-only in their FIX: a chord the target does not bind as "paste" (an xterm.js terminal in a Tauri/Electron app swallows Ctrl+V as `^V`), and a target that reads the clipboard late (an async WebView bridge on a busy machine) after the 120 ms restore timer had already put the previous clipboard back | `jarvis/dictation/insert.py::describe_target`, `_insert_windows_verified`, `jarvis/platform/clipboard_offer.py`, `jarvis/platform/input_isolation.py::windows_foreground_window_is_elevated`, `macos_secure_input_enabled` | All three blocks degrade to the SAME honest outcome instead of silence: the transcript is left on the clipboard, the result is reported as `clipboard_only`, and the bar plus the Dictation view say why and that Ctrl+V will paste it. **Windows** additionally offers the text with delayed rendering and watches who reads it: on a host without a clipboard watcher (no Remote Desktop client, clipboard history off — the default) a paste is proven by the target's read, silence cascades Ctrl+V → Ctrl+Shift+V → Shift+Insert → typing (line breaks as Shift+Enter), and the route is remembered per executable; on a host with a watcher the offer is blind, ONE chord goes out (never a guessed second paste) and the previous clipboard is restored after a 2 s grace only if the dictated text is still on it. **macOS / Linux X11**: plain chord + 120 ms timer restore, unchanged — no delayed-rendering equivalent exists there (NSPasteboard promises and X11 selections notify the owner too, but are a follow-up). macOS Secure Input detection is implemented but has not been verified on real hardware from this machine |
+| P-25 | Medium | Dictation insertion | Pasting the transcript into another application is blocked, silently, in three OS-specific situations: Windows UIPI when the foreground window is elevated and Jarvis is not (`SendInput` reports success and the input is discarded), macOS Secure Input while a password field is focused, and Wayland outright (no synthetic input). Detection exists for the first two; Wayland is refused up front. Two further silent failures are Windows-only in their FIX: a chord the target does not bind as "paste" (an xterm.js terminal in a Tauri/Electron app swallows Ctrl+V as `^V`), and a target that reads the clipboard late (an async WebView bridge on a busy machine) after the 120 ms restore timer had already put the previous clipboard back | `jarvis/dictation/insert.py::describe_target`, `_insert_windows_verified`, `jarvis/platform/clipboard_offer.py`, `jarvis/platform/input_isolation.py::windows_foreground_window_is_elevated`, `macos_secure_input_enabled` | All three blocks degrade to the SAME honest outcome instead of silence: the transcript is left on the clipboard, the result is reported as `clipboard_only`, and the bar plus the Dictation view say why and that Ctrl+V will paste it. **Windows** offers the text with delayed rendering and sends exactly one configured paste shortcut. Only a render requested by the captured target process confirms clipboard consumption; merely opening the clipboard or a watcher reading it is not confirmation. A missing acknowledgement never triggers another shortcut, character typing, or an executable-wide learned route. Unconfirmed delivery reports `paste_sent` and leaves the transcript on the clipboard for a late or manual paste, without a restore timer. Focus changes or held modifiers before key emission leave the text available as `clipboard_only`. Confirmed reads may restore the previous clipboard only while the offer still owns it. The explicit typing setting remains available. Regression tests cover delayed readers, watchers, focus changes, and offer shutdown; these checks do not establish compatibility with every third-party editor. **macOS / Linux X11**: plain chord + 120 ms timer restore, unchanged — no delayed-rendering equivalent exists there (NSPasteboard promises and X11 selections notify the owner too, but are a follow-up). macOS Secure Input detection is implemented but has not been verified on real hardware from this machine |
 | P-04 | Medium | CU typing | Linux desktop Unicode text input needs the system `xdotool` binary (pip cannot install it); the pyautogui fallback used on Linux drops non-ASCII chars (umlauts, CJK, emoji) without it | `jarvis/cu/actuate/posix.py::type_text`, `jarvis/plugins/tool/type_text.py` | With `xdotool` (installer provisions it since 2026-07-15): fine. Without, the drop is now reported HONESTLY (2026-07-23): an all-non-ASCII text fails with an actionable "install xdotool" error, and a mixed text types its ASCII portion and warns that the rest was dropped — no more silent success |
 | P-05 | Low | Wiki | Wiki search hard-fails (RuntimeError with actionable apt/pysqlite3 remediation) on distros whose system SQLite lacks FTS5 | `jarvis/memory/wiki/fts_index.py:279` | `python:3.11-slim` and macOS ship FTS5 — only exotic/old distros affected; message is honest. Decision 2026-07-16: kept as honest hard error — a pysqlite3 shim would rewire seven wiki modules for an exotic audience |
 | P-07 | Low | Audio | No macOS/Linux host-API preference exists (the Windows-name-driven tables are intentionally inert off Windows — documented in-code since 2026-07-16), and headset-name heuristics are Windows-centric | `jarvis/audio/player.py`, `jarvis/audio/capture.py` | Device auto-pick falls back to OS default order — works, less clever than on Windows |

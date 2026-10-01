@@ -1,310 +1,244 @@
-"""The Windows paste path that watches WHO reads the clipboard.
-
-A synthetic paste chord is a request, not a paste: an xterm.js terminal in a
-Tauri/Electron app swallows Ctrl+V, and a WebView that pastes through an async
-bridge may read the clipboard long after a 120 ms "restore the old clipboard"
-timer has fired. The delayed-rendering offer turns both into observations. These
-tests drive ``_insert_windows_verified`` with a fake offer so each host state
-(sighted / blind) and each route (chord, cascade, typing) is pinned without a
-real clipboard. They run on every OS — the platform gate is the factory, and
-the factory is what is swapped.
-"""
-
+"""A paste timeout must never duplicate input or erase an unconfirmed transcript."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 
 import pytest
 
 from jarvis.dictation import insert as insert_mod
 from jarvis.dictation.insert import insert_text
 
-from .test_insert import FakeActuator, FakeClipboard  # noqa: TID252 — sibling fakes
+from .test_insert import FakeActuator, FakeClipboard  # noqa: TID252
 
-SELF_PID = 4242
-WATCHER_PID = 77
-TARGET_PID = 9001
+TARGET = (123, 9001)
 
 
 @dataclass
 class FakeRead:
     pid: int
-    exe: str
-    at: float
+    exe: str = ""
+    at: float = 0.1
     observed: str = "render"
 
 
 @dataclass
 class FakeOffer:
-    """Scripted clipboard offer: who reads, and when (offer-relative seconds)."""
-
     text: str
     script: list[FakeRead] = field(default_factory=list)
-    started: bool = False
     stopped: bool = False
-    clock: float = 0.0
+    lost_ownership: bool = False
+    restored: bool = False
+    clipboard: FakeClipboard | None = None
+    waits: list[float] = field(default_factory=list)
 
-    def start(self) -> bool:
-        self.started = True
+    def start(self):
         return True
 
-    def reads(self) -> list[FakeRead]:
-        return [r for r in self.script if r.at <= self.clock]
+    def reads(self):
+        return [r for r in self.script if r.at <= 0.05]
 
-    def elapsed(self) -> float:
-        return self.clock
+    def elapsed(self):
+        return 0.05
 
     def wait_for_read(self, *, exclude_pids, after_s, timeout_s):
-        self.clock = after_s + timeout_s
-        for read in self.script:
-            if after_s <= read.at <= self.clock and read.pid not in exclude_pids:
-                return read
-        return None
+        self.waits.append(timeout_s)
+        return next((r for r in self.script if after_s <= r.at <= after_s + timeout_s
+                     and r.pid not in exclude_pids), None)
 
-    def stop(self) -> None:
+    def stop(self, *, restore_text=None):
         self.stopped = True
-
-
-class OfferFactory:
-    """Hands out one scripted offer per chord attempt, in order."""
-
-    def __init__(self, *scripts: list[FakeRead]) -> None:
-        self.scripts = list(scripts)
-        self.offers: list[FakeOffer] = []
-
-    def __call__(self, text: str) -> FakeOffer:
-        script = self.scripts.pop(0) if self.scripts else []
-        offer = FakeOffer(text, script)
-        self.offers.append(offer)
-        return offer
+        if restore_text is not None and not self.lost_ownership:
+            self.restored = self.clipboard.write_text(restore_text)
 
 
 @pytest.fixture()
-def verified(monkeypatch: pytest.MonkeyPatch):
-    """insert_text with the verified path active and every OS call faked."""
-    clipboard = FakeClipboard()
-    actuator = FakeActuator()
-
+def verified(monkeypatch):
+    clipboard, actuator = FakeClipboard(), FakeActuator()
     import jarvis.platform.clipboard as real_clipboard
-
     monkeypatch.setattr(real_clipboard, "read_text", clipboard.read_text)
     monkeypatch.setattr(real_clipboard, "write_text", clipboard.write_text)
     monkeypatch.setattr(
-        insert_mod, "describe_target", lambda: insert_mod.TargetReport(True, "", "")
+        insert_mod, "describe_target", lambda: insert_mod.TargetReport(True, "", ""),
     )
     monkeypatch.setattr("jarvis.cu.actuate.get_actuator", lambda: actuator)
-    monkeypatch.setattr(insert_mod.time, "sleep", lambda _s: None)
-    monkeypatch.setattr(insert_mod, "_foreground_exe", lambda: "target.exe")
-    monkeypatch.setattr("os.getpid", lambda: SELF_PID)
-    monkeypatch.setattr(insert_mod, "_LEARNED_ROUTES", {})
+    monkeypatch.setattr(insert_mod.time, "sleep", lambda _: None)
+    monkeypatch.setattr(insert_mod, "_foreground_target", lambda: TARGET)
+    monkeypatch.setattr(insert_mod, "_input_block_reason", lambda _: "")
+    monkeypatch.setattr(insert_mod, "os", SimpleNamespace(name="nt", getpid=lambda: 4242))
+    offers = []
 
-    # The settle window advances the fake clock so early reads become visible.
-    def install(factory: OfferFactory) -> None:
-        def make(text: str) -> FakeOffer:
-            offer = factory(text)
-            offer.clock = 0.05
-            return offer
+    def install(*reads):
+        offer = FakeOffer("dictated text", list(reads))
+        offer.clipboard = clipboard
+        offers.append(offer)
+        monkeypatch.setattr(insert_mod, "_clipboard_offer_factory", lambda: lambda text: offer)
+        return offer
 
-        monkeypatch.setattr(insert_mod, "_clipboard_offer_factory", lambda: make)
-
-    restores: list[tuple[str | None, str, float]] = []
-    monkeypatch.setattr(
-        insert_mod,
-        "_restore_later",
-        lambda cb, previous, text, grace: restores.append((previous, text, grace)),
-    )
-    return clipboard, actuator, install, restores
+    return clipboard, actuator, install
 
 
-# --------------------------------------------------------------------------
-# Sighted host: nobody read during the settle window, so silence is proof.
-# --------------------------------------------------------------------------
-
-
-def test_sighted_paste_is_proven_by_the_target_reading(verified) -> None:
-    clipboard, actuator, install, restores = verified
-    factory = OfferFactory([FakeRead(TARGET_PID, "app.exe", at=0.1)])
-    install(factory)
-
-    result = insert_text("dictated text", paste_chord="ctrl_v")
-
+def test_target_render_confirms_one_paste_and_restores(verified):
+    clipboard, actuator, install = verified
+    offer = install(FakeRead(TARGET[1]))
+    result = insert_text("dictated text")
     assert result.status == "inserted"
-    assert result.method == "clipboard+ctrl_v"
-    assert actuator.combos == [["ctrl", "v"]]
-    # Restored right away — the read was seen, no need to wait.
-    assert result.clipboard_restored is True
+    assert result.clipboard_restored
     assert clipboard.content == "previous contents"
-    assert restores == []
-    assert insert_mod._LEARNED_ROUTES == {"target.exe": "ctrl_v"}
-
-
-def test_sighted_silence_cascades_to_the_next_chord(verified) -> None:
-    """Ctrl+V unanswered, Ctrl+Shift+V answered: one paste, the right one."""
-    _clipboard, actuator, install, _restores = verified
-    factory = OfferFactory([], [FakeRead(TARGET_PID, "app.exe", at=0.2)])
-    install(factory)
-
-    result = insert_text("dictated text", paste_chord="ctrl_v")
-
-    assert result.status == "inserted"
-    assert result.method == "clipboard+ctrl_shift_v"
-    assert actuator.combos == [["ctrl", "v"], ["ctrl", "shift", "v"]]
-    assert all(o.stopped for o in factory.offers)
-    assert insert_mod._LEARNED_ROUTES == {"target.exe": "ctrl_shift_v"}
-
-
-def test_sighted_no_chord_answered_types_with_soft_newlines(verified) -> None:
-    """An app that binds no paste chord still gets the words — typed."""
-    clipboard, actuator, install, _restores = verified
-    install(OfferFactory([], [], []))
-
-    result = insert_text("first line\nsecond line", paste_chord="ctrl_v")
-
-    assert result.status == "inserted"
-    assert result.method == "type"
-    assert actuator.combos == [
-        ["ctrl", "v"],
-        ["ctrl", "shift", "v"],
-        ["shift", "insert"],
-        ["shift", "enter"],  # the line break, never a submitting Enter
-    ]
-    assert actuator.typed == ["first line", "second line"]
-    # The text stays on the clipboard: if the keystrokes landed nowhere it is
-    # the user's way back.
-    assert result.clipboard_holds_text is True
-    assert clipboard.content == "first line\nsecond line"
-    assert insert_mod._LEARNED_ROUTES == {"target.exe": "type"}
-
-
-def test_learned_type_route_skips_the_chords(verified) -> None:
-    _clipboard, actuator, install, _restores = verified
-    insert_mod._LEARNED_ROUTES["target.exe"] = "type"
-    install(OfferFactory())
-
-    result = insert_text("again", paste_chord="ctrl_v")
-
-    assert result.method == "type"
-    assert actuator.combos == []
-    assert actuator.typed == ["again"]
-
-
-def test_learned_chord_goes_first(verified) -> None:
-    _clipboard, actuator, install, _restores = verified
-    insert_mod._LEARNED_ROUTES["target.exe"] = "shift_insert"
-    install(OfferFactory([FakeRead(TARGET_PID, "app.exe", at=0.1)]))
-
-    result = insert_text("again", paste_chord="ctrl_v")
-
-    assert result.method == "clipboard+shift_insert"
-    assert actuator.combos == [["shift", "insert"]]
-
-
-# --------------------------------------------------------------------------
-# Blind host: a watcher consumed the one render, silence proves nothing.
-# --------------------------------------------------------------------------
-
-
-def test_blind_host_sends_one_chord_and_restores_late(verified) -> None:
-    """RDP clipboard sync read at arm time: no cascade, no typing, no 120 ms timer."""
-    clipboard, actuator, install, restores = verified
-    install(OfferFactory([FakeRead(WATCHER_PID, "msrdc.exe", at=0.004)]))
-
-    result = insert_text("dictated text", paste_chord="ctrl_v")
-
-    assert result.status == "inserted"
-    assert result.method == "clipboard+ctrl_v"
-    assert actuator.combos == [["ctrl", "v"]]  # exactly one — never a double paste
-    assert actuator.typed == []
-    # Not restored on the spot; scheduled with the long grace instead.
-    assert result.clipboard_restored is False
-    assert result.clipboard_holds_text is True
-    assert clipboard.content == "dictated text"
-    assert restores == [("previous contents", "dictated text", insert_mod.RESTORE_GRACE_S)]
-    assert insert_mod._LEARNED_ROUTES == {}
-
-
-def test_slow_watcher_after_the_chord_also_means_blind(verified) -> None:
-    _clipboard, actuator, install, restores = verified
-    install(OfferFactory([FakeRead(WATCHER_PID, "svchost.exe", at=0.2)]))
-
-    result = insert_text("dictated text", paste_chord="ctrl_v")
-
-    assert result.status == "inserted"
     assert actuator.combos == [["ctrl", "v"]]
-    assert len(restores) == 1
+    assert offer.stopped
 
 
-def test_blind_host_still_proves_a_paste_by_polling(verified) -> None:
-    """The watcher cached the text, but the target was SEEN holding the clipboard."""
-    clipboard, actuator, install, restores = verified
-    install(
-        OfferFactory(
-            [
-                FakeRead(WATCHER_PID, "msrdc.exe", at=0.004),
-                FakeRead(TARGET_PID, "webview.exe", at=0.3, observed="open"),
-            ]
-        )
-    )
-
-    result = insert_text("dictated text", paste_chord="ctrl_v")
-
-    assert result.status == "inserted"
-    assert actuator.combos == [["ctrl", "v"]]
-    assert result.clipboard_restored is True
-    assert clipboard.content == "previous contents"
-    assert restores == []
-
-
-def test_blind_custom_chord_stays_honest(verified) -> None:
-    """A user-recorded chord with no evidence is ``paste_sent``, not ``inserted``."""
-    _clipboard, _actuator, install, _restores = verified
-    install(OfferFactory([FakeRead(WATCHER_PID, "msrdc.exe", at=0.004)]))
-
-    result = insert_text("dictated text", paste_chord="ctrl+alt+insert")
-
+@pytest.mark.parametrize("reads", [
+    [],
+    [FakeRead(TARGET[1], at=3.0)],
+    [FakeRead(77)],
+    [FakeRead(TARGET[1], observed="open")],
+])
+def test_missing_late_unrelated_or_open_evidence_never_retries_or_erases(verified, reads):
+    clipboard, actuator, install = verified
+    offer = install(*reads)
+    result = insert_text("dictated text")
     assert result.status == "paste_sent"
-    assert result.method == "clipboard+ctrl+alt+insert"
-
-
-# --------------------------------------------------------------------------
-# Degradations
-# --------------------------------------------------------------------------
-
-
-def test_offer_that_cannot_take_the_clipboard_uses_the_plain_path(verified) -> None:
-    clipboard, actuator, install, _restores = verified
-
-    class Refusing(FakeOffer):
-        def start(self) -> bool:
-            return False
-
-    install(OfferFactory())
-    monkeypatch_factory = lambda: Refusing  # noqa: E731
-    insert_mod._clipboard_offer_factory = monkeypatch_factory  # type: ignore[assignment]
-
-    result = insert_text("dictated text", paste_chord="ctrl_v")
-
-    assert result.status == "inserted"
+    assert result.clipboard_holds_text
+    assert not result.clipboard_restored
+    assert clipboard.writes == ["dictated text"]
     assert actuator.combos == [["ctrl", "v"]]
+    assert actuator.typed == []
+    assert sum(offer.waits) <= insert_mod.PASTE_READ_WAIT_S
+    assert offer.stopped
+
+
+def test_early_watcher_returns_without_waiting_and_keeps_text(verified):
+    clipboard, actuator, install = verified
+    offer = install(FakeRead(77, at=0.004))
+    result = insert_text("dictated text")
+    assert result.status == "paste_sent"
+    assert offer.waits == []
+    assert clipboard.content == "dictated text"
+    assert actuator.combos == [["ctrl", "v"]]
+
+
+def test_failure_in_one_field_cannot_change_route_for_later_field(verified):
+    _, actuator, install = verified
+    install()
+    insert_text("first")
+    install(FakeRead(TARGET[1]))
+    result = insert_text("second", paste_chord="shift_insert")
+    assert actuator.combos == [["ctrl", "v"], ["shift", "insert"]]
+    assert actuator.typed == []
+    assert result.method == "clipboard+shift_insert"
+
+
+def test_custom_chord_remains_exactly_the_configured_chord(verified):
+    _, actuator, install = verified
+    install()
+    result = insert_text("dictated text", paste_chord="ctrl+alt+insert")
+    assert result.status == "paste_sent"
+    assert actuator.combos == [["ctrl", "alt", "insert"]]
+
+
+def test_native_probe_failure_after_sending_cannot_send_again(verified):
+    clipboard, actuator, install = verified
+    offer = install()
+
+    def fail(**kwargs):
+        raise OSError("probe unavailable")
+
+    offer.wait_for_read = fail
+    result = insert_text("dictated text")
+    assert result.status == "paste_sent"
+    assert actuator.combos == [["ctrl", "v"]]
+    assert clipboard.content == "dictated text"
+    assert offer.stopped
+
+
+def test_failed_offer_uses_one_plain_chord_but_keeps_windows_clipboard(verified):
+    clipboard, actuator, install = verified
+    offer = install()
+    offer.start = lambda: False
+    result = insert_text("dictated text")
+    assert result.status == "paste_sent"
+    assert actuator.combos == [["ctrl", "v"]]
+    assert clipboard.content == "dictated text"
+    assert offer.stopped
+
+
+def test_changed_focus_or_held_modifier_stops_before_input(verified, monkeypatch):
+    clipboard, actuator, install = verified
+    offer = install()
+    monkeypatch.setattr(insert_mod, "_input_block_reason", lambda _: "A modifier is held.")
+    result = insert_text("dictated text")
+    assert result.status == "clipboard_only"
+    assert actuator.combos == []
+    assert clipboard.content == "dictated text"
+    assert offer.stopped
+
+
+def test_user_copy_during_confirmed_paste_is_not_overwritten(verified):
+    clipboard, _, install = verified
+    offer = install(FakeRead(TARGET[1]))
+    def stop(*, restore_text=None):
+        clipboard.content = "user copy"
+        offer.lost_ownership = True
+    offer.stop = stop
+    result = insert_text("dictated text")
+    assert not result.clipboard_restored
+    assert clipboard.content == "user copy"
+
+
+def test_unreadable_clipboard_prevents_restore(monkeypatch):
+    clipboard = FakeClipboard(initial=None)
+    assert not insert_mod._clipboard_still_holds(clipboard, "dictated text")
+
+    def fail():
+        raise OSError("clipboard busy")
+
+    monkeypatch.setattr(clipboard, "read_text", fail)
+    assert not insert_mod._clipboard_still_holds(clipboard, "dictated text")
+
+
+def test_overlapping_delivery_does_not_replace_active_clipboard(verified):
+    clipboard, actuator, install = verified
+    install()
+    insert_mod._INSERT_LOCK.acquire()
+    try:
+        result = insert_text("other text")
+    finally:
+        insert_mod._INSERT_LOCK.release()
+    assert result.status == "unavailable"
     assert clipboard.content == "previous contents"
+    assert actuator.combos == []
 
 
-def test_restore_later_only_restores_our_own_text(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A copy the user makes during the grace window is never overwritten."""
-    clipboard = FakeClipboard(initial="dictated text")
-    monkeypatch.setattr(insert_mod.time, "sleep", lambda _s: None)
+def test_explicit_typing_is_still_available(verified):
+    _, actuator, install = verified
+    install()
+    result = insert_text("dictated text", method="type")
+    assert result.method == "type"
+    assert actuator.typed == ["dictated text"]
+    assert actuator.combos == []
 
-    import threading
 
-    class Immediate(threading.Thread):
-        def start(self) -> None:  # run inline for the test
-            self.run()
+@pytest.mark.parametrize("held_vk", [0x10, 0x11, 0x12, 0x5B, 0x5C])
+def test_native_modifier_snapshot_refuses_modified_paste(monkeypatch, held_vk):
+    import ctypes
 
-    monkeypatch.setattr(insert_mod.threading, "Thread", Immediate)
+    def key_state(vk):
+        return 0x8000 if vk == held_vk else 0
 
-    insert_mod._restore_later(clipboard, "previous", "dictated text", 0.0)
-    assert clipboard.content == "previous"
+    monkeypatch.setattr(insert_mod, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(insert_mod, "sys", SimpleNamespace(platform="win32"))
+    monkeypatch.setattr(insert_mod, "_foreground_target", lambda: TARGET)
+    monkeypatch.setattr(
+        ctypes, "WinDLL", lambda *a, **kw: SimpleNamespace(GetAsyncKeyState=key_state),
+        raising=False,
+    )
+    assert "modifier" in insert_mod._input_block_reason(TARGET)
 
-    clipboard.content = "something the user copied"
-    insert_mod._restore_later(clipboard, "previous", "dictated text", 0.0)
-    assert clipboard.content == "something the user copied"
+
+def test_foreground_change_prevents_keyboard_probe_and_paste(monkeypatch):
+    monkeypatch.setattr(insert_mod, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(insert_mod, "sys", SimpleNamespace(platform="win32"))
+    monkeypatch.setattr(insert_mod, "_foreground_target", lambda: (124, 9002))
+    assert "window changed" in insert_mod._input_block_reason(TARGET)
