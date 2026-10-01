@@ -110,10 +110,16 @@ A release happens **only** when the maintainer asks for one.
   `pyproject.toml`, `jarvis/__init__.py` and `uv.lock`, moves the `[Unreleased]` notes (or
   the Conventional Commits since the last tag) into a dated CHANGELOG section
   (`scripts/ci/cut_release.py`), and commits on a unique candidate branch.
-  It dispatches full CI for that exact commit, waits for success, then
-  fast-forwards protected main, tags, and dispatches the three publishing
-  workflows on the tag. A failed check or concurrent main update prevents
-  tagging and publication; no branch-protection bypass is needed.
+  It opens a candidate PR, waits for its `pull_request` CI, merges normally,
+  tags the admitted version commit, and dispatches the publishing workflows.
+  GitHub does not count `workflow_dispatch` job checks toward protected-branch
+  requirements ([GitHub documentation](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks#checks-from-some-workflow-jobs-are-not-evaluated)).
+  When repository policy blocks bot-created PRs, the workflow prints the
+  candidate compare link for a maintainer to open; an optional existing
+  `INTEGRATION_TOKEN` follows the merge train's token convention.
+  The optional `resume_sha` input finishes an already merged version commit
+  after an interrupted cut. It requires a full SHA on main, the current version,
+  and successful release admission; it cannot move an existing tag.
 * **`release-gate.yml`** is the first job of `release.yml` (PyPI),
   `desktop-installers.yml` and `sign-installer.yml`. It admits a tag only
   when tag, versions and CHANGELOG agree, the commit is on main, and
