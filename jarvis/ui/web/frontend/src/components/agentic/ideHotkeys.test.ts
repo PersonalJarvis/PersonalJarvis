@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  RESERVED_ROOT_KEYS, assignAgentKeys, hotkeyHints, isLeaderChord, neighborInDirection, resolveHotkey,
+  LEADER_PASSTHROUGH, RESERVED_ROOT_KEYS, assignAgentKeys, hotkeyHints, isLeaderChord, neighborInDirection, resolveHotkey,
   type HotkeyEventLike, type IdeHotkeyStep,
 } from "./ideHotkeys";
 
@@ -17,18 +17,19 @@ const AGENTS = assignAgentKeys([
 const ROOT: IdeHotkeyStep = { menu: "root" };
 
 describe("leader chord", () => {
-  it("is Ctrl+Shift+B off a Mac and Cmd+Shift+B on one", () => {
-    expect(isLeaderChord(press("B", { ctrlKey: true, shiftKey: true }), false)).toBe(true);
-    expect(isLeaderChord(press("B", { metaKey: true, shiftKey: true }), true)).toBe(true);
-    expect(isLeaderChord(press("B", { metaKey: true, shiftKey: true }), false)).toBe(false);
-  });
-
-  it("leaves plain Ctrl+B to the agent (Claude Code's run-in-background)", () => {
-    expect(isLeaderChord(press("b", { ctrlKey: true }), false)).toBe(false);
+  it("is Ctrl+B, and only Ctrl+B", () => {
+    expect(isLeaderChord(press("b", { ctrlKey: true }))).toBe(true);
+    expect(isLeaderChord(press("B", { ctrlKey: true, shiftKey: true }))).toBe(false);
+    expect(isLeaderChord(press("b", { metaKey: true }))).toBe(false);
+    expect(isLeaderChord(press("b", { ctrlKey: true, altKey: true }))).toBe(false);
   });
 
   it("matches the physical key, whatever the layout prints on it", () => {
-    expect(isLeaderChord({ ...press("B", { ctrlKey: true, shiftKey: true }), key: "∫" }, false)).toBe(true);
+    expect(isLeaderChord({ ...press("b", { ctrlKey: true }), key: "∫" })).toBe(true);
+  });
+
+  it("passes through as the control code Ctrl+B sends", () => {
+    expect(LEADER_PASSTHROUGH).toBe(String.fromCharCode(2));
   });
 });
 

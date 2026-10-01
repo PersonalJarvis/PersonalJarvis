@@ -118,11 +118,12 @@ closes when the whole line is done. The dialog says so while you type.
 
 ### Keyboard: the Key Menu
 
-Press **Ctrl+Shift+B** (**Cmd+Shift+B** on a Mac), then the keys the menu
-shows. The chord is taken before the focused pane sees it, so it works while
-you type in an agent; every other key stays with the agent.
+Press **Ctrl+B** (also on a Mac, like tmux), then the keys the menu shows.
+The chord is taken before the focused pane sees it, so it works while you
+type in an agent; every other key stays with the agent. To send Ctrl+B itself
+to the agent (Claude Code's "run in background"), press it twice.
 
-| Keys after Ctrl+Shift+B | What happens |
+| Keys after Ctrl+B | What happens |
 | --- | --- |
 | Agent letter, then an arrow | Open that agent beside the focused pane, in the arrow's direction. Enter puts it in the even grid instead. |
 | `C` · `X` · `O` · `K` · `L` · `G` · `A` · `U` | Claude Code · Codex · OpenCode · Kimi Code · GLM · Grok Build · Antigravity · Cursor CLI (only installed ones are listed) |
@@ -134,7 +135,7 @@ you type in an agent; every other key stays with the agent.
 | `V` | Show or hide the voice bubble |
 
 Escape closes the menu and Backspace goes back one step. Example:
-**Ctrl+Shift+B, C, →** opens Claude Code to the right of the focused pane.
+**Ctrl+B, C, →** opens Claude Code to the right of the focused pane.
 
 For voice, name the pane and action: “Tell T2 to review the failing tests” or
 “What is terminal three doing?” Near matches trigger a confirmation instead of

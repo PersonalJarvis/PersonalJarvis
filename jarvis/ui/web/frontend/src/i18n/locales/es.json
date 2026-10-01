@@ -1588,7 +1588,7 @@
       "zoom_out": "Texto del terminal más pequeño",
       "zoom_reset": "Restablecer el tamaño del texto",
       "open_overlay": "Abrir esta lista",
-      "ide_menu": "Menú de teclas del IDE agéntico: paneles nuevos, paneles, espacios de trabajo"
+      "ide_menu": "Menú de teclas del IDE agéntico (dos veces: Ctrl+B al panel)"
     }
   },
   "board_view": {

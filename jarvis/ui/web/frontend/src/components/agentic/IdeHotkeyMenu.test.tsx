@@ -9,19 +9,28 @@ function setup(enabled = true) {
   const actions: IdeHotkeyAction[] = [];
   const renames: string[] = [];
   const terminalKeys: string[] = [];
+  const passed: number[] = [];
   const view = render(<>
     <textarea aria-label="terminal" onKeyDown={(event) => terminalKeys.push(event.key)} />
-    <IdeHotkeyMenu enabled={enabled} agents={AGENTS} pane="T1" onAction={(action) => actions.push(action)} onRenamePane={(name) => renames.push(name)} />
+    <IdeHotkeyMenu enabled={enabled} agents={AGENTS} pane="T1" onAction={(action) => actions.push(action)} onRenamePane={(name) => renames.push(name)} onPassThrough={() => passed.push(1)} />
   </>);
   const terminal = screen.getByLabelText("terminal");
   terminal.focus();
   const key = (init: KeyboardEventInit & { key: string }) => act(() => { fireEvent.keyDown(document.activeElement ?? terminal, init); });
-  const leader = () => key({ key: "B", code: "KeyB", ctrlKey: true, shiftKey: true });
-  return { actions, renames, terminalKeys, key, leader, view };
+  const leader = () => key({ key: "b", code: "KeyB", ctrlKey: true });
+  return { actions, renames, terminalKeys, passed, key, leader, view };
 }
 
 describe("IdeHotkeyMenu", () => {
-  it("opens on Ctrl+Shift+B without the terminal ever seeing the chord", () => {
+  it("Ctrl+B twice hands one Ctrl+B to the pane", () => {
+    const { leader, passed } = setup();
+    leader();
+    leader();
+    expect(passed).toEqual([1]);
+    expect(screen.queryByRole("dialog", { name: "IDE shortcuts" })).toBeNull();
+  });
+
+  it("opens on Ctrl+B without the terminal ever seeing the chord", () => {
     const { leader, terminalKeys } = setup();
     leader();
     expect(screen.getByRole("dialog", { name: "IDE shortcuts" })).toBeTruthy();
@@ -52,10 +61,10 @@ describe("IdeHotkeyMenu", () => {
 
   it("lets every key through while closed, and stays shut while disabled", () => {
     const { key, terminalKeys } = setup(false);
-    key({ key: "B", code: "KeyB", ctrlKey: true, shiftKey: true });
+    key({ key: "b", code: "KeyB", ctrlKey: true });
     key({ key: "c", code: "KeyC" });
     expect(screen.queryByRole("dialog", { name: "IDE shortcuts" })).toBeNull();
-    expect(terminalKeys).toEqual(["B", "c"]);
+    expect(terminalKeys).toEqual(["b", "c"]);
   });
 
   it("Escape closes the menu", () => {

@@ -106,7 +106,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
   {
     kind: "fixed",
     area: "workspace",
-    keys: ["Mod", "Shift", "B"],
+    keys: ["Ctrl", "B"],
     labelKey: "shortcut_overlay.workspace.ide_menu",
   },
 ] as const;
