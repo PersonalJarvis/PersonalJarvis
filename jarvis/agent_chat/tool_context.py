@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 
 from jarvis.core.protocols import ChatTurn, current_chat_turn
@@ -22,6 +23,9 @@ class TurnContext:
 
 
 _active: dict[str, TurnContext] = {}
+
+# A remote capability cannot borrow the next turn while a catalog lookup awaits.
+required_turn_id: ContextVar[str | None] = ContextVar("jarvis.required_tool_turn", default=None)
 
 
 def register_turn(session_id: str) -> TurnContext | None:
@@ -41,6 +45,9 @@ def unregister_turn(session_id: str, context: TurnContext | None) -> None:
 @contextmanager
 def restore_turn(session_id: str | None) -> Iterator[None]:
     context = _active.get(session_id or "")
+    expected = required_turn_id.get()
+    if context is not None and expected is not None and context.turn.turn_id != expected:
+        context = None
     turn_token = current_chat_turn.set(context.turn if context else None)
     zone_token = client_timezone.set(context.timezone if context else None)
     try:

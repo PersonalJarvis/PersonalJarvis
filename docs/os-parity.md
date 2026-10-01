@@ -23,6 +23,58 @@ can enter its send loop, including the compressed Dropbear size-one form.
 Real loopback contracts cover rejection and ordinary channel traffic, while
 unit tests preserve the password-authentication callback and host-key handling.
 
+## Remote agents retain Jarvis tools (2026-10-01, T3)
+
+Remote coding turns carry their Jarvis MCP tools over a reverse forward on
+the existing pinned SSH connection. Both listeners bind to loopback. The
+remote credential belongs to one active chat turn; the Control API key stays
+on the main computer. Session headers cannot change the owner, and stale
+requests cannot acquire the next turn's user context. The existing session
+catalog and ToolExecutor still enforce grants, approvals and cancellation.
+Routine execution chats retain their owner's computer placement.
+
+The transport uses portable AsyncSSH and asyncio/uvicorn, with no native OS
+imports or boot-time initialization. Windows remote launchers and POSIX argv
+receive the remote endpoint through their existing launch paths. Claude,
+Codex, Antigravity, Grok, OpenCode, Kimi and Cursor have MCP configuration
+adapters; other runners fail before starting model work. Project-discovered
+configurations are restored after the turn and cannot overlap in one
+workspace. Native files and society_shell remain remote; Jarvis's browser,
+memory and file-tool workspace remain on the main computer.
+
+Verification: real in-process SSH forwarding tests cover authentication,
+session isolation, expired and revoked credentials, connection refusal,
+cleanup, configuration adapters, and routine creation/readback through MCP
+with a real SQLite store and scheduler. Reopening the store preserves the
+calendar schedule. Existing Windows launcher tests cover the launch path.
+Native macOS/Linux hosts and all seven real vendor CLIs are not qualified
+by those tests; SSH servers must permit TCP forwarding. No browser is
+started by this transport.
+
+Live qualification on Windows: a resumed Claude subscription chat on a
+connected Windows computer discovered the Jarvis tools, created a temporary
+daily 09:00 Europe/Berlin routine, read back its persisted ID and next run,
+deleted it and verified the empty routine list. The final CLI configuration
+uses an explicit HTTP transport type; omitting it hid the server from the
+actual Claude tool catalog despite successful protocol-level tests. Browser
+actions were not executed in this qualification.
+
+Behavioral acceptance uses a fresh agent and an ordinary request to check
+repository issues every day at 09:00, without tool names, an implementation
+sequence or earlier chat history. The agent independently saves the routine,
+reads it back and confirms the next execution without a clarification round.
+The shared execution guidance stays at the front of compact briefings and is
+refreshed on resumed CLI turns. Recoverable tool failures can trigger one
+continuation even after a successful process exit; unrelated successful calls
+do not erase failed task parts. User denials, policy blocks, missing login and
+quota failures do not trigger that continuation. This is a receipt check,
+not a semantic guarantee that every arbitrary user goal was accomplished.
+
+Protocol references: [AsyncSSH port forwarding](https://asyncssh.readthedocs.io/en/latest/),
+[OpenCode MCP](https://opencode.ai/docs/mcp-servers/),
+[Kimi MCP configuration](https://github.com/MoonshotAI/kimi-cli/blob/main/README.md),
+[Cursor MCP](https://docs.cursor.com/en/cli/mcp).
+
 ## Linux CLI discovery and headless credentials (2026-10-01, T2)
 
 The Linux installer exposes `jarvis` and `jarvisctl` through symlinks in
