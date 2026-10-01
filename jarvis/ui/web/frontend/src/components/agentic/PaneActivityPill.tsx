@@ -121,7 +121,7 @@ const LOOK: Record<Exclude<PaneActivity, "" | "waiting">, Look> = {
     label: "working",
     // Life. A status is never --foreground: ink is the colour of everything
     // that is NOT a signal, so a state painted in it reads as a label.
-    className: "text-success",
+    className: "text-accent",
     icon: "spinner",
     hint: "Working — its screen is still changing.",
   },
@@ -168,7 +168,7 @@ const LOOK: Record<Exclude<PaneActivity, "" | "waiting">, Look> = {
 const DONE: Look = {
   state: "done",
   label: "done",
-  className: "text-success",
+  className: "text-accent",
   icon: "check",
   glow: true,
   hint: "Finished and waiting at its prompt. That it stopped, not that the work is right.",
@@ -185,7 +185,7 @@ const DONE: Look = {
 const IDLE: Look = {
   state: "idle",
   label: "idle",
-  className: "text-success",
+  className: "text-accent",
   icon: "ring",
   hint: "Waiting at its prompt. Nothing has been sent to it yet.",
 };

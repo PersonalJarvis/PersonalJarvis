@@ -65,7 +65,7 @@ function useAgentScope(): [AgentScope, (scope: AgentScope) => void] {
 /** Ink and a faint fill per state, from the semantic status tokens only. */
 const STATE_TONE: Record<AgentDotKind, { text: string; pill: string }> = {
   waiting: { text: "text-warning", pill: "bg-warning/10" },
-  working: { text: "text-success", pill: "bg-success/10" },
+  working: { text: "text-accent", pill: "bg-accent/10" },
   error: { text: "text-destructive", pill: "bg-destructive/10" },
   idle: { text: "text-muted-foreground", pill: "bg-muted" },
 };
