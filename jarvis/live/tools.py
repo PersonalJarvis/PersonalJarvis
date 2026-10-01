@@ -22,23 +22,25 @@ log = logging.getLogger(__name__)
 _CATALOG_BYTE_BUDGET = 24_000
 _DISCOVERY_PAGE_SIZE = 8
 _BUILTIN_TOOLS = frozenset({"discover_tools", "call_tool", "confirm_action", "end_call"})
-# Whole-utterance approvals, keyed to the locale whose veto patterns must vet
-# them. The session language cannot be used: "auto" resolves to English before
-# anyone speaks, which rejected a German "Ja" and stranded the approval.
-_AFFIRMATIONS = {
-    "yes": "en",
-    "yes please": "en",
-    "confirm": "en",
-    "confirmed": "en",
-    "do it": "en",
-    "ja": "de",  # i18n-allow: spoken confirmation vocabulary
-    "ja bitte": "de",  # i18n-allow: spoken confirmation vocabulary
-    "mach das": "de",  # i18n-allow: spoken confirmation vocabulary
-    "bestätigen": "de",  # i18n-allow: spoken confirmation vocabulary
-    "sí": "es",
-    "si": "es",
-    "confirmo": "es",
-}
+# An approval is a short answer made only of go-ahead words: "Ja, send ihn"
+# approves (refused live 2026-10-01 by an exact-phrase list), while "yes,
+# change the target" or "ja, aber warte" carry something else and do not.
+_GO_AHEAD_WORDS = frozenset(
+    {
+        # English
+        "yes", "yeah", "yep", "sure", "ok", "okay", "please", "confirm", "confirmed",
+        "do", "it", "go", "ahead", "send", "run", "start", "that", "now",
+        # German  # i18n-allow: spoken confirmation vocabulary
+        "ja", "jo", "jep", "klar", "gerne", "genau", "bitte", "bestätigen",  # i18n-allow
+        "bestätigt", "mach", "machs", "das", "es", "ihn", "sie",  # i18n-allow
+        "schick", "schicke", "schicks",  # i18n-allow
+        "sende", "senden", "los", "ab", "raus", "jetzt", "starte", "starten",  # i18n-allow
+        # Spanish
+        "sí", "si", "claro", "vale", "dale", "confirmo", "hazlo", "envía", "envialo",
+        "envíalo", "adelante",
+    }
+)  # fmt: skip
+_APPROVAL_LOCALES = ("de", "en", "es")
 _APPROVAL_NEXT_STEP = (
     "Ask the user to approve this action. After an explicit yes, call confirm_action "
     "directly (not through call_tool) with this approval_id. A yes is never a hang-up."
@@ -120,7 +122,7 @@ class LiveTools:
         self.cancel_token.cancel("user_cancelled")
         self.accepting = False
         self.revision += 1
-        await self._cancel_confirmations()
+        await self._cancel_confirmations("user_cancelled")
 
     def declarations(self, *, defer_catalog: bool = False) -> list[dict]:
         self._defer_catalog = defer_catalog
@@ -296,18 +298,13 @@ class LiveTools:
                 "next_offset": next_offset if next_offset < len(matches) else None,
             }
         if name == "confirm_action":
-            from jarvis.voice.echo_confirmation import classify_response
-
             approval_id = str(args.get("approval_id", ""))
+            if approval_id not in self._pending and len(self._pending) == 1:
+                # One open question, so the yes can only mean it; a voice
+                # model that mistypes the 36-character id must not void it.
+                approval_id = next(iter(self._pending))
             pending = self._pending.get(approval_id)
-            locale = self._affirmation_locale()
-            if (
-                pending is None
-                or self.revision <= pending[3]
-                or locale is None
-                or len(self.user_text.split()) > 5
-                or classify_response(self.user_text, language=locale) != "confirm"
-            ):
+            if pending is None or self.revision <= pending[3] or not self._user_approved():
                 return {"success": False, "error": "This action has not been explicitly approved."}
             trace, _, _, _ = self._pending.pop(approval_id)
             from jarvis.core.model_selection import ModelSelection, use_operation_model
@@ -332,7 +329,18 @@ class LiveTools:
             }
         import jsonschema  # type: ignore[import-untyped]
 
-        jsonschema.validate(args, descriptor.input_schema)
+        try:
+            jsonschema.validate(args, descriptor.input_schema)
+        except jsonschema.ValidationError as exc:
+            # Nothing ran yet, so the model may fix the argument and retry. A
+            # bare "execution failed" left it guessing four times in a row.
+            field = "/".join(str(part) for part in exc.absolute_path) or "arguments"
+            return {
+                "success": False,
+                "executed": False,
+                "retryable": True,
+                "error": f"Invalid {field}: {exc.message[:300]}. Correct it and call again.",
+            }
         trace = uuid4()
         from jarvis.core.model_selection import ModelSelection, use_operation_model
 
@@ -354,10 +362,10 @@ class LiveTools:
             result = await self.gateway.execute(canonical, args, self._request(trace))
         if result.error == VOICE_CONFIRM_SENTINEL:
             if operation_token.is_cancelled() or revision != self.revision:
-                await self.gateway.cancel_pending(trace)
+                await self.gateway.cancel_pending(trace, reason="superseded")
                 return {"success": False, "status": "superseded"}
             if not self.accepting:
-                await self.gateway.cancel_pending(trace)
+                await self.gateway.cancel_pending(trace, reason="voice_session_closed")
                 return {"success": False, "status": "voice_closed_before_confirmation"}
             approval_id = str(trace)
             self._pending[approval_id] = (trace, canonical, dict(args), self.revision)
@@ -372,9 +380,23 @@ class LiveTools:
             }
         return self._result(result)
 
-    def _affirmation_locale(self) -> str | None:
-        """Locale of a whole-utterance approval in the latest user text, else None."""
-        return _AFFIRMATIONS.get(re.sub(r"[^\w\s]", "", self.user_text.casefold()).strip())
+    def _user_approved(self) -> bool:
+        """True when the latest user text is a short, unvetoed yes in any locale.
+
+        The session language cannot pick the locale ("auto" resolves to English
+        before anyone speaks), so every supported locale vets the answer: one
+        must read it as a confirmation and none as a veto. Every word must be a
+        go-ahead word, so an answer that adds a condition or a new instruction
+        is not an approval of the old action.
+        """
+        from jarvis.voice.echo_confirmation import classify_response
+
+        text = self.user_text
+        words = re.sub(r"[^\w\s]", " ", text.casefold()).split()
+        if not words or any(word not in _GO_AHEAD_WORDS for word in words):
+            return False
+        verdicts = {classify_response(text, language=locale) for locale in _APPROVAL_LOCALES}
+        return "confirm" in verdicts and "veto" not in verdicts
 
     def _request(self, trace: UUID) -> SupervisorToolRequest:
         return SupervisorToolRequest(
@@ -411,10 +433,10 @@ class LiveTools:
 
     async def close(self) -> None:
         self.accepting = False
-        await self._cancel_confirmations()
+        await self._cancel_confirmations("voice_session_closed")
 
-    async def _cancel_confirmations(self) -> None:
+    async def _cancel_confirmations(self, reason: str) -> None:
         pending = tuple(self._pending.values())
         self._pending.clear()
         for trace, _, _, _ in pending:
-            await self.gateway.cancel_pending(trace)
+            await self.gateway.cancel_pending(trace, reason=reason)

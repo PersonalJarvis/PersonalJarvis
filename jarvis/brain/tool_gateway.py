@@ -255,12 +255,12 @@ class BrainSupervisorToolGateway:
             config_snapshot=config_snapshot,
         )
 
-    async def cancel_pending(self, trace_id: UUID) -> bool:
+    async def cancel_pending(self, trace_id: UUID, *, reason: str = "voice_vetoed") -> bool:
         executor = getattr(self._manager, "_tool_executor", None)
         cancel = getattr(executor, "cancel_pending", None)
         if not callable(cancel):
             return False
-        return bool(await cancel(trace_id))
+        return bool(await cancel(trace_id, reason=reason))
 
     async def publish_guard_denied(
         self,

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 from urllib.parse import quote
 
@@ -30,6 +31,24 @@ def _catalog() -> dict[str, Any]:
     from jarvis.app_actions.catalog import live_catalog
 
     return live_catalog()
+
+
+def _area_words(text: str) -> set[str]:
+    return {w for w in re.split(r"[\W_]+", text.casefold()) if w and w not in {"and", "the"}}
+
+
+def _in_area(entries: list[Any], area: str) -> list[Any]:
+    """Entries whose area slug shares a word with the ``area`` hint.
+
+    The area is a hint, never a gate: models pass the human label ("IDE panes
+    and workspaces") instead of the slug ("agentic-ide"), and an exact match
+    then hid every action (live 2026-10-01). No overlap means no filter.
+    """
+    wanted = _area_words(area)
+    if not wanted:
+        return entries
+    matched = [e for e in entries if wanted & _area_words(e.area)]
+    return matched or entries
 
 
 class FindAppActionTool:
@@ -64,8 +83,7 @@ class FindAppActionTool:
             return ToolResult(
                 success=False, output=None, error="The app's actions are not available here."
             )
-        area = str(args.get("area") or "").strip().lower()
-        entries = [e for e in catalog.values() if not area or e.area.lower() == area]
+        entries = _in_area(list(catalog.values()), str(args.get("area") or ""))
         policy = load_policy()
         descriptors = [
             SupervisorToolDescriptor(

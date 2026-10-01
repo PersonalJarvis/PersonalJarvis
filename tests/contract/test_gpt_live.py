@@ -34,7 +34,7 @@ class Gateway:
         self.calls.append((name, args, request))
         return ToolResult(True, {"verified": True})
 
-    async def cancel_pending(self, trace):
+    async def cancel_pending(self, trace, *, reason="voice_vetoed"):
         return True
 
 
@@ -253,6 +253,80 @@ async def test_veto_still_wins_over_a_listed_affirmation(ledger):
     runtime.user_text = "nein"
     result = await runtime.execute("no", "confirm_action", {"approval_id": approval}, 1)
     assert not result["success"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "answer",
+    [
+        ". Ja, send ihn",  # i18n-allow: live 2026-10-01 transcript
+        "Ja. Ja, schick ihn los",  # i18n-allow: spoken confirmation vocabulary
+        "okay, do it",
+    ],
+)
+async def test_a_short_spoken_go_ahead_approves(ledger, answer):
+    gateway = _ApprovalGateway()
+    runtime = LiveTools(gateway, ledger, "s", language="en", backend_model="")
+    approval = await _pending_approval(runtime)
+    runtime.user_text = answer
+    result = await runtime.execute("ok", "confirm_action", {"approval_id": approval}, 1)
+    assert result["success"]
+    assert gateway.calls[-1][0] == "confirmed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "nein, nicht senden",  # i18n-allow: spoken veto vocabulary
+        "Ja, aber warte noch",  # i18n-allow: spoken hedge vocabulary
+        "yes but change the target",
+        "Wieso nicht gepromptet hast",  # i18n-allow: live 2026-10-01 transcript
+    ],
+)
+async def test_a_hedge_veto_or_new_instruction_does_not_approve(ledger, answer):
+    gateway = _ApprovalGateway()
+    runtime = LiveTools(gateway, ledger, "s", language="en", backend_model="")
+    approval = await _pending_approval(runtime)
+    runtime.user_text = answer
+    result = await runtime.execute("no", "confirm_action", {"approval_id": approval}, 1)
+    assert not result["success"]
+    assert gateway.calls[-1][0] != "confirmed"
+
+
+@pytest.mark.asyncio
+async def test_a_mistyped_approval_id_still_confirms_the_only_pending_action(ledger):
+    gateway = _ApprovalGateway()
+    runtime = LiveTools(gateway, ledger, "s", language="en", backend_model="")
+    approval = await _pending_approval(runtime)
+    runtime.user_text = "Ja"
+    result = await runtime.execute("ok", "confirm_action", {"approval_id": approval[:-1]}, 1)
+    assert result["success"]
+
+
+@pytest.mark.asyncio
+async def test_closing_the_call_is_not_recorded_as_a_veto(ledger):
+    reasons = []
+
+    class _Recording(_ApprovalGateway):
+        async def cancel_pending(self, trace, *, reason="voice_vetoed"):
+            reasons.append(reason)
+            return True
+
+    runtime = LiveTools(_Recording(), ledger, "s", language="en", backend_model="")
+    await _pending_approval(runtime)
+    await runtime.close()
+    assert reasons == ["voice_session_closed"]
+
+
+@pytest.mark.asyncio
+async def test_a_schema_violation_tells_the_model_what_to_fix(ledger):
+    runtime = LiveTools(Gateway(), ledger, "s", language="en", backend_model="")
+    request = {"name": "write-file", "arguments_json": '{"text": 5}'}
+    result = await runtime.execute("bad", "call_tool", request, 0)
+    assert result["success"] is False
+    assert result["executed"] is False and result["retryable"] is True
+    assert "text" in result["error"]
 
 
 @pytest.mark.asyncio
@@ -634,7 +708,7 @@ async def test_cancelled_work_stays_cancelled_when_a_new_request_arrives(ledger)
             assert not request.cancel_token.is_cancelled()
             return ToolResult(True, "New request completed")
 
-        async def cancel_pending(self, trace):
+        async def cancel_pending(self, trace, *, reason="voice_vetoed"):
             self.cancelled.append(trace)
             return True
 

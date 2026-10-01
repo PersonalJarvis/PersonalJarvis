@@ -7,14 +7,19 @@ from jarvis.core.protocols import ExecutionContext, ToolResult, WorkspaceOrchest
 
 class WorkspaceOrchestrationTool:
     name = "workspace-orchestrate"
-    risk_tier = "ask"
+    # Handing a task to the user's own coding agent is Jarvis's job, not an
+    # outward act: it runs without a spoken "shall I send it?" and is logged
+    # (live 2026-10-01: the user asked three times and was still asked back).
+    risk_tier = "monitor"
     is_action_tool = True
     description = (
         "Route coding tasks to Projects > Workspaces > coding agents. Inspect the current graph; "
         "resolve explicit project/workspace/agent references (names or IDs) before sending. "
         "With no named workspace resolve uses the visible workspace, and selects an idle agent "
-        "without requiring a focused terminal. Ask on needs_clarification; never guess. "
-        "Send with all three resolved IDs and request_id returned by resolve; reuse it for "
+        "without requiring a focused terminal. On needs_clarification pick from the returned "
+        "candidates when one clearly fits, else ask; never invent a target. "
+        "Send right away with the resolved IDs and the request_id from resolve (the app "
+        "remembers its resolves, so a slightly mistyped id still works); reuse it for "
         "retries. Explicit background targets never switch the visible workspace. "
         "Accepted means delivered, not completed; uncertain delivery must not be retried. "
         "After a proven pre-write refusal, resolve again for a fresh request_id "
@@ -36,13 +41,13 @@ class WorkspaceOrchestrationTool:
                     "workspace_id",
                     "terminal_id",
                     "prompt",
-                    "request_id",
                 )
             },
+            # No pattern: a schema rejection would discard the whole call over
+            # one mistyped character. The orchestrator repairs the id instead.
             "request_id": {
                 "type": "string",
-                "pattern": "^[a-fA-F0-9]{32}$",
-                "description": "Copy request_id from resolve; keep it unchanged on retries.",
+                "description": "request_id from resolve; keep it unchanged on retries.",
             },
             "limit": {"type": "integer", "minimum": 1, "maximum": 100},
         },
@@ -53,19 +58,7 @@ class WorkspaceOrchestrationTool:
         self.gateway = gateway
 
     def risk_tier_for_args(self, args: dict) -> str:
-        return "safe" if args.get("action") in {"inspect", "resolve", "context"} else "ask"
-
-    def intent_confirms_args(self, args: dict, utterance: str) -> bool:
-        """True when the user's own words already ordered this hand-off.
-
-        Consulted by ``ToolExecutor`` before it arms a confirmation: a send the
-        user asked for ("let an agent in the workspace fix it") runs at once
-        instead of a second "shall I start it?". A send the brain chose while
-        the user talked about something else still confirms.
-        """
-        from jarvis.safety.explicit_intent import utterance_requests_agent_work
-
-        return args.get("action") == "send" and utterance_requests_agent_work(utterance)
+        return "safe" if args.get("action") in {"inspect", "resolve", "context"} else "monitor"
 
     def describe_args(self, args: dict) -> dict:
         return {

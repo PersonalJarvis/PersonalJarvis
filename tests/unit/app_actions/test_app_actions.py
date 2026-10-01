@@ -166,3 +166,12 @@ async def test_settings_routes_list_set_and_show_history(app: FastAPI) -> None:
         history.record(action_id, "ran", "x")
         rows = (await client.get("/api/app-actions/history")).json()["history"]
         assert rows[0]["action"] == action_id
+
+
+@pytest.mark.parametrize("area", ["IDE", "IDE panes and workspaces", "agentic-ide", "nonsense"])
+async def test_area_is_a_hint_not_an_exact_slug(app: FastAPI, area: str) -> None:
+    # Live 2026-10-01: the model passed the human label from the description
+    # and an exact slug match hid every action.
+    found = await FindAppActionTool().execute({"query": "rename pane", "area": area}, None)
+    assert found.success
+    assert found.output["actions"][0]["title"] == "Rename Pane"

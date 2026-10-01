@@ -8,7 +8,11 @@ an approval. This layer never activates a workspace or composes a second prompt.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import re
 import threading
+import time
+from collections.abc import Callable, Iterable
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -23,6 +27,75 @@ def _matches(reference: str, *values: str) -> bool:
     return reference.strip().casefold() in {v.strip().casefold() for v in values if v}
 
 
+# Words people wrap around a name when they speak it ("the Personal-Jarvis
+# workspace", "mein Ordner Jarvis"). They never identify anything.
+_FILLER = frozenset(
+    {
+        "the", "my", "a", "workspace", "workspaces", "project", "projects", "folder",
+        "der", "die", "das", "mein", "meinem", "meinen", "projekt", "ordner",
+        "arbeitsbereich",
+    }
+)  # fmt: skip
+# A resolve is remembered this long so a voice model never has to copy its
+# 32-character request_id verbatim (live 2026-10-01: one dropped "0" failed
+# four sends in a row).
+_RESOLVE_TTL_S = 15 * 60
+_NEAR_MISS = 3
+_TARGET_KEYS = ("project_id", "workspace_id", "terminal_id")
+
+
+def _words(text: str) -> list[str]:
+    return [w for w in re.sub(r"[\W_]+", " ", text.casefold()).split() if w not in _FILLER]
+
+
+def _score(reference: str, ids: Iterable[str], names: Iterable[str]) -> int:
+    """3 = exact id/name, 2 = same words, 1 = one name's words contain the other's."""
+    names = [n for n in names if n]
+    if _matches(reference, *ids, *names):
+        return 3
+    wanted = _words(reference)
+    if not wanted:
+        return 0
+    best = 0
+    for name in names:
+        words = _words(name)
+        if not words:
+            continue
+        if words == wanted:
+            return 2
+        if set(wanted) <= set(words) or set(words) <= set(wanted):
+            best = 1
+    return best
+
+
+def _best(reference: str, items: list, key: Callable[[Any], tuple]) -> list:
+    """The items matching ``reference`` at the strongest tier any item reaches."""
+    scored = [(_score(reference, *key(item)), item) for item in items]
+    top = max((score for score, _ in scored), default=0)
+    return [item for score, item in scored if top and score == top]
+
+
+def _distance(a: str, b: str) -> int:
+    """Levenshtein distance, enough to recognise a mis-copied id."""
+    if abs(len(a) - len(b)) > _NEAR_MISS:
+        return _NEAR_MISS + 1
+    previous = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        current = [i]
+        for j, cb in enumerate(b, 1):
+            current.append(min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + (ca != cb)))
+        previous = current
+    return previous[-1]
+
+
+def _is_request_id(value: str) -> bool:
+    try:
+        UUID(value)
+    except ValueError:
+        return False
+    return True
+
+
 class WorkspaceOrchestrator:
     """One graph for Live discovery, explicit resolution and scoped delivery."""
 
@@ -35,6 +108,9 @@ class WorkspaceOrchestrator:
         self.registry = registry
         self.sessions = sessions
         self.ledger = ledger
+        # request_id -> (target IDs, issued at, prompt sent under it or "")
+        self._issued: dict[str, tuple[dict[str, str], float, str]] = {}
+        self._issued_lock = threading.Lock()
 
     def graph(self) -> dict[str, Any]:
         from jarvis.workspace.agents import pty_available
@@ -72,26 +148,41 @@ class WorkspaceOrchestrator:
         project_ref = str(args.get("project") or "")
         workspace_ref = str(args.get("workspace") or "")
         agent_ref = str(args.get("agent") or "")
+        project_found = False
         if project_ref:
-            projects = [p for p in projects if _matches(project_ref, p["id"], p["name"], p["path"])]
-            if len(projects) != 1:
-                return self._choice("project", projects)
+            matched = _best(project_ref, projects, lambda p: ((p["id"], p["path"]), (p["name"],)))
+            if len(matched) > 1:
+                return self._choice("project", matched, graph)
+            if not matched and not (workspace_ref or agent_ref):
+                return self._choice("project", [], graph, unmatched=project_ref)
+            # A misheard project name ("Jarvis-Works") must not hide a
+            # workspace or agent reference that does identify the target.
+            if matched:
+                projects, project_found = matched, True
         candidates = [(p, w) for p in projects for w in p["workspaces"]]
         if workspace_ref:
-            matched = [(p, w) for p, w in candidates if _matches(workspace_ref, w["id"], w["name"])]
+            matched = _best(
+                workspace_ref, candidates, lambda pw: ((pw[1]["id"],), (pw[1]["name"],))
+            )
             # People often call a project "the Personal Jarvis workspace".
             # Interpret that only when it identifies exactly one project.
             if not matched:
-                owners = [p for p in projects if _matches(workspace_ref, p["id"], p["name"])]
+                owners = _best(workspace_ref, projects, lambda p: ((p["id"],), (p["name"],)))
                 if len(owners) == 1:
                     matched = [(p, w) for p, w in candidates if p["id"] == owners[0]["id"]]
+            if not matched:
+                return self._choice("workspace", [], graph, unmatched=workspace_ref)
             candidates = matched
-        elif not project_ref:
-            named_agents = [
-                (p, w)
-                for p, w in candidates
-                if agent_ref and any(_matches(agent_ref, a["id"], a["name"]) for a in w["agents"])
-            ]
+        elif not project_found:
+            named_agents = (
+                [
+                    (p, w)
+                    for p, w in candidates
+                    if _best(agent_ref, w["agents"], lambda a: ((a["id"],), (a["name"],)))
+                ]
+                if agent_ref
+                else []
+            )
             candidates = named_agents or [
                 (p, w) for p, w in candidates if w["id"] == graph["active_workspace_id"]
             ]
@@ -99,6 +190,7 @@ class WorkspaceOrchestrator:
             return self._choice(
                 "workspace",
                 [{"project_id": p["id"], "project": p["name"], **w} for p, w in candidates],
+                graph,
             )
         project, workspace = candidates[0]
         if workspace["status"] != "open":
@@ -110,10 +202,10 @@ class WorkspaceOrchestrator:
             }
         agents = [a for a in workspace["agents"] if a["accepts_tasks"]]
         if agent_ref:
-            named = [a for a in agents if _matches(agent_ref, a["id"], a["name"])]
+            named = _best(agent_ref, agents, lambda a: ((a["id"],), (a["name"],)))
             agents = named or [a for a in agents if _matches(agent_ref, a["agent"])]
             if len(agents) != 1:
-                return self._choice("agent", agents)
+                return self._choice("agent", agents, graph, unmatched=agent_ref)
         else:
             # A task need not require manually selecting a tile. Stable grid
             # order is the tie-breaker among idle sessions; never interrupt one.
@@ -134,13 +226,22 @@ class WorkspaceOrchestrator:
                 "workspace_id": workspace["id"],
             }
         agent = agents[0]
+        request_id = uuid4().hex
+        target = {
+            "project_id": project["id"],
+            "workspace_id": workspace["id"],
+            "terminal_id": agent["id"],
+        }
+        with self._issued_lock:
+            now = time.monotonic()
+            for stale in [k for k, (_, at, _) in self._issued.items() if now - at > _RESOLVE_TTL_S]:
+                del self._issued[stale]
+            self._issued[request_id] = (target, now, "")
         return {
             "status": "resolved",
-            "request_id": uuid4().hex,
+            "request_id": request_id,
             "target": {
-                "project_id": project["id"],
-                "workspace_id": workspace["id"],
-                "terminal_id": agent["id"],
+                **target,
                 "project": project["name"],
                 "workspace": workspace["name"],
                 "agent": agent["name"],
@@ -149,15 +250,94 @@ class WorkspaceOrchestrator:
         }
 
     @staticmethod
-    def _choice(kind: str, choices: list[dict]) -> dict[str, Any]:
+    def _choice(
+        kind: str, choices: list[dict], graph: dict[str, Any], *, unmatched: str = ""
+    ) -> dict[str, Any]:
+        if choices:
+            return {
+                "status": "needs_clarification",
+                "kind": kind,
+                "candidates": choices,
+                "reason": "Reference is ambiguous.",
+            }
+        # Never answer "nothing" without the options: the model then tells the
+        # user a workspace does not exist while it is open on screen.
+        wanted = set(_words(unmatched))
+        open_workspaces = sorted(
+            (
+                {
+                    "project_id": p["id"],
+                    "project": p["name"],
+                    "workspace_id": w["id"],
+                    "workspace": w["name"],
+                    "active": w["id"] == graph.get("active_workspace_id"),
+                    "agents": [a["name"] for a in w["agents"] if a["accepts_tasks"]],
+                }
+                for p in graph["projects"]
+                for w in p["workspaces"]
+                if w["status"] == "open"
+            ),
+            key=lambda c: (
+                -len(wanted & set(_words(f"{c['project']} {c['workspace']} {c['agents']}"))),
+                not c["active"],
+            ),
+        )
+        lead = f"Nothing open matches '{unmatched}'. " if unmatched else "No matching target. "
         return {
             "status": "needs_clarification",
             "kind": kind,
-            "candidates": choices,
-            "reason": "Reference is ambiguous."
-            if choices
-            else "No matching open target. Connect or restore the workspace first.",
+            "candidates": open_workspaces,
+            "reason": lead
+            + (
+                "These are the open workspaces, closest first; resolve again with the one "
+                "the user meant."
+                if open_workspaces
+                else "No workspace is open; connect or restore one first."
+            ),
         }
+
+    def _reconcile(self, args: dict[str, Any], action: str) -> tuple[dict[str, str], str]:
+        """Target IDs and request_id, repaired against this app's own resolves.
+
+        A voice model retypes long hex IDs and drops characters. The resolve
+        that minted them is the authority: an exact or near-miss request_id,
+        else a resolve for (nearly) the same terminal — the one this prompt
+        already went out under (a retry), or the newest unused one — supplies
+        the target. Only IDs nothing here issued are taken as given. An empty
+        request_id comes back when the call needs a fresh key: a resolve
+        already spent on a different prompt must not swallow a new task.
+        """
+        given = {key: str(args.get(key) or "").strip() for key in _TARGET_KEYS}
+        request_id = str(args.get("request_id") or "").strip()
+        prompt = str(args.get("prompt") or "").strip()
+        with self._issued_lock:
+            issued = dict(self._issued)
+        match = request_id if request_id in issued else ""
+        if not match and request_id:
+            near = [rid for rid in issued if _distance(request_id, rid) <= _NEAR_MISS]
+            match = near[0] if len(near) == 1 else ""
+        if not match and given["terminal_id"] and not _is_request_id(request_id):
+            same_pane = [
+                (at, rid, sent)
+                for rid, (target, at, sent) in issued.items()
+                if _distance(given["terminal_id"], target["terminal_id"]) <= _NEAR_MISS
+            ]
+            retry = [(at, rid) for at, rid, sent in same_pane if sent and sent == prompt]
+            fresh = [(at, rid) for at, rid, sent in same_pane if not sent or action != "send"]
+            if retry or fresh:
+                match = max(retry or fresh)[1]
+        if not match:
+            return given, request_id
+        target, _, sent = issued[match]
+        if action == "send" and sent and sent != prompt:
+            return dict(target), ""
+        return dict(target), match
+
+    def _mark_sent(self, request_id: str, prompt: str) -> None:
+        with self._issued_lock:
+            if request_id in self._issued:
+                target, at, _ = self._issued[request_id]
+                self._issued[request_id] = (target, at, prompt)
 
     async def run(self, args: dict[str, Any], *, trace_id: str = "") -> dict[str, Any]:
         action = args.get("action")
@@ -166,29 +346,22 @@ class WorkspaceOrchestrator:
             return graph if action == "inspect" else self.resolve(args, graph)
         if action not in {"send", "context"}:
             raise ValueError("Unknown workspace orchestration action.")
-        project_id, workspace_id, terminal_id = (
-            str(args.get(key) or "") for key in ("project_id", "workspace_id", "terminal_id")
-        )
+        target, request_id = self._reconcile(args, action)
+        project_id, workspace_id, terminal_id = (target[key] for key in _TARGET_KEYS)
         if not project_id or not workspace_id or not terminal_id.startswith("pane:"):
             raise ValueError(
                 "Resolve a target first; project_id, workspace_id and terminal_id are required."
             )
-        target = {
-            "project_id": project_id,
-            "workspace_id": workspace_id,
-            "terminal_id": terminal_id,
-        }
-        request_id = str(args.get("request_id") or "").strip()
         if action == "send":
             prompt = str(args.get("prompt") or "").strip()
-            if not prompt or not request_id or len(request_id) > 160:
-                raise ValueError(
-                    "Sending requires a prompt and a stable request_id (at most 160 characters)."
-                )
-            try:
-                UUID(request_id)
-            except ValueError as exc:
-                raise ValueError("Use the unique request_id returned by resolve.") from exc
+            if not prompt:
+                raise ValueError("Sending requires a prompt.")
+            if not _is_request_id(request_id):
+                # Nothing usable to key on: derive a key so a retry of this
+                # same task within ten minutes still cannot deliver twice.
+                seed = f"{terminal_id}\n{prompt}\n{int(time.time() // 600)}"
+                request_id = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:32]
+            self._mark_sent(request_id, prompt)
             previous = await asyncio.to_thread(
                 self.ledger.claim,
                 "workspace-orchestration",

@@ -243,9 +243,11 @@ async def test_live_roundtrip_uses_gateway_executor_and_durable_addressed_receip
         ledger.close()
 
 
-def test_send_requires_application_permission_and_reads_remain_safe(rig):
+def test_send_runs_without_a_spoken_question_and_reads_remain_safe(rig):
+    # Live 2026-10-01: a hand-off the user ordered three times was still met
+    # with "shall I send it?". Sending to the user's own agent is logged only.
     tool = WorkspaceOrchestrationTool(rig[0])
-    assert tool.risk_tier_for_args({"action": "send"}) == "ask"
+    assert tool.risk_tier_for_args({"action": "send"}) == "monitor"
     for action in ("inspect", "resolve", "context"):
         assert tool.risk_tier_for_args({"action": action}) == "safe"
 
@@ -292,3 +294,65 @@ def test_confirmation_identifies_target_and_task(rig):
         "agent": "pane:3",
         "task": "Fix Linux installer",
     }
+
+
+async def test_a_mistyped_request_id_still_delivers_exactly_once(rig):
+    # Live 2026-10-01: the voice model dropped one "0" from the 32-character id.
+    resolved = await rig[0].run({"action": "resolve"})
+    rid = resolved["request_id"]
+    garbled = rid[:20] + rid[21:]
+    ids = {k: resolved["target"][k] for k in ("project_id", "workspace_id", "terminal_id")}
+    first = await rig[0].run({"action": "send", **ids, "request_id": garbled, "prompt": "Task"})
+    assert first["status"] == "accepted"
+    retry = rid[:5] + rid[6:]
+    again = await rig[0].run({"action": "send", **ids, "request_id": retry, "prompt": "Task"})
+    assert again == first
+    assert len(rig[2].calls) == 1
+
+
+async def test_send_without_request_id_uses_the_latest_resolve(rig):
+    resolved = await rig[0].run({"action": "resolve"})
+    ids = {k: resolved["target"][k] for k in ("project_id", "workspace_id", "terminal_id")}
+    result = await rig[0].run({"action": "send", **ids, "prompt": "Task"})
+    assert result["status"] == "accepted"
+    assert (await rig[0].run({"action": "send", **ids, "prompt": "Task"}))["status"] == "accepted"
+    assert len(rig[2].calls) == 1
+    other = await rig[0].run({"action": "send", **ids, "prompt": "Another task"})
+    assert other["status"] == "accepted"
+    assert len(rig[2].calls) == 2
+
+
+async def test_garbled_target_ids_are_repaired_from_the_resolve(rig):
+    resolved = await rig[0].run({"action": "resolve"})
+    target = resolved["target"]
+    result = await rig[0].run(
+        {
+            "action": "send",
+            "project_id": target["project_id"][:-1],
+            "workspace_id": target["workspace_id"][1:],
+            "terminal_id": target["terminal_id"],
+            "request_id": resolved["request_id"],
+            "prompt": "Task",
+        }
+    )
+    assert result["status"] == "accepted"
+    assert rig[2].calls[0]["workspace_id"] == target["workspace_id"]
+
+
+async def test_context_ignores_a_broken_request_id(rig):
+    resolved = await target(rig)
+    result = await rig[0].run({"action": "context", **resolved, "request_id": "not-an-id"})
+    assert result["status"] == "observed" or result.get("delivery") == "accepted"
+
+
+async def test_spoken_workspace_name_with_filler_words_resolves(rig):
+    resolved = await target(rig, project="Jarvis-Works", workspace="Personal-Jarvis-Workspace")
+    assert resolved["workspace"] == "Personal Jarvis"
+
+
+async def test_an_unmatched_reference_lists_every_open_workspace(rig):
+    result = await rig[0].run({"action": "resolve", "workspace": "Something else entirely"})
+    assert result["status"] == "needs_clarification"
+    names = {c["workspace"] for c in result["candidates"]}
+    assert names == {"Personal Jarvis", "Other project"}
+    assert "Something else entirely" in result["reason"]
