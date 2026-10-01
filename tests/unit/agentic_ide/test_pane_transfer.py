@@ -5,7 +5,8 @@ or stopped. The agent's process, conversation and history belong to the pane,
 so moving it only changes which tab lists and draws it. What a tab owns on its
 own — the call-sign, the key, the folder — is what these tests pin, because
 every failure there is silent on screen: two panes answering to one name, or a
-pane whose next restart opens an empty chat in the wrong folder.
+pane that ends up listed under another project's folder. Moving is only
+allowed between workspaces on the same folder.
 """
 from __future__ import annotations
 
@@ -153,26 +154,44 @@ async def test_its_key_never_collides_with_a_renamed_pane(
     assert target.find("T1") is moved
 
 
-async def test_another_folder_is_remembered_and_forgotten_on_the_way_home(
-    registry: Registry, tmp_path: Path
+async def test_a_workspace_on_another_folder_is_refused(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
 ) -> None:
-    """The agent keeps working where it started, and a restart resumes there."""
+    """A pane never moves to another project's folder — and nothing changes."""
     jarvis_dir, blog_dir = tmp_path / "jarvis", tmp_path / "blog"
     jarvis_dir.mkdir()
     blog_dir.mkdir()
     source = await registry.start(str(jarvis_dir), [{"agent": "claude"}] * 2, name="Jarvis")
     target = await registry.start(str(blog_dir), [{"agent": "claude"}], name="Blog")
+    await registry.attach("T2", 80, 24, _noop, _noop_exit, workspace_id=source.id)
 
-    _, _, moved = await registry.transfer_terminal(
-        "T2", workspace_id=source.id, target_workspace_id=target.id
-    )
-    assert moved.cwd(target.folder) == source.folder
+    with pytest.raises(SessionError, match="same folder"):
+        await registry.transfer_terminal(
+            "T2", workspace_id=source.id, target_workspace_id=target.id
+        )
 
-    _, _, back = await registry.transfer_terminal(
-        moved.name, workspace_id=target.id, target_workspace_id=source.id
-    )
-    assert back.folder == ""
-    assert back.cwd(source.folder) == source.folder
+    assert [t.name for t in source.terminals] == ["T1", "T2"]
+    assert [t.name for t in target.terminals] == ["T1"]
+    assert fake_pty.closed == []
+
+
+async def test_the_route_refuses_another_folder_as_a_conflict(
+    registry: Registry, tmp_path: Path
+) -> None:
+    jarvis_dir, blog_dir = tmp_path / "jarvis", tmp_path / "blog"
+    jarvis_dir.mkdir()
+    blog_dir.mkdir()
+    source = await registry.start(str(jarvis_dir), [{"agent": "claude"}], name="Jarvis")
+    target = await registry.start(str(blog_dir), [{"agent": "claude"}], name="Blog")
+
+    with pytest.raises(HTTPException) as refused:
+        await routes.transfer_terminal(
+            _request(),
+            "T1",
+            routes.TransferTerminalRequest(workspace_id=source.id, target_workspace_id=target.id),
+        )
+
+    assert refused.value.status_code == 409
 
 
 async def test_the_same_folder_needs_no_folder_of_its_own(

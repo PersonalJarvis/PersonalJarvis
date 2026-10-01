@@ -6,7 +6,8 @@
  * The agent keeps running; only the tab that lists it changes. What the grid
  * owes is to send the pane's stable identity (never a call-sign another tab
  * also has), to drop the pane from its own screen with the answer, and to say
- * when the pane arrived under another name.
+ * when the pane arrived under another name. And only workspaces on the same
+ * folder are offered at all: a pane never moves to another project's folder.
  */
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -35,9 +36,16 @@ vi.stubGlobal("ResizeObserver", ResizeObserverStub);
 vi.stubGlobal("PointerEvent", PointerEventStub);
 
 const makeSession = (names = ["T1", "T2"]) => ({
-  id: "w1", layout: balancedLayout(names), terminals: names.map((name) => ({ name, key: name.toLowerCase(), history_id: `h-${name}`, display_name: "Claude Code", agent: "claude" })),
+  id: "w1", folder: "C:/work/jarvis", layout: balancedLayout(names), terminals: names.map((name) => ({ name, key: name.toLowerCase(), history_id: `h-${name}`, display_name: "Claude Code", agent: "claude" })),
 }) as SessionState;
-const workspaces = [{ id: "w1", name: "Personal Jarvis" }, { id: "w2", name: "Blog" }, { id: "w3", name: "VMs" }];
+// Blog and VMs share this folder (spelled differently, as Windows allows);
+// Website is another project.
+const workspaces = [
+  { id: "w1", name: "Personal Jarvis", folder: "C:/work/jarvis" },
+  { id: "w2", name: "Blog", folder: "c:\\work\\Jarvis\\" },
+  { id: "w3", name: "VMs", folder: "C:/work/jarvis" },
+  { id: "w4", name: "Website", folder: "C:/work/site" },
+];
 const props = { onChanged: vi.fn(), onAdd: vi.fn(), onClose: vi.fn(), onSelect: vi.fn(), selected: "", fontSize: 13, appearance: null, workspaces };
 
 /** A sidebar row as IdeProjectTree draws it, and a pointer that finds it right of x=1000. */
@@ -59,12 +67,13 @@ const blog = { id: "w2", name: "Blog", layout: { pane: "t1" }, max_terminals: 16
 beforeEach(() => { vi.clearAllMocks(); api.layout.mockResolvedValue(blog); });
 afterEach(() => { cleanup(); document.body.innerHTML = ""; });
 
-it("offers every other open workspace and moves the pane to the place picked", async () => {
+it("offers the other workspaces on this folder and moves the pane to the place picked", async () => {
   api.transfer.mockResolvedValue({ terminal: { name: "T3" }, state: { session: makeSession(["T1"]) } });
   const onChanged = vi.fn();
   render(<WorkspaceTerminalGrid {...props} session={makeSession()} onChanged={onChanged} />);
 
   expect(screen.queryByRole("button", { name: "T2: Move to Personal Jarvis…" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "T2: Move to Website…" })).toBeNull();
   expect(screen.getByRole("button", { name: "T2: Move to VMs…" })).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "T2: Move to Blog…" }));
 
@@ -126,5 +135,19 @@ it("ignores the row of the workspace the pane is already in", () => {
   expect(row.hasAttribute("data-pane-drop-active")).toBe(false);
   fireEvent.pointerUp(window, { pointerId: 1, clientX: 1200, clientY: 40 });
 
+  expect(api.transfer).not.toHaveBeenCalled();
+});
+
+it("does not take a pane into a workspace on another folder, and says why", () => {
+  const row = sidebarRow("w4", "Website");
+  render(<WorkspaceTerminalGrid {...props} session={makeSession()} />);
+
+  fireEvent.pointerDown(screen.getByRole("button", { name: "Move T1" }), { button: 0, pointerId: 1, clientX: 15, clientY: 15 });
+  fireEvent.pointerMove(window, { pointerId: 1, clientX: 1200, clientY: 40 });
+  expect(row.hasAttribute("data-pane-drop-active")).toBe(false);
+  expect(screen.getByText("Not into Website: another folder")).toBeTruthy();
+  fireEvent.pointerUp(window, { pointerId: 1, clientX: 1200, clientY: 40 });
+
+  expect(screen.queryByTestId("move-pane-dialog")).toBeNull();
   expect(api.transfer).not.toHaveBeenCalled();
 });
