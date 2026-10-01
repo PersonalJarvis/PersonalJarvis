@@ -1,9 +1,9 @@
 # Personal Jarvis — top-level runtime dependencies (Wave 6).
 #
-# Source of truth: this file. The committed `requirements.txt` is the
-# hash-pinned, PLATFORM-UNIVERSAL lockfile generated from it with:
-#   uv pip compile --universal --generate-hashes --python-version 3.11 \
-#       --output-file=requirements.txt requirements.in
+# This file mirrors pyproject.toml. Compile the hash-pinned, PLATFORM-UNIVERSAL
+# requirements.txt from pyproject.toml with the explicit native crypto source.
+# Use the exact command recorded in requirements.txt's header; install/README.md
+# explains the scoped index and the browser helper's separate lock.
 # Re-generate it after every bump. `--universal` is load-bearing: it emits
 # per-OS environment markers (`; sys_platform == 'win32'`, `== 'linux'`, …)
 # so ONE lockfile installs cleanly on Windows, macOS AND Linux — each OS pulls

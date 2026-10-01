@@ -125,7 +125,7 @@ def test_native_crypto_index_reaches_the_installer_profile(monkeypatch, desktop)
     command = next(
         command for command in commands if profile in command and "--no-deps" not in command
     )
-    assert command[command.index("--extra-index-url") + 1] == native_crypto_index.index_url()
+    assert command[command.index("--find-links") + 1] == native_crypto_index.wheel_links_url()
 
 
 def test_full_profile_prefetches_every_wake_language(capsys) -> None:

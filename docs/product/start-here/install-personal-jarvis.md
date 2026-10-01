@@ -110,8 +110,8 @@ On **Intel macOS 13 or later** and **Windows ARM64**, supply the project's
 native package index when installing or upgrading:
 
 ```bash
-pipx install personal-jarvis --pip-args="--extra-index-url https://personaljarvis.github.io/PersonalJarvis/native-crypto/50.0.2-1/simple/"
-pipx upgrade personal-jarvis --pip-args="--extra-index-url https://personaljarvis.github.io/PersonalJarvis/native-crypto/50.0.2-1/simple/"
+pipx install personal-jarvis --pip-args="--find-links https://personaljarvis.github.io/PersonalJarvis/native-crypto/50.0.2-1/simple/cryptography/"
+pipx upgrade personal-jarvis --pip-args="--find-links https://personaljarvis.github.io/PersonalJarvis/native-crypto/50.0.2-1/simple/cryptography/"
 ```
 
 This provides current cryptography without installing a compiler. The

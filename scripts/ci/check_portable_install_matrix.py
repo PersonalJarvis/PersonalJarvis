@@ -54,7 +54,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.native_crypto_index import index_url, is_native_artifact  # noqa: E402
+from scripts.native_crypto_index import is_native_artifact, wheel_links_url  # noqa: E402
 
 REQUIREMENTS_IN = REPO_ROOT / "requirements.in"
 REQUIREMENTS_TXT = REPO_ROOT / "requirements.txt"
@@ -367,7 +367,6 @@ def _clean_environment() -> dict[str, str]:
             "UV_COLOR": "never",
             "UV_DEFAULT_INDEX": PUBLIC_PYPI,
             "UV_KEYRING_PROVIDER": "disabled",
-            "UV_NO_CONFIG": "1",
             "UV_NO_PROGRESS": "1",
         }
     )
@@ -410,13 +409,12 @@ def _run_command(
 
 def _public_uv_flags() -> list[str]:
     return [
-        "--index",
-        f"native-crypto={index_url()}",
+        "--config-file",
+        "packaging/native-crypto-uv.toml",
         "--default-index",
         PUBLIC_PYPI,
         "--keyring-provider",
         "disabled",
-        "--no-config",
         "--no-progress",
         "--color",
         "never",
@@ -719,11 +717,10 @@ def _compile_command(
     *,
     profile: str,
 ) -> list[str]:
-    sources = [str(REQUIREMENTS_TXT)]
-    extra_flags: list[str] = []
+    sources = [str(REQUIREMENTS_TXT), str(PYPROJECT)]
+    extra_flags: list[str] = ["--no-emit-package", "personal-jarvis"]
     if profile == "full":
-        sources.append(str(PYPROJECT))
-        extra_flags = ["--extra", "full", "--no-emit-package", "personal-jarvis"]
+        extra_flags.extend(("--extra", "full"))
     return [
         "uv",
         "pip",
@@ -738,7 +735,6 @@ def _compile_command(
         python,
         "--python-platform",
         target.uv_platform,
-        "--no-sources",
         *_public_uv_flags(),
     ]
 
@@ -770,7 +766,9 @@ def _install_command(
         command.append("--require-hashes")
     for name in sorted(allowed_sdists):
         command.extend(("--no-binary", name))
-    command.extend(("--requirements", str(requirement), *_public_uv_flags()))
+    command.extend(
+        ("--requirements", str(requirement), "--find-links", wheel_links_url(), *_public_uv_flags())
+    )
     return command
 
 
@@ -897,7 +895,12 @@ def _verify_reproducible_requirements() -> str | None:
     with tempfile.TemporaryDirectory(prefix="jarvis-requirements-recompile-") as raw_dir:
         workspace = Path(raw_dir)
         generated = workspace / "requirements.txt"
-        shutil.copyfile(REQUIREMENTS_IN, workspace / "requirements.in")
+        shutil.copyfile(PYPROJECT, workspace / "pyproject.toml")
+        (workspace / "packaging").mkdir()
+        shutil.copyfile(
+            REPO_ROOT / "packaging" / "native-crypto-uv.toml",
+            workspace / "packaging" / "native-crypto-uv.toml",
+        )
         # Seeding the output is load-bearing: without --upgrade, uv reuses these
         # exact pins and proves a no-upgrade maintenance recompile is stable.
         shutil.copyfile(REQUIREMENTS_TXT, generated)
@@ -908,11 +911,13 @@ def _verify_reproducible_requirements() -> str | None:
                 "compile",
                 "--universal",
                 "--generate-hashes",
-                "--emit-index-url",
+                "--emit-find-links",
                 "--python-version",
                 "3.11",
                 "--output-file=requirements.txt",
-                "requirements.in",
+                "pyproject.toml",
+                "--find-links",
+                wheel_links_url(),
                 *_public_uv_flags(),
             ],
             cwd=workspace,

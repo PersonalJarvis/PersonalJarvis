@@ -307,7 +307,9 @@ def test_cell_projects_full_pylock_before_target_dry_run(
     full_text = full_requirements.read_text(encoding="utf-8")
     assert "example==1.0 --hash=sha256:" + "a" * 64 in full_text
     for command in commands:
-        assert "--no-config" in command
+        assert command[command.index("--config-file") + 1] == "packaging/native-crypto-uv.toml"
+        assert "--index" not in command
+        assert "--extra-index-url" not in command
         assert command[command.index("--default-index") + 1] == gate.PUBLIC_PYPI
         assert command[command.index("--python-platform") + 1] == "aarch64-pc-windows-msvc"
 

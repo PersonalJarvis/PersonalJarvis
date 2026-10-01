@@ -2,6 +2,7 @@
 
 import copy
 import struct
+import tomllib
 
 import pytest
 
@@ -31,7 +32,7 @@ def spec(monkeypatch):
 
 
 def test_only_the_two_missing_wheel_architectures_use_the_index(spec):
-    assert index.pip_options("darwin", "x86_64") == ["--extra-index-url", index.index_url()]
+    assert index.pip_options("darwin", "x86_64") == ["--find-links", index.wheel_links_url()]
     assert index.pip_options("win32", "ARM64")
     assert index.pip_options("darwin", "arm64") == []
     assert index.pip_options("win32", "AMD64") == []
@@ -73,3 +74,29 @@ def test_macho_binary_cannot_silently_raise_the_macos_floor():
         index.validate_macho(header + struct.pack("<6I", 0x32, 24, 1, 15 << 16, 15 << 16, 0))
     with pytest.raises(ValueError, match="extent"):
         index.validate_macho(header)
+
+
+def test_uv_source_is_explicit_and_matches_the_reviewed_publication():
+    config = tomllib.loads((index.ROOT / "packaging/native-crypto-uv.toml").read_text())
+    assert config["index"] == [
+        {"name": "native-crypto", "url": index.index_url(), "explicit": True}
+    ]
+    for relative in ("pyproject.toml", "jarvis/assets/browser/pyproject.toml"):
+        project = tomllib.loads((index.ROOT / relative).read_text(encoding="utf-8"))
+        assert project["tool"]["uv"]["sources"]["cryptography"] == {"index": "native-crypto"}
+        assert project["tool"]["uv"]["index"] == config["index"]
+
+
+def test_browser_dependency_mirror_rejects_losing_a_platform_marker(tmp_path, monkeypatch):
+    from scripts.ci import check_requirements_sync as sync
+
+    monkeypatch.setattr(sync, "REPO_ROOT", tmp_path)
+    project, requirements = tmp_path / "pyproject.toml", tmp_path / "requirements.in"
+    project.write_text(
+        '[project]\ndependencies = ["windows-capture==2.0.1; sys_platform == \'win32\'"]\n',
+        encoding="utf-8",
+    )
+    requirements.write_text("windows-capture==2.0.1\n", encoding="utf-8")
+    assert sync.check_pair(project, requirements) == 1
+    requirements.write_text("windows-capture==2.0.1; sys_platform == 'win32'\n", encoding="utf-8")
+    assert sync.check_pair(project, requirements) == 0

@@ -367,9 +367,9 @@ def step_pip_install(*, with_desktop: bool, with_voice_local: bool, dry_run: boo
     pip = [str(venv_python()), "-m", "pip"]
 
     # ``requirements.txt`` is the Wave 6 hash-pinned, PLATFORM-UNIVERSAL lockfile
-    # generated from ``requirements.in`` (top-level deps mirrored from
-    # ``pyproject.toml [project].dependencies``) by ``uv pip compile --universal
-    # --generate-hashes``. It carries per-OS environment markers so ONE lockfile
+    # generated from ``pyproject.toml [project].dependencies`` (mirrored by
+    # ``requirements.in``) using ``uv pip compile --universal --generate-hashes``
+    # and the scoped native-crypto config. Per-OS markers let ONE lockfile
     # installs on Windows/macOS/Linux (each OS pulls only its wheels). Every
     # package-pinning line carries ``--hash=sha256:...`` so an attacker who compromises a PyPI
     # mirror cannot swap out a transitive dependency without invalidating

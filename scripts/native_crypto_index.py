@@ -43,6 +43,11 @@ def index_url() -> str:
     return f"{PUBLISH_ROOT}/{publication_id(load_manifest())}/simple/"
 
 
+def wheel_links_url() -> str:
+    """Pip's flat link page avoids probing this host for unrelated packages."""
+    return index_url() + "cryptography/"
+
+
 def publication_id(spec: dict) -> str:
     revision = spec.get("build_revision")
     if type(revision) is not int or revision < 1:
@@ -56,7 +61,7 @@ def pip_options(system: str | None = None, machine: str | None = None) -> list[s
     native = (system == "darwin" and machine in {"x86_64", "amd64"}) or (
         system == "win32" and machine in {"arm64", "aarch64"}
     )
-    return ["--extra-index-url", index_url()] if native else []
+    return ["--find-links", wheel_links_url()] if native else []
 
 
 def native_records(spec: dict | None = None) -> list[dict]:

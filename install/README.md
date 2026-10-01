@@ -63,7 +63,7 @@ helper use the same reviewed builds.
 For a manual source checkout, use `python scripts/pip_install.py -e '.[full]'`
 to select the supplemental index automatically. A raw `pip` or `pipx` install
 on Intel macOS or Windows ARM64 needs
-`--extra-index-url https://personaljarvis.github.io/PersonalJarvis/native-crypto/50.0.2-1/simple/`
+`--find-links https://personaljarvis.github.io/PersonalJarvis/native-crypto/50.0.2-1/simple/cryptography/`
 (pass it through `pipx --pip-args` when using pipx).
 
 Maintainers build both native wheels with the **Native cryptography wheels**
@@ -71,11 +71,31 @@ workflow, which validates source hashes, native architecture, linked system
 libraries and security/compatibility contracts. Record the successful artifacts'
 SHA256 values in `packaging/native-crypto.json`. Generate the static index with
 `python scripts/native_crypto_index.py --artifacts <downloaded-wheels> --output <pages-checkout>`
-and publish it on the `native-crypto-index` Pages branch before regenerating
+and push it to the `native-crypto-index` branch, whose Pages workflow verifies
+the artifact hashes again before deployment. Wait for deployment before regenerating
 the application locks. Preserve older version directories; never replace a
 published wheel. A rebuilt wheel needs a new `build_revision`, even when the
 upstream version is unchanged. Keep the explicit uv index URL and pipx example
 in sync, then run the portable matrix and native runtime CI jobs before merging.
+
+Compile from project metadata so uv applies the **explicit** cryptography source.
+The output uses a flat `--find-links` page for pip; a generic extra index would
+query Pages for every unrelated dependency. The browser sidecar project mirrors
+its `requirements.in`, enforced by `check_requirements_sync.py`.
+
+```bash
+uv pip compile --universal --generate-hashes --emit-find-links \
+  --python-version 3.11 --output-file=requirements.txt pyproject.toml \
+  --find-links https://personaljarvis.github.io/PersonalJarvis/native-crypto/50.0.2-1/simple/cryptography/ \
+  --config-file packaging/native-crypto-uv.toml \
+  --default-index https://pypi.org/simple --keyring-provider disabled --no-progress --color never
+uv pip compile jarvis/assets/browser/pyproject.toml --universal --generate-hashes --emit-find-links \
+  --python-version 3.12 --no-header --output-file=jarvis/assets/browser/requirements.lock \
+  --config-file packaging/native-crypto-uv.toml \
+  --find-links https://personaljarvis.github.io/PersonalJarvis/native-crypto/50.0.2-1/simple/cryptography/ \
+  --default-index https://pypi.org/simple --keyring-provider disabled
+uv lock --config-file packaging/native-crypto-uv.toml --default-index https://pypi.org/simple
+```
 
 ## File layout
 
