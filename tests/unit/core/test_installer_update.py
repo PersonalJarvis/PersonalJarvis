@@ -449,6 +449,10 @@ def test_linux_handover_leaves_the_appimage_executable(tmp_path: Path) -> None:
     assert live.stat().st_mode & stat.S_IXUSR
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="the .app swap only runs on macOS; Windows scanners can briefly lock a renamed dir",
+)
 def test_macos_handover_rolls_back_when_the_swap_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
