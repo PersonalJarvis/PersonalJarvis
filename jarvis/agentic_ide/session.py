@@ -3992,23 +3992,31 @@ class Registry:
                     # grid; they follow the new one now, not at their next
                     # unrelated window resize.
                     _announce_geometry(term, cols, rows, except_viewer=on_output)
-            needs_repaint = term.replay.truncated
+            # A frame still owed since an earlier resize counts like a cut
+            # tail: what is kept was drawn for another size, so a fresh paint
+            # has to be asked for even though this viewer changes nothing.
+            needs_repaint = term.replay.truncated or term.replay.awaiting_frame
             if geometry_changed and is_coding_agent(term.agent):
                 # A cursor-addressed TUI stream is meaningful only at the size
                 # that produced it. Replaying the old geometry after a grid
                 # re-layout leaves status rows and command fragments behind
-                # the new paint. Keep the terminal modes, drop those drawing
-                # bytes, and let the live agent rebuild one clean screen below.
+                # the new paint, so a new replay epoch starts here and the live
+                # agent is asked to rebuild one clean screen below. An agent
+                # that paints whole frames keeps its old one meanwhile: the
+                # viewer waits for the new frame's erase, and shows the old one
+                # rather than an empty pane if the agent never answers (see
+                # ``ReplayBuffer.rebase_for_resize``).
                 replay = term.replay.rebase_for_resize()
                 needs_repaint = True
             else:
                 replay = term.replay.text()
             if replay:
                 # Hand over either the stream that drew the current screen, or
-                # (after a geometry change) the terminal-mode prologue that a
-                # clean repaint must draw on. A coding agent's TUI is a painted
-                # surface, not a log: the viewer needs one of those two rebuild
-                # paths rather than an append to whatever it held before.
+                # (after a geometry change) the old frame or the terminal-mode
+                # prologue that a clean repaint must draw on. A coding agent's
+                # TUI is a painted surface, not a log: the viewer needs one of
+                # those rebuild paths rather than an append to whatever it held
+                # before.
                 #
                 # On the replay channel when the viewer offered one — see the
                 # docstring for what appending it to a screen that already had
@@ -5080,7 +5088,9 @@ class Registry:
         if is_coding_agent(term.agent):
             # Future viewers must not replay cursor moves produced for the old
             # grid into the new one. The live viewer already has its screen;
-            # this only starts a clean replay epoch for the next reconnect.
+            # this only starts a clean replay epoch for the next reconnect —
+            # one that still shows the old frame, and asks for a new one, when
+            # the agent lets this resize pass unanswered.
             term.replay.rebase_for_resize()
         term.transcript.resize(cols, rows)
         return True
