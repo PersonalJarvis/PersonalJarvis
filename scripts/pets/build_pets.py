@@ -3643,7 +3643,563 @@ SHELLY = PetDesign(
 )
 
 
-PETS: tuple[PetDesign, ...] = (GIGI, MISO, BREW, BOLT, MOCHI, SHELLY)
+# -- Pip: the baby -----------------------------------------------------------------
+#
+# A chubby baby in a butter-yellow onesie: a big round head with a single curl
+# of hair on top, rosy cheeks, dark shiny eyes and a pink pacifier that does
+# half the acting. Pip sucks it while idling, lets it drop to listen, chews a
+# rattle while thinking, babbles, claps, cries, naps under a mint blanket,
+# bangs a toy keyboard, peers through a toy magnifier and kicks with delight
+# when it is picked up.
+
+PIP_SKIN = hexc("#ffd3b4")
+PIP_SKIN_LIGHT = hexc("#ffe9d8")
+PIP_SKIN_DARK = hexc("#e9a684")
+PIP_SUIT = hexc("#ffdc6a")
+PIP_SUIT_LIGHT = hexc("#fff2b0")
+PIP_SUIT_DARK = hexc("#e0a93a")
+PIP_MINT = hexc("#5fcfa6")
+PIP_MINT_LIGHT = hexc("#a9ecd2")
+PIP_MINT_DARK = hexc("#3a9e7c")
+PIP_HAIR = hexc("#a9683a")
+PIP_EYE = hexc("#2b2133")
+PIP_PACI = hexc("#ff8ab4")
+PIP_PACI_LIGHT = hexc("#ffc6dc")
+PIP_PACI_RING = hexc("#6cc4ff")
+#: Crying: the cheeks flush a deeper pink.
+PIP_FLUSH = hexc("#ff6f86")
+PIP_PILLOW = hexc("#eef0fb")
+PIP_PILLOW_DARK = hexc("#c3c8de")
+#: The toy keyboard's case, and the colours of its keys, the confetti and
+#: the rattle: one bright nursery set.
+PIP_TOY = (hexc("#5aa9ff"), hexc("#9ccbff"), hexc("#3b7fd0"))
+PIP_TOYS = (hexc("#ff6b6b"), hexc("#ffd23f"), hexc("#5fcfa6"), hexc("#c58bff"), hexc("#ff8ab4"))
+PIP_HEART = hexc("#ff6f91")
+PIP_HEART_SHINE = hexc("#ffd3de")
+
+#: The top-left of each 4 x 5 eye; looks move the whole eye a pixel.
+_PIP_EYE_AT: tuple[Px, Px] = ((16, 16), (28, 16))
+_PIP_LOOK: dict[str, Px] = {
+    "open": (0, 0),
+    "wide": (0, 0),
+    "look_left": (-1, 0),
+    "look_right": (1, 0),
+    "up_left": (-1, -1),
+    "up_right": (1, -1),
+    "down": (0, 1),
+}
+#: Closed-eye shapes on the 4 x 5 eye box: content, happy and a scrunched cry.
+_PIP_LIDS: dict[str, tuple[str, ...]] = {
+    "closed": ("....", "....", "#..#", ".##.", "...."),
+    "sleep": ("....", "....", "#..#", ".##.", "...."),
+    "happy": ("....", ".##.", "#..#", "....", "...."),
+    "cry": ("#...", ".##.", "...#", ".##.", "#..."),
+}
+_PIP_STAR = ("..#..", ".###.", "#####", ".###.", ".#.#.")
+
+#: Idle: where Pip looks over the seven breathing cells, the suck of the
+#: pacifier (1 = drawn in) and which foot wiggles (left, right lift).
+_PIP_IDLE_LOOK = ("open", "open", "look_left", "look_left", "open", "look_right", "open")
+_PIP_SUCK = (0, 1, 0, 1, 0, 0, 1)
+_PIP_IDLE_KICK = ((0, 0), (0, 0), (1, 0), (0, 0), (0, 0), (0, 1), (0, 0))
+#: Listening: the head tilts towards the cupped hand and back.
+_PIP_TILT = (0, 1, 1, 1, 1, 0)
+#: Success: a bounce on the bottom (a sitting baby hops lower than the
+#: others, so the curl stays in the cell) and the stretch that goes with it.
+_PIP_HOP = (0, -1, -2, -3, -2, -1, 0, 0)
+#: Success: hands together on every other frame of the hop.
+_PIP_CLAP = (False, True, False, True, False, True, False, False)
+#: Working: which key each hand bangs per frame (None = lifted); left hand
+#: plays the two left keys, right hand the two right ones.
+_PIP_BANG: tuple[tuple[int | None, int | None], ...] = (
+    (0, None),
+    (None, 4),
+    (1, None),
+    (None, None),
+    (None, 3),
+    (0, 4),
+    (None, 3),
+    (None, None),
+)
+#: Held: the swing from the cursor and the kicking feet (left, right lift).
+_PIP_SWAY = (-1, 0, 1, 1, 0, -1)
+_PIP_HELD_KICK = ((3, 0), (1, 1), (0, 3), (0, 2), (1, 1), (2, 0))
+
+
+def pip_pose(state: str, i: int) -> Pose:
+    pose = base_pose(state, i)
+    if state == "idle":
+        look = _PIP_IDLE_LOOK[i] if i < len(_PIP_IDLE_LOOK) else pose.eyes
+        return replace(pose, eyes=look, mouth="paci")
+    if state == "listening":
+        return replace(pose, mouth="o")
+    if state == "thinking":
+        return replace(pose, mouth="chew")
+    if state == "success":
+        return replace(pose, dy=_PIP_HOP[i], mouth="grin")
+    if state == "error":
+        return replace(pose, eyes="cry", mouth="wail")
+    if state == "sleeping":
+        # Lying down: the blanket does the breathing, not a body stretch.
+        return Pose(state, i, eyes="sleep", mouth="paci")
+    if state == "working":
+        return replace(pose, mouth="paci")
+    if state == "searching":
+        sweep = SEARCH_SWEEP[i % len(SEARCH_SWEEP)]
+        lean = (sweep > 2) - (sweep < -2)
+        return Pose(state, i, dx=lean, eyes=SEARCH_EYES[i], mouth="o")
+    if state == "held":
+        return Pose(state, i, dx=_PIP_SWAY[i % len(_PIP_SWAY)], eyes="happy", mouth="grin")
+    return pose
+
+
+def _pip_skin(f: Frame, mask: Mask, depth: int = 1) -> None:
+    f.part(mask, _shade(mask, PIP_SKIN, PIP_SKIN_LIGHT, PIP_SKIN_DARK, depth))
+
+
+def _pip_suit(f: Frame, mask: Mask, depth: int = 2) -> None:
+    f.part(mask, _shade(mask, PIP_SUIT, PIP_SUIT_LIGHT, PIP_SUIT_DARK, depth))
+
+
+def _pip_hand(f: Frame, x: float, y: float, r: float = 2.2) -> None:
+    _pip_skin(f, ellipse(x + 0.5, y + 0.5, r, r))
+
+
+def _pip_arm(f: Frame, shoulder: Px, hand: Px) -> None:
+    """A chubby sleeve from ``shoulder`` to a round hand at ``hand``."""
+    _pip_suit(f, thick(line(*shoulder, *hand)), 1)
+    _pip_hand(f, *hand)
+
+
+def _pip_curl(f: Frame, bob: int = 0) -> None:
+    """The single curl of hair on top; ``bob`` flips its tip up or down."""
+    tip = {0: [(28, 7), (26, 7)], 1: [(29, 7)], -1: [(29, 8)]}[bob]
+    f.part(polyline([(23, 9), (23, 7), (24, 5), (26, 4), (28, 5), *tip]), PIP_HAIR)
+
+
+def _pip_eyes(f: Frame, style: str) -> None:
+    for x, y in _PIP_EYE_AT:
+        if style in _PIP_LIDS:
+            f.paint(from_rows(x, y, _PIP_LIDS[style]), OUTLINE)
+            continue
+        lx, ly = _PIP_LOOK[style]
+        x, y = x + lx, y + ly
+        top, h = (y - 1, 6) if style == "wide" else (y, 5)
+        f.paint(_oval(x, top, 4, h), PIP_EYE)
+        f.paint({(x + 2, top + 1), (x + 2, top + 2), (x + 1, top + 1)}, FX_WHITE)
+        f.paint({(x + 1, top + h - 2)}, FX_DIM)
+
+
+def _pip_paci(f: Frame, x: float, y: float, suck: int = 0) -> None:
+    """The pacifier with its centre at ``(x, y)``: a pink shield, a knob and a
+    blue ring below; sucking draws it in, so it narrows and the ring lifts."""
+    ring = ellipse(x, y + 3.5 - suck, 2.5, 2.5)
+    f.part(ring - ellipse(x, y + 3.5 - suck, 1.2, 1.2), PIP_PACI_RING)
+    shield = ellipse(x, y, 4.0 - 0.7 * suck, 2.0)
+    f.part(shield, {p: PIP_PACI_LIGHT if p[1] < y - 1 else PIP_PACI for p in shield})
+    knob = math.floor(x)
+    f.paint(rect(knob - 1, math.floor(y), knob, math.floor(y)), PIP_PACI_LIGHT)
+
+
+def _pip_mouth(f: Frame, pose: Pose) -> None:
+    mouth = pose.mouth
+    if mouth == "paci":
+        suck = 0
+        if pose.state == "idle" and pose.i < len(_PIP_SUCK):
+            suck = _PIP_SUCK[pose.i]
+        elif pose.state == "working":
+            suck = 1 if any(k is not None for k in _PIP_BANG[pose.i % 8]) else 0
+        _pip_paci(f, CX, 26, suck)
+    elif mouth == "o":
+        f.paint(rect(23, 25, 24, 26), MOUTH_DARK)
+        f.paint({(23, 25), (24, 25)}, OUTLINE)
+    elif mouth == "chew":
+        f.paint(rect(22, 26, 25, 26) if pose.i % 2 else rect(23, 26, 24, 26), OUTLINE)
+    elif mouth == "grin":
+        draw_mouth(f, "open", 21, 25, 6)
+    elif mouth == "wail":
+        draw_mouth(f, "wide", 21, 25, 6)
+        f.paint({(20, 26), (27, 26)}, OUTLINE)  # the corners pulled down
+    else:
+        draw_mouth(f, mouth, 22, 25, 4)
+
+
+def _pip_head(f: Frame, pose: Pose, *, bob: int = 0) -> None:
+    """Ears, curl, the round head and the face (head centred on (CX, 19))."""
+    for ear in (ellipse(11.5, 20.5, 2.2, 2.6), mirrored(ellipse(11.5, 20.5, 2.2, 2.6))):
+        _pip_skin(f, ear)
+    _pip_curl(f, bob)
+    head = ellipse(CX, 19, 12, 11)
+    f.part(head, _shade(head, PIP_SKIN, PIP_SKIN_LIGHT, PIP_SKIN_DARK))
+    f.paint({(11, 20), (36, 20)}, PIP_SKIN_DARK)
+    cheek = rect(14, 23, 16, 24)
+    flush = pose.state == "error"
+    f.paint(cheek | mirrored(cheek), PIP_FLUSH if flush else BLUSH)
+    if flush:
+        f.paint(rect(13, 22, 17, 22) | rect(30, 22, 34, 22), BLUSH)
+    _pip_eyes(f, pose.eyes)
+    _pip_mouth(f, pose)
+
+
+def _pip_arms(pose: Pose) -> tuple[tuple[Px, Px, bool], ...]:
+    """(shoulder, hand, in front of the head) for each arm of the sitting baby."""
+    state, i = pose.state, pose.i
+    rest_l, rest_r = ((16, 33), (14, 39), False), ((31, 33), (33, 39), False)
+    if state == "listening":
+        return rest_l, ((32, 33), (37, 21), True)
+    if state == "thinking":
+        hand = (29, 30) if i < 4 else ((35, 27) if i % 2 else (34, 28))
+        return rest_l, ((31, 33), hand, True)
+    if state == "talking":
+        lift = (0, 0, 3, 5)[i % 4]
+        return ((16, 33), (13, 38 - lift), False), ((31, 33), (34, 38 - lift), False)
+    if state == "success":
+        if _PIP_CLAP[i % 8]:
+            return ((17, 33), (21, 33), True), ((30, 33), (26, 33), True)
+        return ((16, 33), (10, 29), False), ((31, 33), (37, 29), False)
+    if state == "error":
+        up = i % 2
+        return ((16, 33), (10, 30 - 2 * up), False), ((31, 33), (37, 28 + 2 * up), False)
+    if state == "working":
+        return ()  # the hands are on the keyboard, drawn with it
+    if state == "searching":
+        return rest_l, ((31, 33), (35, 30), True)
+    return rest_l, rest_r
+
+
+def draw_pip(f: Frame, pose: Pose) -> None:
+    if pose.state == "sleeping":
+        _draw_pip_asleep(f, pose)
+    elif pose.state == "held":
+        _draw_pip_lifted(f, pose)
+    else:
+        _draw_pip_sitting(f, pose)
+
+
+def _pip_feet(f: Frame, kick: tuple[int, int]) -> None:
+    for side, lift in enumerate(kick):
+        foot = ellipse(17.5, 44.5 - lift, 3.4, 2.2)
+        toes = {(15, 43 - lift), (17, 43 - lift)}
+        if side:
+            foot, toes = mirrored(foot), mirrored(toes)
+        _pip_skin(f, foot)
+        f.paint(toes, PIP_SKIN_LIGHT)
+
+
+def _draw_pip_sitting(f: Frame, pose: Pose) -> None:
+    state, i = pose.state, pose.i
+    kick = (0, 0)
+    if state == "idle" and i < len(_PIP_IDLE_KICK):
+        kick = _PIP_IDLE_KICK[i]
+    elif state == "success":
+        kick = (1, 1) if pose.dy <= -2 else (0, 0)
+    elif state == "error":
+        kick = (i % 2, 1 - i % 2)  # a tantrum: the feet drum
+    elif state == "talking":
+        kick = (0, 0, 1, 1)[i % 4], (0, 0, 0, 1)[i % 4]
+    bob = 1 if state == "success" and pose.dy <= -2 else -1 if state == "error" else 0
+    tilt = _PIP_TILT[i % len(_PIP_TILT)] if state == "listening" else 0
+    arms = _pip_arms(pose)
+    with f.offset(pose.dx, min(pose.dy, 0)):
+        _pip_feet(f, kick)  # planted: a nod never pushes them down
+    with f.offset(pose.dx, pose.dy):
+        # A raised arm's sleeve goes behind the body; only its hand comes forward.
+        for shoulder, hand, front in arms:
+            if front:
+                _pip_arm(f, shoulder, hand)
+        torso = ellipse(CX, 37, 10, 7.5)
+        _pip_suit(f, torso)
+        f.paint(from_rows(25, 36, _PIP_STAR), PIP_MINT)
+        for shoulder, hand, front in arms:
+            if not front:
+                _pip_arm(f, shoulder, hand)
+        with f.offset(tilt, 0):
+            _pip_head(f, pose, bob=bob)
+        if state == "listening" and i == 0:
+            _pip_paci(f, CX, 31)  # popping out of the open mouth
+        elif state == "listening":
+            _pip_paci(f, 22, 40)  # landed in the lap
+        if state == "thinking":
+            _pip_rattle(f, pose)
+        if state == "searching":
+            _pip_magnifier(f, pose)
+        for _shoulder, hand, front in arms:
+            if front:
+                # The sleeve stays behind; clapping hands are a size bigger.
+                _pip_hand(f, *hand, 2.7 if state == "success" else 2.2)
+
+
+def _pip_rattle(f: Frame, pose: Pose) -> None:
+    """A rattle in the right hand: chewed at the mouth, then shaken by the cheek."""
+    if pose.i < 4:
+        ball, end = (25.5, 27.0), (30, 31)
+    else:
+        ball, end = ((38.5, 21.0), (36, 27)) if pose.i % 2 else ((37.5, 22.0), (35, 28))
+    f.part(thick(line(math.floor(ball[0]), math.floor(ball[1]), *end)), PIP_TOYS[1])
+    head = ellipse(*ball, 2.8, 2.8)
+    f.part(head, {p: PIP_MINT_LIGHT if p in eroded(head) else PIP_MINT for p in head})
+    f.paint({(math.floor(ball[0]) - 1, math.floor(ball[1]) - 1)}, FX_WHITE)
+
+
+def _pip_magnifier(f: Frame, pose: Pose) -> None:
+    """A toy magnifier over the right eye: inside the lens the eye is huge and
+    follows the search."""
+    lx, _ly = _PIP_LOOK.get(pose.eyes, (0, 0))
+    cx, cy = 29.5, 18.5
+    f.part(thick(line(33, 23, 35, 29)), PIP_TOYS[0])
+    lens = ellipse(cx, cy, 6, 6)
+    rim = lens - ellipse(cx, cy, 4.6, 4.6)
+    f.paint(lens, PIP_SKIN_LIGHT)
+    eye = _oval(27 + lx, 15, 6, 7)
+    f.paint(eye, PIP_EYE)
+    f.paint(rect(30 + lx, 16, 31 + lx, 17) | {(29 + lx, 16)}, FX_WHITE)
+    f.paint({(28 + lx, 20)}, FX_DIM)
+    f.part(rim, shade(rim, PIP_TOYS[0], light=hexc("#ff9e9e"), dark=hexc("#c94a4a"), dark_depth=1))
+    f.paint({(25, 16), (26, 15)}, FX_WHITE)
+
+
+def _draw_pip_lifted(f: Frame, pose: Pose) -> None:
+    """Held: lifted under the arms, the arms up, the legs dangling and kicking."""
+    lag = -pose.dx
+    left, right = _PIP_HELD_KICK[pose.i % len(_PIP_HELD_KICK)]
+    with f.offset(pose.dx, 0):
+        for hip, lift, out in (((20, 38), left, -1), ((27, 38), right, 1)):
+            foot = (hip[0] + out * (1 + lift) + lag, 44 - lift)
+            _pip_suit(f, thick(line(*hip, *foot)), 1)
+            _pip_skin(f, ellipse(foot[0] + 0.5 + out, foot[1] + 1.0, 2.6, 1.8))
+        torso = ellipse(CX, 33, 8.5, 7)
+        _pip_suit(f, torso)
+        f.paint(from_rows(24, 32, _PIP_STAR), PIP_MINT)
+        _pip_arm(f, (17, 29), (9, 13))
+        _pip_arm(f, (30, 29), (38, 13))
+        with f.offset(0, -3):
+            _pip_head(f, pose, bob=1 if pose.i % 2 else 0)
+
+
+def _draw_pip_asleep(f: Frame, pose: Pose) -> None:
+    """Asleep on a pillow under a mint blanket that rises and falls with each
+    breath; the pacifier keeps a slow suck going."""
+    i = pose.i
+    rise = SLEEP_BREATH[i % len(SLEEP_BREATH)]
+    pillow = ellipse(12, 41, 11, 4)
+    f.part(pillow, _shade(pillow, PIP_PILLOW, FX_WHITE, PIP_PILLOW_DARK, 1))
+    with f.offset(-10, 15):
+        _pip_curl(f)
+    head = ellipse(14, 34, 9, 8.5)
+    _pip_skin(f, head, 2)
+    f.paint(rect(6, 37, 7, 38) | rect(19, 37, 20, 38), BLUSH)
+    for x in (8, 16):
+        f.paint(from_rows(x, 32, _PIP_LIDS["sleep"][1:]), OUTLINE)
+    _pip_paci(f, 14, 39, rise)
+    blanket = ellipse(32, 46, 14.5, 13 + rise) & rect(0, 0, CELL - 1, 45)
+    f.part(blanket, _shade(blanket, PIP_MINT, PIP_MINT_LIGHT, PIP_MINT_DARK, 1))
+    f.paint({p for p in blanket if (p[0] + 2 * p[1]) % 7 == 0 and p in eroded(blanket)}, FX_WHITE)
+    _pip_hand(f, 23, 34 - rise)  # a fist holding the blanket's edge
+
+
+# -- Pip's effects ------------------------------------------------------------
+
+
+#: Listening: sound arcs rolling in towards the cupped hand, (x, fading).
+_PIP_INCOMING: tuple[tuple[tuple[int, bool], ...], ...] = (
+    ((44, False),),
+    ((42, False),),
+    ((40, False), (44, False)),
+    ((40, True), (42, False)),
+    ((40, False),),
+    ((41, True),),
+)
+
+
+def _pip_listening_fx(f: Frame, pose: Pose) -> None:
+    """Sound arcs roll in from the right to the hand cupped at the ear."""
+    with f.offset(pose.dx, pose.dy):
+        for x, fading in _PIP_INCOMING[pose.i % len(_PIP_INCOMING)]:
+            arc = {(x + ax, 21 + ay) for ax, ay in _ARC_L}
+            f.paint({p for p in arc if p[0] < CELL}, ARC_FADE if fading else ARC)
+
+
+def _pip_thinking_fx(f: Frame, pose: Pose) -> None:
+    """A thought cloud with a toy star that twinkles; bubbles rise into it."""
+    i = pose.i
+    with f.offset(pose.dx, pose.dy + 1):
+        rise = i % 4
+        f.part(rect(11 - rise // 2, 9 - rise // 2, 12 - rise // 2, 10 - rise // 2), PIP_PILLOW)
+        cloud = ellipse(6, 5, 4, 3.5) | ellipse(11, 3.5, 4.5, 3.5) | ellipse(15, 5.5, 3, 3)
+        cloud |= rect(4, 6, 16, 7)
+        f.part(cloud, {p: PIP_PILLOW_DARK if p[1] >= 7 else PIP_PILLOW for p in cloud})
+        star = ("..#..", ".###.", "#####", ".#.#.") if i % 4 < 2 else (".#.", "###", ".#.")
+        x = 8 if len(star) == 4 else 9
+        f.paint(from_rows(x, 2 if len(star) == 4 else 3, star), PIP_TOYS[1])
+        if i % 4 >= 2:
+            f.paint({(10, 4)}, SPARK_CORE)
+    if pose.i >= 4:
+        # Shaking the rattle: little rattle ticks round its head.
+        k = pose.i % 2
+        f.paint({(42 + k, 17), (43 + k, 16), (43, 24 + k), (44, 25 + k)}, ARC)
+
+
+_PIP_NOTE = (".##", ".#.", ".#.", "##.")
+
+
+def _pip_talking_fx(f: Frame, pose: Pose) -> None:
+    """Babble notes pop out beside the face, more of them the louder."""
+    with f.offset(pose.dx, pose.dy):
+        if pose.i >= 1:
+            f.paint({(38, 25), (39, 24)}, ARC)
+        if pose.i >= 2:
+            f.glyph(40, 17, _PIP_NOTE, {"#": PIP_TOYS[4]})
+        if pose.i >= 3:
+            f.glyph(5, 14, _PIP_NOTE, {"#": PIP_TOYS[2]})
+            f.paint({(9, 25), (8, 24)}, ARC)
+
+
+_PIP_HEART_S = ("#.#", "###", ".#.")
+_PIP_HEART_L = ("##.##", "#o###", "#####", ".###.", "..#..")
+#: Confetti flakes (x, y, colour index, first frame) that tumble down.
+_PIP_CONFETTI = (
+    (6, 2, 0, 0),
+    (40, 1, 2, 1),
+    (14, 1, 3, 2),
+    (34, 3, 4, 2),
+    (3, 12, 1, 3),
+    (44, 10, 0, 4),
+)
+
+
+def _pip_success_fx(f: Frame, pose: Pose) -> None:
+    """Clap sparks between the hands, confetti tumbling down and a heart."""
+    i = pose.i
+    for x, y, color, start in _PIP_CONFETTI:
+        age = i - start
+        if not 0 <= age <= 4:
+            continue
+        fy = y + 3 * age
+        flake = rect(x, fy, x + 1, fy) if (age + color) % 2 else rect(x, fy, x, fy + 1)
+        f.part(flake, PIP_TOYS[color])
+    if _PIP_CLAP[i % 8]:
+        # Clap! A spark pops on either side of the hands.
+        y = 32 + pose.dy
+        f.glyph(15, y, _SPARK_S, _SPARK_PALETTE)
+        f.glyph(30, y, _SPARK_S, _SPARK_PALETTE)
+    age = i - 2
+    if 0 <= age <= 4:
+        rows = _PIP_HEART_L if age in (1, 2, 3) else _PIP_HEART_S
+        f.glyph(40, 18 - age, rows, {"#": PIP_HEART, "o": PIP_HEART_SHINE})
+
+
+#: Error: tear drops arcing out of each eye, (dx, dy) from the eye per frame.
+_PIP_TEARS: tuple[tuple[Px, ...], ...] = (
+    ((-2, 1),),
+    ((-3, 0), (-5, 2)),
+    ((-4, -1), (-7, 1), (-8, 5)),
+    ((-6, 0), (-9, 3), (-3, 0)),
+    ((-8, 2), (-5, -1), (-10, 6)),
+    ((-7, 1), (-3, 0)),
+)
+_PIP_DROP = (".#.", "###", "#o#", ".#.")
+
+
+def _pip_error_fx(f: Frame, pose: Pose) -> None:
+    """Tears spurt sideways out of both scrunched eyes and stream down the
+    cheeks; the pacifier tumbles away."""
+    with f.offset(pose.dx, pose.dy):
+        streams = rect(15, 21, 15, 24) | rect(32, 21, 32, 24)
+        f.paint(streams, SWEAT)
+        for dx, dy in _PIP_TEARS[pose.i % len(_PIP_TEARS)]:
+            f.glyph(13 + dx, 18 + dy, _PIP_DROP, {"#": SWEAT, "o": SWEAT_SHINE})
+            f.glyph(32 - dx, 18 + dy, _PIP_DROP, {"#": SWEAT, "o": SWEAT_SHINE})
+    fall = min(pose.i, 3)
+    _pip_paci(f, 35 + 2 * fall, 31 + 3 * fall, 0)
+
+
+def _pip_sleeping_fx(f: Frame, pose: Pose) -> None:
+    """The z marks drift up off the blanket."""
+    fx_zzz(f, pose.i, 26, 22)
+
+
+def _pip_working_fx(f: Frame, pose: Pose) -> None:
+    """A toy keyboard with five big coloured keys: Pip bangs them with both
+    hands, a struck key flashes and a note in its colour flies off the side."""
+    i = pose.i
+    case = rounded_rect(8, 36, 39, 45, 2)
+    f.part(case, shade(case, PIP_TOY[0], light=PIP_TOY[1], dark=PIP_TOY[2], dark_depth=1))
+    f.paint({(22, 43), (24, 43), (26, 43)}, PIP_TOY[2])  # the speaker
+    struck = {k for k in _PIP_BANG[i % len(_PIP_BANG)] if k is not None}
+    for k, color in enumerate(PIP_TOYS):
+        x = 11 + 5 * k
+        if k in struck:
+            f.part(rect(x, 39, x + 3, 40), color)
+            f.paint(rect(x, 39, x + 3, 39), FX_WHITE)
+        else:
+            f.part(rect(x, 38, x + 3, 40), color)
+    left, right = _PIP_BANG[i % len(_PIP_BANG)]
+    for key, shoulder, rest in ((left, (16, 33), 13), (right, (31, 33), 34)):
+        hand = (12 + 5 * key, 37) if key is not None else (rest, 31)
+        _pip_arm(f, shoulder, hand)
+    # Notes from earlier strikes fly out, left keys to the left, right to the right.
+    for age in (1, 2):
+        for key in _PIP_BANG[(i - age) % len(_PIP_BANG)]:
+            if key is None:
+                continue
+            x = 4 - age if key < 2 else 41 + age
+            f.glyph(x, 31 - 4 * age, _PIP_NOTE, {"#": PIP_TOYS[key]})
+
+
+def _pip_searching_fx(f: Frame, pose: Pose) -> None:
+    """Dotted glances out of the lens, and a sparkle when something turns up."""
+    sweep = SEARCH_SWEEP[pose.i % len(SEARCH_SWEEP)]
+    with f.offset(pose.dx, pose.dy):
+        if sweep < -2:
+            f.paint({(9, 18), (6, 18), (3, 18)}, ARC_FADE)
+        elif sweep > 2:
+            f.paint({(38, 14), (41, 13), (44, 12)}, ARC_FADE)
+    fx_sparkles(f, pose.i, ((42, 6, 3),))
+
+
+def _pip_held_fx(f: Frame, pose: Pose) -> None:
+    """Wheee: swing streaks behind the dangling legs and little hearts."""
+    sway = pose.dx
+    with f.offset(sway, 0):
+        if sway < 0:
+            f.paint(line(36, 36, 36, 42) | line(38, 38, 38, 41), ARC_FADE)
+        elif sway > 0:
+            f.paint(line(11, 36, 11, 42) | line(9, 38, 9, 41), ARC_FADE)
+    k = pose.i % 3
+    f.glyph(41, 26 - 2 * k, _PIP_HEART_S, {"#": PIP_HEART})
+    if pose.i % 2:
+        f.glyph(3, 23, _PIP_HEART_S, {"#": PIP_HEART})
+
+
+PIP = PetDesign(
+    id="pip",
+    name="Pip",
+    description="A chubby baby with a pacifier who babbles when you talk and naps under a blanket.",
+    draw=draw_pip,
+    pose=pip_pose,
+    waist=40,
+    anchors=Anchors(
+        arcs_left=(8, 20),
+        arcs_right=(39, 20),
+        dots=(19, 3),
+        zzz=(26, 22),
+        bang=(42, 3),
+        sparkles=((6, 12, 1), (41, 9, 2), (5, 32, 3), (42, 30, 3)),
+    ),
+    fx={
+        "listening": _pip_listening_fx,
+        "thinking": _pip_thinking_fx,
+        "talking": _pip_talking_fx,
+        "success": _pip_success_fx,
+        "error": _pip_error_fx,
+        "sleeping": _pip_sleeping_fx,
+        "working": _pip_working_fx,
+        "searching": _pip_searching_fx,
+        "held": _pip_held_fx,
+    },
+)
+
+PETS: tuple[PetDesign, ...] = (GIGI, MISO, BREW, BOLT, MOCHI, SHELLY, PIP)
 
 
 # ---------------------------------------------------------------------------

@@ -5985,6 +5985,9 @@
       },
       "shelly": {
         "description": "Eine Schnecke: das Haus dreht sich beim Nachdenken, zum Schlafen zieht sie sich zurück."
+      },
+      "pip": {
+        "description": "Ein Baby mit Schnuller: plappert beim Sprechen, schläft unter einer Decke."
       }
     },
     "create_dialog": {

@@ -1,0 +1,72 @@
+{
+  "format": "jarvis-pet/1",
+  "id": "pip",
+  "name": "Pip",
+  "description": "A chubby baby with a pacifier who babbles when you talk and naps under a blanket.",
+  "frame_size": 48,
+  "sheet": "sheet.png",
+  "animations": {
+    "idle": {
+      "row": 0,
+      "frames": 8,
+      "fps": 6,
+      "loop": true,
+      "accent_frames": 1,
+      "accent_every": 3
+    },
+    "listening": {
+      "row": 1,
+      "frames": 6,
+      "fps": 8,
+      "loop": true
+    },
+    "thinking": {
+      "row": 2,
+      "frames": 8,
+      "fps": 8,
+      "loop": true
+    },
+    "talking": {
+      "row": 3,
+      "frames": 4,
+      "fps": 10,
+      "loop": true
+    },
+    "success": {
+      "row": 4,
+      "frames": 8,
+      "fps": 10,
+      "loop": false
+    },
+    "error": {
+      "row": 5,
+      "frames": 6,
+      "fps": 9,
+      "loop": false
+    },
+    "sleeping": {
+      "row": 6,
+      "frames": 6,
+      "fps": 3,
+      "loop": true
+    },
+    "working": {
+      "row": 7,
+      "frames": 8,
+      "fps": 8,
+      "loop": true
+    },
+    "searching": {
+      "row": 8,
+      "frames": 8,
+      "fps": 8,
+      "loop": true
+    },
+    "held": {
+      "row": 9,
+      "frames": 6,
+      "fps": 10,
+      "loop": true
+    }
+  }
+}

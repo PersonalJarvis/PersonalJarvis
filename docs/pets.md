@@ -187,6 +187,7 @@ committed PNGs match the script). User-created pets live in
 | `bolt` | Bolt | A battery: charges while thinking, sparks on success, runs flat asleep |
 | `mochi` | Mochi | A jelly blob that wobbles while listening |
 | `shelly` | Shelly | A snail: the shell spins while thinking, it withdraws to sleep |
+| `pip` | Pip | A baby: babbles while talking, cries on errors, naps under a blanket |
 
 ## Adding a pet
 

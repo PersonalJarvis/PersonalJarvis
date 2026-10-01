@@ -17,7 +17,7 @@ from jarvis.ui.pets.states import DEFAULT_PET_ID, PET_STATES
 REPO_ROOT = Path(__file__).resolve().parents[4]
 BUILD_SCRIPT = REPO_ROOT / "scripts" / "pets" / "build_pets.py"
 PACKAGE_DIR = REPO_ROOT / "jarvis" / "ui" / "pets"
-EXPECTED_PETS = ("gigi", "miso", "brew", "bolt", "mochi", "shelly")
+EXPECTED_PETS = ("gigi", "miso", "brew", "bolt", "mochi", "shelly", "pip")
 
 
 def _builder() -> ModuleType:
@@ -39,7 +39,7 @@ def generated(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return out
 
 
-def test_the_six_builtin_pets_ship() -> None:
+def test_the_builtin_pets_ship() -> None:
     ids = [m.id for m in list_pets() if m.builtin]
     assert ids[0] == DEFAULT_PET_ID
     assert sorted(ids) == sorted(EXPECTED_PETS)
