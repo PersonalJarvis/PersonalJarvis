@@ -128,11 +128,13 @@ def _require_macos_screen_recording_permission() -> None:
     from jarvis.platform.permissions import (  # noqa: PLC0415
         PermissionId,
         PermissionState,
+        announce_needed,
         get_system_permission_port,
     )
 
     port = get_system_permission_port()
     if not port.runtime_access_granted(PermissionId.SCREEN_RECORDING):
+        announce_needed(PermissionId.SCREEN_RECORDING, "computer_use")
         state = port.state(PermissionId.SCREEN_RECORDING)
         detail = (
             state.value

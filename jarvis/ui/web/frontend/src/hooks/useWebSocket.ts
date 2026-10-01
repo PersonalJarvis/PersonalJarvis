@@ -32,6 +32,8 @@ import { useI18nStore, hydrateUiLanguage, hydrateReplyLanguage, translate } from
 import { hydrateUiTheme } from "@/hooks/useTheme";
 import { announceDictationSettings } from "@/hooks/usePromptMode";
 import { petKeys } from "@/hooks/usePets";
+import type { PermissionId } from "@/hooks/usePermissions";
+import { askPermission } from "@/store/permissionPrompt";
 import { focusChatComposer, startNewTextChat } from "@/lib/newChat";
 import { SPEAKER_MUTE_EVENT } from "@/lib/speakerMute";
 
@@ -335,6 +337,15 @@ export function useWebSocket(): void {
         // another one, the shortcut): the My Pets page re-reads the list.
         if (env.event_name === "PetChanged") {
           void queryClient.invalidateQueries({ queryKey: petKeys.all });
+        }
+
+        // A feature the user just started hit a missing macOS grant: the
+        // main window answers with one contextual permission card.
+        if (env.event_name === "PermissionNeeded") {
+          const p = env.payload as { permission?: unknown; feature?: unknown };
+          if (typeof p.permission === "string" && typeof p.feature === "string") {
+            askPermission(p.permission as PermissionId, p.feature);
+          }
         }
 
         if (env.event_name === "TranscriptionUpdate") {

@@ -2592,6 +2592,11 @@ class WebServer:
         from jarvis.brain.provider_health_ledger import publish_changes_to
 
         publish_changes_to(self.bus, asyncio.get_running_loop())
+        # A feature the user starts that meets a missing macOS grant announces
+        # it here, and the open window answers with one contextual card.
+        from jarvis.platform.permissions import publish_needs_to
+
+        publish_needs_to(self.bus, asyncio.get_running_loop())
         if start_serving:
             assert_bind_safe(host, _control_key.get_control_key())
             config = uvicorn.Config(

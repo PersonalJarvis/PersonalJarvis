@@ -589,11 +589,13 @@ def _find_and_focus_macos(title_contains: str) -> tuple[bool, str]:
     from jarvis.platform.permissions import (  # noqa: PLC0415
         PermissionId,
         PermissionState,
+        announce_needed,
         get_system_permission_port,
     )
 
     permission_port = get_system_permission_port()
     if not permission_port.runtime_access_granted(PermissionId.ACCESSIBILITY):
+        announce_needed(PermissionId.ACCESSIBILITY, "window_control")
         accessibility_state = permission_port.state(PermissionId.ACCESSIBILITY)
         detail = (
             accessibility_state.value
@@ -1688,11 +1690,13 @@ def _maximize_window_macos(win: WindowInfo) -> tuple[bool, str]:
     from jarvis.platform.permissions import (  # noqa: PLC0415
         PermissionId,
         PermissionState,
+        announce_needed,
         get_system_permission_port,
     )
 
     port = get_system_permission_port()
     if not port.runtime_access_granted(PermissionId.ACCESSIBILITY):
+        announce_needed(PermissionId.ACCESSIBILITY, "window_control")
         state = port.state(PermissionId.ACCESSIBILITY)
         detail = (
             state.value

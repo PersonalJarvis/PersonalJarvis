@@ -2307,7 +2307,7 @@
   "permissions": {
     "group_title": "Privacy permissions",
     "title": "macOS permissions",
-    "description": "Grant only the system access needed for voice, Computer-Use, global shortcuts, and window control. Jarvis never edits the macOS privacy database.",
+    "description": "macOS access is requested the moment a feature first needs it. This list shows where things stand and lets you fix an access later.",
     "loading": "Checking system permissions…",
     "load_failed": "Could not read the current permission status.",
     "refresh": "Check again",
@@ -2359,33 +2359,27 @@
         "description": "Stores your API keys encrypted in the macOS Keychain instead of a plain file — that is the Keychain prompt you see when the app starts. Your keys stay on your Mac and are never sent anywhere."
       }
     },
-    "banner": {
-      "title": "Action needed: macOS permissions are missing",
-      "impact": "Not working right now: {0}",
-      "hint": "Use the buttons to allow access — macOS opens the right System Settings page for each permission. {name} re-checks automatically.",
-      "collapse": "Hide details",
-      "expand": "Show details"
-    },
-    "features": {
-      "voice": "Voice & wake word",
-      "computer_use": "Computer-Use",
-      "global_hotkeys": "Global shortcuts",
-      "window_control": "Window control",
-      "audio_ducking": "Music ducking while dictating",
-      "api_keys": "Secure API-key storage"
-    },
-    "restart_deferred": "Newly granted access turns on with the automatic restart at the end of setup - nothing to do now.",
-    "setup_all": "Set up everything",
-    "setup_all_hint": "One click walks you through every remaining permission and applies them at the end.",
-    "setup_running": "Step {0} of {1}: {2}",
-    "setup_wait_prompt": "Answer the macOS dialog — this continues on its own.",
-    "setup_wait_settings": "Turn on Personal Jarvis in the System Settings pane that just opened, then come back — this continues on its own.",
-    "setup_cancel": "Stop",
-    "setup_restarting": "All set — Personal Jarvis restarts once to apply the new access.",
-    "setup_timeout": "Setup paused: a permission was not granted in time. Use “Set up everything” again whenever you like.",
     "ask_again": "Ask again",
     "stale_grant_hint": "macOS will not ask for this access again. If System Settings already shows it as enabled, that record belongs to an older version of the app — tap “Ask again” and allow access once more.",
-    "identity_reset": "Since the app was last rebuilt, macOS treats Personal Jarvis as a new app and discarded every access you had granted. Please allow them once more — they will stick from then on."
+    "identity_reset": "Since the app was last rebuilt, macOS treats Personal Jarvis as a new app and discarded every access you had granted. Please allow them once more — they will stick from then on.",
+    "prompt": {
+      "title": "Allow {permission}?",
+      "allow": "Continue",
+      "not_now": "Not now",
+      "granted": "Access allowed. You can use it right away.",
+      "dialog_hint": "macOS asks you next. Choose Allow in its dialog.",
+      "settings_hint": "Turn on {name} for {permission} in the System Settings page that opens, then come back. This closes by itself.",
+      "restart_hint": "Access is on. macOS applies it after {name} restarts.",
+      "reason": {
+        "voice": "Voice and the wake word listen through your microphone. Audio stays on your Mac until you speak to {name}.",
+        "computer_use": "Computer-Use looks at your screen and works your mouse and keyboard, but only when you ask it to do something.",
+        "screen_context": "To answer a question about your screen, {name} takes one screenshot and deletes it after the answer.",
+        "window_control": "Switching, focusing and arranging windows for you needs this access.",
+        "global_hotkeys": "Global shortcuts only work from other apps once macOS lets {name} watch the keyboard.",
+        "audio_ducking": "{name} turns Music and Spotify down while you dictate and back up afterwards.",
+        "api_keys": "Your API keys are stored encrypted in the macOS Keychain instead of a plain file."
+      }
+    }
   },
   "settings_hub": {
     "subtitle": "Everything about you, your keys and this app — in one place.",

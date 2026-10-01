@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { askPermission } from "@/store/permissionPrompt";
+
 /**
  * Current wake-word configuration as returned by GET /api/settings/wake-word.
  * Mirrors the backend response in jarvis/ui/web/settings_routes.py.
@@ -122,6 +124,10 @@ export function useWakeWord() {
       }
       const result = body as WakeWordSaveResult;
       window.dispatchEvent(new CustomEvent("jarvis:wake-word-changed"));
+      // A wake word that can actually listen needs the microphone: ask now,
+      // while the user is setting it up (the card stays away when macOS
+      // already granted it, and on every other OS).
+      if (result.wake_available) askPermission("microphone", "voice");
       // The assistant's display name is derived from the wake phrase, so bylines
       // that read from /api/settings/assistant-name must re-seed on every save.
       window.dispatchEvent(new CustomEvent("jarvis:assistant-name-changed"));
@@ -163,6 +169,7 @@ export function useWakeWord() {
         throw new Error(body.detail ?? `HTTP ${res.status}`);
       }
       window.dispatchEvent(new CustomEvent("jarvis:wake-word-changed"));
+      if (enabled) askPermission("microphone", "voice");
       return body as WakeActivationResult;
     },
     [],

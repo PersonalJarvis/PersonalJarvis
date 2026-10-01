@@ -2307,7 +2307,7 @@
   "permissions": {
     "group_title": "Permisos de privacidad",
     "title": "Permisos de macOS",
-    "description": "Concede solo el acceso del sistema necesario para voz, Computer-Use, atajos globales y control de ventanas. Jarvis nunca modifica la base de datos de privacidad de macOS.",
+    "description": "El acceso de macOS se pide en el momento en que una función lo necesita por primera vez. Esta lista muestra el estado y te deja corregir un acceso más tarde.",
     "loading": "Comprobando los permisos del sistema…",
     "load_failed": "No se pudo leer el estado actual de los permisos.",
     "refresh": "Comprobar de nuevo",
@@ -2359,33 +2359,27 @@
         "description": "Guarda tus claves API cifradas en el Llavero de macOS en lugar de un archivo de texto plano — ese es el aviso del Llavero que ves al iniciar la app. Tus claves se quedan en tu Mac y nunca se envían a ningún sitio."
       }
     },
-    "banner": {
-      "title": "Acción necesaria: faltan permisos de macOS",
-      "impact": "Ahora mismo no funciona: {0}",
-      "hint": "Permite el acceso con los botones: macOS abre directamente la página correcta de Ajustes del Sistema para cada permiso. {name} vuelve a comprobarlo automáticamente.",
-      "collapse": "Ocultar detalles",
-      "expand": "Mostrar detalles"
-    },
-    "features": {
-      "voice": "Voz y palabra de activación",
-      "computer_use": "Computer-Use",
-      "global_hotkeys": "Atajos globales",
-      "window_control": "Control de ventanas",
-      "audio_ducking": "Bajar la música al dictar",
-      "api_keys": "Almacenamiento seguro de claves API"
-    },
-    "restart_deferred": "Los permisos recién concedidos se activan con el reinicio automático al final de la configuración; no hay nada que hacer ahora.",
-    "setup_all": "Configurar todo",
-    "setup_all_hint": "Un clic te guía por todos los permisos que faltan y los aplica al final.",
-    "setup_running": "Paso {0} de {1}: {2}",
-    "setup_wait_prompt": "Responde al diálogo de macOS — continúa solo.",
-    "setup_wait_settings": "Activa Personal Jarvis en el panel de Ajustes del Sistema que se acaba de abrir y vuelve — continúa solo.",
-    "setup_cancel": "Detener",
-    "setup_restarting": "Listo — Personal Jarvis se reinicia una vez para aplicar el nuevo acceso.",
-    "setup_timeout": "Configuración en pausa: un permiso no se concedió a tiempo. Usa «Configurar todo» de nuevo cuando quieras.",
     "ask_again": "Preguntar de nuevo",
     "stale_grant_hint": "macOS ya no volverá a preguntar por este acceso. Si Ajustes del Sistema ya lo muestra activado, ese registro pertenece a una versión anterior de la app: pulsa «Preguntar de nuevo» y concede el acceso otra vez.",
-    "identity_reset": "Desde la última reconstrucción, macOS considera Personal Jarvis una app nueva y descartó todos los accesos concedidos. Vuelve a concederlos una vez; a partir de ahí se mantendrán."
+    "identity_reset": "Desde la última reconstrucción, macOS considera Personal Jarvis una app nueva y descartó todos los accesos concedidos. Vuelve a concederlos una vez; a partir de ahí se mantendrán.",
+    "prompt": {
+      "title": "¿Permitir {permission}?",
+      "allow": "Continuar",
+      "not_now": "Ahora no",
+      "granted": "Acceso permitido. Ya puedes usarlo.",
+      "dialog_hint": "A continuación macOS te pregunta. Elige Permitir en su cuadro de diálogo.",
+      "settings_hint": "Activa {name} para {permission} en la página de Ajustes del Sistema que se abre y vuelve. Esto se cierra solo.",
+      "restart_hint": "El acceso está activado. macOS lo aplica cuando {name} se reinicia.",
+      "reason": {
+        "voice": "La voz y la palabra de activación escuchan a través de tu micrófono. El audio se queda en tu Mac hasta que hablas con {name}.",
+        "computer_use": "Computer-Use mira tu pantalla y maneja el ratón y el teclado, pero solo cuando le pides una acción.",
+        "screen_context": "Para responder a una pregunta sobre tu pantalla, {name} hace una captura y la borra tras la respuesta.",
+        "window_control": "Cambiar, enfocar y organizar ventanas por ti necesita este acceso.",
+        "global_hotkeys": "Los atajos globales solo funcionan desde otras apps cuando macOS deja que {name} observe el teclado.",
+        "audio_ducking": "{name} baja Music y Spotify mientras dictas y los sube después.",
+        "api_keys": "Tus claves de API se guardan cifradas en el Llavero de macOS en lugar de un archivo sin cifrar."
+      }
+    }
   },
   "settings_hub": {
     "subtitle": "Todo sobre ti, tus claves y esta aplicación, en un lugar.",

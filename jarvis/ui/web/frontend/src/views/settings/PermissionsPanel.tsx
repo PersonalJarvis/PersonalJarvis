@@ -11,7 +11,6 @@ import {
   Music,
   RefreshCw,
   ShieldCheck,
-  Wand2,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -22,7 +21,6 @@ import {
   type PermissionId,
   type PermissionItem,
   type PermissionSnapshot,
-  type SetupProgress,
 } from "@/hooks/usePermissions";
 import { SettingsBlock } from "@/views/settings/SettingsBlock";
 
@@ -40,16 +38,9 @@ const READY_STATES = new Set(["granted", "not_required"]);
 
 export function PermissionRows({
   compact = false,
-  deferRestartNote = false,
   onSnapshot,
 }: {
   compact?: boolean;
-  /**
-   * Onboarding mode: the guide ends with ONE unconditional fresh restart,
-   * so a granted-but-stale permission shows a calm "applies after the
-   * final restart" note instead of the amber restart-now demand.
-   */
-  deferRestartNote?: boolean;
   onSnapshot?: (snapshot: PermissionSnapshot | null) => void;
 }) {
   const t = useT();
@@ -64,10 +55,6 @@ export function PermissionRows({
     request,
     openSettings,
     reset,
-    setupAll,
-    cancelSetup,
-    setupProgress,
-    setupNeeded,
   } = usePermissions();
 
   useEffect(() => {
@@ -79,27 +66,6 @@ export function PermissionRows({
       await action();
     } catch (exc) {
       pushToast("error", exc instanceof Error ? exc.message : String(exc));
-    }
-  }
-
-  async function runSetup() {
-    try {
-      // Onboarding ends with its own unconditional restart; everywhere else
-      // the flow applies the new access itself so nothing is left to click.
-      const outcome = await setupAll({ autoRestart: !deferRestartNote });
-      if (outcome === "restart") {
-        pushToast("info", t("permissions.setup_restarting"));
-      } else if (outcome === "timeout") {
-        pushToast("warning", t("permissions.setup_timeout"));
-      }
-    } catch (exc) {
-      const message = exc instanceof Error ? exc.message : String(exc);
-      pushToast(
-        "error",
-        message === "restart-missions-running"
-          ? t("topbar.restart_missions_running")
-          : message,
-      );
     }
   }
 
@@ -169,16 +135,6 @@ export function PermissionRows({
           {t("permissions.identity_reset")}
         </div>
       )}
-      {/* One click for the whole list: every dialog in turn, the Settings
-          pane for the rows macOS only grants there, then the restart that
-          applies them — instead of six buttons and a restart to find. */}
-      {setupNeeded && snapshot?.app_identity.stable !== false && (
-        <SetupAllControl
-          progress={setupProgress}
-          onStart={() => void runSetup()}
-          onCancel={cancelSetup}
-        />
-      )}
       {items.map((permission) => (
         <PermissionRow
           key={permission.id}
@@ -190,12 +146,7 @@ export function PermissionRows({
           onReset={() => run(() => reset(permission.id))}
         />
       ))}
-      {snapshot?.restart_required && deferRestartNote && (
-        <p className="text-xs text-muted-foreground">
-          {t("permissions.restart_deferred")}
-        </p>
-      )}
-      {snapshot?.restart_required && !deferRestartNote && (
+      {snapshot?.restart_required && (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-secondary p-3">
           <p className="text-xs text-foreground">{t("permissions.restart_required")}</p>
           <Button size="sm" disabled={restarting} onClick={() => void restartApp()}>
@@ -205,57 +156,6 @@ export function PermissionRows({
         </div>
       )}
       {error && <p className="text-xs text-destructive">{error}</p>}
-    </div>
-  );
-}
-
-export function SetupAllControl({
-  progress,
-  onStart,
-  onCancel,
-}: {
-  progress: SetupProgress | null;
-  onStart: () => void;
-  onCancel: () => void;
-}) {
-  const t = useT();
-  if (!progress) {
-    return (
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-secondary p-3">
-        <p className="text-xs text-foreground">{t("permissions.setup_all_hint")}</p>
-        <Button size="sm" data-testid="permissions-setup-all" onClick={onStart}>
-          <Wand2 className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-          {t("permissions.setup_all")}
-        </Button>
-      </div>
-    );
-  }
-  const step = t("permissions.setup_running")
-    .replace("{0}", String(progress.index))
-    .replace("{1}", String(progress.total))
-    .replace("{2}", t(`permissions.items.${progress.id}.title`));
-  return (
-    <div
-      className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-secondary p-3"
-      data-testid="permissions-setup-progress"
-      aria-live="polite"
-    >
-      <div className="min-w-0 flex-1">
-        <p className="flex items-center gap-2 text-xs font-medium text-foreground">
-          <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
-          {step}
-        </p>
-        <p className="mt-0.5 text-xs text-muted-foreground">
-          {t(
-            progress.phase === "settings"
-              ? "permissions.setup_wait_settings"
-              : "permissions.setup_wait_prompt",
-          )}
-        </p>
-      </div>
-      <Button size="sm" variant="outline" onClick={onCancel}>
-        {t("permissions.setup_cancel")}
-      </Button>
     </div>
   );
 }

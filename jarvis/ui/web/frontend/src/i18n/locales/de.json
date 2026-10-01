@@ -2307,7 +2307,7 @@
   "permissions": {
     "group_title": "Datenschutz-Berechtigungen",
     "title": "macOS-Berechtigungen",
-    "description": "Erteile nur die Systemzugriffe, die für Sprache, Computer-Use, globale Kurzbefehle und Fenstersteuerung nötig sind. Jarvis verändert niemals die macOS-Datenschutzdatenbank.",
+    "description": "Der macOS-Zugriff wird in dem Moment angefragt, in dem eine Funktion ihn zum ersten Mal braucht. Diese Liste zeigt den Stand und lässt dich einen Zugriff später korrigieren.",
     "loading": "Systemberechtigungen werden geprüft…",
     "load_failed": "Der aktuelle Berechtigungsstatus konnte nicht gelesen werden.",
     "refresh": "Erneut prüfen",
@@ -2359,33 +2359,27 @@
         "description": "Speichert deine API-Keys verschlüsselt im macOS-Schlüsselbund statt in einer Klartextdatei — genau dafür fragt macOS beim Start der App. Deine Keys bleiben auf deinem Mac und werden nirgendwohin gesendet."
       }
     },
-    "banner": {
-      "title": "Aktion nötig: macOS-Berechtigungen fehlen",
-      "impact": "Funktioniert gerade nicht: {0}",
-      "hint": "Erlaube den Zugriff über die Buttons — macOS öffnet für jede Berechtigung direkt die richtige Seite der Systemeinstellungen. {name} prüft automatisch nach.",
-      "collapse": "Details ausblenden",
-      "expand": "Details anzeigen"
-    },
-    "features": {
-      "voice": "Sprache & Aktivierungswort",
-      "computer_use": "Computer-Use",
-      "global_hotkeys": "Globale Kurzbefehle",
-      "window_control": "Fenstersteuerung",
-      "audio_ducking": "Musik leiser beim Diktieren",
-      "api_keys": "Sichere API-Key-Ablage"
-    },
-    "restart_deferred": "Neu erteilte Freigaben werden mit dem automatischen Neustart am Ende der Einrichtung aktiv - jetzt ist nichts zu tun.",
-    "setup_all": "Alles einrichten",
-    "setup_all_hint": "Ein Klick führt dich durch alle fehlenden Berechtigungen und übernimmt sie am Ende.",
-    "setup_running": "Schritt {0} von {1}: {2}",
-    "setup_wait_prompt": "Beantworte den macOS-Dialog — es geht automatisch weiter.",
-    "setup_wait_settings": "Schalte Personal Jarvis in der gerade geöffneten Systemeinstellungen-Seite ein und komm zurück — es geht automatisch weiter.",
-    "setup_cancel": "Abbrechen",
-    "setup_restarting": "Fertig — Personal Jarvis startet einmal neu, um den neuen Zugriff zu übernehmen.",
-    "setup_timeout": "Einrichtung pausiert: Eine Berechtigung wurde nicht rechtzeitig erteilt. Nutze „Alles einrichten“ jederzeit erneut.",
     "ask_again": "Erneut fragen",
     "stale_grant_hint": "macOS fragt für diesen Zugriff nicht mehr nach. Steht der Haken in den Systemeinstellungen schon, gehört er zu einer älteren Version der App — tippe auf „Erneut fragen“ und erlaube den Zugriff danach neu.",
-    "identity_reset": "macOS sieht Personal Jarvis seit dem letzten Neuaufbau der App als neue App an und hat dabei alle erteilten Zugriffe verworfen. Bitte einmal neu erlauben — danach bleiben sie erhalten."
+    "identity_reset": "macOS sieht Personal Jarvis seit dem letzten Neuaufbau der App als neue App an und hat dabei alle erteilten Zugriffe verworfen. Bitte einmal neu erlauben — danach bleiben sie erhalten.",
+    "prompt": {
+      "title": "{permission} erlauben?",
+      "allow": "Weiter",
+      "not_now": "Jetzt nicht",
+      "granted": "Zugriff erlaubt. Du kannst es sofort nutzen.",
+      "dialog_hint": "Als Nächstes fragt macOS dich. Wähle im Dialog „Erlauben“.",
+      "settings_hint": "Schalte {name} für {permission} auf der Seite der Systemeinstellungen ein, die sich öffnet, und komm zurück. Das hier schließt sich von selbst.",
+      "restart_hint": "Der Zugriff ist an. macOS wendet ihn an, sobald {name} neu gestartet ist.",
+      "reason": {
+        "voice": "Sprache und das Weckwort hören über dein Mikrofon zu. Audio bleibt auf deinem Mac, bis du mit {name} sprichst.",
+        "computer_use": "Computer-Use sieht deinen Bildschirm und bedient Maus und Tastatur, aber nur, wenn du eine Aktion verlangst.",
+        "screen_context": "Um eine Frage zu deinem Bildschirm zu beantworten, macht {name} einen Screenshot und löscht ihn nach der Antwort.",
+        "window_control": "Fenster für dich wechseln, fokussieren und anordnen braucht diesen Zugriff.",
+        "global_hotkeys": "Globale Tastenkürzel funktionieren aus anderen Apps erst, wenn macOS {name} die Tastatur beobachten lässt.",
+        "audio_ducking": "{name} dreht Music und Spotify beim Diktieren leiser und danach wieder hoch.",
+        "api_keys": "Deine API-Schlüssel liegen verschlüsselt im macOS-Schlüsselbund statt in einer einfachen Datei."
+      }
+    }
   },
   "settings_hub": {
     "subtitle": "Alles über dich, deine Schlüssel und diese App — an einem Ort.",

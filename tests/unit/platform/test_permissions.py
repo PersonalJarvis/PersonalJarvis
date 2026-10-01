@@ -1143,3 +1143,134 @@ def test_identity_reset_forgets_the_automation_answers(tmp_path: Path, monkeypat
     permissions_module.record_identity_reset(("Microphone", "AppleEvents"))
 
     assert not (tmp_path / "consent.json").exists()
+
+
+# ---- Just-in-time requests -------------------------------------------------
+
+
+@pytest.fixture
+def needed() -> list[tuple[PermissionId, str]]:
+    """Capture what the port tells the UI; always uninstall the sink after."""
+    from jarvis.platform.permissions import set_permission_needed_sink
+
+    received: list[tuple[PermissionId, str]] = []
+    set_permission_needed_sink(
+        lambda permission_id, feature: received.append((permission_id, feature))
+    )
+    yield received
+    set_permission_needed_sink(None)
+
+
+def test_a_blocked_feature_announces_the_one_missing_grant(needed) -> None:
+    _CaptureDevice.status = 0
+    modules, _, _ = _native_modules()
+
+    granted = _port(modules).require(PermissionId.MICROPHONE, "voice")
+
+    assert granted is False
+    assert needed == [(PermissionId.MICROPHONE, "voice")]
+
+
+def test_a_granted_feature_asks_nobody(needed) -> None:
+    _CaptureDevice.status = 3
+    modules, _, _ = _native_modules()
+
+    assert _port(modules).require(PermissionId.MICROPHONE, "voice") is True
+    assert needed == []
+
+
+def test_an_unstable_identity_is_not_a_question_for_the_user(needed) -> None:
+    # The grant exists but is pinned to another app identity: asking for the
+    # access again could not help, and Settings explains the real cause.
+    _CaptureDevice.status = 3
+    modules, _, _ = _native_modules(bundle_id="com.example.other")
+
+    assert _port(modules).require(PermissionId.MICROPHONE, "voice") is False
+    assert needed == []
+
+
+def test_a_restricted_access_is_never_announced(needed) -> None:
+    _CaptureDevice.status = 1
+    modules, _, _ = _native_modules()
+
+    assert _port(modules).announce_needed(PermissionId.MICROPHONE, "voice") is False
+    assert needed == []
+
+
+def test_a_retrying_feature_raises_one_card_not_a_stack(needed) -> None:
+    _CaptureDevice.status = 0
+    modules, _, _ = _native_modules()
+    port = _port(modules)
+
+    assert port.announce_needed(PermissionId.MICROPHONE, "voice") is True
+    assert port.announce_needed(PermissionId.MICROPHONE, "voice") is False
+    # A different access is a different conversation.
+    assert port.announce_needed(PermissionId.SCREEN_RECORDING, "computer_use") is True
+    assert needed == [
+        (PermissionId.MICROPHONE, "voice"),
+        (PermissionId.SCREEN_RECORDING, "computer_use"),
+    ]
+
+
+def test_other_operating_systems_never_announce(needed) -> None:
+    port = SystemPermissionPort(platform_name="win32", module_loader=lambda name: None)
+
+    assert port.announce_needed(PermissionId.MICROPHONE, "voice") is False
+    assert needed == []
+
+
+def test_a_broken_sink_never_breaks_the_feature() -> None:
+    from jarvis.platform.permissions import set_permission_needed_sink
+
+    def explode(_permission_id: PermissionId, _feature: str) -> None:
+        raise RuntimeError("UI is gone")
+
+    set_permission_needed_sink(explode)
+    try:
+        _CaptureDevice.status = 0
+        modules, _, _ = _native_modules()
+        assert _port(modules).require(PermissionId.MICROPHONE, "voice") is False
+    finally:
+        set_permission_needed_sink(None)
+
+
+def test_every_feature_a_card_can_name_has_a_reason_in_every_locale() -> None:
+    import json
+
+    from jarvis.platform.permissions import FEATURE_REQUIREMENTS
+
+    locales = Path(__file__).resolve().parents[3] / "jarvis/ui/web/frontend/src/i18n/locales"
+    for lang in ("en", "de", "es"):
+        reasons = json.loads((locales / f"{lang}.json").read_text(encoding="utf-8"))[
+            "permissions"
+        ]["prompt"]["reason"]
+        assert set(FEATURE_REQUIREMENTS) <= set(reasons), lang
+
+
+def test_publish_needs_to_carries_the_request_over_the_bus() -> None:
+    import asyncio
+
+    from jarvis.core.bus import EventBus
+    from jarvis.core.events import PermissionNeeded
+    from jarvis.platform.permissions import publish_needs_to, set_permission_needed_sink
+
+    async def scenario() -> list[PermissionNeeded]:
+        bus = EventBus()
+        seen: list[PermissionNeeded] = []
+
+        async def collect(event: PermissionNeeded) -> None:
+            seen.append(event)
+
+        bus.subscribe(PermissionNeeded, collect)
+        sink = publish_needs_to(bus, asyncio.get_running_loop())
+        try:
+            # From a worker thread, as a Computer-Use run would.
+            await asyncio.to_thread(sink, PermissionId.SCREEN_RECORDING, "computer_use")
+            await asyncio.sleep(0.05)
+        finally:
+            set_permission_needed_sink(None)
+        return seen
+
+    seen = asyncio.run(scenario())
+
+    assert [(e.permission, e.feature) for e in seen] == [("screen_recording", "computer_use")]

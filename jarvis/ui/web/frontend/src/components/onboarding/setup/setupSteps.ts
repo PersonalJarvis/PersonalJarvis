@@ -9,9 +9,9 @@ import type { SectionId } from "@/store/events";
 import type { TourPlacement } from "../tour/tourSteps";
 
 /** Must match `ONBOARDING_STEPS` in jarvis/setup/onboarding_meta.py. */
-// Permissions precede voice so the macOS microphone grant exists before the
-// wake-word group's own microphone test.
-export const SETUP_STEP_IDS = ["welcome", "keys", "subscriptions", "permissions", "voice", "ready"] as const;
+// No permissions step: macOS access is asked for just in time, by the feature
+// that needs it (see PermissionPrompt), never up front.
+export const SETUP_STEP_IDS = ["welcome", "keys", "subscriptions", "voice", "ready"] as const;
 
 export type SetupStepId = (typeof SETUP_STEP_IDS)[number];
 
@@ -49,25 +49,8 @@ export const SETUP_STEPS: Record<SetupStepId, SetupStep> = {
     placement: "left",
     width: 320,
   },
-  permissions: {
-    id: "permissions",
-    section: "settings",
-    anchor: "settings-permissions",
-    scrollTo: true,
-    placement: "left",
-    width: 320,
-  },
   ready: { id: "ready", section: "chats", placement: "inside", width: 400 },
 };
-
-/**
- * The steps this machine walks. Only macOS asks for permissions one ability
- * at a time; Windows, Linux and a failed platform probe leave that step out
- * (Settings stays the way to grant them later).
- */
-export function stepsFor(platform: string | null): SetupStepId[] {
-  return SETUP_STEP_IDS.filter((id) => id !== "permissions" || platform === "darwin");
-}
 
 /**
  * Where a resumed setup starts. The backend remembers the last step, so a

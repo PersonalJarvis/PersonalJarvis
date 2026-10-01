@@ -411,6 +411,20 @@ class DictationRefused(Event):
     detail: str = ""
 
 
+@dataclass(frozen=True, slots=True)
+class PermissionNeeded(Event):
+    """A feature the user just started is blocked by a missing macOS grant.
+
+    Published at the moment of use, never at launch: the UI answers with one
+    short card that explains why the access is needed and walks the user
+    through it. ``permission`` is a ``PermissionId`` value and ``feature`` a
+    ``FEATURE_REQUIREMENTS`` key (both stable tokens; the UI owns the wording).
+    """
+
+    permission: str = ""
+    feature: str = ""
+
+
 # ----------------------------------------------------------------------
 # Intent & Routing
 # ----------------------------------------------------------------------

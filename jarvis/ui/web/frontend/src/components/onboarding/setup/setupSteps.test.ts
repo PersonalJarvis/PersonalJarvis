@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { resumeStep, SETUP_STEP_IDS, SETUP_STEPS, stepsFor } from "./setupSteps";
+import { resumeStep, SETUP_STEP_IDS, SETUP_STEPS } from "./setupSteps";
 
 const SRC = join(__dirname, "..", "..", "..");
 
@@ -23,17 +23,15 @@ describe("setup steps", () => {
     expect([...block![1].matchAll(/"([a-z-]+)"/g)].map((m) => m[1])).toEqual([...SETUP_STEP_IDS]);
   });
 
-  it("ask for permissions on macOS only", () => {
-    expect(stepsFor("darwin")).toContain("permissions");
-    expect(stepsFor("win32")).not.toContain("permissions");
-    expect(stepsFor("linux")).not.toContain("permissions");
-    expect(stepsFor(null)).not.toContain("permissions");
+  it("never ask for macOS permissions up front", () => {
+    // Access is requested just in time by the feature that needs it
+    // (PermissionPrompt); first-run setup has no permissions step.
+    expect(SETUP_STEP_IDS as readonly string[]).not.toContain("permissions");
   });
 
   it("start with the consent and end with the start", () => {
-    const steps = stepsFor("darwin");
-    expect(steps[0]).toBe("welcome");
-    expect(steps[steps.length - 1]).toBe("ready");
+    expect(SETUP_STEP_IDS[0]).toBe("welcome");
+    expect(SETUP_STEP_IDS[SETUP_STEP_IDS.length - 1]).toBe("ready");
   });
 
   it("point only at anchors the app actually sets", () => {
@@ -62,7 +60,7 @@ describe("setup steps", () => {
 });
 
 describe("resumeStep", () => {
-  const steps = stepsFor("win32");
+  const steps = SETUP_STEP_IDS;
 
   it("never skips the consent", () => {
     expect(resumeStep(steps, "voice", false)).toBe("welcome");

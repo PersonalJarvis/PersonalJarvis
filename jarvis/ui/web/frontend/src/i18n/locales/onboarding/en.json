@@ -44,11 +44,6 @@
       "why": "A subscription is a flat monthly price, so your agents' bigger jobs do not bill your API key per call.",
       "later": "I'll connect one later"
     },
-    "permissions": {
-      "title": "Allow access on this Mac",
-      "lede": "These are the Mac permissions. Allow the ones you want; each row updates by itself.",
-      "note": "You can come back to them anytime in Settings. The restart at the end applies them."
-    },
     "voice": {
       "title": "Choose your wake word",
       "lede": "Type your word after \"Hey\" here and save it. The word also becomes the assistant's name. No wake word? The Call shortcut works anytime.",

@@ -10892,6 +10892,10 @@ class SpeechPipeline:
         ``DictationTranscribing`` / ``DictationCompleted`` events.
         """
         if not self._capture_permission_allowed():
+            # No-op off macOS; on macOS it raises the contextual card.
+            from jarvis.platform.permissions import PermissionId, announce_needed
+
+            announce_needed(PermissionId.MICROPHONE, "voice")
             self._refuse_dictation(
                 "microphone_unavailable",
                 "Microphone access is not ready — check the microphone "

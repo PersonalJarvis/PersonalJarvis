@@ -362,6 +362,7 @@ def _require_macos_input_permissions() -> None:
     from jarvis.platform.permissions import (  # noqa: PLC0415
         PermissionId,
         PermissionState,
+        announce_needed,
         get_system_permission_port,
     )
 
@@ -371,8 +372,11 @@ def _require_macos_input_permissions() -> None:
         (PermissionId.EVENT_POSTING, "Input Control"),
     )
     missing: list[str] = []
+    first_missing = None
     for permission_id, label in requirements:
         if not port.runtime_access_granted(permission_id):
+            if first_missing is None:
+                first_missing = permission_id
             state = port.state(permission_id)
             detail = (
                 state.value
@@ -381,6 +385,10 @@ def _require_macos_input_permissions() -> None:
             )
             missing.append(f"{label} ({detail})")
     if missing:
+        # One card for the first missing grant: Input Control rides on the
+        # Accessibility grant, so asking for both would show two cards for
+        # one switch in System Settings.
+        announce_needed(first_missing, "computer_use")
         joined = ", ".join(missing)
         raise ActuationUnavailable(
             "Cannot control the mouse or keyboard on macOS because these "

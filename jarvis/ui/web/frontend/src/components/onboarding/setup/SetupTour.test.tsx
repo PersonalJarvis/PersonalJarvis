@@ -49,7 +49,6 @@ function stubFetch() {
       const method = init?.method ?? "GET";
       calls.push({ url, method });
       const reply = (body: unknown) => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
-      if (url === "/api/permissions/status") return reply({ platform: "win32" });
       if (url === "/api/providers") return reply({ providers });
       if (url === "/api/setup/starter-plans") return reply({ plans: [plan], selected: null, custom_id: "custom" });
       if (url === "/api/settings/wake-word") return reply(wakeWord);

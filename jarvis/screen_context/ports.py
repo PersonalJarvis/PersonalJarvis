@@ -536,12 +536,14 @@ def capture_permission_error() -> CapturePermissionIssue | None:
     try:
         from jarvis.platform.permissions import (  # noqa: PLC0415
             PermissionId,
+            announce_needed,
             get_system_permission_port,
         )
 
         port = get_system_permission_port()
         if port.runtime_access_granted(PermissionId.SCREEN_RECORDING):
             return None
+        announce_needed(PermissionId.SCREEN_RECORDING, "screen_context")
         return CapturePermissionIssue(
             code="capture_permission",
             message=(

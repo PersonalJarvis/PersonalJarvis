@@ -8,6 +8,7 @@ headless installation remains importable on every operating system.
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import logging
 import os
@@ -197,6 +198,7 @@ FEATURE_REQUIREMENTS: dict[str, tuple[PermissionId, ...]] = {
         PermissionId.ACCESSIBILITY,
         PermissionId.EVENT_POSTING,
     ),
+    "screen_context": (PermissionId.SCREEN_RECORDING,),
     "global_hotkeys": (
         PermissionId.ACCESSIBILITY,
         PermissionId.INPUT_MONITORING,
@@ -443,6 +445,67 @@ _RESTART_AFTER_CHANGE = frozenset(
     }
 )
 
+# Just-in-time requests. A feature the user started that hits a missing grant
+# calls :meth:`SystemPermissionPort.require`; the port tells the UI through
+# this sink, and the UI answers with ONE short, contextual card — instead of a
+# permanent banner that lists every grant the app could ever use. The sink is
+# process-wide and installed by the web server (it owns the event bus).
+PermissionNeededSink = Callable[[PermissionId, str], None]
+_needed_sink: PermissionNeededSink | None = None
+
+# One card per permission per window: a feature that retries (a Computer-Use
+# loop, a held hotkey) must not stack the same dialog on top of itself.
+_NEEDED_COOLDOWN_S = 45.0
+# Nothing to ask when the grant is already there (a blocked feature then has a
+# different cause, e.g. an unstable app identity, which Settings explains) or
+# when the user cannot act on it.
+_NOT_ANNOUNCEABLE_STATES = frozenset(
+    {
+        PermissionState.RESTRICTED,
+        PermissionState.UNAVAILABLE,
+        PermissionState.GRANTED,
+        PermissionState.NOT_REQUIRED,
+    }
+)
+
+
+def set_permission_needed_sink(sink: PermissionNeededSink | None) -> None:
+    """Install (or clear, with ``None``) the receiver of just-in-time requests."""
+    global _needed_sink
+    _needed_sink = sink
+
+
+def publish_needs_to(bus: Any, loop: asyncio.AbstractEventLoop) -> PermissionNeededSink:
+    """Announce every just-in-time request as a ``PermissionNeeded`` bus event.
+
+    The bus carries it to every open window over the one existing WebSocket.
+    Thread-safe: a Computer-Use worker thread hands the event to ``loop``.
+    Returns the installed sink.
+    """
+    from jarvis.core.events import PermissionNeeded
+
+    pending: set[asyncio.Future[Any]] = set()
+
+    def _publish(event: Any) -> None:
+        task = asyncio.ensure_future(bus.publish(event))
+        pending.add(task)
+        task.add_done_callback(pending.discard)
+
+    def _sink(permission_id: PermissionId, feature: str) -> None:
+        event = PermissionNeeded(
+            source_layer="platform.permissions",
+            permission=permission_id.value,
+            feature=feature,
+        )
+        try:
+            loop.call_soon_threadsafe(_publish, event)
+        except RuntimeError:
+            # The loop is closed (shutdown): nobody is left to tell.
+            log.debug("Permission prompt: event loop closed, request not announced")
+
+    set_permission_needed_sink(_sink)
+    return _sink
+
 
 @dataclass(frozen=True)
 class AppIdentity:
@@ -522,6 +585,9 @@ class SystemPermissionPort:
         # change while this process runs. Caching it is NOT a cached
         # permission probe — every TCC state read in _state() stays live.
         self._bundle_identity_cache: tuple[str | None, str | None, bool, bool] | None = None
+        # Monotonic time of the last just-in-time announcement per permission:
+        # rate-limit bookkeeping, never a permission probe.
+        self._needed_at: dict[PermissionId, float] = {}
 
     @property
     def platform(self) -> PlatformName:
@@ -917,6 +983,45 @@ class SystemPermissionPort:
         # is still missing.
         states = [self._live_state(item) for item in requirements]
         return self._stable_identity() and all(state is PermissionState.GRANTED for state in states)
+
+    def announce_needed(self, permission_id: PermissionId | str, feature: str) -> bool:
+        """Tell the UI a feature the user just started is blocked by this grant.
+
+        Returns whether an announcement went out. Silent on every other OS, for
+        states the user cannot act on (restricted, unavailable), when no sink
+        is installed, and inside the per-permission cooldown.
+        """
+        resolved = PermissionId(permission_id)
+        sink = _needed_sink
+        if self.platform != "darwin" or sink is None:
+            return False
+        if self._live_state(resolved) in _NOT_ANNOUNCEABLE_STATES:
+            return False
+        now = time.monotonic()
+        last = self._needed_at.get(resolved)
+        if last is not None and now - last < _NEEDED_COOLDOWN_S:
+            return False
+        self._needed_at[resolved] = now
+        try:
+            sink(resolved, feature)
+        except Exception:  # noqa: BLE001 - a broken UI sink must never break the feature
+            log.debug("Permission-needed sink failed for %s.", resolved.value, exc_info=True)
+            return False
+        return True
+
+    def require(self, permission_id: PermissionId | str, feature: str) -> bool:
+        """``runtime_access_granted`` that also asks the user when it fails.
+
+        Call this ONLY from a path the user started (a dictation key, a
+        Computer-Use run, a screen question) — never from a boot probe or a
+        polling loop, which would turn the contextual card back into a
+        launch-time interrogation.
+        """
+        resolved = PermissionId(permission_id)
+        if self.runtime_access_granted(resolved):
+            return True
+        self.announce_needed(resolved, feature)
+        return False
 
     def _requester_available(self, permission_id: PermissionId) -> bool:
         if permission_id is PermissionId.CREDENTIAL_STORE:
@@ -1457,6 +1562,19 @@ class SystemPermissionPort:
 _DEFAULT_SYSTEM_PERMISSION_PORT = SystemPermissionPort()
 
 
+def announce_needed(permission_id: PermissionId | str, feature: str) -> bool:
+    """Ask the user, in context, for a grant a feature they started just lacked.
+
+    The one-line call for the failure branch of a feature that already fails
+    closed on a missing grant. Never raises and is a no-op off macOS.
+    """
+    try:
+        return _DEFAULT_SYSTEM_PERMISSION_PORT.announce_needed(permission_id, feature)
+    except Exception:  # noqa: BLE001 - announcing must never mask the real failure
+        log.debug("Could not announce a needed permission.", exc_info=True)
+        return False
+
+
 def get_system_permission_port() -> SystemPermissionPort:
     """Return the process-wide port that retains only pending-restart state."""
     return _DEFAULT_SYSTEM_PERMISSION_PORT
@@ -1472,6 +1590,10 @@ __all__ = [
     "PermissionOperation",
     "PermissionState",
     "PermissionStatus",
+    "PermissionNeededSink",
     "SystemPermissionPort",
+    "announce_needed",
     "get_system_permission_port",
+    "publish_needs_to",
+    "set_permission_needed_sink",
 ]
