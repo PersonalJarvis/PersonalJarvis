@@ -227,20 +227,9 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
     setApprovalMode("bypass");
   };
 
-  // A fresh dialog starts on the brain marked active, else the first seat —
-  // never on a row that is not connected, because none is listed.
-  useEffect(() => {
-    if (!providerId && seats.length) pickSeat(defaultSeat(seats));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seats, providerId]);
-
-  // A model change can leave the picked effort off that model's ladder.
-  useEffect(() => {
-    if (efforts.length && !efforts.includes(effort)) setEffort(seat?.provider.default_effort ?? efforts[0]);
-    if (!efforts.length && effort) setEffort("");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [efforts.join("|")]);
-
+  // Reset before choosing a seat: a freshly mounted lazy dialog can already
+  // have all queries cached, so there may be no later cache update to repair
+  // a default selection cleared by an effect that ran after it.
   useEffect(() => {
     if (!open) return;
     setName("");
@@ -257,6 +246,20 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
     setError(null);
     setSubmitting(false);
   }, [open]);
+
+  // A fresh dialog starts on the brain marked active, else the first seat —
+  // never on a row that is not connected, because none is listed.
+  useEffect(() => {
+    if (!providerId && seats.length) pickSeat(defaultSeat(seats));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seats, providerId]);
+
+  // A model change can leave the picked effort off that model's ladder.
+  useEffect(() => {
+    if (efforts.length && !efforts.includes(effort)) setEffort(seat?.provider.default_effort ?? efforts[0]);
+    if (!efforts.length && effort) setEffort("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [efforts.join("|")]);
 
   const palette = useMemo(() => resolvePalette(recipe), [recipe]);
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Archive, ChevronDown, MessageSquare, Pin, PinOff, Trash2 } from "lucide-react";
 
 import { useAgentChatStore } from "@/store/agentChat";
@@ -6,7 +6,7 @@ import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { AllChatsDialog } from "@/components/home/AllChatsDialog";
 import { useChatRows, type ChatRow } from "@/components/home/chatRows";
-import { CONVERSATIONS_REFRESH_MS } from "@/hooks/useConversations";
+import { useHistoryPolling } from "@/hooks/useHistoryPolling";
 
 export const RECENT_CHATS_FOLDED = 15;
 export const RECENT_CHATS_UNFOLDED = 50;
@@ -40,11 +40,7 @@ export function RecentChats() {
   const [open, setOpen] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
 
-  useEffect(() => {
-    void loadSessions();
-    const id = window.setInterval(() => void loadSessions(), CONVERSATIONS_REFRESH_MS);
-    return () => window.clearInterval(id);
-  }, [loadSessions]);
+  useHistoryPolling(loadSessions);
 
   const shown = recentRows.slice(0, open ? RECENT_CHATS_UNFOLDED : RECENT_CHATS_FOLDED);
   const canExpand = recentRows.length > RECENT_CHATS_FOLDED;

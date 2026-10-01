@@ -4,10 +4,16 @@
 Why this exists (TTU forensic 2026-07-02, docs/diagnostics/BOOT-TTU-NOTES.md):
 boot regressions land silently — a stale custom wake model put a 114.7 s
 model-load cascade on the critical path and nobody noticed until the user did.
-This guard runs ONE isolated cold boot through the committed harness
+This guard runs ONE fresh-process boot through the committed harness
 (``scripts/measure_desktop_boot.py``) and fails when a measured anchor exceeds
 its budget, so a feature that sneaks heavy work onto the startup path breaks
 CI/pre-push instead of the user's day.
+
+Use --evidence PATH to validate real observations from a parent-controlled
+restart without launching any app, touching audio or contacting providers.
+See scripts/ci/boot_evidence.py for its strict identity/anchor schema. The
+ordinary harness separates data paths but still uses real configured services;
+it is not a hermetic sandbox and must not run beside a user's live app blindly.
 
 Anchors and budgets (override via env for slower CI boxes):
 - window: spawn -> the UI shell serves (``median_wall_ms``).
@@ -36,13 +42,19 @@ registry scan, or a fire-and-forget task AFTER voice-ready. When in doubt run
 """
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT))
+from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS  # noqa: E402
+from scripts.ci.boot_evidence import read_restart_evidence  # noqa: E402
+
 HARNESS = REPO_ROOT / "scripts" / "measure_desktop_boot.py"
 TTU_LATEST = REPO_ROOT / "desktop-ttu-latest.json"
 LATEST = REPO_ROOT / "desktop-boot-latest.json"
@@ -53,7 +65,7 @@ DEFAULT_WINDOW_BUDGET_MS = 8_000.0
 DEFAULT_VOICE_BUDGET_MS = 20_000.0
 # APP_INTERACTIVE = set_app hands the UI's held data requests to the real app
 # (the user-facing "usable" moment; measured median 5.3 s isolated). Checked in
-# voice mode (the run must live past the window anchor to see it).
+# every mode (the run must live past HTML delivery to see it).
 DEFAULT_INTERACTIVE_BUDGET_MS = 20_000.0
 
 
@@ -86,7 +98,13 @@ def _audio_capable() -> bool:
         return False
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--evidence", type=Path,
+        help="Validate captured real restart anchors; do not launch an app or probe audio",
+    )
+    options = parser.parse_args(argv)
     window_budget = float(
         os.environ.get("JARVIS_BOOT_BUDGET_WINDOW_MS", DEFAULT_WINDOW_BUDGET_MS)
     )
@@ -98,36 +116,52 @@ def main() -> int:
             "JARVIS_BOOT_BUDGET_INTERACTIVE_MS", DEFAULT_INTERACTIVE_BUDGET_MS
         )
     )
-    if not HARNESS.exists():
-        print(f"boot-budget: harness missing ({HARNESS}) — skipping", flush=True)
-        return SKIP_EXIT
-
-    voice = _audio_capable()
-    args = [
-        sys.executable,
-        str(HARNESS),
-        "--runs",
-        "1",
-        "--warmup",
-        "0",
-    ]
-    if voice:
-        args.append("--voice")
-    print(
-        f"boot-budget: measuring one isolated cold boot (voice={voice}) ...",
-        flush=True,
-    )
-    proc = subprocess.run(  # noqa: S603 — our own harness, fixed argv
-        args, cwd=str(REPO_ROOT), capture_output=True, text=True, timeout=420
-    )
-    if proc.returncode != 0:
-        print(proc.stdout[-2000:], flush=True)
-        print(proc.stderr[-2000:], flush=True)
-        print("boot-budget: harness run FAILED — treating as budget failure", flush=True)
-        return 1
-
-    latest = TTU_LATEST if voice else LATEST
-    summary = json.loads(latest.read_text(encoding="utf-8"))
+    if options.evidence is not None:
+        try:
+            summary, voice = read_restart_evidence(options.evidence, REPO_ROOT)
+        except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+            print(f"boot-budget: invalid restart evidence: {exc}", flush=True)
+            return 1
+        print(
+            f"boot-budget: captured restart {summary['run_id']} pid={summary['pid']} "
+            "(no app spawned; local readiness is not a voice round trip)", flush=True,
+        )
+    else:
+        if not HARNESS.exists():
+            print(f"boot-budget: harness missing ({HARNESS}) - skipping", flush=True)
+            return SKIP_EXIT
+        voice = _audio_capable()
+        output = Path(tempfile.mkdtemp(prefix="jarvis-boot-budget-")) / "measurement.json"
+        args = [
+            sys.executable, str(HARNESS), "--python", sys.executable,
+            "--mode", "auto", "--interactive", "--runs", "1", "--warmup", "0",
+            "--output", str(output),
+        ]
+        if voice:
+            args.append("--voice")
+        print(
+            f"boot-budget: measuring one fresh-process boot (voice={voice}); "
+            "configured services and credentials are real", flush=True,
+        )
+        env = dict(os.environ)
+        env["PYTHONPATH"] = os.pathsep.join(
+            [str(REPO_ROOT), *filter(None, [env.get("PYTHONPATH", "")])]
+        )
+        proc = subprocess.run(
+            args, cwd=str(REPO_ROOT), env=env, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=420,
+            creationflags=NO_WINDOW_CREATIONFLAGS,
+        )
+        if proc.returncode != 0:
+            print(proc.stdout[-2000:], flush=True)
+            print(proc.stderr[-2000:], flush=True)
+            print("boot-budget: harness run FAILED - treating as budget failure", flush=True)
+            return 1
+        try:
+            summary = json.loads(output.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            print(f"boot-budget: harness evidence missing or invalid: {exc}", flush=True)
+            return 1
 
     failures: list[str] = []
     window_ms = summary.get("median_wall_ms")
@@ -152,23 +186,21 @@ def main() -> int:
                 f"{voice_budget:.0f} ms OK",
                 flush=True,
             )
-        interactive_ms = summary.get("median_app_interactive_wall_ms")
-        if interactive_ms is None:
-            failures.append("APP_INTERACTIVE anchor missing from harness output")
-        elif interactive_ms > interactive_budget:
-            failures.append(
-                f"app-interactive {interactive_ms:.0f} ms > budget "
-                f"{interactive_budget:.0f} ms"
-            )
-        else:
-            print(
-                f"boot-budget: app-interactive {interactive_ms:.0f} ms <= "
-                f"{interactive_budget:.0f} ms OK",
-                flush=True,
-            )
+    else:
+        print("boot-budget: local voice was not measured (recorded skip)", flush=True)
+
+    interactive_ms = summary.get("median_app_interactive_wall_ms")
+    if interactive_ms is None:
+        failures.append("APP_INTERACTIVE anchor missing from harness output")
+    elif interactive_ms > interactive_budget:
+        failures.append(
+            f"app-interactive {interactive_ms:.0f} ms > budget "
+            f"{interactive_budget:.0f} ms"
+        )
     else:
         print(
-            "boot-budget: no usable audio input or permission — voice anchor skipped (honest)",
+            f"boot-budget: app-interactive {interactive_ms:.0f} ms <= "
+            f"{interactive_budget:.0f} ms OK",
             flush=True,
         )
 

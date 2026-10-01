@@ -3,7 +3,7 @@
 
 Two modes (selected by env ``JARVIS_DESKTOP_BENCH_MODE``):
 
-* ``legacy`` (default) — runs the existing ``DesktopApp._run_backend`` so the
+* ``legacy`` (normal launcher default) — runs the existing ``DesktopApp._run_backend`` so the
   harness can measure today's ``spawn -> /api/health 200`` baseline (the literal
   gate ``DesktopApp._wait_for_backend`` uses before creating the pywebview
   window).
@@ -18,7 +18,6 @@ NOT a production entry point — used only by ``scripts/measure_desktop_boot.py`
 
 from __future__ import annotations
 
-import asyncio
 import os
 import time
 
@@ -69,7 +68,21 @@ def _fastboot() -> int:
 
 
 def main() -> int:
-    mode = os.environ.get("JARVIS_DESKTOP_BENCH_MODE", "legacy")
+    # Repeat the identity check in the measured process before any app setup.
+    import importlib.util
+    from pathlib import Path
+
+    root = Path(os.environ["JARVIS_BOOT_EXPECTED_ROOT"]).resolve()
+    spec = importlib.util.find_spec("jarvis")
+    if (
+        spec is None
+        or spec.origin is None
+        or Path(spec.origin).resolve() != root / "jarvis" / "__init__.py"
+    ):
+        raise RuntimeError("Desktop benchmark imports a different checkout")
+    mode = os.environ.get("JARVIS_DESKTOP_BENCH_MODE", "auto")
+    if mode == "auto":
+        mode = "fastboot" if os.environ.get("JARVIS_DESKTOP_FASTBOOT") == "1" else "legacy"
     if mode == "fastboot":
         return _fastboot()
     return _legacy()

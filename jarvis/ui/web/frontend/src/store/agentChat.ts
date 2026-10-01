@@ -11,6 +11,7 @@ import {
   fetchProviderHealth,
   fetchProviderModels,
   isApiRunner,
+  invalidateAgentChatSessions,
   patchAgentChatSession,
   resolveAgentChatApproval,
   answerAgentChatQuestion,
@@ -31,6 +32,7 @@ import {
 } from "@/lib/agentChatApi";
 import { EMPTY_TIMELINE, reduceEvent, reduceEvents, type Timeline } from "@/components/agentchat/reduce";
 import { jitteredDelay, requestConnect } from "../lib/connectBudget";
+import { reuseHistoryRows } from "@/lib/historyRequests";
 
 /**
  * The agent chat's store — one per SURFACE (`createAgentChatStore`).
@@ -505,7 +507,10 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
           // from a backend older than the split — those are kept, so an
           // update never makes a person's chats vanish until the restart.
           const sessions = rows.filter((row) => row.surface === undefined || row.surface === surface);
-          set({ sessions });
+          set((state) => {
+            const shared = reuseHistoryRows(state.sessions, sessions, (row) => row.session_id);
+            return shared === state.sessions ? state : { sessions: shared };
+          });
         } catch {
           /* offline / headless — keep the list as-is */
         }
@@ -753,7 +758,10 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
           writeDraft(DRAFT_KEY, patch.draft);
         }
         set(patch);
-        if (event.kind === "turn_finished" || event.kind === "user_message") void st.loadSessions();
+        if (event.kind === "turn_finished" || event.kind === "user_message") {
+          invalidateAgentChatSessions();
+          void st.loadSessions();
+        }
       },
 
       disconnect: () => {

@@ -96,7 +96,11 @@ REALTIME_WARM_TASK_NAME = "realtime-transport-warm"
 class WebServer:
     """In-process uvicorn + FastAPI, run by the orchestrator loop."""
 
-    def __init__(self, cfg: JarvisConfig, bus: EventBus | None = None) -> None:
+    def __init__(
+        self, cfg: JarvisConfig, bus: EventBus | None = None, *,
+        defer_feature_routes: bool = False,
+    ) -> None:
+        self._defer_feature_routes = defer_feature_routes
         self.cfg = cfg
         self._browser_prepare_task: asyncio.Task[None] | None = None
         self.bus = bus if bus is not None else get_default_bus()
@@ -195,6 +199,13 @@ class WebServer:
         runtime_refs.set_mission_tool_auto_approver(self._mission_tool_auto_approver)
         self.app: FastAPI = self._build_app()
         self.app.state.refresh_scheduler = None
+        from jarvis.ui.deferred_setup import DeferredSetup
+
+        self._feature_setup = DeferredSetup(
+            lambda: self._finish_app_setup(self.app), ready=not defer_feature_routes
+        )
+        if not defer_feature_routes:
+            self._publish_app()
 
     async def _forward_delegation_to_chat(self, event: Any) -> None:
         """Persist a result in its originating chat without starting another model turn."""
@@ -328,6 +339,61 @@ class WebServer:
         # Plugin-Tool-Registry — wired marketplace plugins as live brain tools.
         self._setup_plugin_registry(app)
 
+        # Make the config available to the routes (e.g. admin-pass check in
+        # skills_routes). Other routes will use it too going forward.
+        app.state.config = self.cfg
+        app.state.bus = self.bus
+
+        # Voice boot-readiness mirror. WS events are one-shot, so a tab that
+        # connects after warm-up finished would never see VoiceBootStatus.
+        # Persist the latest state on this (long-lived) server instance for
+        # GET /api/voice/status to read — deliberately NOT on app.state, whose
+        # ASGI lifecycle could outrace the bus subscriber on shutdown.
+        #
+        # When the local voice stack is disabled (JARVIS_VOICE=0 — headless,
+        # VPS, browser-mic-only), there is nothing to warm up and the pipeline
+        # never emits VoiceBootStatus, so seed ready=True. Otherwise the
+        # frontend's "starting up" banner would hang forever even though the
+        # user can already type (and use browser voice). A real voice pipeline
+        # starts at ready=False (warmup_start) and flips True via the subscriber
+        # below, so this seed only ever sticks when voice is genuinely off.
+        _voice_disabled = os.environ.get("JARVIS_VOICE", "").strip().lower() in (
+            "0",
+            "off",
+            "false",
+        )
+        self._voice_ready = _voice_disabled
+
+        # Synchronous routes run on anyio's thread pool, which grows ON the
+        # loop and shrinks after ten idle seconds — a start that blocked the
+        # loop for 15 s on 2026-08-27 (BUG-189). Workers stay resident from
+        # here on; a handful is brought up once voice reports ready, below.
+        from jarvis.core.loop_executor import keep_anyio_workers_alive
+
+        keep_anyio_workers_alive()
+        self._anyio_pool_warmed = False
+
+        async def _track_voice_ready(event: VoiceBootStatus) -> None:
+            # A bus subscriber must never raise (AP-18); setting a plain
+            # instance bool cannot fail, and the warm-up below only schedules.
+            self._voice_ready = event.voice_usable
+            if event.ready:
+                self._schedule_anyio_pool_warm()
+
+        self.bus.subscribe(VoiceBootStatus, _track_voice_ready)
+
+        if not self._defer_feature_routes:
+            self._finish_app_setup(app)
+
+        return app
+
+    def _finish_app_setup(self, app: FastAPI) -> None:
+        """Install optional surfaces before any consumer receives this app.
+
+        Desktop defers this work behind local voice warmup. Headless and other
+        callers retain eager construction. The shared bus, skill registry and
+        voice-status subscriber already exist before this method runs.
+        """
         # Sub-agent registry (dashboard feature) — subscribes to the bus immediately.
         try:
             from jarvis.agents import JarvisAgentRegistry
@@ -673,59 +739,21 @@ class WebServer:
             logger.opt(exception=exc).warning("PreviewRegistry setup failed")
             app.state.preview_registry = None
 
-        # Make the config available to the routes (e.g. admin-pass check in
-        # skills_routes). Other routes will use it too going forward.
-        app.state.config = self.cfg
-        app.state.bus = self.bus
-
-        # Voice boot-readiness mirror. WS events are one-shot, so a tab that
-        # connects after warm-up finished would never see VoiceBootStatus.
-        # Persist the latest state on this (long-lived) server instance for
-        # GET /api/voice/status to read — deliberately NOT on app.state, whose
-        # ASGI lifecycle could outrace the bus subscriber on shutdown.
-        #
-        # When the local voice stack is disabled (JARVIS_VOICE=0 — headless,
-        # VPS, browser-mic-only), there is nothing to warm up and the pipeline
-        # never emits VoiceBootStatus, so seed ready=True. Otherwise the
-        # frontend's "starting up" banner would hang forever even though the
-        # user can already type (and use browser voice). A real voice pipeline
-        # starts at ready=False (warmup_start) and flips True via the subscriber
-        # below, so this seed only ever sticks when voice is genuinely off.
-        _voice_disabled = os.environ.get("JARVIS_VOICE", "").strip().lower() in (
-            "0",
-            "off",
-            "false",
-        )
-        self._voice_ready = _voice_disabled
-
-        # Synchronous routes run on anyio's thread pool, which grows ON the
-        # loop and shrinks after ten idle seconds — a start that blocked the
-        # loop for 15 s on 2026-08-27 (BUG-189). Workers stay resident from
-        # here on; a handful is brought up once voice reports ready, below.
-        from jarvis.core.loop_executor import keep_anyio_workers_alive
-
-        keep_anyio_workers_alive()
-        self._anyio_pool_warmed = False
-
-        async def _track_voice_ready(event: VoiceBootStatus) -> None:
-            # A bus subscriber must never raise (AP-18); setting a plain
-            # instance bool cannot fail, and the warm-up below only schedules.
-            self._voice_ready = event.voice_usable
-            if event.ready:
-                self._schedule_anyio_pool_warm()
-
-        self.bus.subscribe(VoiceBootStatus, _track_voice_ready)
-
+        # The SPA catch-all must remain after every API router.
         self._register_static_or_spa(app)
 
-        # Publish the live app for in-process consumers: the app-command brain
-        # tool executes Command-Registry commands through it via ASGI transport
-        # (same routes + validation as the UI, no TCP).
+    def _publish_app(self) -> None:
+        # Deferred construction runs in a thread, but publication belongs to
+        # the owner loop after prepare() checks its stopping fence. A late
+        # builder must never publish an app whose teardown has already begun.
         from jarvis.core import runtime_refs
 
-        runtime_refs.set_web_app(app)
+        runtime_refs.set_web_app(self.app)
 
-        return app
+    async def prepare_app(self) -> None:
+        """Complete the route graph before ASGI publication or service startup."""
+        await self._feature_setup.prepare()
+        self._publish_app()
 
     #: Breathing room between "voice is ready" and bringing anyio's workers
     #: up. Ready is the end of the heavy boot work, not of the box's — the
@@ -2557,6 +2585,7 @@ class WebServer:
         callable (the fast-boot bootstrap in launcher.py serves a holding app on
         the port and delegates to ``self.app`` once this init chain completes).
         """
+        await self.prepare_app()
         import uvicorn
 
         # Boot profiling (opt-in via JARVIS_BOOT_PROFILE=1; zero behavior change
@@ -3851,6 +3880,16 @@ class WebServer:
         return AgentChatService(store, assistant_name=_name, bus=lambda: self.bus)
 
     async def stop(self) -> None:
+        from jarvis.core import runtime_refs
+
+        if runtime_refs.get_web_app() is self.app:
+            runtime_refs.set_web_app(None)
+        # A cancelled setup waiter cannot stop its worker thread. Join it
+        # before closing board/stores/subscriptions that it may still create.
+        try:
+            await self._feature_setup.stop()
+        except Exception as exc:  # noqa: BLE001 -- close partial setup too
+            logger.opt(exception=exc).warning("Application feature setup failed during shutdown")
         # Fence lazy creation even when no Society owner exists yet. The shared
         # brain factory and HTTP surface can still be called while shutdown awaits.
         self.app.state.society_stopping = True

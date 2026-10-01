@@ -62,10 +62,10 @@ test("IDE rail keeps workspace options and Jarvis Live reachable", () => {
   cleanup();
 });
 
-test("IDE sidebar puts Projects first and returns to the normal chat navigation", () => {
+test("IDE sidebar puts Projects first and returns to the normal chat navigation", async () => {
   act(() => useEventStore.setState({ activeSection: "agentic-ide" }));
   renderSidebar();
-  expect(screen.getByTestId("ide-project-tree")).toBeDefined();
+  expect(await screen.findByTestId("ide-project-tree")).toBeDefined();
   // The agents list lives in the IDE's right-hand side panel now.
   expect(screen.queryByTestId("ide-workspace-agents")).toBeNull();
   expect(screen.queryByTestId("sidebar-new-chat")).toBeNull();

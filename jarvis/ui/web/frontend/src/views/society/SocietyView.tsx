@@ -7,9 +7,8 @@ import { setMapFullscreen } from "@/lib/mapFullscreen";
 import { inDesktopShell } from "@/lib/nativeDrop";
 import { useLocaleChunk, useT } from "@/i18n";
 import { AgentCardOverlay } from "@/components/society/card/AgentCardOverlay";
-import { BuildingCardOverlay } from "@/components/society/card/BuildingCardOverlay";
-import { isBuildingPlace, type BuildingPlace } from "@/components/society/card/buildingCards";
-import { CreateAgentDialog } from "@/components/society/create/CreateAgentDialog";
+import { BUILDING_CARDS, isBuildingPlace, type BuildingPlace } from "@/components/society/card/buildingCards";
+import { DeferredSocietyDialog } from "@/components/society/card/DeferredSocietyDialog";
 import type { PlaceId } from "@/components/society/world/islandLayout";
 import { useSocietyRoster } from "@/components/society/data";
 import { RosterRail } from "@/components/society/roster/RosterRail";
@@ -23,6 +22,12 @@ import { forgetLastAgentId, rememberLastAgentId, storedLastAgentId } from "./las
 const JarvisAgentsBoard = lazy(() =>
   import("@/views/JarvisAgentsView").then((m) => ({ default: m.JarvisAgentsView })),
 );
+
+// Do not evaluate either dialog's 3D dependencies until someone opens it.
+const loadBuildingDialog = () => import("@/components/society/card/BuildingCardOverlay")
+  .then((module) => ({ default: module.BuildingCardOverlay }));
+const loadCreateDialog = () => import("@/components/society/create/CreateAgentDialog")
+  .then((module) => ({ default: module.CreateAgentDialog }));
 
 
 function isProtectedMarsInteraction(target: EventTarget | null): boolean {
@@ -213,15 +218,25 @@ export function SocietyView() {
         )}
         </div>
       </div>
-      <BuildingCardOverlay
-        place={openPlace}
+      {openPlace && <DeferredSocietyDialog
+        load={loadBuildingDialog}
+        title={t(`society.world.${BUILDING_CARDS[openPlace].nameKey}`)}
         onClose={() => setOpenPlace(null)}
-        onCreateAgent={() => {
-          setOpenPlace(null);
-          setCreating(true);
+        dialogProps={{
+          place: openPlace,
+          onClose: () => setOpenPlace(null),
+          onCreateAgent: () => {
+            setOpenPlace(null);
+            setCreating(true);
+          },
         }}
-      />
-      <CreateAgentDialog open={creating} onClose={() => setCreating(false)} onCreated={onCreated} />
+      />}
+      {creating && <DeferredSocietyDialog
+        load={loadCreateDialog}
+        title={t("society.create.title")}
+        onClose={() => setCreating(false)}
+        dialogProps={{ open: true, onClose: () => setCreating(false), onCreated }}
+      />}
     </div>
   );
 }

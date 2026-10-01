@@ -67,7 +67,7 @@ def _require_store(request: Request) -> SessionStore:
 
 
 @router.get("", response_model=list[SessionListItem])
-async def list_sessions(
+def list_sessions(
     request: Request,
     limit: int = Query(default=100, ge=1, le=500),
     include_empty: bool = Query(
@@ -87,7 +87,7 @@ async def list_sessions(
 
 
 @router.get("/latest-turn", response_model=VoiceTurnRow)
-async def get_latest_user_turn(
+def get_latest_user_turn(
     request: Request,
     session_id: str | None = Query(default=None),
 ) -> VoiceTurnRow:
@@ -100,7 +100,7 @@ async def get_latest_user_turn(
 
 
 @router.get("/{session_id}", response_model=SessionDetail)
-async def get_session_detail(session_id: str, request: Request) -> SessionDetail:
+def get_session_detail(session_id: str, request: Request) -> SessionDetail:
     """Full session: header + turns + raw events for replay."""
     store = _require_store(request)
     session = store.get_session(session_id)
@@ -112,7 +112,7 @@ async def get_session_detail(session_id: str, request: Request) -> SessionDetail
 
 
 @router.get("/{session_id}/export")
-async def export_session(
+def export_session(
     session_id: str,
     request: Request,
     export_format: Literal["markdown", "plain", "json"] = Query(

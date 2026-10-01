@@ -1,10 +1,70 @@
 from __future__ import annotations
 
+import asyncio
+import threading
+
+import httpx
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from jarvis.sessions.store import SessionStore
 from jarvis.ui.web import sessions_routes
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("path", "read_method"),
+    [
+        ("/api/sessions", "list_sessions"),
+        ("/api/sessions/latest-turn", "get_latest_user_turn"),
+        ("/api/sessions/s1", "get_session"),
+        ("/api/sessions/s1/export?format=json", "get_session"),
+    ],
+)
+async def test_slow_session_read_does_not_block_other_requests(
+    tmp_path, monkeypatch, path, read_method,
+) -> None:
+    """A held synchronous store read must not own the serving asyncio loop."""
+    store = SessionStore(tmp_path / "sessions.db")
+    store.open()
+    _seed_session(store)
+    entered = threading.Event()
+    release = threading.Event()
+    original = getattr(store, read_method)
+
+    def blocked_read(*args, **kwargs):
+        entered.set()
+        # The timeout is only a teardown escape for the broken implementation.
+        # Assertions test ordering, not a machine-dependent latency budget.
+        release.wait(timeout=2)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(store, read_method, blocked_read)
+    app = FastAPI()
+    app.include_router(sessions_routes.router)
+    app.state.session_store = store
+
+    @app.get("/sentinel")
+    async def sentinel() -> dict[str, bool]:
+        return {"ok": True}
+
+    request = None
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test",
+        ) as client:
+            request = asyncio.create_task(client.get(path))
+            assert await asyncio.to_thread(entered.wait, 2)
+            assert (await client.get("/sentinel")).json() == {"ok": True}
+            assert not request.done(), "the sentinel must run while the store read is still held"
+            release.set()
+            assert (await request).status_code == 200
+    finally:
+        release.set()
+        if request is not None:
+            await request
+        store.close()
 
 
 def _seed_session(store: SessionStore) -> None:

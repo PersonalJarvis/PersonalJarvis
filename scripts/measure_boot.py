@@ -14,25 +14,18 @@ request needs is ready or cleanly deferred (see ``jarvis/ui/web/launcher.py`` an
 the ``[BOOT_PROFILE]`` marks in ``jarvis/ui/web/server.py``, both gated behind
 ``JARVIS_BOOT_PROFILE=1`` so production stdout is unchanged).
 
-Isolation contract (NEVER touches the running production instance)
-------------------------------------------------------------------
-* A dedicated ``.boot-bench/`` directory holds an isolated ``data/`` dir and a
-  representative ``vault/`` (seeded once, frozen identical across passes so the
-  factor is honest).
-* ``data/`` is wiped before every run, so every cold boot does *identical* work:
-  fresh DB schema creation + an FTS5 index build over the seeded vault.
-* ``JARVIS__MEMORY__DATA_DIR`` / ``JARVIS__WIKI_INTEGRATION__VAULT_ROOT`` /
-  ``JARVIS_ISOLATION_ROOT`` redirect every store, the vault, and the mission
-  worktree container into ``.boot-bench/`` — the last one is critical because
-  the mission startup sweep is filesystem-driven (mtime, not DB-gated) and would
-  otherwise delete real mission outputs from the shared production
-  ``sub-agents-outputs/``.
-* The flight-recorder blob sweep is disabled for the bench
-  (``flight_recorder_retention_days=-1``): its directory is hardcoded relative to
-  the CWD, which ``ensure_project_root_cwd()`` pins to the production repo root,
-  so it cannot be isolated without a code change. Excluding it makes the baseline
-  *smaller* (a conservative lower bound on any speed-up factor), never inflated.
-* An ephemeral free port per run — never the production port.
+Data and source isolation (not a service sandbox)
+------------------------------------------------
+Each invocation uses a unique temporary artifact root, and each boot gets new
+verified data/worktree paths. No shared directory is recursively deleted.
+The child interpreter is the parent's interpreter unless explicitly selected;
+PYTHONPATH and a source identity check pin imports to this checkout.
+
+This still starts the real configured application: credentials, autostart,
+control-key setup, provider discovery and other background services are NOT
+hermetically isolated. Do not run it beside a live user app as a harmless probe.
+Use check_boot_budget.py --evidence for a controlled real restart instead.
+The blob sweep remains disabled because its path is relative to the checkout.
 
 Usage
 -----
@@ -48,29 +41,25 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
-import shutil
 import socket
 import statistics
 import subprocess
 import sys
+import tempfile
 import threading
 import time
+import uuid
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-BENCH_DIR = REPO_ROOT / ".boot-bench"
+BENCH_DIR = Path(tempfile.gettempdir()) / f"jarvis-boot-{uuid.uuid4().hex}"
 VAULT_DIR = BENCH_DIR / "vault"
 DATA_DIR = BENCH_DIR / "data"
 ISO_DIR = BENCH_DIR / "sub-agents-outputs"
 BASELINE_PATH = REPO_ROOT / "boot-baseline.json"
 LATEST_PATH = REPO_ROOT / "boot-latest.json"
 
-_WINDOWS_REFERENCE_PYTHON = Path(r"C:\Program Files\Python311\python.exe")
-DEFAULT_PYTHON = (
-    str(_WINDOWS_REFERENCE_PYTHON)
-    if sys.platform == "win32" and _WINDOWS_REFERENCE_PYTHON.exists()
-    else sys.executable
-)
+DEFAULT_PYTHON = sys.executable
 DEFAULT_PAGES = 80
 
 # Canonical no-window flag (AP-1) with a safe fallback if jarvis is not importable
@@ -135,17 +124,71 @@ def _free_port() -> int:
         s.close()
 
 
-def _bench_env(port: int) -> dict[str, str]:
+def _desktop_boot_mode(mode: str = "auto") -> str:
+    """Follow launcher.main's opt-in fastboot contract, unless explicitly compared."""
     import os
 
+    if mode == "auto":
+        return "fastboot" if os.environ.get("JARVIS_DESKTOP_FASTBOOT") == "1" else "legacy"
+    if mode not in {"legacy", "fastboot"}:
+        raise ValueError("Unknown desktop boot mode")
+    return mode
+
+
+def _fresh_run_dirs() -> tuple[Path, Path]:
+    """Allocate fresh stores under this invocation's root without deleting data."""
+    root = BENCH_DIR.resolve()
+    run = root / f"run-{uuid.uuid4().hex}"
+    paths = (run / "data", run / "sub-agents-outputs")
+    for path in paths:
+        if not path.resolve().is_relative_to(root):
+            raise ValueError("Benchmark artifact path escaped its root")
+        path.mkdir(parents=True, exist_ok=False)
+    return paths
+
+
+def _assert_child_source(python: str, env: dict[str, str]) -> dict[str, str]:
+    """Verify the exact interpreter/environment before starting a measured app."""
+    code = (
+        "import json, sys, jarvis; "
+        "print(json.dumps({'python': sys.executable, 'jarvis_file': jarvis.__file__}))"
+    )
+    probe = subprocess.run(
+        [python, "-c", code], cwd=str(REPO_ROOT), env=env,
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=30, creationflags=NO_WINDOW_CREATIONFLAGS,
+    )
+    if probe.returncode:
+        raise RuntimeError("Benchmark interpreter could not import the checkout")
+    identity = json.loads(probe.stdout)
+    expected = (REPO_ROOT / "jarvis" / "__init__.py").resolve()
+    if Path(identity["jarvis_file"]).resolve() != expected:
+        raise RuntimeError("Benchmark interpreter imports a different checkout")
+    return identity
+
+
+def _bench_env(
+    port: int, data_dir: Path | None = None, isolation_dir: Path | None = None,
+) -> dict[str, str]:
+    import os
+
+    # Existing smoke drivers use the invocation-local compatibility paths.
+    data_dir = data_dir if data_dir is not None else DATA_DIR
+    isolation_dir = isolation_dir if isolation_dir is not None else ISO_DIR
     env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(
+        [str(REPO_ROOT), *filter(None, [env.get("PYTHONPATH", "")])]
+    )
     env.update(
         {
             "JARVIS_BOOT_PROFILE": "1",
             # Exercise mission recovery + startup cleanup over the ISOLATED dirs.
             "JARVIS_PRIMARY_INSTANCE": "1",
-            "JARVIS_ISOLATION_ROOT": str(ISO_DIR),
-            "JARVIS__MEMORY__DATA_DIR": str(DATA_DIR),
+            "JARVIS_ISOLATION_ROOT": str(isolation_dir),
+            "JARVIS__MEMORY__DATA_DIR": str(data_dir),
+            "JARVIS_DATA_DIR": str(data_dir),
+            "JARVIS_BOOT_EXPECTED_ROOT": str(REPO_ROOT),
+            "PYTHONUTF8": "1",
             "JARVIS__WIKI_INTEGRATION__ENABLED": "true",
             "JARVIS__WIKI_INTEGRATION__VAULT_ROOT": str(VAULT_DIR),
             # -1 (a real int) disables the CWD-bound prod blob sweep; "0" would
@@ -171,13 +214,9 @@ def _terminate(proc: subprocess.Popen) -> None:
 
 
 def run_one(python: str, timeout: float) -> dict:
-    """Spawn one isolated cold boot, measure spawn->BOOT_READY wall-clock, and
+    """Spawn one fresh process, measure spawn->BOOT_READY wall-clock, and
     capture the per-phase ``[BOOT_PROFILE]`` breakdown."""
-    # Fresh data + isolation dirs => every boot does identical work.
-    shutil.rmtree(DATA_DIR, ignore_errors=True)
-    shutil.rmtree(ISO_DIR, ignore_errors=True)
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    ISO_DIR.mkdir(parents=True, exist_ok=True)
+    data_dir, isolation_dir = _fresh_run_dirs()
 
     port = _free_port()
     cmd = [
@@ -190,14 +229,19 @@ def run_one(python: str, timeout: float) -> dict:
         str(port),
     ]
 
-    result: dict = {"wall_ms": None, "boot_ready_ms": None, "phases": {}, "port": port}
+    env = _bench_env(port, data_dir, isolation_dir)
+    identity = _assert_child_source(python, env)
+    result: dict = {
+        "wall_ms": None, "boot_ready_ms": None, "phases": {}, "port": port,
+        "source_identity": identity, "artifact_dir": str(data_dir.parent),
+    }
     ready = threading.Event()
 
     t_spawn = time.perf_counter()
     proc = subprocess.Popen(
         cmd,
         cwd=str(REPO_ROOT),
-        env=_bench_env(port),
+        env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -267,9 +311,9 @@ def _summarize(runs: list[dict], *, python: str, pages: int) -> dict:
         "boot_ready_ms_runs": [round(r, 1) for r in readies],
         "phase_medians_ms": {k: round(v, 1) for k, v in phase_medians.items()},
         "notes": (
-            "isolated via JARVIS__MEMORY__DATA_DIR + JARVIS__WIKI_INTEGRATION__"
-            "VAULT_ROOT + JARVIS_ISOLATION_ROOT; data/ wiped per run; blob sweep "
-            "excluded (CWD-bound to prod, not isolatable without a code change)."
+            "Unique data/vault/worktree paths; real credentials and configured "
+            "services remain active. Not a hermetic service sandbox. Fresh "
+            "processes do not imply an OS-cold cache."
         ),
     }
 
