@@ -33,7 +33,9 @@ def test_plaintext_and_local_downloads_are_rejected(tmp_path):
 
 
 def test_windows_wheel_cannot_depend_on_builder_openssl():
-    assert builder.windows_external_libraries("  python3.dll\n  KERNEL32.dll\n") == []
+    assert builder.windows_external_libraries(
+        "  python3.dll\n  KERNEL32.dll\n  bcryptprimitives.dll\n  ntdll.dll\n"
+    ) == []
     assert builder.windows_external_libraries("  python3.dll\n  libcrypto-4-arm64.dll\n") == [
         "libcrypto-4-arm64.dll"
     ]
