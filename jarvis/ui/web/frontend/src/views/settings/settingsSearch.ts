@@ -1,11 +1,12 @@
 import en from "@/i18n/locales/en.json";
 import de from "@/i18n/locales/de.json";
 import es from "@/i18n/locales/es.json";
+import it from "@/i18n/locales/it.json";
 import type { UiLanguage } from "@/i18n";
 
 type LocaleTree = Record<string, unknown>;
 
-const LOCALES: Record<UiLanguage, LocaleTree> = { en, de, es };
+const LOCALES: Record<UiLanguage, LocaleTree> = { en, de, es, it };
 
 /** Each Settings page group owns the copy used to search its controls. */
 const SEARCH_GROUPS = [
@@ -83,7 +84,6 @@ export function searchSettingsOptions(
     const label = translate(`settings_view.nav.${id.replaceAll("-", "_")}`);
     const matches = matchingCopy(settings, keys, needle);
     if (!normalize(label).includes(needle) && matches.length === 0) return [];
-    // Prefer a control label to a long explanation or a saved-state toast.
     return [{ id, label, detail: shortDetail(matches, label) }];
   });
 }
