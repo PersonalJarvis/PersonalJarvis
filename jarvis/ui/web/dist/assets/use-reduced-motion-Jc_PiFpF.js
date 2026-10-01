@@ -1,1 +1,7 @@
+<<<<<<<< HEAD:jarvis/ui/web/dist/assets/use-reduced-motion-Jc_PiFpF.js
 import{r as o}from"./index-DK8nKeII.js";const t={current:null},r={current:!1},s=typeof window<"u";function c(){if(r.current=!0,!!s)if(window.matchMedia){const e=window.matchMedia("(prefers-reduced-motion)"),n=()=>t.current=e.matches;e.addEventListener("change",n),n()}else t.current=!1}function u(){!r.current&&c();const[e]=o.useState(t.current);return e}export{r as h,c as i,t as p,u};
+|||||||| parent of e44eec7d8 (chore(ui): rebuild frontend bundle for the IDE key menu):jarvis/ui/web/dist/assets/use-reduced-motion-wqT2-NFS.js
+import{r as o}from"./index-DRGNN6w7.js";const t={current:null},r={current:!1},s=typeof window<"u";function c(){if(r.current=!0,!!s)if(window.matchMedia){const e=window.matchMedia("(prefers-reduced-motion)"),n=()=>t.current=e.matches;e.addEventListener("change",n),n()}else t.current=!1}function u(){!r.current&&c();const[e]=o.useState(t.current);return e}export{r as h,c as i,t as p,u};
+========
+import{r as o}from"./index-BtFTJLvF.js";const t={current:null},r={current:!1},s=typeof window<"u";function c(){if(r.current=!0,!!s)if(window.matchMedia){const e=window.matchMedia("(prefers-reduced-motion)"),n=()=>t.current=e.matches;e.addEventListener("change",n),n()}else t.current=!1}function u(){!r.current&&c();const[e]=o.useState(t.current);return e}export{r as h,c as i,t as p,u};
+>>>>>>>> e44eec7d8 (chore(ui): rebuild frontend bundle for the IDE key menu):jarvis/ui/web/dist/assets/use-reduced-motion-D88T5lQB.js

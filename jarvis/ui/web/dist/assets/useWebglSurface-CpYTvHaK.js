@@ -1,4 +1,10 @@
+<<<<<<<< HEAD:jarvis/ui/web/dist/assets/useWebglSurface-CpYTvHaK.js
 import{r as Dr}from"./index-DK8nKeII.js";import{r as tp}from"./graphDimension-C137GNZH.js";/**
+|||||||| parent of e44eec7d8 (chore(ui): rebuild frontend bundle for the IDE key menu):jarvis/ui/web/dist/assets/useWebglSurface-C0G_2Zh-.js
+import{r as Dr}from"./index-DRGNN6w7.js";import{r as tp}from"./graphDimension-DkOFgkUE.js";/**
+========
+import{r as Dr}from"./index-BtFTJLvF.js";import{r as tp}from"./graphDimension-BAuV_z2q.js";/**
+>>>>>>>> e44eec7d8 (chore(ui): rebuild frontend bundle for the IDE key menu):jarvis/ui/web/dist/assets/useWebglSurface-CmyX8zdX.js
  * @license
  * Copyright 2010-2026 Three.js Authors
  * SPDX-License-Identifier: MIT
