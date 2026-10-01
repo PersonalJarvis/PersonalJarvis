@@ -42,7 +42,7 @@ export const TOUR_STEPS: readonly TourStep[] = [
     onEnter: "open-agents",
     onExit: "back-home",
     skipIfMissing: true,
-    pet: "working",
+    pet: "thinking",
   },
   { id: "voice_hub", anchor: "nav-dictation", placement: "right", onEnter: "back-home", pet: "listening" },
   { id: "settings", anchor: "settings", placement: "right", pet: "thinking" },
