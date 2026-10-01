@@ -1,5 +1,19 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
+## Linux CLI discovery and headless credentials (2026-10-01, T2)
+
+The Linux installer exposes `jarvis` and `jarvisctl` through symlinks in
+`~/.local/bin`, including headless installs and updates. Existing unrelated
+commands are preserved. When that directory is absent from `PATH`, the installer
+prints a shell-quoted export command and a profile hint. Windows and macOS skip
+this step. Covered by `tests/unit/install/test_cli_links.py` and the installer
+flow tests; a complete fresh installation on each OS is not implied.
+
+An absent OS credential store is an expected headless configuration, so its
+working file-store fallback logs at INFO. A previously available vault failing
+still logs a warning. Credential storage and recovery behavior remain covered
+by the headless-keyring, locked-keyring, and backend-recovery tests.
+
 ## Remote agents retain Jarvis tools (2026-10-01, T3)
 
 Remote coding turns carry their Jarvis MCP tools over a reverse forward on

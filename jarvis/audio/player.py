@@ -221,6 +221,7 @@ def _drain_tail_samples(stream: Any, source_rate: int) -> int:
     try:
         latency = float(getattr(stream, "latency", DEFAULT_OUTPUT_BUFFER_S))
     except (TypeError, ValueError):
+        # Malformed latency from the driver: use the documented default.
         latency = DEFAULT_OUTPUT_BUFFER_S
     if not 0.0 <= latency <= 2.0:
         latency = DEFAULT_OUTPUT_BUFFER_S

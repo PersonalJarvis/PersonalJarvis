@@ -128,7 +128,7 @@ def _past_date(text: str, today: date) -> bool:
         try:
             if date(int(year), int(month), int(day)) < today:
                 return True
-        except ValueError:
+        except ValueError:  # not a real calendar date (2026-02-30): not a past one
             continue
     return False
 

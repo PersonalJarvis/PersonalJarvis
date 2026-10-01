@@ -1,7 +1,7 @@
 version: 1
 language: en
 content_root: docs/product
-page_count: 48
+page_count: 50
 navigation_principle: reader-journey
 authoring_contract:
   audience: People using Personal Jarvis, including readers with no software background.
@@ -23,7 +23,7 @@ pages:
     file: docs/product/start-here/welcome-to-personal-jarvis.md
     title: Welcome to Personal Jarvis
     diataxis: explanation
-    summary: Understand what Personal Jarvis can do, what stays under your control, and where to begin.
+    summary: See how Jarvis turns your computer into an AI agent, what stays under your control, and where to begin.
     authoritative_sources:
       - README.md
       - AGENTS.md
@@ -201,6 +201,7 @@ pages:
       - jarvis-agents
       - workflows-and-commands
       - safety-and-approvals
+      - automations
     reader_level: beginner
     maturity: stable
 
@@ -753,7 +754,7 @@ pages:
     diataxis: howto
     summary: Let your assistant inspect one requested screen or window with visible capture, privacy filtering, and short-lived memory.
     authoritative_sources:
-      - jarvis/ui/web/frontend/src/views/settings/ScreenContextGroup.tsx
+      - jarvis/ui/web/frontend/src/views/AppshotsView.tsx
       - jarvis/ui/web/screen_context_routes.py
       - jarvis/screen_context/service.py
       - jarvis/screen_context/intent.py
@@ -1050,4 +1051,42 @@ pages:
       - configuration-reference
       - troubleshooting
     reader_level: advanced
+    maturity: stable
+
+  - section: Everyday use
+    section_order: 2
+    order: 9
+    slug: automations
+    file: docs/product/everyday-use/automations.md
+    title: Automations
+    diataxis: howto
+    summary: Browse automation templates, control recurring work, and inspect schedules and run history.
+    authoritative_sources:
+      - jarvis/ui/web/frontend/src/views/AutomationsView.tsx
+      - jarvis/ui/web/frontend/src/views/automations/TemplateAddDialog.tsx
+      - jarvis/tasks/templates/__init__.py
+    related:
+      - tasks-and-reminders
+      - costs
+      - workflows-and-commands
+      - safety-and-approvals
+    reader_level: beginner
+    maturity: stable
+
+  - section: Everyday use
+    section_order: 2
+    order: 10
+    slug: costs
+    file: docs/product/everyday-use/costs.md
+    title: Spend & Tokens
+    diataxis: howto
+    summary: Understand recorded usage, compare providers, and trace spending to individual runs.
+    authoritative_sources:
+      - jarvis/ui/web/frontend/src/views/CostsView.tsx
+      - jarvis/ui/web/costs_routes.py
+    related:
+      - tasks-and-reminders
+      - automations
+      - providers-and-api-keys
+    reader_level: beginner
     maturity: stable

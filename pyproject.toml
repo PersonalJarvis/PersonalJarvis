@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "personal-jarvis"
-version = "2.3.2"
+version = "2.4.4"
 description = "Turn your computer into an AI agent that coordinates apps, tools, models, and other agents"
 requires-python = ">=3.11,<3.15"
 readme = "README.md"
@@ -88,8 +88,16 @@ dependencies = [
     "keyring>=25.5",
     # SSH to the user's own servers and virtual machines (Settings -> Computers).
     # Pure Python on top of cryptography, so it installs on every OS cell and a
-    # headless python:3.11-slim without a system ssh client.
-    "asyncssh>=2.21",
+    # headless python:3.11-slim without a system ssh client. The bcrypt extra
+    # is what unlocks a passphrase-protected OpenSSH key (ssh-keygen's default
+    # format), so a user's own protected key can be added at all.
+    "asyncssh[bcrypt]>=2.21",
+    # Security floor for a transitive dependency (mcp, twilio): 2.13.0 carries
+    # ten advisories fixed in 2.14.0 (CVE-2026-101917, CVE-2026-102265..102274).
+    "pyjwt>=2.14.0",
+    # Security floor for a transitive dependency (requests, httpx stacks):
+    # 2.7.0 carries CVE-2026-97687..97689, fixed in 2.8.0.
+    "urllib3>=2.8.0",
     "sounddevice>=0.5",  # PortAudio binding; needs system libportaudio2 on Linux
     # ChatGPT-Live (Codex subscription voice) carries audio ONLY on a WebRTC
     # media track — its protocol has no audio event at all. Jarvis owns that

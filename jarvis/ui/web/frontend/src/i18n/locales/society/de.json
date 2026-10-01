@@ -82,6 +82,8 @@
       "legacy": "Ältere Ausführung: Ergebnis vorhanden; Abschlussstatus wurde nicht aufgezeichnet."
     },
     "chat": {
+      "connecting": "Verbindung zu diesem Chat wird hergestellt…",
+      "reconnecting": "Verbindung zu diesem Chat wird wiederhergestellt…",
       "memory_updated": "Memory aktualisiert",
       "memory_changes": "Änderungen",
       "memory_current": "Aktuelle Datei",

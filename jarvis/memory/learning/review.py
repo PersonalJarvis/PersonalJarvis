@@ -250,7 +250,7 @@ def validate(
         touched.add((target, entry_id))
         try:
             importance = int(item.get("importance", 5))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError):  # a model's non-numeric score: use the neutral default
             importance = 5
         if operation == "add" and importance < MIN_IMPORTANCE:
             rejected.append("a minor detail, not worth remembering")

@@ -60,14 +60,25 @@ def matches(pattern: str, capability_id: str, verb: str = "") -> bool:
     return False
 
 
-def decide(agent: AgentRecord, capability_id: str, tool_tier: str, *, verb: str = "") -> Verdict:
-    """What happens to one intended action of ``agent`` (see module doc)."""
+def decide(
+    agent: AgentRecord,
+    capability_id: str,
+    tool_tier: str,
+    *,
+    verb: str = "",
+    approval_mode: str | None = None,
+) -> Verdict:
+    """What happens to one intended action under the bound chat's mode."""
     if tool_tier == "block":
         return Verdict.BLOCK
     rules = agent.approval_rules
     if any(matches(p, capability_id, verb) for p in rules.get("require_approval", [])):
         return Verdict.QUEUE
-    mode = str(agent.approval_mode) if agent.approval_mode is not None else ""
+    mode = (
+        approval_mode
+        if approval_mode is not None
+        else str(agent.approval_mode) if agent.approval_mode is not None else ""
+    )
     if mode == "always_ask":
         return Verdict.QUEUE
     if any(matches(p, capability_id, verb) for p in rules.get("always_allow", [])):

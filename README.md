@@ -13,7 +13,7 @@ longer work, and bring the result back to one workspace.
   <a href="https://github.com/PersonalJarvis/PersonalJarvis/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/PersonalJarvis/PersonalJarvis/actions/workflows/ci.yml/badge.svg" /></a>
 </p>
 
-![Flow from a user request through Jarvis to the computer, browser, apps, agents, models, and services, then back as a result with run history.](assets/brand/request-to-result.svg)
+![Flow from a user request through Jarvis to the computer, browser, apps, agents, models, and services, then back as a result with run history.](https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/brand/request-to-result.svg)
 
 **Why it is different:** Jarvis coordinates the tools you already have. A request
 can move from voice or chat to [computer use](#computer-use-and-connected-channels),
@@ -25,7 +25,7 @@ You can inspect actions, approvals, and output in the app. What runs depends on
 your setup, permissions, and the tools you connect.
 
 **Try it:** [Install on Windows, macOS, or Linux](#install) ·
-[See the app and demos](#see-it-in-action) ·
+[See the agents at work](#jarvis-agents) ·
 [Read the first-run guide](#your-first-steps-in-the-desktop-app)
 
 ## Install
@@ -48,24 +48,14 @@ registers the desktop launcher, and opens the app. Language, wake phrase, and pr
 OS permissions and hardware capabilities affect voice and desktop control.
 Re-running the installer updates an existing installation.
 
+For a minimal server installation, use `pip install personal-jarvis` and
+`jarvis serve`. Open the local address reported at startup; the default is
+`http://localhost:47821`. Remote browser microphone access requires HTTPS.
+See the [headless deployment guide](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/headless-vps-deployment.md).
+
 The idea is simple: one place on your computer where you say what you need, and it happens. You talk to Jarvis or type to it, and it works out whether to just answer, do something on your computer for you, or pass the job to an agent that keeps at it while you get on with your day. You can always see what it's doing, and it asks before it touches anything that matters.
 
 It runs on your own machine with whichever model you like, local ones included, and it's free. There's no account to create, and nothing sends your data anywhere you didn't connect yourself.
-
-## See it in action
-
-The [desktop screenshot](assets/screenshots/home-2026-09-09.webp) shows the
-workspace; the [agent demo](assets/demo/readme-2026-09/jarvis-agents-v4.mp4)
-shows a brief, progress, and output. The demos are **illustrative interface
-recreations**, not recordings of a completed live task or timing benchmarks.
-The [demo source and still previews](scripts/readme-video/README.md) explain
-what is shown.
-
-<p align="center">
-  <a href="assets/demo/readme-2026-09/jarvis-agents-v4.mp4">
-    <img src="assets/demo/readme-2026-09/jarvis-agents-v4.png" alt="Illustrative Jarvis Agents workspace showing a brief, agent activity, and a resulting plan" width="850" />
-  </a>
-</p>
 
 ## One request, several ways to get it done
 
@@ -80,36 +70,15 @@ what is shown.
 The app runs on Windows, macOS, and Linux, with headless use for server-capable
 features. Desktop control needs a supported graphical session and OS permission.
 Local models and speech are optional; hosted providers and connected services
-receive the content required for their requests. See [privacy and local data](docs/product/privacy-safety-and-support/privacy-and-local-data.md).
+receive the content required for their requests. See [privacy and local data](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/privacy-safety-and-support/privacy-and-local-data.md).
 
 ## Start with chat or voice
 
 [Website](https://personaljarvis.ai) · [Docs](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/start-here/welcome-to-personal-jarvis.md) · [Getting started](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/start-here/first-run-setup.md) · [How it works](#how-it-works) · [Discord](https://discord.gg/x7USduHxbc) · [X](https://x.com/PersonalJarvis)
 
-https://github.com/user-attachments/assets/bd2d5f3c-c601-475e-a37e-f532ea6ef6ea
+https://github.com/user-attachments/assets/9930ca95-5015-4ade-9a16-975c77d179fd
 
-<p align="center"><sub>A real, unedited click-through of the app, sped up only where agents are thinking.</sub></p>
-
-## install
-
-**Windows (PowerShell)**
-
-```powershell
-irm https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install/install.ps1 | iex
-```
-
-**macOS and Linux**
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install/install.sh | bash
-```
-
-For a minimal server installation, use `pip install personal-jarvis` and
-`jarvis serve`. Open the local address reported at startup; the default is
-`http://localhost:47821`. Remote browser microphone access requires HTTPS.
-See the [headless deployment guide](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/headless-vps-deployment.md).
-
-</details>
+<p align="center"><sub>A real click-through of the app: every frame is recorded, waiting is sped up, and a few moments are zoomed in.</sub></p>
 
 ## Jarvis Agents
 
@@ -117,20 +86,6 @@ Build a team you can return to. Each agent has an identity, a direct conversatio
 standing instructions, and access to the tools you grant it. Pick a connected
 model or supported agent account for the work, and keep the conversations in
 one workspace.
-
-<br />
-
-<p align="center">
-  <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/assets/demo/readme-2026-09/jarvis-agents-v4.mp4">
-    <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/demo/readme-2026-09/jarvis-agents-v4.gif" alt="Agents workspace recreation: send a brief, watch the live thinking trace, then read the streaming reply and completed plan" width="1000" />
-  </a>
-</p>
-
-<p align="center">
-  <sub>An illustrative agent conversation, from brief to draft. The GIF plays once and holds the reply; click to replay the video.</sub>
-</p>
-
-<br />
 
 - **Talk directly to a specialist.** Select an agent from the roster and continue its chat.
 - **Give it a standing brief.** Configure its instructions, model access, and tools.

@@ -98,6 +98,7 @@ def _git(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str] | None:
             creationflags=NO_WINDOW_CREATIONFLAGS,
         )
     except FileNotFoundError:
+        # No git binary installed: the caller shows 'no changes' honestly.
         return None
     except subprocess.TimeoutExpired:
         logger.info("Agentic IDE git changes: git timed out in {}", cwd)
@@ -144,6 +145,7 @@ def _count_lines(path: Path) -> int | None:
             return None
         data = path.read_bytes()
     except OSError:
+        # Unreadable file: the count is unknown and None says exactly that.
         return None
     if b"\0" in data[:8000]:
         return None
@@ -266,6 +268,7 @@ def _parse_unified(text: str) -> tuple[list[DiffHunk], int, int, bool, bool]:
                 old_no = int(spans[0][1:].split(",")[0])
                 new_no = int(spans[1][1:].split(",")[0])
             except (IndexError, ValueError):
+                # Malformed hunk header: keep the hunk, only its line numbers are lost.
                 old_no = new_no = 0
             hunks.append(DiffHunk(header=header))
             continue

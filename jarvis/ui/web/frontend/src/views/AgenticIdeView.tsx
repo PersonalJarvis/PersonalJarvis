@@ -18,6 +18,7 @@ import { KEEP_CHECKOUT, prepareGit, type GitPlan } from "@/lib/gitApi";
 import { SplitRightIcon, SplitBelowIcon, SplitLeftIcon, SplitAboveIcon } from "@/components/agentic/splitIcons";
 import type { PaneSplitDirection } from "@/components/agentic/WorkspaceTerminalHeader";
 import { cn } from "@/lib/utils";
+import { BrandedSelect } from "@/components/ui/select";
 import { useEventStore } from "@/store/events";
 import { useIdeChatStore } from "@/store/ideChat";
 import { useIdeProjectsStore } from "@/store/ideProjects";
@@ -519,14 +520,15 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
           return <div className="mb-4 space-y-2.5 rounded-xl border border-border bg-muted/40 p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-xs font-medium text-foreground">Where should it open?</span>
-              <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                Next to
-                <select aria-label="Split next to" value={splitAnchor} disabled={busy} onChange={(event) => setSplitAnchor(event.target.value)}
-                  className="h-7 rounded-md border border-input bg-background px-2 text-xs font-medium text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
-                  {session.terminals.map((terminal) => <option key={terminal.name} value={terminal.name}>{terminal.name} · {terminal.display_name}</option>)}
-                  <option value="">Automatic even grid</option>
-                </select>
-              </label>
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <span>Next to</span>
+                <BrandedSelect ariaLabel="Split next to" value={splitAnchor} disabled={busy} onValueChange={setSplitAnchor}
+                  className="h-7 w-auto min-w-[11rem] px-2 py-1 text-xs font-medium"
+                  options={[
+                    ...session.terminals.map((terminal) => ({ value: terminal.name, label: `${terminal.name} · ${terminal.display_name}` })),
+                    { value: "", label: "Automatic even grid" },
+                  ]} />
+              </div>
             </div>
             {anchorTerminal ? <div className="grid grid-cols-4 gap-2" role="radiogroup" aria-label="Split direction">
               {SPLIT_DIRECTIONS.map((item) => {

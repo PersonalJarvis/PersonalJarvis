@@ -538,11 +538,9 @@
     "recent": "Recent",
     "pin_chat": "Pin chat",
     "unpin_chat": "Unpin chat",
-
     "jarvis_tools": "Jarvis Tools",
     "scheduled": "Scheduled",
     "more": "More",
-
     "instance_dev_hint": "Dev instance — a second, freely restartable copy of the app with its own data, ports and icon. The regular app keeps running beside it.",
     "surface_voice": "Voice",
     "surface_chat": "Chat",
@@ -4999,9 +4997,22 @@
   },
   "society": {
     "groups": {
-      "create": "New agent team", "edit": "Edit agent team", "description": "Bundle agents in one sidebar entry. Each agent keeps its own conversation.",
-      "name": "Team name", "members": "Members", "cancel": "Cancel", "save": "Save team", "delete": "Ungroup", "delete_confirm": "Ungroup these agents? Their individual chats will remain.",
-      "left_chat": "Left chat", "right_chat": "Right chat", "open": "Open", "open_individual": "Open {0}'s individual chat", "missing_member": "Select an available agent to view this chat.", "hold_to_group": "Hold to group", "release_to_group": "Release to group"
+      "create": "New agent team",
+      "edit": "Edit agent team",
+      "description": "Bundle agents in one sidebar entry. Each agent keeps its own conversation.",
+      "name": "Team name",
+      "members": "Members",
+      "cancel": "Cancel",
+      "save": "Save team",
+      "delete": "Ungroup",
+      "delete_confirm": "Ungroup these agents? Their individual chats will remain.",
+      "left_chat": "Left chat",
+      "right_chat": "Right chat",
+      "open": "Open",
+      "open_individual": "Open {0}'s individual chat",
+      "missing_member": "Select an available agent to view this chat.",
+      "hold_to_group": "Hold to group",
+      "release_to_group": "Release to group"
     },
     "chat": {
       "placeholder": "Message {0}",
@@ -5514,6 +5525,7 @@
     "unanswered": "Not answered — the turn ended."
   },
   "work_trace": {
+    "tool_failed": "A tool action failed",
     "question": "Waiting for your answer",
     "integration_used": "Used {service}",
     "activity_command": "Ran commands",

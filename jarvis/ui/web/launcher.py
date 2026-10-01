@@ -1149,7 +1149,7 @@ def _holder_alive(pid: int) -> bool:
         return True
     try:
         return psutil.Process(int(pid)).status() != psutil.STATUS_ZOMBIE
-    except psutil.NoSuchProcess:
+    except psutil.NoSuchProcess:  # the recorded owner is gone: the answer is "not alive"
         return False
     except Exception:  # noqa: BLE001 — AccessDenied and friends: it exists
         return True

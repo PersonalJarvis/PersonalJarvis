@@ -538,11 +538,9 @@
     "recent": "Recientes",
     "pin_chat": "Fijar chat",
     "unpin_chat": "Desfijar chat",
-
     "jarvis_tools": "Herramientas Jarvis",
     "scheduled": "Programado",
     "more": "Más",
-
     "instance_dev_hint": "Instancia de desarrollo: una segunda copia de la app que puedes reiniciar libremente, con sus propios datos, puertos e icono. La app normal sigue funcionando al lado.",
     "surface_voice": "Voz",
     "surface_chat": "Chat",
@@ -1411,7 +1409,17 @@
     "title": "Run Inspector",
     "subtitle": "Análisis para desarrolladores por run: entorno, decisiones, latencia, E/S de herramientas y el flujo bruto de eventos.",
     "empty": "Selecciona un run para analizar.",
+    "empty_hint": "Selecciona un run a la izquierda para ver sus turnos, decisiones, latencia y eventos sin procesar.",
+    "empty_title": "Aún no hay runs registrados",
+    "empty_body": "Cada sesión de voz o chat aparece aqué con su registro completo de análisis.",
     "unavailable": "El grabador de runs está desactivado.",
+    "unavailable_body": "Activa el grabador de runs en Ajustes para registrar lo que hizo cada sesión.",
+    "search": "Buscar runs…",
+    "no_matches": "Ningún run coincide con esta búsqueda.",
+    "no_turns": "Este run no contiene ningún turno completado.",
+    "loading": "Cargando runs…",
+    "back": "Volver",
+    "latency": "latencia",
     "export_raw": "Exportar bruto (JSON)",
     "full_transcript": "Conversación completa",
     "deep_dive": "Métricas y análisis",
@@ -1426,6 +1434,27 @@
       "tools": "Herramientas",
       "errors": "Errores",
       "events": "Eventos"
+    },
+    "tab": {
+      "turns": "Turnos",
+      "environment": "Entorno",
+      "metrics": "Métricas",
+      "errors": "Errores",
+      "session_events": "Eventos de sesión"
+    },
+    "errors": {
+      "empty": "No se registraron errores."
+    },
+    "metrics": {
+      "think": "Pensar",
+      "speak": "Hablar",
+      "tokens_in": "Tokens de entrada",
+      "tokens_out": "Tokens de salida",
+      "interruptions": "Interrupciones",
+      "worst_latency": "Latencia máxima",
+      "cost_by_provider": "Coste por proveedor",
+      "recorded_events": "Eventos registrados",
+      "tool_usage": "Uso de herramientas"
     },
     "environment": "Entorno del run",
     "session_events": "Eventos a nivel de sesión",
@@ -1456,7 +1485,9 @@
       "cache_hit": "acierto",
       "cache_miss": "fallo",
       "interrupted": "interrumpido",
-      "context": "contexto"
+      "context": "contexto",
+      "turns": "turnos",
+      "tokens": "tokens"
     },
     "env": {
       "mode": "Modo",
@@ -4966,9 +4997,22 @@
   },
   "society": {
     "groups": {
-      "create": "Nuevo equipo de agentes", "edit": "Editar equipo de agentes", "description": "Agrupa agentes en una entrada lateral. Cada agente conserva su propio chat.",
-      "name": "Nombre del equipo", "members": "Miembros", "cancel": "Cancelar", "save": "Guardar equipo", "delete": "Desagrupar", "delete_confirm": "¿Desagrupar estos agentes? Sus chats individuales permanecerán.",
-      "left_chat": "Chat izquierdo", "right_chat": "Chat derecho", "open": "Abrir", "open_individual": "Abrir el chat individual de {0}", "missing_member": "Selecciona un agente disponible para este chat.", "hold_to_group": "Mantén para agrupar", "release_to_group": "Suelta para agrupar"
+      "create": "Nuevo equipo de agentes",
+      "edit": "Editar equipo de agentes",
+      "description": "Agrupa agentes en una entrada lateral. Cada agente conserva su propio chat.",
+      "name": "Nombre del equipo",
+      "members": "Miembros",
+      "cancel": "Cancelar",
+      "save": "Guardar equipo",
+      "delete": "Desagrupar",
+      "delete_confirm": "¿Desagrupar estos agentes? Sus chats individuales permanecerán.",
+      "left_chat": "Chat izquierdo",
+      "right_chat": "Chat derecho",
+      "open": "Abrir",
+      "open_individual": "Abrir el chat individual de {0}",
+      "missing_member": "Selecciona un agente disponible para este chat.",
+      "hold_to_group": "Mantén para agrupar",
+      "release_to_group": "Suelta para agrupar"
     },
     "chat": {
       "placeholder": "Mensaje a {0}",
@@ -5481,6 +5525,7 @@
     "unanswered": "Sin responder: el turno terminó."
   },
   "work_trace": {
+    "tool_failed": "Falló una acción de herramienta",
     "question": "Esperando tu respuesta",
     "integration_used": "Usó {service}",
     "activity_command": "Ejecutó comandos",

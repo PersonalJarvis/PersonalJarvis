@@ -157,6 +157,21 @@ WITHHELD: Final[dict[str, str]] = {
         "editing a routine changes recurring spend; the owner does it on the "
         "routine card where the schedule is visible, not via a remote client"
     ),
+    "POST /api/society/agents/{agent_id}/routines/{task_id}/operation": (
+        "pausing, deleting or running a routine now changes recurring spend; "
+        "the owner does it on the routine card, not via a remote client"
+    ),
+    "GET /api/society/chat-groups": (
+        "group chats are the owner's own chat layout in the app; a remote "
+        "client addresses agents directly"
+    ),
+    "POST /api/society/chat-groups": "arranging the owner's group chats is app-only UI state",
+    "PATCH /api/society/chat-groups/{group_id}": (
+        "renaming or regrouping the owner's group chats is app-only UI state"
+    ),
+    "DELETE /api/society/chat-groups/{group_id}": (
+        "ungrouping the owner's chats is app-only UI state"
+    ),
 }
 
 

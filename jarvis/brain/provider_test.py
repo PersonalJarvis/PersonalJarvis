@@ -358,7 +358,7 @@ def _continuous_rejection(event: dict) -> str:
     """
     try:
         raw = json.dumps(event.get("error") or event, default=str)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # unserializable: classify as an unknown refusal
         raw = ""
     status = classify_provider_error(raw)
     if status == NO_CREDITS:

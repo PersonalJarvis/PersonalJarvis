@@ -1,5 +1,21 @@
+import { lazy, Suspense } from "react";
 import type { ThinkingStep } from "@/lib/thinkingSteps";
-import { VoiceWorkTrace } from "@/components/agentchat/VoiceWorkTrace";
+
+/**
+ * The trace renderer is code-split out of the entry chunk.
+ *
+ * The voice stage is the front page, but a trace only exists once a turn has
+ * run — and the renderer behind it (WorkTrace) carries the whole markdown
+ * stack (react-markdown, micromark, mdast/hast, remark-gfm) plus the tool and
+ * brand logo tables, over 300 KB the WebView would otherwise parse before its
+ * first paint just to show an empty greeting. `MainView` warms this chunk in its first idle slot through
+ * {@link loadTurnTrace}, so by the time a turn starts it is already resolved
+ * and renders synchronously.
+ */
+export const loadTurnTrace = () =>
+  import("@/components/agentchat/VoiceWorkTrace").then((m) => ({ default: m.VoiceWorkTrace }));
+
+const VoiceWorkTrace = lazy(loadTurnTrace);
 
 export interface TurnStepsProps {
   steps: ThinkingStep[];
@@ -38,5 +54,11 @@ export function traceWorthShowing(
 
 export function TurnSteps({ steps, live = false, durationMs, className }: TurnStepsProps) {
   if (!traceWorthShowing(steps, durationMs, live)) return null;
-  return <VoiceWorkTrace steps={steps} live={live} durationMs={durationMs} className={className} />;
+  // No placeholder while the chunk is in flight: the trace appears with its
+  // turn anyway, and an empty slot is quieter than a row that swaps shape.
+  return (
+    <Suspense fallback={null}>
+      <VoiceWorkTrace steps={steps} live={live} durationMs={durationMs} className={className} />
+    </Suspense>
+  );
 }

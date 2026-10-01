@@ -32,6 +32,7 @@ log = logging.getLogger(__name__)
 
 __all__ = [
     "SURFACE",
+    "bind_society_session",
     "ensure_session",
     "frame_assignment",
     "frame_incoming",
@@ -83,11 +84,23 @@ def ensure_session(svc: Any, cfg: Any, agent: AgentRecord) -> Any:
         ladder_key,
         normalize_permission,
         society_mode_supported,
+        stance_of,
     )
     from jarvis.agent_chat.service import resolve_runner
 
     provider, model, effort = pair_for(cfg, agent)
     runner = resolve_runner(provider, surface=SURFACE)
+    legacy_mode = ""
+    if agent.approval_mode is None:
+        legacy_mode = normalize_permission(
+            "jarvis", _CEILING_TO_MODE[str(agent.permission_ceiling)]
+        )
+        if legacy_mode not in ("plan", "read-only") and not society_mode_supported(
+            runner, "ask"
+        ):
+            raise PermissionError(
+                f"{runner} cannot provide an actionable approval for this legacy agent"
+            )
     if agent.approval_mode is not None and not society_mode_supported(
         runner, str(agent.approval_mode)
     ):
@@ -100,7 +113,7 @@ def ensure_session(svc: Any, cfg: Any, agent: AgentRecord) -> Any:
         ladder = ladder_key(SURFACE, runner)
         if agent.approval_mode is None:
             # A pre-migration row keeps the old Jarvis ladder, including Plan.
-            mode = normalize_permission("jarvis", _CEILING_TO_MODE[str(agent.permission_ceiling)])
+            mode = legacy_mode
         else:
             mode = normalize_permission(ladder, str(agent.approval_mode))
         return svc.store.create_session(
@@ -114,9 +127,41 @@ def ensure_session(svc: Any, cfg: Any, agent: AgentRecord) -> Any:
             surface=SURFACE,
             account_id=agent.account_id,
         )
-    if existing.provider != provider or (model and existing.model != model):
-        svc.store.reseat_session(session_id, provider=provider, model=model or existing.model)
+    if getattr(svc, "is_running", lambda _sid: False)(session_id):
+        # An active CLI turn still owns its provider-specific vendor session.
+        # Re-seat only after it ends so that id cannot land on another provider.
+        return existing
+    if existing.provider != provider or existing.model != model:
+        svc.store.reseat_session(session_id, provider=provider, model=model)
         existing = svc.store.get_session(session_id)
+    ladder = ladder_key(SURFACE, resolve_runner(provider, surface=SURFACE))
+    if agent.approval_mode is None:
+        # Legacy roster rows encoded their chat stance in permission_ceiling.
+        mode = legacy_mode
+    else:
+        # Current rows keep chat prompts separate from the per-tool risk ceiling.
+        mode = normalize_permission(ladder, str(agent.approval_mode))
+    override = svc.store.permission_override(session_id)
+    if not override and existing.permission_mode in ("plan", "read-only"):
+        # Older sessions recorded /plan in the control state before the
+        # separate override record existed. Preserve that explicit choice.
+        control_store = getattr(getattr(svc, "controls", None), "store", None)
+        if control_store is not None:
+            control = control_store.get(session_id)
+            if control.mode == "plan" and control.previous_permission:
+                override = existing.permission_mode
+                svc.store.set_permission_override(session_id, override)
+    if override:
+        chosen = (
+            "plan" if override in ("plan", "read-only")
+            else normalize_permission(ladder, override)
+        )
+        if chosen not in ("plan", "read-only") and not society_mode_supported(runner, chosen):
+            raise PermissionError(f"{runner} cannot provide an actionable approval for {chosen}")
+        # A narrower chat choice survives rebinding. Always ask is stricter
+        # than Ask even though both share the universal ask-first stance.
+        if stance_of(chosen) < stance_of(mode) or (chosen == "always_ask" and mode == "ask"):
+            mode = chosen
     updates: dict[str, str] = {}
     if agent.approval_mode is not None and existing.permission_mode != str(agent.approval_mode):
         updates["permission_mode"] = str(agent.approval_mode)
@@ -124,10 +169,45 @@ def ensure_session(svc: Any, cfg: Any, agent: AgentRecord) -> Any:
         updates["account_id"] = agent.account_id
     if effort and existing.effort != effort:
         updates["effort"] = effort
+    if existing.permission_mode != mode:
+        updates["permission_mode"] = mode
+    if existing.title != agent.name:
+        updates["title"] = agent.name
+    workspace = _workspace(cfg, agent)
+    if existing.cwd != workspace:
+        updates["cwd"] = workspace
     if updates:
         svc.store.update_session(session_id, **updates)
         existing = svc.store.get_session(session_id)
     return existing
+
+
+async def bind_society_session(svc: Any, session_id: str, *, routine_run: bool = False) -> Any:
+    """Apply the live roster ceiling before a Society session is used."""
+    from jarvis.agent_chat.service import SessionBusy
+
+    from .runtime import current_runtime
+
+    if svc.is_running(session_id):
+        raise SessionBusy(session_id)
+    runtime = current_runtime()
+    agent_id = session_id.removeprefix("society:").split(":routine:", 1)[0]
+    agent = await runtime.roster.get(agent_id) if runtime is not None else None
+    session = svc.store.get_session(session_id)
+    if agent is None or session is None or session.surface != SURFACE:
+        raise PermissionError("Society agent is unavailable")
+    inactive = str(agent.state) != "active" or await runtime.store.kill_switch()
+    if session_id.startswith(f"{agent.session_id}:routine:"):
+        if not routine_run or inactive:
+            raise PermissionError("Routine chat requires an active scheduled run")
+        # Each scheduled run has its own explicitly pinned seat and permission
+        # contract. The internal caller has revalidated its live owner.
+        return session
+    if agent.session_id != session_id:
+        raise PermissionError("Society agent is unavailable")
+    if inactive:
+        raise PermissionError("Society agent is paused or disabled")
+    return ensure_session(svc, runtime.config(), agent)
 
 
 def frame_incoming(env: SocietyEnvelope, sender_name: str) -> str:

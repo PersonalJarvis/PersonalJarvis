@@ -1913,6 +1913,16 @@ class SessionError(RuntimeError):
     """A request the registry refuses, with a user-facing English message."""
 
 
+class WorkspaceFull(SessionError):
+    """The refusal is the pane cap (``MAX_TERMINALS``), not anything else.
+
+    Its own type because callers answer it differently from every other
+    refusal — the voice path says "the workspace is full" in the turn's
+    language instead of reading the English sentence out — and matching on
+    the message's wording broke the moment a message was reworded.
+    """
+
+
 class SessionNotReady(SessionError):
     """The addressed workspace is not open — not "not here", but "not yet".
 
@@ -4837,6 +4847,7 @@ class Registry:
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
+            # No event loop (shutdown or sync caller): skip the repaint check.
             return
         # One check per pane: a dragged seam resizes many times a second, and
         # only the newest size's repaint is worth waiting for. An older check is
@@ -5296,7 +5307,7 @@ class Registry:
             if session is None:
                 raise SessionError("No Agentic-IDE session is running.")
             if len(session.terminals) >= MAX_TERMINALS:
-                raise SessionError(
+                raise WorkspaceFull(
                     f"This workspace already has the maximum of {MAX_TERMINALS} terminals."
                 )
             if direction not in ("right", "down", "left", "up", "above", "below"):
@@ -5967,7 +5978,7 @@ class Registry:
         # Checked before a worktree is created, so a full workspace does not
         # leave an orphaned branch behind.
         if len(session.terminals) >= MAX_TERMINALS:
-            raise SessionError(
+            raise WorkspaceFull(
                 f"This workspace already has the maximum of {MAX_TERMINALS} terminals."
             )
         folder = ""
@@ -6034,7 +6045,7 @@ class Registry:
             raise SessionError("No Agentic-IDE session is running.")
         wanted = max(1, int(count))
         if len(selected.terminals) + wanted > MAX_TERMINALS:
-            raise SessionError(f"A workspace can contain at most {MAX_TERMINALS} terminals.")
+            raise WorkspaceFull(f"A workspace can contain at most {MAX_TERMINALS} terminals.")
         created: list[Terminal] = []
         for _ in range(wanted):
             try:
@@ -7438,6 +7449,7 @@ __all__ = [
     "SessionError",
     "SessionNotReady",
     "Terminal",
+    "WorkspaceFull",
     "accepts_prompts",
     "agent_argv",
     "agent_display",
