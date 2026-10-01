@@ -13,22 +13,37 @@ longer work, and bring the result back to one workspace.
   <a href="https://github.com/PersonalJarvis/PersonalJarvis/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/PersonalJarvis/PersonalJarvis/actions/workflows/ci.yml/badge.svg" /></a>
 </p>
 
+## See it in action
+
+https://github.com/user-attachments/assets/9930ca95-5015-4ade-9a16-975c77d179fd
+
+<p align="center"><sub>A real click-through of the app: every frame is recorded, waiting is sped up, and a few moments are zoomed in.</sub></p>
+
+Want to try Personal Jarvis later? **Star this repository** to keep it handy.
+
 ![Flow from a user request through Jarvis to the computer, browser, apps, agents, models, and services, then back as a result with run history.](https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/brand/request-to-result.svg)
 
 **Why it is different:** Jarvis coordinates the tools you already have. A request
-can move from voice or chat to [computer use](#computer-use-and-connected-channels),
-[Codex or Claude Code](#coding-workspace), [local or hosted models](#local-models),
-[plugins and MCP](#plugins-skills-and-mcp), or a [background agent](#jarvis-agents).
-[Memory](#memory-and-knowledge), [agent learning](#jarvis-agents), and
-[routines](#scheduled-work-and-workflows) provide context and recurring work.
+can move from voice or chat to [computer use](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/computer-use.md),
+[Codex or Claude Code](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/agentic-ide.md), [local or hosted models](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/personalize-and-connect/local-ai-providers.md),
+[plugins and MCP](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/plugins.md), or a [background agent](#jarvis-agents).
+[Memory](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/knowledge-and-sharing/wiki-and-memory.md), [agent learning](#jarvis-agents), and
+[routines](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/everyday-use/automations.md) provide context and recurring work.
 You can inspect actions, approvals, and output in the app. What runs depends on
 your setup, permissions, and the tools you connect.
 
 **Try it:** [Install on Windows, macOS, or Linux](#install) ·
-[See the agents at work](#jarvis-agents) ·
-[Read the first-run guide](#your-first-steps-in-the-desktop-app)
+[Watch the real demo](#see-it-in-action) ·
+[Read the first-run guide](#first-steps)
 
 ## Install
+
+**Desktop downloads:** [Windows](https://github.com/PersonalJarvis/PersonalJarvis/releases/latest/download/PersonalJarvis-Setup-x64.exe) ·
+[macOS (Apple Silicon)](https://github.com/PersonalJarvis/PersonalJarvis/releases/latest/download/PersonalJarvis-macOS-arm64.dmg) ·
+[macOS (Intel)](https://github.com/PersonalJarvis/PersonalJarvis/releases/latest/download/PersonalJarvis-macOS-x64.dmg) ·
+[Linux AppImage](https://github.com/PersonalJarvis/PersonalJarvis/releases/latest/download/PersonalJarvis-Linux-x86_64.AppImage)
+
+Prefer the command line? Use the installer below.
 
 **Windows — PowerShell**
 
@@ -75,10 +90,6 @@ receive the content required for their requests. See [privacy and local data](ht
 ## Start with chat or voice
 
 [Website](https://personaljarvis.ai) · [Docs](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/start-here/welcome-to-personal-jarvis.md) · [Getting started](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/start-here/first-run-setup.md) · [How it works](#how-it-works) · [Discord](https://discord.gg/x7USduHxbc) · [X](https://x.com/PersonalJarvis)
-
-https://github.com/user-attachments/assets/9930ca95-5015-4ade-9a16-975c77d179fd
-
-<p align="center"><sub>A real click-through of the app: every frame is recorded, waiting is sped up, and a few moments are zoomed in.</sub></p>
 
 ## Jarvis Agents
 
@@ -141,7 +152,7 @@ idle is not proof that its result is correct; inspect its changes and validation
 You can also send one brief to several coding panes, with a delivery result for
 each pane. This is the coding workspace's parallel-agent path.
 
-If Personal Jarvis is useful to you, a star helps other people find it. Sponsors are listed in [SPONSORS.md](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/SPONSORS.md).
+Sponsors are listed in [SPONSORS.md](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/SPONSORS.md).
 
 <!-- contributors:start -->
 
