@@ -335,6 +335,30 @@ def _reset_entry_point_cache():
     invalidate()
 
 
+@pytest.fixture(autouse=True)
+def _reset_permission_service():
+    """Start and end every test with a cold permission service.
+
+    ``jarvis.platform.permission_service`` keeps open episodes, listeners and a
+    bus handle for the life of the process. That is right in production and wrong
+    across tests: an episode one test opened would answer the next test's
+    ``ensure()`` with ``asked=False``, and a listener would outlive the loop it
+    was registered on.
+
+    The module is looked up in ``sys.modules`` and never imported here: a test
+    that never touched the service must not pay for it (or load it on a base
+    install), and a module that is not loaded has nothing to reset.
+    """
+    module = sys.modules.get("jarvis.platform.permission_service")
+    if module is not None:
+        module._reset_for_tests()
+    yield
+    # Re-read: the test itself may have been the first to import the module.
+    module = sys.modules.get("jarvis.platform.permission_service")
+    if module is not None:
+        module._reset_for_tests()
+
+
 @pytest_asyncio.fixture
 async def fresh_bus():
     """Fresh EventBus for each test."""
