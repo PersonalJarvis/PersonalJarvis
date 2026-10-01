@@ -203,6 +203,23 @@ describe("Agentic IDE project flow", () => {
     expect(api.reorderIdeTerminals).not.toHaveBeenCalled();
   });
 
+  it("Ctrl+B, X, then an arrow opens Codex beside the selected pane", async () => {
+    const terminals = [{ key: "t1", history_id: "id1", name: "T1", display_name: "Codex" }, { key: "t2", history_id: "id2", name: "T2", display_name: "Codex" }];
+    const session = { id: "w1", project_id: "p1", folder: "/code/app", name: "App work", created_at: 0,
+      focus_mode: false, project: { name: "App" }, terminals, layout: balancedLayout(["t1", "t2"]) };
+    api.fetchIdeState.mockResolvedValue({ ...emptyState, active: true, active_id: "w1", session });
+    api.fetchIdeProjects.mockResolvedValue({ projects: [project], active_workspace_id: "w1" });
+    api.addTerminal.mockResolvedValue(session);
+    render(<AgenticIdeView />);
+    await screen.findByRole("button", { name: "Pane add" });
+    await waitFor(() => expect(api.fetchIdeAgents).toHaveBeenCalled());
+    fireEvent.keyDown(document.body, { key: "b", code: "KeyB", ctrlKey: true });
+    expect(await screen.findByRole("dialog", { name: "IDE shortcuts" })).toBeTruthy();
+    fireEvent.keyDown(document.body, { key: "x", code: "KeyX" });
+    fireEvent.keyDown(document.body, { key: "ArrowRight", code: "ArrowRight" });
+    await waitFor(() => expect(api.addTerminal).toHaveBeenCalledWith({ workspace_id: "w1", agent: "codex", anchor: "T1", direction: "right" }, { onMessage: expect.any(Function) }));
+  });
+
   it("shows the pane count and refuses a new agent once the workspace is full", async () => {
     const terminals = Array.from({ length: 16 }, (_, index) => ({ key: `t${index}`, history_id: `id${index}`, name: `T${index}`, display_name: "Codex" }));
     const session = { id: "w1", project_id: "p1", folder: "/code/app", name: "App work", created_at: 0,

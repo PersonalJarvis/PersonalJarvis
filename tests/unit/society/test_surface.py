@@ -12,7 +12,7 @@ from jarvis.agent_chat.approval_bridge import ChatApprovalBridge, ChatGrant, app
 from jarvis.core.bus import EventBus
 from jarvis.core.config import SafetyConfig
 from jarvis.core.protocols import ToolResult
-from jarvis.core.response_style import KEEP_GOING_ON_TOOL_FAILURE
+from jarvis.core.response_style import KEEP_GOING_ON_TOOL_FAILURE, TASK_EXECUTION_GUIDANCE
 from jarvis.safety.approval import ApprovalWorkflow
 from jarvis.safety.risk_tier import RiskTierEvaluator
 from jarvis.safety.tool_executor import ToolExecutor
@@ -62,6 +62,19 @@ async def rt(tmp_path: Path):
         yield runtime
     finally:
         await runtime.close()
+
+
+async def test_task_execution_contract_survives_long_memory_and_compact_transport(rt):
+    from jarvis.agent_chat.jarvis_harness import SYSTEM_PREAMBLE, compact_identity
+
+    agent, _ = await rt.roster.create(name="Task owner", description="Complete assigned work.")
+    briefing = build_briefing(
+        agent, [], [], memory="## Your memory\n" + "Historical fact.\n" * 4000
+    )
+    compact = compact_identity(briefing + "\n\n" + SYSTEM_PREAMBLE)
+    assert TASK_EXECUTION_GUIDANCE in compact
+    assert KEEP_GOING_ON_TOOL_FAILURE in compact
+    assert len(compact) <= 16000
 
 
 def test_agent_id_of():
