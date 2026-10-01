@@ -3490,7 +3490,7 @@ class SpeechPipeline:
         configured = getattr(getattr(getattr(self, "_config", None), "tts", None), "volume", None)
         try:
             return max(0.0, min(1.0, float(configured))) if configured is not None else 1.0
-        except (TypeError, ValueError):
+        except (TypeError, ValueError):  # Invalid legacy volume values use the audible default.
             return 1.0
 
     def set_audio_devices(

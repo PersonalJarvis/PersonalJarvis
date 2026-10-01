@@ -1027,7 +1027,7 @@ def clamp_pet_scale(value: object) -> float:
     """
     try:
         f = float(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # Invalid saved pet scales use the documented 1.0 default.
         return 1.0
     if f != f or f in (float("inf"), float("-inf")):  # NaN / ±inf
         return 1.0

@@ -113,6 +113,71 @@ describe("terminal prompt selection", () => {
     expect(pane.sent).toEqual(["\x7f".repeat(11)]);
   });
 
+  describe("a draft the CLI wraps into indented rows itself", () => {
+    // Claude Code's layout, measured in a 40-column PTY: separate (not
+    // `isWrapped`) rows indented to the marker width, the space at each break
+    // undrawn yet still one arrow press away.
+    const words = Array.from({ length: 24 }, (_, i) => `w${String(i + 1).padStart(2, "0")}`);
+    const draft = words.join(" ");
+    const box = (below = "─".repeat(40)) => [
+      "─".repeat(40),
+      `❯ ${words.slice(0, 9).join(" ")}`,
+      `  ${words.slice(9, 18).join(" ")}`,
+      `  ${words.slice(18).join(" ")}`,
+      below,
+    ].join("\r\n");
+    const at = (word: string) => draft.indexOf(word);
+
+    it("deletes a selection spanning rows with one Backspace", async () => {
+      const pane = await setup(`${box()}\x1b[4;26H`);
+      pane.select(18, 21, 1, 2); // from "w05" through "w14"
+      pane.press("Backspace");
+      const end = at("w14") + 3;
+      expect(pane.sent).toEqual([
+        "\x1b[D".repeat(draft.length - end) + "\x7f".repeat(end - at("w05")),
+      ]);
+    });
+
+    it("selects the whole wrapped draft with select-all", async () => {
+      const pane = await setup(`${box()}\x1b[4;26H`);
+      pane.press("a", { ctrlKey: true });
+      expect(pane.selection()).toEqual({ start: { x: 2, y: 1 }, end: { x: 25, y: 3 } });
+      pane.press("Delete");
+      expect(pane.sent).toEqual(["\x7f".repeat(draft.length)]);
+    });
+
+    it("snaps a drag from a row's indent to its first letter", async () => {
+      const pane = await setup(`${box()}\x1b[4;26H`);
+      pane.select(0, 25, 2, 3); // indent of the second row to the end
+      pane.press("Backspace");
+      expect(pane.sent).toEqual(["\x7f".repeat(draft.length - at("w10"))]);
+    });
+
+    it("edits rows below the caret when the editor box closes under them", async () => {
+      const pane = await setup(`${box()}\x1b[2;11H`); // caret before "w03"
+      pane.select(2, 5, 3); // "w19"
+      pane.press("Delete");
+      const caret = at("w03");
+      expect(pane.sent).toEqual([
+        "\x1b[C".repeat(at("w19") + 3 - caret) + "\x7f".repeat(3),
+      ]);
+    });
+
+    it("never treats indented rows under the caret as draft unless the box closes", async () => {
+      const pane = await setup(`${box("  footer hint\r\nstatus: ready")}\x1b[2;11H`);
+      pane.select(2, 5, 3);
+      pane.press("Delete");
+      expect(pane.sent).toEqual([]);
+    });
+
+    it("never joins indented output that is not anchored to the marker row", async () => {
+      const pane = await setup("earlier output\r\n  indented result\r\n  more result");
+      pane.select(2, 10, 2);
+      pane.press("Backspace");
+      expect(pane.sent).toEqual([]);
+    });
+  });
+
   it("handles select-all ending at the last terminal column", async () => {
     const pane = await setup("› abcdefgh", false, 10);
     pane.press("a", { ctrlKey: true });

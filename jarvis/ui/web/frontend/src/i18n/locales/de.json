@@ -5851,7 +5851,10 @@
         "done": "Fertig",
         "idle": "Im Leerlauf"
       }
-    }
+    },
+    "add_terminal": "Plain Terminal",
+    "terminal_label": "Terminal",
+    "terminal_workspace_required": "Wähle einen Workspace, um ein Terminal zu öffnen."
   },
   "jarvis_actions": {
     "title": "Jarvis-Aktionen",

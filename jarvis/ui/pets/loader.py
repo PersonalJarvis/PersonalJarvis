@@ -231,7 +231,7 @@ def list_custom(root: Path) -> list[PetManifest]:
     root = Path(root)
     try:
         folders = [p for p in root.iterdir() if p.is_dir() and USER_ID_RE.match(p.name)]
-    except FileNotFoundError:
+    except FileNotFoundError:  # A fresh install has no user-created pets directory yet.
         return []
     except OSError as exc:
         _log.warning("pets folder %s is unreadable: %s", root, exc)

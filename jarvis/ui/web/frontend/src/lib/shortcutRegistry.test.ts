@@ -127,7 +127,7 @@ describe("the IDE key menu chord", () => {
         (s) => s.labelKey === "shortcut_overlay.workspace.ide_menu",
       ) as FixedShortcut;
       expect(entry.keys).toEqual(["Ctrl", "B"]);
-      expect(keyLabel(entry.keys[0], isMac)).toBe("Ctrl");
+      expect(keyLabel(entry.keys[0], isMac)).toBe(isMac ? "⌃" : "Ctrl");
       expect(isLeaderChord({ key: "b", code: "KeyB", ctrlKey: true, metaKey: false, altKey: false, shiftKey: false })).toBe(true);
     });
   }

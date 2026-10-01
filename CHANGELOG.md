@@ -9,27 +9,29 @@ versioning per [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
----
-
-## [2.5.0] — 2026-10-01
-
 ### Added
 
-- Quick switcher with a configurable keyboard shortcut and faster section navigation.
-- Move coding terminals between workspaces without restarting the agent.
+- Desktop pets with six built-in characters, animated reactions, a compact control strip, and configurable appearance and size.
+- A redesigned profile page and a dedicated Keyboard Shortcuts page in Settings.
+- Quick section switching, an Agentic IDE key menu, and multiple workspace shell tabs.
+- Move running coding terminals between workspaces in the same folder without restarting the agent.
 - Remote agents retain approved Jarvis tools through scoped SSH forwarding.
 
 ### Changed
 
+- First-run guidance helps users connect an agent subscription and configure their wake phrase.
+- Agents continue requested work, recover incomplete tool steps, and use question cards when essential information is missing.
 - Background learning and wiki work use the connected agent seat and respect subscription billing boundaries.
-- Remove default scheduled work and retain user-edited skills during migration.
-- Integrate local desktop updates with the latest published installation and permission fixes.
+- Provider health indicators read actual call outcomes without sending paid test requests.
+- Built-in routines no longer start scheduled work without the user's setup; edited skills are preserved during migration.
 
 ### Fixed
 
-- Improve dictation delivery, retained terminal rendering, and delegation result routing.
-- Require release tags for publishing and reject superseded CI successes during release admission.
-- Require explicit opt-in for live realtime integration calls and keep shell scripts portable across checkouts.
+- Native application updates and restarts preserve the installation and return the app to the desktop.
+- Dictation delivery, retained terminal rendering, and delegated result reporting are more reliable.
+- Stricter per-chat approval settings survive changes to agent defaults.
+- Release publishing requires a tag and the newest successful CI result; version bumps keep the dependency lock consistent.
+- Cancelled CI runs release their queued aggregation work, and live realtime tests require explicit opt-in.
 
 ---
 

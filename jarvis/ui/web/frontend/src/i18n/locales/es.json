@@ -5851,7 +5851,10 @@
         "done": "Listo",
         "idle": "Inactivo"
       }
-    }
+    },
+    "add_terminal": "Plain Terminal",
+    "terminal_label": "Terminal",
+    "terminal_workspace_required": "Selecciona un espacio de trabajo para abrir una terminal."
   },
   "jarvis_actions": {
     "title": "Acciones de Jarvis",

@@ -21,6 +21,19 @@ TASK_EXECUTION_GUIDANCE = (
     "path remains. If blocked, preserve completed work and state exactly what is unfinished."
 )
 
+AGENT_QUESTION_GUIDANCE = (
+    "Execute clear requests now. Choose sensible reversible implementation details yourself. "
+    "Do not finish with a proposal, 'I can do that', 'if you want', or a request to confirm "
+    "work the user already requested. Progress updates describe work actually in progress; "
+    "they are not the final result. When essential information really cannot be discovered "
+    "or inferred, call society_ask_user and let the person answer in its question card. "
+    "Do not put a blocking question only in your final chat reply. Wait for the card's "
+    "answer, then continue the original task in the same turn without asking the user to "
+    "start you again. A waiting result is not completion. Clarification choices do not "
+    "grant extra permissions. If the user explicitly requested ideas, advice or a plan, "
+    "provide that requested output without executing an unrequested change."
+)
+
 KEEP_GOING_ON_TOOL_FAILURE = (
     "A technical tool failure is not the end of the task. Read the result, inspect the "
     "current tools and try a meaningfully different supported path when permitted. "

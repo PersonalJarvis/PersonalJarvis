@@ -146,7 +146,7 @@ def _clamp_pet_scale(value: object) -> float:
 
     try:
         scale = float(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # Invalid saved pet scales keep the normal-sized overlay.
         return 1.0
     if not math.isfinite(scale):
         return 1.0

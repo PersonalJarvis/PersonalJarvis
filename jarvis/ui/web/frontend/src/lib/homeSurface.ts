@@ -1,21 +1,23 @@
 /**
- * Which surface the front page ("chats" section) shows: the voice stage with
- * the Jarvis bar, or the typed chat.
+ * Which mode the front page ("chats" section) is in: the typed chat, or the
+ * chat's voice mode (the live transcript with the Jarvis bar).
  *
- * The two are one section with one switch at the top of the sidebar
- * (maintainer sketch, 2026-08-23) — `Voice | Chat` — not two sections: both
- * talk to the same assistant and share one history. Voice is the default;
- * it is what the product is for, and the typed chat is one click away.
+ * Since 2026-10-01 the front page is ONE chat (maintainer: "no more Voice and
+ * a normal chat — only a normal chat, with a button that turns voice mode
+ * on"). Chat is the default; the voice mode is entered from the chat's top
+ * bar or the assistant card and left the same way.
  *
- * Persisted in localStorage so the choice survives a reload and a rebuild.
- * A broken or absent value falls back to voice: a corrupted preference must
+ * Persisted in localStorage so a reload in the middle of a call stays in
+ * voice mode. The key moved to v2 with the redesign so every install opens
+ * on the chat once, whatever the old `Voice | Chat` switch last said. A
+ * broken or absent value falls back to chat: a corrupted preference must
  * land somewhere usable, never on a blank screen.
  */
 
 export type HomeSurface = "voice" | "chat";
 
-const STORAGE_KEY = "jarvis.home.surface.v1";
-const DEFAULT_SURFACE: HomeSurface = "voice";
+const STORAGE_KEY = "jarvis.home.surface.v2";
+const DEFAULT_SURFACE: HomeSurface = "chat";
 
 export function isHomeSurface(value: unknown): value is HomeSurface {
   return value === "voice" || value === "chat";

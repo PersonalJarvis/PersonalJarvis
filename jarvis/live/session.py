@@ -34,7 +34,7 @@ def _summary_index(event: dict) -> int:
     """The summary part a reasoning-summary event belongs to (0 when absent)."""
     try:
         return max(0, int(event.get("summary_index") or 0))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # Malformed optional indexes use the first summary part.
         return 0
 
 

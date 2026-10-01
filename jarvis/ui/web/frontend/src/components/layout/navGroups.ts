@@ -51,19 +51,17 @@ export function resolveNavLabel(t: (key: string) => string, item: NavItem): stri
 }
 
 /**
- * The front page is ONE section ("chats") with two faces — the voice stage
- * and the typed chat — picked by the `Voice | Chat` switch at the top of the
- * sidebar. Its nav row says which face it currently is: Mic + "Voice" or
- * bubble + "Chat", the same two words the switch uses. A fixed "Chats" label
- * under a switch that says "Voice" read as a contradiction (maintainer,
- * 2026-08-23). Every other row passes through unchanged. Pure, so the
- * sidebar and the rail present the row identically.
+ * The front page is ONE section ("chats"): a chat with a voice mode inside it
+ * (2026-10-01; before that, a `Voice | Chat` switch picked between two faces
+ * and this row was renamed after the face). The row is "Chat" whatever mode
+ * the chat is in — voice mode is a state of the chat, not another place.
+ * Every other row passes through unchanged. Pure, so the sidebar and the
+ * rail present the row identically; the surface argument stays so callers
+ * need not change.
  */
-export function presentNavItem(item: NavItem, surface: HomeSurface): NavItem {
+export function presentNavItem(item: NavItem, _surface?: HomeSurface): NavItem {
   if (item.id !== "chats") return item;
-  return surface === "voice"
-    ? { ...item, labelKey: "sidebar.surface_voice", icon: Mic, fallbackLabel: "Voice" }
-    : { ...item, labelKey: "sidebar.surface_chat", icon: MessageSquare, fallbackLabel: "Chat" };
+  return { ...item, labelKey: "sidebar.surface_chat", icon: MessageSquare, fallbackLabel: "Chat" };
 }
 
 export interface NavItem {

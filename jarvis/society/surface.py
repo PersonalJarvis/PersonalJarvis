@@ -27,6 +27,7 @@ from typing import Any, Final, cast
 
 from jarvis.core.protocols import Tool, ToolResult
 from jarvis.core.response_style import (
+    AGENT_QUESTION_GUIDANCE,
     CONVERSATIONAL_RESPONSE_STYLE,
     KEEP_GOING_ON_TOOL_FAILURE,
     TASK_EXECUTION_GUIDANCE,
@@ -769,6 +770,7 @@ def build_briefing(
     # keep-going rule before potentially long standing instructions so compact
     # CLI identities retain them (a cancelled tool must not end the task).
     parts.append("## Completing the user's task\n" + TASK_EXECUTION_GUIDANCE)
+    parts.append("## Acting and asking\n" + AGENT_QUESTION_GUIDANCE)
     parts.append("## How to reply to the person\n" + CONVERSATIONAL_RESPONSE_STYLE)
     parts.append("## When a tool fails\n" + KEEP_GOING_ON_TOOL_FAILURE)
     if agent.description.strip():

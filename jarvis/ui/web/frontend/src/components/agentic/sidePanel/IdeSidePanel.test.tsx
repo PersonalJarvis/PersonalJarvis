@@ -1,4 +1,5 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { useIdeChatStore } from "@/store/ideChat";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IdeSidePanelFrame } from "./IdeSidePanel";
 import { IdeSidePanelToggle } from "./IdeSidePanelToggle";
@@ -6,6 +7,12 @@ import { useEventStore } from "@/store/events";
 import { useIdeProjectsStore } from "@/store/ideProjects";
 import { useIdeSidePanelStore } from "@/store/ideSidePanel";
 import { resetWorkspacePanesPoll, useWorkspacePanesStore } from "@/store/workspacePanes";
+
+vi.mock("@/components/workspace/WorkspaceTerminal", () => ({
+  WorkspaceTerminal: ({ paneKey, workspaceId, active }: { paneKey: string; workspaceId: string; active: boolean }) => (
+    <div data-testid={`shell-${paneKey}`} data-workspace={workspaceId} data-active={String(active)} />
+  ),
+}));
 
 // The real stage is a WebGL scene; the tab only owes it the right props and a place to live.
 vi.mock("@/components/society/office/OfficeStage", () => ({
@@ -33,12 +40,69 @@ beforeEach(() => {
   useWorkspacePanesStore.setState({ panes: [], activeId: null, loaded: true, load: async () => {} });
   useIdeProjectsStore.setState({ activeWorkspaceId: null });
   useEventStore.setState({ activeSection: "agentic-ide" });
-  useIdeSidePanelStore.setState({ open: false, tabs: ["agents"], active: "agents", maximized: false, inUse: false });
+  useIdeSidePanelStore.setState({ open: false, tabs: ["agents"], active: "agents", terminals: [], maximized: false, inUse: false });
+  useIdeChatStore.setState({ workspace: { id: "w1", name: "App", path: "/code/app" } });
 });
 
 afterEach(cleanup);
 
 describe("IdeSidePanel", () => {
+  it("opens independent shell tabs and retains them through switching and collapsing", () => {
+    useIdeSidePanelStore.getState().setOpen(true);
+    render(<Harness />);
+    const add = () => {
+      fireEvent.click(screen.getByTestId("ide-side-panel-add"));
+      fireEvent.click(screen.getByTestId("ide-side-panel-add-terminal"));
+    };
+    add();
+    const first = useIdeSidePanelStore.getState().terminals[0];
+    const firstNode = screen.getByTestId(`shell-${first.id}`);
+    expect(firstNode.dataset.workspace).toBe("w1");
+    add();
+    const second = useIdeSidePanelStore.getState().terminals[1];
+    expect(first.id).not.toBe(second.id);
+    expect(screen.getByRole("tab", { name: "Terminal 1" })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "Terminal 2" })).toBeTruthy();
+    fireEvent.click(screen.getByTestId("ide-side-panel-tab-agents"));
+    expect(screen.getByTestId(`shell-${first.id}`)).toBe(firstNode);
+    fireEvent.click(screen.getByTestId("ide-side-panel-collapse"));
+    expect(screen.getByTestId(`shell-${first.id}`)).toBe(firstNode);
+    expect(firstNode.dataset.active).toBe("false");
+    fireEvent.click(screen.getByTestId("ide-side-panel-toggle"));
+    fireEvent.click(screen.getByTestId(`ide-side-panel-tab-${first.id}`));
+    expect(firstNode.dataset.active).toBe("true");
+    fireEvent.click(screen.getByTestId(`ide-side-panel-close-${second.id}`));
+    expect(screen.queryByTestId(`shell-${second.id}`)).toBeNull();
+    expect(screen.getByTestId(`shell-${first.id}`)).toBe(firstNode);
+    // Session-only tabs must never respawn shells on a page reload.
+    expect(localStorage.getItem("jarvis.agenticIde.sidePanelTabs.v4")).not.toContain("terminal:");
+  });
+
+  it("keeps terminals pinned to their workspace and offers another shell on every + click", () => {
+    useIdeSidePanelStore.getState().addTerminalTab("w1", "App");
+    render(<Harness />);
+    const first = useIdeSidePanelStore.getState().terminals[0];
+    const node = screen.getByTestId(`shell-${first.id}`);
+    act(() => useIdeChatStore.setState({ workspace: { id: "w2", name: "Other", path: "/code/other" } }));
+    expect(screen.queryByTestId(`ide-side-panel-tab-${first.id}`)).toBeNull();
+    expect(node.dataset.active).toBe("false");
+    fireEvent.click(screen.getByTestId("ide-side-panel-add"));
+    fireEvent.click(screen.getByTestId("ide-side-panel-add-terminal"));
+    expect(useIdeSidePanelStore.getState().terminals[1].workspaceId).toBe("w2");
+    act(() => useIdeChatStore.setState({ workspace: { id: "w1", name: "App", path: "/code/app" } }));
+    fireEvent.click(screen.getByTestId(`ide-side-panel-tab-${first.id}`));
+    expect(screen.getByTestId(`shell-${first.id}`)).toBe(node);
+    expect(node.dataset.active).toBe("true");
+  });
+
+  it("requires a workspace before starting a shell", () => {
+    useIdeSidePanelStore.getState().setOpen(true);
+    useIdeChatStore.setState({ workspace: null });
+    render(<Harness />);
+    fireEvent.click(screen.getByTestId("ide-side-panel-add"));
+    expect((screen.getByTestId("ide-side-panel-add-terminal") as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it("opens from the caption toggle and closes from its own header", () => {
     render(<Harness />);
     expect(screen.queryByTestId("ide-side-panel")).toBeNull();
