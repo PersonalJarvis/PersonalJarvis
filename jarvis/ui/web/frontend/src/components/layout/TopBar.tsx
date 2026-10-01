@@ -493,8 +493,8 @@ function UpdateButton() {
   }, [busy]);
 
   // The panel closes on a click outside it or on Escape, like every other
-  // floating layer — but never mid-update by accident: the progress lives
-  // there, and the ring on the button keeps reporting either way.
+  // floating layer — also mid-update, which is harmless: the ring on the
+  // button keeps reporting the progress either way.
   useEffect(() => {
     if (!open) return;
     const onPointerDown = (event: PointerEvent) => {
@@ -585,6 +585,8 @@ function UpdateButton() {
       const applyBody = (await applyRes.json().catch(() => ({}))) as {
         detail?: unknown;
         restart_required?: boolean;
+        quitting?: boolean;
+        handover?: string | null;
         deps_warning?: string | null;
         desktop_integration_warning?: string | null;
       };
@@ -619,6 +621,19 @@ function UpdateButton() {
       }
       if (applyBody.desktop_integration_warning) {
         pushToast("warning", t("topbar.update_desktop_warning"));
+      }
+      if (applyBody.restart_required === false && applyBody.quitting === false) {
+        // Installed, but nothing could close this app (no desktop window,
+        // e.g. a browser-only host): it keeps running the old version until
+        // the user restarts it. Say so instead of spinning forever.
+        setBusy(false);
+        setProgress(null);
+        setForceArmed(false);
+        pushToast(
+          "warning",
+          withDetail(t("topbar.update_staged_restart_failed"), applyBody.handover ?? null),
+        );
+        return;
       }
       if (applyBody.restart_required === false) {
         // A native installer took over and the server is already closing

@@ -3658,6 +3658,7 @@ class DesktopApp:
             detached_creationflags,
             fresh_user_env,
             relauncher_command,
+            restart_workdir,
             run_restart_quit_sequence,
             spawn_detached,
         )
@@ -3670,7 +3671,9 @@ class DesktopApp:
         try:
             import jarvis as _jarvis
 
-            repo_root = str(Path(_jarvis.__file__).resolve().parent.parent)
+            # The checkout on a source install; a stable per-user directory on a
+            # frozen one, whose bundle may be a mount that dies with this process.
+            repo_root = restart_workdir(str(Path(_jarvis.__file__).resolve().parent.parent))
             # ``python -m`` on a source install, the frozen executable's own
             # helper flag on a native install (which has no ``-m``).
             argv = relauncher_command(os.getpid(), repo_root, desktop_launch_args())
