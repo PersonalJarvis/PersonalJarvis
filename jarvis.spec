@@ -215,6 +215,20 @@ for pkg in _optional_hidden:
         continue
     hiddenimports.append(pkg)
 
+# macOS: the permission port loads pyobjc frameworks BY NAME
+# (``SystemPermissionPort._load("AVFoundation")``), which no static import
+# analysis can see. Without AVFoundation the frozen app read the microphone
+# permission as "unavailable" for good, so the voice gate never opened - the
+# v2.5.0 image shipped exactly like that (BUG-222). It needs the
+# ``[desktop-macos]`` extra on the build machine; a build without it is refused
+# by scripts/ci/check_frozen_macos_app.py instead of being shipped quietly.
+if sys.platform == "darwin":
+    for pkg in ("AVFoundation",):
+        try:
+            hiddenimports += collect_submodules(pkg)
+        except Exception as exc:
+            print(f"[jarvis.spec] WARNING: cannot collect {pkg}: {exc}")
+
 
 # --- Bundle-size exclusions -------------------------------------------------
 
@@ -418,6 +432,13 @@ if sys.platform == "darwin":
             "CFBundleShortVersionString": VERSION,
             "CFBundleVersion": VERSION,
             "CFBundlePackageType": "APPL",
+            # PyInstaller sets LSBackgroundOnly=True whenever the LAST executable
+            # of the COLLECT is a console one - and the `jarvis` CLI is. A
+            # background-only app gets no Dock icon, no menu bar and no windows
+            # from LaunchServices; the v2.5.0 image shipped that way. This is a
+            # windowed app (the CLI entry runs from a terminal, not through
+            # LaunchServices), so say so explicitly.
+            "LSBackgroundOnly": False,
             "LSMinimumSystemVersion": MACOS_MIN_SYSTEM_VERSION,
             "LSApplicationCategoryType": "public.app-category.productivity",
             "NSHighResolutionCapable": True,
