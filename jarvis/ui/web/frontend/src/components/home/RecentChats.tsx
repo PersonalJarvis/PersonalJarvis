@@ -166,7 +166,7 @@ function ChatRowItem({
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           // The open one wears the same accent edge as the active nav row, so
           // "where am I" is said in one voice all the way down the column.
-          active ? "jarvis-nav-active bg-secondary text-foreground-strong" : "text-foreground-secondary hover:bg-secondary hover:text-foreground",
+          active ? "jarvis-nav-active bg-secondary text-foreground-strong" : "text-foreground hover:bg-secondary",
         )}
       >
         {/* A small open ring, the Claude app's chat bullet; a pinned chat
@@ -174,9 +174,9 @@ function ChatRowItem({
         {pinned ? (
           <MessageSquare aria-hidden className="h-4 w-4 shrink-0 text-muted-foreground" />
         ) : (
-          <span aria-hidden className="ml-1 h-1.5 w-1.5 shrink-0 rounded-full border border-muted-foreground/70" />
+          <span aria-hidden className="ml-1 h-[7px] w-[7px] shrink-0 rounded-full border border-muted-foreground" />
         )}
-        <span className="min-w-0 flex-1 truncate text-sm leading-5">{compactChatTitle(title)}</span>
+        <span className="min-w-0 flex-1 truncate text-base leading-5">{compactChatTitle(title)}</span>
 
       </button>
       <button type="button" onClick={onPin} title={t(pinned ? "sidebar.unpin_chat" : "sidebar.pin_chat")}

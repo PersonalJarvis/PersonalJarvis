@@ -126,7 +126,6 @@ export function TopBarActions() {
     <>
       <ThemeToggle />
       <DetachButton />
-      <UpdateButton />
       <RestartButton />
     </>
   );
@@ -440,7 +439,10 @@ function ProgressRing({ percent, spinning }: { percent: number; spinning: boolea
 }
 
 /**
- * The update entry point in the title strip.
+ * The update entry point — at the foot of the sidebar since 2026-10-01
+ * (`placement="sidebar"`), where the Claude app keeps its download icon; it
+ * used to sit in the title strip among the window buttons, where nobody saw
+ * it. There it wears the signal hue so a waiting update is noticed.
  *
  * At rest it is one more quiet icon among theme, detach and restart: a download
  * glyph with a small accent dot. That is the whole announcement — an update is
@@ -460,7 +462,8 @@ function ProgressRing({ percent, spinning }: { percent: number; spinning: boolea
  * While the update runs, the icon becomes a progress ring and the panel (if
  * open) shows the percentage, the server's sub-status and a thin bar.
  */
-function UpdateButton() {
+export function UpdateButton({ placement = "titlebar" }: { placement?: "titlebar" | "sidebar" } = {}) {
+  const inSidebar = placement === "sidebar";
   const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
   const { status } = useUpdate();
@@ -752,9 +755,10 @@ function UpdateButton() {
         aria-valuemax={busy ? 100 : undefined}
         aria-valuenow={busy ? percent : undefined}
         className={clsx(
-          CHROME_BUTTON,
-          "relative w-8 justify-center px-0",
-          open ? "bg-secondary text-foreground" : CHROME_QUIET,
+          inSidebar
+            ? "relative flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            : clsx(CHROME_BUTTON, "relative w-8 justify-center px-0"),
+          open ? "bg-secondary text-foreground" : inSidebar ? "text-accent hover:bg-secondary" : CHROME_QUIET,
         )}
       >
         {busy ? (
@@ -778,7 +782,10 @@ function UpdateButton() {
           role="dialog"
           aria-label={title}
           data-testid="update-panel"
-          className="absolute right-0 top-full z-50 mt-1.5 w-72 rounded-lg bg-popover p-3 text-left shadow-float"
+          className={clsx(
+            "absolute z-50 w-72 rounded-lg bg-popover p-3 text-left shadow-float",
+            inSidebar ? "bottom-full left-0 mb-2" : "right-0 top-full mt-1.5",
+          )}
         >
           <div className="flex items-baseline justify-between gap-3">
             <span className="text-meta font-semibold text-foreground-strong">

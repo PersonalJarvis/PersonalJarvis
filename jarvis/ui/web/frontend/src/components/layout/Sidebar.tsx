@@ -21,7 +21,7 @@ import { useSectionHealth } from "@/hooks/useProviders";
 import { usePluginAttention } from "@/hooks/usePluginAttention";
 import { clsx } from "clsx";
 import { cn } from "@/lib/utils";
-import { useMemo, useState, type ReactNode } from "react";
+import { lazy, Suspense, useMemo, useState, type ReactNode } from "react";
 import { useT } from "@/i18n";
 import { RecentChats } from "@/components/home/RecentChats";
 import { useHomeStore } from "@/store/home";
@@ -33,6 +33,14 @@ import { useAppInstance } from "@/hooks/useAppInstance";
 import { usePublishIdentity } from "@/components/marketplace/PublishIdentity";
 import { GigiMark } from "@/components/GigiMark";
 import { startNewTextChat } from "@/lib/newChat";
+import { useUserName } from "@/hooks/useUserName";
+import { useAgentChatStore } from "@/store/agentChat";
+
+// The update button renders nothing on most launches; loaded on its own so
+// the title-strip module it lives in stays out of the sidebar's chunk.
+const UpdateButton = lazy(() =>
+  import("@/components/layout/TopBar").then((m) => ({ default: m.UpdateButton })),
+);
 
 /*
  * Why `clsx` and not `cn` on the rows below.
@@ -165,6 +173,7 @@ export function Sidebar({
 }: SidebarProps = {}) {
   const t = useT();
   const active = useEventStore((s) => s.activeSection);
+  const openVoiceThread = useEventStore((s) => s.activeKind === "voice" && Boolean(s.activeThreadId));
   const setActive = useEventStore((s) => s.setActiveSection);
   const activeIdeWorkspaceId = useIdeProjectsStore((s) => s.activeWorkspaceId);
   const openIdeWorkspaceOptions = useIdeProjectsStore((s) => s.openWorkspaceOptions);
@@ -217,7 +226,18 @@ export function Sidebar({
    */
   const onIdeSection = IDE_SECTIONS.includes(active);
   const [moreOpen, setMoreOpen] = useState(false);
+  // An empty chat on the front page: nothing open, nothing being read.
+  const onEmptyChat = useAgentChatStore(
+    (st) => active === "chats" && !st.activeSessionId && st.timeline.items.length === 0,
+  ) && !openVoiceThread;
   const identity = usePublishIdentity();
+  const userName = useUserName();
+  // The person by first name once the Profile knows it, else their
+  // marketplace login, else the plain word — never an invented name.
+  const footerName =
+    userName?.split(/\s+/)[0] ||
+    (identity.data?.signed_in && identity.data.login) ||
+    t("nav.profile");
   // Shared readiness derivation (same source the banner + chat empty-state use).
   const { connected, voiceWarming, bootWarming, warming } = useVoiceReadiness();
 
@@ -316,7 +336,7 @@ export function Sidebar({
   // Rows read like the Claude app's column: regular weight, light ink at
   // rest (muted grey made every entry look disabled), the icon in the same
   // ink, a lift on hover. Section labels and tail rows stay muted.
-  const rowClass = "flex min-h-9 w-full items-center gap-3 rounded-lg px-3 text-base text-foreground-secondary transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+  const rowClass = "flex min-h-8 w-full items-center gap-3 rounded-lg px-3 text-base text-foreground transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
   const renderRow = (raw: NavItem, compact = railed) => {
     const item = presentNavItem(raw, surface);
     return <NavRow key={item.id} item={item} label={resolveNavLabel(t, item)} compact={compact}
@@ -503,13 +523,14 @@ export function Sidebar({
               <Mic aria-hidden className="h-4 w-4" />
             </button>
           </div>}
-        </nav> : <nav aria-label={t("sidebar.sections")} className="space-y-0.5 px-2 py-2">
-          <ul className="space-y-0.5">
+        </nav> : <nav aria-label={t("sidebar.sections")} className="space-y-px px-2 py-2">
+          <ul className="space-y-px">
             {/* One door: a fresh typed chat. Voice is a mode INSIDE the chat
                 now (its top bar's button), so there is nothing to choose
                 between here (2026-10-01). */}
             <li><button type="button" data-testid="sidebar-new-chat" data-tour="new-chat"
-              aria-label={t("sidebar.new_chat")} title={t("sidebar.new_chat")} className={rowClass}
+              aria-label={t("sidebar.new_chat")} title={t("sidebar.new_chat")}
+              className={cn(rowClass, onEmptyChat && "bg-secondary text-foreground-strong")}
               onClick={() => { useHomeStore.getState().setSurface("chat"); startNewTextChat(); }}>
               <Plus aria-hidden strokeWidth={1.75} className="h-[18px] w-[18px] shrink-0" />
               {!railed && <span>{t("sidebar.new_chat")}</span>}
@@ -517,7 +538,7 @@ export function Sidebar({
             {renderRow(findItem("agents"))}
             {renderRow(findItem("dictation"))}
           </ul>
-          <ul className="space-y-0.5">
+          <ul className="space-y-px">
             {renderRow(findItem("visualization"))}
             {renderRow(findItem("agentic-ide"))}
             {renderRow({ ...findItem("plugins"), labelKey: "sidebar.extensions_label" })}
@@ -540,27 +561,30 @@ export function Sidebar({
           models, Settings, Feedback) in its own left navigation.
           The attention dot stays — a failing provider, or a local setup that
           needs care, must be visible without opening anything. */}
-      <div className="shrink-0 border-t border-border p-2">
-        <div className={cn("flex items-center gap-1", railed && "flex-col")}>
+      <div className="shrink-0 border-t border-border px-2 py-1.5">
+        <div className={cn("flex items-center gap-0.5", railed && "flex-col")}>
           <button type="button" onClick={() => setActive("profile")} title={t("nav.profile")}
             data-testid="sidebar-profile-toggle"
             data-tour="settings"
             className={cn(rowClass, "min-w-0 flex-1", hubActive && "jarvis-nav-active bg-secondary text-foreground")}>
             <span className="relative shrink-0">
               <span aria-hidden data-testid="sidebar-profile-initial"
-                className="flex h-7 w-7 items-center justify-center rounded-full bg-secondary text-xs font-semibold uppercase text-foreground">
-                {(identity.data?.signed_in && identity.data.login ? identity.data.login : t("nav.profile")).trim().charAt(0) || "?"}
+                className="flex h-6 w-6 items-center justify-center rounded-full bg-secondary text-xs font-medium uppercase text-muted-foreground">
+                {footerName.trim().charAt(0) || "?"}
               </span>
               {(apikeysHasError || localModelsNeedAttention) && <span data-testid="sidebar-profile-attention"
                 role="status" aria-label={t("sidebar.apikeys_alert")}
-                className={cn("absolute bottom-0 right-0 h-2 w-2 rounded-full", apikeysHasError ? "bg-destructive" : "bg-warning")} />}
+                className={cn("absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full ring-2 ring-sidebar", apikeysHasError ? "bg-destructive" : "bg-warning")} />}
             </span>
-            {!railed && <span className="min-w-0 flex-1 truncate text-left">{identity.data?.signed_in ? identity.data.login || t("nav.profile") : t("nav.profile")}</span>}
+            {!railed && <span data-testid="sidebar-profile-name" className="min-w-0 flex-1 truncate text-left">{footerName}</span>}
           </button>
+          {/* The update lives here now, where Claude keeps its download icon:
+              in sight on every screen, not among the window buttons. */}
+          <Suspense fallback={null}><UpdateButton placement="sidebar" /></Suspense>
           <button type="button" onClick={() => setActive("marketplace")} title={t("nav.marketplace")}
             aria-label={t("nav.marketplace")} data-testid="nav-row-marketplace"
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-            <Store aria-hidden className="h-5 w-5" />
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            <Store aria-hidden strokeWidth={1.75} className="h-4 w-4" />
           </button>
         </div>
       </div>
@@ -642,7 +666,7 @@ function NavRow({
           title={compact ? `${label}${hint ? ` — ${hint}` : ""}` : hint}
           aria-label={compact ? label : undefined}
           className={clsx(
-            "group relative flex h-9 w-full items-center gap-3 rounded-lg px-3 text-base transition-colors",
+            "group relative flex h-8 w-full items-center gap-3 rounded-lg px-3 text-base transition-colors",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
             // Leave the chevron its own column so the two buttons never overlap.
             expand && "pr-9",
@@ -651,7 +675,7 @@ function NavRow({
             // left edge (`.jarvis-nav-active`).
             active
               ? "jarvis-nav-active bg-secondary text-foreground-strong"
-              : "text-foreground-secondary hover:bg-secondary hover:text-foreground",
+              : "text-foreground hover:bg-secondary",
           )}
         >
           <Icon
@@ -659,7 +683,7 @@ function NavRow({
             strokeWidth={1.75}
             className={cn(
               "h-[18px] w-[18px] shrink-0 transition-colors",
-              active ? "text-foreground-strong" : "text-foreground-secondary group-hover:text-foreground",
+              active ? "text-foreground-strong" : "text-foreground",
             )}
           />
           <span className={cn("flex min-w-0 flex-1 items-center gap-2 text-left", compact && "hidden")}>
