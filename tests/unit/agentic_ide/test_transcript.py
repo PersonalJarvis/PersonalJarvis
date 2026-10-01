@@ -6,8 +6,45 @@ is Alex doing?" gets answered from control codes and repainted frames.
 """
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
+import pytest
+
 from jarvis.agentic_ide.screen import ScreenBuffer
 from jarvis.agentic_ide.transcript import ReplayBuffer, Transcript, is_noise, strip_ansi
+
+REPAINT_CASES = json.loads(
+    (Path(__file__).parents[2] / "fakes" / "terminal_repaint_cases.json").read_text(
+        encoding="utf-8"
+    )
+)
+
+
+@pytest.mark.parametrize("erase", REPAINT_CASES["full"])
+def test_equivalent_full_redraws_acknowledge_a_repaint_across_every_read_boundary(
+    erase: str,
+) -> None:
+    for split in range(1, len(erase)):
+        buffer = ReplayBuffer()
+        buffer.feed("\x1b[?1049hOLD FRAME")
+        buffer.feed(erase[:split])
+        buffer.feed(erase[split:] + "new frame")
+        assert buffer.clears == 1, (erase, split)
+        assert "OLD FRAME" not in buffer.text()
+        assert buffer.text().endswith(erase + "new frame")
+        buffer.feed("more output")
+        assert buffer.clears == 1, "the retained scan tail must not count an erase twice"
+
+
+@pytest.mark.parametrize("erase", REPAINT_CASES["partial"])
+def test_a_partial_erase_does_not_acknowledge_a_full_redraw(erase: str) -> None:
+    buffer = ReplayBuffer()
+    buffer.feed("\x1b[?1049hOLD FRAME")
+    for character in erase:
+        buffer.feed(character)
+    assert buffer.clears == 0
+    assert "OLD FRAME" in buffer.text()
 
 
 def test_strip_ansi_removes_colour_and_cursor_sequences() -> None:
