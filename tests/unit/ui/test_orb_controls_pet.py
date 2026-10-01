@@ -152,6 +152,14 @@ def test_the_indicator_rests_still_and_grows_with_the_voice() -> None:
     assert loud > rest
 
 
+def test_the_resting_indicator_looks_like_silence() -> None:
+    # Three equal, shortest strokes: nothing in the pill suggests a voice.
+    rest = controls.indicator_bars(controls.PetStripState())
+    assert len({h for h, _ in rest}) == 1
+    silent = controls.indicator_bars(controls.PetStripState(motion="voice", level=0))
+    assert all(h == rest[0][0] for h, _ in silent)
+
+
 def test_voice_strokes_wobble_but_stay_in_bounds() -> None:
     heights = {
         tuple(

@@ -407,9 +407,10 @@ PET_INDICATOR_SPACING = 0.24
 PET_INDICATOR_HALF_W = 0.068
 PET_INDICATOR_MIN_H = 0.18
 PET_INDICATOR_MAX_H = 0.64
-#: At rest the strokes stand still and dimmed; the middle one a little taller,
-#: so the three read as one control and not as three loose dots.
-PET_INDICATOR_REST_H: tuple[float, ...] = (0.22, 0.32, 0.22)
+#: At rest the strokes stand still, dimmed and all equally short: the look of
+#: silence. A taller middle stroke read as someone speaking; the strokes only
+#: grow when there is a real voice to follow.
+PET_INDICATOR_REST_H: tuple[float, ...] = (PET_INDICATOR_MIN_H,) * PET_INDICATOR_BARS
 PET_INDICATOR_REST_GLOW = 0.78
 #: Animation steps per cycle. Voice: the strokes wobble around the level in
 #: ``PET_VOICE_PHASES`` steps of ``PET_VOICE_STEP_S``. Thinking: a highlight
