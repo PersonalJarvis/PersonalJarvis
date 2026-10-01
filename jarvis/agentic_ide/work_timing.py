@@ -10,6 +10,8 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, Any
 
+from loguru import logger
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -21,6 +23,7 @@ def timestamp(value: Any) -> float:
     try:
         result = float(value)
     except (TypeError, ValueError, OverflowError):
+        logger.debug("Agentic IDE: ignoring an invalid saved task timestamp")
         return 0.0
     return result if math.isfinite(result) and result > 0 else 0.0
 
