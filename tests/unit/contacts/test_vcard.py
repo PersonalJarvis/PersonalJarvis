@@ -15,6 +15,8 @@ import pytest
 
 from jarvis.contacts.store import ContactStore
 from jarvis.contacts.vcard import (
+    _escape,
+    _unescape,
     contact_to_vcard,
     contacts_to_vcf,
     import_records,
@@ -203,3 +205,67 @@ def test_skipped_record_keeps_personal_data_out_of_the_log(
     assert "skipped a record" in caplog.text
     assert "Private Person" not in caplog.text
     assert "1990-99-99" not in caplog.text
+
+
+# ----------------------------------------------------------------------
+# TEXT value escaping: direct tests for _escape / _unescape
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("raw", "escaped"),
+    [
+        ("a,b", "a\\,b"),
+        ("a;b", "a\\;b"),
+        ("a\\b", "a\\\\b"),
+        ("a\nb", "a\\nb"),
+        ("plain text", "plain text"),
+        ("", ""),
+    ],
+)
+def test_escape_single_special_character(raw: str, escaped: str) -> None:
+    assert _escape(raw) == escaped
+
+
+def test_escape_all_four_specials_combined() -> None:
+    # Backslash is escaped first, so the backslashes added for the other
+    # three characters are not doubled.
+    assert _escape("\\,;\n") == "\\\\" + "\\," + "\\;" + "\\n"
+
+
+@pytest.mark.parametrize(
+    ("escaped", "raw"),
+    [
+        ("a\\nb", "a\nb"),
+        ("a\\Nb", "a\nb"),
+        ("a\\,b", "a,b"),
+        ("a\\;b", "a;b"),
+        ("a\\\\b", "a\\b"),
+        ("a\\xb", "axb"),
+        ("plain text", "plain text"),
+        ("", ""),
+    ],
+)
+def test_unescape_sequences(escaped: str, raw: str) -> None:
+    assert _unescape(escaped) == raw
+
+
+def test_unescape_trailing_lone_backslash_is_kept() -> None:
+    assert _unescape("abc\\") == "abc\\"
+
+
+def test_unescape_escaped_backslash_before_n_is_not_a_newline() -> None:
+    assert _unescape("\\\\n") == "\\n"
+
+
+def test_unescape_odd_run_of_backslashes() -> None:
+    # Two backslashes collapse to one; the third has nothing after it and stays.
+    assert _unescape("\\\\\\") == "\\\\"
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["a\\b,c;d\ne", ",;\\\n", "\\n", "\\\\", ""],
+)
+def test_escape_unescape_roundtrip(value: str) -> None:
+    assert _unescape(_escape(value)) == value
