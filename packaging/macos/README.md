@@ -38,7 +38,10 @@ see:
   They come from the `desktop-macos` extra, so install it on the build machine:
   `python3 -m pip install -e ".[desktop,desktop-macos]"` (`.[full]` includes it).
 
-The v2.5.0 image had both defects (BUG-222).
+The v2.5.0 image had both defects (BUG-222). In CI the smoke boot of the app
+also asks it for its permission status and fails when the microphone row reads
+"unavailable", which is what a framework that did not load looks like from
+inside.
 
 ## Signing and notarization
 

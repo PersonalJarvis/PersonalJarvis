@@ -15579,13 +15579,20 @@ instead of the way a user does.
   or the frozen archive lacks one of `AVFoundation`, `ApplicationServices`,
   `AppKit`, `Foundation`, `Quartz`, `objc`. Run by hand against the published
   v2.5.0 arm64 image it exits 1 and names exactly the two defects above.
+- The frozen smoke (`scripts/ci/check_frozen_browser.py`) boots the app on macOS
+  and asks it for `/api/permissions/status`: a microphone row that reads
+  "unavailable", or a bundle id the port does not accept, fails the job. This is
+  the only check that sees a framework whose own dependencies were left out of
+  the archive, because the port swallows an import that fails at run time.
 
 **Guards.** `tests/unit/platform/test_permissions.py` (the `.dmg` identity is
 stable and gets its buttons back, foreign ids are refused, reset hits the right
 id and refuses from a stranger), `tests/unit/setup/test_macos_dmg_identity.py`
 (the literal in `jarvis.spec` equals the branding constant, the two ids stay
 distinct, the lookup), `tests/unit/cli_ctl/test_commands_permissions.py`,
-`tests/unit/ci/test_check_frozen_macos_app.py`.
+`tests/unit/ci/test_check_frozen_macos_app.py`,
+`tests/unit/packaging/test_frozen_browser_smoke.py` (the decision, and `boot()`
+itself against a stand-in app).
 
 **Verification.** Unit level only, on Linux, against faked AppKit / Quartz /
 AVFoundation; the new `.dmg` tests fail on the old code, and the probe fails on

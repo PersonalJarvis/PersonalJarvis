@@ -143,7 +143,10 @@ run, so the macOS job checks the finished bundle
   above all) must be in the frozen archive. That needs the `desktop-macos` extra
   on the build machine; the macOS job installs it.
 
-The v2.5.0 image shipped with both defects (BUG-222).
+The frozen smoke boots the app twice and, on macOS, also reads its permission
+status each time: a microphone row that reads "unavailable" means the framework
+did not load inside the app (the check above only sees that the module is in the
+archive). The v2.5.0 image shipped with both defects (BUG-222).
 
 ### Linux
 
