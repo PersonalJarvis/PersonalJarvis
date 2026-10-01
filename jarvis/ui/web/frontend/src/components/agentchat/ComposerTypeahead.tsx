@@ -5,6 +5,8 @@ import { Bot, FileText, Folder, Sparkles, TerminalSquare } from "lucide-react";
 import { groupRuns, type TypeaheadItem } from "@/components/agentchat/typeahead";
 import { ToolChoiceIcon } from "@/components/agentchat/ToolChoiceChips";
 import { toolIdentityStyle } from "@/components/agentchat/toolIdentity";
+import { AgentSwatch } from "@/components/society/AgentSwatch";
+import { useSocietyRoster } from "@/components/society/data";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
@@ -121,7 +123,8 @@ export function ComposerTypeahead({
               // A named thing (an agent, a plugin) reads by its name first,
               // the way the agents' own picker shows it; a file or a command
               // keeps the terse `@value` row.
-              const named = Boolean(item.choice) || (item.kind === "agent" && item.label !== item.value);
+              const teammate = item.group === "teammates";
+              const named = Boolean(item.choice) || teammate || (item.kind === "agent" && item.label !== item.value);
               return (
                 <div
                   key={`${item.group}:${item.value}`}
@@ -136,7 +139,9 @@ export function ComposerTypeahead({
                     active ? "bg-primary/15 text-foreground" : "text-foreground",
                   )}
                 >
-                  {item.choice ? (
+                  {teammate ? (
+                    <TeammateAvatar name={item.label} />
+                  ) : item.choice ? (
                     <span className="tool-identity inline-flex shrink-0" style={toolIdentityStyle(item.choice)} aria-hidden>
                       <ToolChoiceIcon row={item.choice} size={16} />
                     </span>
@@ -171,6 +176,24 @@ export function ComposerTypeahead({
       )}
     </div>,
     document.body,
+  );
+}
+
+/**
+ * One of the user's agents, wearing the face it has everywhere else (roster,
+ * agent chat, the agents' own "@" list). Mounted only while such a row is on
+ * screen, so the roster is read only when the list names an agent; a name the
+ * roster does not know still gets its deterministic symbol.
+ */
+function TeammateAvatar({ name }: { name: string }) {
+  const roster = useSocietyRoster();
+  const agent = roster.data?.agents.find((a) => a.name === name);
+  return (
+    <AgentSwatch
+      agent={agent ?? ({ name } as Parameters<typeof AgentSwatch>[0]["agent"])}
+      size={22}
+      className="rounded-md"
+    />
   );
 }
 

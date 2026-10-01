@@ -1,4 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AgentComposer } from "@/components/agentchat/AgentComposer";
@@ -244,9 +245,11 @@ describe("composer typeahead", () => {
     });
     seedJarvis(catalog(["@"]));
     render(
-      <AgentChatStoreProvider store={useJarvisChatStore}>
-        <AgentComposer />
-      </AgentChatStoreProvider>,
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <AgentChatStoreProvider store={useJarvisChatStore}>
+          <AgentComposer />
+        </AgentChatStoreProvider>
+      </QueryClientProvider>,
     );
     type("ask @");
 
@@ -254,6 +257,8 @@ describe("composer typeahead", () => {
     const rows = screen.getAllByTestId("composer-typeahead-item").map((r) => r.textContent);
     // The agent first, then the connected plugin; the disconnected one waits for a search.
     expect(rows[0]).toContain("@Mailbox");
+    // An agent wears its face, not a generic robot glyph.
+    expect(screen.getAllByTestId("composer-typeahead-item")[0].querySelector("svg.lucide-bot")).toBeNull();
     expect(rows[1]).toContain("Gmail");
     expect(screen.getByTestId("composer-typeahead").textContent).toContain("Agents");
     const asked = fetchMock.mock.calls.map((c) => String(c[0]));
