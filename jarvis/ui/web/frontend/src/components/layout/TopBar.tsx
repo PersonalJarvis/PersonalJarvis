@@ -466,7 +466,8 @@ export function UpdateButton({ placement = "titlebar" }: { placement?: "titlebar
   const inSidebar = placement === "sidebar";
   const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
-  const { status } = useUpdate();
+  const { status, refresh } = useUpdate();
+  const [checking, setChecking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [forceArmed, setForceArmed] = useState(false);
   const [open, setOpen] = useState(false);
@@ -549,10 +550,76 @@ export function UpdateButton({ placement = "titlebar" }: { placement?: "titlebar
     }
   }, [lastResult, pushToast, status?.current, t]);
 
-  if (!status?.managed) return null;
-  const hasOffer = status.update_available;
-  const hasStaged = Boolean(status.pending_update);
-  if (!hasOffer && !hasStaged) return null;
+  const idle = !status?.managed || (!status.update_available && !status.pending_update);
+  // In the title strip the button only exists while there is something to
+  // install. At the foot of the sidebar it always stands, like the Claude
+  // app's download icon: quiet with nothing waiting (a click says which
+  // version this is and can check now), blue with a dot once an update is in.
+  if (idle && !inSidebar) return null;
+  if (idle) {
+    const managed = Boolean(status?.managed);
+    const checkNow = async () => {
+      if (checking) return;
+      setChecking(true);
+      try {
+        await refresh(true);
+      } finally {
+        setChecking(false);
+      }
+    };
+    return (
+      <div ref={rootRef} className="relative">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-label={t("topbar.update_up_to_date")}
+          title={t("topbar.update_up_to_date")}
+          aria-haspopup="dialog"
+          aria-expanded={open}
+          data-testid="update-button"
+          data-state="idle"
+          className={clsx(
+            "relative flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            open ? "bg-secondary text-foreground" : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+          )}
+        >
+          <Download aria-hidden strokeWidth={1.75} className="h-4 w-4" />
+        </button>
+        {open && (
+          <div
+            role="dialog"
+            aria-label={t("topbar.update_up_to_date")}
+            data-testid="update-panel"
+            className="absolute bottom-full left-0 z-50 mb-2 w-64 rounded-lg bg-popover p-3 text-left shadow-float"
+          >
+            <div className="text-meta font-semibold text-foreground-strong">{t("topbar.update_up_to_date")}</div>
+            {status?.current && (
+              <div className="mt-0.5 text-micro text-muted-foreground">
+                {fill(t("topbar.update_current_version"), { version: status.current })}
+              </div>
+            )}
+            {managed ? (
+              <button
+                type="button"
+                onClick={() => void checkNow()}
+                disabled={checking}
+                data-testid="update-check-now"
+                className="mt-3 h-7 rounded-md bg-secondary px-2.5 text-micro font-medium text-foreground transition-colors hover:bg-secondary/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+              >
+                {checking ? t("topbar.update_checking") : t("topbar.update_check_now")}
+              </button>
+            ) : (
+              <div className="mt-2 text-micro leading-relaxed text-muted-foreground">
+                {t("topbar.update_unmanaged")}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+  const hasOffer = Boolean(status?.update_available);
+  if (!status) return null;
   const shownVersion = status.latest ?? status.pending_update?.version ?? null;
 
   // The mission guard refused (a quit would kill live missions): surface the
