@@ -310,7 +310,11 @@ class DictationCompleted(Event):
 #:
 #: ``microphone_unavailable``
 #:     The local capture gate is closed — the desktop app is not visible, or
-#:     microphone permission has not been granted.
+#:     microphone permission has not been granted. When the cause is the
+#:     permission, a ``PermissionNeeded`` event for the microphone is published
+#:     alongside this refusal; a UI that can render the permission episode
+#:     should prefer it for its card (it carries the system dialog phase and the
+#:     route to System Settings) and keep this refusal for the inline note.
 #: ``no_stt``
 #:     No speech-to-text provider is wired, so nothing could transcribe.
 #: ``already_running``
@@ -405,10 +409,136 @@ class DictationRefused(Event):
     ``reason`` is a stable token from ``DICTATION_REFUSAL_REASONS``; ``detail``
     is a complete, user-facing English sentence, matching the contract of
     ``DictationCompleted.detail``.
+
+    The ``microphone_unavailable`` case ALSO publishes ``PermissionNeeded``
+    (see below). This event stays the signal for the key that did nothing; the
+    permission episode is what a UI should prefer for the card that explains
+    the permission and offers the way back.
     """
 
     reason: str = ""
     detail: str = ""
+
+
+# ----------------------------------------------------------------------
+# Permissions (just-in-time)
+# ----------------------------------------------------------------------
+
+#: Every product feature that can ask for an OS permission, in the vocabulary a
+#: ``PermissionNeeded`` / ``PermissionResolved`` event carries. Declared ONCE
+#: here because the value crosses the permission service, the bus, the REST/WS
+#: surface and the i18n copy keyed per (feature, reason) — the exact shape of
+#: drift AP-4 / BUG-008 exists for. The TypeScript twin is
+#: ``frontend/src/lib/permissionEvents.ts``; a pytest regex read pins them.
+PERMISSION_FEATURES: Final[tuple[str, ...]] = (
+    "voice",
+    "dictation",
+    "wake_word",
+    "computer_use",
+    "screen_context",
+    "appshot",
+    "window_control",
+    "dictation_insert",
+    "global_shortcuts",
+    "audio_ducking",
+    "browser_voice",
+)
+
+#: Why a feature is waiting on a permission.
+#:
+#: ``not_determined``
+#:     The OS has not been asked yet.
+#: ``denied``
+#:     The user answered no, or revoked the grant later. The OS will not ask
+#:     again by itself.
+#: ``restricted``
+#:     A profile or parental control forbids the permission. Explanation only:
+#:     the user cannot change it from the app's settings pane.
+#: ``needs_settings``
+#:     The OS dialog (if any) can only point at System Settings; the user has
+#:     to flip the switch there.
+#: ``restart_hint``
+#:     The grant may only take effect after the app is quit and reopened. A hint
+#:     after a real failed attempt, never an automatic restart.
+#: ``unavailable``
+#:     The permission cannot be asked for here (no GUI session, a framework or
+#:     usage string is missing).
+PERMISSION_NEEDED_REASONS: Final[tuple[str, ...]] = (
+    "not_determined",
+    "denied",
+    "restricted",
+    "needs_settings",
+    "restart_hint",
+    "unavailable",
+)
+
+#: Where an episode is in front of the user.
+#:
+#: ``os_dialog``
+#:     macOS is asking right now; the app shows no card of its own.
+#: ``blocked``
+#:     The user has to act (Settings, a restart) before the feature can work.
+PERMISSION_NEEDED_PHASES: Final[tuple[str, ...]] = ("os_dialog", "blocked")
+
+#: What caused the episode.
+#:
+#: ``user``
+#:     A gesture caused it, so a floating card may open.
+#: ``background``
+#:     A background consumer hit it; only inline rows and status may show it.
+PERMISSION_NEEDED_ORIGINS: Final[tuple[str, ...]] = ("user", "background")
+
+
+@dataclass(frozen=True, slots=True)
+class PermissionNeeded(Event):
+    """A feature is waiting on an OS permission the user has to settle.
+
+    One coalesced episode per (permission family, feature): ``permissions``
+    lists every ``PermissionId`` value the episode needs (``event_posting`` is
+    folded into ``accessibility``). Published on a state change, never on a
+    repeated silent check, so a surface can treat each event as an edge.
+
+    ``feature`` comes from ``PERMISSION_FEATURES``, ``reason`` from
+    ``PERMISSION_NEEDED_REASONS``, ``phase`` from ``PERMISSION_NEEDED_PHASES``
+    and ``origin`` from ``PERMISSION_NEEDED_ORIGINS``. ``target`` is the
+    Automation target's bundle id and empty for every other permission.
+    ``can_prompt`` / ``can_open_settings`` say which actions the UI may offer;
+    ``outside_app`` means Jarvis is not running as an installed app, so the
+    grant would belong to the app that started it and needs an explicit
+    confirmation naming that app.
+
+    ``detail`` is a full English sentence built from fixed templates for logs
+    and support. The UI never renders it: copy comes from i18n per
+    (feature, reason). It never carries exception text, paths or window titles.
+    """
+
+    #: ``PermissionId`` values of this episode, as plain strings.
+    permissions: tuple[str, ...] = ()
+    feature: str = ""
+    reason: str = ""
+    phase: str = ""
+    origin: str = ""
+    target: str = ""
+    can_prompt: bool = False
+    can_open_settings: bool = False
+    outside_app: bool = False
+    detail: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class PermissionResolved(Event):
+    """The episode ended: the permission is now granted, or it was withdrawn.
+
+    Published by the permission service's episode watcher once the live state
+    changes, so consumers that parked on a missing permission (the wake word
+    loop, a hotkey backend) re-arm in process instead of polling. ``granted``
+    is the live verdict when the episode closed; a consumer that needs the
+    permission acts on ``True`` only.
+    """
+
+    permissions: tuple[str, ...] = ()
+    feature: str = ""
+    granted: bool = False
 
 
 # ----------------------------------------------------------------------
