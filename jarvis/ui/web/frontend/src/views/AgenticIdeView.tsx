@@ -128,7 +128,8 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   // On a connected computer the CLI has to be installed THERE, not here: the
   // server is checked before anything is copied, so every coding CLI is offered.
   const workspaceChoices = workspaceComputer ? codingAgents : installed;
-  const agentChoices = agentComputer ? codingAgents : installed;
+  const agentChoices = agents.filter((agent) =>
+    (agent.kind === "shell" || agent.accepts_prompts !== false) && (agentComputer || agent.installed));
   const dialogOpen = projectDialog || workspaceProject !== null || renameOpen || agentPicker !== null;
 
   useEffect(() => {
@@ -550,7 +551,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
 
   return <div className="relative flex h-full min-h-0 flex-col bg-background text-foreground" data-testid="igentic-ide">
     <WorkspaceOptionsDialog open={optionsOpen && !!session} onOpenChange={setOptionsOpen} workspace={session?.name ?? session?.project.name ?? ""}
-      count={session?.terminals.length ?? 0} maxPanes={maxPanes} busy={busy} canAdd={installed.length > 0}
+      count={session?.terminals.length ?? 0} maxPanes={maxPanes} busy={busy} canAdd={agents.some((agent) => agent.installed && (agent.kind === "shell" || agent.accepts_prompts !== false))}
       onAdd={openAgentPicker} onBalance={balanceLayout} onRename={() => { setRenameValue(session?.name ?? session?.project.name ?? ""); setRenameOpen(true); }}
       onClose={stopWorkspace} onGit={() => setGitOpen(true)} appearance={appearance} onAppearance={saveAppearance}
       paneStyle={paneStyle} onPaneStyle={savePaneStyle}
@@ -560,7 +561,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     <CloseAgentDialog target={closeTarget} busy={busy} onCancel={() => setCloseRequest(null)} onConfirm={confirmClose} />
 
     <main className="min-h-0 flex-1">
-      <IdeSidePanelFrame markInUse={paneStyle === "minimal"}>
+      <IdeSidePanelFrame markInUse={paneStyle === "minimal"} appearance={appearance ?? undefined} onScreen={onScreen}>
       {session ? <WorkspaceTerminalGrid key={session.id} session={session} onChanged={(next) => setState((current) => current?.session?.id === next.id ? { ...current, session: next } : current)}
         onAdd={openAgentPicker} onClose={closeAgent} onSelect={setSelected} selected={selected} maxPanes={maxPanes} fontSize={fontSize} appearance={appearance} disabled={busy}
         onMutationStart={beginGridMutation} onMutationEnd={endGridMutation} paneStyle={paneStyle} />
