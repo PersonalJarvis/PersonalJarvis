@@ -265,6 +265,11 @@ def test_windows_installer_script_honours_the_relaunch_param() -> None:
     assert "skipifsilent" not in relaunch_lines[0]
     assert "runasoriginaluser" in relaunch_lines[0]
 
+    # Apps up to v2.4.x hand the NEW installer their old flags; it must still
+    # bring them back, or the first update onto this fix leaves the app closed.
+    function = text.split("function RelaunchRequested", 1)[1].split("\nend;", 1)[0]
+    assert "/RESTARTAPPLICATIONS" in function
+
 
 def test_handover_refuses_a_missing_file(tmp_path: Path) -> None:
     with pytest.raises(InstallerUpdateError, match="does not exist"):
