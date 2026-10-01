@@ -105,4 +105,16 @@ describe("lifting one explorer row into a drag", () => {
       false,
     );
   });
+
+  it("does not trim a listed filename into another file before authorization", () => {
+    const dt = dataTransfer();
+    expect(setWorkspaceEntryDrag(dt, { root: "/project", path: ".env " })).toBe(false);
+    expect(extractPaneDrop(dt).paths).toEqual([]);
+  });
+
+  it("preserves spaces inside the complete path", () => {
+    const dt = dataTransfer();
+    expect(setWorkspaceEntryDrag(dt, { root: "/project ", path: " report.txt" })).toBe(true);
+    expect(extractPaneDrop(dt).paths).toEqual(["/project / report.txt"]);
+  });
 });

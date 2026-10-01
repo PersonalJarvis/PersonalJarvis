@@ -41,6 +41,15 @@ interface WorkspaceDrag {
 
 const DRAG_STORAGE_KEY = "jarvis:workspace-drag-receipt";
 const DRAG_LIFETIME_MS = 120_000;
+// Python splits on all these line separators and strips the unit separator too.
+const PATH_LINE_BREAK = /[\r\n\v\f\x1c-\x1f\x85\u2028\u2029]/;
+
+function isExactWirePath(path: unknown): path is string {
+  // The receiver strips each line. Reject ambiguous filenames instead of
+  // selecting a different file after whitespace normalization.
+  return typeof path === "string" && path.length > 0 &&
+    !PATH_LINE_BREAK.test(path) && path === path.trim();
+}
 let workspaceDrag: (WorkspaceDrag & { stored: boolean }) | null = null;
 let expiryTimer: ReturnType<typeof setTimeout> | undefined;
 let cleanupInstalled = false;
@@ -61,7 +70,7 @@ export function setWorkspaceDragPaths(dt: DataTransfer, paths: readonly string[]
   clearWorkspaceDrag();
   // Attachment APIs frame paths as lines. A filename containing a newline must
   // never become a second file-read request; byte uploads still accept it.
-  if (!paths.length || paths.some((path) => !path || /[\r\n]/.test(path))) return false;
+  if (!paths.length || !paths.every(isExactWirePath)) return false;
   // getRandomValues also works on HTTP LAN origins where randomUUID is absent.
   const receipt = Array.from(crypto.getRandomValues(new Uint8Array(32)), (byte) =>
     byte.toString(16).padStart(2, "0"),
@@ -103,7 +112,7 @@ function consumeWorkspaceDrag(receipt: string): string[] | null {
   if (
     !record || !Number.isFinite(record.expiresAt) || record.expiresAt <= Date.now() ||
     !Array.isArray(record.paths) || record.paths.length === 0 ||
-    record.paths.some((path) => typeof path !== "string" || !path || /[\r\n]/.test(path))
+    !record.paths.every(isExactWirePath)
   ) return null;
   return record.paths;
 }

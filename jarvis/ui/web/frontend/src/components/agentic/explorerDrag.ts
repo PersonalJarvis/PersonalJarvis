@@ -33,10 +33,12 @@ function isWindowsRoot(root: string): boolean {
  * draggable" — better than a path rooted at nothing.
  */
 export function absoluteWorkspacePath(root: string, path: string): string {
-  const base = root.trim().replace(/[\\/]+$/, "");
-  const relative = path.trim().replace(/^[\\/]+/, "");
+  // These are server-listed names, not padded text input. Trimming a name
+  // could select a different file before the receipt validator sees it.
+  const base = root.replace(/[\\/]+$/, "");
+  const relative = path.replace(/^[\\/]+/, "");
   if (!base) return "";
-  if (!relative) return root.trim();
+  if (!relative) return root;
   return isWindowsRoot(base)
     ? `${base}\\${relative.replace(/\//g, "\\")}`
     : `${base}/${relative}`;

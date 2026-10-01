@@ -167,8 +167,17 @@ describe("reading a drop onto a terminal pane", () => {
     expect(isEmptyPayload(extractPaneDrop(transfer))).toBe(true);
   });
 
-  it.each(["/project/one\n/private/secret", "/project/one\r/private/secret"])(
-    "does not split an explorer filename into a second path: %s", (path) => {
+  it.each(["\n", "\r", "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029"])(
+    "rejects every Python splitlines separator in a filename: %j", (separator) => {
+      const path = `/project/one${separator}/private/secret`;
+      const transfer = dt({});
+      expect(setWorkspaceDragPaths(transfer, [path])).toBe(false);
+      expect(isEmptyPayload(extractPaneDrop(transfer))).toBe(true);
+    },
+  );
+
+  it.each(["/project/.env ", "/project/.env\t", "/project/.env\u00a0", "/project/.env\x1f"])(
+    "does not let the receiver trim a filename into another file: %j", (path) => {
       const transfer = dt({});
       expect(setWorkspaceDragPaths(transfer, [path])).toBe(false);
       expect(isEmptyPayload(extractPaneDrop(transfer))).toBe(true);
