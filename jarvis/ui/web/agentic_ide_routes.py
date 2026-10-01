@@ -4277,8 +4277,6 @@ async def terminal_prompt(
                 workspace_id=found[0].id,
                 typed=req.prompt,
                 attachments=attachments,
-                # Asked of Jarvis, so Jarvis reports how it ended.
-                readback=True,
             )
         except SessionError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc

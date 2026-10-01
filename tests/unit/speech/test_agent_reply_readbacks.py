@@ -12,7 +12,9 @@ from tests.unit.speech.test_realtime_mode import _FakeRealtimeSession, _FakeTTS,
 
 def reply(name="Nala"):
     return AnnouncementRequested(
-        source_layer="society.lead",
+        # A routine an agent ran: the held-for-call path society.lead used to
+        # share before agent messages stopped being spoken (2026-09-30).
+        source_layer="tasks.runner",
         kind="completion",
         language="en",
         text=f"{name} reports: The draft is ready.",
