@@ -720,7 +720,7 @@ describe("AgenticTerminal layout", () => {
     expect(region?.className).not.toContain("invisible");
   });
 
-  it("waits for a promised repaint rather than showing the broken tail", () => {
+  it.each(["\x1b[2", "\x1b[1;1H\x1b["])("waits for a promised repaint and recognizes split erases: %j", (eraseStart) => {
     // A replay the server marks as needing a repaint cannot rebuild the screen
     // by itself. A busy agent may answer the repaint request late (the server
     // repeats it after half a second), and revealing on quiet in between showed
@@ -752,7 +752,7 @@ describe("AgenticTerminal layout", () => {
 
     // The erase arrives split across two chunks; the quiet window follows it.
     act(() => {
-      terminalHarness.handlers.current?.onOutput?.("\x1b[2" as never);
+      terminalHarness.handlers.current?.onOutput?.(eraseStart as never);
       terminalHarness.handlers.current?.onOutput?.("Jthe repainted screen" as never);
     });
     expect(region?.className).toContain("invisible");

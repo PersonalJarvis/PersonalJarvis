@@ -137,6 +137,7 @@ import {
 } from "./offscreenBuffer";
 import { installQuerySuppression } from "./terminalQueries";
 import { installSynchronizedOutput } from "./terminalSynchronizedOutput";
+import { FULL_SCREEN_ERASE_SCAN_TAIL, hasFullScreenErase } from "./terminalRepaint";
 import {
   bindTerminalScrollRegion,
   captureWheelForTerminalHistory,
@@ -243,9 +244,6 @@ export const REBUILD_SETTLE_MAX_MS = 450;
  * for the erase, bounded by this, and still under {@link CURTAIN_MAX_MS}.
  */
 export const REPAINT_WAIT_MAX_MS = 1_400;
-
-/** The whole-screen erase a full-screen agent's repaint starts with. */
-const FULL_SCREEN_ERASE = "\x1b[2J";
 
 /**
  * The longest an active pane's surface may stay behind a curtain, full stop.
@@ -1371,12 +1369,12 @@ export function AgenticTerminal({
     const noteRepaintOutput = (text: string) => {
       if (!repaintPending) return;
       const scanned = eraseScanTail + text;
-      if (scanned.includes(FULL_SCREEN_ERASE)) {
+      if (hasFullScreenErase(scanned)) {
         repaintPending = false;
         eraseScanTail = "";
         return;
       }
-      eraseScanTail = scanned.slice(-(FULL_SCREEN_ERASE.length - 1));
+      eraseScanTail = scanned.slice(-FULL_SCREEN_ERASE_SCAN_TAIL);
     };
 
     const clearSettleTimers = () => {
