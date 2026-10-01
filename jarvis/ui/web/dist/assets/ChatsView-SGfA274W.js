@@ -1,7 +1,0 @@
-<<<<<<<< HEAD:jarvis/ui/web/dist/assets/ChatsView-SGfA274W.js
-import{j as s}from"./index-DK8nKeII.js";import{P as n}from"./PageHeader-mXwHCITK.js";import"./WorkTrace-DqWsy594.js";function c({icon:i,title:a,titleBadge:r,subtitle:o,right:e}){return s.jsx("div",{className:"shrink-0 px-8",children:s.jsx(n,{icon:i,title:a,description:o,className:"pb-4",actions:r||e?s.jsxs(s.Fragment,{children:[r,e]}):void 0})})}export{c as V};
-|||||||| parent of e44eec7d8 (chore(ui): rebuild frontend bundle for the IDE key menu):jarvis/ui/web/dist/assets/ChatsView-BRM0b9vc.js
-import{j as s}from"./index-DRGNN6w7.js";import{P as n}from"./PageHeader-jQNj2HhT.js";import"./WorkTrace-DGsfAcXh.js";function c({icon:i,title:a,titleBadge:r,subtitle:o,right:e}){return s.jsx("div",{className:"shrink-0 px-8",children:s.jsx(n,{icon:i,title:a,description:o,className:"pb-4",actions:r||e?s.jsxs(s.Fragment,{children:[r,e]}):void 0})})}export{c as V};
-========
-import{j as s}from"./index-BtFTJLvF.js";import{P as n}from"./PageHeader-BVKdc_4e.js";import"./WorkTrace-CGeEkPul.js";function c({icon:i,title:a,titleBadge:r,subtitle:o,right:e}){return s.jsx("div",{className:"shrink-0 px-8",children:s.jsx(n,{icon:i,title:a,description:o,className:"pb-4",actions:r||e?s.jsxs(s.Fragment,{children:[r,e]}):void 0})})}export{c as V};
->>>>>>>> e44eec7d8 (chore(ui): rebuild frontend bundle for the IDE key menu):jarvis/ui/web/dist/assets/ChatsView-BYC4U3H7.js
