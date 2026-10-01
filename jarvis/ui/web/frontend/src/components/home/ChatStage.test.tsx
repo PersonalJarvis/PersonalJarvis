@@ -9,6 +9,7 @@ import { AgentChatStoreProvider } from "@/components/agentchat/AgentChatStoreCon
 import { useAgentChatStore, useAgentSessionStore } from "@/store/agentChat";
 import { useEventStore } from "@/store/events";
 import { useHomeStore } from "@/store/home";
+import { composerDraftsFor } from "@/components/agentchat/composerDrafts";
 
 const CATALOG: AgentChatCatalog = {
   default_cwd: "C:\\work",
@@ -181,6 +182,8 @@ describe("ChatStage (agent chat)", () => {
     window.localStorage.clear();
     useEventStore.setState({ connected: true, wsWarming: false, assistantName: "Jarvis" });
     useAgentChatStore.setState(seedState());
+    composerDraftsFor(useAgentChatStore).setState({ drafts: new Map() });
+    composerDraftsFor(useAgentSessionStore).setState({ drafts: new Map() });
   });
   afterEach(() => {
     cleanup();
@@ -221,6 +224,106 @@ describe("ChatStage (agent chat)", () => {
     fireEvent.click(screen.getByTestId("composer-voice-mode"));
     expect(useHomeStore.getState().surface).toBe("voice");
     useHomeStore.setState({ surface: "chat" });
+  });
+
+  it("restores an unsent multiline draft after leaving the chat section", () => {
+    const text = "  Draft to finish later\nKeep this second line too.  ";
+    const first = render(<ChatStage />);
+    const box = screen.getByRole("textbox");
+    box.textContent = text;
+    fireEvent.input(box);
+    first.unmount();
+
+    const second = render(<ChatStage />);
+    expect(screen.getByRole("textbox").textContent).toBe(text);
+    expect(screen.getByTestId("composer-send")).toBeTruthy();
+    const restored = screen.getByRole("textbox");
+    restored.textContent = `${text}\nAnd a third line.`;
+    fireEvent.input(restored);
+    second.unmount();
+
+    render(<ChatStage />);
+    expect(screen.getByRole("textbox").textContent).toBe(`${text}\nAnd a third line.`);
+  });
+
+  it("keeps drafts separate when switching conversations", () => {
+    render(<ChatStage />);
+    const box = screen.getByRole("textbox");
+    box.textContent = "New conversation draft";
+    fireEvent.input(box);
+    act(() => useAgentChatStore.setState({ activeSessionId: "other-chat" }));
+    expect(screen.getByRole("textbox").textContent).toBe("");
+    const other = screen.getByRole("textbox");
+    other.textContent = "Existing conversation draft";
+    fireEvent.input(other);
+
+    act(() => useAgentChatStore.setState({ activeSessionId: null }));
+    expect(screen.getByRole("textbox").textContent).toBe("New conversation draft");
+    act(() => useAgentChatStore.setState({ activeSessionId: "other-chat" }));
+    expect(screen.getByRole("textbox").textContent).toBe("Existing conversation draft");
+  });
+
+  it("does not transfer the front page draft into the IDE chat", () => {
+    const first = render(<ChatStage />);
+    const box = screen.getByRole("textbox");
+    box.textContent = "Front page draft";
+    fireEvent.input(box);
+    first.unmount();
+    useAgentSessionStore.setState(seedState());
+    const ide = render(<AgentChatStoreProvider store={useAgentSessionStore}><ChatStage /></AgentChatStoreProvider>);
+    expect(screen.getByRole("textbox").textContent).toBe("");
+    ide.unmount();
+    render(<ChatStage />);
+    expect(screen.getByRole("textbox").textContent).toBe("Front page draft");
+  });
+
+  it("keeps a manually cleared draft empty after remounting", () => {
+    const first = render(<ChatStage />);
+    const box = screen.getByRole("textbox");
+    box.textContent = "Discard this draft";
+    fireEvent.input(box);
+    box.textContent = "";
+    fireEvent.input(box);
+    first.unmount();
+    render(<ChatStage />);
+    expect(screen.getByRole("textbox").textContent).toBe("");
+  });
+
+  it("does not restore a successfully sent draft after remounting", async () => {
+    const originalSend = useAgentChatStore.getState().send;
+    const sent: string[] = [];
+    useAgentChatStore.setState({ send: async (text) => { sent.push(text); } });
+    try {
+      const first = render(<ChatStage />);
+      const box = screen.getByRole("textbox");
+      box.textContent = "Send this once";
+      fireEvent.input(box);
+      await act(async () => fireEvent.click(screen.getByTestId("composer-send")));
+      expect(sent).toEqual(["Send this once"]);
+      first.unmount();
+      render(<ChatStage />);
+      expect(screen.getByRole("textbox").textContent).toBe("");
+    } finally {
+      useAgentChatStore.setState({ send: originalSend });
+    }
+  });
+
+  it("restores a failed send in the field and across remounts", async () => {
+    const originalSend = useAgentChatStore.getState().send;
+    useAgentChatStore.setState({ send: async () => { useAgentChatStore.setState({ lastError: "Offline" }); } });
+    try {
+      const first = render(<ChatStage />);
+      const box = screen.getByRole("textbox");
+      box.textContent = "Keep this if sending fails";
+      fireEvent.input(box);
+      await act(async () => fireEvent.click(screen.getByTestId("composer-send")));
+      expect(screen.getByRole("textbox").textContent).toBe("Keep this if sending fails");
+      first.unmount();
+      render(<ChatStage />);
+      expect(screen.getByRole("textbox").textContent).toBe("Keep this if sending fails");
+    } finally {
+      useAgentChatStore.setState({ send: originalSend });
+    }
   });
 
   it("lists each connected provider with its models in the one brain pick", async () => {

@@ -1,5 +1,5 @@
 import { ChatCommandPanel, useChatCommands } from "./ChatCommands";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowUp,
   AudioLines,
@@ -36,6 +36,7 @@ import { DictationButton } from "@/components/agentchat/DictationButton";
 import { ComposerAddMenu } from "@/components/agentchat/ComposerAddMenu";
 import { ComposerChipField, type ComposerChipFieldHandle } from "@/components/agentchat/ComposerChipField";
 import type { ToolChoice } from "@/components/agentchat/toolChoices";
+import { readComposerDraft, useComposerDraft, writeComposerDraft } from "./composerDrafts";
 import { useAppshotClaim } from "@/components/agentchat/useAppshotClaim";
 import { GigiMark } from "@/components/GigiMark";
 import { useVoiceModeSwitch } from "@/components/home/assistantStatus";
@@ -94,19 +95,38 @@ import { cn } from "@/lib/utils";
  */
 export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   const t = useT();
-  const [value, setValueState] = useState("");
+  const store = useAgentChatApi();
+  const activeSessionId = useAgentChat((s) => s.activeSessionId);
+  const messageDraft = useComposerDraft(store, activeSessionId);
+  const { text: value, choices: selectedTools } = messageDraft;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fieldRef = useRef<ComposerChipFieldHandle>(null);
+  const setSelectedTools = useCallback((choices: ToolChoice[]) => {
+    writeComposerDraft(store, activeSessionId, { ...readComposerDraft(store, activeSessionId), choices });
+  }, [store, activeSessionId]);
+  const setValueState = useCallback((next: string | ((current: string) => string)) => {
+    const current = readComposerDraft(store, activeSessionId);
+    writeComposerDraft(store, activeSessionId, {
+      ...current,
+      text: typeof next === "function" ? next(current.text) : next,
+    });
+  }, [store, activeSessionId]);
   const setValue = useCallback(
     (next: string | ((current: string) => string)) => {
-      setValueState((current) => {
-        const text = typeof next === "function" ? next(current) : next;
-        fieldRef.current?.setText(text);
-        return text;
-      });
+      const current = readComposerDraft(store, activeSessionId).text;
+      const text = typeof next === "function" ? next(current) : next;
+      setValueState(text);
+      fieldRef.current?.setText(text);
     },
-    [],
+    [store, activeSessionId, setValueState],
   );
+  useLayoutEffect(() => {
+    const field = fieldRef.current;
+    const current = field?.getDraft();
+    if (current && (current.text !== messageDraft.text || JSON.stringify(current.choices) !== JSON.stringify(messageDraft.choices))) {
+      field?.hydrate(messageDraft.text, messageDraft.choices);
+    }
+  }, [store, activeSessionId, messageDraft]);
   const connected = useEventStore((s) => s.connected);
   const wsWarming = useEventStore((s) => s.wsWarming);
   const assistantName = useEventStore((s) => s.assistantName);
@@ -114,7 +134,6 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   const pushToast = useEventStore((s) => s.pushToast);
   const [restarting, setRestarting] = useState(false);
 
-  const store = useAgentChatApi();
   const surface = useAgentChat((s) => s.surface);
   const catalog = useAgentChat((s) => s.catalog);
   const catalogError = useAgentChat((s) => s.catalogError);
@@ -123,11 +142,6 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   const liveModels = useAgentChat((s) => s.liveModels);
   const health = useAgentChat((s) => s.health);
   const draft = useAgentChat((s) => s.draft);
-  const activeSessionId = useAgentChat((s) => s.activeSessionId);
-  const [selectedTools, setSelectedTools] = useState<ToolChoice[]>([]);
-  useEffect(() => {
-    setSelectedTools([]);
-  }, [activeSessionId, surface]);
   const timeline = useAgentChat((s) => s.timeline);
   const busy = useAgentChat((s) => s.busy);
   const lastError = useAgentChat((s) => s.lastError);
@@ -236,12 +250,12 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
     if ((!content && files.attachments.length === 0) || (running || busy) && !commands.canSteer) return;
     if (files.analyzing > 0) return; // a file still being read would be sent without its contents
     if (dictating) stopDictation();
-    setValueState("");
+    const selected = selectedTools;
+    writeComposerDraft(store, sessionAtSend, { text: "", choices: [] });
     fieldRef.current?.clear();
     setAttachError("");
     const attached = files.attachments;
     files.clear();
-    const selected = selectedTools;
     if (selected.length)
       await send(
         content,
@@ -251,10 +265,11 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
     else await send(content, attached);
     if (sessionAtSend && store.getState().activeSessionId !== sessionAtSend) return;
     if (store.getState().lastError) {
-      setSelectedTools(selected);
-      setValueState((current) => current || content);
-    } else {
-      setSelectedTools([]);
+      const target = store.getState().activeSessionId;
+      const current = readComposerDraft(store, target);
+      if (!current.text && !current.choices.length) {
+        writeComposerDraft(store, target, { text: value, choices: selected });
+      }
     }
   }
 
@@ -590,8 +605,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
         autoFocus={autoFocus}
         onSubmit={() => (dictating ? stopDictationAndSend() : void onSend())}
         onDraftChange={(draft) => {
-          setValueState(draft.text);
-          setSelectedTools(draft.choices);
+          writeComposerDraft(store, activeSessionId, { text: draft.text, choices: draft.choices });
         }}
         onKeyDown={(ev) => {
           if (commands.onKeyDown(ev)) return true;
