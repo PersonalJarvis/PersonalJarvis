@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AlertCircle, Bot, Brain, Check, ChevronDown, Copy, Cpu, Download, HardDrive, Loader2, LogIn, LogOut, Mic, Play, PlugZap, Radio, Search, Sparkles, Square, Terminal, Volume2, Wand2, Waypoints, XCircle } from "lucide-react";
+import { AlertCircle, Bot, Brain, Check, ChevronDown, Copy, Cpu, Download, HardDrive, KeyRound, Loader2, LogIn, LogOut, Mic, Play, PlugZap, Radio, Search, Sparkles, Square, Terminal, Volume2, Wand2, Waypoints, XCircle } from "lucide-react";
 import { AltCredentialNote } from "@/components/AltCredentialNote";
 import { ApiKeyForm } from "@/components/ApiKeyForm";
 import { BrainModelSelector } from "@/components/BrainModelSelector";
@@ -1521,11 +1521,16 @@ export function ProviderCard({
             </div>
           )}
 
+          {/* The key row stays visible: a collapsed disclosure hid the only
+              place to enter or replace the key behind a tiny triangle. */}
           {configuration && descriptor.configured ? (
-            <details className="rounded-lg border border-border px-3 py-2.5">
-              <summary className="cursor-pointer text-sm font-medium">{t("live.shared_key_ready")}</summary>
-              <div className="pt-3"><AuthWidget descriptor={descriptor} onChanged={onChanged} onSavedActivate={handleSavedActivate} /></div>
-            </details>
+            <div data-testid={`provider-key-${descriptor.id}`} className="space-y-2 rounded-lg border border-border px-3 py-2.5">
+              <p className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+                <KeyRound aria-hidden="true" className="h-3.5 w-3.5 text-muted-foreground" />
+                {t("live.shared_key_ready")}
+              </p>
+              <AuthWidget descriptor={descriptor} onChanged={onChanged} onSavedActivate={handleSavedActivate} />
+            </div>
           ) : <AuthWidget descriptor={descriptor} onChanged={onChanged} onSavedActivate={handleSavedActivate} />}
 
           {configuration}
