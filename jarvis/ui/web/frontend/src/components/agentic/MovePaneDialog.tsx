@@ -1,6 +1,6 @@
 import { useEffect, useState, type KeyboardEvent, type ReactNode } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { Check, FolderInput, Loader2, Wand2 } from "lucide-react";
+import { Check, FolderInput, Loader2 } from "lucide-react";
 import { AgentMark } from "./AgentMark";
 import { treeLayout } from "./treeLayout";
 import { GRID_LIMIT_HINT, fitsWorkspace, previewSplit, workspaceLayout } from "./workspaceDocking";
@@ -17,13 +17,11 @@ interface Props {
   request: MovePaneRequest | null;
   busy: boolean;
   onCancel: () => void;
-  /** `null` places the pane automatically at the right edge of the grid. */
+  /** `null` only for an empty workspace (or one with no room anywhere), which the pane fills. */
   onConfirm: (placement: TransferPlacement | null) => void;
 }
 
 type MapPane = WorkspaceLayoutView["terminals"][number];
-/** What the map is showing: the automatic place, or one side of one pane. */
-type Spot = { kind: "auto" } | { kind: "side"; anchor: string; side: TransferSide };
 
 /**
  * Four triangles from the tile's centre to its edges: the side nearest the
@@ -74,14 +72,15 @@ function Ghost({ request, chosen, allowed, children }: { request: MovePaneReques
  * The target grid is drawn as a map of its real panes. Pointing at a pane
  * shows the moved one taking the half nearest the pointer — the tile splits
  * in place, so nothing jumps under the cursor — and a click keeps that
- * place. The dashed column on the right is the automatic place, chosen until
- * something else is. Arrow keys pick a side of the focused pane.
+ * place. A place is picked from the start (right of the last pane, else
+ * below it), so the map always shows where the pane will go and Enter alone
+ * keeps the quick path. Arrow keys pick a side of the focused pane.
  */
 export function MovePaneDialog({ request, busy, onCancel, onConfirm }: Props) {
   const [view, setView] = useState<WorkspaceLayoutView | null>(null);
   const [loadError, setLoadError] = useState("");
   const [choice, setChoice] = useState<TransferPlacement | null>(null);
-  const [hover, setHover] = useState<Spot | null>(null);
+  const [hover, setHover] = useState<TransferPlacement | null>(null);
   const targetId = request?.target.id;
 
   useEffect(() => {
@@ -103,11 +102,26 @@ export function MovePaneDialog({ request, busy, onCancel, onConfirm }: Props) {
   const full = view !== null && panes.length >= view.max_terminals;
   const fits = (pane: MapPane, side: TransferSide) =>
     !full && current !== null && fitsWorkspace(previewSplit(current, pane.key, INCOMING, SPLIT_DIRECTION[side]));
-  const chosenSpot: Spot = choice ? { kind: "side", ...choice } : { kind: "auto" };
-  const shown: Spot = hover ?? chosenSpot;
-  const sameSpot = (a: Spot, b: Spot) => a.kind === b.kind && (a.kind === "auto" || (b.kind === "side" && a.anchor === b.anchor && a.side === b.side));
+  const shown = hover ?? choice;
   const paneName = request?.pane.name ?? "";
   const targetName = request?.target.name ?? "";
+
+  // The first place with room, nearest the end of the reading order: what an
+  // open-one-more would have done, but shown on the map and changeable.
+  useEffect(() => {
+    if (!view || !current || full) return;
+    for (const pane of [...view.terminals].reverse()) {
+      for (const side of ["right", "below"] as const) {
+        if (fitsWorkspace(previewSplit(current, pane.key, INCOMING, SPLIT_DIRECTION[side]))) {
+          setChoice({ anchor: anchorOf(pane), side });
+          return;
+        }
+      }
+    }
+    // A layout without room anywhere is left to the server's even grid.
+    // Only a newly loaded workspace re-picks; everything else derives from it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view]);
 
   const pick = (pane: MapPane, side: TransferSide) => { if (!busy && fits(pane, side)) setChoice({ anchor: anchorOf(pane), side }); };
   const onTileKey = (event: KeyboardEvent<HTMLDivElement>, pane: MapPane) => {
@@ -121,7 +135,7 @@ export function MovePaneDialog({ request, busy, onCancel, onConfirm }: Props) {
     if (!view) return "";
     if (full) return `${targetName} is full: a workspace holds ${view.max_terminals} terminals.`;
     if (!panes.length) return `${targetName} is empty, so ${paneName} fills it.`;
-    if (shown.kind === "auto") return `Automatic: ${paneName} joins the right edge and every pane gets an even share.`;
+    if (!shown) return `${paneName} joins ${targetName}, and every pane gets an even share.`;
     const pane = panes.find((entry) => anchorOf(entry) === shown.anchor);
     const words = SIDES.find((entry) => entry.side === shown.side)?.words ?? shown.side;
     if (!pane) return "";
@@ -148,9 +162,9 @@ export function MovePaneDialog({ request, busy, onCancel, onConfirm }: Props) {
             </div>
           </div>
 
-          <div className="mt-5 flex h-[clamp(200px,42vh,320px)] gap-1.5 rounded-xl border border-border bg-muted/30 p-1.5"
+          <div className="mt-5 h-[clamp(200px,42vh,320px)] rounded-xl border border-border bg-muted/30 p-1.5"
             onMouseLeave={() => setHover(null)}>
-            <div data-testid="move-pane-map" className="relative min-w-0 flex-1">
+            <div data-testid="move-pane-map" className="relative h-full w-full">
               {!view && !loadError && <div className="flex h-full items-center justify-center gap-2 text-xs text-muted-foreground">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />Loading {targetName}…</div>}
               {view && panes.length === 0 && request && <div className="h-full p-0.5"><Ghost request={request} chosen allowed>
@@ -159,7 +173,7 @@ export function MovePaneDialog({ request, busy, onCancel, onConfirm }: Props) {
                 const box = boxes[index];
                 if (!box) return null;
                 const anchor = anchorOf(pane);
-                const lit = shown.kind === "side" && shown.anchor === anchor ? shown.side : null;
+                const lit = shown?.anchor === anchor ? shown.side : null;
                 const chosenHere = lit !== null && choice?.anchor === anchor && choice.side === lit;
                 const horizontal = lit === "left" || lit === "right";
                 const ghostFirst = lit === "left" || lit === "above";
@@ -181,7 +195,7 @@ export function MovePaneDialog({ request, busy, onCancel, onConfirm }: Props) {
                       aria-pressed={choice?.anchor === anchor && choice.side === side}
                       data-testid={`move-pane-${pane.name}-${side}`}
                       aria-label={`Place ${paneName} ${words} ${pane.name}`}
-                      onMouseEnter={() => setHover({ kind: "side", anchor, side })}
+                      onMouseEnter={() => setHover({ anchor, side })}
                       onClick={() => pick(pane, side)}
                       style={{ clipPath: clip }}
                       className={cn("absolute inset-0 z-10 bg-transparent", allowed ? "cursor-pointer" : "cursor-not-allowed")} />;
@@ -189,25 +203,10 @@ export function MovePaneDialog({ request, busy, onCancel, onConfirm }: Props) {
                 </div>;
               })}
             </div>
-            {panes.length > 0 && request && <button type="button" data-testid="move-pane-auto" aria-pressed={choice === null}
-              aria-label={`Place ${paneName} automatically at the right edge`} disabled={busy || full}
-              onClick={() => setChoice(null)} onMouseEnter={() => setHover({ kind: "auto" })} onFocus={() => setHover({ kind: "auto" })} onBlur={() => setHover(null)}
-              className={cn(
-                "flex w-[76px] shrink-0 flex-col items-center justify-center gap-1.5 rounded-lg border-2 px-1 text-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50",
-                sameSpot(shown, { kind: "auto" })
-                  ? choice === null ? "border-primary bg-primary/15 text-primary" : "border-dashed border-primary/70 bg-primary/10 text-primary"
-                  : "border-dashed border-border text-muted-foreground hover:border-primary/60 hover:text-primary",
-              )}>
-              {sameSpot(shown, { kind: "auto" })
-                ? <><AgentMark agent={request.pane.agent} label={request.pane.displayName} variant="plain" size="sm" />
-                    <span className="max-w-full truncate text-xs font-semibold">{paneName}</span></>
-                : <Wand2 className="h-4 w-4" aria-hidden />}
-              <span className="text-[10px] font-medium uppercase tracking-wide">Auto</span>
-            </button>}
           </div>
 
           <p role="status" className={cn("mt-3 min-h-[1.25rem] text-xs leading-relaxed",
-            shown.kind === "side" && view && !panes.some((pane) => anchorOf(pane) === shown.anchor && fits(pane, shown.side)) ? "text-destructive" : "text-muted-foreground")}>
+            shown && view && !panes.some((pane) => anchorOf(pane) === shown.anchor && fits(pane, shown.side)) ? "text-destructive" : "text-muted-foreground")}>
             {summary}</p>
           {loadError && <p role="alert" className="mt-2 text-xs text-destructive">{loadError}</p>}
 

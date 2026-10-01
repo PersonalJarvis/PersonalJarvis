@@ -5,7 +5,7 @@
  * shows is what will happen: the tile pointed at splits in place to show the
  * moved pane, a side with no room says so instead of being offered, a full
  * workspace cannot be confirmed, and what is sent names the target pane by
- * identity.
+ * identity. There is no hidden "automatic" place: the map always shows one.
  */
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
@@ -23,18 +23,28 @@ const status = () => screen.getByRole("status").textContent;
 beforeEach(() => { vi.clearAllMocks(); });
 afterEach(cleanup);
 
-it("draws the target panes with their task and starts on the automatic place", async () => {
+it("draws the target panes with their task and shows a place from the start", async () => {
   api.layout.mockResolvedValue(workspace(["T1", "T2"]));
   const onConfirm = vi.fn();
   render(<MovePaneDialog request={request} busy={false} onCancel={() => {}} onConfirm={onConfirm} />);
 
   expect(await screen.findByText("Work of T1")).toBeTruthy();
-  expect(screen.getByTestId("move-pane-auto").getAttribute("aria-pressed")).toBe("true");
-  expect(status()).toContain("Automatic: T9 joins the right edge");
+  // Right of the last pane: visible on the map, so Enter alone is safe.
+  expect(screen.getByTestId("move-pane-tile-T2").dataset.lit).toBe("right");
+  expect(status()).toBe("Right of T2: T9 takes half of its space.");
   fireEvent.click(screen.getByTestId("move-pane-confirm"));
 
   expect(api.layout).toHaveBeenCalledWith("w2");
-  expect(onConfirm).toHaveBeenCalledExactlyOnceWith(null);
+  expect(onConfirm).toHaveBeenCalledExactlyOnceWith({ anchor: "pane:h-T2", side: "right" });
+});
+
+it("starts below the last pane when the row has no room", async () => {
+  const row = ["T1", "T2", "T3", "T4"];
+  api.layout.mockResolvedValue(workspace(row, { direction: "row", children: row.map((name) => ({ pane: name.toLowerCase() })), weights: [1, 1, 1, 1] }));
+  render(<MovePaneDialog request={request} busy={false} onCancel={() => {}} onConfirm={() => {}} />);
+
+  await screen.findByText("Work of T4");
+  expect(screen.getByTestId("move-pane-tile-T4").dataset.lit).toBe("below");
 });
 
 it("splits the pointed-at tile to preview the place, and keeps it on click", async () => {
@@ -52,22 +62,9 @@ it("splits the pointed-at tile to preview the place, and keeps it on click", asy
   fireEvent.click(left);
   fireEvent.mouseLeave(screen.getByTestId("move-pane-map").parentElement!);
   expect(screen.getByTestId("move-pane-tile-T2").dataset.lit).toBe("left");
-  expect(screen.getByTestId("move-pane-auto").getAttribute("aria-pressed")).toBe("false");
   fireEvent.click(screen.getByTestId("move-pane-confirm"));
 
   expect(onConfirm).toHaveBeenCalledExactlyOnceWith({ anchor: "pane:h-T2", side: "left" });
-});
-
-it("goes back to automatic from the edge column", async () => {
-  api.layout.mockResolvedValue(workspace(["T1"]));
-  const onConfirm = vi.fn();
-  render(<MovePaneDialog request={request} busy={false} onCancel={() => {}} onConfirm={onConfirm} />);
-
-  fireEvent.click(await screen.findByRole("button", { name: "Place T9 below T1" }));
-  fireEvent.click(screen.getByTestId("move-pane-auto"));
-  fireEvent.click(screen.getByTestId("move-pane-confirm"));
-
-  expect(onConfirm).toHaveBeenCalledExactlyOnceWith(null);
 });
 
 it("says a side has no room instead of taking it", async () => {
@@ -83,7 +80,10 @@ it("says a side has no room instead of taking it", async () => {
   expect(screen.getByText("No room")).toBeTruthy();
   expect(status()).toContain("No room right of T1");
   fireEvent.click(right);
-  expect(screen.getByTestId("move-pane-auto").getAttribute("aria-pressed")).toBe("true");
+  fireEvent.mouseLeave(screen.getByTestId("move-pane-map").parentElement!);
+  // The click changed nothing: the place picked at the start still stands.
+  expect(screen.getByTestId("move-pane-tile-T1").dataset.lit).toBeUndefined();
+  expect(screen.getByTestId("move-pane-tile-T4").dataset.lit).toBe("below");
   expect(screen.getByRole("button", { name: "Place T9 below T1" }).getAttribute("aria-disabled")).toBe("false");
 });
 
@@ -114,5 +114,14 @@ it("says an empty workspace is simply filled", async () => {
 
   expect(await screen.findByText("Fills the empty workspace")).toBeTruthy();
   expect(status()).toBe("Blog is empty, so T9 fills it.");
-  expect(screen.queryByTestId("move-pane-auto")).toBeNull();
+});
+
+it("fills an empty workspace without naming a place", async () => {
+  api.layout.mockResolvedValue(workspace([], null));
+  const onConfirm = vi.fn();
+  render(<MovePaneDialog request={request} busy={false} onCancel={() => {}} onConfirm={onConfirm} />);
+
+  await screen.findByText("Fills the empty workspace");
+  fireEvent.click(screen.getByTestId("move-pane-confirm"));
+  expect(onConfirm).toHaveBeenCalledExactlyOnceWith(null);
 });

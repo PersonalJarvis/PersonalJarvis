@@ -112,8 +112,8 @@ it("asks where a pane dropped on a workspace in the sidebar goes, lighting the r
   expect(api.transfer).not.toHaveBeenCalled();
   await screen.findByRole("button", { name: "Place T1 below T1" });
   fireEvent.click(screen.getByTestId("move-pane-confirm"));
-  // "Automatic" is the default: no place named.
-  await waitFor(() => expect(api.transfer).toHaveBeenCalledExactlyOnceWith("pane:h-T1", "w1", "w2", null));
+  // The place shown from the start: right of Blog's last pane.
+  await waitFor(() => expect(api.transfer).toHaveBeenCalledExactlyOnceWith("pane:h-T1", "w1", "w2", { anchor: "pane:b-T1", side: "right" }));
   expect(api.move).not.toHaveBeenCalled();
 });
 
