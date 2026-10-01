@@ -1601,6 +1601,7 @@
     "close": "Close",
     "or": "or",
     "unassigned": "not assigned",
+    "off": "off",
     "footer": "Rebind the voice keys under Settings → Keyboard.",
     "area": {
       "voice": "Voice",
@@ -2598,6 +2599,18 @@
       "reset": "Reset to default",
       "reset_done": "Reset to the default system prompt",
       "applies_next_turn": "Applies on your assistant's next message — no restart needed."
+    },
+    "quick_switch": {
+      "title": "Quick switcher",
+      "description": "A search that opens over everything: type a section's name and press Enter to go there. Works while the Jarvis window is in front.",
+      "shortcut_label": "Open the quick switcher",
+      "keys_only": "The quick switcher opens with keys only, not mouse buttons.",
+      "mac_note": "On a Mac, Command+Space belongs to Spotlight and Control+Space to the input source switch — macOS keeps both before Jarvis sees them. That is why Option+Space is the default here.",
+      "problem_one_key": "Use exactly one key plus modifiers, for example Ctrl+Space. Modifier-only chords, key pairs and mouse buttons cannot open the quick switcher.",
+      "problem_typing_key": "This key would open the quick switcher every time you type it. Add Ctrl, Alt or Command — or use a function key such as F6.",
+      "problem_os_reserved": "Your operating system keeps this combination for itself, so it never reaches Jarvis. Pick another one.",
+      "problem_app_reserved": "Jarvis already uses this combination (copy, paste, undo or the Wiki and Docs search). Pick another one.",
+      "problem_voice_taken": "A voice shortcut already uses exactly this combination, and it fires before the quick switcher can. Pick another one."
     },
     "keybinds": {
       "title": "Voice Keybinds",

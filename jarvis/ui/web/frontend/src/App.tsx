@@ -46,7 +46,8 @@ import { shouldOpenShortcutOverlay } from "@/lib/shortcutOverlayTrigger";
 const QuickSwitcher = lazy(() =>
   import("@/components/QuickSwitcher").then((m) => ({ default: m.QuickSwitcher })),
 );
-import { isQuickSwitchChord } from "@/lib/quickSwitchChord";
+import { eventMatchesChord } from "@/lib/quickSwitchChord";
+import { useQuickSwitchSettings } from "@/store/quickSwitchSettings";
 import { JarvisDock } from "@/components/JarvisDock";
 import { CliConnectPoller } from "@/components/CliConnectPoller";
 import { OnboardingGate } from "@/components/onboarding/OnboardingGate";
@@ -115,23 +116,33 @@ export default function App() {
   }, []);
 
   /*
-    Ctrl+Space opens the quick switcher — the Spotlight-style "type a section,
-    press Enter" launcher. Listened for in the CAPTURE phase so it also works
-    while a terminal pane has focus: xterm handles keys on its own textarea and
-    would otherwise swallow the chord as a NUL byte for the agent. Pressing it
-    again closes the switcher, the way Spotlight's own chord toggles.
+    The quick switcher's chord (Ctrl+Space; ⌥+Space on a Mac — both can be
+    changed or switched off under Settings → Keyboard shortcuts) opens the
+    Spotlight-style "type a section, press Enter" launcher. Listened for in the
+    CAPTURE phase so it also works while a terminal pane has focus: xterm
+    handles keys on its own textarea and would otherwise send the chord to the
+    agent. Pressing it again closes the switcher, the way Spotlight's own
+    chord toggles. While the Settings recorder is capturing, the chord must
+    reach the recorder instead, so a recording session is skipped.
   */
   const [switcherOpen, setSwitcherOpen] = useState(false);
+  const switcherEnabled = useQuickSwitchSettings((s) => s.enabled);
+  const switcherCombo = useQuickSwitchSettings((s) => s.combo);
   useEffect(() => {
+    if (!switcherEnabled || !switcherCombo) {
+      setSwitcherOpen(false);
+      return;
+    }
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.repeat || !isQuickSwitchChord(event)) return;
+      if (event.repeat || !eventMatchesChord(event, switcherCombo)) return;
+      if (document.querySelector('[data-keybind-recording="true"]')) return;
       event.preventDefault();
       event.stopPropagation();
       setSwitcherOpen((open) => !open);
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, []);
+  }, [switcherEnabled, switcherCombo]);
 
   useWebSocket();
   useBrainStatus();
@@ -411,7 +422,7 @@ export default function App() {
       <CliConnectPoller />
       {/* Blocking onboarding gate — overlays everything until first-run setup is complete. */}
       <OnboardingGate activeSection={activeSection} />
-      {/* Ctrl+Space anywhere; the chunk loads on first use. Main window only:
+      {/* The switcher chord anywhere; the chunk loads on first use. Main window only:
           a detached solo window IS one section, there is nowhere to switch. */}
       {switcherOpen && (
         <Suspense fallback={null}>

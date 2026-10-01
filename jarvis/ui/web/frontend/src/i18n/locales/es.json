@@ -1568,6 +1568,7 @@
     "close": "Cerrar",
     "or": "o",
     "unassigned": "sin asignar",
+    "off": "desactivado",
     "footer": "Cambia las teclas de voz en Ajustes → Teclado.",
     "area": {
       "voice": "Voz",
@@ -2565,6 +2566,18 @@
       "reset": "Restablecer predeterminado",
       "reset_done": "Restablecido al prompt del sistema predeterminado",
       "applies_next_turn": "Se aplica en el próximo mensaje de tu asistente — sin reiniciar."
+    },
+    "quick_switch": {
+      "title": "Cambio rápido",
+      "description": "Una búsqueda sobre todo: escribe el nombre de una sección y pulsa Enter para ir allí. Funciona mientras la ventana de Jarvis está delante.",
+      "shortcut_label": "Abrir el cambio rápido",
+      "keys_only": "El cambio rápido solo se abre con teclas, no con botones del ratón.",
+      "mac_note": "En un Mac, Comando+Espacio pertenece a Spotlight y Control+Espacio al cambio de fuente de entrada: macOS se queda con ambos antes de que Jarvis los vea. Por eso aquí el predeterminado es Opción+Espacio.",
+      "problem_one_key": "Usa exactamente una tecla más modificadores, por ejemplo Ctrl+Espacio. Solo modificadores, pares de teclas y botones del ratón no pueden abrir el cambio rápido.",
+      "problem_typing_key": "Esta tecla abriría el cambio rápido cada vez que escribes. Añade Ctrl, Alt o Comando, o usa una tecla de función como F6.",
+      "problem_os_reserved": "Tu sistema operativo se reserva esta combinación, así que nunca llega a Jarvis. Elige otra.",
+      "problem_app_reserved": "Jarvis ya usa esta combinación (copiar, pegar, deshacer o la búsqueda de Wiki y Docs). Elige otra.",
+      "problem_voice_taken": "Un atajo de voz ya usa exactamente esta combinación y se activa antes que el cambio rápido. Elige otra."
     },
     "keybinds": {
       "title": "Atajos de voz",

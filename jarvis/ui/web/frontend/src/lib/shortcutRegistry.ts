@@ -56,7 +56,17 @@ export interface FixedShortcut extends ShortcutBase {
   alternateKeys?: string[][];
 }
 
-export type Shortcut = RebindableShortcut | FixedShortcut;
+/**
+ * An in-app shortcut whose chord is a per-device preference (the quick
+ * switcher). Like a rebindable entry it carries no keys — the overlay reads the
+ * live setting, including whether the shortcut is switched off.
+ */
+export interface AppSettingShortcut extends ShortcutBase {
+  kind: "app";
+  setting: "quick_switch";
+}
+
+export type Shortcut = RebindableShortcut | FixedShortcut | AppSettingShortcut;
 
 export const SHORTCUTS: readonly Shortcut[] = [
   // ── Voice — every one of these is rebindable in Settings ───────────────
@@ -104,9 +114,9 @@ export const SHORTCUTS: readonly Shortcut[] = [
     labelKey: "shortcut_overlay.workspace.open_overlay",
   },
   {
-    kind: "fixed",
+    kind: "app",
     area: "workspace",
-    keys: ["Ctrl", "Space"],
+    setting: "quick_switch",
     labelKey: "shortcut_overlay.workspace.quick_switch",
   },
 ] as const;
@@ -126,5 +136,21 @@ export function shortcutsForArea(area: ShortcutArea): Shortcut[] {
  */
 export function keyLabel(token: string, isMac: boolean): string {
   if (token === "Mod") return isMac ? "⌘" : "Ctrl";
+  // A saved combo spells modifiers the PC way; a Mac keycap prints a glyph.
+  if (isMac) {
+    const glyph = MAC_GLYPHS[token.toLowerCase()];
+    if (glyph) return glyph;
+  }
   return token;
 }
+
+const MAC_GLYPHS: Record<string, string> = {
+  ctrl: "⌃",
+  alt: "⌥",
+  right_alt: "⌥",
+  cmd: "⌘",
+  command: "⌘",
+  meta: "⌘",
+  win: "⌘",
+  super: "⌘",
+};

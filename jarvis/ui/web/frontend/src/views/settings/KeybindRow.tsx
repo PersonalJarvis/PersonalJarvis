@@ -862,6 +862,9 @@ export function KeybindRow({
     <button
       type="button"
       data-testid={`combo-field-${action}`}
+      // App-level chords (the quick switcher) stand down while this is set, so
+      // the keys being recorded reach the recorder instead of opening something.
+      data-keybind-recording={capturing ? "true" : undefined}
       onClick={() => setCapturing((c) => !c)}
       disabled={loading}
       className={`flex min-h-[34px] flex-wrap items-center gap-1 rounded-md border px-3 py-1.5 text-left text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-border-strong disabled:opacity-50 ${

@@ -30,6 +30,7 @@ import {
 } from "@/hooks/useWakeWord";
 import { useKeybinds, type KeybindAction } from "@/hooks/useHotkey";
 import { KeybindRow } from "@/views/settings/KeybindRow";
+import { QuickSwitchKeybind } from "@/views/settings/QuickSwitchKeybind";
 import { deriveAssistantName } from "@/lib/deriveAssistantName";
 import { WAKE_ENGINES, WAKE_ENGINE_I18N_KEY } from "@/constants/wakeEngines";
 import { useEventStore } from "@/store/events";
@@ -871,6 +872,7 @@ export function KeybindsPanel() {
               />
             ))}
           </div>
+          <QuickSwitchKeybind voiceConfig={config} />
         </div>
       </div>
     </div>

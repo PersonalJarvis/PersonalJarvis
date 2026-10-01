@@ -1568,6 +1568,7 @@
     "close": "Schließen",
     "or": "oder",
     "unassigned": "nicht belegt",
+    "off": "aus",
     "footer": "Sprachtasten änderst du unter Einstellungen → Tastatur.",
     "area": {
       "voice": "Sprache",
@@ -2565,6 +2566,18 @@
       "reset": "Auf Standard zurücksetzen",
       "reset_done": "Auf den Standard-System-Prompt zurückgesetzt",
       "applies_next_turn": "Wirkt ab der nächsten Antwort deines Assistenten — kein Neustart nötig."
+    },
+    "quick_switch": {
+      "title": "Schnellsuche",
+      "description": "Eine Suche über allem: Tippe den Namen eines Bereichs und drücke Enter, um dorthin zu springen. Funktioniert, solange das Jarvis-Fenster vorne ist.",
+      "shortcut_label": "Schnellsuche öffnen",
+      "keys_only": "Die Schnellsuche öffnet sich nur mit Tasten, nicht mit Maustasten.",
+      "mac_note": "Auf dem Mac gehört Command+Leertaste zu Spotlight und Control+Leertaste zum Wechsel der Eingabequelle — macOS fängt beide ab, bevor Jarvis sie sieht. Deshalb ist hier Option+Leertaste voreingestellt.",
+      "problem_one_key": "Nimm genau eine Taste plus Zusatztasten, zum Beispiel Strg+Leertaste. Nur Zusatztasten, Tastenpaare und Maustasten können die Schnellsuche nicht öffnen.",
+      "problem_typing_key": "Diese Taste würde die Schnellsuche bei jedem Tippen öffnen. Nimm Strg, Alt oder Command dazu — oder eine Funktionstaste wie F6.",
+      "problem_os_reserved": "Dein Betriebssystem behält diese Kombination für sich, sie kommt nie bei Jarvis an. Wähle eine andere.",
+      "problem_app_reserved": "Jarvis nutzt diese Kombination schon (Kopieren, Einfügen, Rückgängig oder die Wiki- und Docs-Suche). Wähle eine andere.",
+      "problem_voice_taken": "Ein Sprach-Kürzel nutzt genau diese Kombination schon und reagiert vor der Schnellsuche. Wähle eine andere."
     },
     "keybinds": {
       "title": "Sprach-Tastenkürzel",
