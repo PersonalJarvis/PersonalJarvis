@@ -39,6 +39,7 @@ from jarvis.core.events import (
 )
 from jarvis.core.misfire import is_missed, late_by_s
 from jarvis.core.protocols import RoutineDeferred, current_trigger_path
+from jarvis.tasks.event_catalog import EXCLUDED_EVENT_NAMES
 from jarvis.tasks.hook_events import RoutineEventReceived
 from jarvis.tasks.schema import PAUSABLE_TRIGGER_TYPES, TERMINAL_STATES, TaskSpec
 
@@ -615,6 +616,10 @@ class TaskScheduler:
                 await self._enqueue_hook_event(event)
             return
         cls_name = type(event).__name__
+        if cls_name in EXCLUDED_EVENT_NAMES:
+            # Permission episodes describe a system dialog on the user's machine:
+            # no routine may react to one, whichever way the task was stored.
+            return
         task_ids = self._on_event_index.get(cls_name)
         if not task_ids:
             return
