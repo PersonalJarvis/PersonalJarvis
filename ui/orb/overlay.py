@@ -2409,6 +2409,10 @@ class PetControlStrip(OrbControlRow):
         self._on_drag_release = on_drag_release
         self._on_context = on_context
         self._dragging = False
+        # The press point (screen px) and whether the pointer has since
+        # travelled far enough to make the press a drag rather than a click.
+        self._drag_moved = False
+        self._press_root: tuple[int, int] = (0, 0)
         super().__init__(parent, orb_x, orb_y, orb_w, orb_h)
 
     # -- layout hooks -----------------------------------------------------
@@ -2510,21 +2514,37 @@ class PetControlStrip(OrbControlRow):
         super()._grace_elapsed()
 
     def _on_press(self, event: tk.Event) -> None:
+        # Every press may become a drag — on a control too. The strip is all
+        # controls, so with the pet "None" there would otherwise be nothing
+        # to grab. A press that never travels past DRAG_THRESHOLD_PX stays a
+        # click; one that does moves the pet and the control does not fire.
         super()._on_press(event)
-        self._dragging = self._pressed_action is None
-        if self._dragging and self._on_drag_press is not None:
+        self._dragging = True
+        self._drag_moved = False
+        self._press_root = (event.x_root, event.y_root)
+        if self._on_drag_press is not None:
             self._on_drag_press(event)
 
     def _on_drag_motion_event(self, event: tk.Event) -> None:
-        if self._dragging and self._on_drag_motion is not None:
+        if not self._dragging:
+            return
+        if not self._drag_moved:
+            px, py = self._press_root
+            if abs(event.x_root - px) + abs(event.y_root - py) < DRAG_THRESHOLD_PX:
+                return
+            self._drag_moved = True
+            self._set_hovered(None)
+        if self._on_drag_motion is not None:
             self._on_drag_motion(event)
 
     def _on_release(self, event: tk.Event) -> None:
-        if self._dragging:
-            self._dragging = False
+        dragging, moved = self._dragging, self._drag_moved
+        self._dragging = False
+        self._drag_moved = False
+        if dragging and self._on_drag_release is not None:
+            self._on_drag_release(event)
+        if moved:
             self._pressed_action = None
-            if self._on_drag_release is not None:
-                self._on_drag_release(event)
             return
         super()._on_release(event)
 
