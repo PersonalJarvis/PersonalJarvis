@@ -2,8 +2,11 @@
 
 **Date:** 2026-08-11
 
-**Status:** Assessment of the shipped implementation; five fixes landed, the
-rest is a ranked backlog.
+**Status:** Superseded on 2026-10-01 by the
+[local live voice rebuild plan](local-live-voice-rebuild.md) and
+[ADR-0037](adr/0037-jarvis-owned-local-voice-engine.md). The ranked backlog
+below is closed: the supervised server it describes is being replaced, not
+repaired.
 
 **Scope:** The managed local realtime provider Jarvis owns and runs — crash
 behaviour, time-to-ready, and portability to machines the maintainer cannot
