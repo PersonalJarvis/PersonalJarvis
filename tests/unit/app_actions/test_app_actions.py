@@ -224,3 +224,13 @@ def test_actions_carrying_a_credential_are_never_offered() -> None:
     assert ("POST", "/api/computers") not in routes
     assert ("GET", "/api/usage") in routes
     assert default_tier(routes[("PATCH", "/api/agent-chat/sessions/{sid}")]) == "ask"
+
+
+async def test_a_misspelled_parameter_is_refused_before_anything_runs(app: FastAPI) -> None:
+    action_id = _id(app, "/api/skills", "GET")
+    tool = RunAppActionTool(runtime=_Runtime(app))
+    result = await tool.execute({"action_id": action_id, "params": {"limt": 3}}, None)
+    assert not result.success and result.output["executed"] is False
+    assert "limt" in (result.error or "") and "limit" in (result.error or "")
+    ran = await tool.execute({"action_id": action_id, "params": {"limit": 3}}, None)
+    assert ran.success and ran.output["response"]["limit"] == 3

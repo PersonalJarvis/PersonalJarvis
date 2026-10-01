@@ -187,7 +187,26 @@ class RunAppActionTool:
         query = {k: params.pop(k) for k in list(params) if k in entry.query_params}
         body = params.pop("body", None)
         if body is None and entry.has_body and params:
-            body = params  # a model that flattened the body still gets it through
+            body, params = params, {}  # a model that flattened the body still gets it through
+        # A misspelled name used to be dropped and the action ran on defaults.
+        body_fields = (entry.parameters.get("properties", {}).get("body") or {}).get("properties")
+        unknown = sorted(params) + (
+            [f"body.{k}" for k in body if k not in body_fields]
+            if isinstance(body, dict) and body_fields
+            else []
+        )
+        if unknown:
+            valid = [*entry.path_params, *entry.query_params]
+            body_names = [f"body.{k}" for k in body_fields or ()]
+            valid += body_names or (["body"] if entry.has_body else [])
+            return ToolResult(
+                success=False,
+                output={"action_id": entry.id, "executed": False},
+                error=(
+                    f"Unknown parameter(s) {', '.join(unknown)} for {entry.title}; nothing ran. "
+                    f"Valid: {', '.join(valid) or 'none'}."
+                ),
+            )
         status, data = await self._request(entry.method, path, query, body)
         if status is None:
             history.record(entry.id, "failed", str(data), via=self.name)
