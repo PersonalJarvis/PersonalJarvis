@@ -45,10 +45,11 @@ while dictating**.
   screen. A system permission prompt never needs an API key, password, token,
   or recovery code.
 
-During first-run setup, an interactive Mac shows all seven rows. **Continue** is
-enabled when every row is ready or is waiting for the final setup restart.
-Choose **Skip for now, text only** to skip the remaining grants. Completing
-setup restarts the installed desktop app when that restart is available.
+During first-run setup, an interactive Mac shows the same list behind the setup
+card. You do not have to allow anything to go on: **Continue** is always
+available, so allow the rows you want, or none, and come back to this card in
+Settings whenever you like. Completing setup restarts the installed desktop app
+when that restart is available, which applies the grants you gave.
 
 ## Check Your Platform
 
