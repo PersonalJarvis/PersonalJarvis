@@ -8,11 +8,11 @@ order: 3
 diataxis: howto
 status: active
 owner: maintainers
-last_reviewed: 2026-07-30
+last_reviewed: 2026-10-01
 phase: "-"
 audience: end-user
 tags: [tasks, reminders, scheduling, recurring, automation, approvals]
-related: [jarvis-agents, workflows-and-commands, safety-and-approvals]
+related: [jarvis-agents, workflows-and-commands, safety-and-approvals, automations]
 ---
 
 Use **Tasks** when one instruction should run later or repeat. The saved card is

@@ -1683,10 +1683,10 @@ class LocalRealtimeProvider:
     # and quietly routing a call into one the user did not pick is the opposite
     # of what a local card is for.
     implicit_usage_fallback_allowed = False
-    # Keep the stack warm when selected as the primary voice provider. Merely
-    # configuring it as a fallback must not reserve several GB of GPU/RAM.
-    # A fallback can still start on demand through its normal open_session.
-    eager_warm_as_fallback = False
+    # An explicitly configured local fallback must be ready when the primary
+    # fails. The supervisor still gates spawning on local-model enablement
+    # and available hardware; unselected providers are never warmed.
+    eager_warm_as_fallback = True
     # Small self-hosted brains prefill the whole instruction block EVERY turn;
     # the full ~24k-char profile cost 7.8 s of LLM time per answer against
     # qwen2.5:7b (live 2026-08-07). The session builder honors this capability
