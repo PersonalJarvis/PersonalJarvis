@@ -1,8 +1,9 @@
 # macOS permissions: ask when a feature needs them
 
 Status: implemented, **not yet exercised on a physical Mac** (section 7 is the checklist that
-closes that gap). Last reviewed: 2026-10-02. Scope: Personal Jarvis on macOS (the downloadable
-`.dmg` app and the managed source-install app).
+closes that gap). Last reviewed: 2026-10-02, reconciled with the finished code on that date
+(AP-35 is in `AGENTS.md`, ADR-0037 and BUG-225; the legacy permission wall is deleted). Scope:
+Personal Jarvis on macOS (the downloadable `.dmg` app and the managed source-install app).
 
 ## 1. Summary
 
@@ -10,7 +11,7 @@ closes that gap). Last reviewed: 2026-10-02. Scope: Personal Jarvis on macOS (th
 2. **Why:** the plan said degrade, never hard-block (AD-13); the code inverted it on 2026-07-15 with no recorded decision (2).
 3. **Real, kept:** stable signed identity, live state reads, usage strings, entitlements, silent-failure checks (wallpaper, all-zero audio).
 4. **Now:** a feature asks at first use, macOS shows its own dialog, a denial degrades that feature with one click to the pane (4).
-5. **Proof:** fake-framework tests, Linux gates, two macOS-runner results; nothing ran on a physical Mac (7.4).
+5. **Proof:** fake-framework tests and Linux gates (counts in 7.4) plus one earlier macOS-runner packaging run; the macOS lane steps have no recorded result for this branch; the hotkey spike ran once on two macOS runners but its arm64 report is unusable as TCC evidence (4.15); nothing ran on a physical Mac (7.4).
 
 ## Conventions: evidence labels
 
@@ -61,7 +62,7 @@ for a gate that stops macOS from asking.
 | 2026-07-18 | `b25e63520` | "Ask again" (`POST /{id}/reset`, `tccutil reset` for the app's own id); onboarding permissions step moved last. | Recovery action, legitimate. |
 | 2026-07-20 .. 08-03 | `b0f9ff2e2`, `b66cb179a` | Per-action probes measured as a cost. `b66cb179a` says its per-keystroke probe inside the event-tap callback made the shortcuts "go intermittently dead"; its mechanism (a callback that overruns its deadline gets the tap disabled by macOS) is the commit author's hypothesis, unverified; `jarvis/trigger/backends/quartz.py` carries a comment in the same spirit [code]. | Bugs caused by the gate. |
 | 2026-08-20 / 08-21 | `7d75c6fbc`, `d377bffe8`, `96ebffcc0` | BUG-159 and BUG-161: "Every start warned that permissions were not enabled" while they were on; the app rejected `/Applications` as a tampering signal although "TCC pins a grant to the bundle id and its signature, never to a path". | The gate itself is the bug. |
-| 2026-09-16 | `b7d92746e` | Per-user self-signed certificate: the identity is bundle id plus certificate, not a per-build hash. Verified on macOS 15.7.4. | The structural fix for BUG-083/159/161. Technically required. |
+| 2026-09-16 | `b7d92746e` | Per-user self-signed certificate: the identity is bundle id plus certificate, not a per-build hash. Reported verified on macOS 15.7.4 in the BUG-217 register entry (a live Mac session; not re-verified for this branch) [commit `b7d92746e`, register]. | The structural fix for BUG-083/159/161. Technically required. |
 | 2026-09-16 | `5e3d07db3`, `4af1cc766` | Automation row with a consent file and hidden launch of Music and Spotify; "Set up everything" wizard with auto-restart ("Six buttons and a restart to find, per permission, is how 'the permissions are extremely annoying' reads from the user's side"). | The wizard automates the up-front flow instead of removing the need for it. |
 | 2026-09-30 | `4e2570d76`, `9af34286a` | Onboarding card rebuilt: the permissions step becomes non-blocking. | Softened, still a dedicated up-front step. |
 | 2026-10-01 | `3597dbf5d` | BUG-222 / BUG-224 (details in 2.6). Adds the "wanted" flag and banner "Not now". | One wrong constant disabled the whole permission surface of the `.dmg` app. |
@@ -301,9 +302,10 @@ passive.
 
 ### 4.2 Principles (rule AP-35)
 
-AP-35 is the rule name used in code comments and commit messages. As of the last review of this
-page (2026-10-02) it has no entry in `AGENTS.md` or `docs/BUGS.md` and no ADR; this table is its
-only written statement.
+AP-35 is the rule name used in code comments and commit messages. It is recorded in the
+`AGENTS.md` register (section 3), in `docs/adr/0037-macos-permissions-ask-when-needed.md` (the
+same nine principles) and as the prevention rule of BUG-225 in `docs/BUGS.md`; this table is the
+detailed statement.
 
 | # | Principle |
 |---|---|
@@ -321,13 +323,13 @@ only written statement.
 
 | Layer | Module | Role |
 |---|---|---|
-| Port (OS adapter) | `jarvis/platform/permissions.py`, `SystemPermissionPort` | Live, uncached, non-prompting state reads; `request_native` (returns `dialog_shown`, `no_dialog` or `unavailable`, never evidence of a grant); `usage_string_present`; `outside_installed_app`; `open_settings`; `reset` (own bundle id only). Keeps `ACCEPTED_BUNDLE_IDS`, `AUTOMATION_TARGETS`, `PANE_FAMILY`, `REQUEST_CLASS` and the module-loader seams for fakes. |
-| Service | `jarvis/platform/permission_service.py`, `PermissionService` | The just-in-time layer: `check`, `ensure`, `ensure_all`, `ensure_async`, `ensure_all_async`, `outstanding`, `add_listener`, `open_settings`, `report_failed_use`, `attach_bus`. No framework import at module scope, no I/O at import (AP-26); off macOS `ensure` returns NOT_REQUIRED before the port is asked anything. Resolves the port per call, so test stubs apply. |
-| Protocol | `jarvis/core/protocols.py`, `PermissionGate` | Consumers receive the gate through an injectable hook with a default resolver to the service singleton; `tests/fakes/fake_permission_service.py` injects there. |
-| Consumers | audio, speech pipeline, desktop app gates, computer use, screen capture and context, dictation insert, window control, ducking, hotkeys | Low-level helpers only `check()` and degrade silently; interactive `ensure` exists only at entry points that carry a user gesture (4.6). |
-| Routes | `jarvis/ui/web/permissions_routes.py` | Passive snapshot v2 and single-row GETs; `POST /{id}/request`, `/open-settings`, `/reset` (4.9). CLI: `jarvis permissions status`, `request` and `open-settings`. |
+| Port (OS adapter) | `jarvis/platform/permissions.py`, `SystemPermissionPort` | Live, uncached, non-prompting `state` reads (shallow by default); `request_native` (returns `dialog_shown`, `no_dialog`, `timed_out` or `unavailable`, never evidence of a grant); `usage_string_present`; `outside_installed_app`; `open_pane`; `reset_row` (own bundle id only). It decides nothing about whether a feature may run. Keeps `ACCEPTED_BUNDLE_IDS`, `AUTOMATION_TARGETS`, `PANE_FAMILY`, `REQUEST_CLASS` and the module-loader seams for fakes, plus `remove_leftover_state_files` (4.13). |
+| Service | `jarvis/platform/permission_service.py`, `PermissionService` | The just-in-time layer: `check`, `ensure`, `ensure_all`, `ensure_async`, `ensure_all_async`, `outstanding`, `add_listener`, `open_settings`, `report_failed_use`, `note_reset`, `note_app_activated`, `refresh_episodes`, `invalidate`, `check_deep`, `app_info`, `can_request`, `attach_bus`. No framework import at module scope, no I/O at import (AP-26); off macOS `ensure` returns NOT_REQUIRED before the port is asked anything. Resolves the port per call, so test stubs apply. |
+| Protocol | `jarvis/core/protocols.py`, `PermissionGate` | `check`, `ensure`, `ensure_async`, `ensure_all`, `open_settings`. Consumers receive the gate through an injectable hook with a default resolver to the service singleton; `tests/fakes/fake_permission_service.py` injects there. `force_ask`, `report_failed_use`, `note_reset` and `add_listener` are service-only; consumers reach them by capability lookup. |
+| Consumers | audio, speech pipeline, desktop app gates, computer use, screen capture (`jarvis/platform/screen_access.py`) and context, dictation insert, window control, ducking, hotkeys | Low-level helpers only `check()` and degrade silently; interactive `ensure` exists only at entry points that carry a user gesture (4.6). |
+| Routes | `jarvis/ui/web/permissions_routes.py` | Passive snapshot v2 and single-row GETs; `POST /{id}/request`, `/open-settings`, `/reset` (4.9). CLI (`jarvis/cli_ctl/commands/permissions.py`): `jarvis permissions status`, `request` and `open-settings`; there is no CLI reset. |
 | Events | `jarvis/core/events.py` | `PermissionNeeded`, `PermissionResolved` over the existing `/ws` wildcard forwarder (4.9). |
-| Frontend | `jarvis/ui/web/frontend/src` (the frontend paths on this page are relative to it) | Pure reducer `lib/permissionPrompts.ts`, store `store/permissions.ts`, floating card `components/permissions/PermissionPromptLayer.tsx`, inline notes, passive `views/settings/PermissionsPanel.tsx` (4.10). |
+| Frontend | `jarvis/ui/web/frontend/src` (the frontend paths on this page are relative to it) | Pure reducer `lib/permissionPrompts.ts`, store `store/permissions.ts`, REST client `lib/permissionsApi.ts`, event twin `lib/permissionEvents.ts`, floating card `components/permissions/PermissionPromptLayer.tsx` (mounted by `PermissionPromptHost.tsx`), inline notes (`InlinePermissionNote.tsx`, `agentchat/DictationNote.tsx`, `ShortcutsStatusNote.tsx`, `ShortcutsTip.tsx`, `views/settings/MuteMusicPermissionNote.tsx`), passive `views/settings/PermissionsPanel.tsx` (4.10). |
 
 ### 4.4 Service contract
 
@@ -371,16 +373,30 @@ process. An explicit click (`force_ask`) skips the PROMPT-ONCE cooldown and the 
 `tccutil reset`, a re-sign or another bundle id (red-team finding, recorded in the service
 docstring).
 
-`report_failed_use(permission, *, feature, ...)` is the one producer of the `restart_hint` reason:
-a consumer calls it after a real capture or tap failure while the state reads granted (or after
-the user returned from Settings and the preflight is still negative). It is never an automatic
-restart. It only produces a `restart_hint` for Screen Recording and Input Monitoring
-(`_RESTART_HINT_FAMILIES` in `jarvis/platform/permission_service.py`); any other permission falls
-back to a plain non-interactive `ensure`. The one caller is `jarvis/trigger/backends/quartz.py`
-(Input Monitoring, once per tap when no raw events arrive). Screen Recording has no caller:
-`jarvis/cu/capture.py` documents that the live-grant branch deliberately does not report, because
-nothing failed for good there. The ducking module still carries a comment saying the service has
-no call for "a real attempt failed although the probe said granted" (`jarvis/audio/ducking/macos.py`).
+`report_failed_use(permission, *, feature, target=None, trace_id=None)` is the one producer of
+the `restart_hint` reason: a consumer calls it after a real capture or tap failure while the state
+reads granted (or after the user returned from Settings and the preflight is still negative). It is
+never an automatic restart. It only produces a `restart_hint` for Screen Recording and Input
+Monitoring (`_RESTART_HINT_FAMILIES` in `jarvis/platform/permission_service.py`); any other
+permission falls back to a plain non-interactive `ensure`. It has two callers, both exercised only
+against fakes:
+
+- Input Monitoring: `jarvis/trigger/backends/quartz.py` (`report_if_deaf`), once per tap when the
+  tap runs, the grant is visible, no raw event arrived, Secure Event Input is off and key activity
+  was seen. A raw event arriving later ends the episode again (`note_reset`).
+- Screen Recording: `jarvis/platform/screen_access.py` (`_unusable_grant_refusal`, reached from
+  `verify_frame_is_real`), when the state reads granted yet other apps' windows show no readable
+  title. Only a user-started capture reports; a background capture stays quiet. A later frame whose
+  window list shows a readable title ends the episode (`_clear_failed_use`, through `note_reset`).
+  `jarvis/cu/capture.py` deliberately does not report for a native-capture timeout while the grant
+  reads live, because nothing failed for good there.
+
+Accessibility input and the ducking module have no such path. `jarvis/audio/ducking/macos.py` notes
+that the service has no call for "a real attempt failed although the probe said granted" and maps a
+`-1743` after a granted read to `needs_settings` instead.
+
+`note_reset(permission)` drops a slot's restart hint and forgets the per-process ask cooldown; the
+reset route calls it after a successful "Ask again".
 
 ### 4.5 The permission table: trigger, request, denial, route back, after a grant
 
@@ -388,14 +404,14 @@ Class: DIALOG, PROMPT-ONCE, NATIVE (3.6). EVENT_POSTING is an alias of ACCESSIBI
 
 | Permission | Request kind | Trigger (a user gesture) | How we ask | If not granted | Route back | After a grant |
 |---|---|---|---|---|---|---|
-| **Microphone** | DIALOG | Dictation key or button; "speak in this conversation" (the UI calls `POST /api/permissions/microphone/request` with feature `browser_voice` before `getUserMedia`); push-to-talk; switching the **wake word** on (the route asks with `wait_s=0`); the wake self-test button (`wait_s=60`, the test is the JIT moment) | `request_native` (`AVCaptureDevice requestAccess...`) when `not_determined`, then the stream opens | Voice and dictation refuse (`DictationRefused("microphone_unavailable")` plus `PermissionNeeded`); typed chat unaffected; zeros are never recorded silently | Card and Privacy row: System Settings > Privacy & Security > Microphone | Usable at once. The wake loop that was parked wakes on `PermissionResolved`. A HOLD key pressed during the dialog is **not** started retroactively ("allowed, press again"). |
-| **Screen Recording** | PROMPT-ONCE | First capture started by a user goal: computer-use perception, the `screen_snapshot` tool body, a user-requested screen-context or Appshot capture | `CGRequestScreenCaptureAccess()` (once per process; an explicit Allow always) | Capture refuses with an honest error, never a wallpaper frame; `PermissionNeeded(needs_settings)` | Pane "Screen & System Audio Recording" (static label; "Screen Recording" before macOS 15). On macOS 15 and later the first capture may also show the OS "bypass the system picker" alert. A stuck entry may need a reboot [D 818415]. | The window-title oracle (`_screen_capture_live_check`) decides. A capture timeout while the state reads granted is PENDING ("macOS may be asking you to confirm"), not DENIED. A restart is offered only after a real failed attempt. |
+| **Microphone** | DIALOG | Dictation key or button; "speak in this conversation" (the UI calls `POST /api/permissions/microphone/request` with feature `browser_voice` before `getUserMedia`); push-to-talk; switching the **wake word** on (the route asks with `wait_s=0`); the wake self-test button (`wait_s=60`, the test is the JIT moment) | `request_native` (`AVCaptureDevice requestAccess...`) when `not_determined`, then the stream opens | Voice and dictation refuse (`DictationRefused("microphone_unavailable")` plus `PermissionNeeded`); typed chat unaffected; zeros are never recorded silently | Card and Privacy row: System Settings > Privacy & Security > Microphone | Usable at once [I; Apple does not document a restart requirement]. The wake loop that was parked wakes on `PermissionResolved`. A HOLD key pressed during the dialog is **not** started retroactively ("allowed, press again"). |
+| **Screen Recording** | PROMPT-ONCE | First capture started by a user goal: computer-use perception, the `screen_snapshot` tool body, a user-requested screen-context or Appshot capture | `CGRequestScreenCaptureAccess()` (once per process; an explicit Allow always) | Capture refuses with an honest error, never a wallpaper frame; `PermissionNeeded(needs_settings)` | Pane "Screen & System Audio Recording" (static label; the pane naming per macOS version is [C], unverified; "Screen Recording" before macOS 15). On macOS 15 and later the first capture may also show the OS "bypass the system picker" alert. A stuck entry may need a reboot [D 818415]. | The window-title oracle (`_screen_capture_live_check`) decides. A capture timeout while the state reads granted is PENDING ("macOS may be asking you to confirm"), not DENIED. A restart is offered only after a real failed attempt. |
 | **Accessibility** and post-event | PROMPT-ONCE | First time Jarvis must type, click or focus for the user: computer-use input, dictation auto-paste, window focus and maximize. AX **reads** (tree, element at point) are background: never prompt, degrade | `AXIsProcessTrustedWithOptions(prompt)`, at most once per 10 minutes per process; an explicit Allow always | Dictation falls back to `clipboard_only`; computer-use tools return `[permission_needed:accessibility] ...`; window tools return the same prefix | Pane "Accessibility" (reported renamed on macOS 27, 3.7; the label is static text, no OS sniffing) | A silent watcher; taps and observers are rebuilt on a false-to-true edge. The first paste after an in-process grant reports `paste_sent` until delivery is observed. |
-| **Input Monitoring** | PROMPT-ONCE | The user enables global shortcuts: the "Enable global shortcuts" action in the Shortcuts surfaces, and one dismissible tip after the first UI-started dictation. Never at boot | `CGRequestListenEventAccess()` / `IOHIDRequestAccess` only; the event tap is created only after the preflight is true | The shortcut status reads `needs_input_monitoring`; the app keeps working from button and voice; the Esc-to-cancel pill never claims a dead key | Pane "Input Monitoring"; copy never says "you denied" (the entry is auto-registered after a request) | The watcher re-arms the hotkey in process (a listener sets the existing reload path). "No raw events arrived" is a restart hint, never an automatic restart. |
+| **Input Monitoring** | PROMPT-ONCE | The user enables global shortcuts: the "Enable global shortcuts" action in the Shortcuts surfaces, and one dismissible tip after the first UI-started dictation. Never at boot | `CGRequestListenEventAccess()` / `IOHIDRequestAccess` only; the event tap is created only after the preflight is true | The shortcut status reads `needs_input_monitoring`; the app keeps working from button and voice; the Esc-to-cancel pill never claims a dead key | Pane "Input Monitoring"; copy never says "you denied" (the entry is reportedly auto-registered after a request: BUG-083 live finding on one Mac, [C], unverified) | The watcher re-arms the hotkey in process (a listener sets the existing reload path). "No raw events arrived" is a restart hint, never an automatic restart. |
 | **Automation** (Music and Spotify only) | DIALOG | Switching "Mute music while dictating" on **while a player runs**; the Privacy-row Allow. Never mid-dictation, never by launching a player | The killable `osascript` consent runner (120 s, own daemon thread) | Ducking skips that player; the inline status names the player | Pane "Automation" | Checked per send. `-1743` after GRANTED maps to NEEDS_SETTINGS. |
 | **Files and Folders** | NATIVE | Whenever the user or an agent touches the folder | The OS prompts by itself; never pre-checked or enumerated "to check"; needs a GUI login session [D] | Normal `EPERM` handling | System Settings > Files & Folders | Immediate |
 | **Keychain** | not TCC | Reading a stored key | The `security` vault, then the 0600 file fallback (existing) | File fallback | The Privacy row shows the storage kind; "Try again" replays the read | n/a |
-| **Login item** | not TCC | Autostart (existing, default on) | A LaunchAgent; the OS shows its own notice | n/a | Login Items | n/a |
+| **Login item** | not TCC | Autostart (existing, default on) | A LaunchAgent; the OS shows its own notice [C], see R7 | n/a | Login Items | n/a |
 | Camera, Contacts, Calendars, Notifications, Full Disk Access, Location | n/a | Not used | n/a | n/a | n/a | n/a |
 
 Not implemented (verified in the tree): saving a shortcut in the Shortcuts view does **not** itself
@@ -413,12 +429,12 @@ caller uses `check()` or `wait_s=0`.
 | `jarvis/ui/web/settings_routes.py` | route | Wake switch on: blocking `ensure(wait_s=0)` from the sync handler (a worker thread); the response carries `permission:{outcome, reason, can_open_settings}`. Wake self-test: `ensure_async(wait_s=60)`. GET mic-level uses `check` only. Mute-music PUT asks only when switching on with a player running. |
 | `jarvis/cu/actuate/base.py` | tool body, worker | `ensure_all([ACCESSIBILITY], wait_s=0)` after the executor authorised the call; non-granted raises `PermissionNeededError`, whose text starts `[permission_needed:accessibility] `. `ToolResult` is unchanged. |
 | `jarvis/cu/engine.py` `_dispatch_tool` | worker | Keeps a **silent** Screen Recording gate before every engine action (the AP-3 choke point and the blind-input guard), never interactive there; maps the `[permission_needed:` prefix to a terminal `blocked_permission` mission state with a user Retry, not a model retry loop. **System-consent guard:** while a macOS consent window is frontmost (`jarvis/cu/system_dialogs.py`, an owner-name list that is itself unverified) nothing is dispatched. |
-| `jarvis/cu/capture.py`, `jarvis/platform/screen_access.py`, `screen_snapshot`, screen context | mixed | Helpers `check()` and degrade; gesture entries (`require_screen_recording[_async]`, `wait_s=0`) ask. `verify_frame_is_real` runs a pixel sanity check while the state claims GRANTED (a flat frame plus other apps' windows with no readable title refuses with honest text). GET status routes never prompt. |
+| `jarvis/cu/capture.py`, `jarvis/platform/screen_access.py`, `screen_snapshot`, screen context (`jarvis/screen_context/service.py`) | mixed | Helpers `check()` and degrade; gesture entries (`require_screen_recording[_async]`, `wait_s=0`) ask. A screen-context capture is always a user gesture, so its silent probe is followed by one `require_screen_recording_async`; the status route only runs the silent probe. `verify_frame_is_real` runs a pixel sanity check after the grab while the state claims GRANTED (other apps' windows on screen with no readable title refuses with honest text, flat frame or not) and reports the failed use (4.4). GET status routes never prompt. |
 | `jarvis/vision/ax_tree.py`, `element_at_point.py` | worker | AX reads: `check()` and degrade, never a card. |
 | `jarvis/platform/window_state.py` | worker | `ensure(ACCESSIBILITY, feature="window_control", wait_s=0)`; refusal text starts with the `[permission_needed:accessibility]` prefix. |
 | `jarvis/dictation/insert.py` | worker | First paste: `ensure(ACCESSIBILITY, feature="dictation_insert", wait_s=0)`; `clipboard_only` is a success state (the text is one paste away); `paste_sent` is the honest middle for the first paste after an in-process grant; never sends Return while a dialog could be frontmost. |
 | `jarvis/audio/ducking/macos.py` | worker | Switching on is the only asking path (`prewarm`, off every lock); `mute_others` is non-interactive: it skips and opens a `background` episode. The controller lock is never held across an ask. |
-| `jarvis/trigger/hotkey.py`, `trigger/backends/quartz.py` | loop, tap thread | Requirement is Input Monitoring only. Boot start is silent. `HotkeyTrigger` registers a grant listener that re-arms the backend off the loop (`asyncio.to_thread`). The tap callback never calls `ensure` and takes no service lock; it reads a cached verdict. A raw-callback counter feeds `deaf_tap_suspected`. |
+| `jarvis/trigger/hotkey.py`, `trigger/backends/quartz.py` | loop, tap thread | Requirement is Input Monitoring only. Boot start is silent. `HotkeyTrigger` registers a grant listener that re-arms the backend off the loop (`asyncio.to_thread`). The tap callback never calls `ensure` and takes no service lock; it reads a cached verdict. A raw-callback counter feeds `deaf_tap_suspected`, and `report_if_deaf` (worker thread) turns that into one `report_failed_use` per tap (4.4). |
 | `jarvis/trigger/shortcuts_status.py` | route | One status for the global shortcut tap: `ready`, `needs_input_monitoring`, `unavailable_in_this_mode`, served in `GET /api/settings/keybinds` as `shortcuts_status`. |
 
 ### 4.7 Boot rule
@@ -426,8 +442,9 @@ caller uses `check()` or `wait_s=0`.
 With every permission `not_determined` (including `wake_word_enabled=True`), launch makes **no
 OS dialog, no input-stream open, no event-tap creation and no capture call**; an upgrader with
 every grant present sees zero cards and zero requests. The service singleton is lazy; boot order:
-construct (no I/O), then `attach_bus(bus, loop)` as the first line of server start, before the
-speech pipeline starts. `scripts/ci/check_boot_budget.py` runs after touching startup. Tests that
+construct (no I/O), then `attach_bus(bus, loop)` in `jarvis/ui/desktop_app.py` right after the
+`WebServer` constructor (before the speech task can ask for the microphone) and again as the first
+line of `WebServer.start()` in `jarvis/ui/web/server.py`; the call only stores two references. `scripts/ci/check_boot_budget.py` runs after touching startup. Tests that
 pin it: `tests/unit/speech/test_voice_permission_jit.py` (boot with all `not_determined`, boot of
 an upgrader, boot on a non-macOS host) and `tests/unit/ui/test_desktop_macos_permission_gate.py`.
 
@@ -481,18 +498,30 @@ against the TypeScript twin `jarvis/ui/web/frontend/src/lib/permissionEvents.ts`
 launched_as_bundle, stable}, outside_installed_app, permissions:[{id, label, status, used_for,
 can_request, can_open_settings, can_reset, restart_hint, detail, settings_path}], needed:[open
 episodes]}`. The Automation row is computed only while `[ducking].enabled` or `?include=automation`
-(reading it asks a running player). Screen Recording is the shallow preflight here. EVENT_POSTING
-has no row of its own. `GET /api/permissions/{id}` returns one cheap row. The frontend seeds from
-`needed[]` because events are not persistent.
+(reading it asks a running player). Screen Recording is the shallow preflight here (it can only go
+stale negative; a grant shows once the service has proven it, 4.8). EVENT_POSTING has no row of its
+own. `GET /api/permissions/{id}` returns one cheap row. Both GET routes accept `?activated=1`, which
+the frontend sends on the first refetch after the window regained focus: the route calls
+`note_app_activated()` so a PROMPT-ONCE dialog the person left to flip a switch is promoted to
+`blocked` at once. It is a hint about what the user just did, never a prompt. The frontend seeds
+from `needed[]` because events are not persistent.
+
+`restart_hint` on a row is true while a `restart_hint` episode is open for that permission, **even
+when the state reads granted** (that is the case it is reported for: granted, yet a real use
+failed); the row's `detail` is then the fixed restart sentence. The Keychain row has no request
+call: its `can_request` means "Try again", which replays the Keychain read.
 
 `POST /{id}/request` hands the permission to `ensure(interactive=True, wait_s=0)` and answers at
 once. The body may carry `allow_outside_app` (refused with 403 for a caller that holds only the
-control key: confirming a grantee is for a person at the UI), `feature` and `target`.
+control key: confirming a grantee is for a person at the UI), `feature` and `target`. A request from
+the UI passes `force_ask=True` to the service (an explicit click on "Allow" skips the PROMPT-ONCE
+cooldown); a request that carries only the control key does not, so a script cannot loop it.
 Opening a pane quits a running System Settings first (it ignores the anchor while running,
 BUG-083, observed on macOS 15.7, not documented by Apple), except when the same pane URL was the
 last one this process opened (`_last_opened_url` in `SystemPermissionPort._open_settings`); the user
-may have navigated since, so this is an approximation. `/reset` returns 409
-while the live state is GRANTED. Each of the three routes has its own 5 s per-(action, permission
+may have navigated since, so this is an approximation. `/reset` and `/open-settings`
+answer 409 when the operation did not happen (a reset: while the live state is GRANTED, when the
+state cannot be reset, or off macOS). Each of the three routes has its own 5 s per-(action, permission
 family) cooldown (429 with Retry-After); all three share a global cap of 20 calls per 60 s. Handlers are sync `def`. No agent or router tool exposes ensure, request,
 open-settings or reset (guarded by `tests/unit/platform/test_permission_agent_boundary.py`).
 
@@ -501,23 +530,34 @@ open-settings or reset (guarded by `tests/unit/platform/test_permission_agent_bo
 - **Removed:** the app-wide banner and its dismissal store, the wizard (`setupAll`, ordering,
   auto-restart, polling), the refresh-event plumbing, the onboarding `permissions` step (a stored
   legacy step id maps to `voice`).
-- **Floating card** (`PermissionPromptLayer`): owner window only, not on a headless or remote
-  browser (host-only actions), a portal at `z-[115]` (above the setup spotlight, below the caption
-  bar), mounted lazily. Opens only for `origin="user" && phase="blocked"`. Copy only from i18n per
-  (feature, reason) as full sentences; buttons "Continue", "Open System Settings", "Check again",
-  "Not now" (episode-scoped, memory only), "Quit and reopen" for `restart_hint`, an
-  "Already on? Reset and ask again" path when the state is still off after Settings. No autofocus,
-  `role="group"`, polite live region, no global Escape handler, theme tokens only. No interval
-  polling: a single-flight, jittered refetch on window return (AP-33), the backend watcher pushes
-  `PermissionResolved`.
+- **Floating card** (`PermissionPromptLayer`, mounted lazily by `PermissionPromptHost`): owner
+  window only, not on a headless or remote browser (host-only actions), a portal at `z-[115]`
+  (above the setup spotlight, below the caption bar). Opens only for `origin="user" &&
+  phase="blocked"`. Copy only from i18n (`permissions.prompt.<feature>.<reason>`) as full
+  sentences. Buttons (en.json `permissions.prompt.action.*`), chosen per reason by
+  `components/permissions/promptActions.ts`: "Continue" (before macOS asks), "Allow for the app that
+  started Personal Jarvis" (replaces Continue when running outside the installed app), "Open System
+  Settings", "Check again", "Not now" (episode-scoped, memory only), "Quit and reopen" (only for
+  `restart_hint`), and "Already on? Reset and ask again" (only after the person returned from
+  Settings, the permission still reads off and the backend says `can_reset`). Restricted and
+  unavailable episodes get an explanation and "Not now" only. No autofocus, `role="group"`, a polite
+  live region, no global Escape handler, theme tokens only. No interval polling: a single-flight,
+  jittered refetch on window return (`lib/focusRefresh.ts` through `lib/connectBudget.ts`, AP-33);
+  the backend watcher pushes `PermissionResolved`.
 - **Inline surfaces** through a ref-counted `useInlinePermission(feature)` registry the card
   consults to avoid duplicates: dictation note, wake-word panel, mute-music row, Shortcuts status
   note and tip, browser voice (host microphone asked before `getUserMedia`), sidebar voice status.
   The native orb keeps handling only `DictationRefused`.
-- **Settings > Privacy** (section id `permissions` kept): passive rows with the textual pane path,
-  "Allow" when `can_request`, "Ask again" when `can_reset`, a header sentence "Personal Jarvis asks
-  only when a feature needs it"; refreshes on mount, on focus and after an action; hidden on
-  non-macOS.
+- **Settings > Privacy** (nav label "Privacy", section id `permissions` kept;
+  `views/settings/PermissionsPanel.tsx`): passive rows with the textual pane path, a status pill
+  ("Granted", "Off or not asked", "Denied", "Restricted", "Unavailable", "Not required", "Restart
+  needed"), "Allow" when `can_request` ("Try again" on the Keychain row), "Open System Settings"
+  when `can_open_settings`, "Ask again" when `can_reset`, a header sentence "{app} asks only when a
+  feature needs it. This page shows which permissions macOS allows right now and where to change
+  them."; refreshes on mount, on focus and after an action; hidden on non-macOS. A row that reads
+  granted but carries `restart_hint` (a real failed use, 4.9) shows the "Restart needed" pill and
+  "Quit and reopen" there too; the host-only buttons appear only in the embedded desktop window,
+  a remote browser sees the rows read-only.
 - Definition of done for the frontend: production build, light and dark appearance and the
   terminal-pane appearance inspected (AGENTS.md), vitest and locale parity green, no restart ever
   asked of the user. Build and appearance results are not recorded on this page (7.4).
@@ -525,7 +565,9 @@ open-settings or reset (guarded by `tests/unit/platform/test_permission_agent_bo
 ### 4.11 What stays
 
 Stable signed identity (BUG-060, 217, 223); live uncached state reads; the own-bundle `tccutil
-reset` from the installed app; the restart *hint* (never a forced restart); the honest
+reset` from the installed app (and the one reset the managed installer runs when a rebuild changed
+the bundle's signing identity, `_reset_after_identity_change` in `jarvis/setup/macos_app_bundle.py`;
+the explanatory marker it used to leave is gone); the restart *hint* (never a forced restart); the honest
 wallpaper-only and zero-audio checks; the CI probe of the built app (`scripts/ci/check_frozen_macos_app.py`);
 acceptance of both bundle ids (`ACCEPTED_BUNDLE_IDS` in `jarvis/platform/permissions.py`) for the
 reset gate and the outside-app logic.
@@ -555,14 +597,27 @@ Consumer-visible: the banner and its dismissal store, the wizard and its polling
 permissions step, the readiness aggregate in the snapshot (`features`), `wanted`, `active`,
 `identity_reset`, the global `restart_required` and `foreground`. Backend: the Automation consent
 file and the hidden launch of Music and Spotify, the identity-reset marker, the readiness
-aggregation. **State of the port (checked by grep, 2026-10-02):** the old
-members `FEATURE_REQUIREMENTS`, `active_features` and `runtime_access_granted` still exist inside
-`jarvis/platform/permissions.py`, but no module outside it references them. The macOS CI step
-"Verify headless TCC requests fail closed" still exists in
-`.github/workflows/macos-desktop.yml` and asserts the old behaviour of `SystemPermissionPort.request`.
-Leftovers on
-upgrade (`macos-tcc-reset.json`, `macos-automation-consent.json`, a stored banner-dismissal key,
-a stored onboarding step `permissions`) are ignored or mapped and never prompt.
+aggregation, and (BUG-159 fix f) `_reset_or_explain`.
+
+**State of the port (checked by grep, 2026-10-02):** the old members `FEATURE_REQUIREMENTS`,
+`active_features`, `runtime_access_granted` and `runtime_feature_ready`, the legacy `snapshot()` /
+`request()`, `identity_reset_*` and `automation_consent_path` are deleted from
+`jarvis/platform/permissions.py` and from `jarvis/platform/probes.py` (`screen_recording_granted`).
+`tests/unit/platform/test_no_legacy_permission_api.py` fails if any of those names returns to
+`jarvis/`, `scripts/` or `.github/`. The macOS CI step that asserted the old behaviour was replaced
+by "Verify headless permission asks fail closed" (the name is historical): it replaces the three
+native request seams with tripwires, then asserts that outside an installed bundle `ensure`
+requests nothing (`asked` is false) and that nothing but a granted state reads as granted. Two more
+steps were added to `.github/workflows/macos-desktop.yml`: "Probe the native permission symbols" and
+"Smoke the permission service without asking". `tests/unit/ci/test_macos_desktop_permission_step.py`
+runs those scripts against the FakeTCC simulator on any host.
+
+**Leftovers on upgrade.** `macos-tcc-reset.json` and `macos-automation-consent.json` are never read
+any more. The managed source installer deletes them once, best-effort, on its next run
+(`remove_leftover_state_files`, called from `ensure_macos_app_bundle`). The frozen `.dmg` app never
+gets them deleted: `ensure_desktop_integration` returns early for frozen builds, so that cleanup is
+not reached. That is harmless, since nothing reads either file. A stored banner-dismissal key and a
+stored onboarding step `permissions` are ignored or mapped to `voice`, and never prompt.
 
 ### 4.14 Non-darwin ledger
 
@@ -570,7 +625,7 @@ a stored onboarding step `permissions`) are ignored or mapped and never prompt.
 |---|---|---|
 | `ensure` / `check` | NOT_REQUIRED, no events, no port access, no framework import | `tests/contract/test_permission_service_contract.py` (off-macOS scenarios) |
 | Snapshot v2 | Rows `not_required`, `needed: []` | route tests |
-| Onboarding step list | `permissions` is gone from the platform-agnostic list (the UI showed it on macOS only); both sides tested | `tests/unit/setup/test_onboarding_meta.py`, `setupSteps.test.ts` |
+| Onboarding step list | `permissions` is gone from the platform-agnostic list `welcome, keys, subscriptions, voice, ready` (the UI showed it on macOS only); both sides tested | `tests/unit/setup/test_onboarding_meta.py`, `components/onboarding/setup/setupSteps.test.ts` |
 | Settings nav | Privacy section hidden | frontend tests |
 | Consumers | No gating, no request (FakeTCC call log empty) | consumer tests |
 | Hotkey factory | Unchanged | `tests/contract/test_hotkey_backend_protocol.py` |
@@ -590,8 +645,9 @@ the asking moments of 4.5; stale texts fixed; a raw-callback counter replaces th
 no raw event arrived after the user typed, or after an explicit "still not working"; never an
 automatic restart. The Appshot both-Option gesture is **not** an Input Monitoring row: its
 permission need is unverified (`jarvis/appshot/gesture.py` records that it is unverified whether the
-`CGEventSourceKeyState` Option-key read needs Input Monitoring; `jarvis/trigger/hotkey.py` documents
-the sibling `CGEventSourceFlagsState` as needing none; neither was measured on a Mac); the Appshot page
+`CGEventSourceKeyState` Option-key read needs Input Monitoring; `jarvis/trigger/hotkey.py` notes that
+the sibling `CGEventSourceFlagsState` read needs no event tap and no Accessibility grant, and says
+nothing about Input Monitoring; neither read was measured on a Mac); the Appshot page
 carries an inline note and the shortcut status note only.
 
 **Documented follow-up, not shipped here (AP-31: no flag before code reads it):** a Carbon
@@ -632,25 +688,39 @@ release, no dialog from the hotkey, Secure Input, window drag during re-arm, ten
 re-arms, quit in under 5 s); one opt-in release cycle with no quarantine reports; and the
 `docs/os-parity.md` wording updated.
 
-**The runner spike (shipped, dispatch-only):** `scripts/ci/macos_carbon_hotkey_spike.py` and
-`.github/workflows/macos-hotkey-spike.yml` (`workflow_dispatch` only). It records the TCC context
-first (`CGPreflightListenEventAccess`, `AXIsProcessTrusted`, `IOHIDCheckAccess`, macOS build,
-architecture) with non-prompting reads in a child process, then runs each risky variant in its own
-child process under a hard timeout with the exit signal captured: register and unregister under a
-real `NSApplication` loop, register with no `NSApplication`, unregister off the main thread,
-duplicate registration, secure event input, installing the handler twice, and the Appshot
-both-Option read. Limits it states itself: runners pre-grant TCC to bash, `osascript` and
-Terminal; no dialog; no physical keyboard; no hold semantics; the hop-mode variant and the off-main
-register half are not covered, so flip criterion 1 stays open. **It has not been run on a macOS
-runner**; only its Linux self-test (control crash captured, macOS experiments skipped) was
-observed. Any result quoted here later must be labelled runner evidence only.
+**The runner spike (shipped):** `scripts/ci/macos_carbon_hotkey_spike.py` and
+`.github/workflows/macos-hotkey-spike.yml` (`workflow_dispatch` only; the temporary branch `push`
+trigger of commit `59749f859` was reverted in `945fe7949`). Runner matrix: `macos-15-intel` and `macos-15`, plus `macos-26`
+only when the dispatch input asks for it (that the label exists for this repository is unverified).
+The script records the TCC context first (`CGPreflightListenEventAccess`, `CGPreflightPostEventAccess`,
+`AXIsProcessTrusted`, `IOHIDCheckAccess`, macOS build, architecture) with non-prompting reads in a
+child process, then runs each risky variant in its own child process group under a hard timeout with
+the exit signal captured: register and unregister under a real `NSApplication` loop (plus 200
+register/unregister cycles and 50 synthetic presses), register with no `NSApplication`, unregister
+off the main thread, duplicate registration, secure event input, installing the handler twice, the
+Appshot both-Option read (key actually held, three injection routes), and two controls that tell a
+harness bug from a Carbon crash. The report is written after every experiment, so a killed parent
+still leaves a table; the verdict "Carbon needs no TCC grant" needs the preflights false in the same
+process that received a hot key event, otherwise it reads `inconclusive`. Limits it states itself:
+runners pre-grant TCC to bash, `osascript` and Terminal; no dialog; no physical keyboard; no hold
+semantics (modifier lifted first, auto-repeat); the hop-mode variant and the off-main register half
+are not covered, so flip criterion 1 stays open. **Result:** it ran once from the branch as run `36954304202` on `macos-15` (arm64, macOS 15.7.9)
+and `macos-15-intel`; both jobs were green. On arm64 all 11 experiments finished and only the
+deliberate control crashed (SIGABRT, as designed); every other variant, including register and
+unregister under `NSApplication`, 200 register/unregister cycles with 50 synthetic presses
+delivered, duplicate registration, secure event input and the Appshot Option read, ended `ok`. The
+report itself marks the run unusable as TCC evidence (`usable=False`: a preflight read granted in
+the test process, because runners pre-grant TCC), so it does not settle whether Carbon needs a
+grant. Variant G and the off-main register half are still not covered, so flip criterion 1 stays
+open. Runner evidence only; nothing on a physical Mac. The Intel per-variant table has not been
+transcribed here. The Linux self-test is `tests/unit/ci/test_macos_carbon_hotkey_spike.py`.
 
 ## 5. Assumptions
 
 | # | Assumption |
 |---|---|
 | A1 | Autostart stays default-on. |
-| A2 | The Carbon backend and macOS-specific Call/Hangup defaults are deferred; only the spike ships. |
+| A2 | The Carbon backend and macOS-specific Call/Hangup defaults are deferred; only the spike ships (one runner run, unusable as TCC evidence; see 4.15). |
 | A3 | The camera and speech strings, and the camera entitlement, are removed (no caller). |
 | A4 | No strings for services only a child process could reach (Contacts, Calendars, Photos, Location, Bluetooth); unsupported until an agent feature needs one. |
 | A5 | The WKWebView media-capture delegate (the WebKit decision that sits on top of the TCC dialog) is an open item; the service is called from the gesture before `getUserMedia`. |
@@ -678,7 +748,7 @@ Everything below is **unverified on a physical Mac**. "Closes with" refers to ro
 | R3 | **Screen Recording restart conflict.** Reports conflict on whether a running process sees the grant. | Wrong either way: a forced restart annoys, no restart leaves a dead feature. | Re-probe (shallow preflight, then the window-title oracle), try a real capture, offer "Quit and reopen" only after a real failure. | M-SR-4 |
 | R4 | **Accessibility re-prompt and attribution.** The prompt call may show again while untrusted [C]; a Ventura toggle bug returned wrong values [C]. | Nagging or a false "granted". | Rate-limited to once per 10 minutes per process; the paste after an in-process grant reports `paste_sent`. | M-AX-2, M-AX-3 |
 | R5 | **Attribution of child processes.** DTS says the algorithm is undocumented; helper binaries have been separate TCC clients in other products. | The ducker's `osascript`, `screencapture`, ffmpeg or agent CLIs may need their own grant, or may be attributed to Terminal in a dev run. | Expected, not guaranteed. No in-app text about attribution exists yet; a line on the Privacy page saying a grant applies to Jarvis and the tools it starts only as far as macOS attributes them is a follow-up. | M-DEV-1, M-AUTO-3 |
-| R6 | **Appshot both-Option need.** Unverified whether the `CGEventSourceKeyState` Option-key read needs Input Monitoring (`jarvis/appshot/gesture.py`); the sibling `CGEventSourceFlagsState` is documented as needing none (`jarvis/trigger/hotkey.py`); neither was measured on a Mac. | It is the default Appshot shortcut and has no gesture that "enables" it. | Not an Input Monitoring row; an inline note and the shortcut status note only. The runner spike can read it, but runners cannot prove the permission outcome for a real user. | M-HK-5 |
+| R6 | **Appshot both-Option need.** Unverified whether the `CGEventSourceKeyState` Option-key read needs Input Monitoring (`jarvis/appshot/gesture.py`); `jarvis/trigger/hotkey.py` notes that the sibling `CGEventSourceFlagsState` read needs no event tap and no Accessibility grant, and says nothing about Input Monitoring; neither read was measured on a Mac. | It is the default Appshot shortcut and has no gesture that "enables" it. | Not an Input Monitoring row; an inline note and the shortcut status note only. The runner spike can read it, but runners cannot prove the permission outcome for a real user. | M-HK-5 |
 | R7 | **Autostart notice.** The LaunchAgent runs `/usr/bin/open` without `AssociatedBundleIdentifiers`, so Login Items shows the program or organisation name, and macOS posts its own "Background Items Added" notice [A for attribution, C for the notice]. | Looks like an unexplained permission prompt. | Autostart stays default-on (A1); documented as a product decision. | M-LOGIN-1 |
 | R8 | **Hardened-runtime entitlements never ran on a notarized build.** | A missing `audio-input` entitlement silently suppresses the microphone prompt [C, D]. | The probe asserts `codesign -d --entitlements :-` on a signed build; every runner build so far was ad-hoc signed. | M-SIGN-1 |
 | R9 | **Keyboard-layout and input-source collision.** The default dictation toggle chord equals a macOS input-source shortcut when several input sources exist [I]. | A dead shortcut that is not a permission problem. | Not changed. | M-HK-4 |
@@ -687,12 +757,13 @@ Everything below is **unverified on a physical Mac**. "Closes with" refers to ro
 | R12 | **Stranded grant after a re-sign** (checkmark on, kernel refuses). | Settings shows the switch on and the feature does not work. | "Already on? Reset and ask again" in the card; the state is verified after the reset, otherwise the manual path (remove with minus, re-add, reboot hint) is shown. | M-SR-6 |
 | R13 | **Files and Folders in a headless session.** The prompt appears only in a GUI login session [D]. | A launchd-started backend is silently denied. | Normal `EPERM` handling; nothing pre-checks or enumerates those folders. | M-FF-1 |
 | R14 | **Digital-silence guard threshold.** 5 s of exact zeros while granted is our own figure. | Could mis-report a deliberately muted source, or miss a quiet one. | One report, stays open, the stream is not torn down. | M-MIC-5 |
-| R15 | **Documents and code not yet aligned with this design.** `docs/os-parity.md` (around lines 622 and 716-750) still describes the banner, "Set up everything", "Not now" and fail-closed behaviour as the shipped macOS design; the old port members and the CI step named in 4.13 remain; AP-35 has no `AGENTS.md`, ADR or `docs/BUGS.md` entry (4.2). | A reader of `docs/os-parity.md` is told the opposite of this page. | Nothing here changes those files. | Reconcile |
 
 Follow-ups, not part of this change: the Carbon backend (4.15), macOS Call/Hangup defaults, the
 `WKUIDelegate` media-capture grant, `AssociatedBundleIdentifiers` for the LaunchAgent, a
-`Capabilities.ax_permission_granted` cleanup, and any per-turn computer-use permission cards (cut
-from v1: one floating card plus a journal line).
+`Capabilities.ax_permission_granted` cleanup (the probe still exists in `jarvis/platform/probes.py`
+and feeds the capability record), a `report_failed_use` path for Accessibility input and ducking
+(4.4), and any per-turn computer-use permission cards (cut from v1: one floating card plus a journal
+line).
 
 ## 7. Manual test checklist for a real Mac
 
@@ -708,11 +779,17 @@ from v1: one floating card plus a journal line).
   each row ran on.
 - **Voice turns:** use a subscription or a local model; send one turn, never a loop against a paid
   provider.
-- **Settings:** open it from the app window; Settings > Privacy is the passive permission page;
-  Settings > Shortcuts holds the keys. Read the dictation shortcuts there and write them down: the
-  defaults in `jarvis/core/config.py` are `ctrl+right_alt+j` (hold to talk) and
-  `ctrl+right_alt+space` (press to start, press again to stop); on a Mac keyboard record what
-  Settings shows for the right-hand Alt key.
+- **Where things are (UI strings from `en.json`):** **Settings > Privacy** is the passive
+  permission page. The dictation keys are on **Voice > Shortcuts** ("Push to talk", "Hands-free");
+  read them there and write them down: the defaults in `jarvis/core/config.py` are
+  `ctrl+right_alt+j` (hold to talk) and `ctrl+right_alt+space` (press to start, press again to
+  stop); on a Mac keyboard record what the page shows for the right-hand Alt key. The **Enable
+  global shortcuts** button sits on the Input Monitoring status note, shown on the **Keyboard
+  shortcuts** page (and under **Settings > Keyboard shortcuts**), **Voice > Shortcuts**, the
+  **Dictation** page and the **Appshots** page. "Mute music while dictating" is under **Settings >
+  Overlay & taskbar**. The wake word is under **Settings > Wake word** ("Activate wake word", "Test
+  wake word"). The composer's dictation button is labelled "Dictate"; the voice-conversation
+  control is "Speak in this conversation".
 - **Result column:** write PASS or FAIL. A row whose Expected cell says "record" passes when the
   observation is written down in the Result cell and shows no crash, no hang and no dialog the row
   does not predict; anything else is FAIL with a note.
@@ -765,14 +842,14 @@ Single services, used by the rows in 7.3 (`<id>` is the bundle id under test):
 
 | ID | Scenario | Steps | Expected | Result | Signed off (name, date) |
 |---|---|---|---|---|---|
-| M-FRESH-1 | Fresh install (`.dmg`) | Quit the app; run the "reset everything" loop of 7.1 for `ai.personaljarvis.desktop`; install the `.dmg` (drag to Applications); start the app from Applications | App starts. **No Apple dialog, no card, no banner, no wizard at launch.** Settings > Privacy lists the rows as off or not asked; no onboarding permissions step | | |
-| M-FRESH-2 | Fresh install (managed app) | Same loop for `com.personal-jarvis.desktop`; install with the one-line installer (7.0) | Same as above | | |
-| M-FRESH-3 | Boot with the wake word on and nothing granted | Enable the wake word in a previous run, quit the app, run `tccutil reset Microphone <id>`, start the app | No dialog at launch; no input stream opened; the wake word is quietly blocked (the sidebar voice status is meant to show a quiet blocked-by-permission look; record what it shows); Privacy shows the microphone as not asked | | |
+| M-FRESH-1 | Fresh install (`.dmg`) | Quit the app; run the "reset everything" loop of 7.1 for `ai.personaljarvis.desktop`; install the `.dmg` (drag to Applications); start the app from Applications; walk the first-run setup (welcome, keys, subscriptions, voice, ready) | App starts. No Apple dialog, no card, no banner, no wizard at launch or on the welcome, keys and subscriptions steps, and no permissions step in setup. On the voice step, switching the wake word on is a user gesture and raises Apple's microphone dialog (expected; record its text). If the wake word stays off, no dialog appears during setup. Settings > Privacy lists every row you did not trigger as "Off or not asked" | | |
+| M-FRESH-2 | Fresh install (managed app) | Same loop for `com.personal-jarvis.desktop`; install with the one-line installer (7.0) | Same as M-FRESH-1, including the voice-step microphone dialog | | |
+| M-FRESH-3 | Boot with the wake word on and nothing granted | Enable the wake word in a previous run, quit the app, run `tccutil reset Microphone <id>`, start the app | No dialog at launch; no input stream opened; the wake word is quietly blocked (the sidebar voice status is meant to show a quiet blocked-by-permission look; record what it shows); Privacy shows the microphone as "Off or not asked" | | |
 | M-UPG-1 | Upgrader with all grants present | Grant everything, then update or restart the app | Zero cards, zero requests, features work at once | | |
 | M-DEV-1 | Terminal-launched dev run (outside the installed app) | `python -m jarvis` (or the dev launcher) from a terminal | The outside-app path: no native request without the confirmation; the confirmation names the terminal app as the grantee; Privacy says whose grant it is; "Ask again" is not offered; a "granted" state here proves nothing about the installed app | | |
 | M-APP-1 | `.dmg` app versus managed app | Grant the microphone to one, start the other | The other app is not granted and asks on its own first use; both Privacy pages show their own state | | |
 | M-ARCH-1 | Intel and Apple Silicon | Repeat M-FRESH-1 and the microphone and Screen Recording rows on one Mac of each architecture | Same behaviour; record any difference | | |
-| M-UI-1 | Light and dark appearance of the card | Trigger a blocked episode (deny the microphone, press the dictation button) in light and in dark mode, and over a terminal pane | The card is legible, uses theme tokens, does not cover the terminal controls, does not take focus from the dictation target | | |
+| M-UI-1 | Light and dark appearance of the card | Trigger a blocked episode (deny the microphone, press **Dictate** again) in light and in dark mode, and over a terminal pane | The card (heading "Access is turned off", buttons "Open System Settings", "Check again", "Not now") is legible, uses theme tokens, does not cover the terminal controls, does not take focus from the dictation target | | |
 | M-SIGN-1 | Signed build entitlements | On a Developer ID signed build: `codesign -d --entitlements :- "<app>"` | Lists `audio-input`, `apple-events`, the two `cs.*` keys; no camera key; the microphone dialog appears on first use | | |
 
 ### 7.3 Per permission
@@ -782,34 +859,34 @@ unexpected appeared (a second dialog, a hang).
 
 | ID | Permission | Trigger action | Expected dialog or behaviour | Denial path | Route back | After-grant behaviour |
 |---|---|---|---|---|---|---|
-| M-MIC-1 | Microphone | Quit the app, run `tccutil reset Microphone <id>`, start it, then press the dictation button in the composer (UI-started) | Apple microphone dialog naming the app with the usage string; the card does **not** open while the dialog is up | Press Don't Allow: the composer note says the microphone is off; typed chat still works | Card or Privacy row opens System Settings > Privacy & Security > Microphone | Allow it there: dictation works without a restart |
-| M-MIC-2 | Microphone, hold key | Same reset as M-MIC-1, then press and hold the hold-to-talk shortcut (7.0) | First press raises the dialog; releasing does not start a late recording | After Allow: the UI says "allowed, press again"; the next hold works | as above | as above |
-| M-MIC-3 | Microphone, voice conversation | Same reset as M-MIC-1, then start a voice conversation with the speak-in-this-conversation control (embedded window) | One dialog (R1: note whether WebKit adds a second); on Allow the conversation starts | Deny: the same card as dictation, with the browser-voice sentence | as above | works |
-| M-MIC-4 | Microphone, wake word | Same reset as M-MIC-1, then switch the wake word on in Settings (record where the control is) | The switch is the gesture: dialog appears; an inline note (no success toast) on a non-grant | Deny: the wake word stays off, the note says why | as above | The parked wake loop starts on its own after the grant |
+| M-MIC-1 | Microphone | Quit the app, run `tccutil reset Microphone <id>`, start it, then press **Dictate** in the chat composer (UI-started) | Apple microphone dialog naming the app with the usage string; the card does **not** open while the dialog is up | Press Don't Allow: a note floating above the dictation button (the floating card stays quiet while it is mounted) says dictation cannot work because Microphone is off and offers **Open System Settings**; typed chat still works | The note's (or the card's, or the Privacy row's) **Open System Settings** opens System Settings > Privacy & Security > Microphone | Allow it there: dictation works without a restart; the note reads "Microphone allowed. Press the microphone again to start dictating." |
+| M-MIC-2 | Microphone, hold key | Same reset as M-MIC-1, then press and hold the hold-to-talk shortcut (7.0) | First press raises the dialog; releasing does not start a late recording | After Allow: the UI says "Microphone allowed. Press the microphone again to start dictating."; the next hold works | as above | as above |
+| M-MIC-3 | Microphone, voice conversation | Same reset as M-MIC-1, then press **Speak in this conversation** (embedded window) | One dialog (R1: note whether WebKit adds a second); after Allow the note reads "Microphone allowed. Press the button again to start the conversation." and the next press starts it | Deny: the card with the "Voice in the browser" sentence | as above | works |
+| M-MIC-4 | Microphone, wake word | Same reset as M-MIC-1, then switch **Settings > Wake word > Activate wake word** on; separately try **Test wake word** | The switch is the gesture: dialog appears; an inline note (no success toast) on a non-grant; the test button waits up to a minute for the answer | Deny: the wake word stays off, the note says why | as above | The note reads "Microphone allowed. The wake word can listen now." and the parked wake loop starts on its own |
 | M-MIC-5 | Microphone, zeros | With the app granted, set the input to a muted or disconnected source (or revoke while running) | After about 5 s of exact zeros: one "denied or muted" notice, no crash; revoking while running ends the stream within a few seconds and shows the card | n/a | as above | Restore and retry |
-| M-SR-1 | Screen Recording | Quit, `tccutil reset ScreenCapture <id>`, start; ask Jarvis to look at the screen (the snapshot tool or computer use) | `CGRequestScreenCaptureAccess` dialog offering Open System Settings; the capture refuses honestly (**no wallpaper frame**) | Don't allow or ignore: the card appears after refocus or about 15 s, no repeated prompting | Pane "Screen & System Audio Recording" (or "Screen Recording" before macOS 15) | After flipping the switch, return to Jarvis: note whether capture works in the running process (R3), and whether "Quit and reopen" is offered |
+| M-SR-1 | Screen Recording | Quit, `tccutil reset ScreenCapture <id>`, start; ask Jarvis to look at the screen (the snapshot tool or computer use) | `CGRequestScreenCaptureAccess` dialog offering Open System Settings; the capture refuses honestly (**no wallpaper frame**) | Don't allow or ignore: the card appears after refocus or about 15 s, no repeated prompting | Pane "Screen & System Audio Recording" (or "Screen Recording" before macOS 15); the card's **Open System Settings** | After flipping the switch, return to Jarvis: note whether capture works in the running process (R3), and whether "Quit and reopen" is offered (an appshot shows "Screen Recording allowed. Take the appshot again.") |
 | M-SR-2 | Screen Recording, macOS 15 and later | Capture twice, as a user, after the grant | Note any "bypass the system picker" or "Allow for one month" alert, its timing, and that a capture timeout during it is shown as pending, not denied | n/a | n/a | n/a |
 | M-SR-3 | Screen Recording, computer use | Start a computer-use task | One coalesced card for Screen Recording and Accessibility if both are missing; the agent text tells the agent not to touch the dialog; with a consent window frontmost nothing is dispatched | Mission ends as `blocked_permission` with a Retry button | panes | Retry continues |
 | M-SR-4 | Restart conflict | Grant while Jarvis runs, return to Jarvis, capture again | Record: works without restart / works only after restart / still blocked; the hint appears only after a real failed attempt | n/a | n/a | n/a |
 | M-SR-5 | Lapse | Revoke the grant while running, run a computer-use task | The next action fails closed with an honest message | n/a | pane | n/a |
-| M-SR-6 | Stranded entry | After a re-sign or a manual remove and re-add, the switch shows on but capture fails | The card offers "Already on? Reset and ask again"; verify the state after the reset | n/a | manual path incl. reboot hint if the entry is stuck | n/a |
+| M-SR-6 | Stranded entry | After a re-sign or a manual remove and re-add, the switch shows on but capture fails; press **Open System Settings**, come back | The card shows "It still looks off..." and offers "Already on? Reset and ask again"; verify the state after the reset ("Reset. macOS will ask again now." or "That did not reset it...") | n/a | manual path incl. reboot hint if the entry is stuck | n/a |
 | M-AX-1 | Accessibility | Quit, `tccutil reset Accessibility <id>` and `tccutil reset PostEvent <id>`, start; use dictation into another app (auto-paste), or a computer-use click | First time Jarvis must type or click: Apple Accessibility dialog (offers Open System Settings); until granted the dictation falls back to the clipboard and says so | Deny: text stays on the clipboard (`clipboard_only`) | Pane "Accessibility" (macOS 27: note the actual label, R2) | Flip the switch: the first paste after the grant is reported as sent, not as inserted, until observed |
 | M-AX-2 | Accessibility, no re-prompt | Click the same action repeatedly while untrusted | At most one dialog per 10 minutes per process | n/a | n/a | n/a |
 | M-AX-3 | Accessibility reads | Without the grant, use anything that reads the UI tree | No dialog, no card; the feature degrades quietly | n/a | n/a | n/a |
-| M-AX-4 | Deep link | Press "Open System Settings" for Accessibility, Input Monitoring and Screen Recording with System Settings already open on another pane | The right pane opens (the app quits a running System Settings unless this process last opened the same pane, then opens the anchor); on macOS 27 note whether the anchor resolves. Extra step: open pane A, navigate manually to another pane in System Settings, press the button for A again, and record whether the pane shown is A | n/a | n/a | n/a |
-| M-IM-1 | Input Monitoring | Quit, `tccutil reset ListenEvent <id>`, start; open Settings > Shortcuts and press "Enable global shortcuts"; separately, do one UI-started dictation to see the one-time tip | Apple Input Monitoring dialog; **nothing at boot**; the status note reads "needs Input Monitoring" until granted; buttons and voice keep working | Deny: the note says it is off (no "you denied" wording); Esc-to-cancel never claims a dead key | Pane "Input Monitoring" | The shortcut works after the grant; note whether it works in the running process or needs a restart (the hint appears only after real typing produced no events) |
+| M-AX-4 | Deep link | Press **Open System Settings** for Accessibility, Input Monitoring and Screen Recording with System Settings already open on another pane | The right pane opens (the app quits a running System Settings unless this process last opened the same pane, then opens the anchor); on macOS 27 note whether the anchor resolves. Extra step: open pane A, navigate manually to another pane in System Settings, press the button for A again, and record whether the pane shown is A | n/a | n/a | n/a |
+| M-IM-1 | Input Monitoring | Quit, `tccutil reset ListenEvent <id>`, start; open the Keyboard shortcuts page (7.0) and press **Enable global shortcuts**; separately, do one UI-started dictation to see the one-time tip "Dictate from any app" | Apple Input Monitoring dialog; **nothing at boot**; the status note reads "Global shortcuts work while another app is in front. For that, macOS needs your OK to let Personal Jarvis watch the keyboard (Input Monitoring)..." until granted; buttons and voice keep working | Deny: the note asks to switch on Personal Jarvis under Input Monitoring (no "you denied" wording); Esc-to-cancel never claims a dead key | Pane "Input Monitoring" | The note reads "Input Monitoring allowed. Global shortcuts are on."; note whether the shortcut works in the running process or needs a restart (the restart sentence "Input Monitoring is allowed, but macOS passes key presses to Personal Jarvis only after it restarts" appears only after real typing produced no events) |
 | M-HK-1 | Hold-to-dictate | Hold the dictation shortcut in another app | Dictation starts on press and ends on release | n/a | n/a | n/a |
 | M-HK-2 | Hold-to-dictate, modifier released first | Hold the dictation shortcut, release the modifier key before the letter key | Record whether dictation ends, or keeps recording until the letter key is released (settles part of the Carbon flip rule in 4.15) | n/a | n/a | n/a |
 | M-HK-3 | Re-arm and quit | After a clean reset and one grant: save a shortcut in Settings ten times in a row; drag a window during a re-arm; then quit the app and time it | Each save re-arms the shortcut without a dialog; dragging stays smooth; the app quits in under 5 s. Record any miss | n/a | n/a | n/a |
 | M-HK-4 | Chord collision | Check the default toggle chord against System Settings > Keyboard > Keyboard Shortcuts > Input Sources | Record any collision (R9) | n/a | n/a | n/a |
 | M-HK-5 | Appshot both-Option | With Input Monitoring **not** granted, press both Option keys | Record whether it fires (settles R6) | n/a | n/a | n/a |
-| M-AUTO-1 | Automation | With Music running (a window open), switch "Mute music while dictating" on | Apple Automation dialog naming the app and Music; Music is not launched by Jarvis; with no player running, no dialog and an inline note | Deny: the inline status names the player; dictation continues without ducking | Pane "Automation" | Ducking works on the next dictation |
+| M-AUTO-1 | Automation | With Music running (a window open), switch **Mute music while dictating** on (Settings > Overlay & taskbar) | Apple Automation dialog naming the app and Music; Music is not launched by Jarvis; with no player running, no dialog and the inline note "No music player is running, so nothing was checked..." | Deny: the inline status names the player; dictation continues without ducking | Pane "Automation" | Ducking works on the next dictation |
 | M-AUTO-2 | Automation off | Keep the switch off | No Automation dialog ever, no player launched | n/a | n/a | n/a |
 | M-AUTO-3 | Attribution | After Allow, dictate while music plays | The volume drops (a `-1743` after Allow means the grant is not attributed to the app that sends; record it, R5) | n/a | n/a | n/a |
 | M-FF-1 | Files and Folders | Ask Jarvis to list or save a file in Desktop, Documents or Downloads | Apple's own prompt on first access, with the usage string; nothing pre-checks the folders | Deny: normal error handling | System Settings > Files & Folders | Immediate |
-| M-KC-1 | Keychain | First read of a stored key after install or update | The storage kind appears in the Privacy row; a Keychain dialog (if any) is explained there; "Try again" replays the read | n/a | n/a | n/a |
+| M-KC-1 | Keychain | First read of a stored key after install or update | The Privacy row "Keychain (API keys)" shows the state; after a declined dialog it says "Keychain access was declined, so API keys are kept in a local file for now..." and **Try again** replays the read | n/a | n/a | n/a |
 | M-LOGIN-1 | Autostart | Reboot or log in again with autostart on | Record the "Background Items Added" notice and the name shown in Login Items (R7) | n/a | Login Items | n/a |
-| M-PRIV-1 | Settings > Privacy page | Open it with a mix of granted and denied rows | Passive: no dialog on open, no polling; rows show Granted / Off or not asked / Denied / Restricted; "Allow" and "Ask again" only where offered; refreshes on window return | n/a | n/a | n/a |
+| M-PRIV-1 | Settings > Privacy page | Open it with a mix of granted and denied rows; provoke a deaf tap or an unusable Screen Recording grant | Passive: no dialog on open, no polling; the pill reads Granted / Off or not asked / Denied / Restricted / Unavailable / Not required; **Allow**, **Open System Settings** and **Ask again** only where offered; refreshes on window return. Record whether the "Restart needed" pill and **Quit and reopen** show on a row that reads Granted after the real failed use (expected; the panel shows the hint on a granted row, covered by a vitest case) | n/a | n/a | n/a |
 | M-AGENT-1 | An agent never answers a dialog | With a dialog on screen, start a computer-use task | Nothing is dispatched; the mission stops with `blocked_permission` | n/a | n/a | n/a |
 
 ### 7.4 Evidence ledger: what was verified, and how
@@ -818,12 +895,12 @@ unexpected appeared (a second dialog, a hang).
 
 | Layer | What | How | Result recorded | Strength |
 |---|---|---|---|---|
-| Unit and contract tests on a framework-level simulator | The service's outcomes, episodes, cooldowns, events, the scenario table on macOS and off it; boot with every permission undecided; an upgrader with all grants; a non-macOS host never touches TCC | `tests/fakes/fake_tcc.py` (a stateful TCC simulator: per-service states, scripted dialog policy, no re-ask after a decision, a frozen Screen Recording preflight until relaunch, an ordered call log of probes, requests and implicit prompts), `tests/fakes/fake_permission_service.py`, `tests/contract/test_permission_service_contract.py`, `tests/unit/platform/test_permission_service*.py`, `tests/unit/speech/test_voice_permission_jit.py` | No result is recorded on this page; the pass/fail state of these files is the CI result of the commit under review | The fake models what the code believes about macOS, not macOS itself. It proves the logic, not the OS behaviour |
-| Frontend tests | Reducer, store, card, inline notes, Privacy panel | Vitest | No result is recorded on this page | Logic only; no real WebView |
-| Linux gates | Docs privacy scan, public-docs, language, parity tests, import-safety on a headless host | `scripts/ci/run_gates.py` and narrower invocations | Run `python scripts/ci/run_gates.py`; no result is recorded on this page | Static and portable-code checks |
-| macOS CI lane | Imports of the native frameworks; the bundle self-probe | `.github/workflows/macos-desktop.yml` (a curated test list). The step "Verify headless TCC requests fail closed" still asserts the old port behaviour (4.13); the equivalent service assertion would be `ensure(MICROPHONE)` returns not-granted and `asked` is false outside an installed bundle | Not re-run for this document | Runner only; informational shards |
-| Installer workflow dispatch | The `.dmg` app builds with the new spec on Apple Silicon and Intel, `scripts/ci/check_frozen_macos_app.py` passes, the frozen app boots twice and reads its permission status: microphone "granted" under `ai.personaljarvis.desktop`, so AVFoundation loads inside the app | Desktop installers workflow, run 36923225371 at commit `43eeb7aed`, 2026-10-01, no release published (as recorded in commit `ed489bece`) | Passed on both architectures, **ad-hoc signed**, no hardened runtime, no notarization | Runner evidence. It proves packaging, not prompts, not Gatekeeper |
-| Runner spike | Carbon hot-key crash surface | `.github/workflows/macos-hotkey-spike.yml` (dispatch only) | **Not run.** Only the Linux self-test of the script was observed | None yet |
+| Unit and contract tests on a framework-level simulator | The service's outcomes, episodes, cooldowns, events, the scenario table on macOS and off it; boot with every permission undecided; an upgrader with all grants; a non-macOS host never touches TCC; the consumers (audio capture, ducking, dictation insert, hotkey tap, screen capture and context, computer use, window control); the routes and snapshot v2 | `tests/fakes/fake_tcc.py` (a stateful TCC simulator: per-service states, scripted dialog policy, no re-ask after a decision, a frozen Screen Recording preflight until relaunch, an ordered call log of probes, requests and implicit prompts), `tests/fakes/fake_permission_service.py`, and the test files in the command of the next column | **2026-10-02, Linux sandbox, Python 3.11, no GPU, no audio hardware:** `python -m pytest tests/unit/platform tests/unit/ui/web/test_permissions_routes.py tests/unit/ui/web/test_permissions_snapshot.py tests/contract/test_permission_service_contract.py tests/unit/core/test_permission_events.py tests/unit/trigger tests/unit/cu tests/unit/screen_context tests/unit/vision tests/unit/dictation/test_insert_permission.py tests/unit/audio/test_capture_permission_gate.py tests/unit/audio/test_ducking_permissions.py tests/unit/speech/test_voice_permission_jit.py` gave **2444 passed, 17 skipped, 0 failed** (133 s). The 17 skips are platform or optional-dependency skips (Windows-only ctypes and token probes, `pynput`, `pyatspi`, PySide6, macOS PyObjC and `Quartz`); no failure occurred, so none needs a cause | The fake models what the code believes about macOS, not macOS itself. It proves the logic, not the OS behaviour |
+| Frontend tests | Reducer, store, card, inline notes, Privacy panel, event parity, focus refresh | Vitest | **2026-10-02:** `npx vitest run --maxWorkers=2 src/components/permissions src/lib src/store src/hooks/usePermissions.test.tsx src/views/settings/PermissionsPanel.test.tsx` gave **108 test files passed, 1198 tests passed, 0 failed** (46 s). The frontend was still being polished while this ran, so the counts describe the tree at that moment. The production build and the light, dark and terminal-pane inspections are **not** recorded here | Logic only; no real WebView |
+| Linux gates | Docs privacy scan, public-docs, language, parity tests, import-safety on a headless host | `scripts/ci/run_gates.py` and narrower invocations | **2026-10-02:** `python scripts/ci/docs_privacy_scan.py`, `python scripts/ci/check_public_docs.py`, `python scripts/ci/run_gates.py --only docs-privacy,public-docs,mirrors`, `python scripts/ci/check_no_new_german.py` and `python scripts/ci/check_agents_md.py` all passed on the documentation changes of this reconciliation. The full `run_gates.py` was not run for this page | Static and portable-code checks |
+| macOS CI lane | Imports of the native frameworks; a tripwire proof that nothing asks outside an installed bundle; symbol binding; a service smoke that never asks; the bundle self-probe; a curated test list | `.github/workflows/macos-desktop.yml` (steps in 4.13); its scripts also run against FakeTCC in `tests/unit/ci/test_macos_desktop_permission_step.py` | **No runner result is recorded for this branch.** The lane steps exist and their scripts pass against the simulator on Linux; the lane itself has not been seen to run green on a macOS runner with the new steps | Runner only; informational shards once it runs |
+| Installer workflow dispatch | The `.dmg` app builds with the new spec on Apple Silicon and Intel, `scripts/ci/check_frozen_macos_app.py` passes, the frozen app boots twice and reads its permission status: microphone "granted" under `ai.personaljarvis.desktop`, so AVFoundation loads inside the app | Desktop installers workflow, run 36923225371 at commit `43eeb7aed`, 2026-10-01, no release published (as recorded in commit `ed489bece`) | Passed on both architectures, **ad-hoc signed**, no hardened runtime, no notarization. It predates the just-in-time rebuild, so it says nothing about the new service | Runner evidence. It proves packaging, not prompts, not Gatekeeper |
+| Runner spike | Carbon hot-key crash surface | `.github/workflows/macos-hotkey-spike.yml` (dispatch only, 4.15) | Run `36954304202` at commit `59749f859`: harness green on `macos-15` (arm64) and `macos-15-intel`; the arm64 report's verdict is `usable=False` (a preflight read granted in the test process), so it is not TCC evidence; variant G and the off-main register are not covered | Runner only |
 
 What none of the above shows: any real dialog, wording of any dialog, the behaviour of a grant in
 a running process, hold-key semantics, the Developer ID or notarized build, macOS 26 and 27

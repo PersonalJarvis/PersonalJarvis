@@ -97,9 +97,15 @@ readiness aggregate, `wanted`, `active`, `identity_reset`, the global
 `restart_required` and `foreground` in the snapshot; the Automation consent file and
 the hidden launch of Music and Spotify; the identity-reset marker file. Leftovers on
 upgrade (`macos-tcc-reset.json`, `macos-automation-consent.json`, the stored banner
-dismissal key, a stored onboarding step `permissions`) are ignored or mapped and
-never prompt. The state of the old members inside `jarvis/platform/permissions.py`
-at the time of writing is recorded in `docs/macos-permissions.md` section 4.13.
+dismissal key, a stored onboarding step `permissions`) are never read, or mapped,
+and never prompt. The port's old members (`FEATURE_REQUIREMENTS`, `active_features`,
+`runtime_access_granted`, the legacy `snapshot` / `request`) are deleted from
+`jarvis/platform/permissions.py`, and a ratchet test
+(`tests/unit/platform/test_no_legacy_permission_api.py`) fails if one returns. The
+source installer removes the two leftover state files once, on its next run
+(`remove_leftover_state_files`, called from `ensure_macos_app_bundle`). The frozen
+`.dmg` app never gets them deleted, because `ensure_desktop_integration` returns early
+for frozen builds; that is harmless, since nothing reads either file.
 
 **Stays, because the constraint is real.** A stable signed identity (BUG-060, BUG-217,
 BUG-223); live uncached state reads; the own-bundle `tccutil reset` from the installed
@@ -174,7 +180,8 @@ rows TCC-1 to TCC-7) is rewritten to this behaviour. Windows and Linux are uncha
   Input Monitoring according to community reports (Apple's documentation does not say
   so), but it cannot express modifier-only, Fn, side-specific or two-key chords, its
   crash surface has not been exercised, and a flag nothing reads would break AP-31.
-  Only the evidence tool ships (`macos-hotkey-spike.yml`, dispatch only).
+  Only the evidence tool ships (`macos-hotkey-spike.yml`, dispatch only; the
+temporary branch push trigger of commit `59749f859` was reverted in `945fe7949`).
 - **Per-turn computer-use permission cards.** Rejected for the first version: one
   floating card plus one deck journal line per trace is enough, and a card per agent
   turn invites the model or the user to treat a system dialog as part of the task
@@ -188,17 +195,24 @@ rows TCC-1 to TCC-7) is rewritten to this behaviour. Windows and Linux are uncha
   clean reset (hold-to-dictate including modifier-first release, no dialog, Secure
   Input, quit in under 5 s) is recorded; and one opt-in release cycle ends with no
   quarantine reports. The crash-surface list is in `docs/macos-permissions.md` 4.15.
-  The spike has not been run on a macOS runner yet.
+  The spike ran once (run `36954304202`, `macos-15` arm64 and `macos-15-intel`, both
+  jobs green); its arm64 report is marked unusable as TCC evidence because runners
+  pre-grant TCC, and variant G is not covered, so the criterion stays open. Runner
+  evidence only.
 - **macOS Call and Hangup defaults.** The shipped defaults (`f3+f4`, `f1+f2`) stay on
   the event tap. Platform-specific defaults are a maintainer decision and need the
   five-layer pattern with a parity test (AP-4, AP-31).
 - **WKWebView media-capture delegate.** The embedded window's WebKit decision sits on
   top of the TCC dialog and has no handler. The UI asks from the gesture before
   `getUserMedia`; the delegate grant stays an open item (risk R1).
-- **`report_failed_use` coverage.** The Input Monitoring tap and the Screen Recording
-  capture path (`screen_access._unusable_grant_refusal`) report a real failed use; the
-  ducking module and Accessibility input have no caller, so the "restart hint after a
-  real failed attempt" path is partial there.
+- **`report_failed_use` coverage.** `report_failed_use` produces the `restart_hint` only
+  for Screen Recording and Input Monitoring (`_RESTART_HINT_FAMILIES`). Its two callers are
+  the Input Monitoring tap (`jarvis/trigger/backends/quartz.py`, once per tap when no raw
+  events arrive) and the Screen Recording capture path
+  (`screen_access._unusable_grant_refusal`, when other apps' windows show no readable
+  title while the state reads granted). Accessibility input and the ducking module have
+  no such path; the ducking module maps a `-1743` after a granted read to `needs_settings`
+  instead.
 - **Sign-off.** Run section 7 of `docs/macos-permissions.md` on an Apple Silicon and an
   Intel Mac, on a `.dmg` and a managed install, and record the results before any row
   is called verified.

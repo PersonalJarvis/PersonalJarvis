@@ -184,6 +184,11 @@ happens *inside* attempt 0 and does not add an attempt.
 - **macOS** needs the Screen-Recording TCC permission, which is already probed
   (`screen_recording_granted`); without it, capture returns and the step
   degrades to the coarse click.
+  *(Annotation 2026-10-02: `screen_recording_granted` in `jarvis/platform/probes.py`
+  has since been deleted. The state is now read through
+  `jarvis/platform/screen_access.py` and `jarvis/platform/permission_service.py`
+  (ADR-0037, `docs/macos-permissions.md`); the capture a person starts is where
+  macOS is asked. The design above is otherwise unchanged.)*
 - **Linux/Wayland** screenshot restrictions are already handled by the graceful
   `None` return from `_grab_region_jpeg` → coarse click.
 - **Browsers** need no special handling: the crop is application-agnostic. A

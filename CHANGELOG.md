@@ -24,7 +24,7 @@ versioning per [SemVer](https://semver.org/).
 
 ### Removed
 
-- **The permissions banner, "Set up everything" and the setup permissions step.** The app-wide warning banner and its "Not now", the Optional and wanted-row bookkeeping, the guided wizard with its automatic restart, the refresh event and the onboarding permissions step are gone, along with the Music and Spotify consent file and the hidden launch of those apps, the "macOS treats the app as new" identity note and the global restart-required flag. Old leftovers on disk are ignored and never prompt.
+- **The permissions banner, "Set up everything" and the setup permissions step.** The app-wide warning banner and its "Not now", the Optional and wanted-row bookkeeping, the guided wizard with its automatic restart, the refresh event and the onboarding permissions step are gone, along with the Music and Spotify consent file and the hidden launch of those apps, the "macOS treats the app as new" identity note and the global restart-required flag. Old leftovers on disk are never read and never prompt; the source installer deletes the two leftover state files on its next run, the downloaded app leaves them in place (harmless).
 
 ### Fixed
 

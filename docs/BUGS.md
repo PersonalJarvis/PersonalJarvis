@@ -11127,8 +11127,9 @@ chat hook already ran the `TriggerMatcher` and were never affected.
 
 > **Superseded in part by BUG-225 (2026-10-02).** Cause 1 (the sticky pending-restart flag and the
 > global `restart_required`), the readiness aggregate (`features[...].ready`),
-> fix (d) (the `identity_reset` marker file and its note) and the banner and wizard
-> renderings of `can_reset` no longer exist: a restart is only a per-row hint
+> fix (d) (the `identity_reset` marker file and its note), fix (f)
+> (`_reset_or_explain()`, which wiped the grants once per unresolved round) and the
+> banner and wizard renderings of `can_reset` no longer exist: a restart is only a per-row hint
 > produced after a real failed attempt, the snapshot carries no readiness or
 > identity-reset keys, and a rebuild that changes nothing needs no note. The
 > `can_reset` capability and the own-bundle reset stay (served on Settings >
@@ -15868,15 +15869,30 @@ macOS-shaped and a non-macOS host), `tests/unit/platform/test_permission_service
 `test_permission_service_hardening.py` and `test_permission_service_status_helpers.py`
 (episodes, cooldowns, no second native request), `tests/fakes/fake_tcc.py` with
 `tests/unit/platform/test_fake_tcc.py` (a stateful TCC simulator with an ordered call
-log), `tests/unit/speech/test_voice_permission_jit.py` (first press makes exactly one
-microphone request, a denied press adds none, boot with every permission undecided asks
-nothing, an upgrader sees zero cards, a non-macOS host consults nothing),
-`tests/unit/trigger/test_quartz_jit_permissions.py` (no tap before the preflight is true),
+log), `tests/unit/platform/test_no_legacy_permission_api.py` (a ratchet: the deleted
+wall, its readiness aggregate, the identity-reset marker and the Automation consent
+file must not return to `jarvis/`, `scripts/` or `.github/`),
+`tests/unit/platform/test_permission_characterization.py` (what must survive; its last
+test fails if a `test_legacy_*` test, one that would pin the removed wall, comes back),
 `tests/unit/platform/test_permission_agent_boundary.py` and
 `tests/unit/cu/test_permission_not_agent_exposed.py` (no agent-facing tool),
-`tests/unit/platform/test_permission_characterization.py` (what must survive; its last
-test fails if a `test_legacy_*` test, one that would pin the removed wall, comes back), and the frontend `permissionPrompts.test.ts`,
-`PermissionPromptLayer.test.tsx` and `PermissionsPanel.test.tsx`.
+`tests/unit/platform/test_screen_access.py` and `tests/unit/cu/test_capture_permissions.py`
+(a wallpaper-only frame is refused; a failed use is reported),
+`tests/unit/speech/test_voice_permission_jit.py` (first press makes exactly one
+microphone request, a denied press adds none, boot with every permission undecided asks
+nothing, an upgrader sees zero cards, a non-macOS host consults nothing),
+`tests/unit/audio/test_capture_permission_gate.py` (the microphone is asked once at open,
+no per-frame probe), `tests/unit/audio/test_ducking_permissions.py` (only switching on
+asks), `tests/unit/dictation/test_insert_permission.py`,
+`tests/unit/trigger/test_quartz_jit_permissions.py` (no tap before the preflight is true),
+`tests/unit/screen_context/test_service_permissions.py`,
+`tests/unit/core/test_permission_events.py` (event vocabulary),
+`tests/unit/ui/web/test_permissions_routes.py` and `test_permissions_snapshot.py`
+(snapshot v2 never prompts), `tests/unit/ui/test_desktop_macos_permission_gate.py`,
+`tests/unit/ci/test_macos_desktop_permission_step.py` (the macOS lane's permission
+scripts run against FakeTCC so a step cannot rot into one that always passes), and the
+frontend `permissionPrompts.test.ts`, `PermissionPromptLayer.test.tsx`,
+`InlinePermissionNote.test.tsx` and `PermissionsPanel.test.tsx`.
 
 **Verification.** Fake-framework unit and contract tests, vitest, Linux static gates, and
 macOS CI runners for the packaging and frozen-app probe (ad-hoc signed; a runner is not a

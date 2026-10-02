@@ -66,7 +66,7 @@ is unavailable on a headless server.
 | **Microphone** | Capture local microphone audio | The first time you press the dictation key or button, start a voice conversation, use push-to-talk, switch the wake word on, or run the microphone check | Voice and dictation stop with a note; typed chat is unaffected |
 | **Screen Recording** | Capture visible screen content | The first time you ask Jarvis to look at your screen: Computer Use, a screen snapshot, screen context, or an appshot | The capture is refused with a message, never a blank or wallpaper-only picture |
 | **Accessibility** | Click, type, focus, and move windows for you | The first time Jarvis must type or click for you: Computer Use input, typing dictated text into another app, window control | Dictated text stays on the clipboard so you can paste it; Computer Use input is refused |
-| **Input Monitoring** | Listen for system-wide keyboard shortcuts | When you use **Enable global shortcuts** (Settings > Shortcuts) | Shortcuts that work while another app is in front stay off; the app's buttons and voice keep working |
+| **Input Monitoring** | Listen for system-wide keyboard shortcuts | When you use **Enable global shortcuts** (Keyboard shortcuts page) | Shortcuts that work while another app is in front stay off; the app's buttons and voice keep working |
 | **Automation (Music & Spotify)** | Send Apple Events to Music and Spotify | When you switch **Mute music while dictating** on while a player is running | Jarvis skips volume control for that player and dictation continues |
 | **Keychain (API keys)** | Store API keys in macOS Keychain | When Jarvis first stores or reads a key | Keys are kept in a permission-restricted local file instead |
 

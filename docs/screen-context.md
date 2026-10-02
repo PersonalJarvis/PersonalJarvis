@@ -160,8 +160,9 @@ user speaks
     │
     ▼
 [2] permission check  (screen recording; accessibility for UI text)
-    ├── denied → "technical" refusal: logged, turn CONTINUES on the old path
-    │            (see Wave 2 — a missing permission is not a prohibition)
+    ├── denied → (macOS: ask once through the permission service) if still
+    │            not granted: "technical" refusal, logged, turn CONTINUES on the
+    │            old path (see Wave 2 — a missing permission is not a prohibition)
     └── granted ↓
     │
     ▼
@@ -342,12 +343,17 @@ OS text is otherwise both faster and more accurate.
 | OS | Capture | UI text | Failure mode |
 |---|---|---|---|
 | Windows | none required | none required | — |
-| macOS | Screen Recording (TCC) | Accessibility (TCC) | Capture without the grant returns *wallpaper only*, with no error — so it is probed on every capture and refused honestly rather than returned as a successful blank. |
+| macOS | Screen Recording (TCC), asked at the first capture a person starts | Accessibility (TCC), read in the background and never asked for here | Capture without the grant returns *wallpaper only*, with no error — so it is probed on every capture and refused honestly rather than returned as a successful blank. |
 | Linux/X11 | none required | AT-SPI session | — |
 | Linux/Wayland | no addressable global capture | AT-SPI | Refused with the X11/XWayland message; the compositor owns capture. |
 
 Permission state is never cached across captures: macOS can revoke a grant while
-the app runs. The probe is one call and it is the first thing after intent.
+the app runs. The probe is one call and it is the first thing after intent. The
+probe itself is silent (the status route calls it too). Because a capture is
+always started by a person, a missing Screen Recording grant then goes through
+the just-in-time permission service (`screen_access.require_screen_recording_async`),
+which asks macOS once per episode; only a live grant lets the capture continue
+(ADR-0037, `docs/macos-permissions.md`).
 
 Every denial produces a message that names the exact setting to change and is
 recoverable in-app (AGENTS.md §3) — never a stack trace, never a silent no-op.

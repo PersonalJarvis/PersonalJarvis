@@ -8,7 +8,7 @@ order: 3
 diataxis: tutorial
 status: active
 owner: maintainers
-last_reviewed: 2026-09-30
+last_reviewed: 2026-10-02
 phase: "-"
 audience: end-user
 tags: [setup, onboarding, tour, language, permissions, microphone, wake-word, providers]
@@ -25,8 +25,8 @@ explained afterwards by a short tour of the app.
 - Open the installed desktop app. The first launch may take several seconds.
 - Have one API key ready (OpenAI or Google Gemini is the shortest path), or run
   Ollama with one installed model for a keyless Brain.
-- On macOS, launch the signed app from its application bundle before granting
-  access; permissions belong to that exact app identity.
+- On macOS, launch the installed app from its application bundle; permissions
+  belong to that exact app identity. Setup does not ask for any of them.
 
 > [!warning] Paste a provider credential only into the masked key field on the
 > **API Keys** page. Never paste one into chat, speak it, put it in a wake word,
@@ -65,21 +65,16 @@ provider card and save it:
 **Continue** unlocks once a key is saved. **I'll add a key later** moves on;
 chat and voice then stay off until a key exists.
 
-### 3. Allow access on this Mac (macOS only)
-
-Setup opens **Settings > Privacy permissions**. Use **Allow** or **Open
-Settings** on each row you want, return, and wait for the row to update. The
-restart at the end applies the grants. Windows and Linux skip this step.
-
-### 4. Choose your wake word
+### 3. Choose your wake word
 
 Setup opens **Settings** at the **Wake Word** group. **Hey** is fixed; type
 your own word after it and save. The word also becomes the assistant's name,
 for example **Hey Nova** makes an assistant called Nova. The card confirms when
 the wake word is on. Without a wake word, the Call keyboard shortcut starts a
-conversation.
+conversation. On a Mac, switching the wake word on is the moment macOS asks
+for microphone access; setup has no separate permissions step.
 
-### 5. All set
+### 4. All set
 
 The last card reads back the active Brain and how voice starts, and offers
 **Start at login** if your system supports it. **Start** saves the setup and
@@ -103,7 +98,8 @@ the Agentic IDE, Plugins and the Marketplace, and Settings.
 - Change the interface and reply languages under **Settings > Languages**.
 - Connect and test models under **API Keys**; the same page connects coding
   agents by key or subscription.
-- Repair macOS access under **Settings > Privacy permissions**.
+- Check or repair macOS access under **Settings > Privacy**. Setup never asks
+  for a permission up front; macOS asks when you first use a feature that needs it.
 - Change the phrase, spoken wake language, activation switch, or local wake
   pack under **Settings > Wake Word**, and the Call shortcut under **Settings >
   Voice Keybinds**.
