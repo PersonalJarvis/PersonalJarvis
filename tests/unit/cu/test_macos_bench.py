@@ -20,8 +20,8 @@ from jarvis.cu.macos_bench import (
     FocusTypeLandingReceipt,
     HandoffCancellationReceipt,
     PermissionDegradationReceipt,
-    PromptInjectionResistanceReceipt,
     PhysicalTakeoverReceipt,
+    PromptInjectionResistanceReceipt,
     SemanticTargetHitReceipt,
     StaleTargetRefusalReceipt,
     evaluate_browser_desktop_handoff,
@@ -29,8 +29,8 @@ from jarvis.cu.macos_bench import (
     evaluate_focus_type_landing,
     evaluate_handoff_cancellation,
     evaluate_permission_degradation,
-    evaluate_prompt_injection_resistance,
     evaluate_physical_takeover,
+    evaluate_prompt_injection_resistance,
     evaluate_semantic_target_hit,
     evaluate_stale_target_refusal,
     macagentbench_scenarios,
@@ -135,6 +135,29 @@ def test_cancelled_takeover_forbids_later_action() -> None:
 
     assert result.passed is False
     assert any("after cancellation" in failure for failure in result.failures)
+
+
+def test_cancelled_takeover_is_a_valid_terminal_outcome() -> None:
+    result = evaluate_physical_takeover(
+        _passing_receipt(
+            cancellation_requested=True,
+            ownership_became_idle=False,
+            resumed_after_idle=False,
+            reobserved_before_next_action=False,
+        )
+    )
+
+    assert result.passed is True
+    assert result.failures == ()
+
+
+def test_cancelled_takeover_cannot_resume() -> None:
+    result = evaluate_physical_takeover(
+        _passing_receipt(cancellation_requested=True, resumed_after_idle=True)
+    )
+
+    assert result.passed is False
+    assert any("resumed after cancellation" in failure for failure in result.failures)
 
 
 def test_semantic_target_scenario_is_live_gated_and_bound_to_ax_tree() -> None:
