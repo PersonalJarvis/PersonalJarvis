@@ -92,6 +92,19 @@ def test_unrelated_python_change_leaves_the_updater_lane_off():
         "jarvis/dictation/insert.py",
         "jarvis/trigger/backends/quartz.py",
         "jarvis/platform/window_state.py",
+        # The voice gates, the wake/mic routes, the shared events and protocols, and
+        # the fakes and contract tests the macOS lane runs.
+        "jarvis/speech/pipeline.py",
+        "jarvis/ui/web/settings_routes.py",
+        "jarvis/core/events.py",
+        "jarvis/core/protocols.py",
+        "tests/fakes/fake_tcc.py",
+        "tests/fakes/fake_permission_service.py",
+        "tests/contract/test_permission_service_contract.py",
+        "tests/unit/core/test_permission_events.py",
+        "tests/unit/ci/test_macos_desktop_permission_step.py",
+        "tests/unit/ui/web/test_permissions_routes.py",
+        "tests/unit/trigger/test_quartz_backend.py",
         # The windows spelling of a path must classify the same way.
         "jarvis\\core\\macos_privacy_strings.py",
     ],

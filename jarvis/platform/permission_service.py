@@ -71,7 +71,6 @@ document stays labelled unverified where it is relied on.
 from __future__ import annotations
 
 import asyncio
-import inspect
 import logging
 import math
 import threading
@@ -730,7 +729,6 @@ class PermissionService:
         # (:meth:`invalidate`) or a reset drops it.
         self._sr_proven = False
         # Ports whose ``state()`` takes no ``deep``/``target`` (a pre-JIT stub).
-        self._legacy_state_ports: dict[type, bool] = {}
         self._episodes: dict[_EpisodeKey, _Episode] = {}
         # Per-process "last native request" stamps (the cooldown); never persisted.
         self._last_native: dict[_SlotKey, float] = {}
@@ -770,25 +768,6 @@ class PermissionService:
         self, port: Any, perm: PermissionId, target: str, deep: bool
     ) -> PermissionState:
         """One ``port.state`` call, in the vocabulary the port understands."""
-        kind = type(port)
-        legacy = self._legacy_state_ports.get(kind)
-        if legacy is None:
-            # Probe the signature ONCE instead of catching TypeError: a TypeError
-            # raised inside a pyobjc bridge must not turn into a deep retry.
-            try:
-                params = inspect.signature(port.state).parameters
-                legacy = "deep" not in params and not any(
-                    p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
-                )
-            except (TypeError, ValueError):
-                # No inspectable signature (a builtin or a C-level callable): assume
-                # the modern one, a wrong guess surfaces as a logged read failure.
-                log.debug("The port's state() signature cannot be inspected.", exc_info=True)
-                legacy = False
-            self._legacy_state_ports[kind] = legacy
-        if legacy:
-            # A hand-written port from before the JIT API: state(permission) only.
-            return PermissionState(port.state(perm))
         return PermissionState(port.state(perm, target=target or None, deep=deep))
 
     @staticmethod
@@ -2314,13 +2293,7 @@ class PermissionService:
             port = self._port()
             if not self._is_darwin(port):
                 return False
-            opener = getattr(port, "open_pane", None)
-            if opener is not None:
-                opened = bool(opener(family))
-            else:
-                # A hand-written port from before the light entry point.
-                operation = port.open_settings(family)
-                opened = bool(getattr(operation, "ok", operation))
+            opened = bool(port.open_pane(family))
         except Exception:  # noqa: BLE001 - opening a pane is best-effort
             log.debug("Opening the %s pane failed.", perm.value, exc_info=True)
             return False

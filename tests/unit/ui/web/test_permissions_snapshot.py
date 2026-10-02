@@ -427,8 +427,9 @@ def test_status_never_uses_the_old_readiness_aggregation(make_env, monkeypatch) 
     def forbidden(self, *args, **kwargs):  # noqa: ANN001, ARG001
         raise AssertionError("the status routes must not aggregate")
 
-    monkeypatch.setattr(SystemPermissionPort, "snapshot", forbidden)
-    # The aggregate Automation read rewrites the consent record: never from here.
+    # The readiness aggregation no longer exists on the port at all.
+    assert not hasattr(SystemPermissionPort, "snapshot")
+    # The aggregate Automation read is a live probe of every player: never from here.
     monkeypatch.setattr(SystemPermissionPort, "_automation_state", forbidden)
 
     snapshot = env.status("?include=automation")
@@ -717,16 +718,30 @@ def test_a_restart_hint_episode_marks_its_row(make_env, monkeypatch: pytest.Monk
     assert rows["microphone"]["restart_hint"] is False
 
 
-def test_a_restart_hint_never_marks_a_granted_row(
+def test_a_restart_hint_marks_a_granted_row_after_a_real_failed_use(
     make_env, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """A wallpaper-only capture while the state reads granted still needs the hint."""
     env = make_env(granted=[TccService.SCREEN_RECORDING])
     hint = _restart_hint_episode("screen_recording")
     monkeypatch.setattr(PermissionService, "outstanding", lambda self: [hint])
 
     row = env.rows()["screen_recording"]
 
-    assert row["status"] == "granted" and row["restart_hint"] is False and row["detail"] == ""
+    assert row["status"] == "granted" and row["restart_hint"] is True
+    assert "quit and reopened" in row["detail"]
+
+
+def test_a_restart_hint_never_marks_a_row_that_is_not_required(
+    make_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = make_env(platform="linux")
+    hint = _restart_hint_episode("screen_recording")
+    monkeypatch.setattr(PermissionService, "outstanding", lambda self: [hint])
+
+    rows = env.rows()
+
+    assert all(row["restart_hint"] is False for row in rows.values())
 
 
 # ----------------------------------------------------------------------

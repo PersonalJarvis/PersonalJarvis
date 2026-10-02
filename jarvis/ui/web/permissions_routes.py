@@ -466,10 +466,12 @@ def _row_detail(
         if darwin and permission is PermissionId.AUTOMATION:
             return _AUTOMATION_NO_PLAYER
         return _NOT_REQUIRED_DETAIL
+    if restart_hint:
+        # A real failed use while the state reads granted (a wallpaper-only capture,
+        # a deaf event tap): the row stays granted but says what to do.
+        return user_detail_for(permission, "restart_hint")
     if state is PermissionState.GRANTED:
         return ""
-    if restart_hint:
-        return user_detail_for(permission, "restart_hint")
     if permission is PermissionId.AUTOMATION and not answered:
         return _AUTOMATION_NO_ANSWER
     if permission is PermissionId.CREDENTIAL_STORE and state is PermissionState.NOT_GRANTED:
@@ -521,7 +523,10 @@ def _build_row(
             and permission is not PermissionId.CREDENTIAL_STORE
             and state in _RESETTABLE
         ),
-        "restart_hint": permission.value in restart_hint_for and state not in _READY,
+        # An open restart_hint episode is a REAL failed use, so it shows even when
+        # the state reads granted (that is exactly the case it was reported for).
+        "restart_hint": permission.value in restart_hint_for
+        and state is not PermissionState.NOT_REQUIRED,
         "detail": _row_detail(
             permission,
             state,

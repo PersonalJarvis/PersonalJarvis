@@ -653,16 +653,14 @@ def test_every_handler_is_a_sync_def() -> None:
         assert not inspect.iscoroutinefunction(route.endpoint), route.path
 
 
-def test_no_route_reaches_the_old_readiness_aggregation(make_env, monkeypatch) -> None:
+def test_no_route_reaches_the_old_readiness_aggregation(make_env) -> None:
     """The routes stopped using ``port.snapshot()`` (the feature/``wanted`` aggregation)."""
     from jarvis.platform.permissions import SystemPermissionPort
 
     env = make_env(granted=["microphone"])
 
-    def forbidden(self, **kwargs):  # noqa: ANN001, ARG001
-        raise AssertionError("the status routes must not aggregate readiness")
-
-    monkeypatch.setattr(SystemPermissionPort, "snapshot", forbidden)
+    # The aggregation is gone from the port altogether (the ratchet test pins it).
+    assert not hasattr(SystemPermissionPort, "snapshot")
     assert env.client.get("/api/permissions/status").status_code == 200
     assert env.client.get("/api/permissions/microphone").status_code == 200
     assert env.post("microphone/request").status_code == 200
@@ -673,8 +671,6 @@ def test_open_settings_and_reset_are_light_and_never_snapshot_or_probe_other_per
 ) -> None:
     """Both "way out" routes used to run two full snapshots each: the Automation probe of
     every running player, the window-title oracle and a consent-file write."""
-    from jarvis.platform.permissions import SystemPermissionPort
-
     env = make_env(
         default_policy=DialogPolicy.NEVER_ANSWERED,
         installed_players=[_MUSIC],
@@ -682,10 +678,6 @@ def test_open_settings_and_reset_are_light_and_never_snapshot_or_probe_other_per
     )
     _use_fake_tccutil(monkeypatch, env.tcc)
 
-    def forbidden(self, **kwargs):  # noqa: ANN001, ARG001
-        raise AssertionError("open-settings and reset must not aggregate readiness")
-
-    monkeypatch.setattr(SystemPermissionPort, "snapshot", forbidden)
     assert env.post("accessibility/open-settings").status_code == 200
     assert env.post("microphone/reset").status_code == 200
 

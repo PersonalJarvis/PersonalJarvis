@@ -775,21 +775,6 @@ def test_a_failing_usage_string_check_fails_closed(
     assert port.request_calls == 0
 
 
-def test_a_hand_written_port_without_the_new_api_still_works(
-    monkeypatch: pytest.MonkeyPatch, bare_service: PermissionService
-) -> None:
-    class LegacyPort:
-        platform = "darwin"
-
-        def state(self, permission: Any) -> PermissionState:  # no ``deep``/``target`` keyword
-            return PermissionState.GRANTED
-
-    monkeypatch.setattr(
-        service_module._permissions_module, "get_system_permission_port", LegacyPort
-    )
-    assert bare_service.ensure(_MIC, feature="voice").granted
-
-
 def test_a_broken_bus_never_breaks_a_check(
     make_env: Callable[..., Env], loop_thread: LoopThread
 ) -> None:
