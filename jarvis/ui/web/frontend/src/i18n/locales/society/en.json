@@ -45,6 +45,15 @@
       "read_only": "Read-only · Maintained by this agent",
       "model": "Model"
     },
+    "conversations": {
+      "label": "Conversations",
+      "hint": "Where this agent works on what {name} or a teammate sent it, kept apart from your chat.",
+      "with": "with {0}",
+      "running": "working now",
+      "waiting": "waiting for you",
+      "badge": "Agent conversation",
+      "follow_up": "Ask in this conversation…"
+    },
     "routine_detail": {
       "back_to_agent": "Back to agent chat",
       "saved_result": "Saved execution result",

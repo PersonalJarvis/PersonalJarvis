@@ -219,6 +219,13 @@ class MessageAgentTool:
                         FailureReason.BLOCKED_BY_POLICY, "no success reply was requested"
                     )
         trace_id = parent.trace_id if parent is not None else None
+        from jarvis.core.protocols import current_chat_turn
+
+        turn = current_chat_turn.get()
+        if turn is not None and turn.session_id:
+            # Which of the caller's chats wrote it: the person's chat with the
+            # agent shows only its own outgoing messages, never a conversation's.
+            payload["from_session"] = turn.session_id
         env = await rt.say(
             from_agent=caller.agent_id,
             to_agent=target.agent_id,
@@ -494,6 +501,7 @@ class ProposeChangeTool:
         from jarvis.core.protocols import current_chat_turn
 
         from .proposals import ProposalRefused, propose, resolve
+        from .surface import agent_id_of
 
         rt = self._runtime
         if await rt.store.kill_switch():
@@ -509,7 +517,7 @@ class ProposeChangeTool:
             if (
                 turn is None
                 or not turn.direct_user
-                or turn.session_id != caller.session_id
+                or agent_id_of(turn.session_id) != caller.agent_id
                 or not quote
                 or (len(quote) < 4 and quote != turn.user_text.strip())
                 or quote not in turn.user_text

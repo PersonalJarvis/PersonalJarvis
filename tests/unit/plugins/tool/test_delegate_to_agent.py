@@ -73,7 +73,7 @@ async def test_delegate_acks_and_assigns(runtime):
     assert res.artifacts[1].startswith("assignment:")
     assert res.artifacts[2].startswith("trace:voice:")
     # The assignment went through the scheduler into Scout's canonical chat.
-    assert chat.sent and chat.sent[0][0] == "society:scout"
+    assert chat.sent and chat.sent[0][0] == "society:scout:with:jarvis"
     assert "Find the best VPS." in chat.sent[0][1]
     events = await rt.store.events_since(0)
     assert [e.msg_type for e in events][-2:] == [MsgType.ASSIGN, MsgType.CLAIM]
@@ -189,7 +189,7 @@ async def test_delegate_without_a_name_picks_by_the_task(team):
     )
     assert res.success, res.error
     assert res.output["acknowledgement"] == "Gmail agent is on it, I will let you know."
-    assert chat.sent and chat.sent[0][0] == "society:gmail-agent"
+    assert chat.sent and chat.sent[0][0] == "society:gmail-agent:with:jarvis"
 
 
 async def test_delegate_unknown_name_does_not_redirect_work(team):

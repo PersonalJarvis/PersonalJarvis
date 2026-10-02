@@ -372,6 +372,10 @@ class AgentChatService:
         run = self._running.get(session_id)
         return bool(run and run.task and not run.task.done())
 
+    def running_session_ids(self) -> list[str]:
+        """Every session with a live turn right now."""
+        return [sid for sid in list(self._running) if self.is_running(sid)]
+
     async def seal_stopped_turn(self, session_id: str) -> bool:
         """Close a turn the stop button can still see after its runner is gone.
 

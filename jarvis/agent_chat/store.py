@@ -216,6 +216,19 @@ class AgentChatStore:
                 ).fetchall()
         return [self._row_to_session(r) for r in rows]
 
+    def list_sessions_matching(
+        self, prefix: str, suffix: str = "", *, limit: int = 200
+    ) -> list[AgentChatSession]:
+        """Newest first; every session whose id starts with ``prefix`` (and ends
+        with ``suffix`` when given) — e.g. an agent's conversation chats."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM agent_chat_sessions WHERE substr(session_id,1,?)=? "
+                "AND (?='' OR substr(session_id,-?)=?) ORDER BY updated_ms DESC LIMIT ?",
+                (len(prefix), prefix, suffix, max(1, len(suffix)), suffix, int(limit)),
+            ).fetchall()
+        return [self._row_to_session(r) for r in rows]
+
     def update_session(self, session_id: str, **fields: Any) -> AgentChatSession | None:
         """Set any of title / provider / model / effort / cwd / permission_mode /
         vendor_session. Unknown keys are ignored so a route can pass its body

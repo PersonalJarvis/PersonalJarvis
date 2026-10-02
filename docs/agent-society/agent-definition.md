@@ -332,6 +332,13 @@ Gmail agent stood on the island. The team card (`jarvis/society/lead_card.py`) i
 - **Agent ↔ agent:** exactly one tool, `message_agent(target, text, kind)` → one `SAY` /
   `QUERY` / `PROPOSE` envelope to ONE teammate; the scheduler wakes the target's chat.
   `@name` in a canonical chat by the USER also produces a `SAY` from the user's identity.
+- **Conversation chats (2026-10-02):** whatever Jarvis or a teammate sends an agent runs in the
+  agent's own chat with that sender, `society:<agent_id>:with:<sender_id>` — never in the
+  person's canonical chat. It is the same agent (`agent_id_of` resolves it): seat, workspace,
+  approvals, tools, memory review and briefing are identical; only `society_propose_change`
+  with `mode=apply` stays reserved for the person's own request. Recall searches every chat
+  the agent owns; the card lists the conversations above the chat
+  (`GET /api/society/agents/{id}/conversations`) and opens one as a full chat.
 - **Group:** a room (`ROOM_OPEN → SAY* → ROOM_SETTLE`), opened by Jarvis or an orchestrator,
   rendered as one thread in the society feed and as the meeting pavilion in the world.
 

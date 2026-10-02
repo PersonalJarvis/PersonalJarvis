@@ -125,7 +125,8 @@ async def finish_message(rt, chat, request, **kwargs):
     try:
         done, events = completion(**kwargs)
         await rt._complete_message_reply(
-            chat.store.get_session(f"society:{request.to_agent}"),
+            # Jarvis' message runs in the receiver's conversation chat with Jarvis.
+            chat.store.get_session(f"society:{request.to_agent}:with:{request.from_agent}"),
             done,
             events,
         )
@@ -282,7 +283,7 @@ async def test_assignment_reporting_preserves_result_and_releases_slot(
             chat.store.incoming_message(session.session_id, reported.output["message_id"])
             for session in chat.store.list_sessions(surface="jarvis")
         )
-    queue = chat.queues["society:scout"]
+    queue = chat.queues["society:scout:with:jarvis"]
     await queue.put({"kind": "assistant_text", "payload": {"text": "Recorded outcome."}})
     await queue.put({"kind": "turn_finished", "payload": {"status": "completed"}})
     watchers = list(rt._watchers)

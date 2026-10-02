@@ -9,8 +9,10 @@ kept). Without a provider on the row the session runs on the Agents tier
 the rest of the app uses (``local_models.assistant_session.agents_tier``).
 
 ``make_deliver_hook`` is what the scheduler calls for SAY / QUERY / ANSWER /
-PROPOSE / RESULT envelopes: ensure the target's session, then start a turn
-with the message framed as coming from the sender. A busy session raises
+PROPOSE / RESULT envelopes: ensure the target's conversation chat with the
+sender (``society:<target>:with:<sender>``; the person's own messages use the
+canonical chat), then start a turn with the message framed as coming from the
+sender. A busy session raises
 ``target busy`` so the scheduler writes a typed veto and the envelope stays
 in the inbox for the next turn.
 """
@@ -25,7 +27,13 @@ from typing import Any, Final
 from .communication import response_instruction
 from .delivery import DeliveryBusy, IncomingMessage, incoming_context
 from .events import MsgType, SocietyEnvelope
-from .roster import LEAD_AGENT_ID, AgentRecord, PermissionCeiling
+from .roster import (
+    LEAD_AGENT_ID,
+    PAIR_SESSION_MARKER,
+    AgentRecord,
+    PermissionCeiling,
+    conversation_session_id,
+)
 from .scheduler import DeliverHook
 
 log = logging.getLogger(__name__)
@@ -77,14 +85,27 @@ def _workspace(cfg: Any, agent: AgentRecord) -> str:
     return str(folder)
 
 
-def ensure_session(svc: Any, cfg: Any, agent: AgentRecord) -> Any:
-    """The agent's canonical session, created or re-seated to the roster row."""
+def ensure_session(
+    svc: Any,
+    cfg: Any,
+    agent: AgentRecord,
+    *,
+    counterpart: str = "",
+    counterpart_name: str = "",
+) -> Any:
+    """The agent's session, created or re-seated to the roster row.
+
+    Without ``counterpart`` this is the canonical chat, the one a person has
+    with the agent. With it, it is the agent's own conversation with Jarvis or
+    a teammate (``society:<agent>:with:<counterpart>``): same seat, workspace,
+    approvals, tools and memory, but its turns never land in the person's chat.
+    """
     from jarvis.agent_chat.effort import default_effort
     from jarvis.agent_chat.permissions import ladder_key, normalize_permission
     from jarvis.agent_chat.service import resolve_runner
 
     provider, model, effort = pair_for(cfg, agent)
-    session_id = agent.session_id
+    session_id = conversation_session_id(agent.agent_id, counterpart)
     existing = svc.store.get_session(session_id)
     if existing is None:
         ladder = ladder_key(SURFACE, resolve_runner(provider, surface=SURFACE))
@@ -95,7 +116,11 @@ def ensure_session(svc: Any, cfg: Any, agent: AgentRecord) -> Any:
             effort=effort or default_effort(provider),
             cwd=_workspace(cfg, agent),
             permission_mode=mode,
-            title=agent.name,
+            title=(
+                agent.name
+                if session_id == agent.session_id
+                else f"{agent.name} · {counterpart_name or counterpart}"
+            ),
             session_id=session_id,
             surface=SURFACE,
             account_id=agent.account_id,
@@ -112,6 +137,22 @@ def ensure_session(svc: Any, cfg: Any, agent: AgentRecord) -> Any:
         svc.store.update_session(session_id, **updates)
         existing = svc.store.get_session(session_id)
     return existing
+
+
+def _agent_busy(svc: Any, agent: AgentRecord) -> bool:
+    """Whether the person's chat or a conversation chat of ``agent`` runs a turn.
+
+    Messages wait until the agent is free, as they did when it had one chat:
+    two message turns never share its seat, workspace and browser at once.
+    Routine runs are background work and do not hold messages up.
+    """
+    if svc.is_running(agent.session_id):
+        return True
+    running = getattr(svc, "running_session_ids", None)
+    if not callable(running):
+        return False
+    prefix = agent.session_id + PAIR_SESSION_MARKER
+    return any(sid.startswith(prefix) for sid in running())
 
 
 def frame_incoming(env: SocietyEnvelope, sender_name: str) -> str:
@@ -196,7 +237,11 @@ def make_deliver_hook(
                 raise DeliveryBusy("Jarvis chat is not open yet")
             session = sessions[0]
         else:
-            session = ensure_session(svc, get_cfg(), target)
+            # Jarvis and teammates talk in their own conversation chat; only the
+            # person's own messages belong in the agent's canonical chat.
+            session = ensure_session(
+                svc, get_cfg(), target, counterpart=env.from_agent, counterpart_name=sender
+            )
         await svc.receive_message(session.session_id, incoming)
         return svc, session, incoming
 
@@ -210,7 +255,7 @@ def make_deliver_hook(
         receipt = svc.store.incoming_message(session.session_id, env.event_id)
         if receipt is not None and receipt["status"] == "delivered":
             return
-        if svc.is_running(session.session_id):
+        if svc.is_running(session.session_id) or _agent_busy(svc, target):
             raise DeliveryBusy(f"target busy: {target.name} is running a turn")
         token = incoming_context.set(incoming)
         try:

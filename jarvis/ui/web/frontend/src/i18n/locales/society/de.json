@@ -45,6 +45,15 @@
       "read_only": "Nur lesen · Von diesem Agenten gepflegt",
       "model": "Modell"
     },
+    "conversations": {
+      "label": "Gespräche",
+      "hint": "Hier arbeitet der Agent an dem, was {name} oder ein anderer Agent ihm schickt – getrennt von deinem Chat.",
+      "with": "mit {0}",
+      "running": "arbeitet gerade",
+      "waiting": "wartet auf dich",
+      "badge": "Agenten-Gespräch",
+      "follow_up": "In diesem Gespräch nachfragen…"
+    },
     "routine_detail": {
       "back_to_agent": "Zurück zum Agenten-Chat",
       "saved_result": "Gespeichertes Ausführungsergebnis",

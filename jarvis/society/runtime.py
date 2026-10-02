@@ -42,7 +42,7 @@ from .learning import AgentSkills, LearningPass, TurnDigest, default_creator_fac
 from .memory import SocietyMemory
 from .quests import Quests
 from .rooms import Rooms
-from .roster import LEAD_AGENT_ID, AgentRecord, Roster
+from .roster import LEAD_AGENT_ID, AgentRecord, Roster, conversation_session_id
 from .scheduler import DeliverHook, SocietyScheduler
 from .seeds import seed_first_run
 from .store import SocietyStore
@@ -290,7 +290,7 @@ class SocietyRuntime:
         for original in await self.store.events_for_trace(env.trace_id):
             if original.event_id != env.parent_event_id or not original.to_agent:
                 continue
-            session_id = f"society:{original.to_agent}"
+            session_id = conversation_session_id(original.to_agent, original.from_agent)
             if svc.store.incoming_message(session_id, original.event_id) is not None:
                 await svc.message_status(session_id, original.event_id, "failed", error=env.text)
             break
@@ -503,7 +503,7 @@ class SocietyRuntime:
             request is None
             or request.to_agent is None
             or request.msg_type not in (MsgType.QUERY, MsgType.SAY, MsgType.PROPOSE)
-            or session.session_id != f"society:{request.to_agent}"
+            or session.session_id != conversation_session_id(request.to_agent, request.from_agent)
             or reply_policy(request) == "none"
             or await self.store.kill_switch()
         ):
@@ -546,7 +546,11 @@ class SocietyRuntime:
             trace_id=request.trace_id,
             parent_event_id=request.event_id,
             msg_type=MsgType.ANSWER,
-            payload={"reply_policy": "none", "reply_status": status},
+            payload={
+                "reply_policy": "none",
+                "reply_status": status,
+                "from_session": session.session_id,
+            },
         )
 
     async def recover_reviews(self) -> None:
@@ -707,7 +711,16 @@ class SocietyRuntime:
             raise RuntimeError("agent chat service unavailable: the society cannot start work")
         from .chat_binding import ensure_session, frame_assignment
 
-        session = ensure_session(svc, self._get_cfg(), target)
+        sender = await self.roster.get(env.from_agent) if env.from_agent != "user" else None
+        # Work Jarvis or a teammate hands out runs in the target's own
+        # conversation with that sender, never in the person's chat with it.
+        session = ensure_session(
+            svc,
+            self._get_cfg(),
+            target,
+            counterpart=env.from_agent,
+            counterpart_name=sender.name if sender is not None else env.from_agent,
+        )
         if svc.is_running(session.session_id):
             raise RuntimeError(f"target busy: {target.name} is running a turn")
         queue = svc.subscribe(session.session_id)

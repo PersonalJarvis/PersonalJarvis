@@ -137,7 +137,10 @@ def session_ref(scope: dict[str, Any]) -> str | None:
             value = raw_value.decode("latin-1").strip()
             # Society chats use a namespaced roster slug, while ordinary chats
             # use opaque alphanumeric IDs. Preserve that scope for tool lookup.
-            if len(value) <= 128 and re.fullmatch(r"society:[a-z0-9]+(?:-[a-z0-9]+)*", value):
+            if len(value) <= 128 and re.fullmatch(
+                r"society:[a-z0-9]+(?:-[a-z0-9]+)*(?::with:[a-z0-9]+(?:-[a-z0-9]+)*)?",
+                value,
+            ):
                 return value
             if len(value) <= 64 and re.fullmatch(r"[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*", value):
                 return value
