@@ -370,3 +370,12 @@ async def test_brain_does_not_emit_tool_calls_from_failed_stream():
             deltas.append(delta)
     assert not deltas
     await reasoning.aclose()
+
+
+@pytest.mark.asyncio
+async def test_brain_accepts_protocol_req_keyword():
+    reasoning, _ = _reasoning(lambda _request: httpx.Response(200, text=_sse(_completed())))
+    brain = SubscriptionReasoningBrain(reasoning, "chosen-model")
+    deltas = [delta async for delta in brain.complete(req=BrainRequest(messages=()))]
+    assert deltas[-1].finish_reason == "stop"
+    await reasoning.aclose()

@@ -73,6 +73,7 @@ def make_session(monkeypatch, tmp_path):
 
     yield make
     for session in sessions:
+        session._cancel_report_timeout()
         if not session._ended:
             session._ledger.close()
 
@@ -574,3 +575,434 @@ def test_live_setup_reports_the_explicit_runtime_billing_path(provider, mode):
     )
     assert _profile_for_runtime(cfg).auth_mode == mode
     assert cfg.live.auth_mode == saved_mode
+
+
+async def test_subscription_report_waits_for_native_caption_completion_and_blocks_overlap(
+    make_session,
+):
+    session, _, _, _, _, _ = make_session(
+        [completed_response("r1", [spoken_result("The report is ready.")])]
+    )
+    assert await session.deliver_announcement("Ready", report="A verified finding.")
+    assert session.report_pending and not session.ready_for_report
+    await wait_for_jobs(session)
+    assert session.take_report_outcome() == ""
+    assert not await session.deliver_announcement("Another", report="Another finding.")
+    await session._event(
+        {
+            "type": "session.output_transcript.delta",
+            "segment_id": "report-output",
+            "transcript": "The report",
+            "snapshot": True,
+            "start_ms": 10,
+            "end_ms": 20,
+        }
+    )
+    assert session.report_pending and session._report_state == "started"
+    await session._event(
+        {
+            "type": "session.output_transcript.done",
+            "segment_id": "report-output",
+            "transcript": "The report is ready.",
+            "snapshot": True,
+            "is_final": True,
+            "start_ms": 10,
+            "end_ms": 30,
+        }
+    )
+    assert session.take_report_outcome() == "completed"
+    assert session.take_report_outcome() == ""
+
+
+async def test_filler_before_report_submission_cannot_confirm_delivery(make_session):
+    session, reasoning, _, _, _, _ = make_session([completed_response("r1", [spoken_result()])])
+    reasoning.block = asyncio.Event()
+    assert await session.deliver_announcement("Ready", report="A verified finding.")
+    await reasoning.started.wait()
+    await session._event(
+        {
+            "type": "session.output_transcript.done",
+            "segment_id": "filler",
+            "transcript": "Let me check.",
+            "snapshot": True,
+            "is_final": True,
+            "start_ms": 1,
+            "end_ms": 2,
+        }
+    )
+    assert session._report_state == "sent"
+    assert session.take_report_outcome() == ""
+    reasoning.block.set()
+    await wait_for_jobs(session)
+
+
+async def test_failed_subscription_report_remains_owed_and_signals_pause(make_session, monkeypatch):
+    import jarvis.core.runtime_refs as base
+
+    paused = []
+    monkeypatch.setattr(
+        base,
+        "get_speech_pipeline",
+        lambda: SimpleNamespace(
+            live_call_paused=lambda session: paused.append(session),
+        ),
+    )
+    session, _, _, _, _, _ = make_session([[{"type": "response.failed"}]])
+    assert await session.deliver_announcement("Ready", report="A verified finding.")
+    await wait_for_jobs(session)
+    assert session.take_report_outcome() == "failed"
+    assert session in paused
+    assert not session._connection.sent
+
+
+async def test_unvoiced_report_times_out_only_after_result_submission(make_session):
+    session, _, _, _, _, _ = make_session([completed_response("r1", [spoken_result()])])
+    assert await session.deliver_announcement("Ready", report="A verified finding.")
+    await wait_for_jobs(session)
+    assert len(session._connection.sent) == 1
+    assert session._report_timeout is not None
+    session._cancel_report_timeout()
+    session._report_start_timed_out()
+    assert session.take_report_outcome() == "failed"
+
+
+async def test_report_summary_outlasts_speech_budget_and_still_gets_voiced(
+    make_session,
+    monkeypatch,
+):
+    import jarvis.live.subscription as base
+
+    monkeypatch.setattr(base, "REPORT_START_TIMEOUT_S", 0.01)
+    session, reasoning, _, _, _, _ = make_session(
+        [completed_response("r1", [spoken_result("The late summary is ready.")])]
+    )
+    reasoning.block = asyncio.Event()
+    assert await session.deliver_announcement("Ready", report="A verified finding.")
+    await reasoning.started.wait()
+    assert session._report_timeout is None
+    await asyncio.sleep(0.03)
+    assert session.report_pending and session.take_report_outcome() == ""
+    # Give the native caption an independent, generous startup budget.
+    monkeypatch.setattr(base, "REPORT_START_TIMEOUT_S", 20.0)
+    reasoning.block.set()
+    await wait_for_jobs(session)
+    assert session._report_timeout is not None
+    assert session._connection.sent[-1]["content"] == "The late summary is ready."
+    await session._event(
+        {
+            "type": "session.output_transcript.done",
+            "segment_id": "late-summary",
+            "transcript": "The late summary is ready.",
+            "snapshot": True,
+            "is_final": True,
+            "start_ms": 10,
+            "end_ms": 30,
+        }
+    )
+    assert session._report_timeout is None
+    session._report_start_timed_out()  # A stale callback cannot undo actual delivery.
+    assert session.take_report_outcome() == "completed"
+
+
+async def test_report_cancelled_before_inference_starts_does_not_stay_pending(make_session):
+    session, reasoning, _, _, _, _ = make_session([])
+    assert await session.deliver_announcement("Ready", report="A verified finding.")
+    task = session._subscription_report_task
+    assert task is not None
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    await asyncio.sleep(0)
+    assert not reasoning.requests
+    assert session._report_timeout is None
+    assert session.take_report_outcome() == "failed"
+    assert session.ready_for_report
+
+
+async def test_empty_report_summary_does_not_stay_pending(make_session):
+    session, _, _, _, _, _ = make_session([completed_response("r1", [])])
+    assert await session.deliver_announcement("Ready", report="A verified finding.")
+    await wait_for_jobs(session)
+    assert not session._connection.sent
+    assert session._report_timeout is None
+    assert session.take_report_outcome() == "failed"
+
+
+async def test_fresh_smalltalk_cannot_acknowledge_an_unspoken_report(make_session):
+    session, _, _, _, _, _ = make_session([completed_response("r1", [spoken_result()])])
+    assert await session.deliver_announcement("Ready", report="A verified finding.")
+    await wait_for_jobs(session)
+    revision = session._tools.revision
+    await session._event(
+        {
+            "type": "session.input_transcript.delta",
+            "segment_id": "greeting",
+            "transcript": "Hello",
+            "snapshot": True,
+            "start_ms": 10,
+            "end_ms": 20,
+        }
+    )
+    await session._event(
+        {
+            "type": "session.output_transcript.done",
+            "segment_id": "greeting-response",
+            "transcript": "Hello there.",
+            "snapshot": True,
+            "is_final": True,
+            "start_ms": 21,
+            "end_ms": 30,
+        }
+    )
+    assert session.take_report_outcome() == "failed"
+    assert session._tools.revision == revision
+
+
+async def test_same_user_segment_correction_does_not_invalidate_report(make_session):
+    session, _, _, _, _, _ = make_session([completed_response("r1", [spoken_result()])])
+    await session._event(
+        {
+            "type": "session.input_transcript.delta",
+            "segment_id": "prior-request",
+            "transcript": "Read the report",
+            "snapshot": True,
+            "start_ms": 1,
+            "end_ms": 2,
+        }
+    )
+    assert await session.deliver_announcement("Ready", report="A verified finding.")
+    await wait_for_jobs(session)
+    revision = session._tools.revision
+    await session._event(
+        {
+            "type": "session.input_transcript.done",
+            "segment_id": "prior-request",
+            "transcript": "Read the report.",
+            "snapshot": True,
+            "is_final": True,
+            "start_ms": 1,
+            "end_ms": 3,
+        }
+    )
+    assert session.report_pending
+    assert session._tools.revision == revision
+    await session._event(
+        {
+            "type": "session.output_transcript.done",
+            "segment_id": "report-answer",
+            "transcript": "The state is verified.",
+            "snapshot": True,
+            "is_final": True,
+            "start_ms": 10,
+            "end_ms": 30,
+        }
+    )
+    assert session.take_report_outcome() == "completed"
+
+
+@pytest.mark.parametrize("code", ["authentication_required", "quota_exhausted", "rate_limited"])
+async def test_terminal_subscription_reconnect_error_stops_shared_retry_loop(
+    make_session,
+    monkeypatch,
+    code,
+):
+    import jarvis.live.recovery as recovery
+    import jarvis.live.subscription as base
+    from jarvis.plugins.realtime.openai_subscription_live import SubscriptionLiveError
+
+    attempts, permits = [], []
+
+    async def permit():
+        permits.append(True)
+
+    async def reattach(previous):
+        attempts.append(previous)
+        raise SubscriptionLiveError(code)
+
+    monkeypatch.setattr(recovery, "connection_permit", permit)
+    monkeypatch.setattr(base.random, "uniform", lambda *args: 0)
+    session, _, _, _, _, _ = make_session([])
+    session._provider.reattach_session = reattach
+    assert not await session._wait_for_connection()
+    assert len(attempts) == len(permits) == 1
+    assert session._ended and session.failed
+    assert session.failure_detail == code
+
+
+async def test_subscription_transient_control_outage_reuses_call_and_shared_budget(
+    make_session,
+    monkeypatch,
+):
+    import jarvis.live.recovery as recovery
+    import jarvis.live.subscription as base
+
+    attempts, permits = [], []
+    restored = SubscriptionConnection()
+
+    async def permit():
+        permits.append(True)
+
+    async def reattach(previous):
+        attempts.append(previous)
+        if len(attempts) < 3:
+            raise OSError("offline")
+        return restored
+
+    monkeypatch.setattr(recovery, "connection_permit", permit)
+    monkeypatch.setattr(base.random, "uniform", lambda *args: 0)
+    session, _, _, messages, _, _ = make_session([])
+    old = session._connection
+    session._provider.reattach_session = reattach
+    assert await session._wait_for_connection()
+    assert len(attempts) == len(permits) == 3
+    assert all(previous is old for previous in attempts)
+    assert session._connection is restored and old.closed
+    assert messages[-1]["reuse_webrtc"] is True
+    assert not session.failed
+
+
+async def test_terminal_subscription_recovery_on_pump_task_still_closes_resources(
+    make_session,
+    monkeypatch,
+):
+    import jarvis.live.recovery as recovery
+    import jarvis.live.subscription as base
+    from jarvis.plugins.realtime.openai_subscription_live import SubscriptionLiveError
+
+    async def permit():
+        return None
+
+    async def reattach(previous):
+        raise SubscriptionLiveError("authentication_required")
+
+    monkeypatch.setattr(recovery, "connection_permit", permit)
+    monkeypatch.setattr(base.random, "uniform", lambda *args: 0)
+    session, reasoning, _, _, _, _ = make_session([])
+    session._provider.reattach_session = reattach
+    session._pump_task = asyncio.create_task(session._wait_for_connection())
+    assert await session._pump_task is False
+    assert session._connection.closed and reasoning.closed
+
+
+async def test_new_user_request_does_not_acknowledge_an_unspoken_report(make_session):
+    session, _, _, _, _, _ = make_session(
+        [
+            completed_response("report", [spoken_result("Report result")]),
+            completed_response("user", [spoken_result("New request result")]),
+        ]
+    )
+    assert await session.deliver_announcement("Ready", report="A verified finding.")
+    await wait_for_jobs(session)
+    assert session.report_pending
+    await session._event(
+        {
+            "type": "session.delegation.created",
+            "delegation": {"id": "new-request"},
+            "prompt": "Answer my new request",
+        }
+    )
+    await wait_for_jobs(session)
+    await session._event(
+        {
+            "type": "session.output_transcript.done",
+            "segment_id": "new-request-answer",
+            "transcript": "New request result",
+            "snapshot": True,
+            "is_final": True,
+            "start_ms": 10,
+            "end_ms": 30,
+        }
+    )
+    assert session.take_report_outcome() == "failed"
+
+
+async def test_filler_started_before_submission_cannot_acknowledge_report_late(make_session):
+    session, reasoning, _, _, _, _ = make_session(
+        [completed_response("r1", [spoken_result("Verified report result")])]
+    )
+    reasoning.block = asyncio.Event()
+    assert await session.deliver_announcement("Ready", report="Verified report data")
+    await reasoning.started.wait()
+    await session._event(
+        {
+            "type": "session.output_transcript.delta",
+            "segment_id": "old-filler",
+            "transcript": "Let me",
+            "snapshot": True,
+            "start_ms": 1,
+            "end_ms": 2,
+        }
+    )
+    reasoning.block.set()
+    await wait_for_jobs(session)
+    assert session._subscription_report_submitted
+    await session._event(
+        {
+            "type": "session.output_transcript.done",
+            "segment_id": "old-filler",
+            "transcript": "Let me check",
+            "snapshot": True,
+            "is_final": True,
+            "start_ms": 1,
+            "end_ms": 5,
+        }
+    )
+    assert session.report_pending
+    assert session.take_report_outcome() == ""
+    await session._event(
+        {
+            "type": "session.output_transcript.done",
+            "segment_id": "actual-report",
+            "transcript": "Verified report result",
+            "snapshot": True,
+            "is_final": True,
+            "start_ms": 6,
+            "end_ms": 10,
+        }
+    )
+    assert session.take_report_outcome() == "completed"
+
+
+@pytest.mark.parametrize("terminal", [False, True])
+async def test_subscription_failure_uses_browser_status_contract(make_session, terminal):
+    session, _, _, messages, _, _ = make_session([])
+    await session._failure("untrusted-provider-body", terminal=terminal)
+    expected = "provider_error" if terminal else "provider_warning"
+    failure = next(message for message in messages if message.get("type") == expected)
+    assert failure["code"] == failure["reason"] == "subscription_unavailable"
+    assert isinstance(failure["error"], str) and failure["error"]
+    assert "untrusted-provider-body" not in json.dumps(failure)
+    assert session._ended is terminal
+    assert session.failed is terminal
+    assert session._connection.closed is terminal
+
+
+async def test_report_reasoning_deadline_returns_failed_receipt(make_session, monkeypatch):
+    import jarvis.live.subscription as module
+
+    monkeypatch.setattr(module, "REPORT_REASONING_TIMEOUT_S", 0.01)
+    session, reasoning, _, messages, _, _ = make_session([])
+    reasoning.block = asyncio.Event()
+    assert await session.deliver_announcement("Ready", report="Verified report data")
+    await asyncio.wait_for(wait_for_jobs(session), 1)
+    assert session.take_report_outcome() == "failed"
+    assert not session._connection.sent
+    assert any(message.get("type") == "provider_warning" for message in messages)
+
+
+async def test_started_report_without_final_caption_has_bounded_receipt(make_session):
+    session, _, _, _, _, _ = make_session([completed_response("r1", [spoken_result()])])
+    assert await session.deliver_announcement("Ready", report="Verified report data")
+    await wait_for_jobs(session)
+    await session._event(
+        {
+            "type": "session.output_transcript.delta",
+            "segment_id": "report-answer",
+            "transcript": "Verified",
+            "snapshot": True,
+            "start_ms": 1,
+            "end_ms": 2,
+        }
+    )
+    assert session._report_timeout is not None
+    session._report_start_timed_out()
+    assert session.take_report_outcome() == "failed"

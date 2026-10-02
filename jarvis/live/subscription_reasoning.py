@@ -354,10 +354,10 @@ class SubscriptionReasoningBrain:
         """No metered API-key billing; subscription allowance is reported separately."""
         return 0.0
 
-    async def complete(self, request: BrainRequest) -> AsyncIterator[BrainDelta]:
-        instructions, items = _request_input(request)
+    async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
+        instructions, items = _request_input(req)
         tools: list[dict[str, Any]] = []
-        for declaration in request.tools:
+        for declaration in req.tools:
             if "function" in declaration:
                 tools.append({"type": "function", **declaration["function"]})
             elif declaration.get("type") == "function":
@@ -383,7 +383,7 @@ class SubscriptionReasoningBrain:
             input=items,
             instructions=instructions,
             tools=tools,
-            reasoning_effort=request.reasoning_effort or "",
+            reasoning_effort=req.reasoning_effort or "",
         ):
             kind = event["type"]
             if kind == "response.output_text.delta" and event.get("delta"):

@@ -25,6 +25,19 @@ def _explicit_provider_ids(cfg: Any) -> list[str]:
     """Configured primary/fallback ids, without ambient installed plugins."""
     realtime = getattr(getattr(cfg, "brain", None), "realtime", None)
     installed = set(list_plugins(_GROUP))
+    primary_id = str(getattr(realtime, "provider", "") or "").strip()
+    if primary_id:
+        if primary_id not in installed:
+            return []
+        try:
+            primary = load(_GROUP, primary_id, protocol=RealtimeProvider)
+        except Exception as exc:  # noqa: BLE001 - a broken selection stays unavailable
+            log.warning("Realtime primary %s could not load (%s)", primary_id, type(exc).__name__)
+            return []
+        if not bool(getattr(primary, "provider_fallback_allowed", True)):
+            # A pinned subscription owns its access choice even when old API
+            # fallback settings remain from the user's previous voice mode.
+            return [primary_id]
     ordered: list[str] = []
     for configured in (
         getattr(realtime, "provider", None),

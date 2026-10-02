@@ -441,6 +441,7 @@ class OpenAISubscriptionLiveProvider:
     browser_audio = True
     requires_webrtc_offer = True
     implicit_usage_fallback_allowed = False
+    provider_fallback_allowed = False
     handshake_budget_s = 60.0
     input_sample_rate = 24000
     output_sample_rate = 24000
