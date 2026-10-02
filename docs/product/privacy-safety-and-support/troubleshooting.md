@@ -168,8 +168,8 @@ applicable, and microphone level. It does not prove that the engine will
 recognize your spoken phrase. After it passes, say the phrase once for an
 end-to-end check.
 
-On macOS, use **Settings > Privacy permissions** for microphone access and
-restart only if the card shows **Restart now**. A Realtime session opened in a
+On macOS, use **Settings > Privacy** for microphone access and
+restart only if the card shows **Quit and reopen**. A Realtime session opened in a
 browser uses that browser's microphone permission and device, not the native
 desktop audio selection.
 
@@ -184,11 +184,11 @@ questions. The operating system controls microphone, screen, accessibility,
 and input access. Jarvis then decides whether a particular action is safe,
 needs confirmation, or must be blocked.
 
-- On macOS, open **Settings > Privacy permissions** and act on the named row.
-  Current controls include **Allow**, **Open Settings**, **Check again**, and
-  **Restart now**. Current states include **Allowed**, **Not requested**,
-  **Denied**, **Restricted**, **Not allowed**, **Unavailable**, **Not
-  required**, and **Restart pending**.
+- On macOS, open **Settings > Privacy** and act on the named row. Current
+  controls include **Open System Settings**, **Check again**, and **Quit and
+  reopen**. Current states include **Granted**, **Off or not asked**,
+  **Denied**, **Restricted**, **Unavailable**, **Restart needed**, and **Not
+  required**.
 - Windows and Linux do not show the macOS permission cards. Use the operating
   system's own microphone, display, and accessibility controls when the
   affected feature requires them.

@@ -27,7 +27,7 @@ processed locally even when the later conversation uses hosted speech or AI.
 - Connect the headset, microphone, or speakers you want to use.
 - Wait until the desktop app shows **Ready**, not **Voice starting...**.
 - Allow microphone access in the operating system. macOS users should also
-  review **Settings > Privacy permissions**.
+  review **Settings > Privacy**.
 - Never use a password, recovery code, or other secret as a wake phrase.
 
 Voice is optional. Chats and other text features continue on a computer with

@@ -46,13 +46,31 @@ macOS version, display arrangement, and per-display scaling in the sign-off log.
 
 ## 0. App identity and macOS privacy grants
 
+> Rewritten 2026-10-02 to the ask-when-needed behaviour (AP-35,
+> [ADR-0037](../../adr/0037-macos-permissions-ask-when-needed.md)): a feature asks
+> macOS at the moment the user first uses it, from that gesture; nothing is asked at
+> launch, in onboarding or by a banner. The earlier rows (press each Allow button in
+> onboarding, fail closed before the OS is asked) described the removed preflight wall;
+> git history keeps them. None of these rows has been signed off on a physical Mac.
+> The full row set with the exact dialogs to record is section 7 of
+> [`docs/macos-permissions.md`](../../macos-permissions.md) (ids `M-*`).
+>
+> **Before each row** quit Jarvis, run `tccutil reset <Service> <bundle id>` for the
+> permission under test (Microphone, ScreenCapture, Accessibility plus PostEvent,
+> ListenEvent, AppleEvents), start the app again, then check System Settings > Privacy &
+> Security: an unchanged list means the reset did nothing. Test both installed apps (the
+> `.dmg` app `ai.personaljarvis.desktop` and the managed app `com.personal-jarvis.desktop`)
+> and the one you are not testing must keep its own state.
+
 | # | Scenario | Manual step | Expected observation | PASS / FAIL / N/A |
 |---|---|---|---|---|
-| TCC-1 | Stable installed identity | Run the public install command, then inspect the launched process and `~/Applications/Personal Jarvis.app` | The installer launches through LaunchServices; status reports bundle ID `com.personal-jarvis.desktop`, `launched_as_bundle=true`, and `stable=true`. Terminal/Python never receives the grants | _____ |
-| TCC-2 | Explicit first-run grants | In onboarding, press each Allow button in order: Microphone, Screen Recording, Accessibility, Input Monitoring, Input Control | Every dialog is initiated by that button; no dialog appears merely from installing, booting, or opening the page. Returning from System Settings refreshes status without manual reload | _____ |
-| TCC-3 | Denial and recovery | Deny each permission once, then use Open Settings and grant it | The affected feature stays disabled with an honest status; text chat remains usable; recovery is entirely in-app and never edits the TCC database | _____ |
-| TCC-4 | Revocation | Revoke each previously granted permission while Jarvis is running, then retry the affected feature | The next microphone, capture, hotkey, window, or input action fails closed before touching the protected API; restoring the grant recovers through the supported UI flow | _____ |
-| TCC-5 | Identity persistence | Update/relaunch and enable login autostart | Manual launch, restart, updater relaunch, and LaunchAgent all re-enter through the same app bundle; grants do not migrate to Terminal/Python or unexpectedly reset | _____ |
+| TCC-1 | Stable installed identity | Install through the public install command (managed app) or drag the `.dmg` app to Applications; start it from there; read Settings > Privacy and `jarvis permissions status` | The app runs from the installed bundle; status reports its bundle ID (`com.personal-jarvis.desktop` managed, `ai.personaljarvis.desktop` for the `.dmg`), `launched_as_bundle=true`, `stable=true`. Terminal/Python never receives the grants. A terminal-launched dev run asks for no grant on its own: the UI offers a confirmation that names the app that started Jarvis | _____ |
+| TCC-2 | First use asks, nothing at launch | With every permission reset: start the app and wait 30 s with the wake word off; then press the dictation button in the composer (microphone); ask Jarvis to look at the screen (Screen Recording); dictate into another app or run one computer-use click (Accessibility); press **Enable global shortcuts** in Settings > Shortcuts (Input Monitoring); with Music running switch **Mute music while dictating** on (Automation) | **No dialog, card, banner or wizard at launch or while the page is open.** Each protected action raises Apple's own dialog for exactly that permission, from that gesture, naming Personal Jarvis with the usage string where one exists; Jarvis shows its own card only when the permission is blocked, never while an Apple dialog is up. Record the dialog text and whether the app was frontmost | _____ |
+| TCC-3 | Denial and recovery | Answer **Don't Allow** (or leave a Screen Recording or Accessibility dialog unanswered) for each permission once, retry the feature, then use **Open System Settings** from the card or the Privacy row and switch it on | Only the affected feature degrades with an honest sentence (dictation: the microphone is off; capture refuses, **no wallpaper frame**; dictation paste stays on the clipboard as `clipboard_only`); typed chat stays usable; the retry does not raise a second dialog (a decision is not asked twice); the card or Privacy row opens the right pane; after the switch the feature works without a restart for the microphone, and the observation for Screen Recording and Input Monitoring (works at once, or only after "Quit and reopen") is written down. Recovery never edits the TCC database | _____ |
+| TCC-4 | Revocation | Revoke each previously granted permission in System Settings while Jarvis is running, then retry the affected feature | The next microphone stream ends within a few seconds (or after about 5 s of exact zeros shows one "denied or muted" notice), the next capture, shortcut, window or input action refuses honestly **without** acting on a stale grant, and restoring the grant recovers through the card or the Privacy row. No crash | _____ |
+| TCC-5 | Identity persistence | Update/relaunch and enable login autostart | Manual launch, restart, updater relaunch, and LaunchAgent all re-enter through the same app bundle; grants do not migrate to Terminal/Python or unexpectedly reset. Record the "Background Items Added" notice and the name Login Items shows | _____ |
+| TCC-6 | Upgrader and boot rule | With every grant present, update or restart the app; then, with the wake word on and the microphone reset, start it again | An upgrader sees zero cards and zero requests and every feature works at once. With the microphone reset and the wake word on, launch shows no dialog and opens no input stream; the sidebar voice status shows a quiet blocked-by-permission look | _____ |
+| TCC-7 | An agent never answers a dialog | With an Apple permission dialog on screen, start a computer-use task | Nothing is dispatched while the consent window is frontmost; the mission ends `blocked_permission` with a Retry; the agent text says not to touch the dialog | _____ |
 
 ---
 
@@ -61,7 +79,7 @@ macOS version, display arrangement, and per-display scaling in the sign-off log.
 | # | Feature × OS | Probe command | Manual step | Expected observation | PASS / FAIL / N/A |
 |---|---|---|---|---|---|
 | AX-1 | UI-element-click (macOS) | `signoff_probe.py --feature ax` | Grant System Settings › Privacy & Security › Accessibility; bring a normal app (e.g. TextEdit) to the foreground | `make_ui_tree_source()` returns `AXTreeSource`; `observe()` yields **non-empty** `UIANode`s with canonical roles (`AXButton`→`Button`); a `click_element` by name lands on its bounds | _____ |
-| AX-2 | UI-element-click (macOS) — degrade | `signoff_probe.py --feature ax` | **Revoke** the Accessibility grant, retry | Tree is empty; one English permission message is returned and Computer-Use refuses to inject input. No pixel-click bypass, crash, or silent empty result | _____ |
+| AX-2 | UI-element-click (macOS) — degrade | `signoff_probe.py --feature ax` | **Revoke** the Accessibility grant, retry | AX reads degrade quietly (empty tree, no dialog, no card); the first input action asks for Accessibility (`TCC-2`) and, while it is off, Computer-Use returns one `[permission_needed:accessibility]` message and refuses to inject input. No pixel-click bypass, crash, or silent empty result | _____ |
 | AX-3 | UI-element-click (Linux) | `signoff_probe.py --feature ax` | `apt install python3-pyatspi gir1.2-atspi-2.0`; ensure the AT-SPI bus is up; foreground a GTK app | `make_ui_tree_source()` returns `AtspiTreeSource`; `observe()` returns a **non-empty** tree normalized to canonical roles | _____ |
 | AX-4 | UI-element-click (Linux) — degrade | `signoff_probe.py --feature ax` | Stop the AT-SPI bus / uninstall `pyatspi`, retry | `NullUITreeSource`; **one** English degrade line ("AT-SPI bus unavailable — install python3-pyatspi …"); pixel-click fallback still clicks. No crash | _____ |
 
@@ -77,8 +95,8 @@ macOS version, display arrangement, and per-display scaling in the sign-off log.
 
 | # | Feature × OS | Probe command | Manual step | Expected observation | PASS / FAIL / N/A |
 |---|---|---|---|---|---|
-| HK-1 | Hotkey (macOS) | `signoff_probe.py --feature hotkey` | Grant Accessibility and Input Monitoring; press `ctrl+right_alt+j` | `PynputBackend` **captures** the combo; Jarvis enters LISTENING | _____ |
-| HK-2 | Hotkey (macOS) — missing grant | `signoff_probe.py --feature hotkey` | Without Input-Monitoring, press the combo | The "registered but zero events → grant Input-Monitoring/Accessibility" detection fires (AD-8); no crash | _____ |
+| HK-1 | Hotkey (macOS) | `signoff_probe.py --feature hotkey` | Press **Enable global shortcuts** in Settings > Shortcuts and allow Input Monitoring (Accessibility is not needed for the listen-only tap); press `ctrl+right_alt+j` | `QuartzHotkeyBackend` **captures** the combo; Jarvis enters LISTENING; `shortcuts_status` reads `ready` | _____ |
+| HK-2 | Hotkey (macOS) — missing grant | `signoff_probe.py --feature hotkey` | Without Input Monitoring (never asked, or denied), press the combo | Nothing is asked at launch; `shortcuts_status` reads `needs_input_monitoring`; the buttons and voice keep working; a restart hint appears only when the preflight reads granted and typing then produced no events (AD-8); never an automatic restart; no crash | _____ |
 | HK-3 | Hotkey (Linux X11) | `signoff_probe.py --feature hotkey` | On an X11 session, press the combo | `PynputBackend` captures the press; Jarvis enters LISTENING | _____ |
 | HK-4 | Hotkey (Linux Wayland) — degrade | `signoff_probe.py --feature hotkey` | On a Wayland session, press the combo, then say the wake word | `NoopBackend`; the combo does nothing but logs **once** "global hotkey unavailable on Wayland by OS design; lean on the wake word"; the wake word still summons Jarvis (AD-8). No crash, no spam | _____ |
 

@@ -46,7 +46,7 @@ that have their own guides.
 |---|---|---|
 | **Languages** | Interface, Voice Recognition Language, and Reply Language | Interface and reply choices apply live. After changing recognition, end any Realtime call and restart Jarvis for Pipeline recognition |
 | **App settings** | Launch the app when you sign in | The operating-system startup entry is added or removed immediately |
-| **Privacy permissions** | Microphone, Screen Recording, Accessibility, Input Monitoring, Input control, and Keychain access on macOS | Status updates live; Jarvis shows **Restart now** when a new grant needs it |
+| **Privacy** | Microphone, Screen Recording, Accessibility, Input Monitoring, and Keychain access on macOS | Status updates live; Jarvis shows **Quit and reopen** when a new grant needs it |
 | **Realtime voice (browser)** | Pipeline or Realtime voice mode | Saves immediately. An active desktop call reconnects when its mode changes; otherwise the next call uses the choice |
 | **System Prompt** | The assistant's general style and behavior | On the next message; no restart |
 | **Wake Word** | Activation, phrase, spoken language, detection engine, and self-test | Usually live when desktop voice is ready; otherwise on the next voice start |
@@ -209,7 +209,7 @@ returns to idle.
 | **Realtime voice (browser)** is unavailable | No installed Realtime provider has a usable credential, or this build does not include the optional Realtime engine | Connect OpenAI Realtime or Gemini Live under **API Keys**. If the control stays unavailable, use Pipeline |
 | Music keeps playing after you enable muting | The platform backend is unavailable, macOS Automation access was denied, or the media app is unsupported | Accept the macOS Automation prompt when offered. On Linux or for unsupported players, use the operating system or media app controls |
 | **Save** stays disabled for a shortcut | The combination is incomplete, reserved, or overlaps another action | Follow the inline message and the on-screen keyboard markers, then choose a distinct combination |
-| A macOS feature remains blocked | The operating system has not granted the required access, or the new grant needs an app restart | Use **Settings > Privacy permissions > Allow**, **Open Settings**, or **Ask again**, then select **Restart now** when shown |
+| A macOS feature remains blocked | The operating system has not granted the required access, or the new grant needs an app restart | Use **Settings > Privacy > Open System Settings** or **Check again**, then select **Quit and reopen** when shown |
 | A change works now but returns after restart | The live update succeeded, but the saved preference could not be written | Try the control again, then use [Troubleshooting](troubleshooting) if it still does not survive a restart |
 | **Autopilot Toasts** has no effect | The visible switch is not currently connected to a saved preference | Do not rely on this control until a future app update wires it to behavior |
 

@@ -4201,6 +4201,14 @@ never one dialog at a time.
 
 ## BUG-058: Third macOS first-boot abort at onboarding start — unserialized PortAudio re-init + ungated Quartz event tap (HIGH, HARDENED 2026-07-14, on-device confirmation pending)
 
+> **Superseded in part by BUG-225 (2026-10-02).** The class rule at the end of this entry ("any
+> macOS permission-gated native surface must preflight a non-prompting probe and
+> degrade honestly") is narrowed: it still holds for the event tap (the tap is
+> created only after `CGPreflightListenEventAccess()` is true, never to provoke a
+> prompt) and for a missing usage string (checked before a native request), but a
+> preflight must never refuse a feature before the OS was asked (AP-35, ADR-0037).
+> The history below is kept as written.
+
 **Symptom.** With BUG-056+057 shipped, a fresh Mac boot now shows the
 desktop window and enters first-launch onboarding — then "Python quit
 unexpectedly" again, seconds in, before any meaningful interaction. No
@@ -5727,6 +5735,14 @@ unexplainable early abort.
 ---
 
 ## BUG-083: macOS permissions "auto-denied" after an app update, Settings deep links landing on the wrong pane, and a dead second Allow button (HIGH, FIXED 2026-07-18)
+
+> **Superseded in part by BUG-225 (2026-10-02).** The in-app request path described here (the
+> Allow buttons, the per-row "Ask again", the Settings deep-link rule, the
+> restart gating) is now the just-in-time service
+> `jarvis/platform/permission_service.py`; the rebuild keeps the live reads, the
+> own-bundle `tccutil reset` and the quit-System-Settings-before-a-deep-link rule,
+> and drops the "can_request is false while a restart is pending" machinery. The
+> history below is kept as written.
 
 **Symptom (live Intel test Mac, macOS 15.7, first run after the v1.0.11
 update).** The onboarding permissions view showed Input Monitoring and Input
@@ -11109,6 +11125,15 @@ chat hook already ran the `TriggerMatcher` and were never affected.
 
 ## BUG-159: macOS permissions read as missing although System Settings shows them enabled — a sticky restart flag, a hidden recovery, and a silent grant-wiping rebuild (HIGH, FIXED 2026-08-20)
 
+> **Superseded in part by BUG-225 (2026-10-02).** Cause 1 (the sticky pending-restart flag and the
+> global `restart_required`), the readiness aggregate (`features[...].ready`),
+> fix (d) (the `identity_reset` marker file and its note) and the banner and wizard
+> renderings of `can_reset` no longer exist: a restart is only a per-row hint
+> produced after a real failed attempt, the snapshot carries no readiness or
+> identity-reset keys, and a rebuild that changes nothing needs no note. The
+> `can_reset` capability and the own-bundle reset stay (served on Settings >
+> Privacy and the permission card). The history below is kept as written.
+
 **Symptom (maintainer's Mac, reported 2026-08-20).** Every start warned that
 macOS permissions were not enabled. Clicking the warning's button opened
 System Settings, where the permission was already switched ON. Toggling it off
@@ -11278,6 +11303,14 @@ the facts handed to the composer carry the content and never the URLs).
 ---
 
 ## BUG-161: macOS permissions still read as missing after BUG-159 — every start rebuilt the app bundle, and a copy in /Applications was treated as a stranger (HIGH, FIXED 2026-08-21)
+
+> **Superseded in part by BUG-225 (2026-10-02).** The banner referred to here no longer exists.
+> The "canonical location" rule (both `~/Applications` and `/Applications`) survives as one
+> input to `stable`, but `stable` now decides only whether Jarvis may ask automatically and
+> whether it may reset, never whether a feature may act (AP-35 principle 6). The finding that TCC pins a grant to the
+> bundle id and signature, never to a path, is what the rebuild relies on. The live
+> window-title proof for Screen Recording stays (still unverified on a Mac). The
+> history below is kept as written.
 
 **Symptom (maintainer's Mac, reported 2026-08-21).** The app kept asking for
 permissions it had already been given. Granting them again changed nothing;
@@ -12653,6 +12686,10 @@ policy as well, so the app does not depend on every shell agreeing with it.
 ---
 
 ## BUG-181: clicking Restart sometimes only shut the window down (HIGH, FIXED 2026-08-25)
+
+> **Superseded in part by BUG-225 (2026-10-02).** The permissions banner named in the symptom was
+> removed (no restart control lives in a permission banner any more); the restart
+> machinery this entry fixes is unchanged.
 
 **Symptom.** Click Restart (top bar, Settings, the permissions banner). The
 window closes. Sometimes nothing comes back. A Start-menu click later starts
@@ -15281,6 +15318,15 @@ blocks `lsregister`), `tests/unit/diagnostics/test_doctor_diagnostics.py`
 
 ## BUG-217: macOS asked for every permission again after each rebuild, and the Music prompt never stuck (HIGH, FIXED 2026-09-16)
 
+> **Superseded in part by BUG-225 (2026-10-02).** The Automation **consent file**
+> (`macos-automation-consent.json`), the **hidden launch** of a closed Music or
+> Spotify, and **Set up everything** with its automatic restart are removed:
+> Automation is asked once, when the user switches "Mute music while dictating" on
+> while a player is running, through the killable consent runner (120 s), and a
+> grant is re-read live per send. Root causes 1 and 2 (the certificate identity,
+> `AppleEvents` in the reset sweep, the 120 s wait) and the `/Applications`
+> follow-up stand. The history below is kept as written.
+
 **Symptom.** After an update or reinstall, Personal Jarvis asked for
 Microphone, Screen Recording, Accessibility, Input Monitoring and Input
 Control all over again. The "Music / Spotify" Automation dialog appeared in
@@ -15516,6 +15562,14 @@ Guard: `tests/unit/plugins/wake/test_vosk_native.py::test_dropping_the_proxy_ins
 
 ## BUG-222: the downloaded macOS app could not use a single permission — it was never accepted as "the installed app", it shipped without the microphone framework, and its Info.plist said background-only (HIGH, FIXED 2026-10-01; built and booted on macOS CI runners, not yet tried on a user's Mac)
 
+> **Superseded in part by BUG-225 (2026-10-02).** The identity fix stands (`ACCEPTED_BUNDLE_IDS`,
+> the own-id reset, the packaging fixes and the frozen-app probe), but its premise
+> that a wrong identity "disables the whole permission surface" is gone: identity
+> now decides only who may ask automatically and who may reset, never whether a
+> feature may act (AP-35 principle 6). The `identity_ready`, `can_request` and
+> "no request button means no way to be asked" wording describes the removed
+> readiness model. The history below is kept as written.
+
 **Symptom (the identity part reproduced against the port with faked macOS
 frameworks; none of it observed on a Mac).** Run as the `.dmg` app with every
 grant present, the permission screens read every feature "not ready", refuse
@@ -15628,6 +15682,12 @@ source.
 
 ## BUG-223: every public macOS download was ad-hoc signed — the first launch was blocked and every update forgot every grant (HIGH, FIXED IN CODE 2026-10-01; signing still needs the maintainer's Apple account)
 
+> **Superseded in part by BUG-225 (2026-10-02).** The signing finding stands (a Developer ID
+> signature is what lets grants persist across updates; the path has still never
+> run). References to the re-ask explanation note ("macOS treats the app as new")
+> describe the removed `identity_reset` note. The history below is kept as
+> written.
+
 **Symptom.** The `.dmg` behind the README's macOS link opens with "Apple cannot
 check it for malicious software", and after each update the app asks for every
 permission again.
@@ -15687,6 +15747,13 @@ macOS itself.
 
 ## BUG-224: macOS asked for Music and Spotify control — and opened both apps — for a feature that is off (MEDIUM, FIXED 2026-10-01, unit-tested only)
 
+> **Superseded by BUG-225 (2026-10-02).** `wanted`,
+> `features[...].active`, `active_features()`, the "Optional" tag, the banner's
+> "Not now" and the refresh event no longer exist. The over-asking they patched is
+> removed at the root: a feature the user has not switched on never touches its
+> permission (principle 7), and Automation is asked only by switching "Mute music
+> while dictating" on. The history below is kept as written.
+
 **Symptom (from the code paths of BUG-217's guided flow; not yet observed on a
 Mac).** "Set up everything" and the app-wide banner demanded the Automation
 (Music & Spotify) permission on every Mac — Music ships with macOS — started
@@ -15725,3 +15792,100 @@ restart that stays visible), `PermissionsPanel.test.tsx`,
 **Verification.** Unit tests with faked native frameworks, vitest, a production
 build and a light/dark look at the banner and the rows in Chromium on Linux.
 Nothing was run in the macOS desktop app.
+
+
+---
+
+## BUG-225: macOS was never asked — every protected feature refused behind the app's own permission check, so a banner, a wizard and a restart machine grew around the missing dialog (HIGH, FIXED IN CODE 2026-10-02; not yet exercised on a physical Mac)
+
+**Symptom (class: a preflight wall in front of the OS ask).** On a Mac that had
+never answered a dialog, the wake word was dead, dictation said microphone access
+was "not ready", computer use and global shortcuts refused, and no macOS dialog
+ever appeared from using the feature. The only road to a dialog was the app's own
+UI: an app-wide banner, **Set up everything** in Settings, and an onboarding step.
+The same wall produced the reports of BUG-159, BUG-161, BUG-222 and BUG-224: a
+banner that stayed although the switch was on, features dead for the whole session
+with every grant present, a whole surface disabled by one wrong identity constant,
+and Music and Spotify opened hidden for a feature that was off. The user's own
+words quoted in the history ("the permissions are extremely annoying") describe the
+result.
+
+**Cause.** `SystemPermissionPort.runtime_access_granted()` was true only for a
+stable bundle identity AND an already-granted probe, and every feature path asked it
+before touching the OS API (`audio/capture.py`, `cu/actuate/base.py`,
+`cu/capture.py`, `trigger/backends/quartz.py`, `platform/window_state.py`,
+`screen_context`, `vision/*`, dictation insert, the voice activation gate). For a
+permission in `not_determined` the answer was no, so the feature raised before the
+microphone, the tap or the capture was opened and macOS never got the chance to show
+its own dialog. The frozen plan said the opposite (AD-13: probe at first use, degrade,
+never hard-block); the shipped code inverted it on 2026-07-15 without a recorded
+decision (reconstruction in `docs/macos-permissions.md` section 2). Each later layer
+repaired a symptom of the wall instead of removing it: banner, dead-Allow fixes, sticky
+restart flag, identity-reset note, wizard with auto-restart, Automation consent file,
+`wanted` flag, "Not now". The wall also cost time on hot paths (per-frame, per-keystroke
+and per-0.25 s probes; a tap callback that overran its deadline and was disabled).
+
+**Fix (stages, all revertible).**
+
+- `jarvis/platform/permission_service.py` is the single just-in-time layer: `check`
+  (silent, never prompts) and `ensure` / `ensure_async` / `ensure_all` (interactive, only
+  from a user gesture), one coalesced episode per (pane family, feature), a backend
+  watcher that publishes `PermissionResolved` on a grant, and the `PermissionNeeded` /
+  `PermissionResolved` events (AP-4 parity). Off macOS it returns NOT_REQUIRED before
+  touching the port. Consumers receive it through the `PermissionGate` protocol.
+- Features ask at their gesture: microphone at dictation, push-to-talk, a voice session,
+  the wake-word switch and the mic self-test; Screen Recording at the first
+  user-started capture; Accessibility when Jarvis first types, clicks or focuses;
+  Input Monitoring when the user enables global shortcuts; Automation when the user
+  switches "Mute music while dictating" on with a player running. Helpers `check()` and
+  degrade; the computer-use engine keeps one silent Screen Recording gate and pauses
+  while a macOS consent window is frontmost.
+- Silent-failure traps are checked at the source: a flat wallpaper-only frame while the
+  state claims granted, five seconds of exact zeros from the microphone while granted.
+- Deleted: the banner and its dismissal store, the wizard and polling, the refresh
+  event, the onboarding `permissions` step, `features` / `wanted` / `active` /
+  `identity_reset` / `restart_required` / `foreground` in the snapshot, the Automation
+  consent file and hidden launch, the identity-reset marker. Settings > Privacy is a
+  passive page. Packaging got one usage-string table and lost the camera, speech and
+  system-administration keys.
+- AP-35 and ADR-0037 record the rule; `docs/macos-permissions.md` is the design, the
+  evidence table and the manual Mac checklist.
+
+**Prevention (AP-35).** A feature asks the OS at first use from a user gesture through
+the service. No code path may refuse because our own preflight says "not granted"
+before the OS was asked, and none may act on a permission the OS has not granted
+(`EnsureResult.granted` only for GRANTED / NOT_REQUIRED; a native request's return value
+is never evidence). Nothing is asked at launch (boot rule), denied is a stable state with
+one click to the pane, identity decides who may ask and reset but not whether a feature may
+act, an opt-in feature owns its permission, and an agent never answers a system dialog
+(routine triggers exclude both permission events; no agent tool exposes ensure, request,
+open-settings or reset). Review rule: a new macOS-gated feature that adds its own
+"is it granted" refusal ahead of the OS ask, a banner, a wizard or a persisted "asked"
+flag is this bug again.
+
+**Guards.** `tests/contract/test_permission_service_contract.py` (scenario table on a
+macOS-shaped and a non-macOS host), `tests/unit/platform/test_permission_service.py`,
+`test_permission_service_hardening.py` and `test_permission_service_status_helpers.py`
+(episodes, cooldowns, no second native request), `tests/fakes/fake_tcc.py` with
+`tests/unit/platform/test_fake_tcc.py` (a stateful TCC simulator with an ordered call
+log), `tests/unit/speech/test_voice_permission_jit.py` (first press makes exactly one
+microphone request, a denied press adds none, boot with every permission undecided asks
+nothing, an upgrader sees zero cards, a non-macOS host consults nothing),
+`tests/unit/trigger/test_quartz_jit_permissions.py` (no tap before the preflight is true),
+`tests/unit/platform/test_permission_agent_boundary.py` and
+`tests/unit/cu/test_permission_not_agent_exposed.py` (no agent-facing tool),
+`tests/unit/platform/test_permission_characterization.py` (what must survive; its last
+test fails if a `test_legacy_*` test, one that would pin the removed wall, comes back), and the frontend `permissionPrompts.test.ts`,
+`PermissionPromptLayer.test.tsx` and `PermissionsPanel.test.tsx`.
+
+**Verification.** Fake-framework unit and contract tests, vitest, Linux static gates, and
+macOS CI runners for the packaging and frozen-app probe (ad-hoc signed; a runner is not a
+user's Mac: it pre-grants TCC to its tools and shows no dialog). **Not verified, because
+nothing ran on a physical Mac:** every real dialog and its wording, whether a running
+process sees a new Screen Recording grant, hold-key semantics, the notarized build, macOS
+26 and 27, the second dialog in the embedded WebView, and the Appshot both-Option
+permission need. The rows to close these are in `docs/macos-permissions.md` section 7.
+
+**Related.** BUG-058, BUG-083, BUG-159, BUG-161, BUG-217, BUG-222, BUG-223, BUG-224
+(each carries a "superseded" note), ADR-0037, `docs/os-parity.md`,
+`docs/product/privacy-safety-and-support/permissions.md`.
