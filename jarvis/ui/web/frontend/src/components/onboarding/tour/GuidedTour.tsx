@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { MascotGigi } from "@/components/MascotGigi";
 import { fill, useLocaleChunk, useT } from "@/i18n";
 import { useEventStore } from "@/store/events";
 import { useHomeStore } from "@/store/home";
 import type { HomeSurface } from "@/lib/homeSurface";
 import { cn } from "@/lib/utils";
 import { FOCUS_RING } from "@/components/agentic/controls";
+import { PetSays } from "../pet/GuidePet";
 import { QuietAction } from "../ui";
 import { Spotlight } from "./Spotlight";
 import { nextStepIndex, TOUR_STEPS, type Rect, type TourEffect } from "./tourSteps";
@@ -77,7 +77,6 @@ export function GuidedTour({ onDone }: { onDone: () => void }) {
   const ready = useLocaleChunk("onboarding");
   const [index, setIndex] = useState(readSavedStep);
   const [rect, setRect] = useState<Rect | null>(null);
-  const [cue, setCue] = useState(0);
   const anchorRef = useRef<HTMLElement | null>(null);
   const originalSurface = useRef<HomeSurface>(useHomeStore.getState().surface);
   const doneRef = useRef(false);
@@ -119,7 +118,6 @@ export function GuidedTour({ onDone }: { onDone: () => void }) {
     }
     saveStep(target);
     setIndex(target);
-    setCue((c) => c + 1);
   }, [index, run, finish]);
 
   // Enter the step: move the app if the step asks, then wait for its element.
@@ -216,48 +214,32 @@ export function GuidedTour({ onDone }: { onDone: () => void }) {
   const last = nextStepIndex(index) === null;
 
   return (
-    <Spotlight rect={rect} placement={step.placement}>
-      <div
-        role="dialog"
-        aria-live="polite"
-        aria-label={t("app_tour.label")}
-        className="rounded-2xl border border-border bg-popover p-4 text-popover-foreground shadow-float"
-        data-testid="tour-card"
-        data-step={step.id}
-      >
-        <div className="flex items-start gap-3">
-          <MascotGigi
-            size={36}
-            reactToVoice={false}
-            enableComments={false}
-            cue={{ action: step.mascot, key: cue }}
-          />
-          <p className="min-w-0 flex-1 text-sm leading-relaxed text-foreground" data-testid="tour-text">
-            {t(`app_tour.steps.${step.id}`)}
-          </p>
-        </div>
-        <div className="mt-4 flex items-center gap-3">
-          <button
-            ref={nextButton}
-            type="button"
-            onClick={advance}
-            data-testid="tour-next"
-            className={cn(
-              "h-8 rounded-lg bg-accent px-3.5 text-sm font-medium text-accent-foreground transition-opacity hover:opacity-90",
-              FOCUS_RING,
+    <Spotlight rect={rect} placement={step.placement} cardWidth={460}>
+      <div role="dialog" aria-live="polite" aria-label={t("app_tour.label")} data-testid="tour-card" data-step={step.id}>
+        <PetSays key={step.id} text={t(`app_tour.steps.${step.id}`)} state={step.pet} px={96} testId="tour-text">
+          <div className="mt-3 flex items-center gap-3">
+            <button
+              ref={nextButton}
+              type="button"
+              onClick={advance}
+              data-testid="tour-next"
+              className={cn(
+                "h-8 rounded-lg bg-accent px-3.5 text-sm font-medium text-accent-foreground transition-opacity hover:opacity-90",
+                FOCUS_RING,
+              )}
+            >
+              {last ? t("app_tour.finish") : t("app_tour.next")}
+            </button>
+            <span className="text-xs text-muted-foreground">
+              {fill(t("app_tour.step_of"), { current: index + 1, total: TOUR_STEPS.length })}
+            </span>
+            {!last && (
+              <QuietAction onClick={finish} className="ml-auto text-xs" testId="tour-skip">
+                {t("app_tour.skip")}
+              </QuietAction>
             )}
-          >
-            {last ? t("app_tour.finish") : t("app_tour.next")}
-          </button>
-          <span className="text-xs text-muted-foreground">
-            {fill(t("app_tour.step_of"), { current: index + 1, total: TOUR_STEPS.length })}
-          </span>
-          {!last && (
-            <QuietAction onClick={finish} className="ml-auto text-xs" testId="tour-skip">
-              {t("app_tour.skip")}
-            </QuietAction>
-          )}
-        </div>
+          </div>
+        </PetSays>
       </div>
     </Spotlight>
   );
