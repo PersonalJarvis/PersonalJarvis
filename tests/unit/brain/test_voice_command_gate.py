@@ -223,3 +223,67 @@ def test_language_switch_still_matches_across_ordinary_filler() -> None:
         m = match_voice_command(text)
         assert m is not None and m.kind == "language_switch", text
         assert m.target == target, text
+
+
+@pytest.mark.parametrize(
+    "text,target",
+    [
+        ("passa a gemini", "gemini"),  # i18n-allow: Italian speech-input test vocabulary
+        ("usa openai", "openai"),  # i18n-allow: Italian speech-input test vocabulary
+        ("imposta il provider su claude", "claude"),  # i18n-allow: Italian speech-input test vocabulary
+        ("cambia da gemini a openai", "openai"),  # i18n-allow: Italian speech-input test vocabulary
+    ],
+)
+def test_italian_provider_switch_is_deterministic(text: str, target: str) -> None:
+    m = match_voice_command(text)
+    assert m is not None and m.kind == "provider_switch"
+    assert m.target == target
+
+
+def test_italian_subagent_switch_targets_worker_not_main_provider() -> None:
+    m = match_voice_command(
+        "imposta il subagente provider su codex"  # i18n-allow: Italian speech-input test vocabulary
+    )
+    assert m is not None and m.kind == "subagent_switch"
+    assert m.target == "codex"
+
+
+@pytest.mark.parametrize(
+    "text,kind",
+    [
+        ("jarvis fermati", "cancel"),  # i18n-allow: Italian speech-input test vocabulary
+        ("pensa a fondo", "depth_deep"),  # i18n-allow: Italian speech-input test vocabulary
+        ("pensa velocemente", "depth_fast"),  # i18n-allow: Italian speech-input test vocabulary
+    ],
+)
+def test_italian_local_meta_commands(text: str, kind: str) -> None:
+    m = match_voice_command(text)
+    assert m is not None and m.kind == kind
+
+
+@pytest.mark.parametrize(
+    "text,target",
+    [
+        ("rispondi in inglese", "en"),  # i18n-allow: Italian speech-input test vocabulary
+        ("parla spagnolo", "es"),  # i18n-allow: Italian speech-input test vocabulary
+        ("cambia lingua in tedesco", "de"),  # i18n-allow: Italian speech-input test vocabulary
+    ],
+)
+def test_italian_language_commands_only_target_supported_reply_languages(
+    text: str, target: str
+) -> None:
+    m = match_voice_command(text)
+    assert m is not None and m.kind == "language_switch"
+    assert m.target == target
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "gemini è un modello interessante",  # i18n-allow: Italian speech-input test vocabulary
+        "passa il file a gemini",  # i18n-allow: Italian speech-input test vocabulary
+        "dimmi come pensa a fondo un modello",  # i18n-allow: Italian speech-input test vocabulary
+    ],
+)
+def test_italian_harmless_phrases_do_not_trigger_fast_commands(text: str) -> None:
+    assert match_voice_command(text) is None
