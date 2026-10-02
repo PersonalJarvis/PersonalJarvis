@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { Search, Trash2, X } from "lucide-react";
 
+import { ChatKindMark } from "@/components/home/ChatKindMark";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import {
@@ -221,7 +222,6 @@ function ArchiveRow({
   onDelete?: () => void;
 }) {
   const t = useT();
-  const isVoice = row.kind === "voice";
   const label = chatRowLabel(row, t);
   const title = label.text;
   const preview = row.preview && row.preview !== title ? row.preview : "";
@@ -239,6 +239,7 @@ function ArchiveRow({
           active ? "bg-background/80" : "hover:bg-background/50",
         )}
       >
+        <ChatKindMark kind={row.kind} active={active} className="mt-px" />
         <span className="min-w-0 flex-1">
           <span
             className={cn(
@@ -252,10 +253,7 @@ function ArchiveRow({
             <span className="mt-0.5 block truncate text-xs text-muted-foreground">{preview}</span>
           )}
         </span>
-        {/* The kind is said in words, once, beside the time — not as a glyph
-            on every row. A topicless voice chat already names it. */}
         <span className="mt-0.5 shrink-0 pr-6 text-micro tabular-nums text-muted-foreground">
-          {isVoice && !label.untitled && `${t("all_chats.filter_voice")} · `}
           {formatChatWhen(row.updatedMs)}
         </span>
       </button>
