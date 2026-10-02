@@ -70,6 +70,7 @@ import { useEventStore } from "@/store/events";
 import { useProviderTestStore, verificationOf, type Verification } from "@/store/providerTests";
 import { agentBrand, agentsBrand } from "@/lib/agentBrand";
 import { robustCopy } from "@/lib/clipboard";
+import { hasExperimentalConsent, rememberExperimentalConsent } from "@/lib/experimentalConsent";
 import { filterForLocalMode } from "@/lib/localMode";
 import {
   realtimeTransportIssueKey,
@@ -110,34 +111,6 @@ export interface CategoryMeta {
 // Realtime only when a realtime provider actually has a key
 // (`realtimeAvailable`), so the switch can never pin the boot default to an
 // unreachable engine. See `EngineModeSwitch` below for the exact rule.
-/** Remembered acknowledgement of an experimental provider route.
- *
- * The notice is worth showing once — it explains whose plan pays and that the
- * route can change without notice. Showing it on EVERY switch is the
- * confirmation fatigue this project rejects, and it taught the user to click
- * it away unread, which defeats the point of having it. */
-function experimentalConsentKey(providerId: string): string {
-  return `jarvis.experimentalConsent.${providerId}`;
-}
-
-function hasExperimentalConsent(providerId: string): boolean {
-  try {
-    return window.localStorage.getItem(experimentalConsentKey(providerId)) === "1";
-  } catch {
-    // A WebView with storage disabled simply asks again next time: annoying,
-    // never broken, and never silently skipping the notice.
-    return false;
-  }
-}
-
-function rememberExperimentalConsent(providerId: string): void {
-  try {
-    window.localStorage.setItem(experimentalConsentKey(providerId), "1");
-  } catch {
-    // Same trade-off as above — the dialog reappears, nothing else breaks.
-  }
-}
-
 export type VoiceEngineMode = "pipeline" | "realtime";
 
 // The three provider slots the maintainer's setup recommendation speaks about

@@ -6,6 +6,7 @@ import asyncio
 import copy
 import json
 import logging
+import random
 import time
 from typing import Any
 from uuid import uuid4
@@ -23,6 +24,9 @@ from jarvis.live.tools import take_images
 log = logging.getLogger(__name__)
 _MAX_ROUNDS = 24
 _MAX_DELEGATIONS = 4096
+REPORT_START_TIMEOUT_S = 20.0
+REPORT_FINISH_TIMEOUT_S = 90.0
+REPORT_REASONING_TIMEOUT_S = 240.0
 
 
 class SubscriptionLiveVoiceSession(LiveVoiceSession):
@@ -53,6 +57,120 @@ class SubscriptionLiveVoiceSession(LiveVoiceSession):
         self._image_context: list[dict] = []
         self._resources_closed = False
         self._cleanup_task: asyncio.Task | None = None
+        self._report_state = ""
+        self._report_response_id = ""
+        self._report_timeout: asyncio.TimerHandle | None = None
+        self._subscription_end_notified = False
+        self._subscription_report_id = ""
+        self._subscription_report_submitted = False
+        self._subscription_report_task: asyncio.Task | None = None
+        self._user_caption_segments: dict[str, None] = {}
+        self._assistant_caption_segments: dict[str, None] = {}
+        self._subscription_report_excluded_segments: set[str] = set()
+
+    @property
+    def ready_for_report(self) -> bool:
+        return bool(
+            self.is_active
+            and not self._recovering
+            and not self._resume_needs_input
+            and not self._input_active
+            and not self._thinking
+            and not self._speaking
+            and not self.playback_active
+            and not self._has_pending_work()
+            and not self.report_pending
+        )
+
+    @property
+    def report_pending(self) -> bool:
+        return self._report_state in {"sent", "started"}
+
+    def take_report_outcome(self) -> str:
+        if self._report_state not in {"done", "failed"}:
+            return ""
+        result = "completed" if self._report_state == "done" else "failed"
+        self._report_state = ""
+        self._report_response_id = ""
+        return result
+
+    def _report_sent(self) -> None:
+        self._report_state = "sent"
+        self._report_response_id = ""
+        self._cancel_report_timeout()
+        self._report_timeout = asyncio.get_running_loop().call_later(
+            REPORT_START_TIMEOUT_S, self._report_start_timed_out
+        )
+
+    def _report_started(self, response_id: str = "") -> None:
+        if self._report_state != "sent":
+            return
+        self._cancel_report_timeout()
+        self._report_state = "started"
+        self._report_response_id = response_id
+        self._report_timeout = asyncio.get_running_loop().call_later(
+            REPORT_FINISH_TIMEOUT_S, self._report_start_timed_out
+        )
+
+    def _report_finished(self, *, delivered: bool) -> None:
+        if self._report_state != "started":
+            return
+        self._cancel_report_timeout()
+        self._report_state = "done" if delivered else "failed"
+
+    def _cancel_report_timeout(self) -> None:
+        if self._report_timeout is not None:
+            self._report_timeout.cancel()
+            self._report_timeout = None
+
+    def _report_start_timed_out(self) -> None:
+        self._cancel_report_timeout()
+        if not self.report_pending:
+            return
+        self._report_state = "failed"
+        log.warning("Subscription voice did not confirm report delivery before its deadline.")
+        self._notify_pause()
+
+    def _notify_pause(self) -> None:
+        inherited = getattr(super(), "_notify_pause", None)
+        if callable(inherited):
+            inherited()
+            return
+        if self._closing or not self.ready_for_report:
+            return
+        from jarvis.core.runtime_refs import get_speech_pipeline
+
+        hook = getattr(get_speech_pipeline(), "live_call_paused", None)
+        if callable(hook):
+            try:
+                hook(self)
+            except Exception:
+                log.warning("Subscription voice pause notification failed", exc_info=True)
+
+    def _notify_ended(self) -> None:
+        if self._subscription_end_notified:
+            return
+        self._subscription_end_notified = True
+        inherited = getattr(super(), "_notify_ended", None)
+        if callable(inherited):
+            inherited()
+            return
+        from jarvis.core.runtime_refs import get_speech_pipeline
+
+        hook = getattr(get_speech_pipeline(), "live_call_ended", None)
+        if callable(hook):
+            try:
+                hook(self)
+            except Exception:
+                log.warning("Subscription voice end notification failed", exc_info=True)
+
+    async def _emit_indicator(self, message: dict) -> None:
+        await super()._emit_indicator(message)
+        self._notify_pause()
+
+    async def _receive_media_levels(self, message: dict) -> None:
+        await super()._receive_media_levels(message)
+        self._notify_pause()
 
     async def handle_control(self, message: dict) -> None:
         if message.get("type") == "cancel_work":
@@ -114,6 +232,8 @@ class SubscriptionLiveVoiceSession(LiveVoiceSession):
             self._seen_delegations.add(identifier)
             assert self._tools is not None
             if not event.get("application_event"):
+                if self._report_state == "sent":
+                    self._fail_subscription_report(self._subscription_report_id)
                 # Native Live owns request boundaries. ASR fragments and final
                 # spelling corrections are captions, not additional instructions.
                 self._tools.revision += 1
@@ -139,6 +259,8 @@ class SubscriptionLiveVoiceSession(LiveVoiceSession):
                 name="live-subscription-delegation",
             )
             self._jobs.add(task)
+            if event.get("application_event") and identifier == self._subscription_report_id:
+                self._subscription_report_task = task
             task.add_done_callback(self._job_finished)
             await self._note_thinking()
             return
@@ -148,9 +270,19 @@ class SubscriptionLiveVoiceSession(LiveVoiceSession):
                 terminal=True,
             )
             return
+        if kind == "output_audio_buffer.cleared":
+            # Match native voice: a report the user interrupted was heard.
+            self._report_finished(delivered=True)
+            self._notify_pause()
+            return
         if kind in {"session.usage.updated", "session.closed"}:
             # Private voice accounting is not the public per-minute API ledger.
             if kind == "session.closed":
+                if not self._closing and event.get("reason") in {"expired", "connection_lost"}:
+                    if await self._wait_for_connection(session_expired=True):
+                        return
+                    if self._closing:
+                        return
                 self._closed.set()
                 await self._send_json({"type": "audio_closed"})
                 if not self._closing:
@@ -166,6 +298,21 @@ class SubscriptionLiveVoiceSession(LiveVoiceSession):
         )
         if not segment:
             return
+        if role == "assistant":
+            # Record before the first await: persistence can yield while the
+            # report is submitted. A filler segment already in progress is
+            # never evidence that the newly submitted report was spoken.
+            self._assistant_caption_segments[segment] = None
+            if len(self._assistant_caption_segments) > 256:
+                self._assistant_caption_segments.pop(next(iter(self._assistant_caption_segments)))
+        if role == "user" and segment not in self._user_caption_segments:
+            self._user_caption_segments[segment] = None
+            if len(self._user_caption_segments) > 256:
+                self._user_caption_segments.pop(next(iter(self._user_caption_segments)))
+            if self._report_state == "sent":
+                # A fresh utterance can produce smalltalk without delegation.
+                # Its later reply must not acknowledge an unspoken report.
+                self._fail_subscription_report(self._subscription_report_id)
         text = str(event.get("transcript") or "")
         start = self._timeline_offset + int(event.get("start_ms") or 0)
         end = self._timeline_offset + int(event.get("end_ms") or 0)
@@ -187,6 +334,14 @@ class SubscriptionLiveVoiceSession(LiveVoiceSession):
             await self._bus.publish(caption)
         if role == "user":
             self._tools.user_text = text
+        elif (
+            self._subscription_report_submitted
+            and text.strip()
+            and segment not in self._subscription_report_excluded_segments
+        ):
+            self._report_started(segment)
+            if event.get("is_final") and self._report_response_id == segment:
+                self._report_finished(delivered=True)
         await self._send_json(
             {
                 "type": "transcript",
@@ -200,9 +355,18 @@ class SubscriptionLiveVoiceSession(LiveVoiceSession):
         )
         if event.get("is_final"):
             self._transcript.finish(role)
+            self._notify_pause()
 
     def _job_finished(self, task: asyncio.Task) -> None:
         self._jobs.discard(task)
+        if task.cancelled():
+            self._thinking = self._has_pending_work()
+        if task is self._subscription_report_task:
+            self._subscription_report_task = None
+            if not self._subscription_report_submitted:
+                # A task cancelled before its first step never enters its
+                # coroutine's finally block. The accepted report is still owed.
+                self._fail_subscription_report(self._subscription_report_id)
         if not task.cancelled() and task.exception() is not None:
             log.error(
                 "Subscription delegation terminated unexpectedly (%s)",
@@ -210,12 +374,22 @@ class SubscriptionLiveVoiceSession(LiveVoiceSession):
             )
         if self._closing and not self._jobs:
             self._cleanup_task = asyncio.create_task(self._close_resources())
+        self._notify_pause()
+
+    def _fail_subscription_report(self, identifier: str) -> None:
+        """An accepted report without a spoken result remains owed."""
+        if identifier != self._subscription_report_id or not self.report_pending:
+            return
+        self._report_started()
+        self._report_finished(delivered=False)
 
     async def _failure(self, code: str, *, terminal: bool = False) -> None:
         safe = {
             "authentication_required",
             "access_denied",
             "quota_exhausted",
+            "rate_limited",
+            "invalid_configuration",
             "subscription_auth_unavailable",
             "subscription_unavailable",
             "subscription_account_changed",
@@ -225,9 +399,10 @@ class SubscriptionLiveVoiceSession(LiveVoiceSession):
         code = code if code in safe else "subscription_unavailable"
         await self._send_json(
             {
-                "type": "error",
+                "type": "provider_error" if terminal else "provider_warning",
                 "code": code,
-                "message": (
+                "reason": code,
+                "error": (
                     "ChatGPT subscription access could not complete this request. "
                     "No API key was used."
                 ),
@@ -240,7 +415,8 @@ class SubscriptionLiveVoiceSession(LiveVoiceSession):
 
     async def _run_client_delegation(self, identifier: str, prompt: str, **kwargs: Any) -> None:
         try:
-            await self._delegate(identifier, prompt, **kwargs)
+            async with asyncio.timeout(REPORT_REASONING_TIMEOUT_S):
+                await self._delegate(identifier, prompt, **kwargs)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -248,6 +424,8 @@ class SubscriptionLiveVoiceSession(LiveVoiceSession):
             if not self._closing:
                 await self._failure(str(getattr(exc, "code", "subscription_unavailable")))
         finally:
+            if kwargs.get("application_event") and not self._subscription_report_submitted:
+                self._fail_subscription_report(identifier)
             current = asyncio.current_task()
             self._thinking = any(task is not current and not task.done() for task in self._jobs)
             if not self._closing:
@@ -347,7 +525,25 @@ class SubscriptionLiveVoiceSession(LiveVoiceSession):
                                 self._tools.revision,
                                 self._closing,
                             )
-                            if text and revision == self._tools.revision and not self._closing:
+                            report_current = not application_event or (
+                                identifier == self._subscription_report_id and self.report_pending
+                            )
+                            if (
+                                text
+                                and revision == self._tools.revision
+                                and not self._closing
+                                and report_current
+                            ):
+                                if application_event:
+                                    # Reasoning and speech startup have separate
+                                    # deadlines; start the speech budget only now.
+                                    self._report_sent()
+                                    # Arm before send: the native caption can arrive
+                                    # while the send coroutine hands control back.
+                                    self._subscription_report_excluded_segments = set(
+                                        self._assistant_caption_segments
+                                    )
+                                    self._subscription_report_submitted = True
                                 await self._connection.send(
                                     {
                                         "type": "session.commentary.append",
@@ -407,8 +603,12 @@ class SubscriptionLiveVoiceSession(LiveVoiceSession):
                             return
                     await self._failure("context_capacity")
             except asyncio.CancelledError:
+                if application_event:
+                    self._fail_subscription_report(identifier)
                 raise
             except Exception as exc:
+                if application_event:
+                    self._fail_subscription_report(identifier)
                 log.warning("Subscription reasoning failed (%s)", type(exc).__name__)
                 if not self._closing:
                     await self._failure(str(getattr(exc, "code", "subscription_unavailable")))
@@ -521,16 +721,7 @@ class SubscriptionLiveVoiceSession(LiveVoiceSession):
         return output, text, response_id, usage
 
     async def _deliver_report(self, text: str, report: str, kwargs: dict[str, Any]) -> bool:
-        if (
-            not self.is_active
-            or self._recovering
-            or self._resume_needs_input
-            or self._input_active
-            or self._thinking
-            or self._speaking
-            or self.playback_active
-            or self._has_pending_work()
-        ):
+        if not self.ready_for_report:
             return False
         from jarvis.realtime.report_prompt import report_update_prompt
 
@@ -542,14 +733,26 @@ class SubscriptionLiveVoiceSession(LiveVoiceSession):
         )
         identifier = str(uuid4())
         self._local_delegations.add(identifier)
-        await self._event(
-            {
-                "type": "session.delegation.created",
-                "delegation": {"id": identifier},
-                "prompt": "[Application event, not the user speaking]\n" + prompt,
-                "application_event": True,
-            }
-        )
+        self._subscription_report_id = identifier
+        self._subscription_report_submitted = False
+        self._report_sent()
+        # Reserve the report immediately but suspend the native speech-start
+        # timer while the bounded client reasoning loop prepares its summary.
+        self._cancel_report_timeout()
+        try:
+            await self._event(
+                {
+                    "type": "session.delegation.created",
+                    "delegation": {"id": identifier},
+                    "prompt": "[Application event, not the user speaking]\n" + prompt,
+                    "application_event": True,
+                }
+            )
+        except BaseException:
+            self._cancel_report_timeout()
+            self._report_state = ""
+            self._subscription_report_id = ""
+            raise
         return True
 
     async def attach_appshot(self, image: bytes, mime: str, note: str) -> bool:
@@ -576,17 +779,97 @@ class SubscriptionLiveVoiceSession(LiveVoiceSession):
         return True
 
     async def _recover(self) -> bool:
-        if self._closing:
-            return False
+        return await self._wait_for_connection()
+
+    async def _open_replacement(self, history: list[dict]) -> None:
         try:
-            restored = await self._provider.reattach_session(self._connection)
+            await super()._open_replacement(history)
         except Exception as exc:
-            log.warning("Subscription control recovery failed (%s)", type(exc).__name__)
+            await self._stop_recovery_for_error(exc)
+            raise
+
+    async def _wait_for_connection(self, *, session_expired: bool = False) -> bool:
+        """Keep the same call through an outage; never replay tools or audio."""
+        from jarvis.live.recovery import connection_permit
+
+        attempt = 0
+        self._resume_needs_input = True
+        if self._tools is not None:
+            self._tools.accepting = False
+        try:
+            while not self._closing:
+                self._recovering = True
+                attempt += 1
+                await self._publish_phase("connecting")
+                await self._send_json({"type": "reconnecting", "attempt": attempt})
+                delay = random.uniform(0.5, min(30.0, 2 ** min(attempt, 5)))  # noqa: S311
+                await asyncio.sleep(delay)
+                if self._closing:
+                    return False
+                reattach = getattr(self._provider, "reattach_session", None)
+                if callable(reattach) and not session_expired:
+                    await connection_permit()
+                    try:
+                        async with asyncio.timeout(60):
+                            replacement = await reattach(self._connection)
+                    except Exception as exc:
+                        if await self._stop_recovery_for_error(exc):
+                            return False
+                        log.warning("Subscription sideband unavailable (%s)", type(exc).__name__)
+                        continue
+                    if replacement is not None:
+                        previous, self._connection = self._connection, replacement
+                        if self._closing:
+                            await replacement.close()
+                            return False
+                        if previous is not replacement:
+                            retire = getattr(previous, "retire_control", previous.close)
+                            try:
+                                await asyncio.wait_for(retire(), 3)
+                            except Exception as exc:
+                                log.warning(
+                                    "Old subscription control did not retire (%s)",
+                                    type(exc).__name__,
+                                )
+                        await self._send_json(
+                            {
+                                "type": "audio_ready",
+                                "provider": self.active_provider,
+                                "model": self._active_model,
+                                "language": self._language,
+                                "output_sample_rate": 24000,
+                                "input_sample_rate": 24000,
+                                "continuous": True,
+                                "reconnected": True,
+                                "reuse_webrtc": True,
+                                "input_muted": self._input_muted,
+                            }
+                        )
+                        return True
+                    session_expired = True
+                self._responses.clear()
+                # New allocations still obey the shared receipt/approval guards
+                # and the two-attempt budget. Pending tools are never replayed.
+                if await super()._recover():
+                    return True
             return False
-        if restored is not None:
-            self._connection = restored
-            return True
-        return await super()._recover()
+        finally:
+            self._recovering = False
+
+    async def _stop_recovery_for_error(self, error: Exception) -> bool:
+        code = getattr(error, "code", "")
+        if code not in {
+            "authentication_required",
+            "access_denied",
+            "quota_exhausted",
+            "rate_limited",
+            "invalid_configuration",
+            "subscription_auth_unavailable",
+            "subscription_account_changed",
+        }:
+            return False
+        await self._failure(code, terminal=True)
+        return True
 
     async def _close_resources(self) -> None:
         if self._resources_closed:
@@ -596,6 +879,9 @@ class SubscriptionLiveVoiceSession(LiveVoiceSession):
         await self._auth.aclose()
 
     async def end(self, *, reason: str = "client_stop") -> None:
+        self._fail_subscription_report(self._subscription_report_id)
+        self._cancel_report_timeout()
         await super().end(reason=reason)
+        self._notify_ended()
         if not self._jobs:
             await self._close_resources()

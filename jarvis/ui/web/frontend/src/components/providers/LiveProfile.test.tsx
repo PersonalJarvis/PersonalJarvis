@@ -1,7 +1,7 @@
 import { cleanup, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, it, vi } from "vitest";
-import { LiveProfile, type LiveProfileValue } from "./LiveProfile";
+import { LiveProfile, type LiveAuthMode, type LiveProfileValue } from "./LiveProfile";
 
 vi.mock("@/i18n", () => ({ useT: () => (key: string) => key }));
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
@@ -127,8 +127,8 @@ it("applies a new thinking model at once when Live is already set up", async () 
   client.clear();
 });
 
-function subscriptionSetup({ accountMode = "subscription", catalogFails = false, modelEfforts }: {
-  accountMode?: string; catalogFails?: boolean; modelEfforts?: string[];
+function subscriptionSetup({ accountMode = "subscription", catalogFails = false, modelEfforts, selectedAuthMode }: {
+  accountMode?: string; catalogFails?: boolean; modelEfforts?: string[]; selectedAuthMode?: LiveAuthMode;
 } = {}) {
   let saved: LiveProfileValue = {
     auth_mode: "api_key", model: "gpt-live-1", voice: "gleam", backend_model: "api-model",
@@ -163,7 +163,7 @@ function subscriptionSetup({ accountMode = "subscription", catalogFails = false,
   vi.stubGlobal("fetch", fetcher);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const onAuthModeChange = vi.fn();
-  render(<QueryClientProvider client={client}><LiveProfile onAuthModeChange={onAuthModeChange} /></QueryClientProvider>);
+  render(<QueryClientProvider client={client}><LiveProfile onAuthModeChange={onAuthModeChange} selectedAuthMode={selectedAuthMode} /></QueryClientProvider>);
   return { client, fetcher, writes, onAuthModeChange };
 }
 
@@ -171,6 +171,39 @@ async function selectSubscription() {
   fireEvent.click(await screen.findByRole("combobox", { name: "live.billing_method" }));
   fireEvent.click(await screen.findByRole("option", { name: "live.subscription_mode" }));
 }
+
+it("keeps hosted web search editable only for API mode and preserves its setting", async () => {
+  const { client, writes } = subscriptionSetup();
+  const search = await screen.findByRole("switch", { name: "live.web_search" });
+  expect(search.getAttribute("aria-checked")).toBe("true");
+  fireEvent.click(search);
+  expect(search.getAttribute("aria-checked")).toBe("false");
+  await selectSubscription();
+  await screen.findByText("live.subscription_connected");
+  expect(screen.queryByRole("switch", { name: "live.web_search" })).toBeNull();
+  await waitFor(() => expect((screen.getByRole("combobox", { name: "live.thinking_model" }) as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(screen.getByRole("combobox", { name: "live.thinking_model" }));
+  fireEvent.click(await screen.findByRole("option", { name: /Subscription model/ }));
+  fireEvent.click(screen.getByRole("button", { name: "live.save" }));
+  await waitFor(() => expect(writes).toHaveLength(1));
+  expect(writes[0].web_search).toBe(false);
+  fireEvent.click(screen.getByRole("combobox", { name: "live.billing_method" }));
+  fireEvent.click(await screen.findByRole("option", { name: "live.api_key_mode" }));
+  expect(screen.getByRole("switch", { name: "live.web_search" }).getAttribute("aria-checked")).toBe("false");
+  client.clear();
+});
+
+it("opens a dedicated subscription row in its own mode without rewriting the stored API profile", async () => {
+  const { client, writes, onAuthModeChange } = subscriptionSetup({ selectedAuthMode: "chatgpt_subscription" });
+  await screen.findByText("live.subscription_connected");
+  expect(screen.queryByRole("combobox", { name: "live.billing_method" })).toBeNull();
+  expect(screen.getByText("GPT Subscription")).toBeTruthy();
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "live.voice" }).textContent).toContain("Cove"));
+  expect(onAuthModeChange).toHaveBeenLastCalledWith("chatgpt_subscription", true);
+  expect(writes).toHaveLength(0);
+  expect((screen.getByRole("button", { name: "live.save" }) as HTMLButtonElement).disabled).toBe(true);
+  client.clear();
+});
 
 it("saves subscription voice without an API key and preserves the complete API selection", async () => {
   const { client, writes, fetcher, onAuthModeChange } = subscriptionSetup();

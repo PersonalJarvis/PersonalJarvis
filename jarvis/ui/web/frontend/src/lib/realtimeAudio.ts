@@ -897,6 +897,8 @@ export class RealtimeAudioClient {
   }
 
   private async finishAudioReady(message: RealtimeStatusPayload): Promise<void> {
+    // Reattaching the control socket keeps the existing WebRTC media session.
+    if (message.reuse_webrtc === true) return;
     const answer = message.webrtc_answer_sdp;
     const answerRequired =
       message.requires_webrtc_answer === true ||

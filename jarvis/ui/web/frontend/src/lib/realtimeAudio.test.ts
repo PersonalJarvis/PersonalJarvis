@@ -383,6 +383,31 @@ describe("realtime audio client", () => {
     await client.disconnect();
   });
 
+  it("preserves the negotiated peer when only the subscription sideband reconnects", async () => {
+    installVoiceBrowserFakes();
+    let readyCount = 0;
+    const client = new RealtimeAudioClient({ onStatus: status => {
+      if (status === "audio_ready") readyCount += 1;
+    } }, { requiresWebRtcOffer: true, webRtcStartEventRequired: false });
+    const connecting = client.connect();
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    const socket = FakeWebSocket.instances[0];
+    socket.open();
+    socket.receive({ type: "audio_ready", requires_webrtc_answer: true, webrtc_answer_sdp: "answer" });
+    await connecting;
+    const peer = FakePeerConnection.instances[0];
+    socket.receive({ type: "reconnecting" });
+    socket.receive({ type: "audio_ready", reconnected: true, reuse_webrtc: true });
+    await vi.waitFor(() => expect(readyCount).toBe(2));
+    expect(FakePeerConnection.instances).toHaveLength(1);
+    expect(peer.createOffer).toHaveBeenCalledOnce();
+    expect(peer.setRemoteDescription).toHaveBeenCalledOnce();
+    expect(peer.close).not.toHaveBeenCalled();
+    expect(socket.close).not.toHaveBeenCalled();
+    socket.receive({ type: "audio_closed" });
+    await client.disconnect();
+  });
+
   it("correlates a replacement WebRTC offer with the server request", async () => {
     installVoiceBrowserFakes();
     const client = new RealtimeAudioClient();

@@ -871,7 +871,12 @@ class TestRealtimeCatalog:
         from jarvis.brain.model_catalog import REALTIME_MODELS, REALTIME_VOICES
         from jarvis.ui.web.provider_spec import PROVIDERS
 
-        realtime_ids = {spec.id for spec in PROVIDERS if spec.tier == "realtime"}
+        # Live profiles use /api/live/options, whose account-specific catalog
+        # is covered by test_live_profile_catalog rather than this legacy picker.
+        realtime_ids = {
+            spec.id for spec in PROVIDERS
+            if spec.tier == "realtime" and spec.configuration_surface == "provider"
+        }
         assert realtime_ids <= set(REALTIME_VOICES)
         assert realtime_ids <= set(REALTIME_MODELS)
 
