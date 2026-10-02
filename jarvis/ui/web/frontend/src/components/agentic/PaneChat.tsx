@@ -69,6 +69,8 @@ function useClock(ticking: boolean): number {
  * to compile here until every locale has a word for it.
  */
 const STATE_INK: Record<PaneActivityState, string> = {
+  stopped: "text-muted-foreground",
+  unknown: "text-muted-foreground",
   working: "text-foreground",
   starting: "text-muted-foreground",
   asking: "text-foreground",

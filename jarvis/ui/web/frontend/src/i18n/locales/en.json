@@ -4372,6 +4372,8 @@
       "for_minutes": "for {n} min",
       "for_hours": "for {n} h",
       "state": {
+        "stopped": "Stopped",
+        "unknown": "Status unknown",
         "working": "Working",
         "starting": "Starting",
         "asking": "Needs you",
@@ -4421,6 +4423,7 @@
       "last_task": "Last asked to: {0}",
       "kind_completed": "COMPLETED",
       "kind_needs_input": "NEEDS INPUT",
+      "kind_stopped": "STOPPED",
       "kind_exited": "STOPPED",
       "kind_failed": "FAILED",
       "gone": "{0} is not in this workspace any more — that terminal was closed since the notification arrived."
@@ -5839,6 +5842,8 @@
         "idle": "{n} idle or done"
       },
       "state": {
+        "stopped": "Stopped",
+        "unknown": "Status unknown",
         "starting": "Starting",
         "working": "Working",
         "needs_input": "Needs input",

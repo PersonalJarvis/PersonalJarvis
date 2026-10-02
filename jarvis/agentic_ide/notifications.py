@@ -114,7 +114,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from .session import Registry
 
 #: What one entry is about.
-Kind = Literal["completed", "needs_input", "exited", "failed"]
+Kind = Literal["completed", "needs_input", "exited", "failed", "stopped"]
 
 #: How long a pane must have been settled before its stop is reported. Long
 #: enough to sit out the gap a TUI leaves between two steps, short enough that
@@ -419,6 +419,8 @@ def _title(kind: Kind, term: Any) -> str:
     quiet, and that is all anybody knows. "Finished" is the honest word for
     that; "done" or "succeeded" would not be.
     """
+    if kind == "stopped":
+        return "Its task was interrupted"
     if kind == "completed":
         return "Finished and waiting at its prompt"
     if kind == "needs_input":
@@ -635,6 +637,14 @@ class ActivityWatcher:
             return None
 
         kind = self._kind(activity, watch)
+        from .task_state import evidence
+
+        proof = evidence(term, now=now)
+        if proof is not None:
+            if proof.state == "completed" and activity == "waiting" and watch.tasked:
+                kind = "completed"
+            elif kind == "completed":
+                kind = None
         if kind is None:
             return None
         # A pane that merely STOPPED has to hold still first — see the module
@@ -695,6 +705,16 @@ class ActivityWatcher:
         clock counting the whole episode rather than restarting after every
         pause. Only ``waiting`` is held — a question outranks the hold.
         """
+        from .task_state import evidence
+
+        proof = evidence(term, now=now)
+        if proof is not None and proof.state != "unknown":
+            if activity == "working":
+                watch.moving_since = watch.moving_since or now
+                watch.stamped_working_at = now
+            else:
+                watch.moving_since = None
+            return activity
         if activity != "working":
             if activity == "waiting" and 0 <= now - watch.stamped_working_at <= WORK_HOLD_S:
                 return "working"
@@ -746,7 +766,7 @@ class ActivityWatcher:
         if activity == "working":
             self._set_resume_needed(term, watch, True)
             return
-        if activity in {"asking", "failed"}:
+        if activity in {"asking", "failed", "stopped", "unknown"}:
             self._set_resume_needed(term, watch, False)
             return
         if activity == "exited":
@@ -766,6 +786,8 @@ class ActivityWatcher:
     @staticmethod
     def _kind(activity: Activity, watch: _PaneWatch) -> Kind | None:
         """Which entry this state deserves, or none at all."""
+        if activity == "stopped":
+            return "stopped"
         if activity == "failed":
             return "failed"
         if activity == "exited":
@@ -985,6 +1007,9 @@ def reset() -> None:
     _WATCHER._resume_dirty = False  # noqa: SLF001 - same module, one owner
     _WATCHER.take_results()
     _FEED.clear()
+    from .task_state import reset as reset_task_state
+
+    reset_task_state()
     set_publisher(None)
     reset_switch_cache()
 
@@ -1016,6 +1041,9 @@ async def _run(registry: Registry) -> None:
                 # Resume evidence is independent of the optional bell. Even
                 # with notifications disabled, restored panes must not be
                 # offered a blind Continue merely because history exists.
+                from .task_state import refresh
+
+                await refresh(registry)
                 _WATCHER.poll(registry, emit=await _enabled_off_loop())
                 from .followthrough import poll_ready, publish_result
 

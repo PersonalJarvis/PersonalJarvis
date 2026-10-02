@@ -139,7 +139,7 @@ describe("what a screen reader hears", () => {
   it("carries the word and the sentence behind it", () => {
     const badge = pill({ status: "live", activity: "working" });
     expect(badge.getAttribute("aria-label")).toContain("working");
-    expect(badge.getAttribute("aria-label")).toContain("screen is still");
+    expect(badge.getAttribute("aria-label")).toContain("task is still in progress");
   });
 });
 
@@ -155,5 +155,15 @@ describe("the state behind the word", () => {
     expect(paneActivityState("exited", "exited")).toBe("exited");
     expect(paneActivityState("error", "")).toBe("error");
     expect(paneActivityState("pending", "")).toBe("starting");
+  });
+});
+
+
+describe("verified task outcome", () => {
+  it.each(["stopped", "unknown"] as const)("does not turn %s into a completed task", (activity) => {
+    const badge = pill({ status: "live", activity, worked: true });
+    expect(badge.getAttribute("data-icon")).toBe("ring");
+    expect(paneActivityState("live", activity, true)).toBe(activity);
+    expect(badge.className).toContain("text-muted-foreground");
   });
 });
