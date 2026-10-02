@@ -478,6 +478,7 @@ class LiveVoiceSession:
             self.session_id,
             language=self._language,
             backend_model=profile.backend_model,
+            model_selection=getattr(self, "_tool_model_selection", None),
         )
         prompt_language = getattr(self._config.brain, "reply_language", "auto")
         config = profile.session_config(
@@ -1284,7 +1285,11 @@ class LiveVoiceSession:
         if self._connection is not None:
             try:
                 await self._connection.send({"type": "session.close"})
-                if self._pump_task is not None and not self._closed.is_set():
+                if (
+                    getattr(self._provider, "requires_close_ack", True)
+                    and self._pump_task is not None
+                    and not self._closed.is_set()
+                ):
                     await asyncio.wait_for(self._closed.wait(), 15)
             except Exception:
                 log.warning("Live session final usage is unconfirmed", exc_info=True)
@@ -1324,7 +1329,10 @@ class LiveVoiceSession:
                     BrainTurnCompleted(
                         provider=self.active_provider,
                         model=self._active_model,
-                        cost_usd=self._voice_seconds * 0.05 / 60,
+                        cost_usd=(
+                            self._voice_seconds * 0.05 / 60
+                            if getattr(self._provider, "usage_billed", True) else 0.0
+                        ),
                         finish_reason="realtime_usage",
                     )
                 )

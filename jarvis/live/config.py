@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from jarvis.live.product import PRODUCT_BRIEF
@@ -19,8 +21,40 @@ class LiveConfig(BaseModel):
     instructions: str = Field(default="", max_length=8000)
     backend_instructions: str = Field(default="", max_length=32000)
     configured: bool = False
+    auth_mode: Literal["api_key", "chatgpt_subscription"] = "api_key"
+    subscription_account_id: str = Field(default="", max_length=256)
+    subscription_voice: str = "cove"
+    subscription_backend_model: str = ""
+    subscription_reasoning_effort: str = "medium"
+
+    @property
+    def provider_id(self) -> str:
+        if self.auth_mode == "chatgpt_subscription":
+            return "openai-live-subscription"
+        return "openai-live"
+
+    def for_session(self) -> LiveConfig:
+        """Snapshot the selected mode without overwriting the other mode's settings."""
+        if self.auth_mode == "api_key":
+            return self.model_copy()
+        return self.model_copy(update={
+            "model": "gpt-live-1-codex",
+            "voice": self.subscription_voice,
+            "backend_model": self.subscription_backend_model,
+            "reasoning_effort": self.subscription_reasoning_effort,
+        })
+
+    def backend_config(self, *, language: str, tools: list[dict]) -> dict:
+        """Use the same Jarvis instructions and tools for client-managed reasoning."""
+        effective = self.for_session().model_copy(update={"auth_mode": "api_key"})
+        return effective.session_config(language=language, tools=tools)["delegation"]["responses"]
 
     def session_config(self, *, language: str, tools: list[dict]) -> dict:
+        if self.auth_mode == "chatgpt_subscription":
+            effective = self.for_session().model_copy(update={"auth_mode": "api_key"})
+            session = effective.session_config(language=language, tools=tools)
+            session["delegation"] = {"type": "client"}
+            return session
         if not self.configured or not self.backend_model.strip():
             raise ValueError("Choose a GPT-Live thinking model in API Keys before starting voice.")
         backend: dict = {

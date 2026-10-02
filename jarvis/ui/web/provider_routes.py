@@ -592,6 +592,9 @@ def _spec_to_payload(
         active = spec.id == active_tts
     elif spec.tier == "realtime":
         active = spec.id == active_realtime
+        if spec.configuration_surface == "live" and active_realtime:
+            selected_spec = get_spec(active_realtime)
+            active = bool(selected_spec and selected_spec.configuration_surface == "live")
     elif spec.tier == "dictation":
         active = spec.id == active_dictation
     else:
