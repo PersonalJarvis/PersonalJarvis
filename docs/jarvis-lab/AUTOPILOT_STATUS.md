@@ -122,3 +122,16 @@ receipts.
   local pytest or Ruff pass is claimed; remote CI is the passing test evidence.
 
 The scheduled pass is intentionally limited to the platform-supported maximum cadence of once per hour; it is not a continuously resident daemon.
+
+
+## Remote validation: physical takeover cancellation
+
+- Corrected the MacAgentBench evaluator so a requested cancellation is a terminal
+  outcome: it requires detected takeover, zero synthetic events after takeover,
+  no resume after cancellation and no action after cancellation. The normal
+  non-cancelled path still requires hardware idle, re-observation and resume.
+- Focused local validation: **84 passed** in `test_macos_bench.py`; Ruff and
+  `git diff --check` pass. No native macOS behavior was exercised.
+- Commit: `b4ddd738`. The preceding CI attempt's sole macOS realtime-contract
+  job was cancelled while queued; the portable matrix was green. Native Mac
+  qualification remains a user-driven follow-up.
