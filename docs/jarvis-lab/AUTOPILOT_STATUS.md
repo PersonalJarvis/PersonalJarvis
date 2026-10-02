@@ -113,10 +113,11 @@ receipts.
   capture, while wake-to-bar event budgets have their own focused test. Do not
   describe current measurements as wake-to-ack end-to-end latency until the
   wake anchor can be carried without conflating user speaking time.
-- Focused unit execution is pending CI: the scratch venv's Python launcher was
-  missing, and relinking it to the current runtime exposed a NumPy binary bus
-  error during pytest collection. Syntax compilation and `git diff --check`
-  pass; the scratch linter executable also crashes before linting. No local
-  pytest or Ruff pass is claimed for this follow-up.
+- Remote CI run `37011268318` on the corrected HEAD `dcbda630` completed
+  successfully across all 30 jobs, including the static gates, Python contracts
+  and Windows/Linux shards. The local scratch venv's Python launcher was
+  missing; relinking it to the current runtime exposed a NumPy binary bus error
+  during pytest collection, and the scratch Ruff executable also crashes. No
+  local pytest or Ruff pass is claimed; remote CI is the passing test evidence.
 
 The scheduled pass is intentionally limited to the platform-supported maximum cadence of once per hour; it is not a continuously resident daemon.
