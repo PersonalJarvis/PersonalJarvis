@@ -18,13 +18,15 @@ Safety constraints remain unchanged:
 
 Current workstream priority:
 
-1. upstream alignment and regression checks;
+1. regression verification after upstream sync through `6368c2e`;
 2. MacAgentBench cross-window/browser-to-desktop handoff coverage;
 3. next highest-priority architecture gap that is not blocked on physical macOS testing.
 
 Completed remotely in the current benchmark phase: physical-user-takeover,
 semantic-target-hit, stale-target-refusal and focus-type-landing receipt
-contracts. Native qualification remains deferred until an explicit real-Mac
-pass can grant the required permissions and capture live receipts.
+contracts. Upstream main is merged through `6368c2e` with no overlapping
+JARVIS-LAB paths in that sync. Native qualification remains deferred until an
+explicit real-Mac pass can grant the required permissions and capture live
+receipts.
 
 The scheduled pass is intentionally limited to the platform-supported maximum cadence of once per hour; it is not a continuously resident daemon.
