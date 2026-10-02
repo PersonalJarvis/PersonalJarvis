@@ -19,6 +19,7 @@ interface Props {
   onToggleSendRightClicks?: () => void;
   name: string;
   workspaceId?: string;
+  githubStatusEnabled?: boolean;
   promptCount?: number;
   agent: string;
   agentLogoUrl?: string;
@@ -75,7 +76,7 @@ export function WorkspaceTerminalHeader({
   name, workspaceId, promptCount = 0, agent, agentLogoUrl, displayName, status, appearance, arranging = false,
   maximized = false, addDisabled = false, onArrangeStart, onActivate, onToggleMaximize,
   onAdd, onClose, onRename, onOpenConversation, onOpenChat, onRestart, onFork, branch,
-  computerName, placementItems, workspaceItems, variant = "bar", focused = false,
+  computerName, placementItems, workspaceItems, variant = "bar", focused = false, githubStatusEnabled = true,
 }: Props) {
   const brand = PANE_BRAND[appearance];
   // The pane's goal in a few words, in place of its call-sign; the call-sign
@@ -272,7 +273,7 @@ export function WorkspaceTerminalHeader({
       </button> : renameForm}
       <span id={dragHintId} className="sr-only">Drag to reorder, or focus this title and press Alt with an arrow key.</span>
       <div data-header-control="true" className="flex shrink-0 items-center gap-0.5">
-        <SessionGitHubBadge workspaceId={workspaceId} name={name} appearance={appearance} />
+        <SessionGitHubBadge workspaceId={githubStatusEnabled ? workspaceId : undefined} name={name} appearance={appearance} />
         {moreButton}
         {maximizeButton}
         {onFork && <button type="button" data-testid={`pane-fork-${name}`} aria-label={`Fork ${name}`} title={`Fork ${name}`}

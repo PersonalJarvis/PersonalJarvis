@@ -36,7 +36,8 @@ export function GitHubStatusBadge({ status, appearance }: {
   const palette = themeFor(appearance);
   const muted = PANE_BRAND[appearance].inkMuted;
   const unavailable = !status.available || Date.now() / 1000 - status.fetched_at > 90;
-  const [prIcon, prLabel] = unavailable ? ["question" as const, "GitHub status unavailable"] : PR[status.state];
+  const [prIcon, prLabel] = unavailable ? ["question" as const, "GitHub status unavailable"]
+    : PR[status.state] ?? ["question" as const, "GitHub status unknown"];
   const [ciIcon, ciLabel] = CI[status.ci.state] ?? ["question", "CI status unknown"];
   const identity = `${status.repo} · ${status.branch}${status.number ? ` · #${status.number}` : ""}`;
   const checked = status.fetched_at ? `Last checked ${new Date(status.fetched_at * 1000).toLocaleTimeString()}` : "";

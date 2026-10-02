@@ -17,6 +17,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlsplit
 
+from loguru import logger
+
 from jarvis.agentic_ide import git_overview, github_link
 
 _QUERY = """
@@ -67,6 +69,7 @@ def _repository(url: str) -> str:
         try:
             parsed = urlsplit(url)
         except ValueError:
+            logger.debug("Session GitHub status: ignoring a malformed remote URL")
             return ""
         if parsed.scheme not in {"https", "ssh"} or parsed.hostname != "github.com":
             return ""
