@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
+
 from jarvis.society.browser import install
 
 
@@ -72,6 +73,48 @@ def test_simultaneous_installers_promote_only_one_runtime(installer):
         outcomes = list(workers.map(install.ensure_installed, [data, data]))
     assert all(row["installed"] for row in outcomes)
     assert len(launches) == 1
+
+
+def test_new_install_root_is_canonical_before_probe_containment(installer, monkeypatch):
+    data, root, _, _ = installer
+    # Model a preliminary resolution which still contains a filesystem alias.
+    # Windows can retain unresolved path components before directories exist.
+    parent = root.parent / "alias-parent"
+    parent.mkdir(parents=True)
+    preliminary = parent / ".." / root.name
+    original = install.install_root
+    calls = 0
+
+    def resolve(data_dir=None):
+        nonlocal calls
+        calls += 1
+        return preliminary if calls == 1 else original(data_dir)
+
+    monkeypatch.setattr(install, "install_root", resolve)
+    result = install.ensure_installed(data)
+
+    assert result["installed"]
+    assert install.browser_executable(data).is_relative_to(root)
+
+
+def test_probe_outside_canonical_root_is_still_rejected(installer, monkeypatch):
+    data, root, _, _ = installer
+    outside = data / "outside-browser"
+    outside.write_bytes(b"outside")
+    run = install._run
+
+    def foreign_probe(cmd, **kwargs):
+        output = run(cmd, **kwargs)
+        if "--probe" in cmd:
+            probe = json.loads(output)
+            probe["executable"] = str(outside)
+            return json.dumps(probe)
+        return output
+
+    monkeypatch.setattr(install, "_run", foreign_probe)
+    with pytest.raises(RuntimeError, match="unmanaged executable"):
+        install.ensure_installed(data)
+    assert not (root / "installed.json").exists()
 
 
 def test_missing_binary_and_corrupt_marker_trigger_repair(installer):

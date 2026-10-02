@@ -1433,3 +1433,8 @@ the legacy lowercase directory entry. The migration now renames same-file aliase
 to `USER.md` and `MEMORY.md`, including already committed layouts. Distinct files
 on case-sensitive filesystems remain subject to the existing journal and backup
 checks. The dual-notebook contracts cover content preservation and canonical names.
+
+The managed browser installer also resolves its root strictly after creating it,
+so its executable containment check compares two canonical paths. A preliminary
+filesystem alias cannot reject an executable inside the managed root; an
+executable outside that root remains rejected.
