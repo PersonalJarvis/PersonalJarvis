@@ -170,8 +170,13 @@ export const ROOM_FLOOR_COLOURS = {
   // Mission Control: dark graphite microcement.
   command: { base: "#454b54", accents: ["#3e444c", "#4d535c", "#41474f", "#51575f"] },
   server: { base: "#c3c8cf", accents: ["#c9ced4", "#bcc2c9"] },
-  // Arcade floor: the hall's midnight carpet, the prize corner's plum, the snack bar's checker red.
+  // Arcade floor: the hall's midnight carpet, the game rooms' violet, teal and ember carpets, the foyer's terrazzo,
+  // the prize shop's plum, the snack bar's checker red.
   arcade: { base: "#1a1430", accents: ["#211a3d", "#151027", "#2a1f4a"] },
+  classics: { base: "#241446", accents: ["#2c1a55", "#1d1039"] },
+  puzzle: { base: "#0f2a33", accents: ["#13343f", "#0b2129"] },
+  action: { base: "#2e160c", accents: ["#3a1c0f", "#241008"] },
+  foyer: { base: "#24202e", accents: ["#2c2838", "#1d1a26"] },
   prizes: { base: "#3a1838", accents: ["#431c41", "#33152f"] },
   snack: { base: "#5a1e22", accents: ["#e9e2d6", "#4c191c"] },
 } as const;

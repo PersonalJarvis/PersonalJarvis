@@ -25,7 +25,8 @@ function lcg(seed: number): () => number {
 }
 
 /** Metres covered by one repeat of each floor pattern. */
-const PATTERN_METRES: Record<RoomKind, number> = { lead: 2.6, team: 2, wardrobe: 2, reception: 3.2, break: 2.4, command: 3.2, server: 2, arcade: 2.4, prizes: 2, snack: 1.6 };
+const PATTERN_METRES: Record<RoomKind, number> = { lead: 2.6, team: 2, wardrobe: 2, reception: 3.2, break: 2.4, command: 3.2, server: 2,
+  arcade: 2.4, classics: 2, puzzle: 2, action: 2, foyer: 2.4, prizes: 2, snack: 1.6 };
 
 function drawFloor(kind: RoomKind, ctx: CanvasRenderingContext2D, w: number, h: number): void {
   const { base, accents } = ROOM_FLOOR_COLOURS[kind];

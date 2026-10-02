@@ -1,9 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { Color } from "three";
 import { ARCADE_GAMES } from "./arcadeGames";
-import { drawCarpet, drawGlowSpot, drawPrizeCarpet, drawSnackFloor, drawWallPanels, PartKit } from "./arcadeHallLook";
-import { createLiveScreen, drawScreenFrame, FACE_DRAWINGS, NEON_DRAW, PREVIEW_FPS, type NeonSymbol } from "./arcadeScreens";
-import type { RetroGame } from "./retroGame";
+import { drawCarpet, drawGlowSpot, drawPrizeCarpet, drawRoomFloor, drawSnackFloor, PartKit, ROOM_FLOORS } from "./arcadeHallLook";
+import { drawFloorLogo, drawRoomBoard, drawScreenFrame, FACE_DRAWINGS, NEON_DRAW, type NeonSymbol } from "./arcadeScreens";
 
 /**
  * A stand-in 2D context (jsdom has no canvas): every method is recorded, the
@@ -71,7 +70,7 @@ describe("PartKit", () => {
 describe("hall surfaces", () => {
   it.each([
     ["carpet", drawCarpet], ["prize carpet", drawPrizeCarpet], ["snack floor", drawSnackFloor],
-    ["wall panels", drawWallPanels], ["glow spot", drawGlowSpot],
+    ["glow spot", drawGlowSpot],
   ] as const)("draws the %s the same way every time", (_name, draw) => {
     const a = fakeContext(), b = fakeContext();
     draw(a.ctx, 256, 256);
@@ -119,50 +118,24 @@ describe("machine faces and neon signs", () => {
   });
 });
 
-describe("live preview", () => {
-  interface Counter { draws: number }
-  const fakeCanvas = () => {
-    const { ctx } = fakeContext();
-    return { width: 0, height: 0, getContext: () => ctx } as unknown as HTMLCanvasElement;
-  };
-  const game = (draw: (state: Counter, idle: boolean, time: number) => void): RetroGame<Counter> => ({
-    id: "fake", width: 160, height: 120,
-    create: () => ({ draws: 0 }),
-    step: () => undefined,
-    draw: (_ctx, state, info) => draw(state, info.idle, info.time),
-    status: () => ({ score: 0, over: false }),
+describe("room boards and floor logos", () => {
+  it("writes exactly the room's name on its board", () => {
+    const fake = fakeContext();
+    drawRoomBoard(fake.ctx, 680, 160, "Klassiker", "#a77bff");
+    expect(new Set(fake.texts)).toEqual(new Set(["Klassiker"]));
   });
 
-  it("is unavailable without a 2D canvas", () => {
-    expect(createLiveScreen(game(() => undefined) as RetroGame<unknown>, { canvas: () => null })).toBeNull();
+  it.each(Object.keys(NEON_DRAW) as NeonSymbol[])("lays the %s logo on the floor without words", (symbol) => {
+    const fake = fakeContext();
+    drawFloorLogo(fake.ctx, 512, symbol, "#2de2e6");
+    expect(fake.calls.some((c) => c.startsWith("stroke("))).toBe(true);
+    expect(fake.texts).toEqual([]);
   });
 
-  it("repaints the game's idle title screen a dozen times a second", () => {
-    const seen: { idle: boolean; time: number }[] = [];
-    let state: Counter | null = null;
-    const screen = createLiveScreen(game((s, idle, time) => { state = s; s.draws += 1; seen.push({ idle, time }); }) as RetroGame<unknown>,
-      { canvas: fakeCanvas });
-    expect(screen).not.toBeNull();
-    screen!.tick(0.01);
-    screen!.tick(0.5 / PREVIEW_FPS);
-    expect(state!.draws).toBe(1);
-    screen!.tick(0.6 / PREVIEW_FPS);
-    expect(state!.draws).toBe(2);
-    expect(seen.every((s) => s.idle)).toBe(true);
-    expect(seen[1].time).toBeGreaterThan(seen[0].time);
-    screen!.dispose();
-  });
-
-  it("freezes on a game that throws while drawing", () => {
-    let calls = 0;
-    const screen = createLiveScreen(game(() => { calls += 1; throw new Error("broken"); }) as RetroGame<unknown>, { canvas: fakeCanvas });
-    screen!.tick(1);
-    screen!.tick(1);
-    expect(calls).toBe(1);
-  });
-
-  it("gives up on a game that cannot start", () => {
-    const broken: RetroGame<unknown> = { ...game(() => undefined), create: () => { throw new Error("no start"); } } as RetroGame<unknown>;
-    expect(createLiveScreen(broken, { canvas: fakeCanvas })).toBeNull();
+  it.each(Object.keys(ROOM_FLOORS))("paints the %s floor", (kind) => {
+    const fake = fakeContext();
+    drawRoomFloor(kind as keyof typeof ROOM_FLOORS)(fake.ctx, 256, 256);
+    expect(fake.calls.length).toBeGreaterThan(0);
+    expect(fake.texts).toEqual([]);
   });
 });

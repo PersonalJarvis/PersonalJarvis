@@ -66,9 +66,11 @@ export interface Department extends Rect {
 
 /**
  * "command" (Mission Control) and "server" only exist on the coding floor, in place of the lead office and the wardrobe.
- * "arcade" (the main hall), "prizes" (the prize counter corner) and "snack" (the snack bar) only exist on the arcade floor.
+ * The arcade floor has its own rooms: three game rooms ("classics", "puzzle", "action"), the open hall between them
+ * ("arcade"), and the "foyer" with the elevator, the prize shop ("prizes") and the "snack" bar.
  */
-export type RoomKind = "lead" | "team" | "wardrobe" | "reception" | "break" | "command" | "server" | "arcade" | "prizes" | "snack";
+export type RoomKind = "lead" | "team" | "wardrobe" | "reception" | "break" | "command" | "server"
+  | "arcade" | "classics" | "puzzle" | "action" | "foyer" | "prizes" | "snack";
 
 /** Which floor a layout draws: the society agents' office, the coding agents' floor above it, or the arcade floor on top. */
 export type OfficeVariant = "agents" | "coding" | "arcade";

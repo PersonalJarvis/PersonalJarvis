@@ -1,18 +1,19 @@
 /**
  * Everything the arcade floor draws on canvases: each cabinet's attract
- * screen and lit marquee, the neon signs on the back walls, the faces of the
- * other machines (prize counter, token changer, claw machine, pinball, air
- * hockey, snack bar) and the live preview of the cabinet the person stands at.
+ * screen and lit marquee, the neon signs on the glass walls and the floor
+ * logos, the rooms' lit name boards, and the faces of the other machines
+ * (prize counter, token changer, claw machine, pinball, air hockey, snack bar).
  *
- * No words: only the games' own titles (never translated, see arcadeGames),
- * digits and symbols. Static faces are drawn once and cached; an attract
+ * No words on the machines: only the games' own titles (never translated, see
+ * arcadeGames), digits and symbols; the room boards show the translated room
+ * names they are given. Static faces are drawn once and cached; an attract
  * screen holds two frames stacked in one texture, and the hall flips between
  * them by moving the texture's offset, so ten cabinets animate for free.
  */
-import { CanvasTexture, MeshBasicMaterial, MeshStandardMaterial, SRGBColorSpace, type Texture } from "three";
+import { DoubleSide, MeshBasicMaterial, MeshStandardMaterial, type Texture } from "three";
 import { cachedCanvasTexture, canvasMaterial } from "../office/canvasMaterials";
 import type { ArcadeGameId, ArcadeGameInfo, CabinetLook } from "./arcadeGames";
-import { retroFont, seededRandom, type RetroDrawInfo, type RetroGame } from "./retroGame";
+import { retroFont } from "./retroGame";
 import { HALL, lcg, starPath } from "./arcadeHallLook";
 
 type Ctx = CanvasRenderingContext2D;
@@ -427,7 +428,7 @@ export function marqueeMaterial(game: ArcadeGameInfo | null): MeshStandardMateri
 }
 
 // ---------------------------------------------------------------------------
-// Neon signs on the back walls
+// Neon signs on the glass walls
 // ---------------------------------------------------------------------------
 
 export type NeonSymbol = "joystick" | "alien" | "bolt" | "star" | "ticket" | "soda" | "claw" | "coin";
@@ -572,8 +573,9 @@ export function neonMaterial(symbol: NeonSymbol): MeshBasicMaterial {
       ctx.clearRect(0, 0, w, w);
       NEON_DRAW[symbol](ctx, w);
     });
+    // Double-sided: the signs hang on glass, so they read from inside the room and through the glass from outside.
     material = map
-      ? new MeshBasicMaterial({ map, transparent: true, depthWrite: false, toneMapped: false })
+      ? new MeshBasicMaterial({ map, transparent: true, depthWrite: false, toneMapped: false, side: DoubleSide })
       : new MeshBasicMaterial({ color: HALL.neon.magenta, transparent: true, opacity: 0, depthWrite: false });
     neonMaterials.set(symbol, material);
   }
@@ -848,95 +850,65 @@ export const FACES = {
 };
 
 // ---------------------------------------------------------------------------
-// Live preview
+// Room boards and floor logos
 // ---------------------------------------------------------------------------
 
-/** How often the live preview repaints, per second. */
-export const PREVIEW_FPS = 12;
+/** A room's lit name board in canvas pixels (the board is 2.5 m × 0.58 m). */
+export const ROOM_BOARD_PX = { w: 860, h: 200 } as const;
 
-export interface LiveScreen {
-  material: MeshBasicMaterial;
-  /** Advance the preview's clock by `dt` seconds; repaints at PREVIEW_FPS. */
-  tick(dt: number): void;
-  dispose(): void;
+/** A midnight board with a neon frame in the room's colour and its name written in the pixel face, glowing. */
+export function drawRoomBoard(ctx: Ctx, w: number, h: number, label: string, accent: string): void {
+  ctx.fillStyle = "#0b0816";
+  ctx.fillRect(0, 0, w, h);
+  ctx.beginPath();
+  ctx.roundRect(10, 10, w - 20, h - 20, 18);
+  tube(ctx, accent, 6);
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  fitFont(ctx, label, w - 90, 112, 48, 600);
+  ctx.shadowColor = accent;
+  ctx.shadowBlur = 18;
+  ctx.fillStyle = accent;
+  ctx.fillText(label, w / 2, h / 2 + 4);
+  ctx.shadowBlur = 4;
+  ctx.fillStyle = "rgba(255,255,255,0.85)";
+  ctx.fillText(label, w / 2, h / 2 + 4);
+  ctx.shadowBlur = 0;
 }
 
-function defaultCanvas(): HTMLCanvasElement | null {
-  return typeof document === "undefined" ? null : document.createElement("canvas");
+/** The cached, self-lit name board of a room (one per label and colour). */
+export function roomBoardMaterial(label: string, accent: string): MeshStandardMaterial {
+  return fontCanvasMaterial(`arcade:board:${accent}:${label}`, ROOM_BOARD_PX.w, ROOM_BOARD_PX.h,
+    (ctx, w, h) => drawRoomBoard(ctx, w, h, label, accent), { glow: 1, fallback: "#0b0816", roughness: 0.5 });
 }
 
-/**
- * A game's own title screen, repainted a dozen times a second into a canvas
- * texture of the attract screen's size (the game's frame letterboxed into it).
- * Null where there is no 2D canvas. A game that throws while drawing freezes
- * on its last good frame: the preview is decoration, the overlay is the game.
- */
-export function createLiveScreen(
-  game: RetroGame<unknown>,
-  { seed = 7, canvas = defaultCanvas }: { seed?: number; canvas?: () => HTMLCanvasElement | null } = {},
-): LiveScreen | null {
-  const source = canvas();
-  const output = canvas();
-  if (!source || !output) return null;
-  let sourceCtx: Ctx | null = null, outputCtx: Ctx | null = null;
-  try {
-    sourceCtx = source.getContext("2d");
-    outputCtx = output.getContext("2d");
-  } catch {
-    // jsdom without the canvas package throws "not implemented": no live preview, the static screen stays.
-    return null;
+/** A floor logo: two neon rings in the room's colour round the room's symbol. */
+export function drawFloorLogo(ctx: Ctx, w: number, symbol: NeonSymbol, accent: string): void {
+  ctx.clearRect(0, 0, w, w);
+  ctx.beginPath();
+  ctx.arc(w / 2, w / 2, w * 0.45, 0, Math.PI * 2);
+  tube(ctx, accent, w * 0.016);
+  ctx.beginPath();
+  ctx.arc(w / 2, w / 2, w * 0.4, 0, Math.PI * 2);
+  tube(ctx, accent, w * 0.008);
+  ctx.save();
+  ctx.translate(w * 0.2, w * 0.2);
+  NEON_DRAW[symbol](ctx, w * 0.6);
+  ctx.restore();
+}
+
+const logoMaterials = new Map<string, MeshBasicMaterial>();
+
+/** The cached floor logo of a symbol in a colour, on a transparent sheet that lies on the carpet. */
+export function floorLogoMaterial(symbol: NeonSymbol, accent: string): MeshBasicMaterial {
+  const key = `${symbol}:${accent}`;
+  let material = logoMaterials.get(key);
+  if (!material) {
+    const map = cachedCanvasTexture(`arcade:logo:${key}`, 512, 512, (ctx, w) => drawFloorLogo(ctx, w, symbol, accent));
+    material = map
+      ? new MeshBasicMaterial({ map, transparent: true, depthWrite: false, toneMapped: false, polygonOffset: true, polygonOffsetFactor: -2 })
+      : new MeshBasicMaterial({ color: accent, transparent: true, opacity: 0, depthWrite: false });
+    logoMaterials.set(key, material);
   }
-  if (!sourceCtx || !outputCtx) return null;
-  let state: unknown;
-  try {
-    state = game.create(seededRandom(seed));
-  } catch {
-    // A game that cannot even start leaves its static attract screen; the overlay reports it when played.
-    return null;
-  }
-  source.width = Math.max(1, game.width);
-  source.height = Math.max(1, game.height);
-  output.width = SCREEN_PX.w;
-  output.height = SCREEN_PX.h;
-  const texture = new CanvasTexture(output);
-  texture.colorSpace = SRGBColorSpace;
-  const material = new MeshBasicMaterial({ map: texture, toneMapped: false });
-  const info: RetroDrawInfo = { time: 0, reduced: false, idle: true };
-  // Letterbox: the largest copy of the game's frame that fits the screen.
-  const scale = Math.min(SCREEN_PX.w / source.width, SCREEN_PX.h / source.height);
-  const dw = source.width * scale, dh = source.height * scale;
-  const dx = (SCREEN_PX.w - dw) / 2, dy = (SCREEN_PX.h - dh) / 2;
-  const src = sourceCtx, out = outputCtx;
-  out.imageSmoothingEnabled = false;
-  let since = Infinity;
-  let broken = false;
-  const paint = () => {
-    try {
-      game.draw(src, state, info);
-    } catch {
-      // See above: a broken draw keeps the last good frame; the game's own overlay reports real errors.
-      broken = true;
-      return;
-    }
-    out.fillStyle = "#05040b";
-    out.fillRect(0, 0, SCREEN_PX.w, SCREEN_PX.h);
-    out.drawImage(source, dx, dy, dw, dh);
-    scanlines(out, 0, SCREEN_PX.w, SCREEN_PX.h);
-    texture.needsUpdate = true;
-  };
-  return {
-    material,
-    tick(dt: number) {
-      if (broken) return;
-      info.time += dt;
-      since += dt;
-      if (since < 1 / PREVIEW_FPS) return;
-      since = 0;
-      paint();
-    },
-    dispose() {
-      texture.dispose();
-      material.dispose();
-    },
-  };
+  return material;
 }

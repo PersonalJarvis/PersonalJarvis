@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ARCADE_GAMES, cabinetId, gameForCabinet } from "./arcadeGames";
-import { arcadeDecor, buildArcadeLayout, cabinetPlaySpot, SNACK_TABLE_HALF } from "./arcadeFloorLayout";
-import { archPosts, ARCH, FURNITURE_SIZE, footprint, roomAt, wallRect, type Rect } from "../office/officeLayout";
+import { arcadeDecor, buildArcadeLayout, cabinetPlaySpot, GAME_ROOMS, hallLanes, ROOM_ACCENT, SNACK_TABLE_HALF, uniqueWalls } from "./arcadeFloorLayout";
+import { FURNITURE_SIZE, footprint, roomAt, wallRect, wallsOf, type Rect } from "../office/officeLayout";
 import { buildNavGrid, findPath, isWalkable } from "../office/officeNav";
 import { arrivalPose } from "../office/officeFloors";
 
@@ -12,6 +12,8 @@ describe("arcade floor layout", () => {
   const layout = buildArcadeLayout();
   const grid = buildNavGrid(layout);
   const cabinets = layout.furniture.filter((f) => f.kind === "retroCabinet");
+  const pose = arrivalPose(layout, "elevator");
+  const room = (kind: string) => layout.rooms.find((r) => r.kind === kind)!;
 
   it("is the arcade variant with no agents' places on it", () => {
     expect(layout.variant).toBe("arcade");
@@ -26,74 +28,108 @@ describe("arcade floor layout", () => {
     expect(buildArcadeLayout()).toEqual(layout);
   });
 
-  it("has a compact slab of the size the other floors float at", () => {
+  it("floats on a slab the size of the floors below", () => {
     const { minX, maxX, minZ, maxZ } = layout.bounds;
-    expect(maxX - minX).toBeGreaterThanOrEqual(22);
-    expect(maxX - minX).toBeLessThanOrEqual(28);
-    expect(maxZ - minZ).toBeGreaterThanOrEqual(16);
-    expect(maxZ - minZ).toBeLessThanOrEqual(20);
+    expect(maxX - minX).toBeGreaterThanOrEqual(24);
+    expect(maxX - minX).toBeLessThanOrEqual(30);
+    expect(maxZ - minZ).toBeGreaterThanOrEqual(18);
+    expect(maxZ - minZ).toBeLessThanOrEqual(22);
     expect(inside(layout.floor, layout.bounds)).toBe(true);
   });
 
-  it("has the hall, the prize corner and the snack bar, side by side", () => {
-    expect(layout.rooms.map((r) => r.kind).sort()).toEqual(["arcade", "prizes", "snack"]);
+  it("has three game rooms in the north, the open hall between, foyer, prize shop and snack bar in the south", () => {
+    expect(layout.rooms.map((r) => r.kind)).toEqual(["classics", "puzzle", "action", "arcade", "foyer", "prizes", "snack"]);
     for (const a of layout.rooms) {
       expect(inside(a, layout.bounds)).toBe(true);
-      for (const b of layout.rooms) if (a !== b) expect(overlaps(a, b)).toBe(false);
+      expect(ROOM_ACCENT[a.kind], a.kind).toBeDefined();
+      for (const b of layout.rooms) if (a !== b) expect(overlaps(a, b), `${a.kind} × ${b.kind}`).toBe(false);
     }
-    const kinds = (room: string) => layout.furniture.filter((f) => f.room === room).map((f) => f.kind);
-    expect(kinds("prizes")).toEqual(expect.arrayContaining(["prizeCounter", "tokenMachine", "clawMachine"]));
-    expect(kinds("snack")).toEqual(expect.arrayContaining(["snackCounter", "elevator"]));
-    expect(kinds("arcade")).toEqual(expect.arrayContaining(["retroCabinet", "pinball", "airHockey"]));
+    for (const kind of ["classics", "puzzle", "action"]) expect(room(kind).maxZ).toBeLessThanOrEqual(room("arcade").minZ);
+    for (const kind of ["foyer", "prizes", "snack"]) expect(room(kind).minZ).toBeGreaterThanOrEqual(room("arcade").maxZ);
+    expect(room("arcade").walled).toBe(false);
+    for (const r of layout.rooms.filter((x) => x.kind !== "arcade")) {
+      expect(r.walled, r.kind).toBe(true);
+      expect(r.doors, r.kind).toHaveLength(1);
+    }
+  });
+
+  it("opens every walled room onto the hall, the doors facing each other on three lanes", () => {
+    const hall = room("arcade");
+    for (const r of layout.rooms.filter((x) => x.walled)) {
+      const door = r.doors[0];
+      expect(door.side, r.kind).toBe(r.maxZ <= hall.minZ ? "south" : "north");
+      expect(door.at).toBeGreaterThan(r.minX + door.width / 2);
+      expect(door.at).toBeLessThan(r.maxX - door.width / 2);
+    }
+    const lanes = hallLanes(layout);
+    expect(lanes).toHaveLength(3);
+    const southDoors = ["foyer", "prizes", "snack"].map((k) => room(k).doors[0].at);
+    expect(southDoors).toEqual(lanes);
+    // Nothing solid in the hall stands on a lane.
+    for (const item of layout.furniture.filter((f) => f.room === "arcade")) {
+      const r = footprint(item);
+      for (const x of lanes) expect(r.maxX < x - 0.9 || r.minX > x + 0.9, `${item.id} on lane ${x}`).toBe(true);
+    }
+  });
+
+  it("draws and blocks every wall run once", () => {
+    const all = layout.rooms.flatMap(wallsOf);
+    expect(layout.walls.length).toBeLessThan(all.length);
+    expect(uniqueWalls(layout.rooms)).toEqual(layout.walls);
+    const keys = layout.walls.map((w) => [w.x1, w.z1, w.x2, w.z2].map((v) => v.toFixed(3)).join(","));
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  it("groups the games by room and puts every one in exactly one cabinet", () => {
+    expect(Object.values(GAME_ROOMS).flat().sort()).toEqual(ARCADE_GAMES.map((g) => g.id).sort());
+    expect(cabinets).toHaveLength(ARCADE_GAMES.length);
+    for (const game of ARCADE_GAMES) expect(cabinets.filter((c) => c.id === cabinetId(game.id))).toHaveLength(1);
+    for (const [kind, games] of Object.entries(GAME_ROOMS)) {
+      const inRoom = cabinets.filter((c) => c.room === kind).sort((a, b) => a.x - b.x);
+      expect(inRoom.map((c) => gameForCabinet(c.id)?.id)).toEqual(games);
+    }
+    expect(new Set(layout.furniture.map((f) => f.id)).size).toBe(layout.furniture.length);
+  });
+
+  it("stands every cabinet on its room's back wall, screen to the south", () => {
+    for (const cabinet of cabinets) {
+      expect(cabinet.rotationY).toBe(0);
+      const r = room(cabinet.room);
+      expect(footprint(cabinet).minZ - r.minZ, cabinet.id).toBeLessThan(0.15);
+    }
   });
 
   it("puts every furniture piece in the room it names", () => {
     for (const item of layout.furniture) expect(roomAt(layout, item)?.kind, item.id).toBe(item.room);
   });
 
-  it("has exactly one cabinet per game, turned by quarter turns", () => {
-    expect(cabinets).toHaveLength(ARCADE_GAMES.length);
-    for (const game of ARCADE_GAMES) {
-      expect(cabinets.filter((c) => c.id === cabinetId(game.id))).toHaveLength(1);
-    }
-    for (const cabinet of cabinets) {
-      expect(gameForCabinet(cabinet.id)).not.toBeNull();
-      const quarters = cabinet.rotationY / (Math.PI / 2);
-      expect(Math.abs(quarters - Math.round(quarters))).toBeLessThan(1e-9);
-    }
-    expect(new Set(layout.furniture.map((f) => f.id)).size).toBe(layout.furniture.length);
-  });
-
-  it("turns every cabinet's screen towards the camera (south or east)", () => {
-    for (const cabinet of cabinets) {
-      const facing = { x: Math.round(Math.sin(cabinet.rotationY)), z: Math.round(Math.cos(cabinet.rotationY)) };
-      expect(facing.x >= 0 && facing.z >= 0, cabinet.id).toBe(true);
-    }
-  });
-
-  it("keeps solid furniture, decor and arch posts apart and inside the slab", () => {
+  it("keeps solid furniture, tables and walls apart and inside the slab", () => {
     const solids = layout.furniture.filter((f) => FURNITURE_SIZE[f.kind].solid).map((f) => ({ id: f.id, rect: footprint(f) }));
     const tables = arcadeDecor(layout.rooms).tables.map((t, i) => ({
       id: `table-${i}`, rect: { minX: t.x - SNACK_TABLE_HALF, maxX: t.x + SNACK_TABLE_HALF, minZ: t.z - SNACK_TABLE_HALF, maxZ: t.z + SNACK_TABLE_HALF },
     }));
-    const posts = layout.rooms.flatMap(archPosts).map((p, i) => ({
-      id: `post-${i}`, rect: { minX: p.x - ARCH.post / 2, maxX: p.x + ARCH.post / 2, minZ: p.z - ARCH.post / 2, maxZ: p.z + ARCH.post / 2 },
-    }));
     const walls = layout.walls.map((w, i) => ({ id: `wall-${i}`, rect: wallRect(w) }));
-    const all = [...solids, ...tables, ...posts, ...walls];
-    expect(tables).toHaveLength(3);
-    for (let i = 0; i < all.length; i += 1) {
-      expect(inside(all[i].rect, layout.bounds), all[i].id).toBe(true);
-      for (let j = i + 1; j < all.length; j += 1) {
-        expect(overlaps(all[i].rect, all[j].rect), `${all[i].id} × ${all[j].id}`).toBe(false);
+    const things = [...solids, ...tables];
+    expect(tables).toHaveLength(4);
+    for (let i = 0; i < things.length; i += 1) {
+      expect(inside(things[i].rect, layout.bounds), things[i].id).toBe(true);
+      for (let j = i + 1; j < things.length; j += 1) {
+        expect(overlaps(things[i].rect, things[j].rect), `${things[i].id} × ${things[j].id}`).toBe(false);
       }
+      for (const wall of walls) expect(overlaps(things[i].rect, wall.rect), `${things[i].id} × ${wall.id}`).toBe(false);
     }
-    // Navigation walks round every one of them.
-    for (const { rect } of all) expect(layout.obstacles).toContainEqual(rect);
+    for (const { rect } of [...things, ...walls]) expect(layout.obstacles).toContainEqual(rect);
+  });
+
+  it("keeps the floor logos and the dance floor clear of everything solid", () => {
+    const decor = arcadeDecor(layout.rooms);
+    const solids = layout.obstacles;
+    const flats: Rect[] = [decor.pad, ...decor.logos.map((l) => ({ minX: l.x - l.r, maxX: l.x + l.r, minZ: l.z - l.r, maxZ: l.z + l.r }))];
+    expect(decor.logos.map((l) => l.room).sort()).toEqual(["action", "arcade", "classics", "foyer", "puzzle"]);
+    for (const flat of flats) for (const solid of solids) expect(overlaps(flat, solid)).toBe(false);
   });
 
   it("can reach every cabinet's play spot from the elevator", () => {
-    const pose = arrivalPose(layout, "elevator");
     expect(isWalkable(grid, pose)).toBe(true);
     expect(isWalkable(grid, layout.spawn)).toBe(true);
     expect(isWalkable(grid, layout.arrival)).toBe(true);
@@ -115,25 +151,35 @@ describe("arcade floor layout", () => {
     }
   });
 
-  it("keeps the elevator stop clear of the cabinets", () => {
+  it("arrives in the foyer, clear of the token machines", () => {
     const stop = layout.checkpoints[0];
-    expect(stop.room).toBe("snack");
-    for (const cabinet of cabinets) {
-      const spot = cabinetPlaySpot(cabinet);
-      expect(Math.hypot(spot.x - stop.x, spot.z - stop.z)).toBeGreaterThan(stop.radius + 1);
+    expect(stop.room).toBe("foyer");
+    expect(roomAt(layout, layout.arrival)?.kind).toBe("foyer");
+    for (const token of layout.furniture.filter((f) => f.kind === "tokenMachine")) {
+      expect(Math.hypot(token.x - stop.x, token.z - stop.z)).toBeGreaterThan(stop.radius + 0.4);
     }
   });
 
-  it("reaches the counters, the claw machines and the snack tables on foot", () => {
-    const pose = arrivalPose(layout, "elevator");
+  it("reaches the counters, claw machines, token machines, pinballs and the air hockey on foot", () => {
     const front = (id: string) => {
       const item = layout.furniture.find((f) => f.id === id)!;
       const reach = FURNITURE_SIZE[item.kind].d / 2 + 0.5;
       return { x: item.x + Math.sin(item.rotationY) * reach, z: item.z + Math.cos(item.rotationY) * reach };
     };
-    for (const id of ["prize-counter", "token-machine", "claw-a", "claw-b", "snack-counter", "air-hockey", "pinball-1"]) {
+    const ids = layout.furniture.filter((f) => ["prizeCounter", "snackCounter", "clawMachine", "tokenMachine", "pinball", "airHockey"].includes(f.kind)).map((f) => f.id);
+    expect(ids.length).toBeGreaterThanOrEqual(12);
+    for (const id of ids) {
       expect(isWalkable(grid, front(id)), id).toBe(true);
       expect(findPath(grid, pose, front(id)), id).not.toBeNull();
+    }
+  });
+
+  it("lets the person walk from the foyer through the hall into every room", () => {
+    for (const r of layout.rooms) {
+      const centre = { x: (r.minX + r.maxX) / 2, z: r.kind === "arcade" ? (r.minZ + r.maxZ) / 2 + 1.2 : (r.minZ + r.maxZ) / 2 };
+      const target = isWalkable(grid, centre) ? centre : { x: r.doors[0]?.at ?? centre.x, z: r.maxZ <= room("arcade").minZ ? r.maxZ - 1 : r.minZ + 1 };
+      expect(isWalkable(grid, target), r.kind).toBe(true);
+      expect(findPath(grid, pose, target), r.kind).not.toBeNull();
     }
   });
 });

@@ -273,17 +273,31 @@ which follows like on the coding floor).
   a click, Enter on the focused floor or the floor's number key (0 agents,
   1 coding, 2 arcade) rides there, Escape closes it. The call button shows
   up, down or both arrows depending on the floor (`callDirection`).
-- **Floor plan** (`arcade/arcadeFloorLayout.ts`, `buildArcadeLayout()`): a
-  fixed hall with the main room, a prize counter corner and a snack bar by
-  the elevator. Cabinets are furniture of kind `retroCabinet` with the id
-  `cabinet-<gameId>`; the person plays standing 0.85 m in front of one
-  (`OfficePlayer` nearest-interactable, E opens it). Tests prove every play
-  spot is reachable from the elevator.
+- **Floor plan** (`arcade/arcadeFloorLayout.ts`, `buildArcadeLayout()`),
+  reworked 2026-10-02 after the maintainer found the first open hall
+  confusing: it now reads like the floors below. North strip: three walled
+  game rooms (Classics: Pixel Raiders, Maze Muncher, City Defense, Paddle
+  Duel; Puzzle corner: Block Drop, Neon Snake, Brick Breaker; Action zone:
+  Asteroid Run, Desert Dash, Road Hopper), cabinets on each back wall facing
+  the door. Middle: the open hall (pinballs, air hockey, dance floor, floor
+  logo). South strip: the foyer with the elevator and token machines, the
+  prize shop (counter, claw machines) and the snack bar. The doors of north
+  and south rooms face each other on three lanes that stay clear. Cabinets
+  are furniture of kind `retroCabinet` with the id `cabinet-<gameId>`; the
+  person plays standing 0.85 m in front of one (`OfficePlayer`
+  nearest-interactable, E opens it). Tests prove every play spot, counter
+  and room is reachable from the elevator and that the lanes stay free.
 - **Look** (`arcade/ArcadeHall.tsx`, `ArcadeHallProps.tsx`,
-  `arcadeHallLook.ts`, `arcadeScreens.ts`): blacklight carpet, neon from
-  self-lit materials (one shadow light, three small point lights), merged
-  geometry per machine, two-frame attract screens on every cabinet; the
-  cabinet the person stands at shows its game's title screen live.
+  `arcadeHallLook.ts`, `arcadeScreens.ts`): smoked-glass walls with a neon
+  cap in each room's colour (never hidden or popping away at any camera
+  angle; frames, glass and neon are three merged meshes), a lit name board
+  over every door, each room's own floor and neon floor logo, a calm
+  blacklight carpet in the hall. One shadow light plus hemisphere and
+  ambient; neon is self-lit. Cabinets show two-frame attract screens
+  flipped by a texture offset. The first version's live title-screen
+  preview froze the frame for 0.2-0.6 s whenever the person walked up to a
+  cabinet and was removed; frames at a cabinet now take 2-11 ms in a dev
+  build (measured with `window.__officeGl.info` and timed `__officeStep`).
 - **Games** (`arcade/games/*.ts`, contract in `arcade/retroGame.ts`, registry
   in `arcade/arcadeGames.ts`): Neon Snake, Brick Breaker, Paddle Duel, Block
   Drop, Maze Muncher, Desert Dash, Pixel Raiders, Road Hopper and City

@@ -1,6 +1,6 @@
 /**
- * The arcade floor's look: its palette, the blacklight carpet and the room
- * floors, and a small kit that bakes many coloured primitives into ONE
+ * The arcade floor's look: its palette, the hall's blacklight carpet and each
+ * room's own floor, and a small kit that bakes many coloured primitives into ONE
  * geometry with vertex colours.
  *
  * The kit is why ten cabinets, a pinball row and shelves full of plush cost
@@ -28,8 +28,8 @@ export const HALL = {
   slabEdge: "#130d22",
   /** The glowing rim under the slab's edge. */
   rim: "#ff3fa4",
-  /** The back walls: midnight panels with a faint pinstripe. */
-  wall: { base: "#160f2c", panel: "#1c1438", groove: "#0d0920" },
+  /** The rooms' glass walls: a dark steel frame round smoked glass. */
+  frame: "#1a1726",
   neon: { magenta: "#ff3fa4", cyan: "#2de2e6", yellow: "#ffd23f", violet: "#8b5cff", green: "#39ff88", orange: "#ff8a3d" },
   /** The blacklight carpet: near-black ground and its neon squiggles. */
   carpet: { base: "#0d0a1c", shapes: ["#ff3fa4", "#2de2e6", "#ffd23f", "#8b5cff", "#39ff88"] },
@@ -132,8 +132,9 @@ function wrapped(w: number, h: number, paint: (dx: number, dy: number) => void):
 /**
  * The blacklight arcade carpet: a near-black ground scattered with neon
  * squiggles, rings, triangles, zigzags and specks. Seamless on both axes.
+ * `density` thins the pattern out (the hall uses a calm 0.4).
  */
-export function drawCarpet(ctx: Ctx, w: number, h: number): void {
+export function drawCarpet(ctx: Ctx, w: number, h: number, density = 1): void {
   const { base, shapes } = HALL.carpet;
   const rand = lcg(0xa2cade);
   ctx.fillStyle = base;
@@ -146,7 +147,8 @@ export function drawCarpet(ctx: Ctx, w: number, h: number): void {
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
   const pick = () => shapes[Math.floor(rand() * shapes.length)];
-  for (let i = 0; i < 64; i += 1) {
+  ctx.globalAlpha = density < 1 ? 0.7 : 1;
+  for (let i = 0; i < Math.round(64 * density); i += 1) {
     const x = rand() * w, y = rand() * h, colour = pick(), size = 10 + rand() * 18, turn = rand() * Math.PI * 2;
     const kind = i % 5;
     ctx.strokeStyle = colour;
@@ -191,7 +193,7 @@ export function drawCarpet(ctx: Ctx, w: number, h: number): void {
     });
   }
   // Small neon specks between the shapes.
-  for (let i = 0; i < 140; i += 1) {
+  for (let i = 0; i < Math.round(140 * density); i += 1) {
     ctx.fillStyle = pick();
     const x = rand() * w, y = rand() * h, r = 1.5 + rand() * 2;
     wrapped(w, h, (dx, dy) => {
@@ -200,6 +202,7 @@ export function drawCarpet(ctx: Ctx, w: number, h: number): void {
       ctx.fill();
     });
   }
+  ctx.globalAlpha = 1;
 }
 
 /** The prize corner's plum carpet: a fine dot grid with small gold stars. Seamless. */
@@ -261,22 +264,101 @@ export function drawGlowSpot(ctx: Ctx, w: number, h: number): void {
   ctx.fillRect(0, 0, w, h);
 }
 
-/** The back walls: tall midnight panels with dark grooves and a faint violet sheen. Seamless horizontally. */
-export function drawWallPanels(ctx: Ctx, w: number, h: number): void {
-  const { base, panel, groove } = HALL.wall;
-  ctx.fillStyle = base;
+/** The classics room: a violet carpet with tiny gold and lilac sparkles in a loose grid. Seamless. */
+function drawClassicsFloor(ctx: Ctx, w: number, h: number): void {
+  ctx.fillStyle = "#241446";
   ctx.fillRect(0, 0, w, h);
-  const panels = 4, pw = w / panels;
-  for (let i = 0; i < panels; i += 1) {
-    const g = ctx.createLinearGradient(0, 0, 0, h);
-    g.addColorStop(0, panel);
-    g.addColorStop(1, base);
-    ctx.fillStyle = g;
-    ctx.fillRect(i * pw + 3, 0, pw - 6, h);
-    ctx.fillStyle = groove;
-    ctx.fillRect(i * pw - 1.5, 0, 3, h);
+  const rand = lcg(0xc1a551c);
+  for (let i = 0; i < 1400; i += 1) {
+    ctx.fillStyle = rand() > 0.5 ? "rgba(60,36,110,0.6)" : "rgba(18,8,36,0.5)";
+    ctx.fillRect(Math.floor(rand() * w), Math.floor(rand() * h), 2, 2);
   }
-  // A skirting band at the foot.
-  ctx.fillStyle = groove;
-  ctx.fillRect(0, h - h * 0.04, w, h * 0.04);
+  const cell = w / 4;
+  for (let row = 0; row < 4; row += 1) {
+    for (let col = 0; col < 4; col += 1) {
+      const x = col * cell + (row % 2 === 0 ? cell / 2 : 0), y = row * cell + cell / 2;
+      ctx.fillStyle = (row + col) % 3 === 0 ? "#ffd23f" : "#a77bff";
+      wrapped(w, h, (dx, dy) => {
+        // A four-point pixel sparkle.
+        ctx.fillRect(x + dx - 1, y + dy - 5, 2, 10);
+        ctx.fillRect(x + dx - 5, y + dy - 1, 10, 2);
+      });
+    }
+  }
+}
+
+/** The puzzle corner: deep teal with faint outlined blocks in a stepped pattern. Seamless. */
+function drawPuzzleFloor(ctx: Ctx, w: number, h: number): void {
+  ctx.fillStyle = "#0f2a33";
+  ctx.fillRect(0, 0, w, h);
+  const cell = w / 8;
+  ctx.lineWidth = 2;
+  for (let row = 0; row < 8; row += 1) {
+    for (let col = 0; col < 8; col += 1) {
+      const lit = (row * 3 + col * 5) % 7 === 0;
+      ctx.strokeStyle = lit ? "rgba(45,226,230,0.45)" : "rgba(30,74,88,0.7)";
+      ctx.strokeRect(col * cell + 3, row * cell + 3, cell - 6, cell - 6);
+    }
+  }
+}
+
+/** The action zone: dark ember with diagonal racing stripes. Seamless (the stripes repeat with the tile). */
+function drawActionFloor(ctx: Ctx, w: number, h: number): void {
+  ctx.fillStyle = "#2e160c";
+  ctx.fillRect(0, 0, w, h);
+  ctx.lineWidth = w / 16;
+  ctx.strokeStyle = "rgba(70,32,14,0.9)";
+  for (let k = -2; k <= 2; k += 1) {
+    ctx.beginPath();
+    ctx.moveTo(k * w, h);
+    ctx.lineTo(k * w + w, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(k * w + w / 2, h);
+    ctx.lineTo(k * w + w * 1.5, 0);
+    ctx.stroke();
+  }
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = "rgba(255,138,61,0.55)";
+  for (let k = -2; k <= 2; k += 1) {
+    ctx.beginPath();
+    ctx.moveTo(k * w + w / 4, h);
+    ctx.lineTo(k * w + w * 1.25, 0);
+    ctx.stroke();
+  }
+}
+
+/** The foyer: dark terrazzo with pale chips and the odd neon fleck. Seamless. */
+function drawFoyerFloor(ctx: Ctx, w: number, h: number): void {
+  ctx.fillStyle = "#24202e";
+  ctx.fillRect(0, 0, w, h);
+  const rand = lcg(0xf0e7e2);
+  const chips = ["#3b3550", "#4a4462", "#17141f", "#5b5574"];
+  for (let i = 0; i < 520; i += 1) {
+    const x = rand() * w, y = rand() * h, r = 1 + rand() * 3;
+    ctx.fillStyle = i % 37 === 0 ? HALL.neon.magenta : i % 41 === 0 ? HALL.neon.cyan : chips[Math.floor(rand() * chips.length)];
+    wrapped(w, h, (dx, dy) => {
+      ctx.beginPath();
+      ctx.arc(x + dx, y + dy, r, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  }
+}
+
+/** Each room's floor: its drawing, how many metres one tile covers, and how shiny it is. */
+export const ROOM_FLOORS = {
+  arcade: { draw: (ctx: Ctx, w: number, h: number) => drawCarpet(ctx, w, h, 0.4), metres: CARPET_METRES, roughness: 0.95, glow: 0.18 },
+  classics: { draw: drawClassicsFloor, metres: ROOM_FLOOR_METRES, roughness: 0.95, glow: 0.12 },
+  puzzle: { draw: drawPuzzleFloor, metres: ROOM_FLOOR_METRES, roughness: 0.9, glow: 0.12 },
+  action: { draw: drawActionFloor, metres: ROOM_FLOOR_METRES, roughness: 0.9, glow: 0.1 },
+  foyer: { draw: drawFoyerFloor, metres: 2.4, roughness: 0.45, glow: 0 },
+  prizes: { draw: drawPrizeCarpet, metres: ROOM_FLOOR_METRES, roughness: 0.95, glow: 0.08 },
+  snack: { draw: drawSnackFloor, metres: ROOM_FLOOR_METRES, roughness: 0.4, glow: 0 },
+} as const;
+
+export type ArcadeRoomKind = keyof typeof ROOM_FLOORS;
+
+/** The drawing of a room's floor tile. */
+export function drawRoomFloor(kind: ArcadeRoomKind): (ctx: Ctx, w: number, h: number) => void {
+  return ROOM_FLOORS[kind].draw;
 }
