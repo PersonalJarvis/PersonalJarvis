@@ -56,7 +56,7 @@ jobs:
         run: node scripts/fetch-stargazers.mjs --repo PersonalJarvis/PersonalJarvis
 
       - name: Publish the aggregate feed
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const fs = require('node:fs');
