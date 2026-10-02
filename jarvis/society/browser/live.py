@@ -8,6 +8,7 @@ import json
 import logging
 import os
 from collections.abc import Awaitable, Callable
+from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -379,6 +380,7 @@ class LiveSessions:
     async def ensure(self, agent: Any, *, window_view: bool = False) -> LiveSession:
         """Select the saved identity before opening any browser or reusing a tab."""
         async with self.profile_start_lock:
+            await self._prepare_shared_default(agent)
             binding = await asyncio.to_thread(self.profiles.resolve, agent)
             profile_key = "legacy-attach" if binding.kind == "attach" else binding.key
             for other_id, other in list(self.sessions.items()):
@@ -462,6 +464,54 @@ class LiveSessions:
             except BaseException:
                 lease.release()
                 raise
+
+    async def _prepare_shared_default(self, agent: Any) -> None:
+        """Adopt storage before resolution without interrupting another account."""
+        if not await asyncio.to_thread(self.profiles.needs_shared_default):
+            return
+        async with AsyncExitStack() as controls:
+            for session in tuple(self.sessions.values()):
+                await controls.enter_async_context(session.control_lock)
+            occupied = tuple(
+                (aid, session.profile_binding)
+                for aid, session in self.sessions.items()
+                if not session.closed
+                and getattr(session, "profile_binding", None) is not None
+                and (
+                    session.run_lock.locked()
+                    or session.control_owner
+                    or session.subscribers
+                    or session.state.get("manual")
+                    or session.state.get("login_mode")
+                )
+            )
+            # A run may already have passed ensure() and be waiting for an old
+            # task to finish. Reserve idle admission until metadata and process
+            # invalidation agree; never wait for an active task's run lock.
+            for session in self.sessions.values():
+                if not session.run_lock.locked():
+                    await controls.enter_async_context(session.run_lock)
+            async def initialize() -> None:
+                changed = await asyncio.to_thread(
+                    self.profiles.ensure_shared_default, agent, occupied=occupied
+                )
+                if changed:
+                    await self._invalidate_profiles(None, changed_only=True)
+
+            initializing = asyncio.create_task(initialize())
+            cancelled = False
+            while True:
+                try:
+                    await asyncio.shield(initializing)
+                    break
+                except asyncio.CancelledError:
+                    if initializing.cancelled():
+                        raise
+                    # Cancelling to_thread cannot stop its SQLite commit. Keep
+                    # admission fenced until both commit and invalidation settle.
+                    cancelled = True
+            if cancelled:
+                raise asyncio.CancelledError
 
     async def invalidate_profiles(self, agent_ids: set[str] | None = None) -> None:
         """Disconnect stale viewers; a settings change never reuses the old identity."""
@@ -739,6 +789,8 @@ class LiveSessions:
     ) -> dict:
         session = await self.ensure(agent)
         await claim_browser(session, chat_session_id)
+        if session.closed or self.sessions.get(agent.agent_id) is not session:
+            raise RuntimeError("Browser profile changed; start a new task")
         if (
             session.run_lock.locked()
             or session.control_owner

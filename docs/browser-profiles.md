@@ -1,10 +1,21 @@
 # Browser profiles and shared logins
 
-Open **Browser profiles** in Society or an agent's browser panel. A saved
-profile can be assigned to all current and future agents, selected agents, or
-one agent. Individual agents can inherit the shared default, use their own
-existing profile, or use a named profile. Creating a profile alone does not
-change any assignments.
+Sign in once in an agent's browser. New installations use one persistent shared
+browser profile by default, including for agents created later. It is initialized
+when the first browser opens; viewing the profile list does not launch a browser
+or change assignments. Agents still retain their individual website restrictions.
+
+Open **Browser profiles** only when choosing a different account or changing
+sharing. An explicit separate-profile choice remains separate. Creating an
+additional named profile alone does not change existing assignments.
+
+An existing agent profile can become the shared default without moving or
+copying its data. The registry keeps the original directory and lock identity;
+the source browser can remain open. A queued conversion activates on a future
+browser opening after the updated backend loads. If another affected browser
+is busy, activation waits without changing its account or dropping the request.
+Choosing a separate profile for the original source agent uses a different
+directory, so it cannot accidentally reuse the shared account.
 
 ## Choose a browser
 

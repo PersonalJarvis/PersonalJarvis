@@ -123,7 +123,7 @@ describe("browser profile sharing", () => {
     snapshot.bindings.scout = { mode: "inherit", profile_id: null, effective_profile_id: "revoked" };
     mount("scout");
     expect(await screen.findByText("Currently uses: Profile disconnected — choose a profile")).toBeTruthy();
-    expect(screen.getByRole("combobox", { name: "Agent browser profile" }).textContent).toContain("Use the default · Profile disconnected");
+    expect(screen.getByRole("combobox", { name: "Agent browser profile" }).textContent).toContain("Shared profile (default) · Profile disconnected");
     expect(mutations()).toEqual([]);
   });
 

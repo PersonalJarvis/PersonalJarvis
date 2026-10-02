@@ -8,6 +8,7 @@ import json
 import re
 import secrets
 import sqlite3
+import stat
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -24,6 +25,9 @@ CREATE TABLE IF NOT EXISTS profiles (
 );
 CREATE TABLE IF NOT EXISTS bindings (
  agent_id TEXT PRIMARY KEY, mode TEXT NOT NULL, profile_id TEXT
+);
+CREATE TABLE IF NOT EXISTS profile_sources (
+ profile_id TEXT PRIMARY KEY, source_agent_id TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS pairing (
@@ -128,6 +132,126 @@ class BrowserProfiles:
         row = db.execute("SELECT value FROM settings WHERE key='default_profile'").fetchone()
         return row[0] if row else None
 
+    @staticmethod
+    def _setting(db: sqlite3.Connection, key: str) -> str | None:
+        row = db.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        return row[0] if row else None
+
+    @staticmethod
+    def _initialized(db: sqlite3.Connection) -> None:
+        db.execute("INSERT OR REPLACE INTO settings VALUES('shared_default_initialized','1')")
+        db.execute("DELETE FROM settings WHERE key='pending_shared_source'")
+
+    @staticmethod
+    def _has_configuration(db: sqlite3.Connection) -> bool:
+        # Older selected-only configurations predate the initialization marker.
+        return bool(
+            db.execute("SELECT 1 FROM profiles LIMIT 1").fetchone()
+            or db.execute("SELECT 1 FROM bindings LIMIT 1").fetchone()
+        )
+
+    def _source_folder(self, source_agent_id: str) -> Path:
+        """Validate owned storage without opening cookies or accepting arbitrary paths."""
+        aid = checked_id(source_agent_id)
+        root = self.data_dir.resolve() / "society"
+        folder = root / aid / "browser-profile"
+        try:
+            for component in (root, root / aid, folder):
+                info = component.lstat()
+                if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
+                    raise ValueError("Shared browser storage cannot use a link or junction")
+            if not folder.is_dir() or not folder.resolve().is_relative_to(root.resolve()):
+                raise ValueError("The agent's browser profile is not an owned directory")
+        except OSError as exc:
+            raise ValueError("The agent's existing browser profile is unavailable") from exc
+        # Match the original binding spelling as well as its physical location.
+        return self.data_dir / "society" / aid / "browser-profile"
+
+    def queue_share_all_from_agent(self, source_agent_id: str) -> None:
+        """Stage adoption for a capable runtime; older runtimes ignore this hint."""
+        aid = checked_id(source_agent_id)
+        self._source_folder(aid)
+        with self._db() as db:
+            if self._default(db) is not None:
+                raise ValueError("A shared browser profile is already configured")
+            if db.execute(
+                "SELECT 1 FROM profile_sources WHERE source_agent_id=?", (aid,)
+            ).fetchone():
+                raise ValueError("This agent's original browser profile was already shared")
+            db.execute("INSERT OR REPLACE INTO settings VALUES('pending_shared_source',?)", (aid,))
+
+    def needs_shared_default(self) -> bool:
+        """A read used to avoid locking active controls once setup is settled."""
+        with self._db() as db:
+            return self._default(db) is None and bool(
+                self._setting(db, "pending_shared_source")
+                or (
+                    self._setting(db, "shared_default_initialized") is None
+                    and not self._has_configuration(db)
+                )
+            )
+
+    def ensure_shared_default(
+        self,
+        agent: Any,
+        *,
+        occupied: tuple[tuple[str, ProfileBinding], ...] = (),
+    ) -> bool:
+        """Initialize shared storage once, or consume an explicitly queued adoption."""
+        aid = checked_id(agent.agent_id)
+        with self._db() as db:
+            # Missing default rows and revoked default IDs have different meanings.
+            # An existing choice, including a tombstone, is never replaced here.
+            if self._default(db) is not None:
+                return False
+            pending = self._setting(db, "pending_shared_source")
+            if not pending and (
+                self._setting(db, "shared_default_initialized") is not None
+                or self._has_configuration(db)
+            ):
+                return False
+            row = db.execute("SELECT mode FROM bindings WHERE agent_id=?", (aid,)).fetchone()
+            if not pending and (
+                (row is not None and row["mode"] != "inherit")
+                or str(getattr(agent, "browser_mode", "own")) == "attach"
+            ):
+                return False
+            source = checked_id(pending) if pending else None
+            if source is None and (self.data_dir / "society" / aid / "browser-profile").exists():
+                source = aid
+            path = self._source_folder(source) if source else None
+            if source and db.execute(
+                "SELECT 1 FROM profile_sources WHERE source_agent_id=?", (source,)
+            ).fetchone():
+                raise ValueError("This agent's original browser profile was already shared")
+            # No writes precede this check: a busy account leaves queued intent intact.
+            for other_id, binding in occupied:
+                if not pending:
+                    override = db.execute(
+                        "SELECT mode FROM bindings WHERE agent_id=?", (checked_id(other_id),)
+                    ).fetchone()
+                    if override is not None and override["mode"] != "inherit":
+                        continue
+                if not (
+                    source
+                    and binding.kind == "managed"
+                    and binding.key == f"agent-{source}"
+                    and binding.path == path
+                ):
+                    raise RuntimeError("Finish the other browser session before sharing its logins")
+            pid = uuid4().hex
+            db.execute(
+                "INSERT INTO profiles(id,name,kind,domains,created_at) VALUES(?,?,?,?,?)",
+                (pid, "Shared Chrome", "managed", "[]", time.time()),
+            )
+            if source:
+                db.execute("INSERT INTO profile_sources VALUES(?,?)", (pid, source))
+            db.execute("INSERT OR REPLACE INTO settings VALUES('default_profile',?)", (pid,))
+            if pending:
+                db.execute("DELETE FROM bindings")
+            self._initialized(db)
+            return True
+
     def snapshot(self, agents: list[dict], connected: set[str]) -> dict:
         with self._db() as db:
             default = self._default(db)
@@ -210,6 +334,7 @@ class BrowserProfiles:
             raise ValueError("Choose existing agents and a supported sharing scope")
         with self._db() as db:
             self._require(db, profile_id)
+            self._initialized(db)
             if scope == "all":
                 db.execute(
                     "INSERT OR REPLACE INTO settings VALUES('default_profile',?)", (profile_id,)
@@ -241,6 +366,7 @@ class BrowserProfiles:
     def remove(self, profile_id: str) -> None:
         with self._db() as db:
             self._require(db, profile_id)
+            self._initialized(db)
             db.execute("DELETE FROM pairing WHERE profile_id=?", (profile_id,))
             db.execute("DELETE FROM profiles WHERE id=?", (profile_id,))
             # Keep bindings/default as tombstones: revocation must not silently
@@ -260,11 +386,14 @@ class BrowserProfiles:
             )
             if pid:
                 profile = self._require(db, pid)
+                source = db.execute(
+                    "SELECT source_agent_id FROM profile_sources WHERE profile_id=?", (pid,)
+                ).fetchone()
                 domains = tuple(json.loads(profile["domains"]))
                 restrictions = tuple(getattr(agent, "browser_allowed_domains", ()))
                 if restrictions:
-                    allowed = normalize_domains([d.removeprefix("*.") for d in restrictions])
                     if domains:
+                        allowed = normalize_domains([d.removeprefix("*.") for d in restrictions])
                         domains = tuple(
                             sorted(
                                 {
@@ -280,19 +409,35 @@ class BrowserProfiles:
                                 "The profile and agent have no allowed websites in common"
                             )
                     else:
-                        domains = tuple(allowed)
+                        # Adoption changes storage metadata, not this agent's
+                        # already-enforced domain policy or active access key.
+                        domains = restrictions
+                key = pid
                 path = (
                     self.data_dir / "society" / "browser-profiles" / pid
                     if profile["kind"] == "managed"
                     else None
                 )
-                return ProfileBinding(pid, profile["kind"], pid, path, domains, profile["name"])
+                if source is not None:
+                    if profile["kind"] != "managed":
+                        raise ValueError("Invalid shared browser storage identity")
+                    source_id = checked_id(source["source_agent_id"])
+                    path = self._source_folder(source_id)
+                    key = f"agent-{source_id}"
+                return ProfileBinding(key, profile["kind"], pid, path, domains, profile["name"])
+            shared_source = db.execute(
+                "SELECT 1 FROM profile_sources WHERE source_agent_id=?", (aid,)
+            ).fetchone()
         kind = "attach" if str(getattr(agent, "browser_mode", "own")) == "attach" else "managed"
+        private = bool(shared_source) and kind == "managed"
         return ProfileBinding(
-            f"agent-{aid}",
+            f"private-agent-{aid}" if private else f"agent-{aid}",
             kind,
             None,
-            self.data_dir / "society" / aid / "browser-profile",
+            self.data_dir
+            / "society"
+            / aid
+            / ("browser-profile-private" if private else "browser-profile"),
             tuple(getattr(agent, "browser_allowed_domains", ())),
             "Own profile",
         )
