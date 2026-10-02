@@ -67,6 +67,21 @@ def _readable(term: Any) -> bool:
     )
 
 
+def _shows_dialog(term: Any) -> bool:
+    from .activity import shows_dialog
+
+    return shows_dialog(term)
+
+
+def dialog_open(term: Any) -> bool:
+    """Is the pane waiting on its CLI's own dialog (a choice, a y/n prompt)?
+
+    Only such an answer continues the job in hand: a reply typed under a
+    question in the agent's prose is a new user turn, a new instruction.
+    """
+    return term.reading().activity == "asking" and _shows_dialog(term)
+
+
 def _normalized(text: str) -> str:
     return " ".join(str(text or "").split())
 
@@ -215,6 +230,18 @@ async def publish_result(
         if kind == "completed" and fresh and turns[-1].role == "assistant":
             report = str(turns[-1].text or "")
             evidence = "fresh assistant message for this exact prompt; not independent verification"
+        elif kind == "needs_input" and (
+            fresh and turns[-1].role == "assistant" and turns[-1].text
+            and not _shows_dialog(term)
+        ):
+            # A finished answer that closes with a question ("Would you like me
+            # to commit?") reads as a question on screen. The agent's own words
+            # are the report, not the bottom rows of its terminal.
+            report = str(turns[-1].text)
+            evidence = (
+                "fresh assistant message for this exact prompt, ending in a question; "
+                "not independent verification"
+            )
         elif kind == "needs_input":
             report = "\n".join(term.transcript.tail(20))[-3000:]
             evidence = "current terminal question; not a completed task"

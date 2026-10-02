@@ -4709,8 +4709,9 @@ class Registry:
         answered = None
         if is_submit and not confirm_pending_prompt and term.delegation_result is not None:
             from .followthrough import current as follows
+            from .followthrough import dialog_open
 
-            if follows(term, term.delegation_result) and term.reading().activity == "asking":
+            if follows(term, term.delegation_result) and dialog_open(term):
                 answered = term.delegation_result
         # Do not mutate activity or receipt state for bytes the PTY refused.
         written = manager.write(term.pty_id, data)
@@ -6681,14 +6682,14 @@ class Registry:
                     raise SessionError("The selected coding agent is busy; nothing was sent.")
             pending = None
             if followup is not None and followup.get("reply_surface") in {"voice", "chat"}:
-                from .followthrough import prepare
+                from .followthrough import dialog_open, prepare
 
                 pending = await prepare(
                     term,
                     text,
                     typed,
                     followup,
-                    answering=allow_question and term.reading().activity == "asking",
+                    answering=allow_question and dialog_open(term),
                 )
             return await self._send_prompt_locked(
                 identity,

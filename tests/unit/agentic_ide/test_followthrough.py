@@ -265,6 +265,33 @@ async def test_a_dialog_answer_without_a_followed_job_tracks_the_task_on_record(
     assert "Parser refactored" in events[0].report
 
 
+@pytest.mark.asyncio
+async def test_an_answer_ending_in_a_question_is_reported_in_the_agents_words(pane):
+    pending = await arm(pane)
+    term, turns = pane
+    turns.extend([
+        Turn("user", "Fix the bug"),
+        Turn("assistant", "Fixed the login race. Would you like me to commit it?"),
+    ])
+    events = []
+    assert await ft.publish_result("needs_input", term, pending, events.append, now=200.0)
+    assert "Fixed the login race" in events[0].report
+    assert "Which repository" not in events[0].report  # not the terminal's bottom rows
+    assert term.delegation_result is pending  # It still asks; a later stop is reported too.
+
+
+@pytest.mark.asyncio
+async def test_a_cli_dialog_is_reported_from_the_screen(pane, monkeypatch):
+    pending = await arm(pane)
+    term, turns = pane
+    turns.extend([Turn("user", "Fix the bug"), Turn("assistant", "I'll edit app.py.")])
+    monkeypatch.setattr(ft, "_shows_dialog", lambda _term: True)
+    events = []
+    await ft.publish_result("needs_input", term, pending, events.append, now=200.0)
+    assert "Which repository" in events[0].report
+    assert "current terminal question" in events[0].report
+
+
 def test_report_grace_outlasts_the_conversation_lookup():
     from jarvis.agentic_ide.session import CONVERSATION_DELAYS_S
 

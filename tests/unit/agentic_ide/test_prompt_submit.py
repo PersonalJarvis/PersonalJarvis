@@ -565,8 +565,19 @@ async def test_a_stuck_multiline_prompt_is_left_in_the_box_not_retyped(
 _VOICE = {"reply_surface": "voice", "lang": "en"}
 
 
+_DIALOG = "\x1b[2J\x1b[HDo you want to make this edit to app.py?\r\n❯ 1. Yes\r\n  2. No\r\n"
+_PROSE = "\x1b[2J\x1b[HFixed it. Would you like me to commit the change?\r\n❯ \r\n"
+
+
 def _screen_reads(monkeypatch: pytest.MonkeyPatch, activity: str) -> None:
     monkeypatch.setattr(session_mod, "observed", lambda _term: Reading(activity, 0.0))
+
+
+async def _screen_shows(
+    monkeypatch: pytest.MonkeyPatch, fake_pty: FakePtyManager, term, screen: str
+) -> None:
+    await fake_pty.emit(term.pty_id, screen)
+    _screen_reads(monkeypatch, "asking")
 
 
 async def test_enter_on_the_agents_dialog_keeps_following_the_delegated_job(
@@ -579,7 +590,7 @@ async def test_enter_on_the_agents_dialog_keeps_following_the_delegated_job(
     job = term.delegation_result
     assert job is not None and followthrough.current(term, job)
 
-    _screen_reads(monkeypatch, "asking")
+    await _screen_shows(monkeypatch, fake_pty, term, _DIALOG)
     await asyncio.sleep(0.01)  # a later stamp than the prompt's own
     assert registry.write(term.key, "\r") is True
 
@@ -604,6 +615,22 @@ async def test_enter_at_an_idle_prompt_hands_the_pane_a_new_instruction(
     assert not followthrough.current(term, job), "the person's own prompt owns the next stop"
 
 
+async def test_a_reply_under_a_question_in_prose_is_a_new_instruction(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A typed reply is a user turn of its own; only a dialog choice continues the job."""
+    fake_pty.tui_echo = True
+    term = await _live(registry, tmp_path)
+    await registry.send_prompt("Alex", "Fix the bug", followup=_VOICE)
+    job = term.delegation_result
+
+    await _screen_shows(monkeypatch, fake_pty, term, _PROSE)
+    await asyncio.sleep(0.01)
+    registry.write(term.key, "\r")
+
+    assert not followthrough.current(term, job)
+
+
 async def test_jarvis_answering_a_dialog_keeps_the_task_it_belongs_to(
     registry: Registry, fake_pty: FakePtyManager, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -612,7 +639,7 @@ async def test_jarvis_answering_a_dialog_keeps_the_task_it_belongs_to(
     await registry.send_prompt("Alex", "Fix the bug", followup=_VOICE)
     job = term.delegation_result
 
-    _screen_reads(monkeypatch, "asking")
+    await _screen_shows(monkeypatch, fake_pty, term, _DIALOG)
     await registry.send_prompt(
         "Alex", "1", followup=_VOICE, allow_question=True,
         expected_input=registry.input_token(term),
