@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -121,31 +122,39 @@ def test_an_ongoing_stall_is_not_repeated_every_check(live_loop):
     )
 
 
-def test_recovery_re_arms_the_report(live_loop):
-    """After the loop frees itself, a LATER stall is reported again."""
+def test_recovery_re_arms_the_report(monkeypatch):
+    """A delivered heartbeat re-arms reporting for the next distinct stall."""
+    import jarvis.core.loop_watchdog as module
+
+    ticks = 0
+    pending = []
+    monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=lambda: float(ticks)))
     recorder = _Recorder()
     watchdog = EventLoopWatchdog(
-        live_loop, interval_s=0.05, stall_s=0.2, repeat_s=30.0, on_stall=recorder
+        SimpleNamespace(call_soon_threadsafe=pending.append),
+        interval_s=1.0,
+        stall_s=2.0,
+        repeat_s=30.0,
+        on_stall=recorder,
     )
-    watchdog.start()
 
-    try:
-        first = threading.Event()
-        live_loop.call_soon_threadsafe(lambda: first.wait(1.0))
-        assert recorder.seen.wait(3.0)
-        first.set()
+    def advance(_interval):
+        nonlocal ticks
+        ticks += 1
+        if ticks == 7:
+            return True
+        if ticks == 4:
+            # The loop recovers between two stalls. Control the actual delivery
+            # of its callbacks instead of assuming a sleep let them execute.
+            for beat in pending:
+                beat()
+            pending.clear()
+        return False
 
-        time.sleep(0.3)  # let the loop beat again — this clears the report
-        recorder.seen.clear()
+    watchdog._stop = SimpleNamespace(is_set=lambda: False, wait=advance)
+    watchdog._run()
 
-        second = threading.Event()
-        live_loop.call_soon_threadsafe(lambda: second.wait(1.0))
-        assert recorder.seen.wait(3.0), "a fresh stall after recovery went unreported"
-        second.set()
-    finally:
-        watchdog.stop()
-
-    assert len(recorder.calls) == 2
+    assert [duration for duration, _stack in recorder.calls] == [2.0, 2.0]
 
 
 def test_stop_is_idempotent_and_start_does_not_double_up(live_loop):
