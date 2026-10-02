@@ -83,10 +83,21 @@ _DIRECT_PATTERNS = (
         r"^(?:hey\s+)?(?:jarvis[,\s]+)?kannst\s+du\s+(?P<app>.+?)\s+aufmachen\s*[?.!]*$",
         re.I,
     ),
+    re.compile(
+        r"^(?:hey\s+)?(?:jarvis[,\s]+)?(?:apri|aprimi|avvia)\s+(?P<app>.+?)\s*[?.!]*$",  # i18n-allow: Italian voice input
+        re.I,
+    ),
+    re.compile(
+        r"^(?:hey\s+)?(?:jarvis[,\s]+)?puoi\s+(?:aprire|avviare)\s+(?P<app>.+?)\s*[?.!]*$",  # i18n-allow: Italian voice input
+        re.I,
+    ),
 )
 
 _VISUAL_TARGET_PATTERNS = (
-    re.compile(r"^(?:hey\s+)?(?:jarvis[,\s]+)?(?:klick|click)\s+.+", re.I),
+    re.compile(
+        r"^(?:hey\s+)?(?:jarvis[,\s]+)?(?:klick|click|clicca)\s+.+",  # i18n-allow: Italian voice input
+        re.I,
+    ),
     re.compile(
         r"^(?:hey\s+)?(?:jarvis[,\s]+)?oeffne\s+.+\b"
         r"(?:links|rechts|oben|unten|rote|rotes|roten|gruen|gruene|gruenes|gruenen|"
@@ -110,14 +121,17 @@ _VISUAL_TARGET_PATTERNS = (
 # often mean "write me a poem" / "search the web", i.e. a plain brain answer).
 _COMPOUND_OPEN_CONTROL_RE = re.compile(
     r"^(?:hey\s+)?(?:jarvis[,\s]+)?"
-    r"(?:oeffne|starte|mach|geh\s+(?:auf|zu)|open|start|launch)\b"
-    r".+\b(?:und|and)\b.+",
+    r"(?:oeffne|starte|mach|geh\s+(?:auf|zu)|open|start|launch"
+    r"|apri|aprimi|avvia|vai\s+(?:a|su))\b"  # i18n-allow: Italian voice input
+    r".+\b(?:und|and|e)\b.+",  # i18n-allow: Italian conjunction
     re.I,
 )
 _GUI_VERB_RE = re.compile(
     r"\b(klick|click|doppelklick|rechtsklick|tippe|tipp\b|scroll|scrolle|"
     r"markier|kopier|einfueg|fueg\b.+\bein\b|waehle\s+aus|wechsel\s+(?:zu|auf)\s+fenster|"
-    r"druecke?\s+(?:auf|den|die|das)\b)\w*",
+    r"druecke?\s+(?:auf|den|die|das)\b"
+    r"|clicca|doppio\s+clic|scorri|digita|incolla|copia|seleziona"
+    r"|premi\s+(?:su|il|la|lo)\b)\w*",  # i18n-allow: Italian GUI commands
     re.I,
 )
 
@@ -133,7 +147,11 @@ _GUI_VERB_RE = re.compile(
 # "schließ" → "schliess", "nächste" → "naechste", "vergrößer" → "vergroesser").
 # Only directional prepositions (zu/auf/nach/in) — "navigiere DURCH das Menü" is
 # deliberately excluded (too close to an explain/walk-me-through request).
-_NAVIGATE_RE = re.compile(r"\bnavigier\w*\s+(?:zu|auf|nach|in)\b", re.IGNORECASE)
+_NAVIGATE_RE = re.compile(
+    r"\b(?:navigier\w*\s+(?:zu|auf|nach|in)"
+    r"|naviga\w*\s+(?:a|su|verso)|vai\s+(?:a|su|verso))\b",  # i18n-allow: Italian navigation
+    re.IGNORECASE,
+)
 # Screenshot — verb-anchored on BOTH sides so a TAKE imperative matches
 # ("mach/nimm/erstell/knips einen Screenshot", "Screenshot machen") but an
 # informational or send/show mention does NOT ("ich habe einen Screenshot
@@ -141,28 +159,33 @@ _NAVIGATE_RE = re.compile(r"\bnavigier\w*\s+(?:zu|auf|nach|in)\b", re.IGNORECASE
 # review finding 2026-06-09. "gemacht" never matches \bmach\w* (no word boundary
 # before "mach" inside "gemacht").
 _SCREENSHOT_RE = re.compile(
-    r"\b(?:mach|nimm|erstell|knips|capture|take|grab)\w*\b[\w\s]{0,14}?"
-    r"\b(?:screenshot|bildschirmfoto|bildschirmaufnahme)\b"
-    r"|\b(?:screenshot|bildschirmfoto|bildschirmaufnahme)\b[\w\s]{0,10}?"
-    r"\b(?:mach|nimm|erstell|knips)\w*",
+    r"\b(?:mach|nimm|erstell|knips|capture|take|grab|fai|scatta|cattura)\w*\b[\w\s]{0,14}?"  # i18n-allow
+    r"\b(?:screenshot|bildschirmfoto|bildschirmaufnahme|schermata)\b"  # i18n-allow
+    r"|\b(?:screenshot|bildschirmfoto|bildschirmaufnahme|schermata)\b[\w\s]{0,10}?"  # i18n-allow
+    r"\b(?:mach|nimm|erstell|knips|fai|scatta|cattura)\w*",  # i18n-allow
     re.IGNORECASE,
 )
 # "schließ/minimier/maximier … (das) Fenster/Tab/App" — the verb ALONE is too
 # ambiguous ("schließ die Tür"), so a desktop-context noun within ~18 chars is
 # required. Plus tab-switching ("wechsel zum nächsten Tab", "nächster Tab").
 _WINDOW_OP_RE = re.compile(
-    r"\b(?:schliess|minimier|maximier|verklein|vergroesser)\w*\b[\w\s]{0,18}?"
-    r"\b(?:fenster|tab|app|programm|browser|seite|dialog)\b"
-    r"|\bwechsel\w*\s+(?:zu|auf|zum|zur|in|den|das|die|naechste[nr]?)\b[\w\s]{0,12}?"
-    r"\b(?:tab|fenster|app|programm)\b"
-    r"|\b(?:naechst|vorherig|letzt|erst)\w*\s+tab\b",
+    r"\b(?:schliess|minimier|maximier|verklein|vergroesser"
+    r"|chiudi|minimizza|massimizza)\w*\b[\w\s]{0,18}?"  # i18n-allow
+    r"\b(?:fenster|tab|app|programm|browser|seite|dialog"
+    r"|finestra|scheda|programma|pagina|dialogo)\b"  # i18n-allow
+    r"|\b(?:wechsel\w*\s+(?:zu|auf|zum|zur|in|den|das|die|naechste[nr]?)"
+    r"|passa\s+(?:a|alla|al|nella|nel|su))\b[\w\s]{0,12}?"  # i18n-allow
+    r"\b(?:tab|fenster|app|programm|scheda|finestra|programma)\b"  # i18n-allow
+    r"|\b(?:naechst|vorherig|letzt|erst)\w*\s+tab\b"
+    r"|\b(?:prossim|precedent|ultim|prim)\w*\s+(?:tab|scheda)\b",  # i18n-allow
     re.IGNORECASE,
 )
 # Drag / move — "zieh"/"verschieb"/"drag" are common words, so a desktop object
 # or a direction is required to avoid "zieh dich an".
 _DRAG_RE = re.compile(
-    r"\b(?:zieh|drag|verschieb)\w*\b[\w\s]{0,20}?"
-    r"\b(?:fenster|datei|icon|maus|cursor|element|nach\s+(?:links|rechts|oben|unten))\b",
+    r"\b(?:zieh|drag|verschieb|trascina|sposta)\w*\b[\w\s]{0,20}?"  # i18n-allow
+    r"\b(?:fenster|datei|icon|maus|cursor|element|nach\s+(?:links|rechts|oben|unten)"
+    r"|finestra|file|icona|mouse|cursore|elemento|a\s+(?:sinistra|destra|su|giu|giù))\b",  # i18n-allow
     re.IGNORECASE,
 )
 # Explicit "use Computer-Use to …" — the user NAMES the harness as the instrument
@@ -181,8 +204,9 @@ _DRAG_RE = re.compile(
 # (umlauts → ascii: "über" → "ueber"); the literal hyphen in "computer-use"
 # survives normalize, so [-\s]? covers both "computer-use" and "computer use".
 _EXPLICIT_COMPUTER_USE_RE = re.compile(
-    r"\b(?:mit|per|ueber|via|with|using|use|nutz\w*|benutz\w*|verwend\w*)\s+"
-    r"(?:der\s+|die\s+|das\s+|den\s+|the\s+)?"
+    r"\b(?:mit|per|ueber|via|with|using|use|nutz\w*|benutz\w*|verwend\w*"
+    r"|con|usa|utilizza)\s+"  # i18n-allow
+    r"(?:der\s+|die\s+|das\s+|den\s+|the\s+|il\s+)?"
     r"computer[-\s]?use\b",
     re.IGNORECASE,
 )
@@ -219,6 +243,7 @@ _QUESTION_OPENER_RE = re.compile(
     r"wie|was|warum|wieso|weshalb|wozu|wann|wo|wofuer|woran|worin|worum|"
     r"woher|wohin|wonach|welche[rsnm]?|wer|wen|wem|wessen"
     r"|how|what|why|when|where|which|who|whom|whose"
+    r"|come|cosa|perche|perché|quando|dove|quali?|chi"  # i18n-allow
     r")\b",
     re.IGNORECASE,
 )
@@ -237,6 +262,8 @@ _ASSISTANT_IMPERATIVE_RE = re.compile(
     r"minimier|minimiere|maximier|maximiere|zieh|ziehe|verschieb|verschiebe"
     r"|open|close|click|type|press|scroll|show|play|write|search|switch|"
     r"start|launch|take|grab|drag|minimize|maximize|navigate"
+    r"|apri|aprimi|avvia|clicca|scorri|digita|premi|seleziona"
+    r"|chiudi|minimizza|massimizza|trascina|sposta|naviga|vai|cattura|scatta"  # i18n-allow
     r")\b",
     re.IGNORECASE,
 )
@@ -246,13 +273,13 @@ _ASSISTANT_IMPERATIVE_RE = re.compile(
 #: carries one. Same token set as ``tool_use_loop._INDICATIVE_SUBJECT_RE`` so
 #: the two guards classify the same sentence the same way.
 _INDICATIVE_SUBJECT_AFTER_RE = re.compile(
-    r"\s*(?:ich|man|wir|i|we|you|yo|uno)\b",
+    r"\s*(?:ich|man|wir|i|we|you|yo|uno|io|noi)\b",  # i18n-allow
     re.IGNORECASE,
 )
 #: English (and the German infinitive marker) put the subject in FRONT of the
 #: verb: "...how do I click", "...um zu klicken".
 _INDICATIVE_SUBJECT_BEFORE_RE = re.compile(
-    r"\b(?:i|you|we|they|to|ich|man|wir|zu)\s+$",
+    r"\b(?:i|you|we|they|to|ich|man|wir|zu|io|noi)\s+$",  # i18n-allow
     re.IGNORECASE,
 )
 #: German subordinate clauses push the verb to the END, far from its subject:
@@ -262,7 +289,10 @@ _INDICATIVE_SUBJECT_BEFORE_RE = re.compile(
 #: perfectly well address Jarvis ("du sollst mal runterscrollen" is an order,
 #: not narration).
 _CLAUSE_START_RE = re.compile(r"[,;:.!?]")
-_NARRATING_SUBJECT_RE = re.compile(r"\b(?:ich|man|wir|i|we)\b", re.IGNORECASE)
+_NARRATING_SUBJECT_RE = re.compile(
+    r"\b(?:ich|man|wir|i|we|io|noi)\b",  # i18n-allow
+    re.IGNORECASE,
+)
 
 
 def _is_narrated(text: str, start: int, end: int) -> bool:
@@ -373,7 +403,8 @@ def _looks_like_desktop_control(text: str) -> bool:
 # provider-test endpoint). openrouter/openai/openwakeword must never count
 # as "open".
 _OPEN_VERB_RE = re.compile(
-    r"\b(?:oeffn\w*|aufmach\w*|aufzumach\w*|start\w*|open(?:s|ed|ing)?|launch\w*)\b",
+    r"\b(?:oeffn\w*|aufmach\w*|aufzumach\w*|start\w*|open(?:s|ed|ing)?|launch\w*"
+    r"|apr(?:i|ire|imi)|avvia(?:re|mi)?)\b",  # i18n-allow
     re.IGNORECASE,
 )
 # Separable verb "mach … auf" (particle trails the object): "mach mir Spotify auf".
@@ -383,7 +414,7 @@ _MACH_AUF_RE = re.compile(r"\bmach(?:e|st|t)?\b[\w\s]*\bauf\b", re.IGNORECASE)
 # belongs on the computer-use loop, not a single DIRECT open. Word-boundaried so
 # it never fires inside a token. Operates on the normalised (transliterated)
 # utterance, where "und" and "and" are stable.
-_AND_RE = re.compile(r"\b(?:und|and)\b", re.IGNORECASE)
+_AND_RE = re.compile(r"\b(?:und|and|e)\b", re.IGNORECASE)  # i18n-allow
 # Negated open ("ich will Spotify NICHT öffnen", "bitte KEIN Chrome starten",
 # "öffne Discord lieber nicht") must NEVER launch. The verb-at-end fallback below
 # scans the WHOLE utterance for a known app name, so without this guard it would
@@ -394,7 +425,10 @@ _AND_RE = re.compile(r"\b(?:und|and)\b", re.IGNORECASE)
 # folded into ``is_open_app_intent`` — that predicate is also the force-spawn
 # guard, and a negated open must still count as an open there (to stay OFF the
 # sub-agent worker path), just not trigger an actual launch here.
-_OPEN_NEGATION_RE = re.compile(r"\bnicht\b|\bkein\w*\b|\bniemals\b", re.IGNORECASE)
+_OPEN_NEGATION_RE = re.compile(
+    r"\bnicht\b|\bkein\w*\b|\bniemals\b|\bnon\b|\bmai\b",  # i18n-allow
+    re.IGNORECASE,
+)
 # Signals that the request is NOT a plain desktop app-open but heavy worker /
 # external-system work, which a sandboxed worker (not computer-use) owns. This
 # is the single veto consulted by is_open_app_intent (and therefore by both the
@@ -417,7 +451,9 @@ _NOT_OPEN_APP_RE = re.compile(
 )
 # Instructional questions ("wie oeffne ich X?") must never launch anything.
 _OPEN_INSTRUCTIONAL_RE = re.compile(
-    r"^\s*(?:wie|how|was|what|warum|why|wieso|weshalb)\b", re.IGNORECASE
+    r"^\s*(?:wie|how|was|what|warum|why|wieso|weshalb"
+    r"|come|cosa|perche|perché)\b",  # i18n-allow
+    re.IGNORECASE,
 )
 
 # ---------------------------------------------------------------------------
@@ -642,6 +678,9 @@ _APP_ALIASES = {
     "vlc": "vlc",
     "steam": "steam",
     "outlook": "outlook",
+    "safari": "safari",
+    "finder": "finder",
+    "calcolatrice": "calc",  # i18n-allow
 }
 
 # An app name that is the OBJECT of a container preposition ("oeffne meine
@@ -662,9 +701,9 @@ _APP_ALIAS_ALTERNATION = "|".join(
     re.escape(alias) for alias in sorted(_APP_ALIASES, key=len, reverse=True)
 )
 _APP_AS_CONTAINER_RE = re.compile(
-    r"\b(?:in|im|ins|innerhalb|inside|within|into)\s+"
+    r"\b(?:in|im|ins|innerhalb|inside|within|into|nel|nello|nella|dentro)\s+"  # i18n-allow
     r"(?:dem\s+|den\s+|der\s+|die\s+|das\s+|meinem\s+|meinen\s+|meiner\s+|"
-    r"mein\s+|the\s+|my\s+)?"
+    r"mein\s+|the\s+|my\s+|il\s+|lo\s+|la\s+|mio\s+|mia\s+)?"
     r"(?:" + _APP_ALIAS_ALTERNATION + r")\b",
     re.IGNORECASE,
 )
@@ -689,6 +728,8 @@ _APP_FILLER_WORDS = frozenset({
     "mir", "mal", "bitte", "doch", "den", "die", "das", "dem", "der",
     "ein", "eine", "einen", "mein", "meine", "meinen",
     "fuer", "mich", "uns", "the", "me", "my", "a", "an", "please",
+    "il", "lo", "la", "un", "una", "mio", "mia", "miei", "mie",
+    "per", "favore",  # i18n-allow
 })
 
 _GERMAN_NUMBER_WORDS = {
@@ -751,6 +792,12 @@ def _unsupported_response(text: str, lang: str) -> str:
             "I can't do that yet. "
             "I don't have a registered tool for it. "
             "Tell me which MCP or integration should handle it and I can learn."
+        )
+    if lang == "it":
+        return (
+            "Non posso ancora farlo. "
+            "Non ho uno strumento registrato per questa operazione. "
+            "Dimmi quale MCP o integrazione dovrebbe gestirla e posso imparare."
         )
     return (
         "Das kann ich noch nicht. "
@@ -889,7 +936,7 @@ def _get_capability_registry() -> _CapabilityRegistryLike | None:
 
 def match_local_action(
     text: str,
-    lang: Literal["de", "en"] = "de",
+    lang: Literal["de", "en", "it"] = "de",
     *,
     _registry: _CapabilityRegistryLike | None = _SENTINEL,  # type: ignore[assignment]
     live_tool_names: Sequence[str] = (),
