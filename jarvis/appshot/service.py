@@ -138,6 +138,7 @@ async def take_appshot(
 
     store = get_store()
     store.remember(shot, keep_s=float(config.screen_context.deck_preview_s))
+    await _attach_to_card(shot, config)
     delivered_to = "turn"
     if deliver:
         delivered_to = await _deliver(
@@ -192,10 +193,24 @@ async def record_turn_capture(context: Any, *, bus: Any | None, trigger: Trigger
         shot = shot_from_context(context, trigger=trigger)
         store = get_store()
         store.remember(shot, keep_s=float(config.screen_context.deck_preview_s))
+        await _attach_to_card(shot, config)
         store.mark_delivered(shot.id, "turn")
         await _publish(bus, shot, "turn")
     except Exception:  # noqa: BLE001 - the turn already has its picture
         log.warning("appshot: could not record the turn's capture", exc_info=True)
+
+
+async def _attach_to_card(shot: Appshot, config: Any) -> None:
+    """The corner card may hand this picture out by drag — if it may be kept.
+
+    ``deck_preview_s = 0`` means the user wants no picture kept around, so the
+    card then only opens the editor and shares nothing.
+    """
+    if float(config.screen_context.deck_preview_s) <= 0:
+        return
+    from jarvis.appshot.effect import attach_card_image  # noqa: PLC0415
+
+    await attach_card_image(shot.image)
 
 
 async def _deliver(shot: Appshot, *, target: str, ttl_s: float) -> str:

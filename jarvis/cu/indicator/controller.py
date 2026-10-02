@@ -52,8 +52,9 @@ _ESC_HINTS: dict[str, str] = {
 _QUIT_GRACE_S = 1.5
 _BLANK_ACK_TIMEOUT_S = 0.15
 _SHOW_ACK_TIMEOUT_S = 1.2
-#: How long the sidecar stays up for one appshot shutter effect (flash, rest
-#: in the corner, slide out — see ``renderer._SNAP_TOTAL_MS``) plus slack.
+#: How long the sidecar stays up for one appshot shutter effect (flash and
+#: flight, see ``renderer._SNAP_TOTAL_MS``) plus slack. The resting card that
+#: follows reports itself open and closed, and holds the sidecar meanwhile.
 _SNAP_LIFETIME_S = 3.4
 
 
@@ -116,6 +117,12 @@ class CUIndicatorController:
         # Monotonic deadline until which an appshot effect owns the sidecar.
         self._snap_until = 0.0
         self._idle_quit_task: asyncio.Task | None = None
+        # The appshot card in the corner is up (hover / click / drag).
+        self._card_open = False
+        self._loop: asyncio.AbstractEventLoop | None = None
+        # The finished picture for the current card. It can be ready before the
+        # effect reached the sidecar, so ``snap`` re-sends it after the card.
+        self._card_image_b64: str | None = None
 
     # ------------------------------------------------------------------ wiring
     def wire(self) -> None:
@@ -236,7 +243,7 @@ class CUIndicatorController:
             protocol.CMD_HIDE,
             _SHOW_ACK_TIMEOUT_S,
         )
-        if time.monotonic() < self._snap_until:
+        if self._card_open or time.monotonic() < self._snap_until:
             # An appshot effect is still on screen; quit once it has played.
             self._schedule_idle_quit()
             return
@@ -265,13 +272,17 @@ class CUIndicatorController:
         later, and a respawn would cost the effect a second of Qt start-up.
         """
         self._snap_until = max(self._snap_until, time.monotonic() + _SNAP_LIFETIME_S)
+        self._card_image_b64 = None  # a new capture: the old picture is not its picture
 
-    async def snap(self, *, monitor: list[int], rect: list[float], thumb_b64: str) -> bool:
+    async def snap(
+        self, *, monitor: list[int], rect: list[float], thumb_b64: str, hint: str = ""
+    ) -> bool:
         """Play the appshot shutter effect. ``False`` when it cannot run here."""
         ok, reason = self._border_capability()
         if not ok:
             log.debug("[appshot-effect] unavailable: %s", reason)
             return False
+        self._loop = asyncio.get_running_loop()
         async with self._lock:
             self.hold_for_snap()
             await asyncio.to_thread(self._spawn_sidecar)
@@ -287,9 +298,68 @@ class CUIndicatorController:
                 monitor=list(monitor),
                 rect=list(rect),
                 thumb=thumb_b64,
+                hint=hint,
             )
+            image = self._card_image_b64
+            if shown and image:
+                await asyncio.to_thread(
+                    self._send_and_wait, protocol.CMD_SNAP_IMAGE, _SHOW_ACK_TIMEOUT_S, image=image
+                )
             self._schedule_idle_quit()
             return shown
+
+    async def snap_image(self, image_b64: str) -> bool:
+        """Hand the finished picture to the resting card, for a drag out.
+
+        Kept for the effect still on its way (``snap`` sends it after the card);
+        sent at once when the sidecar already runs. The picture never starts a
+        process of its own.
+        """
+        self._card_image_b64 = image_b64
+        if self._proc is None or self._proc.poll() is not None:
+            return False
+        return await asyncio.to_thread(
+            self._send_and_wait, protocol.CMD_SNAP_IMAGE, _SHOW_ACK_TIMEOUT_S, image=image_b64
+        )
+
+    def _on_sidecar_event(self, payload: dict[str, Any]) -> None:
+        """Runs on the ack-pump thread; hops to the event loop."""
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            return
+        with suppress(RuntimeError):
+            loop.call_soon_threadsafe(self._handle_sidecar_event, payload)
+
+    def _handle_sidecar_event(self, payload: dict[str, Any]) -> None:
+        event = payload.get("event")
+        if event == protocol.EVENT_CARD:
+            self._card_open = bool(payload.get("open"))
+            if not self._card_open:
+                self._schedule_idle_quit()
+        elif event == protocol.EVENT_SNAP_OPEN:
+            # _open_editor logs its own failures; nothing awaits this task.
+            asyncio.get_running_loop().create_task(self._open_editor(), name="appshot-card-open")
+
+    async def _open_editor(self) -> None:
+        """The card was clicked: show the app with the appshot editor."""
+        try:
+            from jarvis.appshot.store import get_store  # noqa: PLC0415
+            from jarvis.core.events import (  # noqa: PLC0415
+                AppshotEditRequested,
+                ShowWindowRequested,
+            )
+
+            shot = get_store().latest()
+            await self._bus.publish(
+                AppshotEditRequested(
+                    source_layer="appshot", appshot_id=shot.id if shot is not None else ""
+                )
+            )
+            await self._bus.publish(
+                ShowWindowRequested(source_layer="appshot", source="appshot_card")
+            )
+        except Exception:  # noqa: BLE001 - a lost click must not break the sidecar
+            log.warning("[appshot-effect] opening the editor failed", exc_info=True)
 
     def _schedule_idle_quit(self) -> None:
         task = self._idle_quit_task
@@ -308,7 +378,12 @@ class CUIndicatorController:
                 break
             await asyncio.sleep(remaining + 0.05)
         async with self._lock:
-            if self._active or self._screen_active or time.monotonic() < self._snap_until:
+            if (
+                self._active
+                or self._screen_active
+                or self._card_open
+                or time.monotonic() < self._snap_until
+            ):
                 return
             await self._quit_sidecar()
 
@@ -343,6 +418,7 @@ class CUIndicatorController:
                 NO_WINDOW_CREATIONFLAGS,
             )
 
+            self._card_open = False  # a fresh sidecar has no card yet
             self._proc = subprocess.Popen(
                 [sys.executable, "-m", "jarvis.cu.indicator"],
                 stdin=subprocess.PIPE,
@@ -376,6 +452,10 @@ class CUIndicatorController:
                 ack = protocol.decode_ack(line)
                 if ack in protocol.ALL_COMMANDS:
                     self._acks.put(ack)
+                    continue
+                event = protocol.decode_event(line)
+                if event is not None:
+                    self._on_sidecar_event(event)
         except Exception:  # noqa: BLE001
             log.debug("[cu-indicator] ack pipe closed", exc_info=True)
 

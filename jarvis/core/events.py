@@ -1338,6 +1338,17 @@ class AppshotTaken(Event):
 
 
 @dataclass(frozen=True, slots=True)
+class AppshotEditRequested(Event):
+    """The user clicked the appshot card in the screen corner: open the editor.
+
+    The app shows its window and opens the appshot editor on the picture held
+    as the last appshot. ``appshot_id`` is empty when none is kept any more.
+    """
+
+    appshot_id: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class ActionPlanned(Event):
     """The CU loop planner proposed the next action (before execution)."""
     action_kind: str = ""               # "click" | "type" | "hotkey" | "wait" | "verify"
