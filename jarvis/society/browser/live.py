@@ -23,6 +23,9 @@ log = logging.getLogger(__name__)
 RPC = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 MAX_LINE = 8 * 1024 * 1024
 _FORCED_CLOSE_TIMEOUT_S = 2.0
+# One login owner can use 2 s to acknowledge shutdown, 12 s to flush Chrome
+# and release native capture, then 2 s to reap. Parallel owners share a budget.
+_SESSIONS_CLOSE_TIMEOUT_S = 17.0
 _BUSY = "This browser is busy or under manual control"
 _PAUSED = (
     "This browser is paused until you allow the action in the browser panel. "
@@ -85,6 +88,7 @@ class LiveSession:
     rpc: dict[str, RPC] = field(default_factory=dict)
     rpc_context: contextvars.Context | None = None
     control_owner: str | None = None
+    manual_epoch: str = ""
     active_trace: str = ""
     active_chat: str = ""
     generation: str = ""
@@ -588,6 +592,7 @@ class LiveSessions:
                     "full_window": bool(result.get("full_window")),
                     "login_available": bool(result.get("login_available")),
                     "login_mode": bool(result.get("login_mode")),
+                    "login_ready": bool(result.get("login_ready")),
                 }
                 self.sessions[agent_id] = session
                 self.release_when_idle(session)
@@ -629,9 +634,22 @@ class LiveSessions:
                 await session.command("subscribe", {"enabled": False})
                 self.release_when_idle(session)
 
-    async def control(self, session: LiveSession, owner: str, op: str, args: dict) -> dict:
+    async def control(
+        self,
+        session: LiveSession,
+        owner: str,
+        op: str,
+        args: dict,
+        *,
+        expected_manual: tuple[str, str] | None = None,
+    ) -> dict:
         if op == "takeover":
             async with session.control_lock:
+                if expected_manual is not None and (
+                    (session.manual_epoch, session.generation) != expected_manual
+                    or not (session.state.get("manual") or session.state.get("login_mode"))
+                ):
+                    raise ValueError("This login session has already ended")
                 if session.control_owner not in {None, owner}:
                     raise ValueError("Browser is controlled by another viewer")
                 if args.get("enabled") and "approval" in session.attention:
@@ -679,6 +697,16 @@ class LiveSessions:
                     manual=result.get("manual", bool(args.get("enabled"))),
                     login_mode=result.get("login_mode", session.state.get("login_mode", False)),
                 )
+                generation = result.get("generation")
+                if isinstance(generation, str) and generation:
+                    session.generation = generation
+                if session.state.get("manual") or session.state.get("login_mode"):
+                    if not getattr(session, "manual_epoch", ""):
+                        session.manual_epoch = uuid4().hex
+                else:
+                    # A viewer reclaim stays in the same cycle. Successful
+                    # handback revokes API completion rights for that cycle.
+                    session.manual_epoch = ""
                 if not session.control_owner and session.window_upgrade_pending:
                     session.publish({"kind": "disconnected"})
                 session.publish({"kind": "control", "ok": True, **result})
@@ -779,7 +807,7 @@ class LiveSessions:
             if owned:
                 # Unlike gather, wait returns immediately on caller cancellation,
                 # so a reluctant idle/RPC task cannot defeat the server deadline.
-                _done, pending = await asyncio.wait(owned, timeout=9)
+                _done, pending = await asyncio.wait(owned, timeout=_SESSIONS_CLOSE_TIMEOUT_S)
                 if pending:
                     raise TimeoutError("browser sessions shutdown incomplete")
             for task in closing:

@@ -78,6 +78,9 @@ _WS_SEND_TIMEOUT_S = 3.0
 # Level samples are disposable animation data. If the socket is busy, discard
 # a sample instead of letting a visual update queue behind functional frames.
 _WS_LEVEL_SEND_TIMEOUT_S = 0.25
+# Society joins its watchers (2 s), then browser owners (17 s). Leave another
+# 3 s for stores and containment cleanup before reporting an incomplete stop.
+_SOCIETY_SHUTDOWN_TIMEOUT_S = 22.0
 
 # How long the realtime transport warm is held back after boot. Warming can
 # spawn a provider's app-server and verify a live account, so it must not
@@ -3818,7 +3821,7 @@ class WebServer:
             try:
                 # The runtime owns delivery tasks, subscriptions and SQLite as
                 # well as the browser. Leaving its store open prevents exit.
-                await asyncio.wait_for(society.close(), timeout=5.0)
+                await asyncio.wait_for(society.close(), timeout=_SOCIETY_SHUTDOWN_TIMEOUT_S)
             except Exception as exc:  # noqa: BLE001 -- finish independent cleanup below
                 society_shutdown_failure = type(exc).__name__
                 logger.warning("Society runtime cleanup incomplete ({})", society_shutdown_failure)

@@ -77,6 +77,7 @@ async def test_login_cancels_and_awaits_task_before_replacing_browser(runtime):
     assert events.index(("context", "closed")) < events.index(("plain", "started"))
     assert events.index(("playwright", "stopped")) < events.index(("plain", "started"))
     assert result["login_mode"] and result["manual"] and result["login_available"]
+    assert result["login_ready"]
     assert not worker.agent_gate.is_set()
     assert worker.context is worker.browser is worker.playwright is None
     assert worker.latest is None and not worker.target and not worker.tabs
@@ -430,3 +431,28 @@ async def test_closed_login_window_leaves_agent_paused_and_worker_alive(runtime)
     assert not worker.closed and worker.login_mode and not worker.agent_gate.is_set()
     assert runtime.wire[-1][0] == "warning"
     assert not any(kind == "fatal" for kind, _ in runtime.wire)
+
+
+async def test_failed_selection_does_not_present_the_old_automated_window_as_plain(
+    runtime, monkeypatch
+):
+    worker = runtime.worker
+    old_context = worker.context
+
+    def unavailable(profile):
+        raise RuntimeError("Update installed Chrome first")
+
+    monkeypatch.setattr(sys.modules["manual_chrome"], "select_chrome_executable", unavailable)
+    with pytest.raises(RuntimeError, match="Update installed Chrome"):
+        await worker.command("takeover", {"enabled": True, "login": True})
+    assert worker.context is old_context
+    assert worker.status()["login_mode"] and not worker.status()["login_ready"]
+    assert not worker.agent_gate.is_set()
+    worker.viewers = True
+
+    async def stop_after_tick(_seconds):
+        worker.closed = True
+
+    monkeypatch.setattr(runtime.module.asyncio, "sleep", stop_after_tick)
+    await worker.watch()
+    assert not any(kind == "frame" for kind, _ in runtime.wire)

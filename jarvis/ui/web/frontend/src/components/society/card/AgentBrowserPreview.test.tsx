@@ -27,13 +27,15 @@ vi.mock("@/i18n", () => ({
     "society.browser_profiles.inline_login": "Sign in",
     "society.browser_profiles.inline_login_finish": "Hand back to agent",
     "society.browser_profiles.inline_login_hint": "Sign in here in Chrome.",
+    "society.browser_profiles.inline_login_active": "Regular Chrome — manual browsing",
+    "society.browser_profiles.inline_login_not_ready": "Regular Chrome is not ready",
   } as Record<string, string>)[key] ?? key,
 }));
 const { control, state, view, browser } = vi.hoisted(() => ({
   control: vi.fn(),
   view: vi.fn(),
   browser: { open: true, mode: "own", connected: true, profileName: "" },
-  state: { connected: true, ready: true, fullWindow: false, extendedInput: false, previewPaused: false, loginMode: false, loginAvailable: false, manual: false, running: false,
+  state: { connected: true, ready: true, fullWindow: false, extendedInput: false, previewPaused: false, loginMode: false, loginReady: false, loginAvailable: false, manual: false, running: false,
     url: "https://example.com", target: "one", tabs: [{ id: "one", url: "https://example.com" }], error: "" },
 }));
 vi.mock("./useBrowserView", () => ({
@@ -61,7 +63,7 @@ afterEach(() => {
   state.manual = false; state.fullWindow = false; state.extendedInput = false; state.previewPaused = false; state.ready = true; state.error = ""; browser.open = true;
   browser.mode = "own"; browser.connected = true; browser.profileName = "";
   state.url = "https://example.com";
-  state.loginMode = false; state.loginAvailable = false;
+  state.loginMode = false; state.loginReady = false; state.loginAvailable = false;
 });
 describe("live agent browser", () => {
   test("a rejected Google login recovers once inside the browser already controlled by its viewer", async () => {
@@ -94,7 +96,7 @@ describe("live agent browser", () => {
     expect(control).not.toHaveBeenCalled();
   });
   test("inline sign-in keeps the canvas and explicitly returns the profile to the agent", () => {
-    state.manual = true; state.loginMode = true; state.loginAvailable = true;
+    state.manual = true; state.loginMode = true; state.loginReady = true; state.loginAvailable = true;
     mount();
     expect(screen.getByText("Sign in here in Chrome.")).toBeTruthy();
     expect(screen.getByLabelText("Live browser of Scout")).toBeTruthy();
@@ -188,6 +190,13 @@ describe("live agent browser", () => {
     mount();
     fireEvent.keyDown(screen.getByLabelText("Live browser of Scout"), { key: "x" });
     expect(control).toHaveBeenCalledWith("text", { text: "x" });
+  });
+  test("a failed transition never labels the automated browser as regular Chrome", () => {
+    state.manual = true; state.loginMode = true; state.loginAvailable = true; state.ready = false;
+    mount();
+    expect(screen.getAllByText(/Regular Chrome is not ready/).length).toBeGreaterThan(0);
+    expect(screen.queryByText("Sign in here in Chrome.")).toBeNull();
+    expect(screen.getByRole("button", { name: "Sign in" })).toBeTruthy();
   });
   test("native menus receive right click, double click and scroll at the shown frame position", () => {
     state.manual = true; state.fullWindow = true; state.extendedInput = true;

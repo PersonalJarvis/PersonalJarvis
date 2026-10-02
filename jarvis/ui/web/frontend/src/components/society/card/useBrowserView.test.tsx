@@ -35,6 +35,56 @@ async function mount() {
   return hook;
 }
 
+test.each(["button", "first click", "already manual"])("%s enters regular Chrome on any website", async (entry) => {
+  class ReadyImage {
+    width = 1280; height = 800;
+    onload?: () => void;
+    set src(_value: string) { this.onload?.(); }
+  }
+  vi.stubGlobal("Image", ReadyImage);
+  const hook = await mount();
+  const canvas = document.createElement("canvas");
+  vi.spyOn(canvas, "getContext").mockReturnValue({ drawImage: vi.fn() } as unknown as CanvasRenderingContext2D);
+  Object.defineProperty(hook.result.current.canvas, "current", { value: canvas, writable: true });
+  act(() => {
+    Socket.current.onmessage?.({ data: JSON.stringify({ kind: "state", generation: "automated",
+      manual: entry === "already manual", login_available: true, login_mode: false, url: "https://example.com", tabs: [] }) });
+    if (entry === "already manual") Socket.current.onmessage?.({ data: JSON.stringify({ kind: "control", ok: true, manual: true }) });
+    Socket.current.onmessage?.({ data: JSON.stringify({ kind: "frame", data: "fixture", generation: "automated", sequence: 1, timestamp: Date.now() / 1000 }) });
+    if (entry === "button") hook.result.current.control("takeover", { enabled: true });
+    else hook.result.current.control("click", { x: 20, y: 40 });
+  });
+  expect(Socket.current.send.mock.calls.map(([value]) => JSON.parse(value))).toEqual([
+    { op: "takeover", args: { enabled: true, login: true } },
+  ]);
+  // Acknowledgement can beat the state heartbeat. The old click must still be dropped.
+  act(() => Socket.current.onmessage?.({ data: JSON.stringify({ kind: "control", ok: true,
+    manual: true, login_mode: true, login_ready: true, generation: "plain" }) }));
+  expect(Socket.current.send).toHaveBeenCalledTimes(1);
+});
+
+test("a paused failed transition cannot expose old pixels or accept credentials", async () => {
+  const image = vi.fn();
+  vi.stubGlobal("Image", image);
+  const hook = await mount();
+  act(() => Socket.current.onmessage?.({ data: JSON.stringify({ kind: "state", generation: "failed",
+    manual: true, login_available: true, login_mode: true, login_ready: false, tabs: [] }) }));
+  act(() => {
+    Socket.current.onmessage?.({ data: JSON.stringify({ kind: "frame", data: "old", generation: "failed", sequence: 1, timestamp: Date.now() / 1000 }) });
+    hook.result.current.control("text", { text: "private input" });
+  });
+  expect(image).not.toHaveBeenCalled();
+  expect(Socket.current.send).not.toHaveBeenCalled();
+  expect(hook.result.current.state.loginReady).toBe(false);
+  expect(hook.result.current.state.ready).toBe(false);
+  for (let i = 0; i < 3; i++) act(() => {
+    vi.advanceTimersByTime(4000);
+    Socket.current.onmessage?.({ data: JSON.stringify({ kind: "state", generation: "failed",
+      manual: true, login_available: true, login_mode: true, login_ready: false, tabs: [] }) });
+  });
+  expect(Socket.current.close).not.toHaveBeenCalled();
+});
+
 test("inline login is capability gated and never buffers input across browser replacement", async () => {
   class ReadyImage {
     width = 1280; height = 800;
@@ -55,8 +105,8 @@ test("inline login is capability gated and never buffers input across browser re
     Socket.current.onmessage?.({ data: JSON.stringify({ kind: "control", ok: true }) });
     hook.result.current.control("text", { text: "must not reach another browser" });
     Socket.current.onmessage?.({ data: JSON.stringify({ kind: "state", generation: "login",
-      manual: true, login_available: true, login_mode: true, tabs: [] }) });
-    Socket.current.onmessage?.({ data: JSON.stringify({ kind: "control", ok: true, manual: true, login_mode: true }) });
+      manual: true, login_available: true, login_mode: true, login_ready: true, tabs: [] }) });
+    Socket.current.onmessage?.({ data: JSON.stringify({ kind: "control", ok: true, manual: true, login_mode: true, login_ready: true }) });
   });
   expect(hook.result.current.state.loginMode).toBe(true);
   expect(hook.result.current.state.previewPaused).toBe(false);

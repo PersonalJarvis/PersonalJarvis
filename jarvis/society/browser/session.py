@@ -151,6 +151,7 @@ class BrowserJobs:
         self.live.cdp_url = cdp_url
         self._procs: dict[str, asyncio.subprocess.Process] = {}
         self._locks: dict[str, asyncio.Lock] = {}
+        self._login_sessions: dict[str, tuple[Any, str, str]] = {}
 
     # ------------------------------------------------------------ status
 
@@ -375,27 +376,74 @@ class BrowserJobs:
         self, agent: AgentRecord, *, start_url: str = "", wall_s: float = LOGIN_WALL_S
     ) -> dict[str, Any]:
         """Hand the existing live session to the user, without a second runner."""
-        try:
-            session = await self.live.ensure(agent, window_view=True)
+        async with self._lock(agent.agent_id):
+            session = None
             owner = f"login:{agent.agent_id}"
-            await self.live.control(session, owner, "takeover", {"enabled": True})
-            if start_url:
-                await self.live.control(session, owner, "navigate", {"url": start_url})
-            return {
-                "ok": True,
-                "manual": True,
-                "logged_in_profile": None,
-                "authentication": "unknown",
-            }
-        except (ValueError, RuntimeError) as exc:
-            raise BrowserUnavailable(FailureReason.TARGET_BUSY, str(exc)) from exc
+            try:
+                session = await self.live.ensure(agent, window_view=True)
+                takeover: dict[str, Any] = {"enabled": True}
+                if session.state.get("login_available"):
+                    takeover["login"] = True
+                result = await self.live.control(session, owner, "takeover", takeover)
+                self._login_sessions[agent.agent_id] = (
+                    session, session.manual_epoch, session.generation
+                )
+                if start_url:
+                    navigation: dict[str, Any] = {"url": start_url}
+                    if session.state.get("login_available"):
+                        # The login transition replaces the surface. Only its new
+                        # generation may receive input into the native address bar.
+                        navigation["generation"] = result.get("generation")
+                        if not navigation["generation"]:
+                            raise RuntimeError("The sign-in window did not report its new surface")
+                    await self.live.control(session, owner, "navigate", navigation)
+                return {
+                    "ok": True,
+                    "manual": True,
+                    "logged_in_profile": None,
+                    "authentication": "unknown",
+                }
+            except (ValueError, RuntimeError) as exc:
+                raise BrowserUnavailable(FailureReason.TARGET_BUSY, str(exc)) from exc
+            finally:
+                if session is not None and session.control_owner == owner:
+                    # The HTTP request prepares the window; its viewer must claim
+                    # its own lease. Releasing this lease never resumes automation.
+                    session.control_owner = None
 
     async def end_login(self, agent_id: str) -> bool:
         """Return the same signed-in browser to automation; never discard its profile."""
-        session = self.live.sessions.get(agent_id)
-        owner = f"login:{agent_id}"
-        if session is None or session.closed or session.control_owner != owner:
-            return False
-        await self.live.control(session, owner, "takeover", {"enabled": False})
-        self.live.release_when_idle(session)
-        return True
+        async with self._lock(agent_id):
+            session = self.live.sessions.get(agent_id)
+            prepared = self._login_sessions.get(agent_id)
+            if (
+                session is None
+                or session.closed
+                or prepared is None
+                or prepared[0] is not session
+                or session.control_owner is not None
+                or not (session.state.get("manual") or session.state.get("login_mode"))
+                or (session.manual_epoch, session.generation) != prepared[1:]
+            ):
+                return False
+            takeover: dict[str, Any] = {"enabled": False}
+            if session.state.get("login_available") or session.state.get("login_mode"):
+                takeover["login"] = False
+            try:
+                await self.live.control(
+                    session, f"login:{agent_id}", "takeover", takeover,
+                    expected_manual=prepared[1:],
+                )
+            except ValueError:
+                # A viewer can begin another cycle while this call waits for
+                # control_lock. Its stale API completion must not release it.
+                if (
+                    session.control_owner is not None
+                    or (session.manual_epoch, session.generation) != prepared[1:]
+                    or not (session.state.get("manual") or session.state.get("login_mode"))
+                ):
+                    return False
+                raise
+            self._login_sessions.pop(agent_id, None)
+            self.live.release_when_idle(session)
+            return True

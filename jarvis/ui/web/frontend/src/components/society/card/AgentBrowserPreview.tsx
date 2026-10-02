@@ -61,7 +61,7 @@ export function AgentBrowserPreview({ agent }: { agent: SocietyAgent }) {
     : chromeDisconnected
     ? t("society.browser_profiles.chrome_offline")
     : state.loginMode
-    ? t("society.browser_profiles.inline_login_active")
+    ? t(state.loginReady ? "society.browser_profiles.inline_login_active" : "society.browser_profiles.inline_login_not_ready")
     : state.previewPaused
     ? t("society.browser_profiles.sign_in_chrome")
     : !live
@@ -183,7 +183,7 @@ export function AgentBrowserPreview({ agent }: { agent: SocietyAgent }) {
       </div>
       <div className="mt-2 flex flex-wrap justify-center gap-1">
         <BrowserProfilesButton agentId={agent.agentId} />
-        {managedRuntime && state.loginAvailable && !state.loginMode && !rejectedGoogle && <button className={signInClass}
+        {managedRuntime && state.loginAvailable && (!state.loginMode || !state.loginReady) && !rejectedGoogle && <button className={signInClass}
           disabled={!live || !state.connected || state.controlPending}
           onClick={() => { setExpanded(true); control("takeover", { enabled: true, login: true }); }}>
           {t("society.browser_profiles.inline_login")}
@@ -195,7 +195,10 @@ export function AgentBrowserPreview({ agent }: { agent: SocietyAgent }) {
         </button>
         {state.running && <button className={buttonClass} onClick={() => control("cancel")}>{t("society.browser_live.cancel")}</button>}
       </div>
-      {state.loginMode && <p role="status" className="mt-2 text-center text-xs text-muted-foreground">
+      {managedRuntime && state.loginAvailable && state.running && !state.manual && <p className="mt-2 text-center text-xs text-muted-foreground">
+        {t("society.browser_profiles.takeover_stops_task")}
+      </p>}
+      {state.loginMode && state.loginReady && <p role="status" className="mt-2 text-center text-xs text-muted-foreground">
         {t("society.browser_profiles.inline_login_hint")}
       </p>}
       {rejectedGoogle && !state.loginMode && <div role="alert"

@@ -23,7 +23,10 @@ Return exactly one JSON object: {"action": {"navigate": {"url": "https://..."}}}
 Do not claim an action succeeded without observing its result. Do not publish,
 send, purchase, delete, or change settings unless required by the user's task.
 Stop if login, identity, or action completion is uncertain. File upload, downloads,
-arbitrary JavaScript, other tabs, and browser configuration are unsupported."""
+arbitrary JavaScript, other tabs, and browser configuration are unsupported.
+This local browser has no CAPTCHA-solving service. If human verification is
+required, stop and ask the person to take control. Do not solve image grids,
+click verification widgets, reload repeatedly, or retry the challenge."""
 
 
 class ChromeSession:
@@ -49,6 +52,7 @@ class ChromeSession:
         self.readers: list[asyncio.Task] = []
         self.run_lock, self.control_lock = asyncio.Lock(), asyncio.Lock()
         self.control_owner: str | None = None
+        self.manual_epoch = ""
         self.active_trace = self.active_chat = ""
         self.rpc: dict[str, Any] = {}
         self.rpc_context: contextvars.Context | None = None

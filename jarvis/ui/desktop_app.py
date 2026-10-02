@@ -139,6 +139,12 @@ _REALTIME_WARM_MIN_INTERVAL_S = 20.0
 #: above a full cold boot, including model prefetch on a cold disk.
 _BACKEND_MIN_UPTIME_FOR_RECOVERY_S = 120.0
 
+# The legacy shell must outwait the server's 22 s Society cleanup budget.
+# Its force-exit backstop also covers overlay/workflow/PTY/bootstrap cleanup
+# before that wait, then thread joins. Healthy shutdown still returns early.
+_SERVER_SHUTDOWN_WAIT_S = 23.0
+_SHUTDOWN_FORCE_EXIT_MIN_S = 45.0
+
 
 def _clamp_pet_scale(value: object) -> float:
     """``[ui] pet_scale`` as a usable multiplier: 0.5–2.0, 1.0 when unusable."""
@@ -6365,6 +6371,10 @@ class DesktopApp:
         bounded worst case, so it only fires on a genuine infinite hang.
         """
 
+        # Older callers request 20 s. Never let that outer deadline interrupt
+        # a healthy Chrome profile flush inside the server's longer cleanup.
+        after_s = max(after_s, _SHUTDOWN_FORCE_EXIT_MIN_S)
+
         def _kill() -> None:
             time.sleep(after_s)
             os._exit(0)
@@ -6591,7 +6601,7 @@ class DesktopApp:
             try:
                 fut = asyncio.run_coroutine_threadsafe(server.stop(), loop)
                 try:
-                    fut.result(timeout=3.0)
+                    fut.result(timeout=_SERVER_SHUTDOWN_WAIT_S)
                 except Exception:  # noqa: BLE001, S110
                     # Server shutdown may hang; the event loop still stops forcibly.
                     pass

@@ -71,8 +71,21 @@ are exported or copied and the person's ordinary Chrome profile is not opened.
 Starting sign-in cancels the current browser task. Losing the viewer or failing
 a transition leaves agent control paused until the person explicitly returns
 it. A locked desktop, missing installed Chrome, or unsupported platform does not
-silently switch to another browser. Ordinary **Take control** still pauses a task
-without replacing its browser; **Sign in** performs the disconnected transition.
+silently switch to another browser. On supported managed sessions, **Take
+control** and the first manual click also enter regular Chrome. This stops the
+current browser task; observing an agent's browser does not. A new browser
+generation discards queued clicks from the previous window.
+
+The header identifies regular Chrome only after its owned native window exists
+and every automation handle is disconnected. A failed transition keeps the
+agent paused, hides stale images, and offers a retry. Public login API calls
+use the same handoff and release their temporary lease for the actual viewer.
+
+Local browser instructions explicitly stop at human-verification requirements.
+They do not assume the browser library's cloud CAPTCHA-solving service is
+available. This is agent guidance, not a guarantee that every provider challenge
+can be detected automatically. See the [browser review](browser-verification-review.md)
+for confirmed findings and the remaining live acceptance checks.
 
 This does not promise that every service accepts automation after sign-in;
 service-side restrictions and session revocation still apply. Google's
