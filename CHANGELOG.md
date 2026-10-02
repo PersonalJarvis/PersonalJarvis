@@ -11,6 +11,16 @@ versioning per [SemVer](https://semver.org/).
 
 ---
 
+## [2.7.1] — 2026-10-02
+
+### Fixed
+
+- Bind federation signatures to their endpoint
+- Close first-contact bot pairing after a setup window
+- Sandbox worker HTML even when opened in a browser tab
+
+---
+
 ## [2.7.0] — 2026-10-02
 
 ### Added
