@@ -72,12 +72,22 @@ _DEEP_PATTERNS = (
     "denk gründlich", "denk gruendlich", "denk tief", "denk mal gründlich",  # i18n-allow: German depth-override input-matching data
     "think hard", "think deeply", "deep thinking",
     "nimm opus", "use opus", "opus-modus",
-    "pensa a fondo", "ragiona a fondo", "pensa approfonditamente",  # i18n-allow: Italian depth commands
 )
 _FAST_PATTERNS = (
     "denk schnell", "denk wieder schnell", "normal denken",
     "nimm haiku", "use haiku", "schnell-modus", "think fast",
-    "pensa veloce", "pensa velocemente", "ragiona velocemente",  # i18n-allow: Italian depth commands
+)
+
+# Italian depth commands are deliberately anchored. A substring check would
+# misread descriptive speech such as "dimmi come pensa a fondo un modello" as
+# a control command and steal the turn from the brain.
+_ITALIAN_DEEP_PATTERN = re.compile(
+    r"^(?:jarvis[,\s]+)?(?:pensa\s+(?:a\s+fondo|approfonditamente)|ragiona\s+a\s+fondo)\b",  # i18n-allow: Italian depth-command input
+    re.IGNORECASE,
+)
+_ITALIAN_FAST_PATTERN = re.compile(
+    r"^(?:jarvis[,\s]+)?(?:pensa\s+(?:veloce|velocemente)|ragiona\s+velocemente)\b",  # i18n-allow: Italian depth-command input
+    re.IGNORECASE,
 )
 
 # Reply-language switch (added 2026-06-22, broadened after forensic #2). A
@@ -313,6 +323,10 @@ def match_voice_command(text: str) -> VoiceCommandMatch | None:
         return VoiceCommandMatch(kind="language_switch", target=lang)
 
     # Depth-Override
+    if _ITALIAN_DEEP_PATTERN.search(t):
+        return VoiceCommandMatch(kind="depth_deep")
+    if _ITALIAN_FAST_PATTERN.search(t):
+        return VoiceCommandMatch(kind="depth_fast")
     for p in _DEEP_PATTERNS:
         if p in t:
             return VoiceCommandMatch(kind="depth_deep")
