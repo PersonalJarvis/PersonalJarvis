@@ -15184,9 +15184,8 @@ class SpeechPipeline:
         # under the floor (the sub-second spurious-apology bug, 2026-06-14).
         self._turn_start_monotonic = time.monotonic()
         wake_anchor_ns = getattr(self, "_session_wake_latency_anchor_ns", None)
-        # Consume once: later turns in the same voice session start at their
-        # own endpoint, so they never inherit the original wake interval.
-        self._session_wake_latency_anchor_ns = None
+        # Keep the session anchor until a real intent is dispatched. A user
+        # may say only the wake phrase first, then issue the command next turn.
         self._turn_wake_latency_anchor_ns = wake_anchor_ns
         self._wake_to_intent_e2e_ms = None
         self._latency_tracker = LatencyTracker(
@@ -15491,6 +15490,7 @@ class SpeechPipeline:
                     0.0, (time.perf_counter_ns() - wake_anchor_ns) / 1_000_000
                 )
                 self._turn_wake_latency_anchor_ns = None
+                self._session_wake_latency_anchor_ns = None
             self._latency_tracker.mark(LatencyPhase.INTENT_DECISION)
 
         # Pre-Thinking-Ack Flash-Brain: spawn parallel acknowledgment task

@@ -254,6 +254,43 @@ async def test_handle_utterance_publishes_latency_turn_complete() -> None:
 
 
 @pytest.mark.asyncio
+async def test_wake_anchor_survives_a_wake_only_turn() -> None:
+    bus = EventBus()
+    received: list[LatencyTurnComplete] = []
+
+    async def capture(event: LatencyTurnComplete) -> None:
+        received.append(event)
+
+    class WakeOnlySTT:
+        async def transcribe_pcm(self, _pcm: bytes) -> Transcript:
+            return Transcript(
+                text="hey jarvis", language="en", confidence=0.95, is_partial=False,
+            )
+
+    bus.subscribe(LatencyTurnComplete, capture)
+    pipeline = _make_streaming_pipeline(bus)
+    pipeline._utterance_stt = WakeOnlySTT()  # type: ignore[assignment]
+    pipeline._config = SimpleNamespace(
+        performance=SimpleNamespace(streaming_tts=True, tts_lookahead_sentences=1),
+        latency=None,
+    )
+    anchor_ns = time.perf_counter_ns() - 60_000_000
+    pipeline._session_wake_latency_anchor_ns = anchor_ns
+
+    await pipeline._handle_utterance(b"\x00\x00" * 1600, skip_completion=True)
+    assert pipeline._session_wake_latency_anchor_ns == anchor_ns
+    assert await _settle(lambda: len(received) == 1)
+    assert received[0].wake_to_intent_e2e_ms is None
+
+    pipeline._utterance_stt = _FixedSTT()  # type: ignore[assignment]
+    await pipeline._handle_utterance(b"\x00\x00" * 1600, skip_completion=True)
+    assert pipeline._session_wake_latency_anchor_ns is None
+    assert await _settle(lambda: len(received) == 2)
+    assert received[1].wake_to_intent_e2e_ms is not None
+    assert received[1].wake_to_intent_e2e_ms >= 60.0
+
+
+@pytest.mark.asyncio
 async def test_forced_cut_carry_turn_publishes_no_turn_complete() -> None:
     """A forced-cut fragment (user still talking, turn NOT finalized) must not
     flush a row — it would poison the stats with half-turns."""
