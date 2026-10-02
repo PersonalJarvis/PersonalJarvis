@@ -104,5 +104,22 @@
       "error": "Errore",
       "sleeping": "Sta dormendo"
     }
+  },
+  "settings_view": {
+    "overlay_style": {
+      "title": "Stile overlay",
+      "description": "Scegli come appare {name} sullo schermo durante l’attività vocale.",
+      "label": "Stile",
+      "save": "Salva",
+      "saved": "Stile overlay modificato.",
+      "restart_required": "Salvato — riavvia {name} per applicare.",
+      "options": {
+        "jarvis_bar": "Barra (predefinita)",
+        "mascot": "Mascotte",
+        "voice_orb": "Sfera vocale",
+        "pet": "Pet",
+        "none": "Nessuno (nascosto)"
+      }
+    }
   }
 }
