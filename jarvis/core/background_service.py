@@ -128,10 +128,33 @@ def work_from_state(state: Any) -> BackgroundWork:
     started = getattr(manager, "started", None)
     if callable(started):
         try:
-            channels = tuple(str(name) for name in started())
+            channels = tuple(
+                name
+                for name in (str(raw) for raw in started())
+                if _is_outside_channel(name, state)
+            )
         except Exception:  # noqa: BLE001 — same: unreadable means none to keep
             logger.opt(exception=True).debug("background: channel state unreadable")
     return BackgroundWork(routines=int(routines), running=int(running), channels=channels)
+
+
+#: Channels that only serve the app's own windows — nothing outside reaches them.
+_IN_APP_CHANNELS = frozenset({"web"})
+
+
+def _is_outside_channel(name: str, state: Any) -> bool:
+    """A channel someone outside the app can write to, and that is switched on.
+
+    ``ChannelManager.started()`` also lists the in-app ``web`` channel and a
+    channel whose ``[integrations.<name>] enabled`` is off (its ``start()``
+    returns early yet counts as started) — neither is work worth a background
+    process.
+    """
+    if name in _IN_APP_CHANNELS:
+        return False
+    cfg = getattr(state, "config", None) or getattr(state, "cfg", None)
+    section = getattr(getattr(cfg, "integrations", None), name, None)
+    return section is None or bool(getattr(section, "enabled", True))
 
 
 def keep_running_enabled(cfg: Any) -> bool:
