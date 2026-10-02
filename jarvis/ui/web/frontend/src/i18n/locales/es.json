@@ -6042,7 +6042,7 @@
     "effect_hint": "Un destello breve y una miniatura en la esquina de la pantalla.",
     "effect_unavailable": "No disponible aquí: {0}",
     "try_label": "Probar",
-    "try_hint": "Hace un appshot de la ventana en primer plano tras 3 segundos. Cambia a ella ahora.",
+    "try_hint": "Elige una zona ahora mismo o captura la ventana delantera tras 3 segundos.",
     "try_counting": "Cambia a tu ventana: {0}",
     "try_button": "Appshot en 3 s",
     "try_region_button": "Elegir zona",

@@ -191,6 +191,22 @@ export function AppshotsView() {
   const [saving, setSaving] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
   const [picking, setPicking] = useState(false);
+  // While a shortcut field records (or refuses a gesture), its row says so
+  // in place of the description.
+  const [fieldStatus, setFieldStatus] = useState<{ window: string | null; region: string | null }>({
+    window: null,
+    region: null,
+  });
+  const windowStatus = useCallback(
+    (text: string | null) =>
+      setFieldStatus((s) => (s.window === text ? s : { ...s, window: text })),
+    [],
+  );
+  const regionStatus = useCallback(
+    (text: string | null) =>
+      setFieldStatus((s) => (s.region === text ? s : { ...s, region: text })),
+    [],
+  );
   const countdownTimer = useRef<number | null>(null);
 
   useEffect(() => {
@@ -391,28 +407,34 @@ export function AppshotsView() {
                 />
                 <Row
                   label={t("appshots.shortcut_label")}
-                  hint={shortcutHint}
+                  hint={fieldStatus.window ?? shortcutHint}
                   control={
                     <AppshotShortcutField
                       value={settings.hotkey}
                       isMac={IS_MAC}
                       disabled={disabled || saving}
                       testId="appshots-hotkey"
+                      label={t("appshots.shortcut_label")}
+                      className="w-44"
                       onSave={(hotkey) => save({ hotkey })}
+                      onStatus={windowStatus}
                     />
                   }
                 />
                 {regionSupported && (
                   <Row
                     label={t("appshots.region_shortcut_label")}
-                    hint={regionShortcutHint}
+                    hint={fieldStatus.region ?? regionShortcutHint}
                     control={
                       <AppshotShortcutField
                         value={settings.region_hotkey}
                         isMac={IS_MAC}
                         disabled={disabled || saving}
                         testId="appshots-region-hotkey"
+                        label={t("appshots.region_shortcut_label")}
+                        className="w-44"
                         onSave={(regionHotkey) => save({ region_hotkey: regionHotkey })}
+                        onStatus={regionStatus}
                       />
                     }
                   />

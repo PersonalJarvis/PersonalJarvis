@@ -6075,7 +6075,7 @@
     "effect_hint": "A short flash and a thumbnail in the corner of your screen.",
     "effect_unavailable": "Not available here: {0}",
     "try_label": "Try it",
-    "try_hint": "Takes an appshot of the window in front after 3 seconds. Switch to it now.",
+    "try_hint": "Select an area right away, or capture the window in front after 3 seconds.",
     "try_counting": "Switch to your window: {0}",
     "try_button": "Take appshot in 3 s",
     "try_region_button": "Select area",

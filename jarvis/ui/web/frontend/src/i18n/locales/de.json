@@ -6042,7 +6042,7 @@
     "effect_hint": "Ein kurzer Blitz und eine Mini-Vorschau in der Bildschirmecke.",
     "effect_unavailable": "Hier nicht verfügbar: {0}",
     "try_label": "Ausprobieren",
-    "try_hint": "Macht nach 3 Sekunden einen Appshot vom Fenster im Vordergrund. Wechsle jetzt dorthin.",
+    "try_hint": "Wähle sofort einen Bereich oder nimm nach 3 Sekunden das vordere Fenster auf.",
     "try_counting": "Wechsle zu deinem Fenster: {0}",
     "try_button": "Appshot in 3 s",
     "try_region_button": "Bereich wählen",

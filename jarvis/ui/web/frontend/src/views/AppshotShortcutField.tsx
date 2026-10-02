@@ -1,34 +1,43 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, X } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
 import { useT } from "@/i18n";
 import { formatAppshotHotkey } from "@/lib/appshotApi";
 import { chordFromCodes } from "@/lib/appshotChord";
 import { cn } from "@/lib/utils";
 
 /**
- * One appshot shortcut: the current keys as keycaps, a Change button that
- * records the next key gesture, and an off switch (X).
+ * One appshot shortcut as a single field, styled like the select beside it:
+ * the keys as small keycaps, click to record new ones, a quiet × to turn the
+ * shortcut off. What the user should do while recording (or why a gesture was
+ * refused) is reported through ``onStatus`` so the row can show it in place
+ * of its description instead of pushing the layout around.
  *
  * Recording listens on `window` in the capture phase, so the keys never reach
  * the rest of the app, and commits when every key is let go — "hold your keys,
  * then let go", like the voice keybinds. Both Alt / both Shift / both Ctrl keys
  * on their own record as the two-sided gestures the backend watches. Esc (on
- * its own) or leaving the window cancels and keeps the old shortcut.
+ * its own), a second click or leaving the window cancels and keeps the old
+ * shortcut.
  */
 export function AppshotShortcutField({
   value,
   isMac,
   disabled,
   testId,
+  label,
+  className,
   onSave,
+  onStatus,
 }: {
   value: string;
   isMac: boolean;
   disabled: boolean;
   testId: string;
+  label: string;
+  className?: string;
   onSave: (hotkey: string) => Promise<void>;
+  onStatus?: (text: string | null) => void;
 }) {
   const t = useT();
   const [recording, setRecording] = useState(false);
@@ -36,6 +45,12 @@ export function AppshotShortcutField({
   const [problem, setProblem] = useState("");
   const onSaveRef = useRef(onSave);
   onSaveRef.current = onSave;
+  const onStatusRef = useRef(onStatus);
+  onStatusRef.current = onStatus;
+
+  useEffect(() => {
+    onStatusRef.current?.(recording ? t("appshots.shortcut_recording_hint") : problem || null);
+  }, [recording, problem, t]);
 
   const commit = useCallback(async (hotkey: string) => {
     setSaving(true);
@@ -89,70 +104,63 @@ export function AppshotShortcutField({
   }, [recording, value, commit, t]);
 
   const keys = value ? formatAppshotHotkey(value, isMac).split(" + ") : [];
+  const busy = disabled || saving;
 
   return (
-    <div className="flex flex-col items-end gap-1" data-testid={testId}>
-      <div className="flex items-center gap-2">
-        <div
-          className={cn(
-            "flex min-h-8 min-w-28 items-center justify-end gap-1 rounded-md px-2",
-            recording && "bg-accent/10 ring-1 ring-accent",
-          )}
-          aria-live="polite"
-        >
-          {recording ? (
-            <span className="text-sm text-foreground">{t("appshots.shortcut_recording")}</span>
-          ) : keys.length > 0 ? (
-            keys.map((key, i) => (
-              <Fragment key={`${key}-${i}`}>
-                {i > 0 && <span className="text-xs text-muted-foreground/60">+</span>}
-                <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground shadow-[inset_0_-1px_0_rgba(0,0,0,0.25)]">
-                  {key}
-                </kbd>
-              </Fragment>
-            ))
-          ) : (
-            <span className="text-sm text-muted-foreground">{t("appshots.shortcut_off")}</span>
-          )}
-        </div>
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          disabled={disabled || saving}
-          onClick={() => {
-            setProblem("");
-            setRecording((on) => !on);
-          }}
-          data-testid={`${testId}-change`}
-        >
-          {saving && <Loader2 className="animate-spin" aria-hidden />}
-          {recording ? t("appshots.shortcut_cancel") : t("appshots.shortcut_change")}
-        </Button>
-        {value && !recording && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            disabled={disabled || saving}
-            aria-label={t("appshots.shortcut_clear")}
-            title={t("appshots.shortcut_clear")}
-            onClick={() => void commit("")}
-            data-testid={`${testId}-clear`}
-          >
-            <X aria-hidden />
-          </Button>
+    <div className={cn("relative", className)} data-testid={testId}>
+      <button
+        type="button"
+        disabled={busy}
+        aria-label={`${label}: ${recording ? t("appshots.shortcut_recording") : keys.join(" + ") || t("appshots.shortcut_off")}`}
+        aria-pressed={recording}
+        title={recording ? undefined : t("appshots.shortcut_change")}
+        onClick={() => {
+          setProblem("");
+          setRecording((on) => !on);
+        }}
+        data-testid={`${testId}-change`}
+        className={cn(
+          "flex h-9 w-full items-center gap-1 rounded-md bg-input py-2 pl-3 text-left text-sm text-foreground",
+          "transition-colors duration-150 hover:bg-popover focus:outline-none focus-visible:ring-2 focus-visible:ring-border-strong",
+          value && !recording ? "pr-8" : "pr-3",
+          recording && "bg-popover ring-2 ring-border-strong",
+          busy && "cursor-not-allowed opacity-50",
         )}
-      </div>
-      {recording && (
-        <p className="max-w-72 text-right text-xs text-muted-foreground">
-          {t("appshots.shortcut_recording_hint")}
-        </p>
+      >
+        {saving ? (
+          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" aria-hidden />
+        ) : recording ? (
+          <span className="truncate text-muted-foreground">{t("appshots.shortcut_recording")}</span>
+        ) : keys.length > 0 ? (
+          keys.map((key, i) => (
+            <Fragment key={`${key}-${i}`}>
+              {i > 0 && <span className="px-0.5 text-xs text-muted-foreground">+</span>}
+              <kbd className="rounded border border-border bg-background px-1.5 py-px font-sans text-xs font-medium leading-5 text-foreground">
+                {key}
+              </kbd>
+            </Fragment>
+          ))
+        ) : (
+          <span className="truncate text-muted-foreground">{t("appshots.shortcut_off")}</span>
+        )}
+      </button>
+      {value && !recording && (
+        <button
+          type="button"
+          disabled={busy}
+          aria-label={t("appshots.shortcut_clear")}
+          title={t("appshots.shortcut_clear")}
+          onClick={() => void commit("")}
+          data-testid={`${testId}-clear`}
+          className="absolute right-1.5 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-background hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-border-strong disabled:opacity-50"
+        >
+          <X className="h-3.5 w-3.5" aria-hidden />
+        </button>
       )}
-      {!recording && problem && (
-        <p className="max-w-72 text-right text-xs text-destructive" role="alert">
+      {problem && !recording && (
+        <span className="sr-only" role="alert">
           {problem}
-        </p>
+        </span>
       )}
     </div>
   );
