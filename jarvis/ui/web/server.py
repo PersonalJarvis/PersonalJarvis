@@ -90,6 +90,7 @@ REALTIME_WARM_BOOT_DELAY_S = 5.0
 # Both surfaces schedule onto ONE event loop in a desktop boot, so the task
 # name is what keeps that boot from warming the same transports twice.
 REALTIME_WARM_TASK_NAME = "realtime-transport-warm"
+_REGISTRY_BOOTSTRAP_STOP_TIMEOUT_S = 5.0
 
 
 class WebServer:
@@ -129,6 +130,8 @@ class WebServer:
         self._doc_registry: Any | None = None
         self._cli_registry: Any | None = None
         self._plugin_registry: Any | None = None
+        self._cli_bootstrap_task: asyncio.Task[None] | None = None
+        self._plugin_bootstrap_task: asyncio.Task[None] | None = None
         # Marketplace OAuth refresh belongs to the shared WebServer lifecycle,
         # not to one launcher. The actual scheduler is created with call_soon
         # at the end of start(), after the serving/readiness path has returned;
@@ -2778,35 +2781,8 @@ class WebServer:
                     "DocRegistry watcher start failed — no hot-reload"
                 )
 
-        # Bootstrap the CLI registry asynchronously — probes all catalog CLIs
-        # and builds tool instances. ``asyncio.create_task`` runs the call as
-        # a background task so ``start()`` itself doesn't block.
-        if self._cli_registry is not None:
-
-            async def _bootstrap_clis() -> None:
-                try:
-                    await self._cli_registry.bootstrap()
-                except Exception as exc:  # noqa: BLE001
-                    logger.opt(exception=exc).warning(
-                        "CliToolRegistry bootstrap failed — CLIs view empty"
-                    )
-
-            asyncio.create_task(_bootstrap_clis(), name="cli-registry-bootstrap")
-
-        # Bootstrap the plugin registry asynchronously — opens an in-process
-        # MCPClient per connected plugin and bridges its tools into the
-        # live brain (BrainToolsChanged re-expands). Mirrors the CLI registry.
-        if self._plugin_registry is not None:
-
-            async def _bootstrap_plugins() -> None:
-                try:
-                    await self._plugin_registry.bootstrap()
-                except Exception as exc:  # noqa: BLE001
-                    logger.opt(exception=exc).warning(
-                        "PluginToolRegistry bootstrap failed — plugins worker-only"
-                    )
-
-            asyncio.create_task(_bootstrap_plugins(), name="plugin-registry-bootstrap")
+        # These owners must settle before shutdown closes their registries.
+        self._schedule_registry_bootstraps()
 
         # Board aggregator as a never-ending task. run_forever() does an
         # on-startup run first and then sleeps 6h (Plan §5-A Decision #2).
@@ -3808,6 +3784,48 @@ class WebServer:
         self.bus.subscribe(DelegationResultReady, self._forward_delegation_to_chat)
         return AgentChatService(store, assistant_name=_name, bus=lambda: self.bus)
 
+    def _schedule_registry_bootstraps(self) -> None:
+        """Start registry discovery after composition without delaying readiness."""
+        async def bootstrap(registry: Any, label: str) -> None:
+            try:
+                await registry.bootstrap()
+            except Exception as exc:  # noqa: BLE001 -- other registries remain usable
+                logger.opt(exception=exc).warning("{} registry bootstrap failed", label)
+
+        for registry, attribute, label in (
+            (self._cli_registry, "_cli_bootstrap_task", "cli"),
+            (self._plugin_registry, "_plugin_bootstrap_task", "plugin"),
+        ):
+            existing = getattr(self, attribute, None)
+            if registry is not None and (existing is None or existing.done()):
+                setattr(self, attribute, asyncio.create_task(
+                    bootstrap(registry, label), name=f"{label}-registry-bootstrap",
+                ))
+
+    async def _stop_registry_bootstraps(self) -> bool:
+        """Cancel both owners before awaiting either one's resource cleanup."""
+        owners = {
+            attribute: task
+            for attribute in ("_cli_bootstrap_task", "_plugin_bootstrap_task")
+            if (task := getattr(self, attribute, None)) is not None
+        }
+        for task in owners.values():
+            if not task.done() and not task.cancelling():
+                task.cancel()
+        if not owners:
+            return True
+        done, pending = await asyncio.wait(
+            set(owners.values()), timeout=_REGISTRY_BOOTSTRAP_STOP_TIMEOUT_S,
+        )
+        for attribute, task in owners.items():
+            if task in done:
+                if not task.cancelled() and (error := task.exception()) is not None:
+                    logger.warning("Registry bootstrap stopped with {}", type(error).__name__)
+                setattr(self, attribute, None)
+        if pending:
+            logger.warning("{} registry bootstrap owner(s) still stopping", len(pending))
+        return not pending
+
     async def stop(self) -> None:
         # Fence lazy creation even when no Society owner exists yet. The shared
         # brain factory and HTTP surface can still be called while shutdown awaits.
@@ -3824,6 +3842,7 @@ class WebServer:
             # Keep only the type: cleanup failures can contain private payloads.
             mars_shutdown_failure = type(exc).__name__
             logger.warning("Mars station cleanup incomplete ({})", mars_shutdown_failure)
+        registry_bootstraps_stopped = await self._stop_registry_bootstraps()
         if self._browser_prepare_task is not None:
             self._browser_prepare_task.cancel()
             await asyncio.gather(self._browser_prepare_task, return_exceptions=True)
@@ -3890,7 +3909,13 @@ class WebServer:
         # AsyncExitStack / subprocess) is closed cleanly. Without this, an
         # in-process restart (--no-lock parallel dev, test teardown) would leave
         # a stale shared handle and leaked MCP sessions.
-        if self._plugin_registry is not None:
+        # A timed-out bootstrap may still hold the registry lock while cleaning
+        # up. Keep both references for a later stop attempt; closing it now can
+        # block indefinitely on that same lock.
+        if (
+            self._plugin_registry is not None
+            and getattr(self, "_plugin_bootstrap_task", None) is None
+        ):
             try:
                 from jarvis.marketplace.plugin_shared import set_active_plugin_registry
 
@@ -4153,6 +4178,8 @@ class WebServer:
             raise RuntimeError(f"mars_station_shutdown_incomplete ({mars_shutdown_failure})")
         if society_shutdown_failure is not None:
             raise RuntimeError(f"society_runtime_shutdown_incomplete ({society_shutdown_failure})")
+        if not registry_bootstraps_stopped:
+            raise RuntimeError("registry_bootstrap_shutdown_incomplete")
 
     @property
     def running(self) -> bool:

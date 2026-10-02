@@ -603,6 +603,8 @@ jobs:
           tests/unit/live/test_subscription_wire.py
           tests/unit/live/test_login_helper.py
           tests/unit/test_agent_login_flow.py
+          tests/unit/clis/test_prober_cancellation.py
+          tests/unit/ui/web/test_registry_bootstrap_shutdown.py
           -q -p no:cacheprovider
 
   # The in-app updater on every OS it ships to. Each one replaces a running
@@ -719,6 +721,8 @@ jobs:
           tests/unit/live/test_subscription_wire.py
           tests/unit/live/test_login_helper.py
           tests/unit/test_agent_login_flow.py
+          tests/unit/clis/test_prober_cancellation.py
+          tests/unit/ui/web/test_registry_bootstrap_shutdown.py
           -q -p no:cacheprovider
 
   soak:
