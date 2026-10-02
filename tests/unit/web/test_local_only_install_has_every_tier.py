@@ -68,8 +68,14 @@ def _inherits_an_address(spec: ProviderSpec) -> bool:
     second field — but it must genuinely follow that address rather than keep a
     localhost copy that breaks the moment the server moves.
     """
+    from jarvis.brain.ollama_pull import server_root
     from jarvis.dictation.polish_client import POLISH_FAMILIES
+    from jarvis.plugins.realtime.local_voice import LocalVoiceProvider, _ollama_root
 
+    if spec.id == LocalVoiceProvider.name:
+        # The local voice engine answers from the Ollama server the brain card
+        # configures; it must resolve that address, not keep its own.
+        return _ollama_root() == server_root()
     return any(
         family.id in spec.id and bool(family.endpoint_provider)
         for family in POLISH_FAMILIES
