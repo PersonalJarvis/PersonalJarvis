@@ -119,6 +119,12 @@ def _child_python() -> str:
     for prefix in dict.fromkeys((sys.prefix, sys.base_prefix)):
         root = Path(prefix)
         dirs += [root / "Scripts", root] if sys.platform == "win32" else [root / "bin"]
+    if sys.platform == "win32":
+        # A relocated copy finds no prefix landmark, so ``sys.prefix`` (and the
+        # frozen ``os.__file__``) fall back to the working directory. The
+        # stdlib path the registry supplied is still on ``sys.path`` as
+        # ``<install>\Lib`` / ``<install>\DLLs``, beside that install's python.exe.
+        dirs += [Path(p).parent for p in sys.path if Path(p).name.lower() in ("lib", "dlls")]
     for directory in dirs:
         for name in names:
             candidate = directory / name

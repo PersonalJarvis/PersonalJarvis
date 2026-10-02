@@ -463,6 +463,7 @@ def test_the_worker_interpreter_is_found_when_the_branded_exe_stands_alone(
     monkeypatch.setattr(sys, "executable", str(branded))
     monkeypatch.setattr(sys, "prefix", str(env))
     monkeypatch.setattr(sys, "base_prefix", str(tmp_path / "missing"))
+    monkeypatch.setattr(sys, "path", [str(tmp_path / "missing" / "Lib")])
 
     assert local_preview._child_python() == str(interp)
 
@@ -477,6 +478,30 @@ def test_a_missing_worker_interpreter_still_fails_loudly(monkeypatch, tmp_path):
     monkeypatch.setattr(sys, "executable", str(branded))
     monkeypatch.setattr(sys, "prefix", str(tmp_path / "nowhere"))
     monkeypatch.setattr(sys, "base_prefix", str(tmp_path / "nowhere"))
+    monkeypatch.setattr(sys, "path", [str(tmp_path / "nowhere" / "Lib")])
 
     with pytest.raises(RuntimeError, match="no python interpreter"):
         local_preview._child_python()
+
+
+def test_a_relocated_copy_with_a_lost_prefix_finds_the_stdlib_install(monkeypatch, tmp_path):
+    """Without a prefix landmark, ``sys.prefix`` is the working directory;
+    the registry-supplied stdlib on ``sys.path`` still names the install."""
+    import sys
+
+    from jarvis.dictation import local_preview
+
+    if sys.platform != "win32":
+        pytest.skip("the relocated branded copy exists only on Windows")
+    branded = tmp_path / "bin" / "PersonalJarvis.exe"
+    branded.parent.mkdir()
+    branded.write_bytes(b"")
+    install = tmp_path / "Python311"
+    (install / "Lib").mkdir(parents=True)
+    (install / "python.exe").write_bytes(b"")
+    monkeypatch.setattr(sys, "executable", str(branded))
+    monkeypatch.setattr(sys, "prefix", str(tmp_path / "cwd"))
+    monkeypatch.setattr(sys, "base_prefix", str(tmp_path / "cwd"))
+    monkeypatch.setattr(sys, "path", ["", str(install / "Lib"), str(tmp_path / "cwd")])
+
+    assert local_preview._child_python() == str(install / "python.exe")
