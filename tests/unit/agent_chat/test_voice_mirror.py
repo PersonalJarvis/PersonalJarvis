@@ -228,3 +228,29 @@ def test_binding_rejects_unknown_and_foreign_surface_chats(tmp_path: Path) -> No
         svc.bind_voice_chat("missing")
     with pytest.raises(NoSuchSession):
         svc.bind_voice_chat(coding.session_id)
+
+
+def test_a_chat_opened_by_a_call_keeps_the_persons_chat_model(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        svc = _service(tmp_path)
+        typed = _open_session(svc)
+        svc.bind_voice_chat(None)
+        bus = EventBus()
+        VoiceChatMirror(lambda: svc).attach(bus)
+        await bus.publish(
+            VoiceTurnCompleted(
+                session_id="call-1",
+                turn_id="t1",
+                user_text="hello",
+                jarvis_text="hi",
+                provider="openai",
+                model="gpt-realtime",
+            )
+        )
+        created = svc.store.get_session(svc.voice_chat_id or "")
+        assert created is not None and created.session_id != typed.session_id
+        # Back on the keyboard, the chat runs on the seat picked for typing,
+        # never on the realtime voice model.
+        assert (created.provider, created.model) == (typed.provider, typed.model)
+
+    asyncio.run(scenario())
