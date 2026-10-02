@@ -77,18 +77,35 @@ async def source_ref(source, delivery, monkeypatch, tmp_path):
     tool, registry, ctx = delivery
     data = png()
     if source == "upload":
-        path = tmp_path / "source.png"
-        path.write_bytes(data)
-        note = handoff_context(
-            str(tmp_path),
-            [DropAnalysis("source.png", '"source.png"', "image")],
-            session_id="chat-A",
+        from jarvis.agent_chat import attachments, runner_brain
+        from jarvis.agent_chat.service import AgentChatService
+        from jarvis.agent_chat.store import AgentChatStore
+        from jarvis.agentic_ide.drops import dereference
+
+        async def describe(readable):
+            # Analysis is optional; an unavailable vision model must not cost the pixels.
+            return [DropAnalysis(name, reference, "image") for name, _, reference in readable]
+
+        monkeypatch.setattr(attachments, "_analyze", describe)
+        monkeypatch.setattr(runner_brain, "brain_manager", lambda: None)
+        attached = await attachments.ingest(tmp_path, uploads=[("source.png", data)])
+        service = AgentChatService(AgentChatStore(tmp_path / "chat.sqlite"))
+        chat = service.store.create_session(
+            provider="fakeprov", model="", effort="", cwd=str(tmp_path), surface="jarvis",
+        )
+        await service.send(chat.session_id, "Fix the pictured bug", [a.to_dict() for a in attached])
+        await service.cancel(chat.session_id)
+        note = next(
+            event["payload"]["text"] for event in service.store.list_events(chat.session_id)
+            if event["kind"] == "user_message"
         )
         ctx = ExecutionContext(
-            ctx.trace_id, ctx.user_utterance, {"approval_ref": "agent-chat:chat-A"}, None
+            ctx.trace_id, ctx.user_utterance,
+            {"approval_ref": "agent-chat:" + chat.session_id}, None,
         )
         ref = re.search(r"img_[0-9a-f]{32}", note)[0]
-        path.unlink()  # Original upload may disappear; the selected bytes remain bound.
+        # Original upload may disappear; the selected bytes remain bound.
+        (tmp_path / dereference(attached[0].reference)).unlink()
     else:
         from jarvis.appshot import service
         from jarvis.plugins.tool import appshot
