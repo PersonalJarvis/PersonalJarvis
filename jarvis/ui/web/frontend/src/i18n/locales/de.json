@@ -5759,6 +5759,18 @@
       "retry": "Erneut versuchen"
     },
     "agents": {
+      "search": {
+        "label": "Terminals suchen",
+        "placeholder": "Beschreibe das gesuchte Terminal…",
+        "hint": "Sucht sinngemäß in Titeln und Aufgaben. Läuft auf diesem Gerät.",
+        "clear": "Suche löschen",
+        "loading": "Lokale Suche wird vorbereitet — beim ersten Mal wird das Modell heruntergeladen…",
+        "searching": "Passende Terminals werden gesucht…",
+        "error": "Die lokale Suche konnte nicht starten. Prüfe für den ersten Modell-Download deine Verbindung und versuche es erneut.",
+        "empty": "Keine passenden Terminals.",
+        "results": "{count} passende Terminals · bester Treffer zuerst",
+        "retry": "Erneut versuchen"
+      },
       "aria": "Agents in diesem Workspace",
       "count_one": "{n} Agent",
       "count_other": "{n} Agents",

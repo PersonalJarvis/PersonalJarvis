@@ -10,7 +10,9 @@ import { useWorkspacePanes } from "@/store/workspacePanes";
 import { usePaneReviewsStore } from "@/store/paneReviews";
 import { AgentMark } from "@/components/agentic/AgentMark";
 import { paneTitleFrom, usePaneRecapPoll, usePaneRecapsStore } from "@/store/paneRecaps";
-import { CheckCheck, Eye, Loader2, type LucideIcon } from "lucide-react";
+import { CheckCheck, Eye, Loader2, Search, X, type LucideIcon } from "lucide-react";
+import { agentSearchDocument } from "./agentSearch";
+import { useAgentSearch } from "./useAgentSearch";
 import {
   COLUMN_ORDER,
   DOT_STYLE,
@@ -120,6 +122,17 @@ export function AgentsOverview() {
   const requestRefresh = useIdeProjectsStore((state) => state.requestRefresh);
   const [confirmStop, setConfirmStop] = useState(false);
   const [stopping, setStopping] = useState(false);
+  const [query, setQuery] = useState("");
+  const searching = query.trim().length > 0;
+  const search = useAgentSearch(query, mine.map((pane) => agentSearchDocument(
+    pane,
+    paneTitleFrom(recaps.workspaceId === pane.workspace_id ? recaps.byName[pane.name] : undefined, pane),
+  )));
+  const byId = new Map(mine.map((pane) => [pane.history_id, pane]));
+  const matches = search.matches.flatMap(({ id }) => {
+    const pane = byId.get(id);
+    return pane ? [pane] : [];
+  });
 
   const columns: Record<AgentColumn, WorkspacePaneRow[]> = { done: [], working: [], reviewed: [] };
   for (const pane of mine) columns[columnFor(pane, reviewed[pane.history_id])].push(pane);
@@ -261,8 +274,62 @@ export function AgentsOverview() {
           ))}
         </div>
       )}
+      {activeWorkspaceId !== null && (
+        <div role="search" className="mx-3 mt-3 shrink-0 space-y-1.5">
+          <div className="flex items-center gap-2 rounded-lg border border-border bg-background px-3 focus-within:ring-2 focus-within:ring-ring">
+            <Search aria-hidden className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <input
+              type="search"
+              value={query}
+              maxLength={500}
+              onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape" && query) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setQuery("");
+                }
+              }}
+              aria-label={t("ide_side_panel.agents.search.label")}
+              aria-describedby="ide-agents-search-hint"
+              placeholder={t("ide_side_panel.agents.search.placeholder")}
+              className="h-9 min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground [&::-webkit-search-cancel-button]:hidden"
+            />
+            {query && (
+              <button
+                type="button"
+                onClick={() => setQuery("")}
+                aria-label={t("ide_side_panel.agents.search.clear")}
+                className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <X aria-hidden className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+          <p id="ide-agents-search-hint" className="px-1 text-[11px] text-muted-foreground">
+            {t("ide_side_panel.agents.search.hint")}
+          </p>
+        </div>
+      )}
       {activeWorkspaceId === null ? (
         <p className="px-4 py-3 text-sm text-muted-foreground">{t("ide_side_panel.agents.no_workspace")}</p>
+      ) : searching ? (
+        <div className="scrollbar-jarvis min-h-0 flex-1 overflow-y-auto px-3 pb-3 pt-3" aria-busy={search.status === "loading" || search.status === "searching"}>
+          <p role="status" className="mb-2 flex items-center gap-2 px-1 text-xs text-muted-foreground">
+            {(search.status === "loading" || search.status === "searching") && <Loader2 aria-hidden className="h-3.5 w-3.5 shrink-0 animate-spin motion-reduce:animate-none" />}
+            {search.status === "loading" ? t("ide_side_panel.agents.search.loading")
+              : search.status === "searching" ? t("ide_side_panel.agents.search.searching")
+              : search.status === "error" ? t("ide_side_panel.agents.search.error")
+              : matches.length === 0 ? t("ide_side_panel.agents.search.empty")
+              : fill(t("ide_side_panel.agents.search.results"), { count: String(matches.length) })}
+          </p>
+          {search.status === "error" && (
+            <button type="button" onClick={search.retry} className="rounded-md border border-border px-3 py-1.5 text-xs text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              {t("ide_side_panel.agents.search.retry")}
+            </button>
+          )}
+          {search.status === "ready" && matches.length > 0 && <ul className="space-y-2">{matches.map(card)}</ul>}
+        </div>
       ) : mine.length === 0 ? (
         <p className="px-4 py-3 text-sm text-muted-foreground">
           {t(scope === "folder" ? "ide_side_panel.agents.empty_folder" : "ide_side_panel.agents.empty")}

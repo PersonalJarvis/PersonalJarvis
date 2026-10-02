@@ -5759,6 +5759,18 @@
       "retry": "Try again"
     },
     "agents": {
+      "search": {
+        "label": "Search terminals",
+        "placeholder": "Describe the terminal you are looking for…",
+        "hint": "Search by meaning in titles and tasks. Runs on this device.",
+        "clear": "Clear search",
+        "loading": "Preparing local search — downloading the model on first use…",
+        "searching": "Finding matching terminals…",
+        "error": "Local search could not start. Check your connection for the first model download, then try again.",
+        "empty": "No matching terminals.",
+        "results": "{count} matching terminals · best match first",
+        "retry": "Try again"
+      },
       "aria": "Agents in this workspace",
       "count_one": "{n} agent",
       "count_other": "{n} agents",
