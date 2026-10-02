@@ -25,6 +25,7 @@ const PROVIDER_NAMES: Record<string, string> = {
   "gemini-live": "Gemini Live",
   "vertex-live": "Vertex AI Live",
   "local-realtime": "Self-hosted realtime",
+  "local-voice": "Local voice",
   unknown: "—",
 };
 

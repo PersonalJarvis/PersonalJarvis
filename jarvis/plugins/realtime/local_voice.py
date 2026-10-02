@@ -15,6 +15,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import sys
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
@@ -26,7 +27,74 @@ log = logging.getLogger(__name__)
 _INPUT_RATE = 16_000
 _OUTPUT_RATE = 24_000
 _READY_TIMEOUT_S = 180.0
+_SELFTEST_TIMEOUT_S = 120.0
 _RESTART_BACKOFF_S = (1.0, 5.0, 30.0)
+#: Core load from a warm disk (plan section 7: core ready <= 15 s); scales the
+#: "about N s" a refused call hears while the engine loads.
+_WARM_LOAD_S = 15.0
+#: Measured default for every machine class with an accelerator (plan 12.3).
+DEFAULT_LLM = "qwen3.5:4b"
+#: Core models the engine cannot start without (``jarvis.voice_engine.models``).
+CORE_MODELS = ("silero-vad-v6", "smart-turn-v3.2", "parakeet-tdt-0.6b-v3-int8")
+#: What a refused call hears and sees, per output language. ``native.py``
+#: speaks ``duplex_unavailable_reason`` verbatim, so it must already be in the
+#: caller's language; the card keeps the engine's own detailed reason.
+_REFUSALS: dict[str, dict[str, str]] = {
+    "not_set_up": {
+        "en": "Local voice is not set up on this machine yet. Run its setup on the "
+              "Local voice card in Settings.",
+        "de": "Die lokale Stimme ist auf diesem Gerät noch nicht "  # i18n-allow
+              "eingerichtet. Starte die Einrichtung in den Einstellungen "  # i18n-allow
+              "auf der Karte Lokale Stimme.",  # i18n-allow
+        "es": "La voz local aún no está configurada en este equipo. "  # i18n-allow
+              "Inicia la configuración en la tarjeta Voz local de los "  # i18n-allow
+              "Ajustes.",  # i18n-allow
+    },
+    "loading": {
+        "en": "Local voice is still loading ({percent} %). Please try again in about "
+              "{eta} seconds.",
+        "de": "Die lokale Stimme lädt noch ({percent} %). Versuch es in "  # i18n-allow
+              "etwa {eta} Sekunden noch einmal.",  # i18n-allow
+        "es": "La voz local aún se está cargando ({percent} %). Vuelve a "  # i18n-allow
+              "intentarlo en unos {eta} segundos.",  # i18n-allow
+    },
+    "failed": {
+        "en": "Local voice could not start. The Local voice card in Settings shows why.",
+        "de": "Die lokale Stimme konnte nicht starten. Die Karte Lokale "  # i18n-allow
+              "Stimme in den Einstellungen zeigt den Grund.",  # i18n-allow
+        "es": "La voz local no pudo arrancar. La tarjeta Voz local de los "  # i18n-allow
+              "Ajustes muestra el motivo.",  # i18n-allow
+    },
+}
+NOT_SET_UP_REASON = _REFUSALS["not_set_up"]["en"]
+
+
+def refusal(kind: str, language: str, **values: object) -> str:
+    """One refusal sentence in ``language`` (de/en/es; anything else is English)."""
+    table = _REFUSALS[kind]
+    return table.get(language, table["en"]).format(**values)
+
+
+def _call_language(cfg: Any) -> str:
+    """The language a call starts in, from the one authority (``turn_language``).
+
+    A reply-language pin wins; else a pinned recognition language; else the
+    app's interface language. Mirrors how the live session picks its first
+    language, so a refusal is spoken in the language the call would have used.
+    """
+    try:
+        from jarvis.core.turn_language import resolve_output_language  # noqa: PLC0415
+
+        ui_language = str(getattr(getattr(cfg, "ui", None), "language", "") or "en")
+        return resolve_output_language(
+            getattr(getattr(cfg, "brain", None), "reply_language", "auto"),
+            getattr(getattr(cfg, "stt", None), "language", "auto"),
+            "",
+            default=ui_language if ui_language in _REFUSALS["failed"] else "en",
+        )
+    except Exception:  # noqa: BLE001 - a refusal in English beats no refusal
+        log.debug("local voice: call language unresolved; refusing in English", exc_info=True)
+        return "en"
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,28 +138,38 @@ class EngineSettings:
     languages: list[str] = field(default_factory=lambda: ["de", "en"])
     tts: str = "pocket"
     tts_options: dict[str, Any] = field(default_factory=dict)
-    llm_model: str = "qwen3.5:4b-voice-8k"
+    llm_model: str = DEFAULT_LLM
     llm_base_url: str = "http://127.0.0.1:11434"
 
     @classmethod
     def from_config(cls, cfg: Any) -> EngineSettings:
+        """Settings from ``[voice_engine]``, the last setup's record and defaults.
+
+        ``cfg`` may be ``None`` (a provider built without a config): then the
+        app's current configuration is read. The model is the card's explicit
+        pick, else what setup chose (installed models first), else the measured
+        default. No network call happens here; this runs on the call path.
+        """
+        if cfg is None:
+            cfg = _current_config()
         section = getattr(cfg, "voice_engine", None)
 
         def pick(name: str, default: Any) -> Any:
             value = getattr(section, name, None) if section is not None else None
-            return default if value in (None, "") else value
+            return default if value in (None, "", [], {}) else value
 
         home = pick("home", os.environ.get("JARVIS_VOICE_ENGINE_HOME") or None)
+        recorded = _setup_record(home)
         return cls(
             python=str(pick("python", os.environ.get("JARVIS_VOICE_ENGINE_PYTHON")
                             or _default_python(home))),
-            package_root=pick("package_root", _package_root()),
+            package_root=pick("package_root", _package_root(home)),
             home=home,
             languages=list(pick("languages", ["de", "en"])),
             tts=str(pick("tts", "pocket")),
             tts_options=dict(pick("tts_options", {})),
-            llm_model=str(pick("llm_model", "qwen3.5:4b-voice-8k")),
-            llm_base_url=str(pick("llm_base_url", "http://127.0.0.1:11434")),
+            llm_model=str(pick("llm_model", recorded.get("llm_model") or DEFAULT_LLM)),
+            llm_base_url=str(pick("llm_base_url", _ollama_root())),
         )
 
     def configure_message(self) -> dict[str, Any]:
@@ -100,24 +178,83 @@ class EngineSettings:
                 "llm": {"model": self.llm_model, "base_url": self.llm_base_url}}
 
 
-def _package_root() -> str | None:
-    """Directory that holds the ``jarvis`` package, for a source checkout."""
-    try:
-        import jarvis  # noqa: PLC0415 - lazily, plugin rule
+def _engine_home(home: str | None) -> Path:
+    from jarvis.voice_engine.paths import engine_home  # noqa: PLC0415 - plugin rule
 
-        return str(Path(jarvis.__file__).resolve().parent.parent)
-    except (ImportError, AttributeError, TypeError):
-        # Frozen builds install the engine package into the engine's own
-        # environment instead (plan section 4.10).
-        return None
+    return Path(home) if home else engine_home()
+
+
+def _package_root(home: str | None = None) -> str | None:
+    """Directory the worker imports ``jarvis.voice_engine`` from.
+
+    A source checkout runs the live source, so an edit needs no re-setup.
+    A frozen build has no importable source tree; it runs the copy that
+    setup placed under the engine home (plan section 4.10).
+    """
+    if not getattr(sys, "frozen", False):
+        try:
+            import jarvis  # noqa: PLC0415 - lazily, plugin rule
+
+            root = Path(jarvis.__file__).resolve().parent.parent
+            if (root / "jarvis" / "voice_engine" / "worker.py").is_file():
+                return str(root)
+        except (ImportError, AttributeError, TypeError):
+            log.debug("local voice: no importable source tree", exc_info=True)
+    copy = _engine_home(home) / "app"
+    return str(copy) if (copy / "jarvis" / "voice_engine" / "worker.py").is_file() else None
 
 
 def _default_python(home: str | None) -> str:
-    from jarvis.voice_engine.paths import engine_home  # noqa: PLC0415
+    from jarvis.voice_engine.paths import venv_python  # noqa: PLC0415 - plugin rule
 
-    root = Path(home) if home else engine_home()
-    venv = root / "venv"
-    return str(venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python"))
+    return str(venv_python(_engine_home(home)))
+
+
+def _setup_record(home: str | None) -> dict[str, Any]:
+    from jarvis.voice_engine.paths import read_setup_state  # noqa: PLC0415 - plugin rule
+
+    return read_setup_state(_engine_home(home))
+
+
+def _ollama_root() -> str:
+    """The configured Ollama server, the one Jarvis itself starts and stops."""
+    try:
+        from jarvis.brain.ollama_pull import server_root  # noqa: PLC0415 - plugin rule
+
+        return server_root()
+    except Exception:  # noqa: BLE001 - an unreadable config keeps the vendor default
+        log.debug("local voice: Ollama root unresolved; using the default", exc_info=True)
+        return "http://127.0.0.1:11434"
+
+
+def _current_config() -> Any:
+    try:
+        from jarvis.core.config import load_config  # noqa: PLC0415 - plugin rule
+
+        return load_config()
+    except Exception:  # noqa: BLE001 - defaults still describe a usable engine
+        log.debug("local voice: config unreadable; using defaults", exc_info=True)
+        return None
+
+
+def engine_installed(settings: EngineSettings) -> bool:
+    """The engine's Python exists and its core models are on disk."""
+    if not Path(settings.python).is_file():
+        return False
+    try:
+        from jarvis.voice_engine import models  # noqa: PLC0415 - plugin rule
+
+        root = _engine_home(settings.home) / "models"
+        return all(models.is_present(name, root) for name in CORE_MODELS)
+    except (ImportError, OSError):
+        # An unreadable model store is "not installed", never "ready".
+        return False
+
+
+def _worker_extra_env(home: Path) -> dict[str, str]:
+    """Point the worker at the model cache setup filled (Pocket TTS weights)."""
+    cache = home / "hf"
+    return {"HF_HOME": str(cache)} if cache.is_dir() else {}
 
 
 class _Engine:
@@ -139,6 +276,8 @@ class _Engine:
         self._slots: dict[int, LocalVoiceSession] = {}
         self._next_slot = 1
         self._failures = 0
+        self._starting: asyncio.Task[None] | None = None
+        self._selftests: list[asyncio.Future[dict[str, Any]]] = []
 
     async def ensure_started(self) -> None:
         async with self._start_lock:
@@ -147,11 +286,13 @@ class _Engine:
             from jarvis.voice_engine.client import EngineClient, worker_env  # noqa: PLC0415
 
             settings = self.settings
+            home = _engine_home(settings.home)
             env = worker_env(
                 package_root=Path(settings.package_root) if settings.package_root else None,
-                home=Path(settings.home) if settings.home else None,
+                home=home,
+                extra=_worker_extra_env(home),
             )
-            stderr = Path(settings.home) / "worker.log" if settings.home else None
+            stderr = home / "worker.log"
             client = EngineClient(settings.python, env=env, stderr_path=stderr)
             self.phase, self.stage, self.reason = "starting", "process", ""
             self._ready.clear()
@@ -160,6 +301,40 @@ class _Engine:
             self._router = asyncio.get_running_loop().create_task(self._route_messages(client))
             self._audio_router = asyncio.get_running_loop().create_task(self._route_audio(client))
             await client.send(settings.configure_message())
+
+    def start_soon(self) -> None:
+        """Start the worker in the background; a caller never waits for it."""
+        if self._client is not None or (self._starting and not self._starting.done()):
+            return
+        self._starting = asyncio.get_running_loop().create_task(self._start_logged())
+
+    async def _start_logged(self) -> None:
+        try:
+            await self.ensure_started()
+        except (OSError, RuntimeError, TimeoutError) as exc:
+            log.warning("local voice engine did not start: %s", exc)
+            self.phase = "failed"
+            self.reason = f"The local voice engine did not start: {exc}"
+            self._ready.set()
+
+    def reset_failures(self) -> None:
+        """A user-started retry (setup, self-test) clears the crash budget."""
+        self._failures = 0
+        if self.phase == "failed" and self._client is None:
+            self.phase, self.reason = "stopped", ""
+
+    async def selftest(self, timeout_s: float = _SELFTEST_TIMEOUT_S) -> dict[str, Any]:
+        """Run the worker's self-test: speak, hear and answer once per language."""
+        if self._client is None or self.phase != "ready":
+            raise RuntimeError(self.reason or "The local voice is not ready.")
+        waiter: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
+        self._selftests.append(waiter)
+        try:
+            await self._client.send({"type": "selftest"})
+            return await asyncio.wait_for(waiter, timeout_s)
+        finally:
+            with contextlib.suppress(ValueError):
+                self._selftests.remove(waiter)
 
     async def wait_ready(self, timeout_s: float) -> bool:
         try:
@@ -175,6 +350,11 @@ class _Engine:
             if kind == "_exited":
                 await self._on_exit()
                 return
+            if kind == "selftest.result":
+                for waiter in list(self._selftests):
+                    if not waiter.done():
+                        waiter.set_result(dict(message))
+                continue
             if kind == "state":
                 self.phase = str(message.get("phase", self.phase))
                 self.stage = str(message.get("stage", ""))
@@ -209,6 +389,9 @@ class _Engine:
         self._failures += 1
         self.phase = "failed" if self._failures >= len(_RESTART_BACKOFF_S) else "stopped"
         self.reason = self.reason or "The local voice engine stopped."
+        for waiter in self._selftests:
+            if not waiter.done():
+                waiter.set_exception(RuntimeError(self.reason))
         self._ready.set()
 
     async def open(self, provider: LocalVoiceProvider, cfg: Any) -> LocalVoiceSession:
@@ -388,34 +571,40 @@ class LocalVoiceProvider:
 
     _engine: ClassVar[_Engine | None] = None
 
-    def __init__(self, settings: EngineSettings | None = None) -> None:
+    def __init__(self, settings: EngineSettings | None = None, *, language: str = "en") -> None:
         self._settings = settings
         self.duplex_unavailable_reason = ""
+        #: Language of the refusal sentences (de/en/es); see ``_call_language``.
+        self.language = language
 
     @classmethod
     def from_runtime_config(cls, cfg: Any) -> LocalVoiceProvider:
-        return cls(EngineSettings.from_config(cfg))
+        return cls(EngineSettings.from_config(cfg), language=_call_language(cfg))
 
     @classmethod
     def external_login_ready(cls, cfg: Any = None) -> bool:
         """Installed means: the engine's Python exists and the core models are on disk."""
-        settings = EngineSettings.from_config(cfg)
-        if not Path(settings.python).is_file():
-            return False
-        try:
-            from jarvis.voice_engine import models  # noqa: PLC0415
-
-            return all(models.is_present(n) for n in
-                       ("silero-vad-v6", "smart-turn-v3.2", "parakeet-tdt-0.6b-v3-int8"))
-        except (ImportError, OSError):
-            # An unreadable model store is "not installed", never "ready".
-            return False
+        return engine_installed(EngineSettings.from_config(cfg))
 
     @classmethod
     def _shared(cls, settings: EngineSettings) -> _Engine:
-        if cls._engine is None or cls._engine.settings != settings:
+        previous = cls._engine
+        if previous is None or previous.settings != settings:
             cls._engine = _Engine(settings)
+            if previous is not None and previous._client is not None:
+                # Changed settings (a new voice or model) start a new worker;
+                # the old one must not linger with its models loaded.
+                try:
+                    asyncio.get_running_loop().create_task(previous.stop())
+                except RuntimeError:
+                    log.warning("local voice: a replaced engine could not be stopped "
+                                "outside an event loop; it exits with the app")
         return cls._engine
+
+    @classmethod
+    def shared_engine(cls, cfg: Any = None) -> _Engine:
+        """The engine this app's calls use, for the card's status and self-test."""
+        return cls._shared(EngineSettings.from_config(cfg))
 
     @classmethod
     async def prespawn_transport(cls, cfg: Any) -> bool:
@@ -433,20 +622,29 @@ class LocalVoiceProvider:
         return await engine.wait_ready(_READY_TIMEOUT_S)
 
     async def can_open_duplex_session(self) -> bool:
+        """Answer at once from the worker's state; never wait for it to load.
+
+        A call during warm-up hears why and roughly how long within a second
+        (plan section 4.9); the start itself runs in the background.
+        """
         settings = self._settings or EngineSettings.from_config(None)
         engine = self._shared(settings)
-        if engine.phase == "ready":
+        if engine.phase == "ready" and engine._client is not None:
             self.duplex_unavailable_reason = ""
             return True
-        if engine.phase in ("stopped", "failed") and engine._client is None:
-            with contextlib.suppress(OSError, RuntimeError):
-                await engine.ensure_started()
+        if engine._client is None:
+            if not engine_installed(settings):
+                self.duplex_unavailable_reason = refusal("not_set_up", self.language)
+                return False
+            if engine.phase != "failed":
+                engine.start_soon()
         if engine.phase == "failed":
-            self.duplex_unavailable_reason = engine.reason or "The local voice could not start."
+            log.warning("local voice refused a call: %s", engine.reason or "engine failed")
+            self.duplex_unavailable_reason = refusal("failed", self.language)
         else:
-            percent = int(engine.progress * 100)
-            self.duplex_unavailable_reason = (
-                f"The local voice is still loading ({engine.stage or 'starting'}, {percent} %)."
+            eta_s = max(1, round((1.0 - engine.progress) * _WARM_LOAD_S))
+            self.duplex_unavailable_reason = refusal(
+                "loading", self.language, percent=int(engine.progress * 100), eta=eta_s
             )
         return False
 

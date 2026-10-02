@@ -39,6 +39,15 @@ INPUT_RATE = p.INPUT_RATE
 OUTPUT_RATE = p.OUTPUT_RATE
 LANGUAGE_NAMES = {"de": "German", "en": "English", "es": "Spanish", "fr": "French",
                   "it": "Italian", "pt": "Portuguese", "nl": "Dutch"}
+# Small local models otherwise act on mood: "I'm so tired" set the volume and
+# started music in 9 of 30 trials (qwen3.5:4b). With this rule: 0 of 30, and
+# 0 of 40 real requests missed (plan section 12.3).
+_ACT_ONLY_ON_REQUEST = (
+    "Act only on request: call a tool that changes something (timer, volume, music, "
+    "lights, messages, calendar, apps) only when the user explicitly asks for that "
+    "action. For tips, ideas, recipes, feelings or knowledge, answer in words and call "
+    "no tool."
+)
 
 
 class VadModel(Protocol):
@@ -618,7 +627,10 @@ class ConversationSession:
 
     def _system_text(self) -> str:
         name = LANGUAGE_NAMES.get(self._language, self._language)
-        rule = f"Reply in {name}. Keep spoken answers short: one to three sentences."
+        rule = (
+            f"Reply in {name}. Keep spoken answers short: one to three sentences. "
+            + _ACT_ONLY_ON_REQUEST
+        )
         return f"{self._instructions.strip()}\n\n{rule}".strip()
 
     def _bounded_messages(self) -> list[dict[str, Any]]:

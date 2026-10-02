@@ -167,6 +167,12 @@ export interface ProviderDescriptor {
    * rendered verbatim — the client never guesses readiness. null elsewhere.
    */
   managed_server?: ManagedServerStatus | null;
+  /**
+   * Local voice card only: whether the Jarvis-owned engine is set up on this
+   * machine and running right now. The card body reads its full status from
+   * `/api/providers/local-voice/status` (`@/lib/localVoice`). null elsewhere.
+   */
+  voice_engine?: { installed: boolean; ready: boolean } | null;
   /** Local/self-hosted cards: whether the card exposes an editable server URL
    *  (persisted via PUT /api/providers/{id}/base-url). */
   supports_base_url?: boolean;

@@ -114,3 +114,34 @@ def test_desktop_speak_seed_reaches_shared_brain() -> None:
         ("user", "Resume this exact conversation")
     ]
     assert facade.take_voice_history_seed() == ()
+
+
+def test_bound_chat_answers_every_call_without_an_explicit_seed() -> None:
+    brain = BrainManager(config=JarvisConfig(), bus=EventBus(), tools={})
+    chat: list[tuple[str, str]] = [("user", "first call"), ("assistant", "first answer")]
+    brain.set_voice_history_source(lambda: list(chat))
+    assert [(m.role, m.content) for m in brain.take_voice_history_seed()] == chat
+    # The second call in the same chat sees what the first one added.
+    chat.append(("user", "second call"))
+    assert len(brain.take_voice_history_seed()) == 3
+    # An explicit seed (an archive resume, or "new voice chat") still wins once.
+    brain.seed_history([])
+    assert brain.take_voice_history_seed() == ()
+    brain.seed_history([("user", "archived")])
+    assert [m.content for m in brain.take_voice_history_seed()] == ["archived"]
+    # Binding a chat drops a seed nobody consumed.
+    brain.seed_history([("user", "stale archive")])
+    brain.drop_voice_history_seed()
+    assert len(brain.take_voice_history_seed()) == 3
+    brain.set_voice_history_source(None)
+    assert brain.take_voice_history_seed() == ()
+
+
+def test_failing_history_source_starts_the_call_fresh() -> None:
+    brain = BrainManager(config=JarvisConfig(), bus=EventBus(), tools={})
+
+    def broken() -> list[tuple[str, str]]:
+        raise RuntimeError("store gone")
+
+    brain.set_voice_history_source(broken)
+    assert brain.take_voice_history_seed() == ()

@@ -20,8 +20,8 @@ import { createVoiceFollower } from "@/components/home/voiceFollower";
  * faster and its core flares with each syllable
  * (components/home/voiceFollower turns the raw level into those smooth
  * signals). While the assistant thinks, nobody speaks — so the light does
- * not go dark: it breathes, and two beams glide along the bottom edge,
- * part and meet again. Levels are read on animation frames — no React state, no
+ * not go dark: it breathes, two comets glide along the bottom edge
+ * trailing sparks, and each time they meet a pillar of light shoots up. Levels are read on animation frames — no React state, no
  * re-render per frame — and the loop stops once the light has settled after
  * a call. Reduced motion keeps the light and drops the movement.
  *
@@ -161,6 +161,7 @@ function ShaderGlow({
         think,
         // The beams start together in the middle and part from there.
         sweep: Math.sin(sweepPhase),
+        sweepVel: Math.cos(sweepPhase),
         power,
         light,
         color,

@@ -1,8 +1,9 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect } from "react";
 
 import { VoiceStage } from "@/components/home/VoiceStage";
-import { useVoiceModeSwitch } from "@/components/home/assistantStatus";
+import { transcriptFromTimeline, useVoiceModeSwitch } from "@/components/home/assistantStatus";
 import { useT } from "@/i18n";
+import { useAgentChatStore } from "@/store/agentChat";
 import { useHomeStore } from "@/store/home";
 
 const ChatStage = lazy(() =>
@@ -27,6 +28,16 @@ export function AssistantChat() {
   const surface = useHomeStore((s) => s.surface);
   const agentChatId = useHomeStore((s) => s.agentChatId);
   const voice = useVoiceModeSwitch();
+  const chatItems = useAgentChatStore((s) => s.timeline.items);
+  const seedTranscript = useHomeStore((s) => s.seedTranscript);
+  const inVoice = surface === "voice" && !agentChatId;
+  // Between calls the voice lane IS the chat on stage. A hangup clears the
+  // lane (store/home.ts); the turns just spoken arrive in the chat a moment
+  // later (the backend files them there), so the lane follows the chat.
+  useEffect(() => {
+    if (!inVoice || voice.live) return;
+    seedTranscript(transcriptFromTimeline(chatItems));
+  }, [chatItems, inVoice, seedTranscript, voice.live]);
   const loading = (
     <div role="status" className="flex min-h-0 flex-1 items-center justify-center text-sm text-muted-foreground">
       {t("common.loading")}

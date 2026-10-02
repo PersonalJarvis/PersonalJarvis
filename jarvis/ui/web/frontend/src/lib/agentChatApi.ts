@@ -84,6 +84,31 @@ export async function saveChatSelection(selection: ChatSelection): Promise<ChatS
   }), "selection-save-failed");
 }
 
+/** The Jarvis chat voice calls continue (`/api/agent-chat/voice-chat`). */
+export interface VoiceChatBinding {
+  /** Null while a blank page is open or nothing was bound yet. */
+  session_id: string | null;
+  /** A blank page is open: the next call opens a new chat. */
+  fresh: boolean;
+}
+
+/**
+ * Make `sessionId` the chat voice calls continue — its turns are filed into
+ * it and a call starts with its history. `null` = a blank page: the next
+ * call opens a new chat.
+ */
+export async function bindVoiceChat(sessionId: string | null): Promise<VoiceChatBinding> {
+  return json(await fetch("/api/agent-chat/voice-chat", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id: sessionId }),
+  }), "voice-chat-bind-failed");
+}
+
+export async function fetchVoiceChat(): Promise<VoiceChatBinding> {
+  return json(await fetch("/api/agent-chat/voice-chat", { cache: "no-store" }), "voice-chat-failed");
+}
+
 /**
  * Where a session lives: the front page's typed chat (`jarvis` — the same
  * assistant as the microphone, on a keyboard) or a coding session listed by

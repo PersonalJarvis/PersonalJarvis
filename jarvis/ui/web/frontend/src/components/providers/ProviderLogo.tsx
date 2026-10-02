@@ -113,6 +113,8 @@ export function providerFamily(providerId: string): string | null {
 /** An on-device engine or a self-hosted server: a capability, not a brand. */
 function localGlyph(providerId: string): "device" | "server" | null {
   const id = providerId.toLowerCase();
+  // The Jarvis-owned voice engine runs on this machine, not on a server.
+  if (id === "local-voice") return "device";
   if (id.startsWith("local-") || id === "generic" || id === "home_server" || id === "strato") return "server";
   if (id === "multipass") return "device";
   if (id.includes("faster-whisper") || id.includes("piper")) return "device";

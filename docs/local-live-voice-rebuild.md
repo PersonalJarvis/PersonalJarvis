@@ -488,10 +488,11 @@ A phase is done when its gate passes, not when its code is merged. Day counts
 are rough planning estimates.
 
 Status 2026-10-01: P0 passed on Windows NVIDIA and the CPU container; the Mac
-run waits for hardware. P1 code is complete and the kill drill passed; the
-real-time worker latency, soak and offline-boot gates are still open
-(section 12.4). P2 has started with the `local-voice` adapter, which is not
-registered as a provider yet.
+run waits for hardware. P1: code complete; the real-time latency gate (p50
+≤ 1.0 s) and the kill drill passed; the 500-turn soak and a boot with the
+network unplugged are still open (section 12.4). P2: the `native.py` fixes
+(4.4, items 1–6) are in; provider registration, config and the card are in
+progress.
 
 | Phase | Content | Gate |
 | --- | --- | --- |
@@ -637,6 +638,13 @@ premium option pending a blind listening test.
 | `qwen3.5:9b` | 0.11 | — | — | fails German, invents actions |
 | `qwen3.5:2b` | — | — | CPU | CPU-only default, first clause ~1.5 s |
 
+Small models also act on mood: asked "I'm so tired today" or for a sleep tip,
+`qwen3.5:4b` set the volume, started music or a timer in 9 of 30 trials. One
+engine rule ("act only on request", `jarvis/voice_engine/engine.py`) brought
+that to 0 of 30 with 0 of 40 real requests missed. On `qwen3.5:2b` the same
+rule only lowers it from 18 to 12 of 30, so the CPU-only tier still needs a
+safeguard for changing actions before it ships (P3).
+
 Ollama's `prompt_eval_count` includes cached tokens. Qwen3.5 does not reuse a
 cached prefix across new conversations, so the engine primes the cache when a
 session opens. The Mistral chat template defeats the cache.
@@ -650,6 +658,15 @@ session opens. The Mistral chat template defeats the cache.
 | Worker boot (Windows, all models) | 11.5 s to ready; self-test de/en character errors 0, LLM 390 ms |
 | Worker memory | about 2.1 GB resident |
 | Kill drill | worker gone 0.06 s after the app's pipe closes, 0 orphans |
+| Real-time worker, `qwen3.5:4b` + Piper, de+en (44 turns) | dialog p50 685 ms, tool p50 951 ms, 0 unanswered |
+| Real-time worker, `qwen3.5:4b` + Pocket, de+en (44 turns) | dialog p50 775 ms, tool p50 999 ms, 0 unanswered |
+| Barge-in cut (from the user's speech onset, 20 trials) | p50 235–258 ms, p95 370–390 ms; 0 ms of reply audio after the cut |
+
+The real-time runs stream synthetic speech at wall-clock pace through the
+worker's pipes and time speech end to the first audio frame the app receives.
+The barge-in p95 misses the 250 ms SLO mainly on the English "Stop", whose
+unvoiced "s" counts as onset here before the VAD hears voice; the cut needs
+160 ms of voiced speech.
 | CPU container | boots and talks; STT 225 ms, Pocket first audio 136 ms |
 
 Three Windows worker bugs found on the way, all fixed: a blocking stdin read

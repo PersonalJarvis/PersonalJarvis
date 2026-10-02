@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
-import { Archive, MessageSquare, Pin, PinOff, Trash2 } from "lucide-react";
+import { Archive, Pin, PinOff, Trash2 } from "lucide-react";
 
 import { useAgentChatStore } from "@/store/agentChat";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { AllChatsDialog } from "@/components/home/AllChatsDialog";
-import { useChatRows, type ChatRow } from "@/components/home/chatRows";
+import { chatRowLabel, useChatRows, type ChatRow } from "@/components/home/chatRows";
 import { CONVERSATIONS_REFRESH_MS } from "@/hooks/useConversations";
 
 
@@ -121,32 +121,36 @@ function ChatRowItem({
   onPin: () => void;
 }) {
   const t = useT();
-  const title = row.title || t("chats_view.new_chat");
+  const label = chatRowLabel(row, t);
+  const title = label.text;
   return (
     <li className="group relative">
       <button
         type="button"
         onClick={onOpen}
         title={title}
-        aria-label={title}
+        aria-label={row.kind === "voice" && !label.untitled ? `${t("all_chats.filter_voice")}: ${title}` : title}
         data-testid="recent-chat-row"
         data-kind={row.kind}
         className={cn(
-          "flex h-8 w-full items-center gap-3 rounded-lg px-3 text-left transition-colors group-hover:pr-16 group-focus-within:pr-16",
+          "flex h-8 w-full items-center rounded-lg px-3 text-left transition-colors group-hover:pr-16 group-focus-within:pr-16",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           // The open one wears the same accent edge as the active nav row, so
           // "where am I" is said in one voice all the way down the column.
           active ? "jarvis-nav-active bg-secondary text-foreground-strong" : "text-foreground hover:bg-secondary",
         )}
       >
-        {/* A small open ring, the Claude app's chat bullet; a pinned chat
-            keeps its bubble so the two lists stay told apart. */}
-        {pinned ? (
-          <MessageSquare aria-hidden className="h-4 w-4 shrink-0 text-muted-foreground" />
-        ) : (
-          <span aria-hidden className="ml-1 h-[7px] w-[7px] shrink-0 rounded-full border border-muted-foreground" />
-        )}
-        <span className="min-w-0 flex-1 truncate text-base leading-5">{compactChatTitle(title)}</span>
+        {/* Text only, the way the Claude and ChatGPT columns list chats: one
+            glyph repeated on every row is noise, not information. A chat with
+            no topic says what it was ("Voice chat · 09:42"), in a quieter tone. */}
+        <span
+          className={cn(
+            "min-w-0 flex-1 truncate text-base leading-5",
+            label.untitled && !active && "text-muted-foreground",
+          )}
+        >
+          {compactChatTitle(title)}
+        </span>
 
       </button>
       <button type="button" onClick={onPin} title={t(pinned ? "sidebar.unpin_chat" : "sidebar.pin_chat")}

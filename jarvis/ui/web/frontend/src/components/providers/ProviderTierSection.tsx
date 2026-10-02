@@ -6,6 +6,7 @@ import { BrainModelSelector } from "@/components/BrainModelSelector";
 import { OpenRouterTtsControls } from "@/components/OpenRouterTtsVoicePicker";
 import { RealtimeOptionsControl } from "@/components/RealtimeOptionsControl";
 import { putVoiceMode } from "@/lib/voiceEngineMode";
+import { LocalVoicePanel } from "@/components/providers/LocalVoicePanel";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { useRowGestures } from "@/components/providers/rowGestures";
 import { Button } from "@/components/ui/button";
@@ -3708,6 +3709,7 @@ export function AuthWidget({
       )}
       <LocalRuntimePanel descriptor={descriptor} onChanged={onChanged} />
       <ManagedServerPanel descriptor={descriptor} onChanged={onChanged} />
+      {descriptor.voice_engine && <LocalVoicePanel onChanged={onChanged} />}
       {descriptor.supports_base_url && descriptor.managed_server && (
         <details className="group text-xs">
           <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 text-muted-foreground transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
@@ -4360,6 +4362,10 @@ export function providerStateChip(
   // Managed self-hosted server: installed and smoke-booted, or not there.
   if (descriptor.managed_server) {
     return descriptor.managed_server.ready ? "ready" : "not_installed";
+  }
+  // Jarvis-owned local voice engine: set up on this machine, or not.
+  if (descriptor.voice_engine) {
+    return descriptor.voice_engine.installed ? "ready" : "not_installed";
   }
   // A keyless provider (Ollama, a local OpenAI-compatible server you point
   // at) has nothing to store and, without a probe in its payload, nothing

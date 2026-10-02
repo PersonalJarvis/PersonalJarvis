@@ -50,7 +50,7 @@ from jarvis.agent_chat.questions import (
     recommended_answer,
 )
 from jarvis.agent_chat.runner_api import TurnHandle, run_api_turn, supports_api_runner
-from jarvis.agent_chat.runner_brain import run_brain_turn
+from jarvis.agent_chat.runner_brain import brain_history_from_events, run_brain_turn
 from jarvis.agent_chat.runner_cli import run_cli_turn, supports_cli_runner
 from jarvis.agent_chat.store import (
     DEFAULT_SURFACE,
@@ -253,6 +253,14 @@ class AgentChatService:
         # reconnects, and a second copy in the chat would read as if the
         # person said everything twice. Bounded below in import_voice_turn.
         self._mirrored_voice_turns: set[str] = set()
+        # The Jarvis chat a voice call continues (bind_voice_chat): the chat
+        # the front page shows. ``_voice_chat_fresh`` = a blank page is open,
+        # so the next call starts a new chat instead of joining the newest.
+        # ``_voice_call_chats`` pins each running call to the chat its first
+        # turn landed in, so opening another chat mid-call never splits it.
+        self._voice_chat_id: str | None = None
+        self._voice_chat_fresh = False
+        self._voice_call_chats: dict[str, str] = {}
         self._retire_cli_seats()
 
     def _retire_cli_seats(self) -> None:
@@ -955,6 +963,68 @@ class AgentChatService:
 
         run.task = asyncio.create_task(_body(), name=f"agent-chat-{turn_id[:8]}")
         return turn_id
+
+    # ------------------------------------------------------------ voice chat
+
+    @property
+    def voice_chat_id(self) -> str | None:
+        """The Jarvis chat the next voice call continues, if one is bound."""
+        return self._voice_chat_id
+
+    @property
+    def voice_chat_fresh(self) -> bool:
+        """True while a blank page is open: the next call opens a new chat."""
+        return self._voice_chat_fresh
+
+    def bind_voice_chat(self, session_id: str | None) -> str | None:
+        """Make ``session_id`` the chat voice calls continue; ``None`` = a new one.
+
+        The front page shows one Jarvis chat at a time. A call started there
+        — the composer's voice button or the wake word — belongs to THAT
+        chat: its turns are filed into it (voice_mirror) and it starts with
+        that chat's history as context (``BrainManager.take_voice_history_seed``
+        asks :meth:`voice_chat_history`). Binding a chat also drops an older
+        explicit seed nobody consumed, which would otherwise hand the call
+        another conversation's memory.
+        """
+        from jarvis.agent_chat import runner_brain
+
+        brain = runner_brain.brain_manager()
+        if session_id is None:
+            self._voice_chat_id = None
+            self._voice_chat_fresh = True
+        else:
+            session = self.store.get_session(session_id)
+            if session is None or session.surface != "jarvis":
+                raise NoSuchSession(session_id)
+            self._voice_chat_id = session_id
+            self._voice_chat_fresh = False
+            drop = getattr(brain, "drop_voice_history_seed", None)
+            if callable(drop):
+                drop()
+        attach = getattr(brain, "set_voice_history_source", None)
+        if callable(attach):
+            attach(self.voice_chat_history)
+        return self._voice_chat_id
+
+    def voice_chat_history(self) -> list[Any]:
+        """The bound chat's turns as call context — empty when none is bound."""
+        session_id = self._voice_chat_id
+        if not session_id or self.store.get_session(session_id) is None:
+            return []
+        return brain_history_from_events(self.store.list_events(session_id))
+
+    def voice_call_chat(self, call_id: str) -> str | None:
+        """The chat a running call already files into, if its first turn landed."""
+        return self._voice_call_chats.get(call_id) if call_id else None
+
+    def pin_voice_call(self, call_id: str, session_id: str) -> None:
+        """Keep every later turn of ``call_id`` in ``session_id``."""
+        if not call_id:
+            return
+        if len(self._voice_call_chats) > 200:
+            self._voice_call_chats.clear()
+        self._voice_call_chats[call_id] = session_id
 
     async def import_voice_turn(
         self,

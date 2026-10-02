@@ -31,6 +31,8 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from jarvis.sessions import chat_titles
+from jarvis.sessions.chat_titles import TitleRequest
 from jarvis.sessions.formatter import _jarvis_outputs_for_turn
 from jarvis.state.chat_store import ChatStore
 from jarvis.state.conversation_constants import (
@@ -152,14 +154,15 @@ def _optional_pipeline(request: Request) -> Any | None:
 # ----------------------------------------------------------------------
 
 
-def _voice_session_to_summary(s: Any) -> ConversationSummary:
+def _voice_session_to_summary(s: Any, title: str = "") -> ConversationSummary:
+    """A voice session as a history row. An empty ``title`` means "no topic"."""
     preview = getattr(s, "preview", "") or ""
     started = int(getattr(s, "started_ms", 0) or 0)
     ended = getattr(s, "ended_ms", None)
     return ConversationSummary(
         kind=CONVERSATION_KIND_VOICE,
         id=str(s.id),
-        title=preview or "Voice session",
+        title=title,
         preview=preview,
         created_ms=started,
         updated_ms=int(ended) if ended else started,
@@ -331,15 +334,56 @@ def _seed_pairs(messages: list[ChatTurn]) -> list[tuple[str, str]]:
     return pairs[-_SEED_MAX_MESSAGES:]
 
 
+def _voice_title_request(
+    s: Any, chat_store: ChatStore, session_store: Any
+) -> TitleRequest:
+    """What the titler needs to name one voice session (read lazily, off-request)."""
+    sid = str(s.id)
+    ended = getattr(s, "ended_ms", None)
+
+    def load() -> list[tuple[str, str]]:
+        messages = _normalized_messages(CONVERSATION_KIND_VOICE, sid, chat_store, session_store)
+        return [(m.role, m.text) for m in messages or []]
+
+    return TitleRequest(
+        kind=chat_titles.KIND_VOICE,
+        conv_id=sid,
+        version=str(ended or ""),
+        message_count=int(getattr(s, "turn_count", 0) or 0),
+        updated_ms=int(ended or getattr(s, "started_ms", 0) or 0),
+        settled=ended is not None,
+        seed=str(getattr(s, "preview", "") or ""),
+        loader=load,
+    )
+
+
+def _voice_titles(
+    request: Request, sessions: list[Any], chat_store: ChatStore, session_store: Any
+) -> dict[tuple[str, str], str]:
+    """Topic titles for voice sessions; the rules over the preview if the titler fails."""
+    requests = [_voice_title_request(s, chat_store, session_store) for s in sessions]
+    try:
+        return chat_titles.titler_for_state(request.app.state).titles_for(requests)
+    except Exception:  # noqa: BLE001 - a title is never worth an empty history
+        log.warning("chat titles unavailable, using the plain rules", exc_info=True)
+        return {(r.kind, r.conv_id): chat_titles.tidy_title([r.seed]) for r in requests}
+
+
 def _conversation_title(
-    kind: str, cid: str, chat_store: ChatStore, session_store: Any | None
+    request: Request,
+    kind: str,
+    cid: str,
+    chat_store: ChatStore,
+    session_store: Any | None,
 ) -> str:
     if kind == CONVERSATION_KIND_TEXT:
         thread = chat_store.get_thread(cid)
         return (thread or {}).get("title", "") if thread else ""
     if kind == CONVERSATION_KIND_VOICE and session_store is not None:
-        session = session_store.get_session(cid)
-        return "Voice session" if session is not None else ""
+        if session_store.get_session(cid) is None:
+            return ""
+        titler = chat_titles.titler_for_state(request.app.state)
+        return titler.known(chat_titles.KIND_VOICE, cid)
     return ""
 
 
@@ -366,8 +410,11 @@ def list_conversations(
     ]
     if session_store is not None:
         try:
-            for s in session_store.list_sessions(limit=limit, include_empty=False):
-                items.append(_voice_session_to_summary(s))
+            sessions = session_store.list_sessions(limit=limit, include_empty=False)
+            titles = _voice_titles(request, sessions, chat_store, session_store)
+            for s in sessions:
+                title = titles.get((chat_titles.KIND_VOICE, str(s.id)), "")
+                items.append(_voice_session_to_summary(s, title))
         except Exception as exc:  # noqa: BLE001 — voice list must never 500 the page
             log.warning("voice session list failed, showing text-only: %s", exc)
 
@@ -413,6 +460,17 @@ async def new_voice_run(request: Request) -> NewVoiceRunResponse:
         brain.seed_history([])
         cleared = True
 
+    # A fresh run is a fresh chat too: its turns must not land in the chat the
+    # previous call continued, or the new run would read as part of it.
+    try:
+        from .agent_chat_routes import _service_from_state
+
+        chat = _service_from_state(request.app.state)
+        if chat is not None:
+            chat.bind_voice_chat(None)
+    except Exception as exc:  # noqa: BLE001 — the reset itself already happened
+        log.warning("new voice run could not unbind the voice chat: %s", exc)
+
     ended = False
     pipeline = _optional_pipeline(request)
     if pipeline is not None and hasattr(pipeline, "request_voice_hangup"):
@@ -436,7 +494,7 @@ async def get_conversation(
     return ConversationDetail(
         kind=kind,
         id=cid,
-        title=_conversation_title(kind, cid, chat_store, session_store),
+        title=_conversation_title(request, kind, cid, chat_store, session_store),
         messages=messages,
     )
 
@@ -464,7 +522,7 @@ async def resume_conversation(
     return ResumeResponse(
         kind=kind,
         id=cid,
-        title=_conversation_title(kind, cid, chat_store, session_store),
+        title=_conversation_title(request, kind, cid, chat_store, session_store),
         messages=messages,
         seeded_turns=seeded,
     )

@@ -122,6 +122,36 @@ async def save_chat_selection(body: ChatSelectionBody, request: Request) -> dict
     return selection.to_dict()
 
 
+class VoiceChatBody(BaseModel):
+    #: The Jarvis chat on stage; ``None`` = a blank page (the next call opens a new chat).
+    session_id: str | None = None
+
+
+class VoiceChatResponse(BaseModel):
+    session_id: str | None
+    fresh: bool
+
+
+def _voice_chat_answer(svc: AgentChatService) -> VoiceChatResponse:
+    return VoiceChatResponse(session_id=svc.voice_chat_id, fresh=svc.voice_chat_fresh)
+
+
+@router.get("/voice-chat", summary="The Jarvis chat voice calls continue")
+async def get_voice_chat(request: Request) -> VoiceChatResponse:
+    return _voice_chat_answer(_service(request))
+
+
+@router.put("/voice-chat", summary="Continue voice calls in this Jarvis chat")
+async def put_voice_chat(body: VoiceChatBody, request: Request) -> VoiceChatResponse:
+    """Bind the chat the front page shows: calls file into it and start with its history."""
+    svc = _service(request)
+    try:
+        svc.bind_voice_chat(body.session_id or None)
+    except NoSuchSession as exc:
+        raise HTTPException(status_code=404, detail="no-such-jarvis-chat") from exc
+    return _voice_chat_answer(svc)
+
+
 @router.get("/commands", summary="List chat slash commands and their availability")
 def list_chat_commands(request: Request, session_id: str | None = None) -> dict[str, Any]:
     try:
@@ -706,7 +736,63 @@ def list_sessions(
         d = s.to_dict()
         d["running"] = svc.is_running(s.session_id)
         out.append(d)
+    _title_jarvis_chats(request, svc, out)
     return {"sessions": out}
+
+
+def _title_jarvis_chats(request: Request, svc: Any, rows: list[dict[str, Any]]) -> None:
+    """Give the Jarvis chats a topic title instead of their first words.
+
+    Only the ``jarvis`` surface — the front page's own history — is retitled;
+    an agent's chat keeps the title its first message gave it. A title the user
+    typed is recognised by the titler and kept.
+    """
+    from jarvis.agent_chat.store import _title_from
+    from jarvis.sessions import chat_titles
+
+    now = int(time.time() * 1000)
+    requests: list[chat_titles.TitleRequest] = []
+    for row in rows:
+        if row.get("surface") != "jarvis":
+            continue
+        sid = str(row["session_id"])
+
+        def load(sid: str = sid) -> list[tuple[str, str]]:
+            texts: list[tuple[str, str]] = []
+            for event in svc.store.list_events(sid):
+                text = str((event.get("payload") or {}).get("text") or "")
+                if event["kind"] == "user_message":
+                    texts.append(("user", text))
+                elif event["kind"] == "agent_message":
+                    texts.append(("agent", text))
+                elif event["kind"] == "assistant_text":
+                    texts.append(("assistant", text))
+            return texts
+
+        updated = int(row.get("updated_ms") or 0)
+        requests.append(chat_titles.TitleRequest(
+            kind=chat_titles.KIND_TYPED,
+            conv_id=sid,
+            version=str(int(row.get("message_count") or 0)),
+            message_count=int(row.get("message_count") or 0),
+            updated_ms=updated,
+            settled=not row.get("running")
+            and now - updated >= chat_titles.TYPED_SETTLE_S * 1000,
+            seed=str(row.get("title") or ""),
+            loader=load,
+            auto_title=_title_from,
+        ))
+    if not requests:
+        return
+    try:
+        titles = chat_titles.titler_for_state(request.app.state).titles_for(requests)
+    except Exception:  # noqa: BLE001 - the stored title is a fine answer; logged
+        log.warning("Jarvis chat titles unavailable, keeping the stored ones", exc_info=True)
+        return
+    for row in rows:
+        key = (chat_titles.KIND_TYPED, str(row["session_id"]))
+        if key in titles:
+            row["title"] = titles[key]
 
 
 @router.post("/sessions", status_code=201)

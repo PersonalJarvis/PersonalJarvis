@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { MessageSquare, Mic, Search, Trash2, X } from "lucide-react";
+import { Search, Trash2, X } from "lucide-react";
 
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import {
+  chatRowLabel,
   filterChatRows,
   formatChatWhen,
   groupChatRows,
@@ -221,8 +222,8 @@ function ArchiveRow({
 }) {
   const t = useT();
   const isVoice = row.kind === "voice";
-  const Icon = isVoice ? Mic : MessageSquare;
-  const title = row.title || t("chats_view.new_chat");
+  const label = chatRowLabel(row, t);
+  const title = label.text;
   const preview = row.preview && row.preview !== title ? row.preview : "";
   return (
     <li className="group relative">
@@ -238,17 +239,23 @@ function ArchiveRow({
           active ? "bg-background/80" : "hover:bg-background/50",
         )}
       >
-        <Icon
-          aria-hidden
-          className={cn("mt-0.5 h-3.5 w-3.5 shrink-0", active ? "text-primary" : "text-muted-foreground")}
-        />
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-xs font-medium text-foreground">{title}</span>
+          <span
+            className={cn(
+              "block truncate text-xs font-medium",
+              label.untitled ? "text-muted-foreground" : "text-foreground",
+            )}
+          >
+            {title}
+          </span>
           {preview && (
             <span className="mt-0.5 block truncate text-xs text-muted-foreground">{preview}</span>
           )}
         </span>
-        <span className="mt-0.5 shrink-0 pr-6 font-mono text-micro tabular-nums text-muted-foreground">
+        {/* The kind is said in words, once, beside the time — not as a glyph
+            on every row. A topicless voice chat already names it. */}
+        <span className="mt-0.5 shrink-0 pr-6 text-micro tabular-nums text-muted-foreground">
+          {isVoice && !label.untitled && `${t("all_chats.filter_voice")} · `}
           {formatChatWhen(row.updatedMs)}
         </span>
       </button>

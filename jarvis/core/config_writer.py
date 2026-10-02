@@ -34,6 +34,7 @@ from .config import (
     DEFAULT_CONFIG_FILE,
     OLLAMA_MODEL_OPTION_KEYS,
     PROJECT_ROOT,
+    VOICE_ENGINE_VOICES,
     OllamaModelOptions,
     clear_config_cache,
 )
@@ -1384,6 +1385,42 @@ def set_realtime_fallback_provider(provider: str, *, path: Path = DEFAULT_CONFIG
     :func:`set_realtime_provider`.
     """
     _patch_realtime_provider_toml(path, provider, key="fallback_provider")
+
+
+def set_voice_engine_settings(
+    *,
+    tts: str | None = None,
+    llm_model: str | None = None,
+    path: Path = DEFAULT_CONFIG_FILE,
+) -> None:
+    """Persist the Local voice card's choices to ``[voice_engine]``.
+
+    ``tts`` must be one of ``config.VOICE_ENGINE_VOICES``; ``llm_model`` is an
+    Ollama tag, and an empty string means "automatic". Both land in ONE atomic
+    write. Read by ``jarvis/plugins/realtime/local_voice.py``; the running
+    engine picks them up on its next start.
+    """
+    values: dict[str, str | bool | int | float | list[str]] = {}
+    if tts is not None:
+        voice = tts.strip().lower()
+        if voice not in VOICE_ENGINE_VOICES:
+            raise ValueError(f"unknown local voice {tts!r}; expected one of {VOICE_ENGINE_VOICES}")
+        values["tts"] = voice
+    if llm_model is not None:
+        model = llm_model.strip()
+        if any(ch.isspace() for ch in model) or len(model) > 200:
+            raise ValueError(f"not an Ollama model tag: {llm_model!r}")
+        values["llm_model"] = model
+    if not values:
+        return
+    first_key, *rest = values
+    _patch_table(
+        path,
+        "voice_engine",
+        first_key,
+        values[first_key],
+        extra={key: values[key] for key in rest},
+    )
 
 
 def set_silence_window_ms(ms: int, *, path: Path = DEFAULT_CONFIG_FILE) -> None:

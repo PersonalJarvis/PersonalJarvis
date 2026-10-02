@@ -58,6 +58,12 @@ class _Conversation:
         self.audio_frames = 0
         self.done = asyncio.Event()
         self.interrupted_at: float | None = None
+        # Barge-in cut: the first ``interrupted`` (reply still generating) or
+        # ``speech_started`` (reply generated, app still playing — the app
+        # flushes playback on it) once the bench starts talking over Jarvis.
+        self.cut_armed = False
+        self.cut_at: float | None = None
+        self.cut_kind = ""
         # Audio after this point answers the user's next utterance, so it is
         # no leak of the interrupted reply.
         self.next_turn_at: float | None = None
@@ -71,6 +77,9 @@ class _Conversation:
         self.audio_frames = 0
         self.done = asyncio.Event()
         self.interrupted_at = None
+        self.cut_armed = False
+        self.cut_at = None
+        self.cut_kind = ""
         self.next_turn_at = None
         self.leaked_until = None
         self.metrics = {}
@@ -85,8 +94,11 @@ class _Conversation:
                 now = time.monotonic()
                 self.events.append((now, message))
                 kind = message.get("type")
+                if (self.cut_armed and self.cut_at is None
+                        and kind in (p.INTERRUPTED, p.SPEECH_STARTED)):
+                    self.cut_at, self.cut_kind = now, kind
                 if kind == p.TRANSCRIPT_INPUT and message.get("final"):
-                    if self.interrupted_at is not None and self.next_turn_at is None:
+                    if self.cut_at is not None and self.next_turn_at is None:
                         self.next_turn_at = now
                     await self.client.send({"type": p.RESPONSE_REQUEST, "session": self.session,
                                             "language": self.language})
@@ -109,7 +121,7 @@ class _Conversation:
                 if self.first_audio_at is None:
                     self.first_audio_at = now
                 self.last_audio_at = now
-                if self.interrupted_at is not None and self.next_turn_at is None:
+                if self.cut_at is not None and self.next_turn_at is None:
                     self.leaked_until = now
 
         await asyncio.gather(messages(), audio())
@@ -209,16 +221,17 @@ async def _run(model: str, tts: str, languages: list[str], voice_kind: str,
                 continue
             await convo.stream(silence(0.4, STT_RATE))
             barge = voice.render(_BARGE[language], language, pad_s=0.0)
+            convo.cut_armed = True
             sent_at = await convo.stream(np.concatenate([barge, silence(0.6, STT_RATE)]))
             barge_start = sent_at + _speech_start(barge)
-            interrupted = convo.interrupted_at
+            cut = convo.cut_at
             leak = 0.0
-            if interrupted is not None and convo.leaked_until is not None:
-                leak = max(0.0, convo.leaked_until - interrupted)
+            if cut is not None and convo.leaked_until is not None:
+                leak = max(0.0, convo.leaked_until - cut)
             barges.append({
                 "language": language,
-                "interrupt_ms": round((interrupted - barge_start) * 1000.0, 1)
-                if interrupted else None,
+                "cut_by": convo.cut_kind or None,
+                "interrupt_ms": round((cut - barge_start) * 1000.0, 1) if cut else None,
                 "audio_after_interrupt_ms": round(leak * 1000.0, 1),
             })
             convo.done = asyncio.Event()

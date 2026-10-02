@@ -17,8 +17,13 @@ from urllib.parse import urlsplit
 UV_VERSION = "0.12.9"
 
 
-def ensure_uv(root: Path) -> str:
-    found = shutil.which("uv")
+def ensure_uv(root: Path, *, prefer_path: bool = True) -> str:
+    """A verified ``uv`` binary: from PATH, else downloaded once into ``root``.
+
+    ``prefer_path=False`` skips PATH and uses the pinned :data:`UV_VERSION`, for
+    callers that rely on flags an older user-installed uv may lack.
+    """
+    found = shutil.which("uv") if prefer_path else None
     if found:
         return found
     target = root / ("uv.exe" if os.name == "nt" else "uv")

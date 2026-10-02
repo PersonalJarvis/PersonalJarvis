@@ -472,3 +472,9 @@ jarvis/society/focus.py
 # --- Local voice engine bench (2026-10-01): the German speech-input corpus the
 #     P0 bench renders, transcribes and sends to the local LLM (ADR-0037) ---
 jarvis/voice_engine/bench/corpus/de.json
+
+# --- Chat history titles (2026-10-02): the closed de/en/es greeting, small-talk
+#     and polite lead-in vocabulary the rules strip from spoken openings, and the
+#     real transcripts that pin it ---
+jarvis/sessions/chat_titles.py
+tests/unit/sessions/test_chat_titles.py
