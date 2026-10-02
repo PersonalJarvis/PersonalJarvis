@@ -7,7 +7,7 @@
  * everything else is client-side choreography that costs no tokens and never
  * starts or stops work.
  */
-import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Html } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
 import { DoubleSide, Vector3, type Group, type Mesh, type MeshBasicMaterial } from "three";
@@ -172,12 +172,11 @@ function PanePlateText({ agent, open, state }: { agent: SocietyAgent; open: bool
 }
 
 /** The sealed envelope Gigi carries on an errand, bobbing under it. */
-function ErrandEnvelope({ owner }: { owner: RefObject<Group | null> }) {
+function ErrandEnvelope() {
   const env = useRef<Group>(null);
   useFrame(({ clock }) => {
-    if (!env.current || !owner.current) return;
-    const p = owner.current.position;
-    env.current.position.set(p.x, 0.62 + Math.sin(clock.elapsedTime * 5) * 0.04, p.z);
+    if (!env.current) return;
+    env.current.position.y = 0.62 + Math.sin(clock.elapsedTime * 5) * 0.04;
     env.current.rotation.y = clock.elapsedTime * 1.6;
   });
   return (
@@ -399,16 +398,17 @@ function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected,
     if (ring.current) {
       const material = ring.current.material as MeshBasicMaterial;
       material.opacity = agent.state === "working" && awake && !reduced ? 0.55 + Math.sin(now / 330) * 0.3 : 0.8;
-      ring.current.visible = !isGigi && (phase.current === "dwell" || selected);
+      ring.current.visible = isGigi ? onFloorRef.current : phase.current === "dwell" || selected;
     }
   });
 
   // A pet on the floor carries its name low, just above its head; a flyer's sits above its hover height.
   const leadPlate = petOnFloor ? LEAD_PLATE_ON_FLOOR_M : LEAD_PLATE_FLYING_M;
-  return (
-    <>
-    <group ref={group} userData={{ agentId: agent.agentId }}>
-      <mesh ref={ring} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.015, 0]}>
+  const presentation = (
+    // The lead inherits GigiFlyer's rendered ground anchor. Only ordinary
+    // walkers bind the group that the navigation frame positions directly.
+    <group ref={isGigi ? undefined : group} userData={{ agentId: agent.agentId }}>
+      <mesh ref={ring} visible={!isGigi || petOnFloor} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.015, 0]}>
         <ringGeometry args={[selected ? 0.4 : 0.46, 0.54, 40]} />
         <meshBasicMaterial color={selected ? "#93c5fd" : RING_COLOUR[agent.state]} transparent opacity={0.8} side={DoubleSide} depthWrite={false} />
       </mesh>
@@ -421,15 +421,16 @@ function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected,
       <Nameplate agent={agent} activity={activity} selected={selected} onSelect={onSelect} height={isGigi ? leadPlate : undefined} />
       <AgentBubble agent={agent} lines={lines} selected={selected} onSelect={onSelect}
         height={(isGigi ? leadPlate : OFFICE_FIGURE_HEIGHT_M + 0.35) + 0.14} />
+      {carrying && <ErrandEnvelope />}
     </group>
-    {carrying && <ErrandEnvelope owner={group} />}
-    {isGigi
-      // One flyer for both roles, so switching keeps its flight state instead of re-spawning it.
-      ? <GigiFlyer owner={following ? PLAYER_OWNER : mover} mode={following ? "follow" : gigiModeFor(gigiPose.pose, gigiPose.travelling)}
-          speaking={speaking} paused={!awake} reduced={reduced} clear={following ? airClear : undefined} />
-      : <AgentFollower owner={group} appearance={pet} paused={!awake || reduced} clear={petClear} />}
-    </>
   );
+  return isGigi
+    // One flyer for both roles, so switching keeps its flight state instead of re-spawning it.
+    ? <GigiFlyer owner={following ? PLAYER_OWNER : mover} mode={following ? "follow" : gigiModeFor(gigiPose.pose, gigiPose.travelling)}
+        speaking={speaking} paused={!awake} reduced={reduced} clear={following ? airClear : undefined}>
+        {presentation}
+      </GigiFlyer>
+    : <>{presentation}<AgentFollower owner={group} appearance={pet} paused={!awake || reduced} clear={petClear} /></>;
 }
 
 export function OfficeAgents({ desks, agents, ctx, newcomers, awake, reduced, selectedId, chats, onSelect }: {

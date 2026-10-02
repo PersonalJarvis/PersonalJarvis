@@ -127,7 +127,7 @@ function nextRandom(seed: { value: number }): number {
   return seed.value / 4294967296;
 }
 
-export function GigiFlyer({ owner, mode, speaking, paused, reduced, clear }: {
+export function GigiFlyer({ owner, mode, speaking, paused, reduced, clear, children }: {
   /** The walker's mover (or, in "follow" mode, the person's character): ground position and facing (0 = +z). */
   owner: { current: { x: number; z: number; heading: number } };
   mode: GigiFlightMode;
@@ -136,7 +136,13 @@ export function GigiFlyer({ owner, mode, speaking, paused, reduced, clear }: {
   reduced: boolean;
   /** Free airspace test; "follow" mode keeps Gigi out of walls with it. */
   clear?: (x: number, z: number) => boolean;
+  /** Floor markers and labels share the rendered position, without the body's lift, turn or scale. */
+  children?: ReactNode;
 }) {
+  const groundRoot = useRef<Group>(null);
+  // JSX must not reset the animated anchor to a newer target on a React render,
+  // especially while paused or while switching between following and errands.
+  const initialPosition = useRef<[number, number, number]>([owner.current.x, 0, owner.current.z]);
   const root = useRef<Group>(null);
   const body = useRef<Group>(null);
   const halo = useRef<Sprite>(null);
@@ -200,7 +206,10 @@ export function GigiFlyer({ owner, mode, speaking, paused, reduced, clear }: {
     const hidden = !onFloor && cameraView.firstPerson && Math.hypot(pose.x - cameraView.x, pose.z - cameraView.z) < FIRST_PERSON_CLEARANCE_M;
     if (root.current) root.current.visible = !hidden;
     if (shadow.current) shadow.current.visible = !hidden;
-    if (root.current) root.current.position.set(pose.x, pose.y, pose.z);
+    // One horizontal transform for the model, shadow and floor annotations.
+    // The navigation target can lead this spring-smoothed position by a metre.
+    if (groundRoot.current) groundRoot.current.position.set(pose.x, 0, pose.z);
+    if (root.current) root.current.position.y = pose.y;
     if (body.current) {
       body.current.rotation.set(pose.pitch, pose.yaw, pose.roll, "YXZ");
       body.current.scale.setScalar(pose.scale);
@@ -237,7 +246,6 @@ export function GigiFlyer({ owner, mode, speaking, paused, reduced, clear }: {
     if (shadow.current) {
       const lift = onFloor ? 0 : Math.max(0, pose.y - 0.4);
       (shadow.current.material as MeshBasicMaterial).opacity = Math.max(0.08, 0.34 - lift * 0.22);
-      shadow.current.position.set(pose.x, 0.012, pose.z);
       // A pet on the floor gets a contact shadow its own size; a flyer's spreads as it rises.
       shadow.current.scale.setScalar(onFloor ? Math.max(0.5, pet.heightM * 1.7) : 0.85 + lift * 0.35);
     }
@@ -276,37 +284,40 @@ export function GigiFlyer({ owner, mode, speaking, paused, reduced, clear }: {
 
   return (
     <>
-      <group ref={root} position={[owner.current.x, pose.y, owner.current.z]}>
-        {!ground && <>
-        <sprite ref={halo} scale={0.9} renderOrder={1}>
-          <spriteMaterial map={textures.glow} color={GLOW_WARM} transparent opacity={0.35} blending={AdditiveBlending} depthWrite={false} />
-        </sprite>
-        <sprite ref={emitter} position={[0, EMITTER_OFFSET, 0]} scale={0.2} renderOrder={1}>
-          <spriteMaterial map={textures.glow} color={GLOW_WARM} transparent opacity={0.5} blending={AdditiveBlending} depthWrite={false} />
-        </sprite>
-        <pointLight ref={light} color={GLOW_WARM} intensity={0.6} distance={3.2} decay={2} />
-        <group ref={orbit}>
-          {[0, 1, 2].map((i) => (
-            <sprite key={i} position={[Math.cos((i / 3) * Math.PI * 2) * ORBIT_RADIUS_M, 0, Math.sin((i / 3) * Math.PI * 2) * ORBIT_RADIUS_M]} scale={0.08} renderOrder={2}>
-              <spriteMaterial map={textures.glow} color={GLOW_WARM} transparent opacity={0.9} blending={AdditiveBlending} depthWrite={false} />
+      <group ref={groundRoot} position={initialPosition.current}>
+        {children}
+        <group ref={root} position={[0, pose.y, 0]}>
+          {!ground && <>
+            <sprite ref={halo} scale={0.9} renderOrder={1}>
+              <spriteMaterial map={textures.glow} color={GLOW_WARM} transparent opacity={0.35} blending={AdditiveBlending} depthWrite={false} />
             </sprite>
-          ))}
-        </group>
-        </>}
-        <group ref={body}>
-          <group position={[0, bodyOffset(pet, ground), 0]}>
-            <ModelBoundary key={pet.id}>
-              <Suspense fallback={null}>
-                <CompanionBody pet={pet} drive={drive} reduced={reduced} paused={paused}
-                  gigi={<CompanionModel appearance={appearance} lead />} />
-              </Suspense>
-            </ModelBoundary>
+            <sprite ref={emitter} position={[0, EMITTER_OFFSET, 0]} scale={0.2} renderOrder={1}>
+              <spriteMaterial map={textures.glow} color={GLOW_WARM} transparent opacity={0.5} blending={AdditiveBlending} depthWrite={false} />
+            </sprite>
+            <pointLight ref={light} color={GLOW_WARM} intensity={0.6} distance={3.2} decay={2} />
+            <group ref={orbit}>
+              {[0, 1, 2].map((i) => (
+                <sprite key={i} position={[Math.cos((i / 3) * Math.PI * 2) * ORBIT_RADIUS_M, 0, Math.sin((i / 3) * Math.PI * 2) * ORBIT_RADIUS_M]} scale={0.08} renderOrder={2}>
+                  <spriteMaterial map={textures.glow} color={GLOW_WARM} transparent opacity={0.9} blending={AdditiveBlending} depthWrite={false} />
+                </sprite>
+              ))}
+            </group>
+          </>}
+          <group ref={body}>
+            <group position={[0, bodyOffset(pet, ground), 0]}>
+              <ModelBoundary key={pet.id}>
+                <Suspense fallback={null}>
+                  <CompanionBody pet={pet} drive={drive} reduced={reduced} paused={paused}
+                    gigi={<CompanionModel appearance={appearance} lead />} />
+                </Suspense>
+              </ModelBoundary>
+            </group>
           </group>
         </group>
+        <mesh ref={shadow} geometry={particles.shadowGeometry} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.012, 0]} renderOrder={1}>
+          <meshBasicMaterial map={textures.shadow} color="#000000" transparent opacity={0.3} depthWrite={false} />
+        </mesh>
       </group>
-      <mesh ref={shadow} geometry={particles.shadowGeometry} rotation={[-Math.PI / 2, 0, 0]} position={[owner.current.x, 0.012, owner.current.z]} renderOrder={1}>
-        <meshBasicMaterial map={textures.shadow} color="#000000" transparent opacity={0.3} depthWrite={false} />
-      </mesh>
       <points ref={trail} geometry={particles.geometry} frustumCulled={false} visible={false} renderOrder={2}>
         <pointsMaterial map={textures.glow} size={0.07} sizeAttenuation vertexColors transparent blending={AdditiveBlending} depthWrite={false} />
       </points>
