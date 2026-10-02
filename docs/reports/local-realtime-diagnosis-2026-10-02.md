@@ -103,16 +103,25 @@ input was synthetic German streamed in 20 ms frames. No cloud model was used.
 | Cold startup including de/en speech proof | 31.93 s in that run |
 | Explicit request to use an arithmetic tool | Exactly one `add_numbers(a=2, b=3)` through the actual `ToolExecutor`; correct spoken result; 76,722 PCM bytes |
 | Tool-run startup and response latency | 37.14 s startup; 18.30 s final-transcript-to-audio under concurrent machine load: functionally successful, too slow for a realtime performance claim |
+| Instrumented repeat of the explicit tool request | 752 ms final-transcript-to-audio; 1,234 ms speech-end-to-audio; tool requested after 480 ms; tool execution below 1 ms; exactly one call and 79,470 PCM bytes |
 | Bare arithmetic question with a tool available | Model answered directly; not counted as tool-execution proof. Explicit action wording was used for the tool test. |
 | Worker shutdown | Probe-owned workers closed after every run |
-| Focused tests | 122 voice-engine tests, 37 local-route/live tests, 27 provider-contract/voice-confirmation tests passed; 2 optional contract cases skipped |
+| Focused tests after integration | 329 passed / 3 skipped in the main checkout; 315 passed / 3 skipped on current remote main plus this patch. Counts differ because the shared checkout contains other integration changes. |
 | Desktop cold-boot guard | Window 1,795 ms; voice usability 9,088 ms; app interaction 10,907 ms; all within existing budgets |
 | Static checks | Ruff passed for changed Python files |
+| Publication checks | All 19 static gates passed. The initial shell parse failure was caused by CRLF files retained across the rebase; exact committed LF bytes passed without a source change. The exact base checkout also passed. |
 
 The voice-engine tests cover failed/cancelled handshake cleanup, protocol
 mismatch, pipe failure, ordered audio/completion, startup timeout, readiness
 failure/retry, settings replacement and stale self-test evidence. The adjacent
 tests retain the existing tool-confirmation and shared provider contracts.
+
+The main checkout contains the committed repair. Its existing desktop process
+has not been restarted by this session: the application explicitly restricts
+restarts to a desktop-user action because active agent terminals would be lost
+(`jarvis/ui/web/settings_routes.py`, `restart_app`). The probe used fresh
+processes with the repaired code. A running desktop session is therefore not
+claimed to have adopted all adapter changes yet.
 
 ## Remaining qualification
 
