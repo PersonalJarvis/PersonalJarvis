@@ -219,12 +219,17 @@ function logicalLineAt(
   const chunks: string[] = [];
   let row = startRow;
   let measured = 0;
-  while (measured < MAX_LOGICAL_LINE_CHARS) {
+  // `getLine` past the last row wraps around xterm's scrollback ring instead
+  // of returning undefined, and an empty wrapped row adds no characters — so
+  // the walk is bounded by the buffer's real end as well as by length.
+  const lastRow = buffer.length - 1;
+  while (measured < MAX_LOGICAL_LINE_CHARS && row <= lastRow) {
     const current = buffer.getLine(row);
     if (!current) break;
     const text = current.translateToString(true);
     chunks.push(text);
     measured += text.length;
+    if (row >= lastRow) break;
     const next = buffer.getLine(row + 1);
     if (!next?.isWrapped) break;
     row += 1;
@@ -245,6 +250,7 @@ function mapStringIndex(
   let column = initialColumn;
   let remaining = chars;
   while (remaining > 0) {
+    if (row >= buffer.length) return undefined;
     const line = buffer.getLine(row);
     if (!line) return undefined;
     for (let index = column; index < line.length; index += 1) {

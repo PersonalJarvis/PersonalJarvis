@@ -1,7 +1,8 @@
 /**
- * The building has two floors joined by an elevator: the Jarvis agents office
- * and, one ride up, the coding floor with a figure per IDE coding session.
- * Pure helpers for what differs per floor; the stage wires them.
+ * The building has three floors joined by an elevator: the Jarvis agents
+ * office, one ride up the coding floor with a figure per IDE coding session,
+ * and on top the arcade hall. Pure helpers for what differs per floor; the
+ * stage wires them.
  */
 import type { OfficeLayout } from "./officeLayout";
 import type { OfficeFloor } from "./officeStore";
@@ -27,8 +28,9 @@ export function arrivalPose(layout: OfficeLayout, at: "elevator" | "remembered",
 
 /** Agent ids each floor has already seen; a newcomer on that floor arrives by the elevator. */
 const codingKnown = new Set<string>();
+const arcadeKnown = new Set<string>();
 export function knownOnFloor(floor: OfficeFloor): Set<string> {
-  return floor === "agents" ? knownAgents : codingKnown;
+  return floor === "agents" ? knownAgents : floor === "coding" ? codingKnown : arcadeKnown;
 }
 
 /**

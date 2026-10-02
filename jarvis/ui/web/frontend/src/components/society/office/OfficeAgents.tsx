@@ -7,7 +7,7 @@
  * everything else is client-side choreography that costs no tokens and never
  * starts or stops work.
  */
-import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Html } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
 import { DoubleSide, Vector3, type Group, type Mesh, type MeshBasicMaterial } from "three";
@@ -23,6 +23,8 @@ import { OFFICE } from "./officePalette";
 import type { DeskSlot, OfficeLayout, Point } from "./officeLayout";
 import { findPath, isWalkable, type NavGrid } from "./officeNav";
 import { AgentFollower } from "../companion/AgentFollower";
+import { useCompanionPet } from "../companion/companionPetStore";
+import { companionFlies } from "../companion/petCompanions";
 import { resolveCompanion } from "../companion/appearance";
 import type { TrailPoint } from "../companion/trail";
 import { stepMover, stepMoverAvoiding, turnToward, WALK_SPEED, type Mover } from "./officeMotion";
@@ -47,6 +49,10 @@ const PLAYER_OWNER = { current: player };
 /** Farther than this from the person's shoulder and Gigi flies back first instead of hovering beside them. */
 const FOLLOW_CATCH_M = 1;
 
+/** Height of the lead's nameplate: above a flying companion, or low above a pet on the floor. */
+const LEAD_PLATE_FLYING_M = 1.75;
+const LEAD_PLATE_ON_FLOOR_M = 0.85;
+
 /** Every figure shares one toy scale, so desks and couches read the same everywhere. */
 export const OFFICE_FIGURE_HEIGHT_M = 1.3;
 
@@ -68,7 +74,7 @@ export function plateScale(distance: number): number {
 
 const RING_COLOUR = { working: OFFICE.ringWorking, idle: OFFICE.ringIdle, waiting: OFFICE.ringWaiting, paused: OFFICE.ringPaused } as const;
 
-/** Jarvis is not a person in the office: it is Gigi, flying at chest height. */
+/** Jarvis is not a person in the office: it is the person's pet (Gigi by default), flying or on the floor. */
 function gigiModeFor(pose: Pose | null, travelling: boolean): GigiFlightMode {
   if (travelling || !pose) return "idle";
   if (pose === "sit" || pose === "work") return "work";
@@ -102,10 +108,10 @@ function Nameplate({ agent, activity, selected, onSelect, height = OFFICE_FIGURE
   );
   return (
     <group ref={anchor} position={[0, height, 0]}>
-      {/* An opened plate draws above its neighbours' plates and bubbles, which sit shoulder to shoulder at a desk row. */}
+      {/* Hover/focus raises a plate above its neighbours; coding titles stay expanded independently. */}
       <Html center zIndexRange={open ? [40, 30] : [20, 0]}>
         <button ref={plate} type="button" data-office-ui className="office-plate" data-state={agent.state} data-selected={selected || undefined}
-          data-pane={pane || undefined} data-open={open || undefined}
+          data-pane={pane || undefined} data-open={pane || open || undefined}
           onClick={(event) => { event.stopPropagation(); onSelect(agent.agentId); }}
           onPointerEnter={() => setOpen(true)} onPointerLeave={() => setOpen(false)}
           onFocus={() => setOpen(true)} onBlur={() => setOpen(false)}
@@ -115,7 +121,7 @@ function Nameplate({ agent, activity, selected, onSelect, height = OFFICE_FIGURE
               {agent.tier === "lead" ? "★" : (pane ? agent.provider : agent.name).slice(0, 1).toUpperCase()}
             </span>
           )}
-          {pane ? <PanePlateText agent={agent} open={open} state={state} /> : (
+          {pane ? <PanePlateText agent={agent} state={state} /> : (
             <>
               <span className="office-plate-name" title={agent.name}>{agent.name}</span>
               {state}
@@ -144,14 +150,13 @@ function PaneLogo({ url, ground }: { url: string; ground: "ink" | "dark" | "any"
 }
 
 /**
- * A coding pane's plate: its title on two lines (subject, then result and run
- * state), so the words that tell four "Office …" panes apart are never the ones
- * clipped. Hovered or focused, it opens to the whole title, the call-sign that
- * finds the pane in the IDE, and the opening of what it was last asked.
+ * A coding pane's plate always shows its whole title (subject, then result and
+ * run state), the call-sign that finds the pane in the IDE, and the opening of
+ * what it was last asked. Only the prompt preview is clamped, never the title.
  */
-function PanePlateText({ agent, open, state }: { agent: SocietyAgent; open: boolean; state: ReactNode }) {
+function PanePlateText({ agent, state }: { agent: SocietyAgent; state: ReactNode }) {
   const { subject, result } = plateTitle(agent.name);
-  const asked = open ? promptOpening(agent.description) : "";
+  const asked = promptOpening(agent.description);
   return (
     <span className="office-plate-text">
       <span className="office-plate-name">{subject}</span>
@@ -159,19 +164,18 @@ function PanePlateText({ agent, open, state }: { agent: SocietyAgent; open: bool
         {result ? <span className="office-plate-result">{result}</span> : null}
         {state}
       </span>
-      {open ? <span className="office-plate-sign">{agent.title}</span> : null}
+      <span className="office-plate-sign">{agent.title}</span>
       {asked && asked !== agent.name ? <span className="office-plate-asked">“{asked}”</span> : null}
     </span>
   );
 }
 
 /** The sealed envelope Gigi carries on an errand, bobbing under it. */
-function ErrandEnvelope({ owner }: { owner: RefObject<Group | null> }) {
+function ErrandEnvelope() {
   const env = useRef<Group>(null);
   useFrame(({ clock }) => {
-    if (!env.current || !owner.current) return;
-    const p = owner.current.position;
-    env.current.position.set(p.x, 0.62 + Math.sin(clock.elapsedTime * 5) * 0.04, p.z);
+    if (!env.current) return;
+    env.current.position.y = 0.62 + Math.sin(clock.elapsedTime * 5) * 0.04;
     env.current.rotation.y = clock.elapsedTime * 1.6;
   });
   return (
@@ -231,6 +235,11 @@ function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected,
   const followingRef = useRef(false);
   const gigiSide = useRef<1 | -1>(1);
   const airClear = useMemo(() => (x: number, z: number) => isWalkable(ctx.grid, { x, z }), [ctx.grid]);
+  // The lead is drawn as the person's pet; one that walks takes floor routes instead of flying over desks.
+  const petOnFloor = useCompanionPet((s) => isGigi && !companionFlies(s.pet));
+  const onFloorRef = useRef(petOnFloor);
+  onFloorRef.current = petOnFloor;
+  const routeGoal = useRef<Point | null>(null);
 
   // Leaving the office releases the agent's spot and its registry entry.
   useEffect(() => () => {
@@ -249,6 +258,14 @@ function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected,
     const dt = Math.min(rawDt, 0.1);
     const now = Date.now();
     const m = mover.current;
+    // A flyer heads straight for its goal; a pet on the floor walks a route, re-planned only when the goal moves.
+    const headFor = (goal: Point) => {
+      if (!onFloorRef.current) { m.path = [goal]; return; }
+      const last = routeGoal.current;
+      if (last && m.path.length > 0 && Math.hypot(last.x - goal.x, last.z - goal.z) < 0.4) return;
+      routeGoal.current = { x: goal.x, z: goal.z };
+      m.path = findPath(ctx.grid, m, goal) ?? [goal];
+    };
     // Gigi on an errand: fly straight to the recipient, hover and deliver, then back to its day.
     const errand = isGigi ? useGigiErrands.getState().current : null;
     const recipient = errand ? agentPositions.get(errand.to) : undefined;
@@ -259,8 +276,12 @@ function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected,
       const key = `${errand.id}:${errand.phase}`;
       if (errand.phase === "fly") {
         const spot = deliverySpot(recipient, m);
-        const end = m.path[m.path.length - 1];
-        if (errandKey.current !== key || !end || Math.hypot(end.x - spot.x, end.z - spot.z) > 0.4) m.path = [spot];
+        if (errandKey.current !== key) routeGoal.current = null;
+        if (onFloorRef.current) headFor(spot);
+        else {
+          const end = m.path[m.path.length - 1];
+          if (errandKey.current !== key || !end || Math.hypot(end.x - spot.x, end.z - spot.z) > 0.4) m.path = [spot];
+        }
         if (reduced) { m.x = spot.x; m.z = spot.z; m.path = []; }
         const { arrived } = stepMover(m, ERRAND_SPEED, dt);
         if (arrived) useGigiErrands.getState().arrive(errand.id);
@@ -284,15 +305,15 @@ function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected,
     const calledTo = summon && summon.untilMs > now ? summon.target : null;
     if (isGigi && !calledTo) {
       // Gigi keeps the person company, as on the coding floor; an errand or a summons still takes it away.
-      const anchor = followAnchor(player.x, player.z, player.heading, gigiSide.current, airClear);
+      const anchor = followAnchor(player.x, player.z, player.heading, gigiSide.current, airClear, onFloorRef.current);
       gigiSide.current = anchor.side;
       const far = Math.hypot(anchor.x - m.x, anchor.z - m.z) > FOLLOW_CATCH_M;
       if (!placed.current || reduced || !far) {
         m.x = anchor.x; m.z = anchor.z; m.path = [];
         placed.current = true;
       } else if (awake) {
-        // Back from an errand or a meeting: fly over to the person, then fall in beside them.
-        m.path = [anchor];
+        // Back from an errand or a meeting: fly (or run) over to the person, then fall in beside them.
+        headFor(anchor);
         stepMover(m, ERRAND_SPEED, dt);
       }
       const nowFollowing = Math.hypot(anchor.x - m.x, anchor.z - m.z) <= FOLLOW_CATCH_M;
@@ -340,7 +361,7 @@ function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected,
       } else {
         m.path = findPath(ctx.grid, m, next.target) ?? [];
         // Gigi flies: after an errand it may hover over a desk, where no floor path starts.
-        if (m.path.length === 0 && isGigi && Math.hypot(next.target.x - m.x, next.target.z - m.z) > 0.05) m.path = [next.target];
+        if (m.path.length === 0 && isGigi && !onFloorRef.current && Math.hypot(next.target.x - m.x, next.target.z - m.z) > 0.05) m.path = [next.target];
         if (m.path.length === 0) { m.x = next.target.x; m.z = next.target.z; }
         phase.current = m.path.length > 0 ? "travel" : "dwell";
         if (phase.current === "dwell") dwellUntil.current = now + next.dwellMs;
@@ -376,14 +397,17 @@ function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected,
     if (ring.current) {
       const material = ring.current.material as MeshBasicMaterial;
       material.opacity = agent.state === "working" && awake && !reduced ? 0.55 + Math.sin(now / 330) * 0.3 : 0.8;
-      ring.current.visible = !isGigi && (phase.current === "dwell" || selected);
+      ring.current.visible = isGigi ? onFloorRef.current : phase.current === "dwell" || selected;
     }
   });
 
-  return (
-    <>
-    <group ref={group} userData={{ agentId: agent.agentId }}>
-      <mesh ref={ring} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.015, 0]}>
+  // A pet on the floor carries its name low, just above its head; a flyer's sits above its hover height.
+  const leadPlate = petOnFloor ? LEAD_PLATE_ON_FLOOR_M : LEAD_PLATE_FLYING_M;
+  const presentation = (
+    // The lead inherits GigiFlyer's rendered ground anchor. Only ordinary
+    // walkers bind the group that the navigation frame positions directly.
+    <group ref={isGigi ? undefined : group} userData={{ agentId: agent.agentId }}>
+      <mesh ref={ring} visible={!isGigi || petOnFloor} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.015, 0]}>
         <ringGeometry args={[selected ? 0.4 : 0.46, 0.54, 40]} />
         <meshBasicMaterial color={selected ? "#93c5fd" : RING_COLOUR[agent.state]} transparent opacity={0.8} side={DoubleSide} depthWrite={false} />
       </mesh>
@@ -393,18 +417,19 @@ function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected,
         onPointerOut={() => { document.body.style.cursor = ""; }}>
         {!isGigi && <ToyFigure look={look} drive={drive} paused={!awake} heightM={OFFICE_FIGURE_HEIGHT_M} seatHeight={seatHeight} />}
       </group>
-      <Nameplate agent={agent} activity={activity} selected={selected} onSelect={onSelect} height={isGigi ? 1.75 : undefined} />
+      <Nameplate agent={agent} activity={activity} selected={selected} onSelect={onSelect} height={isGigi ? leadPlate : undefined} />
       <AgentBubble agent={agent} lines={lines} selected={selected} onSelect={onSelect}
-        height={(isGigi ? 1.75 : OFFICE_FIGURE_HEIGHT_M + 0.35) + 0.14} />
+        height={(isGigi ? leadPlate : OFFICE_FIGURE_HEIGHT_M + 0.35) + 0.14} />
+      {carrying && <ErrandEnvelope />}
     </group>
-    {carrying && <ErrandEnvelope owner={group} />}
-    {isGigi
-      // One flyer for both roles, so switching keeps its flight state instead of re-spawning it.
-      ? <GigiFlyer owner={following ? PLAYER_OWNER : mover} mode={following ? "follow" : gigiModeFor(gigiPose.pose, gigiPose.travelling)}
-          speaking={speaking} paused={!awake} reduced={reduced} clear={following ? airClear : undefined} />
-      : <AgentFollower owner={group} appearance={pet} paused={!awake || reduced} clear={petClear} />}
-    </>
   );
+  return isGigi
+    // One flyer for both roles, so switching keeps its flight state instead of re-spawning it.
+    ? <GigiFlyer owner={following ? PLAYER_OWNER : mover} mode={following ? "follow" : gigiModeFor(gigiPose.pose, gigiPose.travelling)}
+        speaking={speaking} paused={!awake} reduced={reduced} clear={following ? airClear : undefined}>
+        {presentation}
+      </GigiFlyer>
+    : <>{presentation}<AgentFollower owner={group} appearance={pet} paused={!awake || reduced} clear={petClear} /></>;
 }
 
 export function OfficeAgents({ desks, agents, ctx, newcomers, awake, reduced, selectedId, chats, onSelect }: {

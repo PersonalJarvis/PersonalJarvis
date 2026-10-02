@@ -129,6 +129,13 @@ class SettingsBody(BaseModel):
     strip_always: bool | None = Field(
         default=None, description="Keep the control strip up even at rest"
     )
+    preview: bool = Field(
+        default=False,
+        description=(
+            "Apply live only: nothing is written and no PetChanged goes out. "
+            "The size slider sends this while it is dragged and a normal save on release."
+        ),
+    )
 
 
 class VisibilityBody(BaseModel):
@@ -406,33 +413,14 @@ async def put_settings(body: SettingsBody, request: Request) -> dict[str, Any]:
 
     from jarvis.core import config_writer
 
-    persisted = True
+    # Memory, then the desktop, then disk: the pet resizes without waiting
+    # for the locked TOML write behind it.
     if body.scale is not None:
-        scale = clamp_pet_scale(body.scale)
-        _set_ui_value(request, "pet_scale", scale)
-        try:
-            await asyncio.to_thread(config_writer.set_pet_scale, scale, path=_config_path())
-        except Exception as exc:  # noqa: BLE001 — the live apply is still worth trying
-            persisted = False
-            log.warning("pet_scale persist failed (live apply still attempted): %s", exc)
+        _set_ui_value(request, "pet_scale", clamp_pet_scale(body.scale))
     if body.bubble is not None:
         _set_ui_value(request, "pet_bubble", bool(body.bubble))
-        try:
-            await asyncio.to_thread(
-                config_writer.set_pet_bubble, bool(body.bubble), path=_config_path()
-            )
-        except Exception as exc:  # noqa: BLE001 — the live apply is still worth trying
-            persisted = False
-            log.warning("pet_bubble persist failed (live apply still attempted): %s", exc)
     if body.strip_always is not None:
         _set_ui_value(request, "pet_strip_always", bool(body.strip_always))
-        try:
-            await asyncio.to_thread(
-                config_writer.set_pet_strip_always, bool(body.strip_always), path=_config_path()
-            )
-        except Exception as exc:  # noqa: BLE001 — the live apply is still worth trying
-            persisted = False
-            log.warning("pet_strip_always persist failed (live apply still attempted): %s", exc)
 
     applied_live, detail = await _apply(
         request,
@@ -442,6 +430,33 @@ async def put_settings(body: SettingsBody, request: Request) -> dict[str, Any]:
         _configured_strip_always(request),
     )
     active = _configured_pet_id(request)
+    if body.preview:
+        # One step of a slider drag: the release that follows saves and announces it.
+        return {
+            "ok": True,
+            **_state(request, active),
+            "persisted": False,
+            "applied_live": applied_live,
+            "detail": detail,
+        }
+
+    writes: list[tuple[str, Callable[..., None], object]] = []
+    if body.scale is not None:
+        writes.append(("pet_scale", config_writer.set_pet_scale, _configured_scale(request)))
+    if body.bubble is not None:
+        writes.append(("pet_bubble", config_writer.set_pet_bubble, bool(body.bubble)))
+    if body.strip_always is not None:
+        writes.append(
+            ("pet_strip_always", config_writer.set_pet_strip_always, bool(body.strip_always))
+        )
+    persisted = True
+    for key, write, value in writes:
+        try:
+            await asyncio.to_thread(write, value, path=_config_path())
+        except Exception as exc:  # noqa: BLE001 — already applied live; the response reports it
+            persisted = False
+            log.warning("%s persist failed (applied live, lost on restart): %s", key, exc)
+
     await _publish_changed(request, active, source="settings")
     return {
         "ok": True,

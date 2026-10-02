@@ -13,7 +13,8 @@ it("keeps brief voice errors visible", async () => {
  const steps: ThinkingStep[] = [{ id: "s", kind: "note", status: "error", labelKey: "thinking.step_update", error: "Connection lost", startedTs: 0 }];
  expect(traceWorthShowing(steps, 20, false)).toBe(true);
  render(<TurnSteps steps={steps} durationMs={20} />);
- expect(await screen.findByText("Connection lost")).toBeTruthy();
+ // A failed step needs attention, so it stays in view with its reason.
+ expect((await screen.findAllByText(/Connection lost/)).length).toBeGreaterThan(0);
 });
 it("does not hide live work with no events", async () => {
  const { rerender, container } = render(<TurnSteps steps={[]} />);

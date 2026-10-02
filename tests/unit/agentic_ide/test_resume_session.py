@@ -627,7 +627,7 @@ async def test_a_new_workspace_does_not_erase_the_folders_you_closed(
     big, quick = tmp_path / "big", tmp_path / "quick"
     big.mkdir()
     quick.mkdir()
-    await registry.start(str(big), [{"agent": "claude"} for _ in range(ide.MAX_TERMINALS)])
+    await registry.start(str(big), [{"agent": "claude"} for _ in range(16)])
     await registry.end()
 
     await registry.start(str(quick), [{"agent": "claude", "name": "Solo"}])
@@ -635,7 +635,7 @@ async def test_a_new_workspace_does_not_erase_the_folders_you_closed(
     saved = resume_store.load()
     assert saved is not None
     folders = {w.folder: len(w.terminals) for w in saved.workspaces}
-    assert folders == {str(quick): 1, str(big): ide.MAX_TERMINALS}
+    assert folders == {str(quick): 1, str(big): 16}
 
 
 async def test_reopening_the_same_folder_preserves_independent_workspace_records(

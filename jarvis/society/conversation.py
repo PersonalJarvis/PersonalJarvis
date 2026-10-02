@@ -131,35 +131,47 @@ class ConversationArchive:
                         "INSERT INTO messages_fts(rowid,text) VALUES(?,?)", (cursor.lastrowid, text)
                     )
 
-    def search(self, session: str, query: str, *, limit: int = 5) -> list[dict[str, Any]]:
+    def search(
+        self, session: str, query: str, *, limit: int = 5, include_owned: bool = False
+    ) -> list[dict[str, Any]]:
+        """Search one chat; ``include_owned`` adds every ``<session>:...`` chat.
+
+        An agent's canonical chat owns its routine runs and its conversations
+        with Jarvis and teammates, so recall finds what was said in any of them.
+        """
         words = re.findall(r"\w+", query, re.UNICODE)
         if not words:
             return []
         limit = max(1, min(20, limit))
+        prefix = session + ":"
+        scope = "(m.session=? OR substr(m.session,1,?)=?)" if include_owned else "m.session=?"
+        scope_args: tuple[Any, ...] = (
+            (session, len(prefix), prefix) if include_owned else (session,)
+        )
         with self._lock:
             self.open()
             if self.fts_available:
                 expression = " OR ".join('"' + w + '"' for w in words[:32])
-                rows = self._db.execute(
-                    "SELECT m.seq,m.kind,m.text FROM messages_fts f "
+                sql = (
+                    "SELECT m.session,m.seq,m.kind,m.text FROM messages_fts f "  # noqa: S608
                     "JOIN messages m ON m.id=f.rowid WHERE messages_fts MATCH ? "
-                    "AND m.session=? ORDER BY bm25(messages_fts),m.seq DESC LIMIT ?",
-                    (expression, session, limit),
-                ).fetchall()
+                    f"AND {scope} ORDER BY bm25(messages_fts),m.seq DESC LIMIT ?"
+                )
+                rows = self._db.execute(sql, (expression, *scope_args, limit)).fetchall()
             else:
-                clauses = " OR ".join("instr(lower(text),?)>0" for _ in words[:32])
-                rows = self._db.execute(
-                    "SELECT seq,kind,text FROM messages WHERE session=? AND ("  # noqa: S608 - bound values
-                    + clauses
-                    + ") ORDER BY seq DESC LIMIT ?",
-                    (session, *(w.lower() for w in words[:32]), limit),
-                ).fetchall()
+                clauses = " OR ".join("instr(lower(m.text),?)>0" for _ in words[:32])
+                sql = (  # scope and clauses are fixed SQL; every value is bound
+                    "SELECT m.session,m.seq,m.kind,m.text FROM messages m "  # noqa: S608
+                    f"WHERE {scope} AND ({clauses}) ORDER BY m.seq DESC LIMIT ?"
+                )
+                words_lower = (w.lower() for w in words[:32])
+                rows = self._db.execute(sql, (*scope_args, *words_lower, limit)).fetchall()
         return [
             {
                 "seq": r["seq"],
                 "kind": r["kind"],
                 "text": r["text"],
-                "source": f"chat:{session}#seq={r['seq']}",
+                "source": f"chat:{r['session']}#seq={r['seq']}",
             }
             for r in rows
         ]
@@ -273,9 +285,13 @@ class ConversationArchive:
             )
 
     def review_counts(self, agent_id: str) -> dict[str, int]:
-        """Count direct chats and routine reviews without reading conversation contents."""
+        """Count reviews of every chat the agent owns without reading their contents.
+
+        That is the canonical chat, routine runs and the conversations with
+        Jarvis and teammates (``society:<agent>:...``).
+        """
         session = f"society:{agent_id}"
-        prefix = session + ":routine:"
+        prefix = session + ":"
         with self._lock:
             rows = self._db.execute(
                 "SELECT status,count(*) AS n FROM reviews WHERE session=? OR "

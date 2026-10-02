@@ -18,22 +18,31 @@ import {
   type AppshotSettings,
   type AppshotSettingsPatch,
 } from "@/lib/appshotApi";
+import { gestureFamily } from "@/lib/appshotChord";
 import { cn } from "@/lib/utils";
+import { AppshotShortcutField } from "@/views/AppshotShortcutField";
 import { useEventStore } from "@/store/events";
 
 /**
  * Appshots — show the assistant the window you are working in.
  *
  * One page for the whole feature: the master switch (it is also the switch
- * for every other screen look, `[screen_context].enabled`), the global
- * shortcut, where a shortcut appshot goes, the sound and the flash, a try-it
- * button, and the last appshot so the user sees exactly what was handed over.
+ * for every other screen look, `[screen_context].enabled`), the two global
+ * shortcuts (front window, and a dragged-out area), where a shortcut appshot
+ * goes, the sound and the flash, try-it buttons, and the last appshot so the
+ * user sees exactly what was handed over.
  * That picture lives in backend memory for `deck_preview_s` and is fetched
  * with `no-store`; this view keeps no copy.
  */
 
 const IS_MAC = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform || "");
-const PRESET_HOTKEYS = ["alt+alt", "ctrl+alt+a", ""] as const;
+
+/** The key a two-sided gesture is made of, as printed on this keyboard. */
+function gestureKeyName(family: "alt" | "shift" | "ctrl"): string {
+  if (family === "alt") return IS_MAC ? "Option" : "Alt";
+  if (family === "ctrl") return IS_MAC ? "Control" : "Ctrl";
+  return "Shift";
+}
 const TRY_DELAY_S = 3;
 
 export function AppshotGlyph({ className }: { className?: string }) {
@@ -64,12 +73,15 @@ function Row({
 }) {
   return (
     <div className="px-5 py-4">
-      <div className="flex items-center justify-between gap-6">
-        <div className="min-w-0">
+      {/* The label keeps a readable width; a wide control (a shortcut with
+          Change and clear) moves under it instead of squeezing the text to
+          one word per line. */}
+      <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
+        <div className="min-w-[min(100%,14rem)] flex-1">
           <p className="text-base font-medium text-foreground">{label}</p>
           {hint && <p className="mt-0.5 text-sm text-muted-foreground">{hint}</p>}
         </div>
-        <div className="shrink-0">{control}</div>
+        <div className="ml-auto shrink-0">{control}</div>
       </div>
       {children}
     </div>
@@ -178,6 +190,23 @@ export function AppshotsView() {
   const [latest, setLatest] = useState<AppshotMeta | null>(null);
   const [saving, setSaving] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
+  const [picking, setPicking] = useState(false);
+  // While a shortcut field records (or refuses a gesture), its row says so
+  // in place of the description.
+  const [fieldStatus, setFieldStatus] = useState<{ window: string | null; region: string | null }>({
+    window: null,
+    region: null,
+  });
+  const windowStatus = useCallback(
+    (text: string | null) =>
+      setFieldStatus((s) => (s.window === text ? s : { ...s, window: text })),
+    [],
+  );
+  const regionStatus = useCallback(
+    (text: string | null) =>
+      setFieldStatus((s) => (s.region === text ? s : { ...s, region: text })),
+    [],
+  );
   const countdownTimer = useRef<number | null>(null);
 
   useEffect(() => {
@@ -247,6 +276,24 @@ export function AppshotsView() {
     }
   }, [countdown, pushToast, t]);
 
+  const tryRegion = useCallback(async () => {
+    if (picking || countdown !== null) return;
+    setPicking(true);
+    try {
+      const result = await takeAppshot(0, "region");
+      if (result.ok) {
+        setLatest(result.appshot);
+        pushToast("success", t("appshots.try_done"));
+      } else if (result.reason !== "cancelled") {
+        pushToast("warning", t("appshots.toast_refused").replace("{0}", result.message));
+      }
+    } catch (error) {
+      pushToast("error", (error as Error).message);
+    } finally {
+      setPicking(false);
+    }
+  }, [countdown, picking, pushToast, t]);
+
   const forget = useCallback(async () => {
     try {
       await forgetAppshots();
@@ -256,17 +303,6 @@ export function AppshotsView() {
     }
   }, [pushToast]);
 
-  const hotkeyOptions = useMemo<BrandedSelectOption[]>(() => {
-    const options: BrandedSelectOption[] = PRESET_HOTKEYS.map((value) => ({
-      value: value || "off",
-      label: value ? formatAppshotHotkey(value, IS_MAC) : t("appshots.shortcut_off"),
-    }));
-    const current = settings?.hotkey ?? "";
-    if (current && !PRESET_HOTKEYS.includes(current as (typeof PRESET_HOTKEYS)[number])) {
-      options.unshift({ value: current, label: formatAppshotHotkey(current, IS_MAC) });
-    }
-    return options;
-  }, [settings?.hotkey, t]);
 
   const targetOptions = useMemo<BrandedSelectOption[]>(
     () => [
@@ -286,9 +322,36 @@ export function AppshotsView() {
     if (settings.hotkey === "alt+alt") {
       return IS_MAC ? t("appshots.shortcut_both_option_hint") : t("appshots.shortcut_both_alt_hint");
     }
+    const family = gestureFamily(settings.hotkey);
+    if (family) {
+      return t("appshots.shortcut_both_keys_hint").replace("{0}", gestureKeyName(family));
+    }
     return t("appshots.shortcut_combo_hint").replace(
       "{0}",
       formatAppshotHotkey(settings.hotkey, IS_MAC),
+    );
+  })();
+
+  // A backend from before area appshots sends no region fields; the row and
+  // its button stay hidden until the app restarts onto the new backend.
+  const regionSupported = typeof settings?.region_hotkey === "string";
+
+  const regionShortcutHint = (() => {
+    if (!settings || !regionSupported) return "";
+    if (!settings.readiness.region) {
+      return t("appshots.effect_unavailable").replace("{0}", settings.readiness.region_detail);
+    }
+    if (!settings.region_hotkey) return t("appshots.region_shortcut_hint_off");
+    if (settings.enabled && !settings.region_shortcut.armed && settings.region_shortcut.detail) {
+      return t("appshots.shortcut_unavailable").replace("{0}", settings.region_shortcut.detail);
+    }
+    const family = gestureFamily(settings.region_hotkey);
+    if (family) {
+      return t("appshots.region_shortcut_both_keys_hint").replace("{0}", gestureKeyName(family));
+    }
+    return t("appshots.region_shortcut_hint").replace(
+      "{0}",
+      formatAppshotHotkey(settings.region_hotkey, IS_MAC),
     );
   })();
 
@@ -318,7 +381,10 @@ export function AppshotsView() {
           </div>
         </div>
 
-        <div className="mt-5 grid gap-5 lg:grid-cols-2">
+        {/* Two columns only when each gets at least 28rem. A viewport
+            breakpoint split the narrow Settings dialog into two cramped
+            columns on any wide window. */}
+        <div className="mt-5 grid grid-cols-[repeat(auto-fit,minmax(min(100%,28rem),1fr))] gap-5">
           <div className="divide-y divide-border self-start rounded-xl border border-border bg-card">
             {!settings ? (
               <div className="flex h-40 items-center justify-center" role="status" aria-busy="true">
@@ -341,19 +407,38 @@ export function AppshotsView() {
                 />
                 <Row
                   label={t("appshots.shortcut_label")}
-                  hint={shortcutHint}
+                  hint={fieldStatus.window ?? shortcutHint}
                   control={
-                    <BrandedSelect
-                      value={settings.hotkey || "off"}
-                      options={hotkeyOptions}
-                      ariaLabel={t("appshots.shortcut_label")}
+                    <AppshotShortcutField
+                      value={settings.hotkey}
+                      isMac={IS_MAC}
                       disabled={disabled || saving}
                       testId="appshots-hotkey"
+                      label={t("appshots.shortcut_label")}
                       className="w-44"
-                      onValueChange={(value) => void save({ hotkey: value === "off" ? "" : value })}
+                      onSave={(hotkey) => save({ hotkey })}
+                      onStatus={windowStatus}
                     />
                   }
                 />
+                {regionSupported && (
+                  <Row
+                    label={t("appshots.region_shortcut_label")}
+                    hint={fieldStatus.region ?? regionShortcutHint}
+                    control={
+                      <AppshotShortcutField
+                        value={settings.region_hotkey}
+                        isMac={IS_MAC}
+                        disabled={disabled || saving}
+                        testId="appshots-region-hotkey"
+                        label={t("appshots.region_shortcut_label")}
+                        className="w-44"
+                        onSave={(regionHotkey) => save({ region_hotkey: regionHotkey })}
+                        onStatus={regionStatus}
+                      />
+                    }
+                  />
+                )}
                 <Row
                   label={t("appshots.target_label")}
                   hint={targetHint}
@@ -406,20 +491,39 @@ export function AppshotsView() {
                   hint={
                     countdown !== null
                       ? t("appshots.try_counting").replace("{0}", String(countdown))
-                      : t("appshots.try_hint")
+                      : picking
+                        ? t("appshots.try_picking")
+                        : t("appshots.try_hint")
                   }
                   control={
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      size="sm"
-                      disabled={disabled || countdown !== null}
-                      onClick={() => void tryIt()}
-                      data-testid="appshots-try"
-                    >
-                      {countdown !== null && <Loader2 className="animate-spin" aria-hidden />}
-                      {t("appshots.try_button")}
-                    </Button>
+                    <div className="flex items-center gap-2">
+                      {regionSupported && (
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          disabled={
+                            disabled || picking || !settings.readiness.region || countdown !== null
+                          }
+                          onClick={() => void tryRegion()}
+                          data-testid="appshots-try-region"
+                        >
+                          {picking && <Loader2 className="animate-spin" aria-hidden />}
+                          {t("appshots.try_region_button")}
+                        </Button>
+                      )}
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        disabled={disabled || picking || countdown !== null}
+                        onClick={() => void tryIt()}
+                        data-testid="appshots-try"
+                      >
+                        {countdown !== null && <Loader2 className="animate-spin" aria-hidden />}
+                        {t("appshots.try_button")}
+                      </Button>
+                    </div>
                   }
                 />
               </>

@@ -51,8 +51,8 @@ async def test_quick_catalog_resolves_off_loop_without_expensive_probes(
     result = await routes.get_agents(quick=True)
     assert resolved == ["example", "missing", "shell"]
     assert result.terminal_available is pty_available
-    assert result.max_terminals == routes.MAX_TERMINALS
-    assert len(result.suggested_names) == routes.MAX_TERMINALS
+    assert result.max_panes_per_request == routes.MAX_PANES_PER_REQUEST
+    assert len(result.suggested_names) == routes.MAX_PANES_PER_REQUEST
     example, missing, shell = result.agents
     assert shell.installed is True
     assert shell.kind == "shell"

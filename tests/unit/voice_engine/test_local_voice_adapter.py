@@ -221,6 +221,31 @@ async def test_an_installed_engine_starts_in_the_background_and_answers_at_once(
 
 
 @pytest.mark.asyncio
+async def test_selecting_the_card_starts_an_installed_engine_and_never_refuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("JARVIS_VOICE_ENGINE_HOME", str(tmp_path / "missing"))
+    try:
+        await LocalVoiceProvider.verify_activation(JarvisConfig())
+        assert LocalVoiceProvider._engine is None  # nothing set up: nothing starts
+
+        _installed_home(tmp_path)
+        monkeypatch.setenv("JARVIS_VOICE_ENGINE_HOME", str(tmp_path))
+        engine = LocalVoiceProvider.shared_engine(JarvisConfig())
+        starts: list[int] = []
+
+        async def fake_start() -> None:
+            starts.append(1)
+
+        engine.ensure_started = fake_start
+        await LocalVoiceProvider.verify_activation(JarvisConfig())
+        await asyncio.sleep(0)
+        assert starts == [1]
+    finally:
+        LocalVoiceProvider._engine = None
+
+
+@pytest.mark.asyncio
 async def test_a_selftest_result_is_routed_to_its_caller() -> None:
     engine, client = await _running_engine()
     task = asyncio.get_running_loop().create_task(engine.selftest(timeout_s=2))

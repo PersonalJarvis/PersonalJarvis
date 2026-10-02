@@ -147,13 +147,27 @@ describe("reduceThinkingSteps", () => {
     });
   });
 
-  it("adds progress announcements as instantly-done notes, skips other kinds", () => {
+  it("adds progress as a note and a preamble as a thought, skips other kinds", () => {
     const steps = run([
       ["AnnouncementRequested", { kind: "progress", text: "Halfway there" }],
-      ["AnnouncementRequested", { kind: "preamble", text: "On it" }],
+      ["AnnouncementRequested", { kind: "preamble", text: "I'll check the computers you set up." }],
+      ["AnnouncementRequested", { kind: "completion", text: "Done" }],
     ]);
-    expect(steps).toHaveLength(1);
+    expect(steps).toHaveLength(2);
     expect(steps[0]).toMatchObject({ kind: "note", detail: "Halfway there", status: "done" });
+    expect(steps[1]).toMatchObject({ kind: "thought", detail: "I'll check the computers you set up.", status: "done" });
+  });
+
+  it("keeps a refused call as a denied step, even with no proposal before it", () => {
+    const proposed = run([
+      ["ActionProposed", { tool_name: "run-app-action" }],
+      ["ActionDenied", { tool_name: "run-app-action", reason: "blacklist: <tool-declared-block>" }],
+    ]);
+    expect(proposed).toHaveLength(1);
+    expect(proposed[0]).toMatchObject({ kind: "tool", status: "error", denied: true, error: "blacklist: <tool-declared-block>" });
+    const guarded = run([["ActionDenied", { tool_name: "run-app-action", reason: "Plan mode permits reads only" }]]);
+    expect(guarded).toHaveLength(1);
+    expect(guarded[0]).toMatchObject({ kind: "tool", detail: "run-app-action", status: "error", denied: true });
   });
 
   it("caps the list and evicts finished steps before active ones", () => {

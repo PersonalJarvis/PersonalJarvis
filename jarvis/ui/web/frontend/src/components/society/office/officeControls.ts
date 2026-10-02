@@ -7,6 +7,8 @@
  * drawn as arrows; every other cap is printed as is.
  */
 
+import type { OfficeFloor } from "./officeStore";
+
 export type ControlGroup = "move" | "camera" | "interact" | "map" | "arcade";
 
 export interface OfficeControl {
@@ -35,11 +37,16 @@ export const OFFICE_CONTROLS: readonly OfficeControl[] = [
   { id: "sit", group: "interact", keys: [["E"]], agentsOnly: true },
   { id: "screen", group: "interact", keys: [["mouse:click"]] },
   { id: "close", group: "interact", keys: [["Esc"]] },
+  { id: "elevator_floor", group: "interact", keys: [["0", "1", "2"]] },
   { id: "map", group: "map", keys: [["M"]] },
   { id: "guide", group: "map", keys: [["H"]] },
   { id: "minimap_focus", group: "map", keys: [["mouse:click"]] },
   { id: "minimap_walk", group: "map", keys: [["mouse:double"]] },
   { id: "minimap_zoom", group: "map", keys: [["mouse:wheel"]] },
+  { id: "arcade_play", group: "arcade", keys: [["E"]] },
+  { id: "arcade_start", group: "arcade", keys: [["Enter"], ["Space"]] },
+  { id: "arcade_action", group: "arcade", keys: [["Space"], ["J"]] },
+  { id: "arcade_action_b", group: "arcade", keys: [["Shift"], ["K"]] },
   { id: "arcade_fly", group: "arcade", keys: [["W", "A", "S", "D"], ["ArrowUp", "ArrowLeft", "ArrowDown", "ArrowRight"]] },
   { id: "arcade_shoot", group: "arcade", keys: [["Space"]] },
   { id: "arcade_pause", group: "arcade", keys: [["P"]] },
@@ -60,6 +67,6 @@ export function arrowCap(cap: string): ArrowKey | null {
 }
 
 /** The controls of one group that apply on this floor. */
-export function controlsFor(group: ControlGroup, floor: "agents" | "coding"): OfficeControl[] {
+export function controlsFor(group: ControlGroup, floor: OfficeFloor): OfficeControl[] {
   return OFFICE_CONTROLS.filter((c) => c.group === group && (!c.agentsOnly || floor === "agents"));
 }

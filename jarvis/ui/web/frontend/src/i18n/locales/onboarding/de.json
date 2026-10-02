@@ -61,6 +61,7 @@
       "title": "Wähle dein Weckwort",
       "lede": "Tippe hier dein Wort nach „Hey“ ein und speichere es. Das Wort wird auch der Name deines Assistenten. Kein Weckwort? Das Anruf-Kürzel funktioniert jederzeit.",
       "on": "„{phrase}“ ist an. Sag es jederzeit.",
+      "saved": "„{phrase}“ ist gespeichert. Schalte oben „Aktivierungswort einschalten“ an, damit es immer gehört wird; bis dahin funktioniert das Anruf-Kürzel.",
       "off": "Noch kein Weckwort. Bis dahin funktioniert das Anruf-Kürzel.",
       "later": "Überspringen, ich nutze das Anruf-Kürzel"
     },

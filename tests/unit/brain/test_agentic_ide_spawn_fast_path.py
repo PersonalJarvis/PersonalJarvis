@@ -21,7 +21,7 @@ import pytest
 
 from jarvis.agentic_ide import recents
 from jarvis.agentic_ide import session as session_mod
-from jarvis.agentic_ide.session import MAX_TERMINALS, Registry
+from jarvis.agentic_ide.session import Registry, SessionError
 from jarvis.brain.manager import BrainManager
 from jarvis.core.bus import EventBus
 from jarvis.core.config import JarvisConfig
@@ -391,33 +391,48 @@ async def test_without_a_named_agent_the_new_panes_inherit(
 
 
 # ------------------------------------------------------------------ the limits
-async def test_a_capped_batch_says_how_many_actually_opened(
+async def test_a_large_workspace_still_takes_more_panes(
     manager: tuple[BrainManager, FakeBus], registry: Registry, tmp_path: Path
 ) -> None:
-    """The maintainer's live case: nine panes open, five requested, three appear."""
+    """There is no pane limit: sixteen open, five more requested, five appear."""
     mgr, _bus = manager
-    await _open(registry, tmp_path, MAX_TERMINALS - 3)
+    await _open(registry, tmp_path, 16)
 
     reply = await mgr._run_agentic_ide_spawn_fast_path("Spawn five more terminals")
 
     assert reply is not None
-    assert "only room for 3" in reply
+    assert "full" not in reply.lower()
     assert registry.session is not None
-    assert len(registry.session.terminals) == MAX_TERMINALS
+    assert len(registry.session.terminals) == 21
 
 
-async def test_a_full_workspace_says_so_instead_of_failing_silently(
-    manager: tuple[BrainManager, FakeBus], registry: Registry, tmp_path: Path
+async def test_a_batch_cut_short_says_how_many_actually_opened(
+    manager: tuple[BrainManager, FakeBus],
+    registry: Registry,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    mgr, bus = manager
-    await _open(registry, tmp_path, MAX_TERMINALS)
+    """A pane that fails to start mid-batch: the readback names the shortfall."""
+    mgr, _bus = manager
+    await _open(registry, tmp_path, 2)
+    real_add = registry.add_terminal
+    calls = 0
 
-    reply = await mgr._run_agentic_ide_spawn_fast_path("Open two more terminals")
+    async def flaky_add(**kwargs):
+        nonlocal calls
+        calls += 1
+        if calls > 3:
+            raise SessionError("The fourth pane could not start.")
+        return await real_add(**kwargs)
+
+    monkeypatch.setattr(registry, "add_terminal", flaky_add)
+
+    reply = await mgr._run_agentic_ide_spawn_fast_path("Spawn five more terminals")
 
     assert reply is not None
-    assert "full" in reply.lower()
-    assert str(MAX_TERMINALS) in reply
-    assert bus.published == []  # nothing changed, so nothing is announced
+    assert "Only 3 could be opened" in reply
+    assert registry.session is not None
+    assert len(registry.session.terminals) == 5
 
 
 # ----------------------------------------------------------- no open workspace

@@ -42,7 +42,10 @@ __all__ = [
     "LEAD_AGENT_ID",
     "Roster",
     "RosterError",
+    "PAIR_SESSION_MARKER",
     "canonical_session_id",
+    "conversation_session_id",
+    "pair_session_id",
     "slugify",
 ]
 
@@ -73,6 +76,32 @@ def slugify(name: str) -> str:
 def canonical_session_id(agent_id: str) -> str:
     """The agent's one forever-chat on the agent_chat store."""
     return f"society:{agent_id}"
+
+
+#: Marks the receiver's own chat for one counterpart:
+#: ``society:<receiver>:with:<sender>``.
+PAIR_SESSION_MARKER: Final[str] = ":with:"
+_SLUG_RE: Final[re.Pattern[str]] = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+
+
+def pair_session_id(agent_id: str, counterpart_id: str) -> str:
+    """The chat ``agent_id`` works in on messages from ``counterpart_id``.
+
+    Jarvis and the teammates talk in their own conversation, never in the
+    chat a person has with the agent: that chat stays the person's.
+    """
+    return f"{canonical_session_id(agent_id)}{PAIR_SESSION_MARKER}{counterpart_id}"
+
+
+def conversation_session_id(agent_id: str, sender_id: str) -> str:
+    """Where a message from ``sender_id`` to ``agent_id`` runs.
+
+    The person (``user``) speaks in the agent's canonical chat; Jarvis and
+    every other agent get the pair chat of that sender.
+    """
+    if sender_id == "user" or sender_id == agent_id or not _SLUG_RE.fullmatch(sender_id):
+        return canonical_session_id(agent_id)
+    return pair_session_id(agent_id, sender_id)
 
 
 def _loads(value: Any, default: Any) -> Any:

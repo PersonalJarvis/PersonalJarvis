@@ -1273,6 +1273,26 @@ export function AgenticGrid({
     return callback;
   }, []);
 
+  /*
+   * The seams lit as "this moves too" while the pointer rests on another one.
+   *
+   * Held near its top or bottom end, a vertical seam drags every aligned seam
+   * of the panes stacked above and below it (see `stackedSeams`); this shows
+   * that line BEFORE the press. Written straight onto the elements rather
+   * than through state, because a hover must not re-render a wall of
+   * terminals each time the pointer crosses into an end zone.
+   */
+  const linkedSeams = useRef<readonly string[]>([]);
+  const markLinkedSeams = useCallback((ids: readonly string[]) => {
+    const previous = linkedSeams.current;
+    if (previous.length === ids.length && previous.every((id, index) => id === ids[index])) {
+      return;
+    }
+    for (const id of previous) seamNodes.current.get(id)?.removeAttribute("data-linked");
+    for (const id of ids) seamNodes.current.get(id)?.setAttribute("data-linked", "true");
+    linkedSeams.current = ids;
+  }, []);
+
   /**
    * Put every pane and seam where ``next`` says, without telling React.
    *
@@ -2895,8 +2915,14 @@ export function AgenticGrid({
               testId={`pane-seam-${seam.id}`}
               orientation={seam.orientation}
               title={seam.label}
-              active={sizes.dragging === seam.id}
+              active={sizes.draggingSeams.includes(seam.id)}
               onPointerDown={(event) => sizes.startDrag(seam, event)}
+              // Only the OTHER seams of a stack are marked: the held one is
+              // already lit by its own hover.
+              onPointerMove={(event) =>
+                markLinkedSeams(sizes.seamsAt(seam, event).filter((id) => id !== seam.id))
+              }
+              onPointerLeave={() => markLinkedSeams([])}
               onDoubleClick={() => sizes.even(seam)}
               // An arrow key moves the seam the way it points, which for the
               // vertical axis is the opposite of `PaneResizer`'s own sign: its

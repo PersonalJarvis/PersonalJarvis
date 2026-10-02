@@ -77,7 +77,7 @@ def test_custom_cap_is_respected() -> None:
 
 def test_none_and_non_string_values_are_stringified() -> None:
     assert safe_preview(None) == ""
-    assert safe_preview({"projects": 3}) == "{'projects': 3}"
+    assert safe_preview({"projects": 3}) == '{"projects": 3}'
     assert safe_preview(42) == "42"
 
 
@@ -102,3 +102,12 @@ def test_redacts_credentials_embedded_in_http_request_urls() -> None:
     assert telegram_token not in redacted
     assert "?key=<redacted:query_secret>&page=1" in redacted
     assert "bot<redacted:telegram_bot_token>/getUpdates" in redacted
+
+
+def test_structured_values_preview_as_json_not_python_repr() -> None:
+    # The reasoning trace turns a result into a sentence; it can read JSON,
+    # not ``{'computers': []}``.
+    assert safe_preview({"computers": [], "ok": True}) == '{"computers": [], "ok": true}'
+    assert safe_preview(["café", 2]) == '["café", 2]'
+    # Anything JSON cannot encode still previews instead of raising.
+    assert safe_preview({"at": object()}).startswith('{"at": "<object object')

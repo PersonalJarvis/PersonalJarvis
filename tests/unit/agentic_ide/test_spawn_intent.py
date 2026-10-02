@@ -23,7 +23,7 @@ from __future__ import annotations
 import pytest
 
 from jarvis.agentic_ide import intent
-from jarvis.agentic_ide.session import MAX_TERMINALS
+from jarvis.agentic_ide.session import MAX_PANES_PER_REQUEST
 
 NAMES = ["Alex", "Blake", "Casey", "Dana"]
 
@@ -81,14 +81,14 @@ def test_a_number_above_the_cap_is_clamped_not_refused() -> None:
     # number is therefore no count at all, rather than a huge one.
     found = intent.detect_spawn("Spawne 999 Terminals")  # i18n-allow: spoken input under test
     assert found is not None
-    assert found.count == MAX_TERMINALS
+    assert found.count == MAX_PANES_PER_REQUEST
 
 
-def test_a_large_requested_count_obeys_the_workspace_capacity() -> None:
-    """Spoken counts share the same eight-session ceiling as the launch picker."""
+def test_a_count_past_sixteen_is_taken_as_said() -> None:
+    """A workspace has no pane limit, so twenty means twenty."""
     found = intent.detect_spawn("Spawne 20 Terminals")  # i18n-allow: spoken input under test
     assert found is not None
-    assert found.count == MAX_TERMINALS
+    assert found.count == 20
 
 
 @pytest.mark.parametrize(
@@ -299,13 +299,13 @@ def test_the_same_agent_named_twice_is_merged() -> None:
     assert found.count == 4
 
 
-def test_the_total_is_capped_at_the_workspace_maximum() -> None:
+def test_the_total_is_capped_at_the_per_request_guard() -> None:
     found = intent.detect_spawn(
-        f"Open {MAX_TERMINALS} Codex terminals and 5 Claude Code terminals",
+        f"Open {MAX_PANES_PER_REQUEST} Codex terminals and 5 Claude Code terminals",
         names=NAMES,
     )
     assert found is not None
-    assert found.count <= MAX_TERMINALS
+    assert found.count <= MAX_PANES_PER_REQUEST
     assert sum(g.count for g in found.groups) == found.count
 
 

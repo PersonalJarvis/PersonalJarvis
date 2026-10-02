@@ -65,6 +65,21 @@
 .trace-node-live {
   color: hsl(var(--accent));
 }
+/* A Jarvis trace's live line: the user's pet (32 px) stands where the
+   spinner was, centred on the thread. It is wider than the 16 px node
+   column and exactly as tall as the 32 px status row, so it overhangs
+   sideways and nothing below moves when the turn ends and it turns back
+   into a check. */
+.trace-node-pet {
+  position: relative;
+  overflow: visible;
+}
+.trace-node-pet > * {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
 .trace-dot {
   display: block;
   height: 5px;
@@ -128,4 +143,18 @@
   .trace-node-live .trace-dot {
     animation: none;
   }
+}
+
+/* ── The timeline of a turn (TraceTimeline.tsx) ───────────────────────
+   Lines hang on the same thread as the live rail. Edit sizes wear the diff
+   colours; a long thought folds with a fade at its foot. */
+.diff-count-add {
+  color: hsl(var(--diff-add));
+}
+.diff-count-del {
+  color: hsl(var(--diff-del));
+}
+.trace-thought-fade {
+  -webkit-mask-image: linear-gradient(to bottom, black calc(100% - 2.5rem), transparent 100%);
+  mask-image: linear-gradient(to bottom, black calc(100% - 2.5rem), transparent 100%);
 }

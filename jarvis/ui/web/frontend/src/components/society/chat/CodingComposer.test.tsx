@@ -20,7 +20,7 @@ afterEach(cleanup);
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(fetchIdeAgents).mockResolvedValue({
-    terminal_available: true, max_terminals: 12, suggested_names: ["T1"],
+    terminal_available: true, max_panes_per_request: 100, suggested_names: ["T1"],
     agents: [
       { name: "codex", display_name: "Codex", installed: true, accepts_prompts: true, version: null, install_command: null },
       { name: "future-cli", display_name: "Future CLI", installed: true, accepts_prompts: true, custom: true, version: null, install_command: null },

@@ -2690,10 +2690,18 @@ class AppshotConfig(BaseModel):
 
     model_config = {"extra": "allow"}
 
-    #: Global shortcut. ``alt+alt`` means both Alt keys pressed together (read
-    #: by ``jarvis.appshot.gesture``); any other value is an ordinary combo in
-    #: the shared hotkey syntax; an empty string switches the shortcut off.
+    #: Global shortcut. ``alt+alt`` / ``shift+shift`` / ``ctrl+ctrl`` mean both
+    #: keys of that pair pressed together (read by ``jarvis.appshot.gesture``);
+    #: any other value is an ordinary combo in the shared hotkey syntax; an
+    #: empty string switches the shortcut off.
     hotkey: str = "alt+alt"
+
+    #: Global shortcut for an AREA appshot: the screens dim, the user drags a
+    #: rectangle, and exactly that part is captured (``jarvis.appshot.region``).
+    #: Same syntax as ``hotkey``; an empty string switches it off. Both Shift
+    #: keys pairs with both-Alt for the window, exists on every keyboard and
+    #: collides with no app or OS shortcut.
+    region_hotkey: str = "shift+shift"
 
     #: Where a shortcut appshot goes. ``auto``: into the running voice call,
     #: otherwise onto the next message. ``message``: always onto the next

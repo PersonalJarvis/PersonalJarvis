@@ -291,6 +291,20 @@ _MOVING_TYPES = frozenset(
 )
 
 
+def _other_running_chat(svc: Any, agent_id: str, current: str) -> str | None:
+    """A chat of ``agent_id`` other than ``current`` that runs a turn right now."""
+    from .roster import canonical_session_id
+
+    canonical = canonical_session_id(agent_id)
+    running = getattr(svc, "running_session_ids", None)
+    if not callable(running):
+        return None
+    for sid in running():
+        if sid != current and (sid == canonical or sid.startswith(canonical + ":")):
+            return sid
+    return None
+
+
 class CheckpointEngine:
     def __init__(
         self,
@@ -413,6 +427,7 @@ class CheckpointEngine:
         if svc is None:
             return
         queue = svc.subscribe(session_id)
+        cancelled = False
         try:
             agent = await self._runtime.roster.get(agent_id)
             cli_seat = agent is not None and self._cli_seat(agent)
@@ -433,12 +448,19 @@ class CheckpointEngine:
                 elif kind == "turn_finished":
                     break
         except asyncio.CancelledError:
+            cancelled = True
             raise
         except Exception:  # noqa: BLE001 — the world is a projection; a miss never breaks the turn
             log.warning("society checkpoints: turn watcher for %s failed", agent_id, exc_info=True)
         finally:
             svc.unsubscribe(session_id, queue)
-            self.clear_tool_calls(agent_id)
+            # Another of the agent's chats may still work (a conversation with
+            # Jarvis beside the person's chat): follow that one next.
+            other = None if cancelled else _other_running_chat(svc, agent_id, session_id)
+            if other is None:
+                self.clear_tool_calls(agent_id)
+            else:
+                asyncio.get_running_loop().call_soon(self.note_turn_started, agent_id, other)
             # Runs on the loop even when the task is cancelled during shutdown.
             self._fire(agent_id, "turn")
 
@@ -455,14 +477,24 @@ class CheckpointEngine:
             return None
 
     def turn_running(self, agent_id: str) -> bool:
-        """True while the agent's canonical chat session runs a turn."""
+        """True while any of the agent's chats runs a turn.
+
+        That is its canonical chat, a routine run or a conversation with
+        Jarvis or a teammate (``society:<agent_id>:...``).
+        """
         svc = self._chat_service()
         if svc is None:
             return False
         from .roster import canonical_session_id
 
+        canonical = canonical_session_id(agent_id)
         try:
-            return bool(svc.is_running(canonical_session_id(agent_id)))
+            if svc.is_running(canonical):
+                return True
+            running = getattr(svc, "running_session_ids", None)
+            if not callable(running):
+                return False
+            return any(sid.startswith(canonical + ":") for sid in running())
         except Exception:  # noqa: BLE001 — a service without the probe reports no turn
             log.debug("society checkpoints: is_running probe failed", exc_info=True)
             return False

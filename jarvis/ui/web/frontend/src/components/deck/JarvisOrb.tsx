@@ -1,5 +1,5 @@
 import { motion, useReducedMotion, type TargetAndTransition } from "framer-motion";
-import { MascotGigi } from "@/components/MascotGigi";
+import { PetMark } from "@/components/pets/PetMark";
 import type { VoiceState } from "@/store/events";
 import { cn } from "@/lib/utils";
 
@@ -11,14 +11,15 @@ import { cn } from "@/lib/utils";
  * pixels, so on the dark deck it read as a grey box, and the reticle around
  * it sliced that box off at the ring. The maintainer asked repeatedly for the
  * PNG to go and for the mascot to carry the product instead (2026-08-20), so
- * both PNGs are gone from the tree and the middle is Gigi, drawn as vectors:
- * sharp at any size, no edge to cut, no bitmap to ship.
+ * both PNGs are gone from the tree and the middle is the mascot. Since
+ * 2026-10-02 that is the user's own pet (Settings -> My Pets, Gigi by
+ * default), drawn from its sprite sheet by `PetMark`.
  *
  * The staging is a dark figure standing in golden light. The glow behind it
  * (`.deck-orb-glow`, DeckOrb.tsx) throws the silhouette forward; the corona's
- * slow rays come up behind it in the voice. Gigi brings its own life — it
- * blinks, the pupils drift, it waves now and then, and with `reactToVoice` it
- * listens, thinks and speaks along. That is why the reticle around it no
+ * slow rays come up behind it in the voice. The pet brings its own life —
+ * its idle row floats and blinks, and with `reactive` it listens, thinks and
+ * talks along. That is why the reticle around it no
  * longer needs to dance: the living thing is alive, the instruments stay
  * still until they have something to show.
  *
@@ -98,7 +99,7 @@ export function JarvisOrb({
                 : { duration: 0.4 }
           }
         >
-          <MascotGigi size={size} reactToVoice enableComments={false} />
+          <PetMark size={size} reactive />
         </motion.div>
       </div>
     </div>

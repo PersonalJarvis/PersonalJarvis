@@ -115,9 +115,9 @@ from jarvis.agentic_ide.names import default_names
 from jarvis.agentic_ide.session import (
     AGENT_DISPLAY,
     INHERIT_PLACEMENT,
+    MAX_PANES_PER_REQUEST,
     MAX_PROMPT_CHARS,
     MAX_TERMINAL_NAME,
-    MAX_TERMINALS,
     MAX_WORKSPACES,
     PendingPromptAttachmentBatch,
     PlacementError,
@@ -371,8 +371,8 @@ class AddTerminalsRequest(BaseModel):
     count: int = Field(
         default=1,
         ge=1,
-        le=MAX_TERMINALS,
-        description="How many terminals to open, capped by the workspace maximum.",
+        le=MAX_PANES_PER_REQUEST,
+        description="How many terminals to open in this one request.",
     )
     agent: str | None = Field(
         default=None,
@@ -428,7 +428,6 @@ class RefoldRequest(BaseModel):
 
     depth: int = Field(
         ge=1,
-        le=MAX_TERMINALS,
         description=(
             "Panes stacked per column. 1 is the single row a workspace opens "
             "in; 2 folds it into two rows, which is what a row too narrow for "
@@ -454,7 +453,6 @@ class CloseTerminalsRequest(BaseModel):
 
     names: list[str] = Field(
         min_length=1,
-        max_length=MAX_TERMINALS,
         description="Call-signs of the terminals to close.",
     )
 
@@ -620,7 +618,7 @@ class SpawnGroupRequest(BaseModel):
 
     count: int = Field(
         ge=1,
-        le=MAX_TERMINALS,
+        le=MAX_PANES_PER_REQUEST,
         description="How many terminals to open in this group.",
     )
     agent: str | None = Field(
@@ -839,7 +837,9 @@ class AgentStatus(BaseModel):
 
 class AgentsResponse(BaseModel):
     terminal_available: bool
-    max_terminals: int
+    #: The most panes one launch or batch request opens. A guard on a single
+    #: request, never a limit on how many a workspace holds.
+    max_panes_per_request: int
     suggested_names: list[str]
     agents: list[AgentStatus]
 
@@ -1495,8 +1495,8 @@ async def get_agents(quick: bool = False) -> AgentsResponse:
     ]
     return AgentsResponse(
         terminal_available=pty_available(),
-        max_terminals=MAX_TERMINALS,
-        suggested_names=default_names(MAX_TERMINALS),
+        max_panes_per_request=MAX_PANES_PER_REQUEST,
+        suggested_names=default_names(MAX_PANES_PER_REQUEST),
         agents=agents,
     )
 
@@ -1524,8 +1524,8 @@ def _quick_agent_catalog() -> AgentsResponse:
     ]
     return AgentsResponse(
         terminal_available=workspace_agents.pty_available(),
-        max_terminals=MAX_TERMINALS,
-        suggested_names=default_names(MAX_TERMINALS),
+        max_panes_per_request=MAX_PANES_PER_REQUEST,
+        suggested_names=default_names(MAX_PANES_PER_REQUEST),
         agents=agents,
     )
 
@@ -2974,7 +2974,6 @@ def get_workspace_layout(workspace_id: str) -> dict:
             }
             for t in session.terminals
         ],
-        "max_terminals": MAX_TERMINALS,
     }
 
 
@@ -3655,6 +3654,21 @@ def _picks_now(term: Any, read_result: Any) -> dict[str, str]:
         picked_ms = term.picked_at.get(pick, 0.0) * 1000
         out[pick] = own if own and picked_ms > newest_ms else (recorded or own)
     return out
+
+
+@router.post("/terminals/{name}/start", summary="Start a terminal nobody has opened yet")
+async def terminal_start(name: str, workspace: str | None = None) -> dict:
+    """Start the pane's agent now instead of when a viewer first attaches.
+
+    For callers that open panes without showing them — the office's spawn
+    point hands each new pane a task and would otherwise wait on a pane that
+    never starts. A pane that is already running is not touched.
+    """
+    try:
+        term = get_registry().start_pending(name, workspace)
+    except SessionError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"terminal": term.name, "status": term.status}
 
 
 @router.post(

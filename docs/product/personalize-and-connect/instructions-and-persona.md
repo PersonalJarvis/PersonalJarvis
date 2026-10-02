@@ -31,12 +31,21 @@ reply language, or remove safety checks.
 | **Standing instructions** | Free-form preferences for tone, answer shape, forms of address, and default choices | The sidebar page named `<assistant name>.md` | Providers, stored knowledge, tool access, or safety rules |
 | **Packaged persona** | The built-in voice, warmth, and general response style | Used automatically while the System Prompt badge says **Default** | Facts about you, available tools, or permissions |
 | **Custom System Prompt** | Replacing the packaged persona with your own broad behavior guide | **Settings > System Prompt** | Runtime identity, tool availability, reply-language controls, approvals, or safety rules |
+| **Character file (`SOUL.md`)** | Who the assistant is: its name, role, tone, limits, and what it has learned about its own character from your feedback | `SOUL.md` in the `workspace` folder of the app's data folder; the assistant keeps the name and its learned notes up to date itself | Facts about you, tools, or safety rules |
 | **Profile** | Structured facts about you, including your name, preferred form of address, and communication preferences | **Profile** | A complete persona or project knowledge |
 | **Wiki and Memory** | Notes, projects, and facts Jarvis may use as relevant context | **Wiki** and memory features | Standing behavior rules or provider selection |
 | **Provider and model** | The service and model that produce a response | **API Keys & Providers** | Your locally saved persona, instructions, Profile, or Memory |
 
 The `<assistant name>.md` label follows the name in your wake word. If no name
 is available, the page is named `Assistant.md`.
+
+The same wake-word name is the assistant's own name in every chat and voice
+call. With the wake word "Hey George", the assistant introduces itself as
+George; "Personal Jarvis" is the app's name, not the assistant's. To rename
+the assistant, change the wake word. When you correct how the assistant
+presents itself during a live voice call, for example "be less formal", it
+records that in its character file right away and follows it from the next
+call on.
 
 > [!warning] Jarvis sends the active persona and standing instructions to the
 > model as request context. A remote provider receives that text. Do not save

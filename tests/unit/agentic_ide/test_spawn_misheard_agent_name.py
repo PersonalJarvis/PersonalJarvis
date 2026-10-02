@@ -153,20 +153,20 @@ def test_a_group_without_a_cli_keeps_its_own_count() -> None:
     ],
 )
 def test_a_large_spoken_count_is_heard_and_bounded(utterance: str, expected: int) -> None:
-    """Large number words are recognized, then capped by workspace capacity."""
-    from jarvis.agentic_ide.session import MAX_TERMINALS
+    """Large number words are recognized, then bounded by the per-request guard."""
+    from jarvis.agentic_ide.session import MAX_PANES_PER_REQUEST
 
     request = intent.detect_spawn(utterance)
     assert request is not None, utterance
-    assert request.count == min(expected, MAX_TERMINALS)
+    assert request.count == min(expected, MAX_PANES_PER_REQUEST)
 
 
-def test_the_workspace_maximum_is_the_only_ceiling() -> None:
-    from jarvis.agentic_ide.session import MAX_TERMINALS
+def test_the_per_request_guard_is_the_only_ceiling() -> None:
+    from jarvis.agentic_ide.session import MAX_PANES_PER_REQUEST
 
-    request = intent.detect_spawn(f"open {MAX_TERMINALS + 40} Codex terminals")
+    request = intent.detect_spawn(f"open {MAX_PANES_PER_REQUEST + 40} Codex terminals")
     assert request is not None
-    assert request.count == MAX_TERMINALS
+    assert request.count == MAX_PANES_PER_REQUEST
 
 
 def test_naming_a_cli_without_counting_it_is_not_a_pane_request() -> None:

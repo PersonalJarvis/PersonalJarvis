@@ -175,11 +175,22 @@ def test_only_measured_platforms_count_as_verified() -> None:
     assert setup.expected_latency("gpu") == {"low_s": None, "high_s": None, "basis": "selftest"}
 
 
-def _status(cfg, *, installed=frozenset(), error=None, machine="nvidia"):
+def _status(cfg, *, installed=frozenset(), error=None, machine="nvidia", toolless=frozenset()):
     async def llms():
         return set(installed), error
 
-    return asyncio.run(setup.card_status(cfg, installed_llms=llms, machine=machine))
+    async def tool_capable(names: set[str]) -> set[str]:
+        return names - set(toolless)
+
+    return asyncio.run(setup.card_status(cfg, installed_llms=llms, machine=machine,
+                                         tool_capable=tool_capable))
+
+
+def test_models_without_tool_calls_are_not_offered(_isolated_home: Path) -> None:
+    status = _status(JarvisConfig(), installed={"qwen3.5:2b", "bge-m3:latest"},
+                     toolless={"bge-m3:latest"}, machine="cpu")
+    assert status["llm_choices"] == ["qwen3.5:2b"]
+    assert status["llm_model"] == "qwen3.5:2b" and status["llm_installed"] is True
 
 
 def test_status_before_setup_names_the_next_step(_isolated_home: Path) -> None:

@@ -45,6 +45,15 @@
       "read_only": "Read-only · Maintained by this agent",
       "model": "Model"
     },
+    "conversations": {
+      "label": "Conversations",
+      "hint": "Where this agent works on what {name} or a teammate sent it, kept apart from your chat.",
+      "with": "with {0}",
+      "running": "working now",
+      "waiting": "waiting for you",
+      "badge": "Agent conversation",
+      "follow_up": "Ask in this conversation…"
+    },
     "routine_detail": {
       "back_to_agent": "Back to agent chat",
       "saved_result": "Saved execution result",
@@ -811,6 +820,20 @@
       "cp_break_hint": "Call a coffee break",
       "cp_elevator": "Elevator",
       "cp_elevator_hint": "Press the call button beside the doors",
+      "elevator_choose": "Choose a floor",
+      "elevator_here": "You are here",
+      "elevator_keys": "0–2 picks a floor · ↑/↓ move · Esc closes",
+      "floor_name_agents": "Agents floor",
+      "floor_name_coding": "Coding floor",
+      "floor_name_arcade": "Arcade floor",
+      "floor_about_agents": "Your Jarvis agents at work",
+      "floor_about_coding": "Coding sessions from the IDE",
+      "floor_about_arcade": "Retro cabinets to play",
+      "riding_up_to": "Going up · {0}",
+      "riding_down_to": "Going down · {0}",
+      "arcade_floor_title": "Arcade floor",
+      "arcade_floor_subtitle": "Playable cabinets: {0}",
+      "arcade_floor_hint": "Walk up to a cabinet and press E to play",
       "cp_spawn": "Spawn point",
       "cp_spawn_hint": "Spawn a new Jarvis agent",
       "cp_launch": "Spawn point",
@@ -854,6 +877,7 @@
         "ctl_sit": "Sit in the lead chair; E again stands up",
         "ctl_screen": "Click a monitor to open that agent's chat",
         "ctl_close": "Close a panel or the map",
+        "ctl_elevator_floor": "Pick a floor in the elevator",
         "ctl_map": "Open or close the big map",
         "ctl_guide": "Open or close this help",
         "ctl_minimap_focus": "Click the minimap to look there",
@@ -863,6 +887,10 @@
         "ctl_arcade_shoot": "Shoot, or start a round",
         "ctl_arcade_pause": "Pause",
         "ctl_arcade_leave": "Leave the arcade",
+        "ctl_arcade_play": "Play the cabinet in front of you",
+        "ctl_arcade_start": "Start or restart a game",
+        "ctl_arcade_action": "Main button: fire, jump, rotate",
+        "ctl_arcade_action_b": "Second button: drop, bomb, switch",
         "mouse_click": "Click",
         "mouse_double": "Double-click",
         "mouse_drag": "Drag",
@@ -887,12 +915,8 @@
       "coding_title": "Coding floor",
       "coding_subtitle": "Coding sessions on the floor: {0}",
       "coding_empty": "No coding agent is running. Start one in the IDE and it takes a desk here.",
-      "floor_up": "Up to the coding floor",
-      "floor_down": "Down to the agents floor",
       "ledger_coding": "Sessions list",
       "open_ide": "Open the IDE",
-      "riding_up": "Going up to the coding floor",
-      "riding_down": "Going down to the agents floor",
       "prompt_pane": "Check on {0}",
       "since_now": "just now",
       "since_minutes": "for {0} min",
@@ -1000,8 +1024,6 @@
       "fleet_result": "Reached {0} of {1}.",
       "fleet_result_missed": "Not reached: {0}",
       "elevator_press": "Click the button",
-      "elevator_up_count": "Upstairs right now: {0}",
-      "elevator_down_count": "Downstairs right now: {0}",
       "arcade_prompt": "Play Asteroid Run",
       "arcade_title": "Asteroid Run",
       "arcade_score": "Score",
@@ -1021,6 +1043,13 @@
       "room_reception": "Reception",
       "room_break": "Break room",
       "room_server": "Server room",
+      "room_arcade": "Arcade hall",
+      "room_classics": "Classics",
+      "room_puzzle": "Puzzle corner",
+      "room_action": "Action zone",
+      "room_foyer": "Foyer",
+      "room_prizes": "Prize shop",
+      "room_snack": "Snack bar",
       "dog_treat": "Give the bone",
       "dog_take_bone": "Take a dog treat",
       "dog_pet": "Pet the dog",
@@ -1160,6 +1189,74 @@
       "errand_flying": "Taking {0} a task",
       "errand_task": "Here is a new task for you.",
       "errand_ack": "Got it, on it!"
+    },
+    "arcade": {
+      "play_prompt": "Play {0}",
+      "score": "Score",
+      "best": "Best",
+      "lives": "Lives",
+      "level": "Level",
+      "loading": "Loading game…",
+      "load_failed": "This game could not be loaded.",
+      "retry": "Try again",
+      "press_start": "Press Space or Enter to start",
+      "tap_start": "Tap A to start",
+      "paused": "Paused",
+      "resume_hint": "Press P or Space to resume",
+      "tap_resume": "Tap A to resume",
+      "game_over": "Game over",
+      "you_win": "You win!",
+      "new_best": "New best!",
+      "play_again": "Press Space or Enter to play again",
+      "tap_again": "Tap A to play again",
+      "keys_hint": "Enter start · P pause · Esc / E leave",
+      "pause": "Pause",
+      "pad_up": "Up",
+      "pad_down": "Down",
+      "pad_left": "Left",
+      "pad_right": "Right",
+      "games": {
+        "asteroid_run": {
+          "tagline": "Fly through the asteroid field and blast your way out.",
+          "how": "WASD/arrows steer · Space lasers · Click a rock: missile · Shift boost · P pause · Esc leave"
+        },
+        "neon_snake": {
+          "tagline": "Eat, grow, and never bite your own tail.",
+          "how": "Arrows/WASD steer · P pause · Esc leave"
+        },
+        "brick_breaker": {
+          "tagline": "Smash every brick, catch the power-ups.",
+          "how": "←/→ or mouse move · Space/click launch · P pause · Esc leave"
+        },
+        "paddle_duel": {
+          "tagline": "First to seven beats the machine.",
+          "how": "↑/↓ or mouse move · Space serve · P pause · Esc leave"
+        },
+        "block_drop": {
+          "tagline": "Stack the falling blocks and clear full lines.",
+          "how": "←/→ move · ↑/Space rotate · ↓ soft drop · Shift hard drop · P pause · Esc leave"
+        },
+        "maze_muncher": {
+          "tagline": "Munch every dot and outsmart four glitch bugs.",
+          "how": "Arrows steer (turns are buffered) · power orbs make the bugs edible · P pause · Esc leave"
+        },
+        "desert_dash": {
+          "tagline": "Dash across the dunes: jump the cacti, duck the birds.",
+          "how": "↑/Space jump (hold for higher) · ↓ duck / dive · P pause · Esc leave"
+        },
+        "pixel_raiders": {
+          "tagline": "Hold the line against a marching alien fleet.",
+          "how": "←/→ move · Space fire · P pause · Esc leave"
+        },
+        "road_hopper": {
+          "tagline": "Hop across the traffic and the river to get home.",
+          "how": "Arrows hop · P pause · Esc leave"
+        },
+        "city_defense": {
+          "tagline": "Shoot down the warheads before they reach your cities.",
+          "how": "Mouse aim + click fire · Arrows aim · Space fire · Shift pick battery · P pause · Esc leave"
+        }
+      }
     }
   }
 }

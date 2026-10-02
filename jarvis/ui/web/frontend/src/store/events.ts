@@ -246,7 +246,7 @@ export const SECTION_LABELS: Record<SectionId, string> = {
   taskbar: "Taskbar",
   contacts: "Contacts",
   feedback: "Feedback",
-  "agent-instructions": "Agent Instructions",
+  "agent-instructions": "Assistant",
   appshots: "Appshots",
   shortcuts: "Keyboard shortcuts",
   pets: "My Pets",

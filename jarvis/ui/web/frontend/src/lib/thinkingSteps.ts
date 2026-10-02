@@ -49,6 +49,8 @@ export interface ThinkingStep {
   result?: string;
   /** Tool / worker rows: why it failed, when it did. */
   error?: string;
+  /** Tool rows: the call was refused (ActionDenied), not run and failed. */
+  denied?: boolean;
 }
 
 /** Finished trace attached to the assistant message that ended the turn. */
@@ -275,7 +277,7 @@ export function reduceThinkingSteps(
       // The sentence the model wrote next to the call ("I'll check the wiki
       // for that") is the closest thing to its thinking we get for free —
       // one muted line above the tool row, never spoken.
-      const rationale = clip(str(p.rationale), 200);
+      const rationale = clip(str(p.rationale), 600);
       const withThought = rationale
         ? push(steps, {
             id: nextId(),
@@ -330,9 +332,32 @@ export function reduceThinkingSteps(
 
     case "ActionDenied": {
       const name = str(p.tool_name);
-      return completeTool(steps, name, tsMs, {
-        error: true,
-        errorText: clip(str(p.reason), 200) || undefined,
+      const reason = clip(str(p.reason), 400) || undefined;
+      const completed = completeTool(steps, name, tsMs, { error: true, errorText: reason });
+      if (completed) {
+        // completeTool finished the matching row; mark that row as refused.
+        for (let i = completed.length - 1; i >= 0; i--) {
+          const s = completed[i];
+          if (s.kind === "tool" && s.status === "error" && (!name || s.detail === name)) {
+            completed[i] = { ...s, denied: true };
+            break;
+          }
+        }
+        return completed;
+      }
+      // A guard refused the call before it was ever proposed: still a step
+      // the turn took, or the trace would hide why the action never ran.
+      if (!name) return null;
+      return push(steps, {
+        id: nextId(),
+        kind: "tool",
+        labelKey: "thinking.step_tool",
+        detail: name,
+        status: "error",
+        startedTs: tsMs,
+        durationMs: 0,
+        denied: true,
+        ...(reason ? { error: reason } : {}),
       });
     }
 
@@ -385,9 +410,25 @@ export function reduceThinkingSteps(
     }
 
     case "AnnouncementRequested": {
-      // Progress announcements only — preambles already render as their own
-      // chat bubble and completions arrive as the final reply.
-      if (str(p.kind) !== "progress") return null;
+      // A preamble ("I'll check the computers you set up") is the model
+      // saying why it reaches for the next tool — often the only reason a
+      // turn records, since many models leave the call's rationale empty.
+      // It becomes a thought; completions arrive as the final reply.
+      const kind = str(p.kind);
+      if (kind === "preamble") {
+        const said = clip(str(p.text), 600);
+        if (!said) return null;
+        return push(steps, {
+          id: nextId(),
+          kind: "thought",
+          labelKey: "thinking.step_thought",
+          detail: said,
+          status: "done",
+          startedTs: tsMs,
+          durationMs: 0,
+        });
+      }
+      if (kind !== "progress") return null;
       const text = clip(str(p.text), 80);
       if (!text) return null;
       return push(steps, {

@@ -30,7 +30,13 @@ from typing import Any
 import pytest
 
 from jarvis.agentic_ide import agent_sessions, drops
-from jarvis.agentic_ide.fleet_actions import _ready_for_prompt
+from jarvis.agentic_ide.fleet_actions import (
+    COLOUR_PROBE_WAIT_S,
+    STARTUP_QUIET_S,
+    STARTUP_WINDOW_S,
+    _ready_for_prompt,
+)
+from jarvis.agentic_ide.terminal_input import TerminalQueryWatch
 from jarvis.workspace import agents as workspace_agents
 
 # --------------------------------------------------------------- the registry
@@ -825,6 +831,65 @@ def test_a_booting_pane_of_a_new_cli_is_not_prompted_yet() -> None:
     assert _ready_for_prompt(_Pane("codex", ("» Ask Codex anything",))) is True
     # The one measured exception keeps its fast path.
     assert _ready_for_prompt(_Pane("claude", ("anything",))) is True
+
+
+def _starting(agent: str, lines: tuple[str, ...], *, line_up_for: float) -> Any:
+    """A pane whose process started a moment ago and whose input line has
+    been on screen for ``line_up_for`` seconds."""
+    pane = _Pane(agent, lines)
+    now = time.time()
+    pane.started_at = now - line_up_for - 1.0
+    pane.terminal_queries = TerminalQueryWatch()
+    pane.terminal_queries.note_input_line(now - line_up_for)
+    return pane
+
+
+def test_codex_is_not_prompted_before_its_colour_question_is_answered() -> None:
+    """Codex paints its composer, THEN asks for the screen colours.
+
+    A prompt typed into that gap is read where the colour answer was expected,
+    and the answer is typed into the composer as ``]10;rgb:…`` text instead
+    (maintainer report 2026-10-02, reproduced on Codex 0.159.3).
+    """
+    composer = ("› Ask Codex anything",)
+    booting = _starting("codex", composer, line_up_for=STARTUP_QUIET_S + 1.0)
+    assert _ready_for_prompt(booting) is False, "quiet, but the colour question is still to come"
+
+    booting.terminal_queries.feed("\x1b]10;?\x1b\\\x1b]11;?\x1b\\", time.time())
+    assert _ready_for_prompt(booting) is False, "the CLI still needs a moment to read the answer"
+
+    asked = time.time() - STARTUP_QUIET_S
+    booting.terminal_queries.asked_at = booting.terminal_queries.colour_asked_at = asked
+    assert _ready_for_prompt(booting) is True
+
+    # A Codex that never asks is not held back forever.
+    silent = _starting("codex", composer, line_up_for=STARTUP_QUIET_S)
+    silent.started_at = time.time() - COLOUR_PROBE_WAIT_S
+    assert _ready_for_prompt(silent) is True
+
+
+def test_no_agent_is_prompted_while_it_is_still_asking_its_terminal() -> None:
+    """Every coding CLI asks its terminal questions while it starts — some just
+    after its input line appears (Claude Code's version question, a second
+    later). A prompt typed into that window turns the answer into composer
+    text, so the first prompt waits for the questions to stop (maintainer
+    report 2026-10-02: "every coding agent")."""
+    for agent, lines in (("claude", ("❯ ",)), ("opencode", ("> ",)), ("kimi", ("> ",))):
+        fresh = _starting(agent, lines, line_up_for=0.2)
+        assert _ready_for_prompt(fresh) is False, f"{agent}: input line only just appeared"
+
+        asking = _starting(agent, lines, line_up_for=STARTUP_QUIET_S + 1.0)
+        asking.terminal_queries.feed("\x1b[>0q\x1b[c", time.time())
+        assert _ready_for_prompt(asking) is False, f"{agent}: still asking"
+
+        quiet = _starting(agent, lines, line_up_for=STARTUP_QUIET_S + 1.0)
+        quiet.terminal_queries.feed("\x1b[>0q", time.time() - STARTUP_QUIET_S)
+        assert _ready_for_prompt(quiet) is True, f"{agent}: done asking"
+
+    # Long past its start, a CLI that keeps asking cannot block typing.
+    chatty = _starting("claude", ("❯ ",), line_up_for=STARTUP_WINDOW_S)
+    chatty.terminal_queries.feed("\x1b[c", time.time())
+    assert _ready_for_prompt(chatty) is True
 
 
 # ----------------------------------------------------- DeepSeek Harness

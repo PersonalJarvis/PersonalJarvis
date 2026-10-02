@@ -610,9 +610,11 @@ async def test_deliver_hook_frames_and_sends(world):
         payload={"text": "Where is the VPS note?", "refs": ["wiki:society/archivist/vps.md"]},
     )
     await deliver(scout, env)
+    # A teammate's message runs in Scout's conversation with that teammate,
+    # never in the person's own chat with Scout.
     assert svc.sent == [
         (
-            "society:scout",
+            "society:scout:with:archivist",
             "[query from Archivist]\nWhere is the VPS note?\nRefs: wiki:society/archivist/vps.md\n"
             f"Message id: {env.event_id}; sender id: archivist\n"
             "Reply to the sender using society_message_agent with kind 'answer'. "
@@ -621,7 +623,9 @@ async def test_deliver_hook_frames_and_sends(world):
             "messaging connector. No preliminary acknowledgement is needed.",
         )
     ]
-    svc.busy.add("society:scout")
+    assert svc.store.get_session("society:scout") is None
+    assert svc.store.get_session("society:scout:with:archivist").title == "Scout · Archivist"
+    svc.busy.add("society:scout:with:archivist")
     with pytest.raises(RuntimeError, match="target busy"):
         await deliver(scout, env)
 
@@ -655,7 +659,7 @@ async def test_scheduler_delivers_through_the_hook(world):
     await rt.roster.create(name="Archivist", provider="openai")
     rt.set_deliver(make_deliver_hook(lambda: svc, lambda: cfg))
     await rt.say(from_agent="scout", to_agent="archivist", text="ping")
-    assert [s[0] for s in svc.sent] == ["society:archivist"]
+    assert [s[0] for s in svc.sent] == ["society:archivist:with:scout"]
     assert svc.sent[0][1].startswith("[say from Scout]")
 
 

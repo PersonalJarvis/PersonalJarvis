@@ -23,6 +23,7 @@ from datetime import date
 from typing import Any, Final
 
 from jarvis.memory.learning.guard import refusal
+from jarvis.memory.learning.notebook import BOOK_TARGETS
 
 log = logging.getLogger(__name__)
 
@@ -107,13 +108,18 @@ def build_prompt(
     entries: dict[str, list[Any]],
     usage: dict[str, tuple[int, int]],
 ) -> str:
-    """The user message for the reviewer: the two notebooks and what was said."""
+    """The user message for the reviewer: the two notebooks and what was said.
+
+    SOUL.md is not shown: the live conversation model keeps it current itself
+    with the update_soul tool, so the review neither pays for it nor writes it.
+    """
     notebooks = {
         target: {
             "fill": f"{round(100 * used / max(1, budget))}%",
             "entries": [{"entry_id": e.id, "text": e.text} for e in entries.get(target, [])],
         }
         for target, (used, budget) in usage.items()
+        if target in BOOK_TARGETS
     }
     return json.dumps({"notebooks": notebooks, "said": said}, ensure_ascii=False)
 
@@ -214,7 +220,7 @@ def validate(
         text = " ".join(str(item.get("text") or "").split())
         entry_id = str(item.get("entry_id") or "").strip()
         evidence = str(item.get("evidence") or "").strip()
-        if target not in ("user", "memory") or operation not in ("add", "replace", "remove"):
+        if target not in BOOK_TARGETS or operation not in ("add", "replace", "remove"):
             rejected.append(f"invalid target/operation {target!r}/{operation!r}")
             continue
         quote = _norm(evidence)

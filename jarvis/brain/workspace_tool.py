@@ -2,7 +2,43 @@
 
 from __future__ import annotations
 
+from jarvis.core.agent_brief import AGENT_BRIEF_RULE
 from jarvis.core.protocols import ExecutionContext, ToolResult, WorkspaceOrchestrationGateway
+
+
+def _point_at_jarvis_agent(args: dict, result: dict) -> dict:
+    """Say so when a name no coding pane carries is one of the user's Jarvis agents.
+
+    Live 2026-10-02: "send Jarvis Scout a quick message" went to this tool,
+    found no pane called that, and the user heard "I couldn't find agents
+    with those names" - while Jarvis-Scout sat idle on the team.
+    """
+    agent_ref = str(args.get("agent") or "").strip()
+    if not agent_ref or result.get("status") not in {"needs_clarification", "unavailable"}:
+        return result
+    if args.get("action") == "create":
+        return result
+    try:
+        from jarvis.society.agent_names import jarvis_agent_hint
+
+        hint = jarvis_agent_hint(agent_ref, context=str(args.get("prompt") or ""))
+    except Exception:  # noqa: BLE001 - the hint is advisory; the pane result stands
+        import logging
+
+        logging.getLogger(__name__).warning("workspace tool: agent hint failed", exc_info=True)
+        return result
+    if hint is None:
+        return result
+    names = " or ".join(f"'{name}'" for name in hint["agents"])
+    reason = (
+        f"'{agent_ref}' is not a coding pane in the Agentic IDE; it names the user's Jarvis "
+        f"agent {names}. Use delegate_to_agent (to assign work) or message_agent (to send a "
+        "message) with that agent name instead."
+    )
+    if not hint["certain"]:
+        reason += f" The name is not certain: ask the user whether they mean {names} first."
+    earlier = str(result.get("reason") or "").strip()
+    return {**result, "jarvis_agent": hint, "reason": f"{reason} {earlier}".strip()}
 
 
 class WorkspaceOrchestrationTool:
@@ -13,7 +49,10 @@ class WorkspaceOrchestrationTool:
     risk_tier = "monitor"
     is_action_tool = True
     description = (
-        "Route coding tasks to Projects > Workspaces > coding agents. "
+        "Route coding tasks to Projects > Workspaces > coding agents (the coding panes of "
+        "the Agentic IDE). The user's named Jarvis agents (their team, e.g. a Scout or a "
+        "Gmail agent) are NOT panes: reach them with delegate_to_agent or message_agent. "
+        "A resolve result carrying jarvis_agent means the name is such an agent. "
         "When the user asks for a NEW agent, terminal or session (for example 'spawn two "
         "Claude Code agents in the VMs workspace'), call create: it opens count new panes of "
         "the named cli in the named or visible workspace and, with prompt, hands each the "
@@ -40,7 +79,9 @@ class WorkspaceOrchestrationTool:
         "instead of waiting or polling in a loop. "
         "After a proven pre-write refusal, resolve again for a fresh request_id "
         "before a new attempt. "
-        "Use context with the same IDs to inspect recorded results. No prompt rewriting is needed."
+        "Use context with the same IDs to inspect recorded results. No prompt rewriting is needed. "
+        "A prompt for create, open_workspace or send is a work order the agent carries "
+        "out, never a read-only request unless the user asked for one (see prompt)."
     )
     schema = {
         "type": "object",
@@ -73,8 +114,14 @@ class WorkspaceOrchestrationTool:
                     "project_id",
                     "workspace_id",
                     "terminal_id",
-                    "prompt",
                 )
+            },
+            "prompt": {
+                "type": "string",
+                "description": (
+                    "create/open_workspace/send: the full, self-contained task brief; "
+                    "respond: the answer to type. " + AGENT_BRIEF_RULE
+                ),
             },
             # No pattern: a schema rejection would discard the whole call over
             # one mistyped character. The orchestrator repairs the id instead.
@@ -164,6 +211,7 @@ class WorkspaceOrchestrationTool:
         finally:
             current_delegation_origin.reset(token)
         status = result.get("status")
+        result = _point_at_jarvis_agent(args, result)
         return ToolResult(
             success=result.get("success") is not False
             and status not in {"uncertain", "unavailable", "stale_target", "not_accepted"},

@@ -220,18 +220,18 @@ describe("Agentic IDE project flow", () => {
     await waitFor(() => expect(api.addTerminal).toHaveBeenCalledWith({ workspace_id: "w1", agent: "codex", anchor: "T1", direction: "right" }, { onMessage: expect.any(Function) }));
   });
 
-  it("shows the pane count and refuses a new agent once the workspace is full", async () => {
-    const terminals = Array.from({ length: 16 }, (_, index) => ({ key: `t${index}`, history_id: `id${index}`, name: `T${index}`, display_name: "Codex" }));
+  it("shows the pane count and never refuses a new agent, however many are open", async () => {
+    const terminals = Array.from({ length: 20 }, (_, index) => ({ key: `t${index}`, history_id: `id${index}`, name: `T${index}`, display_name: "Codex" }));
     const session = { id: "w1", project_id: "p1", folder: "/code/app", name: "App work", created_at: 0,
       focus_mode: false, project: { name: "App" }, terminals, layout: balancedLayout(terminals.map((terminal) => terminal.key)) };
-    api.fetchIdeState.mockResolvedValue({ ...emptyState, active: true, active_id: "w1", session, max_terminals: 16 });
+    api.fetchIdeState.mockResolvedValue({ ...emptyState, active: true, active_id: "w1", session });
     api.fetchIdeProjects.mockResolvedValue({ projects: [project], active_workspace_id: "w1" });
     render(<AgenticIdeView />);
     fireEvent.click(await screen.findByRole("button", { name: "Pane add" }));
     const dialog = screen.getByRole("dialog", { name: "Add coding agent" });
-    expect(within(dialog).getByText(/16 of 16 agents/)).toBeTruthy();
-    expect(within(dialog).getByRole("status").textContent).toContain("This workspace is full");
-    expect((within(dialog).getByRole("button", { name: "Codex" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(within(dialog).getByText(/20 agents/)).toBeTruthy();
+    expect(within(dialog).queryByText(/is full/)).toBeNull();
+    expect((within(dialog).getByRole("button", { name: "Codex" }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("exposes compact workspace rename and close actions", async () => {
@@ -270,18 +270,16 @@ describe("Agentic IDE project flow", () => {
     await waitFor(() => expect(api.reorderIdeTerminals).toHaveBeenCalledWith("w1", terminals.map((terminal) => terminal.history_id)));
   });
 
-  it("persists a balanced correction for an oversized restored layout", async () => {
+  it("keeps a wide restored layout as it was arranged", async () => {
     const terminals = Array.from({ length: 6 }, (_, index) => ({ key: `t${index}`, history_id: `id${index}`, name: `T${index}` }));
     const session = { id: "w1", project_id: "p1", folder: "/code/app", name: "Restored", created_at: 0,
       focus_mode: false, project: { name: "App" }, terminals, layout: { direction: "row", children: terminals.map((terminal) => ({ pane: terminal.key })), weights: terminals.map(() => 1) } };
     const current = { ...emptyState, active: true, active_id: "w1", session };
     api.fetchIdeState.mockResolvedValue(current);
     api.fetchIdeProjects.mockResolvedValue({ projects: [project], active_workspace_id: "w1" });
-    api.reorderIdeTerminals.mockResolvedValue({ ...current, session: { ...session, layout: balancedLayout(terminals.map((terminal) => terminal.key)) } });
     render(<AgenticIdeView onScreen={false} />);
     await screen.findByTestId("live-grid");
-    expect(api.reorderIdeTerminals).toHaveBeenCalledOnce();
-    expect(api.reorderIdeTerminals).toHaveBeenCalledWith("w1", terminals.map((terminal) => terminal.history_id));
+    expect(api.reorderIdeTerminals).not.toHaveBeenCalled();
   });
 
   it("never rebalances a different workspace returned by a delayed add", async () => {

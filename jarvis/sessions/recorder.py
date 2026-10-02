@@ -74,6 +74,7 @@ from .constants import (
     VOICE_MODE_PIPELINE,
     VOICE_MODE_REALTIME,
 )
+from .continuation import CALL_SEGMENT_PREFIX, continued_voice_session
 from .store import SessionStore
 
 log = logging.getLogger(__name__)
@@ -220,6 +221,11 @@ class _SessionState:
     session_id: str
     started_ms: int
     language: str
+    # The ``voice_sessions`` row this call is filed under. Empty = its own row
+    # (``session_id``); set when the call continues an archived voice chat
+    # (jarvis/sessions/continuation.py). ``session_id`` stays the CALL's id,
+    # which is what every live event carries and is matched against.
+    store_id: str = ""
     turn_count: int = 0
     total_cost_usd: float = 0.0
     total_tokens_in: int = 0
@@ -245,6 +251,11 @@ class _SessionState:
     # label can be re-attached to the turn that actually spoke instead of
     # being dropped or stamped onto the wrong turn (BUG-090).
     last_final_turn: _TurnState | None = None
+
+    @property
+    def record_id(self) -> str:
+        """The stored session every row of this call is written to."""
+        return self.store_id or self.session_id
 
 
 class SessionRecorder:
@@ -344,7 +355,7 @@ class SessionRecorder:
             # path has actually begun listening. It therefore also captures a
             # fallback that follows a successful realtime handshake.
             self._store.update_session_voice_mode(
-                session_id=self._state.session_id,
+                session_id=self._state.record_id,
                 voice_mode=VOICE_MODE_PIPELINE,
             )
             self._ensure_turn_open(event.timestamp_ns // 1_000_000)
@@ -479,6 +490,8 @@ class SessionRecorder:
         # A fresh session supersedes the previous one as the attach target for
         # any late completion readback.
         self._afterglow = None
+        if self._continue_archived(event.session_id):
+            return
         self._store.upsert_session(
             session_id=event.session_id,
             started_ms=ts_ms,
@@ -487,12 +500,39 @@ class SessionRecorder:
         )
         log.info("SessionRecorder: session started id=%s", event.session_id)
 
+    def _continue_archived(self, call_id: str) -> bool:
+        """File this call into the archived voice chat the person reopened.
+
+        The row keeps its start time; its turn numbering and totals carry on
+        from what is stored, so the reopened chat reads as one conversation
+        and ``finalize_session`` writes the grown totals, not this call's
+        alone.
+        """
+        assert self._state is not None
+        target = continued_voice_session()
+        if not target or target == call_id:
+            return False
+        stored = self._store.get_session(target)
+        if stored is None:
+            log.info("SessionRecorder: continued session %s is gone; recording anew", target)
+            return False
+        turns = self._store.get_turns(target)
+        self._state.store_id = target
+        self._state.turn_count = stored.turn_count
+        self._state.total_cost_usd = stored.total_cost_usd
+        self._state.total_tokens_in = stored.total_tokens_in
+        self._state.total_tokens_out = stored.total_tokens_out
+        self._state.providers_used = set(stored.providers_used)
+        self._state.next_idx = max((turn.idx for turn in turns), default=-1) + 1
+        log.info("SessionRecorder: call %s continues session %s", call_id, target)
+        return True
+
     def _on_realtime_ready(self, event: RealtimeSessionReady) -> None:
         """Record only an accepted provider handshake as Realtime evidence."""
         if self._state is None:
             return
         self._store.update_session_voice_mode(
-            session_id=self._state.session_id,
+            session_id=self._state.record_id,
             voice_mode=VOICE_MODE_REALTIME,
         )
 
@@ -503,7 +543,7 @@ class SessionRecorder:
         if self._state.current_turn is not None and not self._state.current_turn.finalized:
             self._finalize_current_turn(end_ms=event.timestamp_ns // 1_000_000)
         self._store.finalize_session(
-            session_id=self._state.session_id,
+            session_id=self._state.record_id,
             ended_ms=event.timestamp_ns // 1_000_000,
             hangup_reason=event.hangup_reason or "",
             turn_count=self._state.turn_count,
@@ -523,7 +563,7 @@ class SessionRecorder:
             if self._state.current_turn is not None
             else None
         )
-        self._afterglow = (self._state.session_id, last_turn_id)
+        self._afterglow = (self._state.record_id, last_turn_id)
         self._state = None
 
     def _force_finalize_session(self, *, reason: str) -> None:
@@ -535,7 +575,7 @@ class SessionRecorder:
         if self._state.current_turn is not None and not self._state.current_turn.finalized:
             self._finalize_current_turn(end_ms=ts_ms)
         self._store.finalize_session(
-            session_id=self._state.session_id,
+            session_id=self._state.record_id,
             ended_ms=ts_ms,
             hangup_reason=reason,
             turn_count=self._state.turn_count,
@@ -572,7 +612,7 @@ class SessionRecorder:
         )
         self._store.upsert_turn(
             turn_id=event.turn_id,
-            session_id=self._state.session_id,
+            session_id=self._state.record_id,
             idx=idx,
             started_ms=ts_ms,
         )
@@ -647,7 +687,7 @@ class SessionRecorder:
         )
         self._store.upsert_turn(
             turn_id=auto_id,
-            session_id=self._state.session_id,
+            session_id=self._state.record_id,
             idx=idx,
             started_ms=ts_ms,
         )
@@ -1068,8 +1108,13 @@ class SessionRecorder:
         )
         ts_ms = event.timestamp_ns // 1_000_000
         payload = _payload_for(event)
+        if self._state.store_id and payload.get("segment_id"):
+            # A caption segment is unique within ONE call; two calls in one
+            # stored row could otherwise overwrite each other's lines.
+            call = self._state.session_id
+            payload["segment_id"] = f"{CALL_SEGMENT_PREFIX}{call}:{payload['segment_id']}"
         self._store.append_event(
-            session_id=self._state.session_id,
+            session_id=self._state.record_id,
             turn_id=turn_id,
             ts_ms=ts_ms,
             kind=kind,

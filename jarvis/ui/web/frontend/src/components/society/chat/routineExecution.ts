@@ -3,6 +3,8 @@ import type { AgentChatEvent } from "@/lib/agentChatApi";
 export interface RoutineChatTarget {
   agentId: string;
   sessionId: string;
+  /** A routine run (default) or the agent's conversation with Jarvis or a teammate. */
+  kind?: "routine" | "conversation";
   title: string;
   timestamp: number;
   result?: string;

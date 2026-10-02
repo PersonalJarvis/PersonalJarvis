@@ -98,18 +98,14 @@ async def test_project_ownership_rejects_another_folder(registry, tmp_path):
     assert registry.sessions == []
 
 
-async def test_pane_cap_applies_to_create_add_and_batch(registry, tmp_path):
-    cap = session.MAX_TERMINALS
-    with pytest.raises(session.SessionError, match=f"At most {cap}"):
-        await registry.start(str(tmp_path), [{"agent": "claude"}] * (cap + 1))
-    space = await registry.start(str(tmp_path), [{"agent": "claude"}] * (cap - 1))
-    with pytest.raises(session.SessionError, match=f"at most {cap}"):
-        await registry.add_terminals(2)
-    assert len(space.terminals) == cap - 1
+async def test_only_one_request_is_bounded_never_the_workspace(registry, tmp_path):
+    guard = session.MAX_PANES_PER_REQUEST
+    with pytest.raises(session.SessionError, match=f"At most {guard}"):
+        await registry.start(str(tmp_path), [{"agent": "claude"}] * (guard + 1))
+    space = await registry.start(str(tmp_path), [{"agent": "claude"}] * 15)
+    await registry.add_terminals(2)
     await registry.add_terminal(agent="claude")
-    with pytest.raises(session.SessionError, match=f"maximum of {cap}"):
-        await registry.add_terminal(agent="claude")
-    assert len(space.terminals) == cap
+    assert len(space.terminals) == 18
 
 
 @pytest.mark.parametrize(
@@ -227,20 +223,18 @@ async def test_duplicate_legacy_workspace_ids_do_not_overwrite_another_project(r
     assert {space.session_id for space in saved.workspaces} == set(ids)
 
 
-async def test_oversized_legacy_workspace_is_preserved_without_partial_restore(registry, tmp_path):
+async def test_a_large_saved_workspace_restores_in_full(registry, tmp_path):
     saved = resume_store.SnapshotWorkspace(
         session_id="legacy-large",
         folder=str(tmp_path),
         terminals=[
             resume_store.SnapshotTerminal(key=f"t{i}", name=f"T{i}", agent="claude")
-            for i in range(session.MAX_TERMINALS + 1)
+            for i in range(17)
         ],
     )
     resume_store.save(resume_store.snapshot_now([saved]))
-    with pytest.raises(session.SessionError, match=f"limit is {session.MAX_TERMINALS}"):
-        await registry.restore_workspace(saved.session_id)
-    assert len(resume_store.load().workspaces[0].terminals) == session.MAX_TERMINALS + 1
-    assert registry.sessions == []
+    await registry.restore_workspace(saved.session_id)
+    assert [len(space.terminals) for space in registry.sessions] == [17]
 
 
 async def test_session_route_accepts_project_and_workspace_name(registry, tmp_path):

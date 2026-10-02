@@ -1072,3 +1072,87 @@ def test_describe_names_what_was_captured() -> None:
     described = context.describe()
     assert "monitor 2" in described
     assert "1920x1080" in described
+
+
+# --------------------------------------------------------------------------
+# Hand-selected areas (region appshots)
+# --------------------------------------------------------------------------
+
+
+async def test_a_selected_area_grabs_exactly_that_rectangle() -> None:
+    capturer = FakeCapturer()
+    bus = RecordingBus()
+    service = make_service(capturer=capturer, bus=bus)
+
+    outcome = await service.capture(region=(100, 200, 300, 150))
+
+    assert outcome.status == "captured"
+    assert capturer.grabs == [((100, 200, 300, 150), None)]
+    assert outcome.context.target.kind is TargetKind.REGION
+    assert outcome.context.target.reason is TargetReason.USER_REGION
+    assert outcome.context.describe().startswith("captured selected area")
+    completed = [e for e in bus.events if type(e).__name__ == "ScreenCaptureCompleted"]
+    assert completed[0].target_kind == "region"
+    assert completed[0].target_label == "selected area"
+
+
+class _VaultBesideTheEditor(FakeWindowProbe):
+    def visible_windows(self):
+        return (
+            WindowFacts(app_name="editor", title="notes", frame_rect=(0, 0, 800, 600)),
+            WindowFacts(app_name="vault", title="1Password", frame_rect=(1000, 0, 400, 400)),
+        )
+
+
+async def test_a_denylisted_window_outside_the_area_does_not_block_it() -> None:
+    capturer = FakeCapturer()
+    service = make_service(
+        settings=ScreenContextSettings(denylist=("1password",)),
+        window_probe=_VaultBesideTheEditor(),
+        capturer=capturer,
+    )
+
+    outcome = await service.capture(region=(10, 10, 400, 300))
+
+    assert outcome.status == "captured"
+    assert len(capturer.grabs) == 1
+
+
+async def test_a_denylisted_window_inside_the_area_is_never_captured() -> None:
+    capturer = FakeCapturer()
+    service = make_service(
+        settings=ScreenContextSettings(denylist=("1password",)),
+        window_probe=_VaultBesideTheEditor(),
+        capturer=capturer,
+    )
+
+    outcome = await service.capture(region=(900, 100, 400, 300))
+
+    assert outcome.status == "refused"
+    assert outcome.reason_kind == "policy"
+    assert capturer.grabs == []
+    assert "selected area" in (outcome.message or "")
+
+
+async def test_focus_settling_after_the_picker_does_not_void_an_area() -> None:
+    class SettlingFocus(FakeWindowProbe):
+        def __init__(self) -> None:
+            super().__init__()
+            self.reads = 0
+
+        def foreground_snapshot(self):
+            self.reads += 1
+            if self.reads == 1:
+                return WindowSnapshot(self._facts, self._handle)
+            return WindowSnapshot(
+                WindowFacts(app_name="browser", title="docs", pid=77, frame_rect=(0, 0, 900, 700)),
+                9,
+            )
+
+    capturer = FakeCapturer()
+    service = make_service(window_probe=SettlingFocus(), capturer=capturer)
+
+    outcome = await service.capture(region=(10, 10, 400, 300))
+
+    assert outcome.status == "captured"
+    assert len(capturer.grabs) == 1

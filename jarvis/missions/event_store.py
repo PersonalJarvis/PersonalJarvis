@@ -22,6 +22,7 @@ import aiosqlite
 
 from .event_bus import MissionBus
 from .events import EventEnvelope
+from .ownership import current_process_identity
 
 log = logging.getLogger(__name__)
 
@@ -83,6 +84,12 @@ class MissionEventStore:
                 "ALTER TABLE missions ADD COLUMN last_heartbeat_ms INTEGER NOT NULL DEFAULT 0"
             )
             log.info("MissionEventStore: migration applied — added 'last_heartbeat_ms'")
+        for column in ("owner_pid", "owner_start_ms"):
+            if column not in existing_cols:
+                await self.conn.execute(
+                    f"ALTER TABLE missions ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0"
+                )
+                log.info("MissionEventStore: migration applied — added '%s'", column)
 
     async def close(self) -> None:
         if self._conn is not None:
@@ -374,11 +381,32 @@ class MissionEventStore:
         so startup recovery can distinguish a busy-but-silent worker from a
         genuinely orphaned mission. Deliberately not an event: it must not bloat
         the event log or wake the flight-recorder wildcard subscriber.
+
+        The calling process also stamps itself as the mission's owner, so
+        recovery can tell a mission whose owner died in a restart from one a
+        live instance is still running (:mod:`jarvis.missions.ownership`).
         """
+        owner_pid, owner_start_ms = current_process_identity()
         await self.conn.execute(
-            "UPDATE missions SET last_heartbeat_ms = ? WHERE id = ?",
-            (ts_ms, mission_id),
+            "UPDATE missions SET last_heartbeat_ms = ?, owner_pid = ?, "
+            "owner_start_ms = ? WHERE id = ?",
+            (ts_ms, owner_pid, owner_start_ms, mission_id),
         )
+
+    async def get_owner(self, mission_id: str) -> tuple[int, int]:
+        """``(pid, start_ms)`` of the process that last heartbeat a mission.
+
+        ``(0, 0)`` when no owner was stamped (old row, or no heartbeat yet).
+        """
+        cur = await self.conn.execute(
+            "SELECT owner_pid, owner_start_ms FROM missions WHERE id = ?",
+            (mission_id,),
+        )
+        row = await cur.fetchone()
+        await cur.close()
+        if row is None:
+            return (0, 0)
+        return (int(row[0] or 0), int(row[1] or 0))
 
     async def get_heartbeat(self, mission_id: str) -> int:
         """Last heartbeat ms for a mission, or 0 if none/unknown."""

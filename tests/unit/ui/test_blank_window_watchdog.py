@@ -572,3 +572,26 @@ def test_attaching_a_reopened_window_starts_a_fresh_incident() -> None:
     wd.attach(second)
     assert wd._window is second
     assert wd._policy.decide(_obs(0.0)).action is Action.WAIT
+
+
+def test_a_hung_page_is_asked_for_its_stack_before_the_renderer_ends() -> None:
+    from jarvis.ui.window_watchdog import Verdict
+
+    order: list[str] = []
+
+    class _Probe:
+        def arm(self) -> None:
+            order.append("arm")
+
+        def capture(self) -> list[str]:
+            order.append("capture")
+            return ["sample 1: 1 frame(s)", "  #0 spin index.js:1:2"]
+
+    window = _FakeWindow()
+    wd = _watchdog(
+        window,
+        stack_probe=_Probe(),
+        end_hung_renderer=lambda: order.append("end") or [],
+    )
+    assert wd._apply(window, Verdict(Action.RELOAD, after_up=True, hung=True))
+    assert order == ["capture", "end"]

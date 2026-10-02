@@ -15,7 +15,7 @@ import pytest
 
 from jarvis.agentic_ide import session as session_mod
 from jarvis.agentic_ide.session import (
-    MAX_TERMINALS,
+    MAX_PANES_PER_REQUEST,
     Registry,
     SessionError,
     terminals_added_event,
@@ -68,23 +68,22 @@ async def test_a_batch_opens_every_requested_pane(registry: Registry, tmp_path: 
     assert len(set(_names(registry))) == 5
 
 
-async def test_the_cap_rejects_the_batch_without_creating_any_pane(
+async def test_an_oversized_request_is_refused_without_creating_any_pane(
     registry: Registry, tmp_path: Path
 ) -> None:
-    """The eight-session workspace limit is checked before creating the batch."""
-    await _open(registry, tmp_path, MAX_TERMINALS - 3)
-    with pytest.raises(SessionError, match="at most"):
-        await registry.add_terminals(5)
-    assert len(_names(registry)) == MAX_TERMINALS - 3
+    """The per-request guard is checked before creating the batch."""
+    await _open(registry, tmp_path, 3)
+    with pytest.raises(SessionError, match="in one go"):
+        await registry.add_terminals(MAX_PANES_PER_REQUEST + 1)
+    assert len(_names(registry)) == 3
 
 
-async def test_a_full_workspace_refuses_instead_of_reporting_nothing(
-    registry: Registry, tmp_path: Path
-) -> None:
-    """With no room at all the caller gets an error it can read out loud."""
-    await _open(registry, tmp_path, MAX_TERMINALS)
-    with pytest.raises(SessionError, match="at most"):
-        await registry.add_terminals(2)
+async def test_a_large_workspace_still_takes_a_batch(registry: Registry, tmp_path: Path) -> None:
+    """There is no workspace limit: a batch on top of sixteen panes opens in full."""
+    await _open(registry, tmp_path, 16)
+    created, capped = await registry.add_terminals(5)
+    assert len(created) == 5 and not capped
+    assert len(_names(registry)) == 21
 
 
 async def test_the_agent_is_inherited_unless_named(registry: Registry, tmp_path: Path) -> None:

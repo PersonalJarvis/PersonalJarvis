@@ -5640,6 +5640,7 @@ class DesktopApp:
         the tray's reopen), so both are covered by one guard with one policy.
         """
         try:
+            from jarvis.ui.webview_hang_probe import HangStackProbe
             from jarvis.ui.window_watchdog import BlankWindowWatchdog
 
             if self._blank_watchdog is not None:
@@ -5653,6 +5654,7 @@ class DesktopApp:
                 warming_probe=self._backend_warming,
                 failure_detail=self._blank_window_detail,
                 theme=self._resolved_theme,
+                stack_probe=HangStackProbe(webview_storage_dir(), self._url()),
             )
             self._blank_watchdog.start()
         except Exception:  # noqa: BLE001
@@ -5742,6 +5744,12 @@ class DesktopApp:
         )
 
         enable_webview_accessibility_tree()
+        # A local DevTools endpoint, so a hung page can be asked where its
+        # script is stuck before the watchdog ends the renderer (see
+        # jarvis/ui/webview_hang_probe.py). WebView2 only; a no-op elsewhere.
+        from jarvis.ui.webview_hang_probe import enable_webview_remote_debugging
+
+        enable_webview_remote_debugging()
         try:
             import webview  # type: ignore[import-not-found]
         except ModuleNotFoundError as exc:

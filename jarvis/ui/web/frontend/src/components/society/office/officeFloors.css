@@ -1,22 +1,77 @@
 /* Floors, the elevator ride and the compact (IDE side panel) HUD. Theme tokens only: light and dark mode both work. */
 
-/* The elevator: two doors slide shut over the scene, the floor switches behind them, they slide open. */
-.office-elevator { position:absolute; inset:0; z-index:62; pointer-events:none; overflow:hidden; display:flex; align-items:center; justify-content:center; }
-.office-elevator-door { position:absolute; top:0; bottom:0; width:50%; background:linear-gradient(90deg, hsl(var(--secondary)), hsl(var(--muted))); box-shadow:inset 0 0 0 1px hsl(var(--border)); transition:transform 480ms cubic-bezier(.6,0,.3,1); }
-.office-elevator-door[data-side="left"] { left:0; transform:translateX(-100%); }
-.office-elevator-door[data-side="right"] { right:0; transform:translateX(100%); }
+/*
+ * The elevator ride (ElevatorRide): brushed-steel doors slide shut over the scene, a hall lantern on the seam
+ * counts the floors while light bands sweep past, and the doors open on the new floor. Part of the diorama,
+ * like the call button's pill: one palette in light and dark mode.
+ */
+.office-elevator { position:absolute; inset:0; z-index:62; pointer-events:none; overflow:hidden; }
+.office-elevator-door {
+  position:absolute; top:0; bottom:0; width:50%;
+  background:
+    repeating-linear-gradient(90deg, rgb(255 255 255 / .035) 0 1px, transparent 1px 4px),
+    linear-gradient(90deg, #5f656e 0%, #a4aab2 30%, #cdd1d6 50%, #9aa0a8 72%, #686e77 100%);
+  transition:transform 600ms cubic-bezier(.65,0,.25,1);
+}
+/* A recessed panel on each door, catching the light along its top edge. */
+.office-elevator-door::before {
+  content:""; position:absolute; inset:8% 14%; border-radius:8px;
+  background:linear-gradient(180deg, rgb(255 255 255 / .08), rgb(0 0 0 / .06));
+  box-shadow:inset 0 0 0 1px rgb(0 0 0 / .16), inset 0 1px 0 rgb(255 255 255 / .4);
+}
+/* The rubber edge where the doors meet. */
+.office-elevator-door::after { content:""; position:absolute; top:0; bottom:0; width:3px; background:#202227; }
+.office-elevator-door[data-side="left"] { left:0; transform:translateX(-101%); box-shadow:inset -16px 0 24px -12px rgb(0 0 0 / .55); }
+.office-elevator-door[data-side="left"]::after { right:0; }
+.office-elevator-door[data-side="right"] { right:0; transform:translateX(101%); box-shadow:inset 16px 0 24px -12px rgb(0 0 0 / .55); }
+.office-elevator-door[data-side="right"]::after { left:0; }
 .office-elevator[data-phase="closing"] .office-elevator-door,
 .office-elevator[data-phase="riding"] .office-elevator-door { transform:translateX(0); }
 /* A fresh mount starts open, so closing animates from open; opening animates back out. */
-.office-elevator[data-phase="closing"] .office-elevator-door { animation:office-door-close 480ms cubic-bezier(.6,0,.3,1); }
+.office-elevator[data-phase="closing"] .office-elevator-door { animation:office-door-close 600ms cubic-bezier(.65,0,.25,1); }
 @keyframes office-door-close { from { transform:translateX(var(--office-door-from, 0)); } }
-.office-elevator[data-phase="closing"] .office-elevator-door[data-side="left"] { --office-door-from:-100%; }
-.office-elevator[data-phase="closing"] .office-elevator-door[data-side="right"] { --office-door-from:100%; }
-.office-elevator-sign { position:relative; padding:6px 14px; border-radius:999px; border:1px solid hsl(var(--border)); background:hsl(var(--popover)); color:hsl(var(--popover-foreground)); font-size:13px; font-weight:600; opacity:0; transition:opacity 200ms ease; }
-.office-elevator[data-phase="riding"] .office-elevator-sign { opacity:1; }
+.office-elevator[data-phase="closing"] .office-elevator-door[data-side="left"] { --office-door-from:-101%; }
+.office-elevator[data-phase="closing"] .office-elevator-door[data-side="right"] { --office-door-from:101%; }
+
+/* Under way: soft light bands slide past the doors, against the direction of travel. */
+.office-elevator-sweep {
+  position:absolute; inset:0; opacity:0;
+  background:repeating-linear-gradient(180deg, transparent 0 150px, rgb(255 255 255 / .2) 170px, transparent 190px 260px);
+  mix-blend-mode:overlay; transition:opacity 260ms ease;
+}
+.office-elevator[data-phase="riding"] .office-elevator-sweep { opacity:1; animation:office-ride-past-down 620ms linear infinite; }
+.office-elevator[data-phase="riding"][data-direction="down"] .office-elevator-sweep { animation-name:office-ride-past-up; }
+@keyframes office-ride-past-down { from { background-position:0 0; } to { background-position:0 260px; } }
+@keyframes office-ride-past-up { from { background-position:0 260px; } to { background-position:0 0; } }
+
+/* The hall lantern: a dark glass display on the seam with the arrow, the floor number and its name. */
+.office-elevator-lantern {
+  position:absolute; left:50%; top:24%; display:flex; flex-direction:column; align-items:center; gap:4px;
+  min-width:150px; padding:12px 22px 11px; border-radius:18px;
+  background:linear-gradient(180deg, #17181d, #0b0c10); border:1px solid rgb(255 255 255 / .1);
+  box-shadow:0 14px 36px rgb(0 0 0 / .45), inset 0 1px 0 rgb(255 255 255 / .07), 0 0 0 6px rgb(18 19 23 / .35);
+  color:#f5b83d; opacity:0; transform:translate(-50%, 10px) scale(.96);
+  transition:opacity 220ms ease, transform 360ms cubic-bezier(.2,.8,.2,1);
+}
+.office-elevator[data-phase="closing"] .office-elevator-lantern { opacity:1; transform:translate(-50%, 0) scale(1); transition-delay:320ms; }
+.office-elevator[data-phase="riding"] .office-elevator-lantern { opacity:1; transform:translate(-50%, 0) scale(1); }
+.office-elevator-arrow { display:block; filter:drop-shadow(0 0 6px rgb(245 184 61 / .75)); }
+.office-elevator-arrow[data-down] { transform:rotate(180deg); }
+.office-elevator[data-phase="riding"] .office-elevator-arrow { animation:office-arrow-up 900ms ease-in-out infinite; }
+.office-elevator[data-phase="riding"] .office-elevator-arrow[data-down] { animation-name:office-arrow-down; }
+@keyframes office-arrow-up { 0% { transform:translateY(4px); opacity:.45; } 50% { opacity:1; } 100% { transform:translateY(-4px); opacity:.45; } }
+@keyframes office-arrow-down { 0% { transform:rotate(180deg) translateY(4px); opacity:.45; } 50% { opacity:1; } 100% { transform:rotate(180deg) translateY(-4px); opacity:.45; } }
+.office-elevator-level {
+  font-family:'JetBrains Mono', ui-monospace, monospace; font-size:56px; line-height:1; font-weight:700; font-variant-numeric:tabular-nums;
+  text-shadow:0 0 16px rgb(245 184 61 / .65); animation:office-level-in 280ms cubic-bezier(.2,.8,.2,1);
+}
+/* A new floor number rolls in from the direction of travel. */
+@keyframes office-level-in { from { transform:translateY(var(--office-level-from, 16px)); opacity:0; } }
+.office-elevator[data-direction="down"] .office-elevator-level { --office-level-from:-16px; }
+.office-elevator-name { font-size:11px; font-weight:700; letter-spacing:.16em; text-transform:uppercase; color:rgb(245 184 61 / .82); white-space:nowrap; }
+.office-elevator[data-reduced] *, .office-elevator[data-reduced] *::before, .office-elevator[data-reduced] *::after { animation:none !important; transition:none !important; }
 @media (prefers-reduced-motion: reduce) {
-  .office-elevator-door { transition:none; animation:none !important; }
-  .office-elevator-sign { transition:none; }
+  .office-elevator *, .office-elevator *::before, .office-elevator *::after { animation:none !important; transition:none !important; }
 }
 
 /* The pill over the elevator's call button. Like the name pills it is part of the diorama, which keeps one palette in both modes. */
@@ -40,3 +95,84 @@
 .office-stage-compact .office-panel-slot { top:auto; bottom:48px; right:8px; width:calc(100% - 16px); max-height:62%; }
 .office-stage-compact .office-prompt { bottom:48px; max-width:calc(100% - 16px); font-size:12px; }
 .office-stage-compact .office-note { font-size:11px; }
+
+/*
+ * The elevator's floor picker (ElevatorPanel), built like a real control panel: brushed steel, a display
+ * with the current floor, one round backlit key per floor, top floor first. Each floor has its own accent;
+ * the key of the floor you are on glows amber, a pressed key lights up fully. Part of the diorama: one
+ * palette in light and dark mode.
+ */
+.office-lift-backdrop { position:absolute; inset:0; z-index:64; display:flex; align-items:center; justify-content:center; padding:16px; background:rgb(8 9 12 / .36); }
+.office-lift {
+  width:min(344px, 100%); padding:14px; border-radius:20px; color:#eef0f3;
+  background:
+    repeating-linear-gradient(90deg, rgb(255 255 255 / .02) 0 1px, transparent 1px 3px),
+    linear-gradient(160deg, #3b3f47 0%, #24272d 55%, #1b1d22 100%);
+  border:1px solid rgb(255 255 255 / .1);
+  box-shadow:0 24px 60px rgb(0 0 0 / .5), inset 0 1px 0 rgb(255 255 255 / .12), inset 0 -1px 0 rgb(0 0 0 / .45);
+  animation:office-lift-in 220ms cubic-bezier(.2,.8,.2,1);
+}
+@keyframes office-lift-in { from { opacity:0; transform:translateY(10px) scale(.97); } }
+.office-lift-top { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
+.office-lift-display {
+  display:inline-flex; align-items:center; justify-content:center; gap:6px; min-width:58px; padding:6px 10px; border-radius:10px;
+  background:#0b0c10; border:1px solid rgb(255 255 255 / .08); box-shadow:inset 0 2px 6px rgb(0 0 0 / .65);
+  color:#f5b83d; font-family:'JetBrains Mono', ui-monospace, monospace; font-size:20px; font-weight:700; line-height:1;
+  text-shadow:0 0 10px rgb(245 184 61 / .6);
+}
+.office-lift-display-arrow { transition:opacity 160ms ease, transform 160ms ease; }
+.office-lift-display-arrow[data-dir="idle"] { opacity:.25; }
+.office-lift-display-arrow[data-dir="down"] { transform:rotate(180deg); }
+.office-lift-top h2 { flex:1; min-width:0; margin:0; font-size:14px; font-weight:700; }
+.office-lift-close { flex:none; width:28px; height:28px; border:0; border-radius:8px; background:rgb(255 255 255 / .06); color:#c9ced6; font-size:18px; line-height:1; cursor:pointer; }
+.office-lift-close:hover { background:rgb(255 255 255 / .12); color:#ffffff; }
+.office-lift-close:focus-visible { outline:2px solid #f5b83d; outline-offset:2px; }
+.office-lift-floors { display:flex; flex-direction:column; gap:8px; }
+.office-lift-floor {
+  --lift-accent:#f5b83d;
+  position:relative; display:flex; align-items:center; gap:12px; width:100%; padding:9px 12px 9px 14px; border-radius:14px;
+  border:1px solid rgb(255 255 255 / .07); background:linear-gradient(180deg, rgb(255 255 255 / .055), rgb(255 255 255 / .02));
+  color:inherit; text-align:left; cursor:pointer;
+  transition:background 160ms ease, border-color 160ms ease, opacity 160ms ease, transform 120ms ease;
+}
+.office-lift-floor[data-floor="agents"] { --lift-accent:#9fd8a8; }
+.office-lift-floor[data-floor="coding"] { --lift-accent:#ffb86b; }
+.office-lift-floor[data-floor="arcade"] { --lift-accent:#ff6fb5; }
+/* The floor's colour as a slim bar along the key's edge. */
+.office-lift-floor::before { content:""; position:absolute; left:5px; top:14px; bottom:14px; width:3px; border-radius:3px; background:var(--lift-accent); opacity:.6; }
+.office-lift-floor:hover:not(:disabled), .office-lift-floor:focus-visible { background:linear-gradient(180deg, rgb(255 255 255 / .1), rgb(255 255 255 / .04)); border-color:color-mix(in srgb, var(--lift-accent) 55%, transparent); }
+.office-lift-floor:focus-visible { outline:2px solid var(--lift-accent); outline-offset:2px; }
+.office-lift-floor:active:not(:disabled) { transform:scale(.985); }
+.office-lift-floor:disabled { cursor:default; }
+.office-lift-floor:disabled:not([data-here]):not([data-pressed]) { opacity:.42; }
+.office-lift-floor[data-pressed] { border-color:rgb(245 184 61 / .65); }
+/* The key: a polished steel ring round a dark button with the floor's number. */
+.office-lift-key {
+  flex:none; display:grid; place-items:center; width:42px; height:42px; border-radius:50%;
+  background:radial-gradient(circle at 35% 30%, #f3f5f7, #aab0b8 55%, #686e77);
+  box-shadow:0 2px 4px rgb(0 0 0 / .45), inset 0 -2px 3px rgb(0 0 0 / .25);
+}
+.office-lift-key span {
+  display:grid; place-items:center; width:32px; height:32px; border-radius:50%;
+  background:radial-gradient(circle at 50% 35%, #30333b, #15171c); color:#e8eaee;
+  font-family:'JetBrains Mono', ui-monospace, monospace; font-size:15px; font-weight:700;
+  box-shadow:inset 0 0 0 2px rgb(255 255 255 / .06);
+  transition:color 160ms ease, box-shadow 160ms ease, background 160ms ease;
+}
+.office-lift-floor:hover:not(:disabled) .office-lift-key span, .office-lift-floor:focus-visible .office-lift-key span {
+  color:var(--lift-accent); box-shadow:inset 0 0 0 2px var(--lift-accent), 0 0 12px color-mix(in srgb, var(--lift-accent) 55%, transparent);
+}
+.office-lift-floor[data-here] .office-lift-key span { color:#f5b83d; box-shadow:inset 0 0 0 2px #f5b83d, 0 0 12px rgb(245 184 61 / .5); }
+.office-lift-floor[data-pressed] .office-lift-key span {
+  background:radial-gradient(circle at 50% 40%, #fff6d1, #f5b83d 58%, #b97a1d); color:#2b1900;
+  box-shadow:0 0 0 2px rgb(255 214 120 / .7), 0 0 20px rgb(245 184 61 / .9);
+}
+.office-lift-text { display:flex; flex-direction:column; gap:1px; min-width:0; }
+.office-lift-text b { font-size:14px; font-weight:650; color:#f4f5f7; }
+.office-lift-text small { font-size:11.5px; color:#a7adb7; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.office-lift-floor[data-here] .office-lift-text small { color:#f5b83d; }
+.office-lift-keys { margin:12px 2px 0; font-size:10.5px; color:#8d939d; }
+.office-lift[data-reduced], .office-lift[data-reduced] * { animation:none !important; transition:none !important; }
+@media (prefers-reduced-motion: reduce) {
+  .office-lift, .office-lift * { animation:none !important; transition:none !important; }
+}

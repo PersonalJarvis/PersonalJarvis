@@ -47,7 +47,7 @@ from .communication import COMMUNICATION_GUIDANCE
 from .conversation_tool import ConversationRecallTool, RoutineInvokeTool, RoutineListTool
 from .learning import RunLearnedSkillTool
 from .memory import resolve_society_vault
-from .roster import AgentRecord, canonical_session_id
+from .roster import PAIR_SESSION_MARKER, AgentRecord, canonical_session_id
 from .routine_runner import is_routine_session
 from .runtime import current_runtime
 
@@ -56,6 +56,7 @@ log = logging.getLogger(__name__)
 __all__ = [
     "SURFACE",
     "agent_id_of",
+    "counterpart_of",
     "build_briefing",
     "capability_epoch",
     "remember_always_allow",
@@ -191,11 +192,25 @@ your location, use these names."""
 
 
 def agent_id_of(session_id: str) -> str | None:
-    """Resolve canonical and per-execution routine chats to their live owner."""
+    """Resolve canonical, routine and conversation chats to their live owner.
+
+    ``society:<agent>``, ``society:<agent>:routine:<task>:<run>`` and
+    ``society:<agent>:with:<counterpart>`` all belong to ``<agent>``: every one
+    of them gets the same identity, tools, memory and briefing.
+    """
     if not session_id.startswith(_PREFIX):
         return None
-    agent_id = session_id[len(_PREFIX) :].split(":routine:", 1)[0].strip()
+    agent_id = session_id[len(_PREFIX) :].split(":routine:", 1)[0]
+    agent_id = agent_id.split(PAIR_SESSION_MARKER, 1)[0].strip()
     return agent_id or None
+
+
+def counterpart_of(session_id: str) -> str | None:
+    """The other side of a conversation chat (``society:<a>:with:<b>`` → ``b``)."""
+    if not session_id.startswith(_PREFIX) or PAIR_SESSION_MARKER not in session_id:
+        return None
+    counterpart = session_id.split(PAIR_SESSION_MARKER, 1)[1].strip()
+    return counterpart or None
 
 
 def _vault_root(cfg: Any) -> Path:

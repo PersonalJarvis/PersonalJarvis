@@ -653,17 +653,17 @@ _PHRASES: dict[str, dict[str, str]] = {
         "en": "There are no matching open terminals.",
         "es": "No hay terminales abiertas que coincidan.",
     },
-    # Fewer than asked for, because the workspace cap cut the batch short. Named
+    # Fewer than asked for, because a pane failed to start mid-batch. Named
     # separately from the plain success so the shortfall is impossible to miss.
     "ide_terminals_spawned_capped": {
-        "de": "Platz war nur für {count}: {names}.",  # i18n-allow
-        "en": "There was only room for {count}: {names}.",
-        "es": "Solo había espacio para {count}: {names}.",
+        "de": "Nur {count} ließen sich öffnen: {names}.",  # i18n-allow
+        "en": "Only {count} could be opened: {names}.",
+        "es": "Solo se pudieron abrir {count}: {names}.",
     },
-    "ide_terminals_full": {
-        "de": "Der Workspace ist voll, {max} Terminals laufen schon.",  # i18n-allow
-        "en": "The workspace is full, {max} terminals are already running.",
-        "es": "El espacio de trabajo está lleno, ya hay {max} terminales.",
+    "ide_terminals_open_failed": {
+        "de": "Ich konnte kein Terminal öffnen.",  # i18n-allow
+        "en": "I could not open a terminal.",
+        "es": "No pude abrir ninguna terminal.",
     },
     # The name came through garbled and lands between two coding CLIs. Asked
     # rather than guessed (maintainer directive 2026-07-28): a needless question

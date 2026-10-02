@@ -15,6 +15,7 @@ import {
   shouldReload,
   type BundleWatchDeps,
 } from "./bundleWatch";
+import { reloadHeld, setReloadHold } from "./reloadHold";
 
 function indexHtml(hash: string): string {
   return [
@@ -130,6 +131,20 @@ describe("shouldReload", () => {
     ).toBe(true);
   });
 
+  it("never hangs up a live call, however idle the user looks", () => {
+    // 2026-10-02: a rebuild reloaded the window 15 minutes into a voice call.
+    // The user was talking, so keyboard and mouse had been idle for minutes.
+    expect(
+      shouldReload({
+        baseline,
+        seen: "new",
+        confirmed: "new",
+        idleMs: 600_000,
+        held: true,
+      }),
+    ).toBe(false);
+  });
+
   it("never reloads for an unchanged or unreadable answer", () => {
     expect(
       shouldReload({
@@ -188,6 +203,22 @@ describe("installBundleWatch", () => {
     expect(app.reload).not.toHaveBeenCalled();
 
     app.idle(9_000);
+    await app.tick();
+    expect(app.reload).toHaveBeenCalledOnce();
+  });
+
+  it("waits for a held window and reloads once the hold is released", async () => {
+    let held = true;
+    const app = harness(indexHtml("AAA"));
+    installBundleWatch({ ...app.deps, held: () => held });
+    await app.tick();
+    app.serve(indexHtml("BBB"));
+    await app.tick();
+    await app.tick();
+    await app.tick();
+    expect(app.reload).not.toHaveBeenCalled();
+
+    held = false;
     await app.tick();
     expect(app.reload).toHaveBeenCalledOnce();
   });
@@ -278,5 +309,17 @@ describe("installBundleWatch", () => {
     stop();
     await app.tick();
     expect(app.fetches()).toBe(before);
+  });
+});
+
+describe("reloadHold", () => {
+  it("holds while any owner holds and releases per owner", () => {
+    expect(reloadHeld()).toBe(false);
+    setReloadHold("call-a", true);
+    setReloadHold("call-b", true);
+    setReloadHold("call-a", false);
+    expect(reloadHeld()).toBe(true);
+    setReloadHold("call-b", false);
+    expect(reloadHeld()).toBe(false);
   });
 });
