@@ -49,13 +49,17 @@ def worker_env(*, package_root: Path | None = None, home: Path | None = None,
 
 class EngineClient:
     def __init__(self, python: str, *, env: dict[str, str] | None = None,
-                 stderr_path: Path | None = None) -> None:
+                 stderr_path: Path | None = None, ordered: bool = False) -> None:
         self._python = python
         self._env = env or worker_env()
         self._stderr_path = stderr_path
+        # Live playback must see audio before the following response.done or
+        # interruption. The bench can still consume separate queues.
+        self._ordered = ordered
         self._process: asyncio.subprocess.Process | None = None
         self._reader_task: asyncio.Task[None] | None = None
-        self.messages: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self._close_task: asyncio.Task[int | None] | None = None
+        self.messages: asyncio.Queue[p.Frame] = asyncio.Queue()
         self.audio_frames: asyncio.Queue[p.AudioFrame] = asyncio.Queue()
         self._stderr_handle: Any = None
         self._write_lock = asyncio.Lock()
@@ -65,17 +69,27 @@ class EngineClient:
         return self._process.pid if self._process is not None else None
 
     async def start(self, timeout_s: float = 30.0) -> dict[str, Any]:
+        self._close_task = None
         if self._stderr_path is not None:
             self._stderr_path.parent.mkdir(parents=True, exist_ok=True)
             self._stderr_handle = self._stderr_path.open("ab")
-        self._process = await asyncio.create_subprocess_exec(
-            self._python, "-m", "jarvis.voice_engine.worker",
-            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-            stderr=self._stderr_handle or asyncio.subprocess.DEVNULL,
-            env=self._env, creationflags=_NO_WINDOW,
-        )
-        self._reader_task = asyncio.get_running_loop().create_task(self._read())
-        return await self.wait_for(lambda m: m["type"] == p.HELLO, timeout_s)
+        try:
+            self._process = await asyncio.create_subprocess_exec(
+                self._python, "-m", "jarvis.voice_engine.worker",
+                stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+                stderr=self._stderr_handle or asyncio.subprocess.DEVNULL,
+                env=self._env, creationflags=_NO_WINDOW,
+            )
+            self._reader_task = asyncio.get_running_loop().create_task(self._read())
+            hello = await self.wait_for(lambda m: m["type"] == p.HELLO, timeout_s)
+            if hello.get("protocol") != p.PROTOCOL_VERSION:
+                raise p.ProtocolError("the voice engine uses an incompatible protocol")
+            return hello
+        except BaseException:
+            # Includes cancellation: a failed handshake must not leave a
+            # worker holding models or an open log handle behind.
+            await self.close()
+            raise
 
     async def _read(self) -> None:
         assert self._process is not None and self._process.stdout is not None
@@ -86,11 +100,11 @@ class EngineClient:
                 if not data:
                     break
                 for frame in reader.feed(data):
-                    if isinstance(frame, p.AudioFrame):
+                    if isinstance(frame, p.AudioFrame) and not self._ordered:
                         self.audio_frames.put_nowait(frame)
                     else:
                         self.messages.put_nowait(frame)
-        except p.ProtocolError as exc:
+        except (p.ProtocolError, OSError) as exc:
             # A corrupt stream cannot be resynchronised; stop the worker so the
             # caller sees an exit instead of waiting on a silent pipe.
             log.error("voice engine sent an invalid frame: %s", exc)
@@ -118,17 +132,30 @@ class EngineClient:
         async with asyncio.timeout(timeout_s):
             while True:
                 message = await self.messages.get()
+                if not isinstance(message, dict):
+                    continue
                 if message["type"] == EXITED:
                     raise RuntimeError("the voice engine exited")
                 if predicate(message):
                     return message
 
     async def close(self, timeout_s: float = 5.0) -> int | None:
+        # A provider switch may cancel the router while it is reaping an
+        # exited/failed worker. All callers join one uncancellable cleanup.
+        if self._close_task is None:
+            self._close_task = asyncio.create_task(self._close(timeout_s))
+        return await asyncio.shield(self._close_task)
+
+    async def _close(self, timeout_s: float) -> int | None:
         process = self._process
         if process is None:
+            if self._stderr_handle is not None:
+                self._stderr_handle.close()
+                self._stderr_handle = None
             return None
-        with contextlib.suppress(RuntimeError, ConnectionError, OSError):
-            await self.send({"type": p.SHUTDOWN})
+        with contextlib.suppress(RuntimeError, ConnectionError, OSError, TimeoutError):
+            async with asyncio.timeout(min(timeout_s, 1.0)):
+                await self.send({"type": p.SHUTDOWN})
         if process.stdin is not None:
             with contextlib.suppress(ConnectionError, OSError):
                 process.stdin.close()
@@ -139,7 +166,11 @@ class EngineClient:
             code = await process.wait()
         if self._reader_task is not None:
             self._reader_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._reader_task
+            self._reader_task = None
         if self._stderr_handle is not None:
             self._stderr_handle.close()
+            self._stderr_handle = None
         self._process = None
         return code
