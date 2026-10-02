@@ -42,9 +42,6 @@ vi.mock("@/components/layout/TopBar", () => ({
 vi.mock("@/components/layout/MainView", () => ({
   MainView: () => <div data-testid="main-view" />,
 }));
-vi.mock("@/components/layout/PermissionsAlertBanner", () => ({
-  PermissionsAlertBanner: () => null,
-}));
 vi.mock("@/components/layout/InputIsolationBanner", () => ({
   InputIsolationBanner: () => null,
 }));

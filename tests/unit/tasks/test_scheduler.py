@@ -10,7 +10,7 @@ import pytest
 
 from jarvis.control.cancel import CancelToken
 from jarvis.core.bus import EventBus
-from jarvis.core.events import MessageSent
+from jarvis.core.events import MessageSent, PermissionNeeded
 from jarvis.tasks.scheduler import TaskScheduler, _match_filter
 from jarvis.tasks.schema import (
     SpeakAction,
@@ -160,6 +160,27 @@ async def test_on_event_filter_expr_blocks_non_match(
     # user-Message → dispatch
     await bus.publish(MessageSent(thread_id="t1", role="user", text="hi"))
     assert runner.dispatched == [str(spec.id)]
+
+
+async def test_on_event_never_dispatches_permission_episodes(
+    store: TaskStore, bus: EventBus, runner: FakeRunner
+) -> None:
+    """A routine stored through any path still cannot react to a system dialog."""
+    scheduler = TaskScheduler(store=store, bus=bus, runner=runner)
+    scheduler.bind_bus()
+
+    spec = TaskSpec(
+        title="permission-watcher",
+        trigger=TriggerOnEvent(event_name="PermissionNeeded", filter_expr=None),
+        action=SpeakAction(text="x"),
+    )
+    await scheduler.schedule(spec)
+
+    await bus.publish(
+        PermissionNeeded(permissions=("microphone",), feature="voice", reason="denied")
+    )
+
+    assert runner.dispatched == []
 
 
 # ----------------------------------------------------------------------

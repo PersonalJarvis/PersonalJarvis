@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "personal-jarvis"
-version = "2.5.0"
+version = "2.7.0"
 description = "Turn your computer into an AI agent that coordinates apps, tools, models, and other agents"
 requires-python = ">=3.11,<3.15"
 readme = "README.md"
@@ -327,10 +327,13 @@ desktop = [
     "winrt-Windows.Media.Control>=3.2; sys_platform == 'win32'",
     "pystray>=0.19",
     "pywebview>=5.3",
-    # macOS uses pynput for global hotkeys. Linux keeps pyautogui/no-op fallbacks:
-    # pynput would otherwise compile evdev against host kernel headers, breaking
-    # the advertised [full] install on a stock headless image. ptyprocess is the
-    # POSIX terminal backend; Windows keeps pywinpty above.
+    # macOS needs pynput for Computer-Use keyboard actuation and the has_hotkey
+    # capability probe; its global hotkeys run on a listen-only Quartz event tap
+    # instead (jarvis/trigger/backends/quartz.py, BUG-077). Linux keeps
+    # pyautogui/no-op fallbacks: pynput would otherwise compile evdev against
+    # host kernel headers, breaking the advertised [full] install on a stock
+    # headless image. ptyprocess is the POSIX terminal backend; Windows keeps
+    # pywinpty above.
     "pynput>=1.7; sys_platform == 'darwin'",
     "ptyprocess>=0.7; sys_platform != 'win32'",
     # Screen capture (mss) + desktop input automation (pyautogui) — all-platform

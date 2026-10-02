@@ -23,11 +23,12 @@ state), avoiding the press-only limitation of ``GlobalHotKeys``.
 
 macOS permission hint (AD-8 / AD-13)
 ------------------------------------
-On macOS a global listener silently fires nothing until the user grants
-Input-Monitoring / Accessibility permission. ``received_any_event()`` reports
-whether any bound chord has actually fired, so the wizard can detect the
-"registered but zero events" state and surface the grant message instead of
-leaving the user with a dead hotkey and no explanation.
+On macOS a global listener silently fires nothing until the user grants Input
+Monitoring (a listen-only event tap needs that and nothing else). The darwin
+branch of ``start`` therefore stays closed until the grant is visible; the
+macOS app itself uses ``QuartzHotkeyBackend`` (BUG-077), which carries the
+liveness counter. ``received_any_event()`` only reports whether a BOUND chord
+has fired.
 
 Import-cleanliness (HN-7): ``pynput`` is imported lazily inside ``start`` so
 ``import jarvis.trigger.backends.pynput`` succeeds on a box without the package.
@@ -47,12 +48,24 @@ log = logging.getLogger(__name__)
 
 
 def _macos_hotkey_permissions_granted() -> bool:
-    """Probe both native grants required by a macOS keyboard event tap."""
+    """Is Input Monitoring granted, the one grant a listen-only tap needs?
+
+    Silent, lock-free and never prompting: it is ``PermissionService.check``,
+    safe from the loop, from the tap callback and at boot. It does not ask the
+    OS for anything (the request belongs to a user gesture) and does not look at
+    the app's bundle identity: we act on whatever grant exists. ``NOT_REQUIRED``
+    (a host without TCC) counts as permitted, like ``EnsureResult.granted``.
+    """
+    from jarvis.platform.permission_service import (  # noqa: PLC0415
+        get_permission_service,
+    )
     from jarvis.platform.permissions import (  # noqa: PLC0415
-        get_system_permission_port,
+        PermissionId,
+        PermissionState,
     )
 
-    return get_system_permission_port().runtime_feature_ready("global_hotkeys")
+    state = get_permission_service().check(PermissionId.INPUT_MONITORING)
+    return state in (PermissionState.GRANTED, PermissionState.NOT_REQUIRED)
 
 
 def _macos_layout_guard_ready() -> bool:
@@ -361,10 +374,10 @@ class PynputBackend:
 
         if sys.platform == "darwin":
             # pynput's darwin backend creates a Quartz event tap on its own
-            # internal thread; without Accessibility and Input Monitoring that native
-            # init is useless at best and a process-level abort at worst
-            # (uncatchable, BUG-058 class). Preflight the non-prompting
-            # native preflights and fail CLOSED instead of touching pynput.
+            # internal thread; without Input Monitoring that native init is
+            # useless at best and a process-level abort at worst (uncatchable,
+            # BUG-058 class). Preflight the non-prompting grant and fail CLOSED
+            # instead of touching pynput.
             granted = False
             try:
                 granted = _macos_hotkey_permissions_granted()
@@ -372,11 +385,9 @@ class PynputBackend:
                 granted = False
             if granted is not True:
                 log.warning(
-                    "Global hotkeys disabled on macOS: the Accessibility "
-                    "and Input Monitoring permissions are not both granted. "
-                    "Use Personal Jarvis > Settings > Permissions, then "
-                    "re-arm the shortcut or restart Jarvis — voice still "
-                    "works via the wake word.",
+                    "Global hotkeys are off on macOS until Input Monitoring "
+                    "is allowed for Personal Jarvis; voice still works via "
+                    "the wake word.",
                 )
                 self._listener = None
                 return

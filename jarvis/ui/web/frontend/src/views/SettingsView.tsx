@@ -14,7 +14,6 @@ import { OverlayTaskbarGroup } from "@/views/settings/OverlayTaskbarGroup";
 import { LanguagesGroup } from "@/views/settings/LanguagesGroup";
 import { MusicGroup } from "@/views/settings/MusicGroup";
 import { AppSettingsGroup } from "@/views/settings/AppSettingsGroup";
-import { PermissionsPanel } from "@/views/settings/PermissionsPanel";
 import { RealtimeVoiceGroup } from "@/views/settings/RealtimeVoiceGroup";
 import { SilenceWindowGroup } from "@/views/settings/SilenceWindowGroup";
 import { VolumeGroup } from "@/views/settings/VolumeGroup";
@@ -157,7 +156,6 @@ export function SettingsView({ searchTarget, onSearchTargetHandled }: {
 const SECTIONS: readonly { id: string; labelKey: string; render: () => React.ReactNode }[] = [
   { id: "languages", labelKey: "settings_view.nav.languages", render: () => <LanguagesGroup /> },
   { id: "app", labelKey: "settings_view.nav.app", render: () => <AppSettingsGroup /> },
-  { id: "permissions", labelKey: "settings_view.nav.permissions", render: () => <PermissionsPanel /> },
   { id: "realtime-voice", labelKey: "settings_view.nav.realtime_voice", render: () => <RealtimeVoiceGroup /> },
   { id: "system-prompt", labelKey: "settings_view.nav.system_prompt", render: () => <SystemPromptGroup /> },
   { id: "wake-word", labelKey: "settings_view.nav.wake_word", render: () => <WakeWordPanel /> },

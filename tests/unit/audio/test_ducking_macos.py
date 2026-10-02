@@ -1,9 +1,21 @@
-"""MacOSScriptDucker: tiered AppleScript duck/restore with a fake runner."""
+"""MacOSScriptDucker: tiered AppleScript duck/restore with a fake runner.
+
+The permission layer is a ``FakePermissionService`` that reads Automation as GRANTED
+(the duck/restore logic is the subject here); ``test_ducking_permissions.py`` covers
+the permission behaviour against ``FakeTCC``.
+"""
 from __future__ import annotations
 
 import subprocess
+import threading
+import time
 
+import pytest
+
+from jarvis.audio.ducking import macos
 from jarvis.audio.ducking.macos import _MASTER_TOKEN, MacOSScriptDucker
+from jarvis.platform.permissions import PermissionId
+from tests.fakes.fake_permission_service import FakePermissionService
 
 _MUSIC = "com.apple.Music"
 _SPOTIFY = "com.spotify.client"
@@ -41,6 +53,7 @@ class FakeRunner:
 
 
 def _ducker(runner: FakeRunner, **kwargs) -> MacOSScriptDucker:
+    kwargs.setdefault("access_gate", FakePermissionService())  # Automation: granted
     return MacOSScriptDucker(run=runner, **kwargs)
 
 
@@ -292,3 +305,221 @@ def test_denied_master_restore_keeps_the_saved_level():
     )
     d.restore([_MASTER_TOKEN])
     assert d._saved == {_MASTER_TOKEN: 80}
+
+
+# --------------------------------------------------------------------------- #
+# Permission gating (FakePermissionService)                                    #
+# --------------------------------------------------------------------------- #
+
+
+def _music_scripts(run: FakeRunner) -> list[str]:
+    return [s for s in run.scripts if _MUSIC in s]
+
+
+def _music_scripts_with_a_send(run: FakeRunner) -> list[str]:
+    return [s for s in _music_scripts(run) if "tell application" in s]
+
+
+def test_a_player_without_a_live_grant_is_never_scripted_and_never_asked():
+    run = FakeRunner({_MUSIC: "65", _SPOTIFY: "40"})
+    gate = FakePermissionService({PermissionId.AUTOMATION: "pending"})
+    d = _ducker(run, access_gate=gate)
+    assert d.mute_others(own_pid=1, never=frozenset()) == []
+    assert d._saved == {}
+    # Only the pure running-state query ever reaches a player that was not granted.
+    assert all("tell application" not in s for s in run.scripts)
+    # The service was only READ, or told non-interactively: nothing could have asked.
+    assert gate.native_free()
+    assert {c.target for c in gate.check_calls()} == {_MUSIC, _SPOTIFY}
+
+
+def test_a_miss_is_recorded_through_a_non_interactive_ensure_only_for_a_running_player():
+    run = FakeRunner({_MUSIC: "65", _SPOTIFY: "-"})  # Spotify is not running
+    gate = FakePermissionService({PermissionId.AUTOMATION: "pending"})
+    d = _ducker(run, access_gate=gate)
+    d.mute_others(own_pid=1, never=frozenset())
+    calls = gate.ensure_calls(PermissionId.AUTOMATION)
+    assert [(c.target, c.interactive, c.feature) for c in calls] == [
+        (_MUSIC, False, "audio_ducking")
+    ]
+
+
+def test_a_player_the_service_calls_not_required_is_left_alone():
+    run = FakeRunner({_MUSIC: "65", _SPOTIFY: "40"})
+    gate = FakePermissionService({PermissionId.AUTOMATION: "not_required"})
+    d = _ducker(run, access_gate=gate)
+    assert d.mute_others(own_pid=1, never=frozenset()) == []
+    assert run.scripts == []  # not installed (or not macOS): not even a probe
+    assert gate.ensure_calls() == []
+
+
+def test_master_fallback_still_applies_when_a_running_player_has_no_grant():
+    run = FakeRunner({_MUSIC: "65", _SPOTIFY: "-", "master": "80"})
+    gate = FakePermissionService({PermissionId.AUTOMATION: "denied"})
+    d = _ducker(run, master_fallback=True, access_gate=gate)
+    assert d.mute_others(own_pid=1, never=frozenset()) == [_MASTER_TOKEN]
+    assert not _music_scripts_with_a_send(run)
+
+
+def test_minus_1743_after_a_granted_read_skips_the_player_and_drops_the_cache():
+    refused = subprocess.CompletedProcess(
+        ["osascript"], 1, stdout="", stderr="Not authorized to send Apple events (-1743)"
+    )
+
+    class Gate(FakePermissionService):
+        invalidated: list[object]
+
+        def invalidate(self, permission=None):
+            self.invalidated.append(permission)
+
+    gate = Gate()
+    gate.invalidated = []
+    run = FakeRunner({_MUSIC: refused, _SPOTIFY: "70"})
+    d = _ducker(run, access_gate=gate)
+    assert d.mute_others(own_pid=1, never=frozenset()) == [2]  # Spotify still ducks
+    assert gate.invalidated == [PermissionId.AUTOMATION]
+    # The service is told ONCE, through the failed-use report: a background episode that
+    # names the player, never an ask (and no longer a non-interactive ensure).
+    (report,) = gate.report_calls("report_failed_use")
+    assert (report.permission, report.feature, report.target) == (
+        PermissionId.AUTOMATION,
+        "audio_ducking",
+        _MUSIC,
+    )
+    assert (report.reason, report.origin, report.interactive) == (
+        "needs_settings",
+        "background",
+        False,
+    )
+    assert gate.ensure_calls(PermissionId.AUTOMATION) == [] and gate.native_free()
+
+
+def test_a_send_that_lands_after_a_refusal_reports_the_success_once():
+    refused = subprocess.CompletedProcess(
+        ["osascript"], 1, stdout="", stderr="Not authorized to send Apple events (-1743)"
+    )
+    gate = FakePermissionService()
+    run = FakeRunner({_MUSIC: refused, _SPOTIFY: "-"})
+    d = _ducker(run, access_gate=gate)
+    assert d.mute_others(own_pid=1, never=frozenset()) == []
+    assert gate.report_calls("report_use_ok") == []  # nothing landed yet
+
+    run._results[_MUSIC] = "65"  # fixed in System Settings: the next duck lands
+    assert d.mute_others(own_pid=1, never=frozenset()) == [1]
+    (ok,) = gate.report_calls("report_use_ok")
+    assert (ok.permission, ok.feature, ok.target) == (
+        PermissionId.AUTOMATION,
+        "audio_ducking",
+        _MUSIC,
+    )
+    d.restore([1])
+    assert d.mute_others(own_pid=1, never=frozenset()) == [1]
+    assert len(gate.report_calls("report_use_ok")) == 1  # a healthy session never reports again
+    assert gate.native_free()
+
+
+def test_a_healthy_session_never_calls_the_failed_use_reports():
+    gate = FakePermissionService()
+    run = FakeRunner({_MUSIC: "65", _SPOTIFY: "40"})
+    d = _ducker(run, access_gate=gate)
+    tokens = d.mute_others(own_pid=1, never=frozenset())
+    d.restore(tokens)
+    assert d.mute_others(own_pid=1, never=frozenset()) == [1, 2]
+    assert gate.report_calls() == []
+
+
+def test_a_player_that_is_not_running_is_no_evidence_that_a_send_landed():
+    """The ``is running`` guard answers ``-`` before any Apple event is sent."""
+    refused = subprocess.CompletedProcess(
+        ["osascript"], 1, stdout="", stderr="Not authorized to send Apple events (-1743)"
+    )
+    gate = FakePermissionService()
+    run = FakeRunner({_MUSIC: refused, _SPOTIFY: "-"})
+    d = _ducker(run, access_gate=gate)
+    d.mute_others(own_pid=1, never=frozenset())
+
+    run._results[_MUSIC] = "-"  # Music quit: nothing was sent, so nothing was proven
+    d.mute_others(own_pid=1, never=frozenset())
+
+    assert gate.report_calls("report_use_ok") == []
+
+
+def test_a_gate_without_the_report_calls_still_gets_the_older_background_episode():
+    """A scripted stub has no ``report_failed_use``: the miss goes through a plain ensure."""
+    refused = subprocess.CompletedProcess(
+        ["osascript"], 1, stdout="", stderr="Not authorized to send Apple events (-1743)"
+    )
+    inner = FakePermissionService()
+
+    class BareGate:
+        def check(self, permission, *, target=None):
+            return inner.check(permission, target=target)
+
+        def ensure(self, permission, **kwargs):
+            return inner.ensure(permission, **kwargs)
+
+    run = FakeRunner({_MUSIC: refused, _SPOTIFY: "70"})
+    d = _ducker(run, access_gate=BareGate())
+    assert d.mute_others(own_pid=1, never=frozenset()) == [2]
+    assert [c.interactive for c in inner.ensure_calls(PermissionId.AUTOMATION)] == [False]
+
+    run._results[_MUSIC] = "65"  # and a landed send is simply not reported
+    assert d.mute_others(own_pid=1, never=frozenset()) == [1, 2]
+
+
+def test_a_report_that_hangs_never_stalls_the_session_and_the_other_player_still_ducks(
+    monkeypatch,
+):
+    release = threading.Event()
+    entered = threading.Event()
+
+    class HungReportGate(FakePermissionService):
+        def report_failed_use(self, permission, **kwargs):
+            entered.set()
+            release.wait(10)
+            return super().report_failed_use(permission, **kwargs)
+
+    refused = subprocess.CompletedProcess(
+        ["osascript"], 1, stdout="", stderr="Not authorized to send Apple events (-1743)"
+    )
+    monkeypatch.setattr(macos, "_PROBE_TIMEOUT_S", 0.05)
+    d = _ducker(FakeRunner({_MUSIC: refused, _SPOTIFY: "70"}), access_gate=HungReportGate())
+    started = time.monotonic()
+    try:
+        assert d.mute_others(own_pid=1, never=frozenset()) == [2]
+        assert entered.is_set()  # the report really was out
+    finally:
+        release.set()
+    assert time.monotonic() - started < 2.0
+
+
+def test_a_report_that_raises_is_logged_and_never_breaks_the_session(caplog):
+    """AP-30: the failure is contained, the session carries on, and it leaves a trace."""
+
+    class BrokenGate(FakePermissionService):
+        def report_failed_use(self, permission, **kwargs):
+            raise RuntimeError("the permission service is broken")
+
+    refused = subprocess.CompletedProcess(
+        ["osascript"], 1, stdout="", stderr="Not authorized to send Apple events (-1743)"
+    )
+    d = _ducker(FakeRunner({_MUSIC: refused, _SPOTIFY: "70"}), access_gate=BrokenGate())
+    with caplog.at_level("DEBUG", logger="jarvis.audio.ducking"):
+        assert d.mute_others(own_pid=1, never=frozenset()) == [2]
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("bounded" in m and "failed" in m for m in messages)
+    assert any("was not delivered to the permission service" in m for m in messages)
+
+
+def test_prewarm_asks_through_the_gate_for_running_players_only():
+    run = FakeRunner({_MUSIC: "+", _SPOTIFY: "-"})
+    gate = FakePermissionService({PermissionId.AUTOMATION: "granted"})
+    report = _ducker(run, access_gate=gate).prewarm()
+    calls = gate.ensure_calls(PermissionId.AUTOMATION)
+    # The ask runs on a worker thread, so it waits for the dialog (budget minus a margin).
+    (call,) = calls
+    assert (call.target, call.interactive) == (_MUSIC, True)
+    assert call.wait_s == pytest.approx(macos._ASK_BUDGET_S - macos._ASK_WAIT_MARGIN_S)
+    assert [p.player for p in report.players] == ["Music"]
+    assert report.not_running == ("Spotify",)
+    assert all("is running" in s and "tell application" not in s for s in run.scripts)

@@ -193,11 +193,14 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      - name: Install Personal Jarvis (desktop + dev)
+      # desktop-macos carries the pyobjc frameworks the permission port loads by
+      # name (AVFoundation, ScreenCaptureKit, ...); without them the frozen app
+      # cannot even read its microphone permission (BUG-222).
+      - name: Install Personal Jarvis (desktop + macOS frameworks + dev)
         shell: bash
         run: |
           python -m pip install --upgrade pip
-          python scripts/pip_install.py -e ".[desktop,dev]"
+          python scripts/pip_install.py -e ".[desktop,desktop-macos,dev]"
 
       # The script decides what to do with these: with them it codesigns with
       # the Developer ID identity and notarizes; without them it ad-hoc signs,
@@ -214,6 +217,13 @@ jobs:
         run: |
           chmod +x packaging/macos/build.sh
           ./packaging/macos/build.sh
+
+      # The permission port loads pyobjc frameworks by name and the bundle's
+      # Info.plist decides how LaunchServices runs it; neither shows in the
+      # headless smoke test below, so look at the built app itself (BUG-222).
+      - name: Verify the app bundle can use macOS permissions
+        shell: bash
+        run: python scripts/ci/check_frozen_macos_app.py --app "dist/Personal Jarvis.app"
 
       - name: Preserve native wheel diagnostics on build failure
         if: failure() && hashFiles('jarvis/assets/browser/wheels/*.whl') != ''

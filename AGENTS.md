@@ -163,8 +163,12 @@ wake upgrade only on the out-of-process inference probe, never on CUDA presence
 (AP-25); verify a wake word on audio energy and candidate shape, never on
 transcript content (AP-27); a WebGL scene releases its context and survives
 losing it (AP-32); a reconnect without jitter and without a shared connect
-budget is an outage of the whole machine, not an app bug (AP-33). Detail and
-history for any of them: `docs/BUGS.md`.
+budget is an outage of the whole machine, not an app bug (AP-33); a macOS
+feature asks the OS at first use, from a user gesture, through
+`jarvis/platform/permission_service.py` — no preflight refuses before the OS was
+asked, nothing is asked at launch, nothing acts without a live grant, an agent
+never answers a system dialog (AP-35; `docs/macos-permissions.md`, ADR-0038).
+Detail and history for any of them: `docs/BUGS.md`.
 
 ## 4. How work ships
 
@@ -234,4 +238,5 @@ voice-ready path.
 **Pointers:** [`docs/architecture-overview.md`](docs/architecture-overview.md) ·
 [`docs/BUGS.md`](docs/BUGS.md) (symptom → cause) · `docs/adr/` ·
 [`docs/os-parity.md`](docs/os-parity.md) ·
+[`docs/macos-permissions.md`](docs/macos-permissions.md) ·
 [`docs/jarvis-cli.md`](docs/jarvis-cli.md).

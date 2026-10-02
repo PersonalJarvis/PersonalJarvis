@@ -69,9 +69,9 @@ async def test_start_dictation_clears_stale_hangup() -> None:
 
 
 @pytest.mark.asyncio
-async def test_start_dictation_does_not_spawn_when_capture_gate_is_closed() -> None:
+async def test_start_dictation_does_not_spawn_when_the_microphone_is_refused() -> None:
     pipe = _make_idle_pipeline()
-    pipe._activation_gate = lambda: False
+    pipe._user_activation_gate = lambda: False
 
     assert pipe.start_dictation() is False
     assert pipe._dictation_task is None

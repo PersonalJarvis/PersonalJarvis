@@ -57,14 +57,9 @@
       "why": "Ein Abo ist ein fester Monatspreis. Ohne Abo nutzen die Agents deinen API-Schlüssel, und jeder Auftrag wird einzeln abgerechnet.",
       "later": "Ich verbinde später eins"
     },
-    "permissions": {
-      "title": "Zugriff auf diesem Mac erlauben",
-      "lede": "Das sind die Mac-Berechtigungen. Erlaube die, die du möchtest; jede Zeile aktualisiert sich selbst.",
-      "note": "Du kannst jederzeit in den Einstellungen zurückkommen. Der Neustart am Ende wendet sie an."
-    },
     "voice": {
       "title": "Wähle dein Weckwort",
-      "lede": "Tippe hier dein Wort nach „Hey“ ein und speichere es. Das Wort wird auch der Name deines Assistenten. Kein Weckwort? Das Anruf-Kürzel funktioniert immer.",
+      "lede": "Tippe hier dein Wort nach „Hey“ ein und speichere es. Das Wort wird auch der Name deines Assistenten. Kein Weckwort? Das Anruf-Kürzel funktioniert jederzeit.",
       "on": "„{phrase}“ ist an. Sag es jederzeit.",
       "off": "Noch kein Weckwort. Bis dahin funktioniert das Anruf-Kürzel.",
       "later": "Überspringen, ich nutze das Anruf-Kürzel"

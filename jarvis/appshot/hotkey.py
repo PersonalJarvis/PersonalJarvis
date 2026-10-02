@@ -30,6 +30,22 @@ class ShortcutStatus:
         return {"hotkey": self.hotkey, "armed": self.armed, "detail": self.detail}
 
 
+#: Status text for the both-Option gesture on a Mac. Its permission need is
+#: UNVERIFIED (see ``jarvis.appshot.gesture``), so the hint names no permission:
+#: sending someone to grant one it may not need is worse than saying nothing.
+BOTH_OPTION_MAC_NOTE = (
+    "If the both-Option shortcut does nothing on this Mac, pick a key "
+    "combination instead."
+)
+
+
+def _both_alt_note() -> str:
+    """The macOS-only hint that goes with an armed both-Option gesture."""
+    from jarvis.platform import detect_platform  # noqa: PLC0415
+
+    return BOTH_OPTION_MAC_NOTE if detect_platform() == "darwin" else ""
+
+
 def normalize_hotkey(value: str) -> str:
     """Canonical spelling: lower case, no spaces, both-Alt aliases folded."""
     combo = "+".join(part.strip().lower() for part in str(value or "").split("+") if part.strip())
@@ -115,7 +131,7 @@ class AppshotShortcut:
         watcher = BothAltWatcher(self._fire_threadsafe, probe=probe)
         watcher.start()
         self._watcher = watcher
-        return ShortcutStatus(hotkey=BOTH_ALT, armed=True)
+        return ShortcutStatus(hotkey=BOTH_ALT, armed=True, detail=_both_alt_note())
 
     def _arm_combo(self, hotkey: str) -> ShortcutStatus:
         from jarvis.platform.probes import has_hotkey  # noqa: PLC0415

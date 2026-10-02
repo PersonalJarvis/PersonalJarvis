@@ -64,10 +64,10 @@ and served with `Cache-Control: no-store`.
 
 | | Windows | macOS | Linux/X11 | Wayland / headless |
 |---|---|---|---|---|
-| Both-Alt shortcut | `GetAsyncKeyState` (AltGr counts as right Alt) | `CGEventSourceKeyState`, needs the Input Monitoring grant | `XQueryKeymap` via python-xlib | Unavailable, reason shown on the page; voice and the button still work where capture works |
+| Both-Alt shortcut | `GetAsyncKeyState` (AltGr counts as right Alt) | `CGEventSourceKeyState`; whether this read needs the Input Monitoring grant is **unverified** (not measured on a Mac), so the page shows no Input Monitoring row for it | `XQueryKeymap` via python-xlib | Unavailable, reason shown on the page; voice and the button still work where capture works |
 | Other shortcuts | Shared hotkey backends (`jarvis/trigger/backends`) | same | same | same as above |
 | Flash + thumbnail | PySide6 overlay, excluded from capture | PySide6 overlay | PySide6 overlay | No overlay; the appshot is still taken where capture works |
-| Capture | Screen Context engine | Needs Screen Recording | X11 | Honest refusal |
+| Capture | Screen Context engine | Needs Screen Recording; macOS asks for it at the first appshot you take | X11 | Honest refusal |
 
 Only the instance that owns ambient duties (the default app, not the dev
 instance) arms the shortcut.

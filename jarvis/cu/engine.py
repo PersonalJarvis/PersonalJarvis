@@ -36,6 +36,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+import re
 import sys
 import time
 from collections.abc import AsyncIterator
@@ -389,6 +390,168 @@ def _signature_still_valid(
     return live == expected or signatures_same_app(expected, live)
 
 
+#: Stable reason code of a mission that stopped because a macOS permission or a
+#: system dialog needs the person. It rides on the existing tool-failure exit code
+#: (``_EXIT_TOOL``) in the final ``stderr`` as ``"[cu] blocked_permission at
+#: step-N: <sentence>"`` rather than as a new status value, so nothing persisted
+#: or localised needs a new member; the layer that turns the result into a card
+#: keys off this token and offers the Retry. Never a model retry loop.
+CU_REASON_BLOCKED_PERMISSION = "blocked_permission"
+
+#: The prefix every agent-facing permission refusal starts with
+#: (``jarvis.platform.permission_service.agent_detail_for``). Matched ANYWHERE in a
+#: tool error because the engine wraps some of them ("could not select existing
+#: text before replacement: <detail>").
+_PERMISSION_NEEDED_RE = re.compile(r"\[permission_needed:([a-z_]+)\]")
+
+_SR_REASON_BY_STATE = {
+    "not_determined": "not_determined",
+    "denied": "denied",
+    "restricted": "restricted",
+    "not_granted": "needs_settings",
+    "unavailable": "unavailable",
+}
+
+
+def _permission_gate() -> Any:
+    """The permission layer; a test replaces this seam. Resolved per call."""
+    from jarvis.platform.permission_service import get_permission_service  # noqa: PLC0415
+
+    return get_permission_service()
+
+
+def _frontmost_system_consent_owner() -> str:
+    """The frontmost window's owner when it is a macOS consent surface, else ``""``.
+
+    macOS only: every other host answers ``""`` without touching a native API.
+    A test replaces this seam.
+    """
+    if sys.platform != "darwin":
+        return ""
+    from jarvis.cu import system_dialogs  # noqa: PLC0415
+
+    return system_dialogs.frontmost_consent_owner()
+
+
+def _blocked_before_dispatch() -> str | None:
+    """The silent guards that run BEFORE any action reaches ``executor.execute()``.
+
+    Returns the agent-facing refusal text, or ``None`` when the action may go on.
+    Blocking (a window-title oracle and a window list): call it off the loop.
+    Never interactive and it never asks macOS for anything.
+
+    1. Screen Recording. A grant can be revoked after perception and before
+       actuation, and input without a screen to verify against is blind input,
+       so no action runs against a screen Jarvis may not observe. The deep read
+       is used on purpose (not the preflight-only ``check``): the preflight is
+       frozen per process on some macOS versions, and a grant the user just gave
+       must be seen. Off macOS the service answers NOT_REQUIRED.
+    2. System consent guard (P9): while a macOS permission / authorization
+       dialog is frontmost nothing is dispatched. An AI agent never answers a
+       system dialog.
+    """
+    from jarvis.platform.permission_service import agent_detail_for  # noqa: PLC0415
+    from jarvis.platform.permissions import PermissionId, PermissionState  # noqa: PLC0415
+
+    gate = _permission_gate()
+    read = getattr(gate, "check_deep", None) or gate.check
+    state = read(PermissionId.SCREEN_RECORDING)
+    if state not in (PermissionState.GRANTED, PermissionState.NOT_REQUIRED):
+        # Record a background episode (it never asks and never raises) so the
+        # grant is noticed and the status snapshot says why the Retry fails.
+        try:
+            gate.ensure(
+                PermissionId.SCREEN_RECORDING,
+                feature="computer_use",
+                interactive=False,
+                wait_s=0.0,
+            )
+        except Exception:  # noqa: BLE001 - the refusal below stands either way
+            log.debug("Recording the screen-recording episode failed.", exc_info=True)
+        reason = _SR_REASON_BY_STATE.get(str(state), "needs_settings")
+        return agent_detail_for(PermissionId.SCREEN_RECORDING, reason)
+
+    if _frontmost_system_consent_owner():
+        from jarvis.cu import system_dialogs  # noqa: PLC0415
+
+        return system_dialogs.agent_detail()
+    return None
+
+
+def _guard_failure_refusal() -> str | None:
+    """What a guard that could not run answers: macOS refuses, every other host proceeds."""
+    if sys.platform != "darwin":
+        return None
+    from jarvis.platform.permission_service import agent_detail_for  # noqa: PLC0415
+    from jarvis.platform.permissions import PermissionId  # noqa: PLC0415
+
+    return agent_detail_for(PermissionId.SCREEN_RECORDING, "unavailable")
+
+
+#: The refusal reasons the agent text distinguishes, in the order they are tried.
+#: ``needs_settings`` comes before ``not_determined`` because the two share one
+#: agent sentence: the ambiguous case keeps the "turn it on in Settings" wording.
+_REFUSAL_REASONS = (
+    "restricted",
+    "unavailable",
+    "denied",
+    "restart_hint",
+    "needs_settings",
+    "not_determined",
+)
+
+
+def _refusal_situation(family: Any, detail: str) -> tuple[str, bool]:
+    """``(reason, asking)`` of a permission refusal, read back from its agent text.
+
+    The agent text is built from fixed templates, so it is matched against the
+    templates themselves instead of being parsed. An unmatched text (a wrapped or
+    shortened one) falls back to ``needs_settings``.
+    """
+    from jarvis.platform.permission_service import agent_detail_for  # noqa: PLC0415
+
+    for reason in _REFUSAL_REASONS:
+        for asking in (False, True):
+            if agent_detail_for(family, reason, asking=asking) in detail:
+                return reason, asking
+    return "needs_settings", False
+
+
+def _permission_block(detail: str) -> str | None:
+    """The user sentence when a tool error is a permission refusal, else ``None``.
+
+    The sentence follows the REASON the refusal carries: a restricted or an
+    unavailable permission is explained and nothing more (there is no switch to
+    flip), the others say what to turn on and to try the task again.
+    """
+    match = _PERMISSION_NEEDED_RE.search(detail or "")
+    if match is None:
+        return None
+    token = match.group(1)
+    from jarvis.cu import system_dialogs  # noqa: PLC0415
+
+    if token == system_dialogs.SYSTEM_DIALOG_BLOCK:
+        return system_dialogs.user_detail()
+    from jarvis.platform.permission_service import user_detail_for  # noqa: PLC0415
+    from jarvis.platform.permissions import PermissionId  # noqa: PLC0415
+
+    try:
+        family = PermissionId(token)
+    except ValueError:
+        # Not a permission this build knows: the generic sentence is the intended
+        # degradation, the token itself is not shown to people.
+        log.debug("Unknown permission token in a tool error.", exc_info=True)
+        return (
+            "A macOS permission is needed to continue, so the task stopped. "
+            "Try the task again once it is allowed."
+        )
+    reason, asking = _refusal_situation(family, detail)
+    sentence = user_detail_for(family, reason, asking=asking)
+    if reason in ("restricted", "unavailable") or asking:
+        return sentence
+    return f"{sentence} Then try the task again."
+
+
 async def _dispatch_tool(
     ctx: Any,
     tool_name: str,
@@ -396,17 +559,17 @@ async def _dispatch_tool(
     trace_id: Any,
 ) -> tuple[bool, str]:
     """Run one action through the ToolExecutor (AP-3 choke point)."""
-    # A macOS Screen Recording grant can be revoked after perception but
-    # before actuation. Re-probe at the final dispatcher choke point so no CU
-    # action can run against a screen Jarvis is no longer allowed to observe.
+    # The final dispatcher choke point: no CU action runs against a screen Jarvis
+    # is no longer allowed to observe, and none while a system dialog is up. The
+    # refusal text starts with "[permission_needed:" and the loop ends the mission
+    # on it (blocked_permission); the model never sees it and never retries.
     try:
-        from jarvis.cu.capture import (  # noqa: PLC0415
-            _require_macos_screen_recording_permission,
-        )
-
-        _require_macos_screen_recording_permission()
-    except RuntimeError as exc:
-        return False, str(exc)
+        blocked = await asyncio.to_thread(_blocked_before_dispatch)
+    except Exception:  # noqa: BLE001 - on macOS a failing guard refuses, never acts
+        log.debug("The pre-dispatch permission guard failed.", exc_info=True)
+        blocked = _guard_failure_refusal()
+    if blocked is not None:
+        return False, blocked
 
     tools = ctx.tools or {}
     tool = tools.get(tool_name)
@@ -980,6 +1143,26 @@ async def run_cu_loop(
                     "foreground window changed during capture; retrying with a fresh frame"
                 )
         except Exception as exc:  # noqa: BLE001 — capture is inherently flaky
+            # A Screen Recording refusal (ScreenCaptureRefused, "[permission_needed:..."
+            # agent text) is not flaky capture: retrying it only re-asks the OS and
+            # burns the budget. It ends the mission as blocked_permission, exactly
+            # like a dispatch-time refusal, so the person gets the sentence and a
+            # Retry instead of "I couldn't see the screen".
+            blocked_sentence = _permission_block(str(exc))
+            if blocked_sentence is not None:
+                log.info(
+                    "[cu] step %d: perception refused (%s)",
+                    step_idx,
+                    CU_REASON_BLOCKED_PERMISSION,
+                )
+                yield _final(
+                    stderr=(
+                        f"[cu] {CU_REASON_BLOCKED_PERMISSION} at step-{step_idx}: "
+                        f"{blocked_sentence}\n"
+                    ),
+                    exit_code=_EXIT_TOOL,
+                )
+                return
             observe_failures += 1
             log.warning("[cu] observe failed (step %d): %s", step_idx, exc)
             if observe_failures > _MAX_OBSERVE_FAILURES:
@@ -1524,6 +1707,13 @@ async def run_cu_loop(
                                     },
                                     trace_id,
                                 )
+                                if not ok2 and _permission_block(detail2) is not None:
+                                    # The retry was refused by the permission or
+                                    # consent guard (a dialog opened after the first
+                                    # click): end the mission now instead of paying
+                                    # another model call to find out.
+                                    ok = False
+                                    detail = detail2
                                 if ok2:
                                     ledger.record(
                                         action,
@@ -1786,6 +1976,24 @@ async def run_cu_loop(
                 )
                 yield _progress(f"[cu] step {step_idx}: {summary} ok")
             else:
+                blocked_sentence = _permission_block(detail)
+                if blocked_sentence is not None:
+                    # A permission refusal is a terminal state with a stable
+                    # reason code, never a failure the model may retry around.
+                    log.info(
+                        "[cu] step %d: %s -> %s (a permission or a system dialog)",
+                        step_idx,
+                        summary,
+                        CU_REASON_BLOCKED_PERMISSION,
+                    )
+                    yield _final(
+                        stderr=(
+                            f"[cu] {CU_REASON_BLOCKED_PERMISSION} at step-{step_idx}: "
+                            f"{blocked_sentence}\n"
+                        ),
+                        exit_code=_EXIT_TOOL,
+                    )
+                    return
                 consecutive_failures += 1
                 history.append(
                     f"step {step_idx}: {summary} -> FAILED: {detail[:180]}",

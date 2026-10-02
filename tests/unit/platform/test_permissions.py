@@ -1,4 +1,8 @@
-"""Unit coverage for the uncached macOS system-permission port."""
+"""Unit coverage for the uncached macOS system-permission port.
+
+Hand-written stubs stand in for the native frameworks; the stateful FakeTCC world
+is exercised in ``test_permission_characterization.py`` and ``test_fake_tcc.py``.
+"""
 
 from __future__ import annotations
 
@@ -29,15 +33,7 @@ class _Bundle:
 
 
 class _RunningApp:
-    def __init__(self, *, active: bool = True, pid: int = 123) -> None:
-        self._active = active
-        self._pid = pid
-
-    def isActive(self) -> bool:
-        return self._active
-
-    def processIdentifier(self) -> int:
-        return self._pid
+    """A placeholder application: the port only asks whether a window server answers."""
 
 
 class _Workspace:
@@ -70,9 +66,8 @@ class _CaptureDevice:
 def _native_modules(
     *,
     bundle_id: str | None = EXPECTED_BUNDLE_ID,
-    active: bool = True,
 ) -> tuple[dict[str, object], dict[str, bool], _Workspace]:
-    current = _RunningApp(active=active)
+    current = _RunningApp()
     workspace = _Workspace(current)
     screen = {"granted": False, "requested": False}
     event = {"listen": False, "post": False}
@@ -162,12 +157,12 @@ def _port(
     )
 
 
-def _permission(snapshot: dict, permission_id: PermissionId) -> dict:
-    return next(item for item in snapshot["permissions"] if item["id"] == permission_id)
-
-
 def test_permission_bundle_id_matches_installed_app_identity() -> None:
     assert EXPECTED_BUNDLE_ID == BUNDLE_ID
+
+
+def _identity(port: SystemPermissionPort):
+    return port._app_identity()[0]
 
 
 def test_matching_bundle_id_at_noncanonical_path_is_not_stable(tmp_path: Path) -> None:
@@ -177,8 +172,10 @@ def test_matching_bundle_id_at_noncanonical_path_is_not_stable(tmp_path: Path) -
         bundlePath=lambda: str(tmp_path / "Personal Jarvis.app"),
     )
     modules["Foundation"].NSBundle = SimpleNamespace(mainBundle=lambda: copied_bundle)
+    port = _port(modules)
 
-    assert _port(modules).snapshot()["app_identity"]["stable"] is False
+    assert _identity(port).stable is False
+    assert port.outside_installed_app is True
 
 
 def test_non_macos_degrades_to_not_required_without_native_imports() -> None:
@@ -187,47 +184,31 @@ def test_non_macos_degrades_to_not_required_without_native_imports() -> None:
         platform_name="win32", module_loader=lambda name: imports.append(name)
     )
 
-    snapshot = port.snapshot()
+    states = {permission_id: port.state(permission_id) for permission_id in PermissionId}
 
     assert imports == []
-    assert snapshot["supported"] is False
-    assert {item["status"] for item in snapshot["permissions"]} == {PermissionState.NOT_REQUIRED}
-    assert all(feature["ready"] for feature in snapshot["features"].values())
+    assert set(states.values()) == {PermissionState.NOT_REQUIRED}
 
 
-def test_snapshot_maps_native_states_and_feature_readiness() -> None:
+def test_state_maps_native_states() -> None:
     _CaptureDevice.status = 3
     modules, _, _ = _native_modules()
+    port = _port(modules)
 
-    snapshot = _port(modules).snapshot()
-
-    assert snapshot["app_identity"]["stable"] is True
-    assert snapshot["app_identity"]["foreground"] is True
-    assert _permission(snapshot, PermissionId.MICROPHONE)["status"] == "granted"
-    assert _permission(snapshot, PermissionId.SCREEN_RECORDING)["status"] == ("not_granted")
-    assert snapshot["features"]["voice"] == {
-        "ready": True,
-        "missing": [],
-        "identity_ready": True,
-        "restart_required": False,
-    }
-    # event_posting is granted through the trusted Accessibility fixture, so
-    # only the screen-recording grant is still missing for Computer-Use.
-    assert snapshot["features"]["computer_use"] == {
-        "ready": False,
-        "missing": ["screen_recording"],
-        "identity_ready": True,
-        "restart_required": False,
-    }
+    assert _identity(port).stable is True
+    assert port.state(PermissionId.MICROPHONE) is PermissionState.GRANTED
+    assert port.state(PermissionId.SCREEN_RECORDING) is PermissionState.NOT_GRANTED
+    # Event posting follows the trusted Accessibility fixture.
+    assert port.state(PermissionId.EVENT_POSTING) is PermissionState.GRANTED
 
 
-def test_snapshot_is_uncached() -> None:
+def test_state_is_uncached() -> None:
     modules, screen, _ = _native_modules()
     port = _port(modules)
 
-    assert _permission(port.snapshot(), PermissionId.SCREEN_RECORDING)["status"] == "not_granted"
+    assert port.state(PermissionId.SCREEN_RECORDING) is PermissionState.NOT_GRANTED
     screen["granted"] = True
-    assert _permission(port.snapshot(), PermissionId.SCREEN_RECORDING)["status"] == "granted"
+    assert port.state(PermissionId.SCREEN_RECORDING) is PermissionState.GRANTED
 
 
 def test_state_probes_only_the_requested_permission() -> None:
@@ -245,142 +226,47 @@ def test_state_probes_only_the_requested_permission() -> None:
     assert imports == ["AVFoundation"]
 
 
-def test_runtime_access_requires_stable_identity_and_fresh_grant() -> None:
+def test_state_reads_the_grant_whatever_the_identity_and_flags_a_foreign_app() -> None:
+    """Identity gates ASKING (the service), never what a read reports."""
     _CaptureDevice.status = 3
     modules, _, _ = _native_modules()
     stable = _port(modules)
     unstable_modules, _, _ = _native_modules(bundle_id="org.python.python")
+    unstable = _port(unstable_modules)
 
-    assert stable.runtime_access_granted(PermissionId.MICROPHONE) is True
-    assert _port(unstable_modules).runtime_access_granted(PermissionId.MICROPHONE) is False
+    assert stable.state(PermissionId.MICROPHONE) is PermissionState.GRANTED
+    assert stable.outside_installed_app is False
+    assert unstable.state(PermissionId.MICROPHONE) is PermissionState.GRANTED
+    assert unstable.outside_installed_app is True
     _CaptureDevice.status = 2
-    assert stable.runtime_access_granted(PermissionId.MICROPHONE) is False
+    assert stable.state(PermissionId.MICROPHONE) is PermissionState.DENIED
 
 
-def test_runtime_access_blocks_a_grant_the_frozen_preflight_cannot_confirm() -> None:
+def test_a_screen_request_does_not_unfreeze_the_preflight() -> None:
     modules, screen, _ = _native_modules()
     port = _port(modules)
 
-    result = port.request(PermissionId.SCREEN_RECORDING)
+    outcome = port.request_native(PermissionId.SCREEN_RECORDING)
 
-    assert result.ok is True
-    # The frozen preflight still reads "no", so access must stay closed.
+    # CGRequestScreenCaptureAccess answered True, but the preflight is frozen for
+    # the life of the process: the answer is never evidence of a grant.
+    assert outcome == "no_dialog"
+    assert screen["requested"] is True
     assert screen["granted"] is False
     assert port.state(PermissionId.SCREEN_RECORDING) is PermissionState.NOT_GRANTED
-    assert port.runtime_access_granted(PermissionId.SCREEN_RECORDING) is False
 
 
-def test_a_pending_restart_dies_the_moment_the_probe_reads_the_grant() -> None:
-    """BUG-159: a live grant ends the restart claim — nothing else clears it.
-
-    Holding the flag past a GRANTED probe is what disabled Computer-Use and
-    hotkeys for the rest of the session after a single settings visit, with
-    no code path left to undo it.
-    """
-    modules, screen, _ = _native_modules()
-    port = _port(modules)
-    port.request(PermissionId.SCREEN_RECORDING)
-    assert port.snapshot()["restart_required"] is True
-
-    # What a relaunch — or simply granting a live-reading permission — looks
-    # like: the probe now sees the grant.
-    screen["granted"] = True
-
-    assert port.runtime_access_granted(PermissionId.SCREEN_RECORDING) is True
-    snapshot = port.snapshot()
-    assert snapshot["restart_required"] is False
-    assert _permission(snapshot, PermissionId.SCREEN_RECORDING)["restart_required"] is False
-    assert snapshot["features"]["computer_use"]["ready"] is True
-
-
-def test_opening_settings_for_a_granted_permission_demands_no_restart() -> None:
-    """BUG-159: looking at an already-granted pane must change nothing.
-
-    The old flow flagged a restart on every open-settings click, which turned
-    a curious glance into "Computer-Use and hotkeys are off until you relaunch".
-    """
-    modules, screen, _ = _native_modules()
-    screen["granted"] = True
-    port = _port(modules, iohid_check=lambda _type: 0)
-    assert port.runtime_feature_ready("computer_use") is True
-
-    result = port.open_settings(PermissionId.ACCESSIBILITY)
-
-    assert result.ok is True
-    assert result.restart_required is False
-    assert result.snapshot["restart_required"] is False
-    assert result.snapshot["features"]["computer_use"]["ready"] is True
-    assert port.runtime_feature_ready("computer_use") is True
-    assert port.runtime_feature_ready("global_hotkeys") is True
-
-
-def test_microphone_status_distinguishes_denied_and_restricted() -> None:
+def test_microphone_state_distinguishes_denied_and_restricted() -> None:
     modules, _, _ = _native_modules()
     port = _port(modules)
 
     _CaptureDevice.status = 2
-    denied = _permission(port.snapshot(), PermissionId.MICROPHONE)
+    denied = port.state(PermissionId.MICROPHONE)
     _CaptureDevice.status = 1
-    restricted = _permission(port.snapshot(), PermissionId.MICROPHONE)
+    restricted = port.state(PermissionId.MICROPHONE)
 
-    assert denied["status"] == "denied"
-    assert denied["can_request"] is False
-    assert restricted["status"] == "restricted"
-    assert restricted["can_request"] is False
-
-
-def test_request_screen_capture_calls_native_api_and_requires_restart() -> None:
-    modules, screen, _ = _native_modules()
-
-    result = _port(modules).request(PermissionId.SCREEN_RECORDING)
-
-    assert result.ok is True
-    assert result.performed is True
-    assert result.restart_required is True
-    assert screen["requested"] is True
-    assert result.snapshot["restart_required"] is True
-    assert _permission(result.snapshot, PermissionId.SCREEN_RECORDING)["restart_required"] is True
-
-
-def test_request_reporting_false_points_at_system_settings() -> None:
-    """A suppressed prompt must not promise a restart-only path (BUG-083 class).
-
-    macOS prompts each app identity exactly once; a previously denied Screen
-    Recording makes CGRequestScreenCaptureAccess return False WITHOUT any
-    dialog. The user needs the System Settings pointer, not a restart loop.
-    """
-    modules, screen, _ = _native_modules()
-    modules["Quartz"].CGRequestScreenCaptureAccess = lambda: False
-
-    result = _port(modules).request(PermissionId.SCREEN_RECORDING)
-
-    assert result.ok is True
-    assert screen["granted"] is False
-    assert "System Settings" in result.message
-    assert "did not show a dialog" in result.message
-    # The stranded-grant case is the one the message must not leave out: the
-    # checkmark is already set in System Settings, so only a reset helps.
-    assert "Ask again" in result.message
-
-
-def test_request_reporting_true_keeps_the_plain_restart_message() -> None:
-    modules, _, _ = _native_modules()
-
-    result = _port(modules).request(PermissionId.SCREEN_RECORDING)
-
-    assert result.ok is True
-    assert "If no system dialog appeared" not in result.message
-
-
-def test_restart_requirement_persists_until_the_process_restarts() -> None:
-    modules, _, _ = _native_modules()
-    port = _port(modules)
-
-    port.request(PermissionId.SCREEN_RECORDING)
-    later = port.snapshot()
-
-    assert later["restart_required"] is True
-    assert _permission(later, PermissionId.SCREEN_RECORDING)["restart_required"] is True
+    assert denied is PermissionState.DENIED
+    assert restricted is PermissionState.RESTRICTED
 
 
 def test_request_microphone_uses_avfoundation_callback_api() -> None:
@@ -388,11 +274,9 @@ def test_request_microphone_uses_avfoundation_callback_api() -> None:
     _CaptureDevice.requests = 0
     modules, _, _ = _native_modules()
 
-    result = _port(modules).request(PermissionId.MICROPHONE)
+    outcome = _port(modules).request_native(PermissionId.MICROPHONE)
 
-    assert result.ok is True
-    assert result.performed is True
-    assert result.restart_required is False
+    assert outcome == "dialog_shown"
     assert _CaptureDevice.requests == 1
 
 
@@ -405,88 +289,79 @@ def test_request_accessibility_uses_prompt_option() -> None:
         kAXTrustedCheckOptionPrompt="prompt",
     )
 
-    result = _port(modules).request(PermissionId.ACCESSIBILITY)
+    outcome = _port(modules).request_native(PermissionId.ACCESSIBILITY)
 
-    assert result.ok is True
-    assert result.performed is True
-    assert result.restart_required is True
-    assert result.snapshot["features"]["global_hotkeys"]["restart_required"] is True
-    assert result.snapshot["features"]["global_hotkeys"]["ready"] is False
+    assert outcome == "dialog_shown"
     assert calls == [{"prompt": True}]
 
 
-@pytest.mark.parametrize(
-    "permission_id,request_name",
-    [
-        (PermissionId.INPUT_MONITORING, "CGRequestListenEventAccess"),
-        (PermissionId.EVENT_POSTING, "CGRequestPostEventAccess"),
-    ],
-)
-def test_request_event_permissions_use_coregraphics(
-    permission_id: PermissionId, request_name: str
-) -> None:
+def test_request_input_monitoring_uses_the_listen_request_and_never_a_tap() -> None:
     modules, _, _ = _native_modules()
     calls: list[str] = []
-    setattr(modules["Quartz"], request_name, lambda: calls.append(request_name))
-    # Untrusted Accessibility keeps event_posting requestable: a trusted AX
-    # grant already implies event posting and would short-circuit to granted.
+    modules["Quartz"].CGRequestListenEventAccess = lambda: calls.append("listen") or False
+
+    outcome = _port(modules).request_native(PermissionId.INPUT_MONITORING)
+
+    assert outcome == "dialog_shown"
+    assert calls == ["listen"]
+
+
+def test_event_posting_is_asked_through_the_accessibility_prompt() -> None:
+    """Event posting is an alias of Accessibility for asking: one request, one prompt."""
+    modules, _, _ = _native_modules()
+    post_requests: list[str] = []
+    modules["Quartz"].CGRequestPostEventAccess = lambda: post_requests.append("post")
+    calls: list[dict[str, bool]] = []
     modules["ApplicationServices"] = SimpleNamespace(
         AXIsProcessTrusted=lambda: False,
-        AXIsProcessTrustedWithOptions=lambda _options: False,
+        AXIsProcessTrustedWithOptions=lambda options: calls.append(options),
         kAXTrustedCheckOptionPrompt="prompt",
     )
 
-    result = _port(modules).request(permission_id)
+    outcome = _port(modules).request_native(PermissionId.EVENT_POSTING)
 
-    assert result.ok is True
-    assert result.performed is True
-    assert calls == [request_name]
+    assert outcome == "dialog_shown"
+    assert calls == [{"prompt": True}]
+    assert post_requests == []
 
 
 _IOHID_POST = 0  # kIOHIDRequestTypePostEvent
 _IOHID_LISTEN = 1  # kIOHIDRequestTypeListenEvent
 
 
-def test_input_monitoring_denied_hides_request_and_keeps_settings() -> None:
-    # macOS never re-prompts once the TCC state is determined; a visible
-    # "request" button would silently do nothing (the dead Allow button).
+def test_input_monitoring_denied_reads_denied() -> None:
+    # macOS never re-prompts once the TCC state is determined; the tri-state read
+    # is what tells "denied" from "never asked".
     modules, _, _ = _native_modules()
 
-    snapshot = _port(modules, iohid_check=lambda t: 1 if t == _IOHID_LISTEN else None).snapshot()
+    port = _port(modules, iohid_check=lambda t: 1 if t == _IOHID_LISTEN else None)
 
-    item = _permission(snapshot, PermissionId.INPUT_MONITORING)
-    assert item["status"] == "denied"
-    assert item["can_request"] is False
-    assert item["can_open_settings"] is True
+    assert port.state(PermissionId.INPUT_MONITORING) is PermissionState.DENIED
 
 
-def test_input_monitoring_not_determined_still_offers_the_prompt() -> None:
+def test_input_monitoring_not_determined_reads_not_determined() -> None:
     modules, _, _ = _native_modules()
 
-    snapshot = _port(modules, iohid_check=lambda t: 2 if t == _IOHID_LISTEN else None).snapshot()
+    port = _port(modules, iohid_check=lambda t: 2 if t == _IOHID_LISTEN else None)
 
-    item = _permission(snapshot, PermissionId.INPUT_MONITORING)
-    assert item["status"] == "not_determined"
-    assert item["can_request"] is True
+    assert port.state(PermissionId.INPUT_MONITORING) is PermissionState.NOT_DETERMINED
 
 
 def test_input_monitoring_falls_back_to_boolean_preflight_without_iohid() -> None:
     modules, _, _ = _native_modules()
 
-    item = _permission(_port(modules).snapshot(), PermissionId.INPUT_MONITORING)
-
-    assert item["status"] == "not_granted"
+    assert _port(modules).state(PermissionId.INPUT_MONITORING) is PermissionState.NOT_GRANTED
 
 
 def test_event_posting_follows_live_accessibility_grant() -> None:
     # The Accessibility grant authorizes event posting and updates live; it
-    # must win over a stale per-process HID verdict so the row flips as soon
+    # must win over a stale per-process HID verdict so the state flips as soon
     # as the user grants Accessibility.
     modules, _, _ = _native_modules()
 
-    snapshot = _port(modules, iohid_check=lambda _t: 1).snapshot()
+    port = _port(modules, iohid_check=lambda _t: 1)
 
-    assert _permission(snapshot, PermissionId.EVENT_POSTING)["status"] == "granted"
+    assert port.state(PermissionId.EVENT_POSTING) is PermissionState.GRANTED
 
 
 def test_event_posting_tristate_when_accessibility_untrusted() -> None:
@@ -497,69 +372,62 @@ def test_event_posting_tristate_when_accessibility_untrusted() -> None:
         kAXTrustedCheckOptionPrompt="prompt",
     )
 
-    snapshot = _port(modules, iohid_check=lambda t: 1 if t == _IOHID_POST else None).snapshot()
+    port = _port(modules, iohid_check=lambda t: 1 if t == _IOHID_POST else None)
 
-    item = _permission(snapshot, PermissionId.EVENT_POSTING)
-    assert item["status"] == "denied"
-    assert item["can_request"] is False
-    assert item["can_open_settings"] is True
+    assert port.state(PermissionId.EVENT_POSTING) is PermissionState.DENIED
 
 
-def test_legacy_macos_event_posting_falls_back_to_accessibility_prompt() -> None:
+def test_event_posting_without_the_post_event_api_follows_accessibility() -> None:
     modules, _, _ = _native_modules()
     delattr(modules["Quartz"], "CGPreflightPostEventAccess")
     delattr(modules["Quartz"], "CGRequestPostEventAccess")
-    calls: list[dict[str, bool]] = []
     modules["ApplicationServices"] = SimpleNamespace(
         AXIsProcessTrusted=lambda: False,
-        AXIsProcessTrustedWithOptions=lambda options: calls.append(options),
+        AXIsProcessTrustedWithOptions=lambda _options: False,
         kAXTrustedCheckOptionPrompt="prompt",
     )
 
-    result = _port(modules).request(PermissionId.EVENT_POSTING)
-
-    assert result.ok is True
-    assert result.performed is True
-    assert calls == [{"prompt": True}]
+    assert _port(modules).state(PermissionId.EVENT_POSTING) is PermissionState.NOT_GRANTED
 
 
-def test_request_refuses_unstable_or_background_identity() -> None:
-    modules, screen, _ = _native_modules(bundle_id="org.python.python")
-    unstable = _port(modules).request(PermissionId.SCREEN_RECORDING)
-    modules, _, _ = _native_modules(active=False)
-    background = _port(modules).request(PermissionId.SCREEN_RECORDING)
-
-    assert unstable.ok is False
-    assert "Terminal or Python" in unstable.message
-    assert background.ok is False
-    assert "foreground" in background.message
-    assert screen["requested"] is False
-
-
-def test_dry_run_never_invokes_native_request() -> None:
-    modules, screen, _ = _native_modules()
-
-    result = _port(modules).request(PermissionId.SCREEN_RECORDING, dry_run=True)
-
-    assert result.ok is True
-    assert result.dry_run is True
-    assert result.performed is False
-    assert screen["requested"] is False
-
-
-def test_open_settings_uses_permission_specific_launchservices_url() -> None:
+def test_open_pane_uses_permission_specific_launchservices_url() -> None:
     modules, _, workspace = _native_modules()
 
-    result = _port(modules).open_settings(PermissionId.INPUT_MONITORING)
-
-    assert result.ok is True
-    assert result.performed is True
+    assert _port(modules).open_pane(PermissionId.INPUT_MONITORING) is True
     assert workspace.opened_urls == [
         "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
     ]
 
 
-def test_open_settings_quits_running_system_settings_before_navigating() -> None:
+def test_open_pane_takes_a_plain_string_and_ignores_an_unknown_id() -> None:
+    modules, _, workspace = _native_modules()
+    port = _port(modules)
+
+    assert port.open_pane("microphone") is True
+    assert port.open_pane("not_a_permission") is False
+    assert len(workspace.opened_urls) == 1
+
+
+def test_open_pane_needs_a_desktop_session() -> None:
+    modules, _, workspace = _native_modules()
+    workspace.current = None  # frontmostApplication() is None: no window server answers
+
+    assert _port(modules).open_pane(PermissionId.MICROPHONE) is False
+    assert workspace.opened_urls == []
+
+
+def test_open_pane_never_raises_when_launchservices_does() -> None:
+    modules, _, workspace = _native_modules()
+
+    def refuse(_url: str) -> bool:
+        raise RuntimeError("LaunchServices is gone")
+
+    workspace.openURL_ = refuse
+
+    assert _port(modules).open_pane(PermissionId.MICROPHONE) is False
+
+
+def test_open_pane_quits_running_system_settings_before_navigating() -> None:
     # System Settings ignores the pane anchor while already running: the URL
     # only raises the stale window (live on macOS 15.7 the Input Monitoring
     # link surfaced the last-open Files & Folders pane). The port must quit a
@@ -596,117 +464,32 @@ def test_open_settings_quits_running_system_settings_before_navigating() -> None
 
     workspace.openURL_ = open_url
 
-    result = _port(modules).open_settings(PermissionId.INPUT_MONITORING)
-
-    assert result.ok is True
+    assert _port(modules).open_pane(PermissionId.INPUT_MONITORING) is True
     assert lookups == ["com.apple.systempreferences"]
     assert order == ["terminate", "open"]
 
 
-def test_screen_capture_restart_pending_hides_the_dead_allow_button() -> None:
-    # CGPreflightScreenCaptureAccess stays frozen for the process lifetime, and
-    # macOS never re-prompts after the first request — a second visible Allow
-    # button could only ever do nothing (live Mac finding 2026-07-18).
-    modules, screen, _ = _native_modules()
-    port = _port(modules)
+def test_keychain_has_no_reset_because_it_owns_no_tcc_row(monkeypatch: pytest.MonkeyPatch) -> None:
+    import subprocess
 
-    port.request(PermissionId.SCREEN_RECORDING)
-    # Mimic the real frozen preflight: the grant is invisible until relaunch.
-    screen["granted"] = False
-    item = _permission(port.snapshot(), PermissionId.SCREEN_RECORDING)
-
-    assert item["status"] == "not_granted"
-    assert item["restart_required"] is True
-    assert item["can_request"] is False
-    assert "restart" in (item["detail"] or "").lower()
-    # And it must not offer the reset either: the frozen preflight cannot tell
-    # a missing grant from the one the user just gave, so a reset here would
-    # throw that fresh grant away.
-    assert item["can_reset"] is False
-
-
-def test_a_stranded_grant_offers_the_reset_although_it_never_reads_denied() -> None:
-    """BUG-159: the escape hatch must not hang off ``status == "denied"``.
-
-    An ad-hoc signature change orphans the recorded TCC rows. System Settings
-    keeps showing the checkmark while the boolean preflights report plain
-    "not granted" — never "denied" — so a denial-keyed reset button was
-    invisible on exactly the two rows that needed it.
-    """
-    modules, screen, _ = _native_modules()
-    screen["granted"] = False
-    modules["ApplicationServices"].AXIsProcessTrusted = lambda: False
-    snapshot = _port(modules).snapshot()
-
-    for permission_id in (PermissionId.SCREEN_RECORDING, PermissionId.ACCESSIBILITY):
-        item = _permission(snapshot, permission_id)
-        assert item["status"] == "not_granted", permission_id
-        assert item["can_reset"] is True, permission_id
-
-
-def test_a_granted_permission_never_offers_the_reset() -> None:
-    modules, screen, _ = _native_modules()
-    screen["granted"] = True
-    snapshot = _port(modules, iohid_check=lambda _type: 0).snapshot()
-
-    for item in snapshot["permissions"]:
-        if item["status"] in {"granted", "not_required"}:
-            assert item["can_reset"] is False, item["id"]
-
-
-def test_keychain_has_no_reset_because_it_owns_no_tcc_row() -> None:
+    monkeypatch.setattr(
+        subprocess, "run", lambda *_a, **_k: pytest.fail("the Keychain has no tccutil row")
+    )
     modules, _, _ = _native_modules()
     port = _port(modules, credential_backend=lambda: "file")
 
-    item = _permission(port.snapshot(), PermissionId.CREDENTIAL_STORE)
+    assert port.state(PermissionId.CREDENTIAL_STORE) is PermissionState.NOT_GRANTED
+    operation = port.reset_row(PermissionId.CREDENTIAL_STORE)
 
-    assert item["status"] == "not_granted"
-    assert item["can_reset"] is False
-
-
-def test_a_signature_reset_is_explained_and_retired_once_grants_return(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """BUG-159: an app that silently forgot every permission reads as broken."""
-    from jarvis.platform import permissions as permissions_module
-
-    monkeypatch.setattr(permissions_module, "user_data_dir", lambda: tmp_path, raising=False)
-    monkeypatch.setattr(
-        permissions_module,
-        "identity_reset_marker_path",
-        lambda: tmp_path / "macos-tcc-reset.json",
-    )
-    permissions_module.record_identity_reset(("ScreenCapture", "Accessibility"))
-
-    # _CaptureDevice.status is class state other tests leave behind; the
-    # marker only retires when EVERY TCC row is back, microphone included.
-    _CaptureDevice.status = 3
-    modules, screen, _ = _native_modules()
-    screen["granted"] = False
-    modules["ApplicationServices"].AXIsProcessTrusted = lambda: False
-    port = _port(modules)
-
-    stranded = port.snapshot()
-    assert stranded["identity_reset"] is not None
-    assert stranded["identity_reset"]["reason"] == "signature-change"
-
-    # Everything granted again: the explanation has done its job and goes away.
-    screen["granted"] = True
-    modules["ApplicationServices"].AXIsProcessTrusted = lambda: True
-    healed = _port(modules, iohid_check=lambda _type: 0).snapshot()
-
-    assert healed["identity_reset"] is None
-    assert not (tmp_path / "macos-tcc-reset.json").exists()
+    assert operation.ok is False
+    assert "no resettable macOS record" in operation.message
 
 
 def test_missing_framework_reports_unavailable_without_raising() -> None:
     modules, _, _ = _native_modules()
     del modules["Quartz"]
 
-    snapshot = _port(modules).snapshot()
-
-    assert _permission(snapshot, PermissionId.SCREEN_RECORDING)["status"] == ("unavailable")
-    assert snapshot["features"]["computer_use"]["ready"] is False
+    assert _port(modules).state(PermissionId.SCREEN_RECORDING) is PermissionState.UNAVAILABLE
 
 
 def test_broken_native_bridge_import_fails_closed() -> None:
@@ -723,36 +506,28 @@ def test_broken_native_bridge_import_fails_closed() -> None:
         credential_store_backend=broken_credential_probe,
     )
 
-    snapshot = port.snapshot()
-
-    assert snapshot["app_identity"]["stable"] is False
-    assert {item["status"] for item in snapshot["permissions"]} == {"unavailable"}
-    assert all(not feature["ready"] for feature in snapshot["features"].values())
+    assert _identity(port).stable is False
+    assert port.outside_installed_app is True
+    assert {port.state(permission_id) for permission_id in PermissionId} == {
+        PermissionState.UNAVAILABLE
+    }
 
 
 def test_credential_store_reports_granted_while_platform_keyring_serves() -> None:
     modules, _, _ = _native_modules()
+    port = _port(modules)
 
-    item = _permission(_port(modules).snapshot(), PermissionId.CREDENTIAL_STORE)
-
-    assert item["status"] == "granted"
-    assert item["can_open_settings"] is False
+    assert port.state(PermissionId.CREDENTIAL_STORE) is PermissionState.GRANTED
+    assert port.open_pane(PermissionId.CREDENTIAL_STORE) is False
 
 
-def test_credential_store_file_fallback_is_not_granted_and_requestable() -> None:
+def test_credential_store_file_fallback_is_not_granted() -> None:
     # A declined macOS Keychain prompt degrades config to the 0600 file
-    # fallback; the row must surface that honestly and keep the retry alive.
+    # fallback; the state must surface that honestly.
     modules, _, _ = _native_modules()
     port = _port(modules, credential_backend=lambda: "file")
 
-    snapshot = port.snapshot()
-    item = _permission(snapshot, PermissionId.CREDENTIAL_STORE)
-
-    assert item["status"] == "not_granted"
-    assert item["can_request"] is True
-    assert item["can_open_settings"] is False
-    assert "Keychain" in (item["detail"] or "")
-    assert snapshot["features"]["api_keys"]["ready"] is False
+    assert port.state(PermissionId.CREDENTIAL_STORE) is PermissionState.NOT_GRANTED
 
 
 def test_credential_store_request_replays_recovery_and_reports_live_state() -> None:
@@ -770,14 +545,11 @@ def test_credential_store_request_replays_recovery_and_reports_live_state() -> N
         credential_recover=recover,
     )
 
-    result = port.request(PermissionId.CREDENTIAL_STORE)
+    outcome = port.request_native(PermissionId.CREDENTIAL_STORE)
 
-    assert result.ok is True
-    assert result.performed is True
-    assert result.restart_required is False
+    assert outcome == "no_dialog"
     assert state["recover_calls"] == 1
-    assert _permission(result.snapshot, PermissionId.CREDENTIAL_STORE)["status"] == "granted"
-    assert result.snapshot["restart_required"] is False
+    assert port.state(PermissionId.CREDENTIAL_STORE) is PermissionState.GRANTED
 
 
 def test_credential_store_declined_again_stays_not_granted() -> None:
@@ -788,23 +560,17 @@ def test_credential_store_declined_again_stays_not_granted() -> None:
         credential_recover=lambda: False,
     )
 
-    result = port.request(PermissionId.CREDENTIAL_STORE)
+    port.request_native(PermissionId.CREDENTIAL_STORE)
 
-    assert result.ok is True
-    assert result.performed is True
-    assert _permission(result.snapshot, PermissionId.CREDENTIAL_STORE)["status"] == "not_granted"
+    assert port.state(PermissionId.CREDENTIAL_STORE) is PermissionState.NOT_GRANTED
 
 
-def test_credential_store_open_settings_refuses_honestly() -> None:
-    # There is no System Settings pane for the Keychain; a silent no-op button
-    # would look like the app is broken.
+def test_credential_store_open_pane_refuses_honestly() -> None:
+    # There is no System Settings pane for the Keychain: nothing is opened.
     modules, _, workspace = _native_modules()
     port = _port(modules, credential_backend=lambda: "file")
 
-    result = port.open_settings(PermissionId.CREDENTIAL_STORE)
-
-    assert result.ok is False
-    assert "System Settings pane" in result.message
+    assert port.open_pane(PermissionId.CREDENTIAL_STORE) is False
     assert workspace.opened_urls == []
 
 
@@ -814,13 +580,9 @@ def test_credential_store_probe_failure_reports_unavailable() -> None:
     def broken_probe() -> str:
         raise RuntimeError("probe failed")
 
-    item = _permission(
-        _port(modules, credential_backend=broken_probe).snapshot(),
-        PermissionId.CREDENTIAL_STORE,
-    )
+    port = _port(modules, credential_backend=broken_probe)
 
-    assert item["status"] == "unavailable"
-    assert item["can_request"] is False
+    assert port.state(PermissionId.CREDENTIAL_STORE) is PermissionState.UNAVAILABLE
 
 
 # --- BUG-161: the app insisted permissions were missing after they were given
@@ -830,9 +592,8 @@ def test_the_app_in_the_shared_applications_folder_is_a_stable_identity() -> Non
     """Dragging the app to /Applications is normal, not a tampering signal.
 
     The old rule accepted only ~/Applications, so the ordinary move turned the
-    installed app into an "unstable identity": every request button vanished,
-    every feature reported not-ready, and the banner kept demanding grants the
-    user had already given, with nothing left to click (BUG-161).
+    installed app into an "unstable identity": the own-bundle reset was refused
+    and the app was read as a foreign one (BUG-161).
     """
     modules, _, _ = _native_modules()
     shared_copy = SimpleNamespace(
@@ -840,12 +601,169 @@ def test_the_app_in_the_shared_applications_folder_is_a_stable_identity() -> Non
         bundlePath=lambda: "/Applications/Personal Jarvis.app",
     )
     modules["Foundation"].NSBundle = SimpleNamespace(mainBundle=lambda: shared_copy)
+    port = _port(modules)
 
-    snapshot = _port(modules).snapshot()
+    assert _identity(port).stable is True
+    assert port.outside_installed_app is False
 
-    assert snapshot["app_identity"]["stable"] is True
-    assert _permission(snapshot, PermissionId.MICROPHONE)["can_request"] is False
-    assert snapshot["features"]["voice"]["identity_ready"] is True
+
+# --- The downloaded .dmg app is an installed app too (its own bundle id)
+
+
+def _installed_as(modules: dict[str, object], bundle_id: str, path: str) -> None:
+    """Make ``NSBundle.mainBundle()`` answer as ``bundle_id`` installed at ``path``."""
+    running = SimpleNamespace(bundleIdentifier=lambda: bundle_id, bundlePath=lambda: path)
+    modules["Foundation"].NSBundle = SimpleNamespace(mainBundle=lambda: running)
+
+
+def test_the_downloaded_dmg_app_is_a_stable_identity() -> None:
+    """The release .dmg is a PyInstaller bundle with its own bundle id.
+
+    The identity check once accepted only the managed bundle's id, so the .dmg app
+    read as a foreign app: it could neither reset its own rows nor ask on its own.
+    """
+    from jarvis.core.branding import MACOS_DMG_BUNDLE_ID
+
+    _CaptureDevice.status = 3
+    modules, _, _ = _native_modules()
+    _installed_as(modules, MACOS_DMG_BUNDLE_ID, "/Applications/Personal Jarvis.app")
+    port = _port(modules, iohid_check=lambda _type: 0)
+
+    identity = _identity(port)
+
+    assert identity.stable is True
+    assert identity.bundle_id == MACOS_DMG_BUNDLE_ID
+    assert port.outside_installed_app is False
+    assert port.state(PermissionId.MICROPHONE) is PermissionState.GRANTED
+
+
+@pytest.mark.parametrize(
+    "bundle_id", ["org.python.python", "com.apple.Terminal", "ai.personaljarvis.desktop.evil", None]
+)
+def test_an_app_that_is_not_ours_is_never_a_stable_identity(bundle_id: str | None) -> None:
+    """Widening the check to the .dmg id must not turn it into "any app"."""
+    modules, _, _ = _native_modules()
+    _installed_as(modules, bundle_id, "/Applications/Personal Jarvis.app")  # type: ignore[arg-type]
+    port = _port(modules)
+
+    assert _identity(port).stable is False
+    assert port.outside_installed_app is True
+
+
+@pytest.mark.parametrize(
+    "running_id",
+    [EXPECTED_BUNDLE_ID, "ai.personaljarvis.desktop"],
+)
+def test_reset_drops_the_rows_of_the_app_that_is_running(
+    monkeypatch: pytest.MonkeyPatch, running_id: str
+) -> None:
+    """``tccutil reset`` is scoped to one bundle id, so it must be the right one.
+
+    Resetting the managed id for the .dmg app would leave the .dmg app's own
+    rows untouched, leaving a stranded grant stranded.
+    """
+    import subprocess
+
+    modules, _, _ = _native_modules()
+    _installed_as(modules, running_id, "/Applications/Personal Jarvis.app")
+    commands: list[list[str]] = []
+
+    def fake_run(command, **_kwargs):
+        commands.append(list(command))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    operation = _port(modules).reset_row(PermissionId.SCREEN_RECORDING)
+
+    assert operation.ok is True
+    assert operation.performed is True
+    assert commands == [["/usr/bin/tccutil", "reset", "ScreenCapture", running_id]]
+
+
+@pytest.mark.parametrize("running_id", ["org.python.python", "com.apple.Terminal", None])
+def test_a_process_that_is_not_the_installed_app_cannot_reset_anything(
+    monkeypatch: pytest.MonkeyPatch, running_id: str | None
+) -> None:
+    """A development run must not be able to wipe the installed app's grants."""
+    import subprocess
+
+    modules, _, _ = _native_modules()
+    _installed_as(modules, running_id, "/Applications/Personal Jarvis.app")  # type: ignore[arg-type]
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *_a, **_k: pytest.fail("tccutil must not run for an unstable identity"),
+    )
+
+    operation = _port(modules).reset_row(PermissionId.SCREEN_RECORDING)
+
+    assert operation.ok is False
+    assert operation.performed is False
+    assert "installed app" in operation.message
+
+
+def test_a_dry_run_reset_changes_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    import subprocess
+
+    monkeypatch.setattr(
+        subprocess, "run", lambda *_a, **_k: pytest.fail("a dry run must not run tccutil")
+    )
+    modules, _, _ = _native_modules()
+
+    operation = _port(modules).reset_row(PermissionId.MICROPHONE, dry_run=True)
+
+    assert operation.ok is True
+    assert operation.dry_run is True
+    assert operation.performed is False
+    assert "Would reset" in operation.message
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        SimpleNamespace(returncode=1, stdout="", stderr="tccutil: no such service /usr/bin/x"),
+        OSError(2, "No such file or directory: '/usr/bin/tccutil'"),
+    ],
+)
+def test_a_failed_reset_says_why_and_performs_nothing(
+    monkeypatch: pytest.MonkeyPatch, failure: object
+) -> None:
+    import subprocess
+
+    def fake_run(*_args, **_kwargs):
+        if isinstance(failure, Exception):
+            raise failure
+        return failure
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    modules, _, _ = _native_modules()
+
+    operation = _port(modules).reset_row(PermissionId.MICROPHONE)
+
+    assert operation.ok is False
+    assert operation.performed is False
+    assert operation.message == "Could not reset the Microphone record."
+    assert "/usr/bin" not in operation.message
+    assert "tccutil" not in operation.message
+
+
+def test_state_is_the_preflight_alone_unless_a_deep_read_is_asked_for() -> None:
+    """The default read never enumerates windows; only ``deep=True`` runs the oracle."""
+    modules, screen, _ = _native_modules()
+    screen["granted"] = False
+    oracle_calls: list[int] = []
+
+    def oracle() -> bool:
+        oracle_calls.append(1)
+        return True
+
+    port = _port(modules, screen_capture_live=oracle)
+
+    assert port.state(PermissionId.SCREEN_RECORDING) is PermissionState.NOT_GRANTED
+    assert oracle_calls == []
+    assert port.state(PermissionId.SCREEN_RECORDING, deep=True) is PermissionState.GRANTED
+    assert oracle_calls == [1]
 
 
 def test_a_live_window_probe_beats_the_frozen_screen_recording_preflight() -> None:
@@ -861,9 +779,8 @@ def test_a_live_window_probe_beats_the_frozen_screen_recording_preflight() -> No
     stale = _port(modules, screen_capture_live=lambda: None)
     healed = _port(modules, screen_capture_live=lambda: True)
 
-    assert stale.state(PermissionId.SCREEN_RECORDING) is PermissionState.NOT_GRANTED
-    assert healed.state(PermissionId.SCREEN_RECORDING) is PermissionState.GRANTED
-    assert healed.runtime_access_granted(PermissionId.SCREEN_RECORDING) is True
+    assert stale.state(PermissionId.SCREEN_RECORDING, deep=True) is PermissionState.NOT_GRANTED
+    assert healed.state(PermissionId.SCREEN_RECORDING, deep=True) is PermissionState.GRANTED
 
 
 def test_a_live_window_probe_never_invents_a_grant_the_preflight_denies() -> None:
@@ -873,7 +790,7 @@ def test_a_live_window_probe_never_invents_a_grant_the_preflight_denies() -> Non
 
     port = _port(modules, screen_capture_live=lambda: False)
 
-    assert port.state(PermissionId.SCREEN_RECORDING) is PermissionState.NOT_GRANTED
+    assert port.state(PermissionId.SCREEN_RECORDING, deep=True) is PermissionState.NOT_GRANTED
 
 
 def test_a_crashing_live_probe_leaves_the_preflight_verdict_intact() -> None:
@@ -884,7 +801,7 @@ def test_a_crashing_live_probe_leaves_the_preflight_verdict_intact() -> None:
     screen["granted"] = False
 
     assert (
-        _port(modules, screen_capture_live=_explode).state(PermissionId.SCREEN_RECORDING)
+        _port(modules, screen_capture_live=_explode).state(PermissionId.SCREEN_RECORDING, deep=True)
         is PermissionState.NOT_GRANTED
     )
 
@@ -904,24 +821,6 @@ def test_window_titles_prove_the_grant_only_from_another_apps_own_layer() -> Non
     assert _window_titles_are_visible(foreign, 42) is True
 
 
-def test_open_settings_works_while_the_app_sits_in_the_background() -> None:
-    """The Settings deep link is not a prompt, so it needs no foreground.
-
-    Refusing it in the background left every non-foreground surface (the app
-    behind System Settings, the browser view) with a permission banner whose
-    only control answered "bring the app to the front" (BUG-161).
-    """
-    modules, _, workspace = _native_modules(active=False)
-
-    snapshot = _port(modules).snapshot()
-    operation = _port(modules).open_settings(PermissionId.MICROPHONE)
-
-    assert snapshot["app_identity"]["foreground"] is False
-    assert _permission(snapshot, PermissionId.MICROPHONE)["can_open_settings"] is True
-    assert operation.ok is True
-    assert workspace.opened_urls
-
-
 # --- Automation (Apple Events): the Music/Spotify consent row
 
 
@@ -930,76 +829,39 @@ _SPOTIFY = "com.spotify.client"
 
 
 class _Player:
-    """An ``NSRunningApplication`` stand-in for one scriptable player."""
-
-    def __init__(self, bundle_id: str, running: set[str]) -> None:
-        self.bundle_id = bundle_id
-        self._running = running
-        self.terminated = False
-
-    def terminate(self) -> None:
-        self.terminated = True
-        self._running.discard(self.bundle_id)
-
-
-class _OpenConfiguration:
-    def __init__(self) -> None:
-        self.activates: bool | None = None
-        self.hides: bool | None = None
-
-    def setActivates_(self, value: bool) -> None:
-        self.activates = value
-
-    def setHides_(self, value: bool) -> None:
-        self.hides = value
+    """An ``NSRunningApplication`` stand-in for one running scriptable player."""
 
 
 def _automation_fixture(
-    tmp_path: Path,
-    monkeypatch,
     *,
     installed: set[str],
     running: set[str],
     answers: dict[str, int],
 ) -> tuple[
     dict[str, object],
-    list[tuple[str, bool | None, bool | None]],
+    list[str],
     list[tuple[str, bool]],
     Callable[[str, bool], int | None],
 ]:
     """Native fakes for the Automation row plus the launch log, probe log and probe."""
-    import jarvis.platform.permissions as permissions_module
-
     modules, _screen, workspace = _native_modules()
     workspace.URLForApplicationWithBundleIdentifier_ = (  # type: ignore[attr-defined]
         lambda bundle_id: (
             f"file:///Applications/{bundle_id}.app" if bundle_id in installed else None
         )
     )
-    players: dict[str, _Player] = {}
-
     def running_apps(bundle_id: str) -> list[_Player]:
-        if bundle_id not in running:
-            return []
-        return [players.setdefault(bundle_id, _Player(bundle_id, running))]
+        return [_Player()] if bundle_id in running else []
 
-    launches: list[tuple[str, bool | None, bool | None]] = []
-
-    def open_app(url: str, configuration: _OpenConfiguration, _handler) -> None:
-        launches.append((url, configuration.activates, configuration.hides))
-        running.add(url.removeprefix("file:///Applications/").removesuffix(".app"))
-
-    workspace.openApplicationAtURL_configuration_completionHandler_ = open_app  # type: ignore[attr-defined]
+    # Tripwire: the port never launches a player; a call would land in this log.
+    launches: list[str] = []
+    workspace.openApplicationAtURL_configuration_completionHandler_ = (  # type: ignore[attr-defined]
+        lambda url, _configuration, _handler: launches.append(url)
+    )
     appkit = modules["AppKit"]
     appkit.NSRunningApplication = SimpleNamespace(  # type: ignore[attr-defined]
         currentApplication=lambda: workspace.current,
         runningApplicationsWithBundleIdentifier_=running_apps,
-    )
-    appkit.NSWorkspaceOpenConfiguration = SimpleNamespace(  # type: ignore[attr-defined]
-        configuration=_OpenConfiguration
-    )
-    monkeypatch.setattr(
-        permissions_module, "automation_consent_path", lambda: tmp_path / "consent.json"
     )
     probes: list[tuple[str, bool]] = []
 
@@ -1010,86 +872,62 @@ def _automation_fixture(
     return modules, launches, probes, probe
 
 
-def _consent_file(tmp_path: Path) -> dict:
-    import json
+def test_the_default_automation_probe_never_forwards_an_asking_flag() -> None:
+    """The in-process Apple Event probe is a silent read: only the killable runner asks."""
+    import inspect
 
-    path = tmp_path / "consent.json"
-    return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    import jarvis.platform.permissions as permissions
 
+    source = inspect.getsource(permissions._default_automation_probe)
 
-def test_automation_is_not_required_without_a_scriptable_player(tmp_path: Path, monkeypatch):
-    modules, _launches, _probes, probe = _automation_fixture(
-        tmp_path, monkeypatch, installed=set(), running=set(), answers={}
-    )
-
-    snapshot = _port(modules, automation_probe=probe).snapshot()
-
-    row = _permission(snapshot, PermissionId.AUTOMATION)
-    assert row["status"] == PermissionState.NOT_REQUIRED
-    assert row["required"] == ["audio_ducking"]
-    assert snapshot["features"]["audio_ducking"]["ready"] is True
+    assert "if ask" not in source
+    assert "_AE_TYPE_WILDCARD, 0))" in source
 
 
-def test_automation_reads_a_running_player_live_and_records_the_answer(tmp_path: Path, monkeypatch):
+def test_automation_is_not_required_without_a_scriptable_player() -> None:
     modules, _launches, probes, probe = _automation_fixture(
-        tmp_path, monkeypatch, installed={_MUSIC}, running={_MUSIC}, answers={_MUSIC: 0}
+        installed=set(), running=set(), answers={}
     )
 
-    snapshot = _port(modules, automation_probe=probe).snapshot()
+    port = _port(modules, automation_probe=probe)
 
-    assert _permission(snapshot, PermissionId.AUTOMATION)["status"] == PermissionState.GRANTED
+    assert port.state(PermissionId.AUTOMATION) is PermissionState.NOT_REQUIRED
+    assert port.state(PermissionId.AUTOMATION, target=_MUSIC) is PermissionState.NOT_REQUIRED
+    assert probes == []
+
+
+def test_automation_reads_a_running_player_live_without_ever_asking() -> None:
+    modules, _launches, probes, probe = _automation_fixture(
+        installed={_MUSIC}, running={_MUSIC}, answers={_MUSIC: 0}
+    )
+
+    state = _port(modules, automation_probe=probe).state(PermissionId.AUTOMATION)
+
+    assert state is PermissionState.GRANTED
     assert probes == [(_MUSIC, False)]  # a status probe never raises the dialog
-    assert _consent_file(tmp_path) == {_MUSIC: "granted"}
 
 
-def test_automation_request_opens_a_closed_player_hidden_asks_and_closes_it(
-    tmp_path: Path, monkeypatch
-):
-    """Apple only shows the dialog for a running target — so start it, quietly."""
+def test_a_closed_player_reads_unknown_and_is_never_launched() -> None:
+    """Apple answers only for a running target: a closed player is unknown, not "denied"."""
     modules, launches, probes, probe = _automation_fixture(
-        tmp_path, monkeypatch, installed={_MUSIC}, running=set(), answers={_MUSIC: 0}
-    )
-    port = _port(modules, automation_probe=probe)
-    before = _permission(port.snapshot(), PermissionId.AUTOMATION)
-    assert before["status"] == PermissionState.NOT_DETERMINED
-    assert before["can_request"] is True
-
-    result = port.request(PermissionId.AUTOMATION)
-
-    assert result.ok and result.performed and result.restart_required is False
-    assert launches == [(f"file:///Applications/{_MUSIC}.app", False, True)]
-    assert (_MUSIC, True) in probes
-    # Closed again — and the answer survives the player being closed.
-    assert (
-        _permission(result.snapshot, PermissionId.AUTOMATION)["status"] == PermissionState.GRANTED
-    )
-    assert _consent_file(tmp_path) == {_MUSIC: "granted"}
-    assert launches and not port._running_automation_targets(modules["AppKit"], _MUSIC)
-
-
-def test_automation_request_leaves_an_already_running_player_open(tmp_path: Path, monkeypatch):
-    modules, launches, _probes, probe = _automation_fixture(
-        tmp_path, monkeypatch, installed={_MUSIC}, running={_MUSIC}, answers={_MUSIC: -1744}
+        installed={_MUSIC}, running=set(), answers={_MUSIC: 0}
     )
     port = _port(modules, automation_probe=probe)
 
-    port.request(PermissionId.AUTOMATION)
-
+    assert port.state(PermissionId.AUTOMATION) is PermissionState.NOT_DETERMINED
+    assert port.state(PermissionId.AUTOMATION, target=_MUSIC) is PermissionState.NOT_DETERMINED
     assert launches == []
-    assert port._running_automation_targets(modules["AppKit"], _MUSIC)
+    assert probes == []
 
 
-def test_automation_denial_offers_the_reset_and_the_reset_forgets_the_answer(
-    tmp_path: Path, monkeypatch
-):
+def test_automation_denial_reads_denied_and_the_reset_is_scoped_to_the_own_bundle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     modules, _launches, _probes, probe = _automation_fixture(
-        tmp_path, monkeypatch, installed={_MUSIC}, running={_MUSIC}, answers={_MUSIC: -1743}
+        installed={_MUSIC}, running={_MUSIC}, answers={_MUSIC: -1743}
     )
     port = _port(modules, automation_probe=probe)
-    row = _permission(port.snapshot(), PermissionId.AUTOMATION)
-    assert row["status"] == PermissionState.DENIED
-    assert row["can_request"] is False and row["can_reset"] is True
-    assert _consent_file(tmp_path) == {_MUSIC: "denied"}
+    assert port.state(PermissionId.AUTOMATION) is PermissionState.DENIED
 
     commands: list[list[str]] = []
 
@@ -1098,48 +936,81 @@ def test_automation_denial_offers_the_reset_and_the_reset_forgets_the_answer(
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr("subprocess.run", fake_run)
-    result = port.reset(PermissionId.AUTOMATION)
+    operation = port.reset_row(PermissionId.AUTOMATION)
 
-    assert result.ok and result.performed
+    assert operation.ok and operation.performed
     assert commands == [["/usr/bin/tccutil", "reset", "AppleEvents", BUNDLE_ID]]
-    # The reset dropped the recorded answer; the after-snapshot then asked the
-    # still-running player live again (the fake keeps saying denied) — a
-    # closed player would have read "not requested" from the empty record.
-    assert _consent_file(tmp_path) == {_MUSIC: "denied"}
-    (tmp_path / "consent.json").unlink()
-    closed = _port(modules, automation_probe=lambda _b, _a: -600).snapshot()
-    assert _permission(closed, PermissionId.AUTOMATION)["status"] == PermissionState.NOT_DETERMINED
 
 
-def test_automation_strictest_player_wins(tmp_path: Path, monkeypatch):
+def test_automation_strictest_player_wins() -> None:
     modules, _launches, _probes, probe = _automation_fixture(
-        tmp_path,
-        monkeypatch,
         installed={_MUSIC, _SPOTIFY},
         running={_SPOTIFY},
         answers={_SPOTIFY: -1744},
     )
-    (tmp_path / "consent.json").write_text('{"com.apple.Music": "granted"}', encoding="utf-8")
 
-    snapshot = _port(modules, automation_probe=probe).snapshot()
-
+    # Music is not running (unknown) and Spotify has not been asked yet.
     assert (
-        _permission(snapshot, PermissionId.AUTOMATION)["status"] == PermissionState.NOT_DETERMINED
+        _port(modules, automation_probe=probe).state(PermissionId.AUTOMATION)
+        is PermissionState.NOT_DETERMINED
     )
-    assert snapshot["features"]["audio_ducking"]["ready"] is False
 
-
-def test_identity_reset_forgets_the_automation_answers(tmp_path: Path, monkeypatch):
-    import jarvis.platform.permissions as permissions_module
-
-    monkeypatch.setattr(
-        permissions_module, "identity_reset_marker_path", lambda: tmp_path / "reset.json"
+    both_modules, _l, _p, both_probe = _automation_fixture(
+        installed={_MUSIC, _SPOTIFY},
+        running={_MUSIC, _SPOTIFY},
+        answers={_MUSIC: 0, _SPOTIFY: -1743},
     )
-    monkeypatch.setattr(
-        permissions_module, "automation_consent_path", lambda: tmp_path / "consent.json"
+    assert (
+        _port(both_modules, automation_probe=both_probe).state(PermissionId.AUTOMATION)
+        is PermissionState.DENIED
     )
-    (tmp_path / "consent.json").write_text('{"com.apple.Music": "granted"}', encoding="utf-8")
 
-    permissions_module.record_identity_reset(("Microphone", "AppleEvents"))
+    granted_modules, _l, _p, granted_probe = _automation_fixture(
+        installed={_MUSIC, _SPOTIFY},
+        running={_MUSIC, _SPOTIFY},
+        answers={_MUSIC: 0, _SPOTIFY: 0},
+    )
+    assert (
+        _port(granted_modules, automation_probe=granted_probe).state(PermissionId.AUTOMATION)
+        is PermissionState.GRANTED
+    )
 
-    assert not (tmp_path / "consent.json").exists()
+
+# --- Leftover state files of the earlier permission wall
+
+
+def test_the_leftover_state_files_are_removed_and_nothing_else(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jarvis.platform import permissions as permissions_module
+
+    for name in ("macos-tcc-reset.json", "macos-automation-consent.json", "keep.json"):
+        (tmp_path / name).write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(permissions_module, "_leftover_state_dir", lambda: tmp_path)
+
+    permissions_module.remove_leftover_state_files()
+    permissions_module.remove_leftover_state_files()  # a second run finds nothing: no error
+
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["keep.json"]
+
+
+def test_the_leftover_cleanup_never_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    from jarvis.platform import permissions as permissions_module
+
+    # A directory with the file's name makes unlink fail with an OSError.
+    (tmp_path / "macos-tcc-reset.json").mkdir()
+    monkeypatch.setattr(permissions_module, "_leftover_state_dir", lambda: tmp_path)
+    with caplog.at_level(logging.DEBUG, logger=permissions_module.log.name):
+        permissions_module.remove_leftover_state_files()
+
+    def locate_fails() -> Path:
+        raise RuntimeError("no data directory")
+
+    monkeypatch.setattr(permissions_module, "_leftover_state_dir", locate_fails)
+    permissions_module.remove_leftover_state_files()
+
+    assert "Could not remove the leftover macos-tcc-reset.json." in caplog.text

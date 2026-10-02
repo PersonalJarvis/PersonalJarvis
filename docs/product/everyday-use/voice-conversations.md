@@ -8,7 +8,7 @@ order: 2
 diataxis: explanation
 status: active
 owner: maintainers
-last_reviewed: 2026-07-30
+last_reviewed: 2026-10-02
 phase: "-"
 audience: end-user
 tags: [voice, microphone, wake-word, speech-recognition, text-to-speech, pipeline, realtime, language]
@@ -28,8 +28,8 @@ reason, act, or speak a reply.
 
 - Wait for **Voice starting…** to become **Ready**.
 - Choose a working microphone and speaker under **Settings > Audio devices**.
-- On macOS, allow **Microphone** access. The Call shortcut can also need
-  Accessibility and Input Monitoring access. Other systems use their own audio
+- On macOS, allow **Microphone** access. The Call shortcut also needs
+  Input Monitoring access, which macOS asks for when you save a shortcut. Other systems use their own audio
   and shortcut permissions.
 - Open **API Keys & Providers** and review **Voice engine**. Realtime needs one
   compatible live voice connection. Pipeline needs usable Voice Input, Brain,

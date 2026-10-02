@@ -440,7 +440,10 @@ def test_noop_backend_explains_the_ACTUAL_reason(monkeypatch):
 
     monkeypatch.setattr("jarvis.platform.detect_platform", lambda: "darwin")
     macos = explain_unavailable()
-    assert "Accessibility" in macos and "Input Monitoring" in macos
+    # A listen-only tap needs Input Monitoring only; there is no wizard and no restart.
+    assert "Input Monitoring" in macos and "Quartz" in macos
+    assert "Accessibility" not in macos
+    assert "Settings > Permissions" not in macos and "restart" not in macos.lower()
 
 
 def test_noop_backend_reason_never_raises(monkeypatch):
@@ -623,11 +626,12 @@ def _install_fake_pynput(monkeypatch, built: list) -> None:
     monkeypatch.setitem(sys.modules, "pynput", fake_pynput)
 
 
-def test_pynput_backend_darwin_without_ax_grant_degrades(monkeypatch, caplog):
+def test_pynput_backend_darwin_without_input_monitoring_degrades(monkeypatch, caplog):
     # pynput's darwin backend creates a Quartz event tap on its own internal
-    # thread; without the Accessibility grant that native init can abort the
-    # whole process (uncatchable — BUG-058 class). The backend must preflight
-    # AXIsProcessTrusted and degrade instead of touching pynput at all.
+    # thread; without Input Monitoring that native init can abort the whole
+    # process (uncatchable — BUG-058 class). The backend must preflight the
+    # grant and degrade instead of touching pynput at all, and its text names
+    # Input Monitoring only (a listen-only tap needs nothing else).
     import jarvis.trigger.backends.pynput as pynput_backend
     from jarvis.trigger.backends.pynput import PynputBackend
 
@@ -639,7 +643,9 @@ def test_pynput_backend_darwin_without_ax_grant_degrades(monkeypatch, caplog):
     with caplog.at_level(logging.WARNING):
         backend.start()
     assert built == []  # no Listener constructed under the missing grant
-    assert "accessibility" in caplog.text.lower()
+    assert "input monitoring" in caplog.text.lower()
+    assert "accessibility" not in caplog.text.lower()
+    assert "settings > permissions" not in caplog.text.lower()
 
 
 def test_pynput_backend_darwin_unverifiable_grant_degrades(monkeypatch, caplog):

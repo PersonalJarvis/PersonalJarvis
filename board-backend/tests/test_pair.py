@@ -9,7 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from board_backend.config import Settings
-from board_backend.crypto import canonical_json, generate_keypair, sign
+from board_backend.crypto import canonical_json, generate_keypair, sign, signed_audience
 from board_backend.main import create_app
 from board_backend.models import Friend, PairToken
 
@@ -29,6 +29,7 @@ def _register_owner(client: TestClient, pubkey: str, name: str = "Owner") -> Non
 
 def _signed_get(client: TestClient, path: str, *, priv: str, pub: str) -> "TestClient.Response":
     payload = {"ts_ms": int(time.time() * 1000)}
+    payload = {"aud": signed_audience("GET", path), **payload}
     body = canonical_json(payload)
     sig = sign(payload, privkey_hex=priv)
     return client.request(

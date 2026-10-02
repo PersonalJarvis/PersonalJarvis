@@ -9,6 +9,41 @@ versioning per [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+---
+
+## [2.7.0] — 2026-10-02
+
+### Added
+
+- **macOS asks when a feature needs a permission.** The first time you use a feature that needs a macOS permission, Personal Jarvis asks right then and macOS shows its own dialog: the microphone at the first dictation, push-to-talk, voice conversation, wake-word switch or microphone check; Screen Recording at the first screen capture you start; Accessibility when Jarvis first has to type, click or focus a window for you; Input Monitoring when you save a global shortcut (or choose the Call shortcut in setup); Music and Spotify control when you switch on "Mute music while dictating" with a player running. Nothing is asked at launch, and Personal Jarvis draws nothing of its own around macOS's dialog. If you say no, only that feature stops, and one short toast says so with one action ("Open System Settings"). Checked against faked macOS frameworks and macOS CI runners, not yet on a Mac of your own.
+- **One short toast after a macOS "no", in English, German and Spanish.** macOS never asks twice and says nothing after a denial, so when a feature you started is blocked by a permission, the app shows one sentence in its normal toast with one action: "Open System Settings", "Ask macOS now" (a development run outside the installed app) or "Quit and reopen" (access is on but needs a restart). It shows once per problem and again whenever you try the feature again after dismissing it, in the main desktop window only, and never for background work; the one exception is the wake word, which you switched on and which tells you once per session when it cannot listen. There is no permissions page, banner, card or inline note.
+- **`jarvis permissions reset <permission>`.** Forgets what macOS recorded for the installed Personal Jarvis app (the downloaded app or the installer's app, or `--bundle-id` for the other one) so macOS asks again on next use. It runs `tccutil` on your Mac behind `--yes`, never touches another app, and prints one line and exits with an error on other systems. The raw `tccutil` commands are in the troubleshooting guide.
+- **macOS permission dialogs in German and Spanish.** New builds of the downloaded app and fresh installs of the installer's app carry German and Spanish versions of the text macOS shows in its permission dialogs (the Apple Events and folder sentences are shorter and name no single app); an installer's app already on your Mac gets them the next time it is rebuilt for another reason, because the bundle version is deliberately not bumped (a bump would reset its permissions). Whether a Mac shows them is not yet tried on a Mac of your own.
+- **Honest checks for silent macOS failures.** A flat wallpaper-only screen capture is refused instead of handed to the model, and five seconds of exact-zero microphone audio produce one "denied or muted" notice. Computer Use pauses while a macOS permission dialog is in front, so an agent never answers one.
+- **A dispatch-only macOS hotkey spike.** A manually started workflow records, on Intel and Apple Silicon runners, whether the native Carbon hotkey calls crash the process. It changes no shipped behaviour.
+
+### Changed
+
+- **Global shortcuts need only Input Monitoring on macOS.** The listen-only shortcut tap no longer also requires Accessibility, is not started at launch unless already allowed, and re-arms in place when you grant access. A restart is suggested only after real typing produced no events, never forced.
+- **macOS permissions are checked silently and read live.** Features check the grant without prompting and act only on a live "granted"; a native request's result is never treated as proof. Identity now decides only who may ask automatically and who may reset, so a terminal-launched run asks for nothing on its own and offers an explicit "Ask macOS now" confirmation in the toast.
+- **The macOS bundles carry one table of usage strings.** The camera, speech and system-administration keys and the camera entitlement, which nothing in Jarvis uses, are removed; Screen Recording, Apple events, Desktop, Documents, Downloads and volumes are described in one place for both the `.dmg` app and the managed app.
+
+### Removed
+
+- **The Settings > Privacy page, the permission card and every inline permission note.** The floating card, the notes in dictation, the wake-word panel, mute-music, Shortcuts, Appshots and voice chat, the "Enable global shortcuts" buttons and tip, the "Mic blocked" line in the sidebar and the Privacy entry in Settings are gone (about 170 translated strings per language); macOS's own dialog and the one toast above replace them. The global-shortcut status that served the Shortcuts note is removed from the keybinds API too.
+- **The permissions banner, "Set up everything" and the setup permissions step.** The app-wide warning banner and its "Not now", the Optional and wanted-row bookkeeping, the guided wizard with its automatic restart, the refresh event and the onboarding permissions step are gone, along with the Music and Spotify consent file and the hidden launch of those apps, the "macOS treats the app as new" identity note and the global restart-required flag. Old leftovers on disk are never read and never prompt; the source installer deletes the two leftover state files on its next run, the downloaded app leaves them in place (harmless).
+
+### Fixed
+
+- **macOS: the wake word, dictation and Computer Use no longer sit dead behind a permission check that never asked macOS.** Protected features used to refuse until the app's own check said "granted", so on a Mac that had never answered a dialog macOS was never asked from the feature, and only a banner, Settings buttons or setup could raise it. The features now ask macOS themselves (see Added). Checked against faked macOS frameworks, not yet on a Mac of your own.
+- **macOS: the downloaded app is recognised as an installed app.** The `.dmg` app was never accepted as one, so (checked against faked macOS frameworks, not yet on a Mac) its microphone, shortcuts and Computer Use stayed disabled even with every permission granted, and no Allow button was offered. It is now recognised, `jarvis permissions` finds it, and `jarvis permissions reset` targets its own permission records.
+- **macOS: the downloaded app is built to be able to use its permissions.** The v2.5.0 image (read on Linux, not run on a Mac) was missing the microphone framework in its frozen archive and was marked background-only in its `Info.plist`. The build now includes the framework, clears the flag, and new checks fail the macOS job if either comes back — including one that boots the built app and asks it for its microphone permission. Built and checked on both macOS CI runners (Apple Silicon and Intel); not yet tried on a Mac of your own.
+- **macOS: the release workflow is prepared to sign and notarize the image.** `packaging/macos/build.sh` now imports the Developer ID certificate secrets the workflow already passed along (rehearsed and run against a stand-in keychain command, not yet end to end). Until the Apple secrets are added the image stays ad-hoc signed: the first launch needs Open Anyway and an update can ask for the permissions again.
+
+---
+
+## [2.6.0] — 2026-10-02
+
 ### Added
 
 - A quiet, Claude-style front page: one greeting, one composer, and a voice mode that lives inside the chat with a flowing aurora glow.

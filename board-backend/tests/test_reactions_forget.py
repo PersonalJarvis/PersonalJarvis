@@ -10,7 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from board_backend.background import StoriesCleanup
-from board_backend.crypto import canonical_json, generate_keypair, sign
+from board_backend.crypto import canonical_json, generate_keypair, sign, signed_audience
 from board_backend.models import ActivityItem, Friend, Reaction
 
 
@@ -19,6 +19,7 @@ def _now_ms() -> int:
 
 
 def _signed_post(client: TestClient, path: str, *, priv: str, pub: str, payload: dict):
+    payload = {"aud": signed_audience("POST", path), **payload}
     body = canonical_json(payload)
     sig = sign(payload, privkey_hex=priv)
     return client.post(
@@ -100,6 +101,78 @@ async def test_reaction_propagates_to_author_backend(client: TestClient) -> None
     finally:
         await client.app.state.federation_http.aclose()
         client.app.state.federation_http = None
+
+
+async def test_friend_cannot_replay_a_forwarded_reaction_at_the_owner(
+    client: TestClient,
+) -> None:
+    """The owner's backend forwards the owner-signed reaction body verbatim to
+    the friend. Before signatures named their endpoint, the friend could send
+    that body + signature back to the owner's backend within the replay
+    window and read the private feed (GET /activities) or the friends list.
+    """
+    owner_priv, owner_pub = generate_keypair()
+    _setup_owner(client, owner_pub)
+    _, friend_pub = generate_keypair()
+    factory = client.app.state.session_factory
+    with factory() as session:
+        session.add(Friend(
+            owner_pubkey=owner_pub, friend_pubkey=friend_pub,
+            friend_url="http://friend-backend:8765",
+            friend_display_name="Bob",
+            paired_at=datetime.now(timezone.utc),
+        ))
+        session.commit()
+
+    captured: dict = {}
+
+    async def _handler(req: httpx.Request) -> httpx.Response:
+        captured["sig"] = req.headers.get("x-jarvis-sig")
+        captured["body"] = req.content
+        return httpx.Response(200, json={"accepted": True})
+
+    client.app.state.federation_http = httpx.AsyncClient(
+        transport=httpx.MockTransport(_handler), base_url="http://x", timeout=5.0,
+    )
+    try:
+        resp = _signed_post(client, "/api/v1/reactions", priv=owner_priv, pub=owner_pub,
+                            payload={"ts_ms": _now_ms(), "item_id": "fakeitem123",
+                                     "reaction": "rocket", "author_pubkey": friend_pub})
+        assert resp.status_code == 200, resp.text
+    finally:
+        await client.app.state.federation_http.aclose()
+        client.app.state.federation_http = None
+
+    replay_headers = {"X-Pubkey": owner_pub, "X-Jarvis-Sig": captured["sig"],
+                      "Content-Type": "application/json"}
+    for method, path in (("GET", "/api/v1/activities"), ("GET", "/api/v1/friends"),
+                         ("GET", "/api/v1/me")):
+        replay = client.request(method, path, content=captured["body"], headers=replay_headers)
+        assert replay.status_code == 401, (path, replay.text)
+
+
+def test_signature_for_one_endpoint_is_refused_at_another(client: TestClient) -> None:
+    owner_priv, owner_pub = generate_keypair()
+    _setup_owner(client, owner_pub)
+    payload = {"ts_ms": _now_ms(), "aud": signed_audience("GET", "/api/v1/me")}
+    body = canonical_json(payload)
+    headers = {"X-Pubkey": owner_pub, "X-Jarvis-Sig": sign(payload, privkey_hex=owner_priv),
+               "Content-Type": "application/json"}
+    assert client.request("GET", "/api/v1/me", content=body, headers=headers).status_code == 200
+    assert client.request("GET", "/api/v1/friends", content=body,
+                          headers=headers).status_code == 401
+
+
+def test_signature_without_audience_is_refused(client: TestClient) -> None:
+    owner_priv, owner_pub = generate_keypair()
+    _setup_owner(client, owner_pub)
+    payload = {"ts_ms": _now_ms()}
+    resp = client.request(
+        "GET", "/api/v1/me", content=canonical_json(payload),
+        headers={"X-Pubkey": owner_pub, "X-Jarvis-Sig": sign(payload, privkey_hex=owner_priv),
+                 "Content-Type": "application/json"},
+    )
+    assert resp.status_code == 401
 
 
 def test_inbound_reaction_persists_when_friend(client: TestClient) -> None:
@@ -215,7 +288,10 @@ def test_right_to_be_forgotten_removes_all_traces(client: TestClient) -> None:
         session.commit()
 
     # B signed DELETE.
-    payload = {"ts_ms": _now_ms()}
+    payload = {
+        "ts_ms": _now_ms(),
+        "aud": signed_audience("DELETE", f"/api/v1/federation/identity/{friend_pub}"),
+    }
     body = canonical_json(payload)
     sig = sign(payload, privkey_hex=friend_priv)
     resp = client.request(
@@ -245,7 +321,10 @@ def test_forget_me_path_and_signature_must_match(client: TestClient) -> None:
     other_priv, other_pub = generate_keypair()
     _setup_owner(client, owner_pub)
 
-    payload = {"ts_ms": _now_ms()}
+    payload = {
+        "ts_ms": _now_ms(),
+        "aud": signed_audience("DELETE", f"/api/v1/federation/identity/{friend_pub}"),
+    }
     body = canonical_json(payload)
     sig = sign(payload, privkey_hex=other_priv)
 

@@ -544,6 +544,43 @@ def _macos_bound_ax_messaging(
         log.debug("AXUIElementSetMessagingTimeout unavailable", exc_info=True)
 
 
+def _permission_gate():
+    """The permission layer (``PermissionGate``); a test replaces this seam."""
+    from jarvis.platform.permission_service import get_permission_service  # noqa: PLC0415
+
+    return get_permission_service()
+
+
+def _macos_accessibility_granted() -> bool:
+    """Silent Accessibility read for background reads: never asks, never publishes."""
+    from jarvis.platform.permissions import PermissionId, PermissionState  # noqa: PLC0415
+
+    state = _permission_gate().check(PermissionId.ACCESSIBILITY)
+    return state in (PermissionState.GRANTED, PermissionState.NOT_REQUIRED)
+
+
+def _macos_window_control_refusal() -> str:
+    """``""`` when focusing / maximizing may proceed, else the agent-facing refusal.
+
+    Called from a worker (the window tools run in ``asyncio.to_thread``) with
+    ``wait_s=0``: the first call makes macOS show its own Accessibility dialog and
+    returns at once, the grant is picked up by the permission watcher. Only a live
+    GRANTED proceeds. The sentence starts with ``[permission_needed:accessibility] ``
+    and forbids retrying, so the computer-use engine can end the mission on it.
+    """
+    from jarvis.platform.permissions import PermissionId  # noqa: PLC0415
+
+    result = _permission_gate().ensure(
+        PermissionId.ACCESSIBILITY, feature="window_control", wait_s=0.0
+    )
+    if result.granted:
+        return ""
+    return result.agent_detail or (
+        "[permission_needed:accessibility] Accessibility access has not been allowed "
+        "yet. You must not retry this action; tell the user and stop."
+    )
+
+
 def _find_and_focus_macos(title_contains: str) -> tuple[bool, str]:
     """Activate and AX-raise a matching macOS window without AppleScript.
 
@@ -586,24 +623,11 @@ def _find_and_focus_macos(title_contains: str) -> tuple[bool, str]:
     except (ImportError, ModuleNotFoundError) as exc:
         return False, f"macOS window APIs are unavailable: {exc}"
 
-    from jarvis.platform.permissions import (  # noqa: PLC0415
-        PermissionId,
-        PermissionState,
-        get_system_permission_port,
-    )
-
-    permission_port = get_system_permission_port()
-    if not permission_port.runtime_access_granted(PermissionId.ACCESSIBILITY):
-        accessibility_state = permission_port.state(PermissionId.ACCESSIBILITY)
-        detail = (
-            accessibility_state.value
-            if accessibility_state is not PermissionState.GRANTED
-            else "grant belongs to an unstable app identity or needs restart"
-        )
-        return False, (
-            f"macOS Accessibility permission is not ready ({detail}) — grant it in System "
-            "Settings > Privacy & Security > Accessibility so Jarvis can switch windows."
-        )
+    # Focusing a window is an ACTION the user asked for: the first one asks macOS
+    # for Accessibility (wait_s=0, the answer arrives later), a refusal stops it.
+    denied = _macos_window_control_refusal()
+    if denied:
+        return False, denied
 
     app = NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
     if app is None:
@@ -685,13 +709,9 @@ def _list_windows_macos() -> list[WindowInfo]:
             AXUIElementCreateApplication,
         )
 
-        from jarvis.platform.permissions import (  # noqa: PLC0415
-            PermissionId,
-            get_system_permission_port,
-        )
-
-        port = get_system_permission_port()
-        if port.runtime_access_granted(PermissionId.ACCESSIBILITY):
+        # Listing is a background READ: a silent check, never a prompt. Without
+        # the grant the minimized flag is simply not read.
+        if _macos_accessibility_granted():
             ax_windows_by_pid: dict[int, list[object]] = {}
             for entry in entries:
                 pid = _macos_window_pid(entry)
@@ -1630,14 +1650,8 @@ def _resolve_macos_ax_window(win: WindowInfo) -> tuple[object | None, str]:
 
 
 def _window_is_maximized_macos(win: WindowInfo) -> bool | None:
-    from jarvis.platform.permissions import (  # noqa: PLC0415
-        PermissionId,
-        get_system_permission_port,
-    )
-
-    if not get_system_permission_port().runtime_access_granted(
-        PermissionId.ACCESSIBILITY,
-    ):
+    # A background READ: a silent check, never a prompt (None = cannot be read).
+    if not _macos_accessibility_granted():
         return None
     target, _error = _resolve_macos_ax_window(win)
     if target is None:
@@ -1685,26 +1699,10 @@ def window_is_maximized(win: WindowInfo) -> bool | None:
 
 def _maximize_window_macos(win: WindowInfo) -> tuple[bool, str]:
     """Set the native AXZoomed attribute without Apple Events automation."""
-    from jarvis.platform.permissions import (  # noqa: PLC0415
-        PermissionId,
-        PermissionState,
-        get_system_permission_port,
-    )
-
-    port = get_system_permission_port()
-    if not port.runtime_access_granted(PermissionId.ACCESSIBILITY):
-        state = port.state(PermissionId.ACCESSIBILITY)
-        detail = (
-            state.value
-            if state is not PermissionState.GRANTED
-            else "grant belongs to an unstable app identity or needs restart"
-        )
-        return False, (
-            "macOS Accessibility permission is not ready "
-            f"({detail}); grant it in Personal Jarvis > Settings > "
-            "Permissions or System Settings > Privacy & Security > "
-            "Accessibility, then retry."
-        )
+    # Maximizing is an ACTION: the first one asks macOS for Accessibility.
+    denied = _macos_window_control_refusal()
+    if denied:
+        return False, denied
 
     try:
         from ApplicationServices import (  # type: ignore[import-not-found] # noqa: PLC0415

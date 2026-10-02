@@ -606,6 +606,7 @@
     "realtime_microphone_unavailable": "This browser cannot access a microphone. Check browser support and device settings.",
     "realtime_audio_worklet_unavailable": "This browser does not support the required audio processor. Update the browser.",
     "realtime_microphone_denied": "Microphone access was denied. Allow it in the browser's site settings, then retry.",
+    "realtime_microphone_denied_desktop": "Microphone access was denied. Allow it in your computer's system settings, then retry.",
     "realtime_browser_tts_unavailable": "This browser has no usable system voice. The answer is still available as text; connect a TTS provider for audio.",
     "realtime_pipeline_fallback": "Classic pipeline fallback",
     "realtime_unavailable": "Connect or configure a Realtime provider",
@@ -2270,87 +2271,33 @@
     "vision_note": "Only models that can see images are listed - Computer-Use reads the screen from screenshots, so a text-only model cannot run it."
   },
   "permissions": {
-    "group_title": "Privacy permissions",
-    "title": "macOS permissions",
-    "description": "Grant only the system access needed for voice, Computer-Use, global shortcuts, and window control. Jarvis never edits the macOS privacy database.",
-    "loading": "Checking system permissions…",
-    "load_failed": "Could not read the current permission status.",
-    "refresh": "Check again",
-    "not_required": "No extra desktop privacy permissions are required on this operating system.",
-    "identity_warning": "Launch Personal Jarvis from its app bundle before granting access. macOS attaches permissions to the exact app identity.",
-    "restart_required": "Restart Personal Jarvis before using the newly granted access.",
-    "restart_now": "Restart now",
-    "restarting": "Restarting…",
     "restart_failed": "Personal Jarvis could not restart. Quit and reopen it manually.",
-    "request": "Allow",
-    "open_settings": "Open Settings",
-    "status": {
-      "granted": "Allowed",
-      "not_determined": "Not requested",
-      "denied": "Denied",
-      "restricted": "Restricted",
-      "not_granted": "Not allowed",
-      "unavailable": "Unavailable",
-      "not_required": "Not required",
-      "restart_pending": "Restart pending"
-    },
-    "items": {
-      "microphone": {
-        "title": "Microphone",
-        "description": "Required for wake-word and local voice input."
+    "toast": {
+      "microphone": "Personal Jarvis needs microphone access to hear you.",
+      "screen_recording": "Personal Jarvis needs screen recording access to see your screen.",
+      "accessibility": "Personal Jarvis needs accessibility access to control other apps for you.",
+      "input_monitoring": "Personal Jarvis needs input monitoring access so your shortcuts work in other apps.",
+      "automation": "Personal Jarvis needs your permission to control another app.",
+      "generic": "Personal Jarvis needs another permission to do that.",
+      "restricted": "Your Mac does not allow Personal Jarvis to use {what}. Only an administrator can change that.",
+      "restart": "Access to {what} is on, but it only works after Personal Jarvis restarts.",
+      "outside": "Personal Jarvis needs access to {what}; as it is not an installed app, macOS gives that access to the app that started it.",
+      "wake_word": "The wake word cannot listen: microphone access is off for Personal Jarvis.",
+      "action_failed": "That did not work. Please open System Settings yourself.",
+      "name": {
+        "microphone": "the microphone",
+        "screen_recording": "screen recording",
+        "accessibility": "accessibility",
+        "input_monitoring": "input monitoring",
+        "automation": "automation",
+        "generic": "this feature"
       },
-      "screen_recording": {
-        "title": "Screen Recording",
-        "description": "Required for Computer-Use to see every connected display."
-      },
-      "accessibility": {
-        "title": "Accessibility",
-        "description": "Required for reliable clicks, typing, focus, and window control."
-      },
-      "input_monitoring": {
-        "title": "Input Monitoring",
-        "description": "Required for global keyboard shortcuts."
-      },
-      "event_posting": {
-        "title": "Input control",
-        "description": "Required for Computer-Use to send mouse and keyboard events."
-      },
-      "automation": {
-        "title": "Automation (Music & Spotify)",
-        "description": "Lets Jarvis turn Music and Spotify down while you dictate and back up afterwards. Asked once per player — a closed player is opened briefly in the background for the dialog."
-      },
-      "credential_store": {
-        "title": "Keychain (API keys)",
-        "description": "Stores your API keys encrypted in the macOS Keychain instead of a plain file — that is the Keychain prompt you see when the app starts. Your keys stay on your Mac and are never sent anywhere."
+      "action": {
+        "open_settings": "Open System Settings",
+        "ask_now": "Ask macOS now",
+        "restart": "Quit and reopen"
       }
-    },
-    "banner": {
-      "title": "Action needed: macOS permissions are missing",
-      "impact": "Not working right now: {0}",
-      "hint": "Use the buttons to allow access — macOS opens the right System Settings page for each permission. {name} re-checks automatically.",
-      "collapse": "Hide details",
-      "expand": "Show details"
-    },
-    "features": {
-      "voice": "Voice & wake word",
-      "computer_use": "Computer-Use",
-      "global_hotkeys": "Global shortcuts",
-      "window_control": "Window control",
-      "audio_ducking": "Music ducking while dictating",
-      "api_keys": "Secure API-key storage"
-    },
-    "restart_deferred": "Newly granted access turns on with the automatic restart at the end of setup - nothing to do now.",
-    "setup_all": "Set up everything",
-    "setup_all_hint": "One click walks you through every remaining permission and applies them at the end.",
-    "setup_running": "Step {0} of {1}: {2}",
-    "setup_wait_prompt": "Answer the macOS dialog — this continues on its own.",
-    "setup_wait_settings": "Turn on Personal Jarvis in the System Settings pane that just opened, then come back — this continues on its own.",
-    "setup_cancel": "Stop",
-    "setup_restarting": "All set — Personal Jarvis restarts once to apply the new access.",
-    "setup_timeout": "Setup paused: a permission was not granted in time. Use “Set up everything” again whenever you like.",
-    "ask_again": "Ask again",
-    "stale_grant_hint": "macOS will not ask for this access again. If System Settings already shows it as enabled, that record belongs to an older version of the app — tap “Ask again” and allow access once more.",
-    "identity_reset": "Since the app was last rebuilt, macOS treats Personal Jarvis as a new app and discarded every access you had granted. Please allow them once more — they will stick from then on."
+    }
   },
   "settings_hub": {
     "subtitle": "Everything about you, your keys and this app — in one place.",
@@ -2418,7 +2365,6 @@
     "nav": {
       "languages": "Languages",
       "app": "App",
-      "permissions": "Privacy permissions",
       "screen_context": "Screen context",
       "realtime_voice": "Realtime voice",
       "system_prompt": "System prompt",

@@ -606,6 +606,7 @@
     "realtime_microphone_unavailable": "Este navegador no puede acceder a un micrófono. Comprueba la compatibilidad del navegador y la configuración del dispositivo.",
     "realtime_audio_worklet_unavailable": "Este navegador no admite el procesador de audio necesario. Actualiza el navegador.",
     "realtime_microphone_denied": "Se denegó el acceso al micrófono. Permítelo en la configuración del sitio del navegador y vuelve a intentarlo.",
+    "realtime_microphone_denied_desktop": "Se denegó el acceso al micrófono. Permítelo en los ajustes del sistema de tu ordenador y vuelve a intentarlo.",
     "realtime_browser_tts_unavailable": "Este navegador no tiene una voz del sistema utilizable. La respuesta sigue disponible como texto; conecta un proveedor de TTS para oírla.",
     "realtime_pipeline_fallback": "Sistema de voz clásico como alternativa",
     "realtime_unavailable": "Conecta o configura un proveedor de tiempo real",
@@ -2270,87 +2271,33 @@
     "vision_note": "Solo se muestran modelos que entienden imágenes: Computer-Use lee la pantalla mediante capturas, un modelo de solo texto no puede controlarlo."
   },
   "permissions": {
-    "group_title": "Permisos de privacidad",
-    "title": "Permisos de macOS",
-    "description": "Concede solo el acceso del sistema necesario para voz, Computer-Use, atajos globales y control de ventanas. Jarvis nunca modifica la base de datos de privacidad de macOS.",
-    "loading": "Comprobando los permisos del sistema…",
-    "load_failed": "No se pudo leer el estado actual de los permisos.",
-    "refresh": "Comprobar de nuevo",
-    "not_required": "Este sistema operativo no requiere permisos de privacidad de escritorio adicionales.",
-    "identity_warning": "Inicia Personal Jarvis desde su paquete de aplicación antes de conceder acceso. macOS vincula los permisos a la identidad exacta de la aplicación.",
-    "restart_required": "Reinicia Personal Jarvis antes de usar el acceso recién concedido.",
-    "restart_now": "Reiniciar ahora",
-    "restarting": "Reiniciando…",
     "restart_failed": "Personal Jarvis no pudo reiniciarse. Ciérralo y ábrelo de nuevo manualmente.",
-    "request": "Permitir",
-    "open_settings": "Abrir Ajustes",
-    "status": {
-      "granted": "Permitido",
-      "not_determined": "No solicitado",
-      "denied": "Denegado",
-      "restricted": "Restringido",
-      "not_granted": "No permitido",
-      "unavailable": "No disponible",
-      "not_required": "No requerido",
-      "restart_pending": "Reinicio pendiente"
-    },
-    "items": {
-      "microphone": {
-        "title": "Micrófono",
-        "description": "Necesario para la palabra de activación y la entrada de voz local."
+    "toast": {
+      "microphone": "Personal Jarvis necesita acceso al micrófono para oírte.",
+      "screen_recording": "Personal Jarvis necesita acceso a la grabación de pantalla para ver tu pantalla.",
+      "accessibility": "Personal Jarvis necesita acceso a la accesibilidad para controlar otras apps.",
+      "input_monitoring": "Personal Jarvis necesita acceso a la monitorización de entrada para que tus atajos funcionen en otras apps.",
+      "automation": "Personal Jarvis necesita tu permiso para controlar otra app.",
+      "generic": "Personal Jarvis necesita otro permiso para hacer eso.",
+      "restricted": "Tu Mac no permite que Personal Jarvis use {what}. Solo un administrador puede cambiarlo.",
+      "restart": "El acceso a {what} está activado, pero solo funciona cuando Personal Jarvis se reinicia.",
+      "outside": "Personal Jarvis necesita acceso a {what}; como no es una app instalada, macOS da ese acceso a la app que lo inició.",
+      "wake_word": "La palabra de activación no puede escuchar: el acceso al micrófono está desactivado para Personal Jarvis.",
+      "action_failed": "No funcionó. Abre Ajustes del Sistema manualmente.",
+      "name": {
+        "microphone": "el micrófono",
+        "screen_recording": "la grabación de pantalla",
+        "accessibility": "la accesibilidad",
+        "input_monitoring": "la monitorización de entrada",
+        "automation": "la automatización",
+        "generic": "esta función"
       },
-      "screen_recording": {
-        "title": "Grabación de pantalla",
-        "description": "Necesario para que Computer-Use vea todas las pantallas conectadas."
-      },
-      "accessibility": {
-        "title": "Accesibilidad",
-        "description": "Necesario para clics, escritura, enfoque y control de ventanas fiables."
-      },
-      "input_monitoring": {
-        "title": "Monitorización de entrada",
-        "description": "Necesario para los atajos de teclado globales."
-      },
-      "event_posting": {
-        "title": "Control de entrada",
-        "description": "Necesario para que Computer-Use envíe eventos de ratón y teclado."
-      },
-      "automation": {
-        "title": "Automatización (Música y Spotify)",
-        "description": "Permite a Jarvis bajar el volumen de Música y Spotify mientras dictas y subirlo después. Se pregunta una vez por reproductor; un reproductor cerrado se abre brevemente en segundo plano para el diálogo."
-      },
-      "credential_store": {
-        "title": "Llavero (claves API)",
-        "description": "Guarda tus claves API cifradas en el Llavero de macOS en lugar de un archivo de texto plano — ese es el aviso del Llavero que ves al iniciar la app. Tus claves se quedan en tu Mac y nunca se envían a ningún sitio."
+      "action": {
+        "open_settings": "Abrir Ajustes del Sistema",
+        "ask_now": "Preguntar a macOS ahora",
+        "restart": "Salir y volver a abrir"
       }
-    },
-    "banner": {
-      "title": "Acción necesaria: faltan permisos de macOS",
-      "impact": "Ahora mismo no funciona: {0}",
-      "hint": "Permite el acceso con los botones: macOS abre directamente la página correcta de Ajustes del Sistema para cada permiso. {name} vuelve a comprobarlo automáticamente.",
-      "collapse": "Ocultar detalles",
-      "expand": "Mostrar detalles"
-    },
-    "features": {
-      "voice": "Voz y palabra de activación",
-      "computer_use": "Computer-Use",
-      "global_hotkeys": "Atajos globales",
-      "window_control": "Control de ventanas",
-      "audio_ducking": "Bajar la música al dictar",
-      "api_keys": "Almacenamiento seguro de claves API"
-    },
-    "restart_deferred": "Los permisos recién concedidos se activan con el reinicio automático al final de la configuración; no hay nada que hacer ahora.",
-    "setup_all": "Configurar todo",
-    "setup_all_hint": "Un clic te guía por todos los permisos que faltan y los aplica al final.",
-    "setup_running": "Paso {0} de {1}: {2}",
-    "setup_wait_prompt": "Responde al diálogo de macOS — continúa solo.",
-    "setup_wait_settings": "Activa Personal Jarvis en el panel de Ajustes del Sistema que se acaba de abrir y vuelve — continúa solo.",
-    "setup_cancel": "Detener",
-    "setup_restarting": "Listo — Personal Jarvis se reinicia una vez para aplicar el nuevo acceso.",
-    "setup_timeout": "Configuración en pausa: un permiso no se concedió a tiempo. Usa «Configurar todo» de nuevo cuando quieras.",
-    "ask_again": "Preguntar de nuevo",
-    "stale_grant_hint": "macOS ya no volverá a preguntar por este acceso. Si Ajustes del Sistema ya lo muestra activado, ese registro pertenece a una versión anterior de la app: pulsa «Preguntar de nuevo» y concede el acceso otra vez.",
-    "identity_reset": "Desde la última reconstrucción, macOS considera Personal Jarvis una app nueva y descartó todos los accesos concedidos. Vuelve a concederlos una vez; a partir de ahí se mantendrán."
+    }
   },
   "settings_hub": {
     "subtitle": "Todo sobre ti, tus claves y esta aplicación, en un lugar.",
@@ -2418,7 +2365,6 @@
     "nav": {
       "languages": "Idiomas",
       "app": "Aplicación",
-      "permissions": "Permisos de privacidad",
       "screen_context": "Contexto de pantalla",
       "realtime_voice": "Voz en tiempo real",
       "system_prompt": "Prompt del sistema",

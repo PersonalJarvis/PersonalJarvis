@@ -842,11 +842,15 @@ pages:
     file: docs/product/privacy-safety-and-support/permissions.md
     title: App Permissions
     diataxis: howto
-    summary: Grant only the microphone, screen, accessibility, and input permissions needed for voice, global shortcuts, and Computer Use.
+    summary: See when macOS asks for microphone, screen, accessibility, and input access, and how to change an answer later.
     authoritative_sources:
-      - jarvis/ui/web/frontend/src/views/settings/PermissionsPanel.tsx
+      - jarvis/ui/web/frontend/src/lib/permissionToast.ts
+      - jarvis/ui/web/frontend/src/i18n/locales/en.json
+      - jarvis/cli_ctl/commands/permissions.py
+      - jarvis/core/macos_privacy_strings.py
       - jarvis/ui/web/permissions_routes.py
       - jarvis/platform/permissions.py
+      - jarvis/platform/permission_service.py
       - jarvis/platform/capabilities.py
     related:
       - first-run-setup

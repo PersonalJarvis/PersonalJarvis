@@ -38,7 +38,11 @@ from jarvis.missions.standalone_run import read_marker as read_standalone_marker
 from jarvis.missions.state_machine import MissionState, is_terminal
 from jarvis.missions.stream_evidence import clean_request_body
 from jarvis.platform import detect_platform
-from jarvis.ui.web.artifact_view import ARTIFACT_PAGE_CSP, VIEW_CSP, render_artifact_html
+from jarvis.ui.web.artifact_view import (
+    ARTIFACT_PAGE_CSP,
+    VIEW_HEADER_CSP,
+    render_artifact_html,
+)
 from jarvis.ui.web.mission_graph import build_mission_graph, render_mission_graph_html
 from jarvis.ui.web.run_plan import build_run_plan
 
@@ -807,7 +811,7 @@ async def get_output_graph(slug: str, request: Request) -> HTMLResponse:
     return HTMLResponse(
         render_mission_graph_html(data),
         headers={
-            "Content-Security-Policy": VIEW_CSP,
+            "Content-Security-Policy": VIEW_HEADER_CSP,
             "X-Content-Type-Options": "nosniff",
         },
     )
@@ -1069,7 +1073,7 @@ async def download_output_artifact(
     # worker-authored artifact cannot execute code against the app.
     active_document_types = {"text/html", "image/svg+xml"}
     if disposition == "inline" and media_type in active_document_types:
-        headers["Content-Security-Policy"] = VIEW_CSP
+        headers["Content-Security-Policy"] = VIEW_HEADER_CSP
     return FileResponse(
         target,
         media_type=media_type or "application/octet-stream",
@@ -1141,7 +1145,7 @@ async def view_output_artifact(slug: str, path: str, request: Request) -> HTMLRe
         # the app's theme rather than the OS's; absent = OS preference.
         render_artifact_html(target.name, text, theme=request.query_params.get("theme")),
         headers={
-            "Content-Security-Policy": VIEW_CSP,
+            "Content-Security-Policy": VIEW_HEADER_CSP,
             "X-Content-Type-Options": "nosniff",
         },
     )

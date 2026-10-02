@@ -657,8 +657,11 @@ can actually deliver it, with nothing raising in between:
 - **Event-tap permission probe.** The TCC grant check ran on EVERY reconcile,
   i.e. two native ObjC calls per keystroke the machine sees, inside the tap
   callback. macOS DISABLES a tap whose callback overruns its deadline — the
-  "works sometimes, or not at all" report. Now throttled (1 s TTL) while
-  staying fail-closed.
+  "works sometimes, or not at all" report. Now throttled (1 s TTL).
+  **Superseded 2026-10-02:** the tap callback reads only a lock-free cached
+  verdict from the silent `PermissionService.check`, never calls `ensure` and
+  takes no service lock; the tap itself is created only after the Input
+  Monitoring preflight is true (see the 2026-10-02 pass below).
 - **Computer-Use numpad.** `base._NAMED_KEYS` accepts `numpad0`-`numpad9`
   plus the five operators and Windows maps every one; the POSIX table mapped
   none, so the identical action died off-Windows with
@@ -703,9 +706,10 @@ Windows, macOS and Linux/X11: a call-scoped capture session, deferred BGRX
 conversion, area-filtered thumbnails, and bounded polling with persistent
 effect confirmation. Windows' native window capture remains a capability-
 gated first choice with the shared rectangle path as its fallback. The
-existing macOS Screen Recording gate, Wayland refusal and headless refusal are
-unchanged, so an unavailable capture backend never becomes permission to act
-blindly. The cross-platform tkinter engine rig remains the release oracle.
+macOS Screen Recording gate (a silent check before the engine acts; the grant
+itself is asked for at the first user-started capture, 2026-10-02 pass below),
+Wayland refusal and headless refusal are unchanged, so an unavailable capture
+backend never becomes permission to act blindly. The cross-platform tkinter engine rig remains the release oracle.
 
 **Fix pass 2026-08-16 (the app is findable as an app).** BUG-138 was a Windows
 defect, but its shape was shared: on all three systems the launcher file was
@@ -750,11 +754,165 @@ with it, so macOS pins privacy grants to `identifier + certificate` instead of
 the per-build CDHash: rebuilds and updates keep every grant. Without a GUI
 session, or if the dialog is declined, signing stays ad-hoc and the previous
 "reset on identity change" behaviour applies. The Music/Spotify Automation
-consent is a permission row of its own (`automation`), asked up front through
-`AEDeterminePermissionToAutomateTarget` with a hidden launch of a closed
-player, and **Set up everything** walks all rows and ends in a single restart.
-Windows and Linux: no TCC, no signing identity, the rows read "not required"
-as before.
+consent is a permission row of its own (`automation`), read live through
+`AEDeterminePermissionToAutomateTarget` for a running player. **Superseded
+2026-10-02:** the up-front ask with a hidden launch of a closed player, the
+consent file and the **Set up everything** wizard that this pass added are
+removed; Automation is asked when "Mute music while dictating" is switched on
+while a player runs (below). Windows and Linux: no TCC, no signing identity,
+the rows read "not required" as before.
+
+**Fix pass 2026-10-01 (macOS: the downloaded app, and what is worth asking
+for, BUG-222/223/224).** Four findings behind a report of a Mac that asked for
+far too many permissions.
+(1) The `.dmg` app carries its own bundle id (`ai.personaljarvis.desktop`) and
+the permission port accepted only the managed bundle's id, so the downloaded app
+read every grant as unusable: no microphone capture, no hotkeys, no request
+buttons. Both ids are now installed identities (`ACCEPTED_BUNDLE_IDS`), reset
+targets the running app's id (and refuses from any other process), and
+`jarvis permissions` finds either app.
+(2) The published v2.5.0 image — opened and read on Linux, not run on a Mac —
+had no `AVFoundation` module in its frozen archive (the port loads it by name, so
+the microphone permission reads "unavailable" for good) and `LSBackgroundOnly` in
+its `Info.plist` (PyInstaller sets it when the last executable is a console one).
+`jarvis.spec` and the macOS job now cover both, and
+`scripts/ci/check_frozen_macos_app.py` fails a build that regresses. A branch
+dispatch of the installer workflow built the image on the Apple Silicon and the
+Intel runner, the check passed, and the booted app reported a readable
+microphone permission under the `.dmg` bundle id (BUG-222); still not tried on a
+user's Mac.
+(3) The published `.dmg` was ad-hoc signed and not notarized (the v2.5.0 build
+log says so), and the workflow's certificate secrets were never imported by
+`build.sh`: it now imports them into a throw-away keychain, before the long
+freeze, so the Apple secrets (five required, the signing identity optional) are
+what is still missing to attempt a Developer-ID-signed, notarized image — a path
+that has never run; until then the first launch needs **System Settings >
+Privacy & Security > Open Anyway** (macOS 15) and an update can re-ask the
+permissions.
+(4) The snapshot then marked which rows a feature the user turned on needs
+(`wanted`, `features[...].active`), with a banner that skipped optional rows and
+could be put off with "Not now". **Superseded 2026-10-02:** those keys, the
+banner and the wizard are gone; a feature the user has not switched on simply
+never touches its permission (below). **Not verified:**
+all of it ran against faked native frameworks, a `DRY_RUN` rehearsal and a
+stand-in `security` command on Linux; no Mac, no Apple account and no real
+notarization were available. Windows and Linux are unchanged — no TCC, no
+signing identity.
+
+**Fix pass 2026-10-01 (macOS: one table of usage strings).** The two macOS
+bundles declared different, partly wrong `NS...UsageDescription` sets: the
+downloadable `.dmg` app had no screen-capture string, the managed app had no
+Desktop / Documents / Downloads string, and the `.dmg` plist carried
+`NSSystemAdministrationUsageDescription` (the wrong key for Accessibility and
+Input Monitoring, which have none), a speech-recognition string and a camera
+string plus the camera entitlement, for APIs Jarvis never calls. Both bundles now
+load one stdlib-only table, `jarvis/core/macos_privacy_strings.py`, by path (the
+spec runs before the package is importable): microphone, screen capture (kept for
+parity; whether macOS reads that key is unverified), Apple events, Desktop,
+Documents, Downloads, removable and network volumes, and local network (reworded
+to the LAN hosts the person configures). The three unused keys and the camera
+entitlement are gone, `entitlements.plist` carries no XML comments (the reasoning
+moved to `packaging/macos/README.md`), and `scripts/ci/check_frozen_macos_app.py`
+asserts the table on the built app and, on a signed build, the entitlements
+`codesign` reports. The managed bundle's format version is deliberately NOT bumped
+(a bump rebuilds every installed bundle, and an ad-hoc rebuild is a new identity that
+re-asks every permission): an installed app carries the new strings after its next
+rebuild for another reason. **Not verified:** no Mac, no
+hardened signed build and no real `codesign` output were available; the checks
+ran against the real `jarvis.spec` with stand-in PyInstaller names and recorded
+`codesign` output shapes on Linux. Windows and Linux are unchanged — no TCC, no
+usage strings.
+
+**Fix pass 2026-10-02 (macOS: permissions are asked for when a feature needs
+them, BUG-225, AP-35, ADR-0038).** Before this pass every protected macOS
+feature first asked `runtime_access_granted()` (stable identity AND a live
+grant) and refused when it said no, so macOS was never asked from a feature path
+and an app-wide banner, **Set up everything** and an onboarding step stood in
+front of the dialog. Now a feature asks at the user's gesture through
+`jarvis/platform/permission_service.py` and acts only on a live grant; denial
+degrades that one feature (one toast with one click to System Settings, see the UI
+reset below). What changed per surface (Windows and Linux are unchanged: NOT_REQUIRED, nothing
+asked, nothing gated):
+
+- **Microphone.** Dictation, push-to-talk, a voice session, the wake-word switch
+  and the microphone self-test ask. The wake loop stays parked, with no dialog and
+  no input stream, until a grant exists. A denial refuses voice and dictation with
+  the native bar's sentence and the one toast; typed chat is unaffected. A hold key
+  pressed while the dialog is up is not started retroactively. Five seconds of
+  exact zeros while the state claims granted produce one "denied or muted" notice.
+- **Screen and computer use.** The first user-started capture asks for Screen
+  Recording; a flat wallpaper-only frame is refused, never delivered. Accessibility
+  is asked when Jarvis first types, clicks or focuses a window; tools return
+  `[permission_needed:accessibility]`, and the mission ends `blocked_permission`
+  with a Retry, not a model retry loop. AX reads never prompt. The engine keeps one
+  silent Screen Recording gate and dispatches nothing while a macOS consent window
+  is frontmost (an agent never answers a system dialog; the owner-name list is
+  unverified).
+- **Dictation insert.** The first paste asks for Accessibility; until granted the
+  transcript stays on the clipboard (`clipboard_only`) and the bar says so.
+- **Global shortcuts.** The listen-only tap needs Input Monitoring only (it used
+  to need Accessibility too). It is not created at boot unless already granted,
+  never created to provoke a prompt, and re-arms in process when the grant
+  arrives. Saving a shortcut asks for Input Monitoring (below). The Esc-to-cancel pill
+  claims the key only while the tap runs.
+- **Ducking.** Switching "Mute music while dictating" on while a player runs is
+  the only asking path (120 s consent runner, no hidden launch of a player);
+  `mute_others` is non-interactive and skips a player that has not consented. A
+  player that refuses the Apple event with `-1743` although its read says granted
+  is skipped too and reported as one background `needs_settings` episode that
+  names it (`jarvis permissions status`, never a toast); it ends when
+  a later send to that player lands, not because a probe reads granted. Windows
+  and Linux: nothing happens (no TCC, empty call log); the effect on a real Mac is
+  unverified.
+- **Appshot both-Option shortcut.** Not an Input Monitoring row: whether the
+  `CGEventSourceKeyState` read needs a grant is unverified (the repo contradicts
+  itself), so nothing asks or says anything about it.
+- **Boot rule.** With every permission undecided, including the wake word on,
+  launch makes no OS dialog, no input-stream open, no event-tap creation and no
+  capture call; an upgrader with every grant shows zero toasts and zero requests.
+
+The onboarding `permissions` step, the banner, the wizard and the refresh event are
+removed. **Not verified:** all of it ran against a stateful fake of the macOS
+frameworks, vitest and Linux gates; the packaging and frozen-app probes ran on
+macOS runners (which pre-grant TCC to their tools and show no dialog). No Mac
+showed a dialog, a hold-key release, the second dialog of the embedded WebView or
+a grant taking effect in a running process; the rows are in
+`docs/macos-permissions.md` section 7. The Carbon hotkey backend and macOS-specific
+Call/Hangup defaults are follow-ups, not shipped.
+
+**Fix pass 2026-10-02, UI reset (macOS: macOS's own dialog plus one toast,
+ADR-0038 amendment).** The first just-in-time implementation also drew a floating
+card, inline notes, a Shortcuts status note and a Settings > Privacy page around
+macOS's dialog. All of it is deleted. macOS shows its own dialog at first use; the
+app adds ONE short toast with ONE action only when a user-started use failed
+because a permission is off (macOS never asks twice, so nothing else would say
+so). Per surface (Windows and Linux are unchanged: NOT_REQUIRED, nothing asked,
+nothing shown, and the permission UI code paths do nothing off macOS):
+
+- **The toast.** Source: the `PermissionNeeded` / `PermissionResolved` events. Shown
+  only in the owner window (the embedded desktop window on macOS; never a detached
+  window, a remote browser or another OS), for `origin="user"` and `phase="blocked"`,
+  once per episode and again on the person's next try; a background origin never toasts except one toast per session for
+  a denied microphone for the wake word. Actions: Open System Settings, Ask macOS now
+  (not asked yet, or a development run outside the installed app), Quit and reopen
+  (granted but unusable). en, de, es; no pane names. The native bar's dictation text
+  and the spoken computer-use readbacks are unchanged. Unverified: the look in the real
+  web view and that the pane opens on the current macOS.
+- **Global shortcuts.** A global shortcut is a background listener, so nothing at the
+  moment of use can carry a dialog; saving one is the gesture. `PUT
+  /api/settings/keybinds` asks for Input Monitoring after the save on macOS, only
+  while the tap is not listening, never for a clear, never blocking the save; the
+  onboarding Call-shortcut click asks once. Off macOS the permission layer is not
+  touched. `GET /api/settings/keybinds` no longer carries `shortcuts_status`.
+- **Reset.** `jarvis permissions reset <permission>` (macOS only, behind `--yes`) runs
+  `tccutil reset` for the installed app's own bundle id (either bundle id); on
+  Windows and Linux it prints one line and exits 1. The HTTP reset route is unchanged
+  and still refuses scripts.
+- **Dialog text.** The Apple Events usage string is target-neutral and the folder
+  strings are shorter. German and Spanish `InfoPlist.strings` and
+  `CFBundleLocalizations` ship in both bundles (the `.dmg` app writes the files before
+  signing, the managed bundle when it lays out the app); the bundle format version is
+  not bumped. Not verified on a Mac: that the localized strings appear in the dialogs.
 
 ## Audit verdict summary
 
@@ -768,10 +926,11 @@ implementations, not stubs.
 
 | Area | Verdict |
 |---|---|
-| Computer-Use / desktop actions (click, type, hotkey, scroll, drag, windows, apps, screenshots, UI trees) | Full per-OS backends (Win32/UIA, Quartz/AX, xdotool/AT-SPI); honest degradation on Wayland/headless/missing TCC grants |
-| On-demand Screen Context | One-shot capture is wired into the production brain on Windows, macOS, and Linux/X11; UIA/AX/AT-SPI text is source-filtered, the indicator precedes capture, and Wayland/headless/missing grants refuse honestly |
-| Appshots (front-window capture on a shortcut, button or request) | Capture, privacy and delivery are OS-neutral (Screen Context engine, `jarvis/appshot`). The both-Alt shortcut reads key state per OS: Windows `GetAsyncKeyState`, macOS `CGEventSourceKeyState` (Input Monitoring grant), Linux/X11 `XQueryKeymap`; Wayland/headless report it unavailable on the Appshots page. The flash is the PySide6 overlay where one can run. Verified live on Windows only; see `docs/appshots.md` |
-| Voice / audio (capture, playback, VAD, wake, STT, TTS, realtime) | Clean; headless disables voice honestly; WASAPI logic is inert-by-data off Windows |
+| Computer-Use / desktop actions (click, type, hotkey, scroll, drag, windows, apps, screenshots, UI trees) | Full per-OS backends (Win32/UIA, Quartz/AX, xdotool/AT-SPI); honest degradation on Wayland/headless/missing TCC grants. macOS: Accessibility is asked when Jarvis first types, clicks or focuses a window, Screen Recording at the first user-started capture; AX reads never prompt, and nothing is asked at launch |
+| On-demand Screen Context | One-shot capture is wired into the production brain on Windows, macOS, and Linux/X11; UIA/AX/AT-SPI text is source-filtered, the indicator precedes capture, and Wayland/headless/missing grants refuse honestly (on macOS a flat wallpaper-only frame is refused, never delivered) |
+| Appshots (front-window capture on a shortcut, button or request) | Capture, privacy and delivery are OS-neutral (Screen Context engine, `jarvis/appshot`). The both-Alt shortcut reads key state per OS: Windows `GetAsyncKeyState`, macOS `CGEventSourceKeyState` (whether this read needs the Input Monitoring grant is UNVERIFIED; the repo contradicts itself and no Mac measured it, so it is not an Input Monitoring row — see `docs/macos-permissions.md`), Linux/X11 `XQueryKeymap`; Wayland/headless report it unavailable on the Appshots page. The flash is the PySide6 overlay where one can run. Verified live on Windows only; see `docs/appshots.md` |
+| Voice / audio (capture, playback, VAD, wake, STT, TTS, realtime) | Clean; headless disables voice honestly; WASAPI logic is inert-by-data off Windows. macOS microphone: asked at the first dictation, push-to-talk, voice session, wake-word switch or mic self-test, never at launch (2026-10-02 pass) |
+| macOS privacy permissions (TCC) | One just-in-time service (`jarvis/platform/permission_service.py`, AP-35, ADR-0038): `check` is silent, `ensure` asks only from a user gesture and only from the installed app (or after a confirmation naming the grantee); Windows and Linux return NOT_REQUIRED before touching anything. The app draws nothing around macOS's dialog; after a denied user-started use it shows one toast with one action. Verified against fake frameworks and runner packaging probes only, not on a physical Mac (`docs/macos-permissions.md` section 7) |
 | Core (launcher, config, keyring, restart, autostart, tray, elevation, paths) | Clean; per-OS autostart (Registry / LaunchAgent / XDG `.desktop`), keyring falls back to a 0600 file on headless hosts |
 | Data / agents (wiki, contacts, telephony, sessions, missions, skills, self-mod, channels, MCP) | Clean; mission workers run on POSIX with a real process-group reaper |
 | Agent society hands (own shell, browser via browser-use, learned skills) | Shell: local subprocess in the agent's workspace on every OS (Git Bash/PowerShell/bash/sh pick as the chat's folder tools), no container by decision. Browser: browser-use lives in a managed venv under the data dir (its pins collide with the app's), installed on demand — `uv`/`venv`, a 3.11–3.13 interpreter preferred, Chromium downloaded once; headless runs need no display, so a headless Linux box runs agents' browsers; the headed login session needs a display (409 without one is the follow-up); attach mode needs a running Chrome with `--remote-debugging-port`. Learning is pure files + the brain, OS-neutral |
@@ -790,7 +949,7 @@ experiences today.
 |---|---|---|---|---|---|
 | P-29 | Low | Subscription voice | The dedicated ChatGPT-subscription voice login is an interactive browser flow, so a headless Linux host — and a graphical Linux desktop that ships no terminal emulator able to host the login for its full lifetime — can never CONNECT the profile there (an existing login still reports ready and calls work through the browser voice bridge) | `jarvis/codex_app_server.py::_login_required_state`, `_linux_login_terminal_missing`, `start_codex_subscription_login`, `jarvis/codex_auth.py::_LINUX_LOGIN_TERMINALS` | Both cases report the same `lifecycle_unavailable` truth on every surface (card, activation, voice-mode, Test), each with its own actionable reason — "run Jarvis on a desktop" or "install one of these terminals" — and never an enabled Connect button that can only produce an error toast |
 | P-24 | Medium | Dictation shortcut | The global dictation/call shortcut needs `pynput` on Linux/X11, and `pynput` hard-requires `evdev` — which is published **source-only** (verified on PyPI 2026-07-28: evdev 1.9.3 ships an sdist and no wheels) and compiles against the kernel headers. Putting it in `[full]` would break the one advertised install path on a stock `python:3.11-slim`, so it is the opt-in `[desktop-linux]` extra instead. Wayland is a separate, unfixable-by-install case: the compositor owns global shortcuts by design (the XDG `GlobalShortcuts` portal lets the *compositor* assign the keys, and no wlroots compositor implements it at all) | `pyproject.toml` (`desktop-linux`), `jarvis/platform/probes.py::has_hotkey`, `jarvis/trigger/backends/noop.py::explain_unavailable` | X11 without the extra: no global shortcut, and the log/UI now names the actual cause and the exact `pip install` that fixes it (it used to blame Wayland unconditionally). Wayland: no global shortcut at all — bind a compositor shortcut to `jarvis api dictation start`. On both, dictation still works from the Jarvis Bar, the Dictation view and the CLI, and voice still works via the wake word |
-| P-25 | Medium | Dictation insertion | Pasting the transcript into another application is blocked, silently, in three OS-specific situations: Windows UIPI when the foreground window is elevated and Jarvis is not (`SendInput` reports success and the input is discarded), macOS Secure Input while a password field is focused, and Wayland outright (no synthetic input). Detection exists for the first two; Wayland is refused up front. Two further silent failures are Windows-only in their FIX: a chord the target does not bind as "paste" (an xterm.js terminal in a Tauri/Electron app swallows Ctrl+V as `^V`), and a target that reads the clipboard late (an async WebView bridge on a busy machine) after the 120 ms restore timer had already put the previous clipboard back | `jarvis/dictation/insert.py::describe_target`, `_insert_windows_verified`, `jarvis/platform/clipboard_offer.py`, `jarvis/platform/input_isolation.py::windows_foreground_window_is_elevated`, `macos_secure_input_enabled` | All three blocks degrade to the SAME honest outcome instead of silence: the transcript is left on the clipboard, the result is reported as `clipboard_only`, and the bar plus the Dictation view say why and that Ctrl+V will paste it. **Windows** offers the text with delayed rendering and sends exactly one configured paste shortcut. Only a render requested by the captured target process confirms clipboard consumption; merely opening the clipboard or a watcher reading it is not confirmation. A missing acknowledgement never triggers another shortcut, character typing, or an executable-wide learned route. Unconfirmed delivery reports `paste_sent` and leaves the transcript on the clipboard for a late or manual paste, without a restore timer. Focus changes or held modifiers before key emission leave the text available as `clipboard_only`. Confirmed reads may restore the previous clipboard only while the offer still owns it. The explicit typing setting remains available. Regression tests cover delayed readers, watchers, focus changes, and offer shutdown; these checks do not establish compatibility with every third-party editor. **macOS / Linux X11**: plain chord + 120 ms timer restore, unchanged — no delayed-rendering equivalent exists there (NSPasteboard promises and X11 selections notify the owner too, but are a follow-up). macOS Secure Input detection is implemented but has not been verified on real hardware from this machine |
+| P-25 | Medium | Dictation insertion | Pasting the transcript into another application is blocked, silently, in three OS-specific situations: Windows UIPI when the foreground window is elevated and Jarvis is not (`SendInput` reports success and the input is discarded), macOS Secure Input while a password field is focused, and Wayland outright (no synthetic input). Detection exists for the first two; Wayland is refused up front. Two further silent failures are Windows-only in their FIX: a chord the target does not bind as "paste" (an xterm.js terminal in a Tauri/Electron app swallows Ctrl+V as `^V`), and a target that reads the clipboard late (an async WebView bridge on a busy machine) after the 120 ms restore timer had already put the previous clipboard back | `jarvis/dictation/insert.py::describe_target`, `_insert_windows_verified`, `jarvis/platform/clipboard_offer.py`, `jarvis/platform/input_isolation.py::windows_foreground_window_is_elevated`, `macos_secure_input_enabled` | All three blocks degrade to the SAME honest outcome instead of silence: the transcript is left on the clipboard, the result is reported as `clipboard_only`, and the bar plus the Dictation view say why and that Ctrl+V will paste it. **Windows** offers the text with delayed rendering and sends exactly one configured paste shortcut. Only a render requested by the captured target process confirms clipboard consumption; merely opening the clipboard or a watcher reading it is not confirmation. A missing acknowledgement never triggers another shortcut, character typing, or an executable-wide learned route. Unconfirmed delivery reports `paste_sent` and leaves the transcript on the clipboard for a late or manual paste, without a restore timer. Focus changes or held modifiers before key emission leave the text available as `clipboard_only`. Confirmed reads may restore the previous clipboard only while the offer still owns it. The explicit typing setting remains available. Regression tests cover delayed readers, watchers, focus changes, and offer shutdown; these checks do not establish compatibility with every third-party editor. **macOS / Linux X11**: plain chord + 120 ms timer restore, unchanged — on macOS the first paste asks for Accessibility (`dictation_insert`, at the gesture), without it the result is `clipboard_only` with the reason, and the first paste after an in-process grant reports `paste_sent` until delivery is observed (unverified on a Mac) — no delayed-rendering equivalent exists there (NSPasteboard promises and X11 selections notify the owner too, but are a follow-up). macOS Secure Input detection is implemented but has not been verified on real hardware from this machine |
 | P-04 | Medium | CU typing | Linux desktop Unicode text input needs the system `xdotool` binary (pip cannot install it); the pyautogui fallback used on Linux drops non-ASCII chars (umlauts, CJK, emoji) without it | `jarvis/cu/actuate/posix.py::type_text`, `jarvis/plugins/tool/type_text.py` | With `xdotool` (installer provisions it since 2026-07-15): fine. Without, the drop is now reported HONESTLY (2026-07-23): an all-non-ASCII text fails with an actionable "install xdotool" error, and a mixed text types its ASCII portion and warns that the rest was dropped — no more silent success |
 | P-05 | Low | Wiki | Wiki search hard-fails (RuntimeError with actionable apt/pysqlite3 remediation) on distros whose system SQLite lacks FTS5 | `jarvis/memory/wiki/fts_index.py:279` | `python:3.11-slim` and macOS ship FTS5 — only exotic/old distros affected; message is honest. Decision 2026-07-16: kept as honest hard error — a pysqlite3 shim would rewire seven wiki modules for an exotic audience |
 | P-07 | Low | Audio | No macOS/Linux host-API preference exists (the Windows-name-driven tables are intentionally inert off Windows — documented in-code since 2026-07-16), and headset-name heuristics are Windows-centric | `jarvis/audio/player.py`, `jarvis/audio/capture.py` | Device auto-pick falls back to OS default order — works, less clever than on Windows |
@@ -813,7 +972,7 @@ experiences today.
 | P-39 | Low | Coding-CLI panes | Cursor CLI panes ship single-login. Sign-in is `agent login` (browser) or `CURSOR_API_KEY`; the on-disk layout of that store has not been verified against a live install, so a seat switcher would report switches that did not happen. The installer is OS-split (`https://cursor.com/install?win32=true` on native Windows, `https://cursor.com/install` on macOS/Linux/WSL); the binary lands in `~/.local/bin` as `agent`, with `cursor-agent` as the unambiguous Windows alias | `jarvis/workspace/agents.py` (the `cursor` entry) | All OSes: one Cursor login, and the account switcher does not offer the CLI. Unblocked by verifying the login store and a dedicated override |
 | P-22 | Low | Coding-CLI panes | Kimi Code uses the bundled Git Bash as its shell environment on Windows, so without Git for Windows installed the binary answers `--version` correctly and the agent then cannot run a single shell command | Kimi vendor docs; `jarvis/workspace/agents.py` (the `kimi` entry) | Windows without Git for Windows: the pane opens, the CLI reports a healthy version, and shell commands fail inside it. macOS/Linux unaffected. `KIMI_SHELL_PATH` points at a non-standard `bash.exe`. An install check that only runs `--version` cannot see this |
 | P-23 | Info | Coding-CLI panes | Kimi Code's alternate screen cannot be disabled (an open upstream request notes it is the outlier versus Claude Code, Codex and the Gemini CLI), so it may conflict with the pane's own scrollback the way a Claude Code pane once did | Upstream issue; `jarvis/agentic_ide/screen.py` | All OSes equally — not an OS gap, recorded here because it is the same class of pane defect and is expected to need the same kind of fix |
-| P-27 | Low | Mouse-button shortcuts | A shortcut may now be a MOUSE BUTTON (middle, and the two side buttons — `mouse_middle` / `mouse_x1` / `mouse_x2`). All three OSes are implemented in the same change and share one token vocabulary, but the delivery is not uniform: Windows needs nothing extra (the backend polls `GetAsyncKeyState`, which reports mouse buttons); macOS needs pyobjc `Quartz` plus the Accessibility + Input Monitoring grants the hotkey tap already requires; Linux/X11 needs `pynput`, which is the opt-in `[desktop-linux]` extra for the reason recorded in P-24 (`evdev` is source-only). Wayland cannot do it at all — no global button grab exists, the same design reason keyboard shortcuts degrade there. The left and right buttons are deliberately not bindable on any OS: their meaning follows the system "swap mouse buttons" setting, so a shortcut recorded as "left" would fire on the physical right button for a left-handed user | `jarvis/trigger/hotkey.py::mouse_hotkeys_available`, `backends/global_hotkeys.py::_MOUSE_TOKEN_TO_VK`, `backends/pynput.py::_start_mouse_listener`, `backends/quartz.py::_MOUSE_BUTTON_TO_TOKEN` | Every host answers the capability question BEFORE offering the control: `mouse_hotkeys_available()` returns an English sentence naming what is missing and what still works, and a backend that cannot start its mouse hook logs the same thing and keeps the KEYBOARD shortcuts alive rather than failing the whole binding. macOS/Linux desktop with the extras: full parity with Windows. Wayland and headless: key combinations only |
+| P-27 | Low | Mouse-button shortcuts | A shortcut may now be a MOUSE BUTTON (middle, and the two side buttons — `mouse_middle` / `mouse_x1` / `mouse_x2`). All three OSes are implemented in the same change and share one token vocabulary, but the delivery is not uniform: Windows needs nothing extra (the backend polls `GetAsyncKeyState`, which reports mouse buttons); macOS needs pyobjc `Quartz` plus the Input Monitoring grant, the one requirement of the listen-only tap (it was Accessibility and Input Monitoring before 2026-10-02), asked when the user enables global shortcuts and never at launch; Linux/X11 needs `pynput`, which is the opt-in `[desktop-linux]` extra for the reason recorded in P-24 (`evdev` is source-only). Wayland cannot do it at all — no global button grab exists, the same design reason keyboard shortcuts degrade there. The left and right buttons are deliberately not bindable on any OS: their meaning follows the system "swap mouse buttons" setting, so a shortcut recorded as "left" would fire on the physical right button for a left-handed user | `jarvis/trigger/hotkey.py::mouse_hotkeys_available`, `backends/global_hotkeys.py::_MOUSE_TOKEN_TO_VK`, `backends/pynput.py::_start_mouse_listener`, `backends/quartz.py::_MOUSE_BUTTON_TO_TOKEN` | Every host answers the capability question BEFORE offering the control: `mouse_hotkeys_available()` returns an English sentence naming what is missing and what still works, and a backend that cannot start its mouse hook logs the same thing and keeps the KEYBOARD shortcuts alive rather than failing the whole binding. macOS/Linux desktop with the extras: parity with Windows once the macOS grant exists (not exercised on a Mac). Wayland and headless: key combinations only |
 | P-43 | Low | Keybind recorder modifiers | The settings recorder used to trust only DOM keydown/keyup. On macOS WKWebView a lone Option/Command/Control can arrive as `flagsChanged` (not a DOM event) or as a keydown whose keyup never comes, so the recorder previewed the key and then hung (GitHub #98). The recorder now (a) syncs the modifier flag word from every keyboard and mouse event, and (b) while capturing, polls `GET /api/settings/keybinds/held`, which is a capability probe (`modifier_snapshot`): Windows `GetAsyncKeyState` for Shift/Ctrl/Alt/Win; macOS `CGEventSourceFlagsState` (no event tap and no Accessibility grant); Linux/X11 falls back to the running pynput held-set when the listener is up; Wayland/headless/missing extras answer `available: false` and the on-screen picker still works. A lagging first poll that says "nothing held" does not commit a chord the user just pressed — the snapshot may only DROP a modifier it has already seen down | `jarvis/trigger/hotkey.py::modifier_snapshot`, `jarvis/ui/web/settings_routes.py::get_keybind_held`, `jarvis/ui/web/frontend/src/views/settings/KeybindRow.tsx` | Windows: live modifier snapshot, no extra packages. macOS with pyobjc Quartz: live snapshot even when the hotkey tap is not running. macOS without Quartz / Wayland / headless: honest `available: false`, click-to-assign and letter+modifier chords still record. Linux/X11 with pynput running: snapshot from the listener held-set. Fn is still not a portable key (the OS often swallows it) and is not offered |
 
 | P-28 | Low | Local realtime | The one-click managed install AND the 2026-08-08 supervisor (prewarm, pidfile ownership, start/stop routes, Ollama keep-alive warm ping) are built cross-platform — pathlib, `os.name` venv layout with a POSIX `lib/python*/site-packages` glob, per-hardware torch flavor, `start_new_session` + `killpg` SIGTERM→SIGKILL escalation on POSIX, `HF_HUB_DISABLE_SYMLINKS` Windows-only — but have only been RUN on the Windows dev box. The preflight narrows the SHARED accelerator probe to the two sources this stack can drive -- NVIDIA VRAM (nvidia-smi) and Apple-Silicon unified memory (total RAM), which the derived launch command maps to `cuda`/`mps`. The shared probe itself also reads AMD and Intel cards now (BUG-206), for the local-model fit verdicts; the preflight deliberately drops those to `(0.0, "none")` via `_DRIVEABLE_SOURCES`, because clearing the memory floor and then launching with a torch device the box does not have is worse than the refusal. An AMD/Intel/no-nvidia-smi host therefore still gets the honest "no supported accelerator" blocker (unit-tested) | `jarvis/realtime/local_server/{preflight,install,supervisor}.py` | Any host under 12 GB usable accelerator memory (including every GPU-less/headless box) gets the honest blocker with a cloud pointer instead of an install — verified by unit tests. macOS Apple-Silicon: preflight and install should work but the smoke boot (`--qwen3_tts_device mps`) is UNVERIFIED on real hardware; a failure is honest (install ends in an error state naming the smoke log, readiness stays fail-closed). Linux+NVIDIA: expected to work via the same cu130 wheel index, unverified; the supervisor's POSIX kill/spawn branches are unit-tested but not live-run. The bring-your-own-server URL socket keeps full parity everywhere |
@@ -843,7 +1002,7 @@ verifies against before it replaces anything.
 | OS | Artifact | Built by | Native window | Signing | Shell registration | Where it has actually run |
 |---|---|---|---|---|---|---|
 | Windows 10/11 x64 | `PersonalJarvis-Setup-x64.exe` (Inno Setup, per-user, no admin prompt, fixed AppId for in-place upgrades) | `packaging/windows/build.ps1` | Yes — WebView2, the shipping desktop window | Owned by the Windows packaging work; see `packaging/windows/` | The installer creates and removes the Start-Menu / Desktop entries | Owned by the Windows packaging work — not verified from here |
-| macOS 12+, arm64 and x64 | `PersonalJarvis-macOS-arm64.dmg`, `PersonalJarvis-macOS-x64.dmg` (`Personal Jarvis.app` + an `/Applications` symlink) | `packaging/macos/build.sh` | Yes — WKWebView through pywebview | Developer ID + Hardened Runtime + notarization when `APPLE_SIGNING_IDENTITY`/`APPLE_ID`/`APPLE_TEAM_ID`/`APPLE_APP_SPECIFIC_PASSWORD` are set; ad-hoc signing and a printed "right-click > Open" notice otherwise | The user drags the app to `/Applications`; the app registers nothing | **No real run yet.** `bash -n`, ShellCheck 0.11.0 `-S style` (zero findings) and a full `DRY_RUN=1` rehearsal of both the signed and unsigned paths. A macOS runner or a physical Mac is the outstanding gate |
+| macOS 12+, arm64 and x64 | `PersonalJarvis-macOS-arm64.dmg`, `PersonalJarvis-macOS-x64.dmg` (`Personal Jarvis.app` + an `/Applications` symlink) | `packaging/macos/build.sh` | Yes — WKWebView through pywebview | Developer ID + Hardened Runtime + notarization when `APPLE_SIGNING_IDENTITY`/`APPLE_ID`/`APPLE_TEAM_ID`/`APPLE_APP_SPECIFIC_PASSWORD` are set; ad-hoc signing and a printed notice otherwise (as of v2.5.0 every published image is the ad-hoc one; the certificate itself comes from the `APPLE_CERTIFICATE_P12_BASE64` / `APPLE_CERTIFICATE_PASSWORD` secrets, which `build.sh` imports into a temporary keychain) | The user drags the app to `/Applications`; the app registers nothing | The ad-hoc path runs for real on the macOS runners (every published image comes from it). The signed/notarized path has **never run**: only `bash -n`, ShellCheck 0.11.0 `-S style` (zero findings), a `DRY_RUN=1` rehearsal of both paths and the certificate import against a stand-in `security` command. A Mac with the Apple secrets is the outstanding gate |
 | Linux x86_64 | `PersonalJarvis-Linux-x86_64.AppImage`, `personal-jarvis_<version>_amd64.deb` | `packaging/linux/build.sh` | **No** — serves its interface over loopback HTTP and opens the default browser (P-38) | None. AppImage has no signing story in this project; the release's SHA-256 sums are the integrity check | `.deb` installs a `.desktop` entry, the hicolor icon, `/usr/bin/jarvis` and `/usr/bin/personal-jarvis`. The AppImage carries its `.desktop` inside itself for AppImageLauncher/`appimaged` | Full build proven in a `python:3.12-bookworm` container on 2026-08-25 (~2 min, 156 MB AppImage + 172 MB `.deb`): `appimagetool` digest check, `desktop-file-validate`, both executables out of one freeze, `--version` through the packaged AppImage and through `AppRun`, `AppRun serve` answering `/api/health` in 1-3 s, and the browser hand-off calling the opener with the right URL. Not run on a real desktop distribution or with FUSE |
 
 **Frozen builds register nothing themselves.** For a native install the
@@ -904,7 +1063,7 @@ build: the first release with this code needs one live update per OS.
 |---|---|---|---|---|---|
 | P-38 | Medium | Native installer / desktop window | The Linux AppImage and `.deb` have **no native desktop window**. Windows (WebView2) and macOS (WKWebView) get one from the frozen bundle; Linux does not, because pywebview's GTK backend needs PyGObject and a frozen interpreter can never import the distribution's `python3-gi` (it is compiled against the system CPython), while bundling GTK 3 + WebKit2GTK portably means shipping its helper processes, GIO modules, pixbuf loaders, GSettings schemas and typelibs. The Qt route is also closed today: the `[desktop]` extra installs `pyside6-essentials`, which has no QtWebEngine, and `jarvis.spec` excludes PySide6 outright. Adding `pyside6-addons` and dropping that exclusion is the realistic fix, at roughly +400 MB | `packaging/linux/README.md` ("The window question"), `jarvis/ui/desktop_app.py::_degrade_to_browser_ui`, `jarvis.spec` `excludes`, `pyproject.toml` `[desktop]` | Linux: honest degradation, verified against a real build — the app catches pywebview's `WebViewException`, keeps the backend serving, and `AppRun` waits for `/api/health` and opens the interface with `xdg-open`. Everything except the window frame works, including the whole CLI. A source/pipx install on a Linux desktop with `python3-gi` + `gir1.2-webkit2-4.1` still gets the native window; only the frozen build does not. Sub-gap: the app's fallback message advises installing those system packages, which does not help a frozen build |
 
-| P-39 | Medium | Dictation hold-key watchdog | A HOLD-started dictation is owed a release edge, and that edge can be lost between the OS hotkey listener and the pipeline (a checker restart mid-hold, a re-arm, a handler that raised). The recording then ran to its 30-minute cap with the bar's X dead and every key press refused (BUG-191). The repair asks the keyboard instead of trusting edges: `HotkeyBackend.chord_is_down(combo)` is a three-way capability — `True`/`False` when the backend can see the keyboard, `None` when it cannot — and the recording finishes itself once the chord has read "up" for one second. The three OS backends can see different amounts: Windows reads `GetAsyncKeyState` (ground truth, the poller's own source); macOS answers from the event tap's held-set, whose modifier half is re-synced from every event's flags word; Linux/X11 answers from pynput's held-set, which is edge-fed like the matcher itself | `jarvis/trigger/backends/__init__.py::HotkeyBackend.chord_is_down`, `backends/global_hotkeys.py::chord_is_down`, `backends/quartz.py::chord_is_down`, `backends/pynput.py::chord_is_down`, `backends/noop.py`, `jarvis/speech/pipeline.py::_watch_dictation_hold_key`, `tests/contract/test_hotkey_backend_protocol.py` | Windows: the watchdog sees the physical key and ends a lost-release recording within ~1 s. macOS / Linux-X11: the watchdog runs on the listener's own bookkeeping — it catches a release the pipeline missed, not one the listener itself missed. Wayland / no listener: the backend answers `None`, the watchdog stands down, and the other stop gestures carry alone — the key (a press during a running dictation is its stop), the bar's X, the Dictation view, `jarvis api dictation stop`. On no host does `None` ever read as "up": a phantom release is the one failure this must never produce |
+| P-39 | Medium | Dictation hold-key watchdog | A HOLD-started dictation is owed a release edge, and that edge can be lost between the OS hotkey listener and the pipeline (a checker restart mid-hold, a re-arm, a handler that raised). The recording then ran to its 30-minute cap with the bar's X dead and every key press refused (BUG-191). The repair asks the keyboard instead of trusting edges: `HotkeyBackend.chord_is_down(combo)` is a three-way capability — `True`/`False` when the backend can see the keyboard, `None` when it cannot — and the recording finishes itself once the chord has read "up" for one second. The three OS backends can see different amounts: Windows reads `GetAsyncKeyState` (ground truth, the poller's own source); macOS answers from the event tap's held-set, whose modifier half is re-synced from every event's flags word, and answers `None` while the tap is not running (a normal fresh-Mac state until Input Monitoring is granted), so the watchdog stands down instead of trusting a stale view; Linux/X11 answers from pynput's held-set, which is edge-fed like the matcher itself | `jarvis/trigger/backends/__init__.py::HotkeyBackend.chord_is_down`, `backends/global_hotkeys.py::chord_is_down`, `backends/quartz.py::chord_is_down`, `backends/pynput.py::chord_is_down`, `backends/noop.py`, `jarvis/speech/pipeline.py::_watch_dictation_hold_key`, `tests/contract/test_hotkey_backend_protocol.py` | Windows: the watchdog sees the physical key and ends a lost-release recording within ~1 s. macOS / Linux-X11: the watchdog runs on the listener's own bookkeeping — it catches a release the pipeline missed, not one the listener itself missed. Wayland / no listener: the backend answers `None`, the watchdog stands down, and the other stop gestures carry alone — the key (a press during a running dictation is its stop), the bar's X, the Dictation view, `jarvis api dictation stop`. On no host does `None` ever read as "up": a phantom release is the one failure this must never produce |
 | P-40 | Low | JarvisBar | The Prompt Mode switch (`[dictation].prompt_mode`, every dictation comes out as a written prompt) is a control on the native bar since 2026-08-28: a sparkle in the resting pill's left slot, drawn ONLY while the SETTING is on (visible without a hover — the pill opens as it does for mute). A click PAUSES the rewriting rather than changing the setting: the mark goes red with a slash through it, jarvis.toml is untouched, and the same click brings it back. The pause is runtime-only and clears on restart or on any write of the setting. With the setting off nothing is drawn there and the spot starts a session as before. The glyph mirrors the mic's inset rather than the close-X's, which is left untouched on a live bar. The switch has ONE writer (`jarvis/dictation/prompt_mode_switch.py`) and one broadcast (`DictationPromptModeChanged`) that the bar, the front-page pill and the settings card all redraw from | `jarvis/ui/jarvisbar/renderer.py::_draw_sparkle`, `interaction.py::resolve_click` (`prompt_mode_toggle`), `overlay.py` / `qt_overlay.py` / `subprocess_overlay.py` (`set_prompt_mode`, `set_on_prompt_mode_toggle`), `host.py` (op `set_prompt_mode`, event `prompt_mode_toggle`), `ui/orb/bus_bridge.py` | Windows/Linux (Tk bar, in-process) and macOS (Qt bar in the companion host, over the existing IPC protocol): the same sparkle, the same click, the same event. Headless / `orb_style = none`: the NullOverlay accepts both methods as no-ops; the pill on the front page and the settings card remain the switch. Guards: `tests/unit/ui/jarvisbar/test_prompt_mode_button.py`, `test_prompt_mode_bridge.py`, `test_surface_contract.py`, `test_host_protocol.py` |
 | P-41 | Medium | Dictation final pass | The dictation lane reads its final pass on the machine, in front of any configured cloud provider, through the same out-of-process worker the live preview uses (`jarvis.dictation.preview_worker`) with a stronger checkpoint (`[dictation].local_model`, default `large-v3-turbo`, `int8_float16`, beam 5). 2026-09-02 forensics: 220 of 220 dictations had run on a cloud recognizer the settings did not name, because the VOICE lane had been moved there to keep CUDA out of the desktop process, and the dictation lane inherited the move — round-trips as lag, near-empty answers on 25 s windows as "truncated window" repairs. The provider declines itself with a CROSSABLE failure (HTTP-503-shaped, `LocalEngineUnavailable`) so the configured provider is one step behind on every press and never a restart away: too little free accelerator memory (`[dictation].local_min_free_gb`, default 1.5; an UNKNOWN reading never blocks), a worker that only comes up on the CPU, a missing local runtime, a worker that died. A call abandoned at its ceiling leaves its answer in the pipe, so the next call kills that worker instead of reading it (AP-24) | `jarvis/dictation/local_final.py::LocalFinalSTT`, `jarvis/speech/pipeline.py::_dictation_local_final`, `_dictation_stt`, `jarvis/dictation/local_preview.py::_spawn_worker_model` (`compute`), `preview_worker.py` (`beam_size`, `segments`), `jarvis/hardware/detection.py::free_accelerator_gb` | Windows/Linux with an NVIDIA card and the local runtime: the final pass runs locally when ≥ 1.5 GB is free, else the cloud chain. macOS: no NVIDIA reading → the memory gate passes as unknown, and the worker's own device ladder decides; a CPU-only worker is declined for the final pass (a beam decode of a 25 s window on a CPU is slower than the cloud it would replace), so Apple Silicon stays on the configured provider until a Metal-backed runtime exists. Headless `python:3.11-slim` (no `faster-whisper`): the provider is never built and the chain is exactly what it was. Switch: `[dictation].local_engine = false`. Guards: `tests/unit/dictation/test_local_final.py`, `test_preview_worker.py` |
 | P-41 | Low | CLI install / connect terminal | Pressing **Install** or **Connect** in the CLI section opens a REAL terminal window and runs the command there, because an interactive OAuth login belongs in a shell the user can see and type into. That spawn was Windows-only until 2026-08-28 (`wt` -> `pwsh` -> `powershell`), so on macOS and Linux the two buttons reported "No external terminal available" and no CLI could be installed from the app at all. macOS now goes through `osascript` to Terminal.app, Linux through the first of seven emulators that exists (Debian's `x-terminal-emulator` alternative first, so the user's own default wins), and the window is held open afterwards the way `-NoExit` holds it on Windows. One install click now carries all the way to signed in: the terminal runs the install, refreshes PATH in that same shell, and continues into the CLI's login command, stopping at the first step that fails. The chain operator differs per OS on purpose — Windows PowerShell 5.1 is a possible fallback shell and `&&` is a parser error there, so the Windows spelling nests `if ($?)` instead | `jarvis/clis/external_terminal.py` (`_spawn_windows`, `_spawn_macos`, `_spawn_linux`, `chain_commands`, `path_refresh_command`), `jarvis/ui/web/cli_routes.py::spawn_external`, `tests/unit/clis/test_install_path.py` | Windows: verified live (wt path, composed install+login command). macOS/Linux: same code path, the branch itself unverified from this machine. A box with no screen has no window to open, so there the endpoint falls back to the in-app streaming install job and the UI says so instead of claiming a terminal appeared — a headless server can still install a CLI, it just cannot run an interactive login |

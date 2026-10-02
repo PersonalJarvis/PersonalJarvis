@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import {
   X,
   Info,
@@ -40,13 +41,16 @@ export function ToastLayer() {
   const toasts = useEventStore((s) => s.toasts);
   const dismiss = useEventStore((s) => s.dismissToast);
 
-  return (
-    // z-[60]: the onboarding gate overlays the whole app at z-50 and renders
-    // later in the DOM; toasts (e.g. failed permission requests during
-    // first-run setup) must stay visible above it.
+  return createPortal(
+    // z-[115]: above the first-run setup spotlight (z-110), whose scrim takes
+    // every click outside its hole: a toast with a button ("Open System
+    // Settings" after the wake-word switch asked for the microphone) must stay
+    // clickable there. Below the caption bar (z-120), which is every window's
+    // title bar. A portal to <body> because the spotlight is one too: inside the
+    // shell root (an isolated stacking context) no z-index could outrank it.
     // top-12: below the caption strip — at the top edge a toast covered the
     // restart and window buttons whose outcome it reports.
-    <div className="pointer-events-none fixed right-4 top-12 z-[60] flex w-[320px] flex-col gap-2">
+    <div className="pointer-events-none fixed right-4 top-12 z-[115] flex w-[320px] flex-col gap-2">
       {toasts.map((toast) => {
         const Icon = ICON_FOR_KIND[toast.kind];
         // A saved-file toast in the desktop shell is a native drag handle: press
@@ -108,6 +112,7 @@ export function ToastLayer() {
               {toast.filePath && (
                 <FileToastActions path={toast.filePath} />
               )}
+              {toast.action && <ToastActionButton toast={toast} onDone={() => dismiss(toast.id)} />}
             </div>
             <button
               type="button"
@@ -122,6 +127,32 @@ export function ToastLayer() {
           </div>
         );
       })}
+    </div>,
+    document.body,
+  );
+}
+
+/**
+ * The one button a toast may carry (`pushToast(..., { action })`), in the same
+ * look as the saved-file buttons below. Runs the action, then closes the toast
+ * unless the action asked to stay (a retry).
+ */
+function ToastActionButton({ toast, onDone }: { toast: Toast; onDone: () => void }) {
+  const action = toast.action;
+  if (!action) return null;
+  return (
+    <div className="mt-2 flex flex-wrap gap-1.5" onMouseDown={(e) => e.stopPropagation()}>
+      <button
+        type="button"
+        data-testid="toast-action"
+        onClick={() => {
+          void action.onAction();
+          if (!action.keepOpen) onDone();
+        }}
+        className="inline-flex items-center rounded-md border border-primary/40 bg-primary/10 px-2 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        {action.label}
+      </button>
     </div>
   );
 }

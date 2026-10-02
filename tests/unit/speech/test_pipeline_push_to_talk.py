@@ -27,8 +27,11 @@ from types import SimpleNamespace
 import jarvis.speech.pipeline as pipeline_mod
 from jarvis.core.events import TranscriptionUpdate
 from jarvis.core.protocols import AudioChunk
+from jarvis.platform.permission_service import PermissionOutcome
+from jarvis.platform.permissions import PermissionId
 from jarvis.sessions.constants import HANGUP_HOTKEY, HANGUP_TURN_COMPLETE
 from jarvis.speech.pipeline import PipelineState, SpeechPipeline, TurnTakingState
+from tests.fakes.fake_permission_service import FakePermissionService
 
 
 class FakeTTS:
@@ -146,11 +149,37 @@ def test_ptt_key_repeat_within_grace_never_heals():
     assert not pipe._ptt_release_event.is_set()
 
 
-def test_ptt_press_blocked_when_activation_gate_closed():
+def test_ptt_press_blocked_when_the_state_gate_is_closed():
     pipe = _make_pipeline()
-    pipe._activation_allowed = lambda: False  # type: ignore[method-assign]
+    pipe._muted = True
     pipe._on_ptt_press()
     assert pipe._ptt_mode is False
+    assert not pipe._call_event.is_set()
+
+
+def test_a_refused_microphone_still_reaches_ensure_and_never_arms_a_recording():
+    """A denied/restricted/unavailable microphone is refused BY ``ensure`` (which
+    publishes the PermissionNeeded card), never by the silent user predicate alone:
+    the press must reach the permission layer so the refusal is not silent."""
+    pipe = _make_pipeline()
+    pipe._user_activation_gate = lambda: False
+    gate = FakePermissionService()
+    gate.script(PermissionId.MICROPHONE, PermissionOutcome.DENIED)
+    pipe._permission_gate = gate
+    pipe._on_ptt_press()
+    assert pipe._ptt_mode is False
+    assert not pipe._call_event.is_set()
+    (call,) = gate.ensure_calls(PermissionId.MICROPHONE)
+    assert (call.feature, call.interactive, call.wait_s) == ("voice", True, 0.0)
+
+
+def test_ptt_press_needs_no_background_grant():
+    """The wake-word gate (a live grant) must not close a deliberate press: the
+    press is what asks the OS, so an undecided microphone still gets through."""
+    pipe = _make_pipeline()
+    pipe._activation_gate = lambda: False
+    pipe._on_ptt_press()
+    assert pipe._ptt_mode is True
 
 
 def test_ptt_release_is_noop_when_not_armed():
@@ -349,9 +378,9 @@ async def test_call_hotkey_bypasses_post_hangup_wake_lock():
     assert pipe._state == PipelineState.IDLE
 
 
-async def test_closed_activation_gate_discards_call_and_clears_ptt_mode():
+async def test_closed_user_capture_gate_discards_call_and_clears_ptt_mode():
     pipe = _make_pipeline()
-    pipe._activation_allowed = lambda: False  # type: ignore[method-assign]
+    pipe._user_activation_gate = lambda: False
     pipe._ptt_mode = True
     pipe._call_event.set()
 
@@ -359,6 +388,26 @@ async def test_closed_activation_gate_discards_call_and_clears_ptt_mode():
 
     assert pipe._ptt_mode is False
     assert pipe._state == PipelineState.IDLE
+
+
+async def test_closed_background_gate_discards_a_wake_call_but_not_an_explicit_one():
+    """The wake word needs a live grant; a deliberate press needs only a not-refused mic."""
+    wake = _make_pipeline()
+    del wake._activation_allowed  # the real predicate, not the harness stub
+    wake._activation_gate = lambda: False
+    wake._call_event.set()
+    ran = _accepting_session_stub(wake)
+    await _pump_state_loop_once(wake)
+    assert ran["session"] is False
+
+    explicit = _make_pipeline()
+    del explicit._activation_allowed
+    explicit._activation_gate = lambda: False
+    explicit._explicit_call_pending = True
+    explicit._call_event.set()
+    ran = _accepting_session_stub(explicit)
+    await _pump_state_loop_once(explicit)
+    assert ran["session"] is True
 
 
 # ----------------------------------------------------------------------
