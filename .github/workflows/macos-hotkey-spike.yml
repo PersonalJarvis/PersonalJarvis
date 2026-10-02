@@ -15,6 +15,9 @@
 name: macOS hotkey spike
 
 on:
+  push:
+    branches: [claude/macos-java-permissions-nm4yxj]
+    paths: [.github/workflows/macos-hotkey-spike.yml]
   workflow_dispatch:
     inputs:
       include_macos_26:
