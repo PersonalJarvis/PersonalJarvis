@@ -1,7 +1,7 @@
 """Take an appshot and put it where the conversation will see it.
 
-One entry point for every trigger — the global shortcut, the Appshots page's
-test button, the live model's ``take_appshot`` tool — plus
+One entry point for every trigger — the global shortcuts, the Appshots page's
+test buttons, the live model's ``take_appshot`` tool — plus
 :func:`record_turn_capture` for looks a conversation turn took itself. The
 capture always runs through the shared Screen Context service, so the privacy
 denylist, redaction, the pre-shutter indicator and the no-disk retention rule
@@ -22,6 +22,8 @@ from jarvis.appshot.store import Appshot, get_store
 log = logging.getLogger(__name__)
 
 Trigger = Literal["hotkey", "voice", "tool", "button"]
+#: ``window``: the front window. ``region``: an area the user drags out first.
+Scope = Literal["window", "region"]
 
 #: Trusted framing in front of the untrusted screen evidence block.
 _APPSHOT_PREAMBLE = (
@@ -54,9 +56,12 @@ def shot_from_context(context: Any, *, trigger: str) -> Appshot:
     from jarvis.screen_context.turn import model_note  # noqa: PLC0415
 
     target = context.target
-    label = "active window" if str(target.kind) == "window" else (
-        f"monitor {target.monitor_name}" if target.monitor_name else "selected monitor"
-    )
+    if str(target.kind) == "window":
+        label = "active window"
+    elif str(target.kind) == "region":
+        label = "selected area"
+    else:
+        label = f"monitor {target.monitor_name}" if target.monitor_name else "selected monitor"
     return Appshot(
         id=uuid.uuid4().hex,
         image=context.image,
@@ -78,9 +83,13 @@ async def take_appshot(
     bus: Any | None = None,
     deliver: bool = True,
     trace_id: uuid.UUID | None = None,
+    scope: Scope = "window",
 ) -> AppshotResult:
-    """Capture the front window once and deliver it per ``[appshot].target``.
+    """Capture once and deliver it per ``[appshot].target``.
 
+    ``scope="window"`` takes the front window; ``scope="region"`` first lets
+    the user drag out an area (:mod:`jarvis.appshot.region`) and takes exactly
+    that — a cancelled selection is a refusal with ``reason_code="cancelled"``.
     ``deliver=False`` is for a caller that consumes the picture itself (the
     live model's tool). Never raises; a refusal carries the user-facing reason.
     """
@@ -96,10 +105,20 @@ async def take_appshot(
                 message="Appshots are switched off. Turn them on under Settings > Appshots.",
             )
         service = get_service(bus=bus)
-        outcome = await service.capture(
-            verdict=IntentVerdict(intent=VisualIntent.WINDOW, evidence=("appshot",)),
-            trace_id=trace_id or uuid.uuid4(),
-        )
+        if scope == "region":
+            picked = await _pick_area(service)
+            if isinstance(picked, AppshotResult):
+                return picked
+            outcome = await service.capture(
+                verdict=IntentVerdict(intent=VisualIntent.SCREEN, evidence=("appshot-region",)),
+                trace_id=trace_id or uuid.uuid4(),
+                region=picked,
+            )
+        else:
+            outcome = await service.capture(
+                verdict=IntentVerdict(intent=VisualIntent.WINDOW, evidence=("appshot",)),
+                trace_id=trace_id or uuid.uuid4(),
+            )
         if outcome.status != "captured" or outcome.context is None:
             return AppshotResult(
                 status="refused",
@@ -137,6 +156,33 @@ async def take_appshot(
         delivered_to,
     )
     return AppshotResult(status="captured", shot=replace(shot, delivered_to=delivered_to))
+
+
+async def _pick_area(service: Any) -> tuple[int, int, int, int] | AppshotResult:
+    """Run the area picker; the chosen rectangle, or the refusal to return."""
+    from jarvis.appshot.region import (  # noqa: PLC0415
+        RegionUnavailable,
+        pick_region,
+        selection_to_bbox,
+    )
+
+    try:
+        selection = await pick_region()
+    except RegionUnavailable as exc:
+        return AppshotResult(status="refused", reason_code="region_unavailable", message=str(exc))
+    if selection is None:
+        return AppshotResult(
+            status="refused", reason_code="cancelled", message="No area was selected."
+        )
+    monitors = await asyncio.to_thread(service.displays.monitors)
+    bbox = selection_to_bbox(selection, monitors)
+    if bbox is None:
+        return AppshotResult(
+            status="refused",
+            reason_code="no_display",
+            message="No screen could be found for the selected area.",
+        )
+    return bbox
 
 
 async def record_turn_capture(context: Any, *, bus: Any | None, trigger: Trigger) -> None:
@@ -191,6 +237,7 @@ def take_pending_for_turn() -> Appshot | None:
 
 __all__ = [
     "AppshotResult",
+    "Scope",
     "record_turn_capture",
     "shot_from_context",
     "take_appshot",

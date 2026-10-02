@@ -2695,6 +2695,12 @@ class AppshotConfig(BaseModel):
     #: the shared hotkey syntax; an empty string switches the shortcut off.
     hotkey: str = "alt+alt"
 
+    #: Global shortcut for an AREA appshot: the screens dim, the user drags a
+    #: rectangle, and exactly that part is captured (``jarvis.appshot.region``).
+    #: Same syntax as ``hotkey``; an empty string switches it off. Alt+Win+A
+    #: (A for area) collides with no OS screenshot key and no Jarvis default.
+    region_hotkey: str = "alt+win+a"
+
     #: Where a shortcut appshot goes. ``auto``: into the running voice call,
     #: otherwise onto the next message. ``message``: always onto the next
     #: message. ``voice``: only into a running voice call.

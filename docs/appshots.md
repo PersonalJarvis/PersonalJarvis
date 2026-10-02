@@ -1,16 +1,34 @@
 # Appshots
 
-An appshot shows the assistant the window you are working in. It captures the
-front window once — picture and on-screen text — and hands it to the
-conversation as context. Settings live under **Settings > Appshots**.
+An appshot shows the assistant the window you are working in — or exactly
+the part of the screen you select. It captures once — picture and on-screen
+text — and hands it to the conversation as context. Settings live under
+**Settings > Appshots**.
 
-## Three ways to take one
+## Ways to take one
 
 | Trigger | What happens |
 |---|---|
-| **Shortcut** — both Alt keys at once by default (both Option keys on a Mac) | The front window is captured and delivered per **Appshot destination**. |
+| **Window shortcut** — both Alt keys at once by default (both Option keys on a Mac) | The front window is captured and delivered per **Appshot destination**. |
+| **Area shortcut** — Alt+Win+A by default (Option+Command+A on a Mac) | Every screen dims; drag a rectangle and exactly that part is captured and delivered the same way. Esc or a right-click cancels and sends nothing. |
 | **Voice or chat** — "take an appshot", "mach einen Appshot", "haz un appshot" | The turn that asked captures the front window and answers with it. |
-| **Try it** button on the Appshots page | Waits three seconds so you can switch windows, then behaves like the shortcut. |
+| **Try it** buttons on the Appshots page | "Take appshot in 3 s" waits three seconds so you can switch windows; "Select area" opens the area picker at once. Both then behave like the shortcuts. |
+
+## Selecting an area
+
+The area picker is a short-lived PySide6 process (`python -m
+jarvis.appshot.picker`) that starts on the shortcut and exits after one
+selection, so nothing stays resident. It covers every screen with a dimmed
+layer and a crosshair, shows the size in real pixels while you drag, and
+reports the rectangle as fractions of the screen it was drawn on; the app maps
+that back to capture pixels (`jarvis/appshot/region.py`), so mixed-DPI setups
+capture exactly what was outlined. A selection stays on one screen. The picker
+gives up after two minutes without a selection.
+
+A selected area is about pixels, not about the window in front: unlike a window
+appshot it is not voided when focus moves while the picker closes. Its privacy
+guard is the denylist check on every visible window that overlaps the
+rectangle (see below).
 
 A spoken "what do you see?" is the same look (Screen Context); it also plays
 the shutter and shows up as the last appshot.
@@ -37,7 +55,9 @@ the shutter and shows up as the last appshot.
 Appshots capture through the Screen Context engine
 ([screen-context.md](screen-context.md)), so everything there applies
 unchanged: the app denylist, redaction of password fields and sensitive
-patterns, and no image ever written to disk. The one difference: an appshot
+patterns, and no image ever written to disk. For an area, a denylisted window
+that overlaps the rectangle refuses the capture; one elsewhere on the screen
+does not. The one difference: an appshot
 shows no gold border before the shutter — the flash over the captured window
 is the visible signal (maintainer directive 2026-09-29). **Allow appshots** on the Appshots page is `[screen_context].enabled`
 — one switch for every screen look.
@@ -55,7 +75,8 @@ and served with `Cache-Control: no-store`.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `hotkey` | `"alt+alt"` | `alt+alt` = both Alt keys; any other combo in the shared hotkey syntax; `""` = off |
+| `hotkey` | `"alt+alt"` | Window appshot. `alt+alt` = both Alt keys; any other combo in the shared hotkey syntax; `""` = off |
+| `region_hotkey` | `"alt+win+a"` | Area appshot, same syntax. Must differ from `hotkey` (the app refuses one key for both) |
 | `target` | `"auto"` | `auto` · `message` · `voice` (table above) |
 | `sound` | `true` | Shutter sound; also needs `[ui].sound_effects` |
 | `effect` | `true` | Flash and corner thumbnail |
@@ -65,18 +86,21 @@ and served with `Cache-Control: no-store`.
 | | Windows | macOS | Linux/X11 | Wayland / headless |
 |---|---|---|---|---|
 | Both-Alt shortcut | `GetAsyncKeyState` (AltGr counts as right Alt) | `CGEventSourceKeyState`, needs the Input Monitoring grant | `XQueryKeymap` via python-xlib | Unavailable, reason shown on the page; voice and the button still work where capture works |
-| Other shortcuts | Shared hotkey backends (`jarvis/trigger/backends`) | same | same | same as above |
+| Other shortcuts (incl. the area shortcut) | Shared hotkey backends (`jarvis/trigger/backends`) | same | same | same as above |
+| Area picker | PySide6 overlay; a global Esc also cancels because Windows may not hand it keyboard focus until the first click | PySide6 overlay | PySide6 overlay | Unavailable, reason shown on the page; the window appshot still works |
 | Flash + thumbnail | PySide6 overlay, excluded from capture | PySide6 overlay | PySide6 overlay | No overlay; the appshot is still taken where capture works |
 | Capture | Screen Context engine | Needs Screen Recording | X11 | Honest refusal |
 
 Only the instance that owns ambient duties (the default app, not the dev
-instance) arms the shortcut.
+instance) arms the shortcuts.
 
 ## Code
 
 `jarvis/appshot/` — `service.py` (take and deliver), `store.py` (pending and
 last appshot, memory only), `gesture.py` (both-Alt watcher), `hotkey.py`
-(shortcut lifecycle), `effect.py` (shutter hook), `delivery.py` (voice calls).
+(both shortcuts' lifecycle), `region.py` (area selection and its coordinate
+mapping), `picker/` (the area picker sidecar), `effect.py` (shutter hook),
+`delivery.py` (voice calls).
 The live model's `take_appshot` tool is `jarvis/plugins/tool/appshot.py`; the
 REST surface is `jarvis/ui/web/appshot_routes.py`; the page is
 `frontend/src/views/AppshotsView.tsx`.

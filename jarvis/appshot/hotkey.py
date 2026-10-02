@@ -1,9 +1,14 @@
-"""The global appshot shortcut: armed after boot, re-armed on a settings change.
+"""The global appshot shortcuts: armed after boot, re-armed on a settings change.
 
-``[appshot].hotkey`` is either ``alt+alt`` (both Alt keys, watched by
+Two shortcuts, one per scope:
+
+* ``[appshot].hotkey`` takes the front window;
+* ``[appshot].region_hotkey`` first lets the user drag out an area.
+
+Each is either ``alt+alt`` (both Alt keys, watched by
 :mod:`jarvis.appshot.gesture`), any combo in the shared hotkey syntax (armed
 through the regular per-OS :class:`~jarvis.trigger.hotkey.HotkeyTrigger`), or
-empty (off). Only the instance that owns ambient duties arms it — a dev app
+empty (off). Only the instance that owns ambient duties arms them — a dev app
 beside the live one would otherwise take every appshot twice.
 """
 
@@ -18,6 +23,11 @@ from typing import Any
 log = logging.getLogger(__name__)
 
 BOTH_ALT = "alt+alt"
+
+#: Scope → the ``[appshot]`` key holding its shortcut.
+SCOPE_KEYS: dict[str, str] = {"window": "hotkey", "region": "region_hotkey"}
+#: Scope → the binding name inside the shared ``HotkeyTrigger``.
+_BINDINGS: dict[str, str] = {"window": "appshot", "region": "appshot_region"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,8 +48,16 @@ def normalize_hotkey(value: str) -> str:
     return combo
 
 
+def configured_hotkeys(block: Any) -> dict[str, str]:
+    """Scope → normalized shortcut from an ``[appshot]`` config block."""
+    return {
+        scope: normalize_hotkey(str(getattr(block, key, "") or ""))
+        for scope, key in SCOPE_KEYS.items()
+    }
+
+
 class AppshotShortcut:
-    """Owns whichever listener the configured shortcut needs."""
+    """Owns whichever listeners the configured shortcuts need."""
 
     def __init__(self, bus: Any) -> None:
         self._bus = bus
@@ -47,12 +65,17 @@ class AppshotShortcut:
         self._watcher: Any | None = None
         self._trigger_task: asyncio.Task[None] | None = None
         self._busy = False
-        self._status = ShortcutStatus(hotkey="", armed=False, detail="Not started yet.")
+        not_started = ShortcutStatus(hotkey="", armed=False, detail="Not started yet.")
+        self._statuses: dict[str, ShortcutStatus] = dict.fromkeys(SCOPE_KEYS, not_started)
         self._subscribed = False
 
     @property
     def status(self) -> ShortcutStatus:
-        return self._status
+        """The front-window shortcut."""
+        return self._statuses["window"]
+
+    def status_for(self, scope: str) -> ShortcutStatus:
+        return self._statuses[scope]
 
     async def start(self) -> ShortcutStatus:
         self._loop = asyncio.get_running_loop()
@@ -60,41 +83,55 @@ class AppshotShortcut:
         return await self.reload()
 
     async def reload(self) -> ShortcutStatus:
-        """Re-read ``[appshot].hotkey`` and re-arm. Never raises."""
+        """Re-read both shortcuts and re-arm. Never raises."""
         await self.stop()
         try:
             from jarvis.core.config import load_config  # noqa: PLC0415
             from jarvis.core.instance import current_instance  # noqa: PLC0415
 
             config = await asyncio.to_thread(load_config)
-            hotkey = normalize_hotkey(config.appshot.hotkey)
-            if not hotkey:
-                self._status = ShortcutStatus(hotkey="", armed=False, detail="No shortcut set.")
-                return self._status
-            if not current_instance().owns_ambient_duties:
-                self._status = ShortcutStatus(
-                    hotkey=hotkey,
-                    armed=False,
-                    detail="The main app owns global shortcuts; this instance does not arm them.",
+            hotkeys = configured_hotkeys(config.appshot)
+            owns = current_instance().owns_ambient_duties
+            combos: dict[str, str] = {}
+            for scope, hotkey in hotkeys.items():
+                if not hotkey:
+                    self._statuses[scope] = ShortcutStatus("", False, "No shortcut set.")
+                elif not owns:
+                    self._statuses[scope] = ShortcutStatus(
+                        hotkey,
+                        False,
+                        "The main app owns global shortcuts; this instance does not arm them.",
+                    )
+                elif scope == "region" and hotkey == hotkeys["window"]:
+                    self._statuses[scope] = ShortcutStatus(
+                        hotkey, False, "This is already the shortcut for the front window."
+                    )
+                elif hotkey == BOTH_ALT:
+                    self._statuses[scope] = await self._arm_both_alt(scope)
+                else:
+                    self._statuses[scope] = self._check_combo(hotkey)
+                    if self._statuses[scope].armed:
+                        combos[scope] = hotkey
+            if combos:
+                self._trigger_task = asyncio.get_running_loop().create_task(
+                    self._run_combos(combos), name="appshot-hotkey"
                 )
-                return self._status
-            if hotkey == BOTH_ALT:
-                self._status = await self._arm_both_alt()
-            else:
-                self._status = self._arm_combo(hotkey)
         except Exception as exc:  # noqa: BLE001 - a bad shortcut must not break boot
             log.warning("appshot: shortcut could not be armed", exc_info=True)
-            self._status = ShortcutStatus(
+            failed = ShortcutStatus(
                 hotkey="",
                 armed=False,
                 detail=f"The shortcut failed to start ({type(exc).__name__}).",
             )
-        log.info(
-            "appshot: shortcut %s (%s)",
-            self._status.hotkey or "off",
-            "armed" if self._status.armed else self._status.detail,
-        )
-        return self._status
+            self._statuses = dict.fromkeys(SCOPE_KEYS, failed)
+        for scope, status in self._statuses.items():
+            log.info(
+                "appshot: %s shortcut %s (%s)",
+                scope,
+                status.hotkey or "off",
+                "armed" if status.armed else status.detail,
+            )
+        return self.status
 
     async def stop(self) -> None:
         watcher, self._watcher = self._watcher, None
@@ -106,18 +143,19 @@ class AppshotShortcut:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
 
-    async def _arm_both_alt(self) -> ShortcutStatus:
+    async def _arm_both_alt(self, scope: str) -> ShortcutStatus:
         from jarvis.appshot.gesture import BothAltWatcher, make_probe  # noqa: PLC0415
 
         probe, reason = await asyncio.to_thread(make_probe)
         if probe is None:
             return ShortcutStatus(hotkey=BOTH_ALT, armed=False, detail=reason)
-        watcher = BothAltWatcher(self._fire_threadsafe, probe=probe)
+        watcher = BothAltWatcher(lambda: self._fire_threadsafe(scope), probe=probe)
         watcher.start()
         self._watcher = watcher
         return ShortcutStatus(hotkey=BOTH_ALT, armed=True)
 
-    def _arm_combo(self, hotkey: str) -> ShortcutStatus:
+    @staticmethod
+    def _check_combo(hotkey: str) -> ShortcutStatus:
         from jarvis.platform.probes import has_hotkey  # noqa: PLC0415
         from jarvis.trigger.hotkey import validate_hotkey  # noqa: PLC0415
 
@@ -132,45 +170,50 @@ class AppshotShortcut:
                 armed=False,
                 detail="Global shortcuts are not available on this desktop.",
             )
-        self._trigger_task = asyncio.get_running_loop().create_task(
-            self._run_combo(hotkey), name="appshot-hotkey"
-        )
         return ShortcutStatus(hotkey=hotkey, armed=True)
 
-    async def _run_combo(self, hotkey: str) -> None:
+    async def _run_combos(self, combos: dict[str, str]) -> None:
         from jarvis.trigger.hotkey import HotkeyTrigger  # noqa: PLC0415
 
+        scopes = {_BINDINGS[scope]: scope for scope in combos}
         try:
-            trigger = HotkeyTrigger({"appshot": [hotkey]})
+            trigger = HotkeyTrigger({_BINDINGS[scope]: [combo] for scope, combo in combos.items()})
             async with trigger:
                 async for name in trigger.events():
-                    if name == "appshot":
-                        self._fire()
+                    scope = scopes.get(name)
+                    if scope is not None:
+                        self._fire(scope)
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 - voice and chat keep working without it
             log.warning("appshot: shortcut listener stopped", exc_info=True)
 
-    def _fire_threadsafe(self) -> None:
+    def _fire_threadsafe(self, scope: str) -> None:
         loop = self._loop
         if loop is None or loop.is_closed():
             return
         with contextlib.suppress(RuntimeError):
-            loop.call_soon_threadsafe(self._fire)
+            loop.call_soon_threadsafe(self._fire, scope)
 
-    def _fire(self) -> None:
+    def _fire(self, scope: str = "window") -> None:
         if self._busy:
             return
         self._busy = True
-        task = asyncio.get_running_loop().create_task(self._take(), name="appshot-take")
+        task = asyncio.get_running_loop().create_task(self._take(scope), name="appshot-take")
         task.add_done_callback(lambda _t: setattr(self, "_busy", False))
 
-    async def _take(self) -> None:
+    async def _take(self, scope: str) -> None:
         from jarvis.appshot.service import take_appshot  # noqa: PLC0415
 
-        result = await take_appshot(trigger="hotkey", bus=self._bus)
-        if not result.ok:
-            log.info("appshot: shortcut press refused — %s", result.message)
+        result = await take_appshot(
+            trigger="hotkey",
+            bus=self._bus,
+            scope="region" if scope == "region" else "window",
+        )
+        if result.ok:
+            return
+        log.info("appshot: shortcut press refused — %s", result.message)
+        if result.reason_code != "cancelled":  # Esc on the picker needs no toast
             await self._publish_refusal(result.message)
 
     async def _publish_refusal(self, message: str) -> None:
@@ -215,8 +258,10 @@ async def start_appshot_shortcut(bus: Any) -> AppshotShortcut:
 
 __all__ = [
     "BOTH_ALT",
+    "SCOPE_KEYS",
     "AppshotShortcut",
     "ShortcutStatus",
+    "configured_hotkeys",
     "get_shortcut",
     "normalize_hotkey",
     "start_appshot_shortcut",

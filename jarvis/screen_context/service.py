@@ -61,7 +61,7 @@ from jarvis.screen_context.ports import (
     make_ui_text_reader,
     make_window_probe,
 )
-from jarvis.screen_context.targeting import resolve_target
+from jarvis.screen_context.targeting import region_target, resolve_target
 
 log = logging.getLogger(__name__)
 
@@ -346,8 +346,14 @@ class ScreenContextService:
         *,
         verdict: IntentVerdict | None = None,
         trace_id: UUID | None = None,
+        region: tuple[int, int, int, int] | None = None,
     ) -> CaptureOutcome:
-        """Take exactly one capture. Assumes intent is already established."""
+        """Take exactly one capture. Assumes intent is already established.
+
+        ``region`` is a rectangle the user selected by hand, in capture
+        coordinates (``displays.monitors()``). It replaces cursor/window
+        targeting; permissions, the denylist and redaction apply unchanged.
+        """
         verdict = verdict or IntentVerdict(intent=VisualIntent.SCREEN)
         if self._closed:
             return CaptureOutcome(
@@ -443,15 +449,19 @@ class ScreenContextService:
 
         monitors = await asyncio.to_thread(self.displays.monitors)
         try:
-            target, target_degradations = resolve_target(
-                verdict.intent,
-                monitors=monitors,
-                cursor_point=cursor_point,
-                bar_point=bar_point,
-                window=window_facts,
-                window_handle=window_handle,
-                main_monitor_override=self._settings.main_monitor,
-            )
+            if region is not None:
+                target = region_target(region, monitors=monitors, window=window_facts)
+                target_degradations: tuple[Degradation, ...] = ()
+            else:
+                target, target_degradations = resolve_target(
+                    verdict.intent,
+                    monitors=monitors,
+                    cursor_point=cursor_point,
+                    bar_point=bar_point,
+                    window=window_facts,
+                    window_handle=window_handle,
+                    main_monitor_override=self._settings.main_monitor,
+                )
         except CaptureUnavailable as exc:
             log.info("screen_context: no capture target — %s", exc)
             return CaptureOutcome(
@@ -476,6 +486,12 @@ class ScreenContextService:
                 reason_kind="policy",
                 message=monitor_privacy_error,
             )
+
+        # A hand-selected area is about pixels, not about the window in front:
+        # the user just clicked on the selection overlay, so focus may still be
+        # settling. Its privacy guard is the visible-window denylist check on
+        # the rectangle itself (``_monitor_privacy_error``), run three times.
+        identity_bound = target.kind is not TargetKind.REGION
 
         # Announce BEFORE the shutter so the indicator is up while there is
         # still something to indicate.
@@ -504,7 +520,7 @@ class ScreenContextService:
             # focus or open on the selected monitor while the indicator is
             # appearing; the earlier policy decision must not authorize that
             # newly visible surface.
-            if target.window.is_known and not await asyncio.to_thread(
+            if identity_bound and target.window.is_known and not await asyncio.to_thread(
                 self._foreground_still_matches,
                 target.window,
                 expected_window_handle=window_handle,
@@ -558,7 +574,7 @@ class ScreenContextService:
             # Treat a post-shutter identity change as untrusted: discard the
             # raw bytes before redaction/storage rather than attaching pixels
             # from a surface different from the one that passed policy.
-            if target.window.is_known and not await asyncio.to_thread(
+            if identity_bound and target.window.is_known and not await asyncio.to_thread(
                 self._foreground_still_matches,
                 target.window,
                 expected_window_handle=window_handle,
@@ -686,27 +702,30 @@ class ScreenContextService:
 
     def _monitor_privacy_error(self, target: CaptureTarget) -> str | None:
         """Return a refusal when monitor-wide denylist safety is unverifiable."""
-        if target.kind is not TargetKind.MONITOR or not self._settings.denylist:
+        if target.kind is TargetKind.WINDOW or not self._settings.denylist:
             return None
+        region = target.kind is TargetKind.REGION
+        what = "the selected area" if region else "the monitor"
         visible_getter = getattr(self.window_probe, "visible_windows", None)
         visible = visible_getter() if callable(visible_getter) else None
         if visible is None:
             return (
-                "I did not capture the monitor because its visible windows "
+                f"I did not capture {what} because its visible windows "
                 "could not be verified against your privacy denylist. Ask for "
                 "the active window instead."
             )
         for candidate in visible:
-            if not candidate.app_name:
+            inside = _rects_intersect_or_unknown(candidate.frame_rect, target.bbox)
+            if not candidate.app_name and (inside or not region):
                 return (
-                    "I did not capture the monitor because a visible "
+                    f"I did not capture {what} because a visible "
                     "application could not be identified for your privacy "
                     "denylist. Ask for the active window instead."
                 )
             blocked_by = redaction.blocked_by_denylist(candidate, self._settings.denylist)
-            if blocked_by and _rects_intersect_or_unknown(candidate.frame_rect, target.bbox):
+            if blocked_by and inside:
                 return (
-                    "I did not capture the monitor because a visible window "
+                    f"I did not capture {what} because a visible window "
                     f"matches your privacy rule '{blocked_by}'."
                 )
         return None
@@ -1185,6 +1204,8 @@ def _safe_target_label(target: CaptureTarget) -> str:
     """Metadata-only target label; never expose an app or document title."""
     if target.kind is TargetKind.WINDOW:
         return "active window"
+    if target.kind is TargetKind.REGION:
+        return "selected area"
     return f"monitor {target.monitor_name}" if target.monitor_name else "selected monitor"
 
 

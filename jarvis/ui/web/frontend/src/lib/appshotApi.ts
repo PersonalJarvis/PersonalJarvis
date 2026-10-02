@@ -13,19 +13,26 @@ export interface AppshotShortcutStatus {
   detail: string;
 }
 
+export type AppshotScope = "window" | "region";
+
 export interface AppshotSettings {
   enabled: boolean;
   hotkey: string;
+  /** Shortcut for an area appshot: drag a rectangle, that part is captured. */
+  region_hotkey: string;
   target: AppshotTarget;
   sound: boolean;
   effect: boolean;
   sound_effects_master: boolean;
   shortcut: AppshotShortcutStatus;
+  region_shortcut: AppshotShortcutStatus;
   readiness: {
     capture: boolean;
     capture_detail: string;
     effect: boolean;
     effect_detail: string;
+    region: boolean;
+    region_detail: string;
   };
 }
 
@@ -41,7 +48,7 @@ export interface AppshotMeta {
 }
 
 export type AppshotSettingsPatch = Partial<
-  Pick<AppshotSettings, "enabled" | "hotkey" | "target" | "sound" | "effect">
+  Pick<AppshotSettings, "enabled" | "hotkey" | "region_hotkey" | "target" | "sound" | "effect">
 >;
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
@@ -78,13 +85,14 @@ export function latestAppshotImageUrl(id: string): string {
   return `/api/appshot/latest/image?v=${encodeURIComponent(id)}`;
 }
 
-export function takeAppshot(delaySeconds = 0): Promise<
-  { ok: true; appshot: AppshotMeta } | { ok: false; reason: string; message: string }
-> {
+export function takeAppshot(
+  delaySeconds = 0,
+  scope: AppshotScope = "window",
+): Promise<{ ok: true; appshot: AppshotMeta } | { ok: false; reason: string; message: string }> {
   return request("/api/appshot/take", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ delay_s: delaySeconds }),
+    body: JSON.stringify({ delay_s: delaySeconds, scope }),
   });
 }
 

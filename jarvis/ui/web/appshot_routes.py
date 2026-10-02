@@ -4,7 +4,7 @@ Endpoints (mounted by the WebServer in ``_build_app()``):
 
     GET    /api/appshot/settings         → switches, shortcut state, readiness.
     PUT    /api/appshot/settings         → change one or more switches.
-    POST   /api/appshot/take             → take one appshot now (optional delay).
+    POST   /api/appshot/take             → take one appshot now (window or area).
     GET    /api/appshot/latest           → metadata of the last appshot.
     GET    /api/appshot/latest/image     → its picture (never cached).
     GET    /api/appshot/pending          → the appshot waiting for the next message.
@@ -37,6 +37,7 @@ class SettingsPatch(BaseModel):
 
     enabled: bool | None = None
     hotkey: str | None = Field(default=None, max_length=64)
+    region_hotkey: str | None = Field(default=None, max_length=64)
     target: Literal["auto", "message", "voice"] | None = None
     sound: bool | None = None
     effect: bool | None = None
@@ -46,6 +47,9 @@ class TakeRequest(BaseModel):
     #: Seconds to wait first, so the user can bring the window they mean to
     #: the front after pressing the button inside this app.
     delay_s: float = Field(default=0.0, ge=0.0, le=10.0)
+    #: ``window``: the front window. ``region``: the user drags out an area
+    #: first (the screens dim until a rectangle is chosen or Esc is pressed).
+    scope: Literal["window", "region"] = "window"
 
 
 class ClaimRequest(BaseModel):
@@ -59,38 +63,46 @@ def _bus(request: Request) -> Any | None:
 def _capability() -> dict[str, Any]:
     import importlib.util  # noqa: PLC0415
 
+    from jarvis.appshot.region import picker_capability  # noqa: PLC0415
     from jarvis.cu.indicator.controller import screen_indicator_capability  # noqa: PLC0415
 
     capture_ok = importlib.util.find_spec("mss") is not None
     effect_ok, effect_reason = screen_indicator_capability()
+    region_ok, region_reason = picker_capability()
     return {
         "capture": capture_ok,
         "capture_detail": "" if capture_ok else "The screen-capture package is not installed.",
         "effect": effect_ok,
         "effect_detail": effect_reason,
+        "region": region_ok,
+        "region_detail": region_reason,
     }
 
 
 def _settings_payload() -> dict[str, Any]:
-    from jarvis.appshot.hotkey import get_shortcut, normalize_hotkey  # noqa: PLC0415
+    from jarvis.appshot.hotkey import configured_hotkeys, get_shortcut  # noqa: PLC0415
     from jarvis.core.config import load_config  # noqa: PLC0415
 
     config = load_config()
     block = config.appshot
+    hotkeys = configured_hotkeys(block)
     shortcut = get_shortcut()
-    status = (
-        shortcut.status.to_json()
-        if shortcut is not None
-        else {"hotkey": normalize_hotkey(block.hotkey), "armed": False, "detail": ""}
-    )
+
+    def _status(scope: str) -> dict[str, Any]:
+        if shortcut is not None:
+            return shortcut.status_for(scope).to_json()
+        return {"hotkey": hotkeys[scope], "armed": False, "detail": ""}
+
     return {
         "enabled": bool(config.screen_context.enabled),
-        "hotkey": normalize_hotkey(block.hotkey),
+        "hotkey": hotkeys["window"],
+        "region_hotkey": hotkeys["region"],
         "target": block.target,
         "sound": bool(block.sound),
         "effect": bool(block.effect),
         "sound_effects_master": bool(getattr(config.ui, "sound_effects", True)),
-        "shortcut": status,
+        "shortcut": _status("window"),
+        "region_shortcut": _status("region"),
         "readiness": _capability(),
     }
 
@@ -103,7 +115,13 @@ async def get_settings() -> dict[str, Any]:
 @router.put("/settings")
 async def put_settings(request: Request, patch: SettingsPatch) -> dict[str, Any]:
     """Write the changed switches, then re-arm the shortcut in place."""
-    from jarvis.appshot.hotkey import get_shortcut, normalize_hotkey  # noqa: PLC0415
+    from jarvis.appshot.hotkey import (  # noqa: PLC0415
+        BOTH_ALT,
+        configured_hotkeys,
+        get_shortcut,
+        normalize_hotkey,
+    )
+    from jarvis.core.config import load_config  # noqa: PLC0415
     from jarvis.core.config_writer import (  # noqa: PLC0415
         set_appshot_settings,
         set_screen_context_settings,
@@ -113,14 +131,25 @@ async def put_settings(request: Request, patch: SettingsPatch) -> dict[str, Any]
     if not changes:
         raise HTTPException(status_code=400, detail="No settings were provided.")
     enabled = changes.pop("enabled", None)
-    if "hotkey" in changes:
-        changes["hotkey"] = normalize_hotkey(changes["hotkey"])
-        if changes["hotkey"] and changes["hotkey"] != "alt+alt":
+    for key in ("hotkey", "region_hotkey"):
+        if key not in changes:
+            continue
+        changes[key] = normalize_hotkey(changes[key])
+        if changes[key] and changes[key] != BOTH_ALT:
             from jarvis.trigger.hotkey import validate_hotkey  # noqa: PLC0415
 
-            verdict = validate_hotkey(changes["hotkey"])
+            verdict = validate_hotkey(changes[key])
             if not verdict.ok:
                 raise HTTPException(status_code=400, detail=verdict.reason or "Invalid shortcut.")
+    if "hotkey" in changes or "region_hotkey" in changes:
+        current = configured_hotkeys((await asyncio.to_thread(load_config)).appshot)
+        window = changes.get("hotkey", current["window"])
+        region = changes.get("region_hotkey", current["region"])
+        if window and window == region:
+            raise HTTPException(
+                status_code=400,
+                detail="The window and the area appshot need two different shortcuts.",
+            )
 
     def _write() -> None:
         if changes:
@@ -139,20 +168,20 @@ async def put_settings(request: Request, patch: SettingsPatch) -> dict[str, Any]
 
         reset_service()
     shortcut = get_shortcut()
-    if shortcut is not None and "hotkey" in changes:
+    if shortcut is not None and ("hotkey" in changes or "region_hotkey" in changes):
         await shortcut.reload()
     return await asyncio.to_thread(_settings_payload)
 
 
 @router.post("/take")
 async def take(request: Request, body: TakeRequest | None = None) -> dict[str, Any]:
-    """Take one appshot of the front window and deliver it like the shortcut."""
+    """Take one appshot (front window or a selected area), like the shortcuts."""
     from jarvis.appshot.service import take_appshot  # noqa: PLC0415
 
-    delay = (body or TakeRequest()).delay_s
-    if delay:
-        await asyncio.sleep(delay)
-    result = await take_appshot(trigger="button", bus=_bus(request))
+    body = body or TakeRequest()
+    if body.delay_s:
+        await asyncio.sleep(body.delay_s)
+    result = await take_appshot(trigger="button", bus=_bus(request), scope=body.scope)
     if not result.ok or result.shot is None:
         return {"ok": False, "reason": result.reason_code, "message": result.message}
     return {"ok": True, "appshot": result.shot.meta()}

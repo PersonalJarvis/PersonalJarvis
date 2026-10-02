@@ -25,15 +25,17 @@ import { useEventStore } from "@/store/events";
  * Appshots — show the assistant the window you are working in.
  *
  * One page for the whole feature: the master switch (it is also the switch
- * for every other screen look, `[screen_context].enabled`), the global
- * shortcut, where a shortcut appshot goes, the sound and the flash, a try-it
- * button, and the last appshot so the user sees exactly what was handed over.
+ * for every other screen look, `[screen_context].enabled`), the two global
+ * shortcuts (front window, and a dragged-out area), where a shortcut appshot
+ * goes, the sound and the flash, try-it buttons, and the last appshot so the
+ * user sees exactly what was handed over.
  * That picture lives in backend memory for `deck_preview_s` and is fetched
  * with `no-store`; this view keeps no copy.
  */
 
 const IS_MAC = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform || "");
 const PRESET_HOTKEYS = ["alt+alt", "ctrl+alt+a", ""] as const;
+const REGION_PRESET_HOTKEYS = ["alt+win+a", "ctrl+alt+s", ""] as const;
 const TRY_DELAY_S = 3;
 
 export function AppshotGlyph({ className }: { className?: string }) {
@@ -120,6 +122,21 @@ function PreviewDemo() {
   );
 }
 
+function shortcutOptions(
+  presets: readonly string[],
+  current: string,
+  offLabel: string,
+): BrandedSelectOption[] {
+  const options: BrandedSelectOption[] = presets.map((value) => ({
+    value: value || "off",
+    label: value ? formatAppshotHotkey(value, IS_MAC) : offLabel,
+  }));
+  if (current && !presets.includes(current)) {
+    options.unshift({ value: current, label: formatAppshotHotkey(current, IS_MAC) });
+  }
+  return options;
+}
+
 function deliveredLabel(t: (key: string) => string, deliveredTo: string): string {
   switch (deliveredTo) {
     case "voice":
@@ -178,6 +195,7 @@ export function AppshotsView() {
   const [latest, setLatest] = useState<AppshotMeta | null>(null);
   const [saving, setSaving] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
+  const [picking, setPicking] = useState(false);
   const countdownTimer = useRef<number | null>(null);
 
   useEffect(() => {
@@ -247,6 +265,24 @@ export function AppshotsView() {
     }
   }, [countdown, pushToast, t]);
 
+  const tryRegion = useCallback(async () => {
+    if (picking || countdown !== null) return;
+    setPicking(true);
+    try {
+      const result = await takeAppshot(0, "region");
+      if (result.ok) {
+        setLatest(result.appshot);
+        pushToast("success", t("appshots.try_done"));
+      } else if (result.reason !== "cancelled") {
+        pushToast("warning", t("appshots.toast_refused").replace("{0}", result.message));
+      }
+    } catch (error) {
+      pushToast("error", (error as Error).message);
+    } finally {
+      setPicking(false);
+    }
+  }, [countdown, picking, pushToast, t]);
+
   const forget = useCallback(async () => {
     try {
       await forgetAppshots();
@@ -256,17 +292,19 @@ export function AppshotsView() {
     }
   }, [pushToast]);
 
-  const hotkeyOptions = useMemo<BrandedSelectOption[]>(() => {
-    const options: BrandedSelectOption[] = PRESET_HOTKEYS.map((value) => ({
-      value: value || "off",
-      label: value ? formatAppshotHotkey(value, IS_MAC) : t("appshots.shortcut_off"),
-    }));
-    const current = settings?.hotkey ?? "";
-    if (current && !PRESET_HOTKEYS.includes(current as (typeof PRESET_HOTKEYS)[number])) {
-      options.unshift({ value: current, label: formatAppshotHotkey(current, IS_MAC) });
-    }
-    return options;
-  }, [settings?.hotkey, t]);
+  const hotkeyOptions = useMemo(
+    () => shortcutOptions(PRESET_HOTKEYS, settings?.hotkey ?? "", t("appshots.shortcut_off")),
+    [settings?.hotkey, t],
+  );
+  const regionHotkeyOptions = useMemo(
+    () =>
+      shortcutOptions(
+        REGION_PRESET_HOTKEYS,
+        settings?.region_hotkey ?? "",
+        t("appshots.shortcut_off"),
+      ),
+    [settings?.region_hotkey, t],
+  );
 
   const targetOptions = useMemo<BrandedSelectOption[]>(
     () => [
@@ -289,6 +327,21 @@ export function AppshotsView() {
     return t("appshots.shortcut_combo_hint").replace(
       "{0}",
       formatAppshotHotkey(settings.hotkey, IS_MAC),
+    );
+  })();
+
+  const regionShortcutHint = (() => {
+    if (!settings) return "";
+    if (!settings.readiness.region) {
+      return t("appshots.effect_unavailable").replace("{0}", settings.readiness.region_detail);
+    }
+    if (!settings.region_hotkey) return t("appshots.region_shortcut_hint_off");
+    if (settings.enabled && !settings.region_shortcut.armed && settings.region_shortcut.detail) {
+      return t("appshots.shortcut_unavailable").replace("{0}", settings.region_shortcut.detail);
+    }
+    return t("appshots.region_shortcut_hint").replace(
+      "{0}",
+      formatAppshotHotkey(settings.region_hotkey, IS_MAC),
     );
   })();
 
@@ -355,6 +408,23 @@ export function AppshotsView() {
                   }
                 />
                 <Row
+                  label={t("appshots.region_shortcut_label")}
+                  hint={regionShortcutHint}
+                  control={
+                    <BrandedSelect
+                      value={settings.region_hotkey || "off"}
+                      options={regionHotkeyOptions}
+                      ariaLabel={t("appshots.region_shortcut_label")}
+                      disabled={disabled || saving}
+                      testId="appshots-region-hotkey"
+                      className="w-44"
+                      onValueChange={(value) =>
+                        void save({ region_hotkey: value === "off" ? "" : value })
+                      }
+                    />
+                  }
+                />
+                <Row
                   label={t("appshots.target_label")}
                   hint={targetHint}
                   control={
@@ -406,20 +476,37 @@ export function AppshotsView() {
                   hint={
                     countdown !== null
                       ? t("appshots.try_counting").replace("{0}", String(countdown))
-                      : t("appshots.try_hint")
+                      : picking
+                        ? t("appshots.try_picking")
+                        : t("appshots.try_hint")
                   }
                   control={
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      size="sm"
-                      disabled={disabled || countdown !== null}
-                      onClick={() => void tryIt()}
-                      data-testid="appshots-try"
-                    >
-                      {countdown !== null && <Loader2 className="animate-spin" aria-hidden />}
-                      {t("appshots.try_button")}
-                    </Button>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        disabled={
+                          disabled || picking || !settings.readiness.region || countdown !== null
+                        }
+                        onClick={() => void tryRegion()}
+                        data-testid="appshots-try-region"
+                      >
+                        {picking && <Loader2 className="animate-spin" aria-hidden />}
+                        {t("appshots.try_region_button")}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        disabled={disabled || picking || countdown !== null}
+                        onClick={() => void tryIt()}
+                        data-testid="appshots-try"
+                      >
+                        {countdown !== null && <Loader2 className="animate-spin" aria-hidden />}
+                        {t("appshots.try_button")}
+                      </Button>
+                    </div>
                   }
                 />
               </>

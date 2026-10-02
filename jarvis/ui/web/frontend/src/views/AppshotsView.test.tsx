@@ -8,12 +8,21 @@ import { AppshotsView } from "@/views/AppshotsView";
 const SETTINGS = {
   enabled: true,
   hotkey: "alt+alt",
+  region_hotkey: "alt+win+a",
   target: "auto",
   sound: true,
   effect: true,
   sound_effects_master: true,
   shortcut: { hotkey: "alt+alt", armed: true, detail: "" },
-  readiness: { capture: true, capture_detail: "", effect: true, effect_detail: "" },
+  region_shortcut: { hotkey: "alt+win+a", armed: true, detail: "" },
+  readiness: {
+    capture: true,
+    capture_detail: "",
+    effect: true,
+    effect_detail: "",
+    region: true,
+    region_detail: "",
+  },
 };
 
 function json(body: unknown, status = 200): Response {
@@ -77,6 +86,62 @@ describe("AppshotsView", () => {
     const tryButton = await screen.findByTestId("appshots-try");
     expect((tryButton as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByTestId("appshots-sound").hasAttribute("disabled")).toBe(true);
+  });
+});
+
+describe("AppshotsView area appshots", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    useEventStore.setState({ events: [], toasts: [], assistantName: "Jarvis" });
+    fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
+      if (url === "/api/appshot/settings") return json(SETTINGS);
+      if (url === "/api/appshot/latest") return json({ appshot: null });
+      if (url === "/api/appshot/take") return json({ ok: false, reason: "cancelled", message: "" });
+      return json({}, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it("shows the area shortcut with its own hint", async () => {
+    render(<AppshotsView />);
+    await screen.findByTestId("appshots-region-hotkey");
+    expect(screen.getByText(/Alt \+ Win \+ A/, { selector: "p" })).toBeDefined();
+  });
+
+  it("asks the backend for an area appshot without a delay", async () => {
+    render(<AppshotsView />);
+    fireEvent.click(await screen.findByTestId("appshots-try-region"));
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some(([url]) => url === "/api/appshot/take")).toBe(true),
+    );
+    const take = fetchMock.mock.calls.find(([url]) => url === "/api/appshot/take")!;
+    expect(JSON.parse(String(take[1].body))).toEqual({ delay_s: 0, scope: "region" });
+    // Esc on the picker is not an error worth a toast.
+    await waitFor(() =>
+      expect((screen.getByTestId("appshots-try-region") as HTMLButtonElement).disabled).toBe(false),
+    );
+    expect(useEventStore.getState().toasts).toEqual([]);
+  });
+
+  it("disables the area button where no picker can run", async () => {
+    fetchMock.mockImplementation(async (url: string) =>
+      url === "/api/appshot/settings"
+        ? json({
+            ...SETTINGS,
+            readiness: { ...SETTINGS.readiness, region: false, region_detail: "no screen" },
+          })
+        : json({ appshot: null }),
+    );
+    render(<AppshotsView />);
+    const button = await screen.findByTestId("appshots-try-region");
+    expect((button as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/no screen/)).toBeDefined();
   });
 });
 
