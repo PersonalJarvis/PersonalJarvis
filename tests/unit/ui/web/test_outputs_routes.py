@@ -1379,6 +1379,42 @@ def test_artifact_page_allows_inline_scripts_but_no_network(app):
     assert "document.title" in r.text
 
 
+def test_artifact_page_is_sandboxed_even_when_opened_top_level(app):
+    """"Open in browser" loads ``/page`` as a top-level tab, where the app's
+    iframe sandbox does not exist. The header CSP must carry the sandbox itself
+    (scripts only, no same-origin, no popups), or the page runs as the app
+    origin and one ``window.open('/')`` reaches every API route."""
+    root = Path(app.state.outputs_root)
+    slug = "mission_019ed2dfd0fab"
+    rel = _make_deliverable(
+        root, "019ed2dfd0fab1234", "escape.html", "<script>window.open('/')</script>"
+    )
+    client = TestClient(app)
+    r = client.get(f"/api/outputs/{slug}/files/{rel}/page")
+    assert r.status_code == 200
+    directives = [d.strip() for d in r.headers["content-security-policy"].split(";")]
+    sandbox = [d for d in directives if d.split(" ")[0] == "sandbox"]
+    assert sandbox == ["sandbox allow-scripts"]
+
+
+@pytest.mark.parametrize(
+    "route",
+    ["view", "download?disposition=inline"],
+)
+def test_worker_html_rendered_inline_is_sandboxed(app, route):
+    """Every inline rendering of a worker file gets an opaque origin, not just
+    a script ban: a top-level tab must never act as the app origin."""
+    root = Path(app.state.outputs_root)
+    slug = "mission_019ed2dfd0fab"
+    name = "notes.md" if route == "view" else "page.html"
+    rel = _make_deliverable(root, "019ed2dfd0fab1234", name, "<b>x</b>")
+    client = TestClient(app)
+    r = client.get(f"/api/outputs/{slug}/files/{rel}/{route}")
+    assert r.status_code == 200
+    directives = [d.strip() for d in r.headers["content-security-policy"].split(";")]
+    assert "sandbox" in directives
+
+
 def test_artifact_page_answers_head_probe(app):
     """The frontend probes ``/page`` with HEAD before framing it. A 405 here
     made the probe fail on every backend, so the sandboxed page never got its

@@ -14,7 +14,21 @@ from uuid import UUID, uuid4
 
 from jarvis.core.protocols import ChannelAdapter
 
-__all__ = ["ChannelAdapter", "ChannelMessage", "ChannelSession"]
+__all__ = [
+    "FIRST_CONTACT_PAIRING_WINDOW_S",
+    "ChannelAdapter",
+    "ChannelMessage",
+    "ChannelSession",
+]
+
+#: How long after a chat channel comes up (app start, or the fresh instance a
+#: marketplace connect builds) its EMPTY allowlist may still be claimed by the
+#: first direct message. Messaging the bot is prompting Jarvis with its tools,
+#: and a bot's username is public, so an unbounded first-contact claim let any
+#: stranger who found the bot before its owner did take it over for good. The
+#: owner pairs right after connecting; after this window an empty allowlist
+#: stays closed until the next start or reconnect.
+FIRST_CONTACT_PAIRING_WINDOW_S = 600.0
 
 
 def _now_ns() -> int:

@@ -33,7 +33,11 @@ from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
-from jarvis.channels.base import ChannelMessage, ChannelSession
+from jarvis.channels.base import (
+    FIRST_CONTACT_PAIRING_WINDOW_S,
+    ChannelMessage,
+    ChannelSession,
+)
 from jarvis.channels.manager import ChannelContext, ChannelStartError
 from jarvis.core.bus import EventBus
 from jarvis.core.config import DiscordConfig, get_secret
@@ -124,6 +128,10 @@ class DiscordChannel:
         self._event_handler_ref: Any = None
         self._bot_user_id: int = 0
         self._started = False
+        # First-contact pairing is open only for a short window after this
+        # instance is built (see FIRST_CONTACT_PAIRING_WINDOW_S).
+        self._pairing_closes_at = time.monotonic() + FIRST_CONTACT_PAIRING_WINDOW_S
+        self._pairing_closed_logged = False
 
     @classmethod
     def from_context(cls, ctx: ChannelContext) -> DiscordChannel:
@@ -362,6 +370,17 @@ class DiscordChannel:
         try:
             user_id = int(author.id)
         except (TypeError, ValueError):
+            return False
+
+        if time.monotonic() > self._pairing_closes_at:
+            if not self._pairing_closed_logged:
+                self._pairing_closed_logged = True
+                log.warning(
+                    "Discord first-user pairing refused: the pairing window closed "
+                    "%.0f s after the channel started. Message the bot right after "
+                    "connecting it, or add your user id to allowed_user_ids.",
+                    FIRST_CONTACT_PAIRING_WINDOW_S,
+                )
             return False
 
         self._cfg.allowed_user_ids.append(user_id)

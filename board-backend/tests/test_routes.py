@@ -7,7 +7,7 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from board_backend.crypto import canonical_json, generate_keypair, sign
+from board_backend.crypto import canonical_json, generate_keypair, sign, signed_audience
 
 
 # ----------------------------------------------------------------------
@@ -26,6 +26,7 @@ def _register(client: TestClient, *, pubkey: str, name: str = "Tester",
 
 def _signed_post(client: TestClient, path: str, *, priv: str, pub: str,
                  payload: dict) -> "TestClient.Response":
+    payload = {"aud": signed_audience("POST", path), **payload}
     body = canonical_json(payload)
     sig = sign(payload, privkey_hex=priv)
     return client.post(
@@ -41,6 +42,7 @@ def _signed_post(client: TestClient, path: str, *, priv: str, pub: str,
 
 def _signed_get(client: TestClient, path: str, *, priv: str, pub: str,
                 payload: dict) -> "TestClient.Response":
+    payload = {"aud": signed_audience("GET", path), **payload}
     body = canonical_json(payload)
     sig = sign(payload, privkey_hex=priv)
     return client.request(
@@ -158,6 +160,7 @@ def test_signed_sync_rejects_tampered_payload(client: TestClient) -> None:
         "voice_commands_count": 0,
         "hours_saved_estimate": 0,
     }]
+    payload["aud"] = signed_audience("POST", "/api/v1/sync")
     sig = sign(payload, privkey_hex=priv)
 
     # Manipulate after signing — a typical replay-tamper vector.
@@ -327,6 +330,7 @@ def test_signature_replay_with_changed_body_rejected(client: TestClient) -> None
     priv, pub = generate_keypair()
     _register(client, pubkey=pub)
     payload = _minimal_payload()
+    payload["aud"] = signed_audience("POST", "/api/v1/sync")
     sig = sign(payload, privkey_hex=priv)
 
     # Replay: overwrite ts_ms → signature no longer matches
