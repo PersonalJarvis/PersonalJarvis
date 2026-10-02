@@ -84,6 +84,12 @@ def _realtime_requires_webrtc_offer(cfg: object) -> bool:
     return realtime_requires_webrtc_offer(cfg)
 
 
+def _webrtc_start_event_required(cfg: object) -> bool:
+    from jarvis.realtime.factory import realtime_webrtc_start_event_required
+
+    return realtime_webrtc_start_event_required(cfg)
+
+
 #: Surface floor for the realtime start budget. Only ever RAISED by a
 #: provider's declared need — never lowered — so a browser that cannot reach
 #: the capability probe still behaves exactly as it always did.
@@ -365,6 +371,7 @@ async def get_voice_mode(request: Request) -> dict[str, object]:
         "realtime_available": realtime_available,
         "realtime_availability_pending": realtime_availability_pending,
         "requires_webrtc_offer": requires_webrtc_offer,
+        "webrtc_start_event_required": _webrtc_start_event_required(cfg),
         "browser_audio": browser_audio,
         "handshake_budget_s": handshake_budget_s,
         "transport_offer_ready": transport_offer_ready,

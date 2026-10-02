@@ -1438,3 +1438,25 @@ The managed browser installer also resolves its root strictly after creating it,
 so its executable containment check compares two canonical paths. A preliminary
 filesystem alias cannot reject an executable inside the managed root; an
 executable outside that root remains rejected.
+
+## GPT-Live subscription access (experimental)
+
+The optional subscription provider uses the selected Codex account for native
+Live audio and delegated reasoning. API-key mode remains independently saved.
+Subscription authentication, quota or transport failures never switch to an
+API-key provider. Jarvis retains tool execution, confirmations and cancellation.
+
+Sign-in reuses an existing Codex CLI. When none is present, the user can prepare
+a private native login helper from settings without Node.js or npm. The helper
+uses the pinned OpenAI binary for the current Windows, macOS or Linux target,
+verifies its SHA-256 before atomic installation, and stays outside global PATH
+and coding-agent discovery. Unsupported targets report that setup is unavailable.
+The existing guided login owns account isolation and process cleanup. Downloads
+and login start only after user interaction; importing the provider does neither.
+
+Fake transport, authentication, installer and account-flow contracts run in the
+strict realtime CI lane on all three operating systems and in the Linux slim
+container. Windows additionally has real subscription audio/delegation evidence
+with project API credentials disabled, and a native login-binary check with Node
+absent. These checks do not establish physical-device or latency parity on other
+platforms. The private upstream voice protocol remains experimental.

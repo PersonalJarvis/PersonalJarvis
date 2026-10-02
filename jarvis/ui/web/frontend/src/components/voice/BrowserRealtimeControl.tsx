@@ -86,7 +86,7 @@ async function reportHostMicrophoneDenied(): Promise<void> {
 export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: boolean } = {}) {
   const t = useT();
   const capabilities = useCapabilities();
-  const { mode, realtimeAvailable, requiresWebRtcOffer, startBudgetMs, browserAudio } =
+  const { mode, realtimeAvailable, requiresWebRtcOffer, webRtcStartEventRequired, startBudgetMs, browserAudio } =
     useVoiceMode();
   const setVoice = useEventStore((store) => store.setVoice);
   const setTranscription = useEventStore((store) => store.setTranscription);
@@ -312,7 +312,7 @@ export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: 
           }
         },
       },
-      { requiresWebRtcOffer, startBudgetMs, browserAudio },
+      { requiresWebRtcOffer, webRtcStartEventRequired, startBudgetMs, browserAudio },
     );
     clientRef.current = client;
     try {
@@ -347,6 +347,7 @@ export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: 
     pushToast,
     realtimeAvailable,
     requiresWebRtcOffer,
+    webRtcStartEventRequired,
     browserAudio,
     setTranscription,
     setVoice,

@@ -36,6 +36,8 @@ export type RealtimeAudioOptions = {
   browserAudio?: boolean;
   /** The active provider needs a WebRTC offer to open its subscription transport. */
   requiresWebRtcOffer?: boolean;
+  /** False for audio-only peers that acknowledge startup by connecting. */
+  webRtcStartEventRequired?: boolean;
   /**
    * How long one start attempt may take before the surface calls it dead.
    *
@@ -86,13 +88,9 @@ export type BrowserRealtimeSupportIssue =
 
 const ICE_GATHER_TIMEOUT_MS = 1_500;
 
-/** One offer-only WebRTC transport for Codex subscription signalling.
- *
- * Audio capture and playback stay on Jarvis's PCM WebSocket. The peer exists
- * only to establish the provider transport: it receives no microphone track,
- * and its remote RTP track is deliberately not attached to an output element.
- * Codex mirrors output through `thread/realtime/outputAudio/delta`, allowing the
- * existing transcript scrub gate to approve PCM before it reaches speakers.
+/** Direct browser media for GPT-Live, or signalling-only for legacy PCM peers.
+ * API Live uses a session.started datachannel acknowledgement. Subscription
+ * Live accepts audio-only SDP and becomes ready when its peer connects.
  */
 export class RealtimeWebRtcTransport {
   private peer: RTCPeerConnection | null = null;
@@ -100,9 +98,10 @@ export class RealtimeWebRtcTransport {
   private dataChannel: RTCDataChannel | null = null;
   private started: Promise<void> | null = null;
   private startupTimer: ReturnType<typeof setTimeout> | null = null;
+  private finishStartup: ((error?: Error) => void) | null = null;
   constructor(private onRemoteStream?: (stream: MediaStream) => void) {}
 
-  async createOffer(stream?: MediaStream): Promise<string | null> {
+  async createOffer(stream?: MediaStream, startEventRequired = true, startBudgetMs = 25_000): Promise<string | null> {
     this.close();
     if (typeof RTCPeerConnection !== "function") return null;
 
@@ -122,19 +121,38 @@ export class RealtimeWebRtcTransport {
     } else {
       peer.addTransceiver("audio", { direction: "recvonly" });
     }
-    this.dataChannel = peer.createDataChannel("oai-events");
-    if (stream) {
+    this.dataChannel = startEventRequired ? peer.createDataChannel("oai-events") : null;
+    if (stream || !startEventRequired) {
       const channel = this.dataChannel;
       this.started = new Promise<void>((resolve, reject) => {
-        this.startupTimer = setTimeout(() => reject(new Error("GPT-Live did not start")), 25_000);
-        channel.addEventListener("message", event => {
+        let settled = false;
+        const finish = (error?: Error) => {
+          if (settled) return;
+          settled = true;
+          if (this.startupTimer) clearTimeout(this.startupTimer);
+          this.startupTimer = null;
+          this.finishStartup = null;
+          channel?.removeEventListener("message", onMessage);
+          peer.removeEventListener("connectionstatechange", onConnectionChange);
+          if (error) reject(error); else resolve();
+        };
+        const onMessage = (event: MessageEvent) => {
           try {
-            if (JSON.parse(event.data).type === "session.started") {
-              if (this.startupTimer) clearTimeout(this.startupTimer);
-              resolve();
-            }
+            if (JSON.parse(event.data).type === "session.started") finish();
           } catch { /* Non-JSON data cannot acknowledge startup. */ }
-        });
+        };
+        const onConnectionChange = () => {
+          if (peer.connectionState === "failed" || peer.connectionState === "closed") {
+            finish(new Error("GPT-Live media connection failed"));
+          } else if (!startEventRequired && peer.connectionState === "connected") {
+            finish();
+          }
+        };
+        this.finishStartup = finish;
+        this.startupTimer = setTimeout(() => finish(new Error("GPT-Live did not start")), startBudgetMs);
+        channel?.addEventListener("message", onMessage);
+        peer.addEventListener("connectionstatechange", onConnectionChange);
+        onConnectionChange();
       });
       void this.started.catch(() => undefined);
     }
@@ -149,9 +167,12 @@ export class RealtimeWebRtcTransport {
   }
 
   async applyAnswer(sdp: string): Promise<void> {
-    if (!this.peer) throw new Error("WebRTC answer arrived without an active offer");
-    await this.peer.setRemoteDescription({ type: "answer", sdp });
-    if (this.started) await this.started;
+    const peer = this.peer;
+    const started = this.started;
+    if (!peer) throw new Error("WebRTC answer arrived without an active offer");
+    await peer.setRemoteDescription({ type: "answer", sdp });
+    if (this.peer !== peer) throw new Error("WebRTC connection closed during startup");
+    if (started) await started;
   }
 
   muteOutput(): void {
@@ -161,10 +182,12 @@ export class RealtimeWebRtcTransport {
   close(): void {
     const peer = this.peer;
     this.peer = null;
+    this.finishStartup?.(new Error("GPT-Live media connection closed"));
     this.dataChannel?.close();
     this.dataChannel = null;
     this.started = null;
     if (this.startupTimer) clearTimeout(this.startupTimer);
+    this.startupTimer = null;
     this.player?.pause();
     if (this.player) this.player.srcObject = null;
     this.player = null;
@@ -524,7 +547,7 @@ export class RealtimeAudioClient {
         sdp: string | null;
         error: unknown | null;
       }> | null = this.options.requiresWebRtcOffer && !this.options.browserAudio
-        ? this.webRtcTransport.createOffer().then(
+        ? this.webRtcTransport.createOffer(undefined, this.options.webRtcStartEventRequired, this.options.startBudgetMs).then(
             (sdp) => ({ sdp, error: null }),
             (error: unknown) => ({ sdp: null, error }),
           )
@@ -603,7 +626,7 @@ export class RealtimeAudioClient {
       // without its WebRTC peer, so this path fails closed.
       if (this.options.requiresWebRtcOffer) {
         const result = this.options.browserAudio
-          ? { sdp: await this.webRtcTransport.createOffer(this.rtcInput?.stream ?? this.stream), error: null }
+          ? { sdp: await this.webRtcTransport.createOffer(this.rtcInput?.stream ?? this.stream, this.options.webRtcStartEventRequired, this.options.startBudgetMs), error: null }
           : await webRtcOffer;
         if (result?.error) {
           this.webRtcTransport.close();
@@ -735,7 +758,7 @@ export class RealtimeAudioClient {
           this.startupPrerollBytes = 0;
           this.playbackNode?.port.postMessage({ type: "flush" });
         } else if (type === "reconnect_offer") {
-          void this.webRtcTransport.createOffer(this.rtcInput?.stream ?? this.stream ?? undefined).then(sdp => {
+          void this.webRtcTransport.createOffer(this.rtcInput?.stream ?? this.stream ?? undefined, this.options.webRtcStartEventRequired, this.options.startBudgetMs).then(sdp => {
             if (sdp && socket.readyState === WebSocket.OPEN && !this.intentionalClose) {
               socket.send(JSON.stringify({ type: "reconnect_offer", request_id: message.request_id, sdp }));
             }
@@ -874,6 +897,8 @@ export class RealtimeAudioClient {
   }
 
   private async finishAudioReady(message: RealtimeStatusPayload): Promise<void> {
+    // Reattaching the control socket keeps the existing WebRTC media session.
+    if (message.reuse_webrtc === true) return;
     const answer = message.webrtc_answer_sdp;
     const answerRequired =
       message.requires_webrtc_answer === true ||

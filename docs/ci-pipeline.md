@@ -29,6 +29,15 @@ agent branch ──► pull request ──► CI (lanes) ──► CI gate ─�
 | `wiki video` | Changes under `wiki-video/` run a clean install, vulnerability audit, lint/TypeScript and webpack bundle. No browser or render is launched. | `wiki-video/package.json` |
 | `CI gate` | Aggregates every job. **The only required check.** Skipped lanes pass in scoped runs; nightly and manual full runs with macOS reject unexpected skips. | `scripts/ci/required_results.py` |
 
+The realtime lane runs the subscription authentication, direct reasoning,
+voice transport, session orchestration, native login provisioning and Live catalog contracts on Windows,
+macOS and Linux, including the slim container without system audio. These
+focused tests are strict: they do not use the broad-suite failure baseline.
+Their fake credentials and transports also prove that a selected subscription
+cannot fall through to a retained API-key provider when its account is absent
+or unavailable. They make no paid inference calls. Real-account voice tests
+remain separate acceptance evidence.
+
 ### Known failures: the ratchet
 
 The suite carries a backlog of failures, mostly platform-specific. They are
