@@ -15566,3 +15566,27 @@ monitor. The Screen Context window probe reads this instead of the raw
 foreground window. macOS and X11 need no walk: their probes never report the
 floating overlays. Guards: `tests/unit/platform/test_foreground_app_window.py`,
 `tests/unit/screen_context/test_ports.py`.
+
+## BUG-229: a mission killed by an app restart stayed "running" for 37 minutes, then failed without an artifact (MEDIUM, FIXED 2026-10-02)
+
+**Symptom.** An artifact build (a GitHub-stars history dashboard, mission
+`01a0fcc3`) showed as running, then ended as `crash_recovery` /
+Failed 38 minutes later with no artifact and no partial output.
+
+**Cause.** The desktop app process was ended without a shutdown 85 s after
+the worker started (15:19:40; no crash record, the next launcher started at
+15:19:44). The Claude worker died with it before writing any file. The new
+instance's recovery sweep then judged the mission only by its timestamps: its
+last heartbeat was younger than `RECOVERY_STALE_AFTER_MS` (30 min), so it was
+"presumed owned by a live instance" and skipped on every sweep — although no
+process was running it any more. The re-sweep finally failed it at 15:56:42.
+
+**Fix.** The orchestrator stamps its process identity (pid + process start
+time) next to every mission heartbeat, starting the moment `run_mission`
+begins (`missions.owner_pid` / `owner_start_ms`, migrated in place).
+`startup_recover` asks `jarvis/missions/ownership.py` whether that owner is
+alive: a provably dead owner (or a pid now reused by another process) is
+swept at once with an `error_detail` naming the exited process. An alive or
+unknown owner keeps the old freshness guard, so a second instance still never
+sweeps a mission a live first instance is running. The restart that killed
+the worker is outside this fix. Guard: `tests/missions/test_recovery_owner.py`.

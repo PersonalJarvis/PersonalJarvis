@@ -988,6 +988,12 @@ class Kontrollierer:
 
         # PENDING -> RUNNING
         await self._safe_transition(mission_id, MissionState.RUNNING, "kontrollierer-start")
+        # Claim ownership before planning so recovery can tell, from the very
+        # first second, whether the process running this mission still exists.
+        try:
+            await self._manager.store.touch_heartbeat(mission_id, now_ms())
+        except Exception as hb_exc:  # noqa: BLE001 - ownership stamp is advisory; freshness guard still applies
+            logger.debug("Initial mission heartbeat failed (non-fatal): %s", hb_exc)
 
         # Decomposer: determine the plan.
         try:

@@ -27,6 +27,14 @@ cloud-first headless-VPS case alike):
 2. ACTIVE-GUARD — a mission whose last event is younger than ``stale_after_ms``
    is presumed owned by a LIVE orchestrator and is SKIPPED. Only genuinely
    stale, orphaned missions are swept to FAILED('crash_recovery').
+
+OWNER-AWARE (live forensic 2026-10-02, mission 01a0fcc3): the active-guard
+alone kept a mission RUNNING for 37 minutes after an app restart had killed its
+worker — the new instance "presumed" the dead old process still owned it. The
+orchestrator now stamps its process identity with each heartbeat; a mission
+whose stamped owner is provably dead is swept immediately, ahead of the
+active-guard (:mod:`jarvis.missions.ownership`). An unknown owner keeps the
+conservative freshness guard.
 """
 from __future__ import annotations
 
@@ -44,6 +52,7 @@ from .events import (
     MissionTimedOut,
     now_ms,
 )
+from .ownership import owner_is_alive
 from .state_machine import MissionState
 
 log = logging.getLogger(__name__)
@@ -99,14 +108,17 @@ async def startup_recover(
     stale_after_ms: int = RECOVERY_STALE_AFTER_MS,
     now: int | None = None,
     now_fn: Callable[[], int] = now_ms,
+    owner_alive_fn: Callable[[int, int], bool | None] = owner_is_alive,
 ) -> list[str]:
     """Recover genuinely-orphaned missions; never touch live or finished ones.
 
     For each non-terminal mission:
         1. If its event log carries a terminal event, reconcile the header to
            that state (no new event emitted) and skip the sweep.
-        2. Else if its last event is younger than ``stale_after_ms``, skip it —
-           a live orchestrator is presumed to own it.
+        2. Else if the process stamped as its owner is provably dead, sweep it
+           now — nothing can finish it. Otherwise, if its last event is younger
+           than ``stale_after_ms``, skip it — a live orchestrator is presumed
+           to own it.
         3. Else mark it FAILED('crash_recovery'), emitting (in order):
            MissionStateChanged(to=FAILED) then MissionFailed.
 
@@ -118,6 +130,8 @@ async def startup_recover(
             against (defaults to ``now_fn()``); injectable for tests. Note
             ``now=0`` means the epoch (1970), NOT "use the default".
         now_fn: clock function (default :func:`now_ms`).
+        owner_alive_fn: liveness probe for a stamped ``(pid, start_ms)``
+            owner (default :func:`owner_is_alive`); injectable for tests.
 
     Returns:
         The list of mission_ids actually swept to FAILED (empty if nothing was
@@ -130,6 +144,7 @@ async def startup_recover(
     interrupted_ids: list[str] = []
     reconciled_ids: list[str] = []
     skipped_active: list[str] = []
+    owner_dead_ids: list[str] = []
 
     for mission_id, prompt, last_state in stale:
         events = await store.events_for_mission(mission_id)
@@ -164,12 +179,32 @@ async def startup_recover(
         #    activity to protect, so fall through to the sweep (do NOT treat
         #    eventless + heartbeat-zero as active — that would leave it stuck
         #    non-terminal forever).
+        #
+        #    Owner check first: a mission whose stamped owner process is gone
+        #    (an app restart killed it, together with its worker) is orphaned
+        #    no matter how fresh its last heartbeat is.
+        owner_pid, owner_start_ms = await store.get_owner(mission_id)
+        owner_dead = owner_alive_fn(owner_pid, owner_start_ms) is False
         last_event_ts = events[-1].ts_ms if events else 0
         heartbeat_ts = await store.get_heartbeat(mission_id)
         freshness = max(last_event_ts, heartbeat_ts)
-        if stale_after_ms > 0 and freshness > 0 and (now_ts - freshness) < stale_after_ms:
+        if (
+            not owner_dead
+            and stale_after_ms > 0
+            and freshness > 0
+            and (now_ts - freshness) < stale_after_ms
+        ):
             skipped_active.append(mission_id)
             continue
+        error_detail = (
+            f"The process running this mission (pid {owner_pid}) exited before "
+            "it finished — the app was restarted or closed while the worker "
+            "was running."
+            if owner_dead
+            else None
+        )
+        if owner_dead:
+            owner_dead_ids.append(mission_id)
 
         # 3. Genuinely orphaned → sweep to FAILED.
         #    Distinguish "had delivered work" (interrupted delivery) from a bare
@@ -199,6 +234,7 @@ async def startup_recover(
                 error_class=error_class,
                 last_state=last_state,
                 partial_artifacts=delivered,
+                error_detail=error_detail,
             ),
         )
         await store.append_and_publish(fail_env)
@@ -221,6 +257,13 @@ async def startup_recover(
             "Mission recovery: marked %d mission(s) FAILED('crash_recovery'): %s",
             len(crash_ids),
             crash_ids,
+        )
+    if owner_dead_ids:
+        log.warning(
+            "Mission recovery: %d of those had a dead owner process (swept "
+            "without waiting for the staleness window): %s",
+            len(owner_dead_ids),
+            owner_dead_ids,
         )
     if interrupted_ids:
         log.warning(
