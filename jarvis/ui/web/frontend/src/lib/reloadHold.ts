@@ -9,8 +9,15 @@
  * touched keyboard or mouse for two seconds — they were talking — and reloaded
  * the window, which the backend recorded as a `client_stop` nobody pressed.
  *
- * Automatic reloads ask {@link reloadHeld} first and wait while anything is
- * held. A reload the user asked for (a crash card's button) does not.
+ * A typed reply that is still streaming holds them too (main.tsx): a reload
+ * mid-answer drops what was being written.
+ *
+ * Every automatic reload — the bundle watch and the preload recovery — asks
+ * {@link reloadHeld}, both before it decides and again right before the
+ * navigation (./safeReload), and waits while anything is held. The preload
+ * recovery used to skip it, so opening a not-yet-loaded view during a call
+ * after a rebuild still hung the call up. A reload the user asked for (a crash
+ * card's button) does not wait.
  */
 
 const holds = new Set<string>();
