@@ -92,7 +92,10 @@ class EngineModels:
 class EngineConfig:
     silence_ms: int = 200
     min_speech_ms: int = 160
-    barge_in_ms: int = 250
+    # Voiced time before the user's speech cancels a reply. 250 ms put the
+    # measured cut at ~300 ms after speech onset, over the 250 ms release SLO;
+    # the browser's echo cancellation keeps Jarvis' own voice out of the VAD.
+    barge_in_ms: int = 160
     preroll_ms: int = 300
     turn_threshold: float = 0.5
     incomplete_wait_ms: int = 1000
