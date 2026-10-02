@@ -4703,6 +4703,15 @@ class Registry:
             and term.last_prompt
             and (term.submitted is False or term.manual_submit_pending)
         )
+        # An Enter that answers the agent's own dialog continues the job Jarvis
+        # is following rather than replacing it. Read before the keystroke
+        # reaches the pane, while the question is still what is on screen.
+        answered = None
+        if is_submit and not confirm_pending_prompt and term.delegation_result is not None:
+            from .followthrough import current as follows
+
+            if follows(term, term.delegation_result) and term.reading().activity == "asking":
+                answered = term.delegation_result
         # Do not mutate activity or receipt state for bytes the PTY refused.
         written = manager.write(term.pty_id, data)
         if not written:
@@ -4741,6 +4750,10 @@ class Registry:
             else:
                 term.last_submit_at = term.last_input_at
                 term.submit_generation = term.process_generation
+                if answered is not None:
+                    from .followthrough import answered_in_pane
+
+                    answered_in_pane(term, answered)
             # And the pane's conversation may have just begun, which for most
             # coding CLIs is the first moment its id exists on disk at all. A
             # pane driven only by hand never goes through `send_prompt`, so
@@ -6670,7 +6683,13 @@ class Registry:
             if followup is not None and followup.get("reply_surface") in {"voice", "chat"}:
                 from .followthrough import prepare
 
-                pending = await prepare(term, text, typed, followup)
+                pending = await prepare(
+                    term,
+                    text,
+                    typed,
+                    followup,
+                    answering=allow_question and term.reading().activity == "asking",
+                )
             return await self._send_prompt_locked(
                 identity,
                 text,

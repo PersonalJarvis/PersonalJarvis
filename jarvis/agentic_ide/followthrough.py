@@ -39,6 +39,9 @@ class PendingResult:
     generation: int
     reply_session_id: str = ""
     submitted_at: float | None = None
+    #: The submission answered a question (a dialog choice the transcript does
+    #: not record as a user turn), so ``prompt`` stays the task it belongs to.
+    keeps_prompt: bool = False
 
 
 def _turns(term: Any) -> list:
@@ -109,21 +112,66 @@ def _snapshot(term: Any) -> list:
         return []
 
 
-async def prepare(term: Any, prompt: str, request: str, origin: dict[str, str]) -> PendingResult:
+async def prepare(
+    term: Any, prompt: str, request: str, origin: dict[str, str], *, answering: bool = False,
+) -> PendingResult:
+    """The receipt for one delivery, before it is sent.
+
+    ``answering`` marks a choice in a dialog the agent is showing. The CLI
+    records no user turn for it, so its eventual answer is matched against the
+    task it was working on: the job Jarvis is already following on this pane,
+    else the newest user turn on record.
+    """
     turns = await asyncio.to_thread(_snapshot, term)
+    previous = getattr(term, "delegation_result", None)
+    if answering and previous is not None and current(term, previous):
+        return replace(previous, baseline=_fingerprint(turns), keeps_prompt=True)
+    task = ""
+    if answering:
+        task = next((t.text for t in reversed(turns) if t.role == "user"), "")
     return PendingResult(
-        request_id=uuid4().hex, prompt=prompt, request=request or prompt,
+        request_id=uuid4().hex, prompt=task or prompt, request=request or prompt,
         language=origin.get("lang", ""), baseline=_fingerprint(turns),
         generation=term.process_generation,
         reply_session_id=origin.get("reply_session_id", ""),
+        keeps_prompt=bool(task),
     )
 
 
 def submitted(term: Any, pending: PendingResult | None) -> None:
+    # A delivery the pane visibly refused handed nothing over, so a job that
+    # was already being followed still owns the pane's next stop.
+    if term.submitted is False:
+        return
     # An uncertain receipt is tracked, but never called completed on its own.
     term.delegation_result = (
-        replace(pending, prompt=term.last_prompt, submitted_at=term.last_submit_at)
-        if pending is not None and term.submitted is not False else None
+        replace(
+            pending,
+            prompt=pending.prompt if pending.keeps_prompt else term.last_prompt,
+            submitted_at=term.last_submit_at,
+        )
+        if pending is not None else None
+    )
+    term.delegation_probe_at = 0.0
+    term.delegation_stopped_at = 0.0
+
+
+def answered_in_pane(term: Any, pending: PendingResult) -> None:
+    """Keep following a delegated job whose question was answered by hand.
+
+    Enter in the pane counts as a new submission, which ends the old receipt.
+    When that Enter answered the agent's own dialog (a permission prompt, a
+    choice), the job Jarvis handed over is still the one running; dropping it
+    there meant its final answer was never reported. The prompt is kept, since
+    a dialog choice is not recorded as a user turn.
+    """
+    if (
+        getattr(term, "delegation_result", None) is not pending
+        or term.process_generation != pending.generation
+    ):
+        return
+    term.delegation_result = replace(
+        pending, submitted_at=term.last_submit_at, keeps_prompt=True,
     )
     term.delegation_probe_at = 0.0
     term.delegation_stopped_at = 0.0

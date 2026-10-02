@@ -240,6 +240,31 @@ async def test_a_new_submission_restarts_the_report_grace(pane):
     assert term.delegation_stopped_at == 0.0
 
 
+@pytest.mark.asyncio
+async def test_a_refused_later_delivery_keeps_the_earlier_job(pane):
+    pending = await arm(pane)
+    term, _ = pane
+    later = await ft.prepare(term, "Also update the docs", "", {"lang": "en"})
+    term.submitted = False  # The text sat in the input box; nothing was handed over.
+    ft.submitted(term, later)
+    assert term.delegation_result is pending and ft.current(term, pending)
+
+
+@pytest.mark.asyncio
+async def test_a_dialog_answer_without_a_followed_job_tracks_the_task_on_record(pane):
+    term, turns = pane
+    turns.append(Turn("user", "Refactor the parser"))
+    answer = await ft.prepare(term, "1", "1", {"lang": "en"}, answering=True)
+    term.last_prompt = "1"
+    ft.submitted(term, answer)
+    tracked = term.delegation_result
+    assert tracked.prompt == "Refactor the parser" and tracked.keeps_prompt
+    turns.append(Turn("assistant", "Parser refactored."))
+    events = []
+    assert await ft.publish_result("completed", term, tracked, events.append, now=200.0)
+    assert "Parser refactored" in events[0].report
+
+
 def test_report_grace_outlasts_the_conversation_lookup():
     from jarvis.agentic_ide.session import CONVERSATION_DELAYS_S
 

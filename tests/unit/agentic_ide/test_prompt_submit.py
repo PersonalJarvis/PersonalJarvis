@@ -17,8 +17,9 @@ from pathlib import Path
 
 import pytest
 
-from jarvis.agentic_ide import fleet_actions
+from jarvis.agentic_ide import fleet_actions, followthrough
 from jarvis.agentic_ide import session as session_mod
+from jarvis.agentic_ide.activity import Reading
 from jarvis.agentic_ide.session import (
     PASTE_END,
     PASTE_START,
@@ -558,3 +559,65 @@ async def test_a_stuck_multiline_prompt_is_left_in_the_box_not_retyped(
     assert term.submitted is False
     assert term.sent_multiline is False, "an unsubmitted prompt did not go out"
     assert term.last_prompt == _MARKDOWN, "what sits in the box is the markdown"
+
+
+# ------------------------------------------------------- delegated follow-through
+_VOICE = {"reply_surface": "voice", "lang": "en"}
+
+
+def _screen_reads(monkeypatch: pytest.MonkeyPatch, activity: str) -> None:
+    monkeypatch.setattr(session_mod, "observed", lambda _term: Reading(activity, 0.0))
+
+
+async def test_enter_on_the_agents_dialog_keeps_following_the_delegated_job(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Answering a permission prompt by hand used to drop Jarvis's job silently."""
+    fake_pty.tui_echo = True
+    term = await _live(registry, tmp_path)
+    await registry.send_prompt("Alex", "Fix the bug", followup=_VOICE)
+    job = term.delegation_result
+    assert job is not None and followthrough.current(term, job)
+
+    _screen_reads(monkeypatch, "asking")
+    await asyncio.sleep(0.01)  # a later stamp than the prompt's own
+    assert registry.write(term.key, "\r") is True
+
+    kept = term.delegation_result
+    assert term.last_submit_at != job.submitted_at
+    assert kept is not None and followthrough.current(term, kept)
+    assert (kept.request_id, kept.prompt) == (job.request_id, "Fix the bug")
+
+
+async def test_enter_at_an_idle_prompt_hands_the_pane_a_new_instruction(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_pty.tui_echo = True
+    term = await _live(registry, tmp_path)
+    await registry.send_prompt("Alex", "Fix the bug", followup=_VOICE)
+    job = term.delegation_result
+
+    _screen_reads(monkeypatch, "waiting")
+    await asyncio.sleep(0.01)
+    registry.write(term.key, "\r")
+
+    assert not followthrough.current(term, job), "the person's own prompt owns the next stop"
+
+
+async def test_jarvis_answering_a_dialog_keeps_the_task_it_belongs_to(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_pty.tui_echo = True
+    term = await _live(registry, tmp_path)
+    await registry.send_prompt("Alex", "Fix the bug", followup=_VOICE)
+    job = term.delegation_result
+
+    _screen_reads(monkeypatch, "asking")
+    await registry.send_prompt(
+        "Alex", "1", followup=_VOICE, allow_question=True,
+        expected_input=registry.input_token(term),
+    )
+
+    kept = term.delegation_result
+    assert kept is not None and followthrough.current(term, kept)
+    assert (kept.request_id, kept.prompt) == (job.request_id, "Fix the bug")
