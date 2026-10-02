@@ -69,20 +69,6 @@ function soloWorkspace(project: IdeProject): ProjectWorkspace | null {
   return workspace.name.trim().toLowerCase() === project.name.trim().toLowerCase() ? workspace : null;
 }
 
-/**
- * Only a workspace with running agents carries a mark: one small accent dot at
- * the row's end. Idle and saved rows stay plain text, like a Codex thread list.
- */
-function RunningMark({ workspaces, hover }: { workspaces: ProjectWorkspace[]; hover: "group" | "group/space" }) {
-  const live = workspaces.reduce((total, workspace) => total + (workspace.status === "open" ? workspace.live_terminals : 0), 0);
-  if (live === 0) return null;
-  const fade = hover === "group"
-    ? "group-hover:opacity-0 group-focus-within:opacity-0"
-    : "group-hover/space:opacity-0 group-focus-within/space:opacity-0";
-  return <span aria-label={`${live} ${live === 1 ? "agent" : "agents"} running`} title={`${live} ${live === 1 ? "agent" : "agents"} running`}
-    className={`mr-1 h-1.5 w-1.5 shrink-0 rounded-full bg-accent ring-[3px] ring-accent/15 transition-opacity [@media(hover:none)]:opacity-0 ${fade}`} />;
-}
-
 function readExpansion(): Record<string, boolean> {
   try {
     const value: unknown = JSON.parse(localStorage.getItem(EXPANSION_KEY) ?? "{}");
@@ -516,8 +502,6 @@ export function IdeProjectTree() {
                 : <Folder aria-hidden className="h-4 w-4 shrink-0 text-muted-foreground" strokeWidth={1.75} />}
             <span className="min-w-0 flex-1 truncate">{project.name}</span>
             {soloPending && <span className="sr-only">Switching workspace</span>}
-            {/* An open project's rows carry their own marks; the header only speaks for a folded one. */}
-            {(solo || !open) && <RunningMark workspaces={project.workspaces} hover="group" />}
           </button>
           <div className={`absolute inset-y-0 right-0 flex items-center rounded-r-md bg-gradient-to-l from-muted from-60% to-transparent pl-5 pr-1 transition-opacity ${projectMenuOpen ? "opacity-100" : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100"}`} data-project-menu={project.id}>
             <button type="button" aria-label={`Project actions for ${project.name}`} title="Project actions" aria-haspopup="menu" aria-expanded={projectMenuOpen}
@@ -640,7 +624,7 @@ export function IdeProjectTree() {
             className={`flex min-h-8 min-w-0 flex-1 items-center gap-2 rounded-md py-1 pl-[34px] pr-2 text-left text-[15px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-45 ${selected || pending ? "text-foreground" : workspace.status === "open" ? "text-foreground/80" : "text-muted-foreground"} ${draggable ? "cursor-grab active:cursor-grabbing" : ""}`}>
             {/* Text aligns under the project name, the way Codex indents threads under a folder. */}
             <span className="min-w-0 flex-1 truncate">{workspace.name}</span>
-            {pending ? <Loader2 aria-hidden className="h-3 w-3 shrink-0 animate-spin text-muted-foreground" /> : <RunningMark workspaces={[workspace]} hover="group/space" />}
+            {pending && <Loader2 aria-hidden className="h-3 w-3 shrink-0 animate-spin text-muted-foreground" />}
             {pending && <span className="sr-only">Switching workspace</span>}
             </button>
             {(() => {

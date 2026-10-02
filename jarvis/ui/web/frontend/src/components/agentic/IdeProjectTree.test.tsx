@@ -107,26 +107,17 @@ it("expands a manually collapsed project when its first workspace becomes active
   expect(screen.getByTestId("ide-workspace-p1-w1")).toBeDefined();
 });
 
-it("marks running agents on the rows, and on the header only when folded", () => {
-  const withTwo = { ...project(), workspaces: [
+it("keeps rows plain: no session counts or status marks", () => {
+  const busy = { ...project(), workspaces: [
     { ...project().workspaces[0], status: "open", live_terminals: 2, terminals: 6 },
-    { ...project().workspaces[0], id: "p1-w2", status: "open", live_terminals: 1, terminals: 3 },
+    { ...project().workspaces[0], id: "p1-w2", status: "closed", live_terminals: 0, terminals: 3 },
   ] } as IdeProject;
-  useIdeProjectsStore.setState({ projects: [withTwo] });
+  useIdeProjectsStore.setState({ projects: [busy] });
   render(<IdeProjectTree />);
-  // Open, each row marks its own running agents; folded, the header sums them.
-  expect(screen.getByLabelText("2 agents running")).toBeDefined();
-  expect(screen.queryByLabelText("3 agents running")).toBeNull();
+  expect(screen.queryByText("6")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Collapse App" }));
-  expect(screen.getByLabelText("3 agents running")).toBeDefined();
-});
-
-it("shows no mark for idle or saved workspaces", () => {
-  const idle = { ...project(), workspaces: [{ ...project().workspaces[0], status: "closed", live_terminals: 0, terminals: 4 }] } as IdeProject;
-  useIdeProjectsStore.setState({ projects: [idle] });
-  render(<IdeProjectTree />);
-  expect(screen.queryByLabelText(/agents? running/)).toBeNull();
-  expect(screen.queryByText("4")).toBeNull();
+  expect(screen.queryByText("9")).toBeNull();
+  expect(screen.queryByLabelText(/agent sessions?|agents? running/)).toBeNull();
 });
 
 it("renders a project whose only workspace shares its name as one row", async () => {
@@ -135,7 +126,7 @@ it("renders a project whose only workspace shares its name as one row", async ()
   render(<IdeProjectTree />);
   expect(screen.queryByRole("button", { name: /Collapse App|Expand App/ })).toBeNull();
   expect(screen.getAllByText(/^app$/i)).toHaveLength(1);
-  expect(screen.queryByLabelText(/agents? running/)).toBeNull();
+  expect(screen.queryByText("4")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Open App" }));
   expect(useIdeProjectsStore.getState().action).toMatchObject({ kind: "activate-workspace", workspaceId: "p1-w1" });
   fireEvent.click(screen.getByRole("button", { name: "Project actions for App" }));
