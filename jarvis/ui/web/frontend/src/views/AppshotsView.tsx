@@ -73,12 +73,15 @@ function Row({
 }) {
   return (
     <div className="px-5 py-4">
-      <div className="flex items-center justify-between gap-6">
-        <div className="min-w-0">
+      {/* The label keeps a readable width; a wide control (a shortcut with
+          Change and clear) moves under it instead of squeezing the text to
+          one word per line. */}
+      <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
+        <div className="min-w-[min(100%,14rem)] flex-1">
           <p className="text-base font-medium text-foreground">{label}</p>
           {hint && <p className="mt-0.5 text-sm text-muted-foreground">{hint}</p>}
         </div>
-        <div className="shrink-0">{control}</div>
+        <div className="ml-auto shrink-0">{control}</div>
       </div>
       {children}
     </div>
@@ -362,7 +365,10 @@ export function AppshotsView() {
           </div>
         </div>
 
-        <div className="mt-5 grid gap-5 lg:grid-cols-2">
+        {/* Two columns only when each gets at least 28rem. A viewport
+            breakpoint split the narrow Settings dialog into two cramped
+            columns on any wide window. */}
+        <div className="mt-5 grid grid-cols-[repeat(auto-fit,minmax(min(100%,28rem),1fr))] gap-5">
           <div className="divide-y divide-border self-start rounded-xl border border-border bg-card">
             {!settings ? (
               <div className="flex h-40 items-center justify-center" role="status" aria-busy="true">
