@@ -223,7 +223,7 @@ const FoldExpandContext = createContext(0);
 
 function Disclosure({ label, children, forced = false, initiallyOpen = false, icon, trailing, tone, summary, resetKey = "", live = false }: {
   label: ReactNode; children?: ReactNode; forced?: boolean; initiallyOpen?: boolean;
-  icon: ReactNode; trailing?: ReactNode; tone?: string; summary?: ReactNode; resetKey?: string;
+  icon?: ReactNode; trailing?: ReactNode; tone?: string; summary?: ReactNode; resetKey?: string;
   /** Rail look only: the node glows while this step is the one working. */
   live?: boolean;
 }) {
@@ -239,13 +239,13 @@ function Disclosure({ label, children, forced = false, initiallyOpen = false, ic
       <button type="button" className={railRowButton} aria-expanded={children ? open : undefined}
         aria-controls={children ? id : undefined} disabled={!children || forced}
         onClick={() => setChoice({ phase, open: !open })}>
-        <Node live={live}>{icon}</Node>
+        {icon ? <Node live={live}>{icon}</Node> : null}
         <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{label}</span>
         {trailing ? <span className="shrink-0 text-xs leading-6 tabular-nums text-muted-foreground">{trailing}</span> : null}
         {children && !forced ? <ChevronRight aria-hidden className={cn("mt-[5px] h-3.5 w-3.5 shrink-0 opacity-40 transition group-hover/trace:opacity-90", open && "rotate-90")} /> : null}
       </button>
       {summary}
-      {children && open ? <div id={id} className="min-w-0 pb-1.5 pl-7">{children}</div> : null}
+      {children && open ? <div id={id} className={cn("min-w-0 pb-1.5", icon ? "pl-7" : "pl-0")}>{children}</div> : null}
     </div>
   );
   return (
@@ -300,10 +300,10 @@ export function ReasoningTrace({ block, turnLive, compact = false }: { block: Re
     : t(live ? "work_trace.thinking_for" : "work_trace.thought_for").replace("{duration}", traceDuration(duration));
   const gist = text.replace(/```[\s\S]*?```/g, " ").replace(/[`*_#>~]/g, "").replace(/\s+/g, " ").trim();
   const showGist = !compact && !turnLive && gist;
-  if (rail) return <Disclosure label={<Live on={live}>{label}</Live>} icon={<span className="trace-dot" />}
+  if (rail) return <Disclosure label={<Live on={live}>{label}</Live>}
     live={live} forced={live} initiallyOpen={compact ? live : turnLive}
     resetKey={compact ? String(turnLive) : ""}
-    summary={showGist ? <p className="mb-1.5 pl-7 line-clamp-2 text-sm leading-6 text-foreground-secondary">{gist.slice(0, 280)}</p> : undefined}>
+    summary={showGist ? <p className="mb-1.5 line-clamp-2 text-sm leading-6 text-muted-foreground">{gist.slice(0, 280)}</p> : undefined}>
     {text ? <ReasoningBody text={text} live={live} /> : undefined}
   </Disclosure>;
   return <Disclosure label={label} icon={<Brain aria-hidden className={cn(iconClass, live && "motion-safe:animate-pulse")} />}
@@ -510,7 +510,7 @@ function traceLogos(blocks: TurnBlock[]): ToolChoice[] {
   for (const block of blocks) {
     if (block.kind !== "tool") continue;
     const view = traceToolIdentity(block);
-    const key = view.identity.key || view.service || block.name;
+    const key = view.identity.logo || view.identity.key || view.service || block.name;
     if (!view.identity.logo || seen.has(key)) continue;
     seen.add(key);
     rows.push(view.row);
@@ -545,24 +545,23 @@ function ConversationWorkFold({ durationMs, attention, blocks, children, timelin
   return (
     <div className="min-w-0" data-testid="conversation-work-fold" data-open={open ? "true" : "false"}>
       {rail ? <button type="button" aria-expanded={open} aria-controls={id} onClick={toggle}
-        className="group/fold mb-0.5 flex max-w-full min-w-0 items-center gap-2 rounded-md py-1 text-left text-sm leading-6 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        className="group/fold flex max-w-full min-w-0 items-center gap-2 rounded-md py-1 text-left text-sm leading-6 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
         {logos.length ? <span aria-hidden className="flex shrink-0 items-center">
           {logos.map((row, i) => <span key={i} className={cn("tool-identity inline-flex rounded-full bg-background ring-2 ring-background", i > 0 && "-ml-1")} style={toolIdentityStyle(row)}><ToolChoiceIcon row={row} size={14} /></span>)}
         </span> : null}
-        <span className="shrink-0 text-foreground-secondary group-hover/fold:text-foreground">{label}</span>
-        {timeline?.summary ? <span className="min-w-0 truncate"><span aria-hidden className="mr-2 text-muted-foreground/50">·</span>{timeline.summary}</span> : null}
+        <span className="shrink-0">{label}</span>
         {timeline && timeline.problemCount > 0 ? <span className="shrink-0 text-destructive">
-          <span aria-hidden className="mr-2 text-muted-foreground/50">·</span>
-          {t("trace_report.failed_count").replace("{count}", String(timeline.problemCount))}
+          <span aria-hidden className="mr-1.5 text-muted-foreground/50">·</span>
+          {t(`trace_report.failed_count_${timeline.problemCount === 1 ? "one" : "other"}`).replace("{count}", String(timeline.problemCount))}
         </span> : null}
-        <ChevronRight aria-hidden className={cn("h-3.5 w-3.5 shrink-0 opacity-60 transition-transform group-hover/fold:opacity-100", open && "rotate-90")} />
+        <ChevronRight aria-hidden className={cn("h-3.5 w-3.5 shrink-0 opacity-50 transition-transform group-hover/fold:opacity-100", open && "rotate-90")} />
       </button> : <button type="button" aria-expanded={open} aria-controls={id}
         className="group/fold mb-1 inline-flex max-w-full items-center gap-1 rounded-md px-1.5 py-1 text-left text-xs leading-5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         onClick={toggle}>
         <ChevronRight aria-hidden className={cn("h-3 w-3 shrink-0 opacity-70 transition-transform group-hover/fold:opacity-100", open && "rotate-90")} />
         <span className="truncate">{label}</span>
       </button>}
-      {open ? <div id={id} className={rail ? "trace-fold-open pb-1" : undefined}><FoldExpandContext.Provider value={seq}>{children}</FoldExpandContext.Provider></div> : attention}
+      {open ? <div id={id} className={rail ? "group/fold-body pb-1 pt-0.5" : undefined}><FoldExpandContext.Provider value={seq}>{children}</FoldExpandContext.Provider></div> : attention}
     </div>
   );
 }
@@ -711,7 +710,7 @@ function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error
         statusOnRail ? "py-1" : "pb-2 pt-1", status === "error" && "text-destructive", pending && "text-foreground")}>
       {petState
         ? <span aria-hidden className="trace-node trace-node-pet" data-trace-pet={petState}><PetMark size={32} state={petState} /></span>
-        : <Node live={working}><Icon className={cn(nodeIcon, working && "motion-safe:animate-spin")} /></Node>}
+        : null}
       <span className="inline-flex min-w-0 flex-1 flex-wrap items-center gap-x-2">
         <span><Live on={working}>{outcomeLabel}</Live></span>
         {(live || durationMs !== null) ? <span aria-live="off" className="tabular-nums">{traceDuration(live ? elapsed : durationMs ?? 0)}</span> : null}
@@ -727,6 +726,8 @@ function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error
         : block.kind === "reasoning" ? <ReasoningTrace block={block} turnLive={live} compact={conversation} />
         : replyNode(block, conversation, renderText),
       liveOnRail: (block) => block.kind === "reasoning" || (block.kind === "tool" && !block.question),
+      renderNarration: (text, id) => renderText ? renderText(text, id)
+        : <div className="prose prose-sm max-w-none text-foreground dark:prose-invert [overflow-wrap:anywhere]"><ChatMarkdown text={text} /></div>,
       renderDetails: (block) => <ToolDetails block={block} />,
     };
     const steps = timelineItems(timeline, renderers);

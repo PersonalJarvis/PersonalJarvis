@@ -10,7 +10,8 @@ it("keeps brief voice errors visible", () => {
  // The finished trace folds into its report; the toggle says a step failed.
  const toggle = screen.getByRole("button", { name: /1 failed/ });
  fireEvent.click(toggle);
- expect(screen.getByText(/Connection lost/)).toBeTruthy();
+ // A failed step says why under its own line.
+ expect(screen.getByText("Connection lost")).toBeTruthy();
 });
 it("does not hide live work with no events", () => {
  const { rerender, container } = render(<TurnSteps steps={[]} />);

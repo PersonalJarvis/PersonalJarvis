@@ -1,26 +1,29 @@
 /**
- * A turn's work as a timeline, in the shape Claude and Codex draw it.
+ * A turn's work in the shape the Codex app draws it.
  *
- * Both tools read the same way: the model's own words carry the story (its
- * narration between calls, its reasoning summaries) as plain prose, and the
- * calls between them are terse single lines — "Explored" with the files it
- * read and the patterns it searched, "Ran `npm test`" with the first lines
- * the command printed, "Edited src/app.ts +3 −1". A finished turn folds to
- * one line, "Worked for 4m 07s", and opens to exactly that timeline.
+ * Codex reads like a conversation, not a log: what the model says between
+ * its calls is ordinary prose at full contrast, and each stretch of calls in
+ * between collapses to ONE quiet line that says what was done — "Ran
+ * commands, searched the web" — with the stretch's real mark in front (the
+ * plugin's logo, the CLI vendor's logo, else a plain terminal or pencil).
+ * The line opens to the single calls; a call opens to its raw input and
+ * output. A finished turn folds to "Worked for 4m 07s".
  *
- * This module is the pure model behind it: blocks → entries, the header's
- * one-line summary, and the same timeline as Markdown for copying. The
- * renderer is TraceTimeline.tsx.
+ * This module is the pure model behind that: blocks → prose and activity
+ * stretches, the wording of every line, the fold's label, and the same
+ * timeline as Markdown for copying. The renderer is TraceTimeline.tsx.
  *
- * What it never does: invent a reason the model did not give, draw a row for
- * wordless (redacted) thinking — its time goes to the header — or draw
- * plumbing (loading a tool's schema, polling a question card).
+ * It never invents a reason the model did not give, never draws wordless
+ * (redacted) thinking, and never draws plumbing (loading a tool's schema,
+ * polling a question card).
  *
  * Placeholders never use `{name}`: the i18n layer fills that token with the
  * assistant's name before any string reaches this module.
  */
 
 import { fill } from "@/i18n";
+import { cliVendor } from "@/lib/cliVendors";
+import { resolveToolBrand } from "@/lib/toolBrand";
 import { describeToolStep } from "@/lib/toolStepLabel";
 import { isQuestionTool, type ReasoningBlock, type TextBlock, type ToolBlock, type TurnBlock, type TurnStatus } from "./reduce";
 import { toolDiff } from "./toolDiff";
@@ -28,58 +31,61 @@ import { traceToolIdentity, traceToolName } from "./traceActivity";
 
 export type Translate = (key: string) => string;
 
-/** How a finished call ended. */
-export type EntryStatus = "done" | "failed" | "blocked" | "declined" | "interrupted";
+/** How a call stands. */
+export type CallStatus = "running" | "done" | "failed" | "blocked" | "declined" | "interrupted";
 
-/** What the model said: its reasoning text, or narration between calls. */
-export interface ThoughtEntry { kind: "thought"; id: string; text: string; block: ReasoningBlock | TextBlock }
-/** Live work the classic row draws (running call, approval, question card, streaming thought, reply). */
-export interface LiveEntry { kind: "live"; id: string; block: TurnBlock }
-/** Consecutive reads, listings and searches, merged Codex-style. */
-export interface ExploreEntry { kind: "explore"; id: string; lines: ExploreLine[]; blocks: ToolBlock[]; durationMs: number }
-export interface ExploreLine { verb: "read" | "list" | "search"; targets: string[] }
-export interface CommandEntry {
-  kind: "command"; id: string; block: ToolBlock; command: string; status: EntryStatus;
-  /** The first lines it printed (or the error), and how many more there were. */
-  output: OutputPreview | null; reason: string;
-}
-export interface EditEntry {
-  kind: "edit"; id: string; block: ToolBlock; verb: "edit" | "write"; path: string;
-  added: number; removed: number; status: EntryStatus; reason: string;
-}
-export interface ToolEntry {
-  kind: "tool"; id: string; block: ToolBlock; label: string; detail: string;
-  /** A terse result ("3 results", the first line it said); "" when none. */
-  result: string; status: EntryStatus; reason: string;
-  /** A failed read, listing or search: counted as that, not as a tool used. */
-  explore?: "read" | "list" | "search";
-  /** How the header's "used …" names it: "the wiki", "GitHub · Create Issue". */
-  subject: string;
-}
+/** What a call is, for its icon and its words. */
+export type CallKind = "command" | "read" | "list" | "search" | "edit" | "write" | "image" | "web" | "family" | "service" | "tool";
+
 export interface OutputPreview { lines: string[]; more: number }
 
-export type TimelineEntry = ThoughtEntry | LiveEntry | ExploreEntry | CommandEntry | EditEntry | ToolEntry;
+export interface Call {
+  id: string;
+  block: ToolBlock;
+  kind: CallKind;
+  /** The line's words: the command itself, "Read src/app.ts", "Searched the wiki". */
+  text: string;
+  /** A quieter tail: a query, a title, an operation's argument. */
+  detail: string;
+  status: CallStatus;
+  /** Why it did not succeed, in plain words; "" otherwise. */
+  reason: string;
+  /** Edit size, when it is an edit. */
+  added: number;
+  removed: number;
+  /** A terse result for tools that are not commands ("3 results", a message). */
+  result: string;
+  /** The stretch summary's bucket ("command", "family:wiki", "used:Linear"). */
+  bucket: string;
+  /** A brand to draw instead of a plain glyph: a plugin, an MCP server, a CLI vendor. */
+  brand: string | null;
+}
+
+/** What the model said — narration between calls, or its reasoning text. */
+export interface ProseEntry { kind: "prose"; id: string; text: string; tone: "narration" | "reasoning"; block: TextBlock | ReasoningBlock }
+/** A stretch of calls between two pieces of prose. */
+export interface ActivityEntry { kind: "activity"; id: string; calls: Call[]; summary: string }
+/** Work the caller draws itself: approvals, question cards, a streaming thought, a live reply. */
+export interface LiveEntry { kind: "live"; id: string; block: TurnBlock }
+
+export type TimelineEntry = ProseEntry | ActivityEntry | LiveEntry;
 
 export interface Timeline {
   entries: TimelineEntry[];
   /** Calls told (live ones included). */
-  actionCount: number;
+  callCount: number;
   /** Calls that failed, were blocked, declined or cut off. */
   problemCount: number;
-  /** Wordless thinking, summed. */
-  thinkingMs: number;
-  /** "Explored 3 files, ran 2 commands" — the folded header's tail. */
-  summary: string;
 }
 
 export interface TimelineOptions {
   t: Translate;
-  /** UI language tag, for plurals and lists. */
+  /** UI language tag, for plurals. */
   lang: string;
   status: TurnStatus;
   /**
-   * Live turns keep their replies and streaming pieces as live entries;
-   * a finished turn's fold tells narration as thoughts.
+   * Live turns keep replies and streaming thoughts for the caller; a folded
+   * finished turn tells its narration as prose.
    */
   live: boolean;
 }
@@ -87,7 +93,7 @@ export interface TimelineOptions {
 const KEY = "trace_report";
 export const tr = (t: Translate, key: string, vars: Record<string, string | number> = {}) => fill(t(`${KEY}.${key}`), vars);
 
-/** "49ms", "0.4s", "12s", "4m 07s" — the duration on a trace line. */
+/** "49ms", "0.4s", "12s", "4m 07s". */
 export function traceDuration(ms: number): string {
   // Keep short, measured calls visible instead of rounding 49 ms to "0.0s".
   if (ms > 0 && ms < 100) return `${Math.ceil(ms)}ms`;
@@ -105,13 +111,13 @@ export function plural(lang: string, count: number): "one" | "other" {
   }
 }
 
-export function joinList(lang: string, items: string[]): string {
-  if (items.length <= 1) return items[0] ?? "";
-  try {
-    return new Intl.ListFormat(lang, { style: "long", type: "conjunction" }).format(items);
-  } catch {
-    return items.join(", ");
-  }
+export function capitalize(text: string): string {
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : text;
+}
+
+/** A registry name as words, sentence case: "society_routines" → "Society routines". */
+function humanize(name: string): string {
+  return capitalize(name.split(/[-_\s.]+/).filter(Boolean).join(" ").toLowerCase());
 }
 
 function oneLine(text: string, max: number): string {
@@ -132,7 +138,7 @@ function firstString(record: Record<string, unknown>, keys: string[]): string {
   return "";
 }
 
-/** The last two or three segments of a path — what a person recognises. */
+/** The last three segments of a path — what a person recognises. */
 export function shortPath(path: string): string {
   const parts = path.replace(/\\/g, "/").split("/").filter(Boolean);
   return parts.length > 3 ? `…/${parts.slice(-3).join("/")}` : path;
@@ -147,14 +153,11 @@ function isPlumbing(block: ToolBlock): boolean {
   return false;
 }
 
-/** Still asks for something or still running: the live row draws it. */
-function isLiveBlock(block: ToolBlock, status: TurnStatus): boolean {
-  if (block.question) return true;
-  if (block.approval && block.approval.decision === null) return true;
-  return block.output === null && status === "running" && block.approval?.decision !== "deny";
+/** Asks the person for something: drawn by the caller as its card. */
+function needsPerson(block: ToolBlock): boolean {
+  return Boolean(block.question) || Boolean(block.approval && block.approval.decision === null);
 }
 
-/** Drop the "… (+N more chars)" cap marker the backend appends. */
 function stripCapMarker(text: string): string {
   return text.replace(/…\s*\(\+\d+ more chars\)\s*$/, "").trimEnd();
 }
@@ -171,10 +174,14 @@ function printedOutput(output: string): string | null {
   }
 }
 
-const PREVIEW_LINES = 3;
+/** The output a person reads: unwrapped, cap marker gone. */
+export function readableOutput(block: ToolBlock): string {
+  const raw = stripCapMarker(block.output ?? "");
+  return printedOutput(raw) ?? raw;
+}
 
-/** The first lines of an output, the way Codex and Claude Code show them. */
-export function previewOutput(output: string, max = PREVIEW_LINES): OutputPreview | null {
+/** The first lines of an output and how many more there were. */
+export function previewOutput(output: string, max = 3): OutputPreview | null {
   const lines = output.split(/\r?\n/).map((line) => line.replace(/\s+$/, "")).filter((line) => line.trim());
   if (!lines.length) return null;
   return { lines: lines.slice(0, max).map((line) => (line.length > 160 ? `${line.slice(0, 159)}…` : line)), more: Math.max(0, lines.length - max) };
@@ -191,24 +198,21 @@ function refusalReason(reason: string, t: Translate): string | null {
   return null;
 }
 
-/** How a finished call ended, and why when it did not succeed. */
-function outcome(block: ToolBlock, t: Translate): { status: EntryStatus; reason: string } {
+function statusOf(block: ToolBlock, turn: TurnStatus, t: Translate): { status: CallStatus; reason: string } {
   if (block.approval?.decision === "deny") {
     const rule = refusalReason(block.approval.summary || block.output || "", t);
     return rule ? { status: "blocked", reason: rule } : { status: "declined", reason: "" };
   }
-  if (block.output === null) return { status: "interrupted", reason: "" };
+  if (block.output === null) return turn === "running" ? { status: "running", reason: "" } : { status: "interrupted", reason: "" };
   if (block.isError) {
     const raw = stripCapMarker(block.output);
     const rule = refusalReason(raw, t);
     if (rule) return { status: "blocked", reason: rule };
-    const first = raw.split(/\r?\n/).find((line) => line.trim()) ?? "";
-    return { status: "failed", reason: oneLine(first, 200) };
+    return { status: "failed", reason: oneLine(raw.split(/\r?\n/).find((line) => line.trim()) ?? "", 200) };
   }
   return { status: "done", reason: "" };
 }
 
-/** Argument keys that name what a coding action touched. */
 const ACTION_KEYS: Record<string, string[]> = {
   command: ["command", "cmd", "CommandLine", "commandLine", "script"],
   read: ["file_path", "path", "notebook_path", "filename"],
@@ -218,22 +222,21 @@ const ACTION_KEYS: Record<string, string[]> = {
   search: ["pattern", "query", "regex", "q"],
 };
 
-/** Families of Jarvis's own tools that have a past-tense label. */
-const FAMILY_LABELS = new Set([
+/** Families of Jarvis's own tools that have their own words. */
+const FAMILIES = new Set([
   "wiki", "wiki_write", "artifact", "skill", "skill_create", "web", "screen", "screen_recall",
   "control", "navigate", "app", "memory", "memory_update", "profile", "contact", "call",
   "worker", "model", "mcp_admin", "settings", "verify",
 ]);
 
+const IMAGE_FILE = /\.(png|jpe?g|gif|webp|bmp|svg|heic|avif)$/i;
+
 /** Keys whose string value says what a structured result was about. */
 const GIST_KEYS = ["summary", "message", "result", "status", "title", "answer", "text", "detail", "description"];
 
-/** A terse result for a generic tool: a count, its message, or its first line. */
+/** A terse result: a count, the tool's own message, or its first line. */
 function terseResult(block: ToolBlock, t: Translate, lang: string): string {
-  let output = stripCapMarker(block.output ?? "");
-  const printed = printedOutput(output);
-  if (printed !== null) output = printed;
-  const text = output.trim();
+  const text = readableOutput(block).trim();
   if (!text) return "";
   if (text.startsWith("{") || text.startsWith("[")) {
     let parsed: unknown;
@@ -245,7 +248,7 @@ function terseResult(block: ToolBlock, t: Translate, lang: string): string {
       const record = parsed as Record<string, unknown>;
       for (const key of GIST_KEYS) {
         const value = record[key];
-        if (typeof value === "string" && value.trim()) return oneLine(value, 140);
+        if (typeof value === "string" && value.trim()) return oneLine(value, 120);
       }
       for (const value of Object.values(record)) {
         if (Array.isArray(value)) {
@@ -254,14 +257,13 @@ function terseResult(block: ToolBlock, t: Translate, lang: string): string {
       }
       return "";
     }
-    // Cut by the preview cap: the top level still says a little.
     if (/^\{\s*["'][\w-]+["']\s*:\s*\[\s*\]/.test(text)) return tr(t, "result.none");
     const nested = text.slice(1).search(/[[{]/);
     const top = nested < 0 ? text : text.slice(0, nested + 1);
     const gist = new RegExp(`["'](?:${GIST_KEYS.join("|")})["']\\s*:\\s*["']([^"']{2,})["']`).exec(top);
-    return gist ? oneLine(gist[1], 140) : "";
+    return gist ? oneLine(gist[1], 120) : "";
   }
-  return oneLine(text.split(/\r?\n/).find((line) => line.trim()) ?? "", 140);
+  return oneLine(text.split(/\r?\n/).find((line) => line.trim()) ?? "", 120);
 }
 
 function diffSize(block: ToolBlock): { added: number; removed: number } {
@@ -276,144 +278,166 @@ function diffSize(block: ToolBlock): { added: number; removed: number } {
   return { added, removed };
 }
 
-/** One finished call as its entry (explore calls come back as a line to merge). */
-function entryOf(block: ToolBlock, t: Translate, lang: string): ExploreLine | CommandEntry | EditEntry | ToolEntry {
+/**
+ * A command line without the directory change in front of it: agents start
+ * most commands with `cd "C:/long/path" && …`, and the line should show what
+ * ran, not where. The full command stays in the call's details.
+ */
+export function withoutCd(command: string): string {
+  let text = command.trim();
+  for (let i = 0; i < 3; i++) {
+    const next = text.replace(/^(?:cd|Set-Location|pushd)\s+(?:"[^"]*"|'[^']*'|\S+)\s*(?:&&|;|\|\|)\s*/i, "");
+    if (next === text) break;
+    text = next;
+  }
+  return text || command.trim();
+}
+
+/** The program a command runs, past env assignments and wrappers ("gh" in "FOO=1 npx gh …"). */
+export function commandBinary(command: string): string {
+  const words = command.trim().split(/\s+/);
+  for (const word of words) {
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) continue;
+    if (/^(sudo|npx|pnpm|bunx|uvx|time|env|&|cmd|\/c|powershell|pwsh|-Command|-NoProfile)$/i.test(word)) continue;
+    return word.replace(/^["'&]+|["']+$/g, "").split(/[\\/]/).pop()?.replace(/\.(exe|cmd|bat)$/i, "") ?? "";
+  }
+  return "";
+}
+
+/** One finished or running call as its line. */
+function callOf(block: ToolBlock, turn: TurnStatus, t: Translate, lang: string): Call {
   const view = traceToolIdentity(block);
   const record = inputRecord(block);
-  const { status, reason } = outcome(block, t);
-  const action = view.action === "memory" ? null : view.action;
+  const { status, reason } = statusOf(block, turn, t);
   const name = traceToolName(block.name);
   const own = /^jarvis\//i.test(name) ? describeToolStep(name.slice("jarvis/".length), block.input) : null;
-  const description = own && (FAMILY_LABELS.has(own.family) || own.family === "shell") ? own : view.description;
+  const description = own && (FAMILIES.has(own.family) || own.family === "shell") ? own : view.description;
+  const action = view.action === "memory" ? null : view.action;
+  const base = { id: block.callId, block, status, reason, added: 0, removed: 0, result: "", detail: "", brand: null as string | null };
 
-  if (action === "read" || action === "list" || action === "search") {
-    if (status === "done") {
-      const target = firstString(record, ACTION_KEYS[action]) || description.detail;
-      const where = action === "search" ? firstString(record, ["path", "glob", "include"]) : "";
-      const text = action === "search" && where
-        ? tr(t, "entry.search_in", { pattern: oneLine(target, 60), path: shortPath(where) })
-        : oneLine(action === "search" ? target : shortPath(target), 80);
-      return { verb: action, targets: text ? [text] : [] };
-    }
+  // Jarvis's CLI wrappers ("mcp__jarvis__cli_jarvisctl") run a command line.
+  const wrapper = /^jarvis\/cli_/i.test(name) && firstString(record, ACTION_KEYS.command);
+  if (action === "command" || description.family === "shell" || wrapper) {
+    const raw = firstString(record, ACTION_KEYS.command) || (typeof block.input === "string" ? block.input : "") || description.detail;
+    const command = oneLine(withoutCd(raw.split(/\r?\n/).find((line) => line.trim()) ?? ""), 200);
+    // A vendor CLI ("gh", "vercel", "docker") wears its vendor's logo.
+    const binary = commandBinary(command);
+    return { ...base, kind: "command", text: command || capitalize(tr(t, "act.command_one")), bucket: "command", brand: cliVendor(binary) ? binary : null };
   }
-  if (action === "command" || description.family === "shell") {
-    let command = firstString(record, ACTION_KEYS.command) || (typeof block.input === "string" ? block.input : "") || description.detail;
-    command = (command.split(/\r?\n/).find((line) => line.trim()) ?? "").trim();
-    const raw = stripCapMarker(block.output ?? "");
-    const printed = printedOutput(raw);
-    return {
-      kind: "command", id: block.callId, block, command: oneLine(command, 160), status, reason,
-      output: status === "done" ? previewOutput(printed ?? raw) : null,
-    };
+  if (action === "read") {
+    const path = firstString(record, ACTION_KEYS.read) || description.detail;
+    if (IMAGE_FILE.test(path)) return { ...base, kind: "image", text: tr(t, "call.image", { target: shortPath(path) }), bucket: "image" };
+    return { ...base, kind: "read", text: tr(t, "call.read", { target: shortPath(path) }), bucket: "read" };
+  }
+  if (action === "list") {
+    const path = firstString(record, ACTION_KEYS.list) || description.detail || ".";
+    return { ...base, kind: "list", text: tr(t, "call.list", { target: shortPath(path) }), bucket: "list" };
+  }
+  if (action === "search") {
+    const pattern = oneLine(firstString(record, ACTION_KEYS.search) || description.detail, 60);
+    const where = firstString(record, ["path", "glob", "include"]);
+    const text = where ? tr(t, "call.search_in", { pattern, path: shortPath(where) }) : tr(t, "call.search", { pattern });
+    return { ...base, kind: "search", text, bucket: "search" };
   }
   if (action === "edit" || action === "write") {
     const path = shortPath(firstString(record, ACTION_KEYS[action]) || description.detail);
-    return { kind: "edit", id: block.callId, block, verb: action, path, ...diffSize(block), status, reason };
+    return { ...base, ...diffSize(block), kind: action, text: tr(t, `call.${action}`, { target: path }), bucket: action };
   }
   const family = description.family;
-  const label = FAMILY_LABELS.has(family) ? tr(t, `family.${family}`)
-    : (() => {
-      const raw = description.label || view.service || block.name;
-      return /[A-Z]/.test(raw) ? raw : raw.split(/[-_\s.]+/).filter(Boolean).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
-    })();
-  if (action === "read" || action === "list" || action === "search") {
-    // A failed read is told like any failed call.
-    return { kind: "tool", id: block.callId, block, label: tr(t, `entry.${action}`), detail: oneLine(description.detail, 100), result: "", status, reason, explore: action, subject: "" };
+  const result = status === "done" ? terseResult(block, t, lang) : "";
+  if (FAMILIES.has(family)) {
+    const kind: CallKind = family === "web" ? "web" : "family";
+    return { ...base, kind, text: capitalize(tr(t, `family.${family}`)), detail: oneLine(description.detail, 100), result, bucket: `family:${family}` };
   }
-  return {
-    kind: "tool", id: block.callId, block, label, detail: oneLine(description.detail, 100),
-    result: status === "done" ? terseResult(block, t, lang) : "", status, reason,
-    subject: FAMILY_LABELS.has(family) ? tr(t, `subject.${family}`) : label,
-  };
+  if (own) {
+    // Jarvis's own server is the road, not the destination: "jarvis/gmail"
+    // is the Gmail plugin, "jarvis/society_routines" is that tool by name.
+    const rest = name.slice("jarvis/".length);
+    const brand = resolveToolBrand(rest);
+    if (brand.logoUrl) {
+      return { ...base, kind: "service", text: brand.label, detail: oneLine(own.detail, 100), result, bucket: `used:${brand.label}`, brand: brand.brandId ?? brand.label };
+    }
+    const label = humanize(rest);
+    return { ...base, kind: "tool", text: label, detail: oneLine(own.detail, 100), result, bucket: `used:${label}` };
+  }
+  const raw = description.label || view.service || block.name;
+  const label = /[A-Z]/.test(raw) ? raw : humanize(raw);
+  if (view.integration || family === "mcp" || family === "service") {
+    const service = view.service || label;
+    return { ...base, kind: "service", text: label, detail: oneLine(description.detail, 100), result, bucket: `used:${service}`, brand: view.identity.logo ? view.identity.key ?? service : null };
+  }
+  return { ...base, kind: "tool", text: label, detail: oneLine(description.detail, 100), result, bucket: `used:${label}` };
+}
+
+/** "Ran commands, searched the web, used Linear" — a stretch in one line. */
+export function summarize(calls: Call[], t: Translate, lang: string): string {
+  if (calls.length === 1) return calls[0].text;
+  const counts = new Map<string, number>();
+  for (const call of calls) counts.set(call.bucket, (counts.get(call.bucket) ?? 0) + 1);
+  const used: string[] = [];
+  const parts: string[] = [];
+  for (const [bucket, n] of counts) {
+    if (bucket.startsWith("used:")) used.push(bucket.slice(5));
+    else if (bucket.startsWith("family:")) parts.push(tr(t, `family.${bucket.slice(7)}`));
+    else parts.push(tr(t, `act.${bucket}_${plural(lang, n)}`));
+  }
+  if (used.length) parts.push(tr(t, "act.used", { what: used.slice(0, 3).join(", ") }));
+  return capitalize(parts.join(", "));
 }
 
 /** Lay out a turn's blocks as its timeline. */
 export function buildTimeline(blocks: TurnBlock[], options: TimelineOptions): Timeline {
   const { t, lang, status, live } = options;
   const entries: TimelineEntry[] = [];
-  let thinkingMs = 0;
-  const tally = { read: 0, list: 0, search: 0, command: 0, edit: 0, write: 0 };
-  const used: string[] = [];
-  let actionCount = 0;
+  let stretch: Call[] = [];
+  let callCount = 0;
   let problemCount = 0;
+  const flush = () => {
+    if (!stretch.length) return;
+    entries.push({ kind: "activity", id: `act:${stretch[0].id}`, calls: stretch, summary: summarize(stretch, t, lang) });
+    stretch = [];
+  };
 
   for (const block of blocks) {
     if (block.kind === "reasoning") {
       if (live && status === "running" && block.live) {
+        flush();
         entries.push({ kind: "live", id: block.id, block });
         continue;
       }
       const text = block.text.trim();
-      if (text) entries.push({ kind: "thought", id: block.id, text, block });
-      else thinkingMs += block.durationMs ?? 0;
+      if (!text) continue;
+      flush();
+      entries.push({ kind: "prose", id: block.id, text, tone: "reasoning", block });
       continue;
     }
     if (block.kind === "text") {
       if (!block.text.trim()) continue;
+      flush();
       if (live) entries.push({ kind: "live", id: block.id, block });
-      else entries.push({ kind: "thought", id: block.id, text: block.text.trim(), block });
+      else entries.push({ kind: "prose", id: block.id, text: block.text.trim(), tone: "narration", block });
       continue;
     }
     if (isPlumbing(block)) continue;
-    actionCount += 1;
-    if (isLiveBlock(block, status)) {
+    callCount += 1;
+    if (needsPerson(block)) {
+      flush();
       entries.push({ kind: "live", id: block.callId, block });
       continue;
     }
-    const entry = entryOf(block, t, lang);
-    if ("verb" in entry && !("kind" in entry)) {
-      tally[entry.verb] += 1;
-      const previous = entries[entries.length - 1];
-      if (previous?.kind === "explore") {
-        const last = previous.lines[previous.lines.length - 1];
-        if (last && last.verb === entry.verb && entry.verb === "read") last.targets.push(...entry.targets);
-        else previous.lines.push(entry);
-        previous.blocks.push(block);
-        previous.durationMs += block.durationMs ?? 0;
-      } else {
-        entries.push({ kind: "explore", id: block.callId, lines: [entry], blocks: [block], durationMs: block.durationMs ?? 0 });
-      }
-      continue;
-    }
-    const full = entry as CommandEntry | EditEntry | ToolEntry;
-    if (full.status !== "done") problemCount += 1;
-    if (full.kind === "command") tally.command += 1;
-    else if (full.kind === "edit") tally[full.verb] += 1;
-    else if (full.explore) tally[full.explore] += 1;
-    else if (full.status === "done" && !used.includes(full.subject)) used.push(full.subject);
-    entries.push(full);
+    const call = callOf(block, status, t, lang);
+    if (call.status !== "done" && call.status !== "running") problemCount += 1;
+    stretch.push(call);
   }
-
-  const parts: string[] = [];
-  const count = (key: string, n: number) => { if (n) parts.push(tr(t, `sum.${key}_${plural(lang, n)}`, { count: n })); };
-  count("read", tally.read);
-  count("list", tally.list);
-  count("search", tally.search);
-  count("command", tally.command);
-  count("edit", tally.edit);
-  count("write", tally.write);
-  if (used.length) parts.push(tr(t, "sum.used", { list: joinList(lang, used.slice(0, 3)) }));
-  const joined = joinList(lang, parts);
-  return {
-    entries,
-    actionCount,
-    problemCount,
-    thinkingMs,
-    summary: joined ? joined.charAt(0).toUpperCase() + joined.slice(1) : "",
-  };
+  flush();
+  return { entries, callCount, problemCount };
 }
 
-/** The folded header: "Worked for 4m 07s" when calls ran, "Thought for 3.0s" otherwise. */
+/** The folded line: "Worked for 4m 07s" when calls ran, "Thought for 3.0s" otherwise. */
 export function headerLabel(timeline: Timeline, durationMs: number | null, t: Translate): string {
-  const worked = timeline.actionCount > 0;
+  const worked = timeline.callCount > 0;
   if (durationMs === null || durationMs <= 0) return tr(t, worked ? "worked" : "thought");
   return tr(t, worked ? "worked_for" : "thought_for", { duration: traceDuration(durationMs) });
-}
-
-function statusLine(entry: CommandEntry | EditEntry | ToolEntry, t: Translate): string {
-  if (entry.status === "done") return "";
-  const label = tr(t, `status.${entry.status}`);
-  return entry.reason ? `${label}: ${entry.reason}` : label;
 }
 
 function codeSpan(text: string): string {
@@ -424,35 +448,24 @@ function codeSpan(text: string): string {
 
 /** The timeline as Markdown — what "Copy" puts on the clipboard. */
 export function timelineMarkdown(timeline: Timeline, header: string, t: Translate): string {
-  const out: string[] = [`**${header}**${timeline.summary ? ` — ${timeline.summary}` : ""}`];
+  const out: string[] = [`**${header}**`];
   for (const entry of timeline.entries) {
+    if (entry.kind === "live") continue;
     out.push("");
-    if (entry.kind === "thought") {
+    if (entry.kind === "prose") {
       out.push(entry.text);
       continue;
     }
-    if (entry.kind === "live") continue;
-    if (entry.kind === "explore") {
-      out.push(`- ${tr(t, "entry.explored")}`);
-      for (const line of entry.lines) out.push(`  - ${tr(t, `entry.${line.verb}`)} ${line.targets.join(", ")}`);
-      continue;
+    if (entry.calls.length > 1) out.push(`*${entry.summary}*`);
+    for (const call of entry.calls) {
+      const words = call.kind === "command" ? codeSpan(call.text) : call.text;
+      const size = call.added || call.removed ? ` (+${call.added} −${call.removed})` : "";
+      const tail = call.detail ? ` — ${call.detail}` : "";
+      const result = call.result ? `: ${call.result}` : "";
+      const state = call.status === "done" || call.status === "running" ? ""
+        : ` — ${tr(t, `state.${call.status}`)}${call.reason ? `: ${call.reason}` : ""}`;
+      out.push(`- ${words}${size}${tail}${result}${state}`);
     }
-    const time = entry.block.durationMs ? ` (${traceDuration(entry.block.durationMs)})` : "";
-    const problem = statusLine(entry, t);
-    if (entry.kind === "command") {
-      out.push(`- ${tr(t, "entry.ran")} ${codeSpan(entry.command)}${time}`);
-      if (entry.output) {
-        out.push("  ```", ...entry.output.lines.map((line) => `  ${line}`));
-        if (entry.output.more) out.push(`  ${tr(t, `entry.more_${plural("en", entry.output.more)}`, { count: entry.output.more })}`);
-        out.push("  ```");
-      }
-    } else if (entry.kind === "edit") {
-      const size = entry.added || entry.removed ? ` (+${entry.added} −${entry.removed})` : "";
-      out.push(`- ${tr(t, entry.verb === "edit" ? "entry.edited" : "entry.created")} ${codeSpan(entry.path)}${size}${time}`);
-    } else {
-      out.push(`- ${entry.label}${entry.detail ? ` — ${entry.detail}` : ""}${time}${entry.result ? `: ${entry.result}` : ""}`);
-    }
-    if (problem) out.push(`  ${problem}`);
   }
   return out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }

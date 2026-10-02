@@ -18,23 +18,28 @@ it("reopens a stored voice turn as a Claude/Codex-style timeline", () => {
   ];
   render(<VoiceWorkTrace steps={steps} durationMs={2400} />);
   // Folded to one line that says what happened.
-  const toggle = screen.getByRole("button", { name: /^Worked for 2\.4s.*Used the wiki.*1 failed/ });
+  const toggle = screen.getByRole("button", { name: /^Worked for 2\.4s.*1 failed/ });
   // The turn is not called failed because one call was refused.
   expect(screen.getByRole("status").textContent).toContain("Done");
   fireEvent.click(toggle);
 
   // The model's own words read as prose, Markdown and all.
-  const thought = document.querySelector<HTMLElement>("[data-trace-entry='thought']")!;
-  expect(within(thought).getByText("wiki").tagName).toBe("STRONG");
-  // Each call is one line, with what came of it underneath.
-  const [wiki, refused] = Array.from(document.querySelectorAll<HTMLElement>("[data-trace-entry='tool']"));
+  const words = document.querySelector<HTMLElement>("[data-trace-entry='reasoning']")!;
+  expect(within(words).getByText("wiki").tagName).toBe("STRONG");
+  // No bullets, threads or rings — just the lines.
+  expect(document.querySelector(".trace-dot, .trace-report-num")).toBeNull();
+  // The stretch is one quiet line; it opens to its calls.
+  fireEvent.click(screen.getByRole("button", { name: /^Searched the wiki, used Run app action.*1 failed/ }));
+  const [wiki, refused] = Array.from(document.querySelectorAll<HTMLElement>("[data-trace-entry='call']"));
   expect(wiki.textContent).toContain("Searched the wikiUrlaub 2026");
-  expect(wiki.textContent).toContain("49ms");
-  expect(wiki.textContent).toContain("1 result");
-  expect(refused.textContent).toContain("Blocked: a safety rule blocks this action");
-  // The raw call is one tap away.
+  expect(refused.textContent).toContain("Run app action");
+  expect(refused.textContent).toContain("Blocked");
+  // A call opens to what came back and why it did not run.
   fireEvent.click(within(wiki).getByRole("button"));
+  expect(wiki.textContent).toContain("1 result");
   expect(within(wiki).getByText("Input")).toBeTruthy();
+  fireEvent.click(within(refused).getByRole("button"));
+  expect(refused.textContent).toContain("Blocked: a safety rule blocks this action");
   expect(screen.getByRole("button", { name: "Copy" })).toBeTruthy();
 });
 

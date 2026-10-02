@@ -103,6 +103,9 @@ describe("work trace", () => {
     expect(screen.getByText("Delete generated files?")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Approve" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /^Worked for 12s.*1 failed/ }));
+    // One quiet line for the stretch; the failure opens with it.
+    fireEvent.click(screen.getByRole("button", { name: /^Read files.*1 failed/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Read err\.ts.*Failed/ }));
     expect(screen.getByText("Failed: Permission denied")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Approve" })).toBeTruthy();
   });
@@ -123,7 +126,7 @@ describe("work trace", () => {
 
   it("shows a denied action without a running indicator", () => {
     const {container} = render(<WorkTrace {...props} status="running" blocks={[tool("a",{output:null,approval:{approvalId:"ap",summary:"Delete?",decision:"deny"}})]} />);
-    expect(screen.getByText("You declined it")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^Read a\.ts.*Declined/ })).toBeTruthy();
     expect(container.querySelector('[data-trace-tool][data-state="running"]')).toBeNull();
     expect(screen.queryByRole("button", {name:"Approve"})).toBeNull();
   });
@@ -145,7 +148,7 @@ describe("work trace", () => {
     expect(container.querySelector('[data-trace-tool][data-state="running"]')).toBeNull();
     rerender(<WorkTrace {...props} status={status} blocks={[tool("a",{output:null})]} />);
     fireEvent.click(screen.getByRole("button", { name: /^Worked for 12s/ }));
-    expect(screen.getByText("Stopped before it finished")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^Read a\.ts.*Stopped/ })).toBeTruthy();
   });
 
   it("updates the live clock and releases timers at completion", () => {
@@ -162,10 +165,9 @@ describe("work trace", () => {
     fireEvent.click(screen.getByRole("button", { name: /^Worked for 12s/ }));
     // Neither the command line nor its printed output turns into markup.
     expect(container.querySelector('img, b')).toBeNull();
-    expect(container.querySelector("[data-trace-output]")?.textContent).toBe("<img src=x onerror=alert(1)>");
-    fireEvent.click(screen.getByRole("button", { name: /^Ran <b>echo<\/b>/ }));
-    expect(container.querySelector('img')).toBeNull();
-    expect(screen.getAllByText('<img src=x onerror=alert(1)>').length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: /^<b>echo<\/b>/ }));
+    expect(container.querySelector('img, b')).toBeNull();
+    expect(container.querySelector("[data-trace-output]")?.textContent).toContain("<img src=x onerror=alert(1)>");
   });
 
   it("formats durations without a 60-second remainder", () => {
@@ -183,7 +185,9 @@ describe("work trace", () => {
     expect(screen.queryByText("0.0s")).toBeNull();
     rerender(<WorkTrace {...props} blocks={[tool("shell", { name, input: { command: "read skill instructions" }, durationMs: 49 })]} />);
     fireEvent.click(screen.getByRole("button", { name: /^Worked for 12s/ }));
-    expect(screen.getByRole("button", { name: /^Ran read skill instructions 49ms/ })).toBeTruthy();
+    // Codex keeps the line clean; the measured time is in the call's details.
+    fireEvent.click(screen.getByRole("button", { name: /^read skill instructions/ }));
+    expect(screen.getByText("Took 49ms")).toBeTruthy();
   });
 
   it("keeps the last reply visible and treats earlier text as foldable work", () => {
@@ -206,28 +210,28 @@ describe("work trace", () => {
 });
 
 describe("rail look", () => {
-  it("threads thoughts, tools and the state line on one rail by default", () => {
-    const { container } = render(<WorkTrace {...props} status="running" blocks={[thought, tool("a", { name: "exec_command" })]} />);
+  it("reads like the Codex app: prose, quiet lines, no thread, no bullets", () => {
+    const { container } = render(<WorkTrace {...props} status="running" blocks={[thought, tool("a", { name: "exec_command", input: { command: "npm test" } })]} />);
     expect(screen.getByTestId("work-trace").getAttribute("data-look")).toBe("rail");
-    const rails = container.querySelectorAll(".trace-rail");
-    expect(rails).toHaveLength(1);
-    const steps = rails[0].querySelectorAll(":scope > .trace-step");
-    expect(steps).toHaveLength(3);
-    expect(steps[2].querySelector("[role='status']")?.textContent).toContain("Working");
+    expect(container.querySelector(".trace-dot, .trace-node-live")).toBeNull();
+    const call = container.querySelector("[data-trace-entry='call']")!;
+    expect(call.textContent).toContain("npm test");
+    expect(call.querySelector("svg")).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toContain("Working");
   });
 
-  it("breaks the rail around a reply so narration stands on its own", () => {
+  it("keeps a live reply between the stretches it separates", () => {
     const { container } = render(<WorkTrace {...props} status="running" blocks={[tool("a", { name: "exec_command" }), reply("mid", "Halfway there."), tool("b", { name: "exec_command", output: null })]} />);
-    const rails = container.querySelectorAll(".trace-rail");
-    expect(rails).toHaveLength(2);
-    expect(rails[0].textContent).not.toContain("Halfway there.");
+    const text = screen.getByTestId("work-trace").textContent!;
+    const calls = container.querySelectorAll("[data-trace-entry='call']");
+    expect(calls).toHaveLength(2);
+    expect(text.indexOf("Halfway there.")).toBeGreaterThan(text.indexOf(calls[0].textContent!));
   });
 
-  it("marks the working step and the live state line with the shimmer", () => {
-    const { container } = render(<WorkTrace {...props} status="running" durationMs={null} blocks={[tool("a", { name: "exec_command", output: null })]} />);
-    const running = container.querySelector('[data-state="running"]')!;
-    expect(running.querySelector(".trace-shimmer")?.textContent).toBe("Run command");
-    expect(running.querySelector(".trace-node-live")).toBeTruthy();
+  it("shimmers the call that is running and the live state line", () => {
+    const { container } = render(<WorkTrace {...props} status="running" durationMs={null} blocks={[tool("a", { name: "exec_command", input: { command: "npm test" }, output: null })]} />);
+    const running = container.querySelector('[data-trace-entry="call"][data-status="running"]')!;
+    expect(running.querySelector(".trace-shimmer")?.textContent).toBe("npm test");
     expect(screen.getByRole("status").querySelector(".trace-shimmer")?.textContent).toBe("Working");
   });
 
