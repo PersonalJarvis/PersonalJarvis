@@ -133,6 +133,40 @@ def platform_name() -> str:
     return "linux"
 
 
+def unsupported_reason(
+    *,
+    system: str | None = None,
+    arch: str | None = None,
+    mac_version: str | None = None,
+    glibc: str | None = None,
+) -> str:
+    """Why the pinned speech runtimes cannot install here; ``""`` when they can.
+
+    Read from the wheels the pins resolve to (``uv pip compile`` per platform):
+    onnxruntime 1.30 ships macOS builds for Apple Silicon on macOS 14+ only
+    and Linux builds for glibc 2.28+; torch has no Intel Mac builds. Saying so
+    before a download beats a failed install halfway through.
+    """
+    import platform as _platform  # noqa: PLC0415
+
+    system = system if system is not None else sys.platform
+    arch = (arch if arch is not None else _platform.machine()).lower()
+    if system == "darwin":
+        if arch not in ("arm64", "aarch64"):
+            return ("Local voice needs a Mac with Apple Silicon; its speech runtimes have "
+                    "no builds for Intel Macs.")
+        version = mac_version if mac_version is not None else _platform.mac_ver()[0]
+        major = int(version.split(".")[0]) if version.split(".")[0].isdigit() else 0
+        if 0 < major < 14:
+            return "Local voice needs macOS 14 or newer."
+    elif system.startswith("linux"):
+        libc = glibc if glibc is not None else _platform.libc_ver()[1]
+        parts = [int(p) for p in libc.split(".")[:2] if p.isdigit()]
+        if len(parts) == 2 and tuple(parts) < (2, 28):
+            return "Local voice needs a Linux with glibc 2.28 or newer."
+    return ""
+
+
 def machine_class(probe: Callable[[], tuple[float, str]] | None = None) -> str:
     """``nvidia`` | ``apple`` | ``gpu`` | ``cpu`` from the shared accelerator probe.
 
@@ -261,6 +295,7 @@ class SetupDeps:
     configured_voice: Callable[[], str]
     languages: Callable[[], list[str]]
     selftest: Callable[[], dict[str, Any]] | None = None
+    unsupported: Callable[[], str] = unsupported_reason
     package_source: Path = field(
         default_factory=lambda: Path(__file__).resolve().parent.parent / "voice_engine")
 
@@ -353,6 +388,9 @@ def _copy_engine(source: Path, home: Path) -> None:
 
 def _run_setup(deps: SetupDeps) -> None:
     home = deps.home
+    blocked = deps.unsupported()
+    if blocked:
+        raise SetupError(blocked)
     home.mkdir(parents=True, exist_ok=True)
     env = _uv_env(home)
 
@@ -592,13 +630,14 @@ async def card_status(
         llm_source = "default"
     llm_installed = None if llm_error else any(_same_tag(llm_model, n) for n in names)
 
+    blocked = unsupported_reason()
     engine = LocalVoiceProvider._engine  # noqa: SLF001 - never create one for a status read
     live = engine if engine is not None and engine.settings == settings else None
     if run["running"]:
         phase, stage, progress, reason = "installing", run["stage"], run["progress"], run["detail"]
     elif not installed:
         phase = "failed" if run["error"] else "not_installed"
-        stage, progress, reason = "", 0.0, run["error"] or NOT_SET_UP_REASON
+        stage, progress, reason = "", 0.0, run["error"] or blocked or NOT_SET_UP_REASON
     else:
         phase, stage, progress, reason = _live_state(live)
     selftest = await asyncio.to_thread(load_selftest, home, settings)
@@ -609,6 +648,9 @@ async def card_status(
         "progress": round(float(progress), 3),
         "reason": reason,
         "installed": installed,
+        # False where the pinned runtimes have no builds (Intel Mac, macOS < 14,
+        # old glibc); ``reason`` then says why and the card offers no setup.
+        "supported": not blocked,
         "setup": run,
         "llm_model": llm_model,
         "llm_source": llm_source,

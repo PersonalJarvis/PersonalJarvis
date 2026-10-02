@@ -101,6 +101,30 @@ def test_a_package_failure_stops_setup_at_that_stage(_isolated_home: Path) -> No
     assert world.fetched == []
 
 
+def test_an_unsupported_machine_is_refused_before_any_download(_isolated_home: Path) -> None:
+    world = _world(_isolated_home, blocked="Local voice needs macOS 14 or newer.")
+    setup.run_setup_blocking(world.deps(PACKAGE))
+    assert setup.setup_snapshot()["error"] == "Local voice needs macOS 14 or newer."
+    assert world.commands == [] and world.fetched == [] and not _isolated_home.exists()
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "blocked"),
+    [
+        ({"system": "darwin", "arch": "x86_64", "mac_version": "14.5"}, True),
+        ({"system": "darwin", "arch": "arm64", "mac_version": "13.6"}, True),
+        ({"system": "darwin", "arch": "arm64", "mac_version": "15.1"}, False),
+        ({"system": "linux", "arch": "x86_64", "glibc": "2.17"}, True),
+        ({"system": "linux", "arch": "aarch64", "glibc": "2.36"}, False),
+        ({"system": "linux", "arch": "x86_64", "glibc": ""}, False),
+        ({"system": "win32", "arch": "AMD64"}, False),
+        ({"system": "win32", "arch": "ARM64"}, False),
+    ],
+)
+def test_unsupported_platforms_match_the_pinned_wheels(kwargs, blocked) -> None:
+    assert bool(setup.unsupported_reason(**kwargs)) is blocked
+
+
 def test_requirements_pin_every_package_exactly() -> None:
     lines = [
         line.split(";")[0].strip()

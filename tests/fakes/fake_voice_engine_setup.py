@@ -29,6 +29,8 @@ class FakeSetupWorld:
     voice: str = "pocket"
     languages: list[str] = field(default_factory=lambda: ["de", "en"])
     fail_command: str = ""
+    #: Non-empty: this machine cannot run the engine (see ``unsupported_reason``).
+    blocked: str = ""
     selftest_report: dict[str, Any] | None = field(default_factory=lambda: {"ok": True})
     commands: list[list[str]] = field(default_factory=list)
     envs: list[dict[str, str]] = field(default_factory=list)
@@ -98,5 +100,6 @@ class FakeSetupWorld:
             configured_voice=lambda: self.voice,
             languages=lambda: list(self.languages),
             selftest=self.selftest if self.selftest_report is not None else None,
+            unsupported=lambda: self.blocked,
             package_source=package_source,
         )

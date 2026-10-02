@@ -83,6 +83,8 @@ export interface LocalVoiceStatus {
   /** The backend's own sentence when not ready; rendered verbatim. */
   reason: string;
   installed: boolean;
+  /** False where the engine's runtimes have no builds; `reason` says why. */
+  supported: boolean;
   setup: LocalVoiceSetupRun;
   llm_model: string;
   llm_source: "config" | "setup" | "default";

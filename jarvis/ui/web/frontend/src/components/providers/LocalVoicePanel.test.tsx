@@ -20,6 +20,7 @@ const NOT_INSTALLED: LocalVoiceStatus = {
   progress: 0,
   reason: "Local voice is not set up on this machine yet.",
   installed: false,
+  supported: true,
   setup: {
     running: false,
     stage: "",
@@ -98,6 +99,18 @@ describe("LocalVoicePanel", () => {
     await waitFor(() => expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("42"));
     expect(calls.some((c) => c.url.endsWith("/local-voice/setup") && c.method === "POST")).toBe(true);
     expect(screen.getByText("apikeys_view.local_voice_stage_models")).toBeTruthy();
+    expect(screen.queryByTestId("local-voice-setup")).toBeNull();
+  });
+
+  it("explains an unsupported machine and offers no setup", async () => {
+    serve(() => ({
+      ...NOT_INSTALLED,
+      supported: false,
+      reason: "Local voice needs a Mac with Apple Silicon.",
+    }));
+    render(<LocalVoicePanel onChanged={() => {}} />);
+
+    expect(await screen.findByText("Local voice needs a Mac with Apple Silicon.")).toBeTruthy();
     expect(screen.queryByTestId("local-voice-setup")).toBeNull();
   });
 

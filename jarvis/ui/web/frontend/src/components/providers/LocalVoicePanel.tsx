@@ -123,7 +123,10 @@ export function LocalVoicePanel({ onChanged }: { onChanged: () => void }) {
   const moving = status.phase === "installing" || status.phase === "starting";
   const stage = stageKey(status.stage);
   const stageLabel = stage ? t(`apikeys_view.local_voice_stage_${stage}`) : "";
-  const showSetup = !status.setup.running && (!status.installed || Boolean(status.setup.error));
+  const showSetup =
+    status.supported &&
+    !status.setup.running &&
+    (!status.installed || Boolean(status.setup.error));
   const figure = latencyFigure(status.expected_latency, locale);
 
   return (
@@ -142,7 +145,9 @@ export function LocalVoicePanel({ onChanged }: { onChanged: () => void }) {
           <p className="font-medium text-foreground">{phaseLabel}</p>
           {/* The backend's sentence explains a failure or a stop; "not set up"
               is already said by the translated phase label above. */}
-          {status.reason && status.phase !== "installing" && status.phase !== "not_installed" && (
+          {status.reason &&
+            status.phase !== "installing" &&
+            (status.phase !== "not_installed" || !status.supported) && (
             <p className="text-muted-foreground">{status.reason}</p>
           )}
         </div>

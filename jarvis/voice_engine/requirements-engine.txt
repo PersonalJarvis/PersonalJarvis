@@ -7,8 +7,11 @@
 #
 # Derived from the P0/P1 measuring environment (Windows x64, CPython 3.12,
 # 2026-10-01). Per-platform hashed locks are P3 work (plan section 4.10); until
-# then these exact pins are the contract. Only Windows x64 was installed from
-# this list so far; macOS and Linux resolve from the same pins unverified.
+# then these exact pins are the contract. `uv pip compile --torch-backend cpu`
+# resolves them for Windows x64/arm64, Linux x64/arm64 (glibc 2.28+) and
+# macOS 14+ on Apple Silicon. Intel Macs and older macOS have no onnxruntime
+# 1.30 wheels; setup refuses there up front (unsupported_reason). Installs
+# were run on Windows x64 only.
 
 # --- direct dependencies of jarvis/voice_engine ---
 numpy==2.5.3
