@@ -294,6 +294,19 @@ async def create_agent(body: CreateAgentBody, request: Request) -> dict[str, Any
     )
     description = compose_description(body.description, body.model_dump(include=set(BRIEF_FIELDS)))
     creator = await _creator_from_request(request, rt)
+    # Voice has no Society session. Its new agents still inherit the last
+    # explicit chat seat, never the realtime credential or the Tool Model.
+    if not fields.get("provider") and (creator is None or creator.agent_id == rt.lead_id):
+        from .agent_chat_routes import _service_from_state
+
+        svc = _service_from_state(request.app.state)
+        if svc is None and getattr(request.app.state, "agent_chat_factory", None) is not None:
+            raise HTTPException(503, "The saved Jarvis chat model is temporarily unavailable")
+        selection = svc.store.chat_selection() if svc is not None else None
+        if selection is not None:
+            for key, value in selection.to_dict().items():
+                if not fields.get(key):
+                    fields[key] = value
     if creator is not None:
         from jarvis.society.inherit import inherit_creator_fields
 
