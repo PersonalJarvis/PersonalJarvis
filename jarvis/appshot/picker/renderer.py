@@ -12,8 +12,10 @@ imports this module (AP-26). One frameless, always-on-top window per screen:
   selects exactly that window.
 - **Drag to select.** The selection is cut out of the dim layer with a
   marching-ants border and its size in real pixels.
-- **Magnifier.** A zoomed pixel grid beside the pointer with the centre pixel
-  marked and the position (or the selection size) underneath.
+- **Magnifier.** A plain square of zoomed pixels beside the pointer with
+  the centre pixel outlined and a strip underneath: the position (or the
+  selection size) and the zoom. The mouse wheel zooms it; the last zoom is
+  kept for the next pick (``QSettings``).
 
 Esc or a right-click cancels. The result is reported as fractions of its
 screen, so mixed-DPI layouts map back to capture pixels exactly (see
@@ -26,7 +28,17 @@ import sys
 import threading
 from contextlib import suppress
 
-from PySide6.QtCore import QObject, QPointF, QRect, QRectF, Qt, QTimer, Signal, Slot
+from PySide6.QtCore import (
+    QObject,
+    QPointF,
+    QRect,
+    QRectF,
+    QSettings,
+    Qt,
+    QTimer,
+    Signal,
+    Slot,
+)
 from PySide6.QtGui import (
     QColor,
     QCursor,
@@ -42,9 +54,14 @@ from PySide6.QtWidgets import QApplication, QWidget
 
 from jarvis.appshot import picker as wire
 from jarvis.appshot.region import (
+    MAG_BOX_PX,
+    MAG_DEFAULT_ZOOM,
+    MAG_ZOOMS,
+    magnifier_layout,
     match_monitor,
     selection_fractions,
     snap_rects_on_screen,
+    step_zoom,
 )
 
 _DIM = QColor(0, 0, 0, 115)
@@ -52,12 +69,11 @@ _LABEL_BG = QColor(18, 18, 20, 225)
 _LABEL_FG = QColor(255, 255, 255, 240)
 _LABEL_MUTED = QColor(255, 255, 255, 150)
 
-#: Magnifier: this many source pixels per side, each drawn this many px wide.
-_MAG_PIXELS = 15
-_MAG_CELL = 10
-_MAG_SIZE = _MAG_PIXELS * _MAG_CELL
-_MAG_OFFSET = 22
-_MAG_RADIUS = 6.0
+#: Magnifier placement and its info strip.
+_MAG_OFFSET = 20.0
+_MAG_STRIP_H = 20.0
+#: Pixel-grid lines only once a source pixel is at least this wide (logical px).
+_MAG_GRID_MIN_CELL = 6.0
 
 #: Marching ants: dash length and the tick that moves them.
 _DASH = 4.0
@@ -169,6 +185,12 @@ class _SelectWindow(QWidget):
             self._end = event.position()
         self._owner.focus_on(self)
         self.update()
+
+    def wheelEvent(self, event) -> None:  # noqa: N802
+        delta = event.angleDelta().y()
+        if delta:
+            self._owner.zoom_by(1 if delta > 0 else -1)
+        event.accept()
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802
         if event.button() != Qt.MouseButton.LeftButton or self._start is None:
@@ -297,76 +319,79 @@ class _SelectWindow(QWidget):
         frozen = self._frozen
         assert frozen is not None
         scale = self._scale()
+        zoom = self._owner.zoom
+        count, cell = magnifier_layout(zoom, scale)
+        half = count // 2
         cx, cy = int(point.x() * scale), int(point.y() * scale)
-        half = _MAG_PIXELS // 2
-        source = QRect(cx - half, cy - half, _MAG_PIXELS, _MAG_PIXELS)
-
-        sel = self._selection()
-        if sel is not None:
-            info = f"{round(sel.width() * scale)} × {round(sel.height() * scale)}"
-        else:
-            px, py = self._capture_point(point)
-            info = f"X: {px}   Y: {py}"
-        font = _font(8.5)
-        metrics = QFontMetricsF(font)
-        info_h = metrics.height() + 8.0
-        total_h = _MAG_SIZE + 4.0 + info_h
+        source = QRect(cx - half, cy - half, count, count)
+        side = MAG_BOX_PX
 
         x = point.x() + _MAG_OFFSET
         y = point.y() + _MAG_OFFSET
-        if x + _MAG_SIZE > self.width() - 4:
-            x = point.x() - _MAG_OFFSET - _MAG_SIZE
-        if y + total_h > self.height() - 4:
-            y = point.y() - _MAG_OFFSET - total_h
-        box = QRectF(x, y, _MAG_SIZE, _MAG_SIZE)
+        if x + side > self.width() - 2:
+            x = point.x() - _MAG_OFFSET - side
+        if y + side + _MAG_STRIP_H > self.height() - 2:
+            y = point.y() - _MAG_OFFSET - side - _MAG_STRIP_H
+        box = QRectF(round(x), round(y), side, side)
+        strip = QRectF(box.x(), box.bottom(), side, _MAG_STRIP_H)
 
-        # Soft shadow, then the zoomed pixels clipped to a rounded square.
-        painter.setPen(Qt.PenStyle.NoPen)
-        for spread, alpha in ((6.0, 20), (3.0, 35), (1.0, 60)):
-            painter.setBrush(QColor(0, 0, 0, alpha))
-            painter.drawRoundedRect(
-                box.adjusted(-spread, -spread + 2, spread, spread + 2),
-                _MAG_RADIUS + spread,
-                _MAG_RADIUS + spread,
-            )
-        clip = QPainterPath()
-        clip.addRoundedRect(box, _MAG_RADIUS, _MAG_RADIUS)
         painter.save()
-        painter.setClipPath(clip)
-        painter.fillRect(box, QColor(0, 0, 0))
-        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
+        painter.fillRect(box, QColor(0, 0, 0))
+        painter.setClipRect(box)
+        # The pixel grid is centred on the box; its outer pixels are clipped.
+        ox = box.x() + (side - count * cell) / 2.0
+        oy = box.y() + (side - count * cell) / 2.0
         visible = source.intersected(frozen.rect())
         if not visible.isEmpty():
             target = QRectF(
-                box.x() + (visible.x() - source.x()) * _MAG_CELL,
-                box.y() + (visible.y() - source.y()) * _MAG_CELL,
-                visible.width() * _MAG_CELL,
-                visible.height() * _MAG_CELL,
+                ox + (visible.x() - source.x()) * cell,
+                oy + (visible.y() - source.y()) * cell,
+                visible.width() * cell,
+                visible.height() * cell,
             )
             painter.drawPixmap(target, frozen, QRectF(visible))
-        # Pixel grid and a tinted crosshair row/column through the centre.
-        painter.setPen(QPen(QColor(0, 0, 0, 45), 1.0))
-        for i in range(1, _MAG_PIXELS):
-            off = i * _MAG_CELL
-            painter.drawLine(QPointF(box.x() + off, box.y()), QPointF(box.x() + off, box.bottom()))
-            painter.drawLine(QPointF(box.x(), box.y() + off), QPointF(box.right(), box.y() + off))
-        offset = half * _MAG_CELL
-        centre = QRectF(box.x() + offset, box.y() + offset, _MAG_CELL, _MAG_CELL)
-        tint = QColor(90, 160, 255, 55)
-        painter.fillRect(QRectF(box.x(), centre.y(), box.width(), _MAG_CELL), tint)
-        painter.fillRect(QRectF(centre.x(), box.y(), _MAG_CELL, box.height()), tint)
-        painter.setPen(QPen(QColor(0, 0, 0, 230), 1.0))
-        painter.drawRect(centre.adjusted(-1, -1, 0, 0))
-        painter.setPen(QPen(QColor(255, 255, 255, 240), 1.0))
-        painter.drawRect(centre)
-        painter.restore()
+        if cell >= _MAG_GRID_MIN_CELL:
+            painter.setPen(QPen(QColor(0, 0, 0, 38), 0))
+            for i in range(1, count):
+                gx, gy = round(ox + i * cell), round(oy + i * cell)
+                painter.drawLine(QPointF(gx, box.y()), QPointF(gx, box.bottom()))
+                painter.drawLine(QPointF(box.x(), gy), QPointF(box.right(), gy))
+        centre = QRectF(round(ox + half * cell), round(oy + half * cell), round(cell), round(cell))
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.setPen(QPen(QColor(255, 255, 255, 200), 1.0))
-        painter.drawRoundedRect(box.adjusted(0.5, 0.5, -0.5, -0.5), _MAG_RADIUS, _MAG_RADIUS)
+        painter.setPen(QPen(QColor(0, 0, 0), 0))
+        painter.drawRect(centre.adjusted(-1, -1, 0, 0))
+        painter.setPen(QPen(QColor(255, 255, 255), 0))
+        painter.drawRect(centre.adjusted(0, 0, -1, -1))
 
-        info_box = QRectF(box.x(), box.bottom() + 4.0, _MAG_SIZE, info_h)
-        _draw_label(painter, info_box, info, font)
+        painter.setClipping(False)
+
+        # Info strip, inside the same frame.
+        painter.fillRect(strip, QColor(12, 12, 12))
+        sel = self._selection()
+        if sel is not None:
+            left = f"{round(sel.width() * scale)} × {round(sel.height() * scale)}"
+        else:
+            px, py = self._capture_point(point)
+            left = f"{px}, {py}"
+        font = _font(8.0)
+        painter.setFont(font)
+        inner = strip.adjusted(7, 0, -7, 0)
+        painter.setPen(_LABEL_FG)
+        middle = Qt.AlignmentFlag.AlignVCenter
+        painter.drawText(inner, middle | Qt.AlignmentFlag.AlignLeft, left)
+        painter.setPen(_LABEL_MUTED)
+        painter.drawText(inner, middle | Qt.AlignmentFlag.AlignRight, f"{zoom}×")
+
+        # One crisp two-tone frame around pixels and strip: white inside, black outside.
+        frame = QRectF(box.x(), box.y(), side, side + _MAG_STRIP_H)
+        painter.setPen(QPen(QColor(255, 255, 255, 235), 0))
+        painter.drawRect(frame.adjusted(0, 0, -1, -1))
+        painter.setPen(QPen(QColor(0, 0, 0, 200), 0))
+        painter.drawRect(frame.adjusted(-1, -1, 0, 0))
+        painter.drawLine(QPointF(box.x(), box.bottom()), QPointF(box.right() - 1, box.bottom()))
+        painter.restore()
 
     def _paint_hint(self, painter: QPainter, hint: str) -> None:
         font = _font(9.0)
@@ -393,6 +418,12 @@ class Picker(QObject):
         self.hint_window: _SelectWindow | None = None
         self._done = False
         self.ants_offset = 0.0
+        self._settings = QSettings("PersonalJarvis", "AppshotPicker")
+        try:
+            saved = int(self._settings.value("zoom", MAG_DEFAULT_ZOOM))
+        except (TypeError, ValueError):
+            saved = MAG_DEFAULT_ZOOM
+        self.zoom = saved if saved in MAG_ZOOMS else MAG_DEFAULT_ZOOM
         self._ants = QTimer(self)
         self._ants.setInterval(_ANTS_MS)
         self._ants.timeout.connect(self._march)
@@ -431,6 +462,15 @@ class Picker(QObject):
         for win in self._windows:
             if win.has_hole():
                 win.update()
+
+    def zoom_by(self, steps: int) -> None:
+        zoom = step_zoom(self.zoom, steps)
+        if zoom == self.zoom:
+            return
+        self.zoom = zoom
+        self._settings.setValue("zoom", zoom)
+        for win in self._windows:
+            win.update()
 
     def set_layout(self, monitors: list[dict], windows: list[list[int]]) -> None:
         for win in self._windows:
