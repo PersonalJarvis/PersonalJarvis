@@ -25,20 +25,38 @@ log = logging.getLogger(__name__)
 
 
 def _identity(config: Any) -> str:
-    """Who the assistant is (wake-word name + SOUL.md); ``""`` on a fault.
+    """Who the assistant is (wake-word name + SOUL.md) and what it remembers.
 
-    ``""`` makes the session config fall back to the nameless directive, so
-    an identity fault never blocks a call.
+    ``""`` on an identity fault makes the session config fall back to the
+    nameless directive, so an identity fault never blocks a call.
     """
     try:
         from jarvis.brain.identity import identity_block
 
         # maintain: the live tool set holds update_soul, so the call itself
         # keeps SOUL.md current (no separate review call for the character).
-        return identity_block(config, maintain=True)
+        identity = identity_block(config, maintain=True)
     except Exception:  # noqa: BLE001 — never block a call on the identity block
         log.warning("live voice: identity block unavailable", exc_info=True)
         return ""
+    return identity + _memory()
+
+
+def _memory() -> str:
+    """The remember directive and Jarvis' notebooks; ``""`` on a fault.
+
+    A GPT-Live call sees what earlier calls and chats saved to MEMORY.md and
+    USER.md, and saves a new "remember this" while the call runs (through
+    the remember tool) instead of only after it ends.
+    """
+    try:
+        from jarvis.memory.learning.notebook import memory_block
+
+        block = memory_block()
+    except Exception:  # noqa: BLE001 — never block a call on the notebooks
+        log.warning("live voice: memory notebooks unavailable", exc_info=True)
+        return ""
+    return "\n\n" + block if block else ""
 
 
 #: Smallest gap between two live snapshots of one streaming reasoning summary.

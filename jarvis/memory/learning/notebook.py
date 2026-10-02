@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 import time
 from dataclasses import dataclass
@@ -61,6 +62,33 @@ _TITLES: Final[dict[str, str]] = {
     "user": "### Who the user is (USER.md)",
     "memory": "### Your working notes (MEMORY.md)",
 }
+_EXPLICIT_TITLE: Final[str] = "### What the user asked you to remember (MEMORY.md)"
+
+#: ``origin`` of an entry the user explicitly asked Jarvis to remember. Such an
+#: entry always lives in MEMORY.md, outranks anything a review inferred, is
+#: never merged or expired by compaction, and has its own prompt allowance.
+EXPLICIT_ORIGIN: Final[str] = "user"
+EXPLICIT_IMPORTANCE: Final[int] = 10
+#: Prompt characters reserved for explicit entries, on top of MEMORY.md's budget.
+EXPLICIT_PROMPT_CHARS: Final[int] = 2_000
+#: How long a save through the remember tool keeps the deterministic fallback
+#: from filing the same request a second time (a GPT-Live call reaches the
+#: loop as one turn when it ends, long after the tool saved it).
+_TOOL_SAVE_WINDOW_S: Final[float] = 6 * 3_600.0
+#: Share of a request's content words a tool save must cover to count as it.
+_SAME_REQUEST_SHARE: Final[float] = 0.6
+_CONTENT_WORD: Final = re.compile(r"[^\W\d_]{4,}")
+
+#: The memory contract every conversation surface states next to the snapshot.
+REMEMBER_DIRECTIVE: Final[str] = (
+    "Long-term memory: when the user explicitly asks you to remember or note something "
+    "for future conversations (for example 'remember', "
+    "'merk dir', 'notier dir'), "  # i18n-allow: input vocabulary
+    "call the remember tool right away with one self-contained sentence in the user's "
+    "language that still makes sense in a later conversation: resolve 'this' or 'that' "
+    "from the conversation. Say it is saved only after the tool succeeded. What it "
+    "stores is shown under 'What you have learned so far' in every later conversation."
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,6 +127,8 @@ class JarvisNotebook:
         self._cache: dict[bool, str] = {}
         self._signature: tuple[float, ...] | None = None
         self._checked_at = 0.0
+        #: ``(monotonic time, saved content, what the user said)`` per tool save.
+        self._tool_saves: list[tuple[float, str, str]] = []
 
     # ── files ────────────────────────────────────────────────────────────
 
@@ -128,10 +158,21 @@ class JarvisNotebook:
         return Soul.load(self.soul_path).learned()
 
     def usage(self, entries: dict[str, list[Any]] | None = None) -> dict[str, tuple[int, int]]:
-        """``target -> (chars used, budget)`` as the reviewer sees it."""
+        """``target -> (chars used, budget)`` as the reviewer sees it.
+
+        Explicit entries have their own allowance, so what the user asked to
+        remember never crowds out what a review may still add or merge.
+        """
         books = entries if entries is not None else self.entries()
         return {
-            target: (sum(len(e.text) + 2 for e in books[target]), self.budgets[target])
+            target: (
+                sum(
+                    len(e.text) + 2
+                    for e in books[target]
+                    if getattr(e, "origin", "") != EXPLICIT_ORIGIN
+                ),
+                self.budgets[target],
+            )
             for target in TARGETS
         }
 
@@ -212,6 +253,76 @@ class JarvisNotebook:
         self._append_ledger(change, evidence=evidence, source=source)
         self.invalidate()
         return change
+
+    def keep_explicit(
+        self,
+        content: str,
+        *,
+        evidence: str = "",
+        source: str = "explicit remember request",
+        via_tool: bool = False,
+    ) -> Change | None:
+        """Save what the user explicitly asked to remember into MEMORY.md, dated.
+
+        ``via_tool`` is the conversation model calling the remember tool with
+        a self-contained sentence; otherwise ``content`` is the user's own
+        words, found by the deterministic fallback. That fallback returns
+        ``None`` for a request the tool already saved. A full notebook never
+        refuses an explicit request; the guard (secrets, oversized text)
+        does, with a ``ValueError``.
+        """
+        from datetime import date
+
+        from jarvis.memory.learning.guard import MAX_ENTRY_CHARS, refusal
+
+        content = " ".join(str(content or "").split())
+        if not content:
+            raise ValueError("there is nothing to remember")
+        label = "asked to remember" if via_tool else "the user's words"
+        prefix = f"{date.today().isoformat()} ({label}): "
+        room = MAX_ENTRY_CHARS - len(prefix)
+        if len(content) > room:
+            content = content[: room - 1].rsplit(" ", 1)[0] + "…"
+        text = prefix + content
+        reason = refusal(text)
+        if reason:
+            raise ValueError(reason)
+        if not via_tool and self._saved_by_tool(content, evidence):
+            return None
+        change = self.apply(
+            target="memory",
+            operation="add",
+            text=text,
+            importance=EXPLICIT_IMPORTANCE,
+            origin=EXPLICIT_ORIGIN,
+            evidence=evidence,
+            source=source,
+            enforce_budget=False,
+        )
+        if via_tool:
+            now = time.monotonic()
+            with self._lock:
+                self._tool_saves = [
+                    s for s in self._tool_saves if now - s[0] < _TOOL_SAVE_WINDOW_S
+                ][-31:] + [(now, content, evidence)]
+        return change
+
+    def _saved_by_tool(self, content: str, said: str) -> bool:
+        """Did the remember tool already save this request during the conversation?"""
+        from jarvis.memory.learning.compact import _norm
+
+        now = time.monotonic()
+        with self._lock:
+            saves = [s for s in self._tool_saves if now - s[0] < _TOOL_SAVE_WINDOW_S]
+        wanted = _norm(content)
+        words = {w[:4] for w in _CONTENT_WORD.findall(wanted)}
+        for _at, saved, evidence in saves:
+            if wanted and (wanted in _norm(evidence) or wanted in _norm(saved)):
+                return True
+            covered = words & {w[:4] for w in _CONTENT_WORD.findall(_norm(saved))}
+            if words and len(covered) / len(words) >= _SAME_REQUEST_SHARE:
+                return True
+        return False
 
     def _edit_soul(
         self, text: str, *, operation: str, entry_id: str, importance: int, origin: str
@@ -343,9 +454,21 @@ class JarvisNotebook:
         if not any(books.get(target) for target in BOOK_TARGETS):
             return ""
         parts = [_HEADER]
+        # What the user asked to be remembered comes first and never competes
+        # with what a review inferred for the regular budget.
+        explicit = [e for e in books.get("memory", []) if e.origin == EXPLICIT_ORIGIN]
+        if explicit:
+            allowance = EXPLICIT_PROMPT_CHARS // (2 if compact else 1)
+            selected, omitted = select_entries(explicit, max_chars=allowance)
+            selected.sort(key=lambda e: e.revision)
+            parts.append(_EXPLICIT_TITLE)
+            parts.append("\n".join("- " + " ".join(e.text.split()) for e in selected))
+            if omitted:
+                parts.append(f"({omitted} older requests are not shown.)")
         for target in BOOK_TARGETS:
             budget = self.budgets[target] // (2 if compact else 1)
-            selected, omitted = select_entries(books[target], max_chars=budget)
+            rows = [e for e in books[target] if e.origin != EXPLICIT_ORIGIN or target != "memory"]
+            selected, omitted = select_entries(rows, max_chars=budget)
             if not selected:
                 continue
             # Oldest first within what fits: the notebook reads as a story.
@@ -428,6 +551,28 @@ def snapshot_block(*, compact: bool = False) -> str:
     if notebook is None:
         return ""
     return notebook.snapshot(compact=compact)
+
+
+def memory_block(*, compact: bool = False) -> str:
+    """:data:`REMEMBER_DIRECTIVE` plus the snapshot, for a surface with the remember tool."""
+    if _active is None:
+        return ""
+    learned = snapshot_block(compact=compact)
+    return REMEMBER_DIRECTIVE + ("\n\n" + learned if learned else "")
+
+
+def remember_explicitly(
+    content: str, *, evidence: str = "", source: str = "remember tool"
+) -> Change | None:
+    """The remember tool's write: one explicit request into MEMORY.md.
+
+    Raises ``LookupError`` while the notebook is not running and
+    ``ValueError`` when the guard refuses the text.
+    """
+    notebook = _active
+    if notebook is None:
+        raise LookupError("Jarvis' notebook is not running")
+    return notebook.keep_explicit(content, evidence=evidence, source=source, via_tool=True)
 
 
 def notebook_from_config(config: Any) -> JarvisNotebook:

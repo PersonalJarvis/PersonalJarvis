@@ -22,11 +22,22 @@ Jarvis itself, tuned for a voice assistant.
    states a preference, corrects Jarvis, or names a plan, goal or deadline.
    Requests and questions ("play some music", "what's the weather") are not
    marked. A conversation with no marked turn never reaches a model.
-3. **Explicit requests (free, immediate).** "Remember that X" / "merk dir X"
-   is saved at once in the user's own words with the date, without a model,
-   so it cannot be lost to a provider failure. Only a bare "remember that",
-   which points at something said before, is reviewed right away with the
-   turn before it.
+3. **Explicit requests (immediate, always MEMORY.md).** The conversation
+   model saves "remember X" / "merk dir X" itself, while the conversation
+   runs, through the `remember` tool (`jarvis/plugins/tool/remember.py`):
+   one self-contained sentence, dated, into `society/jarvis/MEMORY.md` with
+   `origin: user` and importance 10. On GPT-Live the tool sits in the voice
+   tool set (`BrainSupervisorToolGateway._voice_tools`; the router stays a
+   pure dispatcher, ADR-0011) and the session instructions carry
+   `REMEMBER_DIRECTIVE` plus the learned snapshot, so a call both sees what
+   earlier conversations saved and saves a new request before it ends. As a
+   free fallback the loop finds the request in the user's own words, without
+   a model: at the start of a turn ("remember that X") or after what it
+   points at ("I want short reports. Remember that."), where the sentence
+   before it becomes the entry. A request the tool already saved is not
+   filed twice (the turn named the tool, or a tool save in the last six
+   hours covers it). Only a bare "remember that" with nothing before it in
+   the turn is reviewed right away with the turn before it.
 4. **Review (one small call per conversation).** When a call ends
    (`VoiceSessionEnded`), the conversation has been quiet for
    `idle_review_seconds` (default 300), or after `review_every_turns`
@@ -131,7 +142,10 @@ update, so they stay small: `user_budget_chars` 1,500 and `memory_budget_chars`
 1,000 by default (about 650 tokens together at most; the compact realtime
 profile for small local models uses half). One entry is one short sentence,
 at most 300 characters. Entries beyond the prompt budget stay on disk; the most
-important and most recent ones reach the prompt.
+important and most recent ones reach the prompt. Explicit entries (`origin:
+user`) do not count against `memory_budget_chars`: they render first, under
+"What the user asked you to remember", within their own 2,000-character
+allowance (`EXPLICIT_PROMPT_CHARS`, half in the compact profile).
 
 Compaction (`compact.py`) keeps the files themselves small:
 
@@ -143,7 +157,9 @@ Compaction (`compact.py`) keeps the files themselves small:
    sources and invents nothing: every number and link, every capitalised name
    and at least 60 percent of its words come from the sources. An entry is
    dropped as outdated only when it names a date that has passed; lasting
-   facts such as birthdays are kept. The cooldown survives restarts
+   facts such as birthdays are kept. Explicit entries are never shown to the
+   merging model: they are the user's, and their date prefix would otherwise
+   read as a passed deadline. The cooldown survives restarts
    (`.learning-state.json`).
 3. **Hard ceiling.** A review may not grow a notebook past 125 percent of its
    budget (a replace that does not grow it is fine). Only an explicit
