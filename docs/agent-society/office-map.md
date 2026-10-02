@@ -115,7 +115,8 @@ target runs WebGL.
   The agent creator still shows the older rigged figures; switching it to the
   toy style is the rollout step after the maintainer approves this look.
 - **Pets**: each agent's symbol (the profile companion) follows it at about a
-  fifth of its height, reusing `AgentFollower`; the lead gets Gigi.
+  fifth of its height, reusing `AgentFollower`; the lead is drawn as the
+  person's own pet (see *Jarvis is the person's pet* below).
 - **Live monitors** (`LiveMonitors.tsx`, `useDeskChats.ts`, `deskChat.ts`): an
   agent seated at its own desk shows the tail of its chat (user lines, replies,
   running tools) on its monitor, refreshed by jittered polling of the existing
@@ -148,10 +149,29 @@ the floor plan differ.
   terminal and fittings in each floor's own materials (oak, bronze and a mint
   glow with the brass ghost downstairs; walnut, brass and amber with a brass
   `>_` upstairs); two gyroscope rings turn round the floor token.
-- **Gigi follows**: on the coding floor Jarvis (Gigi) flies in "follow" mode,
-  hovering beside and behind the person's head with a smoothed lag and never
-  inside a wall, including in the elevator. In the agents office Gigi keeps
-  its lead-office behaviour.
+- **Jarvis follows**: on the coding floor Jarvis flies (or walks) in "follow"
+  mode beside and behind the person with a smoothed lag and never inside a
+  wall, including in the elevator. In the agents office it keeps its
+  lead-office behaviour.
+- **Jarvis is the person's pet** (2026-10-02): Jarvis appears as the pet
+  chosen in Settings → My Pets (`docs/pets.md`), in 3D, not always as Gigi.
+  `companion/petCompanions.ts` maps a pet to its companion:
+  Gigi keeps its hover model; the six other built-ins have authored Blender
+  models (`scripts/art/build_pet_companions.py`, study
+  `art/studies/jarvis-pet-companions`, one GLB per pet under
+  `assets/society/companions/pets/`) and a gait of their own: Ember the
+  dragon flies with beating wings, Miso the cat trots, Bolt the battery
+  waddles, Brew the teapot hops with a rattling lid, Mochi bounces and Shelly
+  the snail crawls. Pets that fly hover at head height with Gigi's halo and
+  sparkles; pets on the floor (`gigiFlight.ts` `ground` mode) walk right
+  behind the person's feet, take floor routes (`findPath`) on errands instead
+  of flying over desks, and carry their nameplate low. Limbs move by
+  `companion/petRig.ts`, phased by ground covered so feet do not slide;
+  reduced motion stops every gait. A pet the person drew becomes a voxel
+  figure extruded from its own idle frames (`voxelPet.ts`), facing the camera
+  and floating low. The stage feeds the choice through
+  `companion/companionPetStore.ts`, so a change in My Pets swaps the
+  companion live.
 - **Pane to character** (`codingFloor.ts`): every running coding-agent pane
   (Claude Code, Codex and the other agent CLIs; not plain shells, not archived
   panes) is one character. Its id is `pane:<workspace>:<history id or key>`,

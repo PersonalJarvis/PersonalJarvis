@@ -1,11 +1,14 @@
 /**
- * The lead agent (Jarvis) as it appears in the office: not a figure but Gigi,
- * the mascot, flying at chest/head height above the walker's ground position.
+ * The lead agent (Jarvis) as it appears in the office: not a figure but the
+ * person's pet from My Pets (Gigi when none is chosen), in 3D. Gigi and the
+ * dragon fly at chest/head height above the walker's ground position; a cat,
+ * snail, teapot, battery or jelly walks, crawls or hops on the floor
+ * (`petCompanions.ts`); a pet the person drew floats as a voxel figure.
  *
- * Motion comes from the pure `gigiFlight.ts`; this component only renders it
- * with a few cheap effects: an additive halo behind Gigi, a small glow under
- * its hover emitter, a recycled sparkle trail while travelling and a soft
- * shadow blob on the floor. Everything is one draw call each, no lights.
+ * Motion comes from the pure `gigiFlight.ts` (its `ground` mode for pets on
+ * the floor), the pet's own limbs from `petRig.ts`. Flyers get a few cheap
+ * effects: an additive halo, a small glow under the body, a recycled sparkle
+ * trail while travelling. Every companion casts a soft shadow blob.
  */
 import { Component, Suspense, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useFrame } from "@react-three/fiber";
@@ -15,6 +18,10 @@ import {
 } from "three";
 import { CompanionModel } from "../companion/AgentFollower";
 import { defaultCompanion } from "../companion/appearance";
+import { useCompanionPet } from "../companion/companionPetStore";
+import { companionFlies, type CompanionPet } from "../companion/petCompanions";
+import { PetModel, VoxelPet, type PetDrive } from "../companion/PetModel";
+import type { PetMood } from "../companion/petRig";
 import { createGigiFlight, createGigiPose, followAnchor, stepGigiFlight, type GigiFlightMode } from "./gigiFlight";
 import { cameraView } from "./officeStore";
 
@@ -84,11 +91,33 @@ function releaseTextures(): void {
   cache.shadow.dispose();
 }
 
-/** A missing or broken GLB hides Gigi's body; the glow still marks the lead. */
+/** The pet's mood for its limbs: what Jarvis is doing right now. */
+function moodFor(mode: GigiFlightMode, speaking: boolean): PetMood {
+  if (speaking || mode === "talk" || mode === "wave") return "talk";
+  if (mode === "work") return "work";
+  if (mode === "sleep") return "sleep";
+  return "idle";
+}
+
+/** Lift from the flight point (body centre for flyers, the floor for walkers) to the model's origin. */
+function bodyOffset(pet: CompanionPet, ground: boolean): number {
+  if (ground) return 0;
+  return pet.kind === "gigi" ? MODEL_CENTRE_OFFSET : -pet.heightM / 2;
+}
+
+function CompanionBody({ pet, drive, reduced, paused, gigi }: {
+  pet: CompanionPet; drive: { current: PetDrive }; reduced: boolean; paused: boolean; gigi: ReactNode;
+}) {
+  if (pet.kind === "model") return <PetModel pet={pet} drive={drive} reduced={reduced} paused={paused} />;
+  if (pet.kind === "voxel") return <VoxelPet pet={pet} reduced={reduced} paused={paused} />;
+  return <>{gigi}</>;
+}
+
+/** A missing or broken GLB hides the companion's body; the glow still marks the lead. */
 class ModelBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   state = { failed: false };
   static getDerivedStateFromError() { return { failed: true }; }
-  componentDidCatch(error: Error) { console.warn("Gigi model unavailable", error.name); }
+  componentDidCatch(error: Error) { console.warn("Companion model unavailable", error.name); }
   render() { return this.state.failed ? null : this.props.children; }
 }
 
@@ -125,6 +154,11 @@ export function GigiFlyer({ owner, mode, speaking, paused, reduced, clear }: {
   const side = useRef<1 | -1>(1);
   const tint = useMemo(() => new Color(), []);
   const appearance = useMemo(() => ({ ...defaultCompanion("jarvis"), sizeM: GIGI_OFFICE_SIZE_M }), []);
+  const pet = useCompanionPet((s) => s.pet);
+  const ground = !companionFlies(pet);
+  const groundRef = useRef(ground);
+  groundRef.current = ground;
+  const drive = useRef<PetDrive>({ speed: 0, mood: "idle" });
 
   const textures = useMemo(() => sharedTextures(), []);
   useEffect(() => { acquireTextures(); return releaseTextures; }, []);
@@ -150,17 +184,20 @@ export function GigiFlyer({ owner, mode, speaking, paused, reduced, clear }: {
     last.current.x = m.x; last.current.z = m.z;
     let targetX = m.x, targetZ = m.z;
     if (mode === "follow") {
-      const anchor = followAnchor(m.x, m.z, m.heading, side.current, clear);
+      const anchor = followAnchor(m.x, m.z, m.heading, side.current, clear, groundRef.current);
       side.current = anchor.side;
       targetX = anchor.x; targetZ = anchor.z;
     }
+    const onFloor = groundRef.current;
     stepGigiFlight(flight.current, {
-      targetX, targetZ, moving, mode, speaking, t: clock.current, dt, heading: m.heading, reduced, clear,
+      targetX, targetZ, moving, mode, speaking, t: clock.current, dt, heading: m.heading, reduced, clear, ground: onFloor,
     }, pose);
+    drive.current.speed = pose.speed;
+    drive.current.mood = moodFor(mode, speaking);
 
     // Gigi hovers at head height beside the person: seated in first person that is right in
     // front of the eyes, so close by it steps out of the picture until the person stands up.
-    const hidden = cameraView.firstPerson && Math.hypot(pose.x - cameraView.x, pose.z - cameraView.z) < FIRST_PERSON_CLEARANCE_M;
+    const hidden = !onFloor && cameraView.firstPerson && Math.hypot(pose.x - cameraView.x, pose.z - cameraView.z) < FIRST_PERSON_CLEARANCE_M;
     if (root.current) root.current.visible = !hidden;
     if (shadow.current) shadow.current.visible = !hidden;
     if (root.current) root.current.position.set(pose.x, pose.y, pose.z);
@@ -198,15 +235,16 @@ export function GigiFlyer({ owner, mode, speaking, paused, reduced, clear }: {
       });
     }
     if (shadow.current) {
-      const lift = Math.max(0, pose.y - 0.4);
+      const lift = onFloor ? 0 : Math.max(0, pose.y - 0.4);
       (shadow.current.material as MeshBasicMaterial).opacity = Math.max(0.08, 0.34 - lift * 0.22);
       shadow.current.position.set(pose.x, 0.012, pose.z);
-      shadow.current.scale.setScalar(0.85 + lift * 0.35);
+      // A pet on the floor gets a contact shadow its own size; a flyer's spreads as it rises.
+      shadow.current.scale.setScalar(onFloor ? Math.max(0.5, pet.heightM * 1.7) : 0.85 + lift * 0.35);
     }
 
     // Sparkle trail: a fixed pool recycled round-robin, faded by age.
     const { positions, colours, age, rise } = particles;
-    if (moving && !reduced && pose.speed > 0.1) {
+    if (moving && !reduced && !onFloor && pose.speed > 0.1) {
       emitDebt.current += dt * TRAIL_RATE;
       while (emitDebt.current >= 1) {
         emitDebt.current -= 1;
@@ -239,6 +277,7 @@ export function GigiFlyer({ owner, mode, speaking, paused, reduced, clear }: {
   return (
     <>
       <group ref={root} position={[owner.current.x, pose.y, owner.current.z]}>
+        {!ground && <>
         <sprite ref={halo} scale={0.9} renderOrder={1}>
           <spriteMaterial map={textures.glow} color={GLOW_WARM} transparent opacity={0.35} blending={AdditiveBlending} depthWrite={false} />
         </sprite>
@@ -253,10 +292,14 @@ export function GigiFlyer({ owner, mode, speaking, paused, reduced, clear }: {
             </sprite>
           ))}
         </group>
+        </>}
         <group ref={body}>
-          <group position={[0, MODEL_CENTRE_OFFSET, 0]}>
-            <ModelBoundary>
-              <Suspense fallback={null}><CompanionModel appearance={appearance} lead /></Suspense>
+          <group position={[0, bodyOffset(pet, ground), 0]}>
+            <ModelBoundary key={pet.id}>
+              <Suspense fallback={null}>
+                <CompanionBody pet={pet} drive={drive} reduced={reduced} paused={paused}
+                  gigi={<CompanionModel appearance={appearance} lead />} />
+              </Suspense>
             </ModelBoundary>
           </group>
         </group>

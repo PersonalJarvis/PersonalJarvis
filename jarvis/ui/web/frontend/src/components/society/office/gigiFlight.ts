@@ -4,7 +4,8 @@
  * and follows the walker's ground position (x, z). In "follow" mode it trails
  * the person's own character instead, hovering behind-beside its shoulder
  * (`followAnchor`): always on the coding floor, and on the agents floor
- * whenever no errand or summons takes it away.
+ * whenever no errand or summons takes it away. When the person's pet is one
+ * that walks (`ground`), the same model keeps it on the floor right behind them.
  *
  * Pure and deterministic: the same state and inputs give the same pose. With
  * an `out` object a step allocates nothing, so it can run every frame.
@@ -31,6 +32,12 @@ export interface GigiFlightInput {
   reduced?: boolean;
   /** Is a point free airspace (not inside a wall or solid prop)? Gigi never settles where it is not. */
   clear?: (x: number, z: number) => boolean;
+  /**
+   * The companion is a pet that walks, hops or crawls (the person's pet from
+   * My Pets): it keeps to the floor, so no hover height, bob, drift or lean;
+   * it still turns, hops for joy and settles where it is clear.
+   */
+  ground?: boolean;
 }
 
 export interface GigiFlightPose {
@@ -87,6 +94,11 @@ export const GIGI_FOLLOW_HOVER_M = 1.3;
 /** The follow anchor sits this far behind and beside the person. */
 export const GIGI_FOLLOW_BACK_M = 0.45;
 export const GIGI_FOLLOW_SIDE_M = 0.6;
+/** A pet on the floor follows right behind the person, a little to one side. */
+export const GROUND_FOLLOW_BACK_M = 0.75;
+export const GROUND_FOLLOW_SIDE_M = 0.3;
+/** Happy hops of a pet on the floor (speaking, waving), metres. */
+const GROUND_HOP_M = 0.06;
 /** In follow mode Gigi trails the anchor by at most this much (a sprint stretches the spring). */
 const FOLLOW_MAX_LAG_M = 1.1;
 const MAX_BANK = 0.35;
@@ -151,6 +163,7 @@ export function stepGigiFlight(state: GigiFlightState, input: GigiFlightInput, o
   const { targetX, targetZ, mode } = input;
   const happy = mode === "talk" || mode === "wave" || input.speaking;
   const moving = input.moving;
+  const ground = input.ground === true;
 
   // ---- Horizontal follow ------------------------------------------------
   const px = state.x, pz = state.z;
@@ -190,7 +203,8 @@ export function stepGigiFlight(state: GigiFlightState, input: GigiFlightInput, o
   state.happyBlend += ((happy ? 1 : 0) - state.happyBlend) * blend;
 
   // ---- Height -------------------------------------------------------------
-  const baseTarget = mode === "sleep" && !input.speaking ? GIGI_SLEEP_HOVER_M : mode === "follow" ? GIGI_FOLLOW_HOVER_M : GIGI_HOVER_M;
+  const baseTarget = ground ? 0
+    : mode === "sleep" && !input.speaking ? GIGI_SLEEP_HOVER_M : mode === "follow" ? GIGI_FOLLOW_HOVER_M : GIGI_HOVER_M;
   if (reduced) { state.base = baseTarget; state.vBase = 0; }
   else if (dt > 0) {
     springStep(state.base, state.vBase, baseTarget, HEIGHT_OMEGA, dt, scratch);
@@ -198,7 +212,11 @@ export function stepGigiFlight(state: GigiFlightState, input: GigiFlightInput, o
   }
   let y = state.base;
   let driftX = 0, driftZ = 0, wiggle = 0;
-  if (!reduced) {
+  if (ground) {
+    // On the floor: only hops for joy, and only while standing (a walk has its own gait).
+    if (!reduced && !moving) y += Math.abs(Math.sin(t * Math.PI * 1.5)) * GROUND_HOP_M * state.happyBlend;
+    y = Math.max(0, y);
+  } else if (!reduced) {
     const calm = 1 - state.sleepBlend;
     // Gentle hover bob, ~0.06 m at 0.5 Hz; quieter while busy.
     y += Math.sin(t * Math.PI) * 0.06 * calm * (1 - 0.6 * state.workBlend);
@@ -214,7 +232,7 @@ export function stepGigiFlight(state: GigiFlightState, input: GigiFlightInput, o
     driftZ = Math.sin(2 * w) * 0.05 * state.idleBlend;
     wiggle = Math.sin(t * 3.2) * 0.22 * state.happyBlend * (mode === "wave" ? 0 : 1);
   }
-  y = clamp(y, GIGI_MIN_Y, GIGI_MAX_Y);
+  if (!ground) y = clamp(y, GIGI_MIN_Y, GIGI_MAX_Y);
 
   // ---- Facing, lean and bank ---------------------------------------------
   const previousYaw = state.yaw;
@@ -225,9 +243,9 @@ export function stepGigiFlight(state: GigiFlightState, input: GigiFlightInput, o
     state.yaw = reduced ? wrap(input.heading) : wrap(state.yaw + wrap(input.heading - state.yaw) * approach(5, dt));
   }
   const yawRate = dt > 0 ? wrap(state.yaw - previousYaw) / dt : 0;
-  const leanTarget = reduced ? 0 : GIGI_MAX_LEAN * clamp(speed / LEAN_FULL_SPEED, 0, 1);
+  const leanTarget = reduced || ground ? 0 : GIGI_MAX_LEAN * clamp(speed / LEAN_FULL_SPEED, 0, 1);
   // Turning towards +x (yaw increasing) tips the top towards +x: negative roll.
-  const bankTarget = reduced ? 0 : clamp(-yawRate * clamp(speed, 0, 2) * 0.12, -MAX_BANK, MAX_BANK);
+  const bankTarget = reduced || ground ? 0 : clamp(-yawRate * clamp(speed, 0, 2) * 0.12, -MAX_BANK, MAX_BANK);
   state.pitch += (leanTarget - state.pitch) * approach(6, dt);
   state.roll += (bankTarget - state.roll) * approach(6, dt);
 
@@ -270,14 +288,18 @@ export interface FollowAnchor { x: number; z: number; /** +1 or -1: which should
  * then right above the walker). `clear` tests free airspace; a candidate
  * counts only when the midpoint to it is clear too, so no wall sits between.
  */
-export function followAnchor(x: number, z: number, heading: number, side: 1 | -1, clear?: (x: number, z: number) => boolean): FollowAnchor {
+export function followAnchor(x: number, z: number, heading: number, side: 1 | -1, clear?: (x: number, z: number) => boolean,
+  ground = false): FollowAnchor {
   const fx = Math.sin(heading), fz = Math.cos(heading);
   // The walker's right hand (heading 0 faces +z, so its right is -x).
   const rx = -fz, rz = fx;
+  // A flyer hovers behind-beside the shoulder; a pet on the floor walks right behind the feet.
+  const back = ground ? GROUND_FOLLOW_BACK_M : GIGI_FOLLOW_BACK_M;
+  const lateral = ground ? GROUND_FOLLOW_SIDE_M : GIGI_FOLLOW_SIDE_M;
   const candidates: [number, number, 1 | -1][] = [
-    [GIGI_FOLLOW_BACK_M, GIGI_FOLLOW_SIDE_M * side, side],
-    [GIGI_FOLLOW_BACK_M, -GIGI_FOLLOW_SIDE_M * side, side === 1 ? -1 : 1],
-    [GIGI_FOLLOW_BACK_M + 0.2, 0, side],
+    [back, lateral * side, side],
+    [back, -lateral * side, side === 1 ? -1 : 1],
+    [back + 0.2, 0, side],
     [0.25, 0, side],
   ];
   for (const [back, lateral, keep] of candidates) {

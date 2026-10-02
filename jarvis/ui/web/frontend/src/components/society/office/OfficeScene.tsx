@@ -69,7 +69,7 @@ function FloorArrival({ floor, layout, grid, ready }: { floor: OfficeFloor; layo
   return null;
 }
 
-/** On the coding floor Jarvis is nobody's desk mate: Gigi flies along with the person. */
+/** On the coding floor Jarvis is nobody's desk mate: the person's pet (Gigi by default) comes along. */
 function GigiCompanion({ grid, awake, reduced }: { grid: NavGrid; awake: boolean; reduced: boolean }) {
   const speaking = useEventStore((s) => s.voiceState === "speaking");
   const clear = useMemo(() => (x: number, z: number) => isWalkable(grid, { x, z }), [grid]);

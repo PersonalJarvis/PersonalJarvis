@@ -8,6 +8,7 @@
  */
 import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useSyncCompanionPet } from "../companion/companionPetStore";
 import { advance, Canvas } from "@react-three/fiber";
 import { useReducedMotion } from "framer-motion";
 import { useCanvasAwake } from "@/hooks/useCanvasAwake";
@@ -132,6 +133,8 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
   const coding = floor === "coding";
   const roster = useSocietyRoster();
   useRosterRefresh(awake && !coding);
+  // Jarvis keeps the person company as the pet chosen in My Pets.
+  useSyncCompanionPet();
   const [overview, setOverview] = useState(0);
   const [mapOpen, setMapOpen] = useState(false);
   const [profile, setProfile] = useState<PlayerProfile>(loadProfile);
