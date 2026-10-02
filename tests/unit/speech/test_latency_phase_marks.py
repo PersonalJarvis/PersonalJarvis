@@ -29,7 +29,12 @@ from uuid import uuid4
 import pytest
 
 from jarvis.core.bus import EventBus
-from jarvis.core.events import LatencyPhase, LatencyTurnComplete
+from jarvis.core.events import (
+    AnnouncementRequested,
+    LatencyPhase,
+    LatencyTurnComplete,
+    SpeechSpoken,
+)
 from jarvis.core.protocols import AudioChunk, Transcript
 from jarvis.speech.pipeline import SpeechPipeline
 from jarvis.telemetry.latency import LatencyTracker
@@ -143,26 +148,60 @@ async def test_brain_streaming_marks_full_phase_ladder() -> None:
     assert stages[LatencyPhase.TTS_FIRST_CHUNK] <= stages[LatencyPhase.TTS_STREAM_DONE]
 
 
-def test_instant_ack_latency_marks_only_after_playback_confirmation() -> None:
-    """The ack completion phase belongs to playback-confirmed SpeechSpoken,
-    not merely to the point where its announcement was queued."""
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("confirmed", "instant_ack", "replace_tracker", "broken_tracker"),
+    [
+        (True, True, False, False),
+        (False, True, False, False),
+        (True, False, False, False),
+        (True, True, True, False),
+        (True, True, False, True),
+    ],
+)
+async def test_ack_receipt_is_scoped_and_does_not_break_transcript(
+    confirmed: bool, instant_ack: bool, replace_tracker: bool, broken_tracker: bool,
+) -> None:
     bus = EventBus()
     pipeline = _make_streaming_pipeline(bus)
     tracker = LatencyTracker(None, uuid4())
-    pipeline._latency_tracker = tracker  # type: ignore[assignment]
-    pipeline._instant_ack_spoken_text = "I'm checking your records."
+    next_tracker = LatencyTracker(None, uuid4())
+    received: list[SpeechSpoken] = []
 
-    pipeline._emit_spoken("I'm checking your records.", "en", "announcement")
+    async def capture(event: SpeechSpoken) -> None:
+        received.append(event)
 
-    assert LatencyPhase.ACK_PLAYBACK_CONFIRMED.value in tracker.stages_snapshot()
+    class BrokenTracker:
+        def mark(self, phase: LatencyPhase) -> None:
+            raise RuntimeError("telemetry unavailable")
 
-    other_tracker = LatencyTracker(None, uuid4())
-    pipeline._latency_tracker = other_tracker  # type: ignore[assignment]
-    pipeline._emit_spoken("The answer is ready.", "en", "normal")
-    assert (
-        LatencyPhase.ACK_PLAYBACK_CONFIRMED.value
-        not in other_tracker.stages_snapshot()
-    )
+    class ReceiptPlayer:
+        async def play_chunks(self, chunks, *, should_play=None) -> bool:
+            assert LatencyPhase.ACK_PLAYBACK_CONFIRMED not in tracker.stages_snapshot()
+            async for _ in chunks:
+                pass
+            if replace_tracker:
+                pipeline._latency_tracker = next_tracker
+            return confirmed
+
+    bus.subscribe(SpeechSpoken, capture)
+    pipeline._player = ReceiptPlayer()  # type: ignore[assignment]
+    pipeline._latency_tracker = BrokenTracker() if broken_tracker else tracker
+    # Identical words on an unrelated source must not count as an instant ack.
+    pipeline._instant_ack_spoken_text = "Ich prüfe die Unterlagen."
+    await pipeline._on_announcement(AnnouncementRequested(
+        text="Ich prüfe die Unterlagen.", language="de", kind="preamble",
+        source_layer="brain.instant_ack" if instant_ack else "test.unrelated",
+    ))
+    if confirmed:
+        assert await _settle(lambda: len(received) == 1)
+    else:
+        await asyncio.sleep(0.01)
+
+    expected_mark = confirmed and instant_ack and not replace_tracker and not broken_tracker
+    assert (LatencyPhase.ACK_PLAYBACK_CONFIRMED in tracker.stages_snapshot()) == expected_mark
+    assert LatencyPhase.ACK_PLAYBACK_CONFIRMED not in next_tracker.stages_snapshot()
+    assert len(received) == int(confirmed)
 
 
 @pytest.mark.asyncio

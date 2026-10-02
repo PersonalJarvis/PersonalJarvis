@@ -5033,6 +5033,7 @@ class SpeechPipeline:
         retain the existing player-stop behavior. Classic playback uses
         synthesize() and play_chunks(), the same path as ordinary answers.
         """
+        announcement_tracker = getattr(self, "_latency_tracker", None)
         event_kind = getattr(event, "kind", None)
         is_readback = event_kind in _READBACK_KINDS
         is_agent_reply = self._is_agent_reply(event)
@@ -5501,6 +5502,17 @@ class SpeechPipeline:
                 not is_agent_reply or not self._agent_reply_needs_session()
             )
             if agent_reply_completed:
+                # Attribute the receipt to the tracker captured before any await.
+                # A delayed announcement must never mark a newer voice turn.
+                if (
+                    is_instant_ack
+                    and announcement_tracker is not None
+                    and announcement_tracker is getattr(self, "_latency_tracker", None)
+                ):
+                    try:
+                        announcement_tracker.mark(LatencyPhase.ACK_PLAYBACK_CONFIRMED)
+                    except Exception:  # noqa: BLE001 -- telemetry is best-effort
+                        log.debug("Ack playback latency mark failed", exc_info=True)
                 self._emit_spoken(
                     scrubbed.cleaned,
                     ann_lang,
@@ -14956,10 +14968,6 @@ class SpeechPipeline:
         empty tail flushes never produce a row.
         """
         self._latency_tracker = None
-        # The playback receipt matcher is scoped to one utterance. Clear it
-        # before any early return so a later identical phrase cannot inherit
-        # the previous turn's instant-ack attribution.
-        self._instant_ack_spoken_text = None
         try:
             self._continuation_dispatched_this_turn = False
             return await self._handle_utterance_turn(
@@ -17788,14 +17796,6 @@ class SpeechPipeline:
                 voice=voice,
                 voice_provider=voice_provider if voice else None,
             )
-            # The audible transcript is published only after the player has
-            # accepted the corresponding audio. This is the reliable end of
-            # the instant-ack path; ACK_FIRST_TOKEN alone only measures when
-            # the line was queued and can precede a dropped/stale announcement.
-            if text.strip() == getattr(self, "_instant_ack_spoken_text", None):
-                tracker = getattr(self, "_latency_tracker", None)
-                if tracker is not None:
-                    tracker.mark(LatencyPhase.ACK_PLAYBACK_CONFIRMED)
             asyncio.create_task(bus.publish(event))  # noqa: RUF006 — fire-and-forget
         except Exception:  # noqa: BLE001 — telemetry must never break the turn
             log.debug("SpeechSpoken emit failed", exc_info=True)
