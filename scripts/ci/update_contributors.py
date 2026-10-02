@@ -43,10 +43,11 @@ README = Path(__file__).resolve().parents[2] / "README.md"
 START = "<!-- contributors:start -->"
 END = "<!-- contributors:end -->"
 
-#: Accounts that the contributors API reports but that never contributed here.
-#: See the module docstring for why the AI co-author trailer lands on a
-#: third-party account.
-EXCLUDED_LOGINS = frozenset({"claude"})
+#: Accounts that the contributors API reports but that the wall never shows.
+#: ``claude``: see the module docstring for why the AI co-author trailer lands
+#: on a third-party account. ``CodeByPeace``: blocked from the organization by
+#: the maintainer; their merged commits stay in history but are not credited.
+EXCLUDED_LOGINS = frozenset({"claude", "CodeByPeace"})
 
 #: Avatars per row, matching the layout OpenClaw uses. Purely cosmetic.
 PER_ROW = 10
