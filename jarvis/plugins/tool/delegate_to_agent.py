@@ -23,6 +23,7 @@ import logging
 from collections.abc import Callable
 from typing import Any, Final
 
+from jarvis.core.agent_brief import AGENT_BRIEF_RULE
 from jarvis.core.protocols import ExecutionContext, ToolResult
 from jarvis.society.communication import REPLY_POLICY_SCHEMA, select_reply_policy
 
@@ -156,7 +157,7 @@ class DelegateToAgentTool:
                 "type": "string",
                 "description": (
                     "An actionable objective and scope faithful to the user's intent, "
-                    "not just a paraphrase."
+                    "not just a paraphrase. " + AGENT_BRIEF_RULE
                 ),
             },
             "reply_policy": REPLY_POLICY_SCHEMA,

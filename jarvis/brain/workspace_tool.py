@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from jarvis.core.agent_brief import AGENT_BRIEF_RULE
 from jarvis.core.protocols import ExecutionContext, ToolResult, WorkspaceOrchestrationGateway
 
 
@@ -38,7 +39,9 @@ class WorkspaceOrchestrationTool:
         "Accepted means delivered, not completed; uncertain delivery must not be retried. "
         "After a proven pre-write refusal, resolve again for a fresh request_id "
         "before a new attempt. "
-        "Use context with the same IDs to inspect recorded results. No prompt rewriting is needed."
+        "Use context with the same IDs to inspect recorded results. No prompt rewriting is needed. "
+        "A prompt for create, open_workspace or send is a work order the agent carries "
+        "out, never a read-only request unless the user asked for one (see prompt)."
     )
     schema = {
         "type": "object",
@@ -71,8 +74,14 @@ class WorkspaceOrchestrationTool:
                     "project_id",
                     "workspace_id",
                     "terminal_id",
-                    "prompt",
                 )
+            },
+            "prompt": {
+                "type": "string",
+                "description": (
+                    "create/open_workspace/send: the full, self-contained task brief; "
+                    "respond: the answer to type. " + AGENT_BRIEF_RULE
+                ),
             },
             # No pattern: a schema rejection would discard the whole call over
             # one mistyped character. The orchestrator repairs the id instead.

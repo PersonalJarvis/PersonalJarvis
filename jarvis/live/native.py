@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from typing import Any, Literal
 from uuid import uuid4
 
+from jarvis.core.agent_brief import AGENT_BRIEF_RULE
 from jarvis.core.paths import user_data_dir
 from jarvis.core.runtime_refs import get_supervisor_tool_gateway
 from jarvis.core.tool_budget import VOICE_TOOL_BUDGET_S
@@ -153,7 +154,8 @@ class NativeLiveVoiceSession(LiveVoiceSession):
                     "prompt) in the named or visible workspace; never spawn_worker. "
                     "Explicit references override the visible workspace; ask on ambiguity. "
                     "Do not switch the UI to address another workspace. Reuse request_id on "
-                    "retries and never replay uncertain delivery."
+                    "retries and never replay uncertain delivery. "
+                    + AGENT_BRIEF_RULE
                 ),
                 history=tuple(
                     {"role": item["role"], "text": item["delta"]} for item in self._initial_seed

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from jarvis.core.agent_brief import AGENT_BRIEF_RULE
 from jarvis.live.product import PRODUCT_BRIEF
 
 
@@ -51,6 +52,8 @@ class LiveConfig(BaseModel):
                 "A request for a NEW coding agent (or several: 'two Claude Code agents') is "
                 "workspace-orchestrate create in the named or visible workspace, with cli, "
                 "count and the task as prompt; never an existing agent and never spawn_worker. "
+                + AGENT_BRIEF_RULE
+                + " "
                 "Computer-use tasks use the selected thinking model and the same credential. "
                 + self.backend_instructions
             ),
