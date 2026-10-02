@@ -94,7 +94,10 @@ class MessageAgentTool:
         "properties": {
             "target": {
                 "type": "string",
-                "description": "The teammate's name or id, exactly as listed under Teammates.",
+                "description": (
+                    "The teammate's name or id as listed under Teammates (a misheard "
+                    "name is matched; a close one comes back as did_you_mean)."
+                ),
             },
             "text": {
                 "type": "string",
@@ -157,9 +160,24 @@ class MessageAgentTool:
             return _failure(FailureReason.BLOCKED_BY_POLICY, "message exceeds 8000 characters")
         if not target_key or not text:
             return _failure(FailureReason.BLOCKED_BY_POLICY, "target and text are required")
-        target = await rt.roster.resolve(target_key)
+        from .agent_names import lookup_agent
+
+        found = await lookup_agent(
+            rt,
+            target_key,
+            context=text,
+            surface=self.name,
+            include_lead=caller.agent_id != rt.lead_id,
+        )
+        target = found.agent
         if target is None or target.state is AgentState.ARCHIVED:
-            return _failure(FailureReason.TARGET_UNKNOWN, f"no teammate named {target_key!r}")
+            failure = _failure(FailureReason.TARGET_UNKNOWN, f"no teammate named {target_key!r}")
+            if found.decision == "ask" and found.candidates:
+                # Close, but not certain: name the candidates instead of a bare miss.
+                failure.output["did_you_mean"] = [a.name for a in found.candidates]
+            else:
+                failure.output["available"] = found.available_names()
+            return failure
         if target.agent_id == caller.agent_id:
             return _failure(FailureReason.BLOCKED_BY_POLICY, "you cannot message yourself")
         if target.state is AgentState.PAUSED:

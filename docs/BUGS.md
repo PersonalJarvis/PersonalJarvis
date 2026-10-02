@@ -15513,3 +15513,34 @@ plain daemon worker through a `queue.SimpleQueue` (documented reentrant and
 safe in destructors); `__del__` only enqueues and takes no lock. The worker is
 started in ordinary code (`LockedRecognizer.__init__`, `release_recognizer`).
 Guard: `tests/unit/plugins/wake/test_vosk_native.py::test_dropping_the_proxy_inside_an_executor_submit_does_not_deadlock`.
+
+## BUG-227: "send Jarvis Scout a message" found no agent when speech misheard the name (HIGH, FIXED 2026-10-02)
+
+**Symptom.** On a voice call the user asked Jarvis to message their agent
+Jarvis-Scout. Speech recognition delivered "the Java Scout and Quick Meshes";
+Jarvis answered "I couldn't find agents with those names in the open
+workspaces" and did nothing. The user's own later retelling was transcribed as
+"Jarvis Code" — the same name garbled a third way.
+
+**Cause.** Two gaps. (1) Every agent lookup compared strings exactly:
+`Roster.resolve` (id, case-insensitive name, slug) and the coding-pane
+resolver in `agentic_ide/orchestration.py` (exact or same word set), so any
+misheard spelling was "unknown". (2) The live backend's instructions only
+described `workspace-orchestrate`, so a request naming a Jarvis agent went to
+the coding-pane tool, which knows nothing about the team and answered "nothing
+open matches" — with no pointer to `delegate_to_agent` / `message_agent`.
+
+**Fix.** `jarvis/core/spoken_names.py` resolves a spoken name with
+normalization, aliases, Jaro-Winkler and Cologne phonetics, plus a small
+coding-context bonus, and returns act / ask / none; every resolution is logged
+(`name resolution [surface]: heard=... -> ... score=... method=...`).
+`jarvis/society/agent_names.py` applies it to the roster (exact matches first,
+so ids and REST paths are unchanged; title, role and user aliases stored as
+`agent_aliases:<id>` in `society_meta`). `delegate_to_agent`, `society_status`
+and the message tools use it: a close name returns `needs_clarification` with a
+"did you mean" question, an unknown one lists the available agents and says
+when it names a coding pane instead. `workspace-orchestrate` resolves misheard
+custom pane names the same way (positions stay exact) and, when a name is no
+pane but a Jarvis agent, says so in `jarvis_agent`. Guards:
+`tests/unit/core/test_spoken_names.py`, `tests/unit/society/test_agent_names.py`,
+`tests/unit/plugins/tool/test_delegate_to_agent.py`.

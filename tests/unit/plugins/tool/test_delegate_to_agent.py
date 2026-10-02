@@ -200,7 +200,11 @@ async def test_delegate_unknown_name_does_not_redirect_work(team):
         {"agent": "email agent", "task": "check my inbox in gmail", "turn_language": "en"},
         _ctx("email agent, check my inbox"),
     )
-    assert not res.success and res.error == "target_unknown"
+    # "email agent" is close to "Gmail agent", so the user is asked - never a
+    # silent redirect, and never a silent "unknown" either.
+    assert not res.success and res.error == "target_ambiguous"
+    assert res.output["candidates"] == ["Gmail agent"]
+    assert res.output["question"] == "Did you mean Gmail agent?"
     assert not chat.sent
 
 
@@ -435,3 +439,88 @@ async def test_exact_assignment_id_works_without_trace_and_rejects_mismatched_tr
     assert not ambiguous.success and ambiguous.error == "agent required"
     empty = await tool.execute({"agent": "Archivist", "latest_assignment": True}, _ctx())
     assert not empty.success and empty.error == "assignment_unknown"
+
+
+# --------------------------------------------------------------- misheard names
+
+
+@pytest.fixture
+async def voice_team(tmp_path: Path):
+    """The live roster of 2026-10-02 plus a coding agent called Jarvis Code."""
+    chat = FakeChat(tmp_path / "agent_chat.db")
+    cfg = SimpleNamespace(memory=SimpleNamespace(data_dir=str(tmp_path / "data")))
+    rt = SocietyRuntime(tmp_path, chat_service=lambda: chat, cfg=lambda: cfg)
+    await rt.ensure_started()
+    for name, title in (
+        ("Jarvis-Scout", "GitHub trends for Personal Jarvis"),
+        ("Jarvis Code", "Coding agent"),
+        ("Gmail-Tagesreport", "Daily Gmail overview"),
+    ):
+        await rt.roster.create(name=name, title=title, provider="openai", model="gpt-5.2")
+    try:
+        yield rt, chat
+    finally:
+        await rt.close()
+
+
+@pytest.mark.parametrize(
+    ("heard", "agent_id"),
+    [
+        ("Java Scout", "jarvis-scout"),  # the live 2026-10-02 transcript
+        ("Jarvis Kot", "jarvis-code"),
+        ("Jarwis Code", "jarvis-code"),
+        ("jarvis-code", "jarvis-code"),
+    ],
+)
+async def test_delegate_reaches_a_misheard_agent(voice_team, heard, agent_id):
+    rt, chat = voice_team
+    tool = DelegateToAgentTool(runtime_resolver=lambda: rt)
+    res = await tool.execute(
+        {"agent": heard, "task": "Run another scout.", "turn_language": "en"}, _ctx(heard)
+    )
+    assert res.success, res.error
+    assert res.output["agent_id"] == agent_id
+    assert chat.sent and chat.sent[0][0] == f"society:{agent_id}:with:jarvis"
+    if heard != "jarvis-code":
+        # The reply carries how the name was matched, so Jarvis can say who got it.
+        assert res.output["name_match"]["heard"] == heard
+
+
+async def test_delegate_asks_on_a_close_name_and_sends_nothing(voice_team):
+    rt, chat = voice_team
+    tool = DelegateToAgentTool(runtime_resolver=lambda: rt)
+    res = await tool.execute(
+        {"agent": "Charles Code", "task": "Write a poem.", "turn_language": "de"},
+        _ctx("Charles Code soll ein Gedicht schreiben"),  # i18n-allow: user speech
+    )
+    assert res.error == "target_ambiguous" and not chat.sent
+    assert res.output["question"] == "Meinst du Jarvis Code?"  # i18n-allow: spoken reply
+
+
+async def test_coding_context_settles_a_close_coding_name(voice_team):
+    rt, chat = voice_team
+    tool = DelegateToAgentTool(runtime_resolver=lambda: rt)
+    res = await tool.execute(
+        {"agent": "Charles Code", "task": "Fix the bug in the repo.", "turn_language": "en"},
+        _ctx("Charles Code, fix the bug"),
+    )
+    assert res.success, res.error
+    assert res.output["agent_id"] == "jarvis-code"
+
+
+async def test_delegate_unknown_name_lists_who_exists(voice_team):
+    rt, chat = voice_team
+    tool = DelegateToAgentTool(runtime_resolver=lambda: rt)
+    res = await tool.execute(
+        {"agent": "Telegram", "task": "x", "turn_language": "en"}, _ctx("telegram do x")
+    )
+    assert res.error == "target_unknown" and not chat.sent
+    assert res.output.startswith("I do not know an agent called Telegram.")
+    assert "Available agents: Gmail-Tagesreport, Jarvis Code, Jarvis-Scout." in res.output
+
+
+async def test_status_resolves_a_misheard_name(voice_team):
+    rt, _ = voice_team
+    status = SocietyStatusTool(runtime_resolver=lambda: rt)
+    res = await status.execute({"agent": "Java Scout", "turn_language": "en"}, _ctx("x"))
+    assert res.success and res.output == "Jarvis-Scout has nothing to do right now."
