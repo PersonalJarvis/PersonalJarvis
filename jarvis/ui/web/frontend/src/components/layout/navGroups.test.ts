@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MessageSquare } from "lucide-react";
+import { ChatIcon } from "@/components/icons/sectionIcons";
 
 import { NAV_GROUPS, presentNavItem } from "@/components/layout/navGroups";
 
@@ -7,14 +7,12 @@ const chats = NAV_GROUPS.flat().find((i) => i.id === "chats")!;
 const agents = NAV_GROUPS.flat().find((i) => i.id === "agents")!;
 
 describe("presentNavItem", () => {
-  it("keeps the front page named Chat while voice mode is active", () => {
-    const voice = presentNavItem(chats, "voice");
-    expect(voice.labelKey).toBe("sidebar.surface_chat");
-    expect(voice.icon).toBe(MessageSquare);
-
-    const chat = presentNavItem(chats, "chat");
-    expect(chat.labelKey).toBe("sidebar.surface_chat");
-    expect(chat.icon).toBe(MessageSquare);
+  it("names the front page \"Chat\" in either mode — voice mode is a state of the chat", () => {
+    for (const surface of ["voice", "chat"] as const) {
+      const row = presentNavItem(chats, surface);
+      expect(row.labelKey).toBe("sidebar.surface_chat");
+      expect(row.icon).toBe(ChatIcon);
+    }
   });
 
   it("keeps the section id so the row still lands on the front page", () => {

@@ -197,3 +197,40 @@ def test_list_pets_orders_default_first_and_skips_broken(tmp_path: Path, user_pe
 
 def test_list_pets_without_custom_folder(tmp_path: Path) -> None:
     assert all(m.builtin for m in list_pets(data_dir=tmp_path / "missing"))
+
+
+def test_idle_acts_load_from_their_own_sheet(tmp_path: Path) -> None:
+    folder = _write_pet(tmp_path / "pets" / USER_ID, pet_id=USER_ID, sheet=_two_row_sheet())
+    acts = Image.new("RGBA", (96, 64), (0, 0, 0, 0))
+    acts.paste((200, 10, 10, 255), (0, 0, 32, 32))  # "wave" frame 0
+    acts.paste((10, 200, 10, 128), (32, 0, 64, 32))  # "wave" frame 1, half alpha
+    acts.paste((10, 10, 200, 255), (0, 32, 32, 64))  # "hop" frame 0
+    acts.save(folder / "acts.png")
+    manifest = json.loads((folder / "pet.json").read_text(encoding="utf-8"))
+    manifest["acts_sheet"] = "acts.png"
+    manifest["acts"] = {
+        "wave": {"row": 0, "frames": 2, "fps": 8},
+        "hop": {"row": 1, "frames": 1, "fps": 8},
+    }
+    (folder / "pet.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    pack = load_pet(folder, builtin=False)
+    assert list(pack.acts) == ["wave", "hop"]
+    assert len(pack.acts["wave"]) == 2 and len(pack.acts["hop"]) == 1
+    assert pack.acts["wave"][0].getpixel((3, 3)) == (200, 10, 10, 255)
+    assert pack.acts["wave"][1].getpixel((3, 3)) == (10, 200, 10, 255)  # alpha made binary
+    assert pack.acts["hop"][0].size == (32, 32)
+
+
+def test_a_missing_acts_sheet_breaks_the_pet(tmp_path: Path) -> None:
+    folder = _write_pet(tmp_path / "pets" / USER_ID, pet_id=USER_ID, sheet=_two_row_sheet())
+    manifest = json.loads((folder / "pet.json").read_text(encoding="utf-8"))
+    manifest["acts_sheet"] = "acts.png"
+    manifest["acts"] = {"wave": {"row": 0, "frames": 2, "fps": 8}}
+    (folder / "pet.json").write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(PetManifestError):
+        load_pet(folder, builtin=False)
+
+
+def test_a_pet_without_acts_has_none(user_pet: Path) -> None:
+    assert dict(load_pet(user_pet, builtin=False).acts) == {}

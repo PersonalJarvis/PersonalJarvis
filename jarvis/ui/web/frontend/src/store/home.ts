@@ -18,6 +18,13 @@ import { useEventStore } from "@/store/events";
 interface HomeStore {
   jarvisCardMode: "voice" | "chat";
   setJarvisCardMode: (mode: "voice" | "chat") => void;
+  /**
+   * The society agent whose chat holds the front page instead of Jarvis'
+   * (picked from the sidebar's agent list), or null for Jarvis' own chat.
+   * Starting a new chat or opening one from the history clears it.
+   */
+  agentChatId: string | null;
+  openAgentChat: (agentId: string | null) => void;
   freshVoicePending: boolean;
   voiceSelectionPending: boolean;
   voiceSwitchStopping: boolean;
@@ -81,6 +88,8 @@ export function reduceLiveReply(current: string, name: string, payload: unknown)
 export const useHomeStore = create<HomeStore>((set, get) => ({
   jarvisCardMode: "voice",
   setJarvisCardMode: (jarvisCardMode) => set({ jarvisCardMode }),
+  agentChatId: null,
+  openAgentChat: (agentChatId) => set({ agentChatId }),
   freshVoicePending: false,
   voiceSelectionPending: false,
   voiceSwitchStopping: false,

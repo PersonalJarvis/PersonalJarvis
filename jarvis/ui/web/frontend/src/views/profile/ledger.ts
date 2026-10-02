@@ -217,3 +217,18 @@ export function daysSince(iso: unknown, now: Date = new Date()): number | null {
   if (Number.isNaN(then.getTime())) return null;
   return Math.max(0, Math.floor((now.getTime() - then.getTime()) / 86_400_000));
 }
+
+/** Fields whose values are language codes ("de"), shown by name ("German"). */
+export const LANGUAGE_FIELDS: ReadonlySet<string> = new Set(["primary_language", "languages"]);
+
+/** "de" -> "German" in the interface language; the value itself when unknown. */
+export function languageName(code: string, ui: string): string {
+  const tag = code.trim();
+  if (!/^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/i.test(tag)) return code;
+  try {
+    return new Intl.DisplayNames([ui], { type: "language" }).of(tag) ?? code;
+  } catch {
+    // Intl rejects some well-formed but unknown tags; the raw value is honest.
+    return code;
+  }
+}

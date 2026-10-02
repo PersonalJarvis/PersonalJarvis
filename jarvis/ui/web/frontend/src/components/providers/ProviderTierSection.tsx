@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AlertCircle, Bot, Brain, Check, ChevronDown, Copy, Cpu, Download, HardDrive, Loader2, LogIn, LogOut, Mic, Play, PlugZap, Radio, Search, Sparkles, Square, Terminal, Volume2, Wand2, Waypoints, XCircle } from "lucide-react";
+import { AlertCircle, Bot, Brain, Check, ChevronDown, Copy, Cpu, Download, HardDrive, KeyRound, Loader2, LogIn, LogOut, Mic, Play, PlugZap, Radio, Search, Sparkles, Square, Terminal, Volume2, Wand2, Waypoints, XCircle } from "lucide-react";
 import { AltCredentialNote } from "@/components/AltCredentialNote";
 import { ApiKeyForm } from "@/components/ApiKeyForm";
 import { BrainModelSelector } from "@/components/BrainModelSelector";
 import { OpenRouterTtsControls } from "@/components/OpenRouterTtsVoicePicker";
 import { RealtimeOptionsControl } from "@/components/RealtimeOptionsControl";
 import { putVoiceMode } from "@/lib/voiceEngineMode";
+import { LocalVoicePanel } from "@/components/providers/LocalVoicePanel";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { useRowGestures } from "@/components/providers/rowGestures";
 import { Button } from "@/components/ui/button";
@@ -1522,11 +1523,16 @@ export function ProviderCard({
             </div>
           )}
 
+          {/* The key row stays visible: a collapsed disclosure hid the only
+              place to enter or replace the key behind a tiny triangle. */}
           {configuration && descriptor.configured ? (
-            <details className="rounded-lg border border-border px-3 py-2.5">
-              <summary className="cursor-pointer text-sm font-medium">{t("live.shared_key_ready")}</summary>
-              <div className="pt-3"><AuthWidget descriptor={descriptor} onChanged={onChanged} onSavedActivate={handleSavedActivate} /></div>
-            </details>
+            <div data-testid={`provider-key-${descriptor.id}`} className="space-y-2 rounded-lg border border-border px-3 py-2.5">
+              <p className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+                <KeyRound aria-hidden="true" className="h-3.5 w-3.5 text-muted-foreground" />
+                {t("live.shared_key_ready")}
+              </p>
+              <AuthWidget descriptor={descriptor} onChanged={onChanged} onSavedActivate={handleSavedActivate} />
+            </div>
           ) : <AuthWidget descriptor={descriptor} onChanged={onChanged} onSavedActivate={handleSavedActivate} />}
 
           {configuration}
@@ -3703,6 +3709,7 @@ export function AuthWidget({
       )}
       <LocalRuntimePanel descriptor={descriptor} onChanged={onChanged} />
       <ManagedServerPanel descriptor={descriptor} onChanged={onChanged} />
+      {descriptor.voice_engine && <LocalVoicePanel onChanged={onChanged} />}
       {descriptor.supports_base_url && descriptor.managed_server && (
         <details className="group text-xs">
           <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 text-muted-foreground transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
@@ -4355,6 +4362,10 @@ export function providerStateChip(
   // Managed self-hosted server: installed and smoke-booted, or not there.
   if (descriptor.managed_server) {
     return descriptor.managed_server.ready ? "ready" : "not_installed";
+  }
+  // Jarvis-owned local voice engine: set up on this machine, or not.
+  if (descriptor.voice_engine) {
+    return descriptor.voice_engine.installed ? "ready" : "not_installed";
   }
   // A keyless provider (Ollama, a local OpenAI-compatible server you point
   // at) has nothing to store and, without a probe in its payload, nothing

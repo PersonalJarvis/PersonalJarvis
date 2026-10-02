@@ -2207,6 +2207,9 @@ class UIConfig(BaseModel):
     pet_scale: float = 1.0
     # Show the status bubble under the pet's control strip.
     pet_bubble: bool = True
+    # Keep the pet's control strip on screen at all times. Off (default): it
+    # shows only while Jarvis listens, thinks or talks, or under the pointer.
+    pet_strip_always: bool = False
     # Remembered "open with" choice for Outputs artifacts: an opener id
     # ("default" = OS default app, "browser", or an editor key like "code").
     # Empty = ask via the chooser dialog on first open. Desktop-only.
@@ -2361,6 +2364,24 @@ class AutostartConfig(BaseModel):
     # (7 = minimized/tray, 1 = normal); the logon scheduled task launches visibly
     # regardless. macOS/Linux ignore it.
     start_minimized: bool = False
+    # At login, start only the background agent service (routines, chat
+    # channels) instead of the desktop window. Read by
+    # ``jarvis.autostart.command.resolve_launch_spec``.
+    background_only: bool = False
+
+
+class BackgroundConfig(BaseModel):
+    """What keeps running after the desktop app is closed.
+
+    ``keep_agents_running``: on quit, the desktop hands its routines and chat
+    channels (Telegram, Discord) to a windowless background service, which
+    hands them back the next time the app opens. The service is only started
+    when there is work to keep (a scheduled routine or a running channel).
+    Read by :mod:`jarvis.core.background_service`.
+    """
+
+    model_config = ConfigDict(extra="allow")
+    keep_agents_running: bool = True
 
 
 class TelemetryConfig(BaseModel):
@@ -4432,6 +4453,51 @@ class GoogleAuthConfig(BaseModel):
     service_account_path: str | None = None
 
 
+#: Voices the local voice engine can load today (ADR-0037). Pocket TTS is the
+#: natural default; Piper is the floor every machine can run. Qwen3-TTS stays
+#: out of the switchable set until its premium phase (plan section 6, P4).
+VOICE_ENGINE_VOICES: tuple[str, ...] = ("pocket", "piper")
+
+
+class VoiceEngineConfig(BaseModel):
+    """``[voice_engine]`` — the Jarvis-owned local voice engine (``local-voice``).
+
+    Read by ``jarvis/plugins/realtime/local_voice.py`` (``EngineSettings``) and
+    shown on the Local voice card. Written only through
+    ``config_writer.set_voice_engine_settings``. ``extra="allow"`` so a newer
+    key written by a later build never breaks validation here (AP-16).
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    #: Voice backend: ``pocket`` (natural, CPU) or ``piper`` (floor). An
+    #: unknown value falls back to ``pocket`` instead of failing the config.
+    tts: str = "pocket"
+    #: Ollama tag the engine answers with. Empty = automatic: the model setup
+    #: picked (installed models first), else the machine-class default.
+    llm_model: str = ""
+    #: Languages the engine loads a voice for; the first is the fallback voice.
+    languages: list[str] = Field(default_factory=lambda: ["de", "en"])
+
+    @field_validator("tts", mode="before")
+    @classmethod
+    def _known_voice(cls, value: object) -> str:
+        text = str(value or "").strip().lower()
+        return text if text in VOICE_ENGINE_VOICES else "pocket"
+
+    @field_validator("llm_model", mode="before")
+    @classmethod
+    def _strip_model(cls, value: object) -> str:
+        return str(value or "").strip()
+
+    @field_validator("languages", mode="before")
+    @classmethod
+    def _clean_languages(cls, value: object) -> list[str]:
+        items = value if isinstance(value, list | tuple) else []
+        cleaned = [str(x).strip().lower() for x in items if str(x).strip()]
+        return cleaned or ["de", "en"]
+
+
 class JarvisConfig(BaseModel):
     """Root config model."""
 
@@ -4446,6 +4512,8 @@ class JarvisConfig(BaseModel):
     tts: TTSConfig = Field(default_factory=TTSConfig)
     brain: BrainConfig = Field(default_factory=BrainConfig)
     live: LiveConfig = Field(default_factory=LiveConfig)
+    # [voice_engine] — the Jarvis-owned local voice engine (ADR-0037).
+    voice_engine: VoiceEngineConfig = Field(default_factory=VoiceEngineConfig)
     # Google key routing (AI Studio vs Vertex express) — see GoogleAuthConfig.
     google: GoogleAuthConfig = Field(default_factory=GoogleAuthConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
@@ -4463,6 +4531,8 @@ class JarvisConfig(BaseModel):
     # Cross-platform login autostart (Windows .lnk / macOS LaunchAgent / Linux
     # XDG .desktop). Default ON; headless host = graceful no-op.
     autostart: AutostartConfig = Field(default_factory=AutostartConfig)
+    # Background agent service after the window closes (routines, channels).
+    background: BackgroundConfig = Field(default_factory=BackgroundConfig)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     # ``validation_alias`` back-compat: old installs use [sub_agents];

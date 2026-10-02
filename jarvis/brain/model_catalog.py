@@ -560,6 +560,9 @@ REALTIME_MODELS: dict[str, list[ModelInfo]] = {
     # through /v1/models at connect time (same as the local brain card), and a
     # user who wants a specific one pins it on the card.
     "local-realtime": _curated([("auto", "Chosen by your server")]),
+    # local-voice: the language model is picked on the card itself (installed
+    # Ollama models first), stored in [voice_engine].llm_model.
+    "local-voice": _curated([("auto", "Chosen on the Local voice card")]),
     "openai-live": _curated([("gpt-live-1", "GPT-Live 1")]),
     "openai-realtime": _curated(
         [
@@ -621,6 +624,8 @@ REALTIME_VOICES: dict[str, list[ModelInfo]] = {
     # honest entry: the adapter sends no voice override and the server uses its
     # own default.
     "local-realtime": _curated([("auto", "Your server's own voice")]),
+    # local-voice: Pocket or Piper, chosen on the card ([voice_engine].tts).
+    "local-voice": _curated([("auto", "Chosen on the Local voice card")]),
     "openai-realtime": _ids(
         [
             "alloy",

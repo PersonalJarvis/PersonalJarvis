@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { Compass, Monitor, Moon, Power, Sparkles, Sun, Zap } from "lucide-react";
+import { Bot, Compass, Monitor, Moon, Power, Sparkles, Sun, Zap } from "lucide-react";
 import { FIRST_STEPS_START_EVENT, SETUP_REPLAY_EVENT } from "@/components/onboarding/tourEvents";
 import { Switch } from "@/components/ui/switch";
 import { useAutostart } from "@/hooks/useAutostart";
+import { useBackgroundAgents, type BackgroundAgentsPatch } from "@/hooks/useBackgroundAgents";
 import { useTheme, type ThemePreference } from "@/hooks/useTheme";
 import { useEventStore } from "@/store/events";
-import { useLocaleChunk, useT } from "@/i18n";
+import { fill, useLocaleChunk, useT } from "@/i18n";
 
 /**
  * "App settings" group inside the Settings view. Currently hosts the
@@ -30,6 +31,7 @@ export function AppSettingsGroup() {
       </h3>
       <AppearanceRow />
       <AutostartRow />
+      <BackgroundAgentsRow />
       <TourRow />
       <FirstStepsRow />
     </div>
@@ -292,6 +294,98 @@ function AutostartRow() {
               {config.entry_path}
             </p>
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const CHANNEL_LABELS: Record<string, string> = { telegram: "Telegram", discord: "Discord" };
+
+/**
+ * "Keep agents running after closing": on quit the app hands routines and chat
+ * channels to a windowless background service, which hands them back when the
+ * app opens again. The second switch makes the login entry start only that
+ * service. The line below says what a quit would keep right now.
+ */
+function BackgroundAgentsRow() {
+  const t = useT();
+  const { config, loading, error, save } = useBackgroundAgents();
+  const pushToast = useEventStore((s) => s.pushToast);
+  const [saving, setSaving] = useState(false);
+
+  if (config && !config.supported) return null;
+
+  async function apply(patch: BackgroundAgentsPatch) {
+    setSaving(true);
+    try {
+      await save(patch);
+      pushToast("success", t("settings_view.background_agents.saved_toast"));
+    } catch (e) {
+      pushToast("error", (e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const keep = config?.keep_agents_running ?? true;
+  const work = config?.work;
+  const parts: string[] = [];
+  if (work?.routines) {
+    parts.push(fill(t("settings_view.background_agents.routines"), { count: work.routines }));
+  }
+  for (const channel of work?.channels ?? []) parts.push(CHANNEL_LABELS[channel] ?? channel);
+
+  return (
+    <div className="rounded-lg border border-border bg-card p-4">
+      <div className="flex items-start gap-3">
+        <Bot className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center justify-between gap-4">
+            <h4 className="font-medium">{t("settings_view.background_agents.title")}</h4>
+            <Switch
+              checked={keep}
+              disabled={loading || saving}
+              aria-label={t("settings_view.background_agents.title")}
+              onCheckedChange={(next) => void apply({ keep_agents_running: next })}
+            />
+          </div>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {t("settings_view.background_agents.description")}
+          </p>
+
+          {error && <p className="mt-3 text-xs text-destructive">{error}</p>}
+
+          {config?.running_as_service && (
+            <p className="mt-3 text-xs text-foreground">
+              {t("settings_view.background_agents.service_active")}
+            </p>
+          )}
+
+          {config && keep && !config.running_as_service && (
+            <p className="mt-3 text-xs text-muted-foreground">
+              {parts.length > 0
+                ? fill(t("settings_view.background_agents.keeps_now"), { what: parts.join(", ") })
+                : t("settings_view.background_agents.keeps_nothing")}
+            </p>
+          )}
+
+          <div className="mt-3 flex items-center justify-between gap-4 rounded-md border border-border bg-background p-3">
+            <div className="min-w-0">
+              <p className="text-xs font-medium">
+                {t("settings_view.background_agents.login_title")}
+              </p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {t("settings_view.background_agents.login_description")}
+              </p>
+            </div>
+            <Switch
+              checked={config?.background_only_at_login ?? false}
+              disabled={loading || saving || !config?.autostart_enabled}
+              aria-label={t("settings_view.background_agents.login_title")}
+              onCheckedChange={(next) => void apply({ background_only_at_login: next })}
+            />
+          </div>
         </div>
       </div>
     </div>

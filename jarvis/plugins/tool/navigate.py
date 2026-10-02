@@ -29,7 +29,6 @@ KNOWN: frozenset[str] = frozenset(
         "plugins",
         "docs",
         "mcps",
-        "tasks",
         "sessions",
         "run_inspector",
         # Spend & Tokens.
@@ -137,9 +136,15 @@ _ALIASES: dict[str, str] = {
     "dokumente": "docs",
     "doku": "docs",
     "mcp": "mcps",
-    "task": "tasks",
-    "aufgaben": "tasks",
-    "aufgabe": "tasks",
+    # The retired Automations section: scheduled work lives on agents now
+    # (each agent's routines), so its old id and spoken names land there.
+    "tasks": "agents",
+    "task": "agents",
+    "aufgaben": "agents",
+    "aufgabe": "agents",
+    "automations": "agents",
+    "routines": "agents",
+    "schedules": "agents",
     "transkription": "sessions",
     "transcription": "sessions",
     "session": "sessions",

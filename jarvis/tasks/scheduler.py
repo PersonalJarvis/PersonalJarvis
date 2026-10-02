@@ -542,6 +542,14 @@ class TaskScheduler:
         self._wakeup.set()
         return due
 
+    def pending_work(self) -> tuple[int, int]:
+        """``(armed tasks, runs in flight)`` — synchronous and cheap.
+
+        Armed = waiting for a time or an event. The background service reads
+        this to decide whether closing the window leaves anything to keep.
+        """
+        return len(self._known), sum(1 for task in self._runner_tasks if not task.done())
+
     def _remove_from_memory(self, task_id: str) -> None:
         """Drop a task from the heap, the event index and the known set."""
         self.sources.cancel(task_id)

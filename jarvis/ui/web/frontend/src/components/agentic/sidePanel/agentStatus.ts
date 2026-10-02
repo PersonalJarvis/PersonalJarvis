@@ -35,7 +35,7 @@ export function stateKeyFor(pane: WorkspacePaneRow, kind: AgentDotKind = dotKind
 }
 
 export const DOT_STYLE: Record<AgentDotKind, { dot: string; ping: boolean }> = {
-  working: { dot: "bg-success", ping: false },
+  working: { dot: "bg-accent", ping: false },
   waiting: { dot: "bg-warning", ping: true },
   idle: { dot: "bg-muted-foreground/40", ping: false },
   error: { dot: "bg-destructive", ping: false },

@@ -1,4 +1,4 @@
-import { Mic, SquarePen, Volume2 } from "lucide-react";
+import { Mic, Phone, SquarePen, Volume2 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
@@ -18,7 +18,8 @@ const ORB_GRADIENT =
 /**
  * A still picture of the control strip the desktop pet carries: the pen in
  * its own filled disc (new chat), then one filled pill holding the
- * microphone, the talk orb and the speaker, split by faint dividers. Shown on
+ * microphone, the talk orb and the speaker, split by faint dividers, then the
+ * phone that calls Jarvis (its handset lies flat to hang up). Shown on
  * the settings page so the user knows what sits under the pet before
  * switching it on.
  *
@@ -71,6 +72,13 @@ export function PetControlStripPreview({
         <span className={cn("grid place-items-center", slot)}>
           <Volume2 className={icon} strokeWidth={2} />
         </span>
+      </span>
+      <span
+        data-testid="pet-strip-call"
+        className={cn("grid place-items-center rounded-full", height, disc)}
+        style={{ backgroundColor: STRIP_FILL, color: STRIP_ICON }}
+      >
+        <Phone className={icon} strokeWidth={2} />
       </span>
     </div>
   );

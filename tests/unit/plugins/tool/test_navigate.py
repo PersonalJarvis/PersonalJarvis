@@ -59,7 +59,9 @@ async def test_canonical_id_publishes_navigate(tool: NavigateTool, bus: Recordin
         ("settings", "settings"),
         ("agenten", "agents"),
         ("sub-agents", "agents"),
-        ("Aufgaben", "tasks"),
+        # The retired Automations section: scheduled work lives on agents.
+        ("Aufgaben", "agents"),
+        ("tasks", "agents"),
         ("notizen", "memory"),
         ("Kontakte", "contacts"),
         ("kontakt", "contacts"),

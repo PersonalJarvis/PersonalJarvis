@@ -94,9 +94,6 @@ const PluginsDialog = lazyPropView<{ onClose: () => void; area: PluginArea; onAr
 const AgenticIdeView = lazyPropView<AgenticIdeViewProps>(["agentic-ide", "agentic-ide-classic", "chat-workspace"], () =>
   import("@/views/AgenticIdeView").then((m) => ({ default: m.AgenticIdeView })),
 );
-const AutomationsView = lazyView(["tasks"], () =>
-  import("@/views/AutomationsView").then((m) => ({ default: m.AutomationsView })),
-);
 const SessionsView = lazyView(["sessions"], () =>
   import("@/views/SessionsView").then((m) => ({ default: m.SessionsView })),
 );
@@ -366,8 +363,6 @@ function SwitchOnActiveSection({ active }: { active: string }) {
       return <ClisHubView />;
     case "docs":
       return <DocsView />;
-    case "tasks":
-      return <AutomationsView />;
     case "sessions":
       return <SessionsView />;
     case "run_inspector":

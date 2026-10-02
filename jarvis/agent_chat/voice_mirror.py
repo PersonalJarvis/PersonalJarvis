@@ -11,9 +11,11 @@ This bridge closes that gap at the turn boundary, off the voice hot path
 (AP-9): it subscribes to :class:`VoiceTurnCompleted` on the app bus and files
 each turn's two texts into the newest ``jarvis``-surface chat session via
 :meth:`AgentChatService.import_voice_turn` — no runner starts, nothing
-re-answers, and a session that is busy typing keeps running. The imported
-turn also becomes context for the next typed turn, because the API runner
-rebuilds its history from the same event log.
+re-answers, and a session that is busy typing keeps running. When the front
+page bound a chat (``AgentChatService.bind_voice_chat``) the turn goes there
+instead, and every turn of one call stays in the chat its first turn chose.
+The imported turn also becomes context for the next typed turn, because the
+API runner rebuilds its history from the same event log.
 
 Only the lead's chat (surface ``jarvis``) is mirrored: the other society
 agents have no microphone.
@@ -62,11 +64,19 @@ class VoiceChatMirror:
             svc = self._get_service()
             if svc is None:
                 return
-            session = self._target_session(svc)
+            call_id = str(getattr(event, "session_id", "") or "")
+            session = self._target_session(svc, call_id)
             if session is None:
                 session = self._ensure_session(svc, event)
                 if session is None:
                     return
+                if getattr(svc, "voice_chat_fresh", False):
+                    # The blank page's call now has its chat; the next call
+                    # from that page continues it instead of opening another.
+                    svc.bind_voice_chat(session.session_id)
+            pin = getattr(svc, "pin_voice_call", None)
+            if callable(pin):
+                pin(call_id, session.session_id)
             await svc.import_voice_turn(
                 session.session_id,
                 user_text,
@@ -79,9 +89,26 @@ class VoiceChatMirror:
             log.debug("voice chat mirror skipped a turn: %s", exc)
 
     @staticmethod
-    def _target_session(svc: Any) -> Any | None:
-        """The newest Jarvis-surface session — the chat the card shows."""
+    def _target_session(svc: Any, call_id: str = "") -> Any | None:
+        """The chat this turn belongs in.
+
+        In order: the chat this call already files into, the chat the front
+        page bound (``AgentChatService.bind_voice_chat``), and — when nothing
+        was ever bound — the newest Jarvis chat. ``None`` asks for a new chat:
+        a blank page is open, or there is no chat yet.
+        """
         try:
+            for chat_id in (
+                getattr(svc, "voice_call_chat", lambda _c: None)(call_id),
+                getattr(svc, "voice_chat_id", None),
+            ):
+                if not chat_id:
+                    continue
+                session = svc.store.get_session(chat_id)
+                if session is not None and session.surface == SURFACE:
+                    return session
+            if getattr(svc, "voice_chat_fresh", False):
+                return None
             sessions = svc.store.list_sessions(limit=1, surface=SURFACE)
         except Exception as exc:  # noqa: BLE001
             log.debug("voice chat mirror could not list sessions: %s", exc)

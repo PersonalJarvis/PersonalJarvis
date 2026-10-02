@@ -4,9 +4,8 @@ import { CircleAlert, FileText, ImageIcon } from "lucide-react";
 import { InternalMessageBubble, type InternalParticipant } from "./InternalMessageBubble";
 import { MessageWithChips } from "./ToolChoiceChips";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
-import { GigiMark } from "@/components/GigiMark";
 import { effortLabel } from "./AgentComposer";
-import { TurnTrace, type Decide } from "./WorkTrace";
+import { TurnTrace, type Decide, type TraceLook } from "./WorkTrace";
 import type { TimelineItem, TurnItem, TextBlock } from "./reduce";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
@@ -20,6 +19,7 @@ export function AgentTimeline({
   recipientName,
   agentsById,
   bubbles = false,
+  traceLook = "rail",
 }: {
   items: TimelineItem[];
   assistantName: string;
@@ -30,12 +30,15 @@ export function AgentTimeline({
   /** Sender faces by agent id, where the caller has a roster. */
   agentsById?: Record<string, InternalParticipant>;
   /**
-   * The front page's messenger look (2026-10-01): your words in a signal-blue
-   * bubble on the right, the assistant's answers in card bubbles on the left
-   * under a small face, and a centred time stamp wherever the conversation
-   * paused. The Agentic IDE keeps the document look (the default).
+   * The front page's conversation look (2026-10-01, after the Claude app):
+   * your words in a soft rounded bubble on the right, the assistant's answer
+   * as plain text with no name-and-model header above it, and a quiet
+   * centred time stamp wherever the conversation paused. The Agentic IDE
+   * keeps the labelled document look (the default).
    */
   bubbles?: boolean;
+  /** How turns draw their work; the Agentic IDE keeps the classic rows. */
+  traceLook?: TraceLook;
 }) {
   const t = useT();
   const stamps = bubbles ? timeStamps(items) : null;
@@ -78,9 +81,9 @@ export function AgentTimeline({
         >
           <div
             className={cn(
-              "text-reading",
+              "text-[15px] leading-[23px]",
               bubbles
-                ? "jarvis-chat-out max-w-[78%] rounded-3xl rounded-br-lg px-4 py-2.5"
+                ? "jarvis-user-bubble max-w-[80%] rounded-[20px] px-4 py-2.5"
                 : "jarvis-user-bubble max-w-[85%] rounded-lg px-4 py-3",
             )}
           >
@@ -192,6 +195,7 @@ export function AgentTimeline({
         providerLabel={providerLabel(item.provider)}
         onDecide={onDecide}
         bubbles={bubbles}
+        traceLook={traceLook}
       />
     );
   }
@@ -232,33 +236,20 @@ function stampLabel(at: Date, now: Date): string {
   return `${date}, ${time}`;
 }
 
-const Turn = memo(function Turn({ turn, assistantName, providerLabel, onDecide, bubbles = false }: {
-  turn: TurnItem; assistantName: string; providerLabel: string; onDecide: Decide; bubbles?: boolean;
+const Turn = memo(function Turn({ turn, assistantName, providerLabel, onDecide, bubbles = false, traceLook }: {
+  turn: TurnItem; assistantName: string; providerLabel: string; onDecide: Decide; bubbles?: boolean; traceLook: TraceLook;
 }) {
   const t = useT();
   return <div className="flex min-w-0 flex-col gap-3" data-testid="agent-turn" data-message-id={turn.id} data-status={turn.status}>
-    <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-      {bubbles ? <GigiMark size={20} className="rounded-full" /> : null}
-      <span className="font-medium text-foreground">{assistantName}</span>
-      <ProviderLogo providerId={turn.provider} label={providerLabel} size="sm" />
-      <span>{providerLabel}{turn.model ? ` · ${turn.model}` : ""}</span>
-      {turn.effort ? <span>{effortLabel(turn.effort, t)}</span> : null}
-    </div>
-    <TurnTrace
-      turn={turn}
-      onDecide={onDecide}
-      renderText={(text, id) =>
-        bubbles ? (
-          text.trim() ? (
-            <div className="w-fit max-w-full rounded-3xl rounded-tl-lg bg-card px-5 py-1.5" data-testid="agent-bubble">
-              <Prose block={{ kind: "text", text, id }} />
-            </div>
-          ) : null
-        ) : (
-          <Prose block={{ kind: "text", text, id }} />
-        )
-      }
-    />
+    {!bubbles && (
+      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+        <span className="font-medium text-foreground">{assistantName}</span>
+        <ProviderLogo providerId={turn.provider} label={providerLabel} size="sm" />
+        <span>{providerLabel}{turn.model ? ` · ${turn.model}` : ""}</span>
+        {turn.effort ? <span>{effortLabel(turn.effort, t)}</span> : null}
+      </div>
+    )}
+    <TurnTrace turn={turn} look={traceLook} onDecide={onDecide} renderText={(text, id) => <Prose block={{ kind: "text", text, id }} />} />
   </div>;
 });
 
@@ -268,14 +259,19 @@ function Prose({ block }: { block: TextBlock }) {
     <div
       data-testid="agent-text"
       className={cn(
-        "prose prose-neutral max-w-none text-[17px] leading-[30px] text-foreground dark:prose-invert dark:text-foreground [overflow-wrap:anywhere]",
-        "prose-p:my-2 prose-p:text-foreground prose-li:text-foreground prose-strong:text-foreground-strong",
-        "prose-headings:font-display prose-headings:tracking-tight prose-headings:text-foreground-strong prose-h1:text-xl prose-h2:text-lg prose-h3:text-base",
+        // Compact reading size, like the Claude app: headings stay close to body
+        // size and set apart by weight and spacing, not by scale.
+        "prose prose-neutral max-w-none text-[15px] leading-[25px] text-foreground dark:prose-invert dark:text-foreground [overflow-wrap:anywhere]",
+        "[&>div>:first-child]:mt-0 [&>div>:last-child]:mb-0",
+        "prose-p:my-2.5 prose-p:text-foreground prose-li:text-foreground prose-strong:text-foreground-strong",
+        "prose-headings:mb-1.5 prose-headings:mt-5 prose-headings:font-semibold prose-headings:tracking-normal prose-headings:text-foreground-strong",
+        "prose-h1:text-[17px] prose-h1:leading-[25px] prose-h2:text-[16px] prose-h2:leading-[25px] prose-h3:text-[15px] prose-h3:leading-[25px] prose-h4:text-[15px]",
         "prose-a:text-foreground-strong prose-a:underline prose-a:decoration-border-strong prose-a:underline-offset-2",
         "prose-code:rounded prose-code:bg-secondary prose-code:px-1 prose-code:py-0.5 prose-code:font-mono prose-code:text-[0.85em] prose-code:font-normal prose-code:before:hidden prose-code:after:hidden",
-        "prose-pre:my-2 prose-pre:bg-card prose-pre:text-[14px] prose-pre:leading-[22px]",
-        "prose-li:my-0.5 prose-ul:my-2 prose-ol:my-2",
-        "prose-table:my-3 prose-table:text-[15px] prose-table:leading-[22px]",
+        "prose-pre:my-2.5 prose-pre:bg-card prose-pre:text-[13px] prose-pre:leading-[20px]",
+        "prose-li:my-1 prose-ul:my-2.5 prose-ol:my-2.5 prose-ul:pl-5 prose-ol:pl-5 prose-li:pl-1",
+        "prose-hr:my-5",
+        "prose-table:my-3 prose-table:text-[14px] prose-table:leading-[21px]",
         "prose-thead:text-foreground-strong prose-th:text-foreground-strong prose-td:text-foreground",
       )}
     >

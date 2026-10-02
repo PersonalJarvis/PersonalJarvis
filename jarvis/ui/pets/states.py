@@ -29,7 +29,20 @@ PET_STATES: tuple[str, ...] = (
     "success",
     "error",
     "sleeping",
+    "working",
+    "searching",
+    "held",
 )
+
+#: States that show what Jarvis is DOING inside a turn, set from tool calls:
+#: ``working`` for a tool step or a running agent task, ``searching`` for a
+#: lookup (web search, reading a page or a file, the wiki, memory).
+ACTION_STATES: tuple[str, ...] = ("working", "searching")
+
+#: How long a tool call keeps its action state without a newer one, in
+#: seconds. A tool's result normally ends it sooner; this only bounds a call
+#: whose result never arrives.
+ACTION_HOLD_SECONDS: float = 12.0
 
 #: States that play once and then hand back to the underlying state.
 ONE_SHOT_STATES: tuple[str, ...] = ("success", "error")
@@ -49,6 +62,9 @@ STATE_FALLBACKS: dict[str, str] = {
     "success": "idle",
     "error": "idle",
     "sleeping": "idle",
+    "working": "thinking",
+    "searching": "working",
+    "held": "listening",
 }
 
 #: The pet id that shows the control strip with no figure ("None" in the UI).

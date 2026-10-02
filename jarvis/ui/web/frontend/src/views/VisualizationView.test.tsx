@@ -2,8 +2,9 @@
  * The Artifacts section — every page and picture a run produced, full-size.
  *
  * Contracts worth pinning:
- * - the newest artifact is on stage when the section opens; the rail lists
- *   every artifact newest-first and labels a page by its own <title>,
+ * - the section opens on the library: every artifact a card, newest first,
+ *   a page labelled by its own <title>; a click opens it on the stage, back
+ *   returns, previous / next walk the library,
  * - a PAGE is framed from `/page` with `sandbox="allow-scripts"` and no
  *   same-origin (its scripts run, the app stays out of reach); an image goes
  *   through <img>; a PDF through an empty sandbox,
@@ -11,7 +12,7 @@
  *   it — the graph is one tab away, never in front of the page,
  * - a `create_artifact` mission still running shows as a "building…" row and
  *   stage, recognised by the brief's "Artifact:" lead line,
- * - `?run=<slug>` pre-selects that run's artifact; a click wins over newest,
+ * - `?run=<slug>` opens that run's artifact straight away,
  * - only files the WebView can draw are offered (`classifyVisual`).
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -184,10 +185,18 @@ describe("parseArtifactUtterance", () => {
 });
 
 describe("VisualizationView", () => {
-  it("stages the newest artifact full-size, labelled by its page title", async () => {
+  it("opens a card full-size on the stage, labelled by its page title", async () => {
     installFetchMock([DASH_RUN], { mission_dash: [DASH_FILE] });
 
     renderView();
+
+    // The library card carries the page's title, not the filename.
+    const rows = await screen.findAllByTestId("visualization-artifact-row");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].textContent).toContain("Umsatz-Dashboard");
+    expect(rows[0].textContent).toContain("Umsatz pro Monat 2026 als Balken.");
+    expect(screen.queryByTestId("visualization-frame")).toBeNull();
+    fireEvent.click(rows[0]);
 
     const frame = await screen.findByTestId("visualization-frame");
     // The artifact-page route: scripts allowed server-side …
@@ -196,16 +205,15 @@ describe("VisualizationView", () => {
     // same-origin never.
     expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
     expect(screen.getByTestId("visualization-title").textContent).toBe("Umsatz-Dashboard");
-    // The rail row carries the same title, not the filename.
-    const rows = screen.getAllByTestId("visualization-artifact-row");
-    expect(rows).toHaveLength(1);
-    expect(rows[0].textContent).toContain("Umsatz-Dashboard");
-    expect(rows[0].textContent).toContain("Umsatz pro Monat 2026 als Balken.");
     // The run graph is a tab away, not on stage.
     expect(screen.queryByTestId("graph-node-start")).toBeNull();
+    // Back returns to the library.
+    fireEvent.click(screen.getByTestId("visualization-back"));
+    await screen.findAllByTestId("visualization-artifact-row");
+    expect(screen.queryByTestId("visualization-frame")).toBeNull();
   });
 
-  it("lists every artifact newest-first and switches on click", async () => {
+  it("lists every artifact newest-first and walks them with next / previous", async () => {
     installFetchMock(
       [
         { slug: "run-a", utterance: "Draw the architecture", status: "success" },
@@ -224,17 +232,28 @@ describe("VisualizationView", () => {
       expect.stringContaining("diagram.svg"),
       expect.stringContaining("old-chart.png"),
     ]);
-    // Newest on stage first …
+    fireEvent.click(rows[0]);
     expect((await screen.findByTestId("visualization-image")).getAttribute("src")).toContain(
       "diagram.svg",
     );
-    // … a click moves to the older one.
-    fireEvent.click(rows[1]);
+    expect(screen.getByTestId("visualization-previous")).toHaveProperty("disabled", true);
+    // Next moves to the older one …
+    fireEvent.click(screen.getByTestId("visualization-next"));
     await waitFor(() =>
       expect(screen.getByTestId("visualization-image").getAttribute("src")).toContain(
         "old-chart.png",
       ),
     );
+    // … and the arrow key walks back.
+    fireEvent.keyDown(window, { key: "ArrowLeft" });
+    await waitFor(() =>
+      expect(screen.getByTestId("visualization-image").getAttribute("src")).toContain(
+        "diagram.svg",
+      ),
+    );
+    // Escape returns to the library.
+    fireEvent.keyDown(window, { key: "Escape" });
+    await screen.findAllByTestId("visualization-artifact-row");
   });
 
   it("shows the source under Code and the run graph under Run", async () => {
@@ -254,6 +273,7 @@ describe("VisualizationView", () => {
     );
 
     renderView();
+    fireEvent.click(await screen.findByTestId("visualization-artifact-row"));
     await screen.findByTestId("visualization-frame");
 
     fireEvent.click(screen.getByTestId("visualization-tab-code"));
@@ -284,13 +304,16 @@ describe("VisualizationView", () => {
 
     renderView();
 
+    const cards = await screen.findAllByTestId("visualization-artifact-row");
+    expect(cards).toHaveLength(2);
+    fireEvent.click(cards[0]);
     const frame = await screen.findByTestId("visualization-frame");
     expect(frame.getAttribute("sandbox")).toBe("");
     expect(frame.getAttribute("src")).toContain("deck.pdf");
     // No Code tab for a PDF — there is no source to show.
     expect(screen.queryByTestId("visualization-tab-code")).toBeNull();
 
-    fireEvent.click(screen.getAllByTestId("visualization-artifact-row")[1]);
+    fireEvent.click(screen.getByTestId("visualization-next"));
     const image = await screen.findByTestId("visualization-image");
     expect(image.getAttribute("src")).toContain("cover.png");
   });
@@ -312,10 +335,12 @@ describe("VisualizationView", () => {
     const building = await screen.findAllByTestId("visualization-building-row");
     expect(building).toHaveLength(1);
     expect(building[0].textContent).toContain("Umsatz-Dashboard");
-    // With nothing picked, the newest build is what the stage shows.
+    // Opening the build shows its stage …
+    fireEvent.click(building[0]);
     await screen.findByTestId("visualization-building");
-    // The finished artifact is still in the rail, one click away.
-    fireEvent.click(screen.getByTestId("visualization-artifact-row"));
+    // … and the finished artifact is back in the library, one click away.
+    fireEvent.click(screen.getByTestId("visualization-back"));
+    fireEvent.click(await screen.findByTestId("visualization-artifact-row"));
     await screen.findByTestId("visualization-frame");
   });
 

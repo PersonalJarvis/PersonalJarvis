@@ -41,6 +41,7 @@ def test_defaults() -> None:
     assert ui.pet_id == DEFAULT_PET_ID
     assert ui.pet_scale == 1.0
     assert ui.pet_bubble is True
+    assert ui.pet_strip_always is False
 
 
 @pytest.mark.parametrize(
@@ -110,11 +111,13 @@ def test_writers_persist_the_three_ui_keys(tmp_path: Path) -> None:
     config_writer.set_pet_id("Miso", path=toml)
     config_writer.set_pet_scale(3.0, path=toml)
     config_writer.set_pet_bubble(False, path=toml)
+    config_writer.set_pet_strip_always(True, path=toml)
 
     ui = _ui_table(toml)
     assert ui["pet_id"] == "miso"
     assert ui["pet_scale"] == 2.0  # clamped before it reaches the disk
     assert ui["pet_bubble"] is False
+    assert ui["pet_strip_always"] is True
     assert ui["orb_style"] == "pet"
     assert "# kept" in toml.read_text(encoding="utf-8")  # comments survive
 
@@ -201,4 +204,5 @@ def test_example_config_documents_the_pet_keys() -> None:
     assert data["ui"]["pet_id"] == UIConfig().pet_id
     assert data["ui"]["pet_scale"] == UIConfig().pet_scale
     assert data["ui"]["pet_bubble"] == UIConfig().pet_bubble
+    assert data["ui"]["pet_strip_always"] == UIConfig().pet_strip_always
     assert data["trigger"]["hotkey_pet_toggle"] == TriggerConfig().hotkey_pet_toggle

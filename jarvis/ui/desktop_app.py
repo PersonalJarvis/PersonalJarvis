@@ -3197,6 +3197,7 @@ class DesktopApp:
                 logger.critical(
                     "Backend stopped in background mode ({}); exiting the owned shell.", reason,
                 )
+                self._skip_background_handoff = True
                 self._user_requested_quit = True
                 self._arm_force_exit(after_s=20.0)
                 threading.Thread(
@@ -3445,6 +3446,7 @@ class DesktopApp:
             "pet_id": str(getattr(ui, "pet_id", DEFAULT_PET_ID) or DEFAULT_PET_ID),
             "pet_scale": _clamp_pet_scale(getattr(ui, "pet_scale", 1.0)),
             "pet_bubble": bool(getattr(ui, "pet_bubble", True)),
+            "pet_strip_always": bool(getattr(ui, "pet_strip_always", False)),
         }
 
     def _hide_on_idle_for(self, style: str) -> bool:
@@ -3493,21 +3495,27 @@ class DesktopApp:
         return {"ok": True, "applied_live": self._pet_call("set_pet", pet)}
 
     def set_pet_look(
-        self, scale: float | None = None, bubble: bool | None = None
+        self,
+        scale: float | None = None,
+        bubble: bool | None = None,
+        strip_always: bool | None = None,
     ) -> dict[str, object]:
-        """Apply the pet's size and status-bubble switch live (``PUT /api/pets/settings``)."""
+        """Apply the pet's size, bubble and strip switch live (``PUT /api/pets/settings``)."""
         from loguru import logger
 
         clamped = None if scale is None else _clamp_pet_scale(scale)
         flag = None if bubble is None else bool(bubble)
+        strip = None if strip_always is None else bool(strip_always)
         try:
             if clamped is not None:
                 self.cfg.ui.pet_scale = clamped
             if flag is not None:
                 self.cfg.ui.pet_bubble = flag
+            if strip is not None:
+                self.cfg.ui.pet_strip_always = strip
         except Exception as exc:  # noqa: BLE001
             logger.warning("pet look not stored in config: {}", exc)
-        return {"ok": True, "applied_live": self._pet_call("set_pet_look", clamped, flag)}
+        return {"ok": True, "applied_live": self._pet_call("set_pet_look", clamped, flag, strip)}
 
     def set_pet_visible(self, visible: bool) -> dict[str, object]:
         """Hide or show the pet for this run (``POST /api/pets/visibility``).
@@ -3839,6 +3847,7 @@ class DesktopApp:
             return (False, f"{type(exc).__name__}: {exc}")
 
         def _mark_quit() -> None:
+            self._skip_background_handoff = True
             self._user_requested_quit = True
 
         def _quit_soon() -> None:
@@ -3883,6 +3892,7 @@ class DesktopApp:
             return False
 
         def _mark_quit() -> None:
+            self._skip_background_handoff = True
             self._user_requested_quit = True
 
         def _quit_soon() -> None:
@@ -4940,6 +4950,19 @@ class DesktopApp:
                 logger.exception("Could not read whether the window is maximized")
         return run_window_command(window, action, maximized=maximized)
 
+    def set_window_zoom(self, factor: float, view: str | None) -> dict[str, Any]:
+        """Zoom one live window's page. Worker-thread safe.
+
+        A detached view targets that window. Anything else targets the main
+        window. See ``jarvis.ui.window_zoom`` for the per-engine details.
+        """
+        from jarvis.ui.window_zoom import set_window_zoom
+
+        window = self._detached_windows.get(view) if view else None
+        if window is None:
+            window = self._window
+        return set_window_zoom(window, factor)
+
     def _arm_window_frame(self, window: Any) -> None:
         """Let a frameless Windows window still be resized from its edges.
 
@@ -5848,6 +5871,7 @@ class DesktopApp:
         # False → normal return, so callers still get an exit code.
         if self._user_requested_quit:
             self._arm_force_exit(after_s=20.0)
+            self._hand_off_to_background_service()
         code = self.shutdown()
         if self._user_requested_quit:
             with suppress(Exception):
@@ -6084,7 +6108,10 @@ class DesktopApp:
                     # backend bus (the same bus the CU context's KillSwitch is
                     # bound to) from this non-async pystray bridge thread.
                     self._publish_kill_requested_threadsafe()
-                elif action == "quit":
+                elif action in ("quit", "quit_all"):
+                    if action == "quit_all":
+                        # Nothing keeps running: no background agent service.
+                        self._skip_background_handoff = True
                     self._user_requested_quit = True
                     self._arm_force_exit(after_s=20.0)
                     # Detached windows too: webview.start() returns only once
@@ -6257,6 +6284,25 @@ class DesktopApp:
             self._overlay_close_thread.start()
         if backstop:
             self._arm_force_exit(after_s=self._CLOSE_QUIT_BACKSTOP_S)
+
+    def _hand_off_to_background_service(self) -> None:
+        """On a real quit, start the background agent service if there is work.
+
+        Routines and chat channels would otherwise stop with the window; the
+        service (``jarvis.core.background_service``) waits for this process to
+        exit, takes over the lock and keeps them running until the app opens
+        again. A restart, a declined Terms gate or a failed backend set
+        ``_skip_background_handoff`` — those must not leave anything behind.
+        """
+        if getattr(self, "_skip_background_handoff", False):
+            return
+        server = getattr(self, "_server", None)
+        state = getattr(getattr(server, "app", None), "state", None)
+        if state is None:
+            return
+        from jarvis.core.background_service import hand_off_on_quit
+
+        hand_off_on_quit(state, getattr(server, "cfg", None) or self.cfg)
 
     def _stop_overlay(self) -> None:
         """Take the on-screen bar or mascot down. Idempotent, never raises."""

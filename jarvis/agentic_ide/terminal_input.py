@@ -54,7 +54,7 @@ DEFAULT_APPEARANCE = "dark"
 #: (foreground, background) per appearance, mirroring ``terminalThemes.ts``.
 THEME_COLOURS: dict[str, tuple[str, str]] = {
     "dark": ("#f4f4f6", "#12141a"),
-    "light": ("#2b2b33", "#fcfbf8"),
+    "light": ("#18181c", "#fcfbf8"),
 }
 
 #: What xterm answers a primary device-attributes query with: a VT100 with the

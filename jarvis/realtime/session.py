@@ -11642,6 +11642,33 @@ class RealtimeVoiceSession:
         )
 
     async def _handle_end_call(self, event: Any) -> None:
+        from jarvis.speech.hangup import user_asked_to_hang_up
+
+        if not user_asked_to_hang_up(self._last_user_text):
+            # A model tool call alone never ends the call (live 2026-10-01:
+            # "Ja" to an approval became end_call). An explicit command that
+            # arrives after a speculative call still ends it via HANGUP_RE.
+            log.info(
+                "realtime[%s] end_call refused: the user's turn holds no hang-up request",
+                self.session_id,
+            )
+            if self._session is not None and self._session_takes_tool_results():
+                try:
+                    await self._session.send_tool_result(
+                        str(getattr(event, "call_id", "") or ""),
+                        "end_call",
+                        {
+                            "success": False,
+                            "error": "The user did not ask to hang up. Stay on the call.",
+                        },
+                    )
+                except Exception:  # noqa: BLE001 — the call simply stays open
+                    log.warning(
+                        "realtime[%s] end_call refusal could not be sent",
+                        self.session_id,
+                        exc_info=True,
+                    )
+            return
         if self._session is not None and self._session_takes_tool_results():
             try:
                 await self._session.send_tool_result(

@@ -415,6 +415,30 @@ def test_a_society_session_lists_teammates_and_connected_capabilities(tmp_path, 
     assert slash["items"][0]["value"] == "weekly-digest"  # its own skills first
 
 
+def test_the_jarvis_chat_mentions_agents_never_its_scratch_folder(tmp_path, monkeypatch):
+    """The front page's "@" names the user's agents on every seat; the chat's
+    workspace folder is scratch space, so its files never show up there."""
+    from types import SimpleNamespace
+
+    from jarvis.agent_chat import typeahead as ta
+
+    assert ta.triggers_for("brain", "jarvis") == ("/", "@")
+    assert ta.triggers_for("codex-cli", "jarvis") == ("@", "$")
+    (tmp_path / "0.26.0").write_text("", encoding="utf-8")
+    rows = [
+        SimpleNamespace(agent_id="jarvis", name="Jarvis", title="Lead", state="active"),
+        SimpleNamespace(agent_id="mailbox", name="Mailbox", title="Gmail agent", state="active"),
+    ]
+    runtime = SimpleNamespace(roster=SimpleNamespace(snapshot=lambda: rows), catalog=lambda: [])
+    monkeypatch.setattr(ta, "_society_runtime", lambda: runtime)
+
+    for runner in ("brain", "api", "claude-cli"):
+        got = ta.suggest(runner=runner, cwd=tmp_path, trigger="@", surface="jarvis")
+        assert [i["value"] for i in got["items"]] == ["Mailbox"]  # the lead and files stay out
+    narrowed = ta.suggest(runner="api", cwd=tmp_path, trigger="@", surface="jarvis", query="zz")
+    assert narrowed["items"] == []
+
+
 def test_a_society_lookup_without_a_runtime_is_empty_not_an_error(tmp_path, monkeypatch):
     from jarvis.agent_chat import typeahead as ta
 

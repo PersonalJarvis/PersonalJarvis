@@ -1,10 +1,10 @@
 """Plugin grants match by PREFIX everywhere a task's allowlist is applied.
 
-A template grants ``github`` while the live tools are ``github/list_issues``,
+A routine grants ``github`` while the live tools are ``github/list_issues``,
 ``github/create_issue``, … Exact matching in ``BrainManager._select_task_tools``
 left such a task running with ZERO tools (it then "could not access GitHub"
 at 09:00). The brain's allowlist and the unattended-approval bridge must
-apply one and the same rule: :func:`jarvis.tasks.templates.grant_matches`.
+apply one and the same rule: :func:`jarvis.tasks.grants.grant_matches`.
 """
 
 from __future__ import annotations

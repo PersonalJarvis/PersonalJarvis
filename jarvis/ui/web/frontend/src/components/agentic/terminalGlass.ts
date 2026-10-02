@@ -26,6 +26,8 @@ function pack(r: number, g: number, b: number): number {
 
 function packedFromCssRgb(css: string | undefined): number | null {
   if (!css) return null;
+  const hex = css.match(/^#([0-9a-f]{6})$/i);
+  if (hex) return Number.parseInt(hex[1], 16);
   const match = css.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
   if (!match) return null;
   return pack(Number(match[1]), Number(match[2]), Number(match[3]));

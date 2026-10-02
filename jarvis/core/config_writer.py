@@ -34,6 +34,7 @@ from .config import (
     DEFAULT_CONFIG_FILE,
     OLLAMA_MODEL_OPTION_KEYS,
     PROJECT_ROOT,
+    VOICE_ENGINE_VOICES,
     OllamaModelOptions,
     clear_config_cache,
 )
@@ -1165,6 +1166,24 @@ def set_autostart(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     _patch_table(path, "autostart", "enabled", bool(enabled))
 
 
+def set_autostart_background_only(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Persist ``[autostart] background_only`` (login starts only the agent service).
+
+    Toml-only, same rationale as :func:`set_autostart`; the caller re-applies
+    the OS entry so its command line follows the new mode.
+    """
+    _patch_table(path, "autostart", "background_only", bool(enabled))
+
+
+def set_background_keep_running(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Persist ``[background] keep_agents_running`` in jarvis.toml.
+
+    Toml-only, same rationale as :func:`set_autostart`: the drift-guard does
+    not track it. Read at quit time, so it applies without a restart.
+    """
+    _patch_table(path, "background", "keep_agents_running", bool(enabled))
+
+
 def set_wiki_vault_root(vault_root: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Persist ``[wiki_integration] vault_root`` in jarvis.toml (AP-7).
 
@@ -1368,6 +1387,42 @@ def set_realtime_fallback_provider(provider: str, *, path: Path = DEFAULT_CONFIG
     _patch_realtime_provider_toml(path, provider, key="fallback_provider")
 
 
+def set_voice_engine_settings(
+    *,
+    tts: str | None = None,
+    llm_model: str | None = None,
+    path: Path = DEFAULT_CONFIG_FILE,
+) -> None:
+    """Persist the Local voice card's choices to ``[voice_engine]``.
+
+    ``tts`` must be one of ``config.VOICE_ENGINE_VOICES``; ``llm_model`` is an
+    Ollama tag, and an empty string means "automatic". Both land in ONE atomic
+    write. Read by ``jarvis/plugins/realtime/local_voice.py``; the running
+    engine picks them up on its next start.
+    """
+    values: dict[str, str | bool | int | float | list[str]] = {}
+    if tts is not None:
+        voice = tts.strip().lower()
+        if voice not in VOICE_ENGINE_VOICES:
+            raise ValueError(f"unknown local voice {tts!r}; expected one of {VOICE_ENGINE_VOICES}")
+        values["tts"] = voice
+    if llm_model is not None:
+        model = llm_model.strip()
+        if any(ch.isspace() for ch in model) or len(model) > 200:
+            raise ValueError(f"not an Ollama model tag: {llm_model!r}")
+        values["llm_model"] = model
+    if not values:
+        return
+    first_key, *rest = values
+    _patch_table(
+        path,
+        "voice_engine",
+        first_key,
+        values[first_key],
+        extra={key: values[key] for key in rest},
+    )
+
+
 def set_silence_window_ms(ms: int, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Persist the voice silence window to ``[speech] vad_silence_ms`` in jarvis.toml.
 
@@ -1462,6 +1517,11 @@ def set_pet_scale(scale: float, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
 def set_pet_bubble(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Persist ``[ui] pet_bubble`` (show the pet's status bubble)."""
     _patch_table(path, "ui", "pet_bubble", bool(enabled))
+
+
+def set_pet_strip_always(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Persist ``[ui] pet_strip_always`` (keep the pet's control strip up)."""
+    _patch_table(path, "ui", "pet_strip_always", bool(enabled))
 
 
 def set_bar_follow_cursor_monitor(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:

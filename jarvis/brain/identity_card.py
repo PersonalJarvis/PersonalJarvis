@@ -72,6 +72,7 @@ __all__ = [
     "distill_identity_card",
     "identity_card_block",
     "identity_card_text",
+    "learned_user_name",
     "render_identity_block",
     "reset_identity_card_cache",
 ]
@@ -411,6 +412,53 @@ def _vault_profile_path(config: Any) -> Path | None:
         log.debug("identity card: vault root unresolvable", exc_info=True)
         return None
     return root / "entities" / f"{_user_entity_slug(config)}.md"
+
+
+_NAME_FACT_RE = re.compile(r"^\s*[-*]\s*name\s*:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
+_ALIASES_RE = re.compile(r"^aliases\s*:\s*\[([^\]]*)\]", re.IGNORECASE | re.MULTILINE)
+_TITLE_RE = re.compile(r"^#\s+(.+?)\s*$", re.MULTILINE)
+_GENERIC_NAMES = frozenset({"user", "the user", "me", "owner"})
+
+
+def _plausible_name(raw: str) -> str | None:
+    name = raw.strip().strip("\"'").strip()
+    if not name or len(name) > 40 or name.casefold() in _GENERIC_NAMES:
+        return None
+    if not any(ch.isalpha() for ch in name) or re.search(r"[\d@/\\<>|{}]", name):
+        return None
+    return name
+
+
+def learned_user_name(config: Any = None) -> str | None:
+    """The user's name as the memory has learned it, or None.
+
+    Read from the user's own entity page in the wiki vault — a ``- Name:``
+    fact first, then the page's first alias, then its title. This is what the
+    assistant has picked up over time; ``USER.md`` stays the place a name is
+    *set*, and callers prefer that one. A missing vault, a page that only
+    says "User", or anything that does not look like a name yields None —
+    never a guess.
+    """
+    path = _vault_profile_path(config)
+    if path is None:
+        return None
+    text = _read_text(path)
+    if not text.strip():
+        return None
+    match = _NAME_FACT_RE.search(_strip_frontmatter(text))
+    if match and (name := _plausible_name(match.group(1))):
+        return name
+    front = _FRONTMATTER_RE.match(text)
+    if front:
+        aliases = _ALIASES_RE.search(front.group(0))
+        if aliases:
+            first = aliases.group(1).split(",")[0]
+            if name := _plausible_name(first):
+                return name
+    heading = _TITLE_RE.search(_strip_frontmatter(text))
+    if heading:
+        return _plausible_name(heading.group(1))
+    return None
 
 
 def _core_memory_path(config: Any) -> Path | None:

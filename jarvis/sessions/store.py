@@ -375,6 +375,22 @@ class SessionStore:
                 ),
             )
 
+    def record_turn_progress(self, *, turn_id: str, user_text: str, jarvis_text: str) -> None:
+        """Store an OPEN turn's words so far; a finalized turn is never touched.
+
+        A continuous call is one turn that stays open until hang-up. Without
+        this, every reader of the store saw the running call as empty for its
+        whole length and fell back to the previous call.
+        """
+        with self._lock:
+            self._c.execute(
+                """
+                UPDATE voice_turns SET user_text = ?, jarvis_text = ?
+                WHERE id = ? AND ended_ms IS NULL
+                """,
+                (user_text, jarvis_text, turn_id),
+            )
+
     def set_turn_polished(self, *, turn_id: str, text: str) -> None:
         """Attach the polished reading of a turn's user text.
 

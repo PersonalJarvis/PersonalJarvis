@@ -52,7 +52,7 @@ it("keeps live and interrupted conversation tools in the left lane", () => {
   const { container, rerender } = render(<WorkTrace conversation status="running" startedMs={0} durationMs={null} blocks={[thought, live]} />);
   const lane = screen.getByTestId("work-trace");
   expect(lane.hasAttribute("data-conversation")).toBe(true);
-  expect(lane.className).toMatch(/max-w-xl/);
+  expect(lane.className).toMatch(/max-w-\[44rem\]/);
   expect(lane.className).toMatch(/self-start/);
   expect(container.querySelectorAll(".mx-auto")).toHaveLength(0);
   expect(container.querySelector("[data-trace-tool]")?.closest("[data-testid='work-trace']")).toBe(lane);

@@ -462,6 +462,36 @@ def _managed_server_payload(spec: ProviderSpec) -> dict[str, Any] | None:
         return None
 
 
+def _voice_engine_payload(spec: ProviderSpec) -> dict[str, Any] | None:
+    """Installed/ready of the Jarvis-owned local voice engine; None elsewhere.
+
+    Only the Local voice card carries it. File checks and the running engine's
+    state only: the full card status (models, latency, self-test) lives at
+    ``GET /api/providers/local-voice/status``.
+    """
+    if spec.id != "local-voice":
+        return None
+    try:
+        from jarvis.plugins.realtime.local_voice import (
+            EngineSettings,
+            LocalVoiceProvider,
+            engine_installed,
+        )
+
+        settings = EngineSettings.from_config(None)
+        engine = LocalVoiceProvider._engine
+        ready = bool(
+            engine is not None
+            and engine.settings == settings
+            and engine.phase == "ready"
+            and engine._client is not None
+        )
+        return {"installed": engine_installed(settings), "ready": ready}
+    except Exception as exc:  # noqa: BLE001 — the provider list must never 500
+        log.debug("Local voice probe failed (%s); reporting none.", exc)
+        return None
+
+
 def _derived_alias_free(provider_id: str, models: list[Any]) -> list[Any]:
     """Drop the runtime's OWN derived models from a user-facing picker.
 
@@ -695,6 +725,9 @@ def _spec_to_payload(
         # Self-hosted realtime card only: state of the one-click managed
         # server install (fail-closed, server sentence rendered verbatim).
         "managed_server": _managed_server_payload(spec),
+        # Local voice card only: whether the engine is set up and running.
+        # The card fetches its full status from /api/providers/local-voice.
+        "voice_engine": _voice_engine_payload(spec),
         # Gemini's AI-Studio-vs-Vertex split; None for single-path providers.
         "alt_credential": (
             {

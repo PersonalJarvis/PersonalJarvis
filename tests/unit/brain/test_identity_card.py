@@ -333,3 +333,49 @@ def test_accessors_never_raise_on_a_hostile_config() -> None:
     assert ic.identity_card_block(Hostile()) == ""
     ic.reset_identity_card_cache()
     assert isinstance(ic.identity_card_text(Hostile()), str)
+
+
+# ---------------------------------------------------------------------------
+# The learned name — what the front page calls the person when USER.md is empty
+# ---------------------------------------------------------------------------
+
+
+class _SluggedConfig(_FakeConfig):
+    def __init__(self, *, vault_root: Path, slug: str) -> None:
+        super().__init__(vault_root=vault_root)
+
+        class _Rollup:
+            user_entity_slug = slug
+
+        class _Wiki:
+            session_rollup = _Rollup()
+
+        class _Memory:
+            wiki = _Wiki()
+
+        self.memory = _Memory()
+
+
+def test_learned_name_prefers_a_name_fact(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    _write_vault_profile(vault, "nova", "---\naliases: [Nova]\n---\n# Nova\n\n- Name: Nova User\n")
+    assert ic.learned_user_name(_SluggedConfig(vault_root=vault, slug="nova")) == "Nova User"
+
+
+def test_learned_name_falls_back_to_alias_then_title(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    page = "---\naliases: [Nova]\n---\n# Someone\n\n## Facts\n- Likes tea.\n"
+    _write_vault_profile(vault, "nova", page)
+    assert ic.learned_user_name(_SluggedConfig(vault_root=vault, slug="nova")) == "Nova"
+    _write_vault_profile(vault, "nova", "# Nova\n\nNo frontmatter here.\n")
+    assert ic.learned_user_name(_SluggedConfig(vault_root=vault, slug="nova")) == "Nova"
+
+
+def test_learned_name_never_guesses(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    # No page at all, a generic "User" page, and something that is no name.
+    assert ic.learned_user_name(_SluggedConfig(vault_root=vault, slug="nova")) is None
+    _write_vault_profile(vault, "user", "# User\n")
+    assert ic.learned_user_name(_FakeConfig(vault_root=vault)) is None
+    _write_vault_profile(vault, "nova", "# nova@example.com\n")
+    assert ic.learned_user_name(_SluggedConfig(vault_root=vault, slug="nova")) is None

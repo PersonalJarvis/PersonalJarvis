@@ -1,10 +1,11 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AgentComposer } from "@/components/agentchat/AgentComposer";
 import { AgentChatStoreProvider } from "@/components/agentchat/AgentChatStoreContext";
 import { EMPTY_TIMELINE } from "@/components/agentchat/reduce";
-import { useAgentSessionStore as useAgentChatStore } from "@/store/agentChat";
+import { useAgentSessionStore as useAgentChatStore, useAgentChatStore as useJarvisChatStore } from "@/store/agentChat";
 import { useEventStore } from "@/store/events";
 import type { AgentChatCatalog } from "@/lib/agentChatApi";
 
@@ -223,4 +224,67 @@ describe("composer typeahead", () => {
     expect(screen.queryByTestId("composer-typeahead")).toBeNull();
     expect(fetchMock.mock.calls.some((c) => String(c[0]).includes("/typeahead"))).toBe(false);
   });
+
+  it("names agents and connected plugins after @ in the Jarvis chat, and a picked plugin becomes its chip", async () => {
+    const tools = [
+      { id: "plugin:gmail", label: "Gmail", description: "Read and send mail", category: "plugins", group: "plugins",
+        brand: "gmail", available: true, tool_names: [], skill: "" },
+      { id: "plugin:notion", label: "Notion", description: "Pages", category: "plugins", group: "plugins",
+        brand: "notion", available: false, tool_names: [], skill: "" },
+    ];
+    fetchMock.mockImplementation(async (url: string) => {
+      const u = String(url);
+      if (u.includes("/api/agent-chat/typeahead")) {
+        return { ok: true, status: 200, json: async () => ({ trigger: "@", truncated: false,
+          items: [{ value: "Mailbox", label: "Mailbox", hint: "Gmail agent", kind: "agent", group: "teammates" }] }) } as Response;
+      }
+      if (u.includes("/api/agent-chat/tools")) {
+        return { ok: true, status: 200, json: async () => ({ items: tools, mode: "browse", total: tools.length }) } as Response;
+      }
+      return { ok: true, status: 200, json: async () => ({}) } as Response;
+    });
+    seedJarvis(catalog(["@"]));
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <AgentChatStoreProvider store={useJarvisChatStore}>
+          <AgentComposer />
+        </AgentChatStoreProvider>
+      </QueryClientProvider>,
+    );
+    type("ask @");
+
+    await waitFor(() => expect(screen.getAllByTestId("composer-typeahead-item")).toHaveLength(2));
+    const rows = screen.getAllByTestId("composer-typeahead-item").map((r) => r.textContent);
+    // The agent first, then the connected plugin; the disconnected one waits for a search.
+    expect(rows[0]).toContain("@Mailbox");
+    // An agent wears its face, not a generic robot glyph.
+    expect(screen.getAllByTestId("composer-typeahead-item")[0].querySelector("svg.lucide-bot")).toBeNull();
+    expect(rows[1]).toContain("Gmail");
+    expect(screen.getByTestId("composer-typeahead").textContent).toContain("Agents");
+    const asked = fetchMock.mock.calls.map((c) => String(c[0]));
+    expect(asked.some((u) => u.includes("/api/agent-chat/typeahead") && u.includes("surface=jarvis"))).toBe(true);
+
+    fireEvent.click(screen.getAllByTestId("composer-typeahead-item")[1]);
+    await waitFor(() => expect(box().querySelector('[data-tool-chip][data-tool-id="plugin:gmail"]')).toBeTruthy());
+  });
 });
+
+function seedJarvis(cat: AgentChatCatalog) {
+  useJarvisChatStore.setState({
+    catalog: cat,
+    connections: [{ jarvis: "claude-api", key_set: true, is_active_brain: true }],
+    catalogError: null,
+    backendOutdated: false,
+    liveModels: {},
+    sessions: [],
+    activeSessionId: "s-1",
+    activeSession: null,
+    timeline: EMPTY_TIMELINE,
+    draft: { provider: "claude-api", model: "", effort: "high", permissionMode: "default", buildMode: "default", cwd: "C:\work" },
+    busy: false,
+    lastError: null,
+    loadCatalog: async () => {},
+    loadSessions: async () => {},
+    loadModels: async () => {},
+  } as never);
+}

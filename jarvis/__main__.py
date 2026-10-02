@@ -39,6 +39,14 @@ if len(sys.argv) >= 2 and sys.argv[1] == "--relauncher":
 
     raise SystemExit(_relauncher_main(sys.argv[2:]))
 
+# The background agent service of a frozen build, same reason: no ``-m`` to
+# start ``jarvis.ui.web.launcher --background-service`` with
+# (see jarvis/core/background_service.py).
+if len(sys.argv) >= 2 and sys.argv[1] == "--background-service":
+    from jarvis.ui.web.launcher import main as _launcher_main
+
+    raise SystemExit(_launcher_main(sys.argv[1:]))
+
 # Windows Terminal defaults to cp1252 — which breaks Unicode (box-drawing,
 # emojis, ✓/✗). Force utf-8 before printing anything.
 if sys.platform == "win32":
@@ -476,7 +484,7 @@ async def _run_tray_app(debug: bool = False) -> int:
                 cmd: TrayCommand = await asyncio.wait_for(command_queue.get(), timeout=0.5)
             except TimeoutError:
                 continue
-            if cmd.action == "quit":
+            if cmd.action in ("quit", "quit_all"):
                 stop_event.set()
                 return
             if cmd.action == "pause":

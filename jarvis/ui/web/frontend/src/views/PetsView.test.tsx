@@ -35,6 +35,7 @@ function stubServer({ style = "pet" }: { style?: string } = {}) {
     active: "gigi",
     scale: 1,
     bubble: true,
+    strip_always: false,
     visible: true,
     style,
     pets: [pet("gigi", "Gigi", true), pet("miso", "Miso", true), pet("u0123456789abcdef", "Pixel", false)],
@@ -256,6 +257,20 @@ describe("PetsView", () => {
 
     await waitFor(() =>
       expect(calls).toContainEqual({ method: "PUT", url: "/api/pets/settings", body: { bubble: false } }),
+    );
+  });
+
+  it("switches the always-on buttons on from the customize panel", async () => {
+    const { calls } = stubServer();
+    renderView();
+
+    const customize = await screen.findByTestId("pets-customize");
+    await waitFor(() => expect((customize as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(customize);
+    fireEvent.click(await screen.findByTestId("pets-strip-always"));
+
+    await waitFor(() =>
+      expect(calls).toContainEqual({ method: "PUT", url: "/api/pets/settings", body: { strip_always: true } }),
     );
   });
 

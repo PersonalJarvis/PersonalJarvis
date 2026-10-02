@@ -6,7 +6,11 @@ about *which* interpreter/path Jarvis should be relaunched with at login.
 
 The launch target is the full desktop app (``-m jarvis.ui.web.launcher``, voice +
 Orb enabled — NOT ``--headless``): that is what makes "Hey Jarvis" available
-after boot. The interpreter and working directory are computed at call time from
+after boot. With ``[autostart] background_only`` the entry starts only the
+windowless background agent service (``--background-service``) instead, so
+routines and chat channels run after login without opening the window.
+
+The interpreter and working directory are computed at call time from
 the running package, never from a stored absolute string, so a moved/re-cloned
 project never leaves a stale autostart entry (BUG-006 restore-trap class).
 """
@@ -77,11 +81,20 @@ def resolve_launch_spec(cfg: object | None = None) -> LaunchSpec:
     actually running.
     """
     minimized = False
+    background_only = False
     autostart = getattr(cfg, "autostart", None) if cfg is not None else None
     if autostart is not None:
         minimized = bool(getattr(autostart, "start_minimized", False))
+        background_only = bool(getattr(autostart, "background_only", False))
+    # Imported lazily: the service module pulls in loguru and is not needed to
+    # build the plain desktop entry.
+    service_args: tuple[str, ...] = ()
+    if background_only:
+        from jarvis.core.background_service import SERVICE_FLAG
 
-    args: tuple[str, ...] = ("-m", LAUNCHER_MODULE)
+        service_args = (SERVICE_FLAG,)
+
+    args: tuple[str, ...] = ("-m", LAUNCHER_MODULE, *service_args)
     if sys.platform == "win32":
         program = _detect_pythonw()
     elif sys.platform == "darwin":
@@ -107,8 +120,9 @@ def resolve_launch_spec(cfg: object | None = None) -> LaunchSpec:
                 )
             command = macos_launch_services_command(
                 bundle,
-                background=minimized,
+                background=minimized or background_only,
                 wait_for_exit=True,
+                arguments=service_args,
             )
             program, *launch_args = command
             args = tuple(launch_args)
@@ -119,8 +133,10 @@ def resolve_launch_spec(cfg: object | None = None) -> LaunchSpec:
                 exc,
             )
             launch_args = ["-W", "-a", str(bundle)]
-            if minimized:
+            if minimized or background_only:
                 launch_args.insert(0, "-g")
+            if service_args:
+                launch_args += ["--args", *service_args]
             args = tuple(launch_args)
     else:
         program = sys.executable

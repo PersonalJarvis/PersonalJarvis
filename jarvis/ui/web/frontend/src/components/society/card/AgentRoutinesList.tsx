@@ -57,7 +57,7 @@ export function AgentRoutinesList({ agentId, sampleRoutines, variant = "rail", c
           <span className="min-w-0 flex-1">
             <span className="block truncate text-[13px] font-medium text-foreground">{displayRoutineTitle(routine.title)}</span>
             <span className="block break-words text-[11px] leading-snug text-muted-foreground">{routineScheduleLine(routine, t)}{routine.state === "paused" ? ` · ${t("tasks_view.state.paused")}` : ""}</span>
-            {routine.dueMs && active ? <span className="block text-[11px] text-muted-foreground">{t("automations_view.next_run")}: {new Date(routine.dueMs).toLocaleString(undefined, { timeZoneName: "short" })}</span> : null}
+            {routine.dueMs && active ? <span className="block text-[11px] text-muted-foreground">{t("society.card.next_run")}: {new Date(routine.dueMs).toLocaleString(undefined, { timeZoneName: "short" })}</span> : null}
           </span>
           </button>
           {trigger?.type === "webhook" && <div className="pl-6"><WebhookConnection key={routine.id} taskId={routine.id} /></div>}

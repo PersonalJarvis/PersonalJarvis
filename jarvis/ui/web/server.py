@@ -380,6 +380,7 @@ class WebServer:
         from .frontier_routes import router as frontier_router
         from .grok_build_routes import router as grok_build_router
         from .live_routes import router as live_router
+        from .local_voice_routes import router as local_voice_router
         from .local_models_assistant_routes import (
             router as local_models_assistant_router,
         )
@@ -458,6 +459,8 @@ class WebServer:
         # cancellation busy-loop from inside the loop; see diagnostics_routes.
         app.include_router(diagnostics_router)
         app.include_router(provider_router)
+        # Local voice card (setup, status, self-test) — ADR-0037.
+        app.include_router(local_voice_router)
         app.include_router(live_router)
         from jarvis.agent_chat.tasks import run_subscription_task
         from jarvis.core.task_agent import register_runner
@@ -3386,6 +3389,12 @@ class WebServer:
             logger.info(
                 "TaskStack: cleaned up {} interrupted tasks from the previous run",
                 recovered,
+            )
+        retired = await store.retire_catalogue_tasks()
+        if retired:
+            logger.info(
+                "TaskStack: cancelled {} schedules from the retired automations catalogue",
+                retired,
             )
 
         # Wire the brain so agentic (`agent`) tasks can run a tool-restricted

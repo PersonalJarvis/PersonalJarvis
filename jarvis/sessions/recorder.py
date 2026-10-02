@@ -61,6 +61,7 @@ from jarvis.core.events import (
     TranscriptPolished,
     VoiceSessionEnded,
     VoiceSessionStarted,
+    VoiceTranscriptUpdated,
     VoiceTurnCompleted,
     VoiceTurnStarted,
     WakeWordDetected,
@@ -203,6 +204,12 @@ class _TurnState:
     # Supervisor state changes may happen between those two events and must not
     # close the row early under a recorder-generated boundary.
     uses_explicit_lifecycle: bool = False
+    # Continuous-voice caption snapshots: segment_id -> (start_ms, revision,
+    # role, text), plus the texts last projected from them. A projection only
+    # replaces a text it wrote itself, never one an authoritative event set.
+    captions: dict[str, tuple[int, int, str, str]] = field(default_factory=dict)
+    caption_user_text: str = ""
+    caption_jarvis_text: str = ""
     finalized: bool = False
 
 
@@ -347,6 +354,8 @@ class SessionRecorder:
             self._on_transcription_update(event)
         elif isinstance(event, TranscriptPolished):
             self._on_transcript_polished(event)
+        elif isinstance(event, VoiceTranscriptUpdated):
+            self._on_voice_transcript(event)
         elif isinstance(event, BrainTurnStarted):
             self._on_brain_started(event)
         elif isinstance(event, BrainTurnCompleted):
@@ -793,6 +802,44 @@ class SessionRecorder:
             recovered.turn_id,
         )
 
+    def _on_voice_transcript(self, event: VoiceTranscriptUpdated) -> None:
+        """Keep a continuous call's words on its open turn while it runs.
+
+        GPT-Live publishes only caption snapshots during the call; its words
+        reached this recorder once, in the archive ``VoiceTurnCompleted`` the
+        live session sends on close. Two failures followed (live 2026-10-01,
+        session 0071cf3a): while the call ran its turn row held no
+        ``user_text``, so ``session-latest-turn`` answered with the PREVIOUS
+        call and the backend model resumed that call's task; and when the
+        pipeline sealed the session first (client_stop), the archive arrived
+        too late and the call was stored without a single word.
+        """
+        assert self._state is not None
+        if event.session_id != self._state.session_id or not event.segment_id:
+            return
+        t = self._state.current_turn
+        if t is None or t.finalized:
+            return
+        known = t.captions.get(event.segment_id)
+        if known is not None and known[1] > event.revision:
+            return
+        t.captions[event.segment_id] = (event.start_ms, event.revision, event.role, event.text)
+        user_text = _caption_text(t.captions, "user")
+        jarvis_text = _caption_text(t.captions, "assistant")
+        changed = False
+        if user_text != t.caption_user_text and t.user_text in ("", t.caption_user_text):
+            t.user_text = user_text
+            changed = True
+        if jarvis_text != t.caption_jarvis_text and t.jarvis_text in ("", t.caption_jarvis_text):
+            t.jarvis_text = jarvis_text
+            changed = True
+        t.caption_user_text = user_text
+        t.caption_jarvis_text = jarvis_text
+        if changed:
+            self._store.record_turn_progress(
+                turn_id=t.turn_id, user_text=t.user_text, jarvis_text=t.jarvis_text
+            )
+
     def _on_transcript_polished(self, event: TranscriptPolished) -> None:
         """Attach a polished reading to the turn whose words it re-reads.
 
@@ -1096,6 +1143,16 @@ def _normalize_intent_level_to_tier(intent_level: str) -> str:
     if intent_level in _VALID_TIERS:
         return intent_level
     return "router"
+
+
+def _caption_text(captions: dict[str, tuple[int, int, str, str]], role: str) -> str:
+    """One speaker's caption segments in spoken order, as one text."""
+    parts = sorted(
+        (start_ms, text.strip())
+        for start_ms, _revision, speaker, text in captions.values()
+        if speaker == role and text.strip()
+    )
+    return " ".join(text for _start, text in parts)
 
 
 def _now_ms() -> int:

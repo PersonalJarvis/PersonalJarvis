@@ -147,10 +147,10 @@ read credentials, or change protected configuration through the worker grant.
 5. **Outputs retains the result.** Use [Outputs and Files](outputs-and-files)
    to preview files, cancel active work, or create a linked continuation or
    restart.
-6. **Tasks can react to the outcome.** A When-Then task can listen for a final
-   mission result. A normal scheduled task does not automatically gain an
-   agent workspace or review loop. Read [Tasks and Reminders](tasks-and-reminders)
-   before relying on mission events.
+6. **Routines can follow up.** An agent's routine can run on a schedule or
+   when something happens. A routine runs in the agent's own chat; it does not
+   gain a mission workspace or review loop. Read
+   [Tasks and Reminders](tasks-and-reminders) before relying on routines.
 
 ## Check That It Works
 
@@ -185,7 +185,7 @@ For repeated startup, provider, or connection failures, follow
   and understand where copied files are stored.
 - Read [Skills](skills) to turn repeatable instructions into a reviewed
   background mission.
-- Read [Tasks and Reminders](tasks-and-reminders) to react to a mission's final
-  state.
+- Read [Tasks and Reminders](tasks-and-reminders) to give an agent scheduled
+  work.
 - Review [Safety and Approvals](safety-and-approvals) before a mission uses a
   connected service or changes anything outside its isolated files.

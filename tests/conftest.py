@@ -277,6 +277,19 @@ def _provider_health_ledger_in_tmp(tmp_path_factory):  # noqa: ANN001
 
 
 @pytest.fixture(autouse=True)
+def _short_pane_delivery_waits(monkeypatch):  # noqa: ANN001
+    """Fake panes never paint a composer, so the real first-prompt and
+    late-arrival windows (tens of seconds) would only slow every send test.
+    Tests that exercise those windows set their own values."""
+    import sys
+
+    session = sys.modules.get("jarvis.agentic_ide.session")
+    if session is not None:
+        monkeypatch.setattr(session, "_FIRST_PROMPT_COMPOSER_WAIT_S", 0.05, raising=False)
+        monkeypatch.setattr(session, "_LATE_ARRIVAL_WINDOW_S", 0.05, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _reset_bus():
     """Reset the global default bus before and after each test."""
     reset_default_bus()

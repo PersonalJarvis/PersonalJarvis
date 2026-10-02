@@ -83,13 +83,13 @@ export interface VisualArtifact {
 }
 
 /**
- * Newest runs scanned for visuals. See the module docstring for the why. Twenty
- * because that is how many runs the Outputs section listed before it folded
- * into Artifacts (2026-08-23): the rail shows every run the list returns, but
- * only these many are looked inside for pages and pictures up front — an older
- * run still shows as a run row and is read when picked.
+ * Newest runs scanned for visuals. See the module docstring for the why.
+ * Sixty since the section opened on a gallery (2026-10-01): with twenty, a
+ * machine with a couple dozen runs showed its one dashboard as a text card
+ * because it sat just outside the window. One listing per run is cheap; an
+ * older run still shows as a run card and is read when opened.
  */
-export const DEFAULT_RUN_SCAN_LIMIT = 20;
+export const DEFAULT_RUN_SCAN_LIMIT = 60;
 
 /**
  * Encode an artifact path segment by segment.

@@ -31,6 +31,9 @@ import { detectKeyboardPlatform } from "@/views/settings/keyboardLayout";
 import { ACTION_LABEL_KEY, ComboChips, formatCombo } from "@/views/settings/KeybindRow";
 import { KeybindsPanel } from "@/views/settings/KeybindsPanel";
 import { QuickSwitchKeybind } from "@/views/settings/QuickSwitchKeybind";
+import { AppZoomKeybinds } from "@/views/settings/AppZoomKeybinds";
+import { appZoomIntentFor } from "@/lib/appZoom";
+import { useAppZoomSettings } from "@/store/appZoomSettings";
 import { eventMatchesChord } from "@/lib/quickSwitchChord";
 import { isTextEntryTarget } from "@/lib/shortcutOverlayTrigger";
 import { keyLabel, shortcutsForArea, type FixedShortcut } from "@/lib/shortcutRegistry";
@@ -38,6 +41,12 @@ import { zoomIntentFor } from "@/components/agentic/terminalZoom";
 import { cn } from "@/lib/utils";
 
 const DICTATION_ACTIONS: readonly KeybindAction[] = ["dictate", "dictate_toggle", "paste_last"];
+
+const APP_ZOOM_LABEL = {
+  in: "settings_view.app_zoom.in_label",
+  out: "settings_view.app_zoom.out_label",
+  reset: "settings_view.app_zoom.reset_label",
+} as const;
 
 const ZOOM_LABEL = {
   in: "shortcut_overlay.workspace.zoom_in",
@@ -95,6 +104,7 @@ function KeyTester({ config }: { config: KeybindsConfig | null }) {
   const t = useT();
   const isMac = detectKeyboardPlatform() === "mac";
   const quickSwitch = useQuickSwitchSettings();
+  const appZoom = useAppZoomSettings();
   const [pressed, setPressed] = useState<Pressed | null>(null);
 
   useEffect(() => {
@@ -122,8 +132,11 @@ function KeyTester({ config }: { config: KeybindsConfig | null }) {
 
       let meaningKey: string | null = "";
       const zoom = zoomIntentFor(event, { isMac });
+      const appZoomIntent = appZoom.enabled ? appZoomIntentFor(event, appZoom.bindings) : null;
       if (quickSwitch.enabled && quickSwitch.combo && eventMatchesChord(event, quickSwitch.combo)) {
         meaningKey = "settings_view.quick_switch.title";
+      } else if (appZoomIntent) {
+        meaningKey = APP_ZOOM_LABEL[appZoomIntent];
       } else if (zoom) {
         meaningKey = ZOOM_LABEL[zoom];
       } else if (event.key === "?" && !event.ctrlKey && !event.metaKey && !event.altKey) {
@@ -142,7 +155,7 @@ function KeyTester({ config }: { config: KeybindsConfig | null }) {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [config, quickSwitch.enabled, quickSwitch.combo, isMac]);
+  }, [config, quickSwitch.enabled, quickSwitch.combo, appZoom.enabled, appZoom.bindings, isMac]);
 
   const ghost = quickSwitch.combo ? formatCombo(quickSwitch.combo).split(" + ") : ["Ctrl", "Space"];
 
@@ -309,6 +322,7 @@ export function ShortcutsView() {
               hint={t("shortcuts_view.section_app_hint")}
             >
               <QuickSwitchKeybind voiceConfig={config} />
+              <AppZoomKeybinds />
             </SectionCard>
             <SectionCard
               testId="shortcuts-section-calls"

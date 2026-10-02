@@ -4,10 +4,15 @@
  *
  * Three gestures, the ones every coding CLI has: `/` for skills and commands,
  * `@` for files (and Claude Code's subagents), `$` for Codex's explicit skill
- * mention. Which of them a chat honours is the backend's word — the catalog
+ * mention. In the front page's Jarvis chat `@` names the user's agents and
+ * the connected plugins and tools instead — a picked tool lands as the same
+ * brand chip the Add menu inserts. Which of them a chat honours is the backend's word — the catalog
  * row's `typeahead` list, decided from the seat's runner — so the box never
  * opens a `/` list for a seat that would read the slash as plain text.
  */
+
+import { choiceTag } from "./composerChips";
+import { browseToolRows, type ToolChoice } from "./toolChoices";
 
 export interface TypeaheadItem {
   /** What lands after the trigger character — `commit`, `github:issue`, `src/app.py`. */
@@ -16,8 +21,10 @@ export interface TypeaheadItem {
   hint: string;
   /** skill | command | agent | file | folder */
   kind: string;
-  /** project | account | plugins | jarvis | agents | files */
+  /** project | account | plugins | jarvis | agents | teammates | files | tool:<category> */
   group: string;
+  /** A plugin or tool from the composer's catalog: the pick becomes its chip. */
+  choice?: ToolChoice;
 }
 
 export interface TypeaheadResponse {
@@ -95,6 +102,22 @@ export function filterItems(items: readonly TypeaheadItem[], query: string): Typ
   });
   ranked.sort((a, b) => a.score - b.score || a.index - b.index);
   return ranked.map((r) => r.item);
+}
+
+/**
+ * Catalog rows (`/api/agent-chat/tools`) as `@` rows, in the Add menu's order
+ * and with its rules: connectors, not the skills behind them, and nothing
+ * disconnected until someone types a name.
+ */
+export function toolTypeaheadItems(rows: readonly ToolChoice[], query: string): TypeaheadItem[] {
+  return browseToolRows([...rows], query).map((row) => ({
+    value: choiceTag(row),
+    label: row.label,
+    hint: row.description,
+    kind: "tool",
+    group: `tool:${row.category}`,
+    choice: row,
+  }));
 }
 
 /** Triggers whose list is read once and filtered here; `@` asks the backend per keystroke. */

@@ -9,11 +9,35 @@ versioning per [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- A quiet, Claude-style front page: one greeting, one composer, and a voice mode that lives inside the chat with a flowing aurora glow.
+- Open any agent's chat on the front page from the sidebar; `@` in the Jarvis chat names your agents and connected plugins.
+- Reasoning traces drawn as a threaded rail, with a wider, calmer column for agent chats.
+- A restyled sidebar with search, your most-used agents, every recent chat, and the update button in its footer.
+- Zoom the whole app window with Ctrl + Plus / Minus / 0.
+- Artifacts open on a gallery with live previews.
+- Pets gain new characters (Ember, Pip), idle acts, action states, a pixel-art control strip, thought bubbles, notification cards and a phone button to call Jarvis.
+- Onboarding: the pet walks you through the app right after setup, then offers ten first steps.
+- Routines and chat channels keep running after the app window closes.
+- Jarvis can drive the Agentic IDE by voice and open coding agents in a named workspace.
+
+### Changed
+
+- Scheduling lives on agent routines; the separate Automations section is retired.
+- Routines can be created, paused, resumed or test-run by voice without a second confirmation.
+
 ### Fixed
 
+- Dictation works during a live call instead of hanging it up.
+- A new agent's first prompt in the Agentic IDE is reliably submitted.
+- Light-mode terminal panes are crisp and readable.
+- A hung main window recovers on its own instead of waiting forever.
+- Live voice: no hang-up unless you ask, a spoken yes confirms the pending action, and call transcripts are stored while the call runs.
+- Credentials stay out of the app-action catalog.
 - Restore the installation-guide link on the PyPI package page and unblock package publication.
-
-This patch includes all v2.5.0 features: desktop pets, profile and keyboard-shortcut settings, workspace shell tabs, improved terminal editing, task recovery, native updates, and subscription-bound background work.
+- Build Linux installers through the official Ubuntu archive when the runner's default mirror stalls.
+- Publish the Debian installer alongside the AppImage and other desktop packages.
 
 ---
 

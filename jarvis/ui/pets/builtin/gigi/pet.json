@@ -49,6 +49,63 @@
       "frames": 6,
       "fps": 3,
       "loop": true
+    },
+    "working": {
+      "row": 7,
+      "frames": 8,
+      "fps": 8,
+      "loop": true
+    },
+    "searching": {
+      "row": 8,
+      "frames": 8,
+      "fps": 8,
+      "loop": true
+    },
+    "held": {
+      "row": 9,
+      "frames": 6,
+      "fps": 10,
+      "loop": true
+    }
+  },
+  "acts_sheet": "acts.png",
+  "acts": {
+    "phase_out": {
+      "row": 0,
+      "frames": 8,
+      "fps": 8,
+      "loop": false
+    },
+    "glitch_dance": {
+      "row": 1,
+      "frames": 8,
+      "fps": 10,
+      "loop": false
+    },
+    "boo": {
+      "row": 2,
+      "frames": 8,
+      "fps": 8,
+      "loop": false
+    },
+    "coin_flip": {
+      "row": 3,
+      "frames": 8,
+      "fps": 10,
+      "loop": false
+    },
+    "juggle_bits": {
+      "row": 4,
+      "frames": 8,
+      "fps": 8,
+      "loop": false
+    },
+    "loading": {
+      "row": 5,
+      "frames": 8,
+      "fps": 7,
+      "loop": false
     }
   }
 }
