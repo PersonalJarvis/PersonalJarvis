@@ -35,6 +35,8 @@ on:
 
 permissions:
   contents: write
+  # Dispatch ci.yml for the wall commit and wait for its result (see below).
+  actions: write
 
 concurrency:
   # One constant group, NOT keyed on the ref: every run of this job pushes to
@@ -50,6 +52,8 @@ jobs:
     # A closed-but-not-merged pull request adds nobody.
     if: github.event_name != 'pull_request_target' || github.event.pull_request.merged == true
     runs-on: ubuntu-latest
+    # The commit waits for a CI run before it may land on main.
+    timeout-minutes: 90
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -68,7 +72,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python scripts/ci/update_contributors.py
 
-      - name: Commit when it changed
+      - name: Land the change through CI
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           if git diff --quiet -- README.md; then
@@ -77,10 +83,69 @@ jobs:
           fi
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -- README.md
-          git commit -m "docs(readme): refresh the contributor avatar wall"
-          # Someone may have pushed while this ran. Rebase once, then push; a
-          # second failure is reported rather than swallowed, so a genuinely
-          # broken job is visible instead of quietly skipping every week.
-          git pull --rebase --ff-only origin main
-          git push origin main
+
+          # main is protected: a push lands only when the commit already carries
+          # a green `CI gate` check. A plain `git push origin main` was rejected
+          # with GH006 on every run, so the wall never changed. GITHUB_TOKEN
+          # pushes and pull requests start no workflow, but a workflow_dispatch
+          # does: the commit goes to a side branch, CI runs on exactly that
+          # commit, and the same commit is then fast-forwarded onto main. Branch
+          # protection stays untouched.
+          branch="bot/contributor-wall"
+          drop_side_branch() {
+            if git ls-remote --exit-code --heads origin "$branch" >/dev/null; then
+              git push --quiet origin --delete "$branch"
+            fi
+          }
+          landed=""
+          for attempt in 1 2 3; do
+            git fetch --quiet origin main
+            git reset --quiet --hard origin/main
+            python scripts/ci/update_contributors.py
+            if git diff --quiet -- README.md; then
+              echo "contributors: main is already current."
+              landed="yes"
+              break
+            fi
+            git add -- README.md
+            git commit --quiet -m "docs(readme): refresh the contributor avatar wall"
+            sha="$(git rev-parse HEAD)"
+
+            # The side branch is ours alone; a leftover from an earlier run is
+            # removed so the push below never needs --force.
+            drop_side_branch
+            git push --quiet origin "HEAD:refs/heads/$branch"
+            gh workflow run ci.yml --ref "$branch" -f full=false -f include_macos=false
+
+            run_id=""
+            for _ in $(seq 1 30); do
+              run_id="$(gh run list --workflow ci.yml --branch "$branch" --event workflow_dispatch                 --commit "$sha" --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
+              [ -n "$run_id" ] && break
+              sleep 10
+            done
+            if [ -z "$run_id" ]; then
+              echo "::error::contributors: the CI run for $sha never appeared."
+              drop_side_branch
+              exit 1
+            fi
+            echo "contributors: waiting for CI run $run_id on $sha."
+            if ! gh run watch "$run_id" --interval 30 --exit-status >/dev/null; then
+              echo "::error::contributors: CI run $run_id failed; the wall does not land."
+              drop_side_branch
+              exit 1
+            fi
+
+            # A fast-forward only: when main moved during the CI run, the next
+            # attempt regenerates on the new main instead of landing a stale wall.
+            if git push --quiet origin "$sha:refs/heads/main"; then
+              landed="yes"
+              break
+            fi
+            echo "contributors: main moved during CI (attempt $attempt), retrying."
+          done
+
+          drop_side_branch
+          if [ -z "$landed" ]; then
+            echo "::error::contributors: main kept moving; the next merge or the Monday run retries."
+            exit 1
+          fi

@@ -166,9 +166,13 @@ each pane. This is the coding workspace's parallel-agent path.
 
 Sponsors are listed in [SPONSORS.md](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/SPONSORS.md).
 
+## contributors
+
+Thanks to everyone who has shipped something here:
+
 <!-- contributors:start -->
 
-<a href="https://github.com/rubenluetke10-beep"><img src="https://avatars.githubusercontent.com/u/226271791?v=4&s=48" width="48" height="48" alt="rubenluetke10-beep"></a>
+<a href="https://github.com/rubenluetke10-beep"><img src="https://avatars.githubusercontent.com/u/226271791?v=4&s=48" width="48" height="48" alt="rubenluetke10-beep"></a> <a href="https://github.com/CodeByPeace"><img src="https://avatars.githubusercontent.com/u/228503734?v=4&s=48" width="48" height="48" alt="CodeByPeace"></a>
 
 <!-- contributors:end -->
 
