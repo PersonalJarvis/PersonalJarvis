@@ -245,6 +245,37 @@ async def test_a_transcript_that_runs_to_the_end_is_not_reread() -> None:
     assert _audit(events, "tail_repairs") == 0
 
 
+async def test_complete_timestamped_slow_dictation_is_not_reread_by_token_floor() -> None:
+    original = _Transcript("yes, okay", segments=({"start": 0.0, "end": 6.8},))
+    stt = _ScriptedSTT([original])
+    pipe, events = _session_pipeline(stt, _voiced(7.0))
+
+    await _run_session(pipe)
+
+    assert stt.calls == 1
+    assert _completed(events).raw_text == original.text
+    assert _audit(events, "truncation_repairs") == 0
+    assert _audit(events, "tail_repairs") == 0
+
+
+async def test_token_floor_still_checks_providers_without_timestamps() -> None:
+    stt = _ScriptedSTT(
+        [
+            _Transcript("okay"),
+            _Transcript("we must prepare"),
+            _Transcript("the backup before dawn"),
+        ]
+    )
+    pipe, events = _session_pipeline(stt, _voiced(7.0))
+
+    await _run_session(pipe)
+
+    assert stt.calls == 3
+    assert "prepare" in _completed(events).raw_text
+    assert "dawn" in _completed(events).raw_text
+    assert _audit(events, "truncation_repairs") == 1
+
+
 async def test_without_timestamps_the_token_floor_still_decides() -> None:
     # No segments at all (a provider without them): the old energy-versus-
     # token guard is all there is, and it does not fire on a healthy count.

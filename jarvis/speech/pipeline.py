@@ -12768,9 +12768,10 @@ class SpeechPipeline:
               the text and sits far above the token floor below — and it is
               the one the polish pass can trust, because the re-read is short
               and pause-free.
-            * **Tokens against voiced seconds**, as before, for providers
-              without timestamps and for a window that came back short without
-              a clock to say where it stopped.
+            * **Tokens against voiced seconds** for providers without
+              timestamps. When timestamps confirm the transcript reaches the
+              end of the speech, that clock takes precedence over a generic
+              speech-rate floor; short, deliberate dictation is still complete.
 
             A recognizer handed audio with a sustained mid-recording pause can
             stop at the pause and silently drop everything after it — the
@@ -12849,6 +12850,14 @@ class SpeechPipeline:
                             truncation_repairs += 1
                             tail_repairs += 1
                             return merged
+            if (
+                transcript_end_s is not None
+                and voiced_end_s - transcript_end_s < _DICTATION_TAIL_DROP_MIN_S
+            ):
+                # The provider supplied a usable clock and the speech tail is
+                # present. Re-reading a low-token but complete window can turn
+                # deliberate pauses into fragments or hallucinated extra text.
+                return text
             if tokens >= voiced_s * _DICTATION_TRUNCATION_TOKENS_PER_VOICED_S:
                 return text
             split_at_pauses = len(runs) > 1
