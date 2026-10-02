@@ -16,6 +16,7 @@ def main() -> None:
     parser.add_argument("output", type=Path)
     parser.add_argument("side")
     parser.add_argument("--validate-only", action="store_true")
+    parser.add_argument("--preview-stress", action="store_true")
     args = parser.parse_args()
     root = args.root.resolve()
     selected = json.loads(args.selection.read_text("utf-8"))
@@ -37,7 +38,8 @@ def main() -> None:
     runner = Runner(
         argparse.Namespace(
             markers=DEFAULT_MARKERS,
-            pytest_args="--continue-on-collection-errors -p preview_completion_stress",
+            pytest_args="--continue-on-collection-errors"
+            + (" -p preview_completion_stress" if args.preview_stress else ""),
         ),
         {},
         work,
