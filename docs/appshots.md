@@ -11,8 +11,13 @@ text — and hands it to the conversation as context. Settings live under
 |---|---|
 | **Window shortcut** — both Alt keys at once by default (both Option keys on a Mac) | The front window is captured and delivered per **Appshot destination**. |
 | **Area shortcut** — Alt+Win+A by default (Option+Command+A on a Mac) | Every screen dims; drag a rectangle and exactly that part is captured and delivered the same way. Esc or a right-click cancels and sends nothing. |
-| **Voice or chat** — "take an appshot", "mach einen Appshot", "haz un appshot" | The turn that asked captures the front window and answers with it. |
+| **Voice or chat** — "take an appshot", "mach einen Appshot", "haz un appshot" | The turn that asked captures the front window and answers with it. Only an explicit request for the whole screen ("an appshot of my full screen") captures the monitor the cursor is on instead — the live model's `take_appshot` passes `scope: "screen"` for it. |
 | **Try it** buttons on the Appshots page | "Take appshot in 3 s" waits three seconds so you can switch windows; "Select area" opens the area picker at once. Both then behave like the shortcuts. |
+
+"Front window" means the app window you work in. Jarvis's own floating
+overlays (the mascot, the bar) take the focus when you click them, so the
+capture looks past them to the app window underneath (BUG-228); with no app
+window there, it takes the whole screen instead.
 
 ## Selecting an area
 
