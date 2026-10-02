@@ -261,6 +261,11 @@ class ClickElementTool:
         # operation falls back to pointer input; identity/permission failures
         # fail closed.
         if sys.platform == "darwin" and button == "left" and not double:
+            from jarvis.cu.actuate import (  # noqa: PLC0415
+                HumanInputTakeover,
+                human_takeover_tool_result,
+                require_human_input_clear,
+            )
             from jarvis.cu.macos_semantic import try_focus_at, try_press_at
 
             semantic_kwargs = {
@@ -270,13 +275,17 @@ class ClickElementTool:
                 "pre_action_check": lambda: _window_signature_matches(
                     expected_signature,
                 ),
+                "ownership_check": require_human_input_clear,
             }
-            semantic = await asyncio.to_thread(
-                try_press_at,
-                cx,
-                cy,
-                **semantic_kwargs,
-            )
+            try:
+                semantic = await asyncio.to_thread(
+                    try_press_at,
+                    cx,
+                    cy,
+                    **semantic_kwargs,
+                )
+            except HumanInputTakeover as exc:
+                return human_takeover_tool_result(exc)
             if semantic.performed:
                 return ToolResult(
                     success=True,
@@ -289,12 +298,15 @@ class ClickElementTool:
                 return ToolResult(success=False, output=None, error=semantic.detail)
 
             if (matched.role or role_needle).casefold() == "edit":
-                focused = await asyncio.to_thread(
-                    try_focus_at,
-                    cx,
-                    cy,
-                    **semantic_kwargs,
-                )
+                try:
+                    focused = await asyncio.to_thread(
+                        try_focus_at,
+                        cx,
+                        cy,
+                        **semantic_kwargs,
+                    )
+                except HumanInputTakeover as exc:
+                    return human_takeover_tool_result(exc)
                 if focused.performed:
                     return ToolResult(
                         success=True,

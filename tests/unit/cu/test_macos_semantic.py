@@ -247,3 +247,86 @@ def test_secure_text_field_never_reads_axvalue(monkeypatch: pytest.MonkeyPatch) 
 
     assert result.status == "unsupported"
     assert "AXValue" not in reads
+
+
+def test_press_late_ownership_takeover_stops_before_axpress(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(macos_semantic.sys, "platform", "darwin")
+    element = {"AXTitle": "Save", "AXRole": "AXButton", "AXParent": None}
+
+    class _Takeover(RuntimeError):
+        pass
+
+    def _takeover() -> None:
+        raise _Takeover("user took input during AX lookup")
+
+    with pytest.raises(_Takeover, match="user took input"):
+        macos_semantic.try_press_at(
+            10,
+            10,
+            expected_name="save",
+            permission_check=lambda: True,
+            element_at_point=lambda _x, _y: element,
+            read_attr=_reader,
+            action_names=lambda _element: ("AXPress",),
+            ownership_check=_takeover,
+            perform_action=lambda *_args: pytest.fail(
+                "AXPress must not run after physical takeover"
+            ),
+        )
+
+
+def test_focus_late_ownership_takeover_stops_before_axfocused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(macos_semantic.sys, "platform", "darwin")
+    element = {"AXTitle": "Search", "AXRole": "AXTextField", "AXParent": None}
+
+    class _Takeover(RuntimeError):
+        pass
+
+    def _takeover() -> None:
+        raise _Takeover("user took input during AX focus probe")
+
+    with pytest.raises(_Takeover, match="user took input"):
+        macos_semantic.try_focus_at(
+            10,
+            10,
+            expected_name="search",
+            expected_role="Edit",
+            permission_check=lambda: True,
+            element_at_point=lambda _x, _y: element,
+            read_attr=_reader,
+            attribute_settable=lambda _element, _attr: True,
+            ownership_check=_takeover,
+            set_attr=lambda *_args: pytest.fail(
+                "AXFocused must not be written after physical takeover"
+            ),
+        )
+
+
+def test_focus_rechecks_foreground_after_settable_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(macos_semantic.sys, "platform", "darwin")
+    element = {"AXTitle": "Search", "AXRole": "AXTextField", "AXParent": None}
+    checks = iter((True, False))
+
+    result = macos_semantic.try_focus_at(
+        10,
+        10,
+        expected_name="search",
+        expected_role="Edit",
+        permission_check=lambda: True,
+        element_at_point=lambda _x, _y: element,
+        read_attr=_reader,
+        attribute_settable=lambda _element, _attr: True,
+        pre_action_check=lambda: next(checks),
+        set_attr=lambda *_args: pytest.fail(
+            "AXFocused must not be written after the window changes"
+        ),
+    )
+
+    assert result.status == "mismatch"
+    assert "immediately before" in result.detail

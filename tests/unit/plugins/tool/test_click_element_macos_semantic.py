@@ -6,6 +6,7 @@ from uuid import uuid4
 import pytest
 
 from jarvis.core.protocols import ExecutionContext, Observation, UIANode
+from jarvis.cu.actuate import HumanInputTakeover
 from jarvis.cu.macos_semantic import SemanticPressResult
 from jarvis.plugins.tool.click_element import ClickElementTool
 
@@ -55,6 +56,10 @@ def _macos(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "jarvis.plugins.tool.click_element._window_signature_matches",
         lambda _expected: True,
+    )
+    monkeypatch.setattr(
+        "jarvis.cu.actuate.handoff.human_input_allows_automation",
+        lambda: (True, "physical input idle"),
     )
 
 
@@ -148,3 +153,31 @@ async def test_semantic_identity_mismatch_refuses_pointer_fallback(
 
     assert result.success is False
     assert result.error == "target changed identity"
+
+
+@pytest.mark.asyncio
+async def test_takeover_during_semantic_lookup_returns_structured_handoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _macos(monkeypatch)
+
+    def _late_takeover(*_args, **_kwargs):
+        raise HumanInputTakeover("user moved the mouse during AX lookup")
+
+    monkeypatch.setattr(
+        "jarvis.cu.macos_semantic.try_press_at",
+        _late_takeover,
+    )
+    monkeypatch.setattr(
+        "jarvis.cu.actuate.get_actuator",
+        lambda: pytest.fail("late semantic takeover must not fall back to pixels"),
+    )
+
+    result = await ClickElementTool(vision_source=_Vision()).execute(
+        {"name": "save", "role": "Button"},
+        _ctx(),
+    )
+
+    assert result.success is False
+    assert result.output["outcome"] == "human_takeover"
+    assert "during AX lookup" in (result.error or "")

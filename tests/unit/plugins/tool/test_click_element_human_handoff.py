@@ -47,8 +47,6 @@ def _stable_signature() -> tuple[object, ...]:
 async def test_recent_hardware_input_stops_before_any_action(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from jarvis.cu import human_activity
-
     monkeypatch.setattr("jarvis.plugins.tool.click_element.sys.platform", "darwin")
     monkeypatch.setattr("jarvis.plugins.tool.click_element.os.name", "posix")
     monkeypatch.setattr(
@@ -56,8 +54,7 @@ async def test_recent_hardware_input_stops_before_any_action(
         _stable_signature,
     )
     monkeypatch.setattr(
-        human_activity,
-        "human_input_allows_automation",
+        "jarvis.cu.actuate.handoff.human_input_allows_automation",
         lambda: (False, "physical input 0.020s ago; yielding to the user"),
     )
     monkeypatch.setattr(

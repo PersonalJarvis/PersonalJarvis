@@ -290,6 +290,7 @@ def try_press_at(
     expected_role: str = "",
     expected_automation_id: str = "",
     pre_action_check: Callable[[], bool] | None = None,
+    ownership_check: Callable[[], None] | None = None,
     permission_check: Callable[[], bool] | None = None,
     element_at_point: Callable[[int, int], Any | None] | None = None,
     read_attr: Callable[[Any, str], Any] | None = None,
@@ -329,6 +330,13 @@ def try_press_at(
             "mismatch",
             "foreground window changed before the semantic Accessibility action",
         )
+    if ownership_check is not None:
+        ownership_check()
+    if pre_action_check is not None and not pre_action_check():
+        return SemanticPressResult(
+            "mismatch",
+            "foreground window changed immediately before the semantic Accessibility action",
+        )
     if not performer(matched, _AX_PRESS):
         return SemanticPressResult(
             "unavailable",
@@ -348,6 +356,7 @@ def try_focus_at(
     expected_role: str = "",
     expected_automation_id: str = "",
     pre_action_check: Callable[[], bool] | None = None,
+    ownership_check: Callable[[], None] | None = None,
     permission_check: Callable[[], bool] | None = None,
     element_at_point: Callable[[int, int], Any | None] | None = None,
     read_attr: Callable[[Any, str], Any] | None = None,
@@ -397,6 +406,14 @@ def try_focus_at(
         return SemanticPressResult(
             "unavailable",
             "macOS could not verify that AXFocused is writable on the matched element",
+        )
+
+    if ownership_check is not None:
+        ownership_check()
+    if pre_action_check is not None and not pre_action_check():
+        return SemanticPressResult(
+            "mismatch",
+            "foreground window changed immediately before the semantic Accessibility focus action",
         )
 
     setter = set_attr or _set_attr
