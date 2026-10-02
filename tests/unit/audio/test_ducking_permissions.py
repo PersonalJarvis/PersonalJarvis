@@ -274,7 +274,7 @@ def test_mute_others_never_asks_and_never_scripts_an_unasked_player(monkeypatch)
     assert ducker.mute_others(own_pid=1, never=frozenset()) == []
     assert tcc.calls_of(CallKind.REQUEST) == [] and tcc.implicit_prompts() == []
     assert not osa.sends and osa.sends_without_decision == []
-    # The miss is recorded for the inline status: a background episode, never the card.
+    # The miss is recorded for the status snapshot: a background episode, never a toast.
     (episode,) = get_permission_service().outstanding()
     assert (episode.feature, episode.origin, episode.target) == (
         "audio_ducking",
@@ -372,8 +372,8 @@ def test_minus_1743_after_granted_at_mute_time_opens_one_background_episode(monk
     ) == ("audio_ducking", ("automation",), "needs_settings", "blocked", "background", _MUSIC)
     assert episode.can_open_settings and not episode.can_prompt
     assert "Automation access for Music" in episode.detail
-    # ONE event, background origin: only the inline status and the Privacy row show it,
-    # never the floating card (that opens for the user origin only).
+    # ONE event, background origin: only the status snapshot shows it,
+    # never a toast (that opens for the user origin only).
     needed = events.bus.needed()
     assert [(e.origin, e.reason, e.target) for e in needed] == [
         ("background", "needs_settings", _MUSIC)

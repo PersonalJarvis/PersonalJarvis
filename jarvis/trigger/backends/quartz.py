@@ -217,7 +217,7 @@ class QuartzHotkeyBackend:
         # (:meth:`report_if_deaf`); a new tap is a new episode.
         self._deaf_reported = False
         # True while a ``restart_hint`` episode this backend opened is still open.
-        # Unlike the flag above it survives ``start`` (a rearm): the card ends when
+        # Unlike the flag above it survives ``start`` (a rearm): the episode ends when
         # a tap actually hears an event, not when a new tap is built.
         self._deaf_episode_open = False
         self._seconds_since_last_key = _seconds_since_last_key_event
@@ -747,7 +747,7 @@ class QuartzHotkeyBackend:
         When :meth:`deaf_tap_suspected` turns true (tap running, grant visible, zero
         raw callbacks, Secure Event Input off, key activity seen) the permission
         service is told ONCE per tap through ``report_failed_use``: that opens a
-        ``restart_hint`` episode, "quit and reopen" offered as a card, and nothing
+        ``restart_hint`` episode, "quit and reopen" offered as a toast, and nothing
         else. It never restarts the tap, never asks for anything and never reads
         the OS while no tap runs (a boot with Input Monitoring missing costs a flag
         check). If the tap hears an event after the report, the episode is ended
@@ -760,7 +760,7 @@ class QuartzHotkeyBackend:
         if self._raw_events > 0:
             if self._deaf_episode_open:
                 # Also true for an episode the PREVIOUS tap opened (a rearm builds a
-                # new tap): the first event a healthy tap hears ends the card.
+                # new tap): the first event a healthy tap hears ends the episode.
                 self._deaf_episode_open = False
                 self._call_service("note_reset")
             self._deaf_reported = False

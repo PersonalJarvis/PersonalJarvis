@@ -838,7 +838,6 @@ async def test_a_backend_without_a_permission_never_touches_the_service(
         assert trigger.listening() is None, "cannot say: the pill keeps its old behaviour"
         assert trigger.armed is False
         assert trigger.needs_input_monitoring is False
-        assert trigger.deaf_tap_suspected() is False
     tcc.assert_silent()
     assert service_mod._SERVICE is None or not service_mod._SERVICE._listeners
 

@@ -14,13 +14,15 @@ Snapshot v2 (``GET /status``)::
                     can_reset, restart_hint, detail, settings_path}],
      needed: [open episodes]}
 
-Both GET routes accept ``?activated=1``, which the frontend sends on the FIRST refetch
-after the window regained focus: the route then calls ``note_app_activated()`` on
-the service before it refreshes the episodes, so a Screen Recording / Accessibility /
-Input Monitoring dialog the person left to flip a switch in System Settings is
-promoted to "blocked" at once and the next watcher pass reads the grant (the window-
-title oracle included). It is a hint about what the user just did, never a prompt, and
-only the person at the Jarvis window sends it: an agent's ``activated=1`` is ignored.
+Both GET routes accept ``?activated=1`` (no frontend caller since the UI reset; kept
+for the CLI and the window-focus follow-up in docs/macos-permissions.md 4.9): the route
+then calls ``note_app_activated()`` on the service before it refreshes the episodes,
+so a Screen Recording / Accessibility / Input Monitoring dialog the person left to
+flip a switch in System Settings is promoted to "blocked" at once and the next watcher
+pass reads the grant (the window-title oracle included). Without it the same dialog
+turns "blocked" after about 15 s. It is a hint about what the user just did, never a
+prompt, and only the person at the Jarvis window counts: an agent's ``activated=1`` is
+ignored.
 
 The Automation row is computed only while ``[ducking].enabled`` is on or the caller
 passes ``?include=automation``: reading it asks a running player, which a user who
@@ -653,7 +655,7 @@ def _build_snapshot(
 def _single_row(
     service: PermissionService, runtime: _Runtime, permission: PermissionId
 ) -> PermissionRow:
-    """One row without the full snapshot (the card and the Privacy page poll this)."""
+    """One row without the full snapshot (a cheap poll for a single permission)."""
     family = PANE_FAMILY[permission]
     info = service.app_info()
     needed = _needed(service)
@@ -973,15 +975,17 @@ def request_permission(
     ``EnsureResult`` (PENDING while a system dialog may be open, NEEDS_SETTINGS when
     the person has to flip a switch, DENIED once macOS will not ask again). The
     decision itself arrives later as ``PermissionResolved``. Outside the installed
-    app nothing is asked unless the body says ``allow_outside_app`` after the person
-    confirmed which app receives the grant. Rate limited (429).
+    app nothing is asked unless the body says ``allow_outside_app``: the person's
+    one "Ask macOS now" click on a toast that says the app that started Jarvis
+    receives the grant. Rate limited (429).
     """
     options = body if body is not None else PermissionRequestBody()
     agent_caller = _is_agent_caller(request)
     if options.allow_outside_app and agent_caller:
         # Confirming "macOS may grant this to the app that started Jarvis" is a
-        # decision for a person looking at the dialog that names the grantee, never
-        # for an agent that holds the control key (P9).
+        # decision for a person at the Jarvis window (the toast says, in one generic
+        # sentence, that the app that started Jarvis receives the grant), never for
+        # an agent that holds the control key (P9).
         return _requires_ui_response(
             "Confirming a grant for the app that started Jarvis needs the Jarvis "
             "window; a script or the control key cannot do it."

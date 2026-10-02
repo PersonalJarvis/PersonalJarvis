@@ -1,6 +1,6 @@
 """A dictation refused for the microphone names the switch and where to flip it.
 
-The native bar has no permission card (that lives in the web window), so the one
+The native bar has no permission toast (that lives in the web window), so the one
 sentence a refused dictation shows there has to carry the answer. On macOS the
 reason ``microphone_unavailable`` is the microphone permission, so the bridge shows
 a localized sentence instead of the pipeline's generic English one: an undecided

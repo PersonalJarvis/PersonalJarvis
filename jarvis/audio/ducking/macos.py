@@ -17,7 +17,7 @@ asked ONLY from :meth:`MacOSScriptDucker.prewarm`, which runs when the user
 switches the feature on while a player is open. ``mute_others`` never asks: it
 scripts a player only when the service reads its Automation grant as GRANTED,
 and a player without the grant is skipped for the session (a running one is
-recorded through a background episode, inline status only). A player whose
+recorded through a background episode, status snapshot only). A player whose
 Apple Event is refused with ``-1743`` although the read said GRANTED is skipped
 too, and the service is told through ``report_failed_use`` (one background
 ``needs_settings`` episode naming the player); the next send that lands tells it
@@ -225,7 +225,7 @@ class MacOSScriptDucker:
         # the service (report_failed_use) and, on the next landed send, the success
         # (report_use_ok, only for a player in this set, so a healthy session never
         # calls the service); prewarm() reports such a player as needs_settings
-        # instead of "granted", the same thing the inline status says.
+        # instead of "granted", the same thing the status snapshot says.
         self._refused_after_grant: set[str] = set()
 
     @classmethod
@@ -419,8 +419,8 @@ class MacOSScriptDucker:
         """``True`` only for a live GRANTED Automation read. Silent: never asks.
 
         A player without the grant is skipped. When it is running, the miss is
-        recorded as a ``background`` episode (inline status only, never the
-        floating card) so the person can find out why the music was not ducked.
+        recorded as a ``background`` episode (status snapshot only, never a
+        toast) so the person can find out why the music was not ducked.
         """
         state = self._read_state(name, bundle_id)
         if state is PermissionState.GRANTED:
@@ -471,8 +471,8 @@ class MacOSScriptDucker:
         ``osascript`` is UNVERIFIED) or it was just revoked. The player is
         skipped for this session and the permission cache is dropped so the next
         read is live. The service is told through ``report_failed_use``: ONE
-        ``background`` ``needs_settings`` episode naming the player (inline status
-        and Privacy row, never the floating card), and no native request is made
+        ``background`` ``needs_settings`` episode naming the player (status snapshot
+        only, never a toast), and no native request is made
         because of it. A live state that no longer reads granted is described by
         the service itself (its real reason). A gate without the call (a scripted
         stub) gets the older, weaker path: a non-interactive ensure, which opens an

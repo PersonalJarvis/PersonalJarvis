@@ -63,7 +63,28 @@ neither can use an ordinary import, and neither keeps a copy.
 `tests/unit/packaging/test_macos_privacy_strings.py` runs the real spec against
 stand-in PyInstaller classes and asserts that the spec's `info_plist`, the
 managed bundle's plist and the table agree. Add or reword a string in that file
-only.
+only. The Apple Events string is target-neutral on purpose (macOS names the app
+under control in the dialog itself; the same string serves Music, Spotify and
+Terminal) and the folder strings are short.
+
+### German and Spanish dialog text
+
+The same file carries the German and Spanish versions. Both bundles declare
+`CFBundleDevelopmentRegion` (`en`) and `CFBundleLocalizations` (`en`, `de`, `es`) in
+`Info.plist` (the spec spreads `localization_plist_keys()` into its dict) and carry
+`Contents/Resources/{de,es}.lproj/InfoPlist.strings`. English stays the base text in
+`Info.plist`, so there is no `en.lproj`. For this `.dmg` app, `build.sh` runs
+`packaging/macos/add_localizations.py --app "dist/Personal Jarvis.app"` on the
+finished bundle BEFORE signing, because the `.lproj` files are part of the code seal:
+one added after `codesign` would invalidate the signature and the notarization. The
+managed bundle writes the same files itself when it lays out the app. The format
+version of the managed bundle is not bumped for this (a bump would rebuild every
+installed bundle and an ad-hoc rebuild re-asks every permission).
+`scripts/ci/check_frozen_macos_app.py` fails the build if a plist key or a `.strings`
+file is missing or differs from the table. **Unverified:** no Mac was available, so
+that macOS shows these strings in its dialogs, and that it accepts the UTF-8 file
+(Apple's own tooling writes UTF-16), is not proven; `plutil -lint` runs on each file in
+`build.sh` where `plutil` exists.
 
 Keys that are deliberately **not** shipped, because Jarvis has no caller for
 them (least privilege; a string would promise access the app never uses):

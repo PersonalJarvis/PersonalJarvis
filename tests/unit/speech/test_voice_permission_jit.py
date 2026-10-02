@@ -539,8 +539,8 @@ async def test_boot_with_every_permission_not_determined_asks_nothing(
     boot.assert_nothing_was_asked()
     assert not boot.listened.is_set(), "the wake loop listened without a grant"
     if wake_word:
-        # The wake word waits (parked) and says so in the inline status only: one
-        # background-origin episode, never the floating card, never a native ask.
+        # The wake word waits (parked) and says so in the status snapshot only: one
+        # background-origin episode, never a toast, never a native ask.
         origins = {(n.feature, n.origin, n.reason) for n in boot.seen.needed}
         assert origins == {("wake_word", "background", "not_determined")}
     else:

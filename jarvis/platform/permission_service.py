@@ -52,7 +52,11 @@ persisted "asked" memory: it would resurrect the dead end after ``tccutil reset`
 re-sign or another bundle id (BUG-083). An episode ends when every permission it
 needs is granted (``PermissionResolved(granted=True)``), or when nobody touched it
 for ten minutes (``PermissionResolved(granted=False)``: it is closed unresolved, the
-permission was still not granted at the last read).
+permission was still not granted at the last read). Each state is published once per
+episode, except that a USER gesture landing on a still-open episode re-announces it
+(at most once per ``_REANNOUNCE_MIN_S``): the toast the person dismissed, or that
+fired into a hidden window, comes back on their next try instead of staying lost
+until the grant.
 
 The EPISODE WATCHER (an asyncio task when :meth:`attach_bus` gave the service a
 loop, else one daemon thread) polls the open permissions every two seconds,
@@ -115,10 +119,14 @@ _POLL_S: Final = 0.25
 _WATCH_INTERVAL_S: Final = 2.0
 # An episode nobody touched for this long is closed without a grant.
 _EPISODE_TTL_S: Final = 600.0
+# A user gesture that lands on an episode which is still open re-announces it (the
+# toast the person dismissed or missed would otherwise never come back until the
+# grant). At most once per this window, so a retry loop of one gesture never floods.
+_REANNOUNCE_MIN_S: Final = 10.0
 # A PROMPT-ONCE dialog only offers "Open System Settings" (community-observed,
 # UNVERIFIED): once this long has passed since the request (or the app was
 # refocused) and the switch is still off, the user is "blocked" on Settings and
-# the app may show its own card. Both the 15 s and the 130 s below are our own
+# the app may show its toast. Both the 15 s and the 130 s below are our own
 # figures, not Apple's.
 _BLOCKED_AFTER_S: Final = 15.0
 # A DIALOG-class dialog (microphone, automation) that has been open this long
@@ -553,6 +561,9 @@ class _Episode:
     outside_app: bool = False
     detail: str = ""
     published: set[tuple[Any, ...]] = field(default_factory=set)
+    # When the published set was last forgotten for a user gesture (or when the
+    # episode was opened): see ``_REANNOUNCE_MIN_S``.
+    announced_at: float = 0.0
     closed: bool = False
     # Callers of ``_start`` that have not finished their asks yet. While it is
     # positive the episode is invisible (no event, not in ``outstanding``): its
@@ -1645,7 +1656,7 @@ class PermissionService:
             item.state = slot.state
             if item.state in _READY_STATES:
                 # A grant is a grant (P2): a restart hint on the slot never turns a
-                # live GRANTED into a refusal, it only keeps the card honest.
+                # live GRANTED into a refusal, it only keeps the toast honest.
                 results.append(self._result(item, self._ready_view(item.state)))
             else:
                 results.append(self._result(item, self._classify(slot, item.state, now)))
@@ -1857,13 +1868,20 @@ class PermissionService:
                     trace_id=trace,
                     opened_ns=time.time_ns(),
                     touched=now,
+                    announced_at=now,
                 )
                 self._episodes[key] = episode
             else:
                 episode.touched = now
                 if interactive:
-                    # A gesture upgrades a background episode: the card may open now.
+                    # A gesture upgrades a background episode: the toast may show now.
                     episode.origin = "user"
+                    if now - episode.announced_at >= _REANNOUNCE_MIN_S:
+                        # The person is trying again while the permission is still
+                        # missing: forget what was published so the next emit says
+                        # it once more (the toast they dismissed or never saw).
+                        episode.published.clear()
+                        episode.announced_at = now
                 if trace_id is not None:
                     episode.trace_id = trace
             for item in pending:
@@ -2064,8 +2082,11 @@ class PermissionService:
     def note_app_activated(self) -> None:
         """The app was refocused: a PROMPT-ONCE dialog the user left is now "blocked".
 
-        The window-focus handler calls it; a request that only offered "Open
-        System Settings" has then done all it can, and the app may show its card.
+        Reached through ``?activated=1`` on the status routes (kept for the CLI and
+        agents; the app's window has no caller for it since the UI reset, so today
+        the ~15 s timer is what turns the dialog "blocked"). A request that only
+        offered "Open System Settings" has then done all it can, and the app may
+        show its toast.
         The refocus also makes the next watcher pass run the Screen Recording
         oracle at once (the user probably just flipped the switch).
         """
@@ -2417,9 +2438,9 @@ class PermissionService:
           ten minute TTL ends. It is NOT a restart hint (Apple Events are checked per
           send), it never asks (no native request, ``can_prompt`` False) and the
           origin defaults to ``background``: the report comes from a voice session
-          start, so only the inline status and the Privacy row show it, never the
-          floating card. A live state that no longer reads granted is reported
-          through the plain path (its real reason).
+          start, so only the status snapshot shows it, never the toast. A live state
+          that no longer reads granted is reported through the plain path (its real
+          reason).
 
         ``origin`` (``user`` or ``background``) overrides the family default; a value
         outside the event vocabulary is ignored. Anything else (another permission,
@@ -2509,7 +2530,7 @@ class PermissionService:
         item = _Item(requested=perm, family=PermissionId.AUTOMATION, target=target, state=state)
         # An episode this player's ask left behind and that is already answered closes
         # first, so the background report below never inherits its user origin (and
-        # with it the floating card).
+        # with it the toast).
         self._note_ready(item)
         user = _failed_use_origin(origin, "background") == "user"
         episode = self._open_episode(feature, [item], user, trace_id, now)

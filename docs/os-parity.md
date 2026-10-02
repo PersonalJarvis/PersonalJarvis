@@ -775,8 +775,10 @@ to the LAN hosts the person configures). The three unused keys and the camera
 entitlement are gone, `entitlements.plist` carries no XML comments (the reasoning
 moved to `packaging/macos/README.md`), and `scripts/ci/check_frozen_macos_app.py`
 asserts the table on the built app and, on a signed build, the entitlements
-`codesign` reports. The managed bundle's format version is bumped so an installed
-app is rebuilt once to carry the new strings. **Not verified:** no Mac, no
+`codesign` reports. The managed bundle's format version is deliberately NOT bumped
+(a bump rebuilds every installed bundle, and an ad-hoc rebuild is a new identity that
+re-asks every permission): an installed app carries the new strings after its next
+rebuild for another reason. **Not verified:** no Mac, no
 hardened signed build and no real `codesign` output were available; the checks
 ran against the real `jarvis.spec` with stand-in PyInstaller names and recorded
 `codesign` output shapes on Linux. Windows and Linux are unchanged — no TCC, no
@@ -789,14 +791,14 @@ grant) and refused when it said no, so macOS was never asked from a feature path
 and an app-wide banner, **Set up everything** and an onboarding step stood in
 front of the dialog. Now a feature asks at the user's gesture through
 `jarvis/platform/permission_service.py` and acts only on a live grant; denial
-degrades that one feature with one click to the System Settings pane. What
-changed per surface (Windows and Linux are unchanged: NOT_REQUIRED, nothing
+degrades that one feature (one toast with one click to System Settings, see the UI
+reset below). What changed per surface (Windows and Linux are unchanged: NOT_REQUIRED, nothing
 asked, nothing gated):
 
 - **Microphone.** Dictation, push-to-talk, a voice session, the wake-word switch
   and the microphone self-test ask. The wake loop stays parked, with no dialog and
   no input stream, until a grant exists. A denial refuses voice and dictation with
-  an inline note or the one floating card; typed chat is unaffected. A hold key
+  the native bar's sentence and the one toast; typed chat is unaffected. A hold key
   pressed while the dialog is up is not started retroactively. Five seconds of
   exact zeros while the state claims granted produce one "denied or muted" notice.
 - **Screen and computer use.** The first user-started capture asks for Screen
@@ -812,27 +814,25 @@ asked, nothing gated):
 - **Global shortcuts.** The listen-only tap needs Input Monitoring only (it used
   to need Accessibility too). It is not created at boot unless already granted,
   never created to provoke a prompt, and re-arms in process when the grant
-  arrives. `GET /api/settings/keybinds` carries one `shortcuts_status` (`ready`,
-  `needs_input_monitoring`, `unavailable_in_this_mode`). The Esc-to-cancel pill
+  arrives. Saving a shortcut asks for Input Monitoring (below). The Esc-to-cancel pill
   claims the key only while the tap runs.
 - **Ducking.** Switching "Mute music while dictating" on while a player runs is
   the only asking path (120 s consent runner, no hidden launch of a player);
   `mute_others` is non-interactive and skips a player that has not consented. A
   player that refuses the Apple event with `-1743` although its read says granted
   is skipped too and reported as one background `needs_settings` episode that
-  names it (inline status and Privacy row, never the floating card); it ends when
+  names it (`jarvis permissions status`, never a toast); it ends when
   a later send to that player lands, not because a probe reads granted. Windows
   and Linux: nothing happens (no TCC, empty call log); the effect on a real Mac is
   unverified.
 - **Appshot both-Option shortcut.** Not an Input Monitoring row: whether the
   `CGEventSourceKeyState` read needs a grant is unverified (the repo contradicts
-  itself), so the Appshots page carries a status note only.
+  itself), so nothing asks or says anything about it.
 - **Boot rule.** With every permission undecided, including the wake word on,
   launch makes no OS dialog, no input-stream open, no event-tap creation and no
-  capture call; an upgrader with every grant shows zero cards and zero requests.
+  capture call; an upgrader with every grant shows zero toasts and zero requests.
 
-Settings > Privacy (section hidden off macOS) is a passive status page; the
-onboarding `permissions` step, the banner, the wizard and the refresh event are
+The onboarding `permissions` step, the banner, the wizard and the refresh event are
 removed. **Not verified:** all of it ran against a stateful fake of the macOS
 frameworks, vitest and Linux gates; the packaging and frozen-app probes ran on
 macOS runners (which pre-grant TCC to their tools and show no dialog). No Mac
@@ -840,6 +840,40 @@ showed a dialog, a hold-key release, the second dialog of the embedded WebView o
 a grant taking effect in a running process; the rows are in
 `docs/macos-permissions.md` section 7. The Carbon hotkey backend and macOS-specific
 Call/Hangup defaults are follow-ups, not shipped.
+
+**Fix pass 2026-10-02, UI reset (macOS: macOS's own dialog plus one toast,
+ADR-0037 amendment).** The first just-in-time implementation also drew a floating
+card, inline notes, a Shortcuts status note and a Settings > Privacy page around
+macOS's dialog. All of it is deleted. macOS shows its own dialog at first use; the
+app adds ONE short toast with ONE action only when a user-started use failed
+because a permission is off (macOS never asks twice, so nothing else would say
+so). Per surface (Windows and Linux are unchanged: NOT_REQUIRED, nothing asked,
+nothing shown, and the permission UI code paths do nothing off macOS):
+
+- **The toast.** Source: the `PermissionNeeded` / `PermissionResolved` events. Shown
+  only in the owner window (the embedded desktop window on macOS; never a detached
+  window, a remote browser or another OS), for `origin="user"` and `phase="blocked"`,
+  once per episode and again on the person's next try; a background origin never toasts except one toast per session for
+  a denied microphone for the wake word. Actions: Open System Settings, Ask macOS now
+  (not asked yet, or a development run outside the installed app), Quit and reopen
+  (granted but unusable). en, de, es; no pane names. The native bar's dictation text
+  and the spoken computer-use readbacks are unchanged. Unverified: the look in the real
+  web view and that the pane opens on the current macOS.
+- **Global shortcuts.** A global shortcut is a background listener, so nothing at the
+  moment of use can carry a dialog; saving one is the gesture. `PUT
+  /api/settings/keybinds` asks for Input Monitoring after the save on macOS, only
+  while the tap is not listening, never for a clear, never blocking the save; the
+  onboarding Call-shortcut click asks once. Off macOS the permission layer is not
+  touched. `GET /api/settings/keybinds` no longer carries `shortcuts_status`.
+- **Reset.** `jarvis permissions reset <permission>` (macOS only, behind `--yes`) runs
+  `tccutil reset` for the installed app's own bundle id (either bundle id); on
+  Windows and Linux it prints one line and exits 1. The HTTP reset route is unchanged
+  and still refuses scripts.
+- **Dialog text.** The Apple Events usage string is target-neutral and the folder
+  strings are shorter. German and Spanish `InfoPlist.strings` and
+  `CFBundleLocalizations` ship in both bundles (the `.dmg` app writes the files before
+  signing, the managed bundle when it lays out the app); the bundle format version is
+  not bumped. Not verified on a Mac: that the localized strings appear in the dialogs.
 
 ## Audit verdict summary
 
@@ -857,7 +891,7 @@ implementations, not stubs.
 | On-demand Screen Context | One-shot capture is wired into the production brain on Windows, macOS, and Linux/X11; UIA/AX/AT-SPI text is source-filtered, the indicator precedes capture, and Wayland/headless/missing grants refuse honestly (on macOS a flat wallpaper-only frame is refused, never delivered) |
 | Appshots (front-window capture on a shortcut, button or request) | Capture, privacy and delivery are OS-neutral (Screen Context engine, `jarvis/appshot`). The both-Alt shortcut reads key state per OS: Windows `GetAsyncKeyState`, macOS `CGEventSourceKeyState` (whether this read needs the Input Monitoring grant is UNVERIFIED; the repo contradicts itself and no Mac measured it, so it is not an Input Monitoring row — see `docs/macos-permissions.md`), Linux/X11 `XQueryKeymap`; Wayland/headless report it unavailable on the Appshots page. The flash is the PySide6 overlay where one can run. Verified live on Windows only; see `docs/appshots.md` |
 | Voice / audio (capture, playback, VAD, wake, STT, TTS, realtime) | Clean; headless disables voice honestly; WASAPI logic is inert-by-data off Windows. macOS microphone: asked at the first dictation, push-to-talk, voice session, wake-word switch or mic self-test, never at launch (2026-10-02 pass) |
-| macOS privacy permissions (TCC) | One just-in-time service (`jarvis/platform/permission_service.py`, AP-35, ADR-0037): `check` is silent, `ensure` asks only from a user gesture and only from the installed app (or after a confirmation naming the grantee); Windows and Linux return NOT_REQUIRED before touching anything. Settings > Privacy is passive. Verified against fake frameworks and runner packaging probes only, not on a physical Mac (`docs/macos-permissions.md` section 7) |
+| macOS privacy permissions (TCC) | One just-in-time service (`jarvis/platform/permission_service.py`, AP-35, ADR-0037): `check` is silent, `ensure` asks only from a user gesture and only from the installed app (or after a confirmation naming the grantee); Windows and Linux return NOT_REQUIRED before touching anything. The app draws nothing around macOS's dialog; after a denied user-started use it shows one toast with one action. Verified against fake frameworks and runner packaging probes only, not on a physical Mac (`docs/macos-permissions.md` section 7) |
 | Core (launcher, config, keyring, restart, autostart, tray, elevation, paths) | Clean; per-OS autostart (Registry / LaunchAgent / XDG `.desktop`), keyring falls back to a 0600 file on headless hosts |
 | Data / agents (wiki, contacts, telephony, sessions, missions, skills, self-mod, channels, MCP) | Clean; mission workers run on POSIX with a real process-group reaper |
 | Agent society hands (own shell, browser via browser-use, learned skills) | Shell: local subprocess in the agent's workspace on every OS (Git Bash/PowerShell/bash/sh pick as the chat's folder tools), no container by decision. Browser: browser-use lives in a managed venv under the data dir (its pins collide with the app's), installed on demand — `uv`/`venv`, a 3.11–3.13 interpreter preferred, Chromium downloaded once; headless runs need no display, so a headless Linux box runs agents' browsers; the headed login session needs a display (409 without one is the follow-up); attach mode needs a running Chrome with `--remote-debugging-port`. Learning is pure files + the brain, OS-neutral |

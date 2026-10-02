@@ -1597,8 +1597,10 @@ def set_wake_activation(body: WakeActivationBody, request: Request) -> dict[str,
     Switching ON is the user's gesture, so on macOS it is the just-in-time moment
     for the microphone: the response gains ``permission`` (``{outcome, reason,
     can_open_settings}``). The switch is saved and applied either way; without a
-    grant the wake loop waits (nothing is heard until it is allowed) and the UI
-    shows an inline note instead of a success toast. Every existing key is kept.
+    grant the wake loop waits (nothing is heard until it is allowed); a refused
+    permission reaches the app as one toast through ``PermissionNeeded``, and the
+    answer here is for callers that read it (the CLI, agents). Every existing key
+    is kept.
     """
     # The ask comes FIRST so the OS dialog appears while the rest of the route
     # works. This handler is a plain ``def`` (a worker thread), so the blocking
@@ -1915,7 +1917,6 @@ def get_keybinds(request: Request) -> dict[str, object]:
     from jarvis.core.config import TriggerConfig
     from jarvis.core.config_writer import KEYBIND_TOML_KEY
     from jarvis.trigger.hotkey import mouse_hotkeys_available
-    from jarvis.trigger.shortcuts_status import shortcuts_status
 
     cfg = _config(request)
     trig = getattr(cfg, "trigger", None) if cfg is not None else None
@@ -1943,12 +1944,6 @@ def get_keybinds(request: Request) -> dict[str, object]:
         },
         "suggestions": _available_suggestions(current),
         "mouse_buttons": {"supported": mouse_ok, "reason": mouse_reason},
-        # ONE status for the global shortcut tap, not per row. Read silently
-        # (never prompts); a macOS host without Input Monitoring reads
-        # "needs_input_monitoring" so the UI can offer the one action.
-        "shortcuts_status": shortcuts_status(
-            getattr(pipeline, "_hotkey_trigger", None) if pipeline is not None else None
-        ).model_dump(),
         "restart_required": restart_required,
     }
 
@@ -1982,6 +1977,46 @@ def get_keybind_held(request: Request) -> dict[str, object]:
         "tokens": sorted(tokens) if tokens is not None else [],
         "reason": reason,
     }
+
+
+def _ask_input_monitoring_for_saved_shortcut(
+    request: Request, *, hotkey: str, changed: bool = True
+) -> None:
+    """Ask macOS for Input Monitoring because the user just SAVED a global shortcut.
+
+    A global shortcut is a background listener: nothing the user does at the moment
+    they press it could carry a system dialog, so the save is the one gesture that
+    can. macOS only, only for a combo that is actually bound (clearing a shortcut is
+    a no-op for the OS), only when the save CHANGED the combo (re-saving the value
+    already in force is not a new gesture and must not re-open an episode, so a
+    denied permission is not announced again by an identical save), and only while
+    the key tap is not already listening. ``wait_s=0`` returns at once: the route
+    never waits for the dialog, and the outcome reaches the app as
+    ``PermissionNeeded`` / ``PermissionResolved`` (the hotkey trigger re-arms itself
+    on the grant). Never raises and never asks at launch: the save is the only
+    caller.
+
+    Any caller that passes the route's auth counts as the user's gesture, the same
+    as the wake-word activation route: the request is bounded (one ask per episode,
+    never ``allow_outside_app``) and the dialog is macOS's own.
+    """
+    if not hotkey or not changed or not _is_macos():
+        return
+    pipeline = getattr(request.app.state, "speech_pipeline", None)
+    trigger = getattr(pipeline, "_hotkey_trigger", None) if pipeline is not None else None
+    probe = getattr(trigger, "listening", None)
+    if callable(probe):
+        try:
+            if probe() is True:
+                return  # the tap is up: Input Monitoring is already working
+        except Exception:  # noqa: BLE001 - a failed probe reads "unknown", not "listening"
+            log.debug("The shortcut tap liveness probe failed.", exc_info=True)
+    try:
+        _microphone_service(request).ensure(
+            "input_monitoring", feature="global_shortcuts", interactive=True, wait_s=0.0
+        )
+    except Exception:  # noqa: BLE001 - the shortcut itself is saved either way
+        log.debug("Asking for Input Monitoring after a shortcut save failed.", exc_info=True)
 
 
 @router.put("/keybinds")
@@ -2082,6 +2117,9 @@ def put_keybind(body: KeybindBody, request: Request) -> dict[str, object]:
     # (an unbound action cannot collide with anything).
 
     field = KEYBIND_TOML_KEY[action]
+    # Read BEFORE the overwrite below: the Input Monitoring ask only follows a save
+    # that changes the combo.
+    previous = _keybind_values(trig).get(action, "").strip().lower()
     if trig is not None:
         try:
             setattr(trig, field, hotkey)
@@ -2111,6 +2149,10 @@ def put_keybind(body: KeybindBody, request: Request) -> dict[str, object]:
             applied_live = True
         except Exception as exc:  # noqa: BLE001 — never fail the save on a live-apply hiccup
             log.warning("keybind live-apply failed (persisted; applies on restart): %s", exc)
+
+    # Last, after the save and the live re-arm: saving a global shortcut is the
+    # just-in-time moment for Input Monitoring (macOS only; see the helper).
+    _ask_input_monitoring_for_saved_shortcut(request, hotkey=hotkey, changed=previous != hotkey)
 
     return {
         "ok": True,

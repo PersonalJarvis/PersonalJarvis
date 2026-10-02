@@ -471,3 +471,10 @@ tests/unit/memory/test_profile_capture.py
 # --- Agent society (2026-09-01): the focus alias table maps the words people
 #     write in agent descriptions (de/en) onto capability ids ---
 jarvis/society/focus.py
+
+# --- macOS permission-dialog localisation (2026-10): the German and Spanish
+#     Info.plist usage strings live in the single usage-string table next to
+#     the English ones; macOS shows them in its own permission dialogs on a
+#     German or Spanish system (closed product surface: InfoPlist
+#     localisations). The InfoPlist.strings files are generated from it. ---
+jarvis/core/macos_privacy_strings.py

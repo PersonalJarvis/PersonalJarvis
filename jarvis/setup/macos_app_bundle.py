@@ -700,9 +700,23 @@ def _bundle_plist() -> dict[str, object]:
         "LSMinimumSystemVersion": "11.0",
         "NSHighResolutionCapable": True,
         # Every NS...UsageDescription string comes from the one table shared
-        # with jarvis.spec (the .dmg app), never from a copy kept here.
+        # with jarvis.spec (the .dmg app), never from a copy kept here. The
+        # German and Spanish text is declared here and written as
+        # <lang>.lproj/InfoPlist.strings by _write_localizations.
         **_privacy_strings().usage_descriptions(),
+        **_privacy_strings().localization_plist_keys(),
     }
+
+
+def _write_localizations(resources: Path) -> None:
+    """Write the German and Spanish ``InfoPlist.strings`` into ``resources``.
+
+    Part of laying out a bundle, before it is signed (the files are in the seal).
+    Existing installed bundles are NOT rewritten: the format version stays, because
+    a bump would rebuild every bundle and an ad-hoc rebuild is a new identity that
+    re-asks every permission. The next rebuild for another reason carries them.
+    """
+    _privacy_strings().write_localizations(resources)
 
 
 def _remove_path(path: Path) -> None:
@@ -728,6 +742,7 @@ def _write_cross_platform_fixture_bundle(bundle: Path) -> Path:
     info["CFBundleExecutable"] = executable_name
     with (contents / "Info.plist").open("wb") as stream:
         plistlib.dump(info, stream)
+    _write_localizations(resources)
     return bundle
 
 
@@ -915,6 +930,7 @@ def _build_native_bundle(install_root: Path, work_dir: Path) -> Path:
     executable.chmod(executable.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     with (bundle / "Contents" / "Info.plist").open("wb") as stream:
         plistlib.dump(plist, stream)
+    _write_localizations(resources)
     return bundle
 
 

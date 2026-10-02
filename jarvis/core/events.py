@@ -313,8 +313,8 @@ class DictationCompleted(Event):
 #:     microphone permission has not been granted. When the cause is the
 #:     permission, a ``PermissionNeeded`` event for the microphone is published
 #:     alongside this refusal; a UI that can render the permission episode
-#:     should prefer it for its card (it carries the system dialog phase and the
-#:     route to System Settings) and keep this refusal for the inline note.
+#:     should prefer it for its one toast (it carries the system dialog phase and
+#:     the route to System Settings) and keep this refusal for the recording pill.
 #: ``no_stt``
 #:     No speech-to-text provider is wired, so nothing could transcribe.
 #: ``already_running``
@@ -412,7 +412,7 @@ class DictationRefused(Event):
 
     The ``microphone_unavailable`` case ALSO publishes ``PermissionNeeded``
     (see below). This event stays the signal for the key that did nothing; the
-    permission episode is what a UI should prefer for the card that explains
+    permission episode is what a UI should prefer for the toast that explains
     the permission and offers the way back.
     """
 
@@ -475,7 +475,7 @@ PERMISSION_NEEDED_REASONS: Final[tuple[str, ...]] = (
 #: Where an episode is in front of the user.
 #:
 #: ``os_dialog``
-#:     macOS is asking right now; the app shows no card of its own.
+#:     macOS is asking right now; the app shows nothing of its own.
 #: ``blocked``
 #:     The user has to act (Settings, a restart) before the feature can work.
 PERMISSION_NEEDED_PHASES: Final[tuple[str, ...]] = ("os_dialog", "blocked")
@@ -483,9 +483,10 @@ PERMISSION_NEEDED_PHASES: Final[tuple[str, ...]] = ("os_dialog", "blocked")
 #: What caused the episode.
 #:
 #: ``user``
-#:     A gesture caused it, so a floating card may open.
+#:     A gesture caused it, so the app may show its one toast.
 #: ``background``
-#:     A background consumer hit it; only inline rows and status may show it.
+#:     A background consumer hit it; the app shows nothing (the one exception is
+#:     the always-listening wake word the user switched on).
 PERMISSION_NEEDED_ORIGINS: Final[tuple[str, ...]] = ("user", "background")
 
 
@@ -504,8 +505,10 @@ class PermissionNeeded(Event):
     Automation target's bundle id and empty for every other permission.
     ``can_prompt`` / ``can_open_settings`` say which actions the UI may offer;
     ``outside_app`` means Jarvis is not running as an installed app, so the
-    grant would belong to the app that started it and needs an explicit
-    confirmation naming that app.
+    grant would belong to the app that started it. The toast says so in one
+    generic sentence (it does not name the app: the event carries no app name),
+    and its single "Ask macOS now" click is the confirmation that sends
+    ``allow_outside_app``.
 
     ``detail`` is a full English sentence built from fixed templates for logs
     and support. The UI never renders it: copy comes from i18n per

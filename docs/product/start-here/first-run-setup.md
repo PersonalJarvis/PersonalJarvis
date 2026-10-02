@@ -98,8 +98,9 @@ for example **Hey Nova** makes an assistant called Nova. The card confirms when
 the wake word is on, and **Continue** unlocks once one is saved. Without a
 wake word, choose **Skip, I'll use the Call shortcut**; the Call keyboard
 shortcut then starts a conversation. On a Mac, switching the wake word on is
-the moment macOS asks for microphone access; setup has no separate permissions
-step.
+the moment macOS asks for microphone access, and choosing the Call shortcut is
+the moment it asks for Input Monitoring, which lets a shortcut work while another
+app is in front; setup has no separate permissions step.
 
 ### 6. All set
 
@@ -146,8 +147,9 @@ open the Agentic IDE.
 - Change the interface and reply languages under **Settings > Languages**.
 - Connect and test models under **API Keys**; the same page connects coding
   agents by key or subscription.
-- Repair macOS access in **System Settings > Privacy & Security**; Personal Jarvis
-  tells you when a feature needs a permission and offers a button that opens it.
+- Repair macOS access in **System Settings > Privacy & Security**; when a feature
+  you started needs a permission, Personal Jarvis shows one short message with a
+  button that opens it. [App Permissions](permissions) explains how to start over.
 - Change the phrase, spoken wake language, activation switch, or local wake
   pack under **Settings > Wake Word**, and the Call shortcut under **Settings >
   Voice Keybinds**.

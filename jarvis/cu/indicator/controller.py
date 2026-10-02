@@ -21,7 +21,7 @@ therefore no "Esc to cancel" pill (the border must not promise a key that
 cannot work). The pill is shown only after the Escape listener's backend
 reported that it is actually listening; on macOS that means the event tap is
 running, i.e. Input Monitoring is granted. Nothing here asks for that
-permission and no card is forced.
+permission and no toast is forced.
 """
 
 from __future__ import annotations

@@ -37,6 +37,7 @@ def _info(**overrides: object) -> dict:
         "CFBundleExecutable": "PersonalJarvis",
         "LSBackgroundOnly": False,
         **macos_privacy_strings.usage_descriptions(),
+        **macos_privacy_strings.localization_plist_keys(),
     }
     info.update(overrides)
     return info
@@ -48,6 +49,7 @@ def _bundle(tmp_path: Path, **overrides: object) -> Path:
     (app / "Contents" / "MacOS" / "PersonalJarvis").write_bytes(b"\xcf\xfa\xed\xfe")
     with (app / "Contents" / "Info.plist").open("wb") as stream:
         plistlib.dump(_info(**overrides), stream)
+    macos_privacy_strings.write_localizations(app / "Contents" / "Resources")
     return app
 
 
@@ -280,6 +282,93 @@ def test_the_plist_check_includes_the_usage_table(tmp_path: Path) -> None:
 
     assert len(problems) == 1
     assert "NSLocalNetworkUsageDescription" in problems[0]
+
+
+# --- German and Spanish localisation --------------------------------------------
+
+
+def test_a_bundle_that_declares_no_localisation_is_refused(tmp_path: Path) -> None:
+    app = _bundle(tmp_path)
+    info = _info()
+    del info["CFBundleLocalizations"]
+
+    problems = probe.check_info_plist(info, app / "Contents" / "MacOS")
+
+    assert len(problems) == 1
+    assert "CFBundleLocalizations" in problems[0] and "localization_plist_keys" in problems[0]
+
+
+def test_a_wrong_development_region_is_refused(tmp_path: Path) -> None:
+    app = _bundle(tmp_path)
+
+    problems = probe.check_info_plist(
+        _info(CFBundleDevelopmentRegion="de"), app / "Contents" / "MacOS"
+    )
+
+    assert len(problems) == 1
+    assert "CFBundleDevelopmentRegion" in problems[0]
+
+
+def test_a_localisation_list_without_spanish_is_refused(tmp_path: Path) -> None:
+    app = _bundle(tmp_path)
+
+    problems = probe.check_info_plist(
+        _info(CFBundleLocalizations=["en", "de"]), app / "Contents" / "MacOS"
+    )
+
+    assert len(problems) == 1 and "CFBundleLocalizations" in problems[0]
+
+
+def test_the_shipped_lproj_files_pass(tmp_path: Path) -> None:
+    app = _bundle(tmp_path)
+
+    assert probe.check_localization_files(app / "Contents" / "Resources") == []
+
+
+@pytest.mark.parametrize("language", macos_privacy_strings.LOCALIZED_LANGUAGES)
+def test_a_missing_strings_file_names_the_build_step(tmp_path: Path, language: str) -> None:
+    app = _bundle(tmp_path)
+    (app / "Contents" / "Resources" / f"{language}.lproj" / "InfoPlist.strings").unlink()
+
+    problems = probe.check_localization_files(app / "Contents" / "Resources")
+
+    assert len(problems) == 1
+    assert f"{language}.lproj/InfoPlist.strings is missing" in problems[0]
+    assert "add_localizations.py" in problems[0]
+
+
+def test_a_strings_file_that_is_not_the_table_is_refused(tmp_path: Path) -> None:
+    app = _bundle(tmp_path)
+    target = app / "Contents" / "Resources" / "de.lproj" / "InfoPlist.strings"
+    target.write_text('"NSMicrophoneUsageDescription" = "Alter Text.";\n', encoding="utf-8")
+
+    problems = probe.check_localization_files(app / "Contents" / "Resources")
+
+    assert len(problems) == 1
+    assert "de.lproj" in problems[0] and "single usage-string table" in problems[0]
+
+
+def test_a_strings_file_that_is_not_utf8_is_refused(tmp_path: Path) -> None:
+    app = _bundle(tmp_path)
+    target = app / "Contents" / "Resources" / "es.lproj" / "InfoPlist.strings"
+    target.write_bytes("\ufeff".encode("utf-16-le") + b"\xff\xfe\x00")
+
+    problems = probe.check_localization_files(app / "Contents" / "Resources")
+
+    assert len(problems) == 1 and "es.lproj" in problems[0] and "UTF-8" in problems[0]
+
+
+def test_check_app_reports_a_bundle_built_without_the_localisation_step(tmp_path: Path) -> None:
+    app = _bundle(tmp_path)
+    for language in macos_privacy_strings.LOCALIZED_LANGUAGES:
+        (app / "Contents" / "Resources" / f"{language}.lproj" / "InfoPlist.strings").unlink()
+
+    problems = probe.check_app(
+        app, read_modules=lambda _exe: ALL_MODULES, run_codesign=_codesign(ADHOC_REPORT)
+    )
+
+    assert len(problems) == 2
+    assert all("InfoPlist.strings is missing" in problem for problem in problems)
 
 
 # --- entitlements of a signed build ---------------------------------------------

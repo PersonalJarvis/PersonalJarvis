@@ -174,7 +174,7 @@ COMMAND_INDEX: dict[str, tuple[str, ...]] = {
         "import-claude-desktop",
         "delete <name>",
     ),
-    "permissions": ("status", "request", "open-settings"),
+    "permissions": ("status", "request", "open-settings", "reset"),
     "socials": ("list", "add", "edit", "delete"),
     "telephony": ("status", "config", "outbound"),
 }

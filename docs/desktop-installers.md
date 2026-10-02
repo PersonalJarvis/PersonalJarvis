@@ -133,7 +133,12 @@ identity (bundle id, minimum system version) comes from the `BUNDLE` block in
 (microphone, screen capture, Apple events, the Desktop / Documents / Downloads /
 removable-volume / network-volume folders, local network) come from ONE table,
 `jarvis/core/macos_privacy_strings.py`, which `jarvis.spec` and the managed
-source-install app both load by path, so the two apps cannot drift apart. There
+source-install app both load by path, so the two apps cannot drift apart. The same
+table carries the German and Spanish versions: `jarvis.spec` declares the languages
+(`CFBundleLocalizations`) and `build.sh` writes
+`Contents/Resources/{de,es}.lproj/InfoPlist.strings` into the finished `.app`
+(`packaging/macos/add_localizations.py`) BEFORE it signs it, because the files are
+part of the code seal. There
 is deliberately no camera string, no speech-recognition string and no camera
 entitlement: Jarvis has no caller for either. The entitlements embedded by the
 Developer ID path live in `packaging/macos/entitlements.plist` (no comments; the
@@ -151,6 +156,8 @@ smoke run, so the macOS job checks the finished bundle
   on the build machine; the macOS job installs it.
 - Every usage string of the table must be in `Info.plist` with exactly that
   text, and the removed keys must not be.
+- The bundle must declare its German and Spanish localisation, and each
+  `{de,es}.lproj/InfoPlist.strings` must exist with exactly the text of the table.
 - On a signed build, `codesign -d --entitlements :-` must report every
   entitlement of `entitlements.plist` and not the camera one. An ad-hoc or
   unsigned build embeds no entitlements, so the check skips itself with a NOTE
@@ -166,11 +173,13 @@ archive). The v2.5.0 image shipped with the first two defects (BUG-222).
 a feature you start needs it (the first dictation asks for the microphone, the
 first screen capture for Screen Recording, and so on) and never at launch;
 nothing is requested up front and no banner or wizard nags. Apple's own dialog or
-System Settings pane does the asking. Declining a permission degrades that one
-feature, with one click to the right System Settings pane, and leaves the rest of
-the app working. Settings > Privacy is passive: it shows the current state and
-offers the same actions, and never prompts by itself. This is the designed
-behaviour; it has not been exercised on a real Mac yet (unverified). The
+System Settings pane does the asking and the app draws nothing around it. Declining
+a permission degrades that one feature and leaves the rest of the app working; the
+app then shows one short toast with one click to the right System Settings pane.
+The dialog text is German and Spanish on a German or Spanish Mac (the build writes
+the `.lproj` strings before signing). `jarvis permissions reset <permission>` makes
+macOS ask again. This is the designed behaviour; it has not been exercised on a real
+Mac yet (unverified). The
 downloaded app and the managed source-install app are separate apps to macOS
 (`ai.personaljarvis.desktop` and `com.personal-jarvis.desktop`) and each keeps its
 own grants.

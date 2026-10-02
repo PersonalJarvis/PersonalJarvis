@@ -62,7 +62,7 @@ def test_bundle_layout_and_plist(tmp_path: Path, monkeypatch) -> None:
     assert info["CFBundlePackageType"] == "APPL"
     assert "microphone" in info["NSMicrophoneUsageDescription"].lower()
     assert "screen" in info["NSScreenCaptureUsageDescription"].lower()
-    assert "dictate" in info["NSAppleEventsUsageDescription"].lower()
+    assert "other apps" in info["NSAppleEventsUsageDescription"].lower()
     executable = bundle / "Contents" / "MacOS" / executable_name
     assert executable.read_bytes()[:4] == b"\xcf\xfa\xed\xfe"
     if os.name != "nt":
@@ -491,7 +491,12 @@ def test_build_native_bundle_layout_and_clang_invocation(
     from jarvis.setup.macos_app_bundle import _BUNDLE_FORMAT_VERSION
 
     assert info["JarvisBundleFormatVersion"] == _BUNDLE_FORMAT_VERSION
-    assert "dictate" in info["NSAppleEventsUsageDescription"].lower()
+    assert "other apps" in info["NSAppleEventsUsageDescription"].lower()
+    # The German and Spanish dialog text is laid out with the bundle, before signing.
+    assert info["CFBundleLocalizations"] == ["en", "de", "es"]
+    for language in ("de", "es"):
+        strings = bundle / "Contents" / "Resources" / f"{language}.lproj" / "InfoPlist.strings"
+        assert "NSMicrophoneUsageDescription" in strings.read_text(encoding="utf-8")
     executable = bundle / "Contents" / "MacOS" / "PersonalJarvis"
     assert executable.read_bytes()[:4] == b"\xcf\xfa\xed\xfe"
     if os.name != "nt":

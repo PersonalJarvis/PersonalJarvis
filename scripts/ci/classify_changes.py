@@ -177,6 +177,7 @@ _MACOS_FILES = {
     "tests/fakes/fake_tcc.py",
     "tests/unit/ci/test_check_frozen_macos_app.py",
     "tests/unit/ci/test_macos_desktop_permission_step.py",
+    "tests/unit/ui/web/test_keybinds_input_monitoring_ask.py",
     "tests/unit/core/test_permission_events.py",
     "scripts/measure_boot.py",
     "scripts/measure_desktop_boot.py",

@@ -7382,7 +7382,7 @@ class SpeechPipeline:
         # started retroactively once it is answered ("allowed - press again").
         # The silent user predicate is deliberately NOT consulted first: a denied,
         # restricted or unavailable microphone must still reach ``ensure`` so the
-        # press is refused WITH its ``PermissionNeeded`` card (one per episode).
+        # press is refused WITH its ``PermissionNeeded`` toast (one per episode).
         refusal = self._ensure_microphone("voice")
         if refusal is not None:
             log.info("PTT press ignored: %s", refusal)
@@ -7443,7 +7443,7 @@ class SpeechPipeline:
         # Gesture entry: the speak button / bar click may ask macOS for the
         # microphone. A first request raises the dialog and returns False (the UI
         # says "allowed - press again"); the session is never armed retroactively.
-        # As for PTT, a denied microphone reaches ``ensure`` too (card, not silence).
+        # As for PTT, a denied microphone reaches ``ensure`` too (toast, not silence).
         refusal = self._ensure_microphone("voice")
         if refusal is not None:
             log.info("request_voice_session ignored: %s", refusal)
@@ -8281,7 +8281,7 @@ class SpeechPipeline:
 
         The wake word is a background feature: it must not make macOS ask, and it
         must not poll either. So the loop opens ONE background-origin episode
-        (``ensure(interactive=False)``: no request, inline status only), which is
+        (``ensure(interactive=False)``: no request, status snapshot only), which is
         what lets the permission service watcher notice a grant given later in
         System Settings and publish ``PermissionResolved``; ``_on_permission_resolved``
         then sets ``_wake_reload_event``. ``set_wake_plan`` and the 30 s fallback

@@ -82,7 +82,7 @@ def remove_leftover_state_files() -> None:
 
 
 class PermissionId(StrEnum):
-    """Stable identifiers shared by the API and desktop permission UI."""
+    """Stable identifiers shared by the API, the CLI and the desktop permission toast."""
 
     MICROPHONE = "microphone"
     SCREEN_RECORDING = "screen_recording"
@@ -201,7 +201,7 @@ PANE_FAMILY: dict[PermissionId, PermissionId] = {
     PermissionId.CREDENTIAL_STORE: PermissionId.CREDENTIAL_STORE,
 }
 
-# Where a person finds the switch, in plain English, for the Privacy page. The
+# Where a person finds the switch, in plain English (the snapshot row and the docs). The
 # pane names are static text on purpose: no OS sniffing. Apple does not document
 # the label per macOS release (UNVERIFIED): the Screen Recording pane is called
 # "Screen & System Audio Recording" from macOS 15 and was "Screen Recording"
@@ -1220,7 +1220,7 @@ class SystemPermissionPort:
         runs here; nothing is probed, the caller reads the one permission it cares
         about before and after.
         """
-        service = _TCC_RESET_SERVICES.get(permission_id)
+        service = tcc_reset_service(permission_id)
         label = _LABELS[permission_id]
 
         def refused(message: str) -> PermissionOperation:
@@ -1280,6 +1280,16 @@ class SystemPermissionPort:
         )
 
 
+def tcc_reset_service(permission_id: PermissionId) -> str | None:
+    """The ``tccutil`` service name of ``permission_id``, or ``None`` when it has no TCC row.
+
+    The one table behind ``tccutil reset <service> <bundle id>``: the port's
+    :meth:`SystemPermissionPort.reset_row` and the local ``jarvis permissions reset``
+    command both read it, so the two can never disagree about a service name.
+    """
+    return _TCC_RESET_SERVICES.get(permission_id)
+
+
 _DEFAULT_SYSTEM_PERMISSION_PORT = SystemPermissionPort()
 
 
@@ -1306,4 +1316,5 @@ __all__ = [
     "get_system_permission_port",
     "remove_leftover_state_files",
     "settings_path_text",
+    "tcc_reset_service",
 ]

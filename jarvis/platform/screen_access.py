@@ -7,7 +7,7 @@ through, with two rules from the permission rebuild (docs/macos-permissions.md, 
 
 * **Helpers never ask.** A per-frame fast path, a region grab or a status probe
   reads the state through :func:`screen_recording_state` (silent, cheap) and
-  degrades. It never makes macOS show a dialog and never opens a card.
+  degrades. It never makes macOS show a dialog and never raises a toast.
 * **Only a user gesture asks.** The entry point of a capture that a person
   started (the ``screenshot`` tool body, a screen-context request, the first
   Computer-Use frame of a step) calls :func:`require_screen_recording`. That
@@ -388,7 +388,7 @@ def _unusable_grant_refusal(feature: str, gate: Any, *, interactive: bool) -> Sc
     The state reads GRANTED yet the window list says the grant is not honoured: the
     one case where "quit and reopen" is honest advice (the grant may only apply to
     a new process, community-observed and UNVERIFIED). A user-started capture tells
-    the service, which opens a ``restart_hint`` episode (the card names the restart
+    the service, which opens a ``restart_hint`` episode (the toast names the restart
     and nothing restarts by itself); a background consumer stays quiet, the service
     only opens episodes with the user origin for this call. The frame is refused
     either way. A gate without the call (a scripted stub) gets the plain refusal.
@@ -410,7 +410,7 @@ def _clear_failed_use(gate: Any) -> None:
     per feature). The service has no hook that says "the attempt that failed works
     now"; the one call that drops a slot's restart hint is ``note_reset`` (it also
     forgets the per-process ask cooldown, harmless while the grant is live). The next
-    watcher pass then closes the episode as granted, so the card does not nag a user
+    watcher pass then closes the episode as granted, so the toast does not nag a user
     whose capture works again. Does nothing unless some feature reported a failure.
     """
     if not _failed_use_reported:
@@ -454,7 +454,7 @@ def verify_frame_is_real(
        screen).
 
     ``interactive`` is False for a background consumer: the episode is then
-    recorded with the ``background`` origin (inline status, no card) and no native
+    recorded with the ``background`` origin (status snapshot only, no toast) and no native
     request is made. Blocking: a worker thread, never the event loop.
     """
     gate = gate if gate is not None else permission_gate()

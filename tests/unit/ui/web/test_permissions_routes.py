@@ -133,6 +133,26 @@ def test_request_is_attributed_to_the_feature_it_names(make_env) -> None:
     assert episode.permissions == ("microphone",)
 
 
+def test_a_refused_browser_voice_microphone_opens_a_user_episode_the_toast_can_tell(
+    make_env,
+) -> None:
+    """The embedded window reports its own refused getUserMedia through this route."""
+    env = make_env()
+    env.tcc.deny("microphone")
+
+    body = env.post("microphone/request?dry_run=false", json={"feature": "browser_voice"}).json()
+
+    assert body["outcome"] == "denied" and body["asked"] is False
+    [episode] = get_permission_service().outstanding()
+    assert (episode.feature, episode.origin, episode.phase, episode.reason) == (
+        "browser_voice",
+        "user",
+        "blocked",
+        "denied",
+    )
+    assert env.tcc.requests() == []  # a denial is never asked again
+
+
 @pytest.mark.parametrize(
     ("permission", "feature"),
     [

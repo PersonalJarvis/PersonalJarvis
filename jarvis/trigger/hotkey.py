@@ -818,21 +818,6 @@ class HotkeyTrigger:
         """The backend declined to start because Input Monitoring is not granted."""
         return getattr(self._backend, "waiting_for_permission", False) is True
 
-    def deaf_tap_suspected(self) -> bool:
-        """Is the listener up, the grant visible and still not one raw event heard?
-
-        The only basis for a "quit and reopen" hint; nothing here restarts
-        anything. ``False`` for a backend without a raw-event counter.
-        """
-        probe = getattr(self._backend, "deaf_tap_suspected", None)
-        if not callable(probe):
-            return False
-        try:
-            return probe() is True
-        except Exception:  # noqa: BLE001 — a failed probe makes no claim
-            log.debug("deaf_tap_suspected() failed", exc_info=True)
-            return False
-
     def chord_is_down(self, event_name: str) -> bool | None:
         """Is the chord bound to ``event_name`` physically down right now?
 
@@ -988,7 +973,7 @@ class HotkeyTrigger:
         ``waiting_for_permission``) takes part; Windows, Linux and the no-op
         backend never touch the permission service. While the backend waits we
         open a BACKGROUND episode (``interactive=False``: no native request, no
-        card, inline status only) because the service tells its listeners about
+        toast, status snapshot only) because the service tells its listeners about
         a grant only inside an open episode. Never raises.
         """
         if not hasattr(backend, "waiting_for_permission"):
@@ -1064,7 +1049,7 @@ class HotkeyTrigger:
         """Re-touch the service episode every ``_EPISODE_RENEW_S`` while the backend waits.
 
         ``service.ensure(interactive=False)`` blocks on a native read, so it runs
-        in a worker thread. It makes no request and shows no card; it only keeps
+        in a worker thread. It makes no request and shows no toast; it only keeps
         the episode (and with it the grant listener) alive past the service's
         own expiry. Ends once the backend no longer waits. AP-18: nothing escapes.
         """

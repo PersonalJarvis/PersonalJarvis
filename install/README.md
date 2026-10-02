@@ -54,10 +54,10 @@ Jarvis asks at the moment a feature you start needs a permission: the first
 dictation asks for the microphone, the first screen capture asks for Screen
 Recording, and so on, each through Apple's own dialog or System Settings pane.
 If you decline, only that one feature is unavailable, with one click to the
-right System Settings pane, and everything else (typed chat included) keeps
-working. Settings > Privacy only shows the current state and offers the same
-actions; it never prompts by itself. This is how the app is built to behave; it
-has not been exercised on a real Mac yet (unverified).
+right System Settings pane (one short toast offers it), and everything else (typed
+chat included) keeps working. `jarvis permissions reset <permission>` makes macOS ask
+again. This is how the app is built to behave; it has not been exercised on a real
+Mac yet (unverified).
 
 ## Current cryptography on every architecture
 

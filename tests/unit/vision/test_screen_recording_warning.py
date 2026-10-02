@@ -171,7 +171,7 @@ def test_vision_source_refuses_without_the_grant_and_never_asks(monkeypatch):
 def test_vision_source_wallpaper_frame_is_no_success_and_stays_background(monkeypatch):
     # The grant reads as granted (cached), then is revoked: the frame is the
     # wallpaper. The vision source is a background observer, so the episode it
-    # opens has the background origin (inline status, no card) and no request.
+    # opens has the background origin (status snapshot only, no toast) and no request.
     pytest.importorskip("PIL")
     tcc = _darwin(monkeypatch, granted=[TccService.SCREEN_RECORDING], preflight_frozen=())
     _fake_mss(monkeypatch, wallpaper_pixels((8, 8)))

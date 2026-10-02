@@ -15837,8 +15837,10 @@ and per-0.25 s probes; a tap callback that overran its deadline and was disabled
 - Features ask at their gesture: microphone at dictation, push-to-talk, a voice session,
   the wake-word switch and the mic self-test; Screen Recording at the first
   user-started capture; Accessibility when Jarvis first types, clicks or focuses;
-  Input Monitoring when the user enables global shortcuts; Automation when the user
-  switches "Mute music while dictating" on with a player running. Helpers `check()` and
+  Input Monitoring when the user saves a global shortcut (a background listener has no
+  "on use" moment; `PUT /api/settings/keybinds` asks, the onboarding Call-shortcut click asks
+  once); Automation when the user switches "Mute music while dictating" on with a player
+  running. Helpers `check()` and
   degrade; the computer-use engine keeps one silent Screen Recording gate and pauses
   while a macOS consent window is frontmost.
 - Silent-failure traps are checked at the source: a flat wallpaper-only frame while the
@@ -15846,9 +15848,8 @@ and per-0.25 s probes; a tap callback that overran its deadline and was disabled
 - Deleted: the banner and its dismissal store, the wizard and polling, the refresh
   event, the onboarding `permissions` step, `features` / `wanted` / `active` /
   `identity_reset` / `restart_required` / `foreground` in the snapshot, the Automation
-  consent file and hidden launch, the identity-reset marker. Settings > Privacy is a
-  passive page. Packaging got one usage-string table and lost the camera, speech and
-  system-administration keys.
+  consent file and hidden launch, the identity-reset marker. Packaging got one usage-string
+  table and lost the camera, speech and system-administration keys.
 - AP-35 and ADR-0037 record the rule; `docs/macos-permissions.md` is the design, the
   evidence table and the manual Mac checklist.
 
@@ -15857,7 +15858,7 @@ the service. No code path may refuse because our own preflight says "not granted
 before the OS was asked, and none may act on a permission the OS has not granted
 (`EnsureResult.granted` only for GRANTED / NOT_REQUIRED; a native request's return value
 is never evidence). Nothing is asked at launch (boot rule), denied is a stable state with
-one click to the pane, identity decides who may ask and reset but not whether a feature may
+one toast and one click to the pane, identity decides who may ask and reset but not whether a feature may
 act, an opt-in feature owns its permission, and an agent never answers a system dialog
 (routine triggers exclude both permission events; no agent tool exposes ensure, request,
 open-settings or reset). Review rule: a new macOS-gated feature that adds its own
@@ -15891,8 +15892,24 @@ asks), `tests/unit/dictation/test_insert_permission.py`,
 (snapshot v2 never prompts), `tests/unit/ui/test_desktop_macos_permission_gate.py`,
 `tests/unit/ci/test_macos_desktop_permission_step.py` (the macOS lane's permission
 scripts run against FakeTCC so a step cannot rot into one that always passes), and the
-frontend `permissionPrompts.test.ts`, `PermissionPromptLayer.test.tsx`,
-`InlinePermissionNote.test.tsx` and `PermissionsPanel.test.tsx`.
+frontend `permissionToast.test.ts` (the toast planner; the earlier card, inline-note and
+Privacy-page tests were deleted with their UI, see the note below).
+
+**Follow-up note (2026-10-02, UI reset).** The custom UI this fix first shipped (a floating card,
+inline notes in five places, a Shortcuts status note and tip, the Settings > Privacy page and its
+"Ask again") was judged unfit by the user and deleted: macOS shows its own dialog and the app adds
+ONE toast with one action after a user-started use failed (`PermissionNeeded`, `origin="user"`,
+`phase="blocked"`, owner window, once per episode and again on the next try; the wake word tells a denied microphone once per
+session). The service, routes, snapshot v2, events and the boot rule are unchanged. Input Monitoring
+is asked when a shortcut is saved; the way back from a stuck "denied" is the switch in System
+Settings or the local `jarvis permissions reset <permission>` (macOS only; the HTTP reset route
+still refuses scripts). The Info.plist strings became target-neutral and gained German and
+Spanish `InfoPlist.strings` in both bundles. Details: ADR-0037 "Amendment: the UI is reduced to a
+toast". Prevention addition: a new permission surface of our own around the OS dialog (card, note,
+status page, up-front screen) is this bug's UI twin again. Guards added:
+`tests/unit/ui/web/test_keybinds_input_monitoring_ask.py`,
+`tests/unit/cli_ctl/test_commands_permissions.py` (reset), `tests/unit/packaging/test_macos_privacy_strings.py`
+(localisations) and `tests/unit/ci/test_check_frozen_macos_app.py`.
 
 **Verification.** Fake-framework unit and contract tests, vitest, Linux static gates, and
 macOS CI runners for the packaging and frozen-app probe (ad-hoc signed; a runner is not a

@@ -8,7 +8,7 @@ order: 4
 diataxis: howto
 status: active
 owner: maintainers
-last_reviewed: 2026-07-21
+last_reviewed: 2026-10-02
 phase: "-"
 audience: end-user
 tags: [settings, appearance, startup, keyboard-shortcuts, jarvis-bar, sound]
@@ -46,7 +46,6 @@ that have their own guides.
 |---|---|---|
 | **Languages** | Interface, Voice Recognition Language, and Reply Language | Interface and reply choices apply live. After changing recognition, end any Realtime call and restart Jarvis for Pipeline recognition |
 | **App settings** | Launch the app when you sign in | The operating-system startup entry is added or removed immediately |
-| **Privacy** | On macOS, one list of Microphone, Screen Recording, Accessibility, Input Monitoring, Music and Spotify control, and Keychain access. Each row shows its status and at most one action | Refreshes when you open the page and when you return to the app; Jarvis asks only when a feature needs a permission, and shows **Quit and reopen** when a new grant needs it |
 | **Realtime voice (browser)** | Pipeline or Realtime voice mode | Saves immediately. An active desktop call reconnects when its mode changes; otherwise the next call uses the choice |
 | **System Prompt** | The assistant's general style and behavior | On the next message; no restart |
 | **Wake Word** | Activation, phrase, spoken language, detection engine, and self-test | Usually live when desktop voice is ready; otherwise on the next voice start |
@@ -148,6 +147,8 @@ device.
    by the other action. These markers are optional visual aids.
 4. Select **Save**. If Jarvis shows a restart message, restart after important
    work has finished; otherwise the running voice listener is already updated.
+   On a Mac, the first save is the moment macOS asks for Input Monitoring, which
+   lets a shortcut work while another app is in front; Clear never asks.
 
 Press **Escape** while recording to restore the previously saved combination.
 **Reset to default** places the default in the field; select **Save** to apply
@@ -209,7 +210,7 @@ returns to idle.
 | **Realtime voice (browser)** is unavailable | No installed Realtime provider has a usable credential, or this build does not include the optional Realtime engine | Connect OpenAI Realtime or Gemini Live under **API Keys**. If the control stays unavailable, use Pipeline |
 | Music keeps playing after you enable muting | The platform backend is unavailable, macOS Automation access was denied, or the media app is unsupported | Accept the macOS Automation prompt when offered. On Linux or for unsupported players, use the operating system or media app controls |
 | **Save** stays disabled for a shortcut | The combination is incomplete, reserved, or overlaps another action | Follow the inline message and the on-screen keyboard markers, then choose a distinct combination |
-| A macOS feature remains blocked | The operating system has not granted the required access, or the new grant needs an app restart | Open **Settings > Privacy**, use **Ask now** or **Open System Settings** on the row, then select **Quit and reopen** when shown |
+| A macOS feature remains blocked | The operating system has not granted the required access, or the new grant needs an app restart | Use the button on the short message Jarvis shows (**Open System Settings**, **Ask macOS now**, or **Quit and reopen**); [App Permissions](permissions) explains how to start over |
 | A change works now but returns after restart | The live update succeeded, but the saved preference could not be written | Try the control again, then use [Troubleshooting](troubleshooting) if it still does not survive a restart |
 | **Autopilot Toasts** has no effect | The visible switch is not currently connected to a saved preference | Do not rely on this control until a future app update wires it to behavior |
 

@@ -125,6 +125,30 @@ def test_the_certificate_secrets_are_imported_and_the_app_is_signed_with_it(
     assert "ad-hoc" not in out
 
 
+def test_the_localised_permission_text_is_written_before_anything_is_signed(
+    layout: Path,
+) -> None:
+    """The .lproj files are part of the code seal: written after codesign they break it."""
+    ad_hoc = _rehearse(layout)
+    signed = _rehearse(
+        layout,
+        APPLE_ID="maintainer@example.com",
+        APPLE_TEAM_ID="ABCDE12345",
+        **_SECRETS,
+    )
+
+    for result, first_signing in (
+        (ad_hoc, "codesign --force --deep -s -"),
+        (signed, "codesign --force --deep --timestamp --options runtime"),
+    ):
+        assert result.returncode == 0, result.stderr
+        out = result.stdout
+        assert "add_localizations.py --app" in out
+        assert out.index("add_localizations.py") < out.index(first_signing)
+        if "notarytool submit" in out:
+            assert out.index("add_localizations.py") < out.index("notarytool submit")
+
+
 def test_no_secret_ever_reaches_the_output(layout: Path) -> None:
     result = _rehearse(
         layout,

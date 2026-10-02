@@ -8,7 +8,7 @@ order: 5
 diataxis: troubleshooting
 status: active
 owner: maintainers
-last_reviewed: 2026-07-21
+last_reviewed: 2026-10-02
 phase: "-"
 audience: end-user
 tags: [troubleshooting, diagnostics, recovery, startup, providers, voice, connections, support]
@@ -52,7 +52,7 @@ reinstalling the app.
 | Docs only | **Docs** loading or error panel | Select **Try again** |
 | Chat replies | **API Keys & Providers > Brain** | Run **Test** on the selected provider |
 | Wake, listening, or speech | **Settings > Audio devices** and **Wake Word** | Rescan devices, then run **Test wake word** |
-| An action is denied | The permission card or approval message | Grant or approve only the named access |
+| An action is denied | The short permission message or the approval message | Grant or approve only the named access |
 | A plugin, MCP server, or CLI | **Skills, Plugins & MCPs** or **CLIs** | Check that connection's status and one read-only action |
 | A task, agent mission, or file | **Tasks**, the Agents view, or **Outputs** | Read its status or timeline before retrying |
 
@@ -156,7 +156,7 @@ Voice is a chain. Check the first step that fails.
 
 | Symptom | Check |
 |---|---|
-| **Voice starting…** remains visible | Wait for the current warm-up once. If it never clears, check microphone access, the selected input, and the voice provider cards. |
+| **Voice starting…** remains visible | Wait for the warm-up once. If it never clears, check microphone access, the selected input, and the voice provider cards. |
 | The wake phrase does nothing | Open **Settings > Wake Word**, keep **Auto (recommended)** unless you have a reason to choose another engine, and run **Test wake word**. |
 | Listening starts but the transcript is wrong or empty | Select the intended microphone under **Settings > Audio devices**, then use **Rescan devices** if it is missing. |
 | The transcript is correct but no reply is heard | Check the selected output device and the active **Voice Output** provider. |
@@ -164,18 +164,17 @@ Voice is a chain. Check the first step that fails.
 | Normal conversation triggers the wake phrase | Choose a distinct two-word or three-word phrase with a prefix. There is no sensitivity slider. |
 
 **Test wake word** checks the configured engine, model or vocabulary when
-applicable, and microphone level. It does not prove that the engine will
-recognize your spoken phrase. After it passes, say the phrase once for an
-end-to-end check.
+applicable, and microphone level. It does not prove the engine recognizes your
+phrase; after it passes, say the phrase once.
 
-On macOS, use **Settings > Privacy** for microphone access and
-restart only if the card shows **Quit and reopen**. A Realtime session opened in a
+On macOS, use the button on the message that appears when the microphone is
+off, and restart only if it offers **Quit and reopen**. A Realtime session opened in a
 browser uses that browser's microphone permission and device, not the native
 desktop audio selection.
 
-For a recorded voice turn, **Transcription** and **Run Inspector** can show
-whether speech recognition, a provider, a tool, or spoken output was the last
-recorded stage. They do not diagnose a turn that was never recorded.
+For a recorded voice turn, **Transcription** and **Run Inspector** can show which
+stage (speech recognition, provider, tool, or spoken output) was last recorded.
+They do not diagnose a turn that was never recorded.
 
 ### A Permission or Approval Blocks an Action
 
@@ -184,20 +183,33 @@ questions. The operating system controls microphone, screen, accessibility,
 and input access. Jarvis then decides whether a particular action is safe,
 needs confirmation, or must be blocked.
 
-- On macOS, open **Settings > Privacy** and act on the named row. Each row has
-  one status and at most one action: **Ask now** (**Not asked yet**), **Open
-  System Settings** (**Off**), **Try again** (Keychain), or **Quit and reopen**
-  (**Restart needed**). The other statuses are **Allowed**, **Restricted**, **Not
-  available**, and **Not required**; they have no action. **Ask again** appears
-  only after you opened System Settings, came back, and the row still reads
-  **Off**. The floating card adds **Check again** the same way.
-- Windows and Linux do not show the macOS permission cards. Use the operating
+- On macOS, if you said no to Apple's dialog, it never asks again. Use the button
+  on the short message Jarvis shows, or start over (below).
+- Windows and Linux do not show the macOS permission message. Use the operating
   system's own microphone, display, and accessibility controls when the
   affected feature requires them.
-- Review the exact target and effect before approving an action. Do not weaken
-  a safety rule merely to make an unclear request proceed.
-- **Allowed** proves the operating system grant. It does not prove that the
-  action is supported or that Jarvis will approve every later request.
+- Review the exact target and effect before approving an action. Never weaken a
+  safety rule just to make an unclear request proceed.
+- A granted permission proves only the operating system grant, not that the action
+  is supported or that Jarvis will approve it.
+
+### Start Over for One macOS Permission
+
+If macOS shows no dialog, or a switch is on but the feature fails, quit
+Personal Jarvis and run `jarvis permissions reset <permission>
+--yes` (add `--bundle-id` for the other app). If `jarvis` is not found, the
+downloaded app's command is `/Applications/Personal Jarvis.app/Contents/MacOS/jarvis`.
+Without the command, run `tccutil` with
+`ai.personaljarvis.desktop` (downloaded app) or `com.personal-jarvis.desktop`
+(installer's app):
+
+```bash
+for s in Microphone ScreenCapture Accessibility ListenEvent AppleEvents; do
+  tccutil reset "$s" ai.personaljarvis.desktop
+done
+```
+
+Reopen Jarvis; macOS asks again.
 
 ### A Plugin, MCP Server, or CLI Is Disconnected
 
@@ -298,13 +310,12 @@ Verify only the path you repaired:
    **Offline** state has cleared.
 2. Run its smallest harmless check. Reload one Doc, run one provider **Test**,
    use **Test wake word**, recheck one connection, or refresh one task.
-3. Complete one end-to-end action with no external side effect. For chat, ask
-   for a short reply. For voice, ask one short question and confirm the
-   transcript and spoken reply.
+3. Complete one end-to-end action with no external side effect: a short chat
+   reply, or one short voice question with its transcript and spoken reply.
 4. If it was a recorded voice problem, open **Transcription** and **Run
    Inspector** and confirm that the new session contains the expected turn.
 5. Stop when the focused check passes. Do not rotate unrelated credentials or
-   change several working settings as a precaution.
+   change working settings as a precaution.
 
 ## Next Steps
 

@@ -5099,9 +5099,10 @@ _PLATFORM_KEYRING_BACKEND: Any | None = None
 # The credential slot whose OS-keyring read failed most recently. On macOS a
 # user who clicks "Deny" on the Keychain prompt lands exactly here: the read
 # raises, the process degrades to the file backend, and only a fresh read of a
-# real existing item makes macOS show the prompt again. The permissions UI
-# replays this slot on a user-initiated retry (a probe on a brand-new item
-# would silently succeed without ever re-prompting).
+# real existing item makes macOS show the prompt again. The credential_store
+# permission request (``jarvis permissions request credential_store``) replays this
+# slot on a user-initiated retry (a probe on a brand-new item would silently
+# succeed without ever re-prompting).
 _LAST_KEYRING_FAILED_SLOT: str | None = None
 _SECRET_REVISION_LOCK = threading.Lock()
 _SECRET_REVISIONS: dict[str, int] = {}
@@ -5446,7 +5447,7 @@ def credential_store_backend() -> str:
     Credential Manager / Secret Service) serves reads and writes. ``file``
     means this process degraded to the local 0600 JSON fallback — on macOS
     that is the observable state after the user declined the Keychain prompt.
-    The desktop permissions UI maps this onto its Keychain row.
+    The permission snapshot maps this onto its Keychain row.
     """
     _ensure_keyring_backend()
     try:

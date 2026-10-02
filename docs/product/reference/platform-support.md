@@ -139,7 +139,7 @@ surface, Jarvis falls back to the tray or no visible surface; chat continues.
 | Linux AT-SPI packages and desktop bus | Only for native Linux UI labels | Named interface elements for more reliable Computer Use on X11 |
 | Linux global-hotkey backend | Only for global voice shortcuts on X11 | Shortcut capture; it is not part of the current Linux full-profile dependency set |
 | Xcode Command Line Tools on macOS | Required to build the managed desktop launcher | The installer compiles and signs the local app launcher and stops with an installation hint when `clang` is unavailable |
-| macOS privacy grants | Only for the feature that needs each one; macOS asks when you first use or switch on that feature | Microphone, global shortcuts, screen capture, accessibility, and input control |
+| macOS privacy grants | Only for the feature that needs each one; macOS asks when you first use or switch on that feature (or, for global shortcuts, when you save one) | Microphone, global shortcuts, screen capture, accessibility, and input control |
 | Graphical display | Only for desktop surfaces | Desktop window, overlays, screen capture, and physical Computer Use |
 
 ## Storage and Network Defaults
@@ -226,7 +226,7 @@ capability works.
 
 On a desktop, choose **Settings > Audio devices > Rescan devices** and confirm
 the intended devices appear. Then run the relevant **Test wake word** action,
-check the macOS rows under **Settings > Privacy**, or run a reversible Computer Use action.
+check the macOS permissions in **System Settings > Privacy & Security** (or with `jarvis permissions status` when the `jarvis` command is available), or run a reversible Computer Use action.
 
 On headless Linux, open the printed local address and test text chat first.
 Configure authenticated HTTPS access before using a remote browser microphone.
@@ -238,7 +238,7 @@ Configure authenticated HTTPS access before using a remote browser microphone.
 | Python is rejected | Outside 3.11 through 3.14 | Let the installer choose, or install a supported version |
 | Linux opens a server | No X11 or Wayland display | Use the printed address, or install from a graphical session |
 | Linux audio is unavailable | PortAudio, access, or device missing | Install PortAudio, reconnect, then choose **Rescan devices** |
-| A macOS shortcut or screen action fails | Privacy grant missing or declined | Review **Settings > Privacy**; the feature's own card offers **Open System Settings**, and a restart only when it says so |
+| A macOS shortcut or screen action fails | Privacy grant missing or declined | Use the button on the short message Jarvis shows (**Open System Settings**), and a restart only when it says so; `jarvis permissions reset` starts over (see [App Permissions](permissions) if the command is not found) |
 | Linux Computer Use refuses | Wayland or no display | Use X11; text and browser features still work |
 | Linux control names are missing | AT-SPI or its bus is unavailable | Install accessibility packages; pixel fallback may work |
 | A local voice engine is unavailable | No compatible native package | Choose another local, browser, or online speech path |

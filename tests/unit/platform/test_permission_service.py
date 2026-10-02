@@ -289,6 +289,48 @@ def test_a_denied_microphone_is_never_asked_again(make_env: Callable[..., Env]) 
     assert env.tcc.ignored_requests() == []  # no re-prompt loop is hiding in the log
 
 
+def test_a_user_gesture_on_a_still_blocked_episode_announces_it_again(
+    make_env: Callable[..., Env],
+) -> None:
+    """The toast the person dismissed or missed comes back on their next try."""
+    env = make_env()
+    env.tcc.deny("microphone")
+    env.service.ensure(_MIC, feature="dictation", wait_s=0)
+    env.flush()
+    assert [(e.reason, e.phase, e.origin) for e in env.bus.needed()] == [
+        ("denied", "blocked", "user")
+    ]
+
+    # A retry loop inside the window is silent (one edge, not a flood) ...
+    env.clock.advance(1)
+    env.service.ensure(_MIC, feature="dictation", wait_s=0)
+    env.flush()
+    assert len(env.bus.needed()) == 1
+
+    # ... a gesture after the window says it once more, and only once per gesture.
+    env.clock.advance(service_module._REANNOUNCE_MIN_S)
+    env.service.ensure(_MIC, feature="dictation", wait_s=0)
+    env.service.ensure(_MIC, feature="dictation", wait_s=0)
+    env.flush()
+    assert len(env.bus.needed()) == 2
+    assert env.tcc.requests() == []  # re-announcing never re-asks macOS
+
+
+def test_a_background_check_never_re_announces_an_open_episode(
+    make_env: Callable[..., Env],
+) -> None:
+    env = make_env()
+    env.tcc.deny("microphone")
+    env.service.ensure(_MIC, feature="voice", interactive=False)
+    env.flush()
+    assert len(env.bus.needed()) == 1
+    env.clock.advance(service_module._REANNOUNCE_MIN_S * 5)
+    env.service.ensure(_MIC, feature="voice", interactive=False)
+    env.service.refresh_episodes()
+    env.flush()
+    assert len(env.bus.needed()) == 1
+
+
 def test_a_denial_that_already_exists_is_not_asked_at_all(make_env: Callable[..., Env]) -> None:
     env = make_env()
     env.tcc.deny("microphone")

@@ -436,7 +436,7 @@ def get_actuator() -> Actuator:
     session probes run on EVERY call (revocation must fail closed); only the
     backend construction is reused. A caller with a different feature than
     computer use (dictation paste) asks first with its own feature name, so the
-    permission card says what the access is for; this call then finds it granted.
+    permission toast says what the access is for; this call then finds it granted.
     """
     global _ACTUATOR_CACHE
     _ensure_macos_input_permission("computer_use")

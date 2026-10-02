@@ -280,6 +280,17 @@ if building; then
 fi
 log "app bundle: ${APP_BUNDLE}"
 
+# German and Spanish permission-dialog text. The languages are declared in the
+# plist by jarvis.spec; the <lang>.lproj/InfoPlist.strings files are written here
+# from the same table, BEFORE signing: they are part of the code seal, so a file
+# added after codesign would break the signature (and the notarization).
+run "${PYTHON}" "${SCRIPT_DIR}/add_localizations.py" --app "${APP_BUNDLE}"
+if building && command -v plutil >/dev/null 2>&1; then
+  for strings_file in "${APP_BUNDLE}"/Contents/Resources/*.lproj/InfoPlist.strings; do
+    run plutil -lint "${strings_file}"
+  done
+fi
+
 # --- 3. Code signing --------------------------------------------------------
 
 # Apple documents no comment syntax for an entitlements file, so

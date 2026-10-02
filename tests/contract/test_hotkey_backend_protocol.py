@@ -66,10 +66,11 @@ def test_held_tokens_is_unknown_before_the_backend_listens(factory):
 # --- optional readiness probes (just-in-time permissions) ---------------------
 #
 # A backend MAY expose ``is_listening()``, ``waiting_for_permission`` and
-# ``deaf_tap_suspected()``; ``HotkeyTrigger`` reads them through ``getattr``.
+# ``deaf_tap_suspected()``; ``HotkeyTrigger`` reads the first two through ``getattr`` and the
+# backend's own ``report_if_deaf`` uses the third.
 # Whatever it exposes must never claim a running listener, a missing permission
-# or a deaf tap BEFORE ``start``: the "Esc to cancel" pill and the shortcuts
-# status trust these answers.
+# or a deaf tap BEFORE ``start``: the "Esc to cancel" pill and the permission
+# watchers trust these answers.
 
 
 @pytest.mark.parametrize("factory", _backend_factories())
@@ -95,7 +96,6 @@ def test_the_trigger_reads_a_backend_without_probes_as_unknown(factory):
     has_probe = callable(getattr(backend, "is_listening", None))
     assert trigger.listening() is (False if has_probe else None)
     assert trigger.armed is False
-    assert trigger.deaf_tap_suspected() is False
 
 
 def test_only_the_macos_and_the_noop_backends_have_a_listener_probe():

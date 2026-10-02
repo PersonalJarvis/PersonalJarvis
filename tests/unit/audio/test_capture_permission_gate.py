@@ -573,7 +573,7 @@ async def test_five_seconds_of_zeros_while_granted_reports_once_and_keeps_the_st
     (event,) = default_bus_events
     assert event.permissions == ("microphone",)
     # Background even for a user-started capture: the OS says granted, so this is
-    # more likely a muted input than a denial and must not raise the floating card.
+    # more likely a muted input than a denial and must not raise a toast.
     assert event.feature == "voice" and event.reason == "denied" and event.origin == "background"
     assert "denied or muted" in event.detail
 

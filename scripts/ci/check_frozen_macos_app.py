@@ -24,6 +24,11 @@ It also asserts the privacy-permission declarations of the bundle:
   ``jarvis/core/macos_privacy_strings.py`` is in ``Info.plist`` with exactly that
   text, and the keys that table lists as removed (camera, speech recognition,
   system administration) are not;
+* the bundle is localised for German and Spanish: ``Info.plist`` declares
+  ``CFBundleLocalizations`` and ``CFBundleDevelopmentRegion``, and
+  ``Contents/Resources/<lang>.lproj/InfoPlist.strings`` exists for each language
+  with exactly the text of that table (``packaging/macos/add_localizations.py``
+  writes them before signing; a file missing here means the build step did not run);
 * on a SIGNED build (a certificate identity, i.e. the Developer ID path of
   ``packaging/macos/build.sh``), ``codesign -d --entitlements :-`` must report
   every entitlement of ``packaging/macos/entitlements.plist`` and none of the
@@ -97,6 +102,7 @@ def check_info_plist(info: dict, macos_dir: Path) -> list[str]:
     if not isinstance(executable, str) or not (macos_dir / executable).is_file():
         problems.append(f"CFBundleExecutable {executable!r} is not in Contents/MacOS")
     problems += check_usage_strings(info)
+    problems += check_localization_keys(info)
     return problems
 
 
@@ -136,6 +142,46 @@ def check_usage_strings(info: Mapping[str, object]) -> list[str]:
             problems.append(
                 f"{key} is in Info.plist but Jarvis has no caller for that permission: "
                 "remove it from jarvis.spec (least privilege)"
+            )
+    return problems
+
+
+def check_localization_keys(info: Mapping[str, object]) -> list[str]:
+    """What is wrong with the localisation declarations of ``Info.plist`` (empty = fine)."""
+    expected = macos_privacy_strings.localization_plist_keys()
+    problems: list[str] = []
+    for key, value in expected.items():
+        if info.get(key) != value:
+            problems.append(
+                f"{key} is {info.get(key)!r}, expected {value!r}: the bundle declares no "
+                "German/Spanish localisation (jarvis.spec must spread "
+                "localization_plist_keys() into its Info.plist)"
+            )
+    return problems
+
+
+def check_localization_files(resources_dir: Path) -> list[str]:
+    """Which ``<lang>.lproj/InfoPlist.strings`` are missing or differ from the table."""
+    problems: list[str] = []
+    for language in macos_privacy_strings.LOCALIZED_LANGUAGES:
+        target = resources_dir / f"{language}.lproj" / "InfoPlist.strings"
+        if not target.is_file():
+            problems.append(
+                f"{language}.lproj/InfoPlist.strings is missing from Contents/Resources: "
+                "macOS would show the English permission text only (build.sh runs "
+                "packaging/macos/add_localizations.py before signing)"
+            )
+            continue
+        try:
+            text = target.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            problems.append(f"{language}.lproj/InfoPlist.strings is not valid UTF-8")
+            continue
+        if text != macos_privacy_strings.info_plist_strings_text(language):
+            problems.append(
+                f"{language}.lproj/InfoPlist.strings differs from "
+                "jarvis/core/macos_privacy_strings.py: it was not written from the "
+                "single usage-string table"
             )
     return problems
 
@@ -287,6 +333,7 @@ def check_app(
         info = plistlib.load(stream)
     macos_dir = contents / "MacOS"
     problems = check_info_plist(info, macos_dir)
+    problems += check_localization_files(contents / "Resources")
     executable = info.get("CFBundleExecutable")
     if isinstance(executable, str) and (macos_dir / executable).is_file():
         problems += check_frozen_modules(read(macos_dir / executable))

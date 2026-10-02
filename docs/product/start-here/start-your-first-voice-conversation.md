@@ -8,7 +8,7 @@ order: 6
 diataxis: tutorial
 status: active
 owner: maintainers
-last_reviewed: 2026-07-30
+last_reviewed: 2026-10-02
 phase: "-"
 audience: end-user
 tags: [voice, microphone, wake-word, keyboard-shortcut, realtime, pipeline, dictation, tutorial]
@@ -34,8 +34,8 @@ text without asking the Brain or speaking a reply.
   warming up.
 - Connect a microphone and speaker or headset, then check both under
   **Settings > Audio devices**.
-- On macOS, allow **Microphone** access. The Call shortcut can also require
-  Input Monitoring access. Review
+- On macOS, allow **Microphone** access. The Call shortcut also requires
+  Input Monitoring access, which macOS asks for when you save a shortcut. Review
   [Permissions](permissions) if the app reports that access is missing.
 - Under **API Keys & Providers**, connect only what your voice engine needs:
   one compatible live provider for Realtime, or usable Voice Input, Brain,

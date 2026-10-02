@@ -52,8 +52,9 @@ class HotkeyBackend(Protocol):
     introspection hook (true once a BOUND chord fired; not a liveness signal).
     A backend may also expose optional probes the trigger reads through
     ``getattr``: ``is_listening()``, ``waiting_for_permission`` (the macOS tap
-    declined to start for want of Input Monitoring) and
-    ``deaf_tap_suspected()`` (a raw-callback counter, see ``quartz.py``).
+    declined to start for want of Input Monitoring) and ``report_if_deaf()``
+    (the liveness pass the trigger gives a worker thread; it is built on the
+    backend's own ``deaf_tap_suspected()`` raw-callback counter, see ``quartz.py``).
     """
 
     def register(self, bindings: list[HotkeyBinding], on_event: OnEvent | None = None) -> None:

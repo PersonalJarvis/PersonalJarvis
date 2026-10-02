@@ -62,7 +62,7 @@ _screen_recording_warned = False
 def warn_if_screen_recording_denied() -> bool:
     """Read the Screen Recording state now; log once per blocked-state episode.
 
-    Silent: it never asks macOS and never opens a permission card, so a helper, a
+    Silent: it never asks macOS and never raises a permission toast, so a helper, a
     status probe or a per-frame fast path may call it freely. The native result is
     deliberately not held beyond the permission service's sub-second cache: macOS
     can revoke a TCC grant while Jarvis is running. The boolean flag suppresses
@@ -524,7 +524,7 @@ class ScreenshotSource:
 
         # The vision source is a background observer, never a gesture: a blank
         # frame the state cannot explain refuses honestly and records a
-        # background-origin episode (inline status, no card, no native request).
+        # background-origin episode (status snapshot only, no toast, no native request).
         from jarvis.platform import screen_access  # noqa: PLC0415
 
         screen_access.verify_frame_is_real(

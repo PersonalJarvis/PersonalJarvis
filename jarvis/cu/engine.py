@@ -458,7 +458,7 @@ def _blocked_before_dispatch() -> str | None:
     state = read(PermissionId.SCREEN_RECORDING)
     if state not in (PermissionState.GRANTED, PermissionState.NOT_REQUIRED):
         # Record a background episode (it never asks and never raises) so the
-        # grant is noticed and the UI has an inline status for the Retry.
+        # grant is noticed and the status snapshot says why the Retry fails.
         try:
             gate.ensure(
                 PermissionId.SCREEN_RECORDING,

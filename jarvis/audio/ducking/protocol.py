@@ -24,7 +24,7 @@ class AudioDucker(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class PlayerPermission:
-    """The permission answer for ONE media player, as a route or an inline note shows it.
+    """The permission answer for ONE media player, as a route or a status snapshot shows it.
 
     ``outcome`` and ``reason`` carry the ``PermissionOutcome`` / ``PermissionNeeded``
     vocabulary of ``jarvis.platform.permission_service`` verbatim; ``detail`` is its

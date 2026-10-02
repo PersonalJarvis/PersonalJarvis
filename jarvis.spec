@@ -467,5 +467,10 @@ if sys.platform == "darwin":
             # asserted on the built app (scripts/ci/check_frozen_macos_app.py).
             # Add or reword a string THERE, never here.
             **_macos_privacy_strings().usage_descriptions(),
+            # German and Spanish usage strings: the languages are declared here,
+            # the <lang>.lproj/InfoPlist.strings files themselves are written
+            # into the finished .app by packaging/macos/build.sh (before signing,
+            # because they are part of the seal) from the same table.
+            **_macos_privacy_strings().localization_plist_keys(),
         },
     )

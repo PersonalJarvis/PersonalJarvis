@@ -5,6 +5,9 @@ physical Mac**. The behaviour is proven against fake frameworks and Linux gates;
 macOS runners have run the .dmg packaging probe and the hot-key spike (a macOS lane
 step list that also covers the permission tests was extended later and has not been
 run yet). See "Verification status".
+**Amended 2026-10-02:** the custom permission UI of this change (card, inline notes, Settings >
+Privacy page) was deleted and replaced by one toast; see "Amendment: the UI is reduced to a toast"
+at the end. The rule, the service and the events are unchanged.
 **Date:** 2026-10-02
 **Reference:** AP-35 (`AGENTS.md`); `docs/macos-permissions.md` (full design, evidence,
 risk register and the manual Mac checklist); BUG-225 (`docs/BUGS.md`); supersedes
@@ -46,8 +49,9 @@ banner, a wizard, a readiness gate or refusing to let the OS show its own dialog
 **Ask when needed.** A feature asks the operating system at the moment the user first
 uses it or switches it on, from a user gesture, through one module,
 `jarvis/platform/permission_service.py`. macOS shows its own dialog. A denial degrades
-that one feature honestly, with one click to the right System Settings pane. Nothing
-is asked at launch, nothing nags, and Settings > Privacy is a passive page.
+that one feature honestly (originally with a card and a passive Settings > Privacy page; since
+the amendment below, with one short toast and one action). Nothing is asked at launch and
+nothing nags.
 
 This is rule AP-35. Its nine principles are binding:
 
@@ -66,17 +70,21 @@ This is rule AP-35. Its nine principles are binding:
    `IOHIDRequestAccess`, and the tap is created only after the preflight is true.
 4. **Denied is a stable state, not an error to retry.** Degrade the one feature, say
    why where the user is, offer one click to the right pane, stop. No repeated
-   prompting, no polling banner. `tccutil reset` stays an explicit "Ask again".
+   prompting, no polling banner. `tccutil reset` stays an explicit way to ask again
+   (the in-app "Ask again" button is gone since the UI reset; the way is now
+   `jarvis permissions reset <permission>`).
 5. **Grants are detected by silent probing owned by the backend** and applied in
    process. A restart is only a hint, never forced.
 6. **Identity decides who may reset and whether we may auto-ask, not whether we may
    act.** We act on whatever grant exists. Native requests are made only from an
-   installed app bundle, or after an explicit confirmation that names the grantee.
+   installed app bundle, or after an explicit confirmation (since the UI reset: one click on a toast that
+   says the app that started Jarvis receives the grant).
    Reset runs only from the installed app's own bundle id.
 7. **Opt-in features own their permission.** A feature the user has not switched on
    never touches its permission (wake word, mute music, computer use, global shortcuts).
 8. **Honest degradation, always.** Every refusal carries a stable reason and a full
-   English sentence; the UI renders one card with an action.
+   English sentence; the app shows one toast with at most one action, only for a
+   user-started use that failed (amended; this originally read "one card").
 9. **An AI agent never answers a system dialog.** Agent-facing text is prohibitive; the
    computer-use engine pauses while a macOS consent window is frontmost.
 
@@ -185,7 +193,7 @@ rows TCC-1 to TCC-7) is rewritten to this behaviour. Windows and Linux are uncha
   Only the evidence tool ships (`macos-hotkey-spike.yml`, dispatch only; the
 temporary branch push trigger of commit `59749f859` was reverted in `945fe7949`).
 - **Per-turn computer-use permission cards.** Rejected for the first version: one
-  floating card plus the mission's own `blocked_permission` ending (the spoken or
+  floating card (now one toast) plus the mission's own `blocked_permission` ending (the spoken or
   written sentence; no separate deck journal line was built, and nothing resumes the
   mission after a grant: the person asks again) is enough, and a card per agent
   turn invites the model or the user to treat a system dialog as part of the task
@@ -219,10 +227,102 @@ temporary branch push trigger of commit `59749f859` was reverted in `945fe7949`)
   (`report_failed_use(AUTOMATION, target=<player>, reason="needs_settings",
   origin="background")`), which opens ONE background `needs_settings` episode that names
   the player. It is not a restart hint (Apple Events are checked per send), never asks,
-  never raises the floating card, and a probe that reads granted never closes it; only a
+  never raises a toast, and a probe that reads granted never closes it; only a
   later send that lands (`report_use_ok`), `note_reset` or the ten minute TTL does. Its
   effect on a real Mac is unverified (Apple documents `-1743` only as an error code).
   Accessibility input still has no such path (not implemented).
 - **Sign-off.** Run section 7 of `docs/macos-permissions.md` on an Apple Silicon and an
   Intel Mac, on a `.dmg` and a managed install, and record the results before any row
   is called verified.
+
+## Amendment: the UI is reduced to a toast (2026-10-02)
+
+### Context
+
+The just-in-time service worked, but the user judged the interface built around it as
+not fit for the product: a floating permission card, five kinds of inline note, a Shortcuts status note
+and tip, a dictation popover, an "Enable global shortcuts" button on four pages and a
+Settings > Privacy page, about 4,200 source lines and 5,500 test lines and 184 translated
+strings per language to say again what macOS already says. macOS shows its own dialog the
+moment a feature first needs a permission, and Apple's HIG asks apps to wait for that
+moment and to avoid pre-alerts. Where a permission has to be accepted before a feature can
+work, "then it has to be that way", but nothing of ours should dress it up. What macOS does
+not do is say anything after a denial (it never asks twice) or when a granted permission
+still fails; that silence is the only gap left.
+
+### Decision
+
+1. **Nothing of ours around Apple's dialog.** No card, banner, wizard, inline note, status
+   note, tip, popover or Settings page for permissions. The deleted frontend pieces,
+   their tests, the Python parity tests that read their TypeScript twins, the
+   `shortcuts_status` field of `GET /api/settings/keybinds` with
+   `jarvis/trigger/shortcuts_status.py`, and about 170 of the 184 permission strings per
+   language are removed. The service, its episodes and watcher, the routes (`status`, `{id}`,
+   `request`, `open-settings`, `reset`), snapshot v2, the events, the CLI, the wake-loop resume,
+   the hotkey re-arm and the boot rule stay.
+2. **One toast, one action.** When a user-started use failed because a permission is off
+   (`PermissionNeeded`, `origin="user"`, `phase="blocked"`), the app shows ONE short localized
+   sentence (en, de, es; no pane names) in its existing toast (extended by an optional action and
+   TTL), in the owner window only (the embedded desktop window on macOS), once per episode and
+   again on the person's next try: the service re-announces a still-open episode when a USER
+   gesture lands on it (at most once per 10 s), and the window forgets an episode as soon as its
+   toast is gone. A toast raised while the window was hidden is not queued. The
+   action is **Open System Settings**; **Ask macOS now** when macOS can still ask or the app runs
+   outside the installed bundle (the one click is the confirmation; the sentence says generically
+   that the app that started Jarvis receives the access, it names no app); **Quit and reopen**
+   for a granted permission that does not work. A background origin never toasts, except one
+   toast per app session for a denied microphone for the wake word. The native bar text and the
+   spoken computer-use readbacks are unchanged.
+3. **Input Monitoring is asked when a shortcut is saved.** A global shortcut is a background
+   listener, so nothing at the moment of use can carry a dialog. `PUT /api/settings/keybinds` asks
+   once after the save (macOS only, only while the key tap is not listening, never for a clear or
+   for a re-save of the combo already in force, `wait_s=0`, never failing the save; any caller
+   that passes the route's auth counts as the gesture, like the wake-word switch), and the onboarding voice step's "Skip, I'll use the Call
+   shortcut" click asks once. Nothing at launch.
+4. **Reset is a local command.** `jarvis permissions reset <permission>` runs `tccutil reset`
+   for the installed app's own bundle id (both ids), macOS only, behind `--yes`. It does not use
+   the HTTP route, which keeps refusing scripts (principle 4 and the prompt-loop argument stand).
+5. **The Info.plist strings are neutral and localized.** The Apple Events string names no single
+   app, the folder strings are short, and German and Spanish `InfoPlist.strings` plus
+   `CFBundleLocalizations` ship in both the `.dmg` build (written before signing) and the
+   managed bundle. The bundle format version is not bumped.
+
+AP-35 and the nine principles stay true as written; principle 8's UI half is amended above.
+
+### Consequences
+
+- The permission surface of the app is one toast. Apple's dialog stays the place a person
+  decides; ours only explains a silent failure.
+- The toast is web-styled, not an Apple alert, and invisible while the Jarvis window is hidden
+  (the native bar and the spoken readbacks cover dictation and computer use; a deaf shortcut
+  tap has no other surface). Its look in the real web view is unverified.
+- The `?activated=1` refocus hint of the GET routes has no caller any more; a PROMPT-ONCE episode
+  turns `blocked` on its timer only. The parameter stays with the routes this round.
+- A person with a stuck "denied" answer has no button for it: the way back is the switch in
+  System Settings or the CLI command, documented in the user guides.
+- The deleted code leaves no dangling reference (config fields, i18n keys, CI allowlists, docs
+  manifest were checked).
+
+### Alternatives considered
+
+- **Keep a passive Settings > Privacy page.** Rejected: it duplicates System Settings, needs
+  per-row copy in three languages and a refresh machine, and was part of what the user rejected.
+- **An osascript or AppKit alert instead of a toast.** Rejected for now: in-process `NSAlert` is
+  app-modal and a wrong thread aborts the process; an osascript dialog can steal focus from the
+  app being dictated into, carries a generic icon, and needs its own strings in the backend. It
+  stays the fallback if the toast look is rejected on a real Mac.
+- **A macOS notification.** Rejected: it needs a permission of its own, and Apple's HIG says to
+  use an alert, not a notification, for errors.
+- **An up-front permissions step.** Rejected again for the reasons above; where a permission has
+  to be accepted before a feature works, it is asked when that feature is switched on or saved.
+
+### Verification status of the amendment
+
+Logic, parity and wiring were run against fakes and on Linux (the toast planner and its
+event parity, the keybinds ask against `FakeTCC` and `FakePermissionService`, the reset command
+with a recording runner, `FakeTCC` and a fake executable, the Info.plist and `.lproj` content and the
+frozen-app probe on a synthesized bundle, and the build script's dry run). **Unverified, because
+nobody ran it on a physical Mac:** the toast's look in the real web view, that "Open System
+Settings" lands on the right pane, that macOS shows the localized usage strings, that a UTF-8
+`.strings` file is accepted, the real `tccutil` behaviour, and every Apple dialog. The checklist
+rows are in `docs/macos-permissions.md` 7.2 and 7.3.

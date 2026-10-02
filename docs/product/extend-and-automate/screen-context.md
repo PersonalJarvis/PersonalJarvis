@@ -24,7 +24,8 @@ name; this guide says “your assistant” so it fits every chosen name.
 - Connect a provider that can inspect images.
 - On macOS, nothing needs setting up first: the first time you ask your
   assistant to look at the screen, macOS asks for **Screen Recording**.
-  **Settings > Privacy** shows the current state and where to change it.
+  If you say no, Jarvis shows one short message with a button that opens the
+  right System Settings pane.
 - Move private information away or add a privacy rule before testing. Redaction
   cannot recognize every secret in arbitrary pixels.
 
@@ -119,7 +120,7 @@ Accessibility the image still works and the text is simply left out.
 | Related feature | Relationship to Screen Context |
 |---|---|
 | [Computer Use](computer-use) | Screen Context reads once without action tools. Computer Use performs desktop actions separately. |
-| [Permissions](permissions) | Explains when macOS asks for Screen Recording and Accessibility access and shows their state under **Settings > Privacy**; Screen Context checks the current state on every capture and asks only for a capture you started. |
+| [Permissions](permissions) | Explains when macOS asks for Screen Recording and Accessibility access and how to start over; Screen Context checks the current state on every capture and asks only for a capture you started. |
 | [Providers and API Keys](providers-and-api-keys) | A vision-capable provider interprets the filtered image. |
 | [CLI Reference](cli-reference) | The same authenticated local API is available through the `screen-context` group: check readiness, classify wording without capture, request one capture, consume or discard it, and manage settings. |
 
@@ -141,7 +142,7 @@ rules, the announcement, single use, and expiry.
 |---|---|---|
 | Your assistant asks whether it should look | The wording was ambiguous | Confirm on the same conversation, or repeat with “screen” or “this window” |
 | The wrong monitor was captured | The pointer was on another monitor when the request triggered | Place the pointer on the intended monitor and ask again, or name the focused window |
-| Capture is unavailable on macOS | Screen Recording was declined or revoked | Use **Open System Settings** on the card, or open **Settings > Privacy** for the path under **Privacy & Security**, then reopen the app if asked |
+| Capture is unavailable on macOS | Screen Recording was declined or revoked | Use **Open System Settings** on the message Jarvis shows, or open **Privacy & Security** in System Settings yourself, then reopen the app if asked |
 | The image works but visible text is missing | Accessibility permission, AT-SPI, or usable accessibility nodes are absent | Fix that platform support; optionally install and enable OCR |
 | A privacy rule blocks a safe window | A denylist fragment or custom pattern is too broad | Narrow the entry, save, and retry only after checking what it matches |
 | A capture disappears before API consumption | It was already consumed, discarded, or its retention time expired | Make a fresh explicit request; single-use captures cannot be recovered |

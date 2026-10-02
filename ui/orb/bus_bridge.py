@@ -134,7 +134,7 @@ DICTATION_REFUSAL_FALLBACK_TEXT = "Dictation could not start."
 # nearly always the microphone permission. The pipeline's English sentence says
 # "check the microphone permission"; the three tables below say what to do NEXT in
 # the interface language (answer the dialog, flip the switch, open the window),
-# because on this surface the sentence is all the user gets (the permission card
+# because on this surface the sentence is all the user gets (the permission toast
 # lives in the web window). macOS only: the sentences name System Settings, and the
 # same reason on another OS can also mean "the desktop window is not visible".
 # Keys are the supported UI languages. This first table is for a microphone that

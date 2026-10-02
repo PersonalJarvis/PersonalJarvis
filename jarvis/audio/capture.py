@@ -1298,7 +1298,7 @@ class MicrophoneCapture:
 
         ``check`` is silent and cheap. A grant that is no longer there closes
         the native stream, publishes the permission episode through the service
-        (``PermissionNeeded`` with the real reason, an episode for the card when
+        (``PermissionNeeded`` with the real reason, an episode that may toast when
         a user started this capture) and makes ``stream()`` raise
         ``MicrophoneAccessError`` carrying the ``EnsureResult``.
         """
@@ -1398,7 +1398,7 @@ class MicrophoneCapture:
                     phase="blocked",
                     # Background on purpose: the OS says granted, so this is more
                     # likely a muted or noise-gated input than a denial, and a
-                    # floating "Open Settings" card would be wrong. The notice has
+                    # an "Open System Settings" toast would be wrong. The notice has
                     # no service episode (so no close on the first audible frame):
                     # a closable "denied or muted" episode is a service API request.
                     origin="background",
