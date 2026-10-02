@@ -37,13 +37,21 @@ still set it as an env var / credential-manager secret or edit
    whose plugins you want).
 3. **APIs & Services → OAuth consent screen** → User type **External** → Create.
    Fill app name, your support email, and developer contact email → Save.
-4. **Scopes** → add the ones you need: `.../auth/gmail.readonly`,
-   `.../auth/gmail.send`, `.../auth/drive.file`, `.../auth/calendar`,
-   `.../auth/youtube` (YouTube Music).
-   (Drive's `drive.file` is non-sensitive; the Gmail scopes are
-   sensitive/restricted; the full `calendar` scope is sensitive — it lets Jarvis
-   read events across ALL your calendars, not just the primary one, so a lesson
-   on a secondary "School" calendar isn't missed. See "Keeping it connected".)
+4. **Scopes** → add the ones the plugins you want request (these are the exact
+   scopes in the shipped catalog):
+
+   | Plugin | Scope | Google class |
+   |---|---|---|
+   | Gmail | `https://mail.google.com/` | restricted |
+   | Google Drive | `.../auth/drive` | restricted |
+   | Google Calendar | `.../auth/calendar` | sensitive |
+   | YouTube Music | `.../auth/youtube` | sensitive |
+   | YouTube Studio | `.../auth/youtube.force-ssl`, `.../auth/youtube.upload`, `.../auth/yt-analytics.readonly` | sensitive |
+   | Google Cloud | `.../auth/cloud-platform.read-only`, `.../auth/bigquery` | sensitive |
+
+   The full `calendar` scope lets Jarvis read events across ALL your calendars,
+   not just the primary one, so a lesson on a secondary "School" calendar isn't
+   missed. See "Keeping it connected" for what the classes mean.
 5. **Test users** → add your own Google address. In Testing mode only listed
    users can authorize — an unlisted account ends Connect on Google's
    **"Access blocked: <app> has not completed the Google verification process
@@ -55,15 +63,17 @@ still set it as an env var / credential-manager secret or edit
    The Desktop client's "secret" is usually not needed (PKCE protects the flow),
    but if Google rejects the token exchange/refresh with `invalid_client` you can
    also supply it (see below) — it is optional.
-6b. **Authorized redirect URIs** → add ALL of these (one client serves six
-    plugins, each with its own loopback port — a missing entry ends the
-    second plugin's Connect with `redirect_uri_mismatch`):
+6b. **Redirect addresses.** A **Desktop app** client has no redirect URI
+    setting: Google accepts any `http://127.0.0.1:<port>` loopback address for
+    it, so there is nothing to register. Only if you created a **Web
+    application** client instead must you list exactly the addresses Jarvis
+    listens on (a missing entry ends Connect with `redirect_uri_mismatch`):
 
     ```
-    http://127.0.0.1:3120/oauth/callback   (Drive)
-    http://127.0.0.1:3121/oauth/callback   (Gmail)
-    http://127.0.0.1:3122/oauth/callback   (Calendar)
-    http://127.0.0.1:3123/oauth/callback   (YouTube Music)
+    http://127.0.0.1:3120                  (Drive)
+    http://127.0.0.1:3121                  (Gmail)
+    http://127.0.0.1:3122                  (Calendar)
+    http://127.0.0.1:3123                  (YouTube Music)
     http://127.0.0.1:43891/oauth/callback  (Google Cloud, YouTube Studio)
     ```
 7. Give the Client ID to Jarvis. **Preferred: store it as a secret** so it
@@ -137,21 +147,47 @@ used only inside its organization can instead use an **Internal** audience. Then
 reconnect each Google plugin once so Google issues a grant under the new audience
 configuration.
 
-- **Drive `drive.file`** is non-sensitive, but it is still outside the basic
-  identity-only exception to Testing's seven-day lifetime.
-- **Calendar `calendar`** and **Gmail `gmail.send`** are sensitive scopes.
-- **Gmail `gmail.readonly`** is restricted. Public distribution can require
-  Google's restricted-scope verification, and systems that transmit or store
-  restricted data through a third-party server can require a security assessment.
-  Personal use by a small number of known users may qualify for Google's
-  verification exception, subject to an unverified-app warning and user cap.
+- **Calendar, YouTube and Google Cloud scopes** are sensitive.
+- **Gmail `https://mail.google.com/`** and **Drive `drive`** are restricted.
+  Public distribution requires Google's verification, and restricted scopes
+  can additionally require a security assessment. Personal use by a small
+  number of known users may qualify for Google's verification exception: an
+  **unverified** production app still works, but every consent shows the
+  "Google hasn't verified this app" warning and the app has a lifetime cap of
+  100 users. Verification is a Google Cloud Console process; nothing in Jarvis
+  can submit or complete it.
+
+**How to tell whether a grant is time-limited.** When Google caps a grant
+(Testing status, or access the user granted for a limited time), its token
+response carries `refresh_token_expires_in`. Jarvis records the end in the
+connection (`refresh_expires_at`, served by `GET /api/marketplace/plugins`) and
+logs at connect time: `the provider limits this sign-in to 7.0 days`. A
+production grant carries no such field and no such log line.
 
 Production status removes the scheduled seven-day Testing expiry; it does not
-make a grant irrevocable. Google can still require authorization again after a
-user revokes access, an account or administrator changes policy, credentials are
-rotated, or another provider security condition invalidates the refresh token.
+make a grant irrevocable. Google also ends a refresh token when:
+
+- the user removes the app under their Google Account's third-party access,
+  or an administrator's policy does;
+- **any** token of the same Google Cloud project is revoked. Google's
+  revocation is project-wide: it ends every grant of every client in that
+  project. Jarvis therefore only revokes at Google when the LAST connected
+  Google plugin is disconnected (the disconnect response then says
+  `"revocation": "shared"` for the earlier ones). Another tool that uses an
+  OAuth client from the same project (for example a command-line Google
+  client) ends all Jarvis grants when it logs out or revokes its token — give
+  such tools their own project;
+- the password changes and the grant contains Gmail scopes;
+- the account holds more than 100 live refresh tokens for the same client
+  (every Connect or Reconnect issues one; Google drops the oldest silently);
+- a refresh token goes unused for six months (Jarvis refreshes every
+  connection at least every 12 hours, so this does not happen while Jarvis
+  runs).
+
 Jarvis handles ordinary access-token expiry automatically and only asks for
-reconnection when the refresh grant itself is no longer usable.
+reconnection when the refresh grant itself is no longer usable. A deleted or
+disabled OAuth client is reported as "The provider no longer accepts this
+app's OAuth client" instead of being retried forever.
 
 ---
 
