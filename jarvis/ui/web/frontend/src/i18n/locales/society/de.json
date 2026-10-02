@@ -53,7 +53,7 @@
       "chrome": "Mein vorhandenes Chrome-Profil",
       "managed": "Separates Browser-Profil",
       "chrome_hint": "Agents verwenden sichtbare Tabs in deinem ausgewählten Chrome-Profil mit dessen bestehenden Logins. Verbinde es einmal über die Erweiterung.",
-      "managed_hint": "Melde dich im Agent-Browser manuell auf Websites an. Anbieter wie Google können automatisierte Browser ablehnen; nutze für diese Konten ein verbundenes normales Chrome-Profil.",
+      "managed_hint": "Mit Anmelden im Agent-Browser öffnest du normalen Chrome in diesem Fenster. Danach übergibst du dasselbe gespeicherte Profil wieder an den Agenten.",
       "create": "Profil erstellen",
       "close": "Browser-Profile schließen",
       "empty": "Noch keine geteilten Profile eingerichtet. Füge ein Profil hinzu, um dein Chrome zu verbinden oder einen anderen Account zu teilen.",
@@ -65,7 +65,13 @@
       "google_signin_rejected": "Google hat diese Anmeldung abgelehnt",
       "google_signin_recovery": "Google kann die Anmeldung in einem automatisierten Browser ablehnen. Melde dich zuerst selbst im normalen Chrome an. Verbinde danach dieses Chrome-Profil hier und wähle es ausdrücklich für diesen Agenten aus.",
       "connect_supported_chrome": "Normalen Chrome verbinden",
-      "google_signin_help": "Google-Hilfe zur Anmeldung"
+      "google_signin_help": "Google-Hilfe zur Anmeldung",
+      "inline_login": "Anmelden",
+      "inline_login_active": "Anmeldung — du steuerst Chrome",
+      "inline_login_finish": "An Agent übergeben",
+      "inline_login_hint": "Melde dich hier in Chrome an. Wenn du fertig bist, übergib dieses Profil wieder an den Agenten. Dein Browserprofil wird auf diesem Computer gespeichert.",
+      "inline_login_recovery": "Mit Anmelden öffnest du dieses Profil in normalem Chrome innerhalb dieses Fensters. Während der Anmeldung ist die Agentensteuerung getrennt.",
+      "inline_login_unavailable": "Diese Sitzung kann die Anmeldung noch nicht öffnen. Dafür sind installiertes Google Chrome und eine aktuelle Windows-Browsersitzung nötig."
     },
     "profile_card": {
       "user_book": "Dein Profil & Präferenzen",

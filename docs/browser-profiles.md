@@ -49,11 +49,23 @@ unavailable until the user chooses a replacement.
 
 Google may reject a browser controlled by automation. A Google rejection page
 in the managed browser is not evidence that the user's password is wrong.
-Do not rely on Chrome profile/sync sign-in in this automated window to recover.
-Sign in manually in regular Chrome first, then connect that profile with
-the Jarvis extension and explicitly assign it to the intended agent. Jarvis now
-recognizes Google's rejection URL and opens that recovery flow from the preview.
-No profiles are created, reassigned, or copied just by opening recovery.
+On Windows, choose **Sign in** in the managed browser panel. Jarvis closes the
+automation connection and opens installed regular Google Chrome with the same
+owned profile inside the existing preview. Mouse and keyboard input come only
+from the person controlling that panel. No extension installation is needed for
+this mode. Complete the login in that window, then choose **Hand back to agent**.
+
+The handover waits for Chrome to close cleanly before reopening the same profile
+for agent use. Both phases use the same installed Chrome executable, whose
+identity is remembered for future launches. An older Chrome version is never
+allowed to downgrade the profile. Existing browser data is retained; no cookies
+are exported or copied and the person's ordinary Chrome profile is not opened.
+
+Starting sign-in cancels the current browser task. Losing the viewer or failing
+a transition leaves agent control paused until the person explicitly returns
+it. A locked desktop, missing installed Chrome, or unsupported platform does not
+silently switch to another browser. Ordinary **Take control** still pauses a task
+without replacing its browser; **Sign in** performs the disconnected transition.
 
 This does not promise that every service accepts automation after sign-in;
 service-side restrictions and session revocation still apply. Google's
@@ -73,7 +85,8 @@ Websites can expire or revoke sessions and require MFA again. The UI reports
 profile availability and connection state, not a cookie-file-based assertion
 that a website is logged in.
 
-Take manual control to sign in directly in Chrome. During manual Chrome login,
+For a profile connected through the extension, take manual control to sign in
+directly in Chrome. During that connector's manual login,
 the debugger is detached, captured previews are cleared, and model observations
 stop. Losing the Jarvis viewer does not return control to the agent. Reclaim
 control in the viewer and explicitly return it when finished.
@@ -99,7 +112,9 @@ is rechecked before dispatch. A disconnected operation is never replayed.
 
 Focused backend and extension tests use fakes; frontend tests exercise sharing,
 overrides, missing profiles, manual-login privacy and viewer reconnection. They
-do not establish real Chrome installation, real X posting, actual PC-reboot
-persistence, or desktop behavior on every operating system. Those acceptance
-checks require the extension installed in visible user Chrome and must not be
-replaced with hidden/headless browser launches.
+do not establish successful Google authentication, real X posting, actual
+PC-reboot persistence, or desktop behavior on every operating system. In-window
+login tests cover process arguments, Chrome identity/version checks, transition
+failures, frame generations and explicit handover without launching a browser.
+Real acceptance checks require the visible Jarvis browser or connected Chrome,
+as appropriate, and must not be replaced with hidden/headless browser launches.

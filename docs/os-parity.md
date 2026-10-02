@@ -1215,6 +1215,26 @@ passed all seven conversation contracts; physical macOS/Linux audio behavior
 is not inferred from these checks.
 
 
+## Managed browser sign-in (T2)
+
+The managed browser's explicit **Sign in** action uses installed regular Google
+Chrome on Windows with the existing Jarvis-owned persistent profile. It closes
+Playwright/CDP first, retains native window capture and person-controlled input,
+and restores agent automation only after explicit handover and clean Chrome
+shutdown. The selected Chrome executable remains pinned to that profile across
+restarts; missing binaries and profile downgrades fail closed.
+
+macOS and Linux keep their existing managed browser behavior. They do not expose
+this sign-in capability because the current native capture/input implementation
+is Windows-only. The module imports without Win32 dependencies on those systems;
+native libraries load only within Windows-specific calls. Headless boot does not
+launch Chrome. No background login or provider call is added.
+
+Focused tests cover the platform boundary, process arguments, executable/version
+checks, ownership, viewer loss, stale frames and failed transitions using fakes.
+Real provider sign-in and light/dark desktop acceptance remain separate checks;
+passing these tests does not prove that Google accepted an account login.
+
 ## Startup audio catch-up (T2)
 
 The existing WebRTC input worklet now repays startup audio delay with bounded

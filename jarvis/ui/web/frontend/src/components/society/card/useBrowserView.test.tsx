@@ -35,6 +35,65 @@ async function mount() {
   return hook;
 }
 
+test("inline login is capability gated and never buffers input across browser replacement", async () => {
+  class ReadyImage {
+    width = 1280; height = 800;
+    onload?: () => void;
+    set src(_value: string) { this.onload?.(); }
+  }
+  vi.stubGlobal("Image", ReadyImage);
+  const hook = await mount();
+  const canvas = document.createElement("canvas");
+  vi.spyOn(canvas, "getContext").mockReturnValue({ drawImage: vi.fn() } as unknown as CanvasRenderingContext2D);
+  Object.defineProperty(hook.result.current.canvas, "current", { value: canvas, writable: true });
+  expect(hook.result.current.state.loginAvailable).toBe(false);
+  act(() => Socket.current.onmessage?.({ data: JSON.stringify({ kind: "state", generation: "old",
+    manual: false, login_available: true, login_mode: false, tabs: [] }) }));
+  expect(hook.result.current.state.loginAvailable).toBe(true);
+  act(() => {
+    hook.result.current.control("takeover", { enabled: true, login: true });
+    Socket.current.onmessage?.({ data: JSON.stringify({ kind: "control", ok: true }) });
+    hook.result.current.control("text", { text: "must not reach another browser" });
+    Socket.current.onmessage?.({ data: JSON.stringify({ kind: "state", generation: "login",
+      manual: true, login_available: true, login_mode: true, tabs: [] }) });
+    Socket.current.onmessage?.({ data: JSON.stringify({ kind: "control", ok: true, manual: true, login_mode: true }) });
+  });
+  expect(hook.result.current.state.loginMode).toBe(true);
+  expect(hook.result.current.state.previewPaused).toBe(false);
+  expect(Socket.current.send.mock.calls.map(([value]) => JSON.parse(value))).toEqual([
+    { op: "takeover", args: { enabled: true, login: true } },
+  ]);
+  act(() => {
+    Socket.current.onmessage?.({ data: JSON.stringify({ kind: "frame", data: "fixture", generation: "login", sequence: 1, timestamp: Date.now() / 1000 }) });
+    hook.result.current.control("text", { text: "human input" });
+  });
+  expect(Socket.current.send).toHaveBeenLastCalledWith(JSON.stringify({ op: "text", args: { text: "human input", generation: "login" } }));
+});
+
+test("explicit handback blocks input until its acknowledgement", async () => {
+  const hook = await mount();
+  act(() => Socket.current.onmessage?.({ data: JSON.stringify({ kind: "control", ok: true, manual: true, login_mode: true }) }));
+  act(() => {
+    hook.result.current.control("takeover", { enabled: false, login: false });
+    hook.result.current.control("click", { x: 20, y: 30 });
+  });
+  expect(Socket.current.send.mock.calls.map(([value]) => JSON.parse(value))).toEqual([
+    { op: "takeover", args: { enabled: false, login: false } },
+  ]);
+});
+
+test("an early sign-in denial permits retry without reconnecting", async () => {
+  const hook = await mount();
+  act(() => hook.result.current.control("takeover", { enabled: true, login: true }));
+  act(() => Socket.current.onmessage?.({ data: JSON.stringify({
+    kind: "control", op: "takeover", ok: false, error: "Controlled by another viewer",
+  }) }));
+  expect(hook.result.current.state.controlPending).toBe(false);
+  act(() => hook.result.current.control("takeover", { enabled: true, login: true }));
+  expect(Socket.current.send).toHaveBeenCalledTimes(2);
+  expect(Socket.current.close).not.toHaveBeenCalled();
+});
+
 test("silent live connection becomes disconnected and pays the reconnect budget", async () => {
   const hook = await mount();
   expect(hook.result.current.state.connected).toBe(true);

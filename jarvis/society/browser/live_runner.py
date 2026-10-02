@@ -109,6 +109,11 @@ class Worker:
         self.cursor_on = False
         self.native_pointer_active = False
         self.cursor_jobs: set[asyncio.Task] = set()
+        self.transition_lock = asyncio.Lock()
+        self.start_args: dict[str, Any] = {}
+        self.login_mode = False
+        self.login_available = False
+        self.plain_chrome: Any = None
 
     async def rpc(self, kind: str, payload: dict) -> dict:
         key = uuid.uuid4().hex
@@ -121,6 +126,10 @@ class Worker:
             self.pending.pop(key, None)
 
     async def start(self, args: dict) -> dict:
+        from manual_chrome import (  # type: ignore[import-not-found]
+            find_installed_chrome,
+            pinned_chrome_executable,
+        )
         from native_window import NativeWindow, available  # type: ignore[import-not-found]
 
         native_enabled = available()
@@ -135,16 +144,24 @@ class Worker:
         await asyncio.to_thread(profile.mkdir, parents=True, exist_ok=True)
         self.workspace = Path(args["workspace"])
         self.workspace.mkdir(parents=True, exist_ok=True)
-        self.playwright = await async_playwright().start()
         cdp_url = args.get("cdp_url") or ""
         self.owns_context = not bool(cdp_url)
+        self.start_args = dict(args)
+        if self.owns_context:
+            pinned = await asyncio.to_thread(pinned_chrome_executable, profile)
+            if pinned:
+                self.start_args["executable"] = pinned
+        self.login_available = bool(
+            self.owns_context and native_enabled and await asyncio.to_thread(find_installed_chrome)
+        )
+        self.playwright = await async_playwright().start()
         if cdp_url:
             connection = await self.playwright.chromium.connect_over_cdp(cdp_url)
             self.context = connection.contexts[0]
         else:
             self.context = await self.launch_context(
                 str(profile),
-                executable_path=args["executable"],
+                executable_path=self.start_args["executable"],
                 headless=not native_enabled,
                 viewport={"width": 1280, "height": 800},
                 accept_downloads=True,
@@ -245,13 +262,161 @@ class Worker:
                 "<p>Ask your agent to open a website, or take control in Personal Jarvis.</p>"
                 "</main></body></html>"
             )
-        self.state_task = asyncio.create_task(self.watch_state())
-        self.stream = asyncio.create_task(self.watch())
+        self.start_monitors()
+        return self.status()
+
+    def status(self) -> dict:
         return {
             "generation": self.generation,
             "protocol": PROTOCOL_VERSION,
-            "full_window": bool(self.native),
+            "full_window": bool(self.native) or self.login_mode,
+            "extended_input": True,
+            "manual": self.manual,
+            "login_mode": self.login_mode,
+            "login_available": self.login_available,
         }
+
+    def start_monitors(self) -> None:
+        if not self.closed:
+            if self.state_task is None or self.state_task.done():
+                self.state_task = asyncio.create_task(self.watch_state())
+            if self.stream is None or self.stream.done():
+                self.stream = asyncio.create_task(self.watch())
+
+    async def stop_monitors(self) -> None:
+        tasks = [task for task in (self.stream, self.state_task) if task is not None]
+        tasks.extend(self.cursor_jobs)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        self.stream = self.state_task = None
+        self.cursor_jobs.clear()
+
+    async def stop_job(self) -> None:
+        if self.job and not self.job.done():
+            self.job.cancel()
+            _, pending = await asyncio.wait({self.job}, timeout=8)
+            if pending:
+                raise RuntimeError("The browser task is still stopping; login remains paused")
+
+    def reset_surface(self) -> None:
+        """A replacement process must never receive coordinates from old pixels."""
+        self.generation = uuid.uuid4().hex
+        self.sequence = 0
+        self.latest = None
+        self.target = ""
+        self.tabs = {}
+        self.page = None
+        self.dialog = None
+        self.native_frame_at = 0.0
+        self.native_replay = True
+        self.capture_fallback = False
+        self.window_observation = None
+        self.pointer = None
+        self.cursor_on = False
+        self.native_pointer_active = False
+
+    async def close_automation(self) -> None:
+        """Release all owners before a plain Chrome process opens this profile."""
+        if self.branding:
+            await self.branding
+            self.branding = None
+        if self.native:
+            await asyncio.to_thread(self.native.close)
+            self.native = None
+        if self.browser:
+            await self.browser.stop()
+            self.browser = None
+        if self.context and self.owns_context:
+            await self.context.close()
+            self.context = None
+        if self.playwright:
+            await self.playwright.stop()
+            self.playwright = None
+        self.cdp = None
+        self.browser_args = {}
+
+    async def transition_heartbeat(self) -> None:
+        while True:
+            emit("starting", **self.status())
+            await asyncio.sleep(1)
+
+    async def change_login_mode(self, enabled: bool) -> dict:
+        from manual_chrome import PlainChrome, select_chrome_executable
+
+        if (
+            enabled
+            and self.login_mode
+            and self.plain_chrome is not None
+            and self.native is not None
+            and not self.native.failed
+        ):
+            return self.status()
+        if enabled and not self.login_available:
+            raise RuntimeError("In-window sign-in requires installed Chrome and a Windows desktop")
+        self.manual = True
+        self.login_mode = True
+        self.agent_gate.clear()
+        heartbeat = asyncio.create_task(self.transition_heartbeat())
+        restarting_automation = False
+        try:
+            await self.stop_job()
+            await self.stop_monitors()
+            self.reset_surface()
+            emit("state", **self.status(), running=False, url="", target="", tabs=[])
+            if enabled:
+                if self.plain_chrome is not None:
+                    await self.plain_chrome.close()
+                    self.plain_chrome = None
+                    self.native = None
+                profile = Path(self.start_args["profile_dir"])
+                executable = await asyncio.to_thread(select_chrome_executable, profile)
+                if not executable:
+                    raise RuntimeError("Install Google Chrome to sign in inside Jarvis")
+                await self.close_automation()
+                self.start_args["executable"] = executable
+                self.plain_chrome = PlainChrome(
+                    profile,
+                    executable,
+                    # This standalone worker cannot import Jarvis. Older parents
+                    # omit the field; mirror process_utils' Windows constant.
+                    creationflags=int(
+                        self.start_args.get(
+                            "creationflags",
+                            0x08000000 if sys.platform == "win32" else 0,
+                        )
+                    ),
+                )
+                self.native = await self.plain_chrome.start()
+            else:
+                if self.plain_chrome is not None:
+                    await self.plain_chrome.close()
+                    self.plain_chrome = None
+                    self.native = None
+                # A failed earlier transition may still own automation handles.
+                await self.close_automation()
+                restarting_automation = True
+                await self.start(self.start_args)
+                self.login_mode = False
+                self.manual = False
+                self.agent_gate.set()
+            return self.status()
+        except BaseException:
+            if restarting_automation:
+                try:
+                    await self.close_automation()
+                except Exception:
+                    logging.getLogger(__name__).warning(
+                        "Failed browser restart remains paused until cleanup completes",
+                        exc_info=True,
+                    )
+            raise
+        finally:
+            heartbeat.cancel()
+            await asyncio.gather(heartbeat, return_exceptions=True)
+            # Failure deliberately keeps login/manual mode and the agent gate closed.
+            self.start_monitors()
+            emit("state", **self.status(), running=False, url="", target="", tabs=[])
 
     async def launch_context(self, profile: str, **options: Any) -> Any:
         """Chrome may release its profile mutex just after its parent exits."""
@@ -268,6 +433,8 @@ class Worker:
     async def ensure_browser(self) -> None:
         """Connect the agent engine on demand; idle pixels need only Chromium."""
         async with self.browser_lock:
+            if self.login_mode:
+                raise RuntimeError("Finish signing in before returning control to the agent")
             if self.browser is not None:
                 return
 
@@ -313,6 +480,8 @@ class Worker:
         task.add_done_callback(self.cursor_jobs.discard)
 
     async def _arm_frame(self, frame: Any) -> None:
+        if self.login_mode:
+            return
         from page_cursor import ARM_SOURCE, CURSOR_SCRIPT  # type: ignore[import-not-found]
 
         try:
@@ -327,6 +496,8 @@ class Worker:
             )
 
     async def show_page_cursor(self, armed: bool) -> None:
+        if self.login_mode or self.context is None:
+            return
         from page_cursor import arm_cursor  # type: ignore[import-not-found]
 
         try:
@@ -339,6 +510,8 @@ class Worker:
         emit("dialog", type=dialog.type, message=dialog.message[:500])
 
     async def focused(self, *, strict_native: bool = False) -> Any:
+        if self.login_mode:
+            raise RuntimeError("Page inspection is unavailable while signing in")
         self.tabs = {}
         for page in self.context.pages:
             if page.is_closed():
@@ -426,7 +599,7 @@ class Worker:
         while not self.closed:
             try:
                 if self.viewers:
-                    page = await self.focused()
+                    page = None if self.login_mode else await self.focused()
                     target = next((t for t, p in self.tabs.items() if p is page), "")
                     if self.native:
                         self.target = target
@@ -434,16 +607,15 @@ class Worker:
                         await self.switch_stream(page, target)
                     emit(
                         "state",
-                        generation=self.generation,
+                        **self.status(),
                         running=bool(self.job and not self.job.done()),
-                        manual=self.manual,
                         url=page.url if page else "",
                         target=target,
-                        tabs=[{"id": t, "url": p.url} for t, p in self.tabs.items()],
-                        full_window=bool(self.native),
-                        extended_input=True,
+                        tabs=[]
+                        if self.login_mode
+                        else [{"id": t, "url": p.url} for t, p in self.tabs.items()],
                     )
-                elif self.cdp:
+                elif self.cdp and not self.login_mode:
                     await self.cdp.send("Page.stopScreencast")
                     await self.cdp.detach()
                     self.cdp = None
@@ -452,7 +624,7 @@ class Worker:
                 raise
             except Exception as exc:
                 emit("warning", error=f"Browser stream: {type(exc).__name__}")
-                if self.native and self.native.failed:
+                if self.native and self.native.failed and not self.login_mode:
                     emit("fatal", error="The Chrome window closed or its capture stopped")
                     self.closed = True
                     return
@@ -476,7 +648,12 @@ class Worker:
                                 **native_frame,
                                 "target": self.target,
                             }
-                    if self.capture_fallback and self.page and not self.page.is_closed():
+                    if (
+                        not self.login_mode
+                        and self.capture_fallback
+                        and self.page
+                        and not self.page.is_closed()
+                    ):
                         captured_at = time.time()
                         blob = await self.page.screenshot(type="jpeg", quality=65)
                         self.latest = {
@@ -505,13 +682,20 @@ class Worker:
                 self.target = ""
                 await asyncio.sleep(1)
             if self.native and self.native.failed:
+                if self.login_mode:
+                    emit("warning", error="The sign-in window closed; return control to reopen it")
+                    return
                 emit("fatal", error="The Chrome window closed or its capture stopped")
                 self.closed = True
                 return
             await asyncio.sleep(1 / 15)
 
     async def run(self, args: dict) -> dict:
+        if self.login_mode or self.manual:
+            raise RuntimeError("Return browser control to the agent first")
         await self.ensure_browser()
+        if self.login_mode or self.manual:
+            raise RuntimeError("Return browser control to the agent first")
         self.step_idle.clear()
         previous_downloads = set(self.browser.downloaded_files)
         from browser_use import Agent, Tools  # type: ignore[import-not-found]
@@ -672,15 +856,40 @@ class Worker:
             self.step_idle.set()
 
     async def command(self, op: str, args: dict) -> dict:
+        # Cancellation must stay available while a transition waits for the job.
+        if op in {"run", "cancel", "shutdown"}:
+            return await self._command(op, args)
+        generation = self.generation
+        if op == "takeover":
+            self.takeover_generation += 1
+            args = {**args, "_takeover_generation": self.takeover_generation}
+            if args.get("enabled") and not args.get("login") and not self.login_mode:
+                # Ordinary pause remains supersedable by a release while an
+                # agent step finishes. Only the process handoff holds the lock.
+                self.agent_gate.clear()
+                if self.job and not self.job.done():
+                    await self.step_idle.wait()
+                if args["_takeover_generation"] != self.takeover_generation:
+                    return self.status()
+        async with self.transition_lock:
+            if op not in {"ensure", "subscribe", "takeover"}:
+                if generation != self.generation or (
+                    (self.login_available or "generation" in args)
+                    and args.get("generation") != self.generation
+                ):
+                    raise RuntimeError("The Chrome window changed; wait for a new frame")
+            return await self._command(op, args)
+
+    async def _command(self, op: str, args: dict) -> dict:
         if op == "ensure":
-            return (
-                await self.start(args) if self.context is None else {"generation": self.generation}
-            )
+            if self.login_mode or self.context is not None:
+                return self.status()
+            return await self.start(args)
         if op == "subscribe":
             self.viewers = bool(args.get("enabled"))
             if self.native:
                 self.native_replay = self.viewers
-            elif self.viewers and self.page and not self.page.is_closed():
+            elif not self.login_mode and self.viewers and self.page and not self.page.is_closed():
                 # A second viewer may join an unchanged page whose screencast
                 # has nothing new to emit. Give it current pixels immediately.
                 captured_at = time.time()
@@ -698,17 +907,20 @@ class Worker:
                 self.job.cancel()
             return {}
         if op == "takeover":
-            self.takeover_generation += 1
-            generation = self.takeover_generation
+            if self.login_mode and not args.get("enabled") and args.get("login") is not False:
+                # Subscriber loss and older parents release ordinary takeover
+                # with enabled=false. Only the person's explicit handback ends login.
+                return self.status()
+            if (args.get("enabled") and args.get("login") is True) or self.login_mode:
+                return await self.change_login_mode(bool(args.get("enabled")))
+            generation = args.get("_takeover_generation", self.takeover_generation)
             if args.get("enabled"):
                 self.agent_gate.clear()
-                if self.job and not self.job.done():
-                    await self.step_idle.wait()
                 if generation != self.takeover_generation:
-                    return {"manual": self.manual}
+                    return self.status()
                 await self.focused()
                 if generation != self.takeover_generation:
-                    return {"manual": self.manual}
+                    return self.status()
                 self.manual = True
                 if self.pointer:
                     self.pointer.clear()
@@ -728,9 +940,9 @@ class Worker:
                 self.agent_gate.set()
                 if self.cursor_on:
                     await self.show_page_cursor(not self.native_pointer_active)
-            return {"manual": self.manual}
+            return self.status()
         if op == "run":
-            if self.manual:
+            if self.manual or self.login_mode:
                 raise RuntimeError("Return browser control to the agent first")
             return await self.run(args)
         if op == "shutdown":
@@ -740,8 +952,10 @@ class Worker:
             raise RuntimeError("Take control of the browser before interacting")
         if op == "click" and args.get("move_only") is True:
             op = "move"
+        if self.login_mode and (self.plain_chrome is None or self.native is None):
+            raise RuntimeError("The sign-in window is not ready; return control to reopen it")
         if self.native and op in {"click", "move", "scroll", "text", "key"}:
-            if op == "key" and args.get("key") == "Control+t":
+            if not self.login_mode and op == "key" and args.get("key") == "Control+t":
                 async with self.context.expect_page(timeout=5000) as opened:
                     await asyncio.to_thread(self.native.input, op, args)
                 self.page = await opened.value
@@ -749,6 +963,8 @@ class Worker:
             else:
                 await asyncio.to_thread(self.native.input, op, args)
             return {}
+        if self.login_mode:
+            return await self.login_navigation(op, args)
         page = await self.focused()
         if op == "navigate":
             from urllib.parse import urlsplit
@@ -809,6 +1025,23 @@ class Worker:
             raise ValueError("Unknown browser operation")
         return {}
 
+    async def login_navigation(self, op: str, args: dict) -> dict:
+        """The login surface never consults a page, DOM, CDP, or browser engine."""
+        if op == "navigate":
+            if urlsplit(args["url"]).scheme not in {"http", "https"}:
+                raise ValueError("Only HTTP(S) website addresses are supported")
+            await asyncio.to_thread(self.native.input, "key", {"key": "Control+l"})
+            await asyncio.to_thread(self.native.input, "text", {"text": args["url"]})
+            await asyncio.to_thread(self.native.input, "key", {"key": "Enter"})
+        elif op in {"back", "forward", "reload"}:
+            key = {"back": "Alt+ArrowLeft", "forward": "Alt+ArrowRight", "reload": "Control+r"}[op]
+            await asyncio.to_thread(self.native.input, "key", {"key": key})
+        elif op == "tab" and args.get("target") == "new":
+            await asyncio.to_thread(self.native.input, "key", {"key": "Control+t"})
+        else:
+            raise RuntimeError("Use the visible Chrome controls while signing in")
+        return {}
+
     async def dispatch(self, msg: dict) -> None:
         key = str(msg.get("id", ""))
         try:
@@ -857,21 +1090,12 @@ class Worker:
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
-            monitors = [task for task in (self.stream, self.state_task) if task is not None]
-            for task in monitors:
-                task.cancel()
-            await asyncio.gather(*monitors, return_exceptions=True)
-            if self.native:
-                if self.branding:
-                    await self.branding
-                await asyncio.to_thread(self.native.close)
-            if self.browser:
-                with contextlib.suppress(Exception):
-                    await self.browser.stop()
-            if self.context and self.owns_context:
-                await self.context.close()
-            if self.playwright:
-                await self.playwright.stop()
+            await self.stop_monitors()
+            if self.plain_chrome is not None:
+                await self.plain_chrome.close()
+                self.plain_chrome = None
+                self.native = None
+            await self.close_automation()
 
 
 if __name__ == "__main__":

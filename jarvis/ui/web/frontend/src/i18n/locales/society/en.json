@@ -53,7 +53,7 @@
       "chrome": "My existing Chrome profile",
       "managed": "Separate browser profile",
       "chrome_hint": "Agents use visible tabs in your selected Chrome profile with its existing logins. Connect once using the extension.",
-      "managed_hint": "Sign in manually to websites in the agent browser. Providers such as Google may reject automated browsers; use a connected regular Chrome profile for those accounts.",
+      "managed_hint": "Use Sign in in the agent browser to open regular Chrome in this window. When finished, hand the same saved profile back to the agent.",
       "create": "Create profile",
       "close": "Close browser profiles",
       "empty": "No shared profiles configured. Add a profile to connect your Chrome or share another account.",
@@ -65,7 +65,13 @@
       "google_signin_rejected": "Google declined this sign-in",
       "google_signin_recovery": "Google can reject sign-in in an automated browser. Sign in yourself in regular Chrome first, then connect that Chrome profile here and explicitly choose it for this agent.",
       "connect_supported_chrome": "Connect regular Chrome",
-      "google_signin_help": "Google sign-in help"
+      "google_signin_help": "Google sign-in help",
+      "inline_login": "Sign in",
+      "inline_login_active": "Sign-in — you control Chrome",
+      "inline_login_finish": "Hand back to agent",
+      "inline_login_hint": "Sign in here in Chrome. When finished, hand this profile back to the agent. Your browser profile is saved on this computer.",
+      "inline_login_recovery": "Choose Sign in to reopen this profile in regular Chrome inside this window, with agent control disconnected during sign-in.",
+      "inline_login_unavailable": "This session cannot open sign-in yet. It requires installed Google Chrome and a current Windows browser session."
     },
     "profile_card": {
       "user_book": "Your profile & preferences",

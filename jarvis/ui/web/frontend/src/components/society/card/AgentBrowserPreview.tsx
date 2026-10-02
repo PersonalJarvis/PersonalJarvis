@@ -37,6 +37,7 @@ export function AgentBrowserPreview({ agent }: { agent: SocietyAgent }) {
   const managedRuntime = !isChrome && !profileUnavailable;
   const chromeDisconnected = isChrome && !running.data?.connected;
   const { canvas, state, control, approve } = useBrowserView(agent.agentId, live);
+  const rejectedGoogle = managedRuntime && live && googleSignInRejected(state.url);
   const install = useBrowserInstallStatus();
   const [expanded, setExpanded] = useState(false);
   const [address, setAddress] = useState("");
@@ -46,6 +47,8 @@ export function AgentBrowserPreview({ agent }: { agent: SocietyAgent }) {
     ? t("society.browser_profiles.profile_unavailable")
     : chromeDisconnected
     ? t("society.browser_profiles.chrome_offline")
+    : state.loginMode
+    ? t("society.browser_profiles.inline_login_active")
     : state.previewPaused
     ? t("society.browser_profiles.sign_in_chrome")
     : !live
@@ -166,18 +169,31 @@ export function AgentBrowserPreview({ agent }: { agent: SocietyAgent }) {
       </div>
       <div className="mt-2 flex flex-wrap justify-center gap-1">
         <BrowserProfilesButton agentId={agent.agentId} />
-        <button className={buttonClass} disabled={!live || !state.connected || (!state.ready && !state.previewPaused) || state.controlPending}
-          onClick={() => { setExpanded(true); control("takeover", { enabled: !state.manual }); }}>
-          {t(state.manual ? "society.browser_live.return_control" : "society.browser_live.take_control")}
+        {managedRuntime && state.loginAvailable && !state.loginMode && !rejectedGoogle && <button className={buttonClass}
+          disabled={!live || !state.connected || state.controlPending}
+          onClick={() => { setExpanded(true); control("takeover", { enabled: true, login: true }); }}>
+          {t("society.browser_profiles.inline_login")}
+        </button>}
+        <button className={buttonClass} disabled={!live || !state.connected || (!state.ready && !state.previewPaused && !state.loginMode) || state.controlPending}
+          onClick={() => { setExpanded(true); control("takeover", state.loginMode
+            ? { enabled: false, login: false } : { enabled: !state.manual }); }}>
+          {t(state.loginMode ? "society.browser_profiles.inline_login_finish" : state.manual ? "society.browser_live.return_control" : "society.browser_live.take_control")}
         </button>
         {state.running && <button className={buttonClass} onClick={() => control("cancel")}>{t("society.browser_live.cancel")}</button>}
       </div>
-      {managedRuntime && live && googleSignInRejected(state.url) && <div role="alert"
+      {state.loginMode && <p role="status" className="mt-2 text-center text-xs text-muted-foreground">
+        {t("society.browser_profiles.inline_login_hint")}
+      </p>}
+      {rejectedGoogle && !state.loginMode && <div role="alert"
         className="mt-3 grid gap-2 rounded-lg border border-border bg-secondary/40 p-3 text-sm text-foreground">
         <strong>{t("society.browser_profiles.google_signin_rejected")}</strong>
-        <p>{t("society.browser_profiles.google_signin_recovery")}</p>
+        <p>{t("society.browser_profiles.inline_login_recovery")}</p>
         <div className="flex flex-wrap items-center gap-3">
-          <BrowserProfilesButton agentId={agent.agentId} connectChrome />
+          <button className={buttonClass} disabled={!state.loginAvailable || !state.connected || state.controlPending}
+            onClick={() => { setExpanded(true); control("takeover", { enabled: true, login: true }); }}>
+            {t("society.browser_profiles.inline_login")}
+          </button>
+          {!state.loginAvailable && <span className="text-xs text-muted-foreground">{t("society.browser_profiles.inline_login_unavailable")}</span>}
           <a href="https://support.google.com/accounts/answer/7675428" target="_blank" rel="noopener noreferrer"
             className="text-xs underline underline-offset-2">{t("society.browser_profiles.google_signin_help")}</a>
         </div>

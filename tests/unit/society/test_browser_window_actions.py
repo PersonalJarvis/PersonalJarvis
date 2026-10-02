@@ -17,6 +17,24 @@ from jarvis.ui.web.society_browser_routes import validate_control
 from tests.fakes.fake_browser_window import BrowserTools, native_worker
 
 
+@pytest.mark.parametrize(
+    "args",
+    [
+        {"enabled": True, "login": "true"},
+        {"enabled": True, "login": 1},
+        {"enabled": False, "login": True},
+    ],
+)
+def test_signin_control_requires_explicit_boolean_takeover(args):
+    with pytest.raises(ValueError, match="sign-in"):
+        validate_control({"op": "takeover", "args": args})
+
+
+def test_signin_control_accepts_the_inline_login_operation():
+    args = {"enabled": True, "login": True}
+    assert validate_control({"op": "takeover", "args": args}) == ("takeover", args)
+
+
 async def test_native_window_image_is_annotated_and_never_added_during_manual_login():
     worker = native_worker()
     message = await window_message(worker)

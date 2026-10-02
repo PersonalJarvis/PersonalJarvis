@@ -53,7 +53,7 @@
       "chrome": "Mi perfil de Chrome existente",
       "managed": "Perfil del navegador independiente",
       "chrome_hint": "Los agentes usan pestañas visibles de tu perfil de Chrome con sus sesiones actuales. Conéctalo una vez mediante la extensión.",
-      "managed_hint": "Inicia sesión manualmente en sitios web desde el navegador del agente. Proveedores como Google pueden rechazar navegadores automatizados; usa un perfil conectado de Chrome normal para esas cuentas.",
+      "managed_hint": "Usa Iniciar sesión en el navegador del agente para abrir Chrome normal en esta ventana. Al terminar, devuelve el mismo perfil guardado al agente.",
       "create": "Crear perfil",
       "close": "Cerrar perfiles del navegador",
       "empty": "No hay perfiles compartidos configurados. Añade un perfil para conectar Chrome o compartir otra cuenta.",
@@ -65,7 +65,13 @@
       "google_signin_rejected": "Google ha rechazado este inicio de sesión",
       "google_signin_recovery": "Google puede rechazar el inicio de sesión en un navegador automatizado. Inicia sesión personalmente en Chrome normal; después conecta ese perfil aquí y elígelo explícitamente para este agente.",
       "connect_supported_chrome": "Conectar Chrome normal",
-      "google_signin_help": "Ayuda de Google para iniciar sesión"
+      "google_signin_help": "Ayuda de Google para iniciar sesión",
+      "inline_login": "Iniciar sesión",
+      "inline_login_active": "Inicio de sesión — tú controlas Chrome",
+      "inline_login_finish": "Devolver al agente",
+      "inline_login_hint": "Inicia sesión aquí en Chrome. Al terminar, devuelve este perfil al agente. Tu perfil del navegador se guarda en este equipo.",
+      "inline_login_recovery": "Elige Iniciar sesión para abrir este perfil en Chrome normal dentro de esta ventana, con el control del agente desconectado durante el inicio de sesión.",
+      "inline_login_unavailable": "Esta sesión aún no puede abrir el inicio de sesión. Se necesita Google Chrome instalado y una sesión actualizada del navegador en Windows."
     },
     "profile_card": {
       "user_book": "Tu perfil y preferencias",

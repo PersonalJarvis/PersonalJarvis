@@ -71,6 +71,7 @@ VERSION = _package_version()
 datas = []
 datas.append((str(PROJECT_ROOT / "jarvis/society/browser/live_runner.py"), "jarvis/society/browser"))
 datas.append((str(PROJECT_ROOT / "jarvis/society/browser/native_window.py"), "jarvis/society/browser"))
+datas.append((str(PROJECT_ROOT / "jarvis/society/browser/manual_chrome.py"), "jarvis/society/browser"))
 datas.append((str(PROJECT_ROOT / "jarvis/society/browser/window_actions.py"), "jarvis/society/browser"))
 datas.append((str(PROJECT_ROOT / "jarvis/society/browser/pointer.py"), "jarvis/society/browser"))
 

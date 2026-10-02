@@ -44,6 +44,12 @@ class LiveUpdates:
             self.frame = event
         else:
             kind = str(event.get("kind"))
+            if (
+                kind == "state"
+                and self.frame
+                and event.get("generation") != self.frame.get("generation")
+            ):
+                self.frame = None
             # Coalescing must preserve last-occurrence order: an old clear event
             # must reach a slow viewer before a newer approval of the same kind.
             self.metadata.pop(kind, None)
@@ -87,6 +93,7 @@ class LiveSession:
     window_upgrade_pending: bool = False
     profile_binding: ProfileBinding | None = None
     profile_lease: Any = None
+    login_guard: bool = False
 
     async def send(self, value: dict[str, Any]) -> None:
         data = (json.dumps(value, ensure_ascii=True) + "\n").encode()
@@ -175,6 +182,8 @@ class LiveSession:
                     self.tasks.add(task)
                     task.add_done_callback(self.tasks.discard)
                 elif kind == "state":
+                    if self.login_guard:
+                        event = {**event, "manual": True, "login_mode": True}
                     self.state = event
                     self.publish(event)
                 elif kind in {"frame", "pointer", "dialog", "download", "warning", "step"}:
@@ -220,7 +229,8 @@ class LiveSession:
                 self.proc.stdin.close()
             for task in list(self.tasks):
                 task.cancel()
-            await asyncio.wait_for(self.proc.wait(), timeout=5)
+            graceful_timeout = 12 if self.login_guard or self.state.get("login_mode") else 5
+            await asyncio.wait_for(self.proc.wait(), timeout=graceful_timeout)
         except TimeoutError:
             log.debug("Browser graceful shutdown timed out; closing its process tree")
         finally:
@@ -513,7 +523,13 @@ class LiveSessions:
                 )
                 if not upgrade:
                     return old
-                if old.run_lock.locked() or old.control_owner:
+                if (
+                    old.run_lock.locked()
+                    or old.control_owner
+                    or getattr(old, "login_guard", False)
+                    or old.state.get("manual")
+                    or old.state.get("login_mode")
+                ):
                     old.window_upgrade_pending = True
                     return old
             if old:
@@ -549,6 +565,7 @@ class LiveSessions:
                         "window_view": window_view,
                         "workspace": str(folder / "workspace"),
                         "executable": str(install.browser_executable(self.data_dir)),
+                        "creationflags": NO_WINDOW_CREATIONFLAGS,
                         "icon_path": str(
                             Path(__file__).parents[2] / "assets" / "icons" / "jarvis.ico"
                         ),
@@ -560,6 +577,7 @@ class LiveSessions:
                 session.generation = result["generation"]
                 session.state = {
                     "kind": "state",
+                    "generation": session.generation,
                     "manual": False,
                     "running": False,
                     "url": "",
@@ -567,6 +585,8 @@ class LiveSessions:
                     "tabs": [],
                     **session.state,
                     "full_window": bool(result.get("full_window")),
+                    "login_available": bool(result.get("login_available")),
+                    "login_mode": bool(result.get("login_mode")),
                 }
                 self.sessions[agent_id] = session
                 self.release_when_idle(session)
@@ -597,7 +617,9 @@ class LiveSessions:
                 # A lost viewer is not permission to resume observing a real
                 # Chrome login. Keep it paused until a person explicitly returns.
                 binding = getattr(session, "profile_binding", None)
-                if binding is None or binding.kind != "chrome":
+                if not session.state.get("login_mode") and (
+                    binding is None or binding.kind != "chrome"
+                ):
                     await session.command("takeover", {"enabled": False})
                 session.control_owner = None
                 if session.window_upgrade_pending:
@@ -613,10 +635,34 @@ class LiveSessions:
                     raise ValueError("Browser is controlled by another viewer")
                 if args.get("enabled") and "approval" in session.attention:
                     raise ValueError("Resolve the pending approval or stop the task first")
+                login_requested = args.get("login") is True
+                if login_requested and not session.state.get("login_available"):
+                    raise ValueError("In-window Chrome sign-in is unavailable in this session")
+                keep_paused = login_requested or bool(session.state.get("login_mode"))
                 session.publish({"kind": "control_pending"})
                 try:
+                    if login_requested:
+                        # Reserve the profile before cancelling a task. Neither a
+                        # concurrent run nor viewer loss may reconnect automation.
+                        session.control_owner = owner
+                        session.login_guard = True
+                        session.state.update(manual=True, login_mode=True)
+                        await self.cancel(session)
                     result = await session.command(op, args, timeout=610)
                 except BaseException:
+                    if keep_paused:
+                        session.login_guard = True
+                        session.state.update(manual=True, login_mode=True)
+                        session.publish(
+                            {
+                                "kind": "control",
+                                "ok": False,
+                                "manual": True,
+                                "login_mode": True,
+                                "error": "Sign-in remains paused. Retry in the browser panel.",
+                            }
+                        )
+                        raise
                     try:
                         binding = getattr(session, "profile_binding", None)
                         if not session.closed and (binding is None or binding.kind != "chrome"):
@@ -626,6 +672,12 @@ class LiveSessions:
                         session.publish({"kind": "control", "ok": True, "manual": False})
                     raise
                 session.control_owner = owner if args.get("enabled") else None
+                if args.get("enabled") is False and result.get("login_mode") is False:
+                    session.login_guard = False
+                session.state.update(
+                    manual=result.get("manual", bool(args.get("enabled"))),
+                    login_mode=result.get("login_mode", session.state.get("login_mode", False)),
+                )
                 if not session.control_owner and session.window_upgrade_pending:
                     session.publish({"kind": "disconnected"})
                 session.publish({"kind": "control", "ok": True, **result})
@@ -634,6 +686,10 @@ class LiveSessions:
             raise ValueError("Take browser control first")
         if op == "cancel":
             return await self.cancel(session)
+        if session.state.get("login_available") and args.get("generation") != session.state.get(
+            "generation"
+        ):
+            raise ValueError("The browser changed; wait for its new image")
         result = await session.command(op, args)
         if op == "dialog":
             session.publish({"kind": "dialog_cleared"})
@@ -654,7 +710,12 @@ class LiveSessions:
     ) -> dict:
         session = await self.ensure(agent)
         await claim_browser(session, chat_session_id)
-        if session.run_lock.locked() or session.control_owner:
+        if (
+            session.run_lock.locked()
+            or session.control_owner
+            or session.state.get("manual")
+            or session.state.get("login_mode")
+        ):
             raise RuntimeError(_BUSY)
         async with session.run_lock:
             session.rpc = {"llm": llm, "action": action}

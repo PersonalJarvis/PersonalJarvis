@@ -1,15 +1,63 @@
 """Shared profile ownership and viewer-loss safety without any real browser."""
 
+import asyncio
+import json
 from types import SimpleNamespace
 
 import pytest
 
-from jarvis.society.browser.live import LiveSessions, LiveUpdates
+from jarvis.society.browser.live import LiveSession, LiveSessions, LiveUpdates
 from tests.fakes.fake_browser_profiles import ProfileSession
 
 
 def agent(aid):
     return SimpleNamespace(agent_id=aid, browser_mode="own", browser_allowed_domains=[])
+
+
+async def test_login_transition_drops_a_cached_frame_from_the_previous_browser():
+    updates = LiveUpdates()
+    updates.put_nowait({"kind": "frame", "generation": "old", "data": "old pixels"})
+    updates.put_nowait({"kind": "state", "generation": "login", "login_mode": True})
+    assert (await updates.get())["generation"] == "login"
+    assert updates.frame is None
+
+
+async def test_old_worker_heartbeat_cannot_remove_the_parent_login_guard():
+    reader = asyncio.StreamReader()
+    reader.feed_data(
+        json.dumps({"kind": "state", "manual": False, "login_mode": False}).encode() + b"\n"
+    )
+    reader.feed_eof()
+    session = LiveSession(
+        "lead", SimpleNamespace(stdout=reader), SimpleNamespace(close=lambda: None)
+    )
+    session.login_guard = True
+    await session.read()
+    assert session.state["manual"] and session.state["login_mode"]
+
+
+async def test_paused_login_without_a_window_is_not_restarted_on_viewer_reconnect(tmp_path):
+    live = LiveSessions(tmp_path)
+    session = ProfileSession("lead")
+    session.state.update(full_window=False, manual=True, login_mode=True)
+    session.login_guard = True
+    live.sessions["lead"] = session
+    assert await live._ensure_managed(agent("lead"), None, window_view=True) is session
+    assert not session.closed
+    await live.close()
+
+
+async def test_input_must_reference_the_current_browser_generation(tmp_path):
+    live = LiveSessions(tmp_path)
+    session = ProfileSession("lead")
+    session.control_owner = "viewer"
+    session.state.update(login_available=True, generation="login")
+    for generation in (None, "old"):
+        with pytest.raises(ValueError, match="browser changed"):
+            await live.control(
+                session, "viewer", "text", {"text": "fixture", "generation": generation}
+            )
+    assert not session.commands
 
 
 def manager(tmp_path, monkeypatch):
@@ -103,3 +151,72 @@ async def test_lost_viewer_keeps_chrome_login_paused_until_explicit_reclaim(tmp_
     await live.control(session, "new-viewer", "takeover", {"enabled": False})
     assert session.control_owner is None
     await live.close()
+
+
+async def test_lost_viewer_never_restarts_automation_during_inline_login(tmp_path):
+    live = LiveSessions(tmp_path)
+    session = ProfileSession("lead")
+    session.profile_binding = SimpleNamespace(kind="managed")
+    session.state.update(manual=True, login_mode=True)
+    session.control_owner = "old-viewer"
+    queue = LiveUpdates()
+    session.subscribers.add(queue)
+    await live.unsubscribe(session, queue, "old-viewer")
+    assert session.state["manual"] and session.state["login_mode"]
+    assert session.control_owner is None
+    assert not any(op == "takeover" for op, _ in session.commands)
+    await live.close()
+
+
+async def test_inline_login_cancels_the_old_turn_before_changing_browser(tmp_path):
+    live = LiveSessions(tmp_path)
+    session = ProfileSession("lead")
+    session.state["login_available"] = True
+    session.active_trace = "old-turn"
+    await live.control(session, "viewer", "takeover", {"enabled": True, "login": True})
+    commands = [(op, args) for op, args in session.commands if op != "event"]
+    assert commands == [("cancel", None), ("takeover", {"enabled": True, "login": True})]
+    assert ("lead", "old-turn") in live.stopped_turns
+    assert session.control_owner == "viewer"
+    assert session.state["manual"] and session.state["login_mode"]
+
+
+async def test_inline_login_requires_the_worker_capability(tmp_path):
+    live = LiveSessions(tmp_path)
+    session = ProfileSession("lead")
+    with pytest.raises(ValueError, match="unavailable"):
+        await live.control(session, "viewer", "takeover", {"enabled": True, "login": True})
+    assert not session.commands
+
+
+@pytest.mark.parametrize("entering", [True, False])
+async def test_inline_login_failure_never_implicitly_returns_control(tmp_path, entering):
+    class FailedLogin(ProfileSession):
+        async def command(self, op, args=None, **kwargs):
+            self.commands.append((op, args))
+            if op == "takeover":
+                raise RuntimeError("Owned Chrome is still closing")
+            return {}
+
+    live = LiveSessions(tmp_path)
+    session = FailedLogin("lead")
+    session.control_owner = "viewer"
+    session.state.update(login_available=True, manual=not entering, login_mode=not entering)
+    args = {"enabled": True, "login": True} if entering else {"enabled": False, "login": False}
+    with pytest.raises(RuntimeError, match="still closing"):
+        await live.control(session, "viewer", "takeover", args)
+    assert session.state["manual"] and session.state["login_mode"]
+    assert len([op for op, _ in session.commands if op == "takeover"]) == 1
+
+
+async def test_inline_login_explicit_return_records_worker_state(tmp_path):
+    class ReturnedLogin(ProfileSession):
+        async def command(self, op, args=None, **kwargs):
+            return {"manual": False, "login_mode": False}
+
+    live = LiveSessions(tmp_path)
+    session = ReturnedLogin("lead")
+    session.state.update(manual=True, login_mode=True)
+    await live.control(session, "viewer", "takeover", {"enabled": False, "login": False})
+    assert not session.state["manual"] and not session.state["login_mode"]
+    assert session.control_owner is None

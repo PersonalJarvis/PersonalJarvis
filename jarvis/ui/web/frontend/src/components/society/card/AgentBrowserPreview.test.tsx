@@ -24,13 +24,16 @@ vi.mock("@/i18n", () => ({
     "society.browser_profiles.google_signin_recovery": "Sign in yourself in regular Chrome, then connect its profile.",
     "society.browser_profiles.connect_supported_chrome": "Connect regular Chrome",
     "society.browser_profiles.google_signin_help": "Google sign-in help",
+    "society.browser_profiles.inline_login": "Sign in",
+    "society.browser_profiles.inline_login_finish": "Hand back to agent",
+    "society.browser_profiles.inline_login_hint": "Sign in here in Chrome.",
   } as Record<string, string>)[key] ?? key,
 }));
 const { control, state, view, browser } = vi.hoisted(() => ({
   control: vi.fn(),
   view: vi.fn(),
   browser: { open: true, mode: "own", connected: true, profileName: "" },
-  state: { connected: true, ready: true, fullWindow: false, extendedInput: false, previewPaused: false, manual: false, running: false,
+  state: { connected: true, ready: true, fullWindow: false, extendedInput: false, previewPaused: false, loginMode: false, loginAvailable: false, manual: false, running: false,
     url: "https://example.com", target: "one", tabs: [{ id: "one", url: "https://example.com" }], error: "" },
 }));
 vi.mock("./useBrowserView", () => ({
@@ -58,17 +61,36 @@ afterEach(() => {
   state.manual = false; state.fullWindow = false; state.extendedInput = false; state.previewPaused = false; state.ready = true; state.error = ""; browser.open = true;
   browser.mode = "own"; browser.connected = true; browser.profileName = "";
   state.url = "https://example.com";
+  state.loginMode = false; state.loginAvailable = false;
 });
 describe("live agent browser", () => {
-  test("a rejected Google login opens explicit Chrome recovery without retrying or changing the browser", async () => {
+  test("a rejected Google login starts sign-in inside the same browser panel", async () => {
     state.url = "https://accounts.google.com/v3/signin/rejected?flowName=fixture";
     state.manual = true;
+    state.loginAvailable = true;
     mount();
     expect(screen.getByRole("alert").textContent).toContain("Google declined this sign-in");
     expect(screen.getByRole("link", { name: "Google sign-in help" }).getAttribute("href")).toBe("https://support.google.com/accounts/answer/7675428");
-    fireEvent.click(screen.getByRole("button", { name: "Connect regular Chrome" }));
-    expect((await screen.findByTestId("chrome-recovery-dialog")).textContent).toBe("scout:true");
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    expect(control).toHaveBeenCalledWith("takeover", { enabled: true, login: true });
+    expect(screen.queryByTestId("chrome-recovery-dialog")).toBeNull();
+  });
+  test("older workers cannot receive an unsupported sign-in transition", () => {
+    state.url = "https://accounts.google.com/signin/rejected";
+    mount();
+    const button = screen.getByRole("button", { name: "Sign in" }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    fireEvent.click(button);
     expect(control).not.toHaveBeenCalled();
+  });
+  test("inline sign-in keeps the canvas and explicitly returns the profile to the agent", () => {
+    state.manual = true; state.loginMode = true; state.loginAvailable = true;
+    mount();
+    expect(screen.getByText("Sign in here in Chrome.")).toBeTruthy();
+    expect(screen.getByLabelText("Live browser of Scout")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Sign in" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Hand back to agent" }));
+    expect(control).toHaveBeenCalledWith("takeover", { enabled: false, login: false });
   });
   test("an unavailable profile blocks live access and offers profile selection without open or repair", () => {
     browser.mode = "unavailable";
