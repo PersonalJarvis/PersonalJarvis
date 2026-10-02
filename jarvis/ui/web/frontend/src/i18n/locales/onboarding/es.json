@@ -57,14 +57,9 @@
       "why": "Una suscripción es un precio mensual fijo. Sin ella, los agentes usan tu clave de API y cada encargo se cobra por uso.",
       "later": "Conectaré una más tarde"
     },
-    "permissions": {
-      "title": "Permitir acceso en este Mac",
-      "lede": "Estos son los permisos del Mac. Permite los que quieras; cada fila se actualiza sola.",
-      "note": "Puedes volver a ellos cuando quieras en Ajustes. El reinicio final los aplica."
-    },
     "voice": {
       "title": "Elige tu palabra de activación",
-      "lede": "Escribe aquí tu palabra después de «Hey» y guárdala. La palabra también será el nombre de tu asistente. ¿Sin palabra? El atajo de llamada funciona siempre.",
+      "lede": "Escribe aquí tu palabra después de «Hey» y guárdala. La palabra también será el nombre de tu asistente. ¿Sin palabra? El atajo de llamada funciona en cualquier momento.",
       "on": "«{phrase}» está activada. Dila cuando quieras.",
       "off": "Aún no hay palabra de activación. Mientras tanto funciona el atajo de llamada.",
       "later": "Omitir, usaré el atajo de llamada"

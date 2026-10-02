@@ -11,7 +11,6 @@ const LOCALES: Record<UiLanguage, LocaleTree> = { en, de, es };
 const SEARCH_GROUPS = [
   { id: "languages", keys: ["language", "languages_group_title"] },
   { id: "app", keys: ["app_settings_group_title", "autostart", "appearance", "jarvis_api"] },
-  { id: "permissions", keys: ["nav.permissions"] },
   { id: "realtime-voice", keys: ["realtime_voice"] },
   { id: "system-prompt", keys: ["system_prompt"] },
   { id: "wake-word", keys: ["wake_word"] },

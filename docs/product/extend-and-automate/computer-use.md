@@ -8,7 +8,7 @@ order: 6
 diataxis: howto
 status: active
 owner: maintainers
-last_reviewed: 2026-07-21
+last_reviewed: 2026-10-02
 phase: "-"
 audience: end-user
 tags: [computer-use, desktop, vision, permissions, safety, providers]
@@ -37,9 +37,11 @@ infallible. Watch the screen and start with a small, reversible task.
 - Open **API Keys & Providers > Tool Model**. Connect a provider, choose a
   model that understands images, select **Set active**, and run the card's
   test. The Tool Model is separate from the model that writes chat replies.
-- On macOS, open **Settings > Privacy permissions > macOS permissions** and
-  grant **Screen Recording**, **Accessibility**, and **Input Control**. Restart
-  the app when the permission view asks you to do so.
+- On macOS, Computer Use needs **Screen Recording** and **Accessibility**.
+  macOS asks the first time Computer Use needs each one. If you said no, use
+  **Open System Settings** on the short message Jarvis shows (or start over, see
+  [Permissions](permissions)); use **Quit and reopen** only when that message
+  offers it.
 - On Linux X11, keep `xdotool` installed when you need to type accented text,
   emoji, or non-Latin characters. The standard installer tries to provide it;
   without it, the fallback input backend can drop non-ASCII characters.
@@ -222,7 +224,7 @@ completion message arrives after that state appears, not before it.
 |---|---|---|
 | Jarvis says Computer Use is not active, or reports Wayland or no display | An older installation kept the feature off, desktop components are missing, or the session cannot provide global capture and input | Enable it with `jarvis config set computer_use.enabled true`; otherwise use the full desktop install in a Windows, macOS, or Linux X11 session, then restart Jarvis and repeat the harmless check |
 | Jarvis says no model can see the screen | The Tool Model is missing, text-only, out of credit, rate limited, or unavailable across all compatible fallbacks | Open **API Keys & Providers > Tool Model**, test a connected image-capable model, and activate a healthy option |
-| Jarvis cannot see or control the screen on macOS | Screen Recording, Accessibility, or Input Control is missing, belongs to an older app identity, or needs a restart | Open **Settings > Privacy permissions > macOS permissions**, grant each listed item, use **Restart now** when shown, then try again |
+| Jarvis cannot see or control the screen on macOS | Screen Recording or Accessibility is off, denied, or belongs to an older app identity, or a change needs a restart | Use **Open System Settings** on the message Jarvis shows for each item that is off, use **Quit and reopen** when it is offered, or start over with `jarvis permissions reset`, then try again |
 | The pointer, drag, or typed text is wrong | Focus or display layout changed, an elevated Windows window blocked input, or Linux lacks `xdotool` for non-ASCII typing | Bring a normal non-administrator app window forward, keep the layout stable, install `xdotool` on X11 when needed, and retry one named control |
 | Jarvis stops at a sensitive screen, reports no progress, or rejects completion | It needs a human-only login step, the interface changed, or the visible result could not be verified | Complete sensitive input yourself; otherwise check the screen and retry a shorter goal with one visible result |
 

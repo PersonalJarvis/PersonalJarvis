@@ -191,8 +191,9 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 ## permissions
 
 - `jarvis permissions open-settings <permission_id> --yes --dry-run` — Open the matching macOS privacy pane through LaunchServices.
-- `jarvis permissions request <permission_id> --yes --dry-run` — Show the native macOS prompt for one permission.
-- `jarvis permissions status` — Show permission and feature readiness without caching native state.
+- `jarvis permissions request <permission_id> --yes --dry-run` — Ask macOS for one permission through the same service the app uses.
+- `jarvis permissions reset <permission_id> --bundle-id --yes --dry-run` — Forget what macOS recorded for Personal Jarvis, so it asks again on next use (macOS only).
+- `jarvis permissions status --include-automation` — Show each macOS privacy permission and what is waiting on one. Never prompts.
 
 ## refresh
 

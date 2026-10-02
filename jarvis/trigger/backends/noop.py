@@ -83,9 +83,9 @@ def explain_unavailable() -> str:
 
     if platform == "darwin":
         return (
-            "macOS needs both the Accessibility and Input Monitoring "
-            "permissions, and the pyobjc Quartz package. Grant them under "
-            "Settings > Permissions, then restart Jarvis."
+            "the pyobjc Quartz package is not installed (the [full] profile "
+            "includes it). With it, global shortcuts arm themselves once "
+            "macOS has allowed Input Monitoring for Personal Jarvis."
         )
 
     return (
@@ -126,6 +126,14 @@ class NoopBackend:
         return None
 
     def received_any_event(self) -> bool:
+        return False
+
+    def is_listening(self) -> bool:
+        """Nothing is ever armed here, and the backend knows it.
+
+        A consumer that must not promise a key it does not hold (the "Esc to
+        cancel" pill) therefore reads ``False`` instead of "cannot say".
+        """
         return False
 
     def chord_is_down(self, combo: str) -> bool | None:

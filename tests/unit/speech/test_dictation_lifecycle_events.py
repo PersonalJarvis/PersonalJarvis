@@ -295,11 +295,11 @@ async def test_a_crashing_dictation_publishes_exactly_one_completion(
 
 
 @pytest.mark.asyncio
-async def test_a_closed_capture_gate_is_refused_out_loud() -> None:
+async def test_a_refused_microphone_is_refused_out_loud() -> None:
     bus = EventBus()
     seen = _Collector(bus)
     pipe = _dictation_pipeline(bus)
-    pipe._activation_gate = lambda: False
+    pipe._user_activation_gate = lambda: False
 
     assert pipe.start_dictation() is False
     await _drain_bus()
@@ -391,7 +391,7 @@ async def test_every_refusal_reason_comes_from_the_shared_vocabulary(
     seen = _Collector(bus)
 
     closed_gate = _dictation_pipeline(bus)
-    closed_gate._activation_gate = lambda: False
+    closed_gate._user_activation_gate = lambda: False
     closed_gate.start_dictation()
 
     no_stt = _dictation_pipeline(bus)

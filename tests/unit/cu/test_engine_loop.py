@@ -175,6 +175,10 @@ def patched(monkeypatch, tmp_path):
         fake_verify_click_focus_point,
     )
     monkeypatch.setattr(engine_mod, "_foreground_title", lambda: "Test Window")
+    # The per-action permission guard reads the LIVE TCC state and the window list: on
+    # a macOS dev machine without a grant it would refuse every dispatched action.
+    # The guard's own tests drive ``_dispatch_tool`` through a FakeTCC world instead.
+    monkeypatch.setattr(engine_mod, "_blocked_before_dispatch", lambda: None)
     # The engine normalizes the target window via jarvis.platform.window_state;
     # tests must never maximize a real window on the dev machine.
     from jarvis.platform import window_state as ws
@@ -358,17 +362,25 @@ async def test_recent_missions_reach_the_decide_prompt_but_not_the_judge(patched
         cu_run_registry.clear_runs()
 
 
-async def test_dispatch_refuses_action_after_screen_permission_revocation(
-    monkeypatch,
-):
+def _darwin_world(monkeypatch, **tcc_kwargs):
+    """A darwin FakeTCC behind the REAL port; the process-wide service reads it.
+
+    The engine itself never asks macOS: an unanswered dialog makes any unexpected
+    prompt visible as a ``request`` in the call log. Nothing here ran on a real
+    Mac; FakeTCC models the OS.
+    """
+    from tests.fakes.fake_tcc import DialogPolicy, FakeTCC, install_port
+
+    tcc_kwargs.setdefault("default_policy", DialogPolicy.NEVER_ANSWERED)
+    tcc = FakeTCC(**tcc_kwargs)
+    install_port(monkeypatch, tcc.port("darwin"))
+    return tcc
+
+
+async def test_dispatch_refuses_action_after_screen_permission_revocation(monkeypatch):
+    tcc = _darwin_world(monkeypatch, granted=("accessibility",))  # Screen Recording is off
     executor = FakeExecutor()
     ctx = _ctx(FakeBrain([]), executor)
-    monkeypatch.setattr(
-        "jarvis.cu.capture._require_macos_screen_recording_permission",
-        lambda: (_ for _ in ()).throw(
-            RuntimeError("Screen Recording permission was revoked"),
-        ),
-    )
 
     ok, detail = await engine_mod._dispatch_tool(
         ctx,
@@ -378,8 +390,133 @@ async def test_dispatch_refuses_action_after_screen_permission_revocation(
     )
 
     assert ok is False
-    assert "Screen Recording" in detail
+    # The agent-facing refusal: the prefix the loop maps, prohibitive, no paths.
+    assert detail.startswith("[permission_needed:screen_recording] ")
+    assert "must not retry" in detail
     assert executor.calls == []
+    # The gate is silent: it never asks macOS (no dialog, no implicit prompt).
+    assert tcc.requests() == []
+    assert tcc.implicit_prompts() == []
+
+
+async def test_dispatch_sees_a_screen_recording_grant_given_mid_session(monkeypatch):
+    # The per-process preflight is frozen (BUG-161); the deep read's window-title
+    # oracle must still see the grant the user flipped on while Jarvis runs.
+    tcc = _darwin_world(monkeypatch)
+    executor = FakeExecutor()
+    ctx = _ctx(FakeBrain([]), executor)
+    first, _detail = await engine_mod._dispatch_tool(ctx, "click", {"x": 1, "y": 1}, None)
+    assert first is False
+
+    tcc.grant("screen_recording")
+    second, _detail = await engine_mod._dispatch_tool(ctx, "click", {"x": 1, "y": 1}, None)
+
+    assert second is True
+    assert [name for name, _args in executor.calls] == ["click"]
+    assert tcc.requests() == []
+
+
+async def test_dispatch_refuses_after_a_proven_screen_recording_grant_is_revoked(monkeypatch):
+    # The remembered proof of a grant must not defeat the blind-input guard: the gate
+    # reads deep, so a revoke that lands between two actions is seen on the next one.
+    tcc = _darwin_world(monkeypatch)
+    executor = FakeExecutor()
+    ctx = _ctx(FakeBrain([]), executor)
+    tcc.grant("screen_recording")  # the preflight stays frozen negative; the oracle proves it
+    ok, _detail = await engine_mod._dispatch_tool(ctx, "click", {"x": 1, "y": 1}, None)
+    assert ok is True
+
+    tcc.deny("screen_recording")
+    ok, detail = await engine_mod._dispatch_tool(ctx, "click", {"x": 1, "y": 1}, None)
+
+    assert ok is False
+    assert detail.startswith("[permission_needed:screen_recording] ")
+    assert [name for name, _args in executor.calls] == ["click"]  # only the first one ran
+    assert tcc.requests() == []
+
+
+async def test_dispatch_pauses_while_a_system_consent_dialog_is_frontmost(monkeypatch):
+    tcc = _darwin_world(monkeypatch, granted=("screen_recording", "accessibility"))
+    monkeypatch.setattr(engine_mod, "_frontmost_system_consent_owner", lambda: "SecurityAgent")
+    executor = FakeExecutor()
+    ctx = _ctx(FakeBrain([]), executor)
+
+    ok, detail = await engine_mod._dispatch_tool(ctx, "key", {}, None)
+    ok_click, _detail_click = await engine_mod._dispatch_tool(ctx, "click", {"x": 5, "y": 5}, None)
+
+    assert ok is False and ok_click is False
+    assert detail.startswith("[permission_needed:system_dialog] ")
+    assert "must not try to answer" in detail
+    assert "SecurityAgent" not in detail  # no window or owner names in agent text
+    assert executor.calls == []  # an AI agent never answers a system dialog
+    assert tcc.requests() == []
+
+
+async def test_dispatch_gate_is_read_only_through_an_injected_gate(monkeypatch):
+    # The engine gate only READS (``check_deep`` or ``check``) and records a
+    # background episode: it never makes an interactive request.
+    from tests.fakes.fake_permission_service import FakePermissionService
+
+    gate = FakePermissionService({"screen_recording": "needs_settings"})
+    monkeypatch.setattr(engine_mod, "_permission_gate", lambda: gate)
+    executor = FakeExecutor()
+
+    ok, detail = await engine_mod._dispatch_tool(
+        _ctx(FakeBrain([]), executor), "click", {"x": 5, "y": 5}, None
+    )
+
+    assert ok is False and detail.startswith("[permission_needed:screen_recording] ")
+    assert executor.calls == []
+    assert gate.native_free()  # nothing interactive: no call could have made macOS ask
+    assert all(not call.interactive for call in gate.ensure_calls())
+
+
+async def test_dispatch_proceeds_when_no_system_dialog_is_frontmost(monkeypatch):
+    _darwin_world(monkeypatch, granted=("screen_recording", "accessibility"))
+    monkeypatch.setattr(engine_mod, "_frontmost_system_consent_owner", lambda: "")
+    executor = FakeExecutor()
+
+    ok, _detail = await engine_mod._dispatch_tool(
+        _ctx(FakeBrain([]), executor), "click", {"x": 5, "y": 5}, None
+    )
+
+    assert ok is True
+    assert [name for name, _args in executor.calls] == ["click"]
+
+
+async def test_dispatch_refuses_on_macos_when_the_guard_itself_fails(monkeypatch):
+    _darwin_world(monkeypatch, granted=("screen_recording",))
+    monkeypatch.setattr(engine_mod.sys, "platform", "darwin")
+
+    def _boom() -> str:
+        raise RuntimeError("window list exploded")
+
+    monkeypatch.setattr(engine_mod, "_frontmost_system_consent_owner", _boom)
+    executor = FakeExecutor()
+
+    ok, detail = await engine_mod._dispatch_tool(
+        _ctx(FakeBrain([]), executor), "click", {"x": 5, "y": 5}, None
+    )
+
+    assert ok is False and detail.startswith("[permission_needed:")
+    assert "exploded" not in detail  # no exception text in agent-facing text
+    assert executor.calls == []
+
+
+@pytest.mark.parametrize("platform", ["linux", "win32"])
+async def test_dispatch_off_macos_asks_nothing_and_changes_nothing(monkeypatch, platform):
+    from tests.fakes.fake_tcc import FakeTCC, install_port
+
+    tcc = FakeTCC()
+    install_port(monkeypatch, tcc.port(platform))
+    executor = FakeExecutor()
+
+    ok, _detail = await engine_mod._dispatch_tool(
+        _ctx(FakeBrain([]), executor), "click", {"x": 5, "y": 5}, None
+    )
+
+    assert ok is True and [name for name, _args in executor.calls] == ["click"]
+    tcc.assert_silent()
 
 
 async def test_rejected_done_feeds_history_and_eventually_fails(patched):
@@ -1099,3 +1236,205 @@ async def test_a_screen_that_stays_unreadable_still_fails(patched, monkeypatch):
     final = _final(chunks)
     assert final.exit_code == 1
     assert "cannot see the screen" in final.stderr
+
+
+@pytest.mark.parametrize("refusal", ["pending", "denied"])
+async def test_a_screen_recording_refusal_during_perception_is_terminal(
+    patched, monkeypatch, refusal
+):
+    # The first perception frame of a mission is where Screen Recording is asked
+    # for. The refusal is not flaky capture: no retries, a blocked_permission
+    # ending with the people sentence and a single capture attempt.
+    from jarvis.platform import screen_access
+    from jarvis.platform.permissions import PermissionState
+
+    attempts: list[int] = []
+
+    def refused_capture(monitor, **kw):
+        attempts.append(1)
+        if refusal == "pending":
+            raise screen_access.refusal_pending()
+        raise screen_access.refusal_for_state(PermissionState.DENIED)
+
+    monkeypatch.setattr(engine_mod, "capture_stable_frame", refused_capture)
+
+    chunks = await _run(_ctx(FakeBrain([]), FakeExecutor()))
+
+    final = _final(chunks)
+    assert final.exit_code == 8
+    assert "blocked_permission" in final.stderr
+    assert "Screen Recording" in final.stderr
+    assert "You must not" not in final.stderr
+    assert "[permission_needed:" not in final.stderr
+    assert "cannot see the screen" not in final.stderr
+    assert len(attempts) == 1
+
+
+# ---- a permission refusal is TERMINAL (blocked_permission), never a model retry loop ----
+
+
+class _RefusingExecutor(FakeExecutor):
+    """A tool layer whose input tools answer with the permission layer's agent text."""
+
+    def __init__(self, error: str, tool_names: set[str] | None = None) -> None:
+        super().__init__()
+        self.error = error
+        self.tool_names = tool_names
+
+    async def execute(self, tool, args, *, user_utterance, trace_id):
+        name = tool["name"]
+        self.calls.append((name, dict(args)))
+        if self.tool_names is None or name in self.tool_names:
+            return SimpleNamespace(success=False, output=None, error=self.error)
+        return SimpleNamespace(success=True, output=f"{name} ok")
+
+
+def _agent_refusal(permission: str = "accessibility") -> str:
+    from jarvis.platform.permission_service import agent_detail_for
+    from jarvis.platform.permissions import PermissionId
+
+    return agent_detail_for(PermissionId(permission), "needs_settings")
+
+
+async def test_a_permission_refusal_ends_the_mission_as_blocked_permission(patched):
+    brain = FakeBrain(['{"action": "click", "x": 500, "y": 500, "target": "ok"}'] * 8)
+    executor = _RefusingExecutor(_agent_refusal())
+
+    chunks = await _run(_ctx(brain, executor))
+
+    final = _final(chunks)
+    # An existing terminal status carries a stable reason code (no new status value).
+    assert final.exit_code == 8
+    assert "blocked_permission" in final.stderr
+    assert engine_mod.CU_REASON_BLOCKED_PERMISSION == "blocked_permission"
+    # No model retry loop: one dispatch, one decide call, then the mission is over.
+    assert [name for name, _args in executor.calls] == ["click"]
+    assert len(brain.calls) == 1
+    # People get a sentence from a fixed template, not the prohibitive agent text.
+    assert "Accessibility" in final.stderr
+    assert "You must not" not in final.stderr
+    assert "[permission_needed:" not in final.stderr
+
+
+async def test_a_wrapped_permission_refusal_is_still_terminal(patched):
+    # clear_first wraps the hotkey error: "could not select ... : <detail>; refusing ...".
+    brain = FakeBrain(
+        ['{"action": "type", "text": "hello", "clear_first": true}'] * 8,
+    )
+    executor = _RefusingExecutor(_agent_refusal(), tool_names={"hotkey"})
+
+    chunks = await _run(_ctx(brain, executor))
+
+    final = _final(chunks)
+    assert final.exit_code == 8 and "blocked_permission" in final.stderr
+    assert [name for name, _args in executor.calls] == ["hotkey"]  # nothing was typed
+
+
+async def test_a_system_dialog_refusal_is_terminal_and_names_no_permission(patched):
+    from jarvis.cu import system_dialogs
+
+    brain = FakeBrain(['{"action": "key", "keys": ["enter"]}'] * 8)
+    executor = _RefusingExecutor(system_dialogs.agent_detail())
+
+    chunks = await _run(_ctx(brain, executor))
+
+    final = _final(chunks)
+    assert final.exit_code == 8 and "blocked_permission" in final.stderr
+    assert "system dialog" in final.stderr
+    assert "You must not" not in final.stderr
+
+
+class _ClickThenRefuseExecutor(FakeExecutor):
+    """The first click lands (and misses); every later click is refused with ``error``."""
+
+    def __init__(self, error: str) -> None:
+        super().__init__()
+        self.error = error
+
+    async def execute(self, tool, args, *, user_utterance, trace_id):
+        name = tool["name"]
+        self.calls.append((name, dict(args)))
+        clicks = [n for n, _a in self.calls if n == "click"]
+        if name == "click" and len(clicks) > 1:
+            return SimpleNamespace(success=False, output=None, error=self.error)
+        return SimpleNamespace(success=True, output=f"{name} ok")
+
+
+async def test_a_refused_zoom_refined_retry_ends_the_mission_without_another_model_call(patched):
+    from jarvis.cu import system_dialogs
+
+    patched.region_changes_after_click = False  # the first click misses
+    brain = FakeBrain(
+        [
+            '{"action": "click", "x": 500, "y": 500, "target": "tiny icon"}',
+            '{"found": true, "x": 900, "y": 900}',
+            '{"action": "fail", "reason": "must never be asked"}',
+        ]
+    )
+    executor = _ClickThenRefuseExecutor(system_dialogs.agent_detail())
+
+    final = _final(await _run(_ctx(brain, executor)))
+
+    # A dialog opened after the first click: the refine click is refused by the guard
+    # and the mission is over, not a failure the model is asked about again.
+    assert final.exit_code == 8 and "blocked_permission" in final.stderr
+    assert "system dialog" in final.stderr
+    assert [n for n, _a in executor.calls].count("click") == 2
+    assert len(brain.calls) == 2  # decide + zoom-refine; no third (re-perceive) call
+
+
+@pytest.mark.parametrize(
+    ("reason", "asking"),
+    [
+        ("needs_settings", False),
+        ("denied", False),
+        ("not_determined", True),
+        ("restart_hint", False),
+        ("restricted", False),
+        ("unavailable", False),
+    ],
+)
+def test_the_user_sentence_follows_the_reason_the_refusal_carries(reason, asking):
+    from jarvis.platform.permission_service import agent_detail_for, user_detail_for
+    from jarvis.platform.permissions import PermissionId
+
+    family = PermissionId.SCREEN_RECORDING
+    sentence = engine_mod._permission_block(agent_detail_for(family, reason, asking=asking))
+
+    assert sentence is not None
+    assert "[permission_needed:" not in sentence and "You must not" not in sentence
+    if reason in ("restricted", "unavailable"):
+        # Nothing the user can switch on: an explanation, not "turn it on in Settings".
+        assert sentence == user_detail_for(family, reason)
+        assert "Then try the task again" not in sentence
+    else:
+        # not_determined shares its agent sentence with needs_settings: that wording wins.
+        expected = "needs_settings" if reason == "not_determined" else reason
+        assert sentence.startswith(user_detail_for(family, expected, asking=asking))
+    if reason == "denied":
+        assert "turned off" in sentence and sentence.endswith("Then try the task again.")
+
+
+def test_the_guard_failure_refusal_is_explained_not_blamed_on_a_switch(monkeypatch):
+    monkeypatch.setattr(engine_mod.sys, "platform", "darwin")
+
+    sentence = engine_mod._permission_block(engine_mod._guard_failure_refusal() or "")
+
+    assert sentence is not None
+    assert "cannot ask for Screen Recording" in sentence
+    assert "turn" not in sentence.lower() and "try the task again" not in sentence.lower()
+
+
+def test_an_unknown_permission_token_gets_a_neutral_sentence():
+    sentence = engine_mod._permission_block("[permission_needed:something_new] stop")
+
+    assert sentence is not None and "System Settings" not in sentence
+
+
+async def test_an_ordinary_tool_failure_is_not_a_permission_block(patched):
+    brain = FakeBrain(['{"action":"open_app","name":"spotify"}'] * 8)
+    executor = FakeExecutor(failures={"open_app"})
+
+    final = _final(await _run(_ctx(brain, executor)))
+
+    assert "blocked_permission" not in final.stderr

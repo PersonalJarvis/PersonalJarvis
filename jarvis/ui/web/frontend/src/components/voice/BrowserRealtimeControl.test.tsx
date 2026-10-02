@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useEventStore } from "@/store/events";
 import {
@@ -387,6 +387,70 @@ describe("BrowserRealtimeControl", () => {
     expect(screen.getByTestId("voice-waveform").getAttribute("data-phase")).toBe(
       "listening",
     );
+  });
+
+  describe("a refused microphone", () => {
+    const MAC_UA =
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)";
+    let fetchSpy: ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+      fetchSpy = vi.fn(async () => new Response("{}", { status: 200 }));
+      vi.stubGlobal("fetch", fetchSpy);
+      fakes.connect.mockRejectedValueOnce(new DOMException("denied", "NotAllowedError"));
+    });
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+    });
+
+    it("reports a Mac desktop denial so the permission toast can show, with a desktop sentence", async () => {
+      vi.spyOn(navigator, "userAgent", "get").mockReturnValue(MAC_UA);
+      (window as unknown as { pywebview?: unknown }).pywebview = { api: {} };
+      fakes.native = false;
+      render(<BrowserRealtimeControl />);
+      fireEvent.click(screen.getByRole("button", { name: "sidebar.realtime_start" }));
+
+      expect(await screen.findByText("sidebar.realtime_microphone_denied_desktop")).toBeTruthy();
+      expect(screen.queryByText("sidebar.realtime_microphone_denied")).toBeNull();
+      await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
+      const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe("/api/permissions/microphone/request?dry_run=false");
+      expect(init.method).toBe("POST");
+      expect(JSON.parse(String(init.body))).toEqual({ feature: "browser_voice" });
+    });
+
+    it("keeps the browser site-settings sentence, and reports nothing, in a plain browser", async () => {
+      vi.spyOn(navigator, "userAgent", "get").mockReturnValue(MAC_UA);
+      render(<BrowserRealtimeControl />);
+      fireEvent.click(screen.getByRole("button", { name: "sidebar.realtime_start" }));
+
+      expect(await screen.findByText("sidebar.realtime_microphone_denied")).toBeTruthy();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it("does not report a denial of a call the wake word started", async () => {
+      vi.spyOn(navigator, "userAgent", "get").mockReturnValue(MAC_UA);
+      (window as unknown as { pywebview?: unknown }).pywebview = { api: {} };
+      fakes.browserAudio = true;
+      useEventStore.setState({
+        events: [
+          {
+            id: "wake-denied",
+            name: "BrowserVoiceRequested",
+            ts: Date.now(),
+            payload: { action: "start" },
+          },
+        ],
+      });
+      render(<BrowserRealtimeControl controlOnly />);
+
+      await waitFor(() => expect(fakes.connect).toHaveBeenCalledTimes(1));
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
   });
 
   it("maps every connection/voice combination onto exactly one look", () => {

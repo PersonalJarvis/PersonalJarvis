@@ -7,9 +7,13 @@ primitive each OS offers — a key-state read every 50 ms, no hook, no tap:
 
 * Windows: ``GetAsyncKeyState`` on ``VK_LMENU`` / ``VK_RMENU`` (AltGr raises
   ``VK_RMENU`` too, so the gesture works on AltGr layouts).
-* macOS: ``CGEventSourceKeyState`` on the left/right Option key codes. Needs
-  the same Input Monitoring grant as every other global shortcut; without it
-  the read stays false and nothing fires.
+* macOS: ``CGEventSourceKeyState`` on the left/right Option key codes. Whether
+  this read needs a privacy grant (Input Monitoring) is UNVERIFIED: the repo
+  contradicts itself (``CGEventSourceFlagsState`` is documented in
+  ``jarvis/trigger/hotkey.py`` as needing none) and neither was measured on a
+  Mac. It is therefore not treated as an Input Monitoring feature and never
+  triggers a permission request; if the gesture does nothing the status text
+  (``jarvis/appshot/hotkey.py``) points to another key combination.
 * Linux/X11: ``XQueryKeymap`` through python-xlib (pynput's own dependency).
 * Wayland, headless, missing packages: :func:`make_probe` returns ``None``
   with the reason, and the caller reports the shortcut as unavailable.

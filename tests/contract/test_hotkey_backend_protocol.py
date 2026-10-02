@@ -61,3 +61,55 @@ def test_held_tokens_is_unknown_before_the_backend_listens(factory):
     probe = getattr(backend, "held_tokens", None)
     assert callable(probe)
     assert probe() is None
+
+
+# --- optional readiness probes (just-in-time permissions) ---------------------
+#
+# A backend MAY expose ``is_listening()``, ``waiting_for_permission`` and
+# ``deaf_tap_suspected()``; ``HotkeyTrigger`` reads the first two through ``getattr`` and the
+# backend's own ``report_if_deaf`` uses the third.
+# Whatever it exposes must never claim a running listener, a missing permission
+# or a deaf tap BEFORE ``start``: the "Esc to cancel" pill and the permission
+# watchers trust these answers.
+
+
+@pytest.mark.parametrize("factory", _backend_factories())
+def test_optional_probes_never_claim_a_listener_before_start(factory):
+    backend = factory()
+    listening = getattr(backend, "is_listening", None)
+    if callable(listening):
+        assert listening() is False
+    assert getattr(backend, "waiting_for_permission", False) is False
+    deaf = getattr(backend, "deaf_tap_suspected", None)
+    if callable(deaf):
+        assert deaf() is False
+
+
+@pytest.mark.parametrize("factory", _backend_factories())
+def test_the_trigger_reads_a_backend_without_probes_as_unknown(factory):
+    """``listening()`` is ``None`` for a backend that cannot say, never ``False``."""
+    from jarvis.trigger.hotkey import HotkeyTrigger
+
+    trigger = HotkeyTrigger({"call": ["f3+f4"]})
+    backend = factory()
+    trigger._backend = backend
+    has_probe = callable(getattr(backend, "is_listening", None))
+    assert trigger.listening() is (False if has_probe else None)
+    assert trigger.armed is False
+
+
+def test_only_the_macos_and_the_noop_backends_have_a_listener_probe():
+    """Windows and Linux keep today's pill behaviour; the no-op backend says "never"."""
+    from jarvis.trigger.backends.global_hotkeys import GlobalHotkeysBackend
+    from jarvis.trigger.backends.noop import NoopBackend
+    from jarvis.trigger.backends.pynput import PynputBackend
+    from jarvis.trigger.backends.quartz import QuartzHotkeyBackend
+
+    assert callable(QuartzHotkeyBackend().is_listening)
+    # Nothing is ever armed by the no-op backend: "not listening", not "cannot say".
+    assert NoopBackend().is_listening() is False
+    for other in (GlobalHotkeysBackend, PynputBackend, NoopBackend):
+        if other is not NoopBackend:
+            assert not hasattr(other(), "is_listening")
+        # Only the macOS tap can WAIT for a permission (the trigger's re-arm hook).
+        assert not hasattr(other(), "waiting_for_permission")

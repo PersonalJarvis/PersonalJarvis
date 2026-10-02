@@ -7,6 +7,7 @@ import { Card } from "@/components/ui/card";
 import { useCapabilities } from "@/hooks/useCapabilities";
 import { useVoiceMode } from "@/hooks/useVoiceMode";
 import { useT } from "@/i18n";
+import { hasEmbeddedDesktopBridge, isEmbeddedMacWindow } from "@/lib/embeddedDesktop";
 import {
   browserRealtimeSupportIssue,
   RealtimeAudioClient,
@@ -29,27 +30,10 @@ import {
 
 type ConnectionState = "idle" | "connecting" | "connected" | "error";
 
-/** True only inside a pywebview host, never from the backend's machine flag.
- *
- * A normal Chrome window can connect to the same local desktop backend, where
- * `native_file_actions` is also true. Checking the client bridge keeps browser
- * microphone control visible there without enabling a second microphone in the
- * embedded desktop window.
- */
-export function hasEmbeddedDesktopBridge(): boolean {
-  const host = window as unknown as {
-    __JARVIS_EMBEDDED_DESKTOP?: boolean;
-    pywebview?: { api?: unknown };
-    chrome?: { webview?: { postMessage?: unknown } };
-    webkit?: { messageHandlers?: Record<string, unknown> };
-  };
-  return Boolean(
-    host.__JARVIS_EMBEDDED_DESKTOP ||
-      host.pywebview?.api ||
-      typeof host.chrome?.webview?.postMessage === "function" ||
-      host.webkit?.messageHandlers?.jarvisFileDrag,
-  );
-}
+// Defined in lib/embeddedDesktop.ts (a module with no UI imports, so the
+// permission toast can ask it cheaply); re-exported here because this is where
+// the rest of the shell has always imported it from.
+export { hasEmbeddedDesktopBridge };
 
 /** Map the socket state plus the shared voice state onto one visualizer look.
  *
@@ -71,6 +55,25 @@ export function waveformPhase(
   if (voiceState === "thinking") return "working";
   if (voiceState === "speaking") return "speaking";
   return "listening";
+}
+
+/**
+ * Tell the backend that the person pressed Start and macOS refused the
+ * microphone, so it opens a user-origin episode and the permission toast is
+ * shown. Best effort: the sentence under the button already says what happened,
+ * so a failure here is logged and nothing else.
+ */
+async function reportHostMicrophoneDenied(): Promise<void> {
+  try {
+    const res = await fetch("/api/permissions/microphone/request?dry_run=false", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ feature: "browser_voice" }),
+    });
+    if (!res.ok) console.warn(`Microphone permission report failed: HTTP ${res.status}`);
+  } catch (error) {
+    console.warn("Microphone permission report failed:", error);
+  }
 }
 
 /** Browser-owned microphone control for remote/headless installations.
@@ -165,7 +168,7 @@ export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: 
     await client?.disconnect();
   }, [setVoice]);
 
-  const start = useCallback(async () => {
+  const start = useCallback(async (options?: { fromGesture?: boolean }) => {
     if (!realtimeAvailable || clientRef.current || state === "connecting") return;
     const generation = connectionGenerationRef.current + 1;
     connectionGenerationRef.current = generation;
@@ -322,12 +325,21 @@ export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: 
       void client.disconnect();
       clearVoiceInputLevel("browser");
       setState("error");
+      const micDenied = cause instanceof DOMException && cause.name === "NotAllowedError";
+      // In the embedded Mac window a refused microphone is macOS's decision, not a
+      // browser site setting: there is no site settings page to point at. The
+      // person's own press opens a user-origin episode, so the permission toast
+      // ("Open System Settings") takes over; a wake-started call never does.
+      const hostDenied = micDenied && isEmbeddedMacWindow();
+      if (hostDenied && options?.fromGesture) void reportHostMicrophoneDenied();
       setError(
         cause instanceof RealtimeAudioSupportError
           ? supportMessage(cause.issue)
-          : cause instanceof DOMException && cause.name === "NotAllowedError"
-            ? t("sidebar.realtime_microphone_denied")
-            : t("sidebar.realtime_error"),
+          : hostDenied
+            ? t("sidebar.realtime_microphone_denied_desktop")
+            : micDenied
+              ? t("sidebar.realtime_microphone_denied")
+              : t("sidebar.realtime_error"),
       );
       setVoice("error");
     }
@@ -468,7 +480,7 @@ export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: 
         disabled={unavailable || connecting}
         aria-label={label}
         aria-pressed={connected}
-        onClick={() => void (connected ? stop() : start())}
+        onClick={() => void (connected ? stop() : start({ fromGesture: true }))}
         className="w-full touch-manipulation gap-2"
       >
         <Icon

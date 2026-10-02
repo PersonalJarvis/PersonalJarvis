@@ -71,12 +71,13 @@ _TRAVERSAL_TIME_BUDGET_S = 1.2
 #: nodes only spends IPC on data the ladder is guaranteed to throw away.
 _MAX_RAW_NODES = 6000
 
-# Onboarding message surfaced once when the macOS Accessibility permission is
-# missing — English-only, per the Output Language Policy + AD-13.
+# Log line when the macOS Accessibility permission is missing — English-only,
+# per the Output Language Policy + AD-13. An AX read never asks: Jarvis asks the
+# first time it must type or click for the user.
 _AX_PERMISSION_MSG = (
-    "macOS Accessibility permission is not ready — grant it to Personal "
-    "Jarvis in System Settings > Privacy & Security > Accessibility, then "
-    "restart Jarvis. Named UI lookup and protected input remain disabled."
+    "macOS Accessibility access is not granted to Personal Jarvis: the UI tree "
+    "is not read and named UI lookup stays off. It is requested the first time "
+    "Jarvis has to click or type for you."
 )
 
 
@@ -213,22 +214,28 @@ class AXTreeSource:
 
     @staticmethod
     def _ax_is_process_trusted() -> bool:
-        """Unified live Accessibility + stable-app-identity gate.
+        """Silent live Accessibility read: never prompts, never publishes.
 
-        The process-wide permission port owns the uncached native TCC probe,
-        stable bundle identity check, and pending-restart state. Imports remain
-        lazy so this module is clean on Windows and headless Linux.
+        An AX READ is background work: it asks the permission layer's lock-free
+        ``check`` and degrades when the grant is missing, never raising a card or
+        a system dialog (only an action the user started asks, see
+        ``jarvis.cu.actuate.base.get_actuator``). Off macOS the layer answers
+        NOT_REQUIRED. Imports stay lazy so this module is clean on Windows and
+        headless Linux.
         """
         try:
+            from jarvis.platform.permission_service import (  # noqa: PLC0415
+                get_permission_service,
+            )
             from jarvis.platform.permissions import (  # noqa: PLC0415
                 PermissionId,
-                get_system_permission_port,
+                PermissionState,
             )
-            return get_system_permission_port().runtime_access_granted(
-                PermissionId.ACCESSIBILITY,
-            )
+
+            state = get_permission_service().check(PermissionId.ACCESSIBILITY)
+            return state in (PermissionState.GRANTED, PermissionState.NOT_REQUIRED)
         except Exception:  # noqa: BLE001
-            logger.debug("Accessibility permission gate raised", exc_info=True)
+            logger.debug("Accessibility permission read raised", exc_info=True)
             return False
 
     def _empty_observation(self) -> Observation:

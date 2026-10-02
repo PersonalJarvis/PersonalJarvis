@@ -175,25 +175,63 @@ def boot_overlay_style(configured: str | None, *, instance: Any | None = None) -
     return configured if identity.owns_ambient_duties else "none"
 
 
+def _local_voice_microphone_state(
+    platform_name: str | None, permission_gate: Any | None
+) -> Any | None:
+    """The silent microphone state, or ``None`` off macOS (nothing to ask there)."""
+    if (platform_name or sys.platform) != "darwin":
+        return None
+    from jarvis.platform.permission_service import get_permission_service
+    from jarvis.platform.permissions import PermissionId
+
+    gate = permission_gate or get_permission_service()
+    return gate.check(PermissionId.MICROPHONE)
+
+
 def _local_voice_permission_granted(
     *,
     platform_name: str | None = None,
-    permission_port: Any | None = None,
+    permission_gate: Any | None = None,
 ) -> bool:
-    """Return whether local voice may touch the microphone on this host."""
-    platform_name = platform_name or sys.platform
-    if platform_name != "darwin":
-        return True
-    from jarvis.platform.permissions import (
-        PermissionId,
-        get_system_permission_port,
-    )
+    """Whether BACKGROUND voice (wake word, barge-in) may open the microphone.
 
-    port = permission_port or get_system_permission_port()
+    True only for a live GRANT. Silent: it reads the state through the permission
+    service, never asks and never opens the device, so a fresh Mac boots with no
+    dialog and the wake loop simply waits (see ``SpeechPipeline._wake_loop``).
+    """
     try:
-        return bool(port.runtime_access_granted(PermissionId.MICROPHONE))
-    except Exception:  # noqa: BLE001 - protected capture must fail closed
+        state = _local_voice_microphone_state(platform_name, permission_gate)
+    except Exception:  # noqa: BLE001 - background capture must fail closed
+        logging.getLogger(__name__).debug(
+            "The silent microphone read failed; background voice stays closed.", exc_info=True
+        )
         return False
+    if state is None:
+        return True
+    return str(getattr(state, "value", state)) in ("granted", "not_required")
+
+
+def _local_voice_permission_usable(
+    *,
+    platform_name: str | None = None,
+    permission_gate: Any | None = None,
+) -> bool:
+    """Whether a USER gesture (push-to-talk, a voice session, dictation) may try the microphone.
+
+    True unless the state is denied, restricted or unavailable: an undecided
+    microphone is still usable because the gesture itself is what asks. Silent,
+    never asks; the gesture entry points call the service ``ensure`` themselves.
+    """
+    try:
+        state = _local_voice_microphone_state(platform_name, permission_gate)
+    except Exception:  # noqa: BLE001 - an unreadable state must not open the device
+        logging.getLogger(__name__).debug(
+            "The silent microphone read failed; user capture stays closed.", exc_info=True
+        )
+        return False
+    if state is None:
+        return True
+    return str(getattr(state, "value", state)) not in ("denied", "restricted", "unavailable")
 
 
 def _supported_call_kwargs(
@@ -2012,6 +2050,15 @@ class DesktopApp:
         server = loop.run_until_complete(asyncio.to_thread(WebServer, self.cfg))
         self._server = server
         _db_mark("webserver_ctor")
+
+        # Just-in-time permissions: hand the service the bus and this loop BEFORE
+        # the speech task below can ask for the microphone. WebServer.start() does
+        # the same on its first line, but it runs behind the wake-model gate, i.e.
+        # AFTER _start_speech_and_orb. Two references are stored, nothing is probed
+        # and no OS dialog can follow from here (AP-26; design 3.6).
+        from jarvis.platform.permission_service import attach_bus as _attach_permission_bus
+
+        _attach_permission_bus(server.bus, loop)
 
         # Hang the core state off the loop — thread-local, referenced only here.
         supervisor = Supervisor(bus=server.bus)
@@ -4052,30 +4099,27 @@ class DesktopApp:
             logger.info("Voice stack disabled via JARVIS_VOICE=0.")
             return
 
-        # macOS must never discover microphone permission by opening the device:
-        # that would throw an unmanaged TCC prompt before the guided onboarding
-        # step. Keep the pipeline alive but its activation gate closed until the
-        # user explicitly grants access. The probe is native and uncached, so a
-        # grant (or later revocation) applies without restarting the process.
-        permission_port: Any | None = None
-        if sys.platform == "darwin":
-            from jarvis.platform.permissions import get_system_permission_port
-
-            permission_port = get_system_permission_port()
-
+        # Nothing here asks macOS for the microphone: boot never shows a dialog and
+        # never opens an input stream. Two SILENT predicates tell the pipeline
+        # what a read of the permission service says right now: background voice
+        # (the wake word, barge-in) needs a live GRANT; a user gesture (push-to-talk,
+        # a voice session, dictation) only needs the microphone not to be refused,
+        # because the gesture itself is what asks (see ``SpeechPipeline``). Both
+        # read the live state, so a grant applies without restarting the process.
         def voice_activation_gate() -> bool:
-            return _local_voice_permission_granted(
-                platform_name=sys.platform,
-                permission_port=permission_port,
-            )
+            return _local_voice_permission_granted(platform_name=sys.platform)
+
+        def voice_user_gate() -> bool:
+            return _local_voice_permission_usable(platform_name=sys.platform)
 
         if sys.platform == "darwin":
             if not voice_activation_gate():
                 from loguru import logger
 
                 logger.info(
-                    "Voice activation is parked until Microphone access is "
-                    "granted from the in-app macOS permission guide."
+                    "Wake listening waits for Microphone access; the first voice "
+                    "action (a shortcut, the speak button, switching the wake word "
+                    "on) asks for it."
                 )
 
         # On-screen overlay in its own Tk daemon thread — the bus bridge reacts
@@ -4528,6 +4572,7 @@ class DesktopApp:
                 config=self.cfg,
                 vision_provider=voice_vision,
                 activation_gate=voice_activation_gate,
+                user_activation_gate=voice_user_gate,
                 ack_brain=voice_ack_brain,
                 # Resolved custom-wake-word plan: drives the OWW model + the
                 # phrase matcher for the verifier + rolling-whisper.

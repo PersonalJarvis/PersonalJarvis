@@ -72,24 +72,27 @@ class AXPointerResolver(_BaseResolver):
     _native = staticmethod(lambda x, y: _ax_query_element_at_point(x, y))
 
     def at(self, x: int, y: int) -> PointerElement | None:
-        """Query AX only for the canonical, currently authorized app process.
+        """Query AX only while Accessibility is currently granted.
 
-        This check deliberately runs for every point lookup: TCC grants can be
-        revoked while Jarvis is running, and an ad-hoc Python/Terminal launch
-        must never inherit a different executable's Accessibility grant.
+        An element-at-point read is background work: it asks the permission
+        layer's silent ``check`` for every lookup (a grant can be revoked while
+        Jarvis runs) and degrades to ``None`` without a grant. It never prompts
+        and never raises a card.
         """
         try:
+            from jarvis.platform.permission_service import (  # noqa: PLC0415
+                get_permission_service,
+            )
             from jarvis.platform.permissions import (  # noqa: PLC0415
                 PermissionId,
-                get_system_permission_port,
+                PermissionState,
             )
 
-            if not get_system_permission_port().runtime_access_granted(
-                PermissionId.ACCESSIBILITY,
-            ):
+            state = get_permission_service().check(PermissionId.ACCESSIBILITY)
+            if state not in (PermissionState.GRANTED, PermissionState.NOT_REQUIRED):
                 return None
         except Exception:  # noqa: BLE001 - native permission failures fail closed
-            log.debug("macOS Accessibility permission gate failed", exc_info=True)
+            log.debug("macOS Accessibility permission read failed", exc_info=True)
             return None
         return super().at(x, y)
 

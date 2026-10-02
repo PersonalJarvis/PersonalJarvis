@@ -24,6 +24,8 @@ import {
   useCommandActivityStore,
   COMMAND_ACTIVITY_EVENTS,
 } from "@/store/commandActivity";
+import { isDictationStartFailure } from "@/lib/dictationRefusal";
+import { usePermissionToast } from "@/hooks/usePermissionToast";
 import { useDeckStore } from "@/store/deck";
 import { useHomeStore } from "@/store/home";
 import { PANE_ACTIVITY_EVENT } from "@/store/workspacePanes";
@@ -64,6 +66,7 @@ export function useWebSocket(): void {
   const setActiveSection = useEventStore((s) => s.setActiveSection);
   const setBrainProvider = useEventStore((s) => s.setBrainProvider);
   const pushToast = useEventStore((s) => s.pushToast);
+  const { onEvent: onPermissionEvent, seed: seedPermissionToast } = usePermissionToast();
 
   useEffect(() => {
     if (mounted.current) return;
@@ -115,6 +118,11 @@ export function useWebSocket(): void {
           // authoritative "backend is up" signal — useAssistantNameSeed
           // listens for this event and re-fetches the resolved name.
           window.dispatchEvent(new CustomEvent("jarvis:assistant-name-changed"));
+          // Re-seed the permission toast on EVERY (re)connect too: a
+          // PermissionNeeded published while no window was connected (autostart
+          // with the window hidden, a wake-word denial before the socket opened)
+          // is a one-shot bus event and would otherwise never be told.
+          seedPermissionToast();
           return;
         }
 
@@ -179,6 +187,27 @@ export function useWebSocket(): void {
               env.payload,
               Math.floor(env.timestamp_ns / 1_000_000),
             );
+        }
+
+        // A feature a macOS permission stopped: ONE toast with one button, only
+        // in the owner window and only when the person started the feature
+        // (lib/permissionToast). It reads just these two events.
+        if (env.event_name === "PermissionNeeded" || env.event_name === "PermissionResolved") {
+          onPermissionEvent(env.event_name, env.payload);
+        }
+
+        // A dictation that could not start. The composer set `dictating`
+        // optimistically when the person pressed the mic, so without this the
+        // recording pill sticks with a waveform. Only a window that IS
+        // dictating reacts.
+        if (
+          (env.event_name === "DictationRefused" &&
+            isDictationStartFailure((env.payload as { reason?: unknown }).reason)) ||
+          (env.event_name === "ErrorOccurred" &&
+            (env.payload as { layer?: unknown }).layer === "ui.web.dictation")
+        ) {
+          const store = useEventStore.getState();
+          if (store.dictating) store.setDictating(false);
         }
 
         // Mission deck: cost, computer-use, capture, terminals, wiki, words.
@@ -747,6 +776,8 @@ export function useWebSocket(): void {
     setActiveSection,
     setBrainProvider,
     pushToast,
+    onPermissionEvent,
+    seedPermissionToast,
     queryClient,
   ]);
 }

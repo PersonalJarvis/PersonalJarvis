@@ -10,11 +10,25 @@ first Intel-Mac onboarding. The main thread belongs to pywebview, so the only
 safe path is to avoid the TSM APIs entirely.
 
 This backend listens with a listen-only ``CGEventTap`` on a dedicated
-CFRunLoop thread (event taps are legal off the main thread; the BUG-058 gate
-already preflights the Accessibility + Input Monitoring grants that a tap
-needs) and matches chords by PHYSICAL key: a fixed ANSI virtual-keycode table
-plus the modifier flags word. No layout translation, no TSM, no main-queue
-assertion.
+CFRunLoop thread (event taps are legal off the main thread) and matches chords
+by PHYSICAL key: a fixed ANSI virtual-keycode table plus the modifier flags
+word. No layout translation, no TSM, no main-queue assertion.
+
+Permission contract (just-in-time permissions, AP-35): a LISTEN-ONLY tap needs
+Input Monitoring and nothing else (Apple WWDC19 session 701; an Accessibility
+grant also satisfies it, which is not special-cased here). The tap is created
+LAZILY: ``start()`` is a silent INFO-level no-op while Input Monitoring is not
+granted and NEVER calls ``CGEventTapCreate`` before the grant is visible (the
+BUG-058 class: creating a tap while the permission is undecided can register
+the app as denied or abort the process). This backend never asks the user
+either: the explicit request (``CGRequestListenEventAccess``) belongs to the
+permission service at a user gesture, and the service's grant listener re-runs
+``start()`` (see ``HotkeyTrigger``). A tap that is created but receives no
+event at all is detected through a raw-callback counter, never by waiting for a
+bound chord (:meth:`QuartzHotkeyBackend.deaf_tap_suspected`); the owner's watch
+task reports such a tap once to the permission service
+(:meth:`QuartzHotkeyBackend.report_if_deaf`, a "quit and reopen" hint, never an
+automatic restart).
 
 Known trade-offs (documented, honest):
 
@@ -122,11 +136,62 @@ _MOUSE_BUTTON_TO_TOKEN: dict[int, str] = {
 }
 
 # How long a grant verdict stays good inside the event-tap callback. Short
-# enough that revoking Accessibility mid-session stops the shortcuts about as
+# enough that revoking Input Monitoring mid-session stops the shortcuts about as
 # fast as a human can switch back from System Settings; long enough that
 # ordinary typing does not re-probe TCC natively dozens of times a second.
 # See :meth:`QuartzHotkeyBackend._permitted`.
 _PERMISSION_TTL_S = 1.0
+
+# A live tap that has seen no raw event for this long while the system saw the
+# user type is "deaf" (created, but macOS delivers nothing; community-observed
+# after a grant given while the app was running, UNVERIFIED on a real Mac).
+_DEAF_TAP_AFTER_S = 10.0
+
+
+def _seconds_since_last_key_event() -> float | None:
+    """Seconds since the session last saw a key-down, or ``None`` when unknown.
+
+    Asked of the window server's idle counter, which does not depend on our tap
+    (so it can tell "the user typed, our tap heard nothing" from "nobody typed").
+    Whether this counter needs a TCC grant is UNVERIFIED; any failure reads
+    "unknown" and the caller then never claims a deaf tap.
+    """
+    try:
+        import Quartz  # type: ignore[import-untyped]  # noqa: PLC0415 - lazy (HN-7)
+
+        return float(
+            Quartz.CGEventSourceSecondsSinceLastEventType(
+                Quartz.kCGEventSourceStateCombinedSessionState,
+                Quartz.kCGEventKeyDown,
+            )
+        )
+    except Exception:  # noqa: BLE001 - an unreadable idle counter is "unknown"
+        log.debug("Reading the key idle counter failed.", exc_info=True)
+        return None
+
+
+def _secure_event_input_enabled() -> bool | None:
+    """Whether Secure Event Input is on right now, or ``None`` when it cannot be read.
+
+    While it is on (a focused password field, Terminal's Secure Keyboard Entry)
+    the window server hides key events from every event tap, yet the idle counter
+    behind :func:`_seconds_since_last_key_event` still advances: a healthy tap
+    looks deaf. ``IsSecureEventInputEnabled`` is a Carbon HIToolbox call, read
+    through ctypes and lazily (AP-26). Its availability and behaviour are
+    UNVERIFIED on a real Mac; any failure reads "unknown" and the caller makes no
+    claim.
+    """
+    try:
+        import ctypes  # noqa: PLC0415 - lazy: nothing native at import time (AP-26)
+
+        carbon = ctypes.cdll.LoadLibrary("/System/Library/Frameworks/Carbon.framework/Carbon")
+        probe = carbon.IsSecureEventInputEnabled
+        probe.restype = ctypes.c_ubyte
+        probe.argtypes = []
+        return bool(probe())
+    except Exception:  # noqa: BLE001 - an unreadable flag is "unknown"
+        log.debug("Reading the secure-event-input flag failed.", exc_info=True)
+        return None
 
 
 class QuartzHotkeyBackend:
@@ -143,6 +208,27 @@ class QuartzHotkeyBackend:
         self._got_event = False
         self._held: set[str] = set()
         self._permission_check = _macos_hotkey_permissions_granted
+        # Raw-callback liveness: how many events the tap callback has seen since
+        # the tap came up (any key, any bound chord or not), and when. Written
+        # only by the tap thread, read lock-free by status readers.
+        self._raw_events = 0
+        self._armed_at: float | None = None
+        # True once THIS tap was reported to the permission service as deaf
+        # (:meth:`report_if_deaf`); a new tap is a new episode.
+        self._deaf_reported = False
+        # True while a ``restart_hint`` episode this backend opened is still open.
+        # Unlike the flag above it survives ``start`` (a rearm): the episode ends when
+        # a tap actually hears an event, not when a new tap is built.
+        self._deaf_episode_open = False
+        self._seconds_since_last_key = _seconds_since_last_key_event
+        self._secure_input_enabled = _secure_event_input_enabled
+        # ``start`` and ``stop`` never overlap: a grant-driven ``start`` runs in a
+        # worker thread while the owner may already be tearing the backend down,
+        # and a ``start`` that lands after ``stop`` would leave an orphan tap.
+        self._lifecycle = threading.RLock()
+        # ``start()`` declined to create the tap because Input Monitoring is not
+        # granted (as opposed to "never started" or "failed").
+        self._waiting_for_permission = False
         # Last grant verdict + when it was taken (see ``_permitted``). ``None``
         # means "never probed", so the first event of a session always asks.
         self._permission_cache: bool | None = None
@@ -213,14 +299,14 @@ class QuartzHotkeyBackend:
     def _permitted(self) -> bool:
         """The grant verdict, re-probed at most every ``_PERMISSION_TTL_S``.
 
-        The probe itself is deliberately uncached one level down
-        (``permissions.py::_state``) so a revoked grant is seen live — but it
-        is a native TCC call (``AXIsProcessTrusted`` + ``IOHIDCheckAccess``),
-        and it used to run on EVERY reconcile. That put two ObjC round trips
-        into the event-tap callback for every keystroke the machine sees —
-        not just ours, since a session tap observes the whole system. Typing
-        an ordinary sentence therefore fired dozens of native probes a second
-        inside a callback macOS holds the input pipeline on.
+        The probe is the silent, lock-free ``PermissionService.check`` (never
+        ``ensure``, never a service lock, never a prompt) and it reads the live
+        TCC value one level down — but it is a native call, and it used to run
+        on EVERY reconcile. That put ObjC round trips into the event-tap
+        callback for every keystroke the machine sees — not just ours, since a
+        session tap observes the whole system. Typing an ordinary sentence
+        therefore fired dozens of native probes a second inside a callback
+        macOS holds the input pipeline on.
 
         That is not merely slow, it is how the shortcuts go dead: a tap whose
         callback overruns its deadline is DISABLED by the OS
@@ -322,10 +408,18 @@ class QuartzHotkeyBackend:
     # ------------------------------------------------------------------
 
     def start(self) -> None:
+        """Create the listen-only event tap (serialised with :meth:`stop`)."""
+        with self._lifecycle:
+            self._start_locked()
+
+    def _start_locked(self) -> None:
         """Create the listen-only event tap on its own CFRunLoop thread.
 
         Degrades to a logged no-op on any failure — missing pyobjc/Quartz,
-        missing permissions, or a tap-creation refusal (AD-6).
+        missing Input Monitoring, or a tap-creation refusal (AD-6). Without
+        Input Monitoring this is silent (INFO) and creates no tap at all: it
+        runs at boot, where nothing may ask or abort. It is idempotent, so the
+        permission listener simply calls it again once the grant arrives.
         """
         if self._started:
             return
@@ -341,16 +435,18 @@ class QuartzHotkeyBackend:
         try:
             granted = self._permission_check()
         except Exception:  # noqa: BLE001 — the probe must never crash the trigger
+            log.debug("The Input Monitoring probe failed.", exc_info=True)
             granted = False
         if granted is not True:
-            log.warning(
-                "Global hotkeys disabled on macOS: the Accessibility "
-                "and Input Monitoring permissions are not both granted. "
-                "Use Personal Jarvis > Settings > Permissions, then "
-                "re-arm the shortcut or restart Jarvis — voice still "
-                "works via the wake word.",
+            self._waiting_for_permission = True
+            log.info(
+                "Global shortcuts are waiting for Input Monitoring: macOS has "
+                "not allowed it for Personal Jarvis yet, so no event tap is "
+                "created. They arm themselves once it is allowed; voice still "
+                "works via the wake word and the buttons.",
             )
             return
+        self._waiting_for_permission = False
 
         try:
             import Quartz  # type: ignore[import-untyped]  # lazy (HN-7)
@@ -384,6 +480,13 @@ class QuartzHotkeyBackend:
 
         def _callback(_proxy, event_type, event, _refcon):
             try:
+                if event_type not in (
+                    Quartz.kCGEventTapDisabledByTimeout,
+                    Quartz.kCGEventTapDisabledByUserInput,
+                ):
+                    # Raw liveness counter: ANY event the tap hears, bound or
+                    # not. A plain int, written only by this thread.
+                    self._raw_events += 1
                 if event_type == Quartz.kCGEventKeyDown:
                     keycode = Quartz.CGEventGetIntegerValueField(
                         event, Quartz.kCGKeyboardEventKeycode
@@ -434,14 +537,15 @@ class QuartzHotkeyBackend:
             )
             if tap is None:
                 raise RuntimeError(
-                    "CGEventTapCreate returned None (permission or session "
-                    "restriction)"
+                    "CGEventTapCreate returned None (session restriction or "
+                    "a grant macOS does not honour yet)"
                 )
             source = Quartz.CFMachPortCreateRunLoopSource(None, tap, 0)
         except Exception:  # noqa: BLE001 — degrade, never crash the pipeline
             log.error(
-                "Quartz event tap could not be created — hotkeys disabled for "
-                "this session; voice still works via wake word.",
+                "Quartz event tap could not be created although Input "
+                "Monitoring is granted — hotkeys disabled for this session; "
+                "voice still works via wake word.",
                 exc_info=True,
             )
             self._tap = None
@@ -449,6 +553,9 @@ class QuartzHotkeyBackend:
 
         self._tap = tap
         self._source = source
+        self._raw_events = 0
+        self._deaf_reported = False
+        self._armed_at = None
         ready = threading.Event()
         startup_failed = threading.Event()
 
@@ -483,10 +590,19 @@ class QuartzHotkeyBackend:
             )
             self.stop()
             return
+        self._armed_at = time.monotonic()
         self._started = True
 
     def stop(self) -> None:
-        """Stop the run loop and drop the tap. Idempotent, never raises."""
+        """Stop the run loop and drop the tap. Idempotent, never raises.
+
+        Waits for a ``start`` that is already running, so the tap it creates is the
+        one this call tears down.
+        """
+        with self._lifecycle:
+            self._stop_locked()
+
+    def _stop_locked(self) -> None:
         tap = self._tap
         source = self._source
         runloop = self._runloop
@@ -549,6 +665,7 @@ class QuartzHotkeyBackend:
         self._thread = None
         self._tap = None
         self._source = None
+        self._armed_at = None
         self._held.clear()
         for combo in self._combos:
             combo["down"] = False
@@ -564,8 +681,114 @@ class QuartzHotkeyBackend:
         self._needs_mouse = False
 
     def received_any_event(self) -> bool:
-        """True once any bound chord has fired (AD-8 macOS permission hint)."""
+        """True once any bound chord has fired (kept for the backend contract).
+
+        Not a liveness signal: it only flips when a BOUND chord fires, so it
+        cannot tell a deaf tap from "the user has not pressed yet". Liveness is
+        :meth:`raw_event_count` / :meth:`deaf_tap_suspected`.
+        """
         return self._got_event
+
+    # ------------------------------------------------------------------
+    # Readiness and liveness (read by the Esc pill and the shortcuts status)
+    # ------------------------------------------------------------------
+
+    def is_listening(self) -> bool:
+        """True while the event tap exists and its run loop thread is up."""
+        return self._started and self._tap is not None
+
+    @property
+    def waiting_for_permission(self) -> bool:
+        """``start()`` declined to create the tap: Input Monitoring is missing."""
+        return self._waiting_for_permission and not self.is_listening()
+
+    def raw_event_count(self) -> int:
+        """Events the tap callback has seen since the tap came up (any key)."""
+        return self._raw_events
+
+    def deaf_tap_suspected(self) -> bool:
+        """Is the tap alive but hearing nothing although the grant is visible?
+
+        The one signal behind a "quit and reopen" hint, and only that: it never
+        restarts anything. True when the tap is running, Input Monitoring reads
+        granted (without the grant the answer is "needs Input Monitoring", not
+        "restart"), the raw callback count is still 0, and the system saw a
+        key-down after the tap came up more than ``_DEAF_TAP_AFTER_S`` ago. A user
+        who has not typed yet never counts as a deaf tap, and neither does one
+        typing under Secure Event Input (macOS hides those keys from every tap),
+        so that flag must read as off. (An explicit "still not working" from the
+        user would need its own route and UI; none exists.)
+        """
+        if not self.is_listening() or self._raw_events > 0:
+            return False
+        try:
+            granted = self._permission_check() is True
+        except Exception:  # noqa: BLE001 - an unreadable grant is "no claim"
+            log.debug("The Input Monitoring probe failed.", exc_info=True)
+            return False
+        if not granted:
+            return False
+        armed_at = self._armed_at
+        if armed_at is None:
+            return False
+        age = time.monotonic() - armed_at
+        if age < _DEAF_TAP_AFTER_S:
+            return False
+        # Under Secure Event Input the tap is meant to hear nothing, whatever the
+        # idle counter says; an unreadable flag makes no claim either.
+        if self._secure_input_enabled() is not False:
+            return False
+        idle = self._seconds_since_last_key()
+        return idle is not None and idle < age
+
+    def report_if_deaf(self) -> bool:
+        """One liveness pass for the owner's watch task: report a deaf tap, once.
+
+        When :meth:`deaf_tap_suspected` turns true (tap running, grant visible, zero
+        raw callbacks, Secure Event Input off, key activity seen) the permission
+        service is told ONCE per tap through ``report_failed_use``: that opens a
+        ``restart_hint`` episode, "quit and reopen" offered as a toast, and nothing
+        else. It never restarts the tap, never asks for anything and never reads
+        the OS while no tap runs (a boot with Input Monitoring missing costs a flag
+        check). If the tap hears an event after the report, the episode is ended
+        again. Blocking (native reads): run it in a worker thread, never on the
+        loop. Returns ``True`` while the tap is still worth watching, ``False`` once
+        it has proven healthy.
+        """
+        if not self.is_listening():
+            return True  # not up yet (waiting for the grant): nothing to judge
+        if self._raw_events > 0:
+            if self._deaf_episode_open:
+                # Also true for an episode the PREVIOUS tap opened (a rearm builds a
+                # new tap): the first event a healthy tap hears ends the episode.
+                self._deaf_episode_open = False
+                self._call_service("note_reset")
+            self._deaf_reported = False
+            return False
+        if not self._deaf_reported and self.deaf_tap_suspected():
+            self._deaf_reported = True
+            self._deaf_episode_open = True
+            self._call_service("report_failed_use")
+        return True
+
+    def _call_service(self, name: str) -> None:
+        """Run one permission-service call about Input Monitoring; never raises."""
+        try:
+            from jarvis.platform.permission_service import (  # noqa: PLC0415 - lazy (AP-26)
+                get_permission_service,
+            )
+            from jarvis.platform.permissions import PermissionId  # noqa: PLC0415
+
+            service = get_permission_service()
+            if name == "report_failed_use":
+                service.report_failed_use(PermissionId.INPUT_MONITORING, feature="global_shortcuts")
+            else:
+                service.note_reset(PermissionId.INPUT_MONITORING)
+        except Exception:  # noqa: BLE001 - reporting a liveness hint never harms the tap
+            log.debug(
+                "Reporting the tap to the permission service failed (%s).", name,
+                exc_info=True,
+            )
 
 
 __all__ = ["QuartzHotkeyBackend"]

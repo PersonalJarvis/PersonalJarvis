@@ -62,11 +62,49 @@ def test_bundle_layout_and_plist(tmp_path: Path, monkeypatch) -> None:
     assert info["CFBundlePackageType"] == "APPL"
     assert "microphone" in info["NSMicrophoneUsageDescription"].lower()
     assert "screen" in info["NSScreenCaptureUsageDescription"].lower()
-    assert "dictate" in info["NSAppleEventsUsageDescription"].lower()
+    assert "other apps" in info["NSAppleEventsUsageDescription"].lower()
     executable = bundle / "Contents" / "MacOS" / executable_name
     assert executable.read_bytes()[:4] == b"\xcf\xfa\xed\xfe"
     if os.name != "nt":
         assert executable.stat().st_mode & stat.S_IXUSR
+    assert macos_app_bundle_is_launchable(bundle) is True
+
+
+def test_bundle_plist_carries_the_shared_usage_strings_and_no_removed_key(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The managed app shows the same permission dialogs as the .dmg app (one table)."""
+    from jarvis.core import macos_privacy_strings as table
+
+    bundle = _build(tmp_path, monkeypatch)
+    info = plistlib.loads((bundle / "Contents" / "Info.plist").read_bytes())
+
+    for key, text in table.usage_descriptions().items():
+        assert info[key] == text, key
+    for key in table.REMOVED_USAGE_KEYS:
+        assert key not in info, key
+    # These three were missing from the managed bundle before the table existed.
+    for key in (
+        "NSDesktopFolderUsageDescription",
+        "NSDocumentsFolderUsageDescription",
+        "NSDownloadsFolderUsageDescription",
+    ):
+        assert info[key].strip()
+
+
+def test_cosmetic_usage_strings_do_not_force_an_installed_bundle_rebuild(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Adding prompt text must not rebuild installed bundles.
+
+    An ad-hoc rebuild is a new identity and re-asks every permission, so the
+    folder/volume/local-network strings ride the next rebuild that happens for
+    another reason instead of forcing one.
+    """
+    bundle = _build(tmp_path, monkeypatch)
+    info = plistlib.loads((bundle / "Contents" / "Info.plist").read_bytes())
+
+    assert info["JarvisBundleFormatVersion"] == 3
     assert macos_app_bundle_is_launchable(bundle) is True
 
 
@@ -453,7 +491,12 @@ def test_build_native_bundle_layout_and_clang_invocation(
     from jarvis.setup.macos_app_bundle import _BUNDLE_FORMAT_VERSION
 
     assert info["JarvisBundleFormatVersion"] == _BUNDLE_FORMAT_VERSION
-    assert "dictate" in info["NSAppleEventsUsageDescription"].lower()
+    assert "other apps" in info["NSAppleEventsUsageDescription"].lower()
+    # The German and Spanish dialog text is laid out with the bundle, before signing.
+    assert info["CFBundleLocalizations"] == ["en", "de", "es"]
+    for language in ("de", "es"):
+        strings = bundle / "Contents" / "Resources" / f"{language}.lproj" / "InfoPlist.strings"
+        assert "NSMicrophoneUsageDescription" in strings.read_text(encoding="utf-8")
     executable = bundle / "Contents" / "MacOS" / "PersonalJarvis"
     assert executable.read_bytes()[:4] == b"\xcf\xfa\xed\xfe"
     if os.name != "nt":
@@ -616,33 +659,96 @@ def test_reset_stale_tcc_grants_survives_a_failing_tccutil() -> None:
     assert attempts == list(mab._TCC_SERVICES)
 
 
-def test_a_recurring_rebuild_wipes_the_grants_only_once(tmp_path: Path, monkeypatch) -> None:
-    """BUG-159: a rebuild loop must not re-ask for every permission each start.
+def _redirect_data_dir(tmp_path: Path, monkeypatch) -> Path:
+    """Point every data-directory lookup at an empty folder the test can inspect.
 
-    The reset is the right move once. Repeating it while the user has not yet
-    answered the first one destroys the grants they just re-gave — which is
-    exactly what "I allow everything, restart, and it asks again" looks like.
+    The deleted reset note was written under ``user_data_dir()``, never beside the
+    bundle, so asserting an empty bundle folder alone could not see it come back.
     """
+    import jarvis.core.paths as paths
+    import jarvis.platform.permissions as permissions
+
+    data = tmp_path / "jarvis-data"
+    data.mkdir()
+    monkeypatch.setattr(paths, "user_data_dir", lambda: data)
+    monkeypatch.setattr(permissions, "_leftover_state_dir", lambda: data)
+    return data
+
+
+def test_an_identity_change_resets_the_own_rows_and_leaves_no_marker_behind(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The reset names the own bundle id's rows and writes nothing for a note.
+
+    A rebuild loop is stopped one layer up (the rebuild fingerprint, BUG-161);
+    this layer only resets once per rebuild that really happened, and the app
+    asks again just in time instead of explaining the reset up front.
+    """
+    import jarvis.setup.macos_app_bundle as mab
+
+    data = _redirect_data_dir(tmp_path, monkeypatch)
+    monkeypatch.setattr(mab, "_bundle_tcc_identity", lambda _bundle: 'cdhash H"two"')
+    sweeps: list[int] = []
+    monkeypatch.setattr(mab, "_reset_stale_tcc_grants", lambda: sweeps.append(1))
+    bundle = tmp_path / APP_DIR_NAME
+
+    mab._reset_after_identity_change(bundle, 'cdhash H"one"')
+
+    assert sweeps == [1]
+    assert list(tmp_path.iterdir()) == [data]
+    assert list(data.iterdir()) == []
+
+
+def test_a_leftover_state_file_of_an_earlier_build_is_removed_on_the_darwin_install_path(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """An upgrade deletes the two files the permission wall kept; it never asks anything."""
+    import jarvis.autostart.macos as autostart_macos
     import jarvis.platform.permissions as permissions
     import jarvis.setup.macos_app_bundle as mab
 
-    marker = tmp_path / "macos-tcc-reset.json"
-    monkeypatch.setattr(permissions, "identity_reset_marker_path", lambda: marker)
-    hashes = iter(['cdhash H"two"', 'cdhash H"three"'])
-    monkeypatch.setattr(mab, "_bundle_tcc_identity", lambda _bundle: next(hashes))
-    sweeps: list[int] = []
-    monkeypatch.setattr(mab, "_reset_stale_tcc_grants", lambda: sweeps.append(1))
+    data = tmp_path / "data"
+    data.mkdir()
+    for name in ("macos-tcc-reset.json", "macos-automation-consent.json", "keep.json"):
+        (data / name).write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(permissions, "_leftover_state_dir", lambda: data)
+    monkeypatch.setattr(mab.sys, "platform", "darwin")
+    monkeypatch.setattr(mab, "_ensure_macos_app_bundle", lambda **_kw: None)
+    monkeypatch.setattr(mab, "macos_app_bundle_path", lambda **_kw: tmp_path / "missing.app")
+    monkeypatch.setattr(autostart_macos, "retarget_launch_agent", lambda _target: True)
 
-    bundle = tmp_path / APP_DIR_NAME
-    mab._reset_or_explain(bundle, 'cdhash H"one"')
-    assert sweeps == [1]
-    assert marker.is_file()
+    assert ensure_macos_app_bundle() is None
 
-    # Second rebuild, first reset still unanswered: explain, never wipe again.
-    mab._reset_or_explain(bundle, 'cdhash H"two"')
+    assert sorted(path.name for path in data.iterdir()) == ["keep.json"]
 
-    assert sweeps == [1]
-    assert marker.is_file()
+
+@pytest.mark.parametrize(
+    ("platform", "inject_applications_dir"),
+    [("linux", False), ("win32", False), ("darwin", True)],
+    ids=["off-darwin", "windows", "darwin-with-injected-applications-dir"],
+)
+def test_the_leftover_cleanup_leaves_other_installs_and_injected_dirs_alone(
+    tmp_path: Path, monkeypatch, platform: str, inject_applications_dir: bool
+) -> None:
+    """Only the real darwin install path deletes; every other call keeps the files."""
+    import jarvis.platform.permissions as permissions
+    import jarvis.setup.macos_app_bundle as mab
+
+    data = tmp_path / "data"
+    data.mkdir()
+    for name in ("macos-tcc-reset.json", "macos-automation-consent.json"):
+        (data / name).write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(permissions, "_leftover_state_dir", lambda: data)
+    monkeypatch.setattr(mab.sys, "platform", platform)
+    monkeypatch.setattr(mab, "_ensure_macos_app_bundle", lambda **_kw: None)
+    applications_dir = tmp_path / "Applications" if inject_applications_dir else None
+
+    assert ensure_macos_app_bundle(applications_dir=applications_dir) is None
+
+    assert sorted(path.name for path in data.iterdir()) == [
+        "macos-automation-consent.json",
+        "macos-tcc-reset.json",
+    ]
 
 
 # --- BUG-161: a rebuild loop that wiped the grants on every single start
@@ -961,7 +1067,9 @@ def test_resign_in_place_keeps_the_files_and_resets_against_the_old_identity(
     monkeypatch.setattr(mab, "_signed_with_certificate", lambda _b: True)
     monkeypatch.setattr(mab, "macos_app_bundle_is_launchable", lambda _b: True)
     resets: list[tuple[Path, str | None]] = []
-    monkeypatch.setattr(mab, "_reset_or_explain", lambda b, previous: resets.append((b, previous)))
+    monkeypatch.setattr(
+        mab, "_reset_after_identity_change", lambda b, previous: resets.append((b, previous))
+    )
 
     result = mab._resign_bundle_in_place(bundle, "ABCDEF")
 
@@ -983,7 +1091,9 @@ def test_resign_in_place_rolls_back_when_the_result_cannot_launch(
     monkeypatch.setattr(mab, "_sign_bundle", lambda target, identity=None: None)
     monkeypatch.setattr(mab, "_signed_with_certificate", lambda _b: True)
     monkeypatch.setattr(mab, "macos_app_bundle_is_launchable", lambda _b: False)
-    monkeypatch.setattr(mab, "_reset_or_explain", lambda *_a: pytest.fail("no reset on rollback"))
+    monkeypatch.setattr(
+        mab, "_reset_after_identity_change", lambda *_a: pytest.fail("no reset on rollback")
+    )
 
     with pytest.raises(RuntimeError):
         mab._resign_bundle_in_place(bundle, "ABCDEF")
@@ -993,18 +1103,17 @@ def test_resign_in_place_rolls_back_when_the_result_cannot_launch(
 
 def test_a_rebuild_with_the_identity_never_resets_the_grants(tmp_path: Path, monkeypatch) -> None:
     """Same certificate before and after: TCC sees the same app, nothing to reset."""
-    import jarvis.platform.permissions as permissions
     import jarvis.setup.macos_app_bundle as mab
 
-    same ='identifier "com.personal-jarvis.desktop" and certificate leaf = H"0e14"'
+    same = 'identifier "com.personal-jarvis.desktop" and certificate leaf = H"0e14"'
     monkeypatch.setattr(mab, "_bundle_tcc_identity", lambda _b: same)
     monkeypatch.setattr(mab, "_reset_stale_tcc_grants", lambda: pytest.fail("must not reset"))
-    marker = tmp_path / "macos-tcc-reset.json"
-    monkeypatch.setattr(permissions, "identity_reset_marker_path", lambda: marker)
+    data = _redirect_data_dir(tmp_path, monkeypatch)
 
-    mab._reset_or_explain(tmp_path / APP_DIR_NAME, same)
+    mab._reset_after_identity_change(tmp_path / APP_DIR_NAME, same)
 
-    assert not marker.exists()
+    assert list(tmp_path.iterdir()) == [data]
+    assert list(data.iterdir()) == []
 
 
 def _healthy_darwin_bundle(tmp_path: Path, monkeypatch, *, identity: str | None):

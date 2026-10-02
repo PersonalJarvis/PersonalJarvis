@@ -1,0 +1,114 @@
+# Dispatch-only evidence run for a FUTURE Carbon RegisterEventHotKey hotkey
+# backend. Nothing in this repository ships that backend: macOS global shortcuts
+# still use the listen-only CGEventTap. This workflow runs
+# scripts/ci/macos_carbon_hotkey_spike.py on an Intel and an Apple Silicon
+# runner; the script records the TCC context first, then runs each risky
+# variant in a child process so a native crash becomes data. A crash in a
+# variant is NOT a failed job: the job fails only when the harness itself breaks.
+#
+# Runner evidence only. Runners pre-grant TCC to bash/osascript/Terminal, no
+# dialog is shown, no physical keyboard exists, and no key-hold semantics are
+# exercised. The default of a hotkey backend must never be decided from this
+# run alone: flipping it also needs a built-app probe on both architectures, a
+# physical-Mac sign-off and one opt-in release cycle.
+
+name: macOS hotkey spike
+
+on:
+  workflow_dispatch:
+    inputs:
+      include_macos_26:
+        description: >-
+          Also run on the macos-26 label. UNVERIFIED that this runner label
+          exists for this repository: a job on a missing label stays queued.
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: Plan the runner matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - name: Build the matrix
+        id: matrix
+        shell: bash
+        env:
+          INCLUDE_MACOS_26: ${{ inputs.include_macos_26 }}
+        run: |
+          rows='{"runner":"macos-15-intel","arch":"x86_64"},{"runner":"macos-15","arch":"arm64"}'
+          if [ "$INCLUDE_MACOS_26" = "true" ]; then
+            rows="$rows"',{"runner":"macos-26","arch":"arm64"}'
+          fi
+          printf 'matrix={"include":[%s]}\n' "$rows" >> "$GITHUB_OUTPUT"
+
+  spike:
+    name: Carbon spike / ${{ matrix.runner }} (${{ matrix.arch }})
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    env:
+      SPIKE_RUNNER_LABEL: ${{ matrix.runner }}
+      SPIKE_EXPECTED_ARCH: ${{ matrix.arch }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Verify native architecture
+        shell: bash
+        run: |
+          python -c "import os, platform; actual = platform.machine(); expected = os.environ['SPIKE_EXPECTED_ARCH']; print(actual); assert actual == expected, (actual, expected)"
+
+      # The script needs only the standard library and ctypes. It never touches
+      # the network and exits 0 when a variant crashes. The synthetic key is the
+      # one thing that needs System Events automation, which the runner image
+      # pre-grants to osascript.
+      - name: Run the Carbon hotkey spike
+        shell: bash
+        run: |
+          mkdir -p spike-out
+          python scripts/ci/macos_carbon_hotkey_spike.py \
+            --out "spike-out/carbon-hotkey-spike-${SPIKE_RUNNER_LABEL}.json" \
+            --summary-md spike-out/summary.md \
+            --inject-synthetic-key
+
+      - name: Publish the step summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            if [ -f spike-out/summary.md ]; then
+              cat spike-out/summary.md
+            else
+              echo "### macOS Carbon hotkey spike"
+              echo
+              echo "The spike did not produce a summary: the harness itself failed, see the run log."
+              echo
+              echo "Runner evidence only: runners pre-grant TCC to bash/osascript/Terminal; no dialog is shown, no physical keyboard exists, no key-hold semantics were exercised."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the spike JSON
+        if: always()
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        with:
+          name: carbon-hotkey-spike-${{ matrix.runner }}
+          path: spike-out/
+          if-no-files-found: warn
+          retention-days: 30

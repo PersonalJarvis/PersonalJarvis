@@ -25,7 +25,7 @@ agent branch ──► pull request ──► CI (lanes) ──► CI gate ─�
 | `tests windows` | Four shards on full runs; on a pull request one runner takes only the tests the diff can reach. | `scripts/ci/select_tests.py` |
 | `tests macos 1..3` | Nightly and manual runs only (~10x runner cost). | — |
 | `test report + floor` | Sums all Linux shards, enforces the min-passed floor, lists baselined failures that now pass, and on main refreshes the per-file duration cache that balances the shards. | `scripts/ci/ratchet_tests.py` |
-| Lanes | `frontend`, `jarvisctl`, `deps`, `realtime` (3 OS + slim container), `updater` (3 OS: in-app update, native handover, restart helper), `dragdrop`, `browser`, `macOS desktop`, `installer smoke` — each only when its paths change. | — |
+| Lanes | `frontend`, `jarvisctl`, `deps`, `realtime` (3 OS + slim container), `updater` (3 OS: in-app update, native handover, restart helper), `dragdrop`, `browser`, `macOS desktop`, `installer smoke` — each only when its paths change. The `macOS desktop` lane's path gate covers every directory that asks for or acts on a macOS permission (`jarvis/audio/`, `cu/`, `dictation/`, `screen_context/`, `trigger/`, `vision/`, `platform/`), the packaging inputs (`jarvis.spec`, `packaging/macos/`, `jarvis/core/macos_privacy_strings.py`) and `permissions_routes.py` (`scripts/ci/classify_changes.py`); see [`macos-permissions.md`](macos-permissions.md). | — |
 | `CI gate` | Aggregates every job. **The only required check.** Skipped lanes pass; the nightly run is strict and fails on any skip. | `scripts/ci/required_results.py` |
 
 ### Known failures: the ratchet
@@ -43,6 +43,20 @@ python scripts/ci/ratchet_tests.py update --out scripts/ci/test-baseline-linux.j
 
 A missing list puts that OS in report-only mode until the first full run
 produces one.
+
+### Dispatch-only evidence runs
+
+`.github/workflows/macos-hotkey-spike.yml` runs only on `workflow_dispatch`: it is
+in no lane, no schedule and not in the `CI gate`. It runs
+`scripts/ci/macos_carbon_hotkey_spike.py` on an Intel and an Apple Silicon macOS runner
+(optionally `macos-26`, whose label for this repository is unverified). The script
+records the TCC context first, then runs each risky Carbon `RegisterEventHotKey`
+variant in a child process so a native crash becomes data, not a failed job. It is
+runner evidence only: runners pre-grant TCC to their tools, show no dialog and have no
+physical keyboard, so its result never decides a default on its own (the flip rule is
+in `macos-permissions.md`, section 4.15). It ran once from the feature branch as run
+`36954304202` at commit `59749f859` on `macos-15` (arm64) and `macos-15-intel` (harness green;
+the recorded result and its limits are in `macos-permissions.md`, section 4.15).
 
 ### Concurrency
 

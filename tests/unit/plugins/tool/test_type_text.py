@@ -104,6 +104,32 @@ async def test_screenshot_bound_typing_refuses_changed_foreground(monkeypatch):
     assert typed == []
 
 
+async def test_macos_permission_refusal_keeps_its_prefix_at_the_start(monkeypatch):
+    """The engine maps the "[permission_needed:" prefix: type_text must not wrap it."""
+    from jarvis.cu.actuate.base import ActuationUnavailable, PermissionNeededError
+    from jarvis.platform.permissions import PermissionId
+    from tests.fakes.fake_permission_service import make_result
+
+    def _refused():
+        raise PermissionNeededError(make_result(PermissionId.ACCESSIBILITY, "needs_settings"))
+
+    monkeypatch.setattr(tt.os, "name", "posix")
+    monkeypatch.setattr("jarvis.cu.actuate.get_actuator", _refused)
+
+    result = await TypeTextTool().execute({"text": "hello"}, _Ctx())
+
+    assert result.success is False
+    assert result.error.startswith("[permission_needed:accessibility] ")
+
+    # Any other actuation failure keeps the old wrapping.
+    def _headless():
+        raise ActuationUnavailable("no display")
+
+    monkeypatch.setattr("jarvis.cu.actuate.get_actuator", _headless)
+    other = await TypeTextTool().execute({"text": "hello"}, _Ctx())
+    assert other.error == "text input unavailable: no display"
+
+
 # ---------------------------------------------------------------------------
 # RC#1 regression (Google-Flights typing bug, 2026-06-22): the SendInput INPUT
 # union must be sized to its LARGEST member (MOUSEINPUT). If it only carries

@@ -20,21 +20,21 @@ def _cp(returncode: int, stdout: str = "", stderr: str = ""):
     return types.SimpleNamespace(returncode=returncode, stdout=stdout, stderr=stderr)
 
 
-def _patch_macos_accessibility(monkeypatch, *, granted: bool) -> None:
-    from jarvis.platform.permissions import PermissionState
+def _patch_macos_accessibility(monkeypatch, *, granted: bool):
+    """A darwin FakeTCC behind the REAL port; the process-wide service sits on it.
 
-    port = types.SimpleNamespace(
-        runtime_access_granted=lambda _permission_id: granted,
-        state=lambda _permission_id: (
-            PermissionState.GRANTED
-            if granted
-            else PermissionState.NOT_GRANTED
-        ),
+    ``granted=False`` leaves the Accessibility dialog unanswered: "the user has not
+    allowed it yet". Returns the FakeTCC so a test can read what macOS was asked.
+    Nothing here ran on a real Mac; FakeTCC models the OS.
+    """
+    from tests.fakes.fake_tcc import DialogPolicy, FakeTCC, install_port
+
+    tcc = FakeTCC(
+        granted=("accessibility",) if granted else (),
+        default_policy=DialogPolicy.NEVER_ANSWERED,
     )
-    monkeypatch.setattr(
-        "jarvis.platform.permissions.get_system_permission_port",
-        lambda: port,
-    )
+    install_port(monkeypatch, tcc.port("darwin"))
+    return tcc
 
 
 # --- WindowInfo basics ------------------------------------------------------
@@ -746,16 +746,65 @@ def test_resolve_macos_ax_window_uses_bounds_for_duplicate_titles(monkeypatch):
     assert target is second
 
 
-def test_maximize_window_macos_fails_closed_without_accessibility(monkeypatch):
+def test_maximize_window_macos_asks_once_and_refuses_without_accessibility(monkeypatch):
+    """Maximizing is an ACTION: it asks macOS, and only a live grant proceeds."""
     monkeypatch.setattr(ws, "detect_platform", lambda: "darwin")
-    _patch_macos_accessibility(monkeypatch, granted=False)
-    services = types.SimpleNamespace(AXIsProcessTrusted=lambda: False)
-    monkeypatch.setitem(sys.modules, "ApplicationServices", services)
+    tcc = _patch_macos_accessibility(monkeypatch, granted=False)
+    writes: list[str] = []
+    monkeypatch.setitem(sys.modules, "ApplicationServices", types.SimpleNamespace(
+        AXUIElementSetAttributeValue=lambda _el, attr, _value: writes.append(attr) or 0,
+    ))
 
     ok, message = ws.maximize_window(WindowInfo("notes.txt", handle=77))
+    ok_again, _message_again = ws.maximize_window(WindowInfo("notes.txt", handle=77))
 
-    assert ok is False
-    assert "Accessibility" in message
+    assert ok is False and ok_again is False
+    assert message.startswith("[permission_needed:accessibility] ")
+    assert "Settings > Permissions" not in message
+    assert len(tcc.requests("accessibility")) == 1
+    assert writes == []  # nothing acted
+
+
+def test_window_reads_never_ask_macos_for_accessibility(monkeypatch):
+    """Listing windows and reading the maximized state are background reads."""
+    monkeypatch.setattr(ws, "detect_platform", lambda: "darwin")
+    tcc = _patch_macos_accessibility(monkeypatch, granted=False)
+    monkeypatch.setattr(
+        ws,
+        "_quartz_window_list",
+        lambda **_kwargs: [{
+            "kCGWindowLayer": 0,
+            "kCGWindowName": "notes.txt",
+            "kCGWindowOwnerPID": 42,
+            "kCGWindowNumber": 9,
+        }],
+    )
+    monkeypatch.setitem(sys.modules, "ApplicationServices", types.SimpleNamespace(
+        AXUIElementCreateApplication=lambda _pid: object(),
+        AXUIElementCopyAttributeValue=lambda *_args: (1, None),
+    ))
+
+    windows = ws.list_windows()
+    maximized = ws.window_is_maximized(WindowInfo("notes.txt", handle=9, pid=42))
+
+    assert [w.title for w in windows] == ["notes.txt"]  # listing stays ungated
+    assert maximized is None  # cannot be read without the grant
+    assert tcc.requests() == []
+    assert tcc.implicit_prompts() == []
+
+
+def test_window_control_off_macos_never_touches_the_permission_layer(monkeypatch):
+    from tests.fakes.fake_tcc import FakeTCC, install_port
+
+    tcc = FakeTCC()
+    install_port(monkeypatch, tcc.port("linux"))
+    monkeypatch.setattr(ws, "detect_platform", lambda: "linux")
+    monkeypatch.setattr(ws, "is_wayland", lambda: True)
+
+    ws.maximize_window(WindowInfo("notes.txt", handle=77))
+    ws.focus_window("notes")
+
+    tcc.assert_silent()
 
 
 # --- real smoke on the host platform (non-deterministic, just must not crash)

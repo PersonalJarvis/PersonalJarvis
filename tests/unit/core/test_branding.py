@@ -37,6 +37,7 @@ _CURRENT_IDENTITY = {
     "MACOS_APP_DIR_NAME": "Personal Jarvis.app",
     "MACOS_EXECUTABLE_NAME": "PersonalJarvis",
     "MACOS_BUNDLE_ID": "com.personal-jarvis.desktop",
+    "MACOS_DMG_BUNDLE_ID": "ai.personaljarvis.desktop",
     "MACOS_AUTOSTART_LABEL": "com.personal-jarvis.autostart",
     "LINUX_APP_NAME": "Personal Jarvis",
     "LINUX_DESKTOP_ENTRY_FILE_NAME": "personal-jarvis.desktop",
