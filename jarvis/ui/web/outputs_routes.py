@@ -1400,3 +1400,135 @@ async def open_output(slug: str, request: Request) -> dict[str, Any]:
     if not opened:
         return {"opened": False, "path": str(target), "reason": "open failed"}
     return {"opened": True, "path": str(target)}
+
+
+# --- Delete -----------------------------------------------------------------
+# The Artifacts library's right-click "Delete". A card is either one artifact
+# file or a whole run, so there are two routes. Both refuse a run that is still
+# working (its worker may be writing into the very folder) and both stay inside
+# the same sandbox as every other route here: a slug resolves inside an outputs
+# root, a file path must be a genuine deliverable.
+
+
+async def _run_is_live(request: Request, slug: str) -> bool:
+    """True while the mission behind ``slug`` has not reached a terminal state.
+
+    Only ``mission_<short>`` dirs map to a mission row; any other run (a
+    standalone visualisation) finished the moment its folder existed. Without
+    a mission manager nothing can be running. A failing lookup raises 503: we
+    cannot prove the worker is done, so we do not pull the folder from under it.
+    """
+    prefix = _mission_id_prefix_for_dir(slug)
+    mgr = getattr(request.app.state, "mission_manager", None)
+    if prefix is None or mgr is None:
+        return False
+    try:
+        cur = await mgr.store.conn.execute(
+            "SELECT state FROM missions WHERE id LIKE ? ORDER BY updated_ms DESC LIMIT 1",
+            (f"{prefix}%",),
+        )
+        row = await cur.fetchone()
+        await cur.close()
+    except Exception as exc:  # noqa: BLE001 - any DB failure means "cannot confirm"
+        logger.warning("outputs: liveness lookup failed for %s: %s", slug, exc)
+        raise HTTPException(
+            status_code=503, detail="could not confirm the run has finished"
+        ) from exc
+    return row is not None and str(row[0]) not in _TERMINAL_STATE_VALUES
+
+
+def _force_rmtree(path: Path) -> None:
+    """``shutil.rmtree`` that also removes read-only files.
+
+    Workers leave read-only files behind (git objects, copied installers); on
+    Windows a plain rmtree stops at the first one with "Access is denied".
+    Clearing the read-only bit and retrying is the documented recipe.
+    """
+    import shutil
+    import stat
+    import sys
+
+    def _retry(func: Any, target: str, _exc: object) -> None:
+        os.chmod(target, stat.S_IWRITE)
+        func(target)
+
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(path, onexc=_retry)
+    else:
+        shutil.rmtree(path, onerror=_retry)
+
+
+def _delete_run_dirs(request: Request, slug: str) -> int:
+    """Remove ``slug`` from every readable outputs root; return how many went.
+
+    Every root, not only the canonical one: a retained legacy copy of the same
+    slug would otherwise surface again on the next listing.
+    """
+    removed = 0
+    for candidate_root in _outputs_roots(request):
+        root = candidate_root.resolve()
+        target = (root / slug).resolve()
+        if target == root or not target.is_relative_to(root) or not target.is_dir():
+            continue
+        _force_rmtree(target)
+        removed += 1
+    return removed
+
+
+def _prune_empty_parents(start: Path, stop: Path) -> None:
+    """Remove now-empty folders from ``start`` up to (not including) ``stop``."""
+    current = start
+    while current != stop and current.is_relative_to(stop):
+        try:
+            current.rmdir()
+        except OSError:
+            return
+        current = current.parent
+
+
+@router.delete("/{slug}")
+async def delete_output(slug: str, request: Request) -> dict[str, Any]:
+    """Delete a whole run: its folder and everything it produced."""
+    _resolve_output_dir(request, slug)
+    if await _run_is_live(request, slug):
+        raise HTTPException(status_code=409, detail="run is still working")
+    try:
+        removed = await asyncio.to_thread(_delete_run_dirs, request, slug)
+    except OSError as exc:
+        logger.warning("outputs: deleting run %s failed: %s", slug, exc)
+        raise HTTPException(status_code=500, detail=f"delete failed: {exc}") from exc
+    logger.info("outputs: deleted run %s (%d folder(s))", slug, removed)
+    return {"deleted": "run", "slug": slug}
+
+
+@router.delete("/{slug}/files/{path:path}")
+async def delete_output_artifact(slug: str, path: str, request: Request) -> dict[str, Any]:
+    """Delete one artifact file.
+
+    When that was the run's last deliverable the whole run goes with it: a run
+    with nothing left to show would come back as an empty "Output" card, which
+    is not what deleting the card the user right-clicked means.
+    """
+    target = _resolve_artifact_target(request, slug, path)
+    if await _run_is_live(request, slug):
+        raise HTTPException(status_code=409, detail="run is still working")
+    base = _resolve_output_dir(request, slug)
+    rel_parts = target.relative_to(base).parts
+    # tasks/<id>/artifacts/files — the deliverable root this file sits under.
+    files_root = base.joinpath(*rel_parts[:4])
+
+    def _delete() -> str:
+        target.unlink()
+        _prune_empty_parents(target.parent, files_root)
+        if _count_deliverables(base) == 0:
+            _delete_run_dirs(request, slug)
+            return "run"
+        return "file"
+
+    try:
+        deleted = await asyncio.to_thread(_delete)
+    except OSError as exc:
+        logger.warning("outputs: deleting %s/%s failed: %s", slug, path, exc)
+        raise HTTPException(status_code=500, detail=f"delete failed: {exc}") from exc
+    logger.info("outputs: deleted %s/%s (%s)", slug, path, deleted)
+    return {"deleted": deleted, "slug": slug, "path": path}
