@@ -1,10 +1,4 @@
-<<<<<<<< HEAD:jarvis/ui/web/dist/assets/PairConversation-C4-uUAIv.js
-import{p as M,r as n,j as e,u as R,cx as A,X as q,c as k,cy as B}from"./index-CnYlGhr5.js";import{C as D}from"./WorkTrace-DSUZaHGL.js";import{L as H}from"./lock-BiWUTfOy.js";/**
-|||||||| parent of 2acae5534 (chore(ui): rebuild subscription voice settings after integration):jarvis/ui/web/dist/assets/PairConversation-CaA4E9_d.js
-import{p as M,r as n,j as e,u as R,cz as A,X as q,c as k,cA as B}from"./index-BQBpmzGP.js";import{C as D}from"./WorkTrace-Tb_XFYOa.js";import{L as H}from"./lock-BZIhkMi5.js";/**
-========
-import{p as M,r as n,j as e,u as R,cz as A,X as q,c as k,cA as B}from"./index-xlkDullg.js";import{C as D}from"./WorkTrace-C_6MyH6A.js";import{L as H}from"./lock-BdDWyl23.js";/**
->>>>>>>> 2acae5534 (chore(ui): rebuild subscription voice settings after integration):jarvis/ui/web/dist/assets/PairConversation-BDlhSZfK.js
+import{p as M,r as n,j as e,u as R,cx as A,X as q,c as k,cy as B}from"./index-KdjYOaUM.js";import{C as D}from"./WorkTrace-BtJRgtgh.js";import{L as H}from"./lock-B-kbvT7B.js";/**
  * @license lucide-react v0.445.0 - ISC
  *
  * This source code is licensed under the ISC license.

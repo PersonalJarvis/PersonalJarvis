@@ -1,10 +1,4 @@
-<<<<<<<< HEAD:jarvis/ui/web/dist/assets/ProviderLogo-ePEqZhQZ.js
-import{_ as u,a as f,b as m,c as p,d as b,e as h,f as y,g as x,h as w,i as k,j,k as z,l as N,m as L,n as q,o as M,p as W,q as C,r as D,s as P,t as R,u as H,v as O,w as S}from"./xai-DAbc1WdT.js";import{p as $,j as i,c as n,Y as E}from"./index-CnYlGhr5.js";/**
-|||||||| parent of 2acae5534 (chore(ui): rebuild subscription voice settings after integration):jarvis/ui/web/dist/assets/ProviderLogo-BLbh9dvd.js
-import{_ as u,a as f,b as m,c as p,d as b,e as h,f as y,g as x,h as w,i as k,j,k as z,l as N,m as L,n as q,o as M,p as W,q as C,r as D,s as P,t as R,u as H,v as O,w as S}from"./xai-ELXAGfWY.js";import{p as $,j as i,c as n,Y as E}from"./index-BQBpmzGP.js";/**
-========
-import{_ as u,a as f,b as m,c as p,d as b,e as h,f as y,g as x,h as w,i as k,j,k as z,l as N,m as L,n as q,o as M,p as W,q as C,r as D,s as P,t as R,u as H,v as O,w as S}from"./xai-ELXAGfWY.js";import{p as $,j as i,c as n,Y as E}from"./index-xlkDullg.js";/**
->>>>>>>> 2acae5534 (chore(ui): rebuild subscription voice settings after integration):jarvis/ui/web/dist/assets/ProviderLogo-By9dFEJ0.js
+import{_ as u,a as f,b as m,c as p,d as b,e as h,f as y,g as x,h as w,i as k,j,k as z,l as N,m as L,n as q,o as M,p as W,q as C,r as D,s as P,t as R,u as H,v as O,w as S}from"./xai-ELXAGfWY.js";import{p as $,j as i,c as n,Y as E}from"./index-KdjYOaUM.js";/**
  * @license lucide-react v0.445.0 - ISC
  *
  * This source code is licensed under the ISC license.
