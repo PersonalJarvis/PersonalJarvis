@@ -47,7 +47,7 @@
     }
   ],
   "runtime_evidence": [],
-  "technical_report": "",
+  "technical_report": "evidence/technical-review.md",
   "approval": {
     "status": "pending",
     "record": "review.md",
