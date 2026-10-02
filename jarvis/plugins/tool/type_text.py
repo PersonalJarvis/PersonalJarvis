@@ -273,7 +273,7 @@ class TypeTextTool:
                 success=True,
                 output=f"Typed {len(text)} chars ({actuator.name})",
             )
-        except HumanInputTakeover as exc:
+        except HumanInputTakeover as exc:  # expected handoff; structured result resumes CU safely
             return human_takeover_tool_result(exc)
         except ActuationUnavailable as exc:
             return ToolResult(

@@ -252,7 +252,7 @@ class ClickElementTool:
 
             try:
                 await asyncio.to_thread(require_human_input_clear)
-            except HumanInputTakeover as exc:
+            except HumanInputTakeover as exc:  # expected handoff; structured result resumes CU safely
                 return human_takeover_tool_result(exc)
 
         # 5. Accessibility-first on macOS. AXPress acts on the semantic control,
@@ -284,7 +284,7 @@ class ClickElementTool:
                     cy,
                     **semantic_kwargs,
                 )
-            except HumanInputTakeover as exc:
+            except HumanInputTakeover as exc:  # expected handoff; structured result resumes CU safely
                 return human_takeover_tool_result(exc)
             if semantic.performed:
                 return ToolResult(
@@ -305,7 +305,7 @@ class ClickElementTool:
                         cy,
                         **semantic_kwargs,
                     )
-                except HumanInputTakeover as exc:
+                except HumanInputTakeover as exc:  # expected handoff; structured result resumes CU safely
                     return human_takeover_tool_result(exc)
                 if focused.performed:
                     return ToolResult(
@@ -347,7 +347,7 @@ class ClickElementTool:
 
             try:
                 actuator = get_actuator()
-            except HumanInputTakeover as exc:
+            except HumanInputTakeover as exc:  # expected handoff; structured result resumes CU safely
                 return human_takeover_tool_result(exc)
             except ActuationUnavailable as exc:
                 return ToolResult(success=False, output=None, error=str(exc))
@@ -367,7 +367,7 @@ class ClickElementTool:
                     return ToolResult(
                         success=False, output=None, error=landing.detail,
                     )
-            except HumanInputTakeover as exc:
+            except HumanInputTakeover as exc:  # expected handoff; structured result resumes CU safely
                 return human_takeover_tool_result(exc)
             except Exception as exc:  # noqa: BLE001
                 return ToolResult(success=False, output=None, error=str(exc))

@@ -49,7 +49,12 @@ def _require_macos_human_input_clear() -> None:
 
     allowed, detail = human_input_allows_automation()
     if not allowed:
-        raise ActuationUnavailable(
+        # Lazy import avoids coupling the cross-platform backend at module load
+        # time while preserving takeover as typed control flow at the final
+        # Quartz dispatch boundary.
+        from jarvis.cu.actuate.handoff import HumanInputTakeover  # noqa: PLC0415
+
+        raise HumanInputTakeover(
             "Pausing macOS Computer-Use because physical-input ownership is "
             f"unsafe ({detail}). Retry after the user stops interacting and "
             "hardware input state is readable."
@@ -479,6 +484,7 @@ class PosixActuator(Actuator):
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, press)
         steps = max(2, min(40, int(max(0.0, duration_s) * 60)))
         pause = max(0.0, duration_s) / steps
+        completed = False
         try:
             for index in range(1, steps + 1):
                 _require_macos_human_input_clear()
@@ -492,16 +498,21 @@ class PosixActuator(Actuator):
                 Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
                 if pause:
                     time.sleep(pause)
+            completed = True
         finally:
             # Cleanup is exempt from the ownership guard: Jarvis may have
-            # already posted button-down. Release at the *current* cursor so a
-            # user takeover does not pull the pointer to the planned endpoint.
-            release_point = start
-            try:
-                current = Quartz.CGEventGetLocation(Quartz.CGEventCreate(None))
-                release_point = (int(current.x), int(current.y))
-            except Exception:  # noqa: BLE001 - release must still be attempted
-                logger.debug("cannot read cursor for drag cleanup", exc_info=True)
+            # already posted button-down. A normal completed drag releases at
+            # the verified endpoint. If the user took over mid-drag, release
+            # at the current cursor instead so cleanup never pulls the pointer
+            # back to Jarvis's stale planned destination.
+            release_point = end
+            if not completed:
+                release_point = start
+                try:
+                    current = Quartz.CGEventGetLocation(Quartz.CGEventCreate(None))
+                    release_point = (int(current.x), int(current.y))
+                except Exception:  # noqa: BLE001 - release must still be attempted
+                    logger.debug("cannot read cursor for drag cleanup", exc_info=True)
             release = Quartz.CGEventCreateMouseEvent(None, up, release_point, button_id)
             Quartz.CGEventPost(Quartz.kCGHIDEventTap, release)
 

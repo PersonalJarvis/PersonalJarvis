@@ -145,7 +145,7 @@ class DragTool:
                     duration_s,
                     expected_window_signature=expected_signature,
                 )
-        except HumanInputTakeover as exc:
+        except HumanInputTakeover as exc:  # expected handoff; structured result resumes CU safely
             return human_takeover_tool_result(exc)
         except ActuationUnavailable as exc:
             return ToolResult(success=False, output=None, error=str(exc))
