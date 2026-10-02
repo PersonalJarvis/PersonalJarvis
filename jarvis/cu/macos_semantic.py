@@ -72,7 +72,7 @@ def _copy_attr(element: Any, attribute: str) -> Any:
         from ApplicationServices import (  # type: ignore[import-not-found] # noqa: PLC0415
             AXUIElementCopyAttributeValue,
         )
-    except (ImportError, ModuleNotFoundError):
+    except (ImportError, ModuleNotFoundError):  # optional PyObjC bridge may be unavailable
         return None
     try:
         err, value = AXUIElementCopyAttributeValue(element, attribute, None)
@@ -96,7 +96,7 @@ def _attribute_settable(element: Any, attribute: str) -> bool | None:
         from ApplicationServices import (  # type: ignore[import-not-found] # noqa: PLC0415
             AXUIElementIsAttributeSettable,
         )
-    except (ImportError, ModuleNotFoundError):
+    except (ImportError, ModuleNotFoundError):  # optional PyObjC bridge may be unavailable
         return None
     try:
         err, settable = AXUIElementIsAttributeSettable(element, attribute, None)
@@ -118,7 +118,7 @@ def _set_attr(element: Any, attribute: str, value: Any) -> bool:
         from ApplicationServices import (  # type: ignore[import-not-found] # noqa: PLC0415
             AXUIElementSetAttributeValue,
         )
-    except (ImportError, ModuleNotFoundError):
+    except (ImportError, ModuleNotFoundError):  # optional PyObjC bridge may be unavailable
         return False
     try:
         return AXUIElementSetAttributeValue(element, attribute, value) == 0
@@ -133,7 +133,7 @@ def _element_at_point(x: int, y: int) -> Any | None:
             AXUIElementCopyElementAtPosition,
             AXUIElementCreateSystemWide,
         )
-    except (ImportError, ModuleNotFoundError):
+    except (ImportError, ModuleNotFoundError):  # optional PyObjC bridge may be unavailable
         return None
     try:
         system = AXUIElementCreateSystemWide()
@@ -157,7 +157,7 @@ def _action_names(element: Any) -> tuple[str, ...] | None:
         from ApplicationServices import (  # type: ignore[import-not-found] # noqa: PLC0415
             AXUIElementCopyActionNames,
         )
-    except (ImportError, ModuleNotFoundError):
+    except (ImportError, ModuleNotFoundError):  # optional PyObjC bridge may be unavailable
         return None
     try:
         err, names = AXUIElementCopyActionNames(element, None)
@@ -181,7 +181,7 @@ def _perform_action(element: Any, action: str) -> bool:
         from ApplicationServices import (  # type: ignore[import-not-found] # noqa: PLC0415
             AXUIElementPerformAction,
         )
-    except (ImportError, ModuleNotFoundError):
+    except (ImportError, ModuleNotFoundError):  # optional PyObjC bridge may be unavailable
         return False
     try:
         return AXUIElementPerformAction(element, action) == 0
