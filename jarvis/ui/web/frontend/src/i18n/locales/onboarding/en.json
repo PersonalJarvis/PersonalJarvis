@@ -66,6 +66,7 @@
       "title": "Choose your wake word",
       "lede": "Type your word after \"Hey\" here and save it. The word also becomes the assistant's name. No wake word? The Call shortcut works anytime.",
       "on": "\"{phrase}\" is on. Say it anytime.",
+      "saved": "\"{phrase}\" is saved. Turn on \"Activate wake word\" above to have it heard all the time; until then the Call shortcut works.",
       "off": "No wake word yet. The Call shortcut works meanwhile.",
       "later": "Skip, I'll use the Call shortcut"
     },

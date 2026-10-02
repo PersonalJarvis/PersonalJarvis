@@ -176,6 +176,18 @@ it("goes on from the wake word once one is saved", async () => {
   expect(screen.queryByTestId("setup-voice-later")).toBeNull();
 });
 
+it("goes on once a wake word is saved even while always-listen stays off", async () => {
+  wakeWord = { phrase: "Hey Jarvis", enabled: false };
+  render(<SetupTour onb={fakeOnb({ ...accepted, current_step: "voice" })} preview={false} onFinished={vi.fn()} />);
+  await screen.findByTestId("setup-voice-later");
+  expect((screen.getByTestId("onboarding-primary") as HTMLButtonElement).disabled).toBe(true);
+  wakeWord = { phrase: "Hey George", enabled: false };
+  window.dispatchEvent(new CustomEvent("jarvis:wake-word-changed"));
+  await waitFor(() => expect(screen.getByTestId("setup-voice-status").textContent).toContain("Hey George"));
+  expect((screen.getByTestId("onboarding-primary") as HTMLButtonElement).disabled).toBe(false);
+  expect(screen.queryByTestId("setup-voice-later")).toBeNull();
+});
+
 it("switches on the plan a key saved during the step completes", async () => {
   render(<SetupTour onb={fakeOnb({ ...accepted, current_step: "keys" })} preview={false} onFinished={vi.fn()} />);
   await screen.findByTestId("setup-keys-waiting");
