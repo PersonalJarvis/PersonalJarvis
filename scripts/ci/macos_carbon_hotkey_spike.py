@@ -36,10 +36,10 @@ What it does, in this order:
    ``--summary-md`` it also writes the same table as Markdown for
    ``$GITHUB_STEP_SUMMARY``. A killed parent therefore still leaves a report.
 
-What the ctypes code deliberately mirrors from the red-team crash-surface list,
-so that the evidence is about the shape a real shim would have: ``restype`` is
-``c_void_p`` on the event-target getters, ``EventHotKeyID`` is passed by value,
-the callback and the ``EventTypeSpec`` array are module-level singletons, the
+What the ctypes code deliberately mirrors from the crash-surface list
+(docs/macos-permissions.md, 4.15), so that the evidence is about the shape a real shim
+would have: ``restype`` is ``c_void_p`` on the event-target getters, ``EventHotKeyID`` is
+passed by value, the callback and the ``EventTypeSpec`` array are module-level singletons, the
 handler is installed on the APPLICATION event target, the callback returns
 ``eventNotHandledErr`` on an internal error, and every native call runs on the
 main thread inside a running ``NSApplication`` loop (except where the variant
@@ -62,7 +62,7 @@ looks exactly like a silent Carbon). Nothing here is verified on a Mac by its
 author.
 
 NOT covered, and the report says so (:data:`NOT_COVERED`): variant G of the
-red-team list (the hop test, ``AppHelper.callAfter`` versus
+crash-surface list (the hop test, ``AppHelper.callAfter`` versus
 ``performSelectorOnMainThread:withObject:waitUntilDone:modes:`` under an
 event-tracking run-loop mode; it needs pyobjc and an Objective-C target object,
 which this standard-library script does not build) and the off-main REGISTER
@@ -1813,10 +1813,10 @@ class OptionHoldPhase:
 
 
 #: Three routes, because none of them is known to work: System Events ``key down option`` (the
-#: red-team's literal form; it cannot choose a side, the side is READ from the bits that light
-#: up), and a CGEvent key-down for kVK_Option (58) and kVK_RightOption (61) posted from inside
-#: ``osascript`` (JXA), which can choose. A route that fails is a recorded exit status, not an
-#: error of the experiment.
+#: the crash-surface list's literal form; it cannot choose a side, the side is READ from the bits
+#: that light up), and a CGEvent key-down for kVK_Option (58) and kVK_RightOption (61) posted from
+#: inside ``osascript`` (JXA), which can choose. A route that fails is a recorded exit status, not
+#: an error of the experiment.
 OPTION_HOLD_PHASES = (
     OptionHoldPhase("system_events_option", "applescript", None, "System Events `key down option`"),
     OptionHoldPhase(
@@ -2239,7 +2239,7 @@ def _scenario_nsapp_register_unregister() -> NoReturn:
     run_in_nsapp_loop(lambda: _co_nsapp_register_unregister(shim))
 
 
-#: Variant A's stress numbers from the red-team list.
+#: Variant A's stress numbers from the crash-surface list (docs/macos-permissions.md, 4.15).
 REGISTER_CYCLES = 200
 PRESS_CYCLES = 50
 #: At most this many failing cycles are described in the report (all are counted).

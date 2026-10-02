@@ -254,15 +254,16 @@ _AUTOMATION_STATES: dict[int, PermissionState] = {
 }
 
 
-def _default_automation_probe(bundle_id: str, ask: bool) -> int | None:
+def _default_automation_probe(bundle_id: str, _ask: bool) -> int | None:
     """``AEDeterminePermissionToAutomateTarget`` for one bundle id.
 
     Returns the raw OSStatus, or ``None`` when the framework cannot be
-    called. This is a silent read only: ``ask`` is accepted for the frozen
-    two-argument seam but never forwarded, because an in-process asking call
-    blocks the caller until a dialog is answered and cannot be killed. The
-    consent dialog is raised solely through ``request_native`` (a killable
-    child runner).
+    called. This is a silent read only: ``_ask`` is accepted for the frozen
+    two-argument seam (tests and ``FakeTCC.automation_probe`` use it) but is
+    NEVER forwarded, so passing ``True`` still reads silently, because an
+    in-process asking call blocks the caller until a dialog is answered and
+    cannot be killed. The consent dialog is raised solely through
+    ``request_native`` (a killable child runner).
     """
     if sys.platform != "darwin":
         return None

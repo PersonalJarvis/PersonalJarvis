@@ -95,8 +95,19 @@ def test_unrelated_python_change_leaves_the_updater_lane_off():
         # The voice gates, the wake/mic routes, the shared events and protocols, and
         # the fakes and contract tests the macOS lane runs.
         "jarvis/speech/pipeline.py",
+        "jarvis/speech/diagnose.py",
         "jarvis/ui/web/settings_routes.py",
         "jarvis/core/events.py",
+        # Consumers that capture, type or relay: tools, appshot, routes, CLI, bundle ids.
+        "jarvis/plugins/tool/screen_snapshot.py",
+        "jarvis/plugins/tool/type_text.py",
+        "jarvis/plugins/tool/verify_localhost.py",
+        "jarvis/plugins/harness/computer_use.py",
+        "jarvis/appshot/gesture.py",
+        "jarvis/ui/web/screen_context_routes.py",
+        "jarvis/cli_ctl/commands/permissions.py",
+        "jarvis/core/branding.py",
+        "jarvis/tasks/event_catalog.py",
         "jarvis/core/protocols.py",
         "tests/fakes/fake_tcc.py",
         "tests/fakes/fake_permission_service.py",
@@ -121,7 +132,6 @@ def test_macos_permission_and_packaging_paths_turn_on_the_macos_lane(path):
     [
         "jarvis/society/roster.py",
         "jarvis/ui/web/society_browser_routes.py",
-        "jarvis/core/branding.py",
         "packaging/windows/PersonalJarvis.iss",
         "packaging/linux/build.sh",
         "docs/macos-permissions.md",
@@ -135,7 +145,22 @@ def test_the_macos_lane_gate_names_the_new_paths_it_adds_to_the_prefix_tables():
     """Guard the data, not just the outcome: a refactor must not drop an entry."""
     assert {"jarvis.spec", "jarvis/core/macos_privacy_strings.py"} <= classify_changes._MACOS_FILES
     assert "jarvis/ui/web/permissions_routes.py" in classify_changes._MACOS_FILES
-    assert {"packaging/macos/", "jarvis/screen_context/", "jarvis/dictation/"} <= set(
+    assert {
+        "jarvis/plugins/tool/screen_snapshot.py",
+        "jarvis/plugins/tool/type_text.py",
+        "jarvis/plugins/tool/verify_localhost.py",
+        "jarvis/speech/diagnose.py",
+        "jarvis/ui/web/screen_context_routes.py",
+        "jarvis/cli_ctl/commands/permissions.py",
+        "jarvis/core/branding.py",
+        "jarvis/tasks/event_catalog.py",
+    } <= classify_changes._MACOS_FILES
+    assert {
+        "packaging/macos/",
+        "jarvis/screen_context/",
+        "jarvis/dictation/",
+        "jarvis/appshot/",
+    } <= set(
         classify_changes._MACOS_PREFIXES
     )
 

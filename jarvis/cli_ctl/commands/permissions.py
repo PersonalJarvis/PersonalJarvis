@@ -85,7 +85,10 @@ def status(
         bool,
         typer.Option(
             "--include-automation",
-            help="Also read the Automation row (asks a running Music or Spotify).",
+            help=(
+                "Also read the Automation row (checks a running Music or Spotify, "
+                "without asking)."
+            ),
         ),
     ] = False,
 ) -> None:

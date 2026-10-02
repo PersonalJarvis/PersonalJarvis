@@ -141,10 +141,12 @@ def test_status_requires_the_complete_visual_context_path(monkeypatch) -> None:
         "_ocr_capability",
         lambda _enabled: (False, "Optional OCR is switched off."),
     )
-    monkeypatch.setattr(
-        "jarvis.screen_context.ports.capture_permission_error",
-        lambda: None,
-    )
+    probe_kwargs: list[dict] = []
+
+    def capture_probe(**kwargs):
+        probe_kwargs.append(kwargs)
+
+    monkeypatch.setattr("jarvis.screen_context.ports.capture_permission_error", capture_probe)
     monkeypatch.setattr(
         "jarvis.screen_context.ports.accessibility_permission_error",
         lambda: None,
@@ -153,6 +155,7 @@ def test_status_requires_the_complete_visual_context_path(monkeypatch) -> None:
     response = TestClient(_app()).get("/api/screen-context/status")
 
     assert response.status_code == 200
+    assert probe_kwargs == [{"deep": False}]  # a GET never runs the window-title oracle
     payload = response.json()
     assert payload["available"] is False
     assert payload["components"]["capture"]["ready"] is True

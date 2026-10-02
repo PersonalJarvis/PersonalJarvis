@@ -8200,7 +8200,7 @@ class SpeechPipeline:
             try:
                 await asyncio.wait_for(self._wake_reload_event.wait(), timeout=30.0)
             except TimeoutError:
-                pass
+                pass  # the 30 s fallback poll: no reload came, the loop re-reads the plan
             finally:
                 self._wake_reload_event.clear()
 

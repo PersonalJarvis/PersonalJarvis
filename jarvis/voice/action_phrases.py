@@ -1074,6 +1074,103 @@ _REASON_FAMILIES: tuple[tuple[re.Pattern[str], dict[str, str]], ...] = (
 )
 
 
+#: The agent-facing refusal of the permission layer ("[permission_needed:<perm>] This
+#: action cannot run: ... You must not ...") is prohibitive text for the LLM, never for
+#: a person. A tool error that carries it is replaced by ONE short, reason-agnostic
+#: cause sentence (it makes no claim about the remedy: that depends on the reason and
+#: the on-screen card says it), which :func:`localize_failure_reason` then speaks in
+#: the turn's language. Pure regex and fixed tables (AP-11).
+_PERMISSION_NEEDED_TOKEN_RE = re.compile(r"\[permission_needed:(?P<token>[a-z_]+)\]")
+_PERMISSION_CAUSE_EN = "Personal Jarvis does not have the {name} permission right now."
+_PERMISSION_CAUSE_RE = re.compile(
+    r"^Personal Jarvis does not have the (?P<name>.+?) permission right now\.$"
+)
+_PERMISSION_CAUSE_TEMPLATES: dict[str, str] = {
+    "de": "Personal Jarvis hat die Berechtigung {name} gerade nicht.",  # i18n-allow
+    "en": _PERMISSION_CAUSE_EN,
+    "es": "Personal Jarvis no tiene ahora el permiso de {name}.",
+}
+#: How each language names a permission (the macOS UI labels; unverified on a real Mac).
+_PERMISSION_CAUSE_NAMES: dict[str, dict[str, str]] = {
+    "microphone": {
+        "de": "Mikrofon",  # i18n-allow
+        "en": "Microphone",
+        "es": "Micrófono",
+    },
+    "accessibility": {
+        "de": "Bedienungshilfen",  # i18n-allow
+        "en": "Accessibility",
+        "es": "Accesibilidad",
+    },
+    "screen_recording": {
+        "de": "Bildschirmaufnahme",  # i18n-allow
+        "en": "Screen Recording",
+        "es": "Grabación de pantalla",
+    },
+    "input_monitoring": {
+        "de": "Eingabeüberwachung",  # i18n-allow
+        "en": "Input Monitoring",
+        "es": "Monitorización de entrada",
+    },
+    "automation": {
+        "de": "Automatisierung",  # i18n-allow
+        "en": "Automation",
+        "es": "Automatización",
+    },
+}
+_PERMISSION_CAUSE_NAMES["event_posting"] = _PERMISSION_CAUSE_NAMES["accessibility"]
+_PERMISSION_TOKEN_BY_EN_NAME: dict[str, str] = {
+    names["en"]: token for token, names in _PERMISSION_CAUSE_NAMES.items()
+}
+#: Causes without a permission name: a macOS system dialog that is open, and a token
+#: this build does not know. English sentence -> its localized wording.
+_PERMISSION_FIXED_CAUSES: dict[str, dict[str, str]] = {
+    "Personal Jarvis paused because a macOS system dialog is open.": {
+        "de": "Personal Jarvis hat angehalten, weil ein Systemdialog offen ist.",  # i18n-allow
+        "en": "Personal Jarvis paused because a macOS system dialog is open.",
+        "es": "Personal Jarvis se detuvo porque hay un cuadro de diálogo del sistema abierto.",
+    },
+    "A macOS permission is missing right now.": {
+        "de": "Eine macOS-Berechtigung fehlt gerade.",  # i18n-allow
+        "en": "A macOS permission is missing right now.",
+        "es": "Falta un permiso de macOS en este momento.",
+    },
+}
+
+
+def _permission_cause(text: str | None) -> str | None:
+    """The one-sentence English cause of an agent permission refusal, else ``None``.
+
+    Looks for the ``[permission_needed:<token>]`` marker ANYWHERE in ``text`` (a
+    tool may wrap the refusal) and drops the rest of it: the prohibitive agent
+    sentences, wrapped prefixes and anything after the marker never reach a person.
+    """
+    match = _PERMISSION_NEEDED_TOKEN_RE.search(text or "")
+    if match is None:
+        return None
+    permission = match.group("token")
+    if permission == "system_dialog":
+        return "Personal Jarvis paused because a macOS system dialog is open."
+    names = _PERMISSION_CAUSE_NAMES.get(permission)
+    if names is None:
+        return "A macOS permission is missing right now."
+    return _PERMISSION_CAUSE_EN.format(name=names["en"])
+
+
+def _localize_permission_cause(sentence: str, lang: str) -> str | None:
+    """Speak a :func:`_permission_cause` sentence in ``lang``; ``None`` if it is not one."""
+    fixed = _PERMISSION_FIXED_CAUSES.get(sentence)
+    if fixed is not None:
+        return fixed.get(lang) or fixed[_DEFAULT]
+    match = _PERMISSION_CAUSE_RE.match(sentence)
+    token = _PERMISSION_TOKEN_BY_EN_NAME.get(match.group("name")) if match else None
+    if token is None:
+        return None
+    names = _PERMISSION_CAUSE_NAMES[token]
+    template = _PERMISSION_CAUSE_TEMPLATES.get(lang) or _PERMISSION_CAUSE_TEMPLATES[_DEFAULT]
+    return template.format(name=names.get(lang) or names[_DEFAULT])
+
+
 def localize_failure_reason(reason: str | None, language: str) -> str:
     """Speak a KNOWN failure cause in the turn's language; pass others through.
 
@@ -1124,6 +1221,9 @@ def _localize_one_reason(sentence: str, lang: str) -> str | None:
     whether an unrecognized sentence is a cause of its own or the machine tail
     of the cause before it.
     """
+    permission_cause = _localize_permission_cause(sentence, lang)
+    if permission_cause is not None:
+        return permission_cause
     for pattern, templates in _REASON_FAMILIES:
         match = pattern.match(sentence)
         if match is None:
@@ -1162,9 +1262,14 @@ def extract_speakable_reason(error: str | None, output: object = None) -> str | 
             raw = str(output.get(field) or "").strip()
             if not raw:
                 continue
+            # The agent text of a permission refusal is never forwarded: one fixed cause.
+            if (cause := _permission_cause(raw)) is not None:
+                return cause
             candidate = _CU_REASON_PREFIX_RE.sub("", raw).strip()
             if _is_speakable_reason(candidate):
                 return candidate
+    if (cause := _permission_cause(error)) is not None:
+        return cause
     if _is_speakable_reason(error):
         return str(error).strip()
     return None
@@ -1357,6 +1462,12 @@ def cu_failure_readback(
         blocked = cu_blocked_permission_sentence(detail)
         if blocked is not None:
             return _blocked_permission_readback(lang, blocked)
+
+    # 0b) The agent text of a permission refusal is never spoken: one fixed cause.
+    for source in (detail, error):
+        if (cause := _permission_cause(source)) is not None:
+            spoken = _localize_permission_cause(cause, lang) or cause
+            return action_phrase("cu_failed_reason", lang, error=spoken)
 
     # 1) The harness detail string may carry the model's verified reason.
     if detail:

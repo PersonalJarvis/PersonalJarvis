@@ -1,7 +1,7 @@
 """H1: a missing macOS Screen-Recording grant must surface a clear, honest message at
 the screenshot capture point, instead of silently capturing the desktop wallpaper
 (which would make Computer-Use click blind) - and the helpers that do so must never
-ASK macOS: only a gesture entry point does (design-v2 section 3.5).
+ASK macOS: only a gesture entry point does (docs/macos-permissions.md, 4.6).
 
 The REAL permission service runs on a REAL ``SystemPermissionPort`` that sits on
 ``FakeTCC`` (a stateful model of macOS privacy); its call log proves nothing was

@@ -132,54 +132,88 @@ DICTATION_REFUSAL_FALLBACK_TEXT = "Dictation could not start."
 
 # A refused dictation whose reason is ``microphone_unavailable`` is, on macOS,
 # nearly always the microphone permission. The pipeline's English sentence says
-# "check the microphone permission"; this table names the switch and the place
-# to flip it in the interface language, because on this surface the sentence is
-# all the user gets (the permission card lives in the web window). macOS only:
-# the path names System Settings, and the same reason on another OS can also
-# mean "the desktop window is not visible". Keys are the supported UI languages.
+# "check the microphone permission"; the three tables below say what to do NEXT in
+# the interface language (answer the dialog, flip the switch, open the window),
+# because on this surface the sentence is all the user gets (the permission card
+# lives in the web window). macOS only: the sentences name System Settings, and the
+# same reason on another OS can also mean "the desktop window is not visible".
+# Keys are the supported UI languages. This first table is for a microphone that
+# macOS has not been asked about yet.
 MICROPHONE_REFUSAL_TEXT: dict[str, str] = {
     "en": (
-        "Microphone access is needed: allow it in the macOS dialog, or switch on "
-        "Personal Jarvis in System Settings > Privacy & Security > Microphone."
+        "Microphone access is needed: allow it in the macOS dialog, then press the "
+        "key again."
     ),
     "de": (  # i18n-allow
-        "Mikrofonzugriff nötig: im macOS-Dialog erlauben oder Personal Jarvis "  # i18n-allow
-        "in Systemeinstellungen > Datenschutz & Sicherheit > Mikrofon aktivieren."  # i18n-allow
+        "Mikrofonzugriff nötig: im macOS-Dialog erlauben und die Taste dann noch "  # i18n-allow
+        "einmal drücken."  # i18n-allow
     ),
     "es": (  # i18n-allow
-        "Se necesita acceso al micrófono: permítelo en el diálogo de macOS o activa "  # i18n-allow
-        "Personal Jarvis en Ajustes del Sistema > Privacidad y seguridad > Micrófono."  # i18n-allow
+        "Se necesita acceso al micrófono: permítelo en el diálogo de macOS y vuelve "  # i18n-allow
+        "a pulsar la tecla."  # i18n-allow
     ),
 }
 
+# The microphone is DENIED (or macOS applies the switch only in Settings): there is no
+# dialog any more, so the sentence names the switch and the place instead.
+MICROPHONE_DENIED_REFUSAL_TEXT: dict[str, str] = {
+    "en": (
+        "Microphone is off for Personal Jarvis: switch it on in System Settings > "
+        "Privacy & Security > Microphone, then press the key again."
+    ),
+    "de": (  # i18n-allow
+        "Mikrofon ist für Personal Jarvis aus: schalte es in Systemeinstellungen > "  # i18n-allow
+        "Datenschutz & Sicherheit > Mikrofon ein und drücke die Taste dann noch "  # i18n-allow
+        "einmal."  # i18n-allow
+    ),
+    "es": (  # i18n-allow
+        "El micrófono está desactivado para Personal Jarvis: actívalo en Ajustes del "  # i18n-allow
+        "Sistema > Privacidad y seguridad > Micrófono y vuelve a pulsar la tecla."  # i18n-allow
+    ),
+}
+
+# Running outside the installed app: the confirmation lives in the web window, and
+# the permission layer's own sentence talks about "the user" in the third person.
+MICROPHONE_OUTSIDE_REFUSAL_TEXT: dict[str, str] = {
+    "en": "Open the Personal Jarvis window to continue.",
+    "de": "Öffne das Personal-Jarvis-Fenster, um fortzufahren.",  # i18n-allow
+    "es": "Abre la ventana de Personal Jarvis para continuar.",  # i18n-allow
+}
+
+# A microphone-permission notice is a sentence with a place name in it: 3 s is too
+# short to read it, so it stays up longer than an ordinary refusal.
+MICROPHONE_REFUSAL_DWELL_S = 8.0
 
 
-def _microphone_refusal_is_not_switchable(detail: str) -> bool:
-    """True when the permission layer's own sentence must stay on the bar.
+def _microphone_refusal_kind(detail: str) -> str:
+    """Which notice a macOS ``microphone_unavailable`` refusal gets.
 
-    The localized table above says "switch on Personal Jarvis in System Settings",
-    which is only true for an undecided or denied microphone. For a restricted one
-    (a profile or parental control), a session where macOS cannot be asked, or a run
-    from outside the installed app (the grantee is another app), that instruction is
-    wrong, so the permission service's fixed sentence for those cases is kept. Any
-    other detail (the pipeline's generic sentence, the not-determined and denied
-    templates) gets the table. Never raises: an unreadable service means "switchable".
+    ``"keep"``: restricted (a profile or parental control), or a session where macOS
+    cannot be asked: the permission service's fixed sentence stays, because "switch it
+    on in System Settings" would be wrong. ``"outside"``: running outside the installed
+    app (the grantee is another app and only the window can confirm). ``"denied"``: the
+    switch is off, no dialog exists any more. ``"undecided"``: anything else (the
+    pipeline's generic sentence, the not-determined templates). The kind is read from
+    the service's FIXED sentences, never parsed from free text. Never raises: an
+    unreadable service means "undecided" (the table is the safe default for the bar).
     """
     try:
         from jarvis.platform.permission_service import user_detail_for
         from jarvis.platform.permissions import PermissionId
 
         mic = PermissionId.MICROPHONE
-        kept = {
-            user_detail_for(mic, "restricted"),
-            user_detail_for(mic, "unavailable"),
+        if detail in {user_detail_for(mic, "restricted"), user_detail_for(mic, "unavailable")}:
+            return "keep"
+        if detail in {
             user_detail_for(mic, "not_determined", outside_app=True, launched_as_bundle=True),
             user_detail_for(mic, "not_determined", outside_app=True, launched_as_bundle=False),
-        }
+        }:
+            return "outside"
+        if detail in {user_detail_for(mic, "denied"), user_detail_for(mic, "needs_settings")}:
+            return "denied"
     except Exception:  # noqa: BLE001 - the table is the safe default for the bar
         log.debug("Microphone refusal templates unavailable; using the table.", exc_info=True)
-        return False
-    return detail in kept
+    return "undecided"
 
 
 # How long the bar stays up after a dictation that came back with NOTHING —
@@ -1949,14 +1983,17 @@ class OrbBusBridge:
         reason = (event.reason or "").strip() or "unspecified"
         detail = (event.detail or "").strip() or DICTATION_REFUSAL_FALLBACK_TEXT
         log.info("OrbBridge._on_dictation_refused: reason=%s — %s", reason, detail)
-        if (
-            reason == "microphone_unavailable"
-            and sys.platform == "darwin"
-            and not _microphone_refusal_is_not_switchable(detail)
-        ):
-            detail = MICROPHONE_REFUSAL_TEXT.get(
-                self._status_language(), MICROPHONE_REFUSAL_TEXT["en"]
-            )
+        dwell_s = DICTATION_REFUSAL_DWELL_S
+        if reason == "microphone_unavailable" and sys.platform == "darwin":
+            kind = _microphone_refusal_kind(detail)
+            table = {
+                "undecided": MICROPHONE_REFUSAL_TEXT,
+                "denied": MICROPHONE_DENIED_REFUSAL_TEXT,
+                "outside": MICROPHONE_OUTSIDE_REFUSAL_TEXT,
+            }.get(kind)
+            if table is not None:
+                detail = table.get(self._status_language(), table["en"])
+            dwell_s = MICROPHONE_REFUSAL_DWELL_S
         if reason in DICTATION_INERT_REFUSALS:
             # "A dictation is already recording" is not a failure — it is the
             # statement that the turn the user is watching is alive and will
@@ -1981,7 +2018,7 @@ class OrbBusBridge:
         self._cancel_dictation_standdown()
         self._show_notice_mode()
         self._show_listening_transcript(detail)
-        self._schedule_notice_standdown(DICTATION_REFUSAL_DWELL_S)
+        self._schedule_notice_standdown(dwell_s)
 
     def _rest_surface(self) -> None:
         """Drop the working look NOW, without closing the surface yet.

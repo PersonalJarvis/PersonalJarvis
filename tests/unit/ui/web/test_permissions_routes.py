@@ -704,13 +704,12 @@ def test_open_settings_works_outside_the_installed_app_because_it_is_not_a_promp
 
 
 @pytest.fixture
-def control_key(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
-    """A valid Bearer control key: the way a coding agent drives the CLI."""
-    monkeypatch.setattr(
-        routes._control_key,
-        "verify_control_key",
-        lambda token: token == "agent-key",  # noqa: S105 - a test key, not a secret
-    )
+def control_key() -> dict[str, str]:
+    """A Bearer control key: the way a coding agent drives the CLI.
+
+    The auth dependency is overridden in these tests; the routes only look at whether a
+    Bearer is PRESENT (an agent), never at its value.
+    """
     return {"Authorization": "Bearer agent-key"}
 
 
@@ -752,6 +751,109 @@ def test_only_an_explicit_ui_click_skips_the_reask_cooldown(
 
     ui_call, agent_call = gate.ensure_calls(PermissionId.ACCESSIBILITY)
     assert ui_call.force_ask is True and agent_call.force_ask is False
+
+
+def _script_client(env: Env) -> TestClient:
+    """A local script: no browser session cookie (the test harness adds one to every
+    client), no Authorization header and no ``Sec-Fetch-Site``."""
+    client = TestClient(env.app)
+    client.cookies.clear()
+    return client
+
+
+def test_the_ui_without_a_session_cookie_is_recognised_by_the_browsers_own_header(
+    make_env,
+) -> None:
+    # Open local access: the desktop WebView has no session cookie at all.
+    env = make_env(bundle_id=None, bundle_path=None, default_policy=DialogPolicy.NEVER_ANSWERED)
+    webview = _script_client(env)
+
+    body = webview.post(
+        "/api/permissions/microphone/request",
+        json={"allow_outside_app": True},
+        headers={"Sec-Fetch-Site": "same-origin"},
+    ).json()
+
+    assert body["asked"] is True and len(env.tcc.requests("microphone")) == 1
+
+
+def test_a_caller_with_no_credential_at_all_is_treated_as_an_agent(make_env) -> None:
+    # Open local access lets any loopback process reach the router without a key or a
+    # cookie; the person at the window is told apart by the browser's own header.
+    gate = FakePermissionService({PermissionId.ACCESSIBILITY: "pending"})
+    env = make_env(
+        service=gate, bundle_id=None, bundle_path=None, default_policy=DialogPolicy.NEVER_ANSWERED
+    )
+    script = _script_client(env)
+
+    refused = script.post("/api/permissions/microphone/request", json={"allow_outside_app": True})
+    script.post("/api/permissions/accessibility/request")
+    env.clock.advance(6)
+    script.post("/api/permissions/accessibility/request")
+
+    assert refused.status_code == 403
+    assert refused.json()["error"] == "confirmation_requires_ui"
+    assert env.tcc.requests() == []
+    assert [call.force_ask for call in gate.ensure_calls(PermissionId.ACCESSIBILITY)] == [
+        False,
+        False,
+    ]
+
+
+def test_an_agent_cannot_reset_and_so_cannot_rearm_the_request_cooldown(
+    make_env, control_key: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = make_env(default_policy=DialogPolicy.NEVER_ANSWERED)
+    _use_fake_tccutil(monkeypatch, env.tcc)
+    env.post("accessibility/request")  # asked once, the dialog was ignored
+    script = _script_client(env)
+
+    bearer_only = script.post("/api/permissions/accessibility/reset", headers=control_key)
+    no_credential = script.post("/api/permissions/accessibility/reset")
+    env.clock.advance(6)
+    again = script.post("/api/permissions/accessibility/request", headers=control_key).json()
+
+    assert bearer_only.status_code == 403 and no_credential.status_code == 403
+    assert bearer_only.json()["error"] == "confirmation_requires_ui"
+    assert env.tcc.tccutil_calls == []
+    assert again["asked"] is False  # the per-process cooldown still stands
+    assert len(env.tcc.requests("accessibility")) == 1
+
+
+def test_an_agent_may_still_dry_run_a_reset(make_env, control_key: dict[str, str]) -> None:
+    env = make_env()
+
+    body = _script_client(env).post(
+        "/api/permissions/microphone/reset?dry_run=true", headers=control_key
+    )
+
+    assert body.status_code in (200, 409)  # the plan is readable; nothing was reset
+    assert env.tcc.tccutil_calls == []
+
+
+def test_an_agent_loop_cannot_use_up_the_budget_of_the_persons_click(
+    make_env, control_key: dict[str, str]
+) -> None:
+    env = make_env(default_policy=DialogPolicy.NEVER_ANSWERED)
+    env.app.state.permissions_runtime.limiter = routes._RateLimiter(
+        cooldown_s=5, global_max=2, global_window_s=60, clock=env.clock
+    )
+    script = _script_client(env)
+
+    assert (
+        script.post("/api/permissions/microphone/request", headers=control_key).status_code == 200
+    )
+    assert (
+        script.post("/api/permissions/screen_recording/request", headers=control_key).status_code
+        == 200
+    )
+    assert (
+        script.post("/api/permissions/accessibility/request", headers=control_key).status_code
+        == 429
+    )  # the agent's own global cap
+
+    assert env.post("microphone/request").status_code == 200  # the person's click is not starved
+    assert env.post("screen_recording/open-settings").status_code == 200
 
 
 def test_the_allow_button_asks_again_in_the_real_service_after_the_cooldown_of_a_dismissed_prompt(
@@ -826,6 +928,26 @@ def test_the_activated_flag_notes_the_refocus_before_the_episodes_are_refreshed(
         assert service.log[0] == "activated"
         assert service.log.count("activated") == 1
         assert "refresh" in service.log
+    finally:
+        service.inner._shutdown()
+
+
+@pytest.mark.parametrize("path", ["status", "screen_recording"])
+def test_an_agent_cannot_use_the_activated_flag_to_promote_an_episode(
+    make_env, control_key: dict[str, str], path: str
+) -> None:
+    service = _RecordingService()
+    env = make_env(service=service, default_policy=DialogPolicy.NEVER_ANSWERED)
+    try:
+        service.inner.ensure(PermissionId.SCREEN_RECORDING, feature="computer_use")
+        service.log.clear()
+
+        response = _script_client(env).get(
+            f"/api/permissions/{path}?activated=1", headers=control_key
+        )
+
+        assert response.status_code == 200
+        assert "activated" not in service.log  # a focus hint is the person's alone
     finally:
         service.inner._shutdown()
 

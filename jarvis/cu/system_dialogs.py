@@ -52,6 +52,9 @@ SYSTEM_CONSENT_OWNERS: Final[frozenset[str]] = frozenset(
 #: on the window title, which needs Screen Recording (the engine only dispatches
 #: with it), so a title the OS withholds simply does not match (UNVERIFIED).
 SYSTEM_SETTINGS_OWNERS: Final[frozenset[str]] = frozenset({"system settings", "system preferences"})
+#: The owner NAME is probably localized on a non-English Mac (UNVERIFIED), so System
+#: Settings is also recognised by the bundle id of the owning process.
+SYSTEM_SETTINGS_BUNDLE_IDS: Final[frozenset[str]] = frozenset({"com.apple.systempreferences"})
 _PRIVACY_PANE_TITLE_TOKENS: Final[tuple[str, ...]] = (
     "privacy",
     "accessibility",
@@ -61,15 +64,36 @@ _PRIVACY_PANE_TITLE_TOKENS: Final[tuple[str, ...]] = (
     "microphone",
     "automation",
     "full disk access",
+    "camera",
+    "files & folders",
+    "developer tools",
+    "app management",
+    "contacts",
+    "calendars",
+    "reminders",
+    "photos",
+    "location services",
+    "local network",
+    "speech recognition",
     "datenschutz",  # i18n-allow: macOS pane title
     "bedienungshilfen",  # i18n-allow: macOS pane title
     "bildschirmaufnahme",  # i18n-allow: macOS pane title
     "eingabeüberwachung",  # i18n-allow: macOS pane title
     "mikrofon",  # i18n-allow: macOS pane title
     "automatisierung",  # i18n-allow: macOS pane title
+    "kamera",  # i18n-allow: macOS pane title
+    "dateien und ordner",  # i18n-allow: macOS pane title
+    "entwicklerwerkzeuge",  # i18n-allow: macOS pane title
+    "kontakte",  # i18n-allow: macOS pane title
+    "ortungsdienste",  # i18n-allow: macOS pane title
     "privacidad",  # i18n-allow: macOS pane title
     "accesibilidad",  # i18n-allow: macOS pane title
     "grabación de pantalla",  # i18n-allow: macOS pane title
+    "cámara",  # i18n-allow: macOS pane title
+    "archivos y carpetas",  # i18n-allow: macOS pane title
+    "herramientas de desarrollo",  # i18n-allow: macOS pane title
+    "contactos",  # i18n-allow: macOS pane title
+    "localización",  # i18n-allow: macOS pane title
 )
 
 #: Windows that sit above everything but are never a consent dialog and must not
@@ -90,17 +114,36 @@ _CHROME_OWNERS: Final[frozenset[str]] = frozenset(
 WindowLister = Callable[[], Sequence[Mapping[str, Any]]]
 
 
-def is_system_consent_window(owner: str, title: str = "") -> bool:
-    """Whether a window of this owner (and title) is a system consent surface."""
+def _title_names_privacy_pane(title: str) -> bool:
+    lowered = (title or "").casefold()
+    return any(token in lowered for token in _PRIVACY_PANE_TITLE_TOKENS)
+
+
+def is_system_consent_window(owner: str, title: str = "", bundle_id: str = "") -> bool:
+    """Whether a window of this owner (and title) is a system consent surface.
+
+    ``bundle_id`` is the bundle id of the owning process when the caller knows it:
+    System Settings is recognised by it even when its localized owner name is not
+    in :data:`SYSTEM_SETTINGS_OWNERS`.
+    """
     name = (owner or "").strip().casefold()
-    if not name:
-        return False
     if name in SYSTEM_CONSENT_OWNERS:
         return True
-    if name in SYSTEM_SETTINGS_OWNERS:
-        lowered = (title or "").casefold()
-        return any(token in lowered for token in _PRIVACY_PANE_TITLE_TOKENS)
+    if name in SYSTEM_SETTINGS_OWNERS or (bundle_id or "").strip() in SYSTEM_SETTINGS_BUNDLE_IDS:
+        return _title_names_privacy_pane(title)
     return False
+
+
+def _bundle_id_of_pid(pid: int) -> str:
+    """The bundle id of a running process, else ``""`` (macOS only; the import is lazy)."""
+    try:
+        from AppKit import NSRunningApplication  # type: ignore[import-not-found]  # noqa: PLC0415
+
+        app = NSRunningApplication.runningApplicationWithProcessIdentifier_(int(pid))
+        return str(app.bundleIdentifier() or "") if app is not None else ""
+    except Exception:  # noqa: BLE001 - no AppKit or no such process: the owner name decides alone
+        log.debug("The bundle id of a window owner could not be read.", exc_info=True)
+        return ""
 
 
 def _quartz_on_screen_windows() -> Sequence[Mapping[str, Any]]:
@@ -144,7 +187,10 @@ def _is_normal_window(entry: Mapping[str, Any]) -> bool:
         return True
 
 
-def frontmost_consent_owner(window_lister: WindowLister | None = None) -> str:
+def frontmost_consent_owner(
+    window_lister: WindowLister | None = None,
+    bundle_lookup: Callable[[int], str] | None = None,
+) -> str:
     """The owner of a system consent surface that is in front of every normal window, else ``""``.
 
     macOS only: the caller decides the platform (the engine calls this on darwin
@@ -158,9 +204,13 @@ def frontmost_consent_owner(window_lister: WindowLister | None = None) -> str:
     the person already moved on. An unreadable list answers ``""`` (fail open, with
     a debug line): a failed probe must not stop every mission, and a missing consent
     dialog is the case the prohibitive agent text and the grant itself still cover.
-    UNVERIFIED on a real Mac: the real window levels of the consent dialogs.
+    UNVERIFIED on a real Mac: the real window levels of the consent dialogs. A window
+    whose title names a privacy pane is also looked up by the bundle id of its owner
+    (``bundle_lookup``, default AppKit), so a localized System Settings name still
+    matches.
     """
     lister = window_lister or _quartz_on_screen_windows
+    lookup = bundle_lookup or _bundle_id_of_pid
     try:
         entries = lister()
     except Exception:  # noqa: BLE001 - an unreadable window list is "no dialog seen"
@@ -174,7 +224,13 @@ def frontmost_consent_owner(window_lister: WindowLister | None = None) -> str:
         if _is_own_window(entry, own_pid):
             continue
         title = str(entry.get("kCGWindowName") or "")
-        if is_system_consent_window(owner, title):
+        bundle_id = ""
+        if _title_names_privacy_pane(title):
+            try:
+                bundle_id = lookup(int(entry.get("kCGWindowOwnerPID", -1)))
+            except Exception:  # noqa: BLE001 - a failed lookup leaves the owner name to decide
+                log.debug("The owner bundle id lookup failed.", exc_info=True)
+        if is_system_consent_window(owner, title, bundle_id):
             return owner
         if _is_normal_window(entry):
             return ""
@@ -203,6 +259,7 @@ def user_detail() -> str:
 __all__ = [
     "SYSTEM_CONSENT_OWNERS",
     "SYSTEM_DIALOG_BLOCK",
+    "SYSTEM_SETTINGS_BUNDLE_IDS",
     "SYSTEM_SETTINGS_OWNERS",
     "WindowLister",
     "agent_detail",

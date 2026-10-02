@@ -3,7 +3,7 @@
 Every screen capture on macOS is gated by the Screen Recording permission, and
 the gate fails SILENTLY: without the grant the capture returns the desktop
 wallpaper and no error. This module is the one place the capture consumers go
-through, with two rules from the permission rebuild (design-v2 section 3.5):
+through, with two rules from the permission rebuild (docs/macos-permissions.md, 4.6):
 
 * **Helpers never ask.** A per-frame fast path, a region grab or a status probe
   reads the state through :func:`screen_recording_state` (silent, cheap) and
@@ -112,7 +112,7 @@ def permission_gate() -> Any:
 # ----------------------------------------------------------------------
 
 
-def screen_recording_state(gate: Any | None = None) -> PermissionState:
+def screen_recording_state(gate: Any | None = None, *, deep: bool = True) -> PermissionState:
     """The live Screen Recording state. Silent: it never asks and never publishes.
 
     The cheap preflight comes first. The preflight is frozen per process and can
@@ -120,10 +120,14 @@ def screen_recording_state(gate: Any | None = None) -> PermissionState:
     window-title oracle (``check_deep``) before it is believed: a grant the user
     gave mid-session must not read as missing until a restart (BUG-161). A gate
     without ``check_deep`` (a scripted fake) answers with ``check`` alone.
+
+    ``deep=False`` is for a GET status probe: it never runs the oracle (a window
+    enumeration whose side effects on a real Mac are unverified), so it answers
+    from the preflight and the remembered proof only.
     """
     gate = gate if gate is not None else permission_gate()
     state = gate.check(PermissionId.SCREEN_RECORDING)
-    if state not in _DEEP_RETRY_STATES:
+    if not deep or state not in _DEEP_RETRY_STATES:
         return state
     deep = getattr(gate, "check_deep", None)
     if not callable(deep):

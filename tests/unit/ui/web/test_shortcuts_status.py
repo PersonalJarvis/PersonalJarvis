@@ -108,7 +108,7 @@ class _Trigger:
     def __init__(self, deaf: bool) -> None:
         self._deaf = deaf
 
-    def deaf_tap_suspected(self, *, user_reported: bool = False) -> bool:
+    def deaf_tap_suspected(self) -> bool:
         return self._deaf
 
 

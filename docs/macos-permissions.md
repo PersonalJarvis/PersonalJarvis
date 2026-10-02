@@ -407,15 +407,19 @@ Class: DIALOG, PROMPT-ONCE, NATIVE (3.6). EVENT_POSTING is an alias of ACCESSIBI
 | **Microphone** | DIALOG | Dictation key or button; "speak in this conversation" (the UI calls `POST /api/permissions/microphone/request` with feature `browser_voice` before `getUserMedia`); push-to-talk; switching the **wake word** on (the route asks with `wait_s=0`); the wake self-test button (`wait_s=60`, the test is the JIT moment) | `request_native` (`AVCaptureDevice requestAccess...`) when `not_determined`, then the stream opens | Voice and dictation refuse (`DictationRefused("microphone_unavailable")` plus `PermissionNeeded`); typed chat unaffected; zeros are never recorded silently | Card and Privacy row: System Settings > Privacy & Security > Microphone | Usable at once [I; Apple does not document a restart requirement]. The wake loop that was parked wakes on `PermissionResolved`. A HOLD key pressed during the dialog is **not** started retroactively ("allowed, press again"). |
 | **Screen Recording** | PROMPT-ONCE | First capture started by a user goal: computer-use perception, the `screen_snapshot` tool body, a user-requested screen-context or Appshot capture | `CGRequestScreenCaptureAccess()` (once per process; an explicit Allow always) | Capture refuses with an honest error, never a wallpaper frame; `PermissionNeeded(needs_settings)` | Pane "Screen & System Audio Recording" (static label; the pane naming per macOS version is [C], unverified; "Screen Recording" before macOS 15). On macOS 15 and later the first capture may also show the OS "bypass the system picker" alert. A stuck entry may need a reboot [D 818415]. | The window-title oracle (`_screen_capture_live_check`) decides. A capture timeout while the state reads granted is PENDING ("macOS may be asking you to confirm"), not DENIED. A restart is offered only after a real failed attempt. |
 | **Accessibility** and post-event | PROMPT-ONCE | First time Jarvis must type, click or focus for the user: computer-use input, dictation auto-paste, window focus and maximize. AX **reads** (tree, element at point) are background: never prompt, degrade | `AXIsProcessTrustedWithOptions(prompt)`, at most once per 10 minutes per process; an explicit Allow always | Dictation falls back to `clipboard_only`; computer-use tools return `[permission_needed:accessibility] ...`; window tools return the same prefix | Pane "Accessibility" (reported renamed on macOS 27, 3.7; the label is static text, no OS sniffing) | A silent watcher; taps and observers are rebuilt on a false-to-true edge. The first paste after an in-process grant reports `paste_sent` until delivery is observed. |
-| **Input Monitoring** | PROMPT-ONCE | The user enables global shortcuts: the "Enable global shortcuts" action in the Shortcuts surfaces, and one dismissible tip after the first UI-started dictation. Never at boot | `CGRequestListenEventAccess()` / `IOHIDRequestAccess` only; the event tap is created only after the preflight is true | The shortcut status reads `needs_input_monitoring`; the app keeps working from button and voice; the Esc-to-cancel pill never claims a dead key | Pane "Input Monitoring"; copy never says "you denied" (the entry is reportedly auto-registered after a request: BUG-083 live finding on one Mac, [C], unverified) | The watcher re-arms the hotkey in process (a listener sets the existing reload path). "No raw events arrived" is a restart hint, never an automatic restart. |
+| **Input Monitoring** | PROMPT-ONCE | The user enables or saves global shortcuts: the "Enable global shortcuts" action in the Shortcuts surfaces, saving a shortcut, and one dismissible tip after the first UI-started dictation. Never at boot | `CGRequestListenEventAccess()` / `IOHIDRequestAccess` only; the event tap is created only after the preflight is true | The shortcut status reads `needs_input_monitoring`; the app keeps working from button and voice; the Esc-to-cancel pill never claims a dead key | Pane "Input Monitoring"; copy never says "you denied" (the entry is reportedly auto-registered after a request: BUG-083 live finding on one Mac, [C], unverified) | The watcher re-arms the hotkey in process (a listener sets the existing reload path). "No raw events arrived" is a restart hint, never an automatic restart. |
 | **Automation** (Music and Spotify only) | DIALOG | Switching "Mute music while dictating" on **while a player runs**; the Privacy-row Allow. Never mid-dictation, never by launching a player | The killable `osascript` consent runner (120 s, own daemon thread) | Ducking skips that player; the inline status names the player | Pane "Automation" | Checked per send. `-1743` after GRANTED maps to NEEDS_SETTINGS. |
 | **Files and Folders** | NATIVE | Whenever the user or an agent touches the folder | The OS prompts by itself; never pre-checked or enumerated "to check"; needs a GUI login session [D] | Normal `EPERM` handling | System Settings > Files & Folders | Immediate |
 | **Keychain** | not TCC | Reading a stored key | The `security` vault, then the 0600 file fallback (existing) | File fallback | The Privacy row shows the storage kind; "Try again" replays the read | n/a |
 | **Login item** | not TCC | Autostart (existing, default on) | A LaunchAgent; the OS shows its own notice [C], see R7 | n/a | Login Items | n/a |
 | Camera, Contacts, Calendars, Notifications, Full Disk Access, Location | n/a | Not used | n/a | n/a | n/a | n/a |
 
-Not implemented (verified in the tree): saving a shortcut in the Shortcuts view does **not** itself
-ask for Input Monitoring; the ask is the explicit action on the status note and the one-time tip.
+Saving a shortcut from any keybind surface (`useKeybinds().saveKeybind`) asks for Input Monitoring
+once, from that click, when the last status read says `needs_input_monitoring` and the window is
+the embedded desktop one (a failed or rate-limited ask never fails the save). Not implemented
+(verified in the tree): the onboarding wake/call-shortcut step does not show the status note or
+ask, so a fresh Mac user who only picks the Call shortcut there meets the ask on their first save in
+Settings, on the status note's action, or on the one-time tip after the first UI-started dictation.
 
 ### 4.6 Per-consumer behaviour (execution context is part of the contract)
 
@@ -472,7 +476,13 @@ an upgrader, boot on a non-macOS host) and `tests/unit/ui/test_desktop_macos_per
   event-loop thread an Automation read never waits.
 - **Screen Recording oracle:** the window-title check enumerates on-screen windows; it runs on a
   gesture entry and, for a gesture-opened episode, at most every 10 s. Whether the enumeration
-  itself can trigger the macOS 15 alert is **unverified**, hence the low cadence.
+  itself can trigger the macOS 15 alert is **unverified**, hence the low cadence. A proven grant is
+  remembered for SHALLOW reads (the preflight is frozen per process and can only go stale
+  negative); a deep read (the computer-use pre-dispatch gate, the episode watcher) never answers
+  from that memory and drops it when it finds no grant, so a revoke is seen before the next
+  action. The oracle only proves positively, so "no readable window title" also reads as "not
+  granted" there; the next deep read that finds a titled window proves the grant again. The GET
+  status probes (`/api/screen-context/status`) are shallow: they run no oracle.
 
 ### 4.9 Events and snapshot v2
 
@@ -503,7 +513,7 @@ stale negative; a grant shows once the service has proven it, 4.8). EVENT_POSTIN
 own. `GET /api/permissions/{id}` returns one cheap row. Both GET routes accept `?activated=1`, which
 the frontend sends on the first refetch after the window regained focus: the route calls
 `note_app_activated()` so a PROMPT-ONCE dialog the person left to flip a switch is promoted to
-`blocked` at once. It is a hint about what the user just did, never a prompt. The frontend seeds
+`blocked` at once. It is a hint about what the user just did, never a prompt (only the UI's `activated=1` counts). The frontend seeds
 from `needed[]` because events are not persistent.
 
 `restart_hint` on a row is true while a `restart_hint` episode is open for that permission, **even
@@ -512,10 +522,20 @@ failed); the row's `detail` is then the fixed restart sentence. The Keychain row
 call: its `can_request` means "Try again", which replays the Keychain read.
 
 `POST /{id}/request` hands the permission to `ensure(interactive=True, wait_s=0)` and answers at
-once. The body may carry `allow_outside_app` (refused with 403 for a caller that holds only the
-control key: confirming a grantee is for a person at the UI), `feature` and `target`. A request from
-the UI passes `force_ask=True` to the service (an explicit click on "Allow" skips the PROMPT-ONCE
-cooldown); a request that carries only the control key does not, so a script cannot loop it.
+once. The body may carry `allow_outside_app` (refused with 403 for an agent: confirming a grantee is for
+a person at the UI), `feature` and `target`. The person at the Jarvis window is identified
+positively: its session cookie, or (open local access has no cookie) the browser-set
+`Sec-Fetch-Site: same-origin` header on a request with no `Authorization` header. Every other
+caller is an agent: a script with the control key and equally a local process that presents no
+credential at all. A request from the UI passes `force_ask=True` to the service (an explicit click
+on "Allow" skips the PROMPT-ONCE cooldown); an agent's does not, so a script cannot loop it. For an
+agent `/reset` is refused with 403 (a reset forgets the cooldown, so "reset, then request" would
+be a prompt loop) and `?activated=1` is ignored. The UI and every other caller have separate
+cooldowns and global caps, so a loop from a shell cannot starve the person's click. Residual limit:
+a local process that deliberately forges `Sec-Fetch-Site` is indistinguishable from the WebView;
+this guards against an agent that follows its instructions, not against malware (the dialog itself
+stays macOS's), and whether the macOS WebView sends the header on every supported release is
+unverified (a WebView without it only loses `allow_outside_app` and the cooldown skip).
 Opening a pane quits a running System Settings first (it ignores the anchor while running,
 BUG-083, observed on macOS 15.7, not documented by Apple), except when the same pane URL was the
 last one this process opened (`_last_opened_url` in `SystemPermissionPort._open_settings`); the user
@@ -642,8 +662,8 @@ tap required both Accessibility and Input Monitoring, which is stricter than App
 granted; re-arm on grant through the service listener (no second path); the one `shortcuts_status`;
 the asking moments of 4.5; stale texts fixed; a raw-callback counter replaces the dead
 `received_any_event()` liveness signal. A restart hint appears only when the preflight is true and
-no raw event arrived after the user typed, or after an explicit "still not working"; never an
-automatic restart. The Appshot both-Option gesture is **not** an Input Monitoring row: its
+no raw event arrived after the user typed (an explicit "still not working" report would need its
+own route and UI and does not exist); never an automatic restart. The Appshot both-Option gesture is **not** an Input Monitoring row: its
 permission need is unverified (`jarvis/appshot/gesture.py` records that it is unverified whether the
 `CGEventSourceKeyState` Option-key read needs Input Monitoring; `jarvis/trigger/hotkey.py` notes that
 the sibling `CGEventSourceFlagsState` read needs no event tap and no Accessibility grant, and says
@@ -762,8 +782,8 @@ Follow-ups, not part of this change: the Carbon backend (4.15), macOS Call/Hangu
 `WKUIDelegate` media-capture grant, `AssociatedBundleIdentifiers` for the LaunchAgent, a
 `Capabilities.ax_permission_granted` cleanup (the probe still exists in `jarvis/platform/probes.py`
 and feeds the capability record), a `report_failed_use` path for Accessibility input and ducking
-(4.4), and any per-turn computer-use permission cards (cut from v1: one floating card plus a journal
-line).
+(4.4), and any per-turn computer-use permission cards (cut from v1: one floating card plus the mission's `blocked_permission` ending; a deck journal
+line by trace id was never built).
 
 ## 7. Manual test checklist for a real Mac
 

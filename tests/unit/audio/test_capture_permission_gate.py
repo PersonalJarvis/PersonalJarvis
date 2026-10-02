@@ -2,7 +2,7 @@
 
 The old gate probed ``runtime_access_granted`` twice per frame and refused when OUR
 preflight said "not granted", so macOS was never asked from the feature. The
-contract these tests pin (design-v2 3.5, row "audio/capture.py"):
+contract these tests pin (docs/macos-permissions.md, 4.6, row "audio/capture.py"):
 
 * one service ``ensure`` when the stream opens: an interactive (user-started)
   open may make macOS ask, a background open never does, and CoreAudio is not
@@ -573,6 +573,29 @@ async def test_five_seconds_of_zeros_while_granted_reports_once_and_keeps_the_st
     # more likely a muted input than a denial and must not raise the floating card.
     assert event.feature == "voice" and event.reason == "denied" and event.origin == "background"
     assert "denied or muted" in event.detail
+
+
+def test_the_silence_window_is_five_seconds_of_exact_zeros() -> None:
+    # The guard must not fire on the normal start-up silence of a real microphone, so
+    # the window is part of the contract (a shorter one shows a false "denied or muted"
+    # card on a granted Mac). The other tests shorten it; this one pins the real value.
+    assert capture._SILENCE_REPORT_AFTER_S == 5.0
+
+
+@pytest.mark.asyncio
+async def test_start_up_silence_inside_the_real_window_reports_nothing(
+    monkeypatch: pytest.MonkeyPatch, default_bus_events: list[PermissionNeeded]
+) -> None:
+    _tcc, audio = _darwin(monkeypatch, granted=[MIC])
+    monkeypatch.setattr(capture.MicrophoneCapture, "_WATCHDOG_TICK_S", 0.01)
+    # NOT shortened: the real constant decides.
+
+    async with capture.MicrophoneCapture(device=0):
+        (stream,) = audio.starts
+        await _pump_zeros(stream, frames=60)  # about 0.6 s of zeros, far inside 5 s
+        await asyncio.sleep(0.1)
+
+    assert default_bus_events == []
 
 
 @pytest.mark.asyncio

@@ -778,7 +778,7 @@ class MicrophoneCapture:
     ) -> None:
         if permission_feature not in PERMISSION_FEATURES:
             raise ValueError(f"Unknown permission feature: {permission_feature!r}")
-        # Permission contract (design-v2 3.5): ONE service ``ensure`` when the
+        # Permission contract (docs/macos-permissions.md, 4.6): ONE service ``ensure`` when the
         # stream opens, then one cheap ``check`` per watchdog tick. ``interactive``
         # says whether a user gesture started this capture (it may make macOS ask);
         # the default is the safe one, a background start that never asks.

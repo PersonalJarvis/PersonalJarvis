@@ -19,7 +19,8 @@ after the window regained focus: the route then calls ``note_app_activated()`` o
 the service before it refreshes the episodes, so a Screen Recording / Accessibility /
 Input Monitoring dialog the person left to flip a switch in System Settings is
 promoted to "blocked" at once and the next watcher pass reads the grant (the window-
-title oracle included). It is a hint about what the user just did, never a prompt.
+title oracle included). It is a hint about what the user just did, never a prompt, and
+only the person at the Jarvis window sends it: an agent's ``activated=1`` is ignored.
 
 The Automation row is computed only while ``[ducking].enabled`` is on or the caller
 passes ``?include=automation``: reading it asks a running player, which a user who
@@ -51,7 +52,6 @@ from fastapi import APIRouter, Body, Depends, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, field_validator
 
-from jarvis.core import control_key as _control_key
 from jarvis.core.events import PERMISSION_FEATURES
 from jarvis.platform import permissions as _permissions_module
 from jarvis.platform.permission_service import (
@@ -272,7 +272,12 @@ class _Refusal:
 
 
 class _RateLimiter:
-    """A cooldown per (action, permission) and a sliding-window cap over all of them."""
+    """A cooldown per (action, permission) and a sliding-window cap over all of them.
+
+    The person at the Jarvis window and every other caller (an agent, a script) have
+    SEPARATE budgets: a loop from a shell must never use up the cooldown or the global
+    cap that the person's own "Allow" / "Open System Settings" click needs.
+    """
 
     def __init__(
         self,
@@ -287,23 +292,24 @@ class _RateLimiter:
         self._global_window_s = global_window_s
         self._clock = clock
         self._lock = threading.Lock()
-        self._last: dict[tuple[str, str], float] = {}
-        self._recent: deque[float] = deque()
+        self._last: dict[tuple[str, str, bool], float] = {}
+        self._recent: dict[bool, deque[float]] = {True: deque(), False: deque()}
 
-    def admit(self, action: str, permission: PermissionId) -> _Refusal | None:
+    def admit(self, action: str, permission: PermissionId, *, ui: bool = True) -> _Refusal | None:
         """``None`` and the call is counted, or why it is refused (nothing is counted)."""
         now = self._clock()
-        key = (action, permission.value)
+        key = (action, permission.value, ui)
+        recent = self._recent[ui]
         with self._lock:
-            while self._recent and now - self._recent[0] >= self._global_window_s:
-                self._recent.popleft()
+            while recent and now - recent[0] >= self._global_window_s:
+                recent.popleft()
             last = self._last.get(key)
             if last is not None and now - last < self._cooldown_s:
                 return _Refusal("permission", self._cooldown_s - (now - last))
-            if len(self._recent) >= self._global_max:
-                return _Refusal("global", self._global_window_s - (now - self._recent[0]))
+            if len(recent) >= self._global_max:
+                return _Refusal("global", self._global_window_s - (now - recent[0]))
             self._last[key] = now
-            self._recent.append(now)
+            recent.append(now)
         return None
 
 
@@ -635,7 +641,7 @@ def get_permissions_status(
     wanted = {part.strip() for part in (include or "").split(",")}
     include_automation = "automation" in wanted or _ducking_enabled(request)
     service = _service(request)
-    _note_activated(service, activated)
+    _note_activated(service, activated and not _is_agent_caller(request))
     return _build_snapshot(service, _runtime(request), include_automation=include_automation)
 
 
@@ -656,7 +662,7 @@ def get_permission(
     """
     service = _service(request)
     runtime = _runtime(request)
-    _note_activated(service, activated)
+    _note_activated(service, activated and not _is_agent_caller(request))
     _refresh_edges(service, runtime)
     return _single_row(service, runtime, permission_id)
 
@@ -699,16 +705,38 @@ class PermissionRequestBody(BaseModel):
 
 
 def _is_agent_caller(request: Request) -> bool:
-    """Whether the request authenticated only with the Bearer control key.
+    """Whether the request is NOT positively the person at the Jarvis window.
 
-    That is how a coding agent drives Jarvis through the CLI; the desktop UI uses
-    its session cookie or open local access. Two things are for a person at the UI
-    only (P9): confirming that macOS may record a grant for the app that started
-    Jarvis, and an explicit click that skips the re-ask cooldown.
+    The person is identified by what only the desktop UI carries: its session cookie,
+    or (open local access, the default, has no cookie at all) the browser-set
+    ``Sec-Fetch-Site: same-origin`` header on a request without an ``Authorization``
+    header. Everything else is treated as an agent: a script that presents the control
+    key, and equally a local process that presents NO credential at all (open access
+    lets it reach this router). Two things are for a person at the UI only (P9, P4):
+    confirming that macOS may record a grant for the app that started Jarvis, and an
+    explicit click that skips the re-ask cooldown; neither is open to an agent.
+
+    Honest limit: ``Sec-Fetch-Site`` is a "forbidden header" for page scripts, so a
+    page cannot fake it, but a local process that deliberately forges it is
+    indistinguishable from the WebView; this is a guard against an agent that
+    follows its instructions, not a boundary against malware (the permission dialog
+    itself stays macOS's). Whether the macOS WebView sends the header on every
+    supported release is UNVERIFIED; a WebView without it only loses the two
+    conveniences above and nothing is ever granted by it.
     """
     if validate_token(request.cookies.get(COOKIE_NAME, "")):
         return False
-    return bool(_control_key.verify_control_key(_bearer_token(request)))
+    if _bearer_token(request) is not None:
+        return True
+    return request.headers.get("sec-fetch-site", "").strip().lower() != "same-origin"
+
+
+def _requires_ui_response(detail: str) -> JSONResponse:
+    """The 403 for something only a person at the Jarvis window may do."""
+    return JSONResponse(
+        status_code=403,
+        content={"error": "confirmation_requires_ui", "detail": detail},
+    )
 
 
 def _operation(
@@ -913,15 +941,9 @@ def request_permission(
         # Confirming "macOS may grant this to the app that started Jarvis" is a
         # decision for a person looking at the dialog that names the grantee, never
         # for an agent that holds the control key (P9).
-        return JSONResponse(
-            status_code=403,
-            content={
-                "error": "confirmation_requires_ui",
-                "detail": (
-                    "Confirming a grant for the app that started Jarvis needs the Jarvis "
-                    "window; the control key cannot do it."
-                ),
-            },
+        return _requires_ui_response(
+            "Confirming a grant for the app that started Jarvis needs the Jarvis "
+            "window; a script or the control key cannot do it."
         )
     label = _ROW_LABELS.get(PANE_FAMILY[permission_id], permission_id.value)
     if dry_run:
@@ -933,7 +955,7 @@ def request_permission(
             message=f"Would request {label} access.",
         )
     runtime = _runtime(request)
-    refusal = runtime.limiter.admit("request", PANE_FAMILY[permission_id])
+    refusal = runtime.limiter.admit("request", PANE_FAMILY[permission_id], ui=not agent_caller)
     if refusal is not None:
         return _rate_limited(refusal, "request", permission_id)
     service = _service(request)
@@ -1008,7 +1030,7 @@ def open_permission_settings(
             message=f"Would open {label} in System Settings.",
         )
     runtime = _runtime(request)
-    refusal = runtime.limiter.admit("open_settings", family)
+    refusal = runtime.limiter.admit("open_settings", family, ui=not _is_agent_caller(request))
     if refusal is not None:
         return _rate_limited(refusal, "open_settings", permission_id)
     service = _service(request)
@@ -1043,12 +1065,23 @@ def reset_permission(
     again. Scoped strictly to this app's bundle id by the port, so only the
     installed app can do it; other apps stay untouched. Refused with 409 while the
     permission is live GRANTED (a reset would throw a working grant away) and
-    whenever the live state cannot be read.
+    whenever the live state cannot be read. Refused with 403 for an agent (a script, the
+    control key, a caller with no credential): a reset forgets the re-ask cooldown, so
+    "reset, then request" would be a prompt loop; "Ask again" is a click in the window.
     """
     service = _service(request)
     runtime = _runtime(request)
     family = PANE_FAMILY[permission_id]
     label = _ROW_LABELS.get(family, permission_id.value)
+    agent_caller = _is_agent_caller(request)
+    if agent_caller and not dry_run:
+        # A reset forgets the re-ask cooldown, so "reset, then request" from a script
+        # would make macOS ask over and over and undo a denial the person gave (P4).
+        # "Ask again" is a click in the Jarvis window.
+        return _requires_ui_response(
+            "Resetting a privacy permission needs the Jarvis window; a script or the "
+            "control key cannot do it."
+        )
     if not dry_run:
         # "Reset, then request" in a loop would defeat the re-ask limits (P4), so a
         # reset is rate limited like the other two routes that change what macOS shows.

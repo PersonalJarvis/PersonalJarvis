@@ -216,7 +216,7 @@ jobs:
           for permission in PermissionId:
               state = service.check(permission)
               assert isinstance(state, PermissionState), (permission, state)
-              result = service.ensure(permission, feature="smoke", interactive=False)
+              result = service.ensure(permission, feature="voice", interactive=False)
               print(permission.value, state.value, result.outcome)
               assert result.asked is False, permission
               if result.outcome is PermissionOutcome.GRANTED:
@@ -301,4 +301,14 @@ jobs:
             tests/unit/vision/test_ax_tree.py \
             tests/unit/vision/test_element_at_point.py \
             tests/unit/vision/test_select_capture_monitor.py \
-            tests/unit/trigger/test_hotkey_backends.py
+            tests/unit/trigger/test_hotkey_backends.py \
+            tests/unit/trigger/test_quartz_jit_permissions.py \
+            tests/unit/platform/test_screen_access.py \
+            tests/unit/audio/test_ducking_permissions.py \
+            tests/unit/dictation/test_insert_permission.py \
+            tests/unit/cu/test_system_dialogs.py \
+            tests/unit/speech/test_voice_permission_jit.py \
+            tests/unit/packaging/test_macos_privacy_strings.py \
+            tests/unit/packaging/test_macos_build_script.py \
+            tests/unit/ci/test_check_frozen_macos_app.py \
+            tests/unit/ci/test_macos_desktop_permission_step.py

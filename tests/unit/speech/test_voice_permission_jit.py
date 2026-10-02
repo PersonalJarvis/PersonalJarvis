@@ -1,6 +1,6 @@
 """Voice gestures ask for the microphone at the moment they need it; boot never does.
 
-The contract (design-v2 section 3.5, rows 2-4 and section 3.6):
+The contract (docs/macos-permissions.md, 4.6 rows on the voice gates, and 4.7 boot rule):
 
 * A GESTURE (the dictation key or button, push-to-talk, the call key, "speak in
   this conversation") calls ``ensure(MICROPHONE, wait_s=0)``. The first press of an
@@ -29,7 +29,7 @@ import pytest
 
 import jarvis.speech.pipeline as pipeline_mod
 from jarvis.core.bus import EventBus
-from jarvis.core.events import DictationRefused, PermissionNeeded
+from jarvis.core.events import DictationRefused, PermissionNeeded, PermissionResolved
 from jarvis.platform.permission_service import (
     PermissionOutcome,
     get_permission_service,
@@ -562,6 +562,29 @@ async def test_boot_of_an_upgrader_with_every_grant_present_shows_no_card_and_ma
     assert boot.seen.needed == [], "zero permission episodes for an upgrader"
     assert get_permission_service().outstanding() == []
     assert boot.listened.is_set() is wake_word  # granted: the wake loop listens at once
+
+
+@pytest.mark.parametrize(
+    ("granted", "permissions", "parked", "wakes"),
+    [
+        (True, ("microphone",), True, True),
+        (False, ("microphone",), True, False),  # an expired episode is not a grant: no churn
+        (True, ("accessibility",), True, False),
+        (True, ("microphone",), False, False),  # a wake capture that runs is never torn down
+    ],
+)
+async def test_only_a_microphone_grant_wakes_a_parked_wake_loop(
+    granted: bool, permissions: tuple[str, ...], parked: bool, wakes: bool
+) -> None:
+    pipe = SpeechPipeline.__new__(SpeechPipeline)
+    pipe._wake_reload_event = asyncio.Event()
+    pipe._wake_parked_on_permission = parked
+
+    await pipe._on_permission_resolved(
+        PermissionResolved(permissions=permissions, feature="wake_word", granted=granted)
+    )
+
+    assert pipe._wake_reload_event.is_set() is wakes
 
 
 async def test_boot_on_a_non_macos_host_never_consults_tcc(monkeypatch: pytest.MonkeyPatch) -> None:

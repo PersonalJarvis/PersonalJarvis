@@ -241,7 +241,7 @@ async def status(request: Request) -> dict[str, Any]:
         ocr,
     ) = await asyncio.gather(
         asyncio.to_thread(service.displays.monitors),
-        asyncio.to_thread(capture_permission_error),
+        asyncio.to_thread(capture_permission_error, deep=False),
         asyncio.to_thread(service.cursor.position),
         asyncio.to_thread(_capture_backend_capability),
         asyncio.to_thread(_indicator_capability),

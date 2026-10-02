@@ -247,7 +247,6 @@ def test_a_tap_that_is_not_listening_is_never_called_deaf(monkeypatch: pytest.Mo
     _darwin(monkeypatch)
     backend = _backend()
     assert backend.deaf_tap_suspected() is False
-    assert backend.deaf_tap_suspected(user_reported=True) is False
 
 
 def test_deaf_needs_user_typing_after_the_tap_came_up(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -338,21 +337,6 @@ def test_one_heard_event_ends_the_suspicion(monkeypatch: pytest.MonkeyPatch) -> 
         assert backend.deaf_tap_suspected() is True
         fake.deliver_key(0x00)
         assert backend.deaf_tap_suspected() is False
-        assert backend.deaf_tap_suspected(user_reported=True) is False
-    finally:
-        backend.stop()
-
-
-def test_an_explicit_still_not_working_counts_only_while_the_grant_is_visible(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    backend, _fake = _listening_backend(monkeypatch)
-    try:
-        assert backend.deaf_tap_suspected(user_reported=True) is True
-        backend._permission_check = lambda: (
-            False
-        )  # preflight false: "needs the grant", not "restart"
-        assert backend.deaf_tap_suspected(user_reported=True) is False
     finally:
         backend.stop()
 
@@ -515,13 +499,11 @@ def test_a_restarted_tap_is_a_new_episode(monkeypatch: pytest.MonkeyPatch) -> No
 # --------------------------------------------------------------------------
 
 
-async def _enter_trigger(
-    monkeypatch: pytest.MonkeyPatch, *, reload_event: asyncio.Event | None = None
-) -> HotkeyTrigger:
+async def _enter_trigger(monkeypatch: pytest.MonkeyPatch) -> HotkeyTrigger:
     import jarvis.trigger.hotkey as hotkey_mod
 
     monkeypatch.setattr(hotkey_mod, "make_hotkey_backend", lambda: QuartzHotkeyBackend())
-    trigger = HotkeyTrigger({"call": ["control+j"]}, reload_event=reload_event)
+    trigger = HotkeyTrigger({"call": ["control+j"]})
     await trigger.__aenter__()
     return trigger
 
@@ -534,13 +516,12 @@ async def _settle(trigger: HotkeyTrigger) -> None:
         await asyncio.sleep(0.01)
 
 
-async def test_a_grant_after_boot_arms_the_tap_once_and_sets_the_reload_event(
+async def test_a_grant_after_boot_arms_the_tap_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     tcc, fake = _darwin(monkeypatch)
     service = service_mod.get_permission_service()
-    reload_event = asyncio.Event()
-    trigger = await _enter_trigger(monkeypatch, reload_event=reload_event)
+    trigger = await _enter_trigger(monkeypatch)
     try:
         assert trigger.listening() is False
         assert trigger.armed is False
@@ -549,7 +530,6 @@ async def test_a_grant_after_boot_arms_the_tap_once_and_sets_the_reload_event(
         # The wait opened a background episode: no request, no dialog.
         assert tcc.requests() == [] and tcc.dialogs_shown() == []
         assert [e.permissions for e in service.outstanding()] == [("input_monitoring",)]
-        assert not reload_event.is_set()
 
         tcc.grant(TccService.INPUT_MONITORING)  # the user flips the switch in System Settings
         service.invalidate()  # the 250 ms negative cache has long expired by the watcher's tick
@@ -559,7 +539,6 @@ async def test_a_grant_after_boot_arms_the_tap_once_and_sets_the_reload_event(
         assert fake.tap.attempts == ["live"], "exactly one tap, created after the grant"
         assert trigger.armed is True
         assert trigger.needs_input_monitoring is False
-        assert reload_event.is_set(), "the owner's existing reload path is told"
         assert tcc.requests() == []
     finally:
         await trigger.__aexit__(None, None, None)

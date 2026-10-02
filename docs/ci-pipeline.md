@@ -54,7 +54,9 @@ records the TCC context first, then runs each risky Carbon `RegisterEventHotKey`
 variant in a child process so a native crash becomes data, not a failed job. It is
 runner evidence only: runners pre-grant TCC to their tools, show no dialog and have no
 physical keyboard, so its result never decides a default on its own (the flip rule is
-in `macos-permissions.md`, section 4.15). It has not been run on a macOS runner yet.
+in `macos-permissions.md`, section 4.15). It ran once from the feature branch as run
+`36954304202` at commit `59749f859` on `macos-15` (arm64) and `macos-15-intel` (harness green;
+the recorded result and its limits are in `macos-permissions.md`, section 4.15).
 
 ### Concurrency
 

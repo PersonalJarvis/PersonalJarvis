@@ -706,18 +706,18 @@ class QuartzHotkeyBackend:
         """Events the tap callback has seen since the tap came up (any key)."""
         return self._raw_events
 
-    def deaf_tap_suspected(self, *, user_reported: bool = False) -> bool:
+    def deaf_tap_suspected(self) -> bool:
         """Is the tap alive but hearing nothing although the grant is visible?
 
         The one signal behind a "quit and reopen" hint, and only that: it never
         restarts anything. True when the tap is running, Input Monitoring reads
         granted (without the grant the answer is "needs Input Monitoring", not
-        "restart"), the raw callback count is still 0, and either the user said
-        so (``user_reported``: an explicit "still not working") or the system
-        saw a key-down after the tap came up more than ``_DEAF_TAP_AFTER_S``
-        ago. A user who has not typed yet never counts as a deaf tap, and neither
-        does one typing under Secure Event Input (macOS hides those keys from
-        every tap), so the system-side path needs that flag read as off.
+        "restart"), the raw callback count is still 0, and the system saw a
+        key-down after the tap came up more than ``_DEAF_TAP_AFTER_S`` ago. A user
+        who has not typed yet never counts as a deaf tap, and neither does one
+        typing under Secure Event Input (macOS hides those keys from every tap),
+        so that flag must read as off. (An explicit "still not working" from the
+        user would need its own route and UI; none exists.)
         """
         if not self.is_listening() or self._raw_events > 0:
             return False
@@ -728,8 +728,6 @@ class QuartzHotkeyBackend:
             return False
         if not granted:
             return False
-        if user_reported:
-            return True
         armed_at = self._armed_at
         if armed_at is None:
             return False

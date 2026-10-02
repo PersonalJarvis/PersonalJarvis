@@ -257,7 +257,7 @@ def test_off_macos_everything_is_not_required_and_nothing_touches_the_port(
 
 
 # ----------------------------------------------------------------------
-# The named JIT assertions (design-v2 section 8)
+# The named JIT assertions (docs/macos-permissions.md, 7.4 evidence ledger)
 # ----------------------------------------------------------------------
 
 

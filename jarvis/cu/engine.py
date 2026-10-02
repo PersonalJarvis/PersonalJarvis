@@ -538,6 +538,9 @@ def _permission_block(detail: str) -> str | None:
     try:
         family = PermissionId(token)
     except ValueError:
+        # Not a permission this build knows: the generic sentence is the intended
+        # degradation, the token itself is not shown to people.
+        log.debug("Unknown permission token in a tool error.", exc_info=True)
         return (
             "A macOS permission is needed to continue, so the task stopped. "
             "Try the task again once it is allowed."
@@ -1140,6 +1143,26 @@ async def run_cu_loop(
                     "foreground window changed during capture; retrying with a fresh frame"
                 )
         except Exception as exc:  # noqa: BLE001 — capture is inherently flaky
+            # A Screen Recording refusal (ScreenCaptureRefused, "[permission_needed:..."
+            # agent text) is not flaky capture: retrying it only re-asks the OS and
+            # burns the budget. It ends the mission as blocked_permission, exactly
+            # like a dispatch-time refusal, so the person gets the sentence and a
+            # Retry instead of "I couldn't see the screen".
+            blocked_sentence = _permission_block(str(exc))
+            if blocked_sentence is not None:
+                log.info(
+                    "[cu] step %d: perception refused (%s)",
+                    step_idx,
+                    CU_REASON_BLOCKED_PERMISSION,
+                )
+                yield _final(
+                    stderr=(
+                        f"[cu] {CU_REASON_BLOCKED_PERMISSION} at step-{step_idx}: "
+                        f"{blocked_sentence}\n"
+                    ),
+                    exit_code=_EXIT_TOOL,
+                )
+                return
             observe_failures += 1
             log.warning("[cu] observe failed (step %d): %s", step_idx, exc)
             if observe_failures > _MAX_OBSERVE_FAILURES:

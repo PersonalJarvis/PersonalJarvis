@@ -504,13 +504,6 @@ class FakeTCC:
         """The TCC row, for assertions. Not a framework call, never logged."""
         return self._read(_service(service), target)
 
-    def snapshot_states(self) -> dict[str, str]:
-        with self._lock:
-            return {
-                f"{service.value}[{target}]" if target else service.value: state.value
-                for (service, target), state in self._states.items()
-            }
-
     def _set(self, service: TccService, state: TccState, target: str = "") -> None:
         if service is TccService.AUTOMATION and not target:
             raise ValueError("automation is per target: pass the player's bundle id")
@@ -982,9 +975,6 @@ class FakeTCC:
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     # ------------------------------------------------------------------ players
-
-    def install_player(self, bundle_id: str) -> None:
-        self._installed.add(bundle_id)
 
     def launch_player(self, bundle_id: str) -> None:
         self._installed.add(bundle_id)

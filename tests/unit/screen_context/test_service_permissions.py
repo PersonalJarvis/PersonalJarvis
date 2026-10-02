@@ -291,6 +291,20 @@ def test_the_status_probe_reads_a_grant_given_mid_session(monkeypatch) -> None:
     tcc.assert_no_prompts()
 
 
+def test_the_shallow_status_probe_never_runs_the_window_title_oracle(monkeypatch) -> None:
+    tcc = _darwin(monkeypatch)
+    mark = tcc.mark()
+
+    issue = ports.capture_permission_error(deep=False)
+
+    assert issue is not None  # the preflight says no and nothing proves otherwise
+    oracle_probes = [
+        call for call in tcc.calls_since(mark) if "window title oracle" in call.api + call.detail
+    ]
+    assert oracle_probes == []
+    tcc.assert_no_prompts()
+
+
 def test_the_accessibility_probe_is_silent_and_keeps_the_image_available(monkeypatch) -> None:
     tcc = _darwin(monkeypatch)
 

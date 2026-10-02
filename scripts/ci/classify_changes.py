@@ -124,10 +124,14 @@ _BROWSER_FILES = {
 # jarvis/trigger/backends/) and the permission port, the service and window
 # control (jarvis/platform/: permissions.py, permission_service.py,
 # window_state.py). Packaging is covered too: the spec, packaging/macos/ and the
-# single usage-string table both bundles load.
+# single usage-string table both bundles load. The tool plugins that capture or
+# type (screenshot, type_text, verify_localhost), the appshot gesture, the speech
+# diagnosis, the screen-context routes, the CLI relay and the bundle-id constants
+# are consumers too and are listed by file.
 _MACOS_PREFIXES = (
     "install/",
     "jarvis/admin/",
+    "jarvis/appshot/",
     "jarvis/audio/",
     "jarvis/autostart/",
     "jarvis/cu/",
@@ -154,10 +158,19 @@ _MACOS_FILES = {
     ".githooks/pre-push",
     "jarvis.spec",
     "jarvis/core/macos_privacy_strings.py",
+    "jarvis/core/branding.py",
     "jarvis/core/events.py",
     "jarvis/core/protocols.py",
+    "jarvis/cli_ctl/commands/permissions.py",
+    "jarvis/plugins/harness/computer_use.py",
+    "jarvis/plugins/tool/screen_snapshot.py",
+    "jarvis/plugins/tool/type_text.py",
+    "jarvis/plugins/tool/verify_localhost.py",
+    "jarvis/speech/diagnose.py",
     "jarvis/speech/pipeline.py",
+    "jarvis/tasks/event_catalog.py",
     "jarvis/ui/web/permissions_routes.py",
+    "jarvis/ui/web/screen_context_routes.py",
     "jarvis/ui/web/settings_routes.py",
     "tests/contract/test_permission_service_contract.py",
     "tests/fakes/fake_permission_service.py",

@@ -64,6 +64,55 @@ def test_system_settings_is_a_consent_surface_only_on_a_privacy_pane():
     assert not sd.is_system_consent_window("System Settings", "")
 
 
+@pytest.mark.parametrize(
+    ("owner", "title"),
+    [
+        ("Systemeinstellungen", "Datenschutz & Sicherheit"),  # i18n-allow
+        ("Ajustes del Sistema", "Privacidad y seguridad"),
+        ("System Settings", "Camera"),
+        ("System Settings", "Files & Folders"),
+        ("System Settings", "Developer Tools"),
+    ],
+)
+def test_a_localized_system_settings_owner_is_recognised_by_its_bundle_id(owner, title):
+    # The owner name alone does not decide on a de/es Mac (UNVERIFIED that it is localized).
+    if owner != "System Settings":
+        assert not sd.is_system_consent_window(owner, title)
+    assert sd.is_system_consent_window(owner, title, "com.apple.systempreferences")
+    assert not sd.is_system_consent_window(owner, "Wallpaper", "com.apple.systempreferences")
+    assert not sd.is_system_consent_window("Safari", title, "com.apple.Safari")
+
+
+def test_the_scan_looks_a_privacy_titled_window_up_by_its_owner_bundle_id():
+    settings = _window("Systemeinstellungen", "Datenschutz & Sicherheit", pid=4242)  # i18n-allow
+    windows = [settings, _window("Safari")]
+    looked_up: list[int] = []
+
+    def lookup(pid: int) -> str:
+        looked_up.append(pid)
+        return "com.apple.systempreferences"
+
+    assert sd.frontmost_consent_owner(lambda: windows, lookup) == "Systemeinstellungen"
+    assert looked_up == [4242]
+    # A window that does not name a privacy pane is never looked up (no AppKit round trip).
+    wallpaper = _window("Systemeinstellungen", "Hintergrundbild", pid=4242)  # i18n-allow
+    plain = [wallpaper, _window("Safari")]
+    looked_up.clear()
+    assert sd.frontmost_consent_owner(lambda: plain, lookup) == ""
+    assert looked_up == []
+
+
+def test_a_failing_bundle_lookup_leaves_the_owner_name_to_decide():
+    def broken(_pid: int) -> str:
+        raise RuntimeError("no AppKit")
+
+    windows = [_window("System Settings", "Privacy & Security", pid=1), _window("Safari")]
+    assert sd.frontmost_consent_owner(lambda: windows, broken) == "System Settings"
+    localized = _window("Systemeinstellungen", "Datenschutz & Sicherheit", pid=1)  # i18n-allow
+    other = [localized, _window("Safari")]
+    assert sd.frontmost_consent_owner(lambda: other, broken) == ""  # fail open, never raises
+
+
 def test_the_frontmost_consent_window_is_reported():
     windows = [_window("UserNotificationCenter", "Jarvis would like to..."), _window("Safari")]
     assert sd.frontmost_consent_owner(lambda: windows) == "UserNotificationCenter"

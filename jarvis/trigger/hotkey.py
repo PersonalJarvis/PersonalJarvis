@@ -707,14 +707,8 @@ class HotkeyTrigger:
         self,
         bindings: dict[str, list[str]],
         push_to_talk: frozenset[str] | set[str] = frozenset(),
-        *,
-        reload_event: asyncio.Event | None = None,
     ) -> None:
         self._bindings_cfg = bindings
-        # The owner's existing live-reload event (the voice pipeline passes its
-        # ``_hotkey_reload_event``). Set once after a permission grant re-armed the
-        # backend, so the one re-arm path the owner already has runs too.
-        self._reload_event = reload_event
         # Grant-driven re-arm (backends that wait for a permission only).
         self._unsubscribe_grant: Callable[[], None] | None = None
         self._grant_task: asyncio.Task[None] | None = None
@@ -824,7 +818,7 @@ class HotkeyTrigger:
         """The backend declined to start because Input Monitoring is not granted."""
         return getattr(self._backend, "waiting_for_permission", False) is True
 
-    def deaf_tap_suspected(self, *, user_reported: bool = False) -> bool:
+    def deaf_tap_suspected(self) -> bool:
         """Is the listener up, the grant visible and still not one raw event heard?
 
         The only basis for a "quit and reopen" hint; nothing here restarts
@@ -834,7 +828,7 @@ class HotkeyTrigger:
         if not callable(probe):
             return False
         try:
-            return probe(user_reported=user_reported) is True
+            return probe() is True
         except Exception:  # noqa: BLE001 — a failed probe makes no claim
             log.debug("deaf_tap_suspected() failed", exc_info=True)
             return False
@@ -1115,8 +1109,10 @@ class HotkeyTrigger:
         self._grant_task = loop.create_task(self._rearm_after_grant(), name="hotkey-grant-rearm")
 
     async def _rearm_after_grant(self) -> None:
-        """Start the waiting backend off the loop, then use the owner's reload path.
+        """Start the waiting backend off the loop once Input Monitoring is granted.
 
+        The backend already holds the bindings, so ``backend.start`` creating the tap is
+        the whole re-arm (a pipeline reload would only register the same bindings again).
         ``backend.start`` is idempotent and blocks for the tap thread handshake,
         so it runs in a worker thread. AP-18: nothing escapes this task.
         """
@@ -1129,8 +1125,6 @@ class HotkeyTrigger:
                 "Input Monitoring was allowed — global shortcuts %s.",
                 "are armed" if self.listening() is not False else "could not be armed yet",
             )
-            if self._reload_event is not None:
-                self._reload_event.set()
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 — a failed re-arm leaves shortcuts off, never voice

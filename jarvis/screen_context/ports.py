@@ -543,11 +543,13 @@ class AccessibilityTextReader:
 # --------------------------------------------------------------------------
 
 
-def capture_permission_error() -> CapturePermissionIssue | None:
+def capture_permission_error(*, deep: bool = True) -> CapturePermissionIssue | None:
     """``None`` when capture is permitted, else an actionable English message.
 
     SILENT: it reads the state and never asks macOS, so ``GET
     /api/screen-context/status`` and every other status probe may call it freely.
+    ``deep=False`` (the status route) also skips the window-title oracle, which
+    enumerates the on-screen windows: only a capture a person started pays that.
     The capture a person starts asks through the permission service first
     (``ScreenContextService.capture``); this only describes why a capture would
     not be allowed right now. Deliberately not cached beyond the permission
@@ -567,7 +569,7 @@ def capture_permission_error() -> CapturePermissionIssue | None:
     try:
         from jarvis.platform import screen_access  # noqa: PLC0415
 
-        state = screen_access.screen_recording_state()
+        state = screen_access.screen_recording_state(deep=deep)
         if screen_access.state_allows_capture(state):
             return None
         return CapturePermissionIssue(

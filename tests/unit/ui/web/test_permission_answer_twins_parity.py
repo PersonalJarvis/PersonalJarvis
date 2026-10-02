@@ -97,9 +97,7 @@ def test_mute_music_permission_twin_carries_exactly_the_python_keys() -> None:
 def test_wake_activation_twin_carries_exactly_the_keys_the_route_sends() -> None:
     ts = _ts_interface(_WAKE_TS, "WakeActivationPermission")
     # Switch off / not macOS: the early answer. The route's other answers use the same keys.
-    answer = settings_routes._ask_microphone_for_wake_switch(
-        SimpleNamespace(), enabled=False
-    )
+    answer = settings_routes._ask_microphone_for_wake_switch(SimpleNamespace(), enabled=False)
     assert set(ts) == set(answer)
 
 
@@ -110,7 +108,9 @@ def test_wake_route_answers_with_the_shared_vocabulary(
     """Every outcome the service can produce is one the TS union declares, with a known reason."""
     result = SimpleNamespace(
         outcome=outcome,
-        reason="" if outcome in (PermissionOutcome.GRANTED, PermissionOutcome.NOT_REQUIRED) else "denied",
+        reason=""
+        if outcome in (PermissionOutcome.GRANTED, PermissionOutcome.NOT_REQUIRED)
+        else "denied",
         can_open_settings=True,
     )
     service = SimpleNamespace(ensure=lambda *args, **kwargs: result)
@@ -160,7 +160,9 @@ def test_outcome_and_reason_are_declared_with_the_shared_unions_not_string(
 
 def test_the_unions_those_twins_use_are_the_python_vocabularies() -> None:
     assert _ts_union(_SNAPSHOT_TS, "PermissionOutcome") == {o.value for o in PermissionOutcome}
-    assert _ts_const_tuple(_EVENTS_TS, "PERMISSION_NEEDED_REASONS") == set(PERMISSION_NEEDED_REASONS)
+    assert _ts_const_tuple(_EVENTS_TS, "PERMISSION_NEEDED_REASONS") == set(
+        PERMISSION_NEEDED_REASONS
+    )
 
 
 def test_the_dictation_start_failures_are_refusal_reasons_python_can_send() -> None:

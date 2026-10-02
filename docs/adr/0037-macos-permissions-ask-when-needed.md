@@ -1,8 +1,10 @@
 # ADR-0037 — macOS permissions are asked for when a feature needs them
 
 **Status:** Implemented on the branch that introduces it; **not yet exercised on a
-physical Mac**. The behaviour is proven against fake frameworks, Linux gates and
-macOS CI runners only (see "Verification status").
+physical Mac**. The behaviour is proven against fake frameworks and Linux gates; the
+macOS runners have run the .dmg packaging probe and the hot-key spike (a macOS lane
+step list that also covers the permission tests was extended later and has not been
+run yet). See "Verification status".
 **Date:** 2026-10-02
 **Reference:** AP-35 (`AGENTS.md`); `docs/macos-permissions.md` (full design, evidence,
 risk register and the manual Mac checklist); BUG-225 (`docs/BUGS.md`); supersedes
@@ -183,7 +185,9 @@ rows TCC-1 to TCC-7) is rewritten to this behaviour. Windows and Linux are uncha
   Only the evidence tool ships (`macos-hotkey-spike.yml`, dispatch only; the
 temporary branch push trigger of commit `59749f859` was reverted in `945fe7949`).
 - **Per-turn computer-use permission cards.** Rejected for the first version: one
-  floating card plus one deck journal line per trace is enough, and a card per agent
+  floating card plus the mission's own `blocked_permission` ending (the spoken or
+  written sentence; no separate deck journal line was built, and nothing resumes the
+  mission after a grant: the person asks again) is enough, and a card per agent
   turn invites the model or the user to treat a system dialog as part of the task
   (principle 9).
 

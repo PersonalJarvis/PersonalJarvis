@@ -333,6 +333,41 @@ def test_a_screen_recording_grant_proven_by_the_oracle_does_not_flap_back(
     assert env.service.ensure(_SR, feature="computer_use").granted  # and re-proven by a gesture
 
 
+def test_a_deep_read_after_a_revoke_is_not_papered_over_by_the_remembered_proof(
+    make_env: Callable[..., Env],
+) -> None:
+    env = make_env(default_policy=DialogPolicy.NEVER_ANSWERED)
+    env.service.ensure(_SR, feature="computer_use")
+    env.tcc.grant("screen_recording")  # the preflight stays frozen negative until a relaunch
+    env.clock.advance(0.5)
+    assert env.service.check_deep(_SR) is PermissionState.GRANTED  # the oracle proves it
+    env.clock.advance(2)
+    assert env.service.check(_SR) is PermissionState.GRANTED  # shallow reads keep the proof
+
+    env.tcc.deny("screen_recording")  # revoked while Jarvis runs
+    env.clock.advance(2)
+
+    # The Computer-Use pre-dispatch gate reads deep to see exactly this.
+    assert env.service.check_deep(_SR) is not PermissionState.GRANTED
+    assert env.service.check(_SR) is not PermissionState.GRANTED  # and the proof is gone
+
+
+def test_ensure_with_a_wait_on_the_event_loop_does_not_block_it(
+    make_env: Callable[..., Env],
+) -> None:
+    env = make_env(default_policy=DialogPolicy.NEVER_ANSWERED)
+
+    async def call() -> tuple[float, bool]:
+        started = time.monotonic()
+        result = env.service.ensure(_MIC, feature="voice", wait_s=30)
+        return time.monotonic() - started, result.granted
+
+    elapsed, granted = asyncio.run(call())
+
+    assert elapsed < 5  # the wait was refused, not served
+    assert not granted
+
+
 def test_a_reset_drops_the_screen_recording_proof(
     make_env: Callable[..., Env],
 ) -> None:
@@ -711,6 +746,28 @@ def test_resetting_automation_without_a_player_forgets_every_player(
         assert _wait_for(lambda: len(runner.scripts) == 2)
     finally:
         runner.release.set()
+
+
+@pytest.mark.parametrize("decision", ["grant", "deny"])
+def test_a_decision_made_between_the_first_read_and_the_claim_is_never_asked_about(
+    make_env: Callable[..., Env], monkeypatch: pytest.MonkeyPatch, decision: str
+) -> None:
+    # Another thread's dialog was answered after this call read NOT_DETERMINED and before
+    # it claimed the request: asking again would make macOS re-prompt a decided permission.
+    env = make_env(default_policy=DialogPolicy.NEVER_ANSWERED)
+    original = env.service._claim
+
+    def claim_after_the_answer(*args: Any, **kwargs: Any) -> Any:
+        getattr(env.tcc, decision)("microphone")  # the answer lands right here
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(env.service, "_claim", claim_after_the_answer)
+
+    result = env.service.ensure(_MIC, feature="voice")
+
+    assert env.tcc.requests("microphone") == []  # nothing was asked
+    assert result.asked is False
+    assert result.granted is (decision == "grant")
 
 
 def test_invalidate_never_raises_while_another_thread_fills_the_cache(

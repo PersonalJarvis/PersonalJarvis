@@ -726,7 +726,7 @@ class PermissionService:
         # Recording granted in this process. The per-process-frozen preflight can
         # only go stale NEGATIVE (BUG-161), so a proven grant must not flap back to
         # "not granted" when the 1 s cache entry expires; only a capture error
-        # (:meth:`invalidate`) or a reset drops it.
+        # (:meth:`invalidate`), a reset or a deep read that finds no grant drops it.
         self._sr_proven = False
         # Ports whose ``state()`` takes no ``deep``/``target`` (a pre-JIT stub).
         self._episodes: dict[_EpisodeKey, _Episode] = {}
@@ -825,8 +825,11 @@ class PermissionService:
         perm = PermissionId(permission)
         if PANE_FAMILY[perm] is PermissionId.SCREEN_RECORDING:
             self._sr_proven = False
-        # A snapshot of the items: another thread may insert while this runs.
-        self._cache = {key: value for key, value in list(self._cache.items()) if key[0] is not perm}
+        # dict.copy() is one C-level call, so it cannot see a concurrent insert
+        # half-way (iterating list(items()) of a dict another thread mutates can
+        # raise "dictionary changed size during iteration").
+        snapshot = self._cache.copy()
+        self._cache = {key: value for key, value in snapshot.items() if key[0] is not perm}
 
     def check_deep(
         self, permission: PermissionId | str, *, target: str | None = None
@@ -931,7 +934,9 @@ class PermissionService:
         the per-process-frozen preflight still denies (BUG-161) but enumerates the
         on-screen windows. Only a gesture entry or the watcher (never a hot path,
         never the event loop) passes it; ``check()`` never does. An oracle-proven
-        grant is remembered (``_sr_proven``) so a shallow read does not undo it.
+        grant is remembered (``_sr_proven``) so a SHALLOW read does not undo it; a
+        deep read is never answered from that memory (it decides, and a deep read
+        that finds no grant drops the proof).
 
         Automation reads go through :class:`_AutomationGuard`; ``automation_wait_s``
         is how long this call may wait for the probe (default: the guard's hard
@@ -978,7 +983,18 @@ class PermissionService:
         if family is PermissionId.SCREEN_RECORDING and gen == self._cache_gen:
             if state is PermissionState.GRANTED:
                 self._sr_proven = True
+            elif deep and state is not PermissionState.UNAVAILABLE:
+                # A deep read is the one that decides: the oracle had its chance and
+                # the preflight says no, so the remembered proof must not paper over
+                # a grant that was revoked since (the Computer-Use pre-dispatch gate
+                # reads deep to see exactly that). The oracle only ever proves
+                # positively, so "no readable window title" also lands here: the
+                # next shallow read then reports the honest negative and the next
+                # deep read that finds a titled window proves the grant again.
+                self._sr_proven = False
             elif self._sr_proven and state in _UNDECIDED_STATES:
+                # Shallow read only: the frozen preflight can go stale negative
+                # (BUG-161), a proven grant must not flap back every second.
                 state = PermissionState.GRANTED
         ttl = self._granted_ttl_s if state is PermissionState.GRANTED else self._negative_ttl_s
         if gen == self._cache_gen:
@@ -1016,9 +1032,11 @@ class PermissionService:
             return slot_key[0] is family if every_player else slot_key == key
 
         with self._lock:
-            for stamp_key in [k for k in self._last_native if matches(k)]:
+            # ``_observe`` pops ``_last_native`` without this lock (check() is
+            # lock-free), so iterate a C-level copy, never the live dict.
+            for stamp_key in [k for k in self._last_native.copy() if matches(k)]:
                 self._last_native.pop(stamp_key, None)
-            for stamp_key in [k for k in self._failed_native if matches(k)]:
+            for stamp_key in [k for k in self._failed_native.copy() if matches(k)]:
                 self._failed_native.pop(stamp_key, None)
             # An episode that is still open remembers it already asked (one native
             # request per permission per episode); after a reset that memory
@@ -1101,7 +1119,12 @@ class PermissionService:
                 force_ask,
             )
             if wait_s > 0 and interactive:
-                self._wait_sync(port, plan, wait_s)
+                if _on_event_loop_thread():
+                    # A synchronous wait here would freeze the loop for up to wait_s
+                    # while the OS dialog is open: ensure_async is the loop's API.
+                    log.debug("ensure(%s) waited on the event loop; not waiting.", feature)
+                else:
+                    self._wait_sync(port, plan, wait_s)
             return self._finish(plan)
         except Exception:  # noqa: BLE001 - ensure() never raises (contract)
             log.debug("ensure(%s) failed.", feature, exc_info=True)

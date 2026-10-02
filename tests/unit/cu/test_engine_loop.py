@@ -416,6 +416,25 @@ async def test_dispatch_sees_a_screen_recording_grant_given_mid_session(monkeypa
     assert tcc.requests() == []
 
 
+async def test_dispatch_refuses_after_a_proven_screen_recording_grant_is_revoked(monkeypatch):
+    # The remembered proof of a grant must not defeat the blind-input guard: the gate
+    # reads deep, so a revoke that lands between two actions is seen on the next one.
+    tcc = _darwin_world(monkeypatch)
+    executor = FakeExecutor()
+    ctx = _ctx(FakeBrain([]), executor)
+    tcc.grant("screen_recording")  # the preflight stays frozen negative; the oracle proves it
+    ok, _detail = await engine_mod._dispatch_tool(ctx, "click", {"x": 1, "y": 1}, None)
+    assert ok is True
+
+    tcc.deny("screen_recording")
+    ok, detail = await engine_mod._dispatch_tool(ctx, "click", {"x": 1, "y": 1}, None)
+
+    assert ok is False
+    assert detail.startswith("[permission_needed:screen_recording] ")
+    assert [name for name, _args in executor.calls] == ["click"]  # only the first one ran
+    assert tcc.requests() == []
+
+
 async def test_dispatch_pauses_while_a_system_consent_dialog_is_frontmost(monkeypatch):
     tcc = _darwin_world(monkeypatch, granted=("screen_recording", "accessibility"))
     monkeypatch.setattr(engine_mod, "_frontmost_system_consent_owner", lambda: "SecurityAgent")
@@ -1217,6 +1236,38 @@ async def test_a_screen_that_stays_unreadable_still_fails(patched, monkeypatch):
     final = _final(chunks)
     assert final.exit_code == 1
     assert "cannot see the screen" in final.stderr
+
+
+@pytest.mark.parametrize("refusal", ["pending", "denied"])
+async def test_a_screen_recording_refusal_during_perception_is_terminal(
+    patched, monkeypatch, refusal
+):
+    # The first perception frame of a mission is where Screen Recording is asked
+    # for. The refusal is not flaky capture: no retries, a blocked_permission
+    # ending with the people sentence and a single capture attempt.
+    from jarvis.platform import screen_access
+    from jarvis.platform.permissions import PermissionState
+
+    attempts: list[int] = []
+
+    def refused_capture(monitor, **kw):
+        attempts.append(1)
+        if refusal == "pending":
+            raise screen_access.refusal_pending()
+        raise screen_access.refusal_for_state(PermissionState.DENIED)
+
+    monkeypatch.setattr(engine_mod, "capture_stable_frame", refused_capture)
+
+    chunks = await _run(_ctx(FakeBrain([]), FakeExecutor()))
+
+    final = _final(chunks)
+    assert final.exit_code == 8
+    assert "blocked_permission" in final.stderr
+    assert "Screen Recording" in final.stderr
+    assert "You must not" not in final.stderr
+    assert "[permission_needed:" not in final.stderr
+    assert "cannot see the screen" not in final.stderr
+    assert len(attempts) == 1
 
 
 # ---- a permission refusal is TERMINAL (blocked_permission), never a model retry loop ----

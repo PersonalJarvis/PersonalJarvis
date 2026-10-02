@@ -82,7 +82,6 @@ def test_optional_probes_never_claim_a_listener_before_start(factory):
     deaf = getattr(backend, "deaf_tap_suspected", None)
     if callable(deaf):
         assert deaf() is False
-        assert deaf(user_reported=True) is False
 
 
 @pytest.mark.parametrize("factory", _backend_factories())
