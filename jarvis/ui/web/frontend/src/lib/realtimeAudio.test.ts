@@ -153,6 +153,36 @@ describe("realtime audio client", () => {
     await client.disconnect();
   });
 
+  it.each([true, false])("silences the microphone track while Jarvis's mute is on (WebRTC=%s)", async (webrtc) => {
+    const { track } = installVoiceBrowserFakes() as { track: { stop: () => void; enabled?: boolean } };
+    vi.stubGlobal("Audio", class { play = async () => undefined; pause = () => undefined; });
+    const client = new RealtimeAudioClient({}, { browserAudio: true, requiresWebRtcOffer: webrtc });
+    const connecting = client.connect();
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    const socket = FakeWebSocket.instances[0];
+    socket.open();
+    socket.receive({
+      type: "audio_ready",
+      requires_webrtc_answer: webrtc,
+      input_muted: true,
+      ...(webrtc ? { webrtc_answer_sdp: "answer" } : {}),
+    });
+    expect(track.enabled).toBe(false);
+    await connecting;
+    socket.receive({ type: "input_mute", muted: false });
+    expect(track.enabled).toBe(true);
+    socket.receive({ type: "input_mute", muted: true });
+    expect(track.enabled).toBe(false);
+    socket.receive({ type: "input_mute", muted: false });
+    socket.receive({ type: "audio_stopping" });
+    expect(track.enabled).toBe(false);
+    // An unmute after the call began closing never reopens the microphone.
+    socket.receive({ type: "input_mute", muted: false });
+    expect(track.enabled).toBe(false);
+    socket.receive({ type: "audio_closed" });
+    await client.disconnect();
+  });
+
   it("precedes browser PCM with native wake audio on the local/Gemini path", async () => {
     installVoiceBrowserFakes();
     const client = new RealtimeAudioClient({}, { browserAudio: true });
