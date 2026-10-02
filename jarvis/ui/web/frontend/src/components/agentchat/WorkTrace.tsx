@@ -16,8 +16,8 @@ import { activityParts, traceToolIdentity, traceToolName } from "./traceActivity
 import { ToolChoiceIcon } from "./ToolChoiceChips";
 import type { ToolChoice } from "./toolChoices";
 import { toolIdentityStyle } from "./toolIdentity";
-import { TraceReport, useTraceNarrative } from "./TraceReport";
-import type { TraceNarrative } from "./traceNarrative";
+import { CopyTimeline, timelineItems, useTimeline, type TimelineRenderers } from "./TraceTimeline";
+import { headerLabel, timelineMarkdown, traceDuration, type Timeline } from "./traceEntries";
 import "./WorkTrace.css";
 
 export type Decide = (id: string, decision: ApprovalDecision) => void | Promise<void>;
@@ -36,14 +36,7 @@ export type TraceLook = "rail" | "classic";
 const TraceLookContext = createContext<TraceLook>("rail");
 const useRail = () => useContext(TraceLookContext) === "rail";
 
-export function traceDuration(ms: number): string {
-  // Keep short, measured calls visible instead of rounding 49 ms to "0.0s".
-  if (ms > 0 && ms < 100) return `${Math.ceil(ms)}ms`;
-  const seconds = Math.max(0, ms) / 1000;
-  if (seconds < 10) return `${seconds.toFixed(1)}s`;
-  if (seconds < 60) return `${Math.floor(seconds)}s`;
-  return `${Math.floor(seconds / 60)}m ${String(Math.floor(seconds % 60)).padStart(2, "0")}s`;
-}
+export { traceDuration };
 
 function useClock(start: number, live: boolean) {
   const [now, setNow] = useState(Date.now);
@@ -527,12 +520,12 @@ function traceLogos(blocks: TurnBlock[]): ToolChoice[] {
 }
 
 /** Small chevron that hides finished work so the reply can stand alone. */
-function ConversationWorkFold({ durationMs, attention, blocks, children, narrative, initiallyOpen = false }: {
+function ConversationWorkFold({ durationMs, attention, blocks, children, timeline, initiallyOpen = false }: {
   durationMs: number | null; attention?: ReactNode; blocks: TurnBlock[]; children: ReactNode;
   /** Start open — the work is the turn's only outcome (it answered nothing). */
   initiallyOpen?: boolean;
-  /** Rail look: the written report's tally, shown on the pill. */
-  narrative?: TraceNarrative;
+  /** Rail look: the timeline behind the fold, for its "Worked for …" line. */
+  timeline?: Timeline;
 }) {
   const t = useT();
   const rail = useRail();
@@ -541,9 +534,10 @@ function ConversationWorkFold({ durationMs, attention, blocks, children, narrati
   // Counts openings so inner disclosures expand all at once, every time.
   const [seq, setSeq] = useState(initiallyOpen ? 1 : 0);
   const logos = useMemo(() => rail ? traceLogos(blocks) : [], [rail, blocks]);
-  const label = durationMs !== null && durationMs > 0
-    ? t("work_trace.thought_for").replace("{duration}", traceDuration(durationMs))
-    : t("work_trace.thought");
+  const label = timeline ? headerLabel(timeline, durationMs, t)
+    : durationMs !== null && durationMs > 0
+      ? t("work_trace.thought_for").replace("{duration}", traceDuration(durationMs))
+      : t("work_trace.thought");
   const toggle = () => {
     if (!open) setSeq((s) => s + 1);
     setOpen(!open);
@@ -551,20 +545,17 @@ function ConversationWorkFold({ durationMs, attention, blocks, children, narrati
   return (
     <div className="min-w-0" data-testid="conversation-work-fold" data-open={open ? "true" : "false"}>
       {rail ? <button type="button" aria-expanded={open} aria-controls={id} onClick={toggle}
-        className="group/fold mb-1.5 inline-flex max-w-full items-center gap-2 rounded-full border border-border py-1 pl-2.5 pr-2 text-left text-xs leading-5 text-muted-foreground transition-colors hover:border-border-strong hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        className="group/fold mb-0.5 flex max-w-full min-w-0 items-center gap-2 rounded-md py-1 text-left text-sm leading-6 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
         {logos.length ? <span aria-hidden className="flex shrink-0 items-center">
           {logos.map((row, i) => <span key={i} className={cn("tool-identity inline-flex rounded-full bg-background ring-2 ring-background", i > 0 && "-ml-1")} style={toolIdentityStyle(row)}><ToolChoiceIcon row={row} size={14} /></span>)}
-        </span> : <span aria-hidden className="trace-dot shrink-0" />}
-        <span className="truncate">{label}</span>
-        {narrative && narrative.actionCount > 0 ? <span className="shrink-0 tabular-nums">
-          <span aria-hidden className="mr-1.5 text-muted-foreground/50">·</span>
-          {t(`trace_report.steps_${narrative.actionCount === 1 ? "one" : "other"}`).replace("{count}", String(narrative.actionCount))}
         </span> : null}
-        {narrative && narrative.problemCount > 0 ? <span className="shrink-0 tabular-nums text-destructive">
-          <span aria-hidden className="mr-1.5 text-muted-foreground/50">·</span>
-          {t("trace_report.problems").replace("{count}", String(narrative.problemCount))}
+        <span className="shrink-0 text-foreground-secondary group-hover/fold:text-foreground">{label}</span>
+        {timeline?.summary ? <span className="min-w-0 truncate"><span aria-hidden className="mr-2 text-muted-foreground/50">·</span>{timeline.summary}</span> : null}
+        {timeline && timeline.problemCount > 0 ? <span className="shrink-0 text-destructive">
+          <span aria-hidden className="mr-2 text-muted-foreground/50">·</span>
+          {t("trace_report.failed_count").replace("{count}", String(timeline.problemCount))}
         </span> : null}
-        <ChevronRight aria-hidden className={cn("h-3 w-3 shrink-0 opacity-60 transition-transform group-hover/fold:opacity-100", open && "rotate-90")} />
+        <ChevronRight aria-hidden className={cn("h-3.5 w-3.5 shrink-0 opacity-60 transition-transform group-hover/fold:opacity-100", open && "rotate-90")} />
       </button> : <button type="button" aria-expanded={open} aria-controls={id}
         className="group/fold mb-1 inline-flex max-w-full items-center gap-1 rounded-md px-1.5 py-1 text-left text-xs leading-5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         onClick={toggle}>
@@ -624,9 +615,15 @@ function traceGroupItems({ groups, live, status, onDecide, renderText, conversat
       continue;
     }
     if (!first.text.trim()) continue;
-    items.push({ key: group.id, rail: false, node: <div className={cn("min-w-0 py-2", conversation && "w-fit max-w-[min(85%,42rem)] rounded-2xl rounded-bl-md bg-secondary px-4 py-2.5")}>{renderText ? renderText(first.text, first.id) : <div className="prose prose-sm max-w-none text-foreground dark:prose-invert [overflow-wrap:anywhere]"><ChatMarkdown text={first.text} /></div>}</div> });
+    items.push({ key: group.id, rail: false, node: replyNode(first, conversation, renderText) });
   }
   return items;
+}
+
+function replyNode(block: TextBlock, conversation: boolean, renderText?: (text: string, id: string) => ReactNode): ReactNode {
+  return <div className={cn("min-w-0 py-2", conversation && "w-fit max-w-[min(85%,42rem)] rounded-2xl rounded-bl-md bg-secondary px-4 py-2.5")}>
+    {renderText ? renderText(block.text, block.id) : <div className="prose prose-sm max-w-none text-foreground dark:prose-invert [overflow-wrap:anywhere]"><ChatMarkdown text={block.text} /></div>}
+  </div>;
 }
 
 /**
@@ -649,8 +646,6 @@ type WorkTraceProps = {
   blocks: TurnBlock[]; status: TurnStatus; startedMs: number; durationMs: number | null; error?: string | null;
   onDecide?: Decide; renderText?: (text: string, id: string) => ReactNode; className?: string;
   receipt?: ReactNode; completionLabel?: string; conversation?: boolean;
-  /** The model that answered, named in the finished turn's written report. */
-  model?: string;
   /**
    * The trace is Jarvis's own (the front-page chat, a voice turn): the live
    * line shows the user's pet at work instead of a spinning circle. Agent
@@ -659,15 +654,16 @@ type WorkTraceProps = {
   companion?: boolean;
 };
 
-function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error, onDecide, renderText, className, receipt, completionLabel, conversation = false, companion = false, model }: WorkTraceProps) {
+function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error, onDecide, renderText, className, receipt, completionLabel, conversation = false, companion = false }: WorkTraceProps) {
   const t = useT();
   const rail = useRail();
   const blocks = useMemo(() => withoutQuestionPolls(rawBlocks), [rawBlocks]);
   const live = status === "running";
   const elapsed = useClock(startedMs, live);
-  // The rail look folds every finished turn, conversation or not: the work
-  // becomes a written report behind the toggle (TraceReport), the reply
-  // stands alone. The classic look folds conversation turns only, as before.
+  // The rail look folds every finished turn, conversation or not, the way
+  // Claude and Codex do: "Worked for …" opens the turn's timeline
+  // (TraceTimeline), the reply stands alone. The classic look folds
+  // conversation turns only, as before.
   const split = useMemo(() => (conversation || rail) && !live ? splitConversationTurn(blocks) : null, [blocks, conversation, rail, live]);
   // A finished conversation turn shows the reply and nothing else. All work
   // — tools, thoughts, intermediate replies, failures, interruptions, and
@@ -686,7 +682,9 @@ function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error
   }, [split]);
   const groups = useMemo(() => conversation ? groupConversationTrace(fold ? fold.workAll : blocks) : groupActivityTrace(blocks), [blocks, conversation, fold]);
   const restGroups = useMemo(() => fold ? groupConversationTrace(fold.answer) : null, [fold]);
-  const narrative = useTraceNarrative(fold && rail ? fold.workAll : NO_BLOCKS, status, durationMs, model);
+  // A live turn keeps its replies and streaming pieces in place; a folded
+  // one tells its narration as the timeline's prose.
+  const timeline = useTimeline(rail ? (fold ? fold.workAll : blocks) : NO_BLOCKS, status, !fold);
   const asking = blocks.some(isOpenQuestion);
   const pending = asking || blocks.some(block => block.kind === "tool" && block.approval?.decision === null);
   const outcome = asking ? "question" : pending ? "approval" : live ? "working" : status === "error" ? "failed" : status === "cancelled" ? "stopped" : "done";
@@ -724,20 +722,25 @@ function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error
     const statusItem: RailItem = { key: "trace:status", node: statusLine, rail: statusOnRail };
     const errorItem = (text: string, key: string): RailItem => ({ key, rail: false,
       node: <p role="alert" className="py-1.5 pl-7 text-sm text-destructive [overflow-wrap:anywhere]">{text}</p> });
-    const main = traceGroupItems({ groups, ...groupProps });
+    const renderers: TimelineRenderers = {
+      renderLive: (block) => block.kind === "tool" ? <TraceTool block={block} status={status} onDecide={onDecide} />
+        : block.kind === "reasoning" ? <ReasoningTrace block={block} turnLive={live} compact={conversation} />
+        : replyNode(block, conversation, renderText),
+      liveOnRail: (block) => block.kind === "reasoning" || (block.kind === "tool" && !block.question),
+      renderDetails: (block) => <ToolDetails block={block} />,
+    };
+    const steps = timelineItems(timeline, renderers);
     const rest = restGroups ? traceGroupItems({ groups: restGroups, ...groupProps }) : [];
     const items: RailItem[] = fold
-      ? [{ key: "trace:fold", rail: false, node: <ConversationWorkFold durationMs={durationMs} blocks={fold.workAll} narrative={narrative}
+      ? [{ key: "trace:fold", rail: false, node: <ConversationWorkFold durationMs={durationMs} blocks={fold.workAll} timeline={timeline}
           // A turn that ended without an answer (TurnTrace names it so) has
-          // nothing to read but its work: the report stands open.
+          // nothing to read but its work: the timeline stands open.
           initiallyOpen={!answered && Boolean(completionLabel)}
           attention={<div className="trace-fold-open"><Rail items={fold.approvals.map(block => ({ key: block.callId, rail: !block.question, node: <TraceTool block={block} status={status} onDecide={onDecide} /> }))} /></div>}>
-          <TraceReport narrative={narrative} renderDetails={(block) => <ToolDetails block={block} />} />
-          {/* A pending approval asks for a tap: the report names it, the card stays actionable. */}
-          {fold.approvals.length ? <div className="trace-fold-open pt-2"><Rail items={fold.approvals.map(block => ({ key: block.callId, rail: !block.question, node: <TraceTool block={block} status={status} onDecide={onDecide} /> }))} /></div> : null}
-          {foldedError ? <p role="alert" className="py-1.5 text-sm text-destructive [overflow-wrap:anywhere]">{foldedError}</p> : null}
+          <Rail items={[...steps, ...(foldedError ? [errorItem(foldedError, "trace:folded-error")] : [])]} />
+          <CopyTimeline text={() => timelineMarkdown(timeline, headerLabel(timeline, durationMs, t), t)} />
         </ConversationWorkFold> }, ...rest]
-      : main;
+      : steps;
     if (visibleError) items.push(errorItem(visibleError, "trace:error"));
     items.push(statusItem);
     return <div className={cn("min-w-0", conversation && "w-full max-w-[44rem] self-start", className)} data-testid="work-trace" data-look="rail" data-state={status} {...(conversation ? { "data-conversation": "" } : {})}>
@@ -770,7 +773,6 @@ export function TurnTrace({ turn, ...props }: { turn: TurnItem; onDecide?: Decid
   const tokens = outputTokens(turn.usage ?? turn.liveUsage);
   const answered = turn.blocks.some(block => block.kind === "text" && block.text.trim());
   return <WorkTrace {...props} blocks={turn.blocks} status={turn.status} startedMs={turn.startedMs} durationMs={turn.durationMs} error={turn.error}
-    model={turn.model || undefined}
     completionLabel={!answered ? t("agent_chat.turn_no_answer") : undefined}
     receipt={tokens !== null && tokens > 0 || turn.costUsd !== null && turn.costUsd > 0 ? <>
       {tokens !== null && tokens > 0 ? <span aria-live="off" className="tabular-nums">{formatTokens(tokens)} {t("agent_chat.tokens")}</span> : null}

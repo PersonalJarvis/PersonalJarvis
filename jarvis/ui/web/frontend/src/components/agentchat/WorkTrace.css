@@ -145,70 +145,16 @@
   }
 }
 
-/* ── The written report of a finished turn (TraceReport.tsx) ────────────
-   Numbered steps on the same hairline thread as the live rail: each step's
-   marker is a small numbered ring centred on its first line, the thread
-   runs from below one marker to the next. A step that failed or was refused
-   draws its ring in the destructive colour; nothing else gets a frame. */
-.trace-report-steps {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  margin-bottom: 0;
-  padding: 0;
-  list-style: none;
+/* ── The timeline of a turn (TraceTimeline.tsx) ───────────────────────
+   Lines hang on the same thread as the live rail. Edit sizes wear the diff
+   colours; a long thought folds with a fade at its foot. */
+.diff-count-add {
+  color: hsl(var(--diff-add));
 }
-.trace-report-step {
-  position: relative;
-  display: flex;
-  min-width: 0;
-  gap: 0.75rem;
-  padding-bottom: 0.875rem;
+.diff-count-del {
+  color: hsl(var(--diff-del));
 }
-.trace-report-step:last-child {
-  padding-bottom: 0;
-}
-.trace-report-step::after {
-  content: "";
-  position: absolute;
-  left: 9.5px;
-  top: 25px;
-  bottom: 3px;
-  width: 1px;
-  background: hsl(var(--border-strong));
-  pointer-events: none;
-}
-.trace-report-step:last-child::after {
-  display: none;
-}
-.trace-report-marker {
-  display: flex;
-  height: 1.5rem;
-  width: 1.25rem;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  color: hsl(var(--muted-foreground));
-}
-.trace-report-num {
-  display: flex;
-  height: 1.25rem;
-  width: 1.25rem;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid hsl(var(--border-strong));
-  border-radius: 9999px;
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-}
-.trace-report-step[data-outcome="failed"] .trace-report-num,
-.trace-report-step[data-outcome="denied"] .trace-report-num {
-  border-color: hsl(var(--destructive));
-  color: hsl(var(--destructive));
-}
-/* A long reason folds with a fade at its foot, so it reads as "more below". */
-.trace-report-fade {
+.trace-thought-fade {
   -webkit-mask-image: linear-gradient(to bottom, black calc(100% - 2.5rem), transparent 100%);
   mask-image: linear-gradient(to bottom, black calc(100% - 2.5rem), transparent 100%);
 }

@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useT } from "@/i18n";
-import { traceModel, type ThinkingStep } from "@/lib/thinkingSteps";
+import type { ThinkingStep } from "@/lib/thinkingSteps";
 import type { ToolBlock, TurnBlock } from "./reduce";
 import { WorkTrace } from "./WorkTrace";
 
@@ -57,5 +57,5 @@ export function VoiceWorkTrace({ steps, live = false, durationMs, className }: {
   // calling it "Failed" because one tool did would misreport a turn that
   // went on to answer.
   return <WorkTrace blocks={blocks} status={live ? "running" : "done"}
-    startedMs={steps[0]?.startedTs ?? Date.now()} durationMs={durationMs ?? null} className={className} model={traceModel(steps)} companion />;
+    startedMs={steps[0]?.startedTs ?? Date.now()} durationMs={durationMs ?? null} className={className} companion />;
 }

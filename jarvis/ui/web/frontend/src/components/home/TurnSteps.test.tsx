@@ -8,7 +8,7 @@ it("keeps brief voice errors visible", () => {
  expect(traceWorthShowing(steps, 20, false)).toBe(true);
  render(<TurnSteps steps={steps} durationMs={20} />);
  // The finished trace folds into its report; the toggle says a step failed.
- const toggle = screen.getByRole("button", { name: /1 not done/ });
+ const toggle = screen.getByRole("button", { name: /1 failed/ });
  fireEvent.click(toggle);
  expect(screen.getByText(/Connection lost/)).toBeTruthy();
 });

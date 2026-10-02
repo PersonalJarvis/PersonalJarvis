@@ -41,7 +41,7 @@ describe("work trace", () => {
 
   it("keeps live mixed activity open, then folds it at completion", () => {
     const blocks = [tool("a",{name:"linear/get_issue"}),tool("b",{name:"exec_command"})];
-    const {rerender} = render(<WorkTrace {...props} status="running" blocks={blocks} />);
+    const {rerender} = render(<WorkTrace {...rows} status="running" blocks={blocks} />);
     expect(screen.getByRole("button",{name:"Using Linear Running commands"}).getAttribute("aria-expanded")).toBe("true");
     rerender(<WorkTrace {...rows} blocks={blocks} />);
     expect(screen.getByRole("button",{name:"Used Linear Ran commands"}).getAttribute("aria-expanded")).toBe("false");
@@ -59,7 +59,7 @@ describe("work trace", () => {
   it("preserves reasoning, call, next step and final answer order", () => {
     const blocks = [thought, tool("a"), { kind: "text" as const, id: "next", text: "Next, check the tests." }, tool("b"), { kind: "text" as const, id: "final", text: "Everything is ready." }];
     render(<WorkTrace {...props} blocks={blocks} />);
-    fireEvent.click(screen.getByRole("button", { name: /^Thought for 12s/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Worked for 12s/ }));
     const text = screen.getByTestId("work-trace").textContent!;
     expect(text.indexOf("Check the input")).toBeLessThan(text.indexOf("a.ts"));
     expect(text.indexOf("a.ts")).toBeLessThan(text.indexOf("Next, check"));
@@ -88,7 +88,7 @@ describe("work trace", () => {
 
   it("automatically collapses completed groups even after live interaction", () => {
     const blocks = [tool("a"), tool("b")];
-    const { rerender } = render(<WorkTrace {...props} status="running" blocks={blocks} />);
+    const { rerender } = render(<WorkTrace {...rows} status="running" blocks={blocks} />);
     const group = screen.getByRole("button", { name: "Read 2 files" });
     fireEvent.click(group); fireEvent.click(group);
     expect(group.getAttribute("aria-expanded")).toBe("true");
@@ -102,8 +102,8 @@ describe("work trace", () => {
     // already says that a step went wrong.
     expect(screen.getByText("Delete generated files?")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Approve" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /^Thought for 12s.*4 steps.*1 not done/ }));
-    expect(screen.getByText("It failed: Permission denied.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /^Worked for 12s.*1 failed/ }));
+    expect(screen.getByText("Failed: Permission denied")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Approve" })).toBeTruthy();
   });
 
@@ -123,15 +123,17 @@ describe("work trace", () => {
 
   it("shows a denied action without a running indicator", () => {
     const {container} = render(<WorkTrace {...props} status="running" blocks={[tool("a",{output:null,approval:{approvalId:"ap",summary:"Delete?",decision:"deny"}})]} />);
-    expect(container.querySelector('[data-state="denied"]')).toBeTruthy();
+    expect(screen.getByText("You declined it")).toBeTruthy();
+    expect(container.querySelector('[data-trace-tool][data-state="running"]')).toBeNull();
     expect(screen.queryByRole("button", {name:"Approve"})).toBeNull();
   });
 
   it("renders edit input, a diff and output on demand", () => {
     render(<WorkTrace {...props} blocks={[tool("edit",{name:"Edit",input:{file_path:"app.ts",old_string:"oldValue",new_string:"newValue"},output:"File updated"})]} />);
-    fireEvent.click(screen.getByRole("button", { name: /^Thought for 12s/ }));
-    expect(screen.getByText(/Added 1 lines and removed 1\./)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Details" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Worked for 12s/ }));
+    // Codex-style: the edit is one line with its size; the diff is one tap away.
+    const edit = screen.getByRole("button", { name: /^Edited app\.ts \+1 −1/ });
+    fireEvent.click(edit);
     expect(screen.getByLabelText("Changes").textContent).toContain("− oldValue");
     expect(screen.getByLabelText("Changes").textContent).toContain("+ newValue");
     expect(screen.getByText("File updated")).toBeTruthy();
@@ -140,10 +142,10 @@ describe("work trace", () => {
   it.each(["cancelled", "error"] as const)("does not leave tools spinning after %s", status => {
     const {container, rerender} = render(<WorkTrace {...rows} status={status} blocks={[tool("a",{output:null})]} />);
     expect(container.querySelector('[data-state="interrupted"]')).toBeTruthy();
-    expect(container.querySelector('[data-state="running"]')).toBeNull();
+    expect(container.querySelector('[data-trace-tool][data-state="running"]')).toBeNull();
     rerender(<WorkTrace {...props} status={status} blocks={[tool("a",{output:null})]} />);
-    fireEvent.click(screen.getByRole("button", { name: /^Thought for 12s/ }));
-    expect(screen.getByText("It stopped before it returned a result.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /^Worked for 12s/ }));
+    expect(screen.getByText("Stopped before it finished")).toBeTruthy();
   });
 
   it("updates the live clock and releases timers at completion", () => {
@@ -157,13 +159,13 @@ describe("work trace", () => {
 
   it("does not interpret tool output as HTML", () => {
     const {container} = render(<WorkTrace {...props} blocks={[tool("a",{name:"run_shell",input:{command:"<b>echo</b>"},output:'<img src=x onerror=alert(1)>'})]} />);
-    fireEvent.click(screen.getByRole("button", { name: /^Thought for 12s/ }));
-    // Neither the sentence nor the result turns runtime text into markup.
+    fireEvent.click(screen.getByRole("button", { name: /^Worked for 12s/ }));
+    // Neither the command line nor its printed output turns into markup.
     expect(container.querySelector('img, b')).toBeNull();
-    expect(screen.getByTestId("trace-report").textContent).toContain('It returned “<img src=x onerror=alert(1)>”.');
-    fireEvent.click(screen.getByRole("button", { name: "Details" }));
+    expect(container.querySelector("[data-trace-output]")?.textContent).toBe("<img src=x onerror=alert(1)>");
+    fireEvent.click(screen.getByRole("button", { name: /^Ran <b>echo<\/b>/ }));
     expect(container.querySelector('img')).toBeNull();
-    expect(screen.getByText('<img src=x onerror=alert(1)>')).toBeTruthy();
+    expect(screen.getAllByText('<img src=x onerror=alert(1)>').length).toBeGreaterThan(0);
   });
 
   it("formats durations without a 60-second remainder", () => {
@@ -180,8 +182,8 @@ describe("work trace", () => {
     expect(screen.getByRole("button", { name: /Run command.*49ms/ })).toBeTruthy();
     expect(screen.queryByText("0.0s")).toBeNull();
     rerender(<WorkTrace {...props} blocks={[tool("shell", { name, input: { command: "read skill instructions" }, durationMs: 49 })]} />);
-    fireEvent.click(screen.getByRole("button", { name: /^Thought for 12s/ }));
-    expect(screen.getByText("49 ms")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /^Worked for 12s/ }));
+    expect(screen.getByRole("button", { name: /^Ran read skill instructions 49ms/ })).toBeTruthy();
   });
 
   it("keeps the last reply visible and treats earlier text as foldable work", () => {
@@ -264,7 +266,7 @@ describe("rail look", () => {
   it("shows the services a folded conversation turn used on its toggle", () => {
     const blocks = [tool("linear", { name: "mcp__codex_apps__linear_list_issues" }), reply("done", "Three issues are open.")];
     render(<WorkTrace {...props} conversation blocks={blocks} />);
-    const toggle = screen.getByRole("button", { name: /^Thought for 12s/ });
+    const toggle = screen.getByRole("button", { name: /^Worked for 12s/ });
     expect(toggle.querySelector("img, [data-logo]")).toBeTruthy();
   });
 });
