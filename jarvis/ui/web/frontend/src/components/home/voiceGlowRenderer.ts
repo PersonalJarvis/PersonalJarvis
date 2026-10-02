@@ -9,9 +9,11 @@
  *  - soft vertical CURTAINS drifting upward through the haze — the shimmer;
  *  - a hot CORE hugging the bottom edge that flares with each syllable
  *    (`pulse`, the fast envelope) while the haze follows the slower `level`;
- *  - while the assistant THINKS, two beams of light glide along the bottom
- *    edge in opposite directions, part and meet again in the middle — the
- *    light keeps working while nobody speaks.
+ *  - while the assistant THINKS, two comets glide along the bottom edge in
+ *    opposite directions with tails that stretch with their speed, sparks
+ *    rise off them, and each time they meet in the middle a pillar of light
+ *    shoots up and the haze blooms — the light keeps working while nobody
+ *    speaks.
  *
  * Colour is the theme's accent: deep in the haze, lifted toward white in the
  * core. On paper (light themes) the lift is smaller and the whole light
@@ -52,6 +54,7 @@ uniform float uLight;
 uniform float uSpan;
 uniform float uThink;
 uniform float uSweep;
+uniform float uSweepVel;
 uniform vec3 uColor;
 
 float hash(vec2 p) {
@@ -73,6 +76,12 @@ float noise(vec2 p) {
   float c = hash(mod(i + vec2(0.0, 1.0), 289.0));
   float d = hash(mod(i + vec2(1.0, 1.0), 289.0));
   return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+// One comet along x: a round head ahead, an exponential tail behind.
+float comet(float x, float head, float dir, float width, float tail) {
+  float o = (x - head) * dir;
+  return o > 0.0 ? exp(-o * o / (width * width)) : exp(o / tail);
 }
 
 float fbm(vec2 p) {
@@ -102,15 +111,45 @@ void main() {
   float dx = (uv.x - 0.5) / uSpan;
   float dome = exp(-dx * dx * 1.4);
 
-  // Thinking: two beams mirrored about the middle. Screen-blended, not
-  // summed, so where they meet the light swells instead of blowing out.
-  float beamWidth = uSpan * 0.32;
-  float b1 = exp(-pow((uv.x - (0.5 + uSpan * 0.95 * uSweep)) / beamWidth, 2.0));
-  float b2 = exp(-pow((uv.x - (0.5 - uSpan * 0.95 * uSweep)) / beamWidth, 2.0));
-  float beams = (1.0 - (1.0 - b1) * (1.0 - b2)) * uThink;
+  // Thinking: two comets mirrored about the middle, each with a tail that
+  // stretches with its speed. Screen-blended, not summed, so where they
+  // cross the light swells instead of blowing out.
+  float reach = uSpan * 0.95;
+  float width = uSpan * 0.14;
+  float tail = uSpan * (0.12 + 0.55 * abs(uSweepVel));
+  float dir = uSweepVel < 0.0 ? -1.0 : 1.0;
+  float h1 = 0.5 + reach * uSweep;
+  float h2 = 0.5 - reach * uSweep;
+  float b1 = comet(uv.x, h1, dir, width, tail);
+  float b2 = comet(uv.x, h2, -dir, width, tail);
+  float lateral = 1.0 - (1.0 - b1) * (1.0 - b2);
+  float beams = lateral * uThink;
   float beam = beams * (exp(-y / 0.13) + 0.4 * exp(-y / 0.4));
+  float headWidth = width * 0.6;
+  float heads = (exp(-pow((uv.x - h1) / headWidth, 2.0)) + exp(-pow((uv.x - h2) / headWidth, 2.0))) * uThink;
+  float hot = heads * exp(-y / 0.06);
 
-  float h = (1.0 + 0.7 * beams) * (0.34 + 0.42 * uLevel) * (0.6 + 0.8 * crest) * (0.3 + 0.7 * dome);
+  // Where they meet: a pillar of light shoots up through the middle and a
+  // wide bloom lifts the whole haze for a moment.
+  float meet = uThink * exp(-pow(uSweep / 0.22, 2.0));
+  float pillar = exp(-pow((uv.x - 0.5) / (uSpan * 0.1), 2.0)) * exp(-y / (0.18 + 0.6 * meet)) * meet;
+  float bloom = exp(-pow((uv.x - 0.5) / (uSpan * 0.7), 2.0)) * exp(-y / 0.45) * meet;
+  float flare = pillar + 0.5 * bloom;
+
+  // Sparks: one candidate per cell of a grid that scrolls upward; about
+  // half the cells hold one, each twinkling on its own, lit only above a
+  // comet or its tail and fading as it rises.
+  vec2 sp = vec2(x * 16.0, y * 6.0 - t * 1.4);
+  vec2 cell = mod(floor(sp), 289.0);
+  vec2 f = fract(sp);
+  float r = hash(cell);
+  vec2 at = 0.2 + 0.6 * vec2(hash(cell + vec2(3.1, 1.7)), hash(cell + vec2(7.7, 5.3)));
+  vec2 d = (f - at) / vec2(16.0, 6.0);
+  float twinkle = 0.55 + 0.45 * sin(t * 7.0 + r * 40.0);
+  float spark = exp(-dot(d, d) / (0.009 * 0.009)) * step(0.55, r) * twinkle;
+  float sparks = spark * lateral * exp(-y / 0.38) * uThink;
+
+  float h = (1.0 + 0.6 * beams + 0.8 * meet) * (0.34 + 0.42 * uLevel) * (0.6 + 0.8 * crest) * (0.3 + 0.7 * dome);
   float body = exp(-pow(y / max(h, 0.02), 1.35) * 1.7);
 
   float rays = smoothstep(0.2, 0.85, fbm(vec2(x * 2.6 + q.x * 2.2, y * 0.9 - t * 0.35)));
@@ -118,13 +157,19 @@ void main() {
 
   float core = exp(-y / (0.05 + 0.1 * uPulse)) * dome;
 
-  float a = body * shimmer * (0.3 + 0.7 * dome) + core * (0.2 + 0.6 * uPulse) + beam * 0.9;
+  float a = body * shimmer * (0.3 + 0.7 * dome) + core * (0.2 + 0.6 * uPulse)
+    + beam * 0.8 + hot * 0.9 + flare * 0.9 + sparks * 1.4;
   a *= (0.3 + 0.7 * uPower) * (0.65 + 0.55 * uLevel);
   a *= smoothstep(0.0, 0.12, uv.x) * (1.0 - smoothstep(0.88, 1.0, uv.x)) * (1.0 - smoothstep(0.45, 1.0, y));
 
-  float lift = clamp(core * 0.8 + beam * 0.7 + rays * body * 0.35, 0.0, 1.0);
+  float lift = clamp(
+    core * 0.8 + beam * 0.5 + hot * 1.2 + flare + sparks * 2.0 + rays * body * 0.35,
+    0.0,
+    1.0
+  );
   vec3 deep = uColor * (0.75 + 0.25 * uLight);
-  vec3 bright = mix(uColor, vec3(1.0), 0.55 - 0.35 * uLight);
+  // Highlights go toward a cool white, so the hottest light stays blue-born.
+  vec3 bright = mix(uColor, vec3(0.82, 0.93, 1.0), 0.6 - 0.4 * uLight);
   vec3 col = mix(deep, bright, lift);
 
   a = a * (0.55 - 0.2 * uLight);
@@ -145,6 +190,8 @@ export interface GlowFrame {
   think: number;
   /** -1..1: where the thinking beams stand (mirrored about the middle). */
   sweep: number;
+  /** -1..1: the beams' velocity (derivative of `sweep`), for tail and direction. */
+  sweepVel: number;
   /** 0 = resting wash, 1 = call open. */
   power: number;
   /** True on a light theme. */
@@ -239,6 +286,7 @@ export function createGlowRenderer(canvas: HTMLCanvasElement): GlowRenderer | nu
   const uColor = u("uColor");
   const uThink = u("uThink");
   const uSweep = u("uSweep");
+  const uSweepVel = u("uSweepVel");
 
   let cssWidth = 1;
   let cssHeight = 1;
@@ -269,6 +317,7 @@ export function createGlowRenderer(canvas: HTMLCanvasElement): GlowRenderer | nu
       gl.uniform1f(uPower, frame.power);
       gl.uniform1f(uThink, frame.think);
       gl.uniform1f(uSweep, frame.sweep);
+      gl.uniform1f(uSweepVel, frame.sweepVel);
       gl.uniform1f(uLight, frame.light ? 1 : 0);
       gl.uniform1f(uSpan, Math.min(0.45, SPAN_PX / cssWidth));
       gl.uniform3f(uColor, frame.color[0] / 255, frame.color[1] / 255, frame.color[2] / 255);
