@@ -87,7 +87,7 @@ The ONLY way to make an agent do something on a schedule (daily briefing, weekly
 
 - **Endpoint:** `POST /api/society/agents/{agent_id}/routines`
 - **Arguments:** `agent_id` (string; required); `title` (string; required); `prompt` (string; required); `schedule` (object; required); `announce_on_success` (string; optional)
-- **Requires confirmation:** yes
+- **Requires confirmation:** no
 - **Desktop UI section:** `agents`
 - **Voice example (EN):** "give me a briefing every morning at eight"
 

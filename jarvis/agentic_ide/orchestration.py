@@ -38,7 +38,7 @@ def _matches(reference: str, *values: str) -> bool:
 _FILLER = frozenset(
     {
         "the", "my", "a", "workspace", "workspaces", "project", "projects", "folder",
-        "der", "die", "das", "mein", "meinem", "meinen", "projekt", "ordner",
+        "der", "die", "das", "mein", "meinem", "meinen", "projekt", "ordner",  # i18n-allow
         "arbeitsbereich",
     }
 )  # fmt: skip
@@ -163,7 +163,7 @@ def _distance(a: str, b: str) -> int:
 def _is_request_id(value: str) -> bool:
     try:
         UUID(value)
-    except ValueError:
+    except ValueError:  # not a UUID is the answer, not a failure
         return False
     return True
 
@@ -378,7 +378,7 @@ class WorkspaceOrchestrator:
             }
         try:
             count = int(args.get("count") or 1)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError):  # a malformed count falls back to one terminal
             count = 1
         count = max(1, min(count, MAX_TERMINALS))
         name = str(args.get("name") or "").strip()
@@ -409,7 +409,7 @@ class WorkspaceOrchestrator:
                 created, capped = await self.registry.add_terminals(
                     count, agent=cli, workspace_id=workspace["id"]
                 )
-        except SessionError as exc:
+        except SessionError as exc:  # the refusal is returned to the caller with its reason
             return {
                 "status": "not_accepted",
                 "reason": str(exc),
@@ -573,7 +573,7 @@ class WorkspaceOrchestrator:
                     "closed": [t.name for t in closed],
                     "failed": failed,
                 }
-        except SessionError as exc:
+        except SessionError as exc:  # the refusal is returned to the caller with its reason
             return {"status": "not_accepted", "target": target, "reason": str(exc)}
         raise ValueError("Unknown pane action.")
 
@@ -615,7 +615,7 @@ class WorkspaceOrchestrator:
                 }
             try:
                 session = await self.registry.restore_workspace(matched[0][1]["id"])
-            except SessionError as exc:
+            except SessionError as exc:  # the refusal is returned to the caller with its reason
                 return {"status": "not_accepted", "reason": str(exc)}
             await self._announce(
                 lambda: workspace_changed_event(
@@ -666,7 +666,7 @@ class WorkspaceOrchestrator:
                 project_id=project_id,
                 name=str(args.get("name") or "").strip() or None,
             )
-        except SessionError as exc:
+        except SessionError as exc:  # the refusal is returned to the caller with its reason
             return {"status": "not_accepted", "reason": str(exc), "folder": folder}
         await self._announce(
             lambda: workspace_changed_event(
@@ -728,7 +728,7 @@ class WorkspaceOrchestrator:
                 }
             try:
                 count = int(entry.get("count") or 1)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError):  # a malformed count falls back to one terminal
                 count = 1
             groups.append((cli, max(1, min(count, MAX_TERMINALS))))
         return groups or [(_default_cli(), 1)]

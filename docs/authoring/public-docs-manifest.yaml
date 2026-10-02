@@ -1,7 +1,7 @@
 version: 1
 language: en
 content_root: docs/product
-page_count: 50
+page_count: 49
 navigation_principle: reader-journey
 authoring_contract:
   audience: People using Personal Jarvis, including readers with no software background.
@@ -202,7 +202,6 @@ pages:
       - jarvis-agents
       - workflows-and-commands
       - safety-and-approvals
-      - automations
     reader_level: beginner
     maturity: stable
 
@@ -1056,26 +1055,6 @@ pages:
 
   - section: Everyday use
     section_order: 2
-    order: 9
-    slug: automations
-    file: docs/product/everyday-use/automations.md
-    title: Automations
-    diataxis: howto
-    summary: Browse automation templates, control recurring work, and inspect schedules and run history.
-    authoritative_sources:
-      - jarvis/ui/web/frontend/src/views/AutomationsView.tsx
-      - jarvis/ui/web/frontend/src/views/automations/TemplateAddDialog.tsx
-      - jarvis/tasks/templates/__init__.py
-    related:
-      - tasks-and-reminders
-      - costs
-      - workflows-and-commands
-      - safety-and-approvals
-    reader_level: beginner
-    maturity: stable
-
-  - section: Everyday use
-    section_order: 2
     order: 10
     slug: costs
     file: docs/product/everyday-use/costs.md
@@ -1087,7 +1066,7 @@ pages:
       - jarvis/ui/web/costs_routes.py
     related:
       - tasks-and-reminders
-      - automations
+      - jarvis-agents
       - providers-and-api-keys
     reader_level: beginner
     maturity: stable

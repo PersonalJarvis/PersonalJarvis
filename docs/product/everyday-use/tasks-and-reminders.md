@@ -12,7 +12,7 @@ last_reviewed: 2026-10-01
 phase: "-"
 audience: end-user
 tags: [tasks, reminders, scheduling, recurring, routines, agents]
-related: [jarvis-agents, workflows-and-commands, safety-and-approvals, automations]
+related: [jarvis-agents, workflows-and-commands, safety-and-approvals]
 ---
 
 Scheduled work lives on your **Agents**. Each agent can carry **routines**: a

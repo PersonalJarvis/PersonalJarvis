@@ -256,7 +256,7 @@ class LiveTools:
             # so the catalog lookup below answered "no longer available".
             try:
                 inner = json.loads(args.get("arguments_json") or "{}")
-            except ValueError:
+            except ValueError:  # bad JSON is answered by the object check just below
                 inner = None
             if not isinstance(inner, dict):
                 return {"success": False, "error": "Tool arguments must be an object."}
@@ -289,7 +289,7 @@ class LiveTools:
 
             try:
                 offset = max(0, int(args.get("offset") or 0))
-            except (TypeError, ValueError):
+            except (TypeError, ValueError):  # a malformed offset starts the listing from the top
                 offset = 0
             return discover(self.catalog(), str(args.get("query", "")), offset)
         if name == "confirm_action":
@@ -325,7 +325,7 @@ class LiveTools:
             canonical = str(args.get("name", ""))
             try:
                 args = json.loads(args.get("arguments_json") or "{}")
-            except ValueError:
+            except ValueError:  # bad JSON is answered by the object check just below
                 args = None
             if not isinstance(args, dict):
                 return {

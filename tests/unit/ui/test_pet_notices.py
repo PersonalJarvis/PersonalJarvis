@@ -48,7 +48,8 @@ def test_a_failed_chat_turn_is_a_cross_and_an_empty_one_is_nothing() -> None:
     failed = JarvisChatTurnFinished(status="error", user_text="Book a table")
     assert notices.for_chat_turn(failed, "en") == ("error", "Book a table", "")
     no_text = JarvisChatTurnFinished(status="error")
-    assert notices.for_chat_turn(no_text, "de") == ("error", "Jarvis konnte nicht antworten", "")
+    german = "Jarvis konnte nicht antworten"  # i18n-allow: quotes the de locale
+    assert notices.for_chat_turn(no_text, "de") == ("error", german, "")
     assert notices.for_chat_turn(JarvisChatTurnFinished(), "en") is None
 
 

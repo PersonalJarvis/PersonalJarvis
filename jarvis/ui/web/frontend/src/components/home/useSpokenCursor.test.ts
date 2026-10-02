@@ -27,7 +27,7 @@ describe("useSpokenCursor", () => {
 
   it("moves while audio plays and waits while it is silent", () => {
     vi.useFakeTimers({ toFake: ["requestAnimationFrame", "cancelAnimationFrame", "performance"] });
-    const text = "Morgen ist Freitag, der zweite Oktober. Hast du was Besonderes vor?";
+    const text = "Tomorrow is Friday, the second of October. Anything special planned?";
     voiceOutputLevelRef.current = 0.5;
     const { result } = renderHook(() => useSpokenCursor(text, true));
     expect(result.current).toBe(0);
@@ -47,11 +47,11 @@ describe("useSpokenCursor", () => {
   it("starts a new answer from its beginning", () => {
     vi.useFakeTimers({ toFake: ["requestAnimationFrame", "cancelAnimationFrame", "performance"] });
     const { result, rerender } = renderHook(({ text }) => useSpokenCursor(text, true), {
-      initialProps: { text: "Erste Antwort mit ein paar Worten" },
+      initialProps: { text: "A first answer with a few words" },
     });
     act(() => vi.advanceTimersByTime(1000));
     expect(result.current).toBeGreaterThan(0);
-    rerender({ text: "Ganz andere Antwort" });
-    expect(result.current).toBeLessThanOrEqual("Ganz".length);
+    rerender({ text: "Quite another answer" });
+    expect(result.current).toBeLessThanOrEqual("Quite".length);
   });
 });

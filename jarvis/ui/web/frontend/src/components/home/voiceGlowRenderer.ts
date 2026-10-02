@@ -168,6 +168,10 @@ function compile(gl: WebGLRenderingContext, type: number, source: string): WebGL
  * Build the renderer on `canvas`, or return null where WebGL is unavailable
  * (no GPU, a blocklisted driver, the page out of contexts) — the caller then
  * paints the CSS fallback.
+ *
+ * `dispose()` frees the program and buffer only. The caller owns the context
+ * and hands it back with `releaseWebglContext` after unmount (VoiceGlow does,
+ * deferred so a StrictMode remount can reuse it) — AP-32.
  */
 export function createGlowRenderer(canvas: HTMLCanvasElement): GlowRenderer | null {
   let gl: WebGLRenderingContext | null = null;

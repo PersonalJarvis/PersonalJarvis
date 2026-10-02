@@ -485,7 +485,7 @@ class ConversationSession:
                          "name": call["name"], "arguments": call["arguments"]})
         try:
             return await asyncio.wait_for(waiter, self._config.tool_timeout_s)
-        except TimeoutError:
+        except TimeoutError:  # the timeout is returned to the model as the tool result
             self._tool_waiters.pop(call["id"], None)
             return {"success": False, "error": "The tool did not answer in time."}
 
