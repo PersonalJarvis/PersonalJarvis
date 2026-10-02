@@ -9,6 +9,7 @@ from pathlib import Path
 
 def main() -> None:
     log_path = None
+    mode = ""
     for line in sys.stdin:
         message = json.loads(line)
         op, args = message["op"], message["args"]
@@ -16,14 +17,20 @@ def main() -> None:
             workspace = Path(args["workspace"])
             workspace.mkdir(parents=True, exist_ok=True)
             log_path = workspace / "browser-start.jsonl"
+            mode_path = workspace / "browser-start-mode"
+            mode = mode_path.read_text(encoding="utf-8") if mode_path.exists() else ""
         if log_path is not None:
             with log_path.open("a", encoding="utf-8") as log:
                 log.write(json.dumps({"op": op, "args": args}) + "\n")
+        if op == "ensure" and mode == "timeout":
+            continue
         result = (
             {"generation": "fake", "full_window": True}
             if op == "ensure"
             else {"ok": True, "final_result": "Browser task completed"}
         )
+        if op == "ensure" and mode == "invalid":
+            result = {"generation": ""}
         print(
             json.dumps({"kind": "response", "id": message["id"], "ok": True, "result": result}),
             flush=True,
