@@ -819,7 +819,10 @@ class OpenAIChatPolishClient:
         choices = data.get("choices") or []
         if not choices:
             return None
-        message = (choices[0] or {}).get("message") or {}
+        choice = choices[0] or {}
+        if choice.get("finish_reason") not in (None, "stop"):
+            raise PolishProviderError("Rewrite did not finish normally")
+        message = choice.get("message") or {}
         text = str(message.get("content") or "").strip()
         return text or None
 
@@ -846,7 +849,7 @@ class OpenAIChatPolishClient:
                 )
             except httpx.HTTPError as exc:
                 raise PolishProviderError(
-                    f"{self._family.label} polish request failed: {exc}"
+                    f"{self._family.label} polish request failed: {type(exc).__name__}"
                 ) from exc
             if response.status_code < 400:
                 return response.json()
@@ -858,7 +861,7 @@ class OpenAIChatPolishClient:
                     continue
             raise PolishProviderError(
                 f"{self._family.label} polish request returned "
-                f"HTTP {response.status_code}: {body[:200]}",
+                f"HTTP {response.status_code}",
                 status=response.status_code,
                 retry_after=_retry_after(response),
             )
@@ -977,11 +980,17 @@ class GeminiPolishClient:
             )
         except Exception as exc:  # noqa: BLE001 — the SDK raises its own hierarchy
             raise PolishProviderError(
-                f"{self._family.label} polish request failed: {exc}"
+                f"{self._family.label} polish request failed: {type(exc).__name__}"
             ) from exc
         _record_gemini_usage(
             self._family.id, self._model, getattr(response, "usage_metadata", None)
         )
+        candidates = getattr(response, "candidates", None) or []
+        if candidates:
+            reason = getattr(candidates[0], "finish_reason", None)
+            reason = getattr(reason, "name", reason)
+            if reason and str(reason).upper() not in ("STOP", "FINISH_REASON_UNSPECIFIED"):
+                raise PolishProviderError("Rewrite did not finish normally")
         text = str(getattr(response, "text", "") or "").strip()
         return text or None
 
