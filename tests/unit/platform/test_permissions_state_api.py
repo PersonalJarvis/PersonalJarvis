@@ -51,17 +51,6 @@ _ALL_INFO = {
 }
 
 
-@pytest.fixture(autouse=True)
-def _isolated_state_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep the two state files of the legacy snapshot out of the real data dir."""
-    monkeypatch.setattr(
-        permissions_module, "identity_reset_marker_path", lambda: tmp_path / "reset.json"
-    )
-    monkeypatch.setattr(
-        permissions_module, "automation_consent_path", lambda: tmp_path / "consent.json"
-    )
-
-
 class _Bundle:
     """``NSBundle.mainBundle()`` stand-in with a readable Info.plist."""
 
@@ -518,7 +507,7 @@ def test_a_state_read_off_macos_loads_nothing() -> None:
     ],
 )
 def test_a_running_player_is_read_live_without_asking(
-    answer: int, expected: PermissionState, tmp_path: Path
+    answer: int, expected: PermissionState
 ) -> None:
     world = _World()
     world.installed = {_MUSIC, _SPOTIFY}
@@ -530,8 +519,6 @@ def test_a_running_player_is_read_live_without_asking(
     assert state is expected
     # Exactly the one requested player is probed, and never with ask=True.
     assert world.probes == [(_MUSIC, False)]
-    # The legacy aggregate keeps a consent record; the per-target read must not.
-    assert not (tmp_path / "consent.json").exists()
 
 
 def test_a_player_that_is_not_running_is_unknown_not_granted() -> None:
@@ -806,7 +793,7 @@ def test_request_native_makes_no_identity_check_of_its_own(
     assert world.bundle.info_reads == []
 
 
-def test_a_request_answer_is_never_evidence_of_a_grant(tmp_path: Path) -> None:
+def test_a_request_answer_is_never_evidence_of_a_grant() -> None:
     world = _World()
     world.screen_request_answer = True  # the API says "already granted"
     world.ax_request_answer = True
@@ -818,9 +805,6 @@ def test_a_request_answer_is_never_evidence_of_a_grant(tmp_path: Path) -> None:
     # Only the live read says anything about access, and it still says no.
     assert port.state(PermissionId.SCREEN_RECORDING) is PermissionState.NOT_GRANTED
     assert port.state(PermissionId.ACCESSIBILITY) is PermissionState.NOT_GRANTED
-    # And the request recorded nothing: no restart flag, no consent file.
-    assert port._restart_required == set()
-    assert not (tmp_path / "consent.json").exists()
 
 
 # --- request_native(AUTOMATION): a killable, guarded child, never a launch -----
@@ -839,9 +823,7 @@ def test_automation_needs_a_scriptable_player() -> None:
     assert world.requests == []
 
 
-def test_automation_runs_one_guarded_script_and_never_launches_the_player(
-    tmp_path: Path,
-) -> None:
+def test_automation_runs_one_guarded_script_and_never_launches_the_player() -> None:
     world = _World()
     world.installed = {_MUSIC}  # installed, NOT running
 
@@ -855,9 +837,8 @@ def test_automation_runs_one_guarded_script_and_never_launches_the_player(
     assert f'tell application id "{_MUSIC}" to get player state' in script
     assert "launch" not in script and "activate" not in script
     assert world.launches == []
-    # No in-process Apple Event ask, no player probe, no consent record.
+    # No in-process Apple Event ask and no player probe.
     assert world.probes == []
-    assert not (tmp_path / "consent.json").exists()
 
 
 @pytest.mark.parametrize(
@@ -1100,23 +1081,34 @@ def test_outside_installed_app_is_the_inverse_of_the_reported_stable_identity() 
         (None, "/usr/local/bin"),
     ]:
         port = _World(bundle_id=bundle_id, bundle_path=path).port()
-        assert port.outside_installed_app is (not port.snapshot()["app_identity"]["stable"])
+        assert port.outside_installed_app is (not port._app_identity()[0].stable)
 
 
 def test_the_reported_app_identity_keeps_its_shape() -> None:
-    identity = _World().port().snapshot()["app_identity"]
+    identity, headless = _World().port()._app_identity()
 
-    assert set(identity) == {
+    assert set(vars(identity)) == {
         "app_name",
-        "expected_bundle_id",
         "bundle_id",
         "bundle_path",
         "launched_as_bundle",
         "stable",
-        "foreground",
     }
-    assert identity["stable"] is True
-    assert identity["bundle_id"] == EXPECTED_BUNDLE_ID
+    assert identity.stable is True
+    assert identity.bundle_id == EXPECTED_BUNDLE_ID
+    assert headless is False
+
+
+def test_the_default_screen_recording_read_is_the_preflight_alone() -> None:
+    """``deep`` defaults to False: a caller that wants the window-title oracle says so."""
+    world = _World()
+    world.live_check_answer = True  # the oracle WOULD upgrade the verdict
+    port = world.port()
+
+    assert port.state(PermissionId.SCREEN_RECORDING) is PermissionState.NOT_GRANTED
+    assert world.live_checks == 0
+    assert port.state(PermissionId.SCREEN_RECORDING, deep=True) is PermissionState.GRANTED
+    assert world.live_checks == 1
 
 
 def test_reading_the_identity_asks_the_os_for_nothing() -> None:

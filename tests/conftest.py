@@ -190,17 +190,16 @@ def _macos_shell_registration_in_tmp(tmp_path_factory, monkeypatch):  # noqa: AN
     monkeypatch.setattr(macos_dock, "_DEFAULTS", str(agents / "no-defaults"))
     monkeypatch.setattr(macos_dock, "_KILLALL", str(agents / "no-killall"))
     monkeypatch.setattr(macos_dock, "_marker_path", lambda: agents / "macos-dock-pinned")
-    # Suites that force ``platform_name="darwin"`` read - and, once every grant
-    # reads present, DELETE - the "macOS sees this app as new" note and the
-    # Automation answers of the developer's real data directory.
+    # The permission port keeps no state file any more; the one place that still
+    # names the two files an earlier build left behind is the one-time cleanup on
+    # the darwin install path, and a suite that reaches it must not delete the
+    # developer's real copies.
     import jarvis.platform.permissions as permissions
 
-    monkeypatch.setattr(
-        permissions, "identity_reset_marker_path", lambda: agents / "macos-tcc-reset.json"
-    )
-    monkeypatch.setattr(
-        permissions, "automation_consent_path", lambda: agents / "macos-automation-consent.json"
-    )
+    monkeypatch.setattr(permissions, "_leftover_state_dir", lambda: agents)
+    # The rebuild fingerprint is written into the data directory whenever a darwin
+    # bundle is (re)built; a suite that does so must not skew a real launch's decision.
+    monkeypatch.setattr(mab, "_rebuild_marker_path", lambda: agents / "macos-bundle-rebuild.json")
     yield agents
 
 

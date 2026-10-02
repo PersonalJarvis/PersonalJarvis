@@ -1100,7 +1100,7 @@ def _install_native_bundle(
     # An ad-hoc rebuild changed the app's TCC identity: every recorded grant
     # is now orphaned and would read as silently DENIED (BUG-083). With the
     # certificate identity the requirement is unchanged and nothing is reset.
-    _reset_or_explain(bundle, previous_identity)
+    _reset_after_identity_change(bundle, previous_identity)
     return bundle
 
 
@@ -1172,41 +1172,22 @@ def _resign_bundle_in_place(bundle: Path, identity: str, *, prepare=None) -> Pat
             if previous.exists() or previous.is_symlink():
                 previous.rename(bundle)
             raise
-    _reset_or_explain(bundle, previous_identity)
+    _reset_after_identity_change(bundle, previous_identity)
     return bundle
 
 
-def _reset_or_explain(bundle: Path, previous_identity: str | None) -> None:
-    """Reset the orphaned TCC rows once — never in a loop (BUG-159).
+def _reset_after_identity_change(bundle: Path, previous_identity: str | None) -> None:
+    """Drop the orphaned TCC rows once, when the bundle's identity changed (BUG-083).
 
-    A rebuild that keeps recurring (a failing identity probe, a churning
-    interpreter) would otherwise wipe the user's permissions on every single
-    start: they grant everything, restart, and are asked again. The pending
-    marker says the LAST reset never got them to a working state, so repeating
-    it can only destroy grants. Skip it then and keep the explanation up — the
-    permissions view carries a per-row "Ask again" that resets exactly the row
-    the user chooses.
+    A rebuild loop (a failing identity probe, a churning interpreter) must not
+    wipe the user's permissions on every start (BUG-159, BUG-161): that loop is
+    stopped one layer up, by the rebuild fingerprint that refuses to build the
+    identical app again, so this only ever runs for a rebuild that really
+    happened. The app then asks again just in time, at the moment a feature
+    needs a permission; there is nothing to explain up front.
     """
-    from jarvis.platform.permissions import (
-        identity_reset_pending,
-        record_identity_reset,
-    )
-
-    if not _tcc_reset_needed(previous_identity, _bundle_tcc_identity(bundle)):
-        return
-    if identity_reset_pending():
-        log.warning(
-            "The app signature changed again while an earlier permission reset "
-            "is still unresolved — NOT resetting the macOS grants a second time. "
-            "Rebuilds are recurring on this install; fix the cause above."
-        )
-    else:
+    if _tcc_reset_needed(previous_identity, _bundle_tcc_identity(bundle)):
         _reset_stale_tcc_grants()
-    # Either way the user now faces an app macOS treats as a stranger. Record
-    # it so the permissions view explains the re-ask instead of just showing
-    # everything as missing again; snapshot() retires the note once the grants
-    # are back.
-    record_identity_reset(_TCC_SERVICES)
 
 
 def ensure_macos_app_bundle(
@@ -1224,7 +1205,11 @@ def ensure_macos_app_bundle(
     )
     if applications_dir is None and sys.platform == "darwin":
         from jarvis.autostart.macos import retarget_launch_agent
+        from jarvis.platform.permissions import remove_leftover_state_files
 
+        # An upgrade drops the two state files the permission wall of an earlier
+        # build kept; nothing reads them any more.
+        remove_leftover_state_files()
         # A repair that failed still leaves the app wherever it was moved to,
         # and login must find it there.
         target = bundle or macos_app_bundle_path()

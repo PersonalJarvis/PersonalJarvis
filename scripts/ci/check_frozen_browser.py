@@ -131,6 +131,10 @@ def check_macos_permissions(port: int, key: str) -> dict:
     the archive is checked statically by check_frozen_macos_app.py; this asks
     the app itself, which also catches a framework whose own dependencies were
     left out. Elsewhere there is nothing to ask.
+
+    The status route is passive (it never raises a system dialog), and this
+    reads only keys that survive in the snapshot: ``permissions[].id/status``
+    and ``app_identity.bundle_id``.
     """
     if sys.platform != "darwin":
         return {}

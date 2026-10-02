@@ -1,46 +1,27 @@
-"""Characterization of the macOS permission port BEFORE the just-in-time rebuild.
+"""Characterization of the macOS permission port across the just-in-time rebuild.
 
-These tests pin what the code does today. They were written on the unchanged
-base commit and pass against it; the just-in-time rebuild (every protected
-feature asks macOS at first use instead of being refused by our own preflight)
-must keep the ``survives`` group green UNCHANGED, because Windows, Linux and the
-surviving macOS rules are the promise the rebuild makes.
+These tests were written on the unchanged base commit, before every protected
+feature started asking macOS at first use instead of being refused by our own
+preflight. The ``survives`` group is the promise the rebuild makes: Windows and
+Linux behave exactly as before and the surviving macOS rules (live reads, the
+own-bundle-only reset, the Automation allow-list, the pane deep links) hold. The
+wall itself (the runtime-access gate, feature readiness, the v1 snapshot, the
+restart flag, the foreground gate) is gone, and so are the ``test_legacy_*``
+tests that pinned it; where the new contract has an observable counterpart the
+old test was rewritten to assert it, under a ``survives`` name, in the same
+commit that deleted the wall.
 
 Naming contract (read this before touching a red test)
 
-* ``test_survives_*``  - behaviour that must outlive the rebuild. A red one after
-  a later stage is a regression, not an intended change.
-* ``test_legacy_*``    - behaviour the rebuild deletes or rewrites ON PURPOSE (the
-  runtime-access wall, feature readiness, the v1 snapshot keys, the restart
-  flag, the foreground gate). A red one after the stage that changes it is
-  intentional: rewrite or delete it in that same commit and say why. A red
-  ``test_legacy_*`` in any other stage is a regression.
+* ``test_survives_*``  - behaviour that must outlive the rebuild. A red one is a
+  regression, not an intended change.
+* ``test_legacy_*``    - none remain. The last test of this module fails if one
+  comes back, because a test named after deleted behaviour is a test that pins
+  the wall again.
 
-The v1 snapshot keys EXPECTED to change in the later snapshot-v2 stage, all
-pinned only by ``test_legacy_*`` tests: top level ``features``,
-``identity_reset``, ``restart_required``; ``app_identity.foreground`` and
-``app_identity.expected_bundle_id``; per permission row ``wanted``, ``required``
-(becomes ``used_for``) and ``restart_required`` (becomes ``restart_hint``); and
-per feature ``active``. Added by v2: ``outside_installed_app`` and ``needed``.
-The keys pinned by the ``survives`` tests (``platform``, ``supported``,
-``headless``, ``app_identity.app_name/bundle_id/bundle_path/
-launched_as_bundle/stable``, and per row ``id/label/status/can_request/
-can_open_settings/can_reset/detail``) are the ones other consumers read.
-
-Tests EXPECTED to be rewritten or deleted by a later stage (the last test of
-this module fails if a ``test_legacy_*`` test is missing from this list):
-
-* test_legacy_non_darwin_snapshot_v1_only_keys
-* test_legacy_non_darwin_feature_readiness
-* test_legacy_non_darwin_dry_run_request_claims_it_would_ask
-* test_legacy_darwin_runtime_access_is_a_wall_that_never_asks
-* test_legacy_darwin_request_is_refused_in_the_background_or_outside_the_app
-* test_legacy_darwin_request_flags_follow_the_state_and_hide_the_dead_button
-* test_legacy_darwin_snapshot_reports_feature_readiness_and_wanted
-* test_legacy_darwin_a_screen_request_flags_a_restart_until_relaunch
-* test_legacy_darwin_open_settings_needs_the_installed_app_but_not_the_foreground
-* test_legacy_default_darwin_microphone_gate_is_the_runtime_access_wall
-
+The port is read through ``state`` (live, never asks), ``request_native`` (the
+one native request, never evidence of a grant), ``open_pane`` and ``reset_row``;
+who may ask, and when, is decided by the permission service and tested there.
 The FakeTCC call log is the proof that nothing asks: off macOS it must stay
 empty (``assert_silent``), and a read on macOS never prompts
 (``assert_no_prompts``). Everything about macOS behaviour here is a MODEL (the
@@ -66,7 +47,6 @@ from jarvis.platform.permissions import (
     APP_NAME,
     AUTOMATION_TARGETS,
     EXPECTED_BUNDLE_ID,
-    FEATURE_REQUIREMENTS,
     PermissionId,
     PermissionState,
     SystemPermissionPort,
@@ -90,25 +70,19 @@ AUTOMATION = TccService.AUTOMATION
 MUSIC = "com.apple.Music"
 SPOTIFY = "com.spotify.client"
 
-_NOT_REQUIRED_MESSAGE = "macOS permission requests are not required on this platform."
-
-
-def _row(snapshot: dict, permission_id: PermissionId) -> dict:
-    return next(item for item in snapshot["permissions"] if item["id"] == permission_id.value)
-
 
 def _exercise_every_operation(port: SystemPermissionPort) -> None:
     """Every public entry point of the port, for every permission, dry or not."""
     for permission_id in PermissionId:
         port.state(permission_id)
-        port.runtime_access_granted(permission_id)
+        port.state(permission_id, deep=True)
+        port.request_native(permission_id, target=MUSIC)
+        port.open_pane(permission_id)
         for dry_run in (False, True):
-            port.request(permission_id, dry_run=dry_run)
-            port.open_settings(permission_id, dry_run=dry_run)
-            port.reset(permission_id, dry_run=dry_run)
-    for feature in FEATURE_REQUIREMENTS:
-        port.runtime_feature_ready(feature)
-    port.snapshot()
+            port.reset_row(permission_id, dry_run=dry_run)
+    port.usage_string_present(PermissionId.MICROPHONE)
+    port.has_desktop_session()
+    port._app_identity()
 
 
 @pytest.fixture(params=["win32", "linux"])
@@ -138,42 +112,21 @@ def test_survives_non_darwin_state_is_not_required_for_every_permission(non_darw
     tcc.assert_silent()
 
 
-def test_survives_non_darwin_runtime_access_is_granted_for_every_permission(non_darwin) -> None:
+def test_survives_non_darwin_request_native_asks_nothing(non_darwin) -> None:
     port, tcc = non_darwin
 
-    assert all(port.runtime_access_granted(permission_id) for permission_id in PermissionId)
+    for permission_id in PermissionId:
+        assert port.request_native(permission_id, target=MUSIC) == "unavailable", permission_id
 
     tcc.assert_silent()
 
 
-def test_survives_non_darwin_request_refuses_and_asks_nothing(non_darwin) -> None:
+def test_survives_non_darwin_open_pane_opens_nothing(non_darwin) -> None:
     port, tcc = non_darwin
 
     for permission_id in PermissionId:
-        operation = port.request(permission_id)
-        assert operation.ok is False, permission_id
-        assert operation.performed is False
-        assert operation.dry_run is False
-        assert operation.restart_required is False
-        assert operation.action == "request"
-        assert operation.message == _NOT_REQUIRED_MESSAGE
+        assert port.open_pane(permission_id) is False, permission_id
 
-    tcc.assert_silent()
-
-
-def test_survives_non_darwin_open_settings_refuses_and_opens_nothing(non_darwin) -> None:
-    port, tcc = non_darwin
-
-    for permission_id in PermissionId:
-        operation = port.open_settings(permission_id)
-        assert operation.ok is False, permission_id
-        assert operation.performed is False
-        assert operation.restart_required is False
-
-    # The Keychain has no pane at all; every other row refuses with the same
-    # platform sentence.
-    assert "no System Settings pane" in port.open_settings(PermissionId.CREDENTIAL_STORE).message
-    assert port.open_settings(PermissionId.MICROPHONE).message == _NOT_REQUIRED_MESSAGE
     assert tcc.workspace_opened_urls == []
     tcc.assert_silent()
 
@@ -183,9 +136,10 @@ def test_survives_non_darwin_reset_is_a_refused_no_op_and_never_runs_tccutil(non
 
     for permission_id in PermissionId:
         for dry_run in (False, True):
-            operation = port.reset(permission_id, dry_run=dry_run)
+            operation = port.reset_row(permission_id, dry_run=dry_run)
             assert operation.ok is False, (permission_id, dry_run)
             assert operation.performed is False
+            assert operation.action == "reset"
             assert "has no resettable macOS record" in operation.message
 
     assert tcc.tccutil_calls == []
@@ -203,122 +157,24 @@ def test_survives_non_darwin_call_log_stays_empty_through_every_operation(non_da
 
 
 @pytest.mark.parametrize("display", [True, False])
-def test_survives_non_darwin_snapshot_keeps_the_keys_other_consumers_read(
+def test_survives_non_darwin_identity_keeps_the_values_other_consumers_read(
     non_darwin, monkeypatch: pytest.MonkeyPatch, display: bool
 ) -> None:
-    """``jarvis permissions status`` and the browser surface read exactly these."""
+    """The status snapshot and the browser surface read exactly these values."""
     port, tcc = non_darwin
     monkeypatch.setattr(probes, "display_present", lambda: display)
 
-    snapshot = port.snapshot()
+    identity, headless = port._app_identity()
 
-    assert snapshot["platform"] == port.platform
-    assert snapshot["supported"] is False
-    assert snapshot["headless"] is (not display)
-    identity = snapshot["app_identity"]
-    assert identity["app_name"] == APP_NAME
-    assert identity["bundle_id"] is None
-    assert identity["bundle_path"] is None
-    assert identity["launched_as_bundle"] is False
-    assert identity["stable"] is False
-    assert [row["id"] for row in snapshot["permissions"]] == [item.value for item in PermissionId]
-    for row in snapshot["permissions"]:
-        assert row["status"] == "not_required"
-        assert row["can_request"] is False
-        assert row["can_open_settings"] is False
-        assert row["can_reset"] is False
-        assert "detail" in row  # its wording is pinned by the legacy snapshot test
-        assert isinstance(row["label"], str) and row["label"]
-    labels = {row["id"]: row["label"] for row in snapshot["permissions"]}
-    assert labels["microphone"] == "Microphone"
-    assert labels["screen_recording"] == "Screen Recording"
-    assert labels["accessibility"] == "Accessibility"
-    assert labels["input_monitoring"] == "Input Monitoring"
-    tcc.assert_silent()
-
-
-def test_legacy_non_darwin_snapshot_v1_only_keys(non_darwin) -> None:
-    """The v1 keys snapshot-v2 drops or renames (see the module docstring)."""
-    port, tcc = non_darwin
-
-    snapshot = port.snapshot()
-
-    assert set(snapshot) == {
-        "platform",
-        "supported",
-        "headless",
-        "app_identity",
-        "permissions",
-        "features",
-        "identity_reset",
-        "restart_required",
-    }
-    assert snapshot["identity_reset"] is None
-    assert snapshot["restart_required"] is False
-    identity = snapshot["app_identity"]
-    assert set(identity) == {
-        "app_name",
-        "expected_bundle_id",
-        "bundle_id",
-        "bundle_path",
-        "launched_as_bundle",
-        "stable",
-        "foreground",
-    }
-    assert identity["expected_bundle_id"] == EXPECTED_BUNDLE_ID
-    assert identity["foreground"] is False
-    assert set(snapshot["features"]) == set(FEATURE_REQUIREMENTS)
-    for feature in snapshot["features"].values():
-        assert feature == {
-            "ready": True,
-            "missing": [],
-            "identity_ready": True,
-            "restart_required": False,
-            "active": True,
-        }
-    for row in snapshot["permissions"]:
-        assert row["detail"] == "This operating system does not require a macOS TCC grant."
-        assert row["wanted"] is True
-        assert row["restart_required"] is False
-        expected_required = [
-            feature
-            for feature, needs in FEATURE_REQUIREMENTS.items()
-            if PermissionId(row["id"]) in needs
-        ]
-        assert row["required"] == expected_required
-        assert set(row) == {
-            "id",
-            "label",
-            "status",
-            "required",
-            "can_request",
-            "can_open_settings",
-            "can_reset",
-            "restart_required",
-            "detail",
-            "wanted",
-        }
-    tcc.assert_silent()
-
-
-def test_legacy_non_darwin_feature_readiness(non_darwin) -> None:
-    """``FEATURE_REQUIREMENTS`` readiness is deleted by the rebuild."""
-    port, tcc = non_darwin
-
-    assert all(port.runtime_feature_ready(feature) for feature in FEATURE_REQUIREMENTS)
-
-    tcc.assert_silent()
-
-
-def test_legacy_non_darwin_dry_run_request_claims_it_would_ask(non_darwin) -> None:
-    """A dry run answers before the platform check: it reports a request it would refuse."""
-    port, tcc = non_darwin
-
-    operation = port.request(PermissionId.MICROPHONE, dry_run=True)
-
-    assert operation.ok is True
-    assert operation.performed is False
-    assert operation.dry_run is True
+    assert port.platform in {"win32", "linux"}
+    assert headless is (not display)
+    assert identity.app_name == APP_NAME
+    assert identity.bundle_id is None
+    assert identity.bundle_path is None
+    assert identity.launched_as_bundle is False
+    assert identity.stable is False
+    assert port.outside_installed_app is True
+    assert port.launched_as_bundle is False
     tcc.assert_silent()
 
 
@@ -360,7 +216,7 @@ def test_survives_reset_drops_the_rows_of_the_running_apps_own_bundle_id(
     tcc.deny(MIC)
     monkeypatch.setattr(subprocess, "run", tcc.run_tccutil)
 
-    operation = port.reset(PermissionId.MICROPHONE)
+    operation = port.reset_row(PermissionId.MICROPHONE)
 
     assert operation.ok is True and operation.performed is True
     assert tcc.tccutil_calls == [["/usr/bin/tccutil", "reset", "Microphone", running_id]]
@@ -387,7 +243,7 @@ def test_survives_reset_is_refused_for_anything_but_the_installed_app(
     port, tcc = make_darwin_port(bundle_id=bundle_id, bundle_path=bundle_path)
     monkeypatch.setattr(subprocess, "run", tcc.run_tccutil)
 
-    operation = port.reset(PermissionId.MICROPHONE)
+    operation = port.reset_row(PermissionId.MICROPHONE)
 
     assert operation.ok is False and operation.performed is False
     assert "installed app" in operation.message
@@ -411,7 +267,7 @@ def test_survives_reset_names_one_tcc_service_for_the_own_bundle_only(
     port, tcc = make_darwin_port()
     monkeypatch.setattr(subprocess, "run", tcc.run_tccutil)
 
-    operation = port.reset(permission_id)
+    operation = port.reset_row(permission_id)
 
     assert operation.ok is True
     assert tcc.tccutil_calls == [["/usr/bin/tccutil", "reset", service, EXPECTED_BUNDLE_ID]]
@@ -421,7 +277,7 @@ def test_survives_the_keychain_has_no_resettable_row(monkeypatch: pytest.MonkeyP
     port, tcc = make_darwin_port()
     monkeypatch.setattr(subprocess, "run", tcc.run_tccutil)
 
-    operation = port.reset(PermissionId.CREDENTIAL_STORE)
+    operation = port.reset_row(PermissionId.CREDENTIAL_STORE)
 
     assert operation.ok is False
     assert tcc.tccutil_calls == []
@@ -434,11 +290,9 @@ def test_survives_reads_are_live_and_never_cached() -> None:
 
     tcc.deny(MIC)
     assert port.state(PermissionId.MICROPHONE) is PermissionState.DENIED
-    assert _row(port.snapshot(), PermissionId.MICROPHONE)["status"] == "denied"
-    assert port.runtime_access_granted(PermissionId.MICROPHONE) is False
 
     tcc.grant(MIC)
-    assert port.runtime_access_granted(PermissionId.MICROPHONE) is True
+    assert port.state(PermissionId.MICROPHONE) is PermissionState.GRANTED
 
     mark = tcc.mark()
     port.state(PermissionId.MICROPHONE)
@@ -468,25 +322,26 @@ def test_survives_a_screen_grant_is_seen_through_the_live_window_oracle() -> Non
     tcc.grant(SCREEN)
 
     assert tcc.modules["Quartz"].CGPreflightScreenCaptureAccess() is False
-    assert port.state(PermissionId.SCREEN_RECORDING) is PermissionState.GRANTED
+    assert port.state(PermissionId.SCREEN_RECORDING) is PermissionState.NOT_GRANTED
+    assert port.state(PermissionId.SCREEN_RECORDING, deep=True) is PermissionState.GRANTED
 
 
 def test_survives_a_frozen_screen_preflight_is_never_invented_into_a_grant() -> None:
     port, tcc = make_darwin_port(screen_grant_needs_relaunch=True)
     tcc.grant(SCREEN)
 
-    assert port.state(PermissionId.SCREEN_RECORDING) is PermissionState.NOT_GRANTED
+    assert port.state(PermissionId.SCREEN_RECORDING, deep=True) is PermissionState.NOT_GRANTED
     tcc.relaunch()
-    assert port.state(PermissionId.SCREEN_RECORDING) is PermissionState.GRANTED
+    assert port.state(PermissionId.SCREEN_RECORDING, deep=True) is PermissionState.GRANTED
 
 
 def test_survives_reading_state_never_prompts() -> None:
     port, tcc = make_darwin_port()
 
-    port.snapshot()
     for permission_id in PermissionId:
         port.state(permission_id)
-        port.runtime_access_granted(permission_id)
+        port.state(permission_id, deep=True)
+        port.state(permission_id, target=MUSIC)
 
     tcc.assert_no_prompts()
     assert tcc.dialogs_shown() == []
@@ -495,13 +350,15 @@ def test_survives_reading_state_never_prompts() -> None:
 def test_survives_app_identity_of_the_installed_app() -> None:
     port, _tcc = make_darwin_port()
 
-    identity = port.snapshot()["app_identity"]
+    identity, headless = port._app_identity()
 
-    assert identity["app_name"] == APP_NAME
-    assert identity["bundle_id"] == EXPECTED_BUNDLE_ID
-    assert identity["bundle_path"] == INSTALLED_BUNDLE_PATH
-    assert identity["launched_as_bundle"] is True
-    assert identity["stable"] is True
+    assert identity.app_name == APP_NAME
+    assert identity.bundle_id == EXPECTED_BUNDLE_ID
+    assert identity.bundle_path == INSTALLED_BUNDLE_PATH
+    assert identity.launched_as_bundle is True
+    assert identity.stable is True
+    assert headless is False
+    assert port.outside_installed_app is False
 
 
 @pytest.mark.parametrize(
@@ -519,12 +376,13 @@ def test_survives_app_identity_stability_rules(
 ) -> None:
     port, _tcc = make_darwin_port(bundle_id=bundle_id, bundle_path=bundle_path)
 
-    identity = port.snapshot()["app_identity"]
+    identity, _headless = port._app_identity()
 
-    assert identity["bundle_id"] == bundle_id
-    assert identity["bundle_path"] == bundle_path
-    assert identity["launched_as_bundle"] is launched
-    assert identity["stable"] is stable
+    assert identity.bundle_id == bundle_id
+    assert identity.bundle_path == bundle_path
+    assert identity.launched_as_bundle is launched
+    assert identity.stable is stable
+    assert port.outside_installed_app is (not stable)
 
 
 @pytest.mark.parametrize(
@@ -541,8 +399,6 @@ def test_survives_microphone_state_mapping(setup, expected: PermissionState) -> 
     setup(tcc)
 
     assert port.state(PermissionId.MICROPHONE) is expected
-    row = _row(port.snapshot(), PermissionId.MICROPHONE)
-    assert row["status"] == expected.value
 
 
 def test_survives_microphone_state_is_unavailable_when_the_probe_cannot_answer() -> None:
@@ -574,13 +430,13 @@ def test_survives_automation_probes_only_the_allow_listed_players() -> None:
     )
     tcc.grant(AUTOMATION, MUSIC)
 
-    row = _row(port.snapshot(), PermissionId.AUTOMATION)
+    state = port.state(PermissionId.AUTOMATION)
 
     targets = {call.target for call in tcc.calls_of(service=AUTOMATION)}
     assert targets == {MUSIC, SPOTIFY}
     assert other not in targets
     assert tcc.requests(AUTOMATION) == []  # the status read never raises the dialog
-    assert row["status"] == "not_determined"  # Spotify has no answer yet: strictest wins
+    assert state is PermissionState.NOT_DETERMINED  # Spotify has no answer yet: strictest wins
 
 
 def test_survives_automation_is_not_required_without_a_scriptable_player() -> None:
@@ -603,14 +459,12 @@ def test_survives_automation_is_not_required_without_a_scriptable_player() -> No
         (PermissionId.AUTOMATION, "Privacy_Automation"),
     ],
 )
-def test_survives_open_settings_deep_links_to_the_matching_pane(
+def test_survives_open_pane_deep_links_to_the_matching_pane(
     permission_id: PermissionId, pane: str
 ) -> None:
     port, tcc = make_darwin_port()
 
-    operation = port.open_settings(permission_id)
-
-    assert operation.ok is True
+    assert port.open_pane(permission_id) is True
     assert tcc.workspace_opened_urls == [
         f"x-apple.systempreferences:com.apple.preference.security?{pane}"
     ]
@@ -619,102 +473,81 @@ def test_survives_open_settings_deep_links_to_the_matching_pane(
 def test_survives_the_keychain_has_no_settings_pane() -> None:
     port, tcc = make_darwin_port()
 
-    operation = port.open_settings(PermissionId.CREDENTIAL_STORE)
-
-    assert operation.ok is False
+    assert port.open_pane(PermissionId.CREDENTIAL_STORE) is False
     assert tcc.workspace_opened_urls == []
 
 
 # ---------------------------------------------------------------------------
-# (b') macOS: the wall the rebuild removes
+# (b') macOS: what replaced the wall
 # ---------------------------------------------------------------------------
 
 
-def test_legacy_darwin_runtime_access_is_a_wall_that_never_asks() -> None:
-    """Today a feature is refused by OUR preflight and macOS is never asked."""
+def test_survives_a_foreign_grantee_is_read_as_the_os_reports_it() -> None:
+    """Identity decides who may ASK, never what a state read says (design P6).
+
+    The old wall refused a live grant unless the process was the installed app. The
+    port now reports the grant of whatever code is responsible, and flags that it is
+    not the installed app so the service can refuse to ASK on its own.
+    """
     port, tcc = make_darwin_port()
+    assert port.state(PermissionId.MICROPHONE) is PermissionState.NOT_DETERMINED
+    assert port.state(PermissionId.ACCESSIBILITY) is PermissionState.NOT_GRANTED
+    tcc.assert_no_prompts()  # a read never asks
 
-    assert port.runtime_access_granted(PermissionId.MICROPHONE) is False
-    assert port.runtime_access_granted(PermissionId.ACCESSIBILITY) is False
-    tcc.assert_no_prompts()  # the wall refuses without ever asking
-
-    tcc.grant(MIC)
-    assert port.runtime_access_granted(PermissionId.MICROPHONE) is True
-
-    # A live grant is not enough without the stable installed identity.
     terminal_port, terminal = make_darwin_port(bundle_id="com.apple.Terminal", granted=[MIC])
     assert terminal_port.state(PermissionId.MICROPHONE) is PermissionState.GRANTED
-    assert terminal_port.runtime_access_granted(PermissionId.MICROPHONE) is False
+    assert terminal_port.outside_installed_app is True
     terminal.assert_no_prompts()
 
 
-def test_legacy_darwin_request_is_refused_in_the_background_or_outside_the_app() -> None:
+def test_survives_request_native_reaches_the_os_whichever_the_identity_and_the_foreground() -> None:
+    """Whether we may ask is the service's decision; the port only makes the call."""
     background_port, background = make_darwin_port(foreground=False)
     unstable_port, unstable = make_darwin_port(bundle_id="org.python.python")
 
-    refused_background = background_port.request(PermissionId.SCREEN_RECORDING)
-    refused_unstable = unstable_port.request(PermissionId.SCREEN_RECORDING)
+    assert background_port.request_native(PermissionId.MICROPHONE) == "dialog_shown"
+    assert unstable_port.request_native(PermissionId.MICROPHONE) == "dialog_shown"
 
-    assert refused_background.ok is False and "foreground" in refused_background.message
-    assert refused_unstable.ok is False and "Terminal or Python" in refused_unstable.message
-    assert background.requests() == [] and unstable.requests() == []
+    assert len(background.requests(MIC)) == 1
+    assert len(unstable.requests(MIC)) == 1
+    assert unstable_port.outside_installed_app is True
 
 
-def test_legacy_darwin_request_flags_follow_the_state_and_hide_the_dead_button() -> None:
+def test_survives_a_decision_on_file_is_never_asked_again_by_macos() -> None:
     port, tcc = make_darwin_port(default_policy=DialogPolicy.DENY)
 
-    before = _row(port.snapshot(), PermissionId.MICROPHONE)
-    first = port.request(PermissionId.MICROPHONE)
-    after = _row(first.snapshot, PermissionId.MICROPHONE)
-    second = port.request(PermissionId.MICROPHONE)
+    first = port.request_native(PermissionId.MICROPHONE)
+    after_first = port.state(PermissionId.MICROPHONE)
+    second = port.request_native(PermissionId.MICROPHONE)
 
-    assert before["can_request"] is True and before["status"] == "not_determined"
-    assert first.ok is True and first.performed is True and first.restart_required is False
-    assert after["status"] == "denied"
-    assert after["can_request"] is False and after["can_reset"] is True
-    assert second.ok is False and second.performed is False
-    assert len(tcc.requests(MIC)) == 1  # macOS was asked exactly once
+    assert first == "dialog_shown" and after_first is PermissionState.DENIED
+    assert second == "no_dialog"  # the status read beforehand tells a silent no-op
+    assert len(tcc.dialogs_shown(MIC)) == 1  # macOS showed exactly one dialog
+    assert len(tcc.ignored_requests(MIC)) == 1  # the second request was ignored
 
 
-def test_legacy_darwin_snapshot_reports_feature_readiness_and_wanted() -> None:
-    port, tcc = make_darwin_port()
-
-    cold = port.snapshot()
-    tcc.grant(MIC)
-    warm = port.snapshot()
-    ducking_off = port.snapshot(active_features=frozenset(FEATURE_REQUIREMENTS) - {"audio_ducking"})
-
-    assert cold["features"]["voice"]["ready"] is False
-    assert cold["features"]["voice"]["missing"] == ["microphone"]
-    assert warm["features"]["voice"]["ready"] is True
-    assert all(row["wanted"] for row in cold["permissions"])
-    assert _row(ducking_off, PermissionId.AUTOMATION)["wanted"] is False
-    assert ducking_off["features"]["audio_ducking"]["active"] is False
-    assert cold["identity_reset"] is None
-
-
-def test_legacy_darwin_a_screen_request_flags_a_restart_until_relaunch() -> None:
+def test_survives_a_native_request_is_never_evidence_of_a_grant() -> None:
+    """The Screen Recording preflight is frozen until relaunch, whatever the user answered."""
     port, tcc = make_darwin_port(screen_grant_needs_relaunch=True)
 
-    operation = port.request(PermissionId.SCREEN_RECORDING)
+    outcome = port.request_native(PermissionId.SCREEN_RECORDING)
 
-    assert operation.ok is True and operation.restart_required is True
-    assert operation.snapshot["restart_required"] is True
-    row = _row(operation.snapshot, PermissionId.SCREEN_RECORDING)
-    assert row["restart_required"] is True and row["can_request"] is False
+    assert outcome in {"dialog_shown", "no_dialog"}
+    assert port.state(PermissionId.SCREEN_RECORDING) is PermissionState.NOT_GRANTED
     tcc.relaunch()
-    assert _row(port.snapshot(), PermissionId.SCREEN_RECORDING)["restart_required"] is False
+    assert port.state(PermissionId.SCREEN_RECORDING) is PermissionState.GRANTED
 
 
-def test_legacy_darwin_open_settings_needs_the_installed_app_but_not_the_foreground() -> None:
+def test_survives_open_pane_works_from_the_background_and_outside_the_installed_app() -> None:
+    """The Settings deep link is not a prompt: no foreground and no identity needed."""
     background_port, background = make_darwin_port(foreground=False)
     unstable_port, unstable = make_darwin_port(bundle_id="org.python.python")
 
-    assert background_port.open_settings(PermissionId.MICROPHONE).ok is True
-    refused = unstable_port.open_settings(PermissionId.MICROPHONE)
+    assert background_port.open_pane(PermissionId.MICROPHONE) is True
+    assert unstable_port.open_pane(PermissionId.MICROPHONE) is True
 
     assert background.workspace_opened_urls
-    assert refused.ok is False and unstable.workspace_opened_urls == []
+    assert unstable.workspace_opened_urls
 
 
 # ---------------------------------------------------------------------------
@@ -726,19 +559,19 @@ def test_legacy_darwin_open_settings_needs_the_installed_app_but_not_the_foregro
 def test_survives_the_default_microphone_gate_is_absent_off_macos(
     monkeypatch: pytest.MonkeyPatch, platform_name: str
 ) -> None:
-    # A tight window: only the synchronous factory call runs with the patched name.
-    with monkeypatch.context() as patch:
-        patch.setattr(capture.sys, "platform", platform_name)
-        gate = capture._macos_microphone_access_gate()
+    """Off macOS the capture has no access gate of its own: the stream just opens."""
+    port, tcc = make_non_darwin_port(platform_name)  # type: ignore[arg-type]
+    install_port(monkeypatch, port)
 
-    assert gate is None
+    assert capture.MicrophoneCapture(device=0)._access_gate is None
+    tcc.assert_silent()
 
 
 @pytest.mark.skipif(sys.platform == "darwin", reason="off-macOS behaviour; the host decides")
 async def test_survives_microphone_capture_opens_off_macos_without_touching_the_permission_port(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The capture gate is a macOS-only wall: elsewhere the stream just opens."""
+    """Elsewhere than macOS the stream just opens: no permission is consulted."""
     port, tcc = make_non_darwin_port("linux")
     install_port(monkeypatch, port)
     audio = FakeAudioInput(None)  # no TCC off macOS: nothing to consult
@@ -757,24 +590,6 @@ async def test_survives_microphone_capture_opens_off_macos_without_touching_the_
     assert any(chunk.pcm)
     assert stream.closed is True
     tcc.assert_silent()
-
-
-def test_legacy_default_darwin_microphone_gate_is_the_runtime_access_wall(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """On macOS the default gate is ``runtime_access_granted``: it never asks."""
-    port, tcc = make_darwin_port()
-    install_port(monkeypatch, port)
-
-    with monkeypatch.context() as patch:
-        patch.setattr(capture.sys, "platform", "darwin")
-        gate = capture._macos_microphone_access_gate()
-
-    assert gate is not None
-    assert gate() is False  # not_determined: refused, and macOS was not asked
-    tcc.assert_no_prompts()
-    tcc.grant(MIC)
-    assert gate() is True
 
 
 @pytest.mark.parametrize(
@@ -818,14 +633,12 @@ def test_survives_the_hotkey_backend_factory_choice_per_platform(
         tcc.assert_silent()
 
 
-def test_the_module_docstring_lists_every_legacy_test() -> None:
-    """The red tests a later stage expects must be announced, not discovered."""
+def test_no_test_in_this_module_pins_the_deleted_wall() -> None:
+    """A ``test_legacy_*`` name would announce behaviour the rebuild deleted on purpose."""
     legacy = sorted(
         name
         for name, value in globals().items()
         if name.startswith("test_legacy_") and callable(value)
     )
-    documented = __doc__ or ""
 
-    assert legacy
-    assert [name for name in legacy if f"* {name}\n" not in documented] == []
+    assert legacy == []

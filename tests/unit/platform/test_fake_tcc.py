@@ -822,30 +822,28 @@ def test_the_dmg_build_is_an_installed_identity_too() -> None:
 def test_the_real_port_reads_the_fake_without_ever_prompting() -> None:
     port, tcc = make_darwin_port()
 
-    snapshot = port.snapshot()
-    port.state(PermissionId.MICROPHONE)
-    port.runtime_access_granted(PermissionId.MICROPHONE)
+    states = {permission_id.value: port.state(permission_id) for permission_id in PermissionId}
 
-    rows = {row["id"]: row["status"] for row in snapshot["permissions"]}
-    assert rows["microphone"] == "not_determined"
-    assert rows["screen_recording"] == "not_granted"
-    assert rows["accessibility"] == "not_granted"
-    assert rows["input_monitoring"] == "not_determined"
-    assert rows["automation"] == "not_required"  # no scriptable player installed
-    assert snapshot["app_identity"]["stable"] is True
+    assert states["microphone"] is PermissionState.NOT_DETERMINED
+    assert states["screen_recording"] is PermissionState.NOT_GRANTED
+    assert states["accessibility"] is PermissionState.NOT_GRANTED
+    assert states["input_monitoring"] is PermissionState.NOT_DETERMINED
+    assert states["automation"] is PermissionState.NOT_REQUIRED  # no scriptable player installed
+    assert port._app_identity()[0].stable is True
     assert tcc.probes() and tcc.kinds().count("probe") == len(tcc.calls)
     tcc.assert_no_prompts()
 
 
-def test_the_real_port_requests_through_the_fake_exactly_once() -> None:
+def test_the_real_port_requests_through_the_fake_and_macos_never_asks_twice() -> None:
     port, tcc = make_darwin_port(default_policy=DialogPolicy.DENY)
 
-    first = port.request(PermissionId.MICROPHONE)
-    second = port.request(PermissionId.MICROPHONE)
+    first = port.request_native(PermissionId.MICROPHONE)
+    second = port.request_native(PermissionId.MICROPHONE)
 
-    assert first.performed is True
-    assert second.performed is False  # the port already hides a dead Allow button
-    assert len(tcc.requests(MIC)) == 1
+    assert first == "dialog_shown"
+    assert second == "no_dialog"  # the decision is on file: no second dialog
+    assert len(tcc.dialogs_shown(MIC)) == 1
+    assert len(tcc.ignored_requests(MIC)) == 1
     assert port.state(PermissionId.MICROPHONE) is PermissionState.DENIED
 
 
@@ -863,26 +861,27 @@ def test_the_real_port_sees_a_screen_grant_through_the_live_oracle() -> None:
     tcc.grant(SCREEN)
 
     assert tcc.modules["Quartz"].CGPreflightScreenCaptureAccess() is False
-    assert port.state(PermissionId.SCREEN_RECORDING) is PermissionState.GRANTED
+    assert port.state(PermissionId.SCREEN_RECORDING) is PermissionState.NOT_GRANTED
+    assert port.state(PermissionId.SCREEN_RECORDING, deep=True) is PermissionState.GRANTED
 
 
 def test_the_real_port_needs_a_relaunch_in_the_pessimistic_screen_world() -> None:
     port, tcc = make_darwin_port(screen_grant_needs_relaunch=True)
     tcc.grant(SCREEN)
 
-    assert port.state(PermissionId.SCREEN_RECORDING) is PermissionState.NOT_GRANTED
+    assert port.state(PermissionId.SCREEN_RECORDING, deep=True) is PermissionState.NOT_GRANTED
     tcc.relaunch()
-    assert port.state(PermissionId.SCREEN_RECORDING) is PermissionState.GRANTED
+    assert port.state(PermissionId.SCREEN_RECORDING, deep=True) is PermissionState.GRANTED
 
 
 @pytest.mark.parametrize("platform_name", ["win32", "linux"])
 def test_a_non_darwin_port_never_touches_the_fake(platform_name: str) -> None:
     port, tcc = make_non_darwin_port(platform_name)  # type: ignore[arg-type]
 
-    port.snapshot()
     port.state(PermissionId.MICROPHONE)
-    port.request(PermissionId.MICROPHONE)
-    port.reset(PermissionId.MICROPHONE)
+    port.request_native(PermissionId.MICROPHONE)
+    port.open_pane(PermissionId.MICROPHONE)
+    port.reset_row(PermissionId.MICROPHONE)
 
     tcc.assert_silent()
     assert port.platform == platform_name
