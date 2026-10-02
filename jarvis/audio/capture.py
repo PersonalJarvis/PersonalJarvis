@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import asyncio
 import math
-import sys
 import time
 from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from typing import TYPE_CHECKING, Any
@@ -25,6 +24,9 @@ if TYPE_CHECKING:
     # Type-checkers see the real module so `sd.InputStream` annotations resolve;
     # at runtime the guarded import below binds sd (or None when absent).
     import sounddevice as sd
+
+    from jarvis.core.protocols import PermissionGate
+    from jarvis.platform.permission_service import EnsureResult
 else:
     try:
         import sounddevice as sd
@@ -33,6 +35,7 @@ else:
 
 from jarvis.audio import topology
 from jarvis.audio.device_select import is_legacy_primary_mapper
+from jarvis.core.events import PERMISSION_FEATURES, PermissionNeeded
 from jarvis.core.protocols import AudioChunk
 
 SAMPLE_RATE = 16_000       # Whisper native rate
@@ -89,37 +92,73 @@ def capture_chunks_for_duration(seconds: float) -> int:
 DEFAULT_QUEUE_CHUNKS = capture_chunks_for_duration(2.0)
 
 
+# The permission this module asks about. The service takes the plain id string
+# (``PermissionId`` is a ``StrEnum``), which keeps ``jarvis.platform`` out of this
+# module's import graph: a headless install must import capture without it.
+_MICROPHONE = "microphone"
+_GRANTED_STATES = frozenset({"granted", "not_required"})
+
+# Exact digital silence (all-zero samples) for this long while the OS says the
+# microphone is granted means macOS is feeding zeros (a denied or muted input):
+# the capture reports it once and stays open (unverified on a real Mac).
+_SILENCE_REPORT_AFTER_S = 5.0
+_SILENCE_DETAIL = (
+    "The microphone delivers only silence: access is probably denied or muted."
+)
+_NOT_GRANTED_MESSAGE = "Microphone access is not granted for Personal Jarvis."
+
+
 class MicrophoneAccessError(PermissionError):
-    """The current process is not allowed to open the local microphone."""
+    """The microphone may not be opened, or was revoked while it was open.
 
-
-def _macos_microphone_access_gate() -> Callable[[], bool] | None:
-    """Build an uncached, non-prompting TCC gate for a macOS capture.
-
-    Importing the native permission port is deliberately deferred so the base
-    audio module remains portable on Windows, Linux, and headless installs.
-    The returned port probes both the grant and app-bundle identity on every
-    call; it never invokes an Apple request API.
+    ``result`` is the permission layer's :class:`EnsureResult` for the refusal
+    (``user_detail`` is a finished sentence for people, ``agent_detail`` the
+    prohibitive one for a tool error), so a consumer can say WHY without asking
+    the OS again. It is ``None`` only for an error raised by code that never
+    consulted the layer.
     """
-    if sys.platform != "darwin":
-        return None
-    try:
-        from jarvis.platform.permissions import (  # noqa: PLC0415
-            PermissionId,
-            get_system_permission_port,
+
+    def __init__(self, message: str = "", *, result: EnsureResult | None = None) -> None:
+        super().__init__(message)
+        self.result = result
+
+
+def _state_value(state: Any) -> str:
+    return str(getattr(state, "value", state))
+
+
+def _legacy_gate_result(allowed: bool) -> EnsureResult:
+    """An ``EnsureResult`` for an injected boolean ``access_gate`` (a test seam)."""
+    from jarvis.platform.permission_service import (  # noqa: PLC0415 - lazy: keeps capture headless-light
+        EnsureResult,
+        PermissionOutcome,
+        agent_detail_for,
+        user_detail_for,
+    )
+    from jarvis.platform.permissions import PermissionId, PermissionState  # noqa: PLC0415
+
+    if allowed:
+        return EnsureResult(
+            permission=PermissionId.MICROPHONE,
+            outcome=PermissionOutcome.GRANTED,
+            state=PermissionState.GRANTED,
+            asked=False,
+            outside_installed_app=False,
+            agent_detail="",
+            user_detail="",
         )
+    return EnsureResult(
+        permission=PermissionId.MICROPHONE,
+        outcome=PermissionOutcome.DENIED,
+        state=PermissionState.DENIED,
+        asked=False,
+        outside_installed_app=False,
+        agent_detail=agent_detail_for(PermissionId.MICROPHONE, "denied"),
+        user_detail=user_detail_for(PermissionId.MICROPHONE, "denied"),
+        reason="denied",
+        can_open_settings=True,
+    )
 
-        port = get_system_permission_port()
-    except Exception:  # noqa: BLE001 - protected capture must fail closed
-        return lambda: False
-
-    def _allowed() -> bool:
-        try:
-            return port.runtime_access_granted(PermissionId.MICROPHONE)
-        except Exception:  # noqa: BLE001 - a probe failure is not permission
-            return False
-
-    return _allowed
 
 # Queue depth for a REAL-TIME detection consumer (VAD endpointing, wake, barge).
 # ~0.6 s: shallow enough that on a CPU which can't process every frame in real
@@ -722,7 +761,6 @@ class MicrophoneCapture:
     # reliable detection is "no callback for X seconds".
     _STALL_THRESHOLD_S: float = 3.0
     _WATCHDOG_TICK_S: float = 1.0
-    _ACCESS_RECHECK_S: float = 0.25
 
     def __init__(
         self,
@@ -733,10 +771,27 @@ class MicrophoneCapture:
         max_queue_chunks: int = DEFAULT_QUEUE_CHUNKS,
         device_priority: Sequence[str] | None = None,
         access_gate: Callable[[], bool] | None = None,
+        permission_feature: str = "voice",
+        interactive: bool = False,
+        permission_wait_s: float = 0.0,
+        permission_gate: PermissionGate | None = None,
     ) -> None:
-        self._access_gate = (
-            access_gate if access_gate is not None else _macos_microphone_access_gate()
-        )
+        if permission_feature not in PERMISSION_FEATURES:
+            raise ValueError(f"Unknown permission feature: {permission_feature!r}")
+        # Permission contract (design-v2 3.5): ONE service ``ensure`` when the
+        # stream opens, then one cheap ``check`` per watchdog tick. ``interactive``
+        # says whether a user gesture started this capture (it may make macOS ask);
+        # the default is the safe one, a background start that never asks.
+        # ``permission_wait_s`` > 0 waits for the OS dialog and is for a caller
+        # that is not an edge gesture (a held key passes 0).
+        self._permission_feature = permission_feature
+        self._interactive = bool(interactive)
+        self._permission_wait_s = max(0.0, float(permission_wait_s))
+        # ``access_gate`` is the legacy boolean test seam: when given it REPLACES
+        # the service (no ask, no episode). ``permission_gate`` injects a
+        # ``PermissionGate`` (the real service by default, resolved per call).
+        self._access_gate = access_gate
+        self._permission_gate = permission_gate
         # User-configured mic-name priority ([audio].input_device_priority),
         # consulted BEFORE the generic _INPUT_PRIORITY default when resolving
         # "auto-headset". Empty = today's generic behavior.
@@ -799,21 +854,68 @@ class MicrophoneCapture:
         self._last_chunk_monotonic: float = 0.0
         self._watchdog_task: asyncio.Task | None = None
         self._restart_count: int = 0
+        # Permission bookkeeping. ``_watch_access``: the watchdog re-checks the
+        # grant each tick (False off macOS, where the service answers
+        # NOT_REQUIRED and the capture never touches it again). ``_revoked`` /
+        # ``_access_error``: the grant was lost while open; ``stream()`` raises.
+        self._watch_access = False
+        self._unreadable_ticks = 0
+        self._revoked = False
+        self._access_error: MicrophoneAccessError | None = None
+        # Digital-silence guard (macOS only, armed when the OS said GRANTED).
+        self._silence_guard_armed = False
+        self._zero_since: float | None = None
+        self._silence_reported = False
 
-    def _require_microphone_access(self) -> None:
-        """Fail before a native open and whenever a live grant is revoked."""
+    def _service_gate(self) -> PermissionGate:
+        """The injected gate, else the process service (resolved per call)."""
+        gate = self._permission_gate
+        if gate is not None:
+            return gate
+        from jarvis.platform.permission_service import (  # noqa: PLC0415 - lazy: keeps capture headless-light
+            get_permission_service,
+        )
+
+        return get_permission_service()
+
+    def _legacy_gate_allows(self) -> bool:
         gate = self._access_gate
         if gate is None:
-            return
+            return True
         try:
-            allowed = bool(gate())
-        except Exception:  # noqa: BLE001 - protected capture must fail closed
-            allowed = False
-        if not allowed:
-            raise MicrophoneAccessError(
-                "Microphone capture requires a granted macOS permission under "
-                "the installed Personal Jarvis app identity."
+            return bool(gate())
+        except Exception as exc:  # noqa: BLE001 - a gate that raises is not a grant
+            _log.debug("Mic access gate raised ({}); treated as not granted.", exc)
+            return False
+
+    @staticmethod
+    def _access_error_for(result: EnsureResult) -> MicrophoneAccessError:
+        return MicrophoneAccessError(result.user_detail or _NOT_GRANTED_MESSAGE, result=result)
+
+    async def _ensure_access(self, *, interactive: bool) -> None:
+        """The ONE permission ensure of an open; raises unless the mic is granted.
+
+        Runs before CoreAudio is touched, so a refused open never creates a
+        device. The service makes the native request only for an interactive
+        caller, publishes the episode itself and never raises.
+        """
+        if self._access_gate is not None:
+            result = _legacy_gate_result(self._legacy_gate_allows())
+        else:
+            result = await self._service_gate().ensure_async(
+                _MICROPHONE,
+                feature=self._permission_feature,
+                interactive=interactive,
+                wait_s=self._permission_wait_s if interactive else 0.0,
             )
+        if not result.granted:
+            raise self._access_error_for(result)
+        # Off macOS the answer is NOT_REQUIRED: nothing to watch, no guard. The
+        # guard is for a real service grant only (an injected gate is a test seam).
+        os_granted = _state_value(result.outcome) == "granted"
+        self._watch_access = self._access_gate is not None or os_granted
+        self._silence_guard_armed = self._access_gate is None and os_granted
+        self._unreadable_ticks = 0
 
     def _callback(self, indata, frames, time_info, status) -> None:
         """PortAudio callback — runs in the audio thread, NOT in the asyncio loop.
@@ -879,12 +981,29 @@ class MicrophoneCapture:
         except asyncio.QueueFull:
             return
 
+    def _track_silence(self, pcm: bytes, now: float) -> None:
+        """Remember since when the stream has carried only exact zeros.
+
+        Runs per frame on the event loop, so it must stay cheap: ``frombuffer``
+        is a view of the bytes already in hand (no copy) and ``any()`` stops at
+        the first non-zero sample. The watchdog tick reads the verdict.
+        """
+        if len(pcm) < 2 or len(pcm) % 2:
+            return
+        if np.frombuffer(pcm, dtype=np.int16).any():
+            self._zero_since = None
+            self._silence_reported = False
+        elif self._zero_since is None:
+            self._zero_since = now
+
     def _safe_put(self, chunk: AudioChunk) -> None:
         """Runs in the event loop — safe put with drop-OLDEST on full."""
         # Heartbeat update for the stall watchdog. Even if the queue is full,
         # the stream is considered alive — we update the timestamp before the
         # put; otherwise drops would corrupt the stall signal.
         self._last_chunk_monotonic = time.monotonic()
+        if self._silence_guard_armed:
+            self._track_silence(chunk.pcm, self._last_chunk_monotonic)
         try:
             self._queue.put_nowait(chunk)
         except asyncio.QueueFull:
@@ -908,14 +1027,21 @@ class MicrophoneCapture:
                 pass
             self._drops += 1
 
-    async def _try_open_stream(self) -> None:
+    async def _try_open_stream(self, *, interactive: bool | None = None) -> None:
         """Open the preferred mic, then recover through safe alternatives.
 
         Extracted from ``__aenter__`` so the stall watchdog can reuse the same
         logic. Automatic/name-based selection may fail over to another physical
         input; an explicit numeric device remains pinned.
+
+        The permission is ensured ONCE here, before any device is opened
+        (``MicrophoneAccessError`` otherwise). ``interactive=None`` means the
+        constructor's choice; the watchdog restarts pass ``False`` because a
+        restart is never a user gesture.
         """
-        self._require_microphone_access()
+        await self._ensure_access(
+            interactive=self._interactive if interactive is None else interactive
+        )
         preferred_attempts: list[int | str | None] = [self._preferred_device]
         try:
             if isinstance(self._preferred_device, int):
@@ -959,7 +1085,6 @@ class MicrophoneCapture:
         attempt_count = 0
         for attempt, capture_rate, physical_fallback in _open_candidates():
             attempt_count += 1
-            self._require_microphone_access()
             stream = None
             try:
                 capture_blocksize = (
@@ -1088,6 +1213,10 @@ class MicrophoneCapture:
         Logic: if no chunk has arrived in the callback for more than
         _STALL_THRESHOLD_S, stop+close+open the stream. Consumers of
         stream() only notice a brief audio gap.
+
+        The same tick is where the microphone grant is watched: one cheap
+        ``check`` per tick (never per frame), and a revoke ends the capture
+        with ``MicrophoneAccessError``.
         """
         # Initial grace pulse: wait until the first chunk has safely arrived
         # before starting the watchdog, otherwise it fires before the first frame.
@@ -1096,8 +1225,17 @@ class MicrophoneCapture:
             await asyncio.sleep(self._WATCHDOG_TICK_S)
             if self._closed:
                 return
+            if await self._access_revoked():
+                return
             elapsed = time.monotonic() - self._last_chunk_monotonic
             if elapsed <= self._STALL_THRESHOLD_S:
+                if (
+                    self._silence_guard_armed
+                    and not self._silence_reported
+                    and self._zero_since is not None
+                    and time.monotonic() - self._zero_since >= _SILENCE_REPORT_AFTER_S
+                ):
+                    await self._report_digital_silence()
                 # The stream is delivering — keep the resolve cache fresh so a
                 # capture constructed moments after this one closes (the
                 # wake→session handover) skips the ~0.4s device enumeration.
@@ -1128,9 +1266,14 @@ class MicrophoneCapture:
                 # because this watchdog runs on the loop that also serves the
                 # desktop window.
                 await self._discard_stream_off_loop(old_stream)
+            self._zero_since = None
             try:
-                await self._try_open_stream()
+                await self._try_open_stream(interactive=False)
                 _log.info("Mic-Restart #{} succeeded.", self._restart_count)
+            except MicrophoneAccessError as exc:
+                # The grant is gone: no retry loop, the capture ends like a revoke.
+                self._end_revoked(exc)
+                return
             except Exception as exc:  # noqa: BLE001
                 _log.error(
                     "Mic-Restart #{} failed: {} — next attempt in 5s.",
@@ -1143,6 +1286,128 @@ class MicrophoneCapture:
                 continue
             # Reset the heartbeat — grace window for the first frame after reopen.
             self._last_chunk_monotonic = time.monotonic()
+
+    def _end_revoked(self, error: MicrophoneAccessError) -> None:
+        """Mark the capture revoked and wake a reader parked in ``stream()``."""
+        self._revoked = True
+        self._access_error = error
+        self._wake_parked_reader()
+
+    async def _access_revoked(self) -> bool:
+        """One watchdog-tick permission check. ``True``: the capture was ended.
+
+        ``check`` is silent and cheap. A grant that is no longer there closes
+        the native stream, publishes the permission episode through the service
+        (``PermissionNeeded`` with the real reason, an episode for the card when
+        a user started this capture) and makes ``stream()`` raise
+        ``MicrophoneAccessError`` carrying the ``EnsureResult``.
+        """
+        if not self._watch_access:
+            return False
+        if self._access_gate is not None:
+            if self._legacy_gate_allows():
+                return False
+            result = _legacy_gate_result(False)
+        else:
+            try:
+                result = await self._read_revoke_result()
+            except Exception:  # noqa: BLE001 - an injected gate that raises must not end the watchdog
+                # The real service never raises, but a custom PermissionGate may.
+                # Treat the tick as "not revoked" so stall recovery and the next
+                # tick's check keep working; the revoke is caught on a later tick.
+                _log.debug("Mic permission watch tick failed; capture kept.", exc_info=True)
+                return False
+            if result is None:
+                return False
+        _log.warning("Mic access is no longer granted ({}); ending the capture.", result.reason)
+        # Release the device first: when a consumer learns of the revoke, the
+        # native stream (and the OS microphone indicator) is already gone.
+        stream, self._stream = self._stream, None
+        if stream is not None:
+            await self._discard_stream_off_loop(stream)
+        self._end_revoked(self._access_error_for(result))
+        return True
+
+    async def _read_revoke_result(self) -> Any | None:
+        """The service half of one watchdog tick: ``None`` while the grant stands.
+
+        ``check`` first (silent, cheap); only a lost grant goes on to ``ensure``,
+        whose ``EnsureResult`` describes the revoke. May raise when a custom gate
+        does: the caller contains that.
+        """
+        gate = self._service_gate()
+        state = _state_value(gate.check(_MICROPHONE))
+        if state in _GRANTED_STATES:
+            self._unreadable_ticks = 0
+            return None
+        if state == "unavailable":
+            # A failed native read is not a revoke: one such tick is forgiven
+            # so a transient error cannot kill a working dictation.
+            self._unreadable_ticks += 1
+            if self._unreadable_ticks < 2:
+                return None
+        # ensure() publishes the episode and re-reads the state. A denial
+        # makes no native request, so an interactive capture may use it to
+        # upgrade the episode to a user-origin card; every other state is
+        # published as background (a lost stream is never a reason to ask).
+        result = await gate.ensure_async(
+            _MICROPHONE,
+            feature=self._permission_feature,
+            interactive=self._interactive and state == "denied",
+            wait_s=0.0,
+        )
+        if result.granted:
+            self._unreadable_ticks = 0
+            return None
+        return result
+
+    async def _report_digital_silence(self) -> None:
+        """5 s of exact zeros while the OS says granted: re-check once, report once.
+
+        macOS feeds zeros to a denied or muted input instead of raising an error
+        (unverified on a real Mac), so a silent capture would otherwise be
+        recorded as if it were speech. The stream stays open: this is a notice,
+        not a verdict. A re-check that finds the grant gone is left to the next
+        tick's revoke path.
+        """
+        self._silence_reported = True
+        try:
+            gate = self._service_gate()
+            invalidate = getattr(gate, "invalidate", None)
+            if callable(invalidate):
+                invalidate(_MICROPHONE)  # drop the cached GRANTED so the re-check is live
+            if _state_value(gate.check(_MICROPHONE)) not in _GRANTED_STATES:
+                return
+        except Exception:  # noqa: BLE001 - a notice must never end the watchdog
+            _log.debug("Mic silence re-check failed; no notice published.", exc_info=True)
+            return
+        _log.warning(
+            "Mic delivered only digital silence for {:.0f}s while access reads as "
+            "granted (denied or muted input).",
+            _SILENCE_REPORT_AFTER_S,
+        )
+        try:
+            from jarvis.core.bus import get_default_bus  # noqa: PLC0415 - only on this rare path
+
+            await get_default_bus().publish(
+                PermissionNeeded(
+                    source_layer="audio.capture",
+                    permissions=(_MICROPHONE,),
+                    feature=self._permission_feature,
+                    reason="denied",
+                    phase="blocked",
+                    # Background on purpose: the OS says granted, so this is more
+                    # likely a muted or noise-gated input than a denial, and a
+                    # floating "Open Settings" card would be wrong. The notice has
+                    # no service episode (so no close on the first audible frame):
+                    # a closable "denied or muted" episode is a service API request.
+                    origin="background",
+                    can_open_settings=True,
+                    detail=_SILENCE_DETAIL,
+                )
+            )
+        except Exception:  # noqa: BLE001 - a notice must never break the capture
+            _log.debug("Mic silence notice could not be published.", exc_info=True)
 
     def discard_native_stream(self) -> None:
         """Drop the native stream so the stall watchdog reopens it (BUG-102).
@@ -1275,32 +1540,31 @@ class MicrophoneCapture:
         Important: the loop condition no longer depends on stream.active —
         on silent stream death that flag lies and continues to report True.
         The stall watchdog repairs the stream in the background; the consumer
-        only sees a brief audio gap and continues reading.
+        only sees a brief audio gap and continues reading. When the watchdog
+        finds the microphone grant gone, the next read raises
+        ``MicrophoneAccessError`` (no per-frame permission probe happens here).
         """
         while not self._closed:
-            self._require_microphone_access()
-            if self._access_gate is None:
-                chunk = await self._queue.get()
-            else:
-                try:
-                    # ``asyncio.timeout``, not ``wait_for``: the latter can
-                    # swallow a consumer's cancellation on Python 3.11 when a
-                    # frame arrives in the same step (CPython gh-86296,
-                    # BUG-185), and this loop runs per frame.
-                    async with asyncio.timeout(self._ACCESS_RECHECK_S):
-                        chunk = await self._queue.get()
-                except TimeoutError:
-                    # No audio frame is still a live interval: recheck TCC so a
-                    # revoke closes a stalled/silent stream without waiting for
-                    # PortAudio to produce another callback.
-                    continue
+            self._raise_if_revoked()
+            chunk = await self._queue.get()
             if self._closed:
                 # Woken by ``__aexit__``: the device is gone and so is the
                 # reason for this consumer to exist. A reader parked here on an
                 # empty queue used to sit forever after close (BUG-185).
                 return
-            self._require_microphone_access()
+            # Woken by the watchdog's revoke marker (or a frame that raced it).
+            self._raise_if_revoked()
             yield chunk
+
+    def _raise_if_revoked(self) -> None:
+        error = self._access_error
+        if error is not None:
+            raise MicrophoneAccessError(str(error), result=error.result)
+
+    @property
+    def revoked(self) -> bool:
+        """``True`` once the microphone grant was lost while the capture was open."""
+        return self._revoked
 
     @property
     def dropped_frames(self) -> int:

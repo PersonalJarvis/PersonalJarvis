@@ -34,6 +34,7 @@ import numpy as np
 from jarvis.audio import level_tap, mic_level
 from jarvis.audio.capture import (
     REALTIME_QUEUE_CHUNKS,
+    MicrophoneAccessError,
     MicrophoneCapture,
     capture_chunks_for_duration,
     pcm_bytes_to_np,
@@ -73,6 +74,7 @@ from jarvis.core.events import (
     ListeningStarted,
     MessageSent,
     ObservationCaptured,
+    PermissionResolved,
     PetVisibilityToggleRequested,
     SpeechSpoken,
     TranscriptFinal,
@@ -946,6 +948,15 @@ _DICTATION_HANDOVER_TIMEOUT_S = 5.0
 # only after its capture context has exited — so the wait watches that state.
 # Small enough to be imperceptible, large enough not to spin the loop.
 _DICTATION_HANDOVER_POLL_S = 0.02
+
+# Said when a voice gesture is refused and the permission layer has no sentence of
+# its own (an unreadable permission, an injected gate that only says "no").
+_MICROPHONE_REFUSED_SENTENCE = "Microphone access is not available for Personal Jarvis right now."
+
+# How long the wake loop parks on the microphone permission before it re-reads the
+# gate on its own. The grant normally wakes it at once (PermissionResolved); this
+# is the fallback for an edge that never arrived.
+_WAKE_PERMISSION_PARK_S = 30.0
 
 # How many times the FINAL dictation transcription is attempted, and how long it
 # waits between attempts. Only the final call is retried: every earlier one is a
@@ -2290,6 +2301,13 @@ class SpeechPipeline:
         config: Any = None,
         vision_provider: Any = None,
         activation_gate: Callable[[], bool] | None = None,
+        # Silent predicate for a USER gesture (push-to-talk, a voice session,
+        # dictation): true unless the microphone is refused. ``activation_gate``
+        # stays the BACKGROUND one (wake word, barge-in: a live grant only).
+        # Neither asks the OS; the gesture entry points do, through
+        # ``permission_gate`` (the permission service by default).
+        user_activation_gate: Callable[[], bool] | None = None,
+        permission_gate: Any = None,
         # Pre-Thinking-Ack Flash-Brain (spec: 2026-05-11-pre-thinking-ack-
         # flash-brain-design.md). When provided, every user utterance kicks
         # off a parallel acknowledgment LLM call BEFORE the main brain
@@ -2996,6 +3014,11 @@ class SpeechPipeline:
         self._config = config
         self._vision_provider = vision_provider
         self._activation_gate = activation_gate or (lambda: True)
+        self._user_activation_gate = user_activation_gate or (lambda: True)
+        self._permission_gate = permission_gate
+        # True only while the wake loop is parked on the microphone permission:
+        # the one state in which a PermissionResolved edge should wake it.
+        self._wake_parked_on_permission = False
         # Wave 0 (omni-latency): per-turn hot-path latency tracker. Anchored at
         # utterance finalize in ``_handle_utterance``; ``None`` until a turn runs.
         self._latency_tracker: LatencyTracker | None = None
@@ -3118,6 +3141,9 @@ class SpeechPipeline:
         # going through the brain path. The handler speaks directly via TTS.
         if self._bus is not None:
             self._bus.subscribe(AnnouncementRequested, self._on_announcement)
+            # A microphone grant (from the OS dialog, or from System Settings and
+            # seen by the service watcher) wakes a wake loop parked on it.
+            self._bus.subscribe(PermissionResolved, self._on_permission_resolved)
             # Fire-and-forget Jarvis-Agent: when a background run finishes,
             # a proactive voice announcement ("Sir, done. <summary>") — so
             # the user finds out even if they did something else in the
@@ -4425,8 +4451,13 @@ class SpeechPipeline:
             return "pause"
         return None
 
-    def _capture_permission_allowed(self) -> bool:
-        """Return the live local-capture gate without applying Jarvis mute."""
+    def _background_capture_allowed(self) -> bool:
+        """Silent gate for BACKGROUND capture (wake word, barge-in): a live grant only.
+
+        Never asks the OS and never opens the device. An undecided microphone is
+        closed here because nothing the user did is waiting on it: the wake loop
+        parks and a gesture elsewhere asks. Does not apply Jarvis mute.
+        """
         gate = getattr(self, "_activation_gate", None)
         if gate is None:
             return True
@@ -4435,6 +4466,65 @@ class SpeechPipeline:
         except Exception as exc:  # noqa: BLE001
             log.warning("Voice capture permission gate failed closed: %s", exc)
             return False
+
+    def _user_capture_allowed(self) -> bool:
+        """Silent gate for USER-started capture (push-to-talk, voice session, dictation).
+
+        True unless the microphone is denied, restricted or unavailable: an
+        undecided microphone is usable because the gesture itself asks (see
+        ``_ensure_microphone``). Never asks and never opens the device.
+        """
+        gate = getattr(self, "_user_activation_gate", None)
+        if gate is None:
+            return True
+        try:
+            return bool(gate())
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Voice user-capture permission gate failed closed: %s", exc)
+            return False
+
+    def _permission_service(self) -> Any:
+        """The injected ``PermissionGate``, else the process service (resolved per call)."""
+        gate = getattr(self, "_permission_gate", None)
+        if gate is not None:
+            return gate
+        from jarvis.platform.permission_service import get_permission_service
+
+        return get_permission_service()
+
+    def _ensure_microphone(self, feature: str) -> str | None:
+        """THE ask of a voice gesture: ``ensure(MICROPHONE, wait_s=0)``.
+
+        Returns ``None`` when the microphone is granted (or this is not a TCC
+        platform), else a finished English sentence saying why not. ``wait_s=0``
+        is the loop-safe form: a first press may make macOS show its dialog and
+        returns PENDING at once, so the press that raised the dialog is NOT
+        started retroactively (the UI says "allowed - press again"). The service
+        publishes the ``PermissionNeeded`` episode itself, a denial included.
+        Never raises; a failed read refuses.
+        """
+        try:
+            result = self._permission_service().ensure(
+                "microphone", feature=feature, interactive=True, wait_s=0.0
+            )
+        except Exception:  # noqa: BLE001 - an unreadable permission must not start the capture
+            log.warning("The microphone permission check for %s failed.", feature, exc_info=True)
+            return _MICROPHONE_REFUSED_SENTENCE
+        if result.granted:
+            return None
+        return str(result.user_detail or "") or _MICROPHONE_REFUSED_SENTENCE
+
+    async def _on_permission_resolved(self, event: PermissionResolved) -> None:
+        """A microphone grant wakes a wake loop that is parked on the permission.
+
+        Runs on the loop (bus dispatch), so setting the asyncio event is safe. A
+        resolution while the loop is not parked changes nothing: a wake capture
+        that is already running must not be torn down by a dictation's grant.
+        """
+        if not event.granted or "microphone" not in event.permissions:
+            return
+        if getattr(self, "_wake_parked_on_permission", False):
+            self._wake_reload_event.set()
 
     def _dictation_blocks_activation(self) -> bool:
         """True while a running dictation must keep the wake word silent.
@@ -4478,24 +4568,54 @@ class SpeechPipeline:
             return False
         return time.time() < float(getattr(self, "_dictation_wake_block_until", 0.0))
 
-    def _activation_block_reason(self) -> str:
+    def _activation_state_allows(self) -> bool:
+        """The non-permission half of the gate: mute, a running dictation, mic ownership.
+
+        Split out so a gesture entry point can refuse for these reasons BEFORE it
+        asks the OS for anything (a muted press must not raise a macOS dialog), and
+        so the wake loop can tell "waiting on the permission" from "waiting on the
+        state" and park only for the first.
+        """
+        if getattr(self, "_muted", False):
+            return False
+        if self._dictation_blocks_activation():
+            return False
+        from jarvis.live.runtime import owns_microphone
+
+        return not owns_microphone(
+            except_session_id=getattr(self, "_current_voice_session_id", None)
+        )
+
+    def _activation_block_reason(
+        self, *, explicit: bool = False, include_permission: bool = True
+    ) -> str:
         """The honest English reason ``_activation_allowed`` is saying no.
 
         One source for every log line that reports the closed gate. It exists
         because those lines used to hardcode two guesses ("muted" /
         "window not visible?"), and the wrong guess once misled a live freeze
-        diagnosis. Returns an empty string when the gate is open.
+        diagnosis. Returns an empty string when the gate is open. ``explicit``
+        selects the user-gesture permission predicate, as in ``_activation_allowed``.
+        ``include_permission=False`` names only the state half (a gesture entry
+        point that refused on the state alone and must not report the microphone).
         """
         if getattr(self, "_muted", False):
             return "voice is muted"
         if self._dictation_blocks_activation():
             return "a dictation is running"
-        if not self._capture_permission_allowed():
-            return "microphone capture is not permitted (desktop window not visible?)"
+        if not include_permission:
+            return ""
+        permitted = self._user_capture_allowed() if explicit else self._background_capture_allowed()
+        if not permitted:
+            return (
+                "microphone access is not granted"
+                if not explicit
+                else "microphone access is denied or unavailable"
+            )
         return ""
 
     def _activation_allowed(self) -> bool:
-        """True when external UI/lifecycle state permits voice activation.
+        """True when external UI/lifecycle state permits BACKGROUND voice activation.
 
         While muted (mascot doubleClick → ``_muted=True``) we always
         return False so the wake-loop ignores every detection. The loop
@@ -4504,25 +4624,34 @@ class SpeechPipeline:
         A running dictation closes the same gate (``_dictation_blocks_activation``)
         — one edit reaches all three wake gates (loop entry, pre-emit, state
         loop) plus the push-to-talk and ``request_voice_session`` entry points,
-        because this predicate is the only one all of them consult.
+        because the state half of this predicate is shared with all of them
+        (``_activation_state_allows``).
+
+        The permission half is ``_background_capture_allowed``: a live microphone
+        GRANT. A deliberate user action (the call key, push-to-talk, the speak
+        button) uses ``_gesture_activation_allowed`` instead, which only needs the
+        microphone not to be refused, because the gesture is what asks the OS.
+        Neither ever asks from here.
 
         ``getattr`` defaults to False for pipelines constructed via
         ``__new__`` (used by privacy/vision unit tests that bypass
         ``__init__``) — those instances are never muted by definition.
 
-        NB: ``dictation_available`` / ``start_dictation`` deliberately consult
-        ``_capture_permission_allowed`` and NOT this predicate. Routing them
-        through here would make a dictation forbid its own successor.
+        NB: ``dictation_available`` / ``start_dictation`` deliberately do NOT
+        consult this predicate. Routing them through here would make a
+        dictation forbid its own successor.
         """
-        if getattr(self, "_muted", False):
-            return False
-        if self._dictation_blocks_activation():
-            return False
-        from jarvis.live.runtime import owns_microphone
+        return self._activation_state_allows() and self._background_capture_allowed()
 
-        if owns_microphone(except_session_id=getattr(self, "_current_voice_session_id", None)):
-            return False
-        return self._capture_permission_allowed()
+    def _gesture_activation_allowed(self) -> bool:
+        """``_activation_allowed`` for a deliberate user action (key, button, bar click).
+
+        Same state half (mute, a running dictation, mic ownership); the permission
+        half is ``_user_capture_allowed``: true unless the microphone is denied,
+        restricted or unavailable. The wake word is NOT such an action and never
+        passes through here.
+        """
+        return self._activation_state_allows() and self._user_capture_allowed()
 
     @property
     def is_muted(self) -> bool:
@@ -6959,7 +7088,15 @@ class SpeechPipeline:
         if event_name == "call":
             log.info("📞 CALL via Hotkey")
             # A deliberate key press — exempt from the post-hangup wake
-            # lock (no speaker-echo path), same contract as PTT below.
+            # lock (no speaker-echo path), same contract as PTT below. It is
+            # also the gesture that may ask macOS for the microphone: the first
+            # press of an undecided microphone raises the dialog and starts
+            # nothing ("allowed - press again").
+            if self._state == PipelineState.IDLE and self._activation_state_allows():
+                refusal = self._ensure_microphone("voice")
+                if refusal is not None:
+                    log.info("Call key ignored: %s", refusal)
+                    return
             self._explicit_call_pending = True
             self._call_event.set()
         elif event_name == "ptt_press":
@@ -7227,16 +7364,28 @@ class SpeechPipeline:
             return
         if self._state != PipelineState.IDLE:
             return
-        if not self._activation_allowed():
-            # Push-to-talk is gated by the SAME predicate as wake, so a running
-            # dictation refuses it too — deliberately: both lanes open their own
-            # microphone stream, and two native input streams on one device is
-            # the BUG-014 family. The reason is resolved, never guessed, so the
-            # log cannot claim "window not visible" during a dictation.
+        if not self._activation_state_allows():
+            # Push-to-talk shares the STATE half of wake's gate (mute, mic
+            # ownership), so a running dictation refuses it too — deliberately:
+            # both lanes open their own microphone stream, and two native input
+            # streams on one device is the BUG-014 family. The reason is
+            # resolved, never guessed, so the log cannot claim "window not
+            # visible" during a dictation.
             log.info(
                 "PTT press ignored: %s",
-                self._activation_block_reason() or "activation not allowed",
+                self._activation_block_reason(explicit=True, include_permission=False)
+                or "activation not allowed",
             )
+            return
+        # The press is the gesture that may ask macOS for the microphone. The
+        # first press of an undecided microphone raises the OS dialog and is NOT
+        # started retroactively once it is answered ("allowed - press again").
+        # The silent user predicate is deliberately NOT consulted first: a denied,
+        # restricted or unavailable microphone must still reach ``ensure`` so the
+        # press is refused WITH its ``PermissionNeeded`` card (one per episode).
+        refusal = self._ensure_microphone("voice")
+        if refusal is not None:
+            log.info("PTT press ignored: %s", refusal)
             return
         # NB: the post-hangup wake-lock is deliberately NOT consulted here. That
         # lock exists to stop Jarvis' own TTS tail from re-triggering the *wake
@@ -7284,11 +7433,20 @@ class SpeechPipeline:
         if self._ptt_mode or self._state != PipelineState.IDLE:
             log.info("request_voice_session ignored: pipeline not idle.")
             return False
-        if not self._activation_allowed():
+        if not self._activation_state_allows():
             log.info(
                 "request_voice_session ignored: %s",
-                self._activation_block_reason() or "activation not allowed",
+                self._activation_block_reason(explicit=True, include_permission=False)
+                or "activation not allowed",
             )
+            return False
+        # Gesture entry: the speak button / bar click may ask macOS for the
+        # microphone. A first request raises the dialog and returns False (the UI
+        # says "allowed - press again"); the session is never armed retroactively.
+        # As for PTT, a denied microphone reaches ``ensure`` too (card, not silence).
+        refusal = self._ensure_microphone("voice")
+        if refusal is not None:
+            log.info("request_voice_session ignored: %s", refusal)
             return False
         if seed_messages:
             brain = getattr(self, "_brain", None)
@@ -8017,11 +8175,34 @@ class SpeechPipeline:
             # block), so the defence is depth — enough slack that a slow
             # provider call cannot cost words.
             max_queue_chunks=_DICTATION_CAPTURE_QUEUE_CHUNKS,
+            # A key press / button started this capture, so a lost grant is
+            # reported as a user-origin ``dictation`` episode.
+            permission_feature="dictation",
+            interactive=True,
         ) as mic:
             yield mic
 
     def _wake_listening_enabled(self) -> bool:
         return self._openwakeword_enabled or self._whisper_wake_enabled
+
+    async def _wait_while_wake_disabled(self) -> None:
+        """Wait on ``_wake_reload_event`` while both wake detectors are off.
+
+        Touches no permission and opens no episode: a switched-off wake word never
+        owns the microphone permission (P7). Returns at once when a detector is on.
+        """
+        while not self._wake_listening_enabled():
+            log.warning(
+                "Both wake detectors are disabled — wake is PARKED until a "
+                "wake-word change re-enables one (voice still works via hotkey). "
+                "Waiting on a live wake-plan reload, not sleeping forever."
+            )
+            try:
+                await asyncio.wait_for(self._wake_reload_event.wait(), timeout=30.0)
+            except TimeoutError:
+                pass
+            finally:
+                self._wake_reload_event.clear()
 
     async def _wake_loop(self) -> None:
         """Listen for a wake phrase through two parallel paths while idle.
@@ -8046,20 +8227,15 @@ class SpeechPipeline:
         # in-app. The 30 s timeout re-logs the parked state so a genuinely dead
         # listener stays visible without busy-spinning. (Mission: "no dead state
         # blocks waking"; AP-22: recovery must be reachable in-app, not a restart.)
-        while not self._wake_listening_enabled():
-            log.warning(
-                "Both wake detectors are disabled — wake is PARKED until a "
-                "wake-word change re-enables one (voice still works via hotkey). "
-                "Waiting on a live wake-plan reload, not sleeping forever."
-            )
-            try:
-                await asyncio.wait_for(self._wake_reload_event.wait(), timeout=30.0)
-            except TimeoutError:
-                pass
-            finally:
-                self._wake_reload_event.clear()
+        await self._wait_while_wake_disabled()
         gate_blocked_logged_at = 0.0
         while True:
+            # Re-checked on EVERY pass, not only before the loop: a user who
+            # switches the wake word OFF while the loop is parked on the
+            # microphone permission must send it back to the "disabled" wait,
+            # or it would re-open a wake_word permission episode every park
+            # interval for a feature nobody switched on (P7).
+            await self._wait_while_wake_disabled()
             if not self._activation_allowed():
                 now = time.time()
                 if now - gate_blocked_logged_at > 30.0:
@@ -8073,7 +8249,14 @@ class SpeechPipeline:
                         self._activation_block_reason() or "reason unknown",
                     )
                     gate_blocked_logged_at = now
-                await asyncio.sleep(0.25)
+                if self._activation_state_allows():
+                    # Only the microphone permission is missing. Mute, a running
+                    # dictation and mic ownership change on their own clock and
+                    # keep the short poll below; a permission changes rarely and
+                    # announces itself, so the loop PARKS instead of re-probing.
+                    await self._park_until_microphone_allowed()
+                else:
+                    await asyncio.sleep(0.25)
                 continue
             if self._state != PipelineState.IDLE:
                 await asyncio.sleep(0.1)
@@ -8084,9 +8267,55 @@ class SpeechPipeline:
                     getattr(self, "_wake_phrase_label", "the wake word"),
                 )
                 await self._run_parallel_wake()
+            except MicrophoneAccessError as exc:
+                # The grant is missing or was just lost: not a crash, so no
+                # traceback and no 0.5 s retry churn. Park until it is granted.
+                log.info("Wake listening paused: %s", exc)
+                await self._park_until_microphone_allowed()
             except Exception as exc:  # noqa: BLE001
                 log.exception("Wake loop failed: %s", exc)
                 await asyncio.sleep(0.5)
+
+    async def _park_until_microphone_allowed(self) -> None:
+        """Park the wake loop until the microphone is granted (never asks).
+
+        The wake word is a background feature: it must not make macOS ask, and it
+        must not poll either. So the loop opens ONE background-origin episode
+        (``ensure(interactive=False)``: no request, inline status only), which is
+        what lets the permission service watcher notice a grant given later in
+        System Settings and publish ``PermissionResolved``; ``_on_permission_resolved``
+        then sets ``_wake_reload_event``. ``set_wake_plan`` and the 30 s fallback
+        timeout wake the loop through the same event, so a missed edge costs at most
+        half a minute, never a restart. The episode is re-opened on each wake-up
+        that still finds the gate closed (idempotent in the service: same episode,
+        no second event), which also revives one the service expired after ten
+        minutes of nobody touching it.
+        """
+        if not self._wake_listening_enabled():
+            return  # switched off since the caller read the gate: no episode (P7)
+        self._wake_parked_on_permission = True
+        try:
+            try:
+                opened = await self._permission_service().ensure_async(
+                    "microphone", feature="wake_word", interactive=False
+                )
+            except Exception:  # noqa: BLE001 - the park must work without the episode
+                log.debug("Opening the wake-word permission episode failed.", exc_info=True)
+            else:
+                if opened.granted:
+                    # Granted between the gate read and now: no episode was opened,
+                    # so no edge will come. Let the caller re-read the gate.
+                    await asyncio.sleep(0.25)
+                    return
+            try:
+                await asyncio.wait_for(
+                    self._wake_reload_event.wait(), timeout=_WAKE_PERMISSION_PARK_S
+                )
+            except TimeoutError:
+                pass  # fallback poll: the caller re-reads the gate
+        finally:
+            self._wake_parked_on_permission = False
+            self._wake_reload_event.clear()
 
     def _should_show_optimistic_candidate(self) -> bool:
         """Whether an unverified OWW hit may pop the overlay bar immediately.
@@ -8467,7 +8696,13 @@ class SpeechPipeline:
         # applies and is safe here.
         async with _wake_capture_with_release(
             MicrophoneCapture(
-                device=self._input_device, device_priority=self._input_priority
+                device=self._input_device,
+                device_priority=self._input_priority,
+                # Background capture: it never makes macOS ask (the gate above
+                # already required a live grant) and reports a lost grant as
+                # ``wake_word``.
+                permission_feature="wake_word",
+                interactive=False,
             ),
             self._wake_capture_released,
         ) as mic:
@@ -8799,13 +9034,21 @@ class SpeechPipeline:
                 getattr(self, "_explicit_call_pending", False)
             ) or bool(getattr(self, "_ptt_mode", False))
             self._explicit_call_pending = False
-            if not self._activation_allowed():
+            allowed = (
+                self._gesture_activation_allowed()
+                if explicit_call
+                else self._activation_allowed()
+            )
+            if not allowed:
                 # Resolved, never guessed: this backstop closes for a mute and
                 # for a running dictation too, and a log line that names the
                 # window instead is exactly what misled an earlier diagnosis.
+                # A deliberate press (``explicit_call``) is judged by the
+                # user-gesture predicate, a wake word by the background one.
                 log.info(
                     "Voice call ignored: %s.",
-                    self._activation_block_reason() or "activation not allowed",
+                    self._activation_block_reason(explicit=explicit_call)
+                    or "activation not allowed",
                 )
                 # A discarded call consumes any PTT arming with it — otherwise a
                 # stale ``_ptt_mode`` would reroute the NEXT (wake-word) call
@@ -10775,12 +11018,12 @@ class SpeechPipeline:
 
         Lets the UI hide the mic button on a headless host with no capture
         device (cloud-first: a missing capability is a clean no-op, AD-OE6).
+
+        The microphone PERMISSION is deliberately not a term here: the button
+        must be visible on a fresh Mac, where the first press is what asks.
+        ``start_dictation`` refuses honestly when the permission is missing.
         """
-        return (
-            self._utterance_stt is not None
-            and self._input_device != "none"
-            and self._capture_permission_allowed()
-        )
+        return self._utterance_stt is not None and self._input_device != "none"
 
     def dictation_engine_status(self) -> dict[str, Any]:
         """Which recognizer the dictation lane will really use, for the UI.
@@ -10891,13 +11134,6 @@ class SpeechPipeline:
         only publishes ``DictationStarted`` / ``DictationTranscript`` /
         ``DictationTranscribing`` / ``DictationCompleted`` events.
         """
-        if not self._capture_permission_allowed():
-            self._refuse_dictation(
-                "microphone_unavailable",
-                "Microphone access is not ready — check the microphone "
-                "permission and make sure the desktop window is available.",
-            )
-            return False
         if self._utterance_stt is None:
             self._refuse_dictation(
                 "no_stt",
@@ -10918,6 +11154,18 @@ class SpeechPipeline:
                 "pipeline_not_running",
                 "The voice pipeline is not running, so dictation cannot start.",
             )
+            return False
+        # The press is the gesture that may ask macOS for the microphone. A first
+        # press of an undecided microphone raises the OS dialog and refuses THIS
+        # press ("microphone_unavailable" + the PermissionNeeded episode the
+        # service publishes); nothing starts retroactively once it is answered, the
+        # UI says "allowed - press again". The refusal sentence comes from the
+        # permission layer's fixed templates, never from exception text.
+        refusal = self._ensure_microphone("dictation")
+        if refusal is None and not self._user_capture_allowed():
+            refusal = _MICROPHONE_REFUSED_SENTENCE
+        if refusal is not None:
+            self._refuse_dictation("microphone_unavailable", refusal)
             return False
         if self._voice_session_holds_microphone():
             return self._begin_dictation_handover(loop, target=target, source=source)

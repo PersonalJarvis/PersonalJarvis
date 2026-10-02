@@ -32,6 +32,7 @@ import asyncio
 import logging
 import random
 import re
+import sys
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -128,6 +129,58 @@ DICTATION_REFUSAL_DWELL_S = 3.0
 # a key and still deserves to see that the key was heard and declined, so the
 # surface says the one thing that is true without the detail.
 DICTATION_REFUSAL_FALLBACK_TEXT = "Dictation could not start."
+
+# A refused dictation whose reason is ``microphone_unavailable`` is, on macOS,
+# nearly always the microphone permission. The pipeline's English sentence says
+# "check the microphone permission"; this table names the switch and the place
+# to flip it in the interface language, because on this surface the sentence is
+# all the user gets (the permission card lives in the web window). macOS only:
+# the path names System Settings, and the same reason on another OS can also
+# mean "the desktop window is not visible". Keys are the supported UI languages.
+MICROPHONE_REFUSAL_TEXT: dict[str, str] = {
+    "en": (
+        "Microphone access is needed: allow it in the macOS dialog, or switch on "
+        "Personal Jarvis in System Settings > Privacy & Security > Microphone."
+    ),
+    "de": (  # i18n-allow
+        "Mikrofonzugriff nötig: im macOS-Dialog erlauben oder Personal Jarvis "  # i18n-allow
+        "in Systemeinstellungen > Datenschutz & Sicherheit > Mikrofon aktivieren."  # i18n-allow
+    ),
+    "es": (  # i18n-allow
+        "Se necesita acceso al micrófono: permítelo en el diálogo de macOS o activa "  # i18n-allow
+        "Personal Jarvis en Ajustes del Sistema > Privacidad y seguridad > Micrófono."  # i18n-allow
+    ),
+}
+
+
+
+def _microphone_refusal_is_not_switchable(detail: str) -> bool:
+    """True when the permission layer's own sentence must stay on the bar.
+
+    The localized table above says "switch on Personal Jarvis in System Settings",
+    which is only true for an undecided or denied microphone. For a restricted one
+    (a profile or parental control), a session where macOS cannot be asked, or a run
+    from outside the installed app (the grantee is another app), that instruction is
+    wrong, so the permission service's fixed sentence for those cases is kept. Any
+    other detail (the pipeline's generic sentence, the not-determined and denied
+    templates) gets the table. Never raises: an unreadable service means "switchable".
+    """
+    try:
+        from jarvis.platform.permission_service import user_detail_for
+        from jarvis.platform.permissions import PermissionId
+
+        mic = PermissionId.MICROPHONE
+        kept = {
+            user_detail_for(mic, "restricted"),
+            user_detail_for(mic, "unavailable"),
+            user_detail_for(mic, "not_determined", outside_app=True, launched_as_bundle=True),
+            user_detail_for(mic, "not_determined", outside_app=True, launched_as_bundle=False),
+        }
+    except Exception:  # noqa: BLE001 - the table is the safe default for the bar
+        log.debug("Microphone refusal templates unavailable; using the table.", exc_info=True)
+        return False
+    return detail in kept
+
 
 # How long the bar stays up after a dictation that came back with NOTHING —
 # silence, or a provider that refused. Short, and deliberately not zero: the
@@ -1896,6 +1949,14 @@ class OrbBusBridge:
         reason = (event.reason or "").strip() or "unspecified"
         detail = (event.detail or "").strip() or DICTATION_REFUSAL_FALLBACK_TEXT
         log.info("OrbBridge._on_dictation_refused: reason=%s — %s", reason, detail)
+        if (
+            reason == "microphone_unavailable"
+            and sys.platform == "darwin"
+            and not _microphone_refusal_is_not_switchable(detail)
+        ):
+            detail = MICROPHONE_REFUSAL_TEXT.get(
+                self._status_language(), MICROPHONE_REFUSAL_TEXT["en"]
+            )
         if reason in DICTATION_INERT_REFUSALS:
             # "A dictation is already recording" is not a failure — it is the
             # statement that the turn the user is watching is alive and will

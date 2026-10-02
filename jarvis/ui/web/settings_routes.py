@@ -1099,27 +1099,98 @@ def _config(request: Request):
     )
 
 
-def _local_microphone_capture_ready(request: Request) -> bool:
-    """Non-prompting runtime gate for local macOS microphone diagnostics."""
+def _microphone_service(request: Request):  # noqa: ANN202 - the PermissionGate surface
+    """The permission service: ``app.state.permission_service`` when a test injected one."""
+    injected = getattr(request.app.state, "permission_service", None)
+    if injected is not None:
+        return injected
+    from jarvis.platform.permission_service import get_permission_service
+
+    return get_permission_service()
+
+
+def _microphone_state_value(request: Request) -> str:
+    """The silent microphone state (``PermissionState`` value); never asks, never raises.
+
+    Off macOS there is nothing to ask and the answer is ``"not_required"`` without
+    the service being touched.
+    """
     if sys.platform != "darwin":
-        return True
+        return "not_required"
     try:
-        from jarvis.platform.permissions import PermissionId, get_system_permission_port
-
-        port = getattr(request.app.state, "system_permission_port", None)
-        if port is None:
-            port = get_system_permission_port()
-        return bool(port.runtime_access_granted(PermissionId.MICROPHONE))
-    except Exception:  # noqa: BLE001 - protected diagnostics must fail closed
-        return False
+        state = _microphone_service(request).check("microphone")
+    except Exception:  # noqa: BLE001 - an unreadable state is "not usable", never a 500
+        log.debug("Reading the microphone permission failed.", exc_info=True)
+        return "unavailable"
+    return str(getattr(state, "value", state))
 
 
-def _blocked_mic_level_result() -> dict[str, object]:
+def _local_microphone_capture_ready(request: Request) -> bool:
+    """Silent gate for local microphone diagnostics: True only for a live grant.
+
+    It reads the permission service with ``check`` (never asks, never opens the
+    device); the routes that are a user gesture ask through ``ensure_async`` first.
+    """
+    return _microphone_state_value(request) in ("granted", "not_required")
+
+
+# state -> the reason vocabulary of the permission layer (PERMISSION_NEEDED_REASONS)
+_MIC_STATE_REASON = {
+    "denied": "denied",
+    "restricted": "restricted",
+    "unavailable": "unavailable",
+}
+
+
+def _microphone_block_fields(
+    request: Request, result: object | None = None
+) -> dict[str, object]:
+    """The permission part of a "microphone is not ready" answer.
+
+    ``permission_required`` / ``permission`` / ``can_open_settings`` are the stable
+    keys; ``message`` is the permission layer's finished sentence and ``hint`` points
+    at the one System Settings pane. ``result`` is the ``EnsureResult`` of a gesture
+    route; a silent GET passes none and the sentence is built from the state alone.
+    """
+    from jarvis.platform.permission_service import user_detail_for
+    from jarvis.platform.permissions import SETTINGS_PATH_TEXT, PermissionId
+
+    path = SETTINGS_PATH_TEXT[PermissionId.MICROPHONE]
+    if result is not None:
+        reason = str(getattr(result, "reason", "") or "not_determined")
+        message = str(getattr(result, "user_detail", "") or "")
+        can_open = bool(getattr(result, "can_open_settings", False))
+    else:
+        reason = _MIC_STATE_REASON.get(_microphone_state_value(request), "not_determined")
+        message = ""
+        can_open = reason not in ("restricted", "unavailable")
+    if not message:
+        message = user_detail_for(PermissionId.MICROPHONE, reason)
+    if reason in ("restricted", "unavailable"):
+        hint = ""
+    elif reason == "not_determined":
+        # An app that has never asked is not listed in that pane yet: the test
+        # button is what makes macOS show its dialog, so point there first.
+        hint = "Press the test button and choose Allow in the macOS dialog."
+    else:
+        hint = f"Allow Microphone access in {path}, then retry."
+    return {
+        "permission_required": True,
+        "permission": "microphone",
+        "can_open_settings": can_open,
+        "message": message,
+        "hint": hint,
+    }
+
+
+def _blocked_mic_level_result(
+    request: Request, result: object | None = None
+) -> dict[str, object]:
     return {
         "max_dbfs": -120.0,
         "no_device": False,
         "too_quiet": False,
-        "permission_required": True,
+        **_microphone_block_fields(request, result),
     }
 
 
@@ -1475,6 +1546,33 @@ class WakeActivationBody(BaseModel):
     enabled: bool
 
 
+def _ask_microphone_for_wake_switch(request: Request, *, enabled: bool) -> dict[str, object]:
+    """The wake switch's permission answer: ``{outcome, reason, can_open_settings}``.
+
+    Only switching ON asks (and only on macOS); switching off, and every other OS,
+    answers ``not_required`` without touching the permission layer. Never raises.
+    """
+    answer: dict[str, object] = {
+        "outcome": "not_required",
+        "reason": "",
+        "can_open_settings": False,
+    }
+    if not enabled or sys.platform != "darwin":
+        return answer
+    try:
+        result = _microphone_service(request).ensure(
+            "microphone", feature="wake_word", interactive=True, wait_s=0.0
+        )
+    except Exception:  # noqa: BLE001 - the switch itself must still be saved
+        log.debug("Asking for the microphone from the wake switch failed.", exc_info=True)
+        return {"outcome": "unavailable", "reason": "unavailable", "can_open_settings": False}
+    return {
+        "outcome": str(getattr(result.outcome, "value", result.outcome)),
+        "reason": str(result.reason or ""),
+        "can_open_settings": bool(result.can_open_settings),
+    }
+
+
 @router.post("/wake-word/activation")
 def set_wake_activation(body: WakeActivationBody, request: Request) -> dict[str, object]:
     """Turn the always-on wake word ON/OFF — the "how do you activate Jarvis"
@@ -1488,7 +1586,17 @@ def set_wake_activation(body: WakeActivationBody, request: Request) -> dict[str,
     Persisted to ``[trigger] wake_word_enabled`` and applied to the running voice
     pipeline when available. Headless/voice-disabled processes keep the setting
     for their next voice start.
+
+    Switching ON is the user's gesture, so on macOS it is the just-in-time moment
+    for the microphone: the response gains ``permission`` (``{outcome, reason,
+    can_open_settings}``). The switch is saved and applied either way; without a
+    grant the wake loop waits (nothing is heard until it is allowed) and the UI
+    shows an inline note instead of a success toast. Every existing key is kept.
     """
+    # The ask comes FIRST so the OS dialog appears while the rest of the route
+    # works. This handler is a plain ``def`` (a worker thread), so the blocking
+    # ``ensure`` with ``wait_s=0`` is the right form: it never waits for the answer.
+    permission = _ask_microphone_for_wake_switch(request, enabled=bool(body.enabled))
     # Persisting is BEST-EFFORT, exactly like every other settings writer here
     # (put_ui_language, put_wake_word, put_appearance, ...). This route used to
     # raise a 500 instead, and that one inconsistency locked first-time users
@@ -1536,6 +1644,7 @@ def set_wake_activation(body: WakeActivationBody, request: Request) -> dict[str,
             if persisted
             else f"The setting could not be saved to jarvis.toml. {LOG_HINT}"
         ),
+        "permission": permission,
     }
 
 
@@ -1580,6 +1689,7 @@ async def wake_word_self_test(request: Request) -> dict[str, object]:
     the word will wake — the acoustic mismatch that a wrong-language model causes
     is exactly what (1) surfaces.
     """
+    from jarvis.audio.capture import MicrophoneAccessError
     from jarvis.speech.diagnose import measure_mic_dbfs
     from jarvis.speech.wake_constants import resolve_vosk_model_path
     from jarvis.speech.wake_model_fetch import resolve_wake_language
@@ -1595,7 +1705,9 @@ async def wake_word_self_test(request: Request) -> dict[str, object]:
         language=language,
     )
 
-    if not _local_microphone_capture_ready(request):
+    def _blocked(
+        phrase_in_vocab: bool | None, request_result: object | None = None
+    ) -> dict[str, object]:
         return {
             "ok": False,
             "phrase": phrase,
@@ -1603,14 +1715,22 @@ async def wake_word_self_test(request: Request) -> dict[str, object]:
             "language": language,
             "wake_available": bool(plan.wake_available),
             "degraded": bool(plan.degraded),
-            "phrase_in_vocab": None,
+            "phrase_in_vocab": phrase_in_vocab,
             "max_dbfs": -120.0,
             "mic_ok": False,
             "no_device": False,
-            "permission_required": True,
-            "message": "Microphone access is not ready for Personal Jarvis.",
-            "hint": "Grant Microphone access in Settings > Permissions, then retry.",
+            **_microphone_block_fields(request, request_result),
         }
+
+    # The test button is the just-in-time moment for the microphone: a first press
+    # on an undecided Mac raises the OS dialog and waits for the answer (up to a
+    # minute) without pinning a worker thread. Only a live grant measures anything.
+    if sys.platform == "darwin":
+        asked = await _microphone_service(request).ensure_async(
+            "microphone", feature="wake_word", interactive=True, wait_s=60.0
+        )
+        if not asked.granted:
+            return _blocked(None, asked)
 
     # Vocabulary check only makes sense for the grammar (vosk_kws) engine.
     phrase_in_vocab: bool | None = None
@@ -1630,24 +1750,14 @@ async def wake_word_self_test(request: Request) -> dict[str, object]:
 
     try:
         max_dbfs = await measure_mic_dbfs(duration_s=2.0)
+    except MicrophoneAccessError as exc:
+        # The grant was lost between the ask and the capture: a permission answer,
+        # not "no microphone".
+        return _blocked(phrase_in_vocab, getattr(exc, "result", None))
     except Exception:  # noqa: BLE001 — treat a failed measurement as no device
         max_dbfs = -120.0
     if not _local_microphone_capture_ready(request):
-        return {
-            "ok": False,
-            "phrase": phrase,
-            "engine": plan.engine,
-            "language": language,
-            "wake_available": bool(plan.wake_available),
-            "degraded": bool(plan.degraded),
-            "phrase_in_vocab": phrase_in_vocab,
-            "max_dbfs": -120.0,
-            "mic_ok": False,
-            "no_device": False,
-            "permission_required": True,
-            "message": "Microphone access changed during the self-test.",
-            "hint": "Review Microphone access in Settings > Permissions, then retry.",
-        }
+        return _blocked(phrase_in_vocab)
     mic_ok = max_dbfs > -40.0
     no_device = max_dbfs <= -119.9
 
@@ -1696,16 +1806,22 @@ async def wake_mic_level(request: Request) -> dict[str, object]:
     matches ``jarvis.speech.diagnose`` (same measurement helper, so the CLI
     diagnostics and this route can never disagree on what "too quiet" means).
     """
+    from jarvis.audio.capture import MicrophoneAccessError
     from jarvis.speech.diagnose import measure_mic_dbfs
 
+    # A GET never asks: it reads the state silently and reports "permission
+    # required" until the gesture routes (the wake switch, the self-test button)
+    # have got the microphone granted.
     if not _local_microphone_capture_ready(request):
-        return _blocked_mic_level_result()
+        return _blocked_mic_level_result(request)
     try:
         max_dbfs = await measure_mic_dbfs(duration_s=3.0)
+    except MicrophoneAccessError as exc:  # a lost grant is a permission answer, not an error
+        return _blocked_mic_level_result(request, getattr(exc, "result", None))
     except Exception:  # noqa: BLE001 — defensive guard: if measurement fails, treat as no device
         max_dbfs = -120.0
     if not _local_microphone_capture_ready(request):
-        return _blocked_mic_level_result()
+        return _blocked_mic_level_result(request)
     return {
         "max_dbfs": max_dbfs,
         "no_device": max_dbfs <= -119.9,
@@ -1792,6 +1908,7 @@ def get_keybinds(request: Request) -> dict[str, object]:
     from jarvis.core.config import TriggerConfig
     from jarvis.core.config_writer import KEYBIND_TOML_KEY
     from jarvis.trigger.hotkey import mouse_hotkeys_available
+    from jarvis.trigger.shortcuts_status import shortcuts_status
 
     cfg = _config(request)
     trig = getattr(cfg, "trigger", None) if cfg is not None else None
@@ -1819,6 +1936,12 @@ def get_keybinds(request: Request) -> dict[str, object]:
         },
         "suggestions": _available_suggestions(current),
         "mouse_buttons": {"supported": mouse_ok, "reason": mouse_reason},
+        # ONE status for the global shortcut tap, not per row. Read silently
+        # (never prompts); a macOS host without Input Monitoring reads
+        # "needs_input_monitoring" so the UI can offer the one action.
+        "shortcuts_status": shortcuts_status(
+            getattr(pipeline, "_hotkey_trigger", None) if pipeline is not None else None
+        ).model_dump(),
         "restart_required": restart_required,
     }
 
@@ -2843,8 +2966,36 @@ def get_mute_music(request: Request) -> dict[str, object]:
     return {"enabled": bool(getattr(duck, "enabled", False))}
 
 
+def _mute_music_permission(report: object) -> dict[str, object] | None:
+    """The per-player permission answer of a switch-on, or ``None`` when there is none.
+
+    The macOS ducker returns a ``DuckPermissionReport``; Windows and a host without a
+    ducking backend return nothing, and then the response has no ``permission`` key.
+    """
+    as_dict = getattr(report, "as_dict", None)
+    if not callable(as_dict):
+        return None
+    try:
+        return dict(as_dict())
+    except Exception as exc:  # noqa: BLE001 - a malformed report never fails the toggle
+        log.debug("mute_music permission report skipped: %s", exc)
+        return None
+
+
 @router.put("/mute-music")
 async def put_mute_music(body: BoolToggleBody, request: Request) -> dict[str, object]:
+    """Switch "Mute music while dictating" on or off: persisted and applied live.
+
+    Switching ON is the user's gesture, so on macOS it may make the OS ask for
+    Automation access to a RUNNING player (Music, Spotify); the call returns once the
+    dialog is answered (at most ~2 minutes per player). The response keeps ``ok``,
+    ``enabled``, ``persisted`` and ``applied_live`` and, on macOS when switching on,
+    adds ``permission``: ``{feature, checked, asked, note, not_running, players}`` with
+    one ``{player, target, outcome, reason, can_open_settings, asked,
+    outside_installed_app, detail}`` per player that was running. Automation is only
+    checked while a player runs: with none open ``checked`` is false, ``players`` is
+    empty and ``note`` says so. Nothing is asked when switching off.
+    """
     enabled = bool(body.enabled)
     cfg = _config(request)
     duck = getattr(cfg, "ducking", None)
@@ -2862,16 +3013,26 @@ async def put_mute_music(body: BoolToggleBody, request: Request) -> dict[str, ob
     except Exception as exc:  # noqa: BLE001
         log.warning("mute_music persist failed (live apply still attempted): %s", exc)
     applied_live = False
+    permission: dict[str, object] | None = None
     desktop = getattr(request.app.state, "desktop_app", None)
     ducker = getattr(desktop, "_ducker", None)
     setter = getattr(ducker, "set_enabled", None)
     if callable(setter):
         try:
-            await setter(enabled)
+            report = await setter(enabled)
             applied_live = True
+            permission = _mute_music_permission(report)
         except Exception as exc:  # noqa: BLE001
             log.warning("mute_music live-apply failed: %s", exc)
-    return {"ok": True, "enabled": enabled, "persisted": persisted, "applied_live": applied_live}
+    response: dict[str, object] = {
+        "ok": True,
+        "enabled": enabled,
+        "persisted": persisted,
+        "applied_live": applied_live,
+    }
+    if permission is not None:
+        response["permission"] = permission
+    return response
 
 
 @router.get("/sound-effects")
