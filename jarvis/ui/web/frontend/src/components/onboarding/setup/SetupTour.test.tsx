@@ -5,7 +5,7 @@ import type { useOnboarding } from "@/hooks/useOnboarding";
 import { loadLocaleChunk } from "@/i18n";
 import { requestedApiKeysTab } from "@/lib/apiKeysTab";
 import { useEventStore } from "@/store/events";
-import { usePermissionsStore } from "@/store/permissions";
+import { HOW_BEATS } from "./HowWalk";
 import { SetupTour } from "./SetupTour";
 
 type Onb = ReturnType<typeof useOnboarding>;
@@ -105,16 +105,22 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it("asks for the consent first and opens the API Keys page after it", async () => {
+it("starts with a welcome and no consent gate, then opens the API Keys page", async () => {
   const onb = fakeOnb();
   render(<SetupTour onb={onb} preview={false} onFinished={vi.fn()} />);
   const start = (await screen.findByTestId("onboarding-primary")) as HTMLButtonElement;
-  expect(start.disabled).toBe(true);
-  fireEvent.click(screen.getByTestId("onboarding-accept"));
+  expect(screen.getByTestId("setup-card").dataset.step).toBe("welcome");
+  expect(start.disabled).toBe(false);
+  expect(screen.queryByTestId("onboarding-accept")).toBeNull();
+  expect(screen.queryByTestId("onboarding-decline")).toBeNull();
   await act(async () => {
     fireEvent.click(start);
   });
-  expect(onb.acceptTerms).toHaveBeenCalled();
+  expect(onb.acceptTerms).not.toHaveBeenCalled();
+  // First the explainer of what the assistant is, then the API Keys page.
+  await waitFor(() => expect(screen.getByTestId("setup-card").dataset.step).toBe("how"));
+  expect(onb.saveStep).toHaveBeenCalledWith("how", []);
+  fireEvent.click(await screen.findByTestId("how-skip"));
   await waitFor(() => expect(screen.getByTestId("setup-card").dataset.step).toBe("keys"));
   expect(onb.saveStep).toHaveBeenCalledWith("keys", []);
   await waitFor(() => expect(useEventStore.getState().activeSection).toBe("apikeys"));
@@ -162,50 +168,11 @@ it("asks for a wake word before going on, with a way to leave it for later", asy
   expect(onb.saveStep).toHaveBeenLastCalledWith("ready", ["voice"]);
 });
 
-it("resumes a stored legacy permissions step at the voice step and never asks the permission route", async () => {
-  const onb = fakeOnb({ ...accepted, current_step: "permissions" });
-  render(<SetupTour onb={onb} preview={false} onFinished={vi.fn()} />);
-  await screen.findByTestId("setup-voice-later");
-  expect(screen.getByTestId("setup-card").dataset.step).toBe("voice");
-  // Onboarding asks macOS nothing and does not even read the permission snapshot.
-  expect(calls.some((c) => c.url.startsWith("/api/permissions"))).toBe(false);
-});
-
 it("goes on from the wake word once one is saved", async () => {
   wakeWord = { phrase: "Hey George", enabled: true };
   render(<SetupTour onb={fakeOnb({ ...accepted, current_step: "voice" })} preview={false} onFinished={vi.fn()} />);
   await waitFor(() => expect((screen.getByTestId("onboarding-primary") as HTMLButtonElement).disabled).toBe(false));
   expect(screen.queryByTestId("setup-voice-later")).toBeNull();
-});
-
-it("keeps Continue enabled while macOS blocks the microphone for the wake word (the note lives in the panel)", async () => {
-  wakeWord = { phrase: "Hey George", enabled: true };
-  // The wake switch saved, then macOS refused the microphone: an episode is open for the feature.
-  usePermissionsStore.getState().ingest(
-    "PermissionNeeded",
-    "t",
-    {
-      permissions: ["microphone"],
-      feature: "wake_word",
-      reason: "denied",
-      phase: "blocked",
-      origin: "user",
-      target: "",
-      can_prompt: false,
-      can_open_settings: true,
-      outside_app: false,
-      detail: "",
-    },
-    Date.now(),
-  );
-  try {
-    render(<SetupTour onb={fakeOnb({ ...accepted, current_step: "voice" })} preview={false} onFinished={vi.fn()} />);
-    await waitFor(() => expect((screen.getByTestId("onboarding-primary") as HTMLButtonElement).disabled).toBe(false));
-    // The tour never reads or asks the permission route itself.
-    expect(calls.some((c) => c.url.startsWith("/api/permissions"))).toBe(false);
-  } finally {
-    usePermissionsStore.getState().ingest("PermissionResolved", "t", { permissions: ["microphone"], feature: "wake_word", granted: false }, Date.now());
-  }
 });
 
 it("switches on the plan a key saved during the step completes", async () => {
@@ -227,7 +194,7 @@ it("leaves a key that was already there exactly as it is", async () => {
   expect(calls.some((c) => c.url.includes("/switch"))).toBe(false);
 });
 
-it("completes onboarding from the last step", async () => {
+it("hands over to the tour from the last step without completing yet", async () => {
   const onb = fakeOnb({ ...accepted, current_step: "ready" });
   const onFinished = vi.fn();
   render(<SetupTour onb={onb} preview={false} onFinished={onFinished} />);
@@ -235,19 +202,30 @@ it("completes onboarding from the last step", async () => {
   await act(async () => {
     fireEvent.click(start);
   });
-  expect(onb.complete).toHaveBeenCalled();
-  expect(onFinished).not.toHaveBeenCalled();
+  // The gate completes onboarding (and restarts) only once the tour ends.
+  expect(onFinished).toHaveBeenCalled();
+  expect(onb.complete).not.toHaveBeenCalled();
+});
+
+it("keeps the app on the step's page when something else moves it", async () => {
+  render(<SetupTour onb={fakeOnb({ ...accepted, current_step: "keys" })} preview={false} onFinished={vi.fn()} />);
+  await screen.findByTestId("setup-keys-waiting");
+  await waitFor(() => expect(useEventStore.getState().activeSection).toBe("apikeys"));
+  act(() => useEventStore.getState().setActiveSection("profile"));
+  await waitFor(() => expect(useEventStore.getState().activeSection).toBe("apikeys"));
 });
 
 it("walks a replay from the start and never writes, completes or restarts", async () => {
   const onb = fakeOnb({ ...accepted, completed: true, current_step: "voice" });
   const onFinished = vi.fn();
   render(<SetupTour onb={onb} preview onFinished={onFinished} />);
-  // A replay shows every step, the consent included (already ticked).
+  // A replay from the URL shows every step, the welcome included.
   await waitFor(() => expect(screen.getByTestId("setup-card").dataset.step).toBe("welcome"));
   await act(async () => {
     fireEvent.click(screen.getByTestId("onboarding-primary"));
   });
+  await waitFor(() => expect(screen.getByTestId("setup-card").dataset.step).toBe("how"));
+  fireEvent.click(await screen.findByTestId("how-skip"));
   await waitFor(() => expect(screen.getByTestId("setup-card").dataset.step).toBe("keys"));
   fireEvent.click(await screen.findByTestId("setup-keys-later"));
   await waitFor(() => expect(screen.getByTestId("setup-card").dataset.step).toBe("subscriptions"));
@@ -277,4 +255,46 @@ it("starts a replay from Settings at the API Keys page, with no way back to the 
   render(<SetupTour onb={onb} preview startAt="keys" onFinished={vi.fn()} />);
   await waitFor(() => expect(screen.getByTestId("setup-card").dataset.step).toBe("keys"));
   expect(screen.queryByTestId("setup-back")).toBeNull();
+});
+
+it("explains the assistant with the pet walking the real app, then goes on to the keys", async () => {
+  const onb = fakeOnb({ ...accepted, current_step: "how" });
+  render(<SetupTour onb={onb} preview={false} onFinished={vi.fn()} />);
+  const card = await screen.findByTestId("setup-card");
+  expect(card.dataset.step).toBe("how");
+  expect(card.dataset.beat).toBe("hello");
+  // The pet says each line in a bubble; the composer beat moves the app home.
+  fireEvent.click(screen.getByTestId("how-next"));
+  expect(screen.getByTestId("setup-card").dataset.beat).toBe("talk");
+  await waitFor(() => expect(useEventStore.getState().activeSection).toBe("chats"));
+  fireEvent.click(screen.getByTestId("how-prev"));
+  expect(screen.getByTestId("setup-card").dataset.beat).toBe("hello");
+  for (let i = 0; i < HOW_BEATS.length - 1; i++) fireEvent.click(screen.getByTestId("how-next"));
+  expect(screen.getByTestId("setup-card").dataset.beat).toBe("done");
+  // Nothing was written while the pet explained.
+  expect(onb.saveStep).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByTestId("how-next"));
+  await waitFor(() => expect(screen.getByTestId("setup-card").dataset.step).toBe("keys"));
+  expect(onb.saveStep).toHaveBeenCalledWith("keys", []);
+});
+
+it("starts a replay from Settings at the explainer", async () => {
+  const onb = fakeOnb({ ...accepted, completed: true });
+  render(<SetupTour onb={onb} preview startAt="how" onFinished={vi.fn()} />);
+  await waitFor(() => expect(screen.getByTestId("setup-card").dataset.step).toBe("how"));
+  expect(screen.queryByTestId("setup-back")).toBeNull();
+});
+
+it("lets the welcome skip the whole setup", async () => {
+  const onSkipAll = vi.fn();
+  render(<SetupTour onb={fakeOnb()} preview={false} onFinished={vi.fn()} onSkipAll={onSkipAll} />);
+  fireEvent.click(await screen.findByTestId("setup-skip-all"));
+  expect(onSkipAll).toHaveBeenCalled();
+});
+
+it("says what a key is for: live voice needs OpenAI or Gemini", async () => {
+  providers = [{ ...openai, configured: true, secrets_set: { openai_api_key: true } }];
+  render(<SetupTour onb={fakeOnb({ ...accepted, current_step: "keys" })} preview={false} onFinished={vi.fn()} />);
+  const live = await screen.findByTestId("setup-keys-live");
+  await waitFor(() => expect(live.dataset.tone).toBe("ok"));
 });

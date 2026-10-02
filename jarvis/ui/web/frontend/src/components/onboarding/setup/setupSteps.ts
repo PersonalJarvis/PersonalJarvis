@@ -15,7 +15,7 @@ import type { TourPlacement } from "../tour/tourSteps";
  * permission (the wake-word switch on the voice step is one such moment, and
  * says so inside the spotlight hole), never as a stop of its own on first run.
  */
-export const SETUP_STEP_IDS = ["welcome", "keys", "subscriptions", "voice", "ready"] as const;
+export const SETUP_STEP_IDS = ["welcome", "how", "keys", "subscriptions", "voice", "ready"] as const;
 
 export type SetupStepId = (typeof SETUP_STEP_IDS)[number];
 
@@ -36,12 +36,17 @@ export interface SetupStep {
 
 export const SETUP_STEPS: Record<SetupStepId, SetupStep> = {
   welcome: { id: "welcome", placement: "inside", width: 420 },
+  // The pet's walk through the real app (HowWalk) places itself beat by beat.
+  how: { id: "how", placement: "inside", width: 500 },
   keys: { id: "keys", section: "apikeys", anchor: "apikeys-page", placement: "left", width: 320 },
   subscriptions: {
     id: "subscriptions",
     section: "apikeys",
     apiKeysTab: "subagents",
-    anchor: "apikeys-page",
+    // The subscription rows themselves (Connect buttons), scrolled into view —
+    // the tab opens on model settings further up.
+    anchor: "apikeys-subscriptions",
+    scrollTo: true,
     placement: "left",
     width: 340,
   },
@@ -56,29 +61,19 @@ export const SETUP_STEPS: Record<SetupStepId, SetupStep> = {
   ready: { id: "ready", section: "chats", placement: "inside", width: 400 },
 };
 
-/** The steps every machine walks, in order (the same list on every OS). */
+/** The steps this machine walks — every OS walks the same ones. */
 export function stepsFor(): SetupStepId[] {
   return [...SETUP_STEP_IDS];
 }
 
 /**
- * A step id an older build stored that no longer exists, and where it lands.
- * `permissions` used to sit right before `voice` (macOS only); a person who was
- * on it resumes at the voice step, on every OS.
- */
-const LEGACY_STEP_IDS: Readonly<Record<string, SetupStepId>> = { permissions: "voice" };
-
-/**
  * Where a resumed setup starts. The backend remembers the last step, so a
- * window reload lands where the user was — never past the consent.
+ * window reload lands where the user was; a fresh start (or an unknown, old
+ * step id) begins at the welcome.
  */
-export function resumeStep(
-  steps: readonly SetupStepId[],
-  saved: string | null,
-  termsAccepted: boolean,
-): SetupStepId {
-  if (!termsAccepted) return "welcome";
-  const wanted = saved === null ? null : (LEGACY_STEP_IDS[saved] ?? saved);
+export function resumeStep(steps: readonly SetupStepId[], saved: string | null): SetupStepId {
+  // An older build stored "permissions" (macOS only) right before "voice".
+  const wanted = saved === "permissions" ? "voice" : saved;
   const hit = steps.find((id) => id === wanted);
-  return hit && hit !== "welcome" ? hit : (steps[1] ?? "welcome");
+  return hit ?? "welcome";
 }

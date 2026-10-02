@@ -5,9 +5,12 @@ def test_meta_constants():
     assert m.CURRENT_TERMS_VERSION == "1.0"
     # Setup runs inside the real app (2026-09-30): consent, one key on the API
     # Keys page, a subscription for the agents on its Agents tab (2026-10-01),
-    # the wake word in Settings, then the start. There is no macOS permissions
-    # step: permissions are asked just in time, where a feature needs them.
-    assert m.ONBOARDING_STEPS == ["welcome", "keys", "subscriptions", "voice", "ready"]
+    # the wake word in Settings, then the start. The "how" step (2026-10-01)
+    # explains the product before anything is set up. There is no macOS
+    # permissions step: permissions are asked just in time, where a feature
+    # needs them.
+    assert m.ONBOARDING_STEPS == ["welcome", "how", "keys", "subscriptions", "voice", "ready"]
+    assert m.ONBOARDING_STEPS.index("how") < m.ONBOARDING_STEPS.index("keys")
     # Restart batching (2026-07-18): voice sits LAST before the final step so
     # the single unconditional completion restart covers it.
     assert m.ONBOARDING_STEPS[-2] == "voice"

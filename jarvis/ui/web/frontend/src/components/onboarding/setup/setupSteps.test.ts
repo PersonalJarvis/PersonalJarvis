@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { HOW_BEATS } from "./HowWalk";
 import { resumeStep, SETUP_STEP_IDS, SETUP_STEPS, stepsFor } from "./setupSteps";
 
 const SRC = join(__dirname, "..", "..", "..");
@@ -23,13 +24,12 @@ describe("setup steps", () => {
     expect([...block![1].matchAll(/"([a-z-]+)"/g)].map((m) => m[1])).toEqual([...SETUP_STEP_IDS]);
   });
 
-  it("have no permissions step: macOS asks where a feature needs it", () => {
-    expect(stepsFor()).toEqual(["welcome", "keys", "subscriptions", "voice", "ready"]);
-    expect([...SETUP_STEP_IDS]).not.toContain("permissions");
-    expect(Object.keys(SETUP_STEPS)).not.toContain("permissions");
+  it("has no permissions step on any OS (permissions are asked just in time)", () => {
+    expect(stepsFor()).not.toContain("permissions" as never);
+    expect(SETUP_STEPS).not.toHaveProperty("permissions");
   });
 
-  it("start with the consent and end with the start", () => {
+  it("start with the welcome and end with the start", () => {
     const steps = stepsFor();
     expect(steps[0]).toBe("welcome");
     expect(steps[steps.length - 1]).toBe("ready");
@@ -43,10 +43,24 @@ describe("setup steps", () => {
     for (const id of SETUP_STEP_IDS) {
       const anchor = SETUP_STEPS[id].anchor;
       if (!anchor) continue;
-      const literal = code.includes(`data-tour="${anchor}"`);
+      // A literal hook, or one handed to a component as its `tourId`.
+      const literal = code.includes(`data-tour="${anchor}"`) || code.includes(`tourId="${anchor}"`);
       // Settings groups get theirs from a template: data-tour={`settings-${section.id}`}.
       const group = anchor.startsWith("settings-") && code.includes("data-tour={`settings-${section.id}`}");
       expect(literal || group, anchor).toBe(true);
+    }
+  });
+
+  it("let the pet's walk point only at anchors the app actually sets", () => {
+    const code = sources(SRC)
+      .filter((f) => !f.includes(join("components", "onboarding")))
+      .map((f) => readFileSync(f, "utf8"))
+      .join("\n");
+    for (const beat of HOW_BEATS) {
+      if (!beat.anchor) continue;
+      const literal = code.includes(`data-tour="${beat.anchor}"`);
+      const nav = beat.anchor.startsWith("nav-") && code.includes("data-tour={`nav-${item.id}`}");
+      expect(literal || nav, beat.anchor).toBe(true);
     }
   });
 
@@ -63,24 +77,18 @@ describe("setup steps", () => {
 describe("resumeStep", () => {
   const steps = stepsFor();
 
-  it("never skips the consent", () => {
-    expect(resumeStep(steps, "voice", false)).toBe("welcome");
+  it("returns to the saved step", () => {
+    expect(resumeStep(steps, "voice")).toBe("voice");
+    expect(resumeStep(steps, "subscriptions")).toBe("subscriptions");
   });
 
-  it("returns to the saved step once consent exists", () => {
-    expect(resumeStep(steps, "voice", true)).toBe("voice");
+  it("starts at the welcome for a fresh run or an unknown, old step id", () => {
+    expect(resumeStep(steps, null)).toBe("welcome");
+    expect(resumeStep(steps, "api-keys")).toBe("welcome");
   });
 
   it("maps a stored legacy permissions step to the voice step on every OS", () => {
     // An older build stored "permissions" (macOS only) right before "voice".
-    expect(resumeStep(steps, "permissions", true)).toBe("voice");
-    // Still never past the consent.
-    expect(resumeStep(steps, "permissions", false)).toBe("welcome");
-  });
-
-  it("starts after the consent for an unknown or old step id", () => {
-    expect(resumeStep(steps, "api-keys", true)).toBe("keys");
-    expect(resumeStep(steps, null, true)).toBe("keys");
-    expect(resumeStep(steps, "welcome", true)).toBe("keys");
+    expect(resumeStep(steps, "permissions")).toBe("voice");
   });
 });

@@ -123,6 +123,14 @@ otherwise the first launch after that drag needs a network round trip. The
 image is signed, notarized and stapled afterwards, then `hdiutil verify` and
 `stapler validate` check the result.
 
+Those two checks answer "is the image intact" and "is a ticket attached".
+Neither answers the question the downloader cares about, so a notarized build
+is finally assessed with `spctl` **while quarantined**, exactly as a fresh
+download is, and the build **fails** if Gatekeeper rejects it. The quarantine
+part is not ceremony: an unquarantined file takes a different path through
+Gatekeeper and is accepted in cases where the downloaded copy is not, so
+assessing the file as it sits on the builder would prove nothing.
+
 The app-specific password is never written to the build log: the `notarytool`
 line is printed with the secret replaced and the real invocation is not traced.
 
@@ -133,20 +141,32 @@ That build is fine for local testing and must not be published.
 ## First launch
 
 * **Signed and notarized build:** a normal double-click. Nothing to explain.
-* **Unsigned or ad-hoc build** (every image published so far): macOS refuses the
-  first double-click (the dialog says Apple cannot check the app, or could not
-  verify it is free of malware, depending on the macOS version). On macOS 15 and
-  later, open **System Settings > Privacy & Security**, scroll to the message
-  about Personal Jarvis, choose **Open Anyway** and confirm with your password.
-  Up to macOS 14, **right-click (or Control-click) the app in Finder, choose
-  Open, then Open again** also works. macOS remembers the decision for that copy
-  of the app. Alternatively
-  `xattr -dr com.apple.quarantine "/Applications/Personal Jarvis.app"`. These
-  steps follow Apple's published behaviour and have not been tried on a Mac for
-  this project. An ad-hoc signature is a hash of the app's bytes, so an update is
-  a new app to macOS and its permissions are asked for again; a downloaded image
-  keeps one identity across versions only when it is signed with a stable
-  certificate, which for a public download means a Developer ID one.
+* **Unsigned or ad-hoc build:** macOS refuses the first double-click. The
+  wording varies — "cannot be checked for malicious software", or, commonly,
+  "is damaged and can't be opened", which describes a corrupt download rather
+  than an unsigned one and is why most people simply delete the file.
+
+  The way through **depends on the macOS version**, and the two are not
+  interchangeable:
+
+  * **macOS 15 Sequoia and newer:** double-click once and dismiss the warning,
+    then go to **System Settings > Privacy & Security**, scroll to *Security*,
+    and use **Open Anyway**. The failed launch is required — the button only
+    appears for an app that has already been refused.
+  * **macOS 14 Sonoma and earlier:** **right-click (or Control-click) the app
+    in Finder, choose Open, then Open again in the dialog.** Apple removed this
+    shortcut for unsigned apps in Sequoia, so do not hand it to a user without
+    asking which version they are on.
+
+  Either way, `xattr -dr com.apple.quarantine "/Applications/Personal Jarvis.app"`
+  does the same thing from a terminal on every version.
+
+  These steps follow Apple's published behaviour and have not been tried on a
+  Mac for this project. An ad-hoc signature is a hash of the app's bytes, so an
+  update is a new app to macOS and its permissions are asked for again; a
+  downloaded image keeps one identity across versions only when it is signed
+  with a stable certificate, which for a public download means a Developer ID
+  one.
 
 ## Permission prompts
 

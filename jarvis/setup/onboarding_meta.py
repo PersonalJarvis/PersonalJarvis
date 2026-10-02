@@ -24,6 +24,9 @@ CURRENT_TERMS_VERSION = "1.0"
 # before ready, because it only takes full effect after a relaunch — and
 # onboarding already ends with one unconditional fresh restart
 # (onboarding_routes._schedule_fresh_restart).
+# "how" (2026-10-01) is an interactive explainer of what the assistant is and
+# how its parts connect, shown before anything is set up — new users went
+# through setup without understanding the product.
 # There is NO permissions step (just-in-time permissions, AP-35): nothing asks
 # macOS for anything during first run except where a switch IS the gesture (the
 # wake-word switch on the voice step asks for the microphone there, and says so
@@ -31,6 +34,7 @@ CURRENT_TERMS_VERSION = "1.0"
 # "voice" (frontend ``resumeStep``); the backend never validates the stored id.
 ONBOARDING_STEPS: list[str] = [
     "welcome",
+    "how",
     "keys",
     "subscriptions",
     "voice",
