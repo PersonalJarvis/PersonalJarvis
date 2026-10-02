@@ -182,6 +182,18 @@ def test_pair_first_dm_claims_empty_allowlist(
     assert ch._cfg.allowed_user_ids == [777]  # noqa: SLF001
 
 
+def test_pair_first_dm_refuses_first_contact_after_pairing_window(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("JARVIS_CONFIG", str(tmp_path / "jarvis.toml"))
+    cfg = DiscordConfig(enabled=True, allowed_user_ids=[], pair_on_first_dm=True)
+    ch = _make_channel(cfg)
+    ch._pairing_closes_at = time.monotonic() - 1.0  # noqa: SLF001
+    assert ch._pair_first_dm(_make_message(user_id=777)) is False  # noqa: SLF001
+    assert ch._cfg.allowed_user_ids == []  # noqa: SLF001
+
+
 def test_pair_first_dm_off_when_allowlist_nonempty() -> None:
     cfg = DiscordConfig(enabled=True, allowed_user_ids=[1], pair_on_first_dm=True)
     ch = _make_channel(cfg)
