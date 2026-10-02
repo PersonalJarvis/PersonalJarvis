@@ -102,7 +102,7 @@ def _patch_transport(cls: type) -> bool:
 
     try:
         params = inspect.signature(init).parameters
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # an uninspectable httpx stays unpatched
         return False
     if not _REQUIRED_PARAMS <= params.keys():
         return False

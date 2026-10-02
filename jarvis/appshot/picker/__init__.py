@@ -45,7 +45,7 @@ def decode(line: str) -> dict[str, Any] | None:
     """One parsed line, or ``None`` for blank or garbled input."""
     try:
         payload = json.loads(line.strip())
-    except (ValueError, TypeError):
+    except (ValueError, TypeError):  # a garbled picker line is skipped, not an error
         return None
     return payload if isinstance(payload, dict) else None
 

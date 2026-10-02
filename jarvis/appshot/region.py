@@ -201,7 +201,7 @@ def step_zoom(current: int, steps: int) -> int:
     """Move ``steps`` notches along :data:`MAG_ZOOMS` (positive = closer)."""
     try:
         index = MAG_ZOOMS.index(current)
-    except ValueError:
+    except ValueError:  # an unknown zoom restarts from the default
         index = MAG_ZOOMS.index(MAG_DEFAULT_ZOOM)
     return MAG_ZOOMS[max(0, min(len(MAG_ZOOMS) - 1, index + steps))]
 
@@ -233,7 +233,7 @@ def parse_selection(payload: dict[str, Any]) -> Selection | None:
     try:
         info = {key: float(screen[key]) for key in ("x", "y", "w", "h", "dpr")}
         frac = tuple(max(0.0, min(1.0, float(v))) for v in rect)
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError):  # a malformed selection is refused via None
         return None
     if frac[2] <= 0.0 or frac[3] <= 0.0:
         return None
@@ -470,7 +470,7 @@ async def _run_picker(timeout_s: float) -> tuple[dict[str, Any] | None, int | No
     try:
         try:
             payload = await asyncio.wait_for(asyncio.shield(reader), timeout=timeout_s)
-        except TimeoutError:
+        except TimeoutError:  # the timeout is reported through timed_out
             timed_out = True
             await asyncio.to_thread(_cancel, proc)
     finally:

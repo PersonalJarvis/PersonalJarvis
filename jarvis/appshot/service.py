@@ -168,7 +168,7 @@ async def _pick_area(service: Any) -> tuple[int, int, int, int] | AppshotResult:
 
     try:
         selection = await pick_region()
-    except RegionUnavailable as exc:
+    except RegionUnavailable as exc:  # reported to the caller as a refused appshot
         return AppshotResult(status="refused", reason_code="region_unavailable", message=str(exc))
     if selection is None:
         return AppshotResult(

@@ -80,7 +80,7 @@ def _active_port(profile_dir: Path) -> int | None:
         try:
             first = candidate.read_text(encoding="utf-8").splitlines()[0].strip()
             return int(first)
-        except (OSError, IndexError, ValueError):
+        except (OSError, IndexError, ValueError):  # try the next pid file
             continue
     return None
 
@@ -233,7 +233,7 @@ class HangStackProbe:
                     )
                 session.call("Debugger.resume", wait=5)
                 time.sleep(0.3)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 - the reason goes into the captured report
             lines.append(f"capture stopped: {exc}")
         return lines
 

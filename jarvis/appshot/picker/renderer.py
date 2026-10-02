@@ -421,7 +421,7 @@ class Picker(QObject):
         self._settings = QSettings("PersonalJarvis", "AppshotPicker")
         try:
             saved = int(self._settings.value("zoom", MAG_DEFAULT_ZOOM))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError):  # a corrupt saved zoom falls back to the default
             saved = MAG_DEFAULT_ZOOM
         self.zoom = saved if saved in MAG_ZOOMS else MAG_DEFAULT_ZOOM
         self._ants = QTimer(self)

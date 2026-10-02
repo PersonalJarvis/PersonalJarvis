@@ -611,7 +611,7 @@ async def _without_toolless(names: set[str]) -> set[str]:
             same_model,
         )
         from jarvis.brain.ollama_pull import server_root  # noqa: PLC0415
-    except ImportError:
+    except ImportError:  # optional local-model helpers: keep the list
         return names
     try:
         snapshot = await cached_snapshot(server_root())

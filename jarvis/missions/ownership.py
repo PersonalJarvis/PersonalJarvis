@@ -39,7 +39,7 @@ def _process_start_ms(pid: int) -> int | None:
     """Start time of ``pid`` in epoch milliseconds, or None if unknowable."""
     try:
         import psutil
-    except ImportError:
+    except ImportError:  # psutil is optional; the start time is then unknown
         return None
     try:
         return int(psutil.Process(pid).create_time() * 1000)
@@ -79,11 +79,11 @@ def owner_is_alive(pid: int, start_ms: int) -> bool | None:
         return abs(own_start - start_ms) <= _START_TIME_TOLERANCE_MS
     try:
         import psutil
-    except ImportError:
+    except ImportError:  # psutil is optional; liveness is then unknown
         return None
     try:
         actual_start = _process_start_ms(pid)
-    except psutil.NoSuchProcess:
+    except psutil.NoSuchProcess:  # the owner process is gone: that is the answer
         return False
     except Exception as exc:  # noqa: BLE001 - an unreadable owner must count as "unknown", not "dead"
         log.debug("mission ownership: liveness of pid %s unknown: %s", pid, exc)

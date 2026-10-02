@@ -84,7 +84,7 @@ def character_block(*, path: Path | None = None, compact: bool = False) -> str:
         return cached[2]
     try:
         mtime = target.stat().st_mtime
-    except OSError:
+    except OSError:  # no SOUL.md yet means no identity block
         return ""
     if cached is not None and cached[0] == mtime:
         with _cache_lock:

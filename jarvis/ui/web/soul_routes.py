@@ -55,7 +55,7 @@ def _config(request: Request) -> Any:
 def _mtime_ms(path: Path) -> int | None:
     try:
         return int(path.stat().st_mtime * 1000)
-    except OSError:
+    except OSError:  # a missing file has no mtime
         return None
 
 
@@ -195,7 +195,7 @@ def _activity(folder: Path | None) -> list[dict[str, Any]]:
             size = handle.tell()
             handle.seek(max(0, size - _LEDGER_TAIL_BYTES))
             tail = handle.read().decode("utf-8", errors="replace")
-    except OSError:
+    except OSError:  # no ledger yet means no history
         return []
     lines = tail.splitlines()
     if size > _LEDGER_TAIL_BYTES and lines:
@@ -204,7 +204,7 @@ def _activity(folder: Path | None) -> list[dict[str, Any]]:
     for line in reversed(lines):
         try:
             record = json.loads(line)
-        except ValueError:
+        except ValueError:  # a torn ledger line is skipped
             continue
         if not isinstance(record, dict):
             continue
