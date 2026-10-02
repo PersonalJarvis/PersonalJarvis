@@ -30,14 +30,21 @@ export function useFileMeta(): (file: SoulFile) => string {
   };
 }
 
-/** Drops HTML comments, including nested leftovers and an unclosed opener. */
+/**
+ * Drops HTML comments. The preview renders as plain text, so this is about
+ * readability, not safety; an unclosed comment hides the rest of the line.
+ */
 function withoutComments(text: string): string {
-  let previous: string;
-  do {
-    previous = text;
-    text = text.replace(/<!--[\s\S]*?-->/g, "");
-  } while (text !== previous);
-  return text.replace(/<!--|-->/g, "");
+  let out = "";
+  let at = 0;
+  for (;;) {
+    const start = text.indexOf("<!--", at);
+    if (start < 0) return out + text.slice(at);
+    out += text.slice(at, start);
+    const end = text.indexOf("-->", start + 4);
+    if (end < 0) return out;
+    at = end + 3;
+  }
 }
 
 /** Inline Markdown made readable: emphasis markers and comments dropped. */
