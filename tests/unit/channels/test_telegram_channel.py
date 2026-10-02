@@ -223,6 +223,26 @@ async def test_on_msg_pairs_first_private_user_and_inserts_inbox(
 
 
 @pytest.mark.asyncio
+async def test_on_msg_refuses_first_contact_after_the_pairing_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """After the setup window an empty allowlist stays closed: a stranger who
+    finds the public bot later must not become its owner."""
+    paired: list[int] = []
+    monkeypatch.setattr(
+        "jarvis.core.config_writer.add_telegram_allowed_user_id",
+        lambda user_id: paired.append(user_id),
+    )
+    cfg = TelegramConfig(enabled=True, allowed_user_ids=[])
+    ch = _make_channel(cfg)
+    ch._pairing_closes_at = time.monotonic() - 1.0  # noqa: SLF001
+    await ch._on_telegram_msg(_make_update(user_id=666), _ctx=None)  # noqa: SLF001
+    assert paired == []
+    assert ch._cfg.allowed_user_ids == []  # noqa: SLF001
+    assert ch._inbox.qsize() == 0  # noqa: SLF001
+
+
+@pytest.mark.asyncio
 async def test_start_command_replies_without_entering_inbox(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
