@@ -45,9 +45,10 @@ receipts.
   38 new cases cover the two receipt evaluators and the browser tool boundary.
   Ruff and `git diff --check` pass. One dependency deprecation warning comes
   from FastAPI/Starlette's test-client import.
-- Parent CI run `36983225556` at 08:31 UTC: 42 jobs successful, 4 Windows
-  shards still running, 3 skipped. No failures observed at that check; this
-  is not a completed CI result. Check the new HEAD separately after publication.
+- Parent CI run `36983225556` at 08:31 UTC later completed with a failure on
+  the Windows shards. The only new ratchet ID was `pytest::internal`; the
+  named test failures were already present in the Windows baseline. The
+  failure was triaged before advancing the next HEAD.
 - This Linux checkout has no PowerShell, so `preflight.ps1` could not run;
   `import jarvis` was verified to resolve to this checkout. Test dependencies
   live in an isolated environment; no desktop installation was repinned.
@@ -65,5 +66,19 @@ receipts.
   the MacAgentBench receipts, browser handoff routing, macOS readiness and
   physical-input pause tests. Ruff and `git diff --check` pass; the existing
   FastAPI/Starlette test-client deprecation warning remains non-functional.
+
+## Remote validation: Windows pytest-path isolation
+
+- The Windows CI failure was caused by `tests/unit/plugins/tool/test_click_element.py`
+  patching `click_element.os.name` while `click_element.os` referenced the
+  process-wide stdlib module. That changed pathlib's platform selection and
+  caused pytest to raise `pytest::internal` while formatting a separate test
+  failure (`WindowsPath`/`PosixPath` on the wrong host).
+- `click_element` now exposes a module-local platform probe for the existing
+  test seam, leaving stdlib `os.name` unchanged. Local focused validation is
+  **11 passed, 1 deselected** for the click-element paths plus **104 passed**
+  across the MacAgentBench, browser-handoff, readiness and physical-input
+  pause contracts. The known capability-message test remains baselined on
+  this headless Linux runner; no new ratchet entry was added.
 
 The scheduled pass is intentionally limited to the platform-supported maximum cadence of once per hour; it is not a continuously resident daemon.

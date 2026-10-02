@@ -19,7 +19,7 @@ submits, file operations). Toast notification is shown, no approval gate.
 from __future__ import annotations
 
 import asyncio
-import os
+import os as _stdlib_os
 import sys
 from typing import Any
 
@@ -38,6 +38,25 @@ __all__ = ["ClickElementTool", "_click_windows"]
 
 _VALID_BUTTONS = ("left", "right", "middle")
 _MAX_AVAILABLE_NAMES = 15
+
+
+class _PlatformProbe:
+    """Module-local platform seam that cannot mutate ``os.name`` globally.
+
+    The click-element tests override ``click_element.os.name`` to exercise the
+    native and capability-gated branches.  Keeping that seam on a tiny local
+    object is important: assigning to the stdlib ``os.name`` would also change
+    how ``pathlib.Path`` selects its concrete class, which can make pytest
+    instantiate ``WindowsPath``/``PosixPath`` on the wrong host and fail while
+    formatting an otherwise ordinary test failure.
+    """
+
+    name = _stdlib_os.name
+
+
+# Kept as ``os`` for the existing test seam; this is deliberately not the
+# process-wide stdlib ``os`` module.
+os = _PlatformProbe()
 
 
 def _foreground_window_signature() -> tuple[Any, ...]:
