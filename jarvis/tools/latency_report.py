@@ -52,6 +52,7 @@ _STAGE_ORDER: tuple[str, ...] = (
 # not the cumulative offsets — otherwise every stage looks bigger than the one
 # before it. Keep in sync with telemetry.latency_log._DURATION_PAIRS.
 _DURATION_KEYS: tuple[str, ...] = (
+    "wake_to_intent_e2e",  # includes user speech capture and STT
     "vad_to_stt_first",
     "stt_streaming",
     "stt_to_brain_request",

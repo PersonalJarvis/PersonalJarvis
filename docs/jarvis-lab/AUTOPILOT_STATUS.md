@@ -109,10 +109,11 @@ receipts.
   the existing post-playback `SpeechSpoken` receipt. It does not add a new
   command route. The receipt matcher is cleared at the start of each utterance
   so repeated wording cannot inherit a previous turn's ack attribution.
-- Wake-to-route remains unmeasured: the per-turn tracker begins after utterance
-  capture, while wake-to-bar event budgets have their own focused test. Do not
-  describe current measurements as wake-to-ack end-to-end latency until the
-  wake anchor can be carried without conflating user speaking time.
+- Wake-to-route is measured for the first finalized turn after an authoritative
+  wake. A separate end-to-end duration carries the monotonic wake timestamp
+  across detector→session→turn handoff and includes user command speech plus
+  final STT. Normal per-turn TTFW/total anchors remain at utterance finalization.
+  Push-to-talk and later turns have no wake-anchored sample.
 - Remote CI run `37011268318` on the corrected HEAD `dcbda630` completed
   successfully across all 30 jobs, including the static gates, Python contracts
   and Windows/Linux shards. The local scratch venv's Python launcher was

@@ -21,6 +21,7 @@ wall-clock).
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from types import SimpleNamespace
@@ -225,6 +226,7 @@ async def test_handle_utterance_publishes_latency_turn_complete() -> None:
         ),
         latency=None,
     )
+    pipeline._session_wake_latency_anchor_ns = time.perf_counter_ns() - 50_000_000
 
     # Single-turn mode returns False ("session may close") on a COMPLETED
     # turn — completion is proven by the player having spoken both sentences.
@@ -241,6 +243,10 @@ async def test_handle_utterance_publishes_latency_turn_complete() -> None:
     event = received[0]
     stages = dict(event.stages_ms)
     assert LatencyPhase.STT_FINALIZE.value in stages
+    assert LatencyPhase.INTENT_DECISION.value in stages
+    assert stages[LatencyPhase.STT_FINALIZE.value] < 50.0
+    assert received[0].wake_to_intent_e2e_ms is not None
+    assert received[0].wake_to_intent_e2e_ms >= 50.0
     assert LatencyPhase.TTS_STREAM_DONE.value in stages
     assert event.anchor_ns > 0
     tracker = pipeline._latency_tracker

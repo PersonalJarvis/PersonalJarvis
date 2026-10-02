@@ -128,6 +128,7 @@ class LatencyLogWriter:
         ttfw_ms = stages.get("turn_to_first_audio")
         total_ms = stages.get("tts_stream_done")
         durations_ms = _derive_durations(stages)
+        durations_ms["wake_to_intent_e2e"] = event.wake_to_intent_e2e_ms
         return {
             "turn_id": event.trace_id.hex,
             "iso_timestamp": _iso(event.timestamp_ns),

@@ -144,16 +144,18 @@ Audited local handlers before adding another fast path:
   actions, wiki ingest, navigation, society inventory and Agentic-IDE
   operations. Each retains its existing capability/policy gates; skill voice
   triggers only add instructions to the normal brain turn and do not bypass it.
-- The speech pipeline already records STT finalize, intent decision, ack token,
-  first turn audio and streaming brain/TTS milestones. The ack token was only a
-  queued announcement, so `ack_playback_confirmed` now records the existing
-  playback-confirmed `SpeechSpoken` receipt for the instant-ack line.
-- The current turn tracker starts after utterance capture. Wake detector to
-  verified wake, and wake-to-route wall time therefore remain outside its
-  measurements; wake-to-bar event budgets are separately covered by
-  `tests/unit/speech/test_wake_latency.py`. Do not report those as full
-  wake-to-ack measurements until a wake-scoped trace can carry a monotonic
-  anchor through the user utterance without conflating user speaking time.
+- The speech pipeline records STT finalize, intent decision, ack token, first
+  turn audio and streaming brain/TTS milestones. `ack_playback_confirmed` is
+  marked from the player receipt for the instant-ack line, tied to the tracker
+  captured before playback awaits.
+- For the first finalized turn after a confirmed wake, the monotonic wake
+  timestamp is carried through session activation into the turn completion
+  record. The separate `wake_to_intent_e2e` duration includes user speech
+  capture and final STT; the turn's normal latency anchor remains at endpoint,
+  so TTFW and total-turn fields remain measured from turn finalization.
+  Push-to-talk and
+  subsequent turns have no wake-anchored sample. Wake-to-bar event budgets are
+  separately covered by `tests/unit/speech/test_wake_latency.py`.
 
 No additional fast path was justified by this audit. Future additions must
 reuse these handlers and their current safety boundaries.

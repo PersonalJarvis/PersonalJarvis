@@ -1800,6 +1800,8 @@ class LatencyTurnComplete(Event):
     brain_output_tokens: int = -1
     tts_input_chars: int = -1
     errors: tuple[str, ...] = field(default_factory=tuple)
+    #: First confirmed-wake to first brain-routing decision, including user speech and STT.
+    wake_to_intent_e2e_ms: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

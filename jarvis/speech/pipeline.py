@@ -3020,6 +3020,10 @@ class SpeechPipeline:
         self._explicit_hangup_lock_s: float = 0.4
         self._explicit_hard_hangup: bool = False
         self._last_wake_keyword: str = ""
+        self._pending_wake_latency_anchor_ns: int | None = None
+        self._session_wake_latency_anchor_ns: int | None = None
+        self._turn_wake_latency_anchor_ns: int | None = None
+        self._wake_to_intent_e2e_ms: float | None = None
         # 2026-05-26: timestamp of the last priority="interrupt"
         # announcement, used by ``_on_announcement`` to gate preamble-class
         # announcements that would otherwise produce cross-surface voice
@@ -4593,6 +4597,9 @@ class SpeechPipeline:
 
     async def _emit_wake(self, keyword: str, confidence: float = 0.0) -> None:
         self._last_wake_keyword = keyword
+        # Monotonic anchor survives detector → session handoff; the first
+        # finalized user turn consumes it to measure wake-to-intent end-to-end.
+        self._pending_wake_latency_anchor_ns = time.perf_counter_ns()
         if self._bus is not None:
             try:
                 await self._bus.publish(
@@ -8817,6 +8824,7 @@ class SpeechPipeline:
             ) or bool(getattr(self, "_ptt_mode", False))
             self._explicit_call_pending = False
             if not self._activation_allowed():
+                self._pending_wake_latency_anchor_ns = None
                 # Resolved, never guessed: this backstop closes for a mute and
                 # for a running dictation too, and a log line that names the
                 # window instead is exactly what misled an earlier diagnosis.
@@ -8831,6 +8839,7 @@ class SpeechPipeline:
                 await self._abort_pending_wake_handoff()
                 continue
             if now < self._wake_lock_until and not explicit_call:
+                self._pending_wake_latency_anchor_ns = None
                 # The speaker-echo lock gates only WAKE-WORD calls: the tail of
                 # Jarvis' own TTS can re-trigger the wake word, but it cannot
                 # press a key. Dropping explicit presses here made a quick
@@ -8890,6 +8899,15 @@ class SpeechPipeline:
                 else (self._last_wake_keyword or "hotkey")
             )
             self._last_wake_keyword = ""
+            pending_wake_anchor = getattr(
+                self, "_pending_wake_latency_anchor_ns", None
+            )
+            self._pending_wake_latency_anchor_ns = None
+            self._session_wake_latency_anchor_ns = (
+                pending_wake_anchor
+                if not explicit_call and wake_keyword not in {"hotkey", "engine_switch"}
+                else None
+            )
             hangup_reason = HANGUP_ERROR
             try:
                 # Reuse the already-open wake microphone when available. The
@@ -14982,6 +15000,8 @@ class SpeechPipeline:
             # returned early) so it cannot leak into the next turn.
             self._continuation_pending_drop = None
             self._emit_latency_turn_complete()
+            self._turn_wake_latency_anchor_ns = None
+            self._wake_to_intent_e2e_ms = None
             # Close this turn's speech buckets: one priced event per stage and
             # provider, however many sentences the reply was split into.
             recorder = getattr(self, "_speech_spend", None)
@@ -15013,6 +15033,9 @@ class SpeechPipeline:
                 anchor_ns=tracker.anchor_ns,
                 stages_ms=stages,
                 errors=tracker.errors_snapshot(),
+                wake_to_intent_e2e_ms=getattr(
+                    self, "_wake_to_intent_e2e_ms", None
+                ),
             )
             asyncio.create_task(bus.publish(event))  # noqa: RUF006 — fire-and-forget
         except Exception:  # noqa: BLE001 — telemetry must never break the turn
@@ -15160,6 +15183,12 @@ class SpeechPipeline:
         # it to refuse a "took too long" phrase on a turn that genuinely ran
         # under the floor (the sub-second spurious-apology bug, 2026-06-14).
         self._turn_start_monotonic = time.monotonic()
+        wake_anchor_ns = getattr(self, "_session_wake_latency_anchor_ns", None)
+        # Consume once: later turns in the same voice session start at their
+        # own endpoint, so they never inherit the original wake interval.
+        self._session_wake_latency_anchor_ns = None
+        self._turn_wake_latency_anchor_ns = wake_anchor_ns
+        self._wake_to_intent_e2e_ms = None
         self._latency_tracker = LatencyTracker(
             self._bus,
             uuid4(),
@@ -15456,6 +15485,12 @@ class SpeechPipeline:
         self._arm_continuation(text, continued=_continued_dispatch)
         log.info("→ Brain …")
         if self._latency_tracker is not None:
+            wake_anchor_ns = getattr(self, "_turn_wake_latency_anchor_ns", None)
+            if wake_anchor_ns is not None:
+                self._wake_to_intent_e2e_ms = max(
+                    0.0, (time.perf_counter_ns() - wake_anchor_ns) / 1_000_000
+                )
+                self._turn_wake_latency_anchor_ns = None
             self._latency_tracker.mark(LatencyPhase.INTENT_DECISION)
 
         # Pre-Thinking-Ack Flash-Brain: spawn parallel acknowledgment task
