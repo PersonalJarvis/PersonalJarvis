@@ -97,16 +97,18 @@ The third target, `soul`, is the assistant itself. It lives in
 | Part of SOUL.md | Maintained by |
 | --- | --- |
 | `- **Name:**` line under `## Who I am` | the loop at start (`JarvisNotebook.warm`), mirrored from the wake word; the wake word stays the only control for the name |
-| `## Calibration` between the `curator:calibration` markers | the review: id-tagged entries in the Society notebook format, under a file lock, ledgered like the other two |
+| `## Calibration` between the `curator:calibration` markers | the live conversation model, during the call, through the `update_soul` tool: id-tagged entries in the Society notebook format, under a file lock, ledgered like the other two |
 | role, vibe, `## Tone rules`, `## Limits` | the user, by hand; nothing rewrites them |
 
-The review shows the reviewer the `soul` entries next to the other two and
-accepts `target: "soul"` for lasting statements about how the user wants the
-assistant to be and present itself, under the same evidence and guard rules.
-The signal filter also marks turns addressed to the assistant's own manner
-("your name is", "you are too formal", "be more ...", and the German and
-Spanish equivalents). The name itself
-is never stored as an entry.
+The writer is the model that already heard the correction, not the review.
+`update_soul` (`jarvis/plugins/tool/update_soul.py`) sits in the live voice
+tool set only (`BrainSupervisorToolGateway._voice_tools`, ADR-0011 stays a
+pure dispatcher), so on GPT-Live the thinking model calls it through
+`call_tool`; the identity block it receives carries one extra sentence
+(`SOUL_UPDATE_DIRECTIVE`) telling it to. Every note passes `guard.refusal`,
+the notebook budget and the ledger. The review neither shows nor accepts the
+`soul` target: no review call and no reviewer tokens are spent on the
+assistant's character. The name itself is never stored as an entry.
 
 SOUL.md is not part of the learned snapshot below. `jarvis/brain/identity.py`
 renders it, after a name directive ("YOUR NAME IS GEORGE ... Personal Jarvis
@@ -114,7 +116,10 @@ is the name of the app you run inside, not your name"), at the very top of
 every surface: the classic brain prompt (and with it the CLI chat seats), the
 realtime voice instructions and the GPT-Live session, both its voice model
 and its thinking model. The render is cached on the file's modification time,
-so a review or a hand edit applies on the next turn. Regression this fixes: a
+so a tool write or a hand edit applies on the next call. It costs about 350
+prompt tokens (name directive about 90, character about 260 with an empty
+learned section), at the start of every prompt, so provider prompt caches
+cover it after the first request. Regression this fixes: a
 GPT-Live call answered "I'm Personal Jarvis" although the wake word named the
 assistant George (2026-10-02); the live instructions hardcoded the product
 name and never read SOUL.md.
@@ -178,6 +183,7 @@ engines. No upstream code was copied.
 safety rules, ledger and budgets, every trigger, the dead-reviewer fallbacks,
 the voice and chat inputs, and both prompt integrations;
 `test_soul_learning.py` covers the `soul` target end to end;
+`tests/unit/plugins/tool/test_update_soul.py` covers the live tool;
 `tests/unit/memory/test_soul.py` and `tests/unit/brain/test_identity.py` cover
 the file format and the identity block on every surface;
 `test_compaction.py` covers deduplication, safe and refused merges, the

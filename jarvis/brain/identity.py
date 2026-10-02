@@ -30,6 +30,13 @@ from jarvis.brain.assistant_name import DEFAULT_ASSISTANT_NAME, resolve_assistan
 log = logging.getLogger(__name__)
 
 PRODUCT_NAME: Final[str] = "Personal Jarvis"
+#: Tells a model that holds the ``update_soul`` tool to keep SOUL.md current.
+SOUL_UPDATE_DIRECTIVE: Final[str] = (
+    "Keep your character file current yourself: when the user tells you how you should be "
+    "or present yourself, or corrects it, save that right away with the update_soul tool "
+    "as one short third-person note (replace a note on the same subject instead of adding "
+    "a near-duplicate). Facts about the user do not belong there."
+)
 #: Minimum seconds between two mtime checks of SOUL.md from a prompt path.
 _STAT_INTERVAL_S: Final[float] = 2.0
 
@@ -97,14 +104,25 @@ def character_block(*, path: Path | None = None, compact: bool = False) -> str:
     return text
 
 
-def identity_block(config: Any, *, compact: bool = False, path: Path | None = None) -> str:
-    """Name directive plus character, for the top of any system prompt."""
+def identity_block(
+    config: Any, *, compact: bool = False, path: Path | None = None, maintain: bool = False
+) -> str:
+    """Name directive plus character, for the top of any system prompt.
+
+    ``maintain`` adds the instruction to keep SOUL.md current with the
+    ``update_soul`` tool; only a model that actually holds that tool (the
+    live voice tool set) gets it.
+    """
     try:
         name = resolve_assistant_name(config)
     except Exception:  # noqa: BLE001 — the name falls back, the prompt still builds
         log.debug("assistant name unavailable", exc_info=True)
         name = DEFAULT_ASSISTANT_NAME
-    parts = [name_directive(name), character_block(path=path, compact=compact)]
+    parts = [
+        name_directive(name),
+        character_block(path=path, compact=compact),
+        SOUL_UPDATE_DIRECTIVE if maintain else "",
+    ]
     return "\n\n".join(part for part in parts if part)
 
 

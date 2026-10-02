@@ -33,7 +33,9 @@ def _identity(config: Any) -> str:
     try:
         from jarvis.brain.identity import identity_block
 
-        return identity_block(config)
+        # maintain: the live tool set holds update_soul, so the call itself
+        # keeps SOUL.md current (no separate review call for the character).
+        return identity_block(config, maintain=True)
     except Exception:  # noqa: BLE001 — never block a call on the identity block
         log.warning("live voice: identity block unavailable", exc_info=True)
         return ""

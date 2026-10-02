@@ -56,17 +56,6 @@ _SIGNALS: Final[tuple[re.Pattern[str], ...]] = tuple(
         r"\b(?:das (?:ist|war) falsch|nein,? ich meinte|hab ich (?:dir )?doch gesagt"  # i18n-allow
         r"|du hast vergessen|stimmt nicht)\b",  # i18n-allow
         r"\b(?:eso está mal|no es lo que dije|te dije|te olvidaste)\b",  # i18n-allow
-        # About the assistant itself: its name, character and manner (SOUL.md).
-        r"\b(?:your name|you are called|you're called|you are (?:too|so|very)"
-        r"|you're (?:too|so|very)|be (?:more|less)|don't be so|stop being"
-        r"|your (?:tone|humou?r|personality|character|style|voice))\b",
-        r"\b(?:du heißt|du heisst|dein name|du bist (?:zu|so|echt|viel zu)"  # i18n-allow
-        r"|sei (?:mal |doch |bitte )?(?:mehr|weniger|nicht so|lockerer|direkter"  # i18n-allow
-        r"|ehrlicher|frecher|witziger|kürzer|netter|ernster)"  # i18n-allow
-        r"|dein(?:e|en)? (?:ton|humor|art"  # i18n-allow
-        r"|charakter|persönlichkeit|stil|stimme))\b",  # i18n-allow
-        r"\b(?:te llamas|tu nombre|eres (?:demasiado|muy|tan)|sé más|sé menos"  # i18n-allow
-        r"|tu (?:tono|humor|personalidad|carácter|estilo))\b",  # i18n-allow
         # Plans and goals.
         r"\b(?:i|we)(?: am|'m| are|'re)? (?:plan|planning|going to|working on|preparing"
         r"|moving|launching)\b",

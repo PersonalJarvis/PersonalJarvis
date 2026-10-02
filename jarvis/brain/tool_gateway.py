@@ -119,6 +119,11 @@ class BrainSupervisorToolGateway:
         # its effect and sound. Voice-only — a brain turn gets the same
         # picture from its own Screen Context step.
         tools["take_appshot"] = AppshotTool()
+        # The live model keeps its own character file (SOUL.md) current while
+        # the call runs, instead of a separate review call after it.
+        from jarvis.plugins.tool.update_soul import UpdateSoulTool
+
+        tools["update_soul"] = UpdateSoulTool()
         # The live prompt carries only a short product brief; exact how-to
         # answers come from the built-in guide on demand.
         tools["product_help"] = ProductHelpTool()

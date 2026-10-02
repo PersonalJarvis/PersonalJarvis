@@ -23,7 +23,7 @@ from datetime import date
 from typing import Any, Final
 
 from jarvis.memory.learning.guard import refusal
-from jarvis.memory.learning.notebook import TARGETS
+from jarvis.memory.learning.notebook import BOOK_TARGETS
 
 log = logging.getLogger(__name__)
 
@@ -52,13 +52,9 @@ details about other people that do not concern the user, credentials, and sensit
 Skip anything the notebooks already say.
 
 Notebooks: "user" (USER.md) = who the user is and what they want; "memory" (MEMORY.md) = facts
-about their setup and lessons from their corrections; "soul" (SOUL.md) = the assistant's OWN
-character: how the user wants the assistant to be and present itself (personality, humour,
-manner, how it introduces itself) and the user's corrections of that. The assistant's name comes
-from the wake word and is never stored. One fact, one notebook.
+about their setup and lessons from their corrections. One fact, one notebook.
 Write each entry as ONE short declarative sentence in the language the user spoke, e.g.
-"The user prefers short spoken answers." or, for soul, "The assistant introduces itself by its
-own name, never as the app." Never write orders ("Always answer briefly").
+"The user prefers short spoken answers." Never write orders ("Always answer briefly").
 Use "replace" with the entry_id when an entry on the same subject exists (update, correct or
 merge); "remove" only when the user said it is no longer true. When a notebook is above 80
 percent full, merge related entries with replace.
@@ -66,7 +62,7 @@ percent full, merge related entries with replace.
 "evidence" is an exact quote (12+ characters) of the user's words that carry the fact.
 At most 3 changes. Importance: 9-10 identity and lasting requirements, 6-8 durable facts and
 plans; anything below 5 is not worth keeping.
-Return only JSON: {{"changes": [{{"target": "user|memory|soul", "operation": "add|replace|remove",
+Return only JSON: {{"changes": [{{"target": "user|memory", "operation": "add|replace|remove",
 "entry_id": "", "text": "", "evidence": "", "importance": 7}}]}}
 If nothing is important, return {{"changes": []}}."""
 
@@ -112,13 +108,18 @@ def build_prompt(
     entries: dict[str, list[Any]],
     usage: dict[str, tuple[int, int]],
 ) -> str:
-    """The user message for the reviewer: the two notebooks and what was said."""
+    """The user message for the reviewer: the two notebooks and what was said.
+
+    SOUL.md is not shown: the live conversation model keeps it current itself
+    with the update_soul tool, so the review neither pays for it nor writes it.
+    """
     notebooks = {
         target: {
             "fill": f"{round(100 * used / max(1, budget))}%",
             "entries": [{"entry_id": e.id, "text": e.text} for e in entries.get(target, [])],
         }
         for target, (used, budget) in usage.items()
+        if target in BOOK_TARGETS
     }
     return json.dumps({"notebooks": notebooks, "said": said}, ensure_ascii=False)
 
@@ -219,7 +220,7 @@ def validate(
         text = " ".join(str(item.get("text") or "").split())
         entry_id = str(item.get("entry_id") or "").strip()
         evidence = str(item.get("evidence") or "").strip()
-        if target not in TARGETS or operation not in ("add", "replace", "remove"):
+        if target not in BOOK_TARGETS or operation not in ("add", "replace", "remove"):
             rejected.append(f"invalid target/operation {target!r}/{operation!r}")
             continue
         quote = _norm(evidence)

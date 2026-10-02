@@ -43,8 +43,9 @@ The same wake-word name is the assistant's own name in every chat and voice
 call. With the wake word "Hey George", the assistant introduces itself as
 George; "Personal Jarvis" is the app's name, not the assistant's. To rename
 the assistant, change the wake word. When you correct how the assistant
-presents itself, for example "be less formal", it records that in its
-character file after the conversation and follows it from then on.
+presents itself during a live voice call, for example "be less formal", it
+records that in its character file right away and follows it from the next
+call on.
 
 > [!warning] Jarvis sends the active persona and standing instructions to the
 > model as request context. A remote provider receives that text. Do not save

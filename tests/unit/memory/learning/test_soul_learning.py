@@ -62,7 +62,9 @@ async def _drain(loop: JarvisLearningLoop) -> None:
     raise AssertionError("reviews did not finish")
 
 
-def test_a_correction_about_the_assistant_is_accepted_for_soul() -> None:
+def test_the_review_never_writes_soul() -> None:
+    # The live conversation model keeps SOUL.md current with update_soul; a
+    # review proposal for it is refused so there is exactly one writer.
     text = "The assistant never introduces itself as Personal Jarvis."
     accepted, rejected = validate(
         [
@@ -77,8 +79,8 @@ def test_a_correction_about_the_assistant_is_accepted_for_soul() -> None:
         user_texts=["Du heißt George, nicht Personal Jarvis"],  # i18n-allow: user quote
         entries={"user": [], "memory": [], "soul": []},
     )
-    assert rejected == []
-    assert [(p.target, p.text) for p in accepted] == [("soul", text)]
+    assert accepted == []
+    assert rejected and "invalid target" in rejected[0]
 
 
 def test_an_unknown_target_is_still_rejected() -> None:
@@ -131,31 +133,28 @@ def test_without_a_soul_file_the_target_is_empty(tmp_path: Path) -> None:
         book.apply(target="soul", operation="add", text=NOTE)
 
 
-async def test_a_spoken_correction_of_the_name_is_kept_in_soul(
+async def test_the_review_neither_shows_nor_writes_soul(
     book: JarvisNotebook, soul_path: Path
 ) -> None:
-    said = "No, your name is George and not Personal Jarvis, introduce yourself by your name"
+    book.apply(target="soul", operation="add", text=NOTE)
+    said = "I am moving to Hamburg next month, and my sister lives there too"
     reviewer = ScriptedReviewer(
         [
             {
                 "target": "soul",
                 "operation": "add",
-                "text": "The assistant introduces itself by its own name, never as Personal "
-                "Jarvis.",
-                "evidence": "introduce yourself by your name",
+                "text": "The assistant is moving to Hamburg.",
+                "evidence": "moving to Hamburg next month",
                 "importance": 9,
             }
         ]
     )
     loop = JarvisLearningLoop(book, reviewer, review_every_turns=50, idle_review_seconds=0)
-    loop.record("voice:s", Turn(user="What are you?", assistant="I'm Personal Jarvis."))
     loop.record("voice:s", Turn(user=said))
     await loop._on_voice_ended(SimpleNamespace(session_id="s"))
     await _drain(loop)
 
     assert loop.review_calls == 1
     [shown] = reviewer.prompts
-    assert "soul" in shown["notebooks"]
-    assert [e.text for e in Soul.load(soul_path).learned()] == [
-        "The assistant introduces itself by its own name, never as Personal Jarvis."
-    ]
+    assert set(shown["notebooks"]) == {"user", "memory"}  # no tokens spent on SOUL.md
+    assert [e.text for e in Soul.load(soul_path).learned()] == [NOTE]
