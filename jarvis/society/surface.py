@@ -699,6 +699,10 @@ async def society_system_extra(cfg: Any, brain: Any, session: Any) -> str:
     catalog = rt.catalog()
     roster = await rt.roster.list()
     browser = rt.browser.status_for(agent)
+    # The live runner provisions on demand, including in unattended routine chats.
+    browser["auto_start"] = (
+        browser.get("mode") == "own" and rt.browser.live.model_resolver is not None
+    )
     learned = rt.skills_for(agent.agent_id).summaries()
     try:
         memory = rt.memory.head(agent, root=_vault_root(cfg))
@@ -830,7 +834,7 @@ def build_briefing(
 
 def _browser_line(browser: dict[str, Any] | None) -> str:
     """One byte-stable line about the agent's browser (agent-definition §3)."""
-    if not browser or not browser.get("installed"):
+    if not browser or not (browser.get("installed") or browser.get("auto_start")):
         return (
             "## Your browser\nNot set up on this machine yet — the user can install it from your "
             "card. Until then use plugins, CLIs and search-web for the web."
@@ -847,7 +851,10 @@ def _browser_line(browser: dict[str, Any] | None) -> str:
     )
     return (
         "## Your browser\nsociety_browser runs in your own persistent browser profile "
-        f"({logged}). One task per call, capped steps; sending, buying, deleting or "
+        f"({logged}). Call society_browser whenever a task or routine needs it, even when "
+        "the browser or its panel is closed. It prepares and starts the browser automatically; "
+        "do not ask the user to open or install it first. "
+        "One task per call, capped steps; sending, buying, deleting or "
         "publishing asks the user first."
     )
 
