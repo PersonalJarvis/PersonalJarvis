@@ -16,8 +16,9 @@ const t = (key: string) => key;
 vi.mock("@/components/home/VoiceComposer", () => ({
   VoiceComposer: ({ hint }: { hint: string }) => <div data-testid="voice-composer">{hint}</div>,
 }));
+const call = vi.hoisted(() => ({ active: false }));
 vi.mock("@/components/agentic/useVoiceCall", () => ({
-  useVoiceCall: () => ({ active: false, busy: false, connecting: false, toggleCall: () => {} }),
+  useVoiceCall: () => ({ active: call.active, busy: false, connecting: false, toggleCall: () => {} }),
 }));
 vi.mock("@/hooks/useVoiceReadiness", () => ({
   useVoiceReadiness: () => ({
@@ -72,7 +73,9 @@ function viewport(): HTMLElement {
 
 afterEach(() => {
   cleanup();
+  call.active = false;
   useHomeStore.getState().resetTranscript();
+  useEventStore.setState({ voiceState: "idle" });
 });
 
 describe("VoiceStage transcript", () => {
@@ -157,6 +160,43 @@ describe("VoiceStage transcript", () => {
 
     expect(screen.getByTestId("transcript-live").textContent).toContain("still talking");
     act(() => useEventStore.setState({ transcription: "", transcriptionFinal: true }));
+  });
+});
+
+describe("VoiceStage turn pet", () => {
+  function liveSteps(i: number): TranscriptLine {
+    return {
+      id: `s${i}`,
+      who: "steps",
+      text: "",
+      ts: i,
+      live: true,
+      startedTs: i,
+      lastTs: i,
+      steps: [{ id: "t1", kind: "tool", labelKey: "thinking.tool", detail: "web_search", status: "active", startedTs: i }],
+    };
+  }
+
+  it("draws the pet under the lane while the turn has no live trace", () => {
+    call.active = true;
+    act(() => useHomeStore.getState().seedTranscript([said("user", "hello", 1)]));
+    act(() => useEventStore.setState({ voiceState: "thinking" }));
+    render();
+
+    expect(screen.getByTestId("voice-turn-indicator")).toBeTruthy();
+  });
+
+  it("draws no second pet while a live trace sits above the answer", () => {
+    // The live trace already carries the pet on its status line; the answer
+    // streaming in under it must not add another one below.
+    call.active = true;
+    act(() =>
+      useHomeStore.getState().seedTranscript([said("user", "hello", 1), liveSteps(2), said("assistant", "Alles klar", 3)]),
+    );
+    act(() => useEventStore.setState({ voiceState: "speaking" }));
+    render();
+
+    expect(screen.queryByTestId("voice-turn-indicator")).toBeNull();
   });
 });
 

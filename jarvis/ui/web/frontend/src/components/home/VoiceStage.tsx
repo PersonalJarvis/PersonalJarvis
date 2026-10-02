@@ -92,9 +92,10 @@ export function VoiceStage({ onExit }: { onExit?: () => void } = {}) {
   // once its final line has landed while the audio still plays — that line.
   const speaking = active && voiceState === "speaking";
   const lastIsAnswer = !liveAnswer && lastLine?.who === "assistant";
-  // A live work trace at the bottom already shows the pet on its live line;
-  // a second one under it would say the same thing twice.
-  const traceShowsPet = !liveLine && !liveAnswer && lastLine?.who === "steps" && Boolean(lastLine.live);
+  // A live work trace already shows the pet on its live line — also while
+  // the answer streams in under it — so a second pet below would say the
+  // same thing twice.
+  const traceShowsPet = lines.some((m) => m.who === "steps" && m.live);
   const spoken = useSpokenCursor(
     liveAnswer || (lastIsAnswer ? lastLine.text : ""),
     speaking,
