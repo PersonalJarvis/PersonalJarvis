@@ -19,7 +19,9 @@ import { createVoiceFollower } from "@/components/home/voiceFollower";
  * playback level), whichever is louder — the light stands taller, flows
  * faster and its core flares with each syllable
  * (components/home/voiceFollower turns the raw level into those smooth
- * signals). Levels are read on animation frames — no React state, no
+ * signals). While the assistant thinks, nobody speaks — so the light does
+ * not go dark: it breathes, and two beams glide along the bottom edge,
+ * part and meet again. Levels are read on animation frames — no React state, no
  * re-render per frame — and the loop stops once the light has settled after
  * a call. Reduced motion keeps the light and drops the movement.
  *
@@ -28,7 +30,7 @@ import { createVoiceFollower } from "@/components/home/voiceFollower";
  *
  * Purely decorative: no pointer events, hidden from screen readers.
  */
-export function VoiceGlow({ active }: { active: boolean }) {
+export function VoiceGlow({ active, thinking = false }: { active: boolean; thinking?: boolean }) {
   const [webgl, setWebgl] = useState(webglAvailable);
   return (
     <div
@@ -38,9 +40,9 @@ export function VoiceGlow({ active }: { active: boolean }) {
       className="pointer-events-none absolute inset-x-0 bottom-0 h-[38vh] overflow-hidden"
     >
       {webgl ? (
-        <ShaderGlow active={active} onUnavailable={() => setWebgl(false)} />
+        <ShaderGlow active={active} thinking={thinking} onUnavailable={() => setWebgl(false)} />
       ) : (
-        <CssGlow active={active} />
+        <CssGlow active={active} thinking={thinking} />
       )}
     </div>
   );
@@ -64,6 +66,17 @@ function currentVoiceLevel(now: number): number {
 
 /** How long the light takes to come up when a call opens and to settle after. */
 const POWER_TAU_S = 0.5;
+/** How long the thinking beams take to fade in and out. */
+const THINK_TAU_S = 0.35;
+/** Radians per second of the beams' glide: one there-and-back every ~4.5 s. */
+const SWEEP_SPEED = 1.4;
+/** Radians per second of the light's breathing while it thinks (~3 s a breath). */
+const BREATH_SPEED = 2.1;
+
+/** How high the light stands while thinking: a calm, breathing middle height. */
+function thinkingLevel(think: number, breath: number): number {
+  return think * (0.24 + 0.08 * Math.sin(breath));
+}
 
 /**
  * Contexts handed back one task after an unmount, so React's development
@@ -72,9 +85,18 @@ const POWER_TAU_S = 0.5;
  */
 const pendingReleases = new Map<HTMLCanvasElement, number>();
 
-function ShaderGlow({ active, onUnavailable }: { active: boolean; onUnavailable: () => void }) {
+function ShaderGlow({
+  active,
+  thinking,
+  onUnavailable,
+}: {
+  active: boolean;
+  thinking: boolean;
+  onUnavailable: () => void;
+}) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const activeRef = useRef(active);
+  const thinkingRef = useRef(thinking);
   const wakeRef = useRef<() => void>(() => {});
   const unavailableRef = useRef(onUnavailable);
 
@@ -84,8 +106,9 @@ function ShaderGlow({ active, onUnavailable }: { active: boolean; onUnavailable:
 
   useEffect(() => {
     activeRef.current = active;
+    thinkingRef.current = thinking;
     wakeRef.current();
-  }, [active]);
+  }, [active, thinking]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -109,6 +132,9 @@ function ShaderGlow({ active, onUnavailable }: { active: boolean; onUnavailable:
     // loudness into a jump of the whole pattern.
     let time = 12;
     let power = 0;
+    let think = 0;
+    let sweepPhase = 0;
+    let breathPhase = 0;
     let color: [number, number, number] = [61, 139, 255];
     let light = false;
     let sinceTheme = 0;
@@ -128,7 +154,17 @@ function ShaderGlow({ active, onUnavailable }: { active: boolean; onUnavailable:
       light = canvas.closest(".dark") === null;
     };
     const draw = () =>
-      renderer.render({ time, level: signals.level, pulse: signals.pulse, power, light, color });
+      renderer.render({
+        time,
+        level: Math.max(signals.level, thinkingLevel(think, breathPhase)),
+        pulse: signals.pulse,
+        think,
+        // The beams start together in the middle and part from there.
+        sweep: Math.sin(sweepPhase),
+        power,
+        light,
+        color,
+      });
 
     const tick = (now: number) => {
       const dt = last < 0 ? 0 : Math.min(0.1, (now - last) / 1000);
@@ -136,13 +172,22 @@ function ShaderGlow({ active, onUnavailable }: { active: boolean; onUnavailable:
       const live = activeRef.current;
       signals = follower.step(dt, live ? currentVoiceLevel(now) : 0);
       power += ((live ? 1 : 0) - power) * (1 - Math.exp(-dt / POWER_TAU_S));
-      time += dt * (0.55 + signals.level * 1.4);
+      const thinkingNow = live && thinkingRef.current;
+      think += ((thinkingNow ? 1 : 0) - think) * (1 - Math.exp(-dt / THINK_TAU_S));
+      if (think < 0.002 && !thinkingNow) {
+        think = 0;
+        sweepPhase = 0;
+      } else {
+        sweepPhase += dt * SWEEP_SPEED;
+        breathPhase += dt * BREATH_SPEED;
+      }
+      time += dt * (0.55 + Math.max(signals.level, think * 0.3) * 1.4);
       sinceTheme += dt;
       if (sinceTheme > 0.5) {
         sinceTheme = 0;
         readTheme();
       }
-      if (!live && power < 0.002 && signals.level < 0.002 && signals.pulse < 0.002) {
+      if (!live && power < 0.002 && think === 0 && signals.level < 0.002 && signals.pulse < 0.002) {
         // Settled after a call: one last resting frame, then no loop at all.
         power = 0;
         signals = { level: 0, pulse: 0 };
@@ -157,6 +202,8 @@ function ShaderGlow({ active, onUnavailable }: { active: boolean; onUnavailable:
     const wake = () => {
       if (reduced || typeof requestAnimationFrame === "undefined") {
         power = activeRef.current ? 1 : 0;
+        // Reduced motion: the beams stand still, together in the middle.
+        think = activeRef.current && thinkingRef.current ? 1 : 0;
         readTheme();
         draw();
         return;
@@ -226,7 +273,7 @@ function ShaderGlow({ active, onUnavailable }: { active: boolean; onUnavailable:
 }
 
 /** The fallback: three pools of accent light that move with the same signals. */
-function CssGlow({ active }: { active: boolean }) {
+function CssGlow({ active, thinking }: { active: boolean; thinking: boolean }) {
   const blobRefs = useRef<(HTMLDivElement | null)[]>([]);
 
   useEffect(() => {
@@ -245,10 +292,15 @@ function CssGlow({ active }: { active: boolean }) {
     // shader's flow time: the voice changes how fast it travels, never where.
     const sway = BLOBS.map((b) => b.phase);
     const breath = BLOBS.map((b) => b.phase * 2);
+    let thinkBreath = 0;
     const tick = (now: number) => {
       const dt = last < 0 ? 0 : Math.min(0.1, (now - last) / 1000);
       last = now;
-      const voice = follower.step(dt, currentVoiceLevel(now)).level;
+      thinkBreath += dt * BREATH_SPEED;
+      const voice = Math.max(
+        follower.step(dt, currentVoiceLevel(now)).level,
+        thinkingLevel(thinking ? 1 : 0, thinkBreath),
+      );
       BLOBS.forEach((b, i) => {
         const el = blobs[i];
         if (!el) return;
@@ -265,7 +317,7 @@ function CssGlow({ active }: { active: boolean }) {
     };
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-  }, [active]);
+  }, [active, thinking]);
 
   return (
     <>

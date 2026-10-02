@@ -871,10 +871,34 @@ build re-enters its own executable with `--relauncher` (a frozen build has no
 `python -m`), and relaunches through `$APPIMAGE` on Linux and `open -n` on
 macOS. A frozen apply runs the mission guard before downloading. A host with
 no desktop window (`jarvis serve`) keeps running and is told to restart by
-hand. Covered by `tests/unit/core/test_installer_update.py` (the waiter is
-executed for real on macOS and Linux), `tests/unit/ui/test_relauncher_frozen.py`
-and `tests/unit/ui/web/test_update_routes_frozen.py`, run on all three OSes by
-the CI `updater` lane. Not yet run against a real installed build on any OS.
+hand.
+
+Hardening (2026-10-02): Windows also passes `/WAITPID=<pid>` and
+`/LOG=<user logs>/update-installer.log`; the installer's `InitializeSetup`
+waits up to 120 s for that process before touching a file, because a silent
+install that meets the still-running app answers "Abort" and the app never
+comes back (reproduced by the real-installer test). Every handover child gets
+`PYINSTALLER_RESET_ENVIRONMENT=1`, and on Linux the user's `LD_LIBRARY_PATH`
+(from `LD_LIBRARY_PATH_ORIG`) instead of the old AppImage mount. A preflight
+(`update_blocker`) refuses BEFORE downloading when the install cannot replace
+itself: a macOS app run from App Translocation, a disk image or an unwritable
+folder, or a Linux process not started from a writable AppImage; the status
+route reports it as `blocked_reason`. An Intel build under Rosetta updates to
+the arm64 DMG. Downloads only follow https redirects, are size-capped while
+streaming and time out as a whole after 30 minutes; Windows installer
+downloads left in the temp folder are reclaimed on the next run.
+
+Covered by `tests/unit/core/test_installer_update.py` (the waiter is executed
+for real on macOS and Linux), `tests/unit/core/test_installer_update_http.py`
+(the real httpx client against a scripted GitHub),
+`tests/unit/ui/test_relauncher_frozen.py`,
+`tests/unit/ui/web/test_update_routes_frozen.py` and
+`tests/integration/test_update_handover_real_os.py`: a real AppImage swap and
+relaunch on macOS/Linux, a real `.dmg` on macOS, and on Windows the real Inno
+script compiled twice and upgraded over a running install
+(`JARVIS_INSTALLER_E2E=1`). The CI `updater` lane runs all of it on Linux,
+Windows, Apple Silicon and Intel macOS. Still not run against a real released
+build: the first release with this code needs one live update per OS.
 
 | # | Impact | Area | Gap | Evidence | Behavior off-Windows |
 |---|---|---|---|---|---|

@@ -382,6 +382,9 @@ class LocalVoiceProvider:
     input_sample_rate = _INPUT_RATE
     output_sample_rate = _OUTPUT_RATE
     handshake_budget_s = 5.0
+    # Plan 4.6: a small local model gets a curated direct tool set within ~2K
+    # tokens; everything else goes through discover_tools/call_tool.
+    tool_declaration_budget_tokens = 2_000
 
     _engine: ClassVar[_Engine | None] = None
 

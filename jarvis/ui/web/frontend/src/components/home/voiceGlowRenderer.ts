@@ -8,7 +8,10 @@
  *    and sinking toward the sides; the voice lifts it;
  *  - soft vertical CURTAINS drifting upward through the haze — the shimmer;
  *  - a hot CORE hugging the bottom edge that flares with each syllable
- *    (`pulse`, the fast envelope) while the haze follows the slower `level`.
+ *    (`pulse`, the fast envelope) while the haze follows the slower `level`;
+ *  - while the assistant THINKS, two beams of light glide along the bottom
+ *    edge in opposite directions, part and meet again in the middle — the
+ *    light keeps working while nobody speaks.
  *
  * Colour is the theme's accent: deep in the haze, lifted toward white in the
  * core. On paper (light themes) the lift is smaller and the whole light
@@ -47,6 +50,8 @@ uniform float uPulse;
 uniform float uPower;
 uniform float uLight;
 uniform float uSpan;
+uniform float uThink;
+uniform float uSweep;
 uniform vec3 uColor;
 
 float hash(vec2 p) {
@@ -97,7 +102,15 @@ void main() {
   float dx = (uv.x - 0.5) / uSpan;
   float dome = exp(-dx * dx * 1.4);
 
-  float h = (0.34 + 0.42 * uLevel) * (0.6 + 0.8 * crest) * (0.3 + 0.7 * dome);
+  // Thinking: two beams mirrored about the middle. Screen-blended, not
+  // summed, so where they meet the light swells instead of blowing out.
+  float beamWidth = uSpan * 0.32;
+  float b1 = exp(-pow((uv.x - (0.5 + uSpan * 0.95 * uSweep)) / beamWidth, 2.0));
+  float b2 = exp(-pow((uv.x - (0.5 - uSpan * 0.95 * uSweep)) / beamWidth, 2.0));
+  float beams = (1.0 - (1.0 - b1) * (1.0 - b2)) * uThink;
+  float beam = beams * (exp(-y / 0.13) + 0.4 * exp(-y / 0.4));
+
+  float h = (1.0 + 0.7 * beams) * (0.34 + 0.42 * uLevel) * (0.6 + 0.8 * crest) * (0.3 + 0.7 * dome);
   float body = exp(-pow(y / max(h, 0.02), 1.35) * 1.7);
 
   float rays = smoothstep(0.2, 0.85, fbm(vec2(x * 2.6 + q.x * 2.2, y * 0.9 - t * 0.35)));
@@ -105,11 +118,11 @@ void main() {
 
   float core = exp(-y / (0.05 + 0.1 * uPulse)) * dome;
 
-  float a = body * shimmer * (0.3 + 0.7 * dome) + core * (0.2 + 0.6 * uPulse);
+  float a = body * shimmer * (0.3 + 0.7 * dome) + core * (0.2 + 0.6 * uPulse) + beam * 0.9;
   a *= (0.3 + 0.7 * uPower) * (0.65 + 0.55 * uLevel);
   a *= smoothstep(0.0, 0.12, uv.x) * (1.0 - smoothstep(0.88, 1.0, uv.x)) * (1.0 - smoothstep(0.45, 1.0, y));
 
-  float lift = clamp(core * 0.8 + rays * body * 0.35, 0.0, 1.0);
+  float lift = clamp(core * 0.8 + beam * 0.7 + rays * body * 0.35, 0.0, 1.0);
   vec3 deep = uColor * (0.75 + 0.25 * uLight);
   vec3 bright = mix(uColor, vec3(1.0), 0.55 - 0.35 * uLight);
   vec3 col = mix(deep, bright, lift);
@@ -128,6 +141,10 @@ export interface GlowFrame {
   level: number;
   /** Fast voice envelope 0..1: how hard the core flares. */
   pulse: number;
+  /** 0..1: how far the thinking beams have faded in. */
+  think: number;
+  /** -1..1: where the thinking beams stand (mirrored about the middle). */
+  sweep: number;
   /** 0 = resting wash, 1 = call open. */
   power: number;
   /** True on a light theme. */
@@ -224,6 +241,8 @@ export function createGlowRenderer(canvas: HTMLCanvasElement): GlowRenderer | nu
   const uLight = u("uLight");
   const uSpan = u("uSpan");
   const uColor = u("uColor");
+  const uThink = u("uThink");
+  const uSweep = u("uSweep");
 
   let cssWidth = 1;
   let cssHeight = 1;
@@ -252,6 +271,8 @@ export function createGlowRenderer(canvas: HTMLCanvasElement): GlowRenderer | nu
       gl.uniform1f(uLevel, frame.level);
       gl.uniform1f(uPulse, frame.pulse);
       gl.uniform1f(uPower, frame.power);
+      gl.uniform1f(uThink, frame.think);
+      gl.uniform1f(uSweep, frame.sweep);
       gl.uniform1f(uLight, frame.light ? 1 : 0);
       gl.uniform1f(uSpan, Math.min(0.45, SPAN_PX / cssWidth));
       gl.uniform3f(uColor, frame.color[0] / 255, frame.color[1] / 255, frame.color[2] / 255);

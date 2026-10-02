@@ -58,6 +58,10 @@ class _Conversation:
         self.audio_frames = 0
         self.done = asyncio.Event()
         self.interrupted_at: float | None = None
+        # Audio after this point answers the user's next utterance, so it is
+        # no leak of the interrupted reply.
+        self.next_turn_at: float | None = None
+        self.leaked_until: float | None = None
         self.metrics: dict[str, Any] = {}
 
     def reset(self) -> None:
@@ -67,6 +71,8 @@ class _Conversation:
         self.audio_frames = 0
         self.done = asyncio.Event()
         self.interrupted_at = None
+        self.next_turn_at = None
+        self.leaked_until = None
         self.metrics = {}
 
     async def pump(self) -> None:
@@ -80,6 +86,8 @@ class _Conversation:
                 self.events.append((now, message))
                 kind = message.get("type")
                 if kind == p.TRANSCRIPT_INPUT and message.get("final"):
+                    if self.interrupted_at is not None and self.next_turn_at is None:
+                        self.next_turn_at = now
                     await self.client.send({"type": p.RESPONSE_REQUEST, "session": self.session,
                                             "language": self.language})
                 elif kind == p.TOOL_CALL:
@@ -101,6 +109,8 @@ class _Conversation:
                 if self.first_audio_at is None:
                     self.first_audio_at = now
                 self.last_audio_at = now
+                if self.interrupted_at is not None and self.next_turn_at is None:
+                    self.leaked_until = now
 
         await asyncio.gather(messages(), audio())
 
@@ -121,6 +131,11 @@ class _Conversation:
                 await self.client.send_audio(self.slot, self.seq, to_pcm16(quiet))
                 await asyncio.sleep(CHUNK_SAMPLES / STT_RATE)
         return start
+
+
+def _speech_start(samples: np.ndarray, threshold: float = 0.01) -> float:
+    voiced = np.flatnonzero(np.abs(samples) > threshold)
+    return voiced[0] / STT_RATE if voiced.size else 0.0
 
 
 def _speech_end(samples: np.ndarray, threshold: float = 0.01) -> float:
@@ -194,12 +209,12 @@ async def _run(model: str, tts: str, languages: list[str], voice_kind: str,
                 continue
             await convo.stream(silence(0.4, STT_RATE))
             barge = voice.render(_BARGE[language], language, pad_s=0.0)
-            barge_start = time.monotonic()
-            await convo.stream(np.concatenate([barge, silence(0.6, STT_RATE)]))
+            sent_at = await convo.stream(np.concatenate([barge, silence(0.6, STT_RATE)]))
+            barge_start = sent_at + _speech_start(barge)
             interrupted = convo.interrupted_at
             leak = 0.0
-            if interrupted is not None and convo.last_audio_at is not None:
-                leak = max(0.0, convo.last_audio_at - interrupted)
+            if interrupted is not None and convo.leaked_until is not None:
+                leak = max(0.0, convo.leaked_until - interrupted)
             barges.append({
                 "language": language,
                 "interrupt_ms": round((interrupted - barge_start) * 1000.0, 1)

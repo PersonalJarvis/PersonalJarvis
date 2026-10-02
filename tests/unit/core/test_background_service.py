@@ -535,3 +535,18 @@ def test_tray_quit_all_skips_the_hand_off(monkeypatch) -> None:
     item._action(None, item)
     assert seen == ["quit_all", "stopped"]
     assert isinstance(tray._command_queue.get_nowait(), TrayCommand)
+
+
+def test_in_app_and_switched_off_channels_are_not_work() -> None:
+    state = SimpleNamespace(
+        task_scheduler=_Scheduler(),
+        channel_manager=_Channels("discord", "telegram", "web"),
+        config=SimpleNamespace(
+            integrations=SimpleNamespace(
+                telegram=SimpleNamespace(enabled=True), discord=SimpleNamespace(enabled=False)
+            )
+        ),
+    )
+    assert bg.work_from_state(state).channels == ("telegram",)
+    state.config.integrations.telegram.enabled = False
+    assert not bg.work_from_state(state)

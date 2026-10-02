@@ -595,28 +595,54 @@ jobs:
   # app differently (Inno handover, .app swap, AppImage swap, git transaction
   # + restart helper), and the POSIX-only tests run the real relaunch waiter,
   # so this lane is never narrowed to one runner the way PR test jobs are.
+  #
+  # Python: 3.11 is the floor, 3.12 is what the native installers freeze.
+  # macos-15-intel adds the x86_64 Mac (the Intel .dmg and its Rosetta probe).
+  # The real-OS handover tests build a real .dmg on macOS and, in the 3.12
+  # Windows job, compile the real Inno script and upgrade a RUNNING install
+  # with it (JARVIS_INSTALLER_E2E) — the only proof the installer actually
+  # waits for the old app and brings the new one back.
   updater:
-    name: updater (${{ matrix.os }})
+    name: updater (${{ matrix.os }}, Python ${{ matrix.python }})
     needs: detect
     if: needs.detect.outputs.updater == 'true'
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.11", "3.12"]
+        include:
+          - {os: macos-15-intel, python: "3.12"}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python }}
       - name: Portable base + focused runner
         shell: bash
         run: |
           python -m pip install -e .
           python -m pip install pytest pytest-asyncio
+      - name: Inno Setup for the real installer upgrade
+        if: runner.os == 'Windows' && matrix.python == '3.12'
+        shell: pwsh
+        run: |
+          $candidates = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
+            "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
+          )
+          $found = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if ($found) {
+            Write-Host "Inno Setup already present: $found"
+          } else {
+            choco install innosetup --no-progress -y
+          }
+          "JARVIS_INSTALLER_E2E=1" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Updater suite (status, verify, handover, restart, rollback)
         shell: bash
         run: |
@@ -624,6 +650,7 @@ jobs:
           git config --global user.name ci
           python -m pytest -q -p no:cacheprovider -rs \
             tests/unit/core/test_installer_update.py \
+            tests/unit/core/test_installer_update_http.py \
             tests/unit/install/test_installer_update_contract.py \
             tests/unit/ui/test_relauncher.py \
             tests/unit/ui/test_relauncher_frozen.py \
@@ -635,7 +662,8 @@ jobs:
             tests/unit/web/test_update_progress.py \
             tests/unit/web/test_update_progress_route.py \
             tests/unit/web/test_update_subprocess_stream.py \
-            tests/integration/test_update_apply_real_git.py
+            tests/integration/test_update_apply_real_git.py \
+            tests/integration/test_update_handover_real_os.py
 
   realtime-slim:
     name: realtime on python:3.11-slim (no PortAudio)
