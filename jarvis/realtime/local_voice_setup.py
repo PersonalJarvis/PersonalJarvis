@@ -382,8 +382,18 @@ def _copy_engine(source: Path, home: Path) -> None:
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     # A bare namespace marker: the worker must never import the app's package.
     (staging / "jarvis" / "__init__.py").write_text("", encoding="utf-8")
-    shutil.rmtree(target, ignore_errors=True)
-    os.replace(staging, target)
+    # Windows briefly locks freshly written folders (virus scanner, indexer):
+    # the rename failed with "access denied" in about 1 of 60 test runs.
+    for delay in (0.05, 0.1, 0.2, 0.4, 0.8, 1.6, 0.0):
+        shutil.rmtree(target, ignore_errors=True)
+        try:
+            os.replace(staging, target)
+            return
+        except PermissionError:
+            if not delay:
+                raise
+            log.info("engine folder is locked; retrying the copy in %.2f s", delay)
+            time.sleep(delay)
 
 
 def _run_setup(deps: SetupDeps) -> None:
