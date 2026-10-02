@@ -832,7 +832,7 @@ jobs:
       - name: Evaluate every job
         env:
           NEEDS: ${{ toJSON(needs) }}
-          STRICT: ${{ github.event_name == 'schedule' }}
+          STRICT: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full && inputs.include_macos) }}
         run: |
           args=()
           [ "$STRICT" = "true" ] && args+=(--strict)

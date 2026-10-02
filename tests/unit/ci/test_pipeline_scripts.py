@@ -317,9 +317,37 @@ def test_ratchet_matches_timeouts_regardless_of_budget(tmp_path):
     assert ratchet_tests.main(["check", "--baseline", str(baseline), str(report)]) == 0
 
 
-def test_missing_baseline_is_report_only(tmp_path):
+def test_missing_baseline_cannot_waive_test_failures(tmp_path):
     report = _report(tmp_path / "r.json", ["t::new"])
+    assert ratchet_tests.main(["check", "--baseline", str(tmp_path / "no.json"), str(report)]) == 1
+
+
+def test_missing_baseline_accepts_an_actual_passing_report(tmp_path):
+    report = _report(tmp_path / "r.json", [])
     assert ratchet_tests.main(["check", "--baseline", str(tmp_path / "no.json"), str(report)]) == 0
+
+
+def test_ratchet_rejects_an_empty_report_directory(tmp_path):
+    baseline = tmp_path / "b.json"
+    baseline.write_text(json.dumps({"known_failures": []}), encoding="utf-8")
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    assert ratchet_tests.main(["check", "--baseline", str(baseline), str(reports)]) == 1
+
+
+def test_full_manual_ci_with_macos_rejects_unexpected_skipped_jobs():
+    import yaml
+
+    root = Path(__file__).resolve().parents[3]
+    jobs = yaml.safe_load((root / ".github/workflows/ci.yml").read_text("utf-8"))["jobs"]
+    evaluate_step = next(
+        step for step in jobs["gate"]["steps"] if step.get("name") == "Evaluate every job"
+    )
+    assert evaluate_step["env"]["STRICT"] == (
+        "${{ github.event_name == 'schedule' || "
+        "(github.event_name == 'workflow_dispatch' && inputs.full && inputs.include_macos) }}"
+    )
+    assert not required_results.evaluate({"tests-macos": {"result": "skipped"}}, strict=True)["ok"]
 
 
 def test_update_writes_a_baseline_the_check_accepts(tmp_path):
