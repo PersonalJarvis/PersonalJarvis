@@ -100,6 +100,7 @@ def _windows_pipe_reader(source: BinaryIO) -> Callable[[], bytes] | None:
     try:
         handle = msvcrt.get_osfhandle(source.fileno())
     except (OSError, ValueError, AttributeError):
+        # No OS handle: the caller falls back to plain reads.
         return None
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     peek = kernel32.PeekNamedPipe
