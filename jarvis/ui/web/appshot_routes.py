@@ -7,6 +7,7 @@ Endpoints (mounted by the WebServer in ``_build_app()``):
     POST   /api/appshot/take             → take one appshot now (window or area).
     GET    /api/appshot/latest           → metadata of the last appshot.
     GET    /api/appshot/latest/image     → its picture (never cached).
+    PUT    /api/appshot/latest/image     → replace it with the editor's version.
     GET    /api/appshot/pending          → the appshot waiting for the next message.
     POST   /api/appshot/pending/claim    → hand that one to the chat composer.
     DELETE /api/appshot                  → forget every held appshot now.
@@ -203,6 +204,45 @@ async def latest_image() -> Response:
     if shot is None:
         raise HTTPException(status_code=404, detail="No appshot is being kept right now.")
     return Response(content=shot.image, media_type=shot.mime, headers=_NO_STORE)
+
+
+#: Upper bound for an edited picture (a 4K PNG with annotations stays far below).
+_MAX_EDIT_BYTES = 20 * 1024 * 1024
+
+
+@router.put("/latest/image")
+async def replace_latest_image(request: Request, id: str) -> dict[str, Any]:  # noqa: A002
+    """Store the appshot editor's result in place of the last appshot.
+
+    Body: the PNG the editor rendered. In memory only, like every appshot; the
+    next message that takes the appshot gets the edited picture.
+    """
+    from jarvis.appshot.store import get_store  # noqa: PLC0415
+
+    body = await request.body()
+    if not body or len(body) > _MAX_EDIT_BYTES:
+        raise HTTPException(status_code=413, detail="The edited picture is empty or too large.")
+    size = await asyncio.to_thread(_png_size, body)
+    if size is None:
+        raise HTTPException(status_code=400, detail="The edited picture is not a PNG.")
+    shot = await asyncio.to_thread(get_store().replace_image, id, body, "image/png", *size)
+    if shot is None:
+        raise HTTPException(status_code=404, detail="That appshot is no longer kept.")
+    return {"ok": True, "appshot": shot.meta()}
+
+
+def _png_size(data: bytes) -> tuple[int, int] | None:
+    import io  # noqa: PLC0415
+
+    from PIL import Image, UnidentifiedImageError  # noqa: PLC0415
+
+    try:
+        with Image.open(io.BytesIO(data)) as image:
+            if image.format != "PNG":
+                return None
+            return int(image.width), int(image.height)
+    except (UnidentifiedImageError, OSError):  # not a readable PNG; the caller refuses it
+        return None
 
 
 @router.get("/pending")

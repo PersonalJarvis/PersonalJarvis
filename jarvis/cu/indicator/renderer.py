@@ -20,22 +20,31 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 import threading
+import time
 from collections import deque
 from contextlib import suppress
+from pathlib import Path
 
 from PySide6.QtCore import (
     QByteArray,
     QEasingCurve,
+    QMimeData,
     QObject,
+    QPoint,
+    QPointF,
     QRectF,
     Qt,
+    QTimer,
+    QUrl,
     QVariantAnimation,
     Signal,
     Slot,
 )
 from PySide6.QtGui import (
     QColor,
+    QDrag,
     QFont,
     QFontMetricsF,
     QGuiApplication,
@@ -44,11 +53,16 @@ from PySide6.QtGui import (
     QPainter,
     QPainterPath,
     QPen,
+    QPixmap,
 )
 from PySide6.QtWidgets import QApplication, QWidget
 
 from jarvis.cu.indicator import protocol
-from jarvis.cu.indicator.win32 import exclude_from_capture, harden_window
+from jarvis.cu.indicator.win32 import (
+    exclude_from_capture,
+    harden_clickable_window,
+    harden_window,
+)
 
 # Jarvis gold — matches ui/orb BUBBLE_BORDER_HEX (#FFE500) at the crisp
 # edge, falling off through the softer [ui].bar_accent gold (#e7c46e).
@@ -186,21 +200,29 @@ class _GlowWindow(QWidget):
 # Appshot shutter effect — the phone-screenshot moment.
 #
 # A white flash over the captured surface, then the picture shrinks into the
-# bottom-right corner of that monitor, rests there as a rounded thumbnail and
-# slides out. Purely local: the thumbnail arrives over this process's stdin,
-# is painted, and is dropped with the window. Click-through like the glow.
+# bottom-right corner of that monitor. There it becomes a small interactive
+# card (``_CardWindow``): hovering keeps it, a click asks the app to open the
+# editor, a drag hands the finished picture to any app that takes a file, a
+# right-click dismisses it. The flight canvas itself stays click-through.
 # ---------------------------------------------------------------------------
 
 _SNAP_FLASH_MS = 200
 _SNAP_FLY_START_MS = 90
 _SNAP_FLY_MS = 430
-_SNAP_HOLD_UNTIL_MS = 2500
-_SNAP_OUT_MS = 320
-_SNAP_TOTAL_MS = _SNAP_HOLD_UNTIL_MS + _SNAP_OUT_MS
+_SNAP_TOTAL_MS = _SNAP_FLY_START_MS + _SNAP_FLY_MS
 _SNAP_THUMB_W = 320
 _SNAP_THUMB_MAX_H = 240
 _SNAP_MARGIN = 28
 _SNAP_RADIUS = 12.0
+
+#: The resting card: how long it stays untouched, and after the pointer left.
+_CARD_REST_MS = 6000
+_CARD_AFTER_HOVER_MS = 2500
+_CARD_OUT_MS = 240
+#: A press that moves further than this (logical px) is a drag, not a click.
+_CARD_DRAG_SLOP = 6
+#: Drag files older than this are removed the next time one is written.
+_DRAG_FILE_MAX_AGE_S = 3600
 
 
 def _ease_out_cubic(x: float) -> float:
@@ -240,10 +262,26 @@ def _match_screen(monitor: list[float]):
     return best
 
 
-class _SnapWindow(QWidget):
-    """One monitor-sized, click-through canvas for a single shutter effect."""
+def _paint_card(painter: QPainter, rect: QRectF, thumb: QImage, radius: float, ring: float) -> None:
+    """The thumbnail with rounded corners and a white ring — flight and card."""
+    clip = QPainterPath()
+    clip.addRoundedRect(rect, radius, radius)
+    painter.save()
+    painter.setClipPath(clip)
+    painter.drawImage(rect, thumb)
+    painter.restore()
+    if ring > 0.0:
+        pen = QPen(QColor(255, 255, 255, int(235 * ring)))
+        pen.setWidthF(2.5)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRoundedRect(rect, radius, radius)
 
-    def __init__(self, screen, rect_frac: list[float], thumb: QImage, on_done) -> None:
+
+class _SnapWindow(QWidget):
+    """One monitor-sized, click-through canvas for the flash and the flight."""
+
+    def __init__(self, screen, rect_frac: list[float], thumb: QImage, on_landed, on_done) -> None:
         super().__init__(None)
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
@@ -262,7 +300,9 @@ class _SnapWindow(QWidget):
                 self.setAttribute(mac_always_show)
         self.setScreen(screen)
         self.setGeometry(screen.geometry())
+        self._screen_geo = screen.geometry()
         self._thumb = thumb
+        self._on_landed = on_landed
         self._on_done = on_done
         w, h = float(screen.geometry().width()), float(screen.geometry().height())
         fx, fy, fw, fh = (max(0.0, min(1.0, float(v))) for v in rect_frac)
@@ -277,26 +317,40 @@ class _SnapWindow(QWidget):
         if th > _SNAP_THUMB_MAX_H:
             th = float(_SNAP_THUMB_MAX_H)
             tw = th / max(aspect, 1e-6)
-        self._dst = QRectF(w - tw - _SNAP_MARGIN, h - th - _SNAP_MARGIN, tw, th)
+        # Land inside the work area, so the card never sits under the taskbar.
+        avail = screen.availableGeometry()
+        geo = screen.geometry()
+        right = float(avail.right() + 1 - geo.x())
+        bottom = float(avail.bottom() + 1 - geo.y())
+        self._dst = QRectF(right - tw - _SNAP_MARGIN, bottom - th - _SNAP_MARGIN, tw, th)
         self._t = 0.0
         self._anim = QVariantAnimation(self)
         self._anim.setStartValue(0.0)
         self._anim.setEndValue(float(_SNAP_TOTAL_MS))
         self._anim.setDuration(_SNAP_TOTAL_MS)
         self._anim.valueChanged.connect(self._on_tick)
-        self._anim.finished.connect(self._finish)
+        self._anim.finished.connect(self._landed)
 
     def start(self) -> None:
         self.show()
         self._anim.start()
 
     def finish_now(self) -> None:
+        """Drop the effect without handing over to a card."""
+        self._on_landed = None
         self._anim.stop()
         self._finish()
 
     def _on_tick(self, value) -> None:
         self._t = float(value)
         self.update()
+
+    def _landed(self) -> None:
+        landed, self._on_landed = self._on_landed, None
+        if landed is not None and not self._thumb.isNull():
+            top_left = self._screen_geo.topLeft()
+            landed(self._dst.translated(top_left.x(), top_left.y()), self._thumb)
+        self._finish()
 
     def _finish(self) -> None:
         self.hide()
@@ -319,45 +373,208 @@ class _SnapWindow(QWidget):
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
 
         fly = _ease_out_cubic((t - _SNAP_FLY_START_MS) / _SNAP_FLY_MS)
-        out = _ease_out_cubic((t - _SNAP_HOLD_UNTIL_MS) / _SNAP_OUT_MS)
         rect = QRectF(
-            _lerp(self._src.x(), self._dst.x(), fly) + 48.0 * out,
+            _lerp(self._src.x(), self._dst.x(), fly),
             _lerp(self._src.y(), self._dst.y(), fly),
             _lerp(self._src.width(), self._dst.width(), fly),
             _lerp(self._src.height(), self._dst.height(), fly),
         )
-        radius = _SNAP_RADIUS * fly
-        opacity = 1.0 - out
-
-        if not self._thumb.isNull() and opacity > 0.0:
-            painter.setOpacity(opacity)
-            # Soft shadow grows in as the card lifts off the surface.
+        if not self._thumb.isNull():
             if fly > 0.0:
                 for spread, alpha in ((10.0, 18), (5.0, 30), (2.0, 46)):
                     shadow = rect.adjusted(-spread, -spread + 4, spread, spread + 4)
                     painter.setPen(Qt.PenStyle.NoPen)
                     painter.setBrush(QColor(0, 0, 0, int(alpha * fly)))
-                    painter.drawRoundedRect(shadow, radius + spread, radius + spread)
-            clip = QPainterPath()
-            clip.addRoundedRect(rect, radius, radius)
-            painter.save()
-            painter.setClipPath(clip)
-            painter.drawImage(rect, self._thumb)
-            painter.restore()
-            if fly > 0.0:
-                pen = QPen(QColor(255, 255, 255, int(235 * fly)))
-                pen.setWidthF(2.5)
-                painter.setPen(pen)
-                painter.setBrush(Qt.BrushStyle.NoBrush)
-                painter.drawRoundedRect(rect, radius, radius)
+                    radius = _SNAP_RADIUS * fly + spread
+                    painter.drawRoundedRect(shadow, radius, radius)
+            _paint_card(painter, rect, self._thumb, _SNAP_RADIUS * fly, fly)
 
         flash = 1.0 - _ease_out_cubic(t / _SNAP_FLASH_MS)
         if flash > 0.0:
-            painter.setOpacity(1.0)
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor(255, 255, 255, int(225 * flash)))
             painter.drawRect(self._src)
         painter.end()
+
+
+class _CardWindow(QWidget):
+    """The resting thumbnail: hover keeps it, click edits, drag shares."""
+
+    _PAD = 12  # transparent margin that holds the soft shadow
+
+    def __init__(self, rect: QRectF, thumb: QImage, hint: str, owner: Renderer) -> None:
+        super().__init__(None)
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.WindowDoesNotAcceptFocus
+            | Qt.WindowType.Tool
+            | Qt.WindowType.NoDropShadowWindowHint
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        if sys.platform == "darwin":
+            mac_always_show = getattr(Qt.WidgetAttribute, "WA_MacAlwaysShowToolWindow", None)
+            if mac_always_show is not None:
+                self.setAttribute(mac_always_show)
+        pad = self._PAD
+        self.setGeometry(rect.adjusted(-pad, -pad, pad, pad).toAlignedRect())
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setMouseTracking(True)
+        self._thumb = thumb
+        self._hint = hint
+        self._owner = owner
+        self._hover = False
+        self._press: QPointF | None = None
+        self._leaving = False
+        self._dismiss = QTimer(self)
+        self._dismiss.setSingleShot(True)
+        self._dismiss.timeout.connect(self.leave)
+        self._out = QVariantAnimation(self)
+        self._out.setStartValue(0.0)
+        self._out.setEndValue(1.0)
+        self._out.setDuration(_CARD_OUT_MS)
+        self._out.valueChanged.connect(self._on_out)
+        self._out.finished.connect(self._gone)
+        self._origin = self.pos()
+
+    def start(self) -> None:
+        self.show()
+        self._dismiss.start(_CARD_REST_MS)
+
+    # -- lifecycle -----------------------------------------------------------
+    def leave(self) -> None:
+        """Slide out and go. Safe to call more than once."""
+        if self._leaving:
+            return
+        self._leaving = True
+        self._dismiss.stop()
+        self._origin = self.pos()
+        self._out.start()
+
+    def finish_now(self) -> None:
+        self._leaving = True
+        self._dismiss.stop()
+        self._out.stop()
+        self._gone()
+
+    def _on_out(self, value) -> None:
+        t = _ease_out_cubic(float(value))
+        self.move(self._origin + QPoint(int(48 * t), 0))
+        self.setWindowOpacity(1.0 - t)
+
+    def _gone(self) -> None:
+        self.hide()
+        owner, self._owner = self._owner, None
+        if owner is not None:
+            owner.card_gone(self)
+        self.deleteLater()
+
+    # -- input ---------------------------------------------------------------
+    def showEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        super().showEvent(event)
+        # Clickable, so no click-through hardening; layered for the
+        # see-through corners, and out of every screenshot.
+        hwnd = int(self.winId())
+        harden_clickable_window(hwnd)
+        exclude_from_capture(hwnd)
+
+    def enterEvent(self, event) -> None:  # noqa: N802
+        del event
+        if self._leaving:
+            return
+        self._hover = True
+        self._dismiss.stop()
+        self.update()
+
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        del event
+        self._hover = False
+        if not self._leaving:
+            self._dismiss.start(_CARD_AFTER_HOVER_MS)
+        self.update()
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.RightButton:
+            self.leave()
+        elif event.button() == Qt.MouseButton.LeftButton:
+            self._press = event.position()
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802
+        if self._press is None or self._leaving:
+            return
+        moved = event.position() - self._press
+        if abs(moved.x()) + abs(moved.y()) > _CARD_DRAG_SLOP:
+            self._press = None
+            self._start_drag()
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        if event.button() != Qt.MouseButton.LeftButton or self._press is None:
+            return
+        self._press = None
+        if self._owner is not None and not self._leaving:
+            self._owner.card_clicked(self)
+
+    def _start_drag(self) -> None:
+        owner = self._owner
+        image = owner.card_image if owner is not None else None
+        if owner is None or image is None or image.isNull():
+            # Only the finished, privacy-filtered picture may leave this
+            # process; the thumbnail is cut from the raw frame.
+            return
+        path = owner.write_drag_file(image)
+        if path is None:
+            return
+        mime = QMimeData()
+        mime.setUrls([QUrl.fromLocalFile(str(path))])
+        mime.setImageData(image)
+        drag = QDrag(self)
+        drag.setMimeData(mime)
+        preview = QPixmap.fromImage(
+            self._thumb.scaledToWidth(160, Qt.TransformationMode.SmoothTransformation)
+        )
+        drag.setPixmap(preview)
+        drag.setHotSpot(QPoint(preview.width() // 2, preview.height() // 2))
+        self._dismiss.stop()
+        self.setWindowOpacity(0.35)
+        drag.exec(Qt.DropAction.CopyAction)
+        self.setWindowOpacity(1.0)
+        self.leave()
+
+    # -- painting ------------------------------------------------------------
+    def paintEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        del event
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        pad = float(self._PAD)
+        rect = QRectF(pad, pad, self.width() - 2 * pad, self.height() - 2 * pad)
+        painter.setPen(Qt.PenStyle.NoPen)
+        for spread, alpha in ((8.0, 18), (4.0, 30), (1.5, 46)):
+            painter.setBrush(QColor(0, 0, 0, alpha))
+            shadow = rect.adjusted(-spread, -spread + 3, spread, spread + 3)
+            painter.drawRoundedRect(shadow, _SNAP_RADIUS + spread, _SNAP_RADIUS + spread)
+        _paint_card(painter, rect, self._thumb, _SNAP_RADIUS, 1.0)
+        if self._hover and self._hint:
+            self._paint_hint(painter, rect)
+        painter.end()
+
+    def _paint_hint(self, painter: QPainter, rect: QRectF) -> None:
+        font = QFont()
+        font.setPointSizeF(9.0)
+        font.setWeight(QFont.Weight.Medium)
+        metrics = QFontMetricsF(font)
+        h = metrics.height() + 12.0
+        band = QRectF(rect.x(), rect.bottom() - h, rect.width(), h)
+        clip = QPainterPath()
+        clip.addRoundedRect(rect, _SNAP_RADIUS, _SNAP_RADIUS)
+        painter.save()
+        painter.setClipPath(clip)
+        painter.fillRect(band, QColor(10, 10, 12, 200))
+        painter.restore()
+        painter.setFont(font)
+        painter.setPen(QColor(255, 255, 255, 235))
+        painter.drawText(band, Qt.AlignmentFlag.AlignCenter, self._hint)
 
 
 class Renderer(QObject):
@@ -368,6 +585,10 @@ class Renderer(QObject):
         self._app = app
         self._windows: list[_GlowWindow] = []
         self._snaps: list[_SnapWindow] = []
+        self._card: _CardWindow | None = None
+        self._card_hint = ""
+        #: The finished (redacted) picture a drag from the card hands out.
+        self.card_image: QImage | None = None
         self._hint = ""
         self._active = False  # "show" was requested and not yet "hide"
         self._blanked = False  # capture guard currently hiding the border
@@ -427,6 +648,8 @@ class Renderer(QObject):
                     self._unblank()
                 elif cmd == protocol.CMD_SNAP:
                     self._snap(payload)
+                elif cmd == protocol.CMD_SNAP_IMAGE:
+                    self._snap_image(payload)
                 elif cmd == protocol.CMD_QUIT:
                     _ack(cmd)
                     self._app.quit()
@@ -474,7 +697,11 @@ class Renderer(QObject):
         # One effect at a time: a second appshot replaces the resting card.
         for old in list(self._snaps):
             old.finish_now()
-        win = _SnapWindow(screen, rect, thumb, self._snap_done)
+        if self._card is not None:
+            self._card.finish_now()
+        self.card_image = None
+        self._card_hint = str(payload.get("hint", "") or "")
+        win = _SnapWindow(screen, rect, thumb, self._snap_landed, self._snap_done)
         self._snaps.append(win)
         win.start()
 
@@ -482,10 +709,59 @@ class Renderer(QObject):
         with suppress(ValueError):
             self._snaps.remove(win)
 
+    def _snap_landed(self, rect: QRectF, thumb: QImage) -> None:
+        card = _CardWindow(rect, thumb, self._card_hint, self)
+        self._card = card
+        _emit(protocol.EVENT_CARD, open=True)
+        card.start()
+
+    def _snap_image(self, payload: dict) -> None:
+        raw = payload.get("image")
+        if not isinstance(raw, str) or not raw:
+            return
+        image = QImage()
+        if image.loadFromData(QByteArray.fromBase64(raw.encode("ascii"))):
+            self.card_image = image
+
+    def card_gone(self, card: _CardWindow) -> None:
+        if self._card is card:
+            self._card = None
+            self.card_image = None
+            _emit(protocol.EVENT_CARD, open=False)
+
+    def card_clicked(self, card: _CardWindow) -> None:
+        _emit(protocol.EVENT_SNAP_OPEN)
+        card.leave()
+
+    @staticmethod
+    def write_drag_file(image: QImage) -> Path | None:
+        """Write the picture for a drag — the one moment it touches disk.
+
+        Only on the user's drag; files older than an hour are removed first,
+        so the folder never grows (see ``docs/appshots.md``).
+        """
+        folder = Path(tempfile.gettempdir()) / "jarvis-appshots"
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            cutoff = time.time() - _DRAG_FILE_MAX_AGE_S
+            for old in folder.glob("appshot-*.png"):
+                with suppress(OSError):  # a file still open elsewhere stays
+                    if old.stat().st_mtime < cutoff:
+                        old.unlink()
+            path = folder / time.strftime("appshot-%Y%m%d-%H%M%S.png")
+            if not image.save(str(path), "PNG"):
+                return None
+            return path
+        except OSError as exc:
+            sys.stderr.write(f"cu-indicator: drag file failed ({exc!r})\n")
+            return None
+
     def _blank(self) -> None:
         # A resting thumbnail must never end up inside the next capture.
         for snap in list(self._snaps):
             snap.finish_now()
+        if self._card is not None:
+            self._card.hide()
         if not self._active:
             return
         self._blanked = True
@@ -493,6 +769,8 @@ class Renderer(QObject):
             win.hide()
 
     def _unblank(self) -> None:
+        if self._card is not None and not self._card.isVisible():
+            self._card.show()
         if not self._active or not self._blanked:
             return
         self._blanked = False
@@ -562,6 +840,13 @@ class _StdinPump(QObject):
             for raw in sys.stdin:
                 self.line.emit(raw)
         self.eof.emit()
+
+
+def _emit(event: str, **fields) -> None:
+    # A failed write means the parent is gone; the EOF path quits the app.
+    with suppress(Exception):
+        sys.stdout.write(protocol.encode_event(event, **fields))
+        sys.stdout.flush()
 
 
 def _ack(cmd: str) -> None:

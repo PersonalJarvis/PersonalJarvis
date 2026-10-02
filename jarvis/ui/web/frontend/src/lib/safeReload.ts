@@ -68,6 +68,13 @@ export interface SafeReloadDeps {
   reload: () => void;
   /** Schedule the next check. */
   defer: (fn: () => void, ms: number) => void;
+  /**
+   * Is something in this window holding automatic reloads off (a live call, a
+   * reply still streaming)? Asked right before the navigation, because a
+   * conversation can start while the build is being checked. Absent for a
+   * reload the user asked for.
+   */
+  held?: () => boolean;
 }
 
 /**
@@ -124,6 +131,12 @@ export function reloadWhenServable(deps: SafeReloadDeps): void {
             return;
           }
         }
+        if (deps.held?.()) {
+          // The build is ready but a conversation owns this document; reloading
+          // now hangs it up. Ask again gently until it is over.
+          deps.defer(check, SLOW_RETRY_MS);
+          return;
+        }
         deps.reload();
       })
       .catch(() => {
@@ -136,9 +149,17 @@ export function reloadWhenServable(deps: SafeReloadDeps): void {
   check();
 }
 
-/** The deps a real browser window uses. Kept here so every caller agrees. */
-export function browserSafeReloadDeps(): SafeReloadDeps {
+/**
+ * The deps a real browser window uses. Kept here so every caller agrees.
+ *
+ * Automatic reloads pass `held` (see ./reloadHold); a reload the user pressed a
+ * button for leaves it out and goes ahead.
+ */
+export function browserSafeReloadDeps(
+  options: { held?: () => boolean } = {},
+): SafeReloadDeps {
   return {
+    held: options.held,
     fetchIndex: () =>
       fetch("/", { cache: "no-store", headers: { Accept: "text/html" } })
         .then((response) => (response.ok ? response.text() : ""))

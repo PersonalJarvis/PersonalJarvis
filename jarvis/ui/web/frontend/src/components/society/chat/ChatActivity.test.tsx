@@ -55,7 +55,7 @@ it("keeps live and interrupted conversation tools in the left lane", () => {
   expect(lane.className).toMatch(/max-w-\[44rem\]/);
   expect(lane.className).toMatch(/self-start/);
   expect(container.querySelectorAll(".mx-auto")).toHaveLength(0);
-  expect(container.querySelector("[data-trace-tool]")?.closest("[data-testid='work-trace']")).toBe(lane);
+  expect(container.querySelector("[data-trace-entry='call']")?.closest("[data-testid='work-trace']")).toBe(lane);
   rerender(<WorkTrace conversation status="cancelled" startedMs={0} durationMs={4100} blocks={[
     thought,
     { kind: "text", id: "reply", text: "I will send the mail next." },
@@ -70,8 +70,8 @@ it("keeps live and interrupted conversation tools in the left lane", () => {
   // the call, and that it never returned.
   const lane2 = screen.getByTestId("work-trace").textContent!;
   expect(lane2).toContain("Inspect archive.");
-  expect(lane2).toContain("Searcharchive");
-  expect(lane2).toContain("Stopped before it finished");
+  expect(lane2).toContain("Searched for archive");
+  expect(lane2).toContain("Stopped");
   expect(container.querySelectorAll(".mx-auto")).toHaveLength(0);
   expect(screen.getByTestId("work-trace").className).toMatch(/self-start/);
 });
@@ -87,11 +87,13 @@ it("keeps a failed tool visible while folding the surrounding work", () => {
   expect(screen.getByText("I could not finish.")).toBeTruthy();
   expect(screen.queryByText("Report contents")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: /^Worked for 2\.0s.*1 failed/ }));
-  // The failure reads under its line with the tool's own reason.
-  expect(screen.getByText("Failed: Upload failed")).toBeTruthy();
-  // The raw output stays one tap further, under the line.
+  // One quiet line for the stretch; it opens to the calls, and the failed
+  // one says why under its own line.
+  fireEvent.click(screen.getByRole("button", { name: /^Read files.*1 failed/ }));
+  expect(screen.getByText("Upload failed")).toBeTruthy();
+  // The raw output stays one tap further, under the call.
   expect(screen.queryByText("Report contents")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: /^Explored/ }));
+  fireEvent.click(screen.getAllByRole("button", { name: /^Read report\.csv/ })[0]);
   expect(screen.getByText("Report contents")).toBeTruthy();
 });
 
@@ -101,7 +103,7 @@ it("keeps failures and pending approvals visible in the conversation style", () 
     base,
     { ...base, callId: "approval", isError: false, output: null, approval: { approvalId: "ap", summary: "Send this message?", decision: null } },
   ]} onDecide={() => undefined} />);
-  expect(screen.getByText("Failed: Delivery failed")).toBeTruthy();
+  expect(screen.getAllByText("Delivery failed").length).toBeGreaterThan(0);
   expect(screen.getByText("Send this message?")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Approve" })).toBeTruthy();
   // With no other work to fold, both items stay in place and need no toggle.
@@ -124,29 +126,29 @@ it("folds successful work while showing post-reply errors without reordering the
   const tool: ToolBlock = { kind: "tool", callId: "a", name: "read_file", input: { path: "report.csv" }, output: "Report contents", isError: false, durationMs: 100, approval: null, startedMs: 0 };
   const blocks = [tool, { ...tool, callId: "b", name: "write_file" }, { kind: "text" as const, id: "reply", text: "Your report is ready." }, { ...tool, callId: "error", isError: true, output: "Upload failed" }];
   const { rerender } = render(<WorkTrace conversation status="running" startedMs={0} durationMs={null} blocks={blocks} />);
-  // While it runs, finished calls already read as their timeline lines.
-  expect(screen.getByRole("button", { name: /^Explored/ })).toBeTruthy();
-  expect(screen.getByRole("button", { name: /^Created report\.csv/ })).toBeTruthy();
+  // While it runs, finished calls already read as their timeline line.
+  expect(screen.getByRole("button", { name: /^Read a file, created a file/ })).toBeTruthy();
   rerender(<WorkTrace conversation status="done" startedMs={0} durationMs={1000} blocks={blocks} />);
-  expect(screen.queryByRole("button", { name: /^Explored/ })).toBeNull();
+  expect(screen.queryByRole("button", { name: /^Read a file, created a file/ })).toBeNull();
   expect(screen.getByText("Your report is ready.")).toBeTruthy();
   expect(screen.getByText("Upload failed")).toBeTruthy();
   expect(screen.queryByText("Report contents")).toBeNull();
-  const toggle = screen.getByRole("button", { name: /^Worked for 1\.0s/ });
-  expect(toggle.textContent).toContain("Read 2 files and created a file");
+  const toggle = screen.getByRole("button", { name: /^Worked for 1\.0s.*1 failed/ });
   fireEvent.click(toggle);
-  // One tap opens the whole timeline: every call in order, the post-reply
-  // error included, with the reply kept where it was.
-  const text = screen.getByTestId("work-trace").textContent ?? "";
-  expect(text.indexOf("Readreport.csv")).toBeGreaterThanOrEqual(0);
-  expect(text.indexOf("Readreport.csv")).toBeLessThan(text.indexOf("Createdreport.csv"));
-  expect(text).toContain("Failed: Upload failed");
+  // One tap opens the timeline: the post-reply error joins the stretch, the
+  // reply stays where it was.
+  const stretch = screen.getByRole("button", { name: /^Read files, created a file.*1 failed/ });
   expect(screen.getAllByText("Your report is ready.")).toHaveLength(1);
-  // Each line's raw call stays tappable on its own.
-  const explored = screen.getByRole("button", { name: /^Explored/ });
-  fireEvent.click(explored);
+  fireEvent.click(stretch);
+  const calls = Array.from(document.querySelectorAll<HTMLElement>("[data-trace-entry='call']")).map((c) => c.textContent);
+  expect(calls[0]).toContain("Read report.csv");
+  expect(calls[1]).toContain("Created report.csv");
+  expect(calls[2]).toContain("Upload failed");
+  // Each call's raw output stays tappable on its own.
+  const first = screen.getAllByRole("button", { name: /^Read report\.csv/ })[0];
+  fireEvent.click(first);
   expect(screen.getAllByText("Report contents").length).toBeGreaterThan(0);
-  fireEvent.click(explored);
+  fireEvent.click(first);
   expect(screen.queryAllByText("Report contents")).toHaveLength(0);
 });
 

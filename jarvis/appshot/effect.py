@@ -5,6 +5,11 @@ moment for every look the shared service takes — a shortcut appshot, a spoken
 "take an appshot", a "what do you see?". The thumbnail is cut from the raw
 frame in memory and piped to the local indicator sidecar; it is never stored
 and never published on the event bus.
+
+The thumbnail then rests in the corner as a card: a click opens the appshot
+editor in the app, a drag hands the picture to another app. For that drag the
+finished, privacy-filtered appshot follows (:func:`attach_card_image`) — the
+raw-frame thumbnail itself never leaves the sidecar.
 """
 
 from __future__ import annotations
@@ -22,6 +27,19 @@ log = logging.getLogger(__name__)
 _THUMB_EDGE = 560
 
 _tasks: set[asyncio.Task[None]] = set()
+
+# The card's hover line — app chrome, so it follows [ui].language; a phrase
+# table always carries every supported locale.
+_CARD_HINTS: dict[str, str] = {
+    "de": "Klicken zum Bearbeiten · Ziehen zum Teilen",  # i18n-allow: product UI string
+    "en": "Click to edit · Drag to share",
+    "es": "Clic para editar · Arrastra para compartir",  # i18n-allow: product UI string
+}
+
+
+def card_hint(config: Any) -> str:
+    language = str(getattr(getattr(config, "ui", None), "language", "") or "").lower()[:2]
+    return _CARD_HINTS.get(language, _CARD_HINTS["en"])
 
 
 def on_shutter(target: Any, size: tuple[int, int], rgb: bytes, monitors: list[dict]) -> None:
@@ -60,11 +78,25 @@ async def _play(
             monitor=monitor,
             rect=rect,
             thumb_b64=base64.b64encode(thumb).decode("ascii"),
+            hint=card_hint(config),
         )
         if not shown:
             log.info("appshot: shutter effect could not be shown on this desktop")
     except Exception:  # noqa: BLE001 - the effect is decoration, never a failure
         log.warning("appshot: shutter effect failed", exc_info=True)
+
+
+async def attach_card_image(image: bytes) -> None:
+    """Give the resting card the finished picture, so a drag can share it."""
+    try:
+        from jarvis.cu.indicator.controller import get_indicator_controller  # noqa: PLC0415
+
+        controller = get_indicator_controller()
+        if controller is None:
+            return
+        await controller.snap_image(base64.b64encode(image).decode("ascii"))
+    except Exception:  # noqa: BLE001 - without it the card still opens the editor
+        log.warning("appshot: could not hand the picture to the card", exc_info=True)
 
 
 def thumbnail_jpeg(size: tuple[int, int], rgb: bytes) -> bytes:
@@ -117,4 +149,4 @@ def placement(
     ]
 
 
-__all__ = ["on_shutter", "placement", "thumbnail_jpeg"]
+__all__ = ["attach_card_image", "card_hint", "on_shutter", "placement", "thumbnail_jpeg"]

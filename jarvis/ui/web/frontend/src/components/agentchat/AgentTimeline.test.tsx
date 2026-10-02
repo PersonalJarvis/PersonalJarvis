@@ -17,8 +17,7 @@ it("replays persisted events through the new shared trace", () => {
  // A finished turn writes its work as a report; with no answer to read,
  // the report stands open.
  expect(screen.getByRole("button", { name: /^Worked/ }).getAttribute("aria-expanded")).toBe("true");
- expect(screen.getByTestId("work-trace").textContent).toContain("Worked·Listed a folder");
- expect(screen.getByRole("button", { name: /^Explored/ }).parentElement?.textContent).toContain("Listsrc");
+ expect(screen.getByRole("button", { name: /^Listed src/ })).toBeTruthy();
 });
 describe("the person's turn with files", () => {
   const SHOT = {

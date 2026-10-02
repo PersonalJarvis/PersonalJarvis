@@ -80,9 +80,10 @@ export function fetchLatestAppshot(): Promise<{ appshot: AppshotMeta | null }> {
   return request<{ appshot: AppshotMeta | null }>("/api/appshot/latest");
 }
 
-export function latestAppshotImageUrl(id: string): string {
-  // The id only busts the <img> cache between appshots; the server keeps one.
-  return `/api/appshot/latest/image?v=${encodeURIComponent(id)}`;
+export function latestAppshotImageUrl(id: string, revision = 0): string {
+  // The id (and the edit revision) only bust the <img> cache; the server keeps one.
+  const v = revision ? `${id}-${revision}` : id;
+  return `/api/appshot/latest/image?v=${encodeURIComponent(v)}`;
 }
 
 export function takeAppshot(

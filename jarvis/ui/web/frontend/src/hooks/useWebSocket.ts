@@ -26,6 +26,7 @@ import {
 } from "@/store/commandActivity";
 import { isDictationStartFailure } from "@/lib/dictationRefusal";
 import { usePermissionToast } from "@/hooks/usePermissionToast";
+import { useAppshotEditor } from "@/store/appshotEditor";
 import { useDeckStore } from "@/store/deck";
 import { useHomeStore } from "@/store/home";
 import { PANE_ACTIVITY_EVENT } from "@/store/workspacePanes";
@@ -160,6 +161,19 @@ export function useWebSocket(): void {
             pushToast("warning", translate("appshots.toast_refused").replace("{0}", label));
           } else {
             pushToast("success", translate("appshots.try_done"));
+          }
+        }
+
+        // A click on the appshot card in the screen corner: open the editor on
+        // the Appshots page. A detached solo window leaves it to the main one.
+        if (env.event_name === "AppshotEditRequested" && !useEventStore.getState().solo) {
+          const id = (env.payload as { appshot_id?: unknown }).appshot_id;
+          if (typeof id === "string" && id) {
+            setActiveSection("appshots");
+            useAppshotEditor.getState().open(id);
+          } else {
+            setActiveSection("appshots");
+            pushToast("warning", translate("appshots.editor.gone"));
           }
         }
 

@@ -69,6 +69,46 @@ def harden_window(hwnd: int) -> bool:
         return False
 
 
+def harden_clickable_window(hwnd: int) -> bool:
+    """Layered, never-activating tool window that still takes clicks.
+
+    For the appshot card: like :func:`harden_window` minus click-through, so
+    its rounded corners are see-through and a click does not steal focus.
+    Also asks Windows 11 for no frame border and no corner rounding of its
+    own, which would otherwise draw a grey outline around the transparent
+    margin. A quiet no-op elsewhere.
+    """
+    user32 = _user32()
+    if user32 is None or not hwnd:
+        return False
+    try:
+        style = user32.GetWindowLongW(hwnd, _GWL_EXSTYLE)
+        wanted = style | _WS_EX_LAYERED | _WS_EX_NOACTIVATE | _WS_EX_TOOLWINDOW
+        wanted &= ~_WS_EX_TRANSPARENT
+        if wanted != style:
+            user32.SetWindowLongW(hwnd, _GWL_EXSTYLE, wanted)
+    except Exception:  # noqa: BLE001
+        log.debug("harden_clickable_window failed for hwnd=%s", hwnd, exc_info=True)
+        return False
+    _no_dwm_frame(hwnd)
+    return True
+
+
+def _no_dwm_frame(hwnd: int) -> None:
+    import ctypes  # noqa: PLC0415
+    from ctypes import wintypes  # noqa: PLC0415
+
+    try:
+        dwmapi = ctypes.WinDLL("dwmapi")
+        for attribute, value in ((33, 1), (34, 0xFFFFFFFE)):  # DONOTROUND, COLOR_NONE
+            data = wintypes.DWORD(value)
+            dwmapi.DwmSetWindowAttribute(
+                wintypes.HWND(hwnd), attribute, ctypes.byref(data), ctypes.sizeof(data)
+            )
+    except Exception:  # noqa: BLE001 - older Windows: a thin frame stays
+        log.debug("DWM frame attributes unavailable", exc_info=True)
+
+
 def exclude_from_capture(hwnd: int) -> bool:
     """Hide ``hwnd`` from all screen capture (BitBlt/mss/OBS/CU frames)."""
     if os.environ.get(CAPTURABLE_ENV, "").strip() in {"1", "true", "yes"}:
@@ -93,5 +133,6 @@ __all__ = [
     "CAPTURABLE_ENV",
     "capture_exclusion_available",
     "exclude_from_capture",
+    "harden_clickable_window",
     "harden_window",
 ]
