@@ -328,11 +328,12 @@ class SyncClient:
         return payload
 
     async def _push(self) -> bool:
-        from board_backend.crypto import canonical_json, sign
+        from board_backend.crypto import AUDIENCE_FIELD, canonical_json, sign, signed_audience
 
         assert self._http is not None
         assert self._privkey_hex is not None and self._pubkey_hex is not None
         payload = self._build_payload()
+        payload[AUDIENCE_FIELD] = signed_audience("POST", "/api/v1/sync")
         body = canonical_json(payload)
         sig = sign(payload, privkey_hex=self._privkey_hex)
         try:

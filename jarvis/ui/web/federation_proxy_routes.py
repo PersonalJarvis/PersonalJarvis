@@ -27,21 +27,28 @@ from jarvis.board.sync import (
 )
 
 try:
-    from board_backend.crypto import canonical_json, sign
-except ModuleNotFoundError:
+    from board_backend.crypto import AUDIENCE_FIELD, canonical_json, sign, signed_audience
+except ImportError:
     # `board_backend` is a SEPARATE, optional package (the Board-federation
     # backend). The base app MUST import this module without it (cloud-first:
     # a fresh `pip install .` has no board_backend), so the whole server still
     # boots. The federation routes then return a clear 503 when actually called,
-    # instead of crashing the server at import time.
+    # instead of crashing the server at import time. ImportError, not only
+    # ModuleNotFoundError: an older installed package without endpoint-bound
+    # signatures (``signed_audience``) must degrade the same way.
     def _federation_unavailable(*_a: Any, **_k: Any) -> Any:  # type: ignore[misc]
         raise HTTPException(
             status_code=503,
-            detail="Board federation is unavailable — the optional 'board_backend' package is not installed.",
+            detail=(
+                "Board federation is unavailable — the optional 'board_backend' "
+                "package is not installed or is too old."
+            ),
         )
 
+    AUDIENCE_FIELD = "aud"
     canonical_json = _federation_unavailable  # type: ignore[assignment]
     sign = _federation_unavailable  # type: ignore[assignment]
+    signed_audience = _federation_unavailable  # type: ignore[assignment]
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/board/federation", tags=["board-federation"])
@@ -216,7 +223,7 @@ async def proxy_get(request: Request,
     backend = _backend_url(request)
     kr = _KeyringBackend()
     privkey, pubkey = _load_or_create_privkey(kr)
-    payload = {"ts_ms": int(time.time() * 1000)}
+    payload = {"ts_ms": int(time.time() * 1000), AUDIENCE_FIELD: signed_audience("GET", path)}
     body = canonical_json(payload)
     headers = _signed_headers(privkey, pubkey, payload)
     async with httpx.AsyncClient(timeout=10.0) as c:
@@ -241,7 +248,13 @@ async def proxy_post(request: Request, payload: ProxyPostRequest) -> Any:
     backend = _backend_url(request)
     kr = _KeyringBackend()
     privkey, pubkey = _load_or_create_privkey(kr)
-    full_body = {**payload.body, "ts_ms": int(time.time() * 1000)}
+    # ``aud`` last: the caller's body must never choose which endpoint the
+    # signature is valid for.
+    full_body = {
+        **payload.body,
+        "ts_ms": int(time.time() * 1000),
+        AUDIENCE_FIELD: signed_audience("POST", payload.path),
+    }
     body_bytes = canonical_json(full_body)
     headers = _signed_headers(privkey, pubkey, full_body)
     async with httpx.AsyncClient(timeout=10.0) as c:
@@ -263,7 +276,11 @@ async def proxy_patch(request: Request, payload: ProxyPatchRequest) -> Any:
     backend = _backend_url(request)
     kr = _KeyringBackend()
     privkey, pubkey = _load_or_create_privkey(kr)
-    full_body = {**payload.body, "ts_ms": int(time.time() * 1000)}
+    full_body = {
+        **payload.body,
+        "ts_ms": int(time.time() * 1000),
+        AUDIENCE_FIELD: signed_audience("PATCH", payload.path),
+    }
     body_bytes = canonical_json(full_body)
     headers = _signed_headers(privkey, pubkey, full_body)
     async with httpx.AsyncClient(timeout=10.0) as c:
