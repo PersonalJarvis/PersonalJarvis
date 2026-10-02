@@ -23,13 +23,15 @@ import pytest
 
 from jarvis.agentic_ide import resume_store
 from jarvis.agentic_ide import session as ide
+from tests.fakes.fake_pty_manager import FakePtyManager
 
 
 @pytest.fixture
 def registry(tmp_path: Path, monkeypatch) -> ide.Registry:
     monkeypatch.setattr(resume_store, "save", lambda snapshot: None)
     monkeypatch.setattr(resume_store, "clear", lambda: True)
-    return ide.Registry()
+    monkeypatch.setattr(ide, "agent_argv", lambda name: (f"/test/{name}",))
+    return ide.Registry(pty_manager=FakePtyManager())
 
 
 def folder(tmp_path: Path, name: str) -> str:
@@ -185,8 +187,9 @@ async def test_the_arrangement_survives_a_real_restart(tmp_path, monkeypatch):
     store = tmp_path / "store" / "last_session.json"
     store.parent.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(resume_store, "_store_path", lambda: store)
+    monkeypatch.setattr(ide, "agent_argv", lambda name: (f"/test/{name}",))
 
-    live = ide.Registry()
+    live = ide.Registry(pty_manager=FakePtyManager())
     ids = await open_three(live, tmp_path)
     await live.activate(ids[1])
     resume_store.save(live.snapshot())
@@ -194,7 +197,7 @@ async def test_the_arrangement_survives_a_real_restart(tmp_path, monkeypatch):
     # A fresh process: nothing in memory, everything from the file.
     reloaded = resume_store.load()
     assert reloaded is not None
-    after_restart = ide.Registry()
+    after_restart = ide.Registry(pty_manager=FakePtyManager())
     await after_restart.restore(reloaded)
 
     assert tab_folders(after_restart) == ["alpha", "beta", "gamma"]

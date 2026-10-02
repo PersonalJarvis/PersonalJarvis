@@ -68,6 +68,7 @@ class _FakeMic:
 
 def _make_pipeline() -> SpeechPipeline:
     pipe = SpeechPipeline(tts=FakeTTS(), bus=None, enable_whisper_wake=False)
+    pipe._permission_gate = FakePermissionService()
     pipe._state = PipelineState.IDLE
     pipe._activation_allowed = lambda: True  # type: ignore[method-assign]
     return pipe
@@ -565,7 +566,7 @@ class _TrackedInputBuffer:
         self._chunks = chunks
         self.closed = asyncio.Event()
 
-    async def stream(self) -> AsyncIterator[AudioChunk]:
+    async def stream(self, *, discard_before_ns=None) -> AsyncIterator[AudioChunk]:
         for pcm in self._chunks:
             yield AudioChunk(pcm=pcm, sample_rate=16_000, timestamp_ns=0, channels=1)
             await asyncio.sleep(0)
@@ -701,6 +702,7 @@ async def test_ptt_release_recovers_timed_out_native_probe_before_final_stt(
 async def test_release_does_not_wait_for_a_cosmetic_probe_without_provider_work():
     """A local preview may outlive its UI slot; final STT must start immediately."""
     pipe = SpeechPipeline.__new__(SpeechPipeline)
+    pipe._permission_gate = FakePermissionService()
     pipe._stt_final_timeout_s = 8.0
     stop_event = asyncio.Event()
     inference_active = asyncio.Event()
@@ -724,6 +726,7 @@ async def test_release_does_not_wait_for_a_cosmetic_probe_without_provider_work(
 async def test_release_bounds_a_cosmetic_probe_that_ignores_cancellation():
     """A broken cosmetic task cannot move the final-STT edge indefinitely."""
     pipe = SpeechPipeline.__new__(SpeechPipeline)
+    pipe._permission_gate = FakePermissionService()
     pipe._stt_final_timeout_s = 8.0
     stop_event = asyncio.Event()
     inference_active = asyncio.Event()
@@ -765,6 +768,7 @@ async def test_dictation_provider_warmup_is_single_flight_and_joined():
             time.sleep(0.05)
 
     pipe = SpeechPipeline.__new__(SpeechPipeline)
+    pipe._permission_gate = FakePermissionService()
     pipe._dictation_warmup_task = None
     pipe._dictation_warmup_provider = None
     provider = _WarmProvider()
@@ -797,6 +801,7 @@ async def test_live_provider_switch_joins_the_old_warmup_before_the_new_one():
             self.calls += 1
 
     pipe = SpeechPipeline.__new__(SpeechPipeline)
+    pipe._permission_gate = FakePermissionService()
     pipe._dictation_warmup_task = None
     pipe._dictation_warmup_provider = None
     pipe._dictation_warmup_succeeded_provider = None
@@ -827,6 +832,7 @@ async def test_reset_releases_the_warmed_provider_before_a_live_switch():
             time.sleep(0.01)
 
     pipe = SpeechPipeline.__new__(SpeechPipeline)
+    pipe._permission_gate = FakePermissionService()
     pipe._dictation_warmup_task = None
     pipe._dictation_warmup_provider = None
     pipe._dictation_warmup_succeeded_provider = None
@@ -860,6 +866,7 @@ async def test_a_wedged_dictation_warmup_replaces_the_provider(monkeypatch):
     old = _WedgedProvider()
     fresh = object()
     pipe = SpeechPipeline.__new__(SpeechPipeline)
+    pipe._permission_gate = FakePermissionService()
     pipe._dictation_warmup_task = None
     pipe._dictation_warmup_provider = None
     pipe._dictation_stt_instance = old
@@ -890,6 +897,7 @@ async def test_an_independently_cancelled_warmup_replaces_the_provider():
     old = _Provider()
     fresh = object()
     pipe = SpeechPipeline.__new__(SpeechPipeline)
+    pipe._permission_gate = FakePermissionService()
     pipe._dictation_warmup_task = None
     pipe._dictation_warmup_provider = None
     pipe._dictation_stt_instance = old

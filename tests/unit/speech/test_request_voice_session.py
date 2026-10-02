@@ -30,6 +30,7 @@ class _FakeBrain:
 
 def _pipe(*, state=PipelineState.IDLE, gate=True, ptt=False, brain=None):
     p = SpeechPipeline.__new__(SpeechPipeline)
+    p._permission_gate = FakePermissionService()
     p._ptt_mode = ptt
     p._state = state
     p._call_event = asyncio.Event()

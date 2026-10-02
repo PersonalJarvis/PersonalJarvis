@@ -36,6 +36,7 @@ import jarvis.speech.pipeline as pipeline_mod
 from jarvis.core.bus import EventBus
 from jarvis.core.config import DictationConfig
 from jarvis.speech.pipeline import PipelineState, SpeechPipeline
+from tests.fakes.fake_permission_service import FakePermissionService
 
 BYTES_PER_SECOND = 16_000 * 2
 
@@ -58,6 +59,7 @@ def _word(index: int, seconds: float = 0.5) -> bytes:
 
 def _silence(seconds: float) -> bytes:
     return np.zeros(int(seconds * 16_000), dtype=np.int16).tobytes()
+
 
 
 class _MarkerSTT:
@@ -114,6 +116,7 @@ class _ScriptedMic:
 
 def _pipeline(bus: EventBus, stt: _MarkerSTT, cfg: DictationConfig) -> SpeechPipeline:
     pipe = SpeechPipeline.__new__(SpeechPipeline)
+    pipe._permission_gate = FakePermissionService()
     pipe._bus = bus
     pipe._utterance_stt = stt
     pipe._dictation_task = None

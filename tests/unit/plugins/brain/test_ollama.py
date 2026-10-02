@@ -14,7 +14,6 @@ from typing import Any
 import httpx
 import pytest
 
-import jarvis.core.config as cfg
 from jarvis.core.config import BrainConfig, BrainProviderConfig, JarvisConfig
 from jarvis.plugins.brain.ollama import (
     DEFAULT_SERVER_ROOT,
@@ -24,6 +23,7 @@ from jarvis.plugins.brain.ollama import (
     default_server_root,
     normalize_server_root,
 )
+from tests.fakes.provider_config import use_provider_config
 
 
 class _FakeOpenAI:
@@ -34,13 +34,13 @@ class _FakeOpenAI:
 
 
 def _no_override(monkeypatch) -> None:
-    monkeypatch.setattr(cfg, "load_config", lambda: JarvisConfig())
+    use_provider_config(monkeypatch, JarvisConfig())
     monkeypatch.delenv("OLLAMA_HOST", raising=False)
 
 
 def _override(url: str, monkeypatch) -> None:
     conf = JarvisConfig(brain=BrainConfig(providers={"ollama": BrainProviderConfig(base_url=url)}))
-    monkeypatch.setattr(cfg, "load_config", lambda: conf)
+    use_provider_config(monkeypatch, conf)
     monkeypatch.delenv("OLLAMA_HOST", raising=False)
 
 
@@ -502,7 +502,7 @@ def wired(monkeypatch):
 
 def _config_with_options(monkeypatch, models: dict[str, dict[str, Any]]) -> None:
     conf = JarvisConfig(brain=BrainConfig(providers={"ollama": BrainProviderConfig(models=models)}))
-    monkeypatch.setattr(cfg, "load_config", lambda: conf)
+    use_provider_config(monkeypatch, conf)
 
 
 def _req(**kwargs: Any):

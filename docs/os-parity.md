@@ -1425,3 +1425,11 @@ steady input lag. Paired GPT-Live probes retained the same recognized words in
 German and English, including a quieter English sample. First response text
 arrived 0.4–1.4 seconds earlier in those three comparisons; these small
 synthetic comparisons are not a physical-device latency guarantee.
+
+### Agent notebook filename spelling
+
+On case-preserving, case-insensitive filesystems, replacing a notebook can retain
+the legacy lowercase directory entry. The migration now renames same-file aliases
+to `USER.md` and `MEMORY.md`, including already committed layouts. Distinct files
+on case-sensitive filesystems remain subject to the existing journal and backup
+checks. The dual-notebook contracts cover content preservation and canonical names.

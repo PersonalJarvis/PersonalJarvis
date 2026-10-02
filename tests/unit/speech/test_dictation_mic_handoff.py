@@ -25,6 +25,7 @@ import jarvis.speech.pipeline as pipeline_mod
 from jarvis.core.config import DictationConfig
 from jarvis.core.protocols import AudioChunk
 from jarvis.speech.pipeline import PipelineState, SpeechPipeline
+from tests.fakes.fake_permission_service import FakePermissionService
 
 
 class _FakeTTS:
@@ -111,6 +112,7 @@ def _wake_pipeline(
 
     monkeypatch.setattr(pipeline_mod, "MicrophoneCapture", _mic_factory)
     pipeline = SpeechPipeline(tts=_FakeTTS(), bus=None, enable_whisper_wake=False)
+    pipeline._permission_gate = FakePermissionService()
     pipeline._openwakeword_enabled = True
     pipeline._whisper_wake_enabled = False
     pipeline._wake = _NeverWake()  # type: ignore[assignment]
@@ -246,6 +248,7 @@ async def test_a_dictation_opens_one_capture_when_no_wake_stream_exists(
 async def test_a_pipeline_without_wake_plumbing_still_dictates() -> None:
     """Unit-test pipelines built via ``__new__`` have no handoff events."""
     bare = SpeechPipeline.__new__(SpeechPipeline)
+    bare._permission_gate = FakePermissionService()
     assert await bare._claim_wake_capture_for_dictation() is None
 
 
