@@ -174,6 +174,29 @@ non-secret probe, zero pointer fallback, and explicit evidence that no secure
 text-field value was read. CI validates only the evaluator; a live Mac fixture
 must still capture the native receipt.
 
+`cross-window-handoff` now requires distinct positive native window IDs, an
+observed destination matching the requested window (including two windows of
+one app), an authorized transition, fresh destination observation and target
+re-identification, stable foreground identity, no stale source-target actions,
+and a verified destination effect. IDs come from the existing foreground probe;
+window titles, URLs and field values are not copied into these receipts.
+
+`browser-to-desktop-handoff` requires the explicit `core:computer-use` route,
+zero further browser actions for that task, desktop execution through the
+existing ToolExecutor, a fresh destination observation, stable foreground
+identity and a verified effect. Native browser chrome may remain in the same
+window, so this contract deliberately does not require a window switch.
+Both handoff contracts reject actions after cancellation. A cancelled scenario
+that never reaches its intended effect still fails completion; dedicated
+cancellation-only qualification is the next receipt gap.
+
+Portable tests also exercise the real `BrowserTool.execute()` early-return
+path using no-I/O fakes: native chrome, file-picker and cross-app requests must
+return the handoff before selecting either browser executor, in both normal and
+read-only modes. Inactive callers and the society kill switch retain precedence.
+This proves the routing boundary, not a live desktop transition or ToolExecutor
+execution; those remain requirements for a future real-Mac receipt collector.
+
 Live MacAgentBench remains the release gate for observable receipts: semantic
 target hit, stale-target refusal, focus/type landing, human takeover,
 cross-window handoff, browser-to-desktop transition, cancellation, permission

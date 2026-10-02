@@ -18,15 +18,42 @@ Safety constraints remain unchanged:
 
 Current workstream priority:
 
-1. regression verification after upstream sync through `6368c2e`;
-2. MacAgentBench cross-window/browser-to-desktop handoff coverage;
+1. finish checking CI for the latest `jarvis-lab` HEAD; triage any new failures
+   against the exact parent under the same environment;
+2. MacAgentBench dedicated cancellation-only receipt (including cancellation
+   before the intended UI effect), then permission degradation and prompt-injection
+   resistance coverage;
 3. next highest-priority architecture gap that is not blocked on physical macOS testing.
 
 Completed remotely in the current benchmark phase: physical-user-takeover,
-semantic-target-hit, stale-target-refusal and focus-type-landing receipt
-contracts. Upstream main is merged through `6368c2e` with no overlapping
+semantic-target-hit, stale-target-refusal, focus-type-landing, cross-window-handoff
+and browser-to-desktop-handoff receipt contracts. Browser handoff tests now also
+exercise the real tool's early return, including read-only mode, inactive caller
+and kill-switch precedence, without reaching either browser executor.
+Upstream main is merged through `6368c2e` with no overlapping
 JARVIS-LAB paths in that sync. Native qualification remains deferred until an
 explicit real-Mac pass can grant the required permissions and capture live
 receipts.
+
+## Remote validation: 2026-10-02 handoff contracts
+
+- Audited parent: `bfaaf0255a986ae1ebb98acec1e4d95dab38fdfc`; PR #1 remains
+  open and draft. Upstream `6368c2e201dd2e767080f0fad9d04207b1767e90`
+  is already included; fork `main` remains separate (99 ahead / 1 behind at
+  that parent).
+- Focused Linux/Python 3.12 run: **80 passed** across
+  `test_macos_bench.py`, `test_browser_handoff.py` and `test_macos_readiness.py`;
+  38 new cases cover the two receipt evaluators and the browser tool boundary.
+  Ruff and `git diff --check` pass. One dependency deprecation warning comes
+  from FastAPI/Starlette's test-client import.
+- Parent CI run `36983225556` at 08:31 UTC: 42 jobs successful, 4 Windows
+  shards still running, 3 skipped. No failures observed at that check; this
+  is not a completed CI result. Check the new HEAD separately after publication.
+- This Linux checkout has no PowerShell, so `preflight.ps1` could not run;
+  `import jarvis` was verified to resolve to this checkout. Test dependencies
+  live in an isolated environment; no desktop installation was repinned.
+- Scope: pure benchmark contracts and no-I/O test coverage only. No new
+  orchestrator, safety boundary, memory store, desktop driver or permission
+  request. Native macOS transitions and live receipt collection remain unqualified.
 
 The scheduled pass is intentionally limited to the platform-supported maximum cadence of once per hour; it is not a continuously resident daemon.

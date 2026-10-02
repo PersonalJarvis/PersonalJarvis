@@ -1,15 +1,25 @@
 """Deterministic MacAgentBench receipt evaluator tests."""
 from __future__ import annotations
 
+from dataclasses import replace
+
+import pytest
+
 from jarvis.cu.macos_bench import (
+    BROWSER_DESKTOP_HANDOFF,
+    CROSS_WINDOW_HANDOFF,
     FOCUS_TYPE_LANDING,
     PHYSICAL_USER_TAKEOVER,
     SEMANTIC_TARGET_HIT,
     STALE_TARGET_REFUSAL,
+    BrowserDesktopHandoffReceipt,
+    CrossWindowHandoffReceipt,
     FocusTypeLandingReceipt,
     PhysicalTakeoverReceipt,
     SemanticTargetHitReceipt,
     StaleTargetRefusalReceipt,
+    evaluate_browser_desktop_handoff,
+    evaluate_cross_window_handoff,
     evaluate_focus_type_landing,
     evaluate_physical_takeover,
     evaluate_semantic_target_hit,
@@ -257,3 +267,117 @@ def test_focus_type_evidence_never_reads_secure_field_value() -> None:
 
     assert result.passed is False
     assert any("secure text-field content" in failure for failure in result.failures)
+
+
+@pytest.fixture
+def cross_window_receipt() -> CrossWindowHandoffReceipt:
+    return CrossWindowHandoffReceipt(
+        source_window_id=101,
+        intended_window_id=202,
+        observed_window_id=202,
+        transition_authorized=True,
+        destination_reobserved=True,
+        destination_target_reidentified=True,
+        foreground_identity_stable=True,
+        stale_source_actions=0,
+        expected_effect_verified=True,
+    )
+
+
+@pytest.fixture
+def browser_desktop_receipt() -> BrowserDesktopHandoffReceipt:
+    return BrowserDesktopHandoffReceipt(
+        handoff_target="core:computer-use",
+        browser_actions_after_handoff=0,
+        desktop_routed_through_executor=True,
+        destination_reobserved=True,
+        foreground_identity_stable=True,
+        expected_effect_verified=True,
+    )
+
+
+@pytest.mark.parametrize("scenario", [CROSS_WINDOW_HANDOFF, BROWSER_DESKTOP_HANDOFF])
+def test_handoff_scenarios_remain_live_gated(scenario) -> None:
+    scenarios = macagentbench_scenarios()
+    assert scenario in scenarios
+    assert len({entry.id for entry in scenarios}) == len(scenarios)
+    assert scenario.to_dict()["live_required"] is True
+    assert set(scenario.readiness_checks) == {
+        "semantic:ax-tree", "actuation:backend", "handoff:hardware-input",
+    }
+
+
+def test_cross_window_receipt_passes_for_fresh_authorized_destination(cross_window_receipt):
+    result = evaluate_cross_window_handoff(cross_window_receipt)
+    assert result.to_dict() == {
+        "scenario_id": "cross-window-handoff", "passed": True, "failures": (),
+    }
+
+
+@pytest.mark.parametrize(
+    ("changes", "failure"),
+    [
+        ({"source_window_id": 0}, "known positive IDs"),
+        ({"intended_window_id": -1}, "known positive IDs"),
+        ({"observed_window_id": None}, "known positive IDs"),
+        ({"source_window_id": True}, "known positive IDs"),
+        ({"source_window_id": "101"}, "known positive IDs"),
+        ({"source_window_id": 202}, "distinct destination"),
+        ({"observed_window_id": 101}, "not the intended window"),
+        ({"observed_window_id": 303}, "not the intended window"),
+        ({"transition_authorized": False}, "authorized Computer-Use"),
+        ({"destination_reobserved": False}, "not re-observed"),
+        ({"destination_target_reidentified": False}, "not re-identified"),
+        ({"foreground_identity_stable": False}, "foreground identity changed"),
+        ({"stale_source_actions": 1}, "stale source-window"),
+        ({"stale_source_actions": -1}, "stale source-window"),
+        ({"expected_effect_verified": False}, "effect was not verified"),
+        ({"cancellation_requested": True, "action_after_cancel": True}, "after cancellation"),
+    ],
+)
+def test_cross_window_handoff_rejects_unsafe_or_missing_evidence(
+    cross_window_receipt, changes, failure,
+):
+    result = evaluate_cross_window_handoff(replace(cross_window_receipt, **changes))
+    assert result.passed is False
+    assert any(failure in message for message in result.failures)
+
+
+def test_browser_desktop_receipt_passes_without_requiring_another_window(browser_desktop_receipt):
+    result = evaluate_browser_desktop_handoff(browser_desktop_receipt)
+    assert result.to_dict() == {
+        "scenario_id": "browser-to-desktop-handoff", "passed": True, "failures": (),
+    }
+
+
+@pytest.mark.parametrize(
+    ("changes", "failure"),
+    [
+        ({"handoff_target": ""}, "explicitly hand off"),
+        ({"handoff_target": "society_browser"}, "explicitly hand off"),
+        ({"browser_actions_after_handoff": 1}, "browser specialist acted"),
+        ({"browser_actions_after_handoff": -1}, "browser specialist acted"),
+        ({"desktop_routed_through_executor": False}, "ToolExecutor safety boundary"),
+        ({"destination_reobserved": False}, "not re-observed"),
+        ({"foreground_identity_stable": False}, "foreground identity changed"),
+        ({"expected_effect_verified": False}, "effect was not verified"),
+        ({"cancellation_requested": True, "action_after_cancel": True}, "after cancellation"),
+    ],
+)
+def test_browser_desktop_handoff_rejects_unsafe_or_missing_evidence(
+    browser_desktop_receipt, changes, failure,
+):
+    result = evaluate_browser_desktop_handoff(replace(browser_desktop_receipt, **changes))
+    assert result.passed is False
+    assert any(failure in message for message in result.failures)
+
+
+def test_handoff_cancellation_stops_actions_after_completed_transition(
+    cross_window_receipt, browser_desktop_receipt,
+):
+    # The successful transition precedes cancellation; no action follows it.
+    for receipt, evaluate in (
+        (cross_window_receipt, evaluate_cross_window_handoff),
+        (browser_desktop_receipt, evaluate_browser_desktop_handoff),
+    ):
+        assert evaluate(replace(receipt, cancellation_requested=True)).passed is True
