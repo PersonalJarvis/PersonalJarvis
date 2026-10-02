@@ -166,7 +166,7 @@ async def test_posix_unavailable_backend_reports_actionable_message(
             "'personal-jarvis[desktop]') to get pynput/pyautogui."
         )
 
-    monkeypatch.setattr("jarvis.cu.actuate.base.get_actuator", _unavailable)
+    monkeypatch.setattr("jarvis.cu.actuate.get_actuator", _unavailable)
 
     nodes = (
         UIANode(role="Button", name="Save", bounds=(10, 20, 100, 40), enabled=True),
