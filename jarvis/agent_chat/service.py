@@ -258,6 +258,8 @@ class AgentChatService:
         self._voice_chat_id: str | None = None
         self._voice_chat_fresh = False
         self._voice_call_chats: dict[str, str] = {}
+        # The archived voice chat's history while one is continued (bind_voice_chat).
+        self._voice_archive_history: Callable[[], list[Any]] | None = None
         self._retire_cli_seats()
 
     def _retire_cli_seats(self) -> None:
@@ -914,8 +916,27 @@ class AgentChatService:
         """True while a blank page is open: the next call opens a new chat."""
         return self._voice_chat_fresh
 
-    def bind_voice_chat(self, session_id: str | None) -> str | None:
+    @property
+    def voice_session_continued(self) -> str | None:
+        """The archived voice chat calls are recorded into, if one is on stage."""
+        from jarvis.sessions.continuation import continued_voice_session
+
+        return continued_voice_session()
+
+    def bind_voice_chat(
+        self,
+        session_id: str | None,
+        *,
+        voice_session: str | None = None,
+        voice_history: Callable[[], list[Any]] | None = None,
+    ) -> str | None:
         """Make ``session_id`` the chat voice calls continue; ``None`` = a new one.
+
+        ``voice_session`` puts an ARCHIVED voice chat on stage instead (a
+        history row of ``sessions.db``): the recorder files the next calls
+        into that row rather than a new one (jarvis/sessions/continuation.py),
+        no typed chat receives the turns, and ``voice_history`` answers each
+        call's starting context. Any other binding ends that continuation.
 
         The front page shows one Jarvis chat at a time. A call started there
         — the composer's voice button or the wake word — belongs to THAT
@@ -926,8 +947,12 @@ class AgentChatService:
         another conversation's memory.
         """
         from jarvis.agent_chat import runner_brain
+        from jarvis.sessions.continuation import continue_voice_session
 
         brain = runner_brain.brain_manager()
+        archived = (voice_session or "").strip() or None
+        continue_voice_session(archived if session_id is None else None)
+        self._voice_archive_history = voice_history if archived and session_id is None else None
         if session_id is None:
             self._voice_chat_id = None
             self._voice_chat_fresh = True
@@ -947,6 +972,9 @@ class AgentChatService:
 
     def voice_chat_history(self) -> list[Any]:
         """The bound chat's turns as call context — empty when none is bound."""
+        archive = self._voice_archive_history
+        if archive is not None and self.voice_session_continued:
+            return archive()
         session_id = self._voice_chat_id
         if not session_id or self.store.get_session(session_id) is None:
             return []

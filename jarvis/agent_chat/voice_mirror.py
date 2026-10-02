@@ -64,6 +64,10 @@ class VoiceChatMirror:
             svc = self._get_service()
             if svc is None:
                 return
+            if getattr(svc, "voice_session_continued", None):
+                # An archived voice chat is on stage: the recorder files this
+                # turn into that row, and a typed copy would be a second chat.
+                return
             call_id = str(getattr(event, "session_id", "") or "")
             session = self._target_session(svc, call_id)
             if session is None:

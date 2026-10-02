@@ -95,15 +95,39 @@ router = APIRouter(prefix="/api/agent-chat", tags=["agent-chat"])
 class VoiceChatBody(BaseModel):
     #: The Jarvis chat on stage; ``None`` = a blank page (the next call opens a new chat).
     session_id: str | None = None
+    #: An archived voice chat on stage instead (``sessions.db``): calls are
+    #: recorded into it and start with its history. Only with ``session_id`` unset.
+    voice_session_id: str | None = None
 
 
 class VoiceChatResponse(BaseModel):
     session_id: str | None
     fresh: bool
+    voice_session_id: str | None = None
 
 
 def _voice_chat_answer(svc: AgentChatService) -> VoiceChatResponse:
-    return VoiceChatResponse(session_id=svc.voice_chat_id, fresh=svc.voice_chat_fresh)
+    return VoiceChatResponse(
+        session_id=svc.voice_chat_id,
+        fresh=svc.voice_chat_fresh,
+        voice_session_id=svc.voice_session_continued,
+    )
+
+
+def _archived_voice_history(request: Request, voice_session_id: str) -> Any:
+    """Reader for an archived voice chat's turns, or ``None`` when it does not exist."""
+    from .chats_routes import _normalized_messages, _seed_pairs
+
+    session_store = getattr(request.app.state, "session_store", None)
+    chat_store = getattr(request.app.state, "chat_store", None)
+    if session_store is None or session_store.get_session(voice_session_id) is None:
+        return None
+
+    def history() -> list[Any]:
+        messages = _normalized_messages("voice", voice_session_id, chat_store, session_store)
+        return _seed_pairs(messages or [])
+
+    return history
 
 
 @router.get("/voice-chat", summary="The Jarvis chat voice calls continue")
@@ -115,8 +139,16 @@ async def get_voice_chat(request: Request) -> VoiceChatResponse:
 async def put_voice_chat(body: VoiceChatBody, request: Request) -> VoiceChatResponse:
     """Bind the chat the front page shows: calls file into it and start with its history."""
     svc = _service(request)
+    voice_session = None if body.session_id else (body.voice_session_id or "").strip() or None
+    history = None
+    if voice_session is not None:
+        history = _archived_voice_history(request, voice_session)
+        if history is None:
+            raise HTTPException(status_code=404, detail="no-such-voice-chat")
     try:
-        svc.bind_voice_chat(body.session_id or None)
+        svc.bind_voice_chat(
+            body.session_id or None, voice_session=voice_session, voice_history=history
+        )
     except NoSuchSession as exc:
         raise HTTPException(status_code=404, detail="no-such-jarvis-chat") from exc
     return _voice_chat_answer(svc)
