@@ -106,6 +106,31 @@ describe("RecentChats", () => {
     ]);
   });
 
+  it("lists chats as plain titles and names a topicless voice chat by its kind", async () => {
+    useEventStore.setState({
+      conversations: [...CONVERSATIONS, { ...row("voice", "v2", ""), preview: "Hallo" }],
+    });
+    render(<RecentChats />);
+    // No per-row glyphs: the title is the row.
+    for (const item of screen.getAllByTestId("recent-chat-row")) {
+      expect(item.querySelector("svg")).toBeNull();
+    }
+    const voice = screen.getByRole("button", { name: "Voice: Spoken thread" });
+    expect(voice.getAttribute("data-kind")).toBe("voice");
+    // A voice chat with no topic never shows its first words as a headline.
+    expect(screen.queryByText("Hallo")).toBeNull();
+    const untitled = screen.getAllByTestId("recent-chat-row").find(
+      (item) => item.textContent?.startsWith("Voice chat"),
+    );
+    expect(untitled?.querySelector(".text-muted-foreground")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Pin chat: Spoken thread" }));
+    expect(screen.getByTestId("pinned-chats").contains(
+      screen.getByRole("button", { name: "Voice: Spoken thread" }),
+    )).toBe(true);
+    expect(screen.getAllByTitle("Spoken thread")).toHaveLength(1);
+    await flush();
+  });
+
   it("opens an agent chat on the chat surface even from the voice stage", async () => {
     render(<RecentChats />);
     // The classic brain's text threads are no longer listed — the chat

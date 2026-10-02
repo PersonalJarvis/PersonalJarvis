@@ -67,7 +67,10 @@ export function useChatRows({ poll = false }: { poll?: boolean } = {}): ChatRows
       .map((c) => ({
         kind: "voice",
         id: c.id,
-        title: c.title || c.preview,
+        // The backend names each chat by its topic; "" means it has none, and
+        // the row then says what kind of chat it was (chatRowLabel) instead
+        // of promoting its first words ("Hallo", "Kannst") to a headline.
+        title: c.title,
         preview: c.preview,
         updatedMs: c.updated_ms,
         messageCount: c.message_count,
@@ -77,7 +80,7 @@ export function useChatRows({ poll = false }: { poll?: boolean } = {}): ChatRows
     const agent: ChatRow[] = sessions.map((s) => ({
       kind: "agent",
       id: s.session_id,
-      title: s.title || s.preview,
+      title: s.title,
       preview: s.preview,
       updatedMs: s.updated_ms,
       messageCount: s.message_count,
@@ -129,6 +132,21 @@ export function useChatRows({ poll = false }: { poll?: boolean } = {}): ChatRows
   }, []);
 
   return { rows, isActive, open, remove };
+}
+
+/**
+ * What a row is called: its topic, or — when it has none — what it was.
+ * ``untitled`` lets a list set those rows in a quieter tone.
+ */
+export function chatRowLabel(row: ChatRow, t: (key: string) => string): { text: string; untitled: boolean } {
+  const title = row.title.trim();
+  if (title) return { text: title, untitled: false };
+  if (row.kind === "voice") {
+    const when = formatChatWhen(row.updatedMs);
+    const kind = t("sidebar.untitled_voice_chat");
+    return { text: when ? `${kind} · ${when}` : kind, untitled: true };
+  }
+  return { text: t("chats_view.new_chat"), untitled: true };
 }
 
 /** Short time for a row: clock today, day + month before that. */

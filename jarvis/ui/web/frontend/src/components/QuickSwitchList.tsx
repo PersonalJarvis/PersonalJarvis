@@ -26,7 +26,7 @@ import { useHomeStore } from "@/store/home";
 import { useSettingsJump } from "@/store/settingsJump";
 import { useIdeProjectsStore } from "@/store/ideProjects";
 import { useIdeSidePanelStore } from "@/store/ideSidePanel";
-import { formatChatWhen, useChatRows, type ChatRow } from "@/components/home/chatRows";
+import { chatRowLabel, formatChatWhen, useChatRows, type ChatRow } from "@/components/home/chatRows";
 import {
   fetchIdeProjects,
   fetchWorkspacePanes,
@@ -312,7 +312,7 @@ export function QuickSwitchList({
               value={`chat:${row.kind}:${row.id}`}
               testId={`quick-switch-chat-${row.id}`}
               icon={row.kind === "voice" ? VoiceIcon : ChatIcon}
-              label={row.title || t("quick_switch.untitled_chat")}
+              label={chatRowLabel(row, t).text}
               detail={formatChatWhen(row.updatedMs)}
               size={size}
               onSelect={() => goToChat(row)}
