@@ -76,10 +76,22 @@ Implemented on `jarvis-lab`:
 - `jarvis/cu/human_activity.py` reads Quartz HID-only activity and yields to
   recent physical mouse/keyboard use without mistaking Jarvis synthetic input
   for the user.
-- the shared POSIX actuator entry point and `click_element` both enforce the
-  human-input handoff.
+- human takeover is enforced twice on macOS: at the shared actuator facade and
+  again at the Quartz dispatch boundary immediately before synthetic events.
+  Late takeover therefore remains typed as `HumanInputTakeover` instead of
+  degrading into a generic actuation failure.
+- `AXPress` and `AXFocused` receive the same ownership guard at their native
+  mutation boundary, after semantic lookup/probing and with a final foreground
+  window re-check.
+- tool results preserve takeover as the structured `human_takeover` outcome;
+  the existing Computer-Use loop yields control, polls the side-effect-free HID
+  state, honours cancellation, then re-observes the desktop before resuming.
+  Unknown/unreadable ownership stays fail-closed.
+- even the reduced-context legacy drag fallback routes through the protected
+  macOS actuator; there is no direct pyautogui bypass on macOS.
 - unit/integration coverage exercises AXPress, AXFocused, stale-target refusal,
-  missing permission, secure-field handling and human takeover.
+  missing permission, secure-field handling, late-dispatch takeover,
+  pause/resume, cancellation and guarded drag cleanup.
 
 Still requires real-Mac qualification: Accessibility permission, AXPress on a
 native button, AXFocused on a native/search field, human takeover, then verified
