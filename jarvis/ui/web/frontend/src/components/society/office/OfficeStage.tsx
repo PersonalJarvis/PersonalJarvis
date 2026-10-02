@@ -39,8 +39,7 @@ import { PaneCommandPanel } from "./PaneCommandPanel";
 import type { WalkerContext } from "./OfficeAgents";
 import { ownsKeyboard } from "./OfficePlayer";
 import { ArcadeCabinet } from "./ArcadeCabinet";
-import { ElevatorPanel } from "./ElevatorPanel";
-import { ElevatorRide, minRideMs, type RidePhase } from "./ElevatorRide";
+import { ElevatorCar, minRideMs, type CarPhase } from "./ElevatorCar";
 import { buildArcadeLayout } from "../arcade/arcadeFloorLayout";
 import { ARCADE_GAMES, gameForCabinet, type RetroGameId } from "../arcade/arcadeGames";
 import { useOfficeSettings, useReceptionTab } from "./officeSettings";
@@ -69,11 +68,12 @@ const REFRESH_JITTER_MS = 1500;
 
 const EMPTY_OCCUPANTS: ReadonlyMap<string, PaneOccupant> = new Map();
 
-/** Elevator doors: closing, the ride (held until the new floor has loaded and the lantern has counted the floors, capped), opening. */
-const DOORS_MS = 620;
-const RIDE_MAX_MS = 2200;
-/** After a key on the floor picker lit up, the call button outside glows this long before the doors move. */
-const PICKED_CALL_MS = 320;
+/** The elevator car: its doors slide in CAR_DOORS_MS, stepping in or out takes CAR_STEP_MS, a ride is capped at RIDE_MAX_MS. */
+const CAR_DOORS_MS = 760;
+const CAR_STEP_MS = 420;
+const RIDE_MAX_MS = 2800;
+/** The call button glows this long before the person is in the car. */
+const CALL_GLOW_MS = 280;
 
 class RenderBoundary extends Component<{ children: ReactNode; fallbackText: string }, { failed: boolean }> {
   state = { failed: false };
@@ -234,68 +234,72 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
     openTimer.current = setTimeout(() => { go(); setDiving(false); }, ZOOM_SECONDS * 1000 + 260);
   }, [sectionDive, compact, onOpenLedger, reduced]);
 
-  // The elevator: doors close, the floor switches behind them, doors open once
-  // the new floor has loaded (capped). Reduced motion switches at once.
-  const [ride, setRide] = useState<{ from: OfficeFloor; to: OfficeFloor; phase: RidePhase; startedMs: number } | null>(null);
-  const rideTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  useEffect(() => () => clearTimeout(rideTimer.current), []);
-  const takeElevator = useCallback((to: OfficeFloor) => {
-    const from = useOfficeStore.getState().floor;
-    if (ride || to === from) return;
-    if (reduced) { switchFloor(to, true); return; }
-    useOfficeStore.getState().select(null);
-    setRide({ from, to, phase: "closing", startedMs: 0 });
-    rideTimer.current = setTimeout(() => {
-      switchFloor(to, true);
-      setRide({ from, to, phase: "riding", startedMs: performance.now() });
-      rideTimer.current = setTimeout(() => setRide((r) => (r?.phase === "riding" ? { ...r, phase: "opening" } : r)), RIDE_MAX_MS);
-    }, DOORS_MS);
-  }, [reduced, ride]);
-  // Riding takes a press of the call button beside the doors, standing at the
-  // elevator: the press opens the floor picker, picking a floor lights the
-  // button and the doors close. A press from afar (a click on the button, the
+  // The elevator, ridden from inside the car (ElevatorCar): pressing the call
+  // button at the doors puts the person in the car; pressing a floor there
+  // closes the doors, the floor switches behind them, and the doors open once
+  // the new floor has loaded and the indicator has counted the floors (capped);
+  // then the person steps out. A press from afar (a click on the button, the
   // floor token or E anywhere) walks the character over instead; it never
-  // rides from a distance.
+  // rides from a distance. Reduced motion switches floors at once.
+  const [car, setCar] = useState<{ phase: CarPhase; from: OfficeFloor; to: OfficeFloor | null; startedMs: number } | null>(null);
+  const carTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(carTimer.current), []);
   const [callLit, setCallLit] = useState(false);
-  const [picking, setPicking] = useState(false);
-  const callTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  useEffect(() => () => clearTimeout(callTimer.current), []);
   const pressCall = useCallback(() => {
-    if (ride || callLit) return;
+    if (car || callLit) return;
     const lift = layout.checkpoints.find((cp) => cp.id === "elevator");
     if (!atElevator(player, lift)) {
       if (lift) useOfficeStore.getState().requestWalk({ x: lift.x, z: lift.z });
       return;
     }
-    setPicking(true);
-  }, [ride, callLit, layout]);
-  const pickFloor = useCallback((to: OfficeFloor) => {
-    setPicking(false);
-    if (ride || callLit || to === useOfficeStore.getState().floor) return;
+    // The button lights, then the doors are open and the person steps in.
     setCallLit(true);
-    callTimer.current = setTimeout(() => { setCallLit(false); takeElevator(to); }, PICKED_CALL_MS);
-  }, [ride, callLit, takeElevator]);
-  const closePicker = useCallback(() => setPicking(false), []);
-  // The picker belongs to the floor it was opened on.
-  useEffect(() => { setPicking(false); }, [floor]);
-  // E at the elevator, or a click on its floor token, presses the button instead of opening a panel.
+    clearTimeout(carTimer.current);
+    carTimer.current = setTimeout(() => {
+      setCallLit(false);
+      useOfficeStore.getState().select(null);
+      setCar({ phase: "boarding", from: useOfficeStore.getState().floor, to: null, startedMs: 0 });
+    }, CALL_GLOW_MS);
+  }, [car, callLit, layout]);
+  const pickFloor = useCallback((to: OfficeFloor) => {
+    if (car?.phase !== "boarding" || to === car.from) return;
+    if (reduced) { setCar(null); switchFloor(to, true); return; }
+    setCar({ ...car, to, phase: "closing" });
+    clearTimeout(carTimer.current);
+    carTimer.current = setTimeout(() => {
+      switchFloor(to, true);
+      setCar((c) => (c ? { ...c, phase: "riding", startedMs: performance.now() } : c));
+      carTimer.current = setTimeout(() => setCar((c) => (c?.phase === "riding" ? { ...c, phase: "opening" } : c)), RIDE_MAX_MS);
+    }, CAR_DOORS_MS);
+  }, [car, reduced]);
+  const leaveCar = useCallback(() => {
+    if (car?.phase !== "boarding") return;
+    if (reduced) { setCar(null); return; }
+    setCar({ ...car, phase: "leaving" });
+  }, [car, reduced]);
+  // E at the elevator, or a click on its floor token, presses the call button instead of opening a panel.
   useEffect(() => {
     if (selection?.kind !== "checkpoint" || selection.id !== "elevator") return;
     select(null);
     pressCall();
   }, [selection, select, pressCall]);
   useEffect(() => {
-    if (ride?.phase === "riding" && floor === ride.to && ready) {
-      // Open once the floor has loaded and the lantern has counted every floor passed.
-      const left = minRideMs(ride.from, ride.to) - (performance.now() - ride.startedMs);
-      clearTimeout(rideTimer.current);
-      rideTimer.current = setTimeout(() => setRide({ ...ride, phase: "opening" }), Math.max(160, left));
+    if (car?.phase === "riding" && floor === car.to && ready && car.to) {
+      // The car settles once the floor has loaded and the indicator has counted every floor passed.
+      const left = minRideMs(car.from, car.to) - (performance.now() - car.startedMs);
+      clearTimeout(carTimer.current);
+      carTimer.current = setTimeout(() => setCar((c) => (c ? { ...c, phase: "opening" } : c)), Math.max(220, left));
     }
-    if (ride?.phase === "opening") {
-      clearTimeout(rideTimer.current);
-      rideTimer.current = setTimeout(() => setRide(null), DOORS_MS);
+    if (car?.phase === "opening") {
+      // The doors open, a short beat to look out, then the person steps out.
+      clearTimeout(carTimer.current);
+      carTimer.current = setTimeout(() => setCar((c) => (c ? { ...c, phase: "leaving" } : c)), CAR_DOORS_MS + 260);
     }
-  }, [ride, floor, ready]);
+    if (car?.phase === "leaving") {
+      clearTimeout(carTimer.current);
+      carTimer.current = setTimeout(() => setCar(null), CAR_STEP_MS);
+    }
+  }, [car, floor, ready]);
 
   const counts = countStates(active);
   const updateProfile = useCallback((next: PlayerProfile) => { setProfile(next); saveProfile(next); }, []);
@@ -379,11 +383,6 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
   const playing = selection?.kind === "arcade" ? gameForCabinet(selection.id) : null;
   const playsAsteroids = selection?.kind === "arcade" && (!playing || playing.kind === "asteroid3d");
   const titleKey = arcade ? "society.office.arcade_floor_title" : coding ? "society.office.coding_title" : "society.office.title";
-  const floorCounts = useMemo<Record<OfficeFloor, string | null>>(() => ({
-    agents: roster.data ? t("society.office.subtitle").replace("{0}", String(jarvisAgents.length)) : null,
-    coding: codingFloor.loaded ? t("society.office.coding_subtitle").replace("{0}", String(codingFloor.occupants.length)) : null,
-    arcade: t("society.office.arcade_floor_subtitle").replace("{0}", String(ARCADE_GAMES.length)),
-  }), [t, roster.data, jarvisAgents.length, codingFloor.loaded, codingFloor.occupants.length]);
   const playerName = profile.name.trim() || t("society.office.you");
   const showHintBar = useOfficeSettings((s) => s.showHintBar);
   const receptionOpen = selection?.kind === "checkpoint" && selection.id === "create";
@@ -408,7 +407,7 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
                 <OfficeScene floor={floor} occupants={occupants} ready={ready} layout={layout} grid={grid} walkers={walkers} agents={agents} newcomers={newcomers}
                   awake={awake} reduced={reduced} overview={overview} player={{ look: playerLook(profile), name: playerName }}
                   selection={selection} nearby={nearby} chats={chats} onOpenScreen={openScreen}
-                  elevatorCall={{ lit: callLit, picking, onPress: pressCall }} />
+                  elevatorCall={{ lit: callLit || !!car, picking: !!car, onPress: pressCall }} />
               </Canvas>
             </Suspense>
           </RenderBoundary>
@@ -455,7 +454,7 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
           <RetroArcadeOverlay gameId={playing.id as RetroGameId} onClose={() => select(null)} />
         </Suspense>
       )}
-      {picking && !ride && <ElevatorPanel floor={floor} counts={floorCounts} onPick={pickFloor} onClose={closePicker} />}
+
       {/* A coding session is a window of its own on the stage, not a panel in the corner slot. */}
       {selection?.kind === "agent" && selectedPane && (
         <PaneCommandPanel occupant={selectedPane} compact={compact} onOpen={() => openPaneSession(selectedPane.pane)} onClose={() => select(null)} />
@@ -470,14 +469,14 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
         </div>
       )}
 
-      {nearbyLabel && !selection && !picking && (
+      {nearbyLabel && !selection && !car && (
         <button type="button" className="office-hud office-prompt" data-office-ui onClick={() => nearby && select(nearby)}>
           <kbd>E</kbd>{nearbyLabel}
         </button>
       )}
       {!compact && <OfficeCompass layout={layout} agents={agents} selectedId={selection?.kind === "agent" ? selection.id : null} />}
       {diving && <div className="office-dive-fade" aria-hidden />}
-      {ride && <ElevatorRide from={ride.from} to={ride.to} phase={ride.phase} reduced={reduced} />}
+      {car && <ElevatorCar phase={car.phase} from={car.from} to={car.to} reduced={reduced} onPick={pickFloor} onLeave={leaveCar} />}
       {!compact && <OfficeMinimap layout={layout} agents={agents} selectedId={selection?.kind === "agent" ? selection.id : null}
         onOpenMap={() => setMapOpen(true)} />}
       <OfficeFullMap open={mapOpen} onOpen={() => setMapOpen(true)} onClose={() => setMapOpen(false)}

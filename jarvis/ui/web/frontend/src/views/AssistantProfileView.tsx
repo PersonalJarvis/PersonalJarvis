@@ -14,14 +14,15 @@
  *   [pet]  Helpful but not obsequious. Direct, …   (the vibe, as the lead)
  *          ● Learning · 1 thing remembered · changed today
  *   ────────────────────────────────────────────────────────────
+ *   Files    four pages with their own first lines: SOUL.md,
+ *            George.md, MEMORY.md, USER.md — open in place
+ *   ────────────────────────────────────────────────────────────
  *   Character                                            Edit
  *   Role     …   /   Tone     …   /   Limits   …
  *   ────────────────────────────────────────────────────────────
  *   Memory   [Remembered · About you · About itself]
  *   ────────────────────────────────────────────────────────────
  *   Recently learned  — the ledger, with the person's words
- *   ────────────────────────────────────────────────────────────
- *   Files    SOUL.md · George.md · MEMORY.md · USER.md   →
  *
  * A file opens in place with a way back, like USER.md on the Profile page.
  */
@@ -106,10 +107,10 @@ export function AssistantProfileView() {
         {data && !openFile && (
           <div className="flex flex-col gap-10">
             <Intro profile={data} />
+            <FilesSection files={data.files} onOpen={setOpen} />
             <CharacterSection soul={fileOf(data, "soul")} onEdit={() => setOpen("soul")} />
             <MemorySection profile={data} />
             <RecentSection activity={data.activity} />
-            <FilesSection files={data.files} onOpen={setOpen} />
           </div>
         )}
       </div>
