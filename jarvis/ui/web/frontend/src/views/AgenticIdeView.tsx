@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { FolderPlus, Loader2, X } from "lucide-react";
 import { FolderPicker } from "@/components/agentic/FolderPicker";
 import { VoiceBubble, storedVoiceBubbleOpen, storeVoiceBubbleOpen } from "@/components/agentic/VoiceBubble";
-import { WorkspaceTerminalGrid } from "@/components/agentic/WorkspaceTerminalGrid";
+import { RetainedWorkspaceGrid } from "@/components/agentic/RetainedWorkspaceGrid";
 import { WorkspaceAgentSetup } from "@/components/agentic/WorkspaceAgentSetup";
 import { RunOnPicker, storeRunOn, storedRunOn } from "@/components/agentic/RunOnPicker";
 import { WorkspaceOptionsDialog } from "@/components/agentic/WorkspaceOptionsDialog";
@@ -12,12 +12,15 @@ import { IdeSidePanelFrame } from "@/components/agentic/sidePanel/IdeSidePanel";
 import { GRID_LIMIT_HINT, MAX_WORKSPACE_PANES, canSplitFit, fitsWorkspace, isBalancedWorkspace } from "@/components/agentic/workspaceDocking";
 import { AgentMark } from "@/components/agentic/AgentMark";
 import { CloseAgentDialog, type CloseTarget } from "@/components/agentic/CloseAgentDialog";
+import { IdeHotkeyMenu } from "@/components/agentic/IdeHotkeyMenu";
+import { LEADER_PASSTHROUGH, PANE_COMMAND_EVENT, PANE_INPUT_EVENT, type IdeHotkeyAction, type PaneCommand, type PaneCommandDetail, type PaneInputDetail } from "@/components/agentic/ideHotkeys";
 import { GitCheckoutPicker } from "@/components/agentic/git/GitCheckoutPicker";
 import { GitPanelDialog } from "@/components/agentic/git/GitPanelDialog";
 import { KEEP_CHECKOUT, prepareGit, type GitPlan } from "@/lib/gitApi";
 import { SplitRightIcon, SplitBelowIcon, SplitLeftIcon, SplitAboveIcon } from "@/components/agentic/splitIcons";
 import type { PaneSplitDirection } from "@/components/agentic/WorkspaceTerminalHeader";
 import { cn } from "@/lib/utils";
+import { BrandedSelect } from "@/components/ui/select";
 import { useEventStore } from "@/store/events";
 import { useIdeChatStore } from "@/store/ideChat";
 import { useIdeProjectsStore } from "@/store/ideProjects";
@@ -125,7 +128,8 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   // On a connected computer the CLI has to be installed THERE, not here: the
   // server is checked before anything is copied, so every coding CLI is offered.
   const workspaceChoices = workspaceComputer ? codingAgents : installed;
-  const agentChoices = agentComputer ? codingAgents : installed;
+  const agentChoices = agents.filter((agent) =>
+    (agent.kind === "shell" || agent.accepts_prompts !== false) && (agentComputer || agent.installed));
   const dialogOpen = projectDialog || workspaceProject !== null || renameOpen || agentPicker !== null;
 
   useEffect(() => {
@@ -138,11 +142,14 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     const dialog = document.querySelector<HTMLElement>("[data-ide-dialog]");
     if (!dialog) return;
     const focusable = () => [...dialog.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])')];
-    (focusable()[0] ?? dialog).focus();
+    (dialog.querySelector<HTMLElement>("[data-autofocus]") ?? focusable()[0] ?? dialog).focus();
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        // A field that backs out of itself on Escape (the folder picker's path
+        // and new-folder fields) gets the key instead of the whole dialog closing.
+        if (event.target instanceof Element && event.target.closest("[data-escape-local]")) return;
         event.preventDefault();
-        if (workspaceProject && busy) { event.stopPropagation(); return; }
+        if ((workspaceProject || projectDialog) && busy) { event.stopPropagation(); return; }
         setProjectDialog(false); setWorkspaceProject(null); setRenameOpen(false); setAgentPicker(null);
         return;
       }
@@ -464,6 +471,79 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const stopWorkspace = () => {
     if (session) setCloseRequest({ kind: "workspace", workspaceId: session.id });
   };
+  // Ctrl+B, then a key (see components/agentic/ideHotkeys): the IDE's
+  // key menu. Pane commands go to the grid that owns the pane; the rest are
+  // the same calls the buttons and the sidebar make.
+  const hotkeysEnabled = onScreen && !dialogOpen && !optionsOpen && !gitOpen && !closeRequest;
+  const hotkeyAgents = installed.map((agent) => ({ name: agent.name, label: agent.display_name }));
+  const sendPaneCommand = (command: PaneCommand) => {
+    if (!session || !selected) return;
+    const detail: PaneCommandDetail = { workspaceId: session.id, pane: selected, command };
+    window.dispatchEvent(new CustomEvent(PANE_COMMAND_EVENT, { detail }));
+  };
+  const openWorkspaces = state?.workspaces ?? [];
+  const goToWorkspace = (index: number) => {
+    const target = openWorkspaces[index];
+    if (!target) { pushToast("info", `There is no workspace ${index + 1}.`); return; }
+    if (target.id !== session?.id) void activateFromTree(target.id);
+  };
+  const runHotkey = (hotkey: IdeHotkeyAction): void => {
+    switch (hotkey.kind) {
+      case "split": {
+        // tmux/herdr split: the new pane runs what the focused pane runs.
+        const focused = session?.terminals.find((terminal) => terminal.name === selected);
+        const agent = focused?.agent ?? installed[0]?.name;
+        if (!agent) { openAgentPicker(); return; }
+        runHotkey({ kind: "spawn", agent, direction: hotkey.direction });
+        return;
+      }
+      case "spawn": {
+        if (!session) { setProjectDialog(true); return; }
+        if (session.terminals.length >= maxPanes) { pushToast("error", `This workspace is full (${maxPanes} agents). Close a pane, or open another workspace.`); return; }
+        const anchor = session.terminals.find((terminal) => terminal.name === selected);
+        const fits = Boolean(anchor && hotkey.direction && canSplitFit(session.layout, session.terminals, anchor.key, hotkey.direction, maxPanes));
+        if (anchor && hotkey.direction && !fits) pushToast("info", `No room beside ${anchor.name} there; the new agent joins the even grid.`);
+        addAgent(hotkey.agent, session.id, fits ? anchor!.name : undefined, fits ? hotkey.direction! : "down",
+          anchor ? anchor.computer_id || null : workspaceRunsOn(session.terminals));
+        return;
+      }
+      case "agent-picker": openAgentPicker(); return;
+      case "focus-pane": sendPaneCommand({ kind: "focus", direction: hotkey.direction }); return;
+      case "swap-pane": sendPaneCommand({ kind: "swap", direction: hotkey.direction }); return;
+      case "maximize-pane": sendPaneCommand({ kind: "maximize" }); return;
+      case "fork-pane": sendPaneCommand({ kind: "fork" }); return;
+      case "rename-pane": return; // the menu asks for the name itself
+      case "close-pane": {
+        const terminal = session?.terminals.find((entry) => entry.name === selected);
+        if (terminal) closeAgent(terminal);
+        return;
+      }
+      case "balance": balanceLayout(); return;
+      case "toggle-voice": setVoiceOpen((current) => { const next = !current; storeVoiceBubbleOpen(next); return next; }); return;
+      case "workspace-index": goToWorkspace(hotkey.index); return;
+      case "workspace-step": {
+        if (openWorkspaces.length < 2) return;
+        const at = Math.max(0, openWorkspaces.findIndex((workspace) => workspace.id === session?.id));
+        goToWorkspace((at + hotkey.step + openWorkspaces.length) % openWorkspaces.length);
+        return;
+      }
+      case "new-workspace": {
+        const project = projects.find((entry) => entry.id === session?.project_id);
+        if (!project) { setProjectDialog(true); return; }
+        setWorkspaceProject(project); setWorkspaceName(""); setWorkspaceAgents([installed[0]?.name ?? ""]);
+        setWorkspaceGit(KEEP_CHECKOUT); setWorkspaceComputer(storedRunOn(project.id));
+        return;
+      }
+      case "new-worktree-workspace": newWorktreeWorkspace(); return;
+      case "rename-workspace":
+        if (session) { setRenameValue(session.name ?? session.project.name); setRenameOpen(true); }
+        return;
+      case "close-workspace": stopWorkspace(); return;
+      case "git-panel": if (session) setGitOpen(true); return;
+      case "workspace-options": if (session) setOptionsOpen(true); return;
+      case "connect-project": setProjectDialog(true); return;
+    }
+  };
   const closeTarget: CloseTarget | null = !closeRequest ? null
     : closeRequest.kind === "terminal"
       ? { kind: "terminal", name: closeRequest.terminal.name, agent: closeRequest.terminal.agent, displayName: closeRequest.terminal.display_name }
@@ -474,7 +554,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
 
   return <div className="relative flex h-full min-h-0 flex-col bg-background text-foreground" data-testid="igentic-ide">
     <WorkspaceOptionsDialog open={optionsOpen && !!session} onOpenChange={setOptionsOpen} workspace={session?.name ?? session?.project.name ?? ""}
-      count={session?.terminals.length ?? 0} maxPanes={maxPanes} busy={busy} canAdd={installed.length > 0}
+      count={session?.terminals.length ?? 0} maxPanes={maxPanes} busy={busy} canAdd={agents.some((agent) => agent.installed && (agent.kind === "shell" || agent.accepts_prompts !== false))}
       onAdd={openAgentPicker} onBalance={balanceLayout} onRename={() => { setRenameValue(session?.name ?? session?.project.name ?? ""); setRenameOpen(true); }}
       onClose={stopWorkspace} onGit={() => setGitOpen(true)} appearance={appearance} onAppearance={saveAppearance}
       paneStyle={paneStyle} onPaneStyle={savePaneStyle}
@@ -484,8 +564,8 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     <CloseAgentDialog target={closeTarget} busy={busy} onCancel={() => setCloseRequest(null)} onConfirm={confirmClose} />
 
     <main className="min-h-0 flex-1">
-      <IdeSidePanelFrame markInUse={paneStyle === "minimal"}>
-      {session ? <WorkspaceTerminalGrid key={session.id} session={session} onChanged={(next) => setState((current) => current?.session?.id === next.id ? { ...current, session: next } : current)}
+      <IdeSidePanelFrame markInUse={paneStyle === "minimal"} appearance={appearance ?? undefined} onScreen={onScreen}>
+      {session ? <RetainedWorkspaceGrid session={session} onScreen={onScreen} workspaceIds={state.workspaces?.map((workspace) => workspace.id)} onChanged={(next) => setState((current) => current?.session?.id === next.id ? { ...current, session: next } : current)}
         onAdd={openAgentPicker} onClose={closeAgent} onSelect={setSelected} selected={selected} maxPanes={maxPanes} fontSize={fontSize} appearance={appearance} disabled={busy}
         onMutationStart={beginGridMutation} onMutationEnd={endGridMutation} paneStyle={paneStyle} workspaces={state.workspaces ?? []} />
       : <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
@@ -497,6 +577,13 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
       </IdeSidePanelFrame>
     </main>
 
+    <IdeHotkeyMenu enabled={hotkeysEnabled} agents={hotkeyAgents} pane={session ? selected : ""} onAction={runHotkey}
+      onRenamePane={(name) => sendPaneCommand({ kind: "rename", name })}
+      onPassThrough={() => {
+        if (!session || !selected) return;
+        const detail: PaneInputDetail = { workspaceId: session.id, pane: selected, data: LEADER_PASSTHROUGH };
+        window.dispatchEvent(new CustomEvent(PANE_INPUT_EVENT, { detail }));
+      }} />
     <VoiceBubble open={voiceOpen} onClose={closeVoice} onScreen={onScreen} onJumpToPane={jumpToPane} promptTarget={selected} />
 
     {agentPicker && <div className="fixed inset-0 z-[80] flex items-center justify-center bg-background/75 p-4 backdrop-blur-sm"
@@ -516,14 +603,15 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
           return <div className="mb-4 space-y-2.5 rounded-xl border border-border bg-muted/40 p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-xs font-medium text-foreground">Where should it open?</span>
-              <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                Next to
-                <select aria-label="Split next to" value={splitAnchor} disabled={busy} onChange={(event) => setSplitAnchor(event.target.value)}
-                  className="h-7 rounded-md border border-input bg-background px-2 text-xs font-medium text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
-                  {session.terminals.map((terminal) => <option key={terminal.name} value={terminal.name}>{terminal.name} · {terminal.display_name}</option>)}
-                  <option value="">Automatic even grid</option>
-                </select>
-              </label>
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <span>Next to</span>
+                <BrandedSelect ariaLabel="Split next to" value={splitAnchor} disabled={busy} onValueChange={setSplitAnchor}
+                  className="h-7 w-auto min-w-[11rem] px-2 py-1 text-xs font-medium"
+                  options={[
+                    ...session.terminals.map((terminal) => ({ value: terminal.name, label: `${terminal.name} · ${terminal.display_name}` })),
+                    { value: "", label: "Automatic even grid" },
+                  ]} />
+              </div>
             </div>
             {anchorTerminal ? <div className="grid grid-cols-4 gap-2" role="radiogroup" aria-label="Split direction">
               {SPLIT_DIRECTIONS.map((item) => {
@@ -565,13 +653,34 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
       </section>
     </div>}
 
-    {projectDialog && <div className="fixed inset-0 z-[80] flex items-center justify-center bg-background/75 p-4 backdrop-blur-sm" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setProjectDialog(false); }}>
-      <section data-ide-dialog tabIndex={-1} role="dialog" aria-modal="true" aria-label="Connect project" className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-border bg-card shadow-2xl">
-        <div className="flex items-center justify-between border-b border-border px-5 py-3"><h2 className="text-sm font-semibold">Connect project folder</h2><button type="button" aria-label="Close" onClick={() => setProjectDialog(false)}><X className="h-4 w-4" /></button></div>
-        <div className="min-h-0 flex-1 overflow-auto px-5 py-3"><FolderPicker selected={projectPath} onSelect={setProjectPath} /></div>
-        <div className="border-t border-border px-5 py-3"><label className="block text-xs text-muted-foreground">Project name (optional)<input value={projectName} onChange={(event) => setProjectName(event.target.value)} placeholder={projectPath?.split(/[\\/]/).filter(Boolean).at(-1) ?? "Project name"} className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground" /></label>
-          <div className="mt-3 flex justify-end gap-2"><button type="button" onClick={() => setProjectDialog(false)} className="rounded-md px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent">Cancel</button><button type="button" disabled={busy || !projectPath} onClick={connect} className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground disabled:opacity-50">Connect project</button></div>
-        </div>
+    {projectDialog && <div className="fixed inset-0 z-[80] flex items-center justify-center bg-background/75 p-4 backdrop-blur-sm" role="presentation" onMouseDown={(event) => { if (!busy && event.target === event.currentTarget) setProjectDialog(false); }}>
+      {/* A fixed height, so the dialog does not jump each time a folder with
+          a different number of subfolders is opened. */}
+      <section data-ide-dialog tabIndex={-1} role="dialog" aria-modal="true" aria-label="Connect project" aria-describedby="connect-project-hint" aria-busy={busy}
+        className="flex h-[min(46rem,90vh)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
+        <header className="shrink-0 px-6 pb-1 pt-6">
+          <div className="flex items-center justify-between gap-4">
+            <h2 className="text-xl font-semibold tracking-tight">Connect a project</h2>
+            <button type="button" aria-label="Close" disabled={busy} onClick={() => setProjectDialog(false)}
+              className="rounded-lg p-2 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><X className="h-5 w-5" /></button>
+          </div>
+          <p id="connect-project-hint" className="mt-1 text-sm text-muted-foreground">Choose the folder your coding agents will work in. Open it in the list, find it by name, or make a new one.</p>
+        </header>
+        <div className="flex min-h-0 flex-1 flex-col px-3"><FolderPicker selected={projectPath} onSelect={setProjectPath} /></div>
+        <footer className="flex shrink-0 flex-wrap items-end gap-3 border-t border-border bg-muted/20 px-6 py-4">
+          <label className="min-w-[14rem] flex-1 text-xs font-medium text-muted-foreground">Project name <span className="font-normal opacity-70">(optional)</span>
+            <input value={projectName} onChange={(event) => setProjectName(event.target.value)}
+              onKeyDown={(event) => { if (event.key === "Enter" && projectPath && !busy) { event.preventDefault(); connect(); } }}
+              placeholder={projectPath?.split(/[\\/]/).filter(Boolean).at(-1) ?? "Uses the folder name"}
+              className="mt-1.5 h-10 w-full rounded-lg border border-input bg-background/60 px-3 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-1 focus:ring-ring/30" />
+          </label>
+          <div className="flex gap-2">
+            <button type="button" disabled={busy} onClick={() => setProjectDialog(false)} className="h-10 rounded-lg px-4 text-sm text-muted-foreground hover:bg-muted disabled:opacity-50">Cancel</button>
+            <button type="button" disabled={busy || !projectPath} onClick={connect} title={projectPath ? undefined : "Choose a folder first"}
+              className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-50">
+              {busy && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}Connect project</button>
+          </div>
+        </footer>
       </section>
     </div>}
 

@@ -11,9 +11,27 @@ import { create } from "zustand";
  */
 
 /** Every function the panel can show. A new one is a new id plus a registry entry. */
-export type SidePanelTabId = "agents" | "changes" | "files" | "git" | "office";
+export type SidePanelTabId = "agents" | "changes" | "files" | "git" | "office" | `terminal:${string}`;
+
+export interface SidePanelTerminal {
+  id: `terminal:${string}`;
+  workspaceId: string;
+  workspaceName: string;
+  number: number;
+}
+
+export const MAX_TERMINAL_TABS = 16;
 
 export const SIDE_PANEL_TAB_IDS: readonly SidePanelTabId[] = ["agents", "changes", "files", "git", "office"];
+
+/**
+ * DOM id of the panel host, for the toggle's `aria-controls`.
+ *
+ * It lives here rather than in the panel's module because the toggle sits in
+ * the always-loaded window caption: importing it from `IdeSidePanel` linked the
+ * whole panel (explorer, git overview, agents overview) into the entry chunk.
+ */
+export const SIDE_PANEL_ID = "ide-side-panel";
 
 const OPEN_KEY = "jarvis.agenticIde.sidePanelOpen";
 // v4: the panel starts with Agents alone and the other tabs are added from
@@ -50,7 +68,10 @@ function storedTabs(): { tabs: SidePanelTabId[]; active: SidePanelTabId } {
 function persist(open: boolean, tabs: SidePanelTabId[], active: SidePanelTabId): void {
   try {
     localStorage.setItem(OPEN_KEY, open ? "1" : "0");
-    localStorage.setItem(TABS_KEY, JSON.stringify({ tabs, active }));
+    // Shell processes belong to this window. A reload must not silently start
+    // replacements for commands that were running before the window closed.
+    const saved = tabs.filter(isTabId);
+    localStorage.setItem(TABS_KEY, JSON.stringify({ tabs: saved, active: isTabId(active) ? active : saved[0] }));
   } catch {
     /* a convenience only: the panel still works for this session */
   }
@@ -69,6 +90,8 @@ interface IdeSidePanelState {
   open: boolean;
   tabs: SidePanelTabId[];
   active: SidePanelTabId;
+  terminals: SidePanelTerminal[];
+  addTerminalTab: (workspaceId: string, workspaceName: string) => void;
   setOpen: (open: boolean) => void;
   toggle: () => void;
   /** Open a tab (or bring it forward when it is already open). */
@@ -106,6 +129,17 @@ export const useIdeSidePanelStore = create<IdeSidePanelState>((set, get) => {
     open: storedOpen(),
     tabs: initialTabs.tabs,
     active: initialTabs.active,
+    terminals: [],
+    addTerminalTab: (workspaceId, workspaceName) => {
+      if (!workspaceId) return;
+      const { terminals, tabs } = get();
+      const siblings = terminals.filter((terminal) => terminal.workspaceId === workspaceId);
+      if (siblings.length >= MAX_TERMINAL_TABS) return;
+      const id = `terminal:${crypto.randomUUID()}` as const;
+      const number = Math.max(0, ...siblings.map((terminal) => terminal.number)) + 1;
+      set({ terminals: [...terminals, { id, workspaceId, workspaceName, number }] });
+      commit({ open: true, tabs: [...tabs, id], active: id });
+    },
     spotlight: null,
     setSpotlight: (spotlight) => set({ spotlight }),
     maximized: false,
@@ -129,6 +163,7 @@ export const useIdeSidePanelStore = create<IdeSidePanelState>((set, get) => {
       const index = tabs.indexOf(id);
       if (index < 0) return;
       const rest = tabs.filter((tab) => tab !== id);
+      set({ terminals: get().terminals.filter((terminal) => terminal.id !== id) });
       if (rest.length === 0) {
         set({ spotlight: null, maximized: false, inUse: false });
         commit({ open: false, tabs: DEFAULT_TABS, active: DEFAULT_TABS[0] });

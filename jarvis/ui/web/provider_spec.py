@@ -953,7 +953,7 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
     # and bundles no server.
     ProviderSpec(
         id="local-realtime",
-        label="Self-hosted realtime (OpenAI-compatible)",
+        label="Local voice",
         tier="realtime",
         auth_mode="none",
         secret_keys=(),

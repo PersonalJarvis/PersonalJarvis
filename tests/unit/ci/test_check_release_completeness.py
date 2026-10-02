@@ -12,6 +12,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 from scripts.ci import check_release_completeness as gate
 
 
@@ -83,3 +84,29 @@ def test_release_matches_accepts_v_prefix_and_rejects_other_versions():
     # No published release at all must never satisfy the gate.
     assert not gate.release_matches("", "1.1.0")
     assert not gate.release_matches("v1.1.0", "")
+
+
+def test_release_checks_current_branch_when_local_main_is_stale(tmp_path: Path):
+    """A release worktree may include upstream fixes while local main does not."""
+    def git(*args: str) -> None:
+        subprocess.run(
+            ["git", *args], cwd=tmp_path, check=True, capture_output=True,
+            text=True, encoding="utf-8", creationflags=NO_WINDOW_CREATIONFLAGS,
+        )
+
+    git("init", "--quiet", "-b", "main")
+    git("config", "user.name", "Release test")
+    git("config", "user.email", "release@example.invalid")
+    git("commit", "--allow-empty", "-m", "base")
+    git("init", "--bare", "--quiet", "public.git")
+    git("remote", "add", "public", str(tmp_path / "public.git"))
+    git("push", "public", "main")
+    git("checkout", "-b", "release")
+    git("commit", "--allow-empty", "-m", "upstream fix")
+    git("push", "public", "HEAD:main")
+    git("commit", "--allow-empty", "-m", "release")
+    ok, message = gate.check_not_behind_public(tmp_path, remote="public", branch="main")
+    assert ok, message
+    git("checkout", "--detach", "HEAD~2")
+    ok, _ = gate.check_not_behind_public(tmp_path, remote="public", branch="main")
+    assert not ok

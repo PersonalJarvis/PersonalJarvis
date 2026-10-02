@@ -139,7 +139,11 @@ class OrdinaryStationExecutor:
             return None
         status = str(terminal["payload"].get("status") or "")
         if status in {"ok", "done", "completed"}:
-            state = "completed"
+            state = (
+                "completed"
+                if service.store.turn_has_text_before(agent.session_id, run_id[5:], terminal["seq"])
+                else "failed"
+            )
         elif status in {"canceled", "cancelled"}:
             state = "canceled"
         elif status in {"error", "failed", "blocked"}:

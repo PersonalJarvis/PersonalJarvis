@@ -163,20 +163,22 @@ def check_not_behind_public(root: Path, *, remote: str, branch: str) -> tuple[bo
     rc, out = _run_git(["fetch", "--quiet", remote, branch], cwd=root)
     if rc != 0:
         return False, f"could not fetch {remote}/{branch} (offline?): {out}"
-    rc, out = _run_git(["rev-list", "--count", f"{branch}..{remote}/{branch}"], cwd=root)
+    # Inspect the checkout being released; a linked worktree's local main may
+    # still point at the user's unrelated, actively edited desktop checkout.
+    rc, out = _run_git(["rev-list", "--count", f"HEAD..{remote}/{branch}"], cwd=root)
     out = out.strip()
     if rc != 0 or not out.isdigit():
         return False, f"could not compare {branch} against {remote}/{branch}: {out}"
     behind = int(out)
     if behind:
         return False, (
-            f"{branch} is {behind} commit(s) BEHIND {remote}/{branch} - reconcile "
+            f"release checkout is {behind} commit(s) BEHIND {remote}/{branch} - reconcile "
             "first (a release must never roll the public line back)"
         )
-    rc, ahead = _run_git(["rev-list", "--count", f"{remote}/{branch}..{branch}"], cwd=root)
+    rc, ahead = _run_git(["rev-list", "--count", f"{remote}/{branch}..HEAD"], cwd=root)
     ahead = ahead.strip()
     note = f" ({ahead} local commit(s) will publish)" if ahead.isdigit() and int(ahead) else ""
-    return True, f"{branch} is not behind {remote}/{branch}{note}"
+    return True, f"release checkout is not behind {remote}/{branch}{note}"
 
 
 def _last_commit_ts(root: Path, *pathspecs: str) -> int | None:

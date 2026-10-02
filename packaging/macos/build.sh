@@ -275,6 +275,32 @@ log "verifying the disk image"
 run hdiutil verify "${DMG_PATH}"
 if [ "${NOTARIZED}" = "1" ]; then
   run xcrun stapler validate "${DMG_PATH}"
+
+  # The checks above answer "is the image intact" and "is a ticket attached".
+  # Neither answers the only question that matters to a downloader: does
+  # Gatekeeper let this open. A ticket can be stapled to an image whose seal
+  # Gatekeeper still refuses - a nested object missed by the re-sign pass, a
+  # seal broken after signing, an entitlement the hardened runtime rejects -
+  # and every check above passes while the first double-click fails.
+  #
+  # Assess it the way the downloader's Mac will. That means quarantined: an
+  # unquarantined file takes a different path through Gatekeeper and is
+  # accepted in cases where the downloaded copy is not, so testing the file
+  # as it sits here would prove nothing about the file as it arrives.
+  if building; then
+    log "assessing the image as Gatekeeper will see it (quarantined)"
+    xattr -w com.apple.quarantine "0081;00000000;build-verify;" "${DMG_PATH}" \
+      || die "could not set the quarantine flag; the assessment below would not reflect a downloaded copy"
+
+    ASSESSMENT="$(spctl -a -t open --context context:primary-signature -vv "${DMG_PATH}" 2>&1 || true)"
+    xattr -d com.apple.quarantine "${DMG_PATH}" 2>/dev/null || true
+
+    printf '%s\n' "${ASSESSMENT}" | sed 's/^/    /'
+    case "${ASSESSMENT}" in
+      *accepted*) log "Gatekeeper accepts this image" ;;
+      *) die "Gatekeeper REJECTED this image - publishing it would show users 'damaged and can't be opened'. Fix the signature before releasing." ;;
+    esac
+  fi
 fi
 
 # --- 6. Report --------------------------------------------------------------

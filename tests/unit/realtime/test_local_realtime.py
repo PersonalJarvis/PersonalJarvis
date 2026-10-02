@@ -1097,11 +1097,8 @@ async def test_warm_transport_never_raises(monkeypatch) -> None:
 
 
 # ── Boot-time prespawn (prespawn_transport capability) ───────────────────
-def test_local_realtime_is_eagerly_warmed_as_a_fallback() -> None:
-    """Live 2026-08-10: with an expired subscription primary, the un-warmed
-    local FALLBACK was still stone cold when the first call arrived — the
-    call died on a machine that could have answered it. A local stack costs
-    no account round-trip to warm, so it must not sit out fallback warming."""
+def test_local_realtime_warms_an_explicitly_configured_fallback() -> None:
+    """A failed cloud primary must not leave the selected fallback cold (#256)."""
     assert LocalRealtimeProvider.eager_warm_as_fallback is True
 
 

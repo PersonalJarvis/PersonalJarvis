@@ -146,7 +146,7 @@ def _clamp_pet_scale(value: object) -> float:
 
     try:
         scale = float(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # Invalid saved pet scales keep the normal-sized overlay.
         return 1.0
     if not math.isfinite(scale):
         return 1.0
@@ -5238,6 +5238,9 @@ class DesktopApp:
 
     def _hook_main_window_lifecycle(self) -> None:
         """Attach the closing/closed contract to the current main window."""
+        from jarvis.ui.winforms_errors import register_winforms_error_logging
+
+        register_winforms_error_logging(self._window)
         self._window.events.closing += self._on_window_closing
         self._window.events.closed += self._on_main_window_closed
         # Real paths for dropped files/folders (see jarvis/ui/native_drop.py).

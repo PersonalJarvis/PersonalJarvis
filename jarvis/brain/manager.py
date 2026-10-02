@@ -6728,10 +6728,12 @@ class BrainManager:
         try:
             window = int(getattr(brain, "context_window", 0) or 0)
         except (TypeError, ValueError):
+            # A malformed context window means 'unknown'; no trimming then.
             window = 0
         try:
             max_tools = int(getattr(brain, "max_tools", 0) or 0)
         except (TypeError, ValueError):
+            # A malformed tool limit means 'unknown'; no trimming then.
             max_tools = 0
         if window <= 0 and max_tools <= 0:
             return tools
@@ -8127,6 +8129,7 @@ class BrainManager:
             from jarvis.agentic_ide.session import (
                 MAX_TERMINALS,
                 SessionError,
+                WorkspaceFull,
                 get_registry,
                 terminals_added_event,
             )
@@ -8245,12 +8248,29 @@ class BrainManager:
                     # is attempted on its own and what could not be opened is
                     # named at the end, so a mixed fleet degrades pane by pane
                     # instead of all at once.
+                    # The registry refuses a batch that does not fit as a
+                    # whole, but a spoken "open five more" with room for three
+                    # opens three and says so (``ide_terminals_spawned_capped``):
+                    # the user hears the shortfall instead of a flat refusal.
+                    current = registry.session
+                    room = (
+                        MAX_TERMINALS - len(current.terminals)
+                        if current is not None
+                        else group.count
+                    )
+                    if room <= 0:
+                        if created:
+                            break
+                        raise WorkspaceFull(
+                            f"A workspace can contain at most {MAX_TERMINALS} terminals."
+                        )
+                    wanted = min(group.count, room)
                     try:
                         opened, _capped = await registry.add_terminals(
-                            group.count, agent=group.agent
+                            wanted, agent=group.agent
                         )
                     except SessionError as exc:
-                        if "maximum" in str(exc).lower():
+                        if isinstance(exc, WorkspaceFull):
                             raise
                         log.info(
                             "Agentic IDE spawn: %s group refused: %s",
@@ -8260,7 +8280,7 @@ class BrainManager:
                         refused.append(str(exc))
                         continue
                     created.extend(opened)
-                    if _capped:
+                    if _capped or wanted < group.count:
                         # The workspace filled up mid-fleet. Stop rather than
                         # asking for the next group and getting the same
                         # refusal — the readback already reports the shortfall.
@@ -8270,7 +8290,7 @@ class BrainManager:
             # these already carries a user-facing English sentence, and speaking
             # it is more useful than a generic failure.
             log.info("Agentic IDE spawn fast-path refused: %s", exc)
-            if "maximum" in str(exc).lower():
+            if isinstance(exc, WorkspaceFull):
                 return action_phrase(
                     "ide_terminals_full", out_lang, max=MAX_TERMINALS
                 )

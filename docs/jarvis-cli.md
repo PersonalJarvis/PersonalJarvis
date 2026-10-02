@@ -24,7 +24,8 @@ The CLI is a **thin HTTP client over the REST API**, in two layers:
    commands for the common domains: `brain`, `config`, `missions`, `wiki`,
    `sessions`, `skills`, `outputs`, `board`, `costs`, `workflows`, `conductor`,
    `contacts`, `telephony`, `marketplace`, `mcps`, `docs`, `frontier`,
-   `local-models`, plus `auth`, `system`, `tasks`.
+   `local-models`, `clis`, `commands`, `computer-use`, `friends`, `ide`,
+   `permissions`, `socials`, plus `auth`, `system`, `tasks`.
 
 Because the CLI only ever calls the same routes the WebUI calls, it inherits all
 of Jarvis's safety machinery (risk tiers, the atomic config-write pipeline, the

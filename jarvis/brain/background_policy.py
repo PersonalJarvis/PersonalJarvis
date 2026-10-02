@@ -79,7 +79,7 @@ def _marker_path() -> Path:
 def _read_markers() -> dict[str, float]:
     try:
         raw = json.loads(_marker_path().read_text(encoding="utf-8"))
-    except FileNotFoundError:
+    except FileNotFoundError:  # no marker file yet: nothing has been recorded
         return {}
     except (OSError, ValueError):
         log.warning("background policy: unreadable subscription marker, starting empty")

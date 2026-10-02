@@ -735,6 +735,7 @@ def _spawn(term: Any, key: str, rows: list[str], folder: str) -> None:
     try:
         asyncio.get_running_loop()
     except RuntimeError:
+        # No running loop: this is a worker thread, handled below.
         try:
             from anyio.from_thread import run_sync
 

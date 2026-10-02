@@ -17,6 +17,7 @@ import {
   skipAgentChatQuestion,
   type QuestionAnswerInput,
   sendAgentChatMessage,
+  saveChatSelection,
   type AgentChatCatalog,
   type AgentChatEvent,
   type AgentChatProvider,
@@ -79,6 +80,7 @@ const SESSION_LIST_LIMIT = 500;
 
 export interface ComposerDraft {
   provider: string;
+  accountId?: string;
   model: string;
   effort: string;
   permissionMode: string;
@@ -156,7 +158,7 @@ export interface AgentChatStore {
   openSession: (sessionId: string) => void;
   removeSession: (sessionId: string) => Promise<void>;
   /** Send the sentence, with whatever files the composer is holding for it. */
-  send: (text: string, attachments?: ChatAttachment[], toolChoices?: string[]) => Promise<void>;
+  send: (text: string, attachments?: ChatAttachment[], toolChoices?: string[]) => Promise<void | "sent" | "failed" | "stale">;
   cancel: () => Promise<void>;
   decide: (approvalId: string, decision: ApprovalDecision) => Promise<void>;
   /** Answer question `index` of an agent's card in the active session; throws so the card can say why. */
@@ -252,6 +254,7 @@ function draftFromSession(session: AgentChatSession, prev: ComposerDraft): Compo
   const plan = session.permission_mode === "plan";
   return {
     provider: session.provider,
+    accountId: session.account_id ?? "",
     model: session.model,
     effort: session.effort,
     permissionMode: session.permission_mode,
@@ -279,6 +282,10 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
   const DRAFT_KEY = draftKey(surface) + (draftNamespace ? `:${draftNamespace}` : "");
 
   let catalogRequest = 0;
+  const patchQueues = new Map<string, Promise<void>>();
+  const patchRevisions = new Map<string, number>();
+  let selectionRevision = 0;
+  let selectionWrite: Promise<unknown> = Promise.resolve();
   let socket: WebSocket | null = null;
   let socketSession: string | null = null;
   /** Cancels the reconnect waiting in the shared connect budget. */
@@ -358,7 +365,7 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
             timeline: { ...tl, sessionPatch: null },
             draft: draftFromSession(frame.session, prev.draft),
           });
-          writeDraft(DRAFT_KEY, get().draft);
+          if (surface !== "jarvis") writeDraft(DRAFT_KEY, get().draft);
           if (prev.activeSession?.account_id !== frame.session.account_id) void get().loadCatalog();
           return;
         }
@@ -411,8 +418,10 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
 
       loadCatalog: async () => {
         const requestId = ++catalogRequest;
+        const revision = selectionRevision;
         const sessionId = get().activeSessionId;
         try {
+          if (surface === "jarvis" && !sessionId) await selectionWrite;
           const [raw, connections] = await Promise.all([
             fetchAgentChatCatalog(surface, { sessionId: sessionId ?? undefined, cwd: get().draft.cwd || undefined }),
             fetchAgentConnections().catch(() => [] as AgentConnectionRow[]),
@@ -451,6 +460,9 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
           const st = get();
           const options = st.providerOptions();
           let draft = st.draft;
+          if (surface === "jarvis" && !sessionId && revision === selectionRevision && catalog.selection) {
+            draft = { ...draft, provider: catalog.selection.provider, model: catalog.selection.model, effort: catalog.selection.effort, accountId: catalog.selection.account_id ?? "" };
+          }
           const known = options.find((o) => o.id === draft.provider);
           if (!known) {
             const pick = options.find((o) => o.active && o.connected) ?? options.find((o) => o.connected) ?? options[0];
@@ -487,7 +499,18 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
           }
           if (draft !== st.draft) {
             set({ draft });
-            writeDraft(DRAFT_KEY, draft);
+            if (surface !== "jarvis" || !sessionId) writeDraft(DRAFT_KEY, draft);
+          }
+          // Upgrade an existing local pick once, so voice can use it before
+          // the person sends another chat message.
+          if (surface === "jarvis" && !sessionId && !catalog.selection && known && revision === selectionRevision) {
+            const selection = { provider: draft.provider, model: draft.model, effort: draft.effort, ...(draft.accountId ? { account_id: draft.accountId } : {}) };
+            selectionWrite = selectionWrite.catch(() => undefined).then(() => saveChatSelection(selection));
+            try {
+              await selectionWrite;
+            } catch (err) {
+              set({ lastError: errorText(err) });
+            }
           }
           if (draft.provider) void get().loadModels(draft.provider);
         } catch (err) {
@@ -545,6 +568,8 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
 
       setDraft: async (patch) => {
         const st = get();
+        const changesSelection = patch.provider !== undefined || patch.model !== undefined || patch.effort !== undefined;
+        if (changesSelection) ++selectionRevision;
         let draft: ComposerDraft = { ...st.draft, ...patch };
         // A provider change re-seats model / effort / permission on the new
         // provider's defaults unless the caller set them explicitly.
@@ -554,6 +579,7 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
             draft = {
               ...draft,
               model: patch.model ?? p.default_model,
+              accountId: patch.accountId ?? "",
               effort: patch.effort ?? p.default_effort,
               permissionMode: patch.permissionMode ?? p.default_permission_mode,
               buildMode: patch.permissionMode ?? p.default_permission_mode,
@@ -567,6 +593,15 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
         writeDraft(DRAFT_KEY, draft);
         // With a session open, the pick applies to it right away.
         const sid = st.activeSessionId;
+        if (surface === "jarvis" && changesSelection && !sid && draft.provider) {
+          const selection = { provider: draft.provider, model: draft.model, effort: draft.effort, ...(draft.accountId ? { account_id: draft.accountId } : {}) };
+          selectionWrite = selectionWrite.catch(() => undefined).then(() => saveChatSelection(selection));
+          try {
+            await selectionWrite;
+          } catch (err) {
+            set({ lastError: errorText(err) });
+          }
+        }
         if (sid) {
           const body: PatchSessionInput = {};
           if (patch.provider !== undefined) body.provider = draft.provider;
@@ -576,14 +611,39 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
             body.permission_mode = draft.permissionMode;
           }
           if (patch.cwd !== undefined) body.cwd = draft.cwd;
+          const revision = (patchRevisions.get(sid) ?? 0) + 1;
+          patchRevisions.set(sid, revision);
+          const previous = surface === "jarvis"
+            ? selectionWrite.catch(() => undefined)
+            : patchQueues.get(sid) ?? Promise.resolve();
+          const pending = previous.then(() => patchAgentChatSession(sid, body));
+          if (surface === "jarvis") selectionWrite = pending;
+          patchQueues.set(sid, pending.then(() => undefined, () => undefined));
           try {
-            const session = await patchAgentChatSession(sid, body);
-            set((s) => ({
-              activeSession: s.activeSessionId === sid ? session : s.activeSession,
-              sessions: s.sessions.map((x) => (x.session_id === sid ? { ...x, ...session } : x)),
-            }));
+            const session = await pending;
+            let reconciledDraft: ComposerDraft | null = null;
+            set((s) => {
+              const latest = patchRevisions.get(sid) === revision;
+              const active = s.activeSessionId === sid && latest;
+              if (active) reconciledDraft = draftFromSession(session, s.draft);
+              return {
+                activeSession: active ? session : s.activeSession,
+                draft: reconciledDraft ?? s.draft,
+                sessions: latest
+                  ? s.sessions.map((x) => (x.session_id === sid ? { ...x, ...session } : x))
+                  : s.sessions,
+              };
+            });
+            if (reconciledDraft) writeDraft(DRAFT_KEY, reconciledDraft);
           } catch (err) {
-            set({ lastError: errorText(err) });
+            if (get().activeSessionId === sid && patchRevisions.get(sid) === revision) {
+              set({ lastError: errorText(err) });
+            }
+          } finally {
+            if (patchRevisions.get(sid) === revision) {
+              patchQueues.delete(sid);
+              patchRevisions.delete(sid);
+            }
           }
         }
       },
@@ -603,6 +663,7 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
         closeSocket();
         ++catalogRequest;
         set({
+          ...(surface === "jarvis" ? { draft: readDraft(DRAFT_KEY) } : {}),
           activeSessionId: null,
           activeSession: null,
           timeline: EMPTY_TIMELINE,
@@ -637,6 +698,8 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
           set({ lastError: errorText(err) });
         }
         timelineCache.delete(sessionId);
+        patchQueues.delete(sessionId);
+        patchRevisions.delete(sessionId);
         if (get().activeSessionId === sessionId) get().newChat();
         set((s) => ({ sessions: s.sessions.filter((x) => x.session_id !== sessionId) }));
         void get().loadSessions();
@@ -646,15 +709,17 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
         const content = text.trim();
         // A message may be files alone — dropping a screenshot and pressing
         // Enter is a complete gesture — but never nothing at all.
-        if (!content && attachments.length === 0) return;
+        if (!content && attachments.length === 0) return "failed";
         const st = get();
         set({ busy: true, lastError: null });
         let sid = st.activeSessionId;
         try {
+          await selectionWrite;
           if (!sid) {
             const d = st.draft;
             const session = await createAgentChatSession({
               provider: d.provider,
+              ...(d.accountId ? { account_id: d.accountId } : {}),
               model: d.model,
               effort: d.effort,
               cwd: d.cwd || null,
@@ -671,9 +736,12 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
             connect(sid, 0);
           }
           await sendAgentChatMessage(sid, content, attachments, toolChoices);
+          if (surface === "jarvis") writeDraft(DRAFT_KEY, st.draft);
           if (get().activeSessionId === sid) void get().loadSessions();
+          return get().activeSessionId === sid ? "sent" : "stale";
         } catch (err) {
           if (get().activeSessionId === sid) set({ lastError: errorText(err) });
+          return get().activeSessionId === sid ? "failed" : "stale";
         } finally {
           // A switch away from this session already cleared `busy`; do not
           // unlock (or error) the chat that is on screen now.
@@ -722,7 +790,7 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
           const session = { ...st.activeSession, ...tl.sessionPatch } as AgentChatSession;
           patch.activeSession = session;
           patch.draft = draftFromSession(session, st.draft);
-          writeDraft(DRAFT_KEY, patch.draft);
+          if (surface !== "jarvis") writeDraft(DRAFT_KEY, patch.draft);
         }
         set(patch);
         if (event.kind === "turn_finished" || event.kind === "user_message") void st.loadSessions();

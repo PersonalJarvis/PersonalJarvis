@@ -1,7 +1,7 @@
 /**
  * Which folder the agents work in.
  *
- * Six ways to arrive at one, because people arrive differently:
+ * Seven ways to arrive at one, because people arrive differently:
  *
  * 1. **The system folder window** — Explorer on Windows, Finder on macOS, the
  *    desktop's own dialog on Linux. The one people already know. Offered only
@@ -15,7 +15,8 @@
  *    that (which found nothing, and was reported as "search is broken").
  * 4. **Browsing** — the list, projects and repositories sorted first. Hidden
  *    folders (`.claude`, `.config`) stay out of the way until asked for.
- * 5. **Typing a path** — with completion, the way `cd` works in a terminal.
+ * 5. **Typing a path** — the address bar turns into a field with completion,
+ *    the way `cd` works in a terminal.
  * 6. **Drag and drop** — drop a folder (or a file inside it) anywhere on the
  *    panel. Inside the desktop shell the host reports the real path
  *    (`waitForNativeDrop`); in a browser only the NAME is known, and the
@@ -29,27 +30,45 @@
  * over a network and absent on a headless server. Everything here therefore
  * works without it, and the button appears only where it can deliver.
  *
- * ## Six ways, one list
+ * ## Laid out like a file window
  *
- * Those six used to be six regions stacked down a column — a grid of recent
- * cards, a search row, a breadcrumb, the listing, a drop result, a path field,
- * and a bar repeating what was selected — each with its own border and its own
- * heading. Every one of them answers the same question, so a reader had to scan
- * seven bordered boxes to find the one route they wanted.
+ * Every route answers the same question, so they share one shape — the one
+ * people know from Explorer and Finder — instead of seven bordered regions:
  *
- * Now there is one scrolling list. Recents are a labelled group at the top of
- * it, not a separate control with a different shape; search filters that same
- * list in place; the path field sits under it as a single line. What is above
- * the list is only ever navigation, what is below it is only ever typing, and
- * the folder that is chosen is reported once — in the launcher's header, where
- * the button that acts on it is.
+ * * a toolbar: search, the system window, a new folder;
+ * * one panel: an address bar over the folder list. The bar shows where you
+ *   are as clickable crumbs and turns into a path field when clicked, which is
+ *   where typing a path lives (it used to be a second text field under the
+ *   list that looked exactly like the search above it);
+ * * the choice, stated once under the panel.
+ *
+ * **The folder on screen is the folder chosen.** Opening a folder, clicking a
+ * crumb, or going up all choose what is then on screen, so "what will be used"
+ * never differs from "where I am" — the old list chose a folder on click and
+ * then showed its CONTENTS, which left people looking at the wrong thing and
+ * guessing what the button would connect. The start view is the one exception:
+ * it is a list of places, not a folder, and choosing nothing there keeps the
+ * previous choice.
+ *
+ * Recents belong to the start view only. Pinned above every folder listing,
+ * they pushed what someone was browsing half a screen down; one click on the
+ * machine's name brings them back.
  *
  * The start view is labelled with the machine's own name rather than the account
  * folder: "Administrator" says nothing about which computer you are looking at,
  * "Ruben's MacBook" does.
+ *
+ * ## Escape
+ *
+ * Every host is a dialog that closes on Escape. The new-folder field and the
+ * path field use Escape to back out of THEMSELVES, so they carry
+ * `data-escape-local`; a host checks for it before closing (AgenticIdeView's
+ * key handler, `onEscapeKeyDown` on the Radix dialogs).
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Check,
+  ChevronRight,
   CornerDownLeft,
   CornerLeftUp,
   Eye,
@@ -58,10 +77,12 @@ import {
   FolderGit2,
   FolderOpen,
   FolderPlus,
+  History,
   Loader2,
+  Monitor,
+  Pencil,
   RefreshCw,
   Search,
-  Star,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -87,11 +108,20 @@ interface FolderPickerProps {
   onSelect: (path: string) => void;
   /** A recent workspace was picked — its previous layout can be replayed. */
   onSelectRecent?: (recent: RecentWorkspace) => void;
+  /**
+   * Whether the picker states the chosen folder under its list. A host that
+   * already reports the choice beside its own action (the launcher's step
+   * list) turns it off so the folder is not named twice.
+   */
+  showSelection?: boolean;
+  className?: string;
 }
 
 /** Below this many characters the search stays a local filter of the open list. */
 const SEARCH_MIN = 2;
 const SEARCH_DEBOUNCE_MS = 250;
+/** More crumbs than this and the middle ones fold into "…". */
+const CRUMBS_MAX = 4;
 
 /**
  * Pull whatever identifies the dropped folder out of a DataTransfer.
@@ -148,6 +178,8 @@ export function FolderPicker({
   selected,
   onSelect,
   onSelectRecent,
+  showSelection = true,
+  className,
 }: FolderPickerProps) {
   const [path, setPath] = useState<string | null>(null);
   const [parent, setParent] = useState<string | null>(null);
@@ -192,6 +224,8 @@ export function FolderPicker({
   const [newName, setNewName] = useState("");
   const [creating, setCreating] = useState(false);
   const [createNote, setCreateNote] = useState<string | null>(null);
+  // The address bar is showing the path field instead of the crumbs.
+  const [editingPath, setEditingPath] = useState(false);
 
   // Read through a ref by the search effect: the launcher may hand in a fresh
   // callback every render, and an effect keyed on it would re-run — and
@@ -243,6 +277,21 @@ export function FolderPicker({
   }, [load]);
 
   /**
+   * Go to a folder, and — because the folder on screen is the folder chosen —
+   * choose it. `null` is the start view, which is a list of places rather
+   * than a folder, so it leaves the choice as it was.
+   */
+  const navigate = (target: string | null) => {
+    if (target) onSelect(target);
+    setQuery("");
+    setSearchHits(null);
+    setPathLeaf(null);
+    setCreateOffer(null);
+    setEditingPath(false);
+    void load(target);
+  };
+
+  /**
    * Hand over to the operating system's own folder window.
    *
    * The request stays open for as long as the window does — a person deciding
@@ -257,10 +306,7 @@ export function FolderPicker({
     void openNativePicker(selected ?? path)
       .then((res) => {
         if (res.path) {
-          onSelect(res.path);
-          setQuery("");
-          setSearchHits(null);
-          void load(res.path);
+          navigate(res.path);
         } else if (res.error) {
           setNativeNote(res.error);
         }
@@ -350,31 +396,36 @@ export function FolderPicker({
     return () => window.clearTimeout(handle);
   }, [query, goToTypedPath]);
 
+  const typedPath = looksLikePath(normalizeTypedPath(query));
+  // A bare word narrows what is on screen; a path is a place, not a filter.
+  const needle = typedPath ? "" : query.trim().toLowerCase();
+
   const visible = useMemo(() => {
     if (searchHits !== null) return searchHits;
     if (pathLeaf !== null) {
-      const needle = pathLeaf.toLowerCase();
-      return entries.filter((e) => e.name.toLowerCase().startsWith(needle));
+      const leafNeedle = pathLeaf.toLowerCase();
+      return entries.filter((e) => e.name.toLowerCase().startsWith(leafNeedle));
     }
-    const typed = normalizeTypedPath(query);
-    // A path on its way to being listed: the folder itself is what is shown,
-    // not the list filtered by a string no folder is called.
-    if (looksLikePath(typed)) return entries;
-    const needle = query.trim().toLowerCase();
     if (!needle) return entries;
     return entries.filter((e) => e.name.toLowerCase().includes(needle));
-  }, [entries, query, searchHits, pathLeaf]);
+  }, [entries, needle, searchHits, pathLeaf]);
 
-  const open = (item: FolderItem) => {
-    onSelect(item.path);
-    setQuery("");
-    setSearchHits(null);
-    setPathLeaf(null);
-    setCreateOffer(null);
-    void load(item.path);
-  };
+  const searchingMachine = searchHits !== null;
+  const atStart = path === null && pathLeaf === null && !searchingMachine;
+  const visibleRecents = useMemo(
+    () =>
+      atStart
+        ? recents.filter(
+            (r) =>
+              !needle ||
+              r.name.toLowerCase().includes(needle) ||
+              r.path.toLowerCase().includes(needle),
+          )
+        : [],
+    [atStart, recents, needle],
+  );
 
-  /** Make the folder, then treat it like any other folder that was clicked. */
+  /** Make the folder, then treat it like any other folder that was opened. */
   const makeFolder = (parent: string | null, name: string) => {
     if (creating) return;
     setCreating(true);
@@ -388,7 +439,7 @@ export function FolderPicker({
         setNaming(false);
         setNewName("");
         setError(null);
-        open(res.folder);
+        navigate(res.folder.path);
       })
       .catch((e) => setCreateNote((e as Error).message))
       .finally(() => setCreating(false));
@@ -407,14 +458,16 @@ export function FolderPicker({
    * the review step as the workspace, with the error shown next to it. Now the
    * folder is listed first; only when it really is one does it become the
    * selection, and otherwise the message stays and the previous choice stands.
+   *
+   * Resolves to whether it worked, so the path field stays open for a fix.
    */
-  const usePath = (raw: string) => {
+  const usePath = (raw: string): Promise<boolean> => {
     const value = raw.trim();
-    if (!value) return;
+    if (!value) return Promise.resolve(false);
     setLoading(true);
     setError(null);
     const { dir, leaf } = splitTypedPath(value);
-    fetchFolders(value, showHiddenRef.current || leaf.startsWith("."))
+    return fetchFolders(value, showHiddenRef.current || leaf.startsWith("."))
       .then((res) => {
         if (res.device_name) setDeviceName(res.device_name);
         if (res.error) {
@@ -423,22 +476,26 @@ export function FolderPicker({
           // message, so a typo is corrected and a new project is created from
           // the same line.
           setCreateOffer(dir && leaf ? { parent: dir, name: leaf } : null);
-          return;
+          return false;
         }
         setPath(res.path);
         setParent(res.parent);
         setEntries(res.entries);
         setCreateOffer(null);
+        setPathLeaf(null);
         onSelect(res.path ?? value);
+        return true;
       })
-      .catch((e) => setError((e as Error).message))
+      .catch((e) => {
+        setError((e as Error).message);
+        return false;
+      })
       .finally(() => setLoading(false));
   };
 
   const pickRecent = (recent: RecentWorkspace) => {
-    onSelect(recent.path);
+    navigate(recent.path);
     onSelectRecent?.(recent);
-    void load(recent.path);
   };
 
   // ------------------------------------------------------------ drag & drop
@@ -472,8 +529,7 @@ export function FolderPicker({
       .then((res) => {
         if (res.resolved) {
           setDropNote(res.detail || null);
-          onSelect(res.resolved);
-          void load(res.resolved);
+          navigate(res.resolved);
         } else {
           setDropChoices(res.candidates);
           setDropNote(res.detail || "Could not find that folder.");
@@ -491,11 +547,20 @@ export function FolderPicker({
   }, []);
   useDragSessionEnd(dragOver, clearDragOver);
 
-  const searchingMachine = searchHits !== null;
-  // What a full path looks like on THIS machine, for the placeholder and the
-  // "nothing found" hints. Built from the real home folder, never from a
-  // hard-coded `C:\…` — the same UI is opened against Macs and Linux boxes.
+  // What a full path looks like on THIS machine, for the "nothing found"
+  // hints. Built from the real home folder, never from a hard-coded `C:\…` —
+  // the same UI is opened against Macs and Linux boxes.
   const pathExample = home ? joinPath(home, "my-project") : null;
+  const machine = deviceName || "This machine";
+  const crumbs = path ? foldCrumbs(pathCrumbs(path)) : [];
+  const listLabel = searchingMachine
+    ? null
+    : pathLeaf !== null
+      ? `Folders starting with “${pathLeaf}”`
+      : path
+        ? `Folders in ${leafName(path)}`
+        : "Places";
+  const hasMessages = Boolean(error || nativeNote || dropNote || createNote);
 
   return (
     <div
@@ -515,46 +580,44 @@ export function FolderPicker({
       }}
       onDrop={onDrop}
       data-testid="folder-drop-zone"
-      className="relative flex min-h-0 flex-1 flex-col"
+      className={cn("relative flex min-h-0 flex-1 flex-col p-3", className)}
     >
       {dragOver && (
-        <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-surface bg-background ring-2 ring-inset ring-primary/60">
-          <span className="flex items-center gap-2 text-sm font-medium text-primary">
-            <FolderOpen className="h-4 w-4" />
-            Let go to use this folder
+        <div className="pointer-events-none absolute inset-0 z-40 flex flex-col items-center justify-center gap-2 rounded-surface border-2 border-dashed border-primary/60 bg-background/95">
+          <FolderOpen className="h-8 w-8 text-primary" />
+          <span className="text-sm font-medium text-foreground">
+            Drop to choose this folder
           </span>
         </div>
       )}
 
-      {/* --------------------------------------------------------- navigation */}
-      <div className="flex items-center gap-1.5 p-3 pb-2">
+      {/* ------------------------------------------------------------ toolbar */}
+      <div className="flex items-center gap-2">
         <div className="relative min-w-0 flex-1">
           {searching ? (
-            <Loader2 className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 animate-spin text-muted-foreground" />
+            <Loader2 className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground" />
           ) : (
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           )}
           <Field
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder={
-              pathExample
-                ? `Search by name, or type a path like ${pathExample}`
-                : "Search folders by name, or type a path…"
-            }
-            aria-label="Search folders by name, or type a path"
+            placeholder="Search by name or paste a path"
+            aria-label="Search folders by name, or paste a path"
             data-testid="folder-search"
-            className="w-full pl-8 pr-7"
+            data-autofocus
+            className="h-9 w-full pl-9 pr-8"
             spellCheck={false}
+            autoComplete="off"
           />
           {query && (
             <IconButton
               size="sm"
               label="Clear search"
               onClick={() => setQuery("")}
-              className="absolute right-1 top-1/2 -translate-y-1/2"
+              className="absolute right-1.5 top-1/2 -translate-y-1/2"
             >
-              <X className="h-3 w-3" />
+              <X className="h-3.5 w-3.5" />
             </IconButton>
           )}
         </div>
@@ -563,14 +626,15 @@ export function FolderPicker({
             onClick={browseNatively}
             disabled={nativeOpen}
             data-testid="native-browse"
-            title="Choose the folder in a normal folder window"
+            title="Choose the folder in this computer's own folder window"
+            className="h-9"
           >
             {nativeOpen ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
-              <FolderOpen className="h-3.5 w-3.5" />
+              <FolderOpen className="h-4 w-4" />
             )}
-            {nativeOpen ? "Window open…" : "Browse"}
+            {nativeOpen ? "Window open…" : "Browse…"}
           </Button>
         )}
         <Button
@@ -582,331 +646,421 @@ export function FolderPicker({
           disabled={naming}
           data-testid="new-folder"
           title={`Make a new folder in ${path ?? "your home folder"}`}
+          className="h-9"
         >
-          <FolderPlus className="h-3.5 w-3.5" />
+          <FolderPlus className="h-4 w-4" />
           New folder
         </Button>
-        <IconButton
-          label={showHidden ? "Hide hidden folders" : "Show hidden folders"}
-          title={
-            showHidden
-              ? "Hidden folders (names starting with a dot) are shown"
-              : "Also list hidden folders — names starting with a dot"
-          }
-          aria-pressed={showHidden}
-          onClick={toggleHidden}
-          disabled={loading}
-          data-testid="toggle-hidden"
-          className={cn(showHidden && "text-primary")}
-        >
-          {showHidden ? (
-            <Eye className="h-4 w-4" />
-          ) : (
-            <EyeOff className="h-4 w-4" />
-          )}
-        </IconButton>
-        <IconButton
-          label="Go up one folder"
-          onClick={() => void load(parent)}
-          disabled={loading || searchingMachine || (!parent && path === null)}
-        >
-          <CornerLeftUp className="h-4 w-4" />
-        </IconButton>
-        <IconButton
-          label="Reload this folder"
-          onClick={() => void load(path)}
-          disabled={loading}
-        >
-          {loading ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <RefreshCw className="h-4 w-4" />
-          )}
-        </IconButton>
-      </div>
-
-      {/* ------------------------------------------------------- where you are */}
-      <div className="flex min-w-0 items-center gap-1.5 px-3 pb-2 text-xs text-muted-foreground">
-        {searchingMachine ? (
-          <span className="truncate">
-            {visible.length === 0 && !searching
-              ? `Nothing matches “${query.trim()}”`
-              : `Matches for “${query.trim()}”, anywhere on this machine`}
-          </span>
-        ) : (
-          <>
-            <span className="shrink-0 font-medium text-foreground">
-              {deviceName || "This machine"}
-            </span>
-            {path && (
-              <>
-                <span className="shrink-0 opacity-50">›</span>
-                <code className="min-w-0 truncate font-mono">{path}</code>
-              </>
-            )}
-          </>
-        )}
       </div>
 
       {/* The window can still end up behind the app despite being opened
           topmost — a user who does not know it is there just sees a button
           that hung. Saying so costs one line and saves the confusion. */}
       {nativeOpen && (
-        <p className="px-3 pb-2 text-xs text-primary" role="status">
+        <p className="mt-2 text-xs text-primary" role="status">
           A folder window has opened. Choose your folder there. If you cannot
           see it, it is behind this window or in the taskbar.
         </p>
       )}
 
-      {/* --------------------------------------------------------- new folder */}
-      {naming && (
-        <form
-          data-testid="new-folder-form"
-          className="flex items-center gap-1.5 px-3 pb-2"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (newName.trim()) makeFolder(path, newName);
-          }}
-        >
-          <FolderPlus className="h-4 w-4 shrink-0 text-primary" />
-          <Field
-            autoFocus
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Escape") setNaming(false);
-            }}
-            placeholder={`Name of the new folder in ${path ?? "your home folder"}`}
-            aria-label="Name of the new folder"
-            data-testid="new-folder-name"
-            className="min-w-0 flex-1"
-            spellCheck={false}
-            autoComplete="off"
-          />
-          <Button
-            type="submit"
-            variant="primary"
-            disabled={creating || !newName.trim()}
-            data-testid="new-folder-create"
-          >
-            {creating ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <FolderPlus className="h-3.5 w-3.5" />
-            )}
-            Create
-          </Button>
+      {/* -------------------------------------------------------------- panel */}
+      {/* Not overflow-hidden: the path field's suggestions hang below the
+          address bar, over the list, and would be clipped by the panel. */}
+      <div className="mt-3 flex min-h-0 flex-1 flex-col rounded-surface border border-border">
+        {/* ------------------------------------------------------ address bar */}
+        <div className="relative flex h-10 shrink-0 items-center gap-0.5 rounded-t-surface border-b border-border bg-secondary/40 px-1">
           <IconButton
-            label="Cancel new folder"
-            onClick={() => {
-              setNaming(false);
-              setCreateNote(null);
+            label="Go up one folder"
+            onClick={() => navigate(parent)}
+            disabled={loading || searchingMachine || path === null}
+          >
+            <CornerLeftUp className="h-4 w-4" />
+          </IconButton>
+
+          {editingPath ? (
+            <PathInput
+              base={path}
+              initial={path ? withTrailingSeparator(path) : ""}
+              showHidden={showHidden}
+              onUse={(value) =>
+                usePath(value).then((ok) => {
+                  if (ok) setEditingPath(false);
+                })
+              }
+              onCancel={() => setEditingPath(false)}
+            />
+          ) : searchingMachine ? (
+            <span className="min-w-0 flex-1 truncate px-2 text-xs text-muted-foreground">
+              {visible.length === 0 && !searching
+                ? `Nothing on ${machine} is called “${query.trim()}”`
+                : `Folders called “${query.trim()}” anywhere on ${machine}`}
+            </span>
+          ) : (
+            <nav
+              aria-label="Folder path"
+              className="flex h-full min-w-0 flex-1 items-center"
+            >
+              <button
+                type="button"
+                onClick={() => navigate(null)}
+                title={`Start: recent folders and places on ${machine}`}
+                aria-current={path === null ? "location" : undefined}
+                className={cn(
+                  CRUMB,
+                  "max-w-[11rem] shrink",
+                  path === null && "font-medium text-foreground",
+                )}
+              >
+                <Monitor className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate">{machine}</span>
+              </button>
+              {crumbs.map((crumb, index) => {
+                const last = index === crumbs.length - 1;
+                return (
+                  <Fragment key={crumb.path ?? `fold-${index}`}>
+                    <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60" />
+                    {crumb.path === null ? (
+                      <button
+                        type="button"
+                        onClick={() => setEditingPath(true)}
+                        title={`${crumb.hidden}\nClick to see and edit the whole path`}
+                        aria-label="Show the whole path"
+                        className={cn(CRUMB, "shrink-0")}
+                      >
+                        …
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => navigate(crumb.path)}
+                        title={crumb.path}
+                        aria-current={last ? "location" : undefined}
+                        className={cn(
+                          CRUMB,
+                          "min-w-[2.5rem] max-w-[12rem] shrink",
+                          last && "font-medium text-foreground",
+                        )}
+                      >
+                        <span className="truncate">{crumb.label}</span>
+                      </button>
+                    )}
+                  </Fragment>
+                );
+              })}
+              {/* The empty rest of the bar is where a path is typed, the way
+                  clicking beside the crumbs in Explorer turns them into text. */}
+              <button
+                type="button"
+                tabIndex={-1}
+                aria-hidden="true"
+                onClick={() => setEditingPath(true)}
+                className="h-full min-w-4 flex-1 cursor-text"
+              />
+            </nav>
+          )}
+
+          {!editingPath && (
+            <IconButton
+              label="Type a path"
+              title="Type or paste a path — Tab completes folder names"
+              onClick={() => setEditingPath(true)}
+              data-testid="edit-path"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+            </IconButton>
+          )}
+          <IconButton
+            label={showHidden ? "Hide hidden folders" : "Show hidden folders"}
+            title={
+              showHidden
+                ? "Hidden folders (names starting with a dot) are shown"
+                : "Also list hidden folders — names starting with a dot"
+            }
+            aria-pressed={showHidden}
+            onClick={toggleHidden}
+            disabled={loading}
+            data-testid="toggle-hidden"
+            className={cn(showHidden && "text-primary")}
+          >
+            {showHidden ? (
+              <Eye className="h-4 w-4" />
+            ) : (
+              <EyeOff className="h-4 w-4" />
+            )}
+          </IconButton>
+          <IconButton
+            label="Reload this folder"
+            onClick={() => void load(path)}
+            disabled={loading}
+          >
+            {loading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
+          </IconButton>
+        </div>
+
+        {/* ------------------------------------------------------- new folder */}
+        {naming && (
+          <form
+            data-testid="new-folder-form"
+            data-escape-local
+            className="shrink-0 border-b border-border px-3 py-2.5"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (newName.trim()) makeFolder(path, newName);
             }}
           >
-            <X className="h-4 w-4" />
-          </IconButton>
-        </form>
-      )}
-
-      {/* --------------------------------------------------------------- list */}
-      <div className="min-h-[16rem] flex-1 overflow-y-auto scrollbar-jarvis border-y border-border">
-        {recents.length > 0 && !searchingMachine && (
-          <>
-            <div className="sticky top-0 z-10 bg-card px-3 py-1.5 backdrop-blur">
-              <SectionLabel>Recent folders</SectionLabel>
+            <div className="flex items-center gap-2">
+              <FolderPlus className="h-4 w-4 shrink-0 text-primary" />
+              <Field
+                autoFocus
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    setNaming(false);
+                    setCreateNote(null);
+                  }
+                }}
+                placeholder="Name of the new folder"
+                aria-label="Name of the new folder"
+                data-testid="new-folder-name"
+                className="min-w-0 flex-1"
+                spellCheck={false}
+                autoComplete="off"
+              />
+              <Button
+                type="submit"
+                variant="primary"
+                disabled={creating || !newName.trim()}
+                data-testid="new-folder-create"
+              >
+                {creating && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                Create
+              </Button>
+              <IconButton
+                label="Cancel new folder"
+                onClick={() => {
+                  setNaming(false);
+                  setCreateNote(null);
+                }}
+              >
+                <X className="h-4 w-4" />
+              </IconButton>
             </div>
+            <p className="mt-1.5 truncate pl-6 text-xs text-muted-foreground">
+              Created in{" "}
+              <span className="font-mono">{path ?? "your home folder"}</span>
+            </p>
+          </form>
+        )}
+
+        {/* ------------------------------------------------------------- list */}
+        <div className="min-h-[14rem] flex-1 overflow-y-auto scrollbar-jarvis p-1.5">
+          {visibleRecents.length > 0 && (
+            <section aria-label="Recent folders" className="pb-2">
+              <GroupLabel>Recent folders</GroupLabel>
+              <ul>
+                {visibleRecents.map((recent) => (
+                  <li key={recent.path} className="group/row relative">
+                    <button
+                      type="button"
+                      onClick={() => pickRecent(recent)}
+                      title={recent.path}
+                      className={cn(
+                        ROW,
+                        "pr-9",
+                        selected === recent.path
+                          ? "bg-primary/10"
+                          : "hover:bg-secondary",
+                      )}
+                    >
+                      <History
+                        data-testid="recent-folder-icon"
+                        className="h-4 w-4 shrink-0 text-muted-foreground"
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate font-medium">
+                          {recent.name}
+                        </span>
+                        <span className="block truncate font-mono text-micro text-muted-foreground">
+                          {recent.path}
+                        </span>
+                      </span>
+                      <span className="shrink-0 text-right text-micro text-muted-foreground">
+                        {lastUsedLabel(recent.last_used)}
+                        {/* The terminal count only means something where the
+                            layout is replayed — the launcher. */}
+                        {onSelectRecent && (
+                          <span className="block tabular-nums">
+                            {recent.terminals}{" "}
+                            {recent.terminals === 1 ? "terminal" : "terminals"}
+                          </span>
+                        )}
+                      </span>
+                    </button>
+                    <IconButton
+                      size="sm"
+                      label={`Forget ${recent.name}`}
+                      title="Remove from this list (the folder itself stays)"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setRecents((prev) =>
+                          prev.filter((r) => r.path !== recent.path),
+                        );
+                        void forgetRecent(recent.path).catch(() => {
+                          /* list refreshes on next visit */
+                        });
+                      }}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 focus-visible:opacity-100 group-hover/row:opacity-100"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </IconButton>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
+          {/*
+            The typed path's last segment is not a folder in the folder on
+            screen, and nothing there starts with it either: the one thing left
+            to do with that name is make it.
+          */}
+          {createOffer && pathLeaf !== null && visible.length === 0 && !searching && (
+            <button
+              type="button"
+              data-testid="create-offer"
+              onClick={() => makeFolder(createOffer.parent, createOffer.name)}
+              disabled={creating}
+              className={cn(ROW, "text-primary hover:bg-secondary")}
+            >
+              {creating ? (
+                <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+              ) : (
+                <FolderPlus className="h-4 w-4 shrink-0" />
+              )}
+              <span className="min-w-0 flex-1">
+                <span className="block truncate">
+                  Create folder “{createOffer.name}”
+                </span>
+                <span className="block truncate font-mono text-micro text-muted-foreground">
+                  in {createOffer.parent ?? "your home folder"}
+                </span>
+              </span>
+            </button>
+          )}
+
+          {listLabel && visible.length > 0 && (
+            <GroupLabel>{listLabel}</GroupLabel>
+          )}
+
+          {visible.length === 0 && !loading && !searching ? (
+            <p className="px-2.5 py-6 text-center text-sm text-muted-foreground">
+              {searchingMachine
+                ? `No folder with that name was found.${
+                    pathExample
+                      ? ` To open one by where it is, type its full path — like ${pathExample}.`
+                      : ""
+                  }`
+                : pathLeaf !== null
+                  ? `No folder here starts with “${pathLeaf}”.`
+                  : needle
+                    ? `No folder here matches “${query.trim()}”. Keep typing to search the whole machine.`
+                    : path
+                      ? "This folder has no folders inside. You can choose it as it is, or make a new folder in it."
+                      : "Nothing to list here — search above, drop a folder, or type its path."}
+            </p>
+          ) : (
             <ul>
-              {recents.map((recent) => (
-                <li key={recent.path} className="group/row relative">
-                  <button
-                    type="button"
-                    onClick={() => pickRecent(recent)}
-                    className={cn(
-                      "flex w-full items-center gap-2.5 px-3 py-1.5 text-left transition-colors",
-                      selected === recent.path
-                        ? "bg-primary/10"
-                        : "hover:bg-secondary",
-                    )}
-                  >
-                    <Star
-                      data-testid="recent-folder-star"
-                      className="h-3.5 w-3.5 shrink-0 fill-current text-primary"
-                    />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm">
-                        {recent.name}
-                      </span>
-                      <span className="block truncate font-mono text-micro text-muted-foreground">
-                        {recent.path}
-                      </span>
-                    </span>
-                    <span className="shrink-0 pr-5 font-mono text-micro tabular-nums text-muted-foreground">
-                      {recent.terminals}
-                    </span>
-                  </button>
-                  <IconButton
-                    size="sm"
-                    label={`Forget ${recent.name}`}
-                    title="Remove from this list (the folder itself stays)"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setRecents((prev) =>
-                        prev.filter((r) => r.path !== recent.path),
-                      );
-                      void forgetRecent(recent.path).catch(() => {
-                        /* list refreshes on next visit */
-                      });
-                    }}
-                    className="absolute right-1.5 top-1/2 -translate-y-1/2 opacity-0 focus-visible:opacity-100 group-hover/row:opacity-100"
-                  >
-                    <X className="h-3 w-3" />
-                  </IconButton>
-                </li>
-              ))}
-            </ul>
-            {/*
-              Not the machine's name a second time: it is already in the line
-              above the list, and a label repeated twelve pixels apart reads as
-              two different things being named rather than one.
-            */}
-            <div className="sticky top-0 z-10 bg-card px-3 py-1.5 backdrop-blur">
-              <SectionLabel>Browse</SectionLabel>
-            </div>
-          </>
-        )}
-
-        {/*
-          The typed path's last segment is not a folder in the folder on
-          screen, and nothing there starts with it either: the one thing left
-          to do with that name is make it.
-        */}
-        {createOffer && pathLeaf !== null && visible.length === 0 && !searching && (
-          <button
-            type="button"
-            data-testid="create-offer"
-            onClick={() => makeFolder(createOffer.parent, createOffer.name)}
-            disabled={creating}
-            className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-primary transition-colors hover:bg-secondary"
-          >
-            {creating ? (
-              <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
-            ) : (
-              <FolderPlus className="h-4 w-4 shrink-0" />
-            )}
-            <span className="min-w-0 flex-1">
-              <span className="block truncate">
-                Create folder “{createOffer.name}”
-              </span>
-              <span className="block truncate font-mono text-micro text-muted-foreground">
-                in {createOffer.parent ?? "your home folder"}
-              </span>
-            </span>
-          </button>
-        )}
-
-        {visible.length === 0 && !loading && !searching ? (
-          <p className="px-3 py-4 text-sm text-muted-foreground">
-            {searchingMachine
-              ? `No folder with that name was found.${
-                  pathExample
-                    ? ` To open one by where it is, type its full path — like ${pathExample}.`
-                    : ""
-                }`
-              : pathLeaf !== null
-                ? `No folder here starts with “${pathLeaf}”.`
-                : "Nothing to list here — search above, drop a folder, or type its path below."}
-          </p>
-        ) : (
-          <ul>
-            {visible.map((item) => {
-              const isSelected = selected === item.path;
-              return (
-                <li key={item.path}>
-                  <button
-                    type="button"
-                    onClick={() => open(item)}
-                    className={cn(
-                      "flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-sm transition-colors",
-                      isSelected ? "bg-primary/10" : "hover:bg-secondary",
-                    )}
-                  >
-                    {item.is_repo ? (
-                      <FolderGit2
+              {visible.map((item) => {
+                const isSelected = selected === item.path;
+                const Icon = item.is_repo ? FolderGit2 : Folder;
+                return (
+                  <li key={item.path}>
+                    <button
+                      type="button"
+                      onClick={() => navigate(item.path)}
+                      title={item.path}
+                      className={cn(
+                        ROW,
+                        "group/item",
+                        isSelected ? "bg-primary/10" : "hover:bg-secondary",
+                      )}
+                    >
+                      <Icon
                         className={cn(
                           "h-4 w-4 shrink-0",
                           isSelected ? "text-primary" : "text-muted-foreground",
                         )}
                       />
-                    ) : (
-                      <Folder
-                        className={cn(
-                          "h-4 w-4 shrink-0",
-                          isSelected
-                            ? "text-primary"
-                            : "text-muted-foreground",
+                      <span className="min-w-0 flex-1">
+                        <span
+                          className={cn(
+                            "block truncate",
+                            isSelected && "font-medium text-primary",
+                          )}
+                        >
+                          {item.name}
+                        </span>
+                        {searchingMachine && (
+                          <span className="block truncate font-mono text-micro text-muted-foreground">
+                            {item.path}
+                          </span>
                         )}
-                      />
-                    )}
-                    <span className="min-w-0 flex-1">
-                      <span
-                        className={cn(
-                          "block truncate",
-                          isSelected && "text-primary",
-                        )}
-                      >
-                        {item.name}
                       </span>
-                      {searchingMachine && (
-                        <span className="block truncate font-mono text-micro text-muted-foreground">
-                          {item.path}
+                      {item.is_repo && (
+                        <span className="shrink-0 rounded border border-border px-1.5 font-mono text-micro text-muted-foreground">
+                          git
                         </span>
                       )}
-                    </span>
-                    {item.is_repo && (
-                      <span className="shrink-0 font-mono text-micro text-muted-foreground">
-                        git
-                      </span>
-                    )}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        )}
+                      <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/item:opacity-100" />
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
       </div>
 
-      {/* ------------------------------------------------------------- typing */}
-      <PathInput base={path} showHidden={showHidden} onUse={usePath} />
+      {/* ------------------------------------------------------------ choice */}
+      {showSelection && <SelectedFolder selected={selected} />}
 
       {/* ---------------------------------------------------------- reporting */}
-      {(error || nativeNote || dropNote || createNote) && (
-        <div className="space-y-1 px-3 pb-3">
+      {hasMessages ? (
+        <div className="mt-2 space-y-1.5">
           {error && (
-            <p className="text-xs text-destructive" role="alert">
-              {error}
-            </p>
-          )}
-          {error && pathExample && (
-            <p className="text-xs text-muted-foreground">
-              A full path on this machine looks like{" "}
-              <code className="font-mono">{pathExample}</code>.
-            </p>
-          )}
-          {/* The path field's "no such folder", answered: make it. */}
-          {error && createOffer && pathLeaf === null && (
-            <Button
-              onClick={() => makeFolder(createOffer.parent, createOffer.name)}
-              disabled={creating}
-              data-testid="create-offer"
-              className="h-7 text-xs"
+            <div
+              className="rounded-control border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs"
+              role="alert"
             >
-              {creating ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <FolderPlus className="h-3.5 w-3.5" />
+              <p className="text-destructive">{error}</p>
+              {pathExample && (
+                <p className="mt-0.5 text-muted-foreground">
+                  A full path on this machine looks like{" "}
+                  <code className="font-mono">{pathExample}</code>.
+                </p>
               )}
-              Create folder “{createOffer.name}”
-            </Button>
+              {/* The path field's "no such folder", answered: make it. */}
+              {createOffer && pathLeaf === null && (
+                <Button
+                  onClick={() => makeFolder(createOffer.parent, createOffer.name)}
+                  disabled={creating}
+                  data-testid="create-offer"
+                  className="mt-2 h-7 text-xs"
+                >
+                  {creating ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <FolderPlus className="h-3.5 w-3.5" />
+                  )}
+                  Create folder “{createOffer.name}”
+                </Button>
+              )}
+            </div>
           )}
           {createNote && (
             <p className="text-xs text-destructive" role="alert">
@@ -930,9 +1084,9 @@ export function FolderPicker({
                         onClick={() => {
                           setDropNote(null);
                           setDropChoices([]);
-                          open(choice);
+                          navigate(choice.path);
                         }}
-                        className="flex w-full items-center gap-2 rounded px-1 py-0.5 text-left text-xs hover:bg-secondary"
+                        className="flex w-full items-center gap-2 rounded-control px-1.5 py-1 text-left text-xs hover:bg-secondary"
                       >
                         <FolderOpen className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                         <code className="min-w-0 truncate font-mono">
@@ -946,6 +1100,75 @@ export function FolderPicker({
             </>
           )}
         </div>
+      ) : (
+        <p className="mt-2 text-xs text-muted-foreground">
+          Tip: you can also drag a folder here from your file manager.
+        </p>
+      )}
+    </div>
+  );
+}
+
+const CRUMB =
+  "inline-flex h-7 min-w-0 items-center gap-1.5 rounded-control px-1.5 text-xs " +
+  "text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground " +
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60";
+
+const ROW =
+  "flex min-h-9 w-full items-center gap-3 rounded-control px-2.5 py-1.5 text-left text-sm " +
+  "transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60";
+
+function GroupLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="px-2.5 pb-1 pt-2">
+      <SectionLabel>{children}</SectionLabel>
+    </div>
+  );
+}
+
+/**
+ * The folder that will be used, said once, right above whatever acts on it.
+ *
+ * The list alone never answered this: a folder that is opened is chosen AND
+ * replaced on screen by its contents, so the one row that could have shown
+ * the choice is gone the moment it is made.
+ */
+function SelectedFolder({ selected }: { selected: string | null }) {
+  return (
+    <div
+      data-testid="folder-selection"
+      role="status"
+      aria-live="polite"
+      className={cn(
+        "mt-3 flex min-h-[3.25rem] shrink-0 items-center gap-3 rounded-surface border px-3 py-2",
+        selected ? "border-primary/40 bg-primary/5" : "border-dashed border-border",
+      )}
+    >
+      {selected ? (
+        <>
+          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
+            <Check className="h-3.5 w-3.5" strokeWidth={3} />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-sm font-medium">
+              <span className="sr-only">Chosen folder: </span>
+              {leafName(selected)}
+            </span>
+            <span
+              className="block truncate font-mono text-micro text-muted-foreground"
+              title={selected}
+            >
+              {selected}
+            </span>
+          </span>
+        </>
+      ) : (
+        <>
+          <Folder className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <span className="text-sm text-muted-foreground">
+            No folder chosen yet. Open a folder in the list to choose it.
+          </span>
+        </>
       )}
     </div>
   );
@@ -973,6 +1196,97 @@ export function separatorOf(fullPath: string): string {
 export function joinPath(base: string, name: string): string {
   const sep = separatorOf(base);
   return base.endsWith(sep) ? `${base}${name}` : `${base}${sep}${name}`;
+}
+
+function withTrailingSeparator(fullPath: string): string {
+  return /[\\/]$/.test(fullPath) ? fullPath : `${fullPath}${separatorOf(fullPath)}`;
+}
+
+/** The last segment of a path — what a person calls the folder. */
+export function leafName(fullPath: string): string {
+  const trimmed = fullPath.replace(/[\\/]+$/, "");
+  return trimmed.split(/[\\/]/).pop() || fullPath;
+}
+
+/**
+ * A path as the crumbs of an address bar, each one a place to go.
+ *
+ * The root keeps its own shape — `C:` on Windows, `/` elsewhere, the whole
+ * `\\server\share` of a network path, since a server alone is not a folder
+ * anyone can open.
+ */
+export function pathCrumbs(fullPath: string): { label: string; path: string }[] {
+  const sep = separatorOf(fullPath);
+  let root = "";
+  let rest = fullPath;
+  const unc = fullPath.match(/^([\\/]{2}[^\\/]+[\\/]+[^\\/]+)[\\/]*(.*)$/);
+  const drive = fullPath.match(/^([a-zA-Z]:)[\\/]*(.*)$/);
+  if (unc) {
+    root = unc[1];
+    rest = unc[2];
+  } else if (drive) {
+    root = `${drive[1]}${sep}`;
+    rest = drive[2];
+  } else if (/^[\\/]/.test(fullPath)) {
+    root = sep;
+    rest = fullPath.replace(/^[\\/]+/, "");
+  }
+  const crumbs: { label: string; path: string }[] = [];
+  if (root) {
+    crumbs.push({ label: root === sep ? sep : root.replace(/[\\/]+$/, ""), path: root });
+  }
+  let acc = root;
+  for (const part of rest.split(/[\\/]+/).filter(Boolean)) {
+    acc = acc ? joinPath(acc, part) : part;
+    crumbs.push({ label: part, path: acc });
+  }
+  return crumbs;
+}
+
+/**
+ * A long path keeps its root and the two folders nearest the end; the middle
+ * folds into one "…" crumb (`path: null`) that names what it hides.
+ */
+function foldCrumbs(
+  crumbs: { label: string; path: string }[],
+): { label: string; path: string | null; hidden?: string }[] {
+  if (crumbs.length <= CRUMBS_MAX) return crumbs;
+  const folded = crumbs.slice(1, -2);
+  return [
+    crumbs[0],
+    { label: "…", path: null, hidden: folded[folded.length - 1].path },
+    ...crumbs.slice(-2),
+  ];
+}
+
+/**
+ * When a recent folder was last opened, the way people say it.
+ *
+ * Counted in calendar days on this clock, so something opened late last night
+ * is "Yesterday" this morning, not "Today". Accepts seconds (what the backend
+ * stores) or milliseconds.
+ */
+export function lastUsedLabel(lastUsed: number, now: number = Date.now()): string {
+  if (!lastUsed || !Number.isFinite(lastUsed)) return "";
+  const ms = lastUsed > 1e12 ? lastUsed : lastUsed * 1000;
+  const dayStart = (t: number) => {
+    const d = new Date(t);
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  };
+  const days = Math.round((dayStart(now) - dayStart(ms)) / 86_400_000);
+  if (days <= 0) return "Today";
+  if (days === 1) return "Yesterday";
+  if (days < 7) return `${days} days ago`;
+  if (days < 30) {
+    const weeks = Math.floor(days / 7);
+    return weeks === 1 ? "Last week" : `${weeks} weeks ago`;
+  }
+  return new Date(ms).toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "short",
+    year: days > 300 ? "numeric" : undefined,
+  });
 }
 
 /**
@@ -1025,31 +1339,40 @@ export function resolveTypedPath(raw: string, base: string | null): string {
 }
 
 /**
- * A path field that completes as you type, the way `cd` does in a terminal.
+ * The address bar as a path field that completes as you type, the way `cd`
+ * does in a terminal.
  *
- * Typing a bare name completes against the folder currently on screen, so
- * `cd`-style navigation works without ever writing an absolute path; Tab takes
- * the highlighted suggestion and appends a separator so the next segment can be
- * typed straight away. Arrow keys move through the list, Enter opens what is
- * highlighted — or, with nothing highlighted, whatever was typed.
+ * It opens holding the folder on screen plus a separator, so the next segment
+ * can be typed straight away; a bare name still completes against the folder
+ * on screen, so `cd`-style navigation works without an absolute path. Tab
+ * takes the highlighted suggestion and appends a separator. Arrow keys move
+ * through the list, Enter opens what is highlighted — or, with nothing
+ * highlighted, whatever was typed. Escape and leaving the field put the crumbs
+ * back.
  *
  * Completion is deliberately a plain folder listing rather than the name search
- * above it: `cd` shows what is in THIS folder, and a field that answered with
- * matches from across the disk would be a different tool wearing the same shape.
+ * in the toolbar: `cd` shows what is in THIS folder, and a field that answered
+ * with matches from across the disk would be a different tool wearing the same
+ * shape.
  */
 function PathInput({
   base,
+  initial,
   showHidden,
   onUse,
+  onCancel,
 }: {
   base: string | null;
+  initial: string;
   showHidden: boolean;
-  onUse: (value: string) => void;
+  onUse: (value: string) => Promise<void>;
+  onCancel: () => void;
 }) {
-  const [value, setValue] = useState("");
+  const [value, setValue] = useState(initial);
   const [options, setOptions] = useState<FolderItem[]>([]);
   const [active, setActive] = useState(-1);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const { dir, leaf } = splitTypedPath(normalizeTypedPath(value));
   // An empty `dir` means a bare name was typed: complete inside the folder the
@@ -1060,6 +1383,14 @@ function PathInput({
       ? dir
       : joinPath(base, dir)
     : base || "";
+
+  useEffect(() => {
+    const input = inputRef.current;
+    if (!input) return;
+    input.focus();
+    // The caret at the end, ready for the next segment.
+    input.setSelectionRange(input.value.length, input.value.length);
+  }, []);
 
   useEffect(() => {
     if (!value.trim() && !base) {
@@ -1100,11 +1431,11 @@ function PathInput({
 
   const submit = () => {
     if (active >= 0 && options[active]) {
-      onUse(options[active].path);
+      void onUse(options[active].path);
     } else {
       // A relative path is relative to what is on screen, the way cd reads it.
       const absolute = resolveTypedPath(value, base);
-      if (absolute) onUse(absolute);
+      if (absolute) void onUse(absolute);
     }
     setOpen(false);
   };
@@ -1132,45 +1463,51 @@ function PathInput({
       submit();
       return;
     }
-    if (e.key === "Escape") setOpen(false);
+    if (e.key === "Escape") {
+      e.preventDefault();
+      // First Escape closes the suggestions, the next one the field.
+      if (open && options.length > 0) setOpen(false);
+      else onCancel();
+    }
   };
 
   return (
-    <div className="relative p-3">
+    <div className="relative min-w-0 flex-1" data-escape-local>
       <Field
+        ref={inputRef}
         value={value}
         onChange={(e) => {
           setValue(e.target.value);
           setOpen(true);
         }}
         onKeyDown={onKeyDown}
-        onFocus={() => setOpen(true)}
-        // Closing on blur is delayed: a click on a suggestion blurs the input
-        // first, and an immediate close would remove the element under the
-        // pointer before the click lands on it.
-        onBlur={() => window.setTimeout(() => setOpen(false), 150)}
-        placeholder="…or type a folder name here — Tab completes it"
+        // Leaving is delayed: a click on a suggestion blurs the input first,
+        // and an immediate close would remove the element under the pointer
+        // before the click lands on it.
+        onBlur={() =>
+          window.setTimeout(() => {
+            if (document.activeElement !== inputRef.current) onCancel();
+          }, 150)
+        }
+        placeholder="Type a path — Tab completes folder names"
         aria-label="Folder path"
         data-testid="folder-path-input"
-        className="w-full pr-8 font-mono text-xs"
+        className="h-8 w-full pr-8 font-mono text-xs"
         spellCheck={false}
         autoComplete="off"
       />
       {/*
-        The field's own confirm, in place of the "Use this path" button that
-        used to sit beside it. Enter already does this, but only for someone who
-        guesses that it will — and a control that can only be reached by guessing
-        is not a route, so the affordance stays. It is inside the field because
-        it belongs to it: as a sibling it was a second full-width control for a
-        line of text nobody had typed yet.
+        The field's own confirm. Enter already does this, but only for someone
+        who guesses that it will — and a control that can only be reached by
+        guessing is not a route, so the affordance stays.
       */}
       {value.trim() && (
         <IconButton
           size="sm"
-          label="Use this path"
+          label="Go to this path"
           onMouseDown={(e) => e.preventDefault()}
           onClick={submit}
-          className="absolute right-4 top-1/2 -translate-y-1/2 text-primary"
+          className="absolute right-1 top-1/2 -translate-y-1/2 text-primary"
         >
           <CornerDownLeft className="h-3.5 w-3.5" />
         </IconButton>
@@ -1178,7 +1515,7 @@ function PathInput({
       {open && options.length > 0 && (
         <ul
           data-testid="path-suggestions"
-          className="absolute bottom-full left-3 right-3 z-30 mb-1 max-h-48 overflow-y-auto scrollbar-jarvis rounded-control border border-border bg-popover"
+          className="absolute left-0 right-0 top-full z-30 mt-1.5 max-h-56 overflow-y-auto scrollbar-jarvis rounded-control border border-border bg-popover p-1 shadow-lg"
         >
           {options.slice(0, 40).map((item, index) => (
             <li key={item.path}>
@@ -1187,7 +1524,7 @@ function PathInput({
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => complete(item)}
                 className={cn(
-                  "flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs",
+                  "flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-xs",
                   index === active ? "bg-primary/15" : "hover:bg-secondary",
                 )}
               >

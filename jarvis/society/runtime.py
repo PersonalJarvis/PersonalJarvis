@@ -18,6 +18,7 @@ the ownership map letting the bridge attribute every mission event back.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from collections.abc import Callable, Iterable, Mapping
 from contextlib import AsyncExitStack
@@ -79,6 +80,7 @@ class SocietyRuntimeClosed(RuntimeError):
 _LEAD_INCOMING_TYPES: Final[frozenset[MsgType]] = frozenset(
     {MsgType.SAY, MsgType.QUERY, MsgType.ANSWER, MsgType.PROPOSE}
 )
+_WATCH_EVENT_POLL_SECONDS: Final[float] = 2.0
 
 _current: SocietyRuntime | None = None
 
@@ -169,9 +171,12 @@ class SocietyRuntime:
         # ``event_publish`` is the app bus the WebSocket forwards (server.py hands
         # it in); without it the engine falls back to the process default bus.
         self.checkpoints = CheckpointEngine(self, publish=event_publish)
+        self._publish_event = event_publish
         #: The society's one memory service; every touch moves the figure to the Memory House.
         self.memory = SocietyMemory(self, on_activity=self.checkpoints.note_memory_activity)
-        self.conversations = ConversationArchive(self._data_dir / "society-conversations.db")
+        self.conversations = ConversationArchive(
+            self._data_dir / "society-conversations.db", defer_open=True
+        )
         self._review_lock = asyncio.Lock()
         #: The Quest Board: the person's jobs, routed to one taker, read back off the board.
         self.quests = Quests(self)
@@ -250,6 +255,10 @@ class SocietyRuntime:
     async def _start_runtime(self) -> SocietyRuntime:
         await self.store.open()
         self._require_open_owner()
+        # FTS backfill can take seconds on a busy disk. It must never stall
+        # HTTP, microphone controls or the first response from the desktop.
+        await asyncio.to_thread(self.conversations.open)
+        self._require_open_owner()
         self.scheduler._budget = self._get_budget()  # noqa: SLF001 — the runtime owns its scheduler
         self.scheduler.attach()
         self._delivery_unsubscribe = self.store.bus.subscribe_all(self._delivery_failed)
@@ -325,50 +334,74 @@ class SocietyRuntime:
             )
             if request is None:
                 return
-            if request.msg_type is MsgType.ASSIGN and "reply_policy" in request.payload:
+            if (
+                request.msg_type is MsgType.ASSIGN and "reply_policy" in request.payload
+                and env.msg_type is MsgType.ANSWER
+            ):
                 # The turn watcher owns this completion, including semantic blockers.
                 return
-            status = str(env.payload.get("reply_status") or "done")
+            status = (
+                "needs_input" if env.msg_type in (MsgType.QUERY, MsgType.PROPOSE)
+                else str(env.payload.get("reply_status") or "done")
+            )
             if not should_report(request, status):
                 return
-            await self.announce_lead_message(sender, env)
+            await self.announce_lead_message(sender, env, request=request)
         except Exception:  # noqa: BLE001 - a silent message is a lost courtesy, not a lost result
             log.warning("society: lead incoming announcement failed", exc_info=True)
 
-    async def announce_lead_message(self, sender: AgentRecord, env: SocietyEnvelope) -> None:
-        """Close the loop on an agent talking back to Jarvis: show the person.
+    async def announce_lead_message(
+        self, sender: AgentRecord, env: SocietyEnvelope, *, request: SocietyEnvelope,
+    ) -> None:
+        """Return a correlated answer or clarification to its requesting conversation."""
+        status = (
+            "needs_input" if env.msg_type in (MsgType.QUERY, MsgType.PROPOSE)
+            else str(env.payload.get("reply_status") or "done")
+        )
+        await self._deliver_lead_result(
+            sender, request, status=status, summary=env.text,
+            kind="society_message", message_type=str(env.msg_type).lower(),
+        )
 
-        Twin of report_to_lead for conversational envelopes (SAY / QUERY /
-        ANSWER / PROPOSE): the text is posted as a notice into the newest
-        front-page chat, where the order came from. It is not spoken — no
-        background result is read aloud (maintainer decision 2026-09-30).
-        A failed notice never fails the run.
-        """
-        summary = " ".join(str(env.text or "").split())
-        if not summary:
-            return
+    async def _deliver_lead_result(
+        self, target: AgentRecord, request: SocietyEnvelope, *, status: str,
+        summary: str, kind: str, message_type: str = "",
+    ) -> None:
+        from jarvis.core.delegation import result_announcement
+
+        event = result_announcement(
+            source="society.lead", request_id=request.event_id, name=target.name,
+            request=request.text, status=status, report=summary,
+            language=str(request.payload.get("lang") or ""),
+        )
         svc = self._get_chat()
         post = getattr(svc, "post_notice", None)
-        if svc is None or post is None:
-            return
-        try:
-            sessions = svc.store.list_sessions(limit=1, surface="jarvis")
-            if sessions:
-                await post(
-                    sessions[0].session_id,
-                    {
-                        "kind": "society_message",
-                        "agent_id": sender.agent_id,
-                        "agent_name": sender.name,
-                        "msg_type": str(env.msg_type).lower(),
-                        "status": "done",
-                        "text": summary[:1000],
-                        "session_id": sender.session_id,
-                        "trace_id": env.trace_id,
-                    },
-                )
-        except Exception:  # noqa: BLE001 - a lost notice is a lost courtesy, not a lost result
-            log.warning("society: incoming message notice for the lead chat failed", exc_info=True)
+        if post is not None:
+            try:
+                session_id = str(request.payload.get("reply_session_id") or "")
+                if not session_id:
+                    sessions = svc.store.list_sessions(limit=1, surface="jarvis")
+                    session_id = sessions[0].session_id if sessions else ""
+                # Never redirect a result from a deleted chat into an unrelated one.
+                session = svc.store.get_session(session_id) if session_id else None
+                if session is not None and session.surface == "jarvis":
+                    await post(session_id, {
+                        "kind": kind, "agent_id": target.agent_id, "agent_name": target.name,
+                        "msg_type": message_type, "status": status, "text": summary[:1000],
+                        "session_id": target.session_id, "trace_id": request.trace_id,
+                        "assignment_id": request.event_id, "report": event.report,
+                    })
+            except Exception:  # A chat failure must not suppress the voice result.
+                log.warning("society: result notice delivery failed", exc_info=True)
+        surface = request.payload.get("reply_surface")
+        if surface == "voice" or (surface is None and request.trace_id.startswith("voice:")):
+            if self._publish_event is not None:
+                try:
+                    value = self._publish_event(event)
+                    if inspect.isawaitable(value):
+                        await value
+                except Exception:  # The durable board and chat still retain the report.
+                    log.warning("society: result announcement failed", exc_info=True)
 
     async def _deliver_pending(self) -> None:
         """Recover committed messages and retry busy chats without opening sockets."""
@@ -408,13 +441,13 @@ class SocietyRuntime:
         async with AsyncExitStack() as cleanup:
             cleanup.callback(clear_runtime)
             cleanup.push_async_callback(self.store.close)
+            cleanup.push_async_callback(asyncio.to_thread, self.conversations.close)
             for release in (
                 self.world_feed.detach,
                 self.quests.detach,
                 self.checkpoints.detach,
                 self.bridge.detach,
                 self.scheduler.detach,
-                self.conversations.close,
             ):
                 cleanup.callback(release)
             cleanup.push_async_callback(self.browser.close)
@@ -458,7 +491,7 @@ class SocietyRuntime:
         import json
 
         events = json.loads(completion.events_json)
-        self.conversations.ingest(session.session_id, events)
+        await asyncio.to_thread(self.conversations.ingest, session.session_id, events)
         await self._complete_message_reply(session, completion, events)
         terminal = [e for e in events if e.get("kind") == "turn_finished"]
         if not terminal or terminal[-1].get("payload", {}).get("status") not in {
@@ -483,7 +516,8 @@ class SocietyRuntime:
             # Reviewing them again wastes a model call and can
             # duplicate a standing instruction as a conflicting memory.
             return
-        if self.conversations.queue_review(
+        if await asyncio.to_thread(
+            self.conversations.queue_review,
             session.session_id,
             completion.turn.turn_id,
             events,
@@ -763,33 +797,78 @@ class SocietyRuntime:
         error = ""
         tool_steps: list[str] = []
         used_browser = False
+        last_seq = 0
+        read_failures = 0
         quest_trace = env.trace_id.startswith("quest:")
         try:
             while True:
-                event = await queue.get()
-                kind = event.get("kind")
-                payload = event.get("payload") or {}
-                if payload.get("turn_id") not in (None, turn_id):
-                    continue
-                if kind == "assistant_text":
-                    final_text = str(payload.get("text") or final_text)
-                    if quest_trace:
-                        await self.quests.note_progress(env.trace_id, "", live=final_text)
-                elif kind == "tool_call":
-                    name = str(payload.get("name") or payload.get("tool") or "tool")
-                    summary = str(payload.get("summary") or "")[:120]
-                    step = f"{name}: {summary}" if summary else name
-                    tool_steps.append(step)
-                    if quest_trace:
-                        await self.quests.note_progress(env.trace_id, step)
-                    if name == "society_browser":
-                        used_browser = True
-                elif kind == "error":
-                    status, error = "blocked", str(payload.get("message") or "error")
-                elif kind == "turn_finished":
-                    if payload.get("status") not in (None, "ok", "done", "completed"):
+                try:
+                    events = [
+                        await asyncio.wait_for(queue.get(), timeout=_WATCH_EVENT_POLL_SECONDS)
+                    ]
+                except TimeoutError:
+                    # The service drops a subscriber whose queue overflows. Its
+                    # events remain durable, so recover the missing terminal.
+                    try:
+                        events = await asyncio.to_thread(
+                            svc.store.list_events, session_id, after_seq=last_seq
+                        )
+                    except Exception:  # noqa: BLE001 - a broken chat store must release the slot
+                        read_failures += 1
+                        log.warning(
+                            "society: durable turn recovery failed for %s (%s/3)",
+                            run_id,
+                            read_failures,
+                            exc_info=True,
+                        )
+                        if read_failures < 3:
+                            continue
                         status = "blocked"
-                        error = str(payload.get("error") or payload.get("status") or "")
+                        error = "Agent result could not be recovered from chat history."
+                        try:
+                            await svc.cancel(session_id, expected_turn_id=turn_id)
+                        except Exception:  # noqa: BLE001 - still release the board slot
+                            log.warning(
+                                "society: turn %s could not be cancelled after recovery failure",
+                                run_id,
+                                exc_info=True,
+                            )
+                        break
+                    read_failures = 0
+                else:
+                    read_failures = 0
+                finished = False
+                for event in events:
+                    seq = int(event.get("seq") or 0)
+                    if seq and seq <= last_seq:
+                        continue
+                    last_seq = max(last_seq, seq)
+                    kind = event.get("kind")
+                    payload = event.get("payload") or {}
+                    if payload.get("turn_id") not in (None, turn_id):
+                        continue
+                    if kind == "assistant_text":
+                        final_text = str(payload.get("text") or final_text)
+                        if quest_trace:
+                            await self.quests.note_progress(env.trace_id, "", live=final_text)
+                    elif kind == "tool_call":
+                        name = str(payload.get("name") or payload.get("tool") or "tool")
+                        summary = str(payload.get("summary") or "")[:120]
+                        step = f"{name}: {summary}" if summary else name
+                        tool_steps.append(step)
+                        if quest_trace:
+                            await self.quests.note_progress(env.trace_id, step)
+                        if name == "society_browser":
+                            used_browser = True
+                    elif kind == "error":
+                        status, error = "blocked", str(payload.get("message") or "error")
+                    elif kind == "turn_finished":
+                        if payload.get("status") not in (None, "ok", "done", "completed"):
+                            status = "blocked"
+                            error = str(payload.get("error") or payload.get("status") or "")
+                        finished = True
+                        break
+                if finished:
                     break
         except asyncio.CancelledError:  # Session cancellation is normal shutdown.
             return
@@ -799,18 +878,27 @@ class SocietyRuntime:
         summary = (final_text or error or "turn finished").strip()
         # A successful model turn can still report an unfinished task. Use the
         # correlated, typed report, never a keyword guess over the final prose.
-        reports = [
+        correlated = [
             item
             for item in await self.store.events_for_trace(env.trace_id)
             if item.parent_event_id == env.event_id
             and item.from_agent == target.agent_id
             and item.to_agent == env.from_agent
-            and item.msg_type is MsgType.ANSWER
-            and item.payload.get("reply_status") == "blocked"
+        ]
+        reports = [item for item in correlated if item.msg_type is MsgType.ANSWER
+                   and item.payload.get("reply_status") == "blocked"]
+        questions = [
+            item for item in correlated if item.msg_type in (MsgType.QUERY, MsgType.PROPOSE)
         ]
         if reports:
             status = "blocked"
             error = summary = reports[-1].text
+        elif questions:
+            status = "blocked"
+            error = summary = questions[-1].text
+        elif status == "done" and not final_text.strip():
+            status = "blocked"
+            error = summary = "Agent finished without a result report."
         try:
             await self.store.append_and_publish(
                 SocietyEnvelope(
@@ -833,7 +921,7 @@ class SocietyRuntime:
             )
         except Exception:  # noqa: BLE001 - the slot is free either way; the loss is one RESULT row
             log.warning("society: RESULT for %s could not be written", run_id, exc_info=True)
-        if env.from_agent == LEAD_AGENT_ID:
+        if env.from_agent == LEAD_AGENT_ID and (reports or not questions):
             await self.report_to_lead(target, env, status=status, summary=summary)
         digest = TurnDigest(
             task=env.text or str(env.payload.get("task") or ""),
@@ -857,34 +945,18 @@ class SocietyRuntime:
         Jarvis delegates by voice or from the front-page chat and acknowledges
         at once ("Scout is on it"); the work then ends on the board, where the
         person only sees it by opening the Agents section. So the RESULT of a
-        lead-assigned task is also posted where the order came from: a notice
-        in the newest front-page chat. It is not spoken — no background result
-        is read aloud (maintainer decision 2026-09-30). A failed notice never
-        fails the run.
+        lead-assigned task returns to its original chat. Voice requests also
+        enter the live conversation's floor-aware result queue. No separate
+        model is called to phrase the report. A failed notice never fails the run.
         """
-        if not should_report(env, status):
+        if (
+            env.from_agent != LEAD_AGENT_ID or env.to_agent != target.agent_id
+            or not should_report(env, status)
+        ):
             return
-        svc = self._get_chat()
-        post = getattr(svc, "post_notice", None)
-        if svc is None or post is None:
-            return
-        try:
-            sessions = svc.store.list_sessions(limit=1, surface="jarvis")
-            if sessions:
-                await post(
-                    sessions[0].session_id,
-                    {
-                        "kind": "society_result",
-                        "agent_id": target.agent_id,
-                        "agent_name": target.name,
-                        "status": status,
-                        "text": summary[:1000],
-                        "session_id": target.session_id,
-                        "trace_id": env.trace_id,
-                    },
-                )
-        except Exception:  # noqa: BLE001 - a lost notice is a lost courtesy, not a lost result
-            log.warning("society: result notice for the lead chat failed", exc_info=True)
+        await self._deliver_lead_result(
+            target, env, status=status, summary=summary, kind="society_result",
+        )
 
     def pick_agent(self, task: str) -> AgentRecord | None:
         """The active agent whose hands fit ``task`` best, or ``None``.
@@ -941,9 +1013,46 @@ class SocietyRuntime:
 
     # ------------------------------------------------------------ controls
 
+    async def _cancel_active_society_chats(self) -> None:
+        service = self.chat_service()
+        if service is None or not callable(getattr(service, "cancel", None)):
+            return
+        # AgentChatService exposes is_running but not a public active-id list.
+        # Snapshot its live turns; a store query could miss an older active chat.
+        running = tuple(getattr(service, "_running", {}).items())
+        targets: list[str] = []
+        for session_id, run in running:
+            session = service.store.get_session(session_id)
+            if (
+                session is None
+                or session.surface != "society"
+                or not session_id.startswith("society:")
+            ):
+                continue
+            signal = getattr(service, "signal_cancel", None)
+            if callable(signal):
+                signal(session_id)
+            # The kill switch can be invoked from an agent's own turn. Signal
+            # it, but never await that turn from inside itself.
+            if getattr(run, "task", None) is asyncio.current_task():
+                continue
+            targets.append(session_id)
+        if not targets:
+            return
+        results = await asyncio.gather(
+            *(service.cancel(session_id) for session_id in targets),
+            return_exceptions=True,
+        )
+        for session_id, result in zip(targets, results, strict=True):
+            if isinstance(result, BaseException):
+                log.warning(
+                    "society kill switch: chat %s did not stop", session_id, exc_info=result
+                )
+
     async def engage_kill_switch(self) -> dict[str, Any]:
         await self.store.set_kill_switch(True)
         halted = await self.scheduler.halt_all()
+        await self._cancel_active_society_chats()
         await self.browser.close()
         settled = 0
         for room in await self.rooms.list(state=RoomState.RUNNING):

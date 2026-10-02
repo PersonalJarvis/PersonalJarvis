@@ -356,6 +356,39 @@ def test_train_updates_only_conflicting_or_stale_red_branches():
 # --------------------------------------------------------------------------- release
 
 
+@pytest.mark.parametrize("status,conclusion,expected", [
+    ("completed", "failure", "failure"),
+    ("completed", "cancelled", "failure"),
+    ("completed", "success", "success"),
+    ("in_progress", None, "pending"),
+    ("queued", None, "pending"),
+])
+def test_release_admission_uses_newest_run(status, conclusion, expected):
+    from scripts.ci.release_admit import latest_gate_state
+
+    old = {"id": 10, "status": "completed", "conclusion": "success"}
+    new = {"id": 11, "status": status, "conclusion": conclusion}
+    assert latest_gate_state([old, new]) == expected
+    assert latest_gate_state([new, old]) == expected
+    assert latest_gate_state([]) == "missing"
+
+
+@pytest.mark.parametrize("filename,job", [
+    ("release.yml", "publish"),
+    ("sign-installer.yml", "provenance"),
+    ("sign-installer.yml", "release"),
+])
+def test_publication_requires_a_tag(filename, job):
+    import yaml
+
+    workflow = yaml.safe_load(
+        (Path(__file__).resolve().parents[3] / ".github/workflows" / filename).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert workflow["jobs"][job]["if"] == "github.ref_type == 'tag'"
+
+
 def test_bump_and_commit_notes():
     assert cut_release.bump("2.3.2", "patch") == "2.3.3"
     assert cut_release.bump("2.3.2", "minor") == "2.4.0"
@@ -372,6 +405,12 @@ def test_apply_moves_notes_under_a_dated_section(tmp_path):
     (tmp_path / "jarvis").mkdir()
     (tmp_path / "pyproject.toml").write_text('[project]\nversion = "1.0.0"\n', encoding="utf-8")
     (tmp_path / "jarvis" / "__init__.py").write_text('__version__ = "1.0.0"\n', encoding="utf-8")
+    (tmp_path / "uv.lock").write_text(
+        '[[package]]\nname = "dependency"\nversion = "1.0.0"\n\n'
+        '[[package]]\nname = "personal-jarvis"\nversion = "1.0.0"\n'
+        'source = { editable = "." }\n',
+        encoding="utf-8",
+    )
     (tmp_path / "CHANGELOG.md").write_text(
         "# Changelog\n\n## [Unreleased]\n\n---\n\n## [1.0.0] — 2026-01-01\n\n- old\n",
         encoding="utf-8",
@@ -381,6 +420,9 @@ def test_apply_moves_notes_under_a_dated_section(tmp_path):
     assert text.index("## [Unreleased]") < text.index("## [1.1.0] — 2026-09-28")
     assert text.index("## [1.1.0]") < text.index("## [1.0.0]")
     assert cut_release.section_notes(text, "1.1.0") == "### Added\n\n- thing"
+    lock = (tmp_path / "uv.lock").read_text(encoding="utf-8")
+    assert 'name = "personal-jarvis"\nversion = "1.1.0"' in lock
+    assert 'name = "dependency"\nversion = "1.0.0"' in lock
     from scripts.ci import release_admit
 
     assert release_admit.versions(tmp_path) == ("1.1.0", "1.1.0")

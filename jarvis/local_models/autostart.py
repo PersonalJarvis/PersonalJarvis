@@ -230,7 +230,10 @@ async def run_once(
         if not ok:
             return record
         record["started"] = True
-    model = _chat_model(cfg)
+    # Local voice owns its own model and load order. Warming a dormant chat
+    # pick here competes with speech models and can evict the voice brain.
+    primary = str(getattr(getattr(cfg, "brain", None), "primary", "") or "")
+    model = _chat_model(cfg) if primary == SERVER_PROVIDER_ID else ""
     if model and await (warm or _default_warm)(root, model, _keep_alive(cfg, model)):
         record["warmed"] = model
     return record

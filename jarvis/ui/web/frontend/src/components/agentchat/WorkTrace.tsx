@@ -122,12 +122,14 @@ function isPendingApproval(block: TurnBlock): block is ToolBlock {
   return (block.kind === "tool" && Boolean(block.approval && block.approval.decision === null)) || isOpenQuestion(block);
 }
 
+function needsAttention(block: TurnBlock): block is ToolBlock {
+  return block.kind === "tool" && (block.isError || isPendingApproval(block));
+}
+
 function hasFoldableWork(blocks: TurnBlock[]): boolean {
   return blocks.some((block) => {
-    // Only a pending approval keeps its row outside the fold — it asks the
-    // person to act. Failures and interruptions fold like any other work:
-    // the finished conversation shows the reply, the toggle reveals the rest.
-    if (isPendingApproval(block)) return false;
+    // Decisions and failed tools remain visible after a turn completes.
+    if (needsAttention(block)) return false;
     return block.kind !== "text" || Boolean(block.text.trim());
   });
 }
@@ -608,7 +610,7 @@ function traceGroupItems({ groups, live, status, onDecide, renderText, conversat
  * and draw nothing.
  */
 function withoutQuestionPolls(blocks: TurnBlock[]): TurnBlock[] {
-  const kept = blocks.filter((block) => !(block.kind === "tool" && isQuestionTool(block.name) && !block.question));
+  const kept = blocks.filter((block) => !(block.kind === "tool" && isQuestionTool(block.name) && !block.question && !block.isError));
   return kept.length === blocks.length ? blocks : kept;
 }
 
@@ -629,27 +631,26 @@ function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error
   const live = status === "running";
   const elapsed = useClock(startedMs, live);
   const split = useMemo(() => conversation && !live ? splitConversationTurn(blocks) : null, [blocks, conversation, live]);
-  // A finished conversation turn shows the reply and nothing else. All work
-  // — tools, thoughts, intermediate replies, failures, interruptions, and
-  // post-reply work — folds behind the "Thought for …" toggle. Pending
-  // approvals stay visible both ways: beside the toggle while it is closed
-  // (they need a tap) and inside the open chain.
+  // Completed failures and pending approvals stay visible beside the fold.
+  // Other work can collapse without hiding an action that needs attention.
   const fold = useMemo(() => {
     if (!split) return null;
     const workAll = [...split.work, ...split.after];
-    if (!hasFoldableWork(workAll.filter((block) => !isPendingApproval(block)))) return null;
+    if (!hasFoldableWork(workAll)) return null;
     return {
       answer: split.answer,
       workAll,
-      approvals: workAll.filter(isPendingApproval),
+      attention: workAll.filter(needsAttention),
     };
   }, [split]);
   const groups = useMemo(() => conversation ? groupConversationTrace(fold ? fold.workAll : blocks) : groupActivityTrace(blocks), [blocks, conversation, fold]);
   const restGroups = useMemo(() => fold ? groupConversationTrace(fold.answer) : null, [fold]);
   const asking = blocks.some(isOpenQuestion);
   const pending = asking || blocks.some(block => block.kind === "tool" && block.approval?.decision === null);
-  const outcome = asking ? "question" : pending ? "approval" : live ? "working" : status === "error" ? "failed" : status === "cancelled" ? "stopped" : "done";
-  const Icon = asking ? MessageCircleQuestion : pending ? ShieldQuestion : live ? CircleDashed : status === "error" ? CircleAlert : Check;
+  const toolFailed = blocks.some(block => block.kind === "tool" && block.isError);
+  const failed = status === "error";
+  const outcome = asking ? "question" : pending ? "approval" : live ? "working" : failed ? "failed" : status === "cancelled" ? "stopped" : "done";
+  const Icon = asking ? MessageCircleQuestion : pending ? ShieldQuestion : live ? CircleDashed : failed ? CircleAlert : Check;
   const groupProps = { live, status, onDecide, renderText, conversation, rail, t };
   // A turn-level error next to a reply folds with the work — it stays one
   // tap away behind the toggle. With no reply the error IS the outcome, so
@@ -668,10 +669,11 @@ function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error
     const statusOnRail = !conversation || live;
     const statusLine = <div role="status" aria-live="polite" data-trace-status={outcome}
       className={cn("flex min-w-0 flex-wrap items-start gap-x-3 text-xs leading-6 text-muted-foreground",
-        statusOnRail ? "py-1" : "pb-2 pt-1", status === "error" && "text-destructive", pending && "text-foreground")}>
+        statusOnRail ? "py-1" : "pb-2 pt-1", failed && "text-destructive", pending && "text-foreground")}>
       <Node live={working}><Icon className={cn(nodeIcon, working && "motion-safe:animate-spin")} /></Node>
       <span className="inline-flex min-w-0 flex-1 flex-wrap items-center gap-x-2">
         <span><Live on={working}>{outcomeLabel}</Live></span>
+        {toolFailed && !live && !failed ? <span className="sr-only">{t("work_trace.tool_failed")}</span> : null}
         {(live || durationMs !== null) ? <span aria-live="off" className="tabular-nums">{traceDuration(live ? elapsed : durationMs ?? 0)}</span> : null}
         {receiptNode ? <span aria-hidden className="text-muted-foreground/50">·</span> : null}
         {receiptNode}
@@ -684,11 +686,13 @@ function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error
     const rest = restGroups ? traceGroupItems({ groups: restGroups, ...groupProps }) : [];
     const items: RailItem[] = fold
       ? [{ key: "trace:fold", rail: false, node: <ConversationWorkFold durationMs={durationMs} blocks={fold.workAll}
-          attention={<div className="trace-fold-open"><Rail items={fold.approvals.map(block => ({ key: block.callId, rail: !block.question, node: <TraceTool block={block} status={status} onDecide={onDecide} /> }))} /></div>}>
+          attention={<div className="trace-fold-open"><Rail items={fold.attention.map(block => ({ key: block.callId, rail: !block.question, node: <TraceTool block={block} status={status} onDecide={onDecide} /> }))} /></div>}>
           <Rail items={[...main, ...(foldedError ? [errorItem(foldedError, "trace:folded-error")] : [])]} />
         </ConversationWorkFold> }, ...rest]
       : main;
     if (visibleError) items.push(errorItem(visibleError, "trace:error"));
+    if (toolFailed && !live && !failed) items.push({ key: "trace:tool-failed", rail: false,
+      node: <p data-testid="tool-failure-warning" className="flex items-center gap-1.5 py-1 pl-7 text-xs text-destructive"><CircleAlert aria-hidden className="h-3.5 w-3.5" />{t("work_trace.tool_failed")}</p> });
     items.push(statusItem);
     return <div className={cn("min-w-0", conversation && "w-full max-w-[44rem] self-start", className)} data-testid="work-trace" data-look="rail" data-state={status} {...(conversation ? { "data-conversation": "" } : {})}>
       <Rail items={items} />
@@ -697,7 +701,7 @@ function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error
 
   const classicGroups = (list: Group[]) => <>{traceGroupItems({ groups: list, ...groupProps }).map(item => <Fragment key={item.key}>{item.node}</Fragment>)}</>;
   return <div className={cn("min-w-0 space-y-0.5", conversation && "w-full max-w-[44rem] self-start", className)} data-testid="work-trace" data-state={status} {...(conversation ? { "data-conversation": "" } : {})}>
-    {fold ? <ConversationWorkFold durationMs={durationMs} blocks={fold.workAll} attention={fold.approvals.map(block =>
+    {fold ? <ConversationWorkFold durationMs={durationMs} blocks={fold.workAll} attention={fold.attention.map(block =>
       <div key={block.callId} className="w-full py-1 text-xs [&_button]:text-xs">
         <TraceTool block={block} status={status} onDecide={onDecide} />
       </div>)}>
@@ -706,9 +710,13 @@ function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error
     </ConversationWorkFold> : classicGroups(groups)}
     {restGroups ? classicGroups(restGroups) : null}
     {visibleError ? <p role="alert" className="py-2 text-sm text-destructive [overflow-wrap:anywhere]">{visibleError}</p> : null}
-    <div role="status" aria-live="polite" className={cn("flex flex-wrap items-center gap-2 text-xs text-muted-foreground", conversation ? "px-1 pb-2 pt-1" : "border-t border-border pt-3", status === "error" && "text-destructive")}>
+    {toolFailed && !live && !failed ? <p data-testid="tool-failure-warning" className="flex items-center gap-1.5 px-1 py-1 text-xs text-destructive">
+      <CircleAlert aria-hidden className="h-3.5 w-3.5" />{t("work_trace.tool_failed")}
+    </p> : null}
+    <div role="status" aria-live="polite" className={cn("flex flex-wrap items-center gap-2 text-xs text-muted-foreground", conversation ? "px-1 pb-2 pt-1" : "border-t border-border pt-3", failed && "text-destructive")}>
       <Icon aria-hidden className={cn("h-3.5 w-3.5", live && !pending && "motion-safe:animate-spin")} />
       <span>{outcomeLabel}</span>
+      {toolFailed && !live && !failed ? <span className="sr-only">{t("work_trace.tool_failed")}</span> : null}
       {(live || durationMs !== null) ? <span aria-live="off" className="tabular-nums">{traceDuration(live ? elapsed : durationMs ?? 0)}</span> : null}
       {receiptNode}
     </div>

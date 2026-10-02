@@ -115,6 +115,12 @@ export const SHORTCUTS: readonly Shortcut[] = [
     labelKey: "shortcut_overlay.workspace.open_overlay",
   },
   {
+    kind: "fixed",
+    area: "workspace",
+    keys: ["Ctrl", "B"],
+    labelKey: "shortcut_overlay.workspace.ide_menu",
+  },
+  {
     kind: "app",
     area: "workspace",
     setting: "quick_switch",
@@ -137,6 +143,12 @@ export const SHORTCUTS: readonly Shortcut[] = [
     area: "workspace",
     setting: "app_zoom_reset",
     labelKey: "shortcut_overlay.workspace.app_zoom_reset",
+  },
+  {
+    kind: "fixed",
+    area: "workspace",
+    keys: ["Ctrl", "B"],
+    labelKey: "shortcut_overlay.workspace.ide_menu",
   },
 ] as const;
 

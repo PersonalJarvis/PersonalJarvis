@@ -36,6 +36,8 @@ class WorkspaceOrchestrationTool:
         "remembers its resolves, so a slightly mistyped id still works); reuse it for "
         "retries. Explicit background targets never switch the visible workspace. "
         "Accepted means delivered, not completed; uncertain delivery must not be retried. "
+        "The result returns asynchronously to this conversation; keep talking to the user "
+        "instead of waiting or polling in a loop. "
         "After a proven pre-write refusal, resolve again for a fresh request_id "
         "before a new attempt. "
         "Use context with the same IDs to inspect recorded results. No prompt rewriting is needed."
@@ -149,10 +151,18 @@ class WorkspaceOrchestrationTool:
         }
 
     async def execute(self, args: dict, ctx: ExecutionContext) -> ToolResult:
+        from jarvis.core.delegation import current_delegation_origin, origin_metadata
+
+        token = current_delegation_origin.set(origin_metadata(
+            language=str(ctx.config.get("output_language") or ""),
+        ))
         try:
             result = await self.gateway.run(args, trace_id=str(ctx.trace_id))
         except ValueError as exc:
+            # Invalid arguments go back to the model as the tool error.
             return ToolResult(success=False, output=None, error=str(exc))
+        finally:
+            current_delegation_origin.reset(token)
         status = result.get("status")
         return ToolResult(
             success=result.get("success") is not False

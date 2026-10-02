@@ -362,6 +362,7 @@ def _adopted_with_work(term: Any) -> bool:
             getattr(term, "process_generation", 0)
         )
     except (TypeError, ValueError):
+        # A garbled generation counter just means no adoption to report.
         return False
 
 

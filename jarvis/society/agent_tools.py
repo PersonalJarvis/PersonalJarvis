@@ -219,6 +219,10 @@ class MessageAgentTool:
                         FailureReason.BLOCKED_BY_POLICY, "no success reply was requested"
                     )
         trace_id = parent.trace_id if parent is not None else None
+        if caller.agent_id == rt.lead_id and parent is None:
+            from jarvis.core.delegation import origin_metadata
+            config = getattr(ctx, "config", None) or {}
+            payload.update(origin_metadata(language=str(config.get("output_language") or "")))
         env = await rt.say(
             from_agent=caller.agent_id,
             to_agent=target.agent_id,
@@ -421,9 +425,8 @@ class MemoryRecallTool:
 class ProposeChangeTool:
     """``society_propose_change`` — configuration by chat (agent-definition §3.5).
 
-    The agent proposes ONE change to itself; the proposal parks in the
-    approvals queue and shows as a card in this chat. Nothing changes until
-    the person confirms it there — proposing is therefore a safe-tier action.
+    An explicit current request can apply in this turn. Inferred changes
+    park on a proposal card until confirmed; permission changes always do.
     """
 
     name: str = PROPOSE_TOOL_NAME
@@ -527,6 +530,7 @@ class ProposeChangeTool:
                 payload=args.get("payload"),
                 reason=str(args.get("reason") or ""),
                 session_id=self._session_id or caller.session_id,
+                resume_in_place=apply_now,
             )
         except ProposalRefused as exc:  # Return the proposal's explicit refusal reason.
             return _failure(exc.reason, exc.detail)
@@ -645,7 +649,7 @@ class ShellTool:
         verdict = decide(caller, "core:shell", tier, verb=level)
         if verdict is Verdict.BLOCK:
             return _failure(FailureReason.BLOCKED_BY_POLICY, "command class is blocked")
-        if verdict is Verdict.QUEUE:
+        if verdict is Verdict.QUEUE and getattr(ctx, "approved_by", None) != "user":
             item = await rt.approvals.enqueue(
                 agent_id=caller.agent_id,
                 trace_id=f"shell:{caller.agent_id}:{getattr(ctx, 'trace_id', '')}"[:120],

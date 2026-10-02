@@ -267,6 +267,33 @@ def test_start_login_raises_when_binary_missing(monkeypatch: pytest.MonkeyPatch)
         svc.start_login()
 
 
+@pytest.mark.parametrize("owned_status", ["ready", "finished"])
+def test_guarded_login_handoff_accepts_owned_profile(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    owned_status: str,
+) -> None:
+    """A completed login still holds its lock while awaiting parent release."""
+    guardian = codex_auth_module._GuardedCodexLoginProcess
+    statuses = iter(["waiting", owned_status])
+    monkeypatch.setattr(guardian, "_read_status", lambda _path: next(statuses))
+    released: list[bool] = []
+
+    class RunningGuardian:
+        def poll(self) -> None:
+            return None
+
+    release = tmp_path / "release"
+    guardian.establish_handoff(
+        RunningGuardian(),
+        tmp_path / "ack",
+        release,
+        lambda: released.append(True),
+    )
+    assert released == [True]
+    assert release.read_text(encoding="utf-8") == "acquire"
+
+
 def test_guarded_login_handoff_runs_real_guardian(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

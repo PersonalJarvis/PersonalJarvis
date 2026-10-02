@@ -136,6 +136,34 @@ async def test_bad_key_and_wrong_passphrase_are_sentences(
     assert computer_service.all() == []
 
 
+def test_protected_keys_can_be_unlocked_on_this_install() -> None:
+    """``asyncssh[bcrypt]`` is a declared dependency: ssh-keygen's default
+    format needs bcrypt's KDF, and without it no protected key can be added."""
+    from jarvis.computers import service
+
+    assert service._bcrypt_kdf_available()  # noqa: SLF001
+
+
+def test_a_missing_bcrypt_is_named_instead_of_blaming_the_passphrase(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jarvis.computers import service
+
+    def _locked(*_args: object, **_kwargs: object) -> object:
+        raise asyncssh.KeyEncryptionError(
+            "OpenSSH private key encryption requires bcrypt with KDF support"
+        )
+
+    monkeypatch.setattr(asyncssh, "import_private_key", _locked)
+    monkeypatch.setattr(service, "_bcrypt_kdf_available", lambda: False)
+    with pytest.raises(ComputerError) as caught:
+        # A header with a dummy body, split so secret scanners do not read it as a key.
+        service.import_private_key("-----BEGIN OPENSSH " + "PRIVATE KEY-----\nx", "pw")
+    assert caught.value.kind == "bad_key"
+    assert "bcrypt" in str(caught.value)
+    assert "passphrase does not unlock" not in str(caught.value)
+
+
 async def test_unknown_provider_is_refused(computer_service: ComputerService) -> None:
     with pytest.raises(ComputerError):
         await computer_service.add_server(name="x", host="127.0.0.1", provider="nope")

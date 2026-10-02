@@ -609,7 +609,9 @@ class _GuardedCodexLoginProcess:
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
             status = cls._read_status(acknowledgement)
-            if status == "ready":
+            # A fast login may finish before this poll observes "ready". The
+            # guardian still owns the profile until our explicit release.
+            if status in {"ready", "finished"}:
                 return
             if status == "busy":
                 raise RuntimeError(

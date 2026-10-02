@@ -2,7 +2,7 @@
 
 Mirrors ``jarvis/state/chat_store.py``: one ``sqlite3`` connection in WAL
 mode behind a ``threading.Lock`` (route handlers and the runner share the
-asyncio loop; the lock keeps a future worker-thread caller safe). Two tables:
+asyncio loop; the lock keeps a future worker-thread caller safe). Three tables:
 
 ``agent_chat_sessions``
     One row per session — title, the provider / model / effort the composer
@@ -13,6 +13,9 @@ asyncio loop; the lock keeps a future worker-thread caller safe). Two tables:
 ``agent_chat_events``
     The append-only event log (see :mod:`jarvis.agent_chat.events`), ordered
     by ``seq`` per session. Transient kinds are never written.
+
+``agent_chat_permission_overrides``
+    A user's explicit Society chat stance, kept apart from the roster ceiling.
 
 Ordering by ``seq`` (our own counter), not by wall clock: Windows ``time()``
 resolution can tie two fast appends.
@@ -55,8 +58,19 @@ CREATE TABLE IF NOT EXISTS agent_chat_events (
     payload     TEXT NOT NULL,
     PRIMARY KEY (session_id, seq)
 );
+CREATE TABLE IF NOT EXISTS agent_chat_permission_overrides (
+    session_id TEXT PRIMARY KEY,
+    mode TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_agent_chat_sessions_updated
     ON agent_chat_sessions(updated_ms DESC);
+CREATE TABLE IF NOT EXISTS jarvis_chat_selection (
+    id          INTEGER PRIMARY KEY CHECK (id = 1),
+    provider    TEXT NOT NULL,
+    model       TEXT NOT NULL DEFAULT '',
+    effort      TEXT NOT NULL DEFAULT '',
+    account_id  TEXT NOT NULL DEFAULT ''
+);
 """
 
 _TITLE_MAX_CHARS = 80
@@ -80,6 +94,19 @@ _PREVIEW_MAX_CHARS = 120
 #: brain runner with the agent's own hands, listed only inside the society.
 SURFACES: Final[tuple[str, ...]] = ("jarvis", "agent", "local-models", "society")
 DEFAULT_SURFACE: Final[str] = "agent"
+
+
+@dataclass(frozen=True, slots=True)
+class ChatSelection:
+    """The last explicit Jarvis chat pick, independent of viewed history or voice."""
+
+    provider: str
+    model: str = ""
+    effort: str = ""
+    account_id: str = ""
+
+    def to_dict(self) -> dict[str, str]:
+        return asdict(self)
 
 
 @dataclass(slots=True)
@@ -155,6 +182,44 @@ class AgentChatStore:
     def close(self) -> None:
         with self._lock:
             self._conn.close()
+
+    def chat_selection(self) -> ChatSelection | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM jarvis_chat_selection WHERE id = 1").fetchone()
+            if row is None:
+                # Upgrade installs whose last choice exists only in chat history.
+                # Agent replies and automatic control turns must not win recency.
+                history = self._conn.execute(
+                    "SELECT s.provider, s.model, s.effort, s.account_id, e.payload "
+                    "FROM agent_chat_sessions s JOIN agent_chat_events e USING (session_id) "
+                    "WHERE s.surface = 'jarvis' AND e.kind = 'user_message' "
+                    "ORDER BY e.ts_ms DESC, e.seq DESC"
+                )
+                for previous in history:
+                    if (
+                        previous["provider"]
+                        and json.loads(previous["payload"]).get("origin") != "control"
+                    ):
+                        row = previous
+                        break
+        if row is None:
+            return None
+        return ChatSelection(
+            **{key: row[key] for key in ("provider", "model", "effort", "account_id")}
+        )
+
+    def save_chat_selection(self, selection: ChatSelection) -> None:
+        if not selection.provider.strip():
+            raise ValueError("A chat selection needs a provider")
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO jarvis_chat_selection (id, provider, model, effort, account_id) "
+                "VALUES (1, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET "
+                "provider=excluded.provider, model=excluded.model, "
+                "effort=excluded.effort, account_id=excluded.account_id",
+                (selection.provider, selection.model, selection.effort, selection.account_id),
+            )
+            self._conn.commit()
 
     # ------------------------------------------------------------ sessions
 
@@ -244,6 +309,24 @@ class AgentChatStore:
             self._conn.commit()
         return self.get_session(session_id)
 
+    def permission_override(self, session_id: str) -> str:
+        """The user's explicit stance, separate from a Society roster ceiling."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT mode FROM agent_chat_permission_overrides WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        return str(row[0]) if row else ""
+
+    def set_permission_override(self, session_id: str, mode: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO agent_chat_permission_overrides (session_id, mode) VALUES (?, ?) "
+                "ON CONFLICT(session_id) DO UPDATE SET mode = excluded.mode",
+                (session_id, mode),
+            )
+            self._conn.commit()
+
     def data_version(self) -> int:
         """How many one-shot data migrations this file has already had.
 
@@ -293,6 +376,9 @@ class AgentChatStore:
                 "DELETE FROM agent_chat_sessions WHERE session_id = ?", (session_id,)
             )
             self._conn.execute("DELETE FROM agent_chat_events WHERE session_id = ?", (session_id,))
+            self._conn.execute(
+                "DELETE FROM agent_chat_permission_overrides WHERE session_id = ?", (session_id,)
+            )
             self._conn.commit()
         return cur.rowcount > 0
 
@@ -380,6 +466,17 @@ class AgentChatStore:
             "kind": row["kind"],
             "payload": json.loads(row["payload"]),
         }
+
+    def turn_has_text_before(self, session_id: str, turn_id: str, before_seq: int) -> bool:
+        """Whether this exact turn wrote a nonblank answer before its terminal."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT 1 FROM agent_chat_events WHERE session_id = ? AND seq < ? "
+                "AND kind = 'assistant_text' AND json_extract(payload, '$.turn_id') = ? "
+                "AND trim(coalesce(json_extract(payload, '$.text'), '')) <> '' LIMIT 1",
+                (session_id, before_seq, turn_id),
+            ).fetchone()
+        return row is not None
 
     def list_events(
         self, session_id: str, *, after_seq: int = 0, tail: int | None = None

@@ -285,7 +285,7 @@ async def _login_path(session: Session) -> str | None:
             answer = await run_command(
                 session, "/bin/sh -s", timeout_s=timeout, stdin=login_path_script(flags)
             )
-        except SshError:
+        except SshError:  # Failed shell probe: try the next mode, then known paths.
             continue
         path = parse_login_path(answer.stdout)
         if path:

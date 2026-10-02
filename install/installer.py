@@ -41,6 +41,7 @@ import argparse
 import json
 import os
 import platform
+import shlex
 import shutil
 import stat
 import subprocess
@@ -360,13 +361,15 @@ def repair_distribution_metadata(
 
 
 def step_pip_install(*, with_desktop: bool, with_voice_local: bool, dry_run: bool) -> None:
+    from scripts.native_crypto_index import pip_options
+
     phase("4/6", "Dependencies")
     pip = [str(venv_python()), "-m", "pip"]
 
     # ``requirements.txt`` is the Wave 6 hash-pinned, PLATFORM-UNIVERSAL lockfile
-    # generated from ``requirements.in`` (top-level deps mirrored from
-    # ``pyproject.toml [project].dependencies``) by ``uv pip compile --universal
-    # --generate-hashes``. It carries per-OS environment markers so ONE lockfile
+    # generated from ``pyproject.toml [project].dependencies`` (mirrored by
+    # ``requirements.in``) using ``uv pip compile --universal --generate-hashes``
+    # and the scoped native-crypto config. Per-OS markers let ONE lockfile
     # installs on Windows/macOS/Linux (each OS pulls only its wheels). Every
     # package-pinning line carries ``--hash=sha256:...`` so an attacker who compromises a PyPI
     # mirror cannot swap out a transitive dependency without invalidating
@@ -382,7 +385,7 @@ def step_pip_install(*, with_desktop: bool, with_voice_local: bool, dry_run: boo
                         pip + ["install", "--require-hashes", "-r", "requirements.txt"])
     else:
         runtime_step = ("runtime dependencies (cloud-first base)",
-                        pip + ["install", "-e", "."])
+                        pip + ["install", *pip_options(), "-e", "."])
 
     plans: list[tuple[str, list[str]]] = [
         ("editable install (entry-points)", pip + ["install", "-e", ".", "--no-deps"]),
@@ -394,7 +397,7 @@ def step_pip_install(*, with_desktop: bool, with_voice_local: bool, dry_run: boo
         # this OS cannot use. --headless keeps the torch-free base floor.
         # ``with_voice_local`` is a deprecated no-op: [full] already carries it.
         plans.append(("full profile extras (desktop, telephony, channels, local voice)",
-                      pip + ["install", "-e", ".[full]"]))
+                      pip + ["install", *pip_options(), "-e", ".[full]"]))
     plans.append(("dependency consistency check", pip + ["check"]))
 
     note("this can take a minute — grabbing dependencies")
@@ -799,7 +802,9 @@ def step_launch(*, headless: bool, dry_run: bool) -> None:
         msg = "the Desktop App"
 
     # └ closes the connected journey the Stage-1 shell opened with ┌.
-    console.print(f"[muted]└[/]  [brand]Launching {msg}[/] [muted]— the app takes over from here…[/]")
+    console.print(
+        f"[muted]└[/]  [brand]Launching {msg}[/] [muted]— the app takes over from here…[/]"
+    )
     hint = _relaunch_command(headless=headless)
     if dry_run:
         console.print(f"[muted]     (dry-run) {' '.join(cmd)}[/]")
@@ -820,6 +825,43 @@ def step_launch(*, headless: bool, dry_run: bool) -> None:
     # command behind — this is the line the user needs when the window never
     # appears (macOS first-launch permission prompt, background launch, …).
     console.print(f"[muted]     If it doesn't open, run:[/] [brand]{hint}[/]")
+
+
+def step_cli_links(*, dry_run: bool) -> None:
+    """Expose Linux venv entry points without replacing unrelated commands."""
+    if not sys.platform.startswith("linux"):
+        return
+    bin_dir = Path.home() / ".local" / "bin"
+    for command in ("jarvis", "jarvisctl"):
+        target = repo_root() / ".venv" / "bin" / command
+        link = bin_dir / command
+        if dry_run:
+            note(f"(dry-run) CLI link: {rich_escape(str(link))} -> {rich_escape(str(target))}")
+            continue
+        try:
+            if not target.is_file():
+                note(f"CLI entry point missing: {rich_escape(str(target))}")
+                continue
+            if link.is_symlink() and link.resolve() == target.resolve():
+                continue
+            if link.exists() or link.is_symlink():
+                note(
+                    f"Keeping existing {rich_escape(str(link))}; "
+                    f"use {rich_escape(str(target))}"
+                )
+                continue
+            bin_dir.mkdir(parents=True, exist_ok=True)
+            link.symlink_to(target)
+        except OSError as exc:
+            note(
+                f"Could not create CLI link: {rich_escape(str(exc))}; "
+                f"use {rich_escape(str(target))}"
+            )
+    if str(bin_dir) not in os.environ.get("PATH", "").split(os.pathsep):
+        export = f"export PATH={shlex.quote(str(bin_dir))}:\"$PATH\""
+        note("To use jarvis / jarvisctl in this shell:")
+        console.print(export, markup=False, highlight=False, soft_wrap=True)
+        note("Add that line to your shell profile to keep the commands on PATH.")
 
 
 def step_summary(*, no_launch: bool, update: bool, headless: bool) -> None:
@@ -847,7 +889,9 @@ def step_summary(*, no_launch: bool, update: bool, headless: bool) -> None:
     if update:
         rows.append(("Next", "your setup and settings are kept - no re-onboarding", "muted"))
     elif headless or is_headless_linux():
-        rows.append(("Next", f"open http://localhost:{_resolved_admin_port()} in your browser -", "muted"))
+        rows.append(
+            ("Next", f"open http://localhost:{_resolved_admin_port()} in your browser -", "muted")
+        )
         rows.append(("", "the one-time setup guide (language, wake word,", "muted"))
         rows.append(("", "API keys) runs there, once", "muted"))
     else:
@@ -870,7 +914,7 @@ def step_summary(*, no_launch: bool, update: bool, headless: bool) -> None:
     console.print(GUTTER)
     console.print(f"[ok]◇[/]  [ok.bold]{title}[/]  [brand.deep]{top_dashes}╮[/]")
     console.print(f"[brand.deep]│[/]{' ' * (inner_w + 5)}[brand.deep]│[/]")
-    for (key, value, vstyle), p in zip(rows, plain):
+    for (key, value, vstyle), p in zip(rows, plain, strict=True):
         pad = " " * (inner_w - len(p))
         console.print(
             f"[brand.deep]│[/]  [muted]{key:<{key_w}}[/] "
@@ -943,6 +987,7 @@ def main(argv: list[str] | None = None) -> int:
         run_noted(browser_cmd, label="preparing the agent browser", cwd=repo_root())
 
     phase("6/6", "Finish & launch")
+    step_cli_links(dry_run=args.dry_run)
     step_worker_cli(dry_run=args.dry_run)
     if not step_desktop_integration(enabled=with_desktop, dry_run=args.dry_run):
         sys.exit(4)

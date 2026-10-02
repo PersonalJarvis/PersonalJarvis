@@ -14,13 +14,16 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 import { Terminal as TerminalIcon, AlertCircle } from "lucide-react";
 import { installNewlineBridge } from "../agentic/terminalNewline";
+import { FONT_DEFAULT } from "../agentic/paneFont";
 import {
   MINIMUM_CONTRAST_RATIO,
   PANE_CHROME,
   themeFor,
+  type TerminalAppearance,
 } from "../agentic/terminalThemes";
 import { useThemeValue } from "@/hooks/useTheme";
 import { TERMINAL_FONT_STACK, syncTerminalFont } from "@/lib/terminalFont";
+import { requestConnect } from "@/lib/connectBudget";
 import {
   activateTerminalLink,
   TERMINAL_OSC_LINK_HANDLER,
@@ -35,6 +38,10 @@ interface WorkspaceTerminalProps {
   agentName?: string;
   /** Run an agent's installer by name; mutually exclusive with agentName. */
   installName?: string;
+  /** Plain terminals are pinned to the workspace chosen when the tab opens. */
+  workspaceId?: string;
+  active?: boolean;
+  appearance?: TerminalAppearance;
   /**
    * A line to print before anything the process says.
    *
@@ -63,12 +70,19 @@ export function WorkspaceTerminal({
   installName,
   title,
   banner,
+  workspaceId,
+  active = true,
+  appearance: requestedAppearance,
 }: WorkspaceTerminalProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const [status, setStatus] = useState<Status>("connecting");
   const [error, setError] = useState<string | null>(null);
-  const appearance = useThemeValue();
+  const appAppearance = useThemeValue();
+  const appearance = requestedAppearance ?? appAppearance;
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  const resizeRef = useRef<() => void>(() => {});
   // Read through a ref inside the setup effect: the theme must NOT be a
   // dependency there, or switching it would tear down the PTY WebSocket and
   // restart the agent. Recolouring happens in its own effect below.
@@ -87,7 +101,7 @@ export function WorkspaceTerminal({
     const term = new Terminal({
       convertEol: false,
       fontFamily: TERMINAL_FONT_STACK,
-      fontSize: 12,
+      fontSize: FONT_DEFAULT,
       lineHeight: 1.15,
       cursorBlink: true,
       scrollback: 5000,
@@ -122,10 +136,12 @@ export function WorkspaceTerminal({
     }
 
     let ws: WebSocket | null = null;
+    let cancelConnect: () => void = () => {};
     let disposed = false;
     let everLive = false;
 
     const sendResize = () => {
+      if (disposed || !activeRef.current || container.clientWidth === 0 || container.clientHeight === 0) return;
       try {
         fit.fit();
       } catch {
@@ -135,6 +151,7 @@ export function WorkspaceTerminal({
         ws.send(JSON.stringify({ t: "r", cols: term.cols, rows: term.rows }));
       }
     };
+    resizeRef.current = sendResize;
 
     // The fit above measured whatever font had loaded by then. If the display
     // font lands afterwards, the grid keeps the fallback's cell width while the
@@ -153,64 +170,76 @@ export function WorkspaceTerminal({
       };
       if (agentName) params.agent = agentName;
       else if (installName) params.install = installName;
+      if (workspaceId) params.workspace_id = workspaceId;
 
-      ws = new WebSocket(buildUrl(paneKey, params));
-      ws.onopen = () => {
-        setStatus("connecting");
-        // Push the ACTUAL pane size to the PTY now that we can send. The spawn
-        // used a best-effort size (the mount-time fit often runs before the
-        // grid cell is measured), and resizes fired while the socket was still
-        // connecting were dropped — so without this the agent's full-screen TUI
-        // keeps drawing at the wrong dimensions (cramped / clipped on the
-        // right). A second deferred fit catches any late grid layout.
-        sendResize();
-        requestAnimationFrame(sendResize);
-      };
-      ws.onmessage = (ev) => {
-        let msg: { t?: string; d?: string; code?: number; message?: string };
+      // Workspace panes share the same connection budget as the app and IDE
+      // sockets. A grid mounting at once must not bypass the wake-storm cap.
+      cancelConnect = requestConnect(() => {
+        if (disposed) return;
         try {
-          msg = JSON.parse(ev.data as string);
+          ws = new WebSocket(buildUrl(paneKey, params));
         } catch {
+          setStatus("error");
+          setError("Connection to the terminal failed.");
           return;
         }
-        if (msg.t === "o") term.write(msg.d ?? "");
-        else if (msg.t === "ready") {
-          everLive = true;
-          setStatus("live");
-          term.focus();
-        } else if (msg.t === "exit") {
-          setStatus("exited");
-          term.write(`\r\n\x1b[33m[process exited: ${msg.code ?? "?"}]\x1b[0m\r\n`);
-        } else if (msg.t === "error") {
+        ws.onopen = () => {
+          setStatus("connecting");
+          // Push the ACTUAL pane size to the PTY now that we can send. The spawn
+          // used a best-effort size (the mount-time fit often runs before the
+          // grid cell is measured), and resizes fired while the socket was still
+          // connecting were dropped — so without this the agent's full-screen TUI
+          // keeps drawing at the wrong dimensions (cramped / clipped on the
+          // right). A second deferred fit catches any late grid layout.
+          sendResize();
+          requestAnimationFrame(sendResize);
+        };
+        ws.onmessage = (ev) => {
+          let msg: { t?: string; d?: string; code?: number; message?: string };
+          try {
+            msg = JSON.parse(ev.data as string);
+          } catch {
+            return;
+          }
+          if (msg.t === "o") term.write(msg.d ?? "");
+          else if (msg.t === "ready") {
+            everLive = true;
+            setStatus("live");
+            if (activeRef.current) term.focus();
+          } else if (msg.t === "exit") {
+            setStatus("exited");
+            term.write(`\r\n\x1b[33m[process exited: ${msg.code ?? "?"}]\x1b[0m\r\n`);
+          } else if (msg.t === "error") {
+            setStatus("error");
+            setError(msg.message ?? "terminal error");
+          }
+        };
+        ws.onerror = () => {
           setStatus("error");
-          setError(msg.message ?? "terminal error");
-        }
-      };
-      ws.onerror = () => {
-        setStatus("error");
-        setError("Connection to the terminal failed.");
-      };
-      ws.onclose = (ev) => {
-        if (everLive) {
-          setStatus("exited");
-        } else if (!disposed) {
-          // Closed during the handshake (e.g. 4401 auth) — surface it honestly
-          // instead of hanging on "connecting" forever (mirrors PtyTerminal).
-          setStatus("error");
-          setError((e) =>
-            e ??
-            (ev.code === 4401
-              ? "Terminal authorization failed — reopen to retry."
-              : `Terminal connection closed (code ${ev.code || "?"}).`),
-          );
-        }
-      };
+          setError("Connection to the terminal failed.");
+        };
+        ws.onclose = (ev) => {
+          if (everLive) {
+            setStatus("exited");
+          } else if (!disposed) {
+            // Closed during the handshake (e.g. 4401 auth) — surface it honestly
+            // instead of hanging on "connecting" forever (mirrors PtyTerminal).
+            setStatus("error");
+            setError((e) =>
+              e ??
+              (ev.code === 4401
+                ? "Terminal authorization failed — reopen to retry."
+                : `Terminal connection closed (code ${ev.code || "?"}).`),
+            );
+          }
+        };
 
-      term.onData((data) => {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ t: "i", d: data }));
-        }
-      });
+        term.onData((data) => {
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ t: "i", d: data }));
+          }
+        });
+      }, 0);
     }
 
     window.addEventListener("resize", sendResize);
@@ -219,6 +248,8 @@ export function WorkspaceTerminal({
 
     return () => {
       disposed = true;
+      cancelConnect();
+      resizeRef.current = () => {};
       window.removeEventListener("resize", sendResize);
       ro.disconnect();
       disposeFontSync();
@@ -226,12 +257,21 @@ export function WorkspaceTerminal({
       try {
         ws?.close();
       } catch {
-        /* ignore */
+        /* The socket is already closed; terminal cleanup still must run. */
       }
       term.dispose();
       termRef.current = null;
     };
-  }, [paneKey, agentName, installName]);
+  }, [paneKey, agentName, installName, workspaceId]);
+
+  useEffect(() => {
+    if (!active) return;
+    const frame = requestAnimationFrame(() => {
+      resizeRef.current();
+      termRef.current?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [active]);
 
   // Recolour in place on a theme switch. xterm repaints from the new palette
   // without touching the buffer, so scrollback and the live PTY both survive.

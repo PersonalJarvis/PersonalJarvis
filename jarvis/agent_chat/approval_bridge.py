@@ -90,6 +90,8 @@ class ChatGrant:
     #: this turn (Claude Code's ``can_use_tool``): the executor's gate for the
     #: same tool is answered without a second card.
     pre_approved: set[str] = field(default_factory=set)
+    #: Society's explicit require-approval rules override Bypass.
+    force_ask: Callable[[str, dict[str, Any]], bool] = field(default=lambda _name, _args: False)
 
 
 class ChatApprovalBridge:
@@ -138,8 +140,10 @@ class ChatApprovalBridge:
             grant = self._grants.get(ref) if ref else None
             if grant is None:
                 return
-            decision = self._decide_inline(grant, event.tool_name)
+            args = self._args.get(event.trace_id) or {}
+            decision = self._decide_inline(grant, event.tool_name, args)
             if decision is not None:
+                self._args.pop(event.trace_id, None)
                 await self._bus.publish(
                     ActionApproved(
                         trace_id=event.trace_id,
@@ -160,10 +164,16 @@ class ChatApprovalBridge:
     # ------------------------------------------------------------ policy
 
     @staticmethod
-    def _decide_inline(grant: ChatGrant, tool_name: str) -> str | None:
+    def _decide_inline(
+        grant: ChatGrant, tool_name: str, args: dict[str, Any] | None = None
+    ) -> str | None:
         """The ``approved_by`` label when the stance decides without a card, else None."""
         name = _bare(tool_name)
+        if grant.stance == "always_ask" or grant.force_ask(name, args or {}):
+            return None
         if grant.stance == "bypass":
+            if grant.force_ask(name, args or {}):
+                return None
             return "chat-bypass"
         if name in grant.always_allowed:
             return "user"

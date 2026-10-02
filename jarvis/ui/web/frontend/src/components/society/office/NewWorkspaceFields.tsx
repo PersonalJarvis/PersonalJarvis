@@ -9,6 +9,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import { useT } from "@/i18n";
 import type { IdeProject } from "@/lib/agenticIdeApi";
+import { BrandedSelect } from "@/components/ui/select";
 
 const FolderPicker = lazy(() => import("@/components/agentic/FolderPicker").then((module) => ({ default: module.FolderPicker })));
 
@@ -46,22 +47,23 @@ export function NewWorkspaceFields({ projects, target, onTarget, name, onName, d
 
   return (
     <>
-      <label className="office-mc-row">
+      <div className="office-mc-row" title={target?.path}>
         <span>{t("society.office.mission_ws_folder")}</span>
-        <select value={value} disabled={disabled} title={target?.path}
-          onChange={(e) => {
+        <BrandedSelect value={value} disabled={disabled} ariaLabel={t("society.office.mission_ws_folder")}
+          placeholder={t("society.office.mission_ws_pick")} className="office-mc-select px-2 py-1.5 text-xs"
+          options={[
+            ...projects.map((p) => ({ value: p.id, label: p.name, searchText: p.path })),
+            ...(target && !target.projectId ? [{ value, label: target.label, searchText: target.path }] : []),
+            { value: PICK, label: t("society.office.mission_ws_choose") },
+          ]}
+          onValueChange={(next) => {
             // Picking "choose a folder" leaves the select on what it showed
             // before, so closing the window without a choice changes nothing.
-            if (e.target.value === PICK) { setCandidate(target?.path ?? null); setPicking(true); return; }
-            const project = projects.find((p) => p.id === e.target.value);
+            if (next === PICK) { setCandidate(target?.path ?? null); setPicking(true); return; }
+            const project = projects.find((p) => p.id === next);
             if (project) onTarget({ path: project.path, label: project.name, projectId: project.id });
-          }}>
-          {!target && <option value="" disabled>{t("society.office.mission_ws_pick")}</option>}
-          {projects.map((p) => <option key={p.id} value={p.id} title={p.path}>{p.name}</option>)}
-          {target && !target.projectId && <option value={value} title={target.path}>{target.label}</option>}
-          <option value={PICK}>{t("society.office.mission_ws_choose")}</option>
-        </select>
-      </label>
+          }} />
+      </div>
       <label className="office-mc-row">
         <span>{t("society.office.mission_ws_name")}</span>
         <input className="office-mc-input" value={name} maxLength={80} disabled={disabled}
@@ -71,13 +73,13 @@ export function NewWorkspaceFields({ projects, target, onTarget, name, onName, d
       <Dialog.Root open={picking} onOpenChange={setPicking}>
         <Dialog.Portal>
           <Dialog.Overlay className="fixed inset-0 z-[90] bg-[rgb(var(--scrim-rgb)/0.4)]" />
-          <Dialog.Content className="fixed left-1/2 top-1/2 z-[91] flex max-h-[85vh] w-[min(680px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col rounded-xl border border-border bg-popover p-4 text-foreground shadow-float">
+          <Dialog.Content onEscapeKeyDown={(e) => { if (e.target instanceof Element && e.target.closest("[data-escape-local]")) e.preventDefault(); }} className="fixed left-1/2 top-1/2 z-[91] flex max-h-[85vh] w-[min(680px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col rounded-xl border border-border bg-popover p-4 text-foreground shadow-float">
             <Dialog.Title className="pr-8 text-sm font-semibold">{t("society.office.mission_ws_choose_title")}</Dialog.Title>
             <Dialog.Description className="mt-1 text-xs text-muted-foreground">{t("society.office.mission_ws_choose_hint")}</Dialog.Description>
             <Dialog.Close aria-label={t("society.office.mission_ws_close")} className="absolute right-3 top-3 rounded p-1 hover:bg-secondary"><X className="h-4 w-4" /></Dialog.Close>
             <div className="my-3 min-h-0 overflow-auto">
               <Suspense fallback={<p className="text-xs text-muted-foreground">{t("society.office.mission_loading")}</p>}>
-                {picking && <FolderPicker selected={candidate} onSelect={setCandidate} />}
+                {picking && <FolderPicker selected={candidate} onSelect={setCandidate} className="p-0" />}
               </Suspense>
             </div>
             <button type="button" disabled={!candidate}

@@ -19,7 +19,7 @@ class ModeBody(BaseModel):
 
 
 @router.get("")
-async def list_app_actions() -> dict[str, Any]:
+def list_app_actions() -> dict[str, Any]:
     from jarvis.app_actions.catalog import live_catalog
     from jarvis.app_actions.policy import effective_tier, load_policy
 
@@ -36,7 +36,7 @@ async def list_app_actions() -> dict[str, Any]:
 
 
 @router.put("/{action_id}/mode")
-async def set_app_action_mode(action_id: str, body: ModeBody) -> dict[str, Any]:
+def set_app_action_mode(action_id: str, body: ModeBody) -> dict[str, Any]:
     from jarvis.app_actions.catalog import live_catalog
     from jarvis.app_actions.policy import effective_tier, set_mode
 
@@ -48,7 +48,7 @@ async def set_app_action_mode(action_id: str, body: ModeBody) -> dict[str, Any]:
 
 
 @router.get("/history")
-async def app_action_history(limit: int = 50) -> dict[str, Any]:
+def app_action_history(limit: int = 50) -> dict[str, Any]:
     from jarvis.app_actions import history
     from jarvis.app_actions.catalog import live_catalog
 

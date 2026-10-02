@@ -188,6 +188,9 @@ async def open_session(target: SshTarget, *, timeout_s: float = CONNECT_TIMEOUT_
         # Keys only; a password offer is noted, never answered.
         options["preferred_auth"] = "publickey,keyboard-interactive,password"
         options["client_factory"] = _password_probe(offered)
+    from jarvis.computers.ssh_packet_guard import guarded_client_factory
+
+    options["client_factory"] = guarded_client_factory(options.get("client_factory"))
     started = time.perf_counter()
     try:
         conn = await asyncssh.connect(target.host, **options)

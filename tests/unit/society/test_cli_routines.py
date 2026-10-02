@@ -128,6 +128,11 @@ async def test_explicit_cli_request_schedules_and_reads_back(world, quote):
     try:
         result = json.loads(await call(world, "society_propose_change", args(quote)))
         assert result["applied"] is True
+        assert result["proposal"]["action"]["resume_in_place"] is True
+        events = await world.rt.store.events_since()
+        assert not any(str(e.msg_type) == "RELEASE" and e.to_agent == "scout" for e in events)
+        notices = world.rt.chat_service().notices
+        assert not any(n.get("kind") == "proposal" for _, n in notices)
         saved = json.loads(await call(world, "society_routines"))
         assert saved["timezone"] == "America/New_York"
         assert len(saved["routines"]) == 1
@@ -172,6 +177,21 @@ async def test_read_only_session_can_inspect_but_not_schedule(world):
     assert "society_propose_change" not in catalog
     assert "no longer available" in await call(world, "society_propose_change", args("yes"))
     assert world.tasks.rows == []
+
+
+async def test_cli_catalog_uses_bound_chat_approval_mode(world):
+    world.store.update_session("society:scout", permission_mode="always_ask")
+    catalog = {tool.name: tool for tool in await world.gateway.session_catalog("society:scout")}
+    assert catalog["Read"].risk_tier == "safe"
+    assert catalog["Read"].risk_tier_for_args({"file_path": "note.txt"}) == "ask"
+
+
+async def test_legacy_cli_agent_honors_explicit_chat_override(world):
+    await world.rt.store.update_agent("scout", {"approval_mode": None})
+    world.store.set_permission_override("society:scout", "always_ask")
+    world.store.update_session("society:scout", permission_mode="always_ask")
+    catalog = {tool.name: tool for tool in await world.gateway.session_catalog("society:scout")}
+    assert catalog["Read"].risk_tier_for_args({"file_path": "note.txt"}) == "ask"
 
 
 async def test_grants_are_checked_again_at_call_time(world):
@@ -227,9 +247,23 @@ def test_resumed_society_seat_refreshes_routine_contract(monkeypatch, tmp_path):
         identity=identity,
     )
     assert "mcp_servers.jarvis.required=true" in plan.argv
-    assert 'mcp_servers.jarvis.tools.society_propose_change.approval_mode="approve"' in plan.argv
+    # Codex exec cannot answer its own MCP prompts; every Jarvis tool defers
+    # to the session catalog and ToolExecutor, which own the approval card.
+    assert 'mcp_servers.jarvis.default_tools_approval_mode="approve"' in plan.argv
     assert 'mcp_servers.jarvis.tools.society_browser.approval_mode="approve"' in plan.argv
-    assert not any("default_tools_approval_mode" in arg for arg in plan.argv)
+    # A society seat gets no vendor-native hands that would bypass that gate.
+    assert 'sandbox_mode="read-only"' in plan.argv
+    assert 'approval_policy="never"' in plan.argv
+    for feature in ("shell_tool", "apps", "browser_use", "computer_use", "web_search_request"):
+        index = plan.argv.index(feature)
+        assert plan.argv[index - 1] == "--disable"
+    assert "--dangerously-bypass-approvals-and-sandbox" not in plan.argv
+    # The blanket approve is only for society seats, never an ordinary chat.
+    for session_id in (None, "ordinary-chat"):
+        assert not any(
+            "default_tools_approval_mode" in arg
+            for arg in jarvis_harness.codex_config_args(session_id)
+        )
     assert "society_propose_change" in plan.stdin_text
     assert "LARGE OLD IDENTITY" not in plan.stdin_text
     assert plan.stdin_text.endswith("Check comments every hour")

@@ -4,8 +4,7 @@
  * A drop on a pane goes straight to that pane's terminal. Here the terminal
  * does not exist yet, so a drop is only READ now and handed to each new pane
  * once it is live. The reading is the pane's own — the same drag tracking
- * (`usePaneFileDrag`), payload extraction (`paneDrop`) and desktop-shell path
- * resolution (`waitForNativeDrop`) — so the two surfaces cannot disagree about
+ * (`usePaneFileDrag`) and payload extraction (`paneDrop`) so the surfaces agree about
  * what a drop is.
  */
 import { useCallback, useState, type ClipboardEvent } from "react";
@@ -18,7 +17,6 @@ import {
 } from "@/components/agentic/paneDrop";
 import { usePaneFileDrag } from "@/components/agentic/paneFileDrag";
 import type { DropAttachment } from "@/lib/agenticIdeApi";
-import { waitForNativeDrop } from "@/lib/nativeDrop";
 
 /** One held file: a real path the drag carried, or bytes it gave no path for. */
 export interface HeldFile {
@@ -87,20 +85,9 @@ export function useSpawnFiles() {
   const { dragging, handlers } = usePaneFileDrag(
     useCallback(
       (dt: DataTransfer) => {
-        // Both reads happen BEFORE any await: a DataTransfer empties the moment
-        // this handler returns, and the desktop shell only answers a listener
-        // that was already in place when the drop happened.
-        const payload = extractPaneDrop(dt);
-        void waitForNativeDrop().then((detail) => {
-          if (!detail?.paths.length) return hold(payload);
-          // Inside the desktop shell the real path beats a byte copy of the
-          // same file; drop the copies the shell just accounted for.
-          const named = new Set(detail.names.map((n) => n.toLowerCase()));
-          hold({
-            paths: Array.from(new Set([...payload.paths, ...detail.paths])),
-            files: payload.files.filter((f) => !named.has(f.name.toLowerCase())),
-          });
-        });
+        // Native path hints can originate in foreign drag metadata on some
+        // WebViews. Only granted bytes and internal explorer receipts attach.
+        hold(extractPaneDrop(dt));
       },
       [hold],
     ),

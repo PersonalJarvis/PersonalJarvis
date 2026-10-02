@@ -67,6 +67,26 @@ async def test_inherit_fills_blank_seat_and_permissions_and_caps_a_raise(tmp_pat
     assert "core:run-shell" in capped["denies"] and "core:search-web" in capped["denies"]
 
 
+async def test_inherit_never_loosens_the_creators_approval_mode(tmp_path: Path) -> None:
+    runtime = SocietyRuntime(tmp_path, seed_starter_team=False)
+    await runtime.ensure_started()
+    try:
+        asker, _ = await runtime.roster.create(name="Asker", approval_mode="ask")
+        assert inherit_creator_fields({}, asker)["approval_mode"] == "ask"
+        raised = inherit_creator_fields({"approval_mode": "bypass"}, asker)
+        assert raised["approval_mode"] == "ask"
+        stricter = inherit_creator_fields({"approval_mode": "always_ask"}, asker)
+        assert stricter["approval_mode"] == "always_ask"
+        bogus = inherit_creator_fields({"approval_mode": "yolo"}, asker)
+        assert bogus["approval_mode"] == "ask"
+
+        careful, _ = await runtime.roster.create(name="Careful", approval_mode="always_ask")
+        kid = inherit_creator_fields({"approval_mode": "bypass"}, careful)
+        assert kid["approval_mode"] == "always_ask"
+    finally:
+        await runtime.close()
+
+
 async def test_create_from_society_session_inherits_seat_and_permissions(tmp_path: Path) -> None:
     client, runtime = _client(tmp_path)
     await runtime.ensure_started()
@@ -135,12 +155,15 @@ async def test_ui_create_without_session_keeps_defaults_and_explicit_seat(tmp_pa
     assert blank["provider"] == ""
     assert blank["model"] == ""
     assert blank["account_id"] == ""
-    assert blank["permission_ceiling"] == "monitor"
+    # New agents default to Bypass under an ask ceiling.
+    assert blank["permission_ceiling"] == "ask"
+    assert blank["approval_mode"] == "bypass"
     assert blank["grant_mode"] == "all"
     assert blank["parent_agent_id"] is None
     assert picked["provider"] == "openai"
     assert picked["model"] == "gpt-5"
     assert picked["permission_ceiling"] == "safe"
+    assert picked["approval_mode"] == "bypass"
     assert picked["grant_mode"] == "all"
 
 
@@ -151,7 +174,8 @@ async def test_paused_creator_session_does_not_inherit(tmp_path: Path) -> None:
         name="Bot Maker",
         provider="grok-build",
         model="grok-4.6",
-        permission_ceiling="ask",
+        permission_ceiling="safe",
+        approval_mode="always_ask",
     )
     await runtime.roster.update(creator.agent_id, {"state": AgentState.PAUSED})
     with client as c:
@@ -161,5 +185,6 @@ async def test_paused_creator_session_does_not_inherit(tmp_path: Path) -> None:
             headers={"X-Jarvis-Chat-Session": creator.session_id},
         ).json()["agent"]
     assert agent["provider"] == ""
-    assert agent["permission_ceiling"] == "monitor"
+    assert agent["permission_ceiling"] == "ask"
+    assert agent["approval_mode"] == "bypass"
     assert agent["parent_agent_id"] is None

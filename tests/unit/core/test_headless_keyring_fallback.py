@@ -6,6 +6,7 @@ VPS downloader can paste a key in the UI and have it persist.
 """
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import threading
@@ -14,6 +15,31 @@ from pathlib import Path
 import pytest
 
 import jarvis.core.config as cfg
+
+
+@pytest.mark.parametrize("retain_platform_backend", [False, True])
+def test_file_backend_logs_expected_headless_fallback_without_warning(
+    monkeypatch, tmp_path, caplog, retain_platform_backend
+):
+    import keyring
+    from keyring.backends import fail
+
+    monkeypatch.setattr(keyring, "get_keyring", lambda: fail.Keyring())
+    monkeypatch.setattr(keyring, "set_keyring", lambda backend: None)
+    monkeypatch.setattr(cfg, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(cfg, "_FILE_BACKEND_ACTIVE", False)
+    monkeypatch.setattr(cfg, "_PLATFORM_KEYRING_BACKEND", None)
+    with caplog.at_level(logging.INFO, logger=cfg.__name__):
+        assert cfg._install_file_cred_backend(
+            "test fallback", retain_platform_backend=retain_platform_backend
+        )
+        assert cfg._install_file_cred_backend(
+            "test fallback", retain_platform_backend=retain_platform_backend
+        )
+    messages = [r for r in caplog.records if "OS credential store unusable" in r.message]
+    assert len(messages) == 1
+    expected = logging.WARNING if retain_platform_backend else logging.INFO
+    assert messages[0].levelno == expected
 
 
 def test_file_cred_store_roundtrip(tmp_path):

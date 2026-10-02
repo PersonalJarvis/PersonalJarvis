@@ -68,7 +68,7 @@ if TYPE_CHECKING:
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="jarvis",
-        description="Personal Jarvis — voice-driven meta-orchestrator.",
+        description="Personal Jarvis — turn your computer into an AI agent.",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("--wizard", action="store_true", help="Restart the setup wizard.")

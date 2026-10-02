@@ -62,6 +62,7 @@ from jarvis.agent_chat.permissions import (
     ladder_key,
     normalize_permission,
     permission_modes,
+    society_mode_supported,
 )
 from jarvis.agent_chat.service import (
     DECISIONS,
@@ -90,6 +91,35 @@ SURFACE_NAMES: frozenset[str] = frozenset({"jarvis", "agent", "local-models", "s
 HIDDEN_SURFACES: frozenset[str] = frozenset({"society"})
 
 router = APIRouter(prefix="/api/agent-chat", tags=["agent-chat"])
+
+
+class ChatSelectionBody(BaseModel):
+    provider: str = Field(min_length=1)
+    model: str = ""
+    effort: str = ""
+    account_id: str = ""
+
+
+@router.put("/selection", summary="Remember the model for new Jarvis chats and agents")
+async def save_chat_selection(body: ChatSelectionBody, request: Request) -> dict[str, str]:
+    from jarvis.agent_chat.store import ChatSelection
+
+    provider = body.provider.strip().lower()
+    if not offers("jarvis", provider):
+        raise HTTPException(400, "This provider is not offered on the Jarvis chat")
+    if body.account_id:
+        from jarvis import agent_accounts
+        from jarvis.agent_chat.catalog import provider_row
+
+        account = agent_accounts.resolve(body.account_id)
+        row = provider_row(provider)
+        if account is None or row is None or account.platform != row.agent:
+            raise HTTPException(400, "This subscription account does not belong to the provider")
+    selection = ChatSelection(
+        provider, body.model.strip(), normalize_effort(provider, body.effort), body.account_id
+    )
+    _service(request).store.save_chat_selection(selection)
+    return selection.to_dict()
 
 
 @router.get("/commands", summary="List chat slash commands and their availability")
@@ -131,6 +161,7 @@ _WS_PING_S = 20.0
 
 class CreateSessionBody(BaseModel):
     provider: str
+    account_id: str = ""
     model: str = ""
     effort: str | None = None
     cwd: str | None = None
@@ -325,6 +356,11 @@ async def get_catalog(
         "providers": rows,
         "default_cwd": svc.default_cwd(surface),
         "shell": shell_label(),
+        "selection": (
+            selection.to_dict()
+            if surface == "jarvis" and (selection := svc.store.chat_selection()) is not None
+            else None
+        ),
     }
 
 
@@ -657,7 +693,7 @@ async def get_provider_health(
 
 
 @router.get("/sessions")
-async def list_sessions(
+def list_sessions(
     request: Request,
     limit: int = Query(200, ge=1, le=1000),
     surface: SurfaceName | None = None,
@@ -674,8 +710,16 @@ async def list_sessions(
 
 
 @router.post("/sessions", status_code=201)
-async def create_session(body: CreateSessionBody, request: Request) -> dict[str, Any]:
+def create_session(body: CreateSessionBody, request: Request) -> dict[str, Any]:
     svc = _service(request)
+    if body.account_id:
+        from jarvis import agent_accounts
+        from jarvis.agent_chat.catalog import provider_row
+
+        account = agent_accounts.resolve(body.account_id)
+        row = provider_row(body.provider)
+        if account is None or row is None or account.platform != row.agent:
+            raise HTTPException(400, "This subscription account does not belong to the provider")
     ladder = ladder_key(body.surface, resolve_runner(body.provider, surface=body.surface))
     if body.permission_mode and not is_permission_mode(ladder, body.permission_mode):
         raise HTTPException(
@@ -695,16 +739,23 @@ async def create_session(body: CreateSessionBody, request: Request) -> dict[str,
             permission_mode=normalize_permission(ladder, body.permission_mode),
             title=body.title,
             surface=body.surface,
+            account_id=body.account_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if session.surface == "jarvis":
+        from jarvis.agent_chat.store import ChatSelection
+
+        svc.store.save_chat_selection(
+            ChatSelection(session.provider, session.model, session.effort, session.account_id)
+        )
     d = session.to_dict()
     d["running"] = False
     return d
 
 
 @router.get("/sessions/{session_id}")
-async def get_session(
+def get_session(
     session_id: str,
     request: Request,
     tail: int | None = Query(
@@ -728,6 +779,10 @@ async def patch_session(
     existing = svc.store.get_session(session_id)
     if existing is None:
         raise HTTPException(status_code=404, detail="session not found")
+    if existing.surface == "society" and ":routine:" in session_id:
+        raise HTTPException(status_code=403, detail="Routine chat is owned by its schedule")
+    if existing.surface == "society" and svc.is_running(session_id):
+        raise HTTPException(status_code=409, detail="Agent chat is working")
     fields: dict[str, Any] = {}
     if body.title is not None:
         fields["title"] = body.title.strip()[:120]
@@ -739,6 +794,8 @@ async def patch_session(
                 detail=f"provider {picked!r} is not offered on the {existing.surface!r} chat",
             )
         fields["provider"] = picked
+        if picked != existing.provider:
+            fields["account_id"] = ""
         # A provider change resets the vendor conversation: the new CLI cannot
         # resume the old one's id.
         fields["vendor_session"] = ""
@@ -762,6 +819,13 @@ async def patch_session(
                     + ", ".join(m.id for m in permission_modes(ladder))
                 ),
             )
+        if current.surface == "society" and not society_mode_supported(
+            runner, body.permission_mode
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail=f"{runner} cannot provide an actionable approval for {body.permission_mode}",
+            )
         fields["permission_mode"] = body.permission_mode
     elif "provider" in fields:
         # A provider change folds the old mode onto the new runner's ladder
@@ -784,9 +848,27 @@ async def patch_session(
             await svc.controls.pause(session_id, "Model or permission settings changed")
         if "provider" in fields or "account_id" in fields:
             await svc.controls._clear_saved_native(session_id)
+    if current.surface == "society" and svc.is_running(session_id):
+        raise HTTPException(status_code=409, detail="Agent chat is working")
     session = svc.store.update_session(session_id, **fields)
     assert session is not None
-    changed = {k: v for k, v in fields.items() if k != "vendor_session"}
+    if session.surface == "jarvis" and {"provider", "model", "effort"}.intersection(fields):
+        from jarvis.agent_chat.store import ChatSelection
+
+        svc.store.save_chat_selection(
+            ChatSelection(session.provider, session.model, session.effort, session.account_id)
+        )
+    if current.surface == "society" and body.permission_mode is not None:
+        svc.store.set_permission_override(session_id, session.permission_mode)
+    if current.surface == "society":
+        binder = getattr(svc, "bind_society_session", None)
+        if binder is not None:
+            session = await binder(session_id)
+            if body.permission_mode is not None:
+                # Persist the effective choice, not a requested escalation that
+                # the roster narrowed during binding.
+                svc.store.set_permission_override(session_id, session.permission_mode)
+    changed = {key: getattr(session, key) for key in fields if key != "vendor_session"}
     if changed:
         await svc._emit(session_id, make_event("session_updated", changed))  # noqa: SLF001 — same package boundary
     d = session.to_dict()
@@ -830,6 +912,8 @@ async def post_message(session_id: str, body: MessageBody, request: Request) -> 
         raise HTTPException(status_code=404, detail="session not found") from exc
     except SessionBusy as exc:
         raise HTTPException(status_code=409, detail="a turn is already running") from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     finally:

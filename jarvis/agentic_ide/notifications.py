@@ -444,6 +444,11 @@ class ActivityWatcher:
         self.center = center
         self._panes: dict[tuple[str, str], _PaneWatch] = {}
         self._resume_dirty = False
+        self._results: list[tuple[str, Any, Any]] = []
+
+    def take_results(self) -> list[tuple[str, Any, Any]]:
+        results, self._results = self._results, []
+        return results
 
     def take_resume_dirty(self) -> bool:
         """Return and clear whether activity changed the resume checkpoint."""
@@ -641,6 +646,9 @@ class ActivityWatcher:
 
         watch.announced = True
         watch.worked = False
+        pending = getattr(term, "delegation_result", None)
+        if pending is not None:
+            self._results.append((kind, term, pending))
         if not emit:
             return None
         return self.center.add(
@@ -975,6 +983,7 @@ def reset() -> None:
     _CENTER.clear()
     _WATCHER._panes.clear()  # noqa: SLF001 - same module, one owner
     _WATCHER._resume_dirty = False  # noqa: SLF001 - same module, one owner
+    _WATCHER.take_results()
     _FEED.clear()
     set_publisher(None)
     reset_switch_cache()
@@ -1008,6 +1017,16 @@ async def _run(registry: Registry) -> None:
                 # with notifications disabled, restored panes must not be
                 # offered a blind Continue merely because history exists.
                 _WATCHER.poll(registry, emit=await _enabled_off_loop())
+                from .followthrough import poll_ready, publish_result
+
+                for kind, term, pending in _WATCHER.take_results():
+                    if not await publish_result(kind, term, pending, _publisher):
+                        # Retry publication only while the same submission still owns it.
+                        from .followthrough import current
+
+                        if current(term, pending):
+                            _WATCHER._results.append((kind, term, pending))
+                await poll_ready(registry, _publisher)
                 if _WATCHER.take_resume_dirty():
                     await registry.persist_resume_activity()
                 # After the stamps, so the event carries the word this sweep
