@@ -9,6 +9,10 @@ versioning per [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+---
+
+## [2.7.0] — 2026-10-02
+
 ### Added
 
 - **macOS asks when a feature needs a permission.** The first time you use a feature that needs a macOS permission, Personal Jarvis asks right then and macOS shows its own dialog: the microphone at the first dictation, push-to-talk, voice conversation, wake-word switch or microphone check; Screen Recording at the first screen capture you start; Accessibility when Jarvis first has to type, click or focus a window for you; Input Monitoring when you save a global shortcut (or choose the Call shortcut in setup); Music and Spotify control when you switch on "Mute music while dictating" with a player running. Nothing is asked at launch, and Personal Jarvis draws nothing of its own around macOS's dialog. If you say no, only that feature stops, and one short toast says so with one action ("Open System Settings"). Checked against faked macOS frameworks and macOS CI runners, not yet on a Mac of your own.
