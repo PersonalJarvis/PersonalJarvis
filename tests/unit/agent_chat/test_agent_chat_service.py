@@ -161,6 +161,27 @@ def test_deny_feeds_a_denied_result_and_allow_always_flips_the_mode(tmp_path: Pa
     asyncio.run(scenario())
 
 
+def test_an_abandoned_approval_card_is_closed(tmp_path: Path, scripted):
+    """A card whose ask is cancelled (its ticket settled elsewhere) must not stay open."""
+
+    async def scenario() -> None:
+        svc = AgentChatService(AgentChatStore(":memory:"))
+        session = svc.create_session(provider="fakeprov", cwd=str(tmp_path))
+        q = svc.subscribe(session.session_id)
+        asking = asyncio.create_task(
+            svc._ask(session.session_id, "turn-1", "row-1", "Write", {}, "a.txt")  # noqa: SLF001
+        )
+        opened = (await _drain(q, "approval_required"))[-1]["payload"]
+        asking.cancel()
+        await asyncio.gather(asking, return_exceptions=True)
+        closed = (await _drain(q, "approval_resolved"))[-1]["payload"]
+        assert closed["approval_id"] == opened["approval_id"]
+        assert closed["decision"] == "cancel"
+        assert not svc.resolve_approval(session.session_id, opened["approval_id"], "allow")
+
+    asyncio.run(scenario())
+
+
 def test_cancel_ends_the_turn(tmp_path: Path, scripted):
     ScriptedBrain.script = [
         [

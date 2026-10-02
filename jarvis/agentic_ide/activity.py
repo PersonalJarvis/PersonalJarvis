@@ -224,6 +224,22 @@ ASK_FRAGMENTS: tuple[str, ...] = (
     "choose an option",
 )
 
+#: The part of :data:`ASK_FRAGMENTS` that only a CLI's own dialog draws — a
+#: numbered choice, a y/n prompt. "Do you want" and "would you like" are also
+#: how an agent's finished answer often ends ("Would you like me to commit?"),
+#: and a dialog choice, unlike a typed reply, is not recorded as a user turn.
+DIALOG_FRAGMENTS: tuple[str, ...] = (
+    "(y/n)",
+    "[y/n]",
+    "yes/no?",
+    "press enter to continue",
+    "1. yes",
+    "❯ 1.",
+    "▶ 1.",
+    "select an option",
+    "choose an option",
+)
+
 
 def visible_rows(term: Any) -> list[str]:
     """The pane's bottom rows as they are on screen right now.
@@ -267,6 +283,11 @@ def shows_question(term: Any) -> bool:
     and a caller deciding whether to type into it needs the question half.
     """
     return _contains(visible_rows(term), ASK_FRAGMENTS)
+
+
+def shows_dialog(term: Any) -> bool:
+    """Is the question on screen the CLI's own dialog rather than the agent's prose?"""
+    return _contains(visible_rows(term), DIALOG_FRAGMENTS)
 
 
 def _typing_now(term: Any, moment: float) -> bool:

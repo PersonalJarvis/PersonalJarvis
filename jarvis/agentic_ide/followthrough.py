@@ -14,6 +14,20 @@ from loguru import logger
 
 from jarvis.core.delegation import result_announcement
 
+#: How long a stopped pane may take to show its answer in its transcript before
+#: the stop is reported without one. A CLI that cannot be told its session id
+#: (Codex) is only found after its first prompt, on the schedule
+#: ``session.CONVERSATION_DELAYS_S`` (last attempt 21.5 s after the submit); a
+#: short job is long finished by then, and reporting at the first quiet sweep
+#: turned its real answer into a bare "has stopped". Must outlast that schedule.
+REPORT_GRACE_S = 30.0
+
+#: How much of a long prompt's end has to match the recorded user turn. The
+#: transcript reader keeps both ends of a long block (``agent_transcript._clip``,
+#: 2000 characters each); this stays well inside the kept tail even when a large
+#: share of it is whitespace that normalization collapses.
+MATCH_TAIL_CHARS = 600
+
 
 @dataclass(frozen=True, slots=True)
 class PendingResult:
@@ -25,6 +39,9 @@ class PendingResult:
     generation: int
     reply_session_id: str = ""
     submitted_at: float | None = None
+    #: The submission answered a question (a dialog choice the transcript does
+    #: not record as a user turn), so ``prompt`` stays the task it belongs to.
+    keeps_prompt: bool = False
 
 
 def _turns(term: Any) -> list:
@@ -41,6 +58,63 @@ def _turns(term: Any) -> list:
     ) or []
 
 
+def _readable(term: Any) -> bool:
+    """Whether a report for this pane can still appear in a local transcript."""
+    from . import agent_transcript
+
+    return not getattr(term, "computer_id", "") and agent_transcript.can_read(
+        str(getattr(term, "agent", "") or "")
+    )
+
+
+def _shows_dialog(term: Any) -> bool:
+    from .activity import shows_dialog
+
+    return shows_dialog(term)
+
+
+def dialog_open(term: Any) -> bool:
+    """Is the pane waiting on its CLI's own dialog (a choice, a y/n prompt)?
+
+    Only such an answer continues the job in hand: a reply typed under a
+    question in the agent's prose is a new user turn, a new instruction.
+    """
+    return term.reading().activity == "asking" and _shows_dialog(term)
+
+
+def _normalized(text: str) -> str:
+    return " ".join(str(text or "").split())
+
+
+def answers_prompt(recorded: str, prompt: str) -> bool:
+    """Whether the newest recorded user turn is ``prompt``.
+
+    The transcript does not hold a prompt byte-for-byte as it was typed, so an
+    exact comparison silently lost real answers:
+
+    * a CLI writes its own user records in front of the first prompt (Codex
+      opens a conversation with its AGENTS.md preamble and environment
+      context), and the reader joins consecutive user records into one turn;
+    * the reader strips tag-shaped text from user records (``_spoken``), which
+      also removes ``<div>`` or ``List<String>`` from a coding prompt;
+    * the reader keeps only both ends of a long block (``_clip``).
+
+    So the prompt is put through the reader's own filter and must END the
+    recorded turn, starting at a word boundary; a long one is compared by its
+    tail, which is all the reader is sure to have kept.
+    """
+    from . import agent_transcript
+
+    got = _normalized(recorded)
+    expected = _normalized(agent_transcript._spoken(prompt))  # noqa: SLF001 - same package
+    if not got or not expected:
+        return False
+    if len(expected) > MATCH_TAIL_CHARS:
+        # The kept tail may begin inside a word, so no boundary is required here.
+        return got.endswith(expected[-MATCH_TAIL_CHARS:])
+    return got == expected or got.endswith(" " + expected)
+
+
 def _fingerprint(turns: list) -> str:
     return hashlib.sha256(repr([(t.role, t.text) for t in turns]).encode()).hexdigest()
 
@@ -53,23 +127,69 @@ def _snapshot(term: Any) -> list:
         return []
 
 
-async def prepare(term: Any, prompt: str, request: str, origin: dict[str, str]) -> PendingResult:
+async def prepare(
+    term: Any, prompt: str, request: str, origin: dict[str, str], *, answering: bool = False,
+) -> PendingResult:
+    """The receipt for one delivery, before it is sent.
+
+    ``answering`` marks a choice in a dialog the agent is showing. The CLI
+    records no user turn for it, so its eventual answer is matched against the
+    task it was working on: the job Jarvis is already following on this pane,
+    else the newest user turn on record.
+    """
     turns = await asyncio.to_thread(_snapshot, term)
+    previous = getattr(term, "delegation_result", None)
+    if answering and previous is not None and current(term, previous):
+        return replace(previous, baseline=_fingerprint(turns), keeps_prompt=True)
+    task = ""
+    if answering:
+        task = next((t.text for t in reversed(turns) if t.role == "user"), "")
     return PendingResult(
-        request_id=uuid4().hex, prompt=prompt, request=request or prompt,
+        request_id=uuid4().hex, prompt=task or prompt, request=request or prompt,
         language=origin.get("lang", ""), baseline=_fingerprint(turns),
         generation=term.process_generation,
         reply_session_id=origin.get("reply_session_id", ""),
+        keeps_prompt=bool(task),
     )
 
 
 def submitted(term: Any, pending: PendingResult | None) -> None:
+    # A delivery the pane visibly refused handed nothing over, so a job that
+    # was already being followed still owns the pane's next stop.
+    if term.submitted is False:
+        return
     # An uncertain receipt is tracked, but never called completed on its own.
     term.delegation_result = (
-        replace(pending, prompt=term.last_prompt, submitted_at=term.last_submit_at)
-        if pending is not None and term.submitted is not False else None
+        replace(
+            pending,
+            prompt=pending.prompt if pending.keeps_prompt else term.last_prompt,
+            submitted_at=term.last_submit_at,
+        )
+        if pending is not None else None
     )
     term.delegation_probe_at = 0.0
+    term.delegation_stopped_at = 0.0
+
+
+def answered_in_pane(term: Any, pending: PendingResult) -> None:
+    """Keep following a delegated job whose question was answered by hand.
+
+    Enter in the pane counts as a new submission, which ends the old receipt.
+    When that Enter answered the agent's own dialog (a permission prompt, a
+    choice), the job Jarvis handed over is still the one running; dropping it
+    there meant its final answer was never reported. The prompt is kept, since
+    a dialog choice is not recorded as a user turn.
+    """
+    if (
+        getattr(term, "delegation_result", None) is not pending
+        or term.process_generation != pending.generation
+    ):
+        return
+    term.delegation_result = replace(
+        pending, submitted_at=term.last_submit_at, keeps_prompt=True,
+    )
+    term.delegation_probe_at = 0.0
+    term.delegation_stopped_at = 0.0
 
 
 def current(term: Any, pending: PendingResult) -> bool:
@@ -81,9 +201,21 @@ def current(term: Any, pending: PendingResult) -> bool:
 
 
 async def publish_result(
-    kind: str, term: Any, pending: PendingResult, publish: Any, *, require_report: bool = False,
+    kind: str,
+    term: Any,
+    pending: PendingResult,
+    publish: Any,
+    *,
+    require_report: bool = False,
+    now: float | None = None,
 ) -> bool:
-    """Return an observed stop/question, never convert silence into success."""
+    """Return an observed stop/question, never convert silence into success.
+
+    ``False`` means nothing was published; the sweep retries while the same
+    submission still owns the pane. A stop whose answer is not in the
+    transcript YET is held for :data:`REPORT_GRACE_S` before it is reported
+    without one.
+    """
     if publish is None or not current(term, pending):
         return False
     try:
@@ -91,13 +223,25 @@ async def publish_result(
         if not current(term, pending):
             return False
         last_user = next((t.text for t in reversed(turns) if t.role == "user"), "")
-        matches = " ".join(last_user.split()) == " ".join(pending.prompt.split())
+        matches = answers_prompt(last_user, pending.prompt)
         fresh = bool(turns and _fingerprint(turns) != pending.baseline and matches)
         report = ""
         evidence = "terminal_state_only; task success is unverified"
         if kind == "completed" and fresh and turns[-1].role == "assistant":
             report = str(turns[-1].text or "")
             evidence = "fresh assistant message for this exact prompt; not independent verification"
+        elif kind == "needs_input" and (
+            fresh and turns[-1].role == "assistant" and turns[-1].text
+            and not _shows_dialog(term)
+        ):
+            # A finished answer that closes with a question ("Would you like me
+            # to commit?") reads as a question on screen. The agent's own words
+            # are the report, not the bottom rows of its terminal.
+            report = str(turns[-1].text)
+            evidence = (
+                "fresh assistant message for this exact prompt, ending in a question; "
+                "not independent verification"
+            )
         elif kind == "needs_input":
             report = "\n".join(term.transcript.tail(20))[-3000:]
             evidence = "current terminal question; not a completed task"
@@ -105,6 +249,14 @@ async def publish_result(
             report = f"Process state: {kind}; exit code: {getattr(term, 'exit_code', None)}"
         if require_report and not report:
             return False
+        if kind == "completed" and not report and _readable(term):
+            moment = time.time() if now is None else now
+            stopped_at = getattr(term, "delegation_stopped_at", 0.0) or 0.0
+            # A pane that moved again since the clock started is a new stop.
+            if not stopped_at or (getattr(term, "last_output_at", 0.0) or 0.0) > stopped_at:
+                term.delegation_stopped_at = stopped_at = moment
+            if moment - stopped_at < REPORT_GRACE_S:
+                return False
         event = result_announcement(
             source="agentic_ide.readback", request_id=pending.request_id,
             name=str(term.name), request=pending.request, status=kind,

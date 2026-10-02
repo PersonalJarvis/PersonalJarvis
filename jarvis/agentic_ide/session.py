@@ -1105,6 +1105,8 @@ class Terminal:
     # Runtime-only ownership of a result requested through Jarvis, never a UI field.
     delegation_result: Any = None
     delegation_probe_at: float = 0.0
+    # When a delegated stop was first seen without its answer in the transcript.
+    delegation_stopped_at: float = 0.0
     # The current process's records are kept as a fallback if the local history
     # file cannot be written. The full durable history is loaded only when its
     # UI is opened, never in the workspace-state hot path.
@@ -4701,6 +4703,16 @@ class Registry:
             and term.last_prompt
             and (term.submitted is False or term.manual_submit_pending)
         )
+        # An Enter that answers the agent's own dialog continues the job Jarvis
+        # is following rather than replacing it. Read before the keystroke
+        # reaches the pane, while the question is still what is on screen.
+        answered = None
+        if is_submit and not confirm_pending_prompt and term.delegation_result is not None:
+            from .followthrough import current as follows
+            from .followthrough import dialog_open
+
+            if follows(term, term.delegation_result) and dialog_open(term):
+                answered = term.delegation_result
         # Do not mutate activity or receipt state for bytes the PTY refused.
         written = manager.write(term.pty_id, data)
         if not written:
@@ -4739,6 +4751,10 @@ class Registry:
             else:
                 term.last_submit_at = term.last_input_at
                 term.submit_generation = term.process_generation
+                if answered is not None:
+                    from .followthrough import answered_in_pane
+
+                    answered_in_pane(term, answered)
             # And the pane's conversation may have just begun, which for most
             # coding CLIs is the first moment its id exists on disk at all. A
             # pane driven only by hand never goes through `send_prompt`, so
@@ -6666,9 +6682,15 @@ class Registry:
                     raise SessionError("The selected coding agent is busy; nothing was sent.")
             pending = None
             if followup is not None and followup.get("reply_surface") in {"voice", "chat"}:
-                from .followthrough import prepare
+                from .followthrough import dialog_open, prepare
 
-                pending = await prepare(term, text, typed, followup)
+                pending = await prepare(
+                    term,
+                    text,
+                    typed,
+                    followup,
+                    answering=allow_question and dialog_open(term),
+                )
             return await self._send_prompt_locked(
                 identity,
                 text,

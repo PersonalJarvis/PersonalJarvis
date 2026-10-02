@@ -14,7 +14,7 @@ from jarvis.agent_chat import folder_tools as ft
 from jarvis.agent_chat.approval_bridge import ChatApprovalBridge, ChatGrant, approval_ref
 from jarvis.core.bus import EventBus
 from jarvis.core.config import SafetyConfig
-from jarvis.core.events import ActionApprovalRequired, ActionDenied
+from jarvis.core.events import ActionApprovalRequired, ActionApproved, ActionDenied
 from jarvis.safety.approval import ApprovalWorkflow
 from jarvis.safety.risk_tier import RiskTierEvaluator
 from jarvis.safety.tool_executor import APPROVAL_DENIED_PREFIX, ToolExecutor
@@ -113,6 +113,94 @@ async def test_deny_on_the_card_yields_approval_denied(tmp_path: Path):
     assert result.error and result.error.startswith(APPROVAL_DENIED_PREFIX)
     assert not (tmp_path / "a.txt").exists()
     assert denials and denials[-1].reason == "declined by the person"
+
+
+class _OpenCard(_Card):
+    """A card nobody clicks; records whether it was closed under it."""
+
+    def __init__(self) -> None:
+        super().__init__("allow")
+        self.release.clear()
+        self.closed = False
+
+    async def __call__(self, call_id: str, name: str, args: dict[str, Any], summary: str) -> str:
+        try:
+            return await super().__call__(call_id, name, args, summary)
+        except asyncio.CancelledError:
+            self.closed = True
+            raise
+
+
+def _approvals(bus: EventBus) -> list[ActionApproved]:
+    seen: list[ActionApproved] = []
+
+    async def _capture(event: ActionApproved) -> None:
+        seen.append(event)
+
+    bus.subscribe(ActionApproved, _capture)
+    return seen
+
+
+async def test_an_expired_ticket_closes_its_card(tmp_path: Path):
+    """A click after the executor gave up must not read as an approval."""
+    executor, bridge, bus = _stack(timeout_s=0.05)
+    approvals = _approvals(bus)
+    card = _OpenCard()
+    bridge.arm(REF, _grant(card, "ask"))
+    write = ft.folder_tools(tmp_path)["Write"]
+
+    result = await executor.execute(
+        write, {"file_path": "a.txt", "content": "hi"}, config_snapshot=_snapshot(0.05)
+    )
+    await asyncio.sleep(0.01)
+
+    assert not result.success and not (tmp_path / "a.txt").exists()
+    assert card.asked and card.closed
+    card.release.set()
+    await asyncio.sleep(0.01)
+    assert approvals == []
+
+
+async def test_a_ticket_answered_elsewhere_closes_its_card(tmp_path: Path):
+    executor, bridge, bus = _stack()
+    card = _OpenCard()
+    bridge.arm(REF, _grant(card, "ask"))
+    tickets: list[ActionApprovalRequired] = []
+
+    async def _answer_elsewhere(event: ActionApprovalRequired) -> None:
+        tickets.append(event)
+
+    bus.subscribe(ActionApprovalRequired, _answer_elsewhere)
+    write = ft.folder_tools(tmp_path)["Write"]
+    running = asyncio.create_task(
+        executor.execute(write, {"file_path": "b.txt", "content": "x"}, config_snapshot=_snapshot())
+    )
+    for _ in range(20):
+        await asyncio.sleep(0)
+    assert card.asked and tickets
+    await bus.publish(
+        ActionApproved(trace_id=tickets[0].trace_id, tool_name="Write", approved_by="user")
+    )
+    result = await asyncio.wait_for(running, timeout=5.0)
+    await asyncio.sleep(0.01)
+
+    assert result.success
+    assert card.closed
+
+
+async def test_the_cards_own_answer_does_not_close_it_twice(tmp_path: Path):
+    executor, bridge, bus = _stack()
+    denials = _denials(bus)
+    card = _Card("deny")
+    bridge.arm(REF, _grant(card, "ask"))
+    write = ft.folder_tools(tmp_path)["Write"]
+
+    await executor.execute(
+        write, {"file_path": "c.txt", "content": "x"}, config_snapshot=_snapshot()
+    )
+
+    assert [d.reason for d in denials][0] == "declined by the person"
+    assert bridge._asking == {}  # noqa: SLF001 - nothing left open
 
 
 async def test_reads_never_ask(tmp_path: Path):
