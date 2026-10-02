@@ -137,6 +137,13 @@ actuator construction and hardware-input handoff. It never clicks, types,
 launches applications or prompts for permission. Recent human input is reported
 as an active handoff state, not as a missing capability.
 
+`jarvis/cu/macos_bench.py` now defines the first deterministic receipt
+contract, `physical-user-takeover`. CI can evaluate safety evidence without
+posting input: takeover detected, zero synthetic events after detection, pause
+until HID idle, re-observation before the next action and cancellation with no
+later action. The scenario is explicitly marked `live_required=True`; a fake
+receipt passing in CI is not native qualification.
+
 Live MacAgentBench remains the release gate for observable receipts: semantic
 target hit, stale-target refusal, focus/type landing, human takeover,
 cross-window handoff, browser-to-desktop transition, cancellation, permission
