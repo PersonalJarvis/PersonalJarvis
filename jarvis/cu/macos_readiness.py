@@ -55,7 +55,7 @@ def _permission_check(port: Any, permission_id: Any, label: str) -> ReadinessChe
     try:
         raw_state = port.state(permission_id)
         state = getattr(raw_state, "value", raw_state)
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 - permission-state detail is diagnostic fallback only
         state = "not granted"
     return ReadinessCheck(
         id=f"permission:{permission_id}",
@@ -127,7 +127,7 @@ async def probe_macos_readiness(
                     f"Accessibility tree observation succeeded ({node_count} nodes)",
                 )
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 - readiness reports probe failure instead of raising
             checks.append(
                 ReadinessCheck(
                     "semantic:ax-tree",
@@ -164,7 +164,7 @@ async def probe_macos_readiness(
                     f"input backend is available ({getattr(actuator, 'name', type(actuator).__name__)})",
                 )
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 - readiness records backend unavailability
             checks.append(
                 ReadinessCheck(
                     "actuation:backend",
@@ -202,7 +202,7 @@ async def probe_macos_readiness(
                 ),
             )
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001 - readiness records handoff probe failure
         checks.append(
             ReadinessCheck(
                 "handoff:hardware-input",
