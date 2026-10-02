@@ -205,44 +205,79 @@ class TerminalQueryResponder:
         return f"\x1b]{which};{_rgb(colour)}{match.group('terminator')}"
 
 
-_COLOUR_QUERY_RE = re.compile(r"\x1b\](?:10|11);\?(?:\x07|\x1b\\)")
+#: Every question a coding CLI was measured asking its terminal while it
+#: starts (2026-10-02: Claude Code, Codex, OpenCode, Kimi, Antigravity) —
+#: colours, device attributes, version, keyboard protocol, mode reports,
+#: capabilities, cursor position and window size.
+_TERMINAL_QUERY_RE = re.compile(
+    r"(?P<colour>\x1b\](?:10|11);\?(?:\x07|\x1b\\))"
+    r"|\x1b\][0-9]+(?:;[0-9]+)*;\?(?:\x07|\x1b\\)"
+    r"|\x1b\[[?>=]?[0-9;]*c"
+    r"|\x1b\[>[0-9]*q"
+    r"|\x1b\[\?u"
+    r"|\x1b\[\?[0-9;]+\$p"
+    r"|\x1bP\+q[0-9a-fA-F;]*\x1b\\"
+    r"|\x1b\[\??6n"
+    r"|\x1b\[1[468]t"
+)
+
+#: Longest question worth remembering across a chunk boundary — capability
+#: queries (``ESC P + q <hex> ST``) run longer than the colour ones.
+_QUERY_TAIL_KEEP = 64
 
 
 @dataclass(slots=True)
-class ColourQueryWatch:
-    """Remember when a pane's CLI last asked its terminal for its colours.
+class TerminalQueryWatch:
+    """Remember when a pane's CLI asked its terminal something, and what.
 
-    Fed from the output the app sees, which is always AFTER the reply went
-    out: the PTY's reader (or the PTY host) answers a query before it hands
-    the bytes on. So ``asked_at`` doubles as "answered at".
+    Fed from the output the app sees. The colour and device questions are
+    answered before that — the PTY's reader (or the PTY host) replies before
+    it hands the bytes on — and the rest are answered by the viewer one round
+    trip later.
 
-    It exists for a CLI that reads that answer straight from its console
-    input while it starts. Codex paints its composer first and asks for the
-    colours a second or more later; a prompt typed into that gap is still
-    sitting in the input when the question goes out, the CLI reads the
-    prompt where it expected the answer, and the colour reply then lands in
-    the composer as ``]10;rgb:f4f4/f4f4/f6f6\\]11;rgb:1212/1414/1a1a\\``
-    (reproduced 2026-10-02 on Codex 0.159.3). Readiness waits for this.
+    It exists because coding CLIs read those answers from their keyboard
+    input while they start, and every one measured keeps asking until about
+    the moment its input line appears, some of them after it: Codex asks for
+    its colours one to several seconds after painting its composer, Claude
+    Code asks for the terminal's version a second after. A prompt typed into
+    that window is read where the answer was expected, and the answer is then
+    typed into the composer instead — ``]10;rgb:f4f4/f4f4/f6f6\\]11;rgb:…``
+    (reproduced 2026-10-02 on Codex 0.159.3). Readiness waits on this
+    (``jarvis.agentic_ide.fleet_actions.terminal_questions_settled``).
     """
 
+    #: The latest question of any kind.
     asked_at: float | None = None
+    #: The latest colour question (``ESC ] 10/11 ; ?``).
+    colour_asked_at: float | None = None
+    #: When readiness first saw this process's input line.
+    input_line_at: float | None = None
     _tail: str = field(default="", repr=False)
 
     def feed(self, data: str, now: float) -> None:
-        """Note a colour query in ``data``, even one split across two reads."""
+        """Note the questions in ``data``, even one split across two reads."""
         if not data:
             return
         combined = self._tail + data
         consumed = 0
-        for match in _COLOUR_QUERY_RE.finditer(combined):
+        for match in _TERMINAL_QUERY_RE.finditer(combined):
             self.asked_at = now
+            if match.group("colour"):
+                self.colour_asked_at = now
             consumed = match.end()
-        # A query already noted must not be noted again from the retained tail.
-        self._tail = combined[max(consumed, len(combined) - _TAIL_KEEP) :]
+        # A question already noted must not be noted again from the tail.
+        self._tail = combined[max(consumed, len(combined) - _QUERY_TAIL_KEEP) :]
+
+    def note_input_line(self, now: float) -> None:
+        """Remember the first time the input line was seen."""
+        if self.input_line_at is None:
+            self.input_line_at = now
 
     def reset(self) -> None:
         """Forget everything — a fresh process has asked nothing yet."""
         self.asked_at = None
+        self.colour_asked_at = None
+        self.input_line_at = None
         self._tail = ""
 
 
@@ -250,8 +285,8 @@ __all__ = [
     "DEFAULT_APPEARANCE",
     "DEVICE_ATTRIBUTES",
     "THEME_COLOURS",
-    "ColourQueryWatch",
     "TerminalQueryResponder",
+    "TerminalQueryWatch",
     "classify_terminal_input",
     "is_newline_chord_only",
     "is_pointer_noise_only",

@@ -134,7 +134,9 @@ def registry(fake_pty: FakePtyManager, monkeypatch: pytest.MonkeyPatch) -> Regis
     monkeypatch.setattr(session_mod, "_LATE_ARRIVAL_WINDOW_S", 0.04)
     monkeypatch.setattr(fleet_actions, "READY_POLL_S", 0.01)
     monkeypatch.setattr(fleet_actions, "READY_TIMEOUT_S", 0.08)
+    # Submit mechanics, not the startup-question wait (tested on its own).
     monkeypatch.setattr(fleet_actions, "COLOUR_PROBE_SETTLE_S", 0.0)
+    monkeypatch.setattr(fleet_actions, "STARTUP_QUIET_S", 0.0)
     return Registry(pty_manager=fake_pty)
 
 

@@ -8,8 +8,8 @@ import pytest
 from jarvis.agentic_ide.terminal_input import (
     DEVICE_ATTRIBUTES,
     THEME_COLOURS,
-    ColourQueryWatch,
     TerminalQueryResponder,
+    TerminalQueryWatch,
     classify_terminal_input,
     is_newline_chord_only,
     is_terminal_report_only,
@@ -71,22 +71,47 @@ def test_an_answered_query_is_never_answered_twice() -> None:
 
 
 def test_the_colour_question_is_noticed_once_even_when_split() -> None:
-    watch = ColourQueryWatch()
+    watch = TerminalQueryWatch()
 
     watch.feed("banner \x1b]11", 1.0)
-    assert watch.asked_at is None
+    assert watch.colour_asked_at is None
     watch.feed(";?\x07 composer", 2.0)
-    assert watch.asked_at == 2.0
+    assert watch.colour_asked_at == watch.asked_at == 2.0
 
     # The retained tail must not report the same question again later.
     watch.feed("more output", 3.0)
     assert watch.asked_at == 2.0
 
-    watch.feed(DA_QUERY + "\x1b]10;rgb:ffff/ffff/ffff\x07", 4.0)
-    assert watch.asked_at == 2.0, "device attributes and colour SETTING are not the question"
+    watch.feed("\x1b]10;rgb:ffff/ffff/ffff\x07", 4.0)
+    assert watch.asked_at == 2.0, "SETTING a colour is not a question"
+
+    watch.feed(DA_QUERY, 5.0)
+    assert watch.asked_at == 5.0
+    assert watch.colour_asked_at == 2.0, "device attributes are not the colour question"
+
+    watch.note_input_line(6.0)
+    watch.note_input_line(7.0)
+    assert watch.input_line_at == 6.0, "the FIRST sighting counts"
 
     watch.reset()
-    assert watch.asked_at is None
+    assert (watch.asked_at, watch.colour_asked_at, watch.input_line_at) == (None, None, None)
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "\x1b[>0q",  # version (Claude Code, OpenCode)
+        "\x1b[?u",  # keyboard protocol (Claude Code, Kimi, Antigravity)
+        "\x1b[?2026$p",  # mode report (OpenCode, Antigravity)
+        "\x1bP+q4d73\x1b\\",  # capability (OpenCode)
+        "\x1b]4;1;?\x07",  # palette entry
+    ],
+)
+def test_every_measured_startup_question_is_noticed(question: str) -> None:
+    watch = TerminalQueryWatch()
+    watch.feed(f"draw{question}draw", 1.0)
+    assert watch.asked_at == 1.0
+    assert watch.colour_asked_at is None
 
 
 def test_ordinary_output_is_not_mistaken_for_a_query() -> None:
