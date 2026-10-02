@@ -67,9 +67,9 @@ beforeEach(() => {
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-function mount(agentId?: string) {
+function mount(agentId?: string, connectChrome = false) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  render(<QueryClientProvider client={client}><BrowserProfilesDialog agentId={agentId} onClose={() => {}} /></QueryClientProvider>);
+  render(<QueryClientProvider client={client}><BrowserProfilesDialog agentId={agentId} connectChrome={connectChrome} onClose={() => {}} /></QueryClientProvider>);
   return client;
 }
 
@@ -82,6 +82,27 @@ async function ready(agentId?: string) {
 function mutations() { return calls.filter((call) => call.method !== "GET"); }
 
 describe("browser profile sharing", () => {
+  test("Google recovery offers Chrome setup when none exists without creating or assigning anything", async () => {
+    snapshot.profiles = [];
+    snapshot.bindings.scout = { mode: "own", profile_id: null, effective_profile_id: null };
+    mount("scout", true);
+    const create = await screen.findByRole("button", { name: "Create profile" });
+    expect(screen.getByRole("note").textContent).toContain("Sign in yourself in regular Chrome");
+    expect(screen.getByRole("combobox", { name: "Profile type" }).textContent).toContain("My existing Chrome profile");
+    expect(mutations()).toEqual([]);
+    fireEvent.click(within(create.closest("form")!).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("button", { name: "Create profile" })).toBeNull();
+    expect(mutations()).toEqual([]);
+  });
+
+  test("Google recovery selects an existing Chrome profile instead of another managed profile", async () => {
+    snapshot.profiles.unshift({ id: "isolated", name: "Managed browser", kind: "managed", connected: false,
+      allowed_domains: [], agent_ids: [], is_default: false });
+    mount("scout", true);
+    expect(await screen.findByDisplayValue("Personal Chrome")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Create profile" })).toBeNull();
+    expect(mutations()).toEqual([]);
+  });
   test("a removed assigned profile remains visibly disconnected until an explicit replacement is saved", async () => {
     snapshot.profiles = [];
     mount("scout");

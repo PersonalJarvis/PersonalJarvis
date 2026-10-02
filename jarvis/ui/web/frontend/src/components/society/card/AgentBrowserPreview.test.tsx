@@ -20,6 +20,10 @@ vi.mock("@/i18n", () => ({
     "society.browser_profiles.preview_paused": "Sign in directly in Chrome. The preview is paused.",
     "society.browser_live.return_control": "Return control",
     "society.browser_live.repair": "Repair browser",
+    "society.browser_profiles.google_signin_rejected": "Google declined this sign-in",
+    "society.browser_profiles.google_signin_recovery": "Sign in yourself in regular Chrome, then connect its profile.",
+    "society.browser_profiles.connect_supported_chrome": "Connect regular Chrome",
+    "society.browser_profiles.google_signin_help": "Google sign-in help",
   } as Record<string, string>)[key] ?? key,
 }));
 const { control, state, view, browser } = vi.hoisted(() => ({
@@ -39,6 +43,10 @@ vi.mock("../cardData", () => ({
   useBrowserInstallStatus: () => ({ data: { installed: true, running: false } }),
   useAgentBrowserOpen: () => ({ data: browser }),
 }));
+vi.mock("../browser/BrowserProfilesDialog", () => ({
+  default: ({ agentId, connectChrome }: { agentId?: string; connectChrome?: boolean }) =>
+    <div data-testid="chrome-recovery-dialog">{agentId}:{String(connectChrome)}</div>,
+}));
 const agent = { agentId: "scout", name: "Scout" } as SocietyAgent;
 function mount() {
   return render(<QueryClientProvider client={new QueryClient()}>
@@ -49,8 +57,19 @@ afterEach(() => {
   cleanup(); control.mockClear(); view.mockClear();
   state.manual = false; state.fullWindow = false; state.extendedInput = false; state.previewPaused = false; state.ready = true; state.error = ""; browser.open = true;
   browser.mode = "own"; browser.connected = true; browser.profileName = "";
+  state.url = "https://example.com";
 });
 describe("live agent browser", () => {
+  test("a rejected Google login opens explicit Chrome recovery without retrying or changing the browser", async () => {
+    state.url = "https://accounts.google.com/v3/signin/rejected?flowName=fixture";
+    state.manual = true;
+    mount();
+    expect(screen.getByRole("alert").textContent).toContain("Google declined this sign-in");
+    expect(screen.getByRole("link", { name: "Google sign-in help" }).getAttribute("href")).toBe("https://support.google.com/accounts/answer/7675428");
+    fireEvent.click(screen.getByRole("button", { name: "Connect regular Chrome" }));
+    expect((await screen.findByTestId("chrome-recovery-dialog")).textContent).toBe("scout:true");
+    expect(control).not.toHaveBeenCalled();
+  });
   test("an unavailable profile blocks live access and offers profile selection without open or repair", () => {
     browser.mode = "unavailable";
     state.error = "Previous browser error";

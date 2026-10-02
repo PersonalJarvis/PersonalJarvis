@@ -53,7 +53,7 @@
       "chrome": "Mi perfil de Chrome existente",
       "managed": "Perfil del navegador independiente",
       "chrome_hint": "Los agentes usan pestañas visibles de tu perfil de Chrome con sus sesiones actuales. Conéctalo una vez mediante la extensión.",
-      "managed_hint": "Un perfil independiente y persistente para otra cuenta. Inicia sesión en el navegador del agente y comparte el perfil con los agentes que elijas.",
+      "managed_hint": "Inicia sesión manualmente en sitios web desde el navegador del agente. Proveedores como Google pueden rechazar navegadores automatizados; usa un perfil conectado de Chrome normal para esas cuentas.",
       "create": "Crear perfil",
       "close": "Cerrar perfiles del navegador",
       "empty": "No hay perfiles compartidos configurados. Añade un perfil para conectar Chrome o compartir otra cuenta.",
@@ -61,7 +61,11 @@
       "default": "Predeterminado",
       "connected": "Chrome conectado. El estado de inicio de sesión se comprueba en cada sitio.",
       "disconnected": "Chrome desconectado. Abre el perfil correcto, conecta su extensión de Jarvis y actualiza. Las tareas del navegador esperan esta conexión.",
-      "managed_status": "Perfil independiente. Las sesiones se guardan localmente; una sesión guardada no demuestra que el acceso siga siendo válido."
+      "managed_status": "Perfil independiente. Las sesiones se guardan localmente; una sesión guardada no demuestra que el acceso siga siendo válido.",
+      "google_signin_rejected": "Google ha rechazado este inicio de sesión",
+      "google_signin_recovery": "Google puede rechazar el inicio de sesión en un navegador automatizado. Inicia sesión personalmente en Chrome normal; después conecta ese perfil aquí y elígelo explícitamente para este agente.",
+      "connect_supported_chrome": "Conectar Chrome normal",
+      "google_signin_help": "Ayuda de Google para iniciar sesión"
     },
     "profile_card": {
       "user_book": "Tu perfil y preferencias",

@@ -211,15 +211,21 @@ function NewProfile({ onCreated, onCancel }: { onCreated: (profile: BrowserProfi
   </form>;
 }
 
-export default function BrowserProfilesDialog({ agentId, onClose }: { agentId?: string; onClose: () => void }) {
+export default function BrowserProfilesDialog({ agentId, onClose, connectChrome = false }: {
+  agentId?: string; onClose: () => void; connectChrome?: boolean;
+}) {
   const t = useT();
   useLocaleChunk("society");
   const queryClient = useQueryClient();
   const query = useBrowserProfiles();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [setupDismissed, setSetupDismissed] = useState(false);
   const data = query.data;
-  const selected = data?.profiles.find((profile) => profile.id === selectedId) ?? data?.profiles[0];
+  const firstChrome = data?.profiles.find((profile) => profile.kind === "chrome");
+  const showCreate = creating || (connectChrome && !!data && !firstChrome && !setupDismissed);
+  const selected = data?.profiles.find((profile) => profile.id === selectedId) ??
+    (connectChrome ? firstChrome : data?.profiles[0]);
   const onSaved = (snapshot: BrowserProfilesSnapshot) => {
     const previous = queryClient.getQueryData<BrowserProfilesSnapshot>(BROWSER_PROFILES_QUERY);
     const changedProfiles = new Set(previous?.profiles.filter((profile) => {
@@ -251,19 +257,22 @@ export default function BrowserProfilesDialog({ agentId, onClose }: { agentId?: 
         </div>
         <div className="grid gap-5 overflow-y-auto p-5">
           <p className="text-xs text-muted-foreground">{t("society.browser_profiles.persistence")}</p>
+          {connectChrome && <p role="note" className="rounded-lg border border-border bg-secondary/30 p-4 text-sm">
+            {t("society.browser_profiles.google_signin_recovery")}
+          </p>}
           <div className="flex flex-wrap items-center gap-2">
-            <button type="button" className={button} disabled={!data || creating} onClick={() => setCreating(true)}><Plus size={14} />{t("society.browser_profiles.new")}</button>
+            <button type="button" className={button} disabled={!data || showCreate} onClick={() => setCreating(true)}><Plus size={14} />{t("society.browser_profiles.new")}</button>
             <button type="button" className={button} disabled={query.isFetching} onClick={() => void query.refetch()}><RotateCw size={14} />{t("society.browser_profiles.refresh")}</button>
           </div>
           {query.isLoading && <p role="status" className="text-sm text-muted-foreground">{t("society.browser_profiles.loading")}</p>}
           {query.isError && <p role="alert" className="text-sm text-destructive">{t("society.browser_profiles.load_error")}</p>}
           {data && <>
             {agentId && <AgentBinding key={`${agentId}:${JSON.stringify(data.bindings[agentId])}`} agentId={agentId} data={data} onSaved={onSaved} />}
-            {creating && <NewProfile onCancel={() => setCreating(false)} onCreated={async (profile) => {
+            {showCreate && <NewProfile onCancel={() => { setCreating(false); setSetupDismissed(true); }} onCreated={async (profile) => {
               await queryClient.invalidateQueries({ queryKey: BROWSER_PROFILES_QUERY });
-              setSelectedId(profile.id); setCreating(false);
+              setSelectedId(profile.id); setCreating(false); setSetupDismissed(true);
             }} />}
-            {!data.profiles.length && !creating && <p className="rounded-lg border border-dashed border-border p-5 text-sm text-muted-foreground">{t("society.browser_profiles.empty")}</p>}
+            {!data.profiles.length && !showCreate && <p className="rounded-lg border border-dashed border-border p-5 text-sm text-muted-foreground">{t("society.browser_profiles.empty")}</p>}
             {!!data.profiles.length && <div className="grid gap-3">
               <BrandedSelect ariaLabel={t("society.browser_profiles.choose_profile")} value={selected?.id ?? ""} onValueChange={setSelectedId}
                 options={data.profiles.map((profile) => ({ value: profile.id, label: `${profile.name}${profile.is_default ? ` · ${t("society.browser_profiles.default")}` : ""}` }))} />

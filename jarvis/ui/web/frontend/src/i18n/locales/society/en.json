@@ -53,7 +53,7 @@
       "chrome": "My existing Chrome profile",
       "managed": "Separate browser profile",
       "chrome_hint": "Agents use visible tabs in your selected Chrome profile with its existing logins. Connect once using the extension.",
-      "managed_hint": "A separate, persistent browser profile for a different account. Sign in through the agent's browser and share the same profile with the agents you choose.",
+      "managed_hint": "Sign in manually to websites in the agent browser. Providers such as Google may reject automated browsers; use a connected regular Chrome profile for those accounts.",
       "create": "Create profile",
       "close": "Close browser profiles",
       "empty": "No shared profiles configured. Add a profile to connect your Chrome or share another account.",
@@ -61,7 +61,11 @@
       "default": "Default",
       "connected": "Chrome connected. Website login status is checked on each website.",
       "disconnected": "Chrome disconnected. Open the correct Chrome profile, connect its Jarvis extension, then refresh. Browser tasks wait for this connection.",
-      "managed_status": "Separate profile. Website sessions are saved locally; an existing session does not prove you are still logged in."
+      "managed_status": "Separate profile. Website sessions are saved locally; an existing session does not prove you are still logged in.",
+      "google_signin_rejected": "Google declined this sign-in",
+      "google_signin_recovery": "Google can reject sign-in in an automated browser. Sign in yourself in regular Chrome first, then connect that Chrome profile here and explicitly choose it for this agent.",
+      "connect_supported_chrome": "Connect regular Chrome",
+      "google_signin_help": "Google sign-in help"
     },
     "profile_card": {
       "user_book": "Your profile & preferences",

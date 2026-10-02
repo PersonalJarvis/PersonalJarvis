@@ -45,6 +45,22 @@ Removing a profile revokes Jarvis access. It does not log the person out of
 their personal Chrome or delete browser cookies. Removed assignments remain
 unavailable until the user chooses a replacement.
 
+## Google sign-in rejection
+
+Google may reject a browser controlled by automation. A Google rejection page
+in the managed browser is not evidence that the user's password is wrong.
+Do not rely on Chrome profile/sync sign-in in this automated window to recover.
+Sign in manually in regular Chrome first, then connect that profile with
+the Jarvis extension and explicitly assign it to the intended agent. Jarvis now
+recognizes Google's rejection URL and opens that recovery flow from the preview.
+No profiles are created, reassigned, or copied just by opening recovery.
+
+This does not promise that every service accepts automation after sign-in;
+service-side restrictions and session revocation still apply. Google's
+[supported browser guidance](https://support.google.com/accounts/answer/7675428)
+documents the sign-in limitation. Website sign-in and Chrome profile/sync
+sign-in are different flows; an X task does not require signing into Chrome Sync.
+
 ## Restart and login behavior
 
 Profile assignments and pairing survive application restarts. Managed profile

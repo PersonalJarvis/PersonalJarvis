@@ -15,6 +15,7 @@ import { useAgentBrowserOpen, useBrowserInstallStatus } from "../cardData";
 import { useBrowserView } from "./useBrowserView";
 import { AgentCursor } from "./AgentCursor";
 import { browserPoint } from "./browserInput";
+import { googleSignInRejected } from "./browserSignIn";
 import { BrowserProfilesButton } from "../browser/BrowserProfilesButton";
 import "./agentCard.css";
 
@@ -171,6 +172,16 @@ export function AgentBrowserPreview({ agent }: { agent: SocietyAgent }) {
         </button>
         {state.running && <button className={buttonClass} onClick={() => control("cancel")}>{t("society.browser_live.cancel")}</button>}
       </div>
+      {managedRuntime && live && googleSignInRejected(state.url) && <div role="alert"
+        className="mt-3 grid gap-2 rounded-lg border border-border bg-secondary/40 p-3 text-sm text-foreground">
+        <strong>{t("society.browser_profiles.google_signin_rejected")}</strong>
+        <p>{t("society.browser_profiles.google_signin_recovery")}</p>
+        <div className="flex flex-wrap items-center gap-3">
+          <BrowserProfilesButton agentId={agent.agentId} connectChrome />
+          <a href="https://support.google.com/accounts/answer/7675428" target="_blank" rel="noopener noreferrer"
+            className="text-xs underline underline-offset-2">{t("society.browser_profiles.google_signin_help")}</a>
+        </div>
+      </div>}
       {state.approval && <div className="mt-2 text-xs">
         <p>{t("society.browser_live.approval")} {state.approval.action}</p>
         <button className={buttonClass} onClick={() => void approve(true)}>{t("society.browser_live.allow")}</button>

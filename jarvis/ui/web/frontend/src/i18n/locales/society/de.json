@@ -53,7 +53,7 @@
       "chrome": "Mein vorhandenes Chrome-Profil",
       "managed": "Separates Browser-Profil",
       "chrome_hint": "Agents verwenden sichtbare Tabs in deinem ausgewählten Chrome-Profil mit dessen bestehenden Logins. Verbinde es einmal über die Erweiterung.",
-      "managed_hint": "Ein separates, dauerhaftes Browser-Profil für einen anderen Account. Melde dich im Browser des Agents an und teile das Profil mit den gewünschten Agents.",
+      "managed_hint": "Melde dich im Agent-Browser manuell auf Websites an. Anbieter wie Google können automatisierte Browser ablehnen; nutze für diese Konten ein verbundenes normales Chrome-Profil.",
       "create": "Profil erstellen",
       "close": "Browser-Profile schließen",
       "empty": "Noch keine geteilten Profile eingerichtet. Füge ein Profil hinzu, um dein Chrome zu verbinden oder einen anderen Account zu teilen.",
@@ -61,7 +61,11 @@
       "default": "Standard",
       "connected": "Chrome verbunden. Ob du angemeldet bist, wird auf der jeweiligen Website geprüft.",
       "disconnected": "Chrome nicht verbunden. Öffne das richtige Chrome-Profil, verbinde dessen Jarvis-Erweiterung und aktualisiere den Status. Browser-Aufgaben warten auf diese Verbindung.",
-      "managed_status": "Separates Profil. Website-Sitzungen werden lokal gespeichert; eine vorhandene Sitzung beweist keinen gültigen Login."
+      "managed_status": "Separates Profil. Website-Sitzungen werden lokal gespeichert; eine vorhandene Sitzung beweist keinen gültigen Login.",
+      "google_signin_rejected": "Google hat diese Anmeldung abgelehnt",
+      "google_signin_recovery": "Google kann die Anmeldung in einem automatisierten Browser ablehnen. Melde dich zuerst selbst im normalen Chrome an. Verbinde danach dieses Chrome-Profil hier und wähle es ausdrücklich für diesen Agenten aus.",
+      "connect_supported_chrome": "Normalen Chrome verbinden",
+      "google_signin_help": "Google-Hilfe zur Anmeldung"
     },
     "profile_card": {
       "user_book": "Dein Profil & Präferenzen",
