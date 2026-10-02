@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Loader2, Mic, MicOff, RotateCcw } from "lucide-react";
 
 import { VoiceWaveform, type WaveformPhase } from "@/components/overlay/VoiceWaveform";
@@ -14,6 +14,7 @@ import {
   type BrowserRealtimeSupportIssue,
 } from "@/lib/realtimeAudio";
 import { useEventStore, type VoiceState } from "@/store/events";
+import { setReloadHold } from "@/lib/reloadHold";
 import { cn } from "@/lib/utils";
 import {
   clearVoiceInputLevel,
@@ -401,6 +402,14 @@ export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: 
   useEffect(() => {
     if (!visible) void stop();
   }, [stop, visible]);
+
+  // This document owns the call: an automatic reload (a rebuilt bundle) would
+  // unmount this control and hang up mid-sentence. Hold reloads while it lives.
+  const reloadOwner = useId();
+  useEffect(() => {
+    setReloadHold(reloadOwner, state === "connecting" || state === "connected");
+  }, [reloadOwner, state]);
+  useEffect(() => () => setReloadHold(reloadOwner, false), [reloadOwner]);
 
   useEffect(
     () => () => {
