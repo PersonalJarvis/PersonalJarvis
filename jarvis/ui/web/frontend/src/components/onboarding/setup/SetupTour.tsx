@@ -7,6 +7,7 @@ import { applyStarterPlan, getStarterPlans, selectStarterPlan, type StarterPlan 
 import { useWakeWord } from "@/hooks/useWakeWord";
 import { fetchAgentConnections } from "@/lib/agentChatApi";
 import { clearApiKeysTabRequest, requestApiKeysTab } from "@/lib/apiKeysTab";
+import { isEmbeddedMacWindow } from "@/lib/embeddedDesktop";
 import { fill, setUiLanguage, useLocaleChunk, useT, useUiLanguage, type UiLanguage } from "@/i18n";
 import type { PetState } from "@/lib/petStates";
 import { cn } from "@/lib/utils";
@@ -427,6 +428,30 @@ function useConnectedSubscriptions(pollMs: number): string[] {
 }
 
 /**
+ * "Skip, I'll use the Call shortcut" is the one moment on first run where the
+ * person picks a global key over the wake word, so on a Mac it is also the moment
+ * that key's permission (Input Monitoring) can be asked: from this click, once,
+ * never at launch. macOS shows its own dialog; a refusal changes nothing here (the
+ * Shortcuts settings save asks again the same way, and a denied one is told by the
+ * permission toast the next time a shortcut fails).
+ */
+function askInputMonitoringForCallShortcut(): void {
+  if (!isEmbeddedMacWindow()) return;
+  void fetch("/api/permissions/input_monitoring/request?dry_run=false", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ feature: "global_shortcuts" }),
+  })
+    .then((res) => {
+      if (!res.ok) console.warn(`Input Monitoring request answered HTTP ${res.status}.`);
+    })
+    .catch((error: unknown) => {
+      // Best-effort: the step moves on either way, the ask is only a courtesy.
+      console.warn("Input Monitoring request failed:", error);
+    });
+}
+
+/**
  * The wake-word group of Settings is open behind the card. Continue waits
  * for a saved wake word; without one the Call shortcut is the way in, so the
  * step can still be left for later.
@@ -435,6 +460,10 @@ function VoiceStep({ next, later }: { next: () => void; later: () => void }) {
   const t = useT();
   const { config } = useWakeWord();
   const on = Boolean(config?.enabled && config.phrase.trim());
+  const chooseCallShortcut = () => {
+    askInputMonitoringForCallShortcut();
+    later();
+  };
   return (
     <div className="space-y-3">
       <Status tone={on ? "ok" : "muted"} testId="setup-voice-status">
@@ -445,7 +474,7 @@ function VoiceStep({ next, later }: { next: () => void; later: () => void }) {
       </PrimaryAction>
       {!on && (
         <div className="text-center">
-          <QuietAction onClick={later} testId="setup-voice-later" className="text-xs">
+          <QuietAction onClick={chooseCallShortcut} testId="setup-voice-later" className="text-xs">
             {t("first_run.voice.later")}
           </QuietAction>
         </div>

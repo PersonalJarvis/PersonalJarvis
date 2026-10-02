@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import type { WakeActivationPermission } from "@/components/permissions/wakeActivation";
-
 /**
  * Current wake-word configuration as returned by GET /api/settings/wake-word.
  * Mirrors the backend response in jarvis/ui/web/settings_routes.py.
@@ -66,15 +64,6 @@ export interface WakeActivationResult {
   persisted: boolean;
   // Empty when persisted; otherwise the writer's own reason, in one sentence.
   message: string;
-  /**
-   * What switching ON found out about the microphone (the switch is the user's
-   * gesture, so on macOS it may make the OS ask). `outcome` is a
-   * `PermissionOutcome` value (`granted`, `pending`, `denied`, `needs_settings`,
-   * `unavailable`, `not_required`); `reason` a `PermissionNeeded` reason or "".
-   * Optional: an older backend does not send it, and then there is nothing to
-   * explain.
-   */
-  permission?: WakeActivationPermission;
 }
 
 /**

@@ -1,18 +1,19 @@
 /**
- * The two permission events and the dictation refusal reach the stores through
- * the real useWebSocket -> WSClient path (via a MockWebSocket, like
- * useWebSocket.test.tsx).
+ * The permission events and the dictation refusal reach the UI through the real
+ * useWebSocket -> WSClient path (via a MockWebSocket, like useWebSocket.test.tsx):
+ * a user-started feature that a macOS permission stopped becomes ONE toast with
+ * one button in the owner window, and a refused dictation start resets the
+ * recording pill.
  */
-import { cleanup, render, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { ToastLayer } from "@/components/ToastLayer";
 import { useWebSocket } from "@/hooks/useWebSocket";
-import { EMPTY_PROMPTS } from "@/lib/permissionPrompts";
+import { useI18nStore } from "@/i18n";
+import { resetPermissionToastState } from "@/lib/permissionToast";
 import { useEventStore } from "@/store/events";
-import { usePermissionsStore } from "@/store/permissions";
-
-vi.mock("@/lib/bootStagger", () => ({ bootSettled: () => Promise.resolve() }));
 
 class MockWebSocket {
   static OPEN = 1;
@@ -59,6 +60,8 @@ function envelope(eventName: string, payload: Record<string, unknown>, trace = "
   };
 }
 
+vi.mock("@/lib/bootStagger", () => ({ bootSettled: () => Promise.resolve() }));
+
 const needed = {
   permissions: ["microphone"],
   feature: "dictation",
@@ -72,18 +75,26 @@ const needed = {
   detail: "Microphone access is off.",
 };
 
+const MAC_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)";
+
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
 function Harness() {
   return (
     <QueryClientProvider client={queryClient}>
       <Inner />
+      <ToastLayer />
     </QueryClientProvider>
   );
 }
 function Inner() {
   useWebSocket();
   return null;
+}
+
+function embeddedMac() {
+  (window as unknown as { __JARVIS_EMBEDDED_DESKTOP?: boolean }).__JARVIS_EMBEDDED_DESKTOP = true;
+  vi.spyOn(window.navigator, "userAgent", "get").mockReturnValue(MAC_UA);
 }
 
 describe("useWebSocket permission wiring", () => {
@@ -93,85 +104,137 @@ describe("useWebSocket permission wiring", () => {
   beforeEach(() => {
     (globalThis as unknown as { WebSocket: typeof MockWebSocket }).WebSocket = MockWebSocket;
     (window as unknown as { location: unknown }).location = { protocol: "http:", host: "localhost:5173" };
-    fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      if (String(input) === "/api/permissions/status") {
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({
-            platform: "darwin",
-            supported: true,
-            headless: false,
-            app_identity: { app_name: "Personal Jarvis" },
-            outside_installed_app: false,
-            permissions: [],
-            needed: [{ ...needed, feature: "voice", trace_id: "srv", opened_at_ns: 1 }],
-          }),
-        } as Response;
-      }
-      return { ok: false, status: 404, json: async () => ({}) } as Response;
-    });
+    fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) }) as Response);
     vi.stubGlobal("fetch", fetchMock);
-    useEventStore.setState({ dictating: false, toasts: [] });
-    usePermissionsStore.setState({ ...EMPTY_PROMPTS, snapshot: null, owner: false, inline: {}, dictationNote: null });
+    useI18nStore.getState().setUi("en", { push: false });
+    useEventStore.setState({ dictating: false, toasts: [], solo: false });
+    resetPermissionToastState();
     queryClient.clear();
   });
 
   afterEach(() => {
     cleanup();
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
+    delete (window as unknown as { __JARVIS_EMBEDDED_DESKTOP?: boolean }).__JARVIS_EMBEDDED_DESKTOP;
     (globalThis as unknown as { WebSocket: typeof WebSocket }).WebSocket = OriginalWS;
     MockWebSocket.last = null;
   });
 
-  it("PermissionNeeded opens an episode and PermissionResolved closes it", async () => {
+  it("a user-started feature stopped by a denied microphone becomes one toast with one action", async () => {
+    embeddedMac();
     render(<Harness />);
     await Promise.resolve();
 
     MockWebSocket.last!.deliver(envelope("PermissionNeeded", needed));
-    expect(usePermissionsStore.getState().episodes).toHaveLength(1);
-    expect(usePermissionsStore.getState().episodes[0]).toMatchObject({
-      feature: "dictation",
-      reason: "denied",
-      trace_id: "trace-1",
-    });
 
+    expect(await screen.findByText("Personal Jarvis needs microphone access to hear you.")).toBeTruthy();
+    expect(screen.getAllByTestId("toast-action")).toHaveLength(1);
+    expect(screen.getByTestId("toast-action").textContent).toBe("Open System Settings");
+  });
+
+  it("the same episode is told once, and again after PermissionResolved ends it", async () => {
+    embeddedMac();
+    render(<Harness />);
+    await Promise.resolve();
+
+    MockWebSocket.last!.deliver(envelope("PermissionNeeded", needed));
+    MockWebSocket.last!.deliver(envelope("PermissionNeeded", needed));
+    expect(useEventStore.getState().toasts).toHaveLength(1);
+    expect(useEventStore.getState().toasts[0].count).toBe(1);
+
+    // A grant takes the stale sentence down ...
     MockWebSocket.last!.deliver(
       envelope("PermissionResolved", { permissions: ["microphone"], feature: "dictation", granted: true }),
     );
-    expect(usePermissionsStore.getState().episodes).toEqual([]);
-    expect(usePermissionsStore.getState().resolved[0]).toMatchObject({ feature: "dictation", granted: true });
+    expect(useEventStore.getState().toasts).toEqual([]);
+
+    // ... and a later denial of the same episode is news again.
+    MockWebSocket.last!.deliver(envelope("PermissionNeeded", needed));
+    expect(useEventStore.getState().toasts).toHaveLength(1);
   });
 
-  it("the welcome frame re-seeds the open episodes from the REST list (owner window only)", async () => {
-    usePermissionsStore.setState({ owner: true });
+  it("says nothing while macOS is asking, for a background consumer, or outside the owner window", async () => {
+    embeddedMac();
+    render(<Harness />);
+    await Promise.resolve();
+
+    MockWebSocket.last!.deliver(envelope("PermissionNeeded", { ...needed, phase: "os_dialog", reason: "not_determined" }));
+    MockWebSocket.last!.deliver(envelope("PermissionNeeded", { ...needed, feature: "screen_context", origin: "background" }));
+    expect(useEventStore.getState().toasts).toEqual([]);
+
+    useEventStore.setState({ solo: true });
+    MockWebSocket.last!.deliver(envelope("PermissionNeeded", needed));
+    expect(useEventStore.getState().toasts).toEqual([]);
+  });
+
+  it("says nothing in a plain browser, even on a Mac (it would open Settings on another computer)", async () => {
+    vi.spyOn(window.navigator, "userAgent", "get").mockReturnValue(MAC_UA);
+    render(<Harness />);
+    await Promise.resolve();
+
+    MockWebSocket.last!.deliver(envelope("PermissionNeeded", needed));
+
+    expect(useEventStore.getState().toasts).toEqual([]);
+  });
+
+  it("on connect the owner window only READS the open episodes: nothing is asked at launch", async () => {
+    embeddedMac();
+    fetchMock.mockImplementation(
+      async () =>
+        ({ ok: true, status: 200, json: async () => ({ needed: [] }) }) as Response,
+    );
     render(<Harness />);
     await Promise.resolve();
 
     MockWebSocket.last!.deliver({ type: "welcome", session_id: "s1" });
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/permissions/status")).toBe(true),
+    );
 
-    await waitFor(() => expect(usePermissionsStore.getState().episodes.map((e) => e.feature)).toEqual(["voice"]));
-    expect(fetchMock.mock.calls.some(([url]) => url === "/api/permissions/status")).toBe(true);
-    // Nothing is asked at launch: a welcome frame only READS.
-    expect(
-      fetchMock.mock.calls.filter(
-        ([url, init]) =>
-          String(url).startsWith("/api/permissions/") && (init as RequestInit | undefined)?.method === "POST",
-      ),
-    ).toEqual([]);
+    const permissionCalls = fetchMock.mock.calls.filter(([url]) => String(url).startsWith("/api/permissions"));
+    expect(permissionCalls.map(([url, init]) => [String(url), (init as RequestInit | undefined)?.method ?? "GET"])).toEqual([
+      ["/api/permissions/status", "GET"],
+    ]);
   });
 
-  it("the welcome frame does not touch the permission API in a window that is not the owner", async () => {
+  it("does not read the permission API at all in a window that cannot toast", async () => {
     render(<Harness />);
     await Promise.resolve();
 
     MockWebSocket.last!.deliver({ type: "welcome", session_id: "s1" });
     await new Promise((resolve) => setTimeout(resolve, 20));
 
-    expect(fetchMock.mock.calls.some(([url]) => url === "/api/permissions/status")).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith("/api/permissions"))).toBe(false);
   });
 
-  it("DictationRefused ends a recording the composer started and leaves a note", async () => {
+  it("tells an episode that opened while no window was listening, once per page load", async () => {
+    embeddedMac();
+    const wake = { ...needed, feature: "wake_word", origin: "background" };
+    fetchMock.mockImplementation(
+      async (url: unknown) =>
+        ({
+          ok: true,
+          status: 200,
+          json: async () => (String(url) === "/api/permissions/status" ? { needed: [needed, wake] } : {}),
+        }) as Response,
+    );
+    render(<Harness />);
+    await Promise.resolve();
+
+    MockWebSocket.last!.deliver({ type: "welcome", session_id: "s1" });
+    await waitFor(() => expect(useEventStore.getState().toasts.length).toBeGreaterThan(0));
+    expect(await screen.findByText("Personal Jarvis needs microphone access to hear you.")).toBeTruthy();
+    expect(screen.getByText(/The wake word cannot listen/)).toBeTruthy();
+
+    // The person lets them expire; the socket reconnects: nothing is repeated.
+    useEventStore.setState({ toasts: [] });
+    MockWebSocket.last!.deliver({ type: "welcome", session_id: "s1" });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(useEventStore.getState().toasts).toEqual([]);
+  });
+
+  it("DictationRefused ends a recording the composer started", async () => {
     useEventStore.setState({ dictating: true });
     render(<Harness />);
     await Promise.resolve();
@@ -181,10 +244,6 @@ describe("useWebSocket permission wiring", () => {
     );
 
     expect(useEventStore.getState().dictating).toBe(false);
-    expect(usePermissionsStore.getState().dictationNote).toMatchObject({
-      source: "refused",
-      reason: "microphone_unavailable",
-    });
   });
 
   it.each(["already_running", "nothing_to_paste", "paste_unavailable", "history_disabled"])(
@@ -197,7 +256,6 @@ describe("useWebSocket permission wiring", () => {
       MockWebSocket.last!.deliver(envelope("DictationRefused", { reason, detail: "" }));
 
       expect(useEventStore.getState().dictating).toBe(true);
-      expect(usePermissionsStore.getState().dictationNote).toBeNull();
     },
   );
 
@@ -214,41 +272,16 @@ describe("useWebSocket permission wiring", () => {
     },
   );
 
-  it("only a window that IS dictating reacts", async () => {
-    useEventStore.setState({ dictating: false });
-    render(<Harness />);
-    await Promise.resolve();
-
-    MockWebSocket.last!.deliver(envelope("DictationRefused", { reason: "microphone_unavailable", detail: "" }));
-
-    expect(usePermissionsStore.getState().dictationNote).toBeNull();
-  });
-
-  it("ErrorOccurred from ui.web.dictation also stops the recording pill, and keeps the better reason", async () => {
+  it("ErrorOccurred from ui.web.dictation also stops the recording pill", async () => {
     useEventStore.setState({ dictating: true });
     render(<Harness />);
     await Promise.resolve();
 
-    MockWebSocket.last!.deliver(envelope("DictationRefused", { reason: "no_stt", detail: "" }));
-    useEventStore.setState({ dictating: true });
     MockWebSocket.last!.deliver(
       envelope("ErrorOccurred", { layer: "ui.web.dictation", error_type: "DictationBusy", message: "busy", recoverable: true }),
     );
 
     expect(useEventStore.getState().dictating).toBe(false);
-    expect(usePermissionsStore.getState().dictationNote?.reason).toBe("no_stt");
-  });
-
-  it("ErrorOccurred(DictationUnavailable) says the pipeline is not running", async () => {
-    useEventStore.setState({ dictating: true });
-    render(<Harness />);
-    await Promise.resolve();
-
-    MockWebSocket.last!.deliver(
-      envelope("ErrorOccurred", { layer: "ui.web.dictation", error_type: "DictationUnavailable", message: "x", recoverable: true }),
-    );
-
-    expect(usePermissionsStore.getState().dictationNote).toMatchObject({ source: "error", reason: "pipeline_not_running" });
   });
 
   it("an ErrorOccurred from another layer is not a dictation refusal", async () => {
@@ -259,6 +292,5 @@ describe("useWebSocket permission wiring", () => {
     MockWebSocket.last!.deliver(envelope("ErrorOccurred", { layer: "brain", message: "x", recoverable: true }));
 
     expect(useEventStore.getState().dictating).toBe(true);
-    expect(usePermissionsStore.getState().dictationNote).toBeNull();
   });
 });

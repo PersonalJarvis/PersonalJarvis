@@ -7,7 +7,7 @@
  * and fails when they drift, so a feature or reason cannot be spelled one way
  * on the bus and another in the UI copy.
  *
- * Declarations only, no logic: the reducer lives in `permissionPrompts.ts`.
+ * Declarations only, no logic: `permissionToast.ts` reads these events.
  */
 
 /** Product features that can ask for an OS permission. */

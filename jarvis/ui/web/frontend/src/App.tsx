@@ -26,7 +26,6 @@ import { VoiceWarmingBanner } from "@/components/layout/VoiceWarmingBanner";
 import { MainView } from "@/components/layout/MainView";
 import { ToastLayer } from "@/components/ToastLayer";
 import { CommandActivityLayer } from "@/components/CommandActivityLayer";
-import { PermissionPromptHost } from "@/components/permissions/PermissionPromptHost";
 import { EditContextMenu } from "@/components/EditContextMenu";
 /*
   Lazy on purpose. The overlay pulls in the dialog primitives, the keyboard
@@ -405,10 +404,6 @@ export default function App() {
       </main>
 
       <ToastLayer />
-      {/* A missing macOS permission is explained here, where the person is,
-          only when a feature they used needs it: one card, owner window only,
-          never at launch. Mounts its (lazy) card only while there is one. */}
-      <PermissionPromptHost />
       <CommandActivityLayer />
       {/* Right-click Cut/Copy/Paste. The desktop WebView ships with its own
           context menu disabled, so without this there is no mouse-driven paste

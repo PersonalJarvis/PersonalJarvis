@@ -6,16 +6,17 @@ on ``FakeTCC`` (``tests/fakes/fake_tcc.py``), behind a real FastAPI ``TestClient
 The FakeTCC call log is the proof that nothing was asked. Nothing here ran on a real
 Mac: every macOS behaviour is a MODEL (see the fidelity ledger in ``fake_tcc.py``).
 
-The key sets of the snapshot cross Python, JSON and the TypeScript twin the frontend
-reads (AP-4): the TypedDicts of ``permissions_routes`` are the Python side, read back
-here against the real answer and against the TypeScript interfaces.
+The key sets of the snapshot cross Python and JSON (the CLI and the CI probe read them):
+the TypedDicts of ``permissions_routes`` are read back here against the real answer. The
+web UI no longer reads the snapshot (it listens to ``PermissionNeeded`` /
+``PermissionResolved`` only, whose vocabulary ``test_permission_events.py`` pins against
+``lib/permissionEvents.ts``), so there is no TypeScript twin of it any more.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-import re
 import subprocess
 import threading
 import time
@@ -46,12 +47,6 @@ from tests.fakes.fake_tcc import DMG_BUNDLE_ID, DialogPolicy, FakeTCC, TccServic
 
 _MUSIC = "com.apple.Music"
 _SPOTIFY = "com.spotify.client"
-_REPO_ROOT = Path(__file__).resolve().parents[4]
-# The TypeScript twin of the snapshot types (interfaces PermissionSnapshot,
-# PermissionAppIdentity, PermissionRow, PermissionNeededEpisode). It must exist: a
-# missing file is a failure, never a skip.
-_TS_TWIN = _REPO_ROOT / "jarvis/ui/web/frontend/src/lib/permissionSnapshot.ts"
-
 _REMOVED_KEYS = {"features", "wanted", "active", "identity_reset", "restart_required", "foreground"}
 
 
@@ -267,92 +262,6 @@ def test_every_used_for_entry_is_a_known_feature() -> None:
         assert set(features) <= set(PERMISSION_FEATURES), permission
     assert set(routes._USED_FOR) == set(routes._ROW_ORDER)
     assert set(routes._ROW_LABELS) == set(routes._ROW_ORDER)
-
-
-def _ts_interface(name: str) -> dict[str, str]:
-    source = _TS_TWIN.read_text(encoding="utf-8")
-    match = re.search(rf"export interface {name} \{{(.*?)\n\}}", source, re.S)
-    assert match, f"interface {name} missing from {_TS_TWIN.name}"
-    fields = dict(re.findall(r"^\s{2}([a-z_]+)\??: ([^;\n]+);", match.group(1), re.M))
-    assert fields, f"no fields parsed from {name}"
-    return fields
-
-
-@pytest.mark.parametrize(
-    ("typed_dict", "interface"),
-    [
-        (PermissionsSnapshot, "PermissionSnapshot"),
-        (AppIdentityBlock, "PermissionAppIdentity"),
-        (PermissionRow, "PermissionRow"),
-        (NeededEpisode, "PermissionNeededEpisode"),
-    ],
-)
-def test_typescript_twin_matches_the_typed_dict(typed_dict: type, interface: str) -> None:
-    py_fields = _typed_keys(typed_dict)
-    ts_fields = _ts_interface(interface)
-    extra, missing = set(ts_fields) - py_fields, py_fields - set(ts_fields)
-    assert not extra and not missing, f"{interface} drift: extra={extra}, missing={missing}"
-
-
-def _ts_union(name: str) -> set[str]:
-    source = _TS_TWIN.read_text(encoding="utf-8")
-    match = re.search(rf"export type {name} =((?:\s*\|?\s*\"[a-z_]+\")+);", source)
-    assert match, f"union {name} missing from {_TS_TWIN.name}"
-    return set(re.findall(r'"([a-z_]+)"', match.group(1)))
-
-
-def test_typescript_twin_speaks_the_same_state_outcome_and_row_vocabulary() -> None:
-    """The values behind the interfaces cross the same five layers (AP-4)."""
-    from jarvis.platform.permission_service import PermissionOutcome
-    from jarvis.platform.permissions import PermissionId, PermissionState
-
-    assert _ts_union("PermissionState") == {state.value for state in PermissionState}
-    assert _ts_union("PermissionOutcome") == {outcome.value for outcome in PermissionOutcome}
-
-    source = _TS_TWIN.read_text(encoding="utf-8")
-    ids = re.search(r"export const PERMISSION_ROW_IDS = \[(.*?)\] as const;", source, re.S)
-    assert ids, "PERMISSION_ROW_IDS missing"
-    row_ids = re.findall(r'"([a-z_]+)"', ids.group(1))
-    assert row_ids == [permission.value for permission in routes._ROW_ORDER]
-    # PermissionId = the rows plus the one alias the routes still accept.
-    assert set(row_ids) | {"event_posting"} == {permission.value for permission in PermissionId}
-    assert "event_posting" in source
-
-
-@pytest.mark.parametrize(
-    ("typed_dict", "interface"),
-    [
-        (routes.EnsurePayload, "PermissionEnsurePayload"),
-        (routes.OperationPayload, "PermissionOperationPayload"),
-        (routes.RateLimitedPayload, "PermissionRateLimitedPayload"),
-    ],
-)
-def test_typescript_twin_matches_the_answer_typed_dicts(typed_dict: type, interface: str) -> None:
-    """The three answer shapes of the ask routes are twinned key for key as well (AP-4)."""
-    py_fields = _typed_keys(typed_dict)
-    ts_fields = _ts_interface(interface)
-    extra, missing = set(ts_fields) - py_fields, py_fields - set(ts_fields)
-    assert not extra and not missing, f"{interface} drift: extra={extra}, missing={missing}"
-
-
-@pytest.mark.parametrize(
-    ("interface", "field", "declared"),
-    [
-        ("PermissionRow", "id", "PermissionRowId"),
-        ("PermissionRow", "status", "PermissionState"),
-        ("PermissionNeededEpisode", "feature", "PermissionFeature"),
-        ("PermissionNeededEpisode", "reason", "PermissionNeededReason"),
-        ("PermissionNeededEpisode", "phase", "PermissionNeededPhase"),
-        ("PermissionNeededEpisode", "origin", "PermissionNeededOrigin"),
-        ("PermissionEnsurePayload", "outcome", "PermissionOutcome"),
-        ("PermissionEnsurePayload", "state", "PermissionState"),
-    ],
-)
-def test_typescript_twin_declares_the_enumerated_fields_with_their_union(
-    interface: str, field: str, declared: str
-) -> None:
-    """A twin that widened an enumerated field to ``string`` would let a new value through."""
-    assert _ts_interface(interface)[field] == declared
 
 
 def test_the_real_answers_carry_exactly_the_keys_of_their_typed_dicts(

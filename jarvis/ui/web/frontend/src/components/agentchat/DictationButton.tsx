@@ -18,22 +18,13 @@
  *
  * Green, not red: a live microphone is a state, not a fault, and the palette
  * keeps `--destructive` for faults (see components/VoiceIndicator.tsx).
- *
- * A press that does nothing is explained right here (`DictationNote`): the
- * first press on a Mac may make macOS ask for the microphone, which refuses
- * THAT press and says "allowed - press again" afterwards. Nothing is started
- * retroactively. After the first dictation that really ran, a one-time tip may
- * offer global shortcuts.
  */
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Mic, Square } from "lucide-react";
 
-import { DictationNote } from "@/components/agentchat/DictationNote";
 import { useT } from "@/i18n";
-import { claimShortcutsTip } from "@/lib/shortcutsTip";
 import { readVoiceInputLevel } from "@/lib/voiceInputLevel";
 import { cn } from "@/lib/utils";
-import { usePermissionsStore } from "@/store/permissions";
 
 /** Bars in the waveform; the newest sample enters on the right. */
 const BAR_COUNT = 18;
@@ -116,11 +107,7 @@ export interface DictationButtonProps {
   className?: string;
 }
 
-/**
- * The control itself: the idle mic, or the live pill. Wrapped by
- * {@link DictationButton}, which adds the note popover.
- */
-function DictationControl({
+export function DictationButton({
   dictating,
   onToggle,
   disabled,
@@ -205,54 +192,5 @@ function DictationControl({
         <Square className="h-2.5 w-2.5 fill-current" aria-hidden />
       </button>
     </div>
-  );
-}
-
-export function DictationButton(props: DictationButtonProps) {
-  const { dictating, onToggle } = props;
-  const [tip, setTip] = useState(false);
-  const wasDictating = useRef(false);
-
-  // A dictation that really ran (it was live, and no refusal note came with its
-  // end) is the one moment the global-shortcuts tip may appear, once.
-  useEffect(() => {
-    if (dictating) {
-      wasDictating.current = true;
-      return undefined;
-    }
-    if (!wasDictating.current) return undefined;
-    wasDictating.current = false;
-    if (usePermissionsStore.getState().dictationNote !== null) return undefined;
-    let cancelled = false;
-    void claimShortcutsTip().then((offer) => {
-      if (offer && !cancelled) setTip(true);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [dictating]);
-
-  const originId = useId();
-  // A button that goes away must not leave a stale owner behind for the next one.
-  useEffect(
-    () => () => {
-      const store = usePermissionsStore.getState();
-      if (store.dictationOrigin === originId) store.setDictationOrigin(null);
-    },
-    [originId],
-  );
-  const toggle = () => {
-    // A new press supersedes whatever the last one said, and this button now owns the answer.
-    usePermissionsStore.getState().clearDictationNote();
-    usePermissionsStore.getState().setDictationOrigin(originId);
-    setTip(false);
-    onToggle();
-  };
-
-  return (
-    <span className="relative inline-flex shrink-0">
-      <DictationControl {...props} onToggle={toggle} />
-      <DictationNote originId={originId} tip={tip} onTipDone={() => setTip(false)} />
-    </span>
   );
 }

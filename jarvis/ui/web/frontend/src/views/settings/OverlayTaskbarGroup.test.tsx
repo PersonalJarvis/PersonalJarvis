@@ -1,18 +1,15 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-// Identity translator so assertions can match exact i18n keys. The rest of the
-// module stays real: the inline permission notes under the switches use `fill`
-// and `useUiLanguage`.
-vi.mock("@/i18n", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/i18n")>()),
+// Identity translator so assertions can match exact i18n keys.
+vi.mock("@/i18n", () => ({
   useT: () => (key: string) => key,
 }));
 
-// The group reads pushToast from the store; the mute-music tests read what it pushed.
-const pushToast = vi.hoisted(() => vi.fn());
+// The group reads pushToast from the store; we never trigger it here.
 vi.mock("@/store/events", () => ({
-  useEventStore: (selector: (s: { pushToast: () => void }) => unknown) => selector({ pushToast }),
+  useEventStore: (selector: (s: { pushToast: () => void }) => unknown) =>
+    selector({ pushToast: vi.fn() }),
 }));
 
 // Mascot SVG is irrelevant to this group's structure — stub it out.
@@ -35,26 +32,9 @@ vi.mock("@/hooks/useBarPersistent", () => ({
 vi.mock("@/hooks/useBarFollowCursor", () => ({
   useBarFollowCursor: () => ({ enabled: true, loading: false, setEnabled: vi.fn() }),
 }));
-// The switch keeps its own state like the real hook, and the PUT answer is the
-// test's to script (`muteSetEnabled`).
-const muteSetEnabled = vi.hoisted(() => vi.fn());
-vi.mock("@/hooks/useMuteMusic", async () => {
-  const React = await import("react");
-  return {
-    useMuteMusic: () => {
-      const [enabled, setEnabledState] = React.useState(false);
-      return {
-        enabled,
-        loading: false,
-        setEnabled: async (next: boolean) => {
-          const answer = await muteSetEnabled(next);
-          setEnabledState(next);
-          return answer;
-        },
-      };
-    },
-  };
-});
+vi.mock("@/hooks/useMuteMusic", () => ({
+  useMuteMusic: () => ({ enabled: false, loading: false, setEnabled: vi.fn() }),
+}));
 const setSoundEffects = vi.fn().mockResolvedValue({ ok: true, enabled: false });
 vi.mock("@/hooks/useSoundEffects", () => ({
   useSoundEffects: () => ({
@@ -65,8 +45,6 @@ vi.mock("@/hooks/useSoundEffects", () => ({
 }));
 
 import { OverlayTaskbarGroup } from "@/views/settings/OverlayTaskbarGroup";
-import { EMPTY_PROMPTS } from "@/lib/permissionPrompts";
-import { usePermissionsStore } from "@/store/permissions";
 import { NonePreview } from "@/components/overlay/OverlayStylePreviews";
 
 afterEach(() => {
@@ -135,138 +113,5 @@ describe("OverlayTaskbarGroup", () => {
     // a clean, centred strike rather than a lopsided slash.
     expect((Number(line.getAttribute("x1")) + Number(line.getAttribute("x2"))) / 2).toBe(50);
     expect((y1 + y2) / 2).toBe(20);
-  });
-});
-
-describe("mute music: the switch is the gesture that may make macOS ask", () => {
-  beforeEach(() => {
-    muteSetEnabled.mockReset();
-    pushToast.mockClear();
-    usePermissionsStore.setState({
-      ...EMPTY_PROMPTS,
-      inline: {},
-      snapshot: {
-        platform: "darwin",
-        supported: true,
-        headless: false,
-        app_identity: { app_name: "Personal Jarvis", bundle_id: null, bundle_path: null, launched_as_bundle: true, stable: true },
-        outside_installed_app: false,
-        permissions: [],
-        needed: [],
-      },
-    });
-  });
-
-  function muteSwitch() {
-    // Behavior block order: bar_persistent, follow_cursor, mute_music, sound_effects.
-    return screen.getAllByRole("switch").find((el) => el.getAttribute("aria-label") === "taskbar_view.mute_music.title")!;
-  }
-
-  it("names the player in the inline status and keeps no refresh event", async () => {
-    muteSetEnabled.mockResolvedValue({
-      ok: true,
-      enabled: true,
-      persisted: true,
-      applied_live: true,
-      permission: {
-        feature: "audio_ducking",
-        checked: true,
-        asked: true,
-        note: "",
-        not_running: ["Music"],
-        players: [
-          {
-            player: "Spotify",
-            target: "com.spotify.client",
-            outcome: "needs_settings",
-            reason: "needs_settings",
-            can_open_settings: true,
-            asked: true,
-            outside_installed_app: false,
-            detail: "ENGLISH BACKEND DETAIL",
-          },
-        ],
-      },
-    });
-    const refreshes = vi.fn();
-    window.addEventListener("jarvis:permissions-refresh", refreshes);
-
-    render(<OverlayTaskbarGroup />);
-    fireEvent.click(muteSwitch());
-
-    const status = await screen.findByTestId("mute-music-status");
-    // The identity translator returns the keys; the wording (and the player's
-    // name inside it) is covered by MuteMusicPermissionNote.test.tsx.
-    expect(status.textContent).toContain("permissions.inline.audio_ducking.player_blocked");
-    expect(status.textContent).toContain("permissions.inline.audio_ducking.player_not_running");
-    expect(refreshes).not.toHaveBeenCalled();
-    window.removeEventListener("jarvis:permissions-refresh", refreshes);
-  });
-
-  function answerFor(outcome: string) {
-    return {
-      ok: true,
-      enabled: true,
-      persisted: true,
-      applied_live: true,
-      permission: {
-        feature: "audio_ducking",
-        checked: true,
-        asked: true,
-        note: "",
-        not_running: [],
-        players: [
-          {
-            player: "Spotify",
-            target: "com.spotify.client",
-            outcome,
-            reason: outcome === "granted" ? "" : outcome,
-            can_open_settings: true,
-            asked: true,
-            outside_installed_app: false,
-            detail: "",
-          },
-        ],
-      },
-    };
-  }
-
-  it.each(["denied", "needs_settings", "unavailable"])(
-    "pushes no 'is on' success toast when the player answer is %s (the line under the switch says it)",
-    async (outcome) => {
-      muteSetEnabled.mockResolvedValue(answerFor(outcome));
-      render(<OverlayTaskbarGroup />);
-
-      fireEvent.click(muteSwitch());
-
-      await screen.findByTestId("mute-music-status");
-      expect(pushToast).not.toHaveBeenCalled();
-    },
-  );
-
-  it("still confirms with a toast when every running player allowed it", async () => {
-    muteSetEnabled.mockResolvedValue(answerFor("granted"));
-    render(<OverlayTaskbarGroup />);
-
-    fireEvent.click(muteSwitch());
-
-    await waitFor(() => expect(pushToast).toHaveBeenCalledWith("success", "taskbar_view.mute_music.enabled_toast"));
-  });
-
-  it("says macOS may be asking while the request is out, and shows nothing when switched off", async () => {
-    let release: (value: unknown) => void = () => undefined;
-    muteSetEnabled.mockImplementation(
-      () => new Promise((resolve) => {
-        release = resolve;
-      }),
-    );
-    render(<OverlayTaskbarGroup />);
-    fireEvent.click(muteSwitch());
-
-    expect(await screen.findByTestId("mute-music-asking")).toBeTruthy();
-
-    release({ ok: true, enabled: true, persisted: true, applied_live: true });
-    await waitFor(() => expect(screen.queryByTestId("mute-music-asking")).toBeNull());
-    expect(screen.queryByTestId("mute-music-status")).toBeNull();
   });
 });

@@ -1,97 +1,139 @@
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useI18nStore } from "@/i18n";
-import { EMPTY_PROMPTS, PERMISSION_CARD_OFFSET_VAR } from "@/lib/permissionPrompts";
 import { useEventStore } from "@/store/events";
-import { usePermissionsStore } from "@/store/permissions";
-import PermissionPromptLayer from "./permissions/PermissionPromptLayer";
 import { ToastLayer } from "./ToastLayer";
-
-const CARD_HEIGHT = 141.2;
 
 beforeEach(() => {
   useI18nStore.getState().setUi("en", { push: false });
   useEventStore.setState({ toasts: [] });
-  usePermissionsStore.setState({
-    ...EMPTY_PROMPTS,
-    snapshot: {
-      platform: "darwin",
-      supported: true,
-      headless: false,
-      app_identity: { app_name: "Personal Jarvis", bundle_id: "x", bundle_path: null, launched_as_bundle: true, stable: true },
-      outside_installed_app: false,
-      permissions: [],
-      needed: [],
-    },
-    owner: true,
-    inline: {},
-  });
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) }) as Response),
-  );
-  // jsdom lays nothing out: give the permission card column a real height.
-  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
-    const height = this.dataset.testid === "permission-prompt-layer" ? CARD_HEIGHT : 0;
-    return { x: 0, y: 0, top: 0, left: 0, right: 0, bottom: height, width: 320, height, toJSON: () => ({}) } as DOMRect;
-  });
 });
 
 afterEach(() => {
   cleanup();
-  vi.restoreAllMocks();
-  vi.unstubAllGlobals();
-  document.documentElement.style.removeProperty(PERMISSION_CARD_OFFSET_VAR);
+  vi.useRealTimers();
 });
 
-describe("toasts under the permission card", () => {
-  it("starts the toast column beneath the card (they share the top-right corner)", async () => {
-    render(
-      <>
-        <ToastLayer />
-        <PermissionPromptLayer />
-      </>,
-    );
-    act(() => {
-      useEventStore.getState().pushToast("info", "Saved");
-      usePermissionsStore.getState().ingest(
-        "PermissionNeeded",
-        "t",
-        {
-          permissions: ["microphone"],
-          feature: "dictation",
-          reason: "denied",
-          phase: "blocked",
-          origin: "user",
-          target: "",
-          can_prompt: false,
-          can_open_settings: true,
-          outside_app: false,
-          detail: "",
-        },
-        Date.now(),
-      );
-    });
-    await screen.findByTestId("permission-prompt-card");
+describe("ToastLayer", () => {
+  it("shows a plain toast without a button", () => {
+    render(<ToastLayer />);
+    act(() => useEventStore.getState().pushToast("info", "Saved"));
 
-    // ceil(height) + an 8 px gap, published on <html> ...
-    const offset = `${Math.ceil(CARD_HEIGHT) + 8}px`;
-    expect(document.documentElement.style.getPropertyValue(PERMISSION_CARD_OFFSET_VAR)).toBe(offset);
-    // ... and consumed by the toast column as its top margin.
-    const toast = screen.getByText("Saved");
-    const column = toast.closest<HTMLElement>(".fixed");
-    expect(column?.style.marginTop).toBe(`var(${PERMISSION_CARD_OFFSET_VAR}, 0px)`);
+    expect(screen.getByText("Saved")).toBeTruthy();
+    expect(screen.queryByTestId("toast-action")).toBeNull();
   });
 
-  it("falls back to no offset when no card is up", () => {
+  it("shows the one button of a toast, runs it, and closes the toast", () => {
+    const onAction = vi.fn();
     render(<ToastLayer />);
+    act(() =>
+      useEventStore.getState().pushToast("warning", "Personal Jarvis needs microphone access to hear you.", {
+        action: { label: "Open System Settings", onAction },
+      }),
+    );
+
+    const button = screen.getByRole("button", { name: "Open System Settings" });
+    fireEvent.click(button);
+
+    expect(onAction).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("Personal Jarvis needs microphone access to hear you.")).toBeNull();
+  });
+
+  it("keeps the toast up after a button that asked to stay (a retry)", () => {
+    const onAction = vi.fn();
+    render(<ToastLayer />);
+    act(() =>
+      useEventStore.getState().pushToast("warning", "Needs a restart", {
+        action: { label: "Quit and reopen", onAction, keepOpen: true },
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Quit and reopen" }));
+
+    expect(onAction).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("Needs a restart")).toBeTruthy();
+  });
+
+  it("closes with the X like every other toast", () => {
+    render(<ToastLayer />);
+    act(() =>
+      useEventStore.getState().pushToast("info", "Needs access", {
+        action: { label: "Open System Settings", onAction: vi.fn() },
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+
+    expect(screen.queryByText("Needs access")).toBeNull();
+  });
+
+  it("the button sits in the same toast box as the message (one box, not a second layer)", () => {
+    render(<ToastLayer />);
+    act(() =>
+      useEventStore.getState().pushToast("info", "Needs access", {
+        action: { label: "Open System Settings", onAction: vi.fn() },
+      }),
+    );
+
+    const box = screen.getByRole("status");
+    expect(box.contains(screen.getByTestId("toast-action"))).toBe(true);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+  });
+});
+
+describe("ToastLayer placement", () => {
+  it("renders into <body>, so it can sit above the setup spotlight (also a body-level portal)", () => {
+    const { container } = render(<ToastLayer />);
+    act(() => useEventStore.getState().pushToast("info", "Saved"));
+
+    expect(container.querySelector("[role=status]")).toBeNull();
+    expect(document.body.querySelector(":scope > div.fixed.z-\\[115\\] [role=status]")).not.toBeNull();
+  });
+});
+
+describe("pushToast with an action and a lifetime", () => {
+  it("keeps a toast with a button up for its own ttl, not the 3.5 s default", () => {
+    vi.useFakeTimers();
+    act(() =>
+      useEventStore.getState().pushToast("info", "Needs access", {
+        action: { label: "Go", onAction: vi.fn() },
+        ttlMs: 20_000,
+      }),
+    );
+
+    act(() => void vi.advanceTimersByTime(19_000));
+    expect(useEventStore.getState().toasts).toHaveLength(1);
+    act(() => void vi.advanceTimersByTime(1_500));
+    expect(useEventStore.getState().toasts).toEqual([]);
+  });
+
+  it("a plain toast still goes away after the default lifetime", () => {
+    vi.useFakeTimers();
+    act(() => useEventStore.getState().pushToast("info", "Saved"));
+
+    act(() => void vi.advanceTimersByTime(3_600));
+
+    expect(useEventStore.getState().toasts).toEqual([]);
+  });
+
+  it("collapses a repeat of the same sentence and button into one toast", () => {
+    const action = { label: "Go", onAction: vi.fn() };
     act(() => {
-      useEventStore.getState().pushToast("info", "Saved");
+      useEventStore.getState().pushToast("info", "Needs access", { action });
+      useEventStore.getState().pushToast("info", "Needs access", { action });
     });
 
-    const column = screen.getByText("Saved").closest<HTMLElement>(".fixed");
-    expect(document.documentElement.style.getPropertyValue(PERMISSION_CARD_OFFSET_VAR)).toBe("");
-    expect(column?.style.marginTop).toBe(`var(${PERMISSION_CARD_OFFSET_VAR}, 0px)`);
+    expect(useEventStore.getState().toasts).toHaveLength(1);
+    expect(useEventStore.getState().toasts[0].count).toBe(2);
+  });
+
+  it("keeps the same sentence with another button as another toast", () => {
+    act(() => {
+      useEventStore.getState().pushToast("info", "Needs access", { action: { label: "Go", onAction: vi.fn() } });
+      useEventStore.getState().pushToast("info", "Needs access", { action: { label: "Stay", onAction: vi.fn() } });
+    });
+
+    expect(useEventStore.getState().toasts).toHaveLength(2);
   });
 });

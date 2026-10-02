@@ -24,8 +24,8 @@ import {
   useCommandActivityStore,
   COMMAND_ACTIVITY_EVENTS,
 } from "@/store/commandActivity";
-import { usePermissionsStore, PERMISSION_EVENTS, isDictationStartFailure } from "@/store/permissions";
-import { bootSettled } from "@/lib/bootStagger";
+import { isDictationStartFailure } from "@/lib/dictationRefusal";
+import { usePermissionToast } from "@/hooks/usePermissionToast";
 import { useDeckStore } from "@/store/deck";
 import { useHomeStore } from "@/store/home";
 import { PANE_ACTIVITY_EVENT } from "@/store/workspacePanes";
@@ -66,6 +66,7 @@ export function useWebSocket(): void {
   const setActiveSection = useEventStore((s) => s.setActiveSection);
   const setBrainProvider = useEventStore((s) => s.setBrainProvider);
   const pushToast = useEventStore((s) => s.pushToast);
+  const { onEvent: onPermissionEvent, seed: seedPermissionToast } = usePermissionToast();
 
   useEffect(() => {
     if (mounted.current) return;
@@ -117,11 +118,11 @@ export function useWebSocket(): void {
           // authoritative "backend is up" signal — useAssistantNameSeed
           // listens for this event and re-fetches the resolved name.
           window.dispatchEvent(new CustomEvent("jarvis:assistant-name-changed"));
-          // Re-seed the open macOS permission episodes on EVERY (re)connect: a
-          // PermissionNeeded event published while this window was hidden or not
-          // yet created is gone, so the REST list (`needed[]`) is the truth. A
-          // no-op outside the owner window (see store/permissions).
-          void bootSettled().then(() => usePermissionsStore.getState().seed());
+          // Re-seed the permission toast on EVERY (re)connect too: a
+          // PermissionNeeded published while no window was connected (autostart
+          // with the window hidden, a wake-word denial before the socket opened)
+          // is a one-shot bus event and would otherwise never be told.
+          seedPermissionToast();
           return;
         }
 
@@ -188,23 +189,17 @@ export function useWebSocket(): void {
             );
         }
 
-        // macOS permission episodes: the card and the inline notes follow these
-        // two events; the store ignores anything it cannot render honestly.
-        if (PERMISSION_EVENTS.has(env.event_name)) {
-          usePermissionsStore
-            .getState()
-            .ingest(
-              env.event_name,
-              env.trace_id,
-              env.payload,
-              Math.floor(env.timestamp_ns / 1_000_000),
-            );
+        // A feature a macOS permission stopped: ONE toast with one button, only
+        // in the owner window and only when the person started the feature
+        // (lib/permissionToast). It reads just these two events.
+        if (env.event_name === "PermissionNeeded" || env.event_name === "PermissionResolved") {
+          onPermissionEvent(env.event_name, env.payload);
         }
 
         // A dictation that could not start. The composer set `dictating`
         // optimistically when the person pressed the mic, so without this the
         // recording pill sticks with a waveform. Only a window that IS
-        // dictating reacts; the inline note itself is rendered by the composer.
+        // dictating reacts.
         if (
           (env.event_name === "DictationRefused" &&
             isDictationStartFailure((env.payload as { reason?: unknown }).reason)) ||
@@ -212,22 +207,7 @@ export function useWebSocket(): void {
             (env.payload as { layer?: unknown }).layer === "ui.web.dictation")
         ) {
           const store = useEventStore.getState();
-          if (store.dictating) {
-            store.setDictating(false);
-            const p = env.payload as { reason?: unknown; error_type?: unknown };
-            const refused = env.event_name === "DictationRefused";
-            usePermissionsStore.getState().noteDictationRefusal({
-              source: refused ? "refused" : "error",
-              reason: refused
-                ? typeof p.reason === "string"
-                  ? p.reason
-                  : ""
-                : p.error_type === "DictationUnavailable"
-                  ? "pipeline_not_running"
-                  : "already_running",
-              ts: Math.floor(env.timestamp_ns / 1_000_000),
-            });
-          }
+          if (store.dictating) store.setDictating(false);
         }
 
         // Mission deck: cost, computer-use, capture, terminals, wiki, words.
@@ -796,6 +776,8 @@ export function useWebSocket(): void {
     setActiveSection,
     setBrainProvider,
     pushToast,
+    onPermissionEvent,
+    seedPermissionToast,
     queryClient,
   ]);
 }

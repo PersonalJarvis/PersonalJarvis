@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   AlertTriangle,
   Keyboard,
@@ -14,10 +14,6 @@ import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/layout/EmptyState";
 import { PanelSkeleton, SkeletonBar } from "@/components/layout/PanelSkeleton";
 import { useDictation, type DictationEntry } from "@/hooks/useDictation";
-import { useKeybinds } from "@/hooks/useHotkey";
-import { InlinePermissionNote } from "@/components/permissions/InlinePermissionNote";
-import { ShortcutsStatusNote } from "@/components/permissions/ShortcutsStatusNote";
-import { privacySectionVisible, usePermissionsStore } from "@/store/permissions";
 import { DictationStatsBar } from "@/views/voice/DictationStatsBar";
 import { DictationHistoryGroup } from "@/views/voice/DictationHistoryGroup";
 import { useEventStore } from "@/store/events";
@@ -88,38 +84,10 @@ export function DictationView({ hideHeader = false }: DictationViewProps = {}) {
     clearHistory,
   } = useDictation();
   const pushToast = useEventStore((s) => s.pushToast);
-  // The shortcut of the dictation key is a GLOBAL shortcut: say here, beside it,
-  // when macOS has not allowed those yet (one status for the whole tap).
-  const { config: keybinds, refetch: refetchKeybinds } = useKeybinds();
-  // True once THIS page pressed Start, so "Microphone allowed" is only said to
-  // the person who asked (the grant event reaches every window).
-  const [started, setStarted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState("");
   const [busyIds, setBusyIds] = useState<ReadonlySet<string>>(new Set());
   const [copiedId, setCopiedId] = useState<string | null>(null);
-
-  /**
-   * True when a microphone permission episode explains a refused start. The
-   * refusal's own sentence is English backend text, so when the permission note
-   * below says it (in the person's language, with the way to System Settings)
-   * the toast would only repeat it badly. The episode event can trail the HTTP
-   * answer by a moment, so one short second look is allowed.
-   *
-   * Only macOS has such episodes: elsewhere the answer is "no" at once (no
-   * delay before the error toast), and an episode of another permission or
-   * another feature never hides an unrelated failure (no speech-to-text provider).
-   */
-  const permissionExplainsRefusal = useCallback(async (): Promise<boolean> => {
-    if (!privacySectionVisible()) return false;
-    const open = () =>
-      usePermissionsStore
-        .getState()
-        .episodes.some((entry) => entry.feature === "dictation" && entry.permissions.includes("microphone"));
-    if (open()) return true;
-    await new Promise((resolve) => window.setTimeout(resolve, 400));
-    return open();
-  }, []);
 
   async function onToggle() {
     setBusy(true);
@@ -130,11 +98,10 @@ export function DictationView({ hideHeader = false }: DictationViewProps = {}) {
         // "auto" — the backend decides at delivery time whether the text goes
         // into the app in front or into this app's own input box, so starting
         // here and then switching to the target application works.
-        setStarted(true);
         await start("auto");
       }
     } catch (e) {
-      if (!(await permissionExplainsRefusal())) pushToast("error", (e as Error).message);
+      pushToast("error", (e as Error).message);
     } finally {
       setBusy(false);
     }
@@ -322,25 +289,6 @@ export function DictationView({ hideHeader = false }: DictationViewProps = {}) {
                 <Keyboard aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
                 {t("dictation.assign_hint")}
               </p>
-            )}
-            {/* A refused start (macOS asking for the microphone, or a Settings
-                switch to flip), explained here instead of as an English error. */}
-            <InlinePermissionNote
-              feature="dictation"
-              allowedKey="permissions.inline.dictation.allowed"
-              holdMs={15_000}
-              showAllowed={started}
-              className="mt-block"
-              testId="dictation-view-permission-note"
-            />
-            {status?.hotkey && (
-              <ShortcutsStatusNote
-                surface="dictation"
-                variant="compact"
-                status={keybinds?.shortcuts_status}
-                onChanged={() => void refetchKeybinds()}
-                className="mt-block"
-              />
             )}
           </Card>
 

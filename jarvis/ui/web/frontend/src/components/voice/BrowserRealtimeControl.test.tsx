@@ -2,8 +2,6 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useEventStore } from "@/store/events";
-import { EMPTY_PROMPTS } from "@/lib/permissionPrompts";
-import { usePermissionsStore } from "@/store/permissions";
 import {
   setBrowserVoiceInputOwnership,
   setVoiceInputLevel,
@@ -49,12 +47,7 @@ vi.mock("@/hooks/useVoiceMode", () => ({
   }),
 }));
 
-// Identity translator (assertions match i18n keys); the rest of the module stays
-// real because the permission copy helpers use `fill` and `useUiLanguage`.
-vi.mock("@/i18n", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/i18n")>()),
-  useT: () => (key: string) => key,
-}));
+vi.mock("@/i18n", () => ({ useT: () => (key: string) => key }));
 
 vi.mock("@/lib/realtimeAudio", () => ({
   browserRealtimeSupportIssue: () => fakes.supportIssue,
@@ -396,6 +389,70 @@ describe("BrowserRealtimeControl", () => {
     );
   });
 
+  describe("a refused microphone", () => {
+    const MAC_UA =
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)";
+    let fetchSpy: ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+      fetchSpy = vi.fn(async () => new Response("{}", { status: 200 }));
+      vi.stubGlobal("fetch", fetchSpy);
+      fakes.connect.mockRejectedValueOnce(new DOMException("denied", "NotAllowedError"));
+    });
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+    });
+
+    it("reports a Mac desktop denial so the permission toast can show, with a desktop sentence", async () => {
+      vi.spyOn(navigator, "userAgent", "get").mockReturnValue(MAC_UA);
+      (window as unknown as { pywebview?: unknown }).pywebview = { api: {} };
+      fakes.native = false;
+      render(<BrowserRealtimeControl />);
+      fireEvent.click(screen.getByRole("button", { name: "sidebar.realtime_start" }));
+
+      expect(await screen.findByText("sidebar.realtime_microphone_denied_desktop")).toBeTruthy();
+      expect(screen.queryByText("sidebar.realtime_microphone_denied")).toBeNull();
+      await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
+      const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe("/api/permissions/microphone/request?dry_run=false");
+      expect(init.method).toBe("POST");
+      expect(JSON.parse(String(init.body))).toEqual({ feature: "browser_voice" });
+    });
+
+    it("keeps the browser site-settings sentence, and reports nothing, in a plain browser", async () => {
+      vi.spyOn(navigator, "userAgent", "get").mockReturnValue(MAC_UA);
+      render(<BrowserRealtimeControl />);
+      fireEvent.click(screen.getByRole("button", { name: "sidebar.realtime_start" }));
+
+      expect(await screen.findByText("sidebar.realtime_microphone_denied")).toBeTruthy();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it("does not report a denial of a call the wake word started", async () => {
+      vi.spyOn(navigator, "userAgent", "get").mockReturnValue(MAC_UA);
+      (window as unknown as { pywebview?: unknown }).pywebview = { api: {} };
+      fakes.browserAudio = true;
+      useEventStore.setState({
+        events: [
+          {
+            id: "wake-denied",
+            name: "BrowserVoiceRequested",
+            ts: Date.now(),
+            payload: { action: "start" },
+          },
+        ],
+      });
+      render(<BrowserRealtimeControl controlOnly />);
+
+      await waitFor(() => expect(fakes.connect).toHaveBeenCalledTimes(1));
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+  });
+
   it("maps every connection/voice combination onto exactly one look", () => {
     expect(waveformPhase("idle", "idle")).toBe("idle");
     expect(waveformPhase("connecting", "idle")).toBe("connecting");
@@ -417,222 +474,5 @@ describe("BrowserRealtimeControl", () => {
     expect((button as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText("sidebar.realtime_https_required")).toBeTruthy();
     expect(fakes.connect).not.toHaveBeenCalled();
-  });
-});
-
-/*
- * The embedded desktop window reaches the SAME macOS microphone permission the
- * native pipeline uses, so the click asks the host first (the request is the
- * gesture) and only then opens the stream. A remote browser keeps the browser's
- * own prompt and message.
- */
-describe("BrowserRealtimeControl host microphone", () => {
-  let requests: Array<{ url: string; body: unknown }> = [];
-  let answer: Record<string, unknown> = {};
-  let userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)";
-
-  function embedDesktop() {
-    (window as unknown as { pywebview?: unknown }).pywebview = { api: {} };
-  }
-
-  beforeEach(() => {
-    // The same clean slate the first suite starts from.
-    fakes.native = false;
-    fakes.mode = "realtime";
-    fakes.available = true;
-    fakes.requiresWebRtcOffer = false;
-    fakes.browserAudio = false;
-    fakes.connect.mockReset();
-    fakes.connect.mockImplementation(async () => undefined);
-    fakes.disconnect.mockClear();
-    fakes.supportIssue = null;
-    fakes.callbacks = null;
-    fakes.options = null;
-    setBrowserVoiceInputOwnership(false);
-    useEventStore.setState({
-      events: [],
-      voiceState: "idle",
-      transcription: "",
-      transcriptionFinal: true,
-      solo: false,
-      activeSection: "chats",
-      detachedViews: [],
-    });
-    requests = [];
-    answer = { outcome: "granted", granted: true, reason: "" };
-    userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)";
-    vi.spyOn(window.navigator, "userAgent", "get").mockImplementation(() => userAgent);
-    usePermissionsStore.setState({ ...EMPTY_PROMPTS, inline: {}, snapshot: null });
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-        requests.push({
-          url: String(input),
-          body: typeof init?.body === "string" ? JSON.parse(init.body) : undefined,
-        });
-        return { ok: true, status: 200, json: async () => answer } as Response;
-      }),
-    );
-  });
-  afterEach(() => {
-    delete (window as unknown as { pywebview?: unknown }).pywebview;
-    vi.unstubAllGlobals();
-    vi.restoreAllMocks();
-  });
-
-  it("requests nothing from the host on Windows or Linux, even in the embedded window", async () => {
-    userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
-    embedDesktop();
-    render(<BrowserRealtimeControl />);
-
-    fireEvent.click(screen.getByRole("button", { name: "sidebar.realtime_start" }));
-
-    await waitFor(() => expect(fakes.connect).toHaveBeenCalledTimes(1));
-    expect(requests).toEqual([]);
-  });
-
-  it("asks macOS from the click BEFORE the stream opens", async () => {
-    embedDesktop();
-    let release: (value: unknown) => void = () => undefined;
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-        requests.push({
-          url: String(input),
-          body: typeof init?.body === "string" ? JSON.parse(init.body) : undefined,
-        });
-        await new Promise((resolve) => {
-          release = resolve;
-        });
-        return { ok: true, status: 200, json: async () => answer } as Response;
-      }),
-    );
-    render(<BrowserRealtimeControl />);
-
-    fireEvent.click(screen.getByRole("button", { name: "sidebar.realtime_start" }));
-
-    await waitFor(() => expect(requests).toHaveLength(1));
-    expect(requests[0].url).toBe("/api/permissions/microphone/request?dry_run=false");
-    expect(requests[0].body).toEqual({ feature: "browser_voice" });
-    expect(fakes.connect).not.toHaveBeenCalled();
-
-    release(undefined);
-    await waitFor(() => expect(fakes.connect).toHaveBeenCalledTimes(1));
-  });
-
-  it("does not open the stream while macOS is asking, and says so", async () => {
-    embedDesktop();
-    answer = { outcome: "pending", granted: false, reason: "not_determined" };
-    render(<BrowserRealtimeControl />);
-
-    fireEvent.click(screen.getByRole("button", { name: "sidebar.realtime_start" }));
-
-    await screen.findByText("permissions.inline.os_dialog");
-    expect(fakes.connect).not.toHaveBeenCalled();
-    // The button is back to Start: the person answers macOS, then presses again.
-    expect(screen.getByRole("button", { name: "sidebar.realtime_start" })).toBeTruthy();
-    // This control explains it; the floating card stays quiet.
-    expect(usePermissionsStore.getState().inline).toEqual({ browser_voice: 1 });
-  });
-
-  it("says 'allowed - press again' once the grant arrives, and still starts nothing", async () => {
-    embedDesktop();
-    answer = { outcome: "pending", granted: false, reason: "not_determined" };
-    render(<BrowserRealtimeControl />);
-    fireEvent.click(screen.getByRole("button", { name: "sidebar.realtime_start" }));
-    await screen.findByText("permissions.inline.os_dialog");
-
-    act(() => {
-      usePermissionsStore
-        .getState()
-        .ingest("PermissionResolved", "", { permissions: ["microphone"], feature: "browser_voice", granted: true }, Date.now() + 5);
-    });
-
-    await screen.findByText("permissions.inline.browser_voice.allowed");
-    expect(fakes.connect).not.toHaveBeenCalled();
-    expect(usePermissionsStore.getState().inline).toEqual({});
-  });
-
-  it("a blocked microphone gets the full per-feature sentence and a Retry, never the browser message", async () => {
-    embedDesktop();
-    answer = { outcome: "denied", granted: false, reason: "denied" };
-    render(<BrowserRealtimeControl />);
-
-    fireEvent.click(screen.getByRole("button", { name: "sidebar.realtime_start" }));
-
-    await screen.findByText("permissions.prompt.browser_voice.denied");
-    expect(screen.queryByText("sidebar.realtime_microphone_denied")).toBeNull();
-    expect(fakes.connect).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "sidebar.realtime_retry" })).toBeTruthy();
-  });
-
-  it("goes on to the stream when the host route fails, so voice is not made impossible by it", async () => {
-    embedDesktop();
-    vi.stubGlobal("fetch", vi.fn(async () => Promise.reject(new Error("offline"))));
-    render(<BrowserRealtimeControl />);
-
-    fireEvent.click(screen.getByRole("button", { name: "sidebar.realtime_start" }));
-
-    await waitFor(() => expect(fakes.connect).toHaveBeenCalledTimes(1));
-  });
-
-  it("maps a refused stream in the desktop window to the same permission episode", async () => {
-    embedDesktop();
-    // The first answer (before the stream) says fine; the stream is refused anyway,
-    // and the second look finds the microphone blocked.
-    const answers = [
-      { outcome: "granted", granted: true, reason: "" },
-      { outcome: "needs_settings", granted: false, reason: "needs_settings" },
-    ];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-        requests.push({
-          url: String(input),
-          body: typeof init?.body === "string" ? JSON.parse(init.body) : undefined,
-        });
-        return { ok: true, status: 200, json: async () => answers.shift() ?? answers[0] } as Response;
-      }),
-    );
-    fakes.connect.mockRejectedValueOnce(new DOMException("denied", "NotAllowedError"));
-    render(<BrowserRealtimeControl />);
-
-    fireEvent.click(screen.getByRole("button", { name: "sidebar.realtime_start" }));
-
-    await screen.findByText("permissions.prompt.browser_voice.needs_settings");
-    expect(requests).toHaveLength(2);
-    expect(screen.queryByText("sidebar.realtime_microphone_denied")).toBeNull();
-  });
-
-  it("keeps the browser's site-settings message when macOS says the microphone is fine", async () => {
-    embedDesktop();
-    fakes.connect.mockRejectedValueOnce(new DOMException("denied", "NotAllowedError"));
-    render(<BrowserRealtimeControl />);
-
-    fireEvent.click(screen.getByRole("button", { name: "sidebar.realtime_start" }));
-
-    await screen.findByText("sidebar.realtime_microphone_denied");
-  });
-
-  it("a remote browser never asks the host and keeps the browser message", async () => {
-    fakes.connect.mockRejectedValueOnce(new DOMException("denied", "NotAllowedError"));
-    render(<BrowserRealtimeControl />);
-
-    fireEvent.click(screen.getByRole("button", { name: "sidebar.realtime_start" }));
-
-    await screen.findByText("sidebar.realtime_microphone_denied");
-    expect(requests).toEqual([]);
-  });
-
-  it("a start the desktop made by itself (a wake) never asks macOS", async () => {
-    embedDesktop();
-    fakes.browserAudio = true;
-    useEventStore.setState({
-      events: [{ id: "wake-1", name: "BrowserVoiceRequested", ts: Date.now(), payload: { action: "start" } }],
-    });
-    render(<BrowserRealtimeControl controlOnly />);
-
-    await waitFor(() => expect(fakes.connect).toHaveBeenCalledTimes(1));
-    expect(requests).toEqual([]);
   });
 });

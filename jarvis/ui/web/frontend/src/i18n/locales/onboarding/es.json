@@ -59,7 +59,7 @@
     },
     "voice": {
       "title": "Elige tu palabra de activación",
-      "lede": "Escribe aquí tu palabra después de «Hey» y guárdala. La palabra también será el nombre de tu asistente. ¿Sin palabra? El atajo de llamada funciona siempre.",
+      "lede": "Escribe aquí tu palabra después de «Hey» y guárdala. La palabra también será el nombre de tu asistente. ¿Sin palabra? El atajo de llamada funciona en cualquier momento.",
       "on": "«{phrase}» está activada. Dila cuando quieras.",
       "off": "Aún no hay palabra de activación. Mientras tanto funciona el atajo de llamada.",
       "later": "Omitir, usaré el atajo de llamada"

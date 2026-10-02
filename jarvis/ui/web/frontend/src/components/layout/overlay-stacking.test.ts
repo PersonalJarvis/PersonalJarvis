@@ -109,11 +109,12 @@ describe("overlay stacking guard", () => {
     ).toEqual([]);
   });
 
-  it("keeps the permission card between the setup spotlight and the caption bar", () => {
+  it("keeps the toasts between the setup spotlight and the caption bar", () => {
     // The blocking tour dims the app at z-110 with a pointer-events-auto scrim; a
-    // permission card under it would be dimmed and unclickable during the
-    // onboarding step where the wake word asks for the microphone. The caption
-    // bar (z-120) is the title bar of every window and always wins.
+    // toast under it would be dimmed and unclickable during the onboarding step
+    // where the wake word asks for the microphone, and its "Open System Settings"
+    // button is the one way on after a denial. The caption bar (z-120) is the
+    // title bar of every window and always wins.
     const zOf = (path: string, pattern: RegExp): number => {
       const match = pattern.exec(read(path));
       expect(match, `${path} no longer carries ${pattern}`).not.toBeNull();
@@ -121,9 +122,9 @@ describe("overlay stacking guard", () => {
     };
     const spotlight = zOf("components/onboarding/tour/Spotlight.tsx", /fixed inset-0 z-\[(\d+)\]/);
     const caption = zOf("components/layout/TopBar.tsx", /fixed inset-x-0 top-0 z-\[(\d+)\]/);
-    const card = zOf("components/permissions/PermissionPromptLayer.tsx", /fixed right-4 top-12 z-\[(\d+)\]/);
+    const toasts = zOf("components/ToastLayer.tsx", /fixed right-4 top-12 z-\[(\d+)\]/);
 
-    expect(card).toBeGreaterThan(spotlight);
-    expect(card).toBeLessThan(caption);
+    expect(toasts).toBeGreaterThan(spotlight);
+    expect(toasts).toBeLessThan(caption);
   });
 });

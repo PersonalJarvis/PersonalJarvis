@@ -5,8 +5,8 @@
  *   - Placeholder text is "e.g. Jonas" (from i18n key settings_view.wake_word.phrase_placeholder).
  *   - The phrase input starts empty when the backend returns phrase == "".
  */
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 // ---------------------------------------------------------------------------
 // i18n mock: use the real strings from en.json via a pass-through so we can
@@ -69,9 +69,6 @@ vi.mock("@/components/onboarding/OnboardingGate", () => ({
 }));
 
 import { SettingsView } from "@/views/SettingsView";
-import { EMPTY_PROMPTS } from "@/lib/permissionPrompts";
-import { useEventStore } from "@/store/events";
-import { usePermissionsStore } from "@/store/permissions";
 
 afterEach(cleanup);
 
@@ -237,114 +234,6 @@ describe("WakeWordPanel (via SettingsView)", () => {
             c.method === "POST",
         ),
       ).toBe(true);
-    });
-  });
-
-  describe("the activation switch is the microphone's just-in-time moment", () => {
-    function stubActivation(permission: Record<string, unknown> | undefined) {
-      const calls: { url: string; method: string }[] = [];
-      // The backend remembers the switch: the panel refetches after it saves.
-      let enabledNow = false;
-      vi.stubGlobal(
-        "fetch",
-        vi.fn((url: string, init?: RequestInit) => {
-          const method = init?.method ?? "GET";
-          calls.push({ url, method });
-          if (url === "/api/settings/wake-word" && method === "GET") {
-            return Promise.resolve({
-              ok: true,
-              json: () => Promise.resolve({ ...makeWakeWordGET("Jonas"), enabled: enabledNow }),
-            });
-          }
-          if (url === "/api/settings/wake-word/activation" && method === "POST") {
-            enabledNow = true;
-            return Promise.resolve({
-              ok: true,
-              json: () =>
-                Promise.resolve({
-                  ok: true,
-                  enabled: true,
-                  applied_live: true,
-                  restart_required: false,
-                  persisted: true,
-                  message: "",
-                  ...(permission ? { permission } : {}),
-                }),
-            });
-          }
-          return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
-        }),
-      );
-      return calls;
-    }
-
-    function toastTexts(): string[] {
-      return useEventStore.getState().toasts.map((toast) => toast.message);
-    }
-
-    beforeEach(() => {
-      usePermissionsStore.setState({ ...EMPTY_PROMPTS, inline: {}, snapshot: null });
-      useEventStore.setState({ toasts: [] });
-    });
-
-    it("explains a missing microphone inline instead of toasting a success", async () => {
-      stubActivation({ outcome: "needs_settings", reason: "needs_settings", can_open_settings: true });
-      render(<SettingsView />);
-      await waitFor(() => screen.getByText("Wake Word"));
-
-      fireEvent.click(await screen.findByRole("switch", { name: "Activate wake word" }));
-
-      const note = await screen.findByTestId("wake-word-permission-note");
-      expect(note.textContent).toContain("The wake word needs access to \u201cMicrophone\u201d.");
-      expect(note.getAttribute("data-reason")).toBe("needs_settings");
-      // The setup tour spotlights this section (data-tour="settings-wake-word", see setupSteps):
-      // the blocked-microphone note must sit INSIDE that hole, not outside it.
-      expect(note.closest('[data-tour="settings-wake-word"]')).not.toBeNull();
-      expect(toastTexts()).not.toContain("Wake-word activation updated immediately.");
-      // The floating card stays quiet: this panel is the inline surface.
-      expect(usePermissionsStore.getState().inline).toEqual({ wake_word: 1 });
-    });
-
-    it("says macOS is asking while the dialog is open, then 'allowed' once it is answered", async () => {
-      stubActivation({ outcome: "pending", reason: "not_determined", can_open_settings: true });
-      render(<SettingsView />);
-      await waitFor(() => screen.getByText("Wake Word"));
-
-      fireEvent.click(await screen.findByRole("switch", { name: "Activate wake word" }));
-
-      const asking = await screen.findByTestId("wake-word-permission-note");
-      expect(asking.getAttribute("data-phase")).toBe("os_dialog");
-
-      act(() => {
-        usePermissionsStore
-          .getState()
-          .ingest("PermissionResolved", "", { permissions: ["microphone"], feature: "wake_word", granted: true }, Date.now());
-      });
-      await waitFor(() =>
-        expect(screen.getByTestId("wake-word-permission-note").getAttribute("data-phase")).toBe("allowed"),
-      );
-    });
-
-    it("keeps the success toast when the microphone is granted (or needs nothing on this OS)", async () => {
-      stubActivation({ outcome: "granted", reason: "", can_open_settings: false });
-      render(<SettingsView />);
-      await waitFor(() => screen.getByText("Wake Word"));
-
-      fireEvent.click(await screen.findByRole("switch", { name: "Activate wake word" }));
-
-      await waitFor(() => expect(toastTexts()).toContain("Wake-word activation updated immediately."));
-      expect(screen.queryByTestId("wake-word-permission-note")).toBeNull();
-    });
-
-    it("an older backend without a permission answer behaves as before", async () => {
-      stubActivation(undefined);
-      render(<SettingsView />);
-      await waitFor(() => screen.getByText("Wake Word"));
-
-      fireEvent.click(await screen.findByRole("switch", { name: "Activate wake word" }));
-
-      await waitFor(() => expect(toastTexts()).toContain("Wake-word activation updated immediately."));
-      expect(screen.queryByTestId("wake-word-permission-note")).toBeNull();
     });
   });
 });

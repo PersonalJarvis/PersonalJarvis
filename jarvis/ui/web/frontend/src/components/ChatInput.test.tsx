@@ -4,7 +4,6 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
 import { ChatInput } from "@/components/ChatInput";
 import { useEventStore } from "@/store/events";
-import { usePermissionsStore } from "@/store/permissions";
 
 // The composer names the model that will answer (useVoiceEngineDisplay →
 // useVoiceMode, a query), so it mounts under a query client like the app.
@@ -97,36 +96,5 @@ describe("ChatInput dictation commit", () => {
     fireEvent.change(box, { target: { value: "" } });
     commit("two");
     expect(box.value).toBe("two");
-  });
-});
-
-/*
- * The composer's microphone is where a refused dictation is explained: the WS
- * hook resets `dictating` when the backend refuses (or macOS asks for the
- * microphone on the first press) and leaves a note; the button says it in place.
- */
-describe("ChatInput refused dictation", () => {
-  beforeEach(() => {
-    useEventStore.setState({ connected: true, wsWarming: false, chatThinking: false, dictating: false });
-    usePermissionsStore.setState({ dictationNote: null });
-  });
-  afterEach(() => cleanup());
-
-  test("the press that was refused is explained at the mic and the recording pill is gone", () => {
-    render(<ChatInput />);
-    fireEvent.click(screen.getByTestId("dictation-button"));
-    expect(screen.getByTestId("dictation-status")).toBeTruthy();
-
-    // What useWebSocket does on DictationRefused for a window that was dictating.
-    act(() => {
-      useEventStore.getState().setDictating(false);
-      usePermissionsStore
-        .getState()
-        .noteDictationRefusal({ reason: "no_stt", source: "refused", ts: Date.now() });
-    });
-
-    expect(screen.queryByTestId("dictation-status")).toBeNull();
-    expect(screen.getByTestId("dictation-button")).toBeTruthy();
-    expect(screen.getByTestId("dictation-refused-note").textContent).toContain("No speech-to-text provider");
   });
 });

@@ -168,6 +168,43 @@ it("asks for a wake word before going on, with a way to leave it for later", asy
   expect(onb.saveStep).toHaveBeenLastCalledWith("ready", ["voice"]);
 });
 
+const MAC_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)";
+
+function inputMonitoringAsks() {
+  return calls.filter((c) => c.url.startsWith("/api/permissions/input_monitoring/request"));
+}
+
+it("choosing the Call shortcut asks for Input Monitoring once, from that click, in the Mac desktop window", async () => {
+  (window as unknown as { __JARVIS_EMBEDDED_DESKTOP?: boolean }).__JARVIS_EMBEDDED_DESKTOP = true;
+  vi.spyOn(window.navigator, "userAgent", "get").mockReturnValue(MAC_UA);
+  try {
+    const onb = fakeOnb({ ...accepted, current_step: "voice" });
+    render(<SetupTour onb={onb} preview={false} onFinished={vi.fn()} />);
+    await screen.findByTestId("setup-voice-later");
+    // Nothing is asked by arriving on the step.
+    expect(inputMonitoringAsks()).toEqual([]);
+
+    fireEvent.click(screen.getByTestId("setup-voice-later"));
+
+    await waitFor(() => expect(inputMonitoringAsks()).toHaveLength(1));
+    expect(inputMonitoringAsks()[0].method).toBe("POST");
+    await waitFor(() => expect(screen.getByTestId("setup-card").dataset.step).toBe("ready"));
+  } finally {
+    delete (window as unknown as { __JARVIS_EMBEDDED_DESKTOP?: boolean }).__JARVIS_EMBEDDED_DESKTOP;
+  }
+});
+
+it("choosing the Call shortcut asks nothing on Windows, Linux or in a plain browser", async () => {
+  const onb = fakeOnb({ ...accepted, current_step: "voice" });
+  render(<SetupTour onb={onb} preview={false} onFinished={vi.fn()} />);
+  await screen.findByTestId("setup-voice-later");
+
+  fireEvent.click(screen.getByTestId("setup-voice-later"));
+
+  await waitFor(() => expect(screen.getByTestId("setup-card").dataset.step).toBe("ready"));
+  expect(inputMonitoringAsks()).toEqual([]);
+});
+
 it("goes on from the wake word once one is saved", async () => {
   wakeWord = { phrase: "Hey George", enabled: true };
   render(<SetupTour onb={fakeOnb({ ...accepted, current_step: "voice" })} preview={false} onFinished={vi.fn()} />);

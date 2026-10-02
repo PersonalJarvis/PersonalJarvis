@@ -20,10 +20,6 @@ import { useEventStore } from "@/store/events";
 import { useSectionPrefetch } from "@/hooks/useSectionPrefetch";
 import { useVoiceReadiness } from "@/hooks/useVoiceReadiness";
 import { useVoiceMode } from "@/hooks/useVoiceMode";
-import {
-  useVoiceBlockedByPermission,
-  useVoiceNotAskedByPermission,
-} from "@/hooks/useVoiceBlockedByPermission";
 import { useSectionHealth } from "@/hooks/useProviders";
 import { usePluginAttention } from "@/hooks/usePluginAttention";
 import { clsx } from "clsx";
@@ -97,12 +93,6 @@ const VOICE_STATE_STYLE: Record<string, { dot: string; pulse: boolean }> = {
   // Not a supervisor state — the surface's own "a realtime transport is
   // negotiating" phase, which no backend state covers. Half up, so amber.
   connecting: { dot: "bg-warning", pulse: true },
-  // Voice is up but macOS has not allowed the microphone, so a wake word would
-  // be dead and silent. Neither working nor broken, and not a red alarm for a
-  // switch the person has not flipped yet: a hollow ring in neutral ink, with
-  // the words "Microphone blocked" beside it (the explanation and the way to
-  // System Settings live in the wake-word panel and the permission card).
-  blocked_by_permission: { dot: "bg-transparent ring-1 ring-inset ring-muted-foreground", pulse: false },
 };
 
 export interface SidebarProps {
@@ -316,20 +306,9 @@ export function Sidebar({
   // voiceWarming / bootWarming / warming come from the shared useVoiceReadiness
   // hook so the sidebar dot, the banner and the chat empty-state never disagree.
   const showSpinner = warming || voiceMode.connecting;
-  // Only an idle, warmed-up, connected pipeline can be "blocked": a live
-  // conversation proves the microphone works.
-  const voiceBlocked = useVoiceBlockedByPermission();
-  const voiceNotAsked = useVoiceNotAskedByPermission();
-  const micIdle = connected && !voiceWarming && !voiceMode.connecting && voiceState === "idle";
-  const micBlocked = voiceBlocked && micIdle;
-  // Never asked (not denied): the same quiet look, but the words must not send
-  // anyone to a System Settings pane that has no entry yet.
-  const micNotAsked = voiceNotAsked && !voiceBlocked && micIdle;
   const vs = voiceMode.connecting
     ? VOICE_STATE_STYLE.connecting
-    : micBlocked || micNotAsked
-      ? VOICE_STATE_STYLE.blocked_by_permission
-      : VOICE_STATE_STYLE[voiceState] ?? VOICE_STATE_STYLE.idle;
+    : VOICE_STATE_STYLE[voiceState] ?? VOICE_STATE_STYLE.idle;
   // A negotiating realtime transport outranks the pipeline's own state: the
   // subscription route needs 15-45 s before it can hear anything, and showing
   // the stale pre-call state there is what made a live handshake look frozen.
@@ -341,25 +320,10 @@ export function Sidebar({
       ? t("voice_state.starting")
       : voiceMode.connecting
         ? t("voice_state.connecting")
-        : micBlocked
-          ? t("voice_state.blocked_by_permission")
-          : micNotAsked
-            ? t("voice_state.not_allowed_yet")
-            : t(`voice_state.${voiceState}`);
+        : t(`voice_state.${voiceState}`);
   // The header spells the state out only when it is news — anything but a
-  // connected, warmed-up pipeline at rest. See the header row below. A
-  // microphone macOS has not allowed IS news: a dead wake word is never silent.
-  const voiceHasNews =
-    !connected || showSpinner || voiceState !== "idle" || micBlocked || micNotAsked;
-  // The words beside the name have a few dozen pixels. "Microphone blocked" does
-  // not fit next to a name in the narrow header (it cut off as "Microphone bloc…"
-  // and squeezed the name to "Assist…"), so it has a shorter label; the full
-  // sentence stays in the hover text and in the dot's accessible name.
-  const voiceShortLabel = micBlocked
-    ? t("voice_state.blocked_by_permission_short")
-    : micNotAsked
-      ? t("voice_state.not_allowed_yet_short")
-      : voiceLabel;
+  // connected, warmed-up pipeline at rest. See the header row below.
+  const voiceHasNews = !connected || showSpinner || voiceState !== "idle";
 
   // Dragged past the snap point the sidebar becomes a rail of icons. Everything
   // that only makes sense with a label beside it steps aside; the
@@ -456,17 +420,7 @@ export function Sidebar({
               className="flex min-w-0 flex-1 items-center gap-2 text-sm"
               title={voiceLabel}
             >
-              {/* With a status word beside it the name keeps its own width (up to
-                  most of the row) and the word gives way, never the other way round. */}
-              <span
-                data-testid="sidebar-assistant-name"
-                className={cn(
-                  "truncate font-medium text-foreground-strong",
-                  voiceHasNews && "max-w-[60%] shrink-0",
-                )}
-              >
-                {assistantName}
-              </span>
+              <span className="truncate font-medium text-foreground-strong">{assistantName}</span>
               {devTag && (
                 // A mark, not a status: the fill is the neutral accent, so it
                 // never competes with the green/amber/red the voice dot
@@ -498,9 +452,7 @@ export function Sidebar({
                 />
               )}
               {voiceHasNews && (
-                <span data-testid="sidebar-voice-label" className="min-w-0 truncate text-xs text-muted-foreground">
-                  {voiceShortLabel}
-                </span>
+                <span className="truncate text-xs text-muted-foreground">{voiceLabel}</span>
               )}
             </div>
           )}

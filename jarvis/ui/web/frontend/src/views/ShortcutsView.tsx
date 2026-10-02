@@ -16,7 +16,6 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { ArrowUpRight, AppWindow, Keyboard, Mic, Phone, Sparkles, SquareTerminal } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
-import { ShortcutsStatusNote } from "@/components/permissions/ShortcutsStatusNote";
 import { useT } from "@/i18n";
 import { useEventStore } from "@/store/events";
 import { useQuickSwitchSettings } from "@/store/quickSwitchSettings";
@@ -287,7 +286,7 @@ export function ShortcutsView() {
   const setActiveSection = useEventStore((s) => s.setActiveSection);
   // One read of the voice keybinds for the tester, the list and the quick
   // switcher's duplicate check; a save anywhere refetches it.
-  const { config, refetch } = useKeybinds();
+  const { config } = useKeybinds();
 
   return (
     <div
@@ -301,14 +300,6 @@ export function ShortcutsView() {
           description={t("shortcuts_view.description")}
         />
         <div className="flex flex-col gap-6">
-          {/* One sentence for the whole page when macOS has not allowed global
-              shortcuts yet (the tester below still works inside this window). */}
-          <ShortcutsStatusNote
-            surface="shortcuts"
-            status={config?.shortcuts_status}
-            onChanged={() => void refetch()}
-            className="rounded-xl border border-border bg-card px-5 py-4"
-          />
           <KeyTester config={config} />
           <div className="grid gap-6 xl:grid-cols-2">
             <SectionCard

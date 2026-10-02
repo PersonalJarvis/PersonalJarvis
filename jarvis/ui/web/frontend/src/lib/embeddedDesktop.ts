@@ -19,3 +19,21 @@ export function hasEmbeddedDesktopBridge(): boolean {
       host.webkit?.messageHandlers?.jarvisFileDrag,
   );
 }
+
+/** Clients whose user agent says macOS (the embedded WebView and Safari/Chrome on a Mac). */
+export function isMacClient(userAgent: string): boolean {
+  return /Macintosh|Mac OS X/i.test(userAgent);
+}
+
+/**
+ * True in the embedded desktop window of a Mac: the one place where a macOS
+ * permission is the host's own, so asking for it or opening System Settings acts
+ * on the computer in front of the person. A remote browser (another computer) and
+ * Windows or Linux never qualify. Read at call time: the desktop shell injects
+ * the bridge flag AFTER the page loads.
+ */
+export function isEmbeddedMacWindow(): boolean {
+  return (
+    typeof navigator !== "undefined" && isMacClient(navigator.userAgent) && hasEmbeddedDesktopBridge()
+  );
+}
