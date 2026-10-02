@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from board_backend.crypto import canonical_json, generate_keypair, sign
+from board_backend.crypto import canonical_json, generate_keypair, sign, signed_audience
 from board_backend.models import ActivityItem, Friend
 from board_backend.routes.activity import interesting_score
 
@@ -31,6 +31,7 @@ def _now_ms() -> int:
 
 
 def _signed_post(client: TestClient, path: str, *, priv: str, pub: str, payload: dict):
+    payload = {"aud": signed_audience("POST", path), **payload}
     body = canonical_json(payload)
     sig = sign(payload, privkey_hex=priv)
     return client.post(
@@ -42,6 +43,7 @@ def _signed_post(client: TestClient, path: str, *, priv: str, pub: str, payload:
 def _signed_get(client: TestClient, path: str, *, priv: str, pub: str, params: dict | None = None,
                 payload: dict | None = None):
     payload = payload or {"ts_ms": _now_ms()}
+    payload = {"aud": signed_audience("GET", path), **payload}
     body = canonical_json(payload)
     sig = sign(payload, privkey_hex=priv)
     return client.request(
