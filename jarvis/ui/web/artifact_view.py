@@ -25,6 +25,13 @@ _MARKDOWN_EXT = (".md", ".markdown")
 # XSS from artifact content rendered in the app origin.
 VIEW_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:;"
 
+# VIEW_CSP as a response HEADER. The ``sandbox`` directive is honoured only in
+# a header (a <meta> CSP ignores it), and it puts the document in an opaque
+# origin even when it is opened top-level in a browser tab rather than inside
+# the app's sandboxed iframe — so a worker-written file can never act as the
+# app origin, whatever the script-src says.
+VIEW_HEADER_CSP = VIEW_CSP + " sandbox;"
+
 # The artifact-page CSP (``/files/{path}/page`` in outputs_routes): an artifact
 # is a self-contained page a worker wrote to be LOOKED AT and used — tabs,
 # filters, a chart drawn on canvas — so inline scripts run. What stays shut is
@@ -36,6 +43,7 @@ VIEW_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:;"
 # use. ``/view`` and inline downloads keep VIEW_CSP: those are arbitrary
 # worker files, not artifacts.
 ARTIFACT_PAGE_CSP = (
+    "sandbox allow-scripts; "
     "default-src 'none'; "
     "script-src 'unsafe-inline'; "
     "style-src 'unsafe-inline'; "
@@ -118,4 +126,4 @@ def render_artifact_html(filename: str, text: str, *, theme: str | None = None) 
     return _shell(filename, f"<pre>{html.escape(text)}</pre>", theme)
 
 
-__all__ = ["ARTIFACT_PAGE_CSP", "VIEW_CSP", "render_artifact_html"]
+__all__ = ["ARTIFACT_PAGE_CSP", "VIEW_CSP", "VIEW_HEADER_CSP", "render_artifact_html"]
