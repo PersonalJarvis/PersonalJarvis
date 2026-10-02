@@ -4372,6 +4372,8 @@
       "for_minutes": "seit {n} min",
       "for_hours": "seit {n} h",
       "state": {
+        "stopped": "Gestoppt",
+        "unknown": "Status unklar",
         "working": "Arbeitet",
         "starting": "Startet",
         "asking": "Braucht dich",
@@ -4421,6 +4423,7 @@
       "last_task": "Zuletzt beauftragt mit: {0}",
       "kind_completed": "FERTIG",
       "kind_needs_input": "BRAUCHT EINGABE",
+      "kind_stopped": "GESTOPPT",
       "kind_exited": "GESTOPPT",
       "kind_failed": "FEHLGESCHLAGEN",
       "gone": "{0} gibt es in diesem Workspace nicht mehr — das Terminal wurde geschlossen, seit die Benachrichtigung kam."
@@ -5839,6 +5842,8 @@
         "idle": "{n} fertig oder im Leerlauf"
       },
       "state": {
+        "stopped": "Gestoppt",
+        "unknown": "Status unklar",
         "starting": "Startet",
         "working": "Arbeitet",
         "needs_input": "Wartet auf dich",

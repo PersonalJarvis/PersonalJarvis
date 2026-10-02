@@ -4372,6 +4372,8 @@
       "for_minutes": "desde hace {n} min",
       "for_hours": "desde hace {n} h",
       "state": {
+        "stopped": "Interrumpido",
+        "unknown": "Estado desconocido",
         "working": "Trabajando",
         "starting": "Iniciando",
         "asking": "Te necesita",
@@ -4421,6 +4423,7 @@
       "last_task": "Última tarea encargada: {0}",
       "kind_completed": "COMPLETADO",
       "kind_needs_input": "NECESITA RESPUESTA",
+      "kind_stopped": "INTERRUMPIDO",
       "kind_exited": "DETENIDO",
       "kind_failed": "FALLIDO",
       "gone": "{0} ya no está en este espacio de trabajo: ese terminal se cerró después de llegar la notificación."
@@ -5839,6 +5842,8 @@
         "idle": "{n} listos o inactivos"
       },
       "state": {
+        "stopped": "Interrumpido",
+        "unknown": "Estado desconocido",
         "starting": "Iniciando",
         "working": "Trabajando",
         "needs_input": "Espera tu respuesta",

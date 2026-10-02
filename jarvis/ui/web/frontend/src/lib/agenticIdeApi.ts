@@ -278,6 +278,8 @@ export type PaneActivity =
   | "asking"
   | "failed"
   | "exited"
+  | "stopped"
+  | "unknown"
   | "";
 
 /**
@@ -1767,6 +1769,7 @@ export async function closeTerminals(names: string[]): Promise<CloseTerminalsRes
  * claim from "the work is right".
  */
 export type PaneNotificationKind =
+  | "stopped"
   | "completed"
   | "needs_input"
   | "exited"
