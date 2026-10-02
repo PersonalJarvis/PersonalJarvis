@@ -242,9 +242,26 @@ class Rooms:
         room = await self.get(room_id)
         if room is None:
             raise RoomError(FailureReason.TARGET_UNKNOWN, f"room {room_id!r} not found")
+        if room.state in (RoomState.SETTLED, RoomState.FAILED):
+            return room
         room.state = RoomState.FAILED
         room.settle_reason = reason
         await self._persist(room)
+        await self._store.append_and_publish(
+            SocietyEnvelope(
+                msg_type=MsgType.ROOM_SETTLE,
+                from_agent="scheduler",
+                to_agent=None,
+                trace_id=room.trace_id,
+                payload={
+                    "room_id": room.room_id,
+                    "reason": reason,
+                    "rounds": room.round,
+                    "messages": room.message_count,
+                    "failed": True,
+                },
+            )
+        )
         return room
 
     # ------------------------------------------------------------- policy

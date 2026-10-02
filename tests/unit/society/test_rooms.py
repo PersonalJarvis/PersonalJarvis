@@ -119,7 +119,7 @@ async def test_room_survives_reopen(rooms, tmp_path: Path):
 
 
 async def test_manual_settle_and_fail(rooms):
-    service, _ = rooms
+    service, store = rooms
     room = await service.open(opened_by="jarvis", members=["a", "b"])
     settled = await service.settle(room.room_id, reason="kill_switch")
     assert settled.state is RoomState.SETTLED
@@ -127,5 +127,12 @@ async def test_manual_settle_and_fail(rooms):
     other = await service.open(opened_by="jarvis", members=["c", "d"])
     failed = await service.fail(other.room_id, reason="boom")
     assert failed.state is RoomState.FAILED
+    assert failed.settle_reason == "boom"
+    failed_again = await service.fail(other.room_id, reason="different")
+    assert failed_again.settle_reason == "boom"
+    events = await store.events_for_trace(other.trace_id)
+    assert [event.msg_type for event in events] == [MsgType.ROOM_OPEN, MsgType.ROOM_SETTLE]
+    assert events[-1].payload["reason"] == "boom"
+    assert events[-1].payload["failed"] is True
     with pytest.raises(RoomError):
         await service.settle("nope", reason="x")
