@@ -18,6 +18,7 @@ from jarvis.dictation.insert import (
     insert_text,
     resolve_paste_chord,
 )
+from tests.fakes.fake_permission_service import FakePermissionService
 
 
 class FakeClipboard:
@@ -63,6 +64,9 @@ def wired(monkeypatch: pytest.MonkeyPatch):
     """insert_text wired to fakes, with insertion permitted and no sleeping."""
     clipboard = FakeClipboard()
     actuator = FakeActuator()
+    gate = FakePermissionService()
+    monkeypatch.setattr(insert_mod, "_permission_gate", lambda: gate)
+    monkeypatch.setattr(insert_mod, "_macos_dialog_block_reason", lambda: "")
 
     import jarvis.platform.clipboard as real_clipboard
 

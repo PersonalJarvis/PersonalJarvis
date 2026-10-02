@@ -724,6 +724,8 @@ def _fresh_launch_state(monkeypatch) -> list[dict[str, Any]]:
     monkeypatch.setattr(supervisor, "_port_open", lambda port, timeout=1.0: False)
     monkeypatch.setattr(supervisor, "probe_runtime", lambda *args, **kwargs: None)
     monkeypatch.setattr(supervisor, "_process_create_time", lambda pid: 1000.0)
+    # This contract records the server launch, not the host keychain's helpers.
+    monkeypatch.setattr(supervisor, "hardened_child_env", lambda **kwargs: {"PYTHONUTF8": "1"})
     monkeypatch.setattr(LocalRealtimeProvider, "_last_launch_at", float("-inf"))
     spawned: list[dict[str, Any]] = []
 

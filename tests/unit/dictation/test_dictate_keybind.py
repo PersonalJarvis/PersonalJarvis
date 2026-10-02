@@ -18,6 +18,7 @@ from jarvis.core.config import DictationConfig, TriggerConfig
 from jarvis.core.config_writer import KEYBIND_ACTIONS, KEYBIND_TOML_KEY
 from jarvis.speech.pipeline import PipelineState, SpeechPipeline
 from jarvis.trigger.hotkey import validate_hotkey
+from tests.fakes.fake_permission_service import FakePermissionService
 
 # --------------------------------------------------------------------------
 # Registry wiring
@@ -78,6 +79,7 @@ def test_every_keybind_action_reaches_the_os_binding_table() -> None:
     """A bound action that never reaches ``_build_hotkey_bindings`` is a row
     that saves, displays, survives a restart — and never fires."""
     pipe = SpeechPipeline.__new__(SpeechPipeline)
+    pipe._permission_gate = FakePermissionService()
     pipe._ptt_hotkeys = []
     pipe._dictate_mode = "hold"
     for index, action in enumerate(KEYBIND_ACTIONS):
@@ -191,6 +193,7 @@ def _pipeline(
     *, dictate: list[str], mode: str = "hold", dictate_toggle: list[str] | None = None
 ) -> SpeechPipeline:
     pipe = SpeechPipeline.__new__(SpeechPipeline)
+    pipe._permission_gate = FakePermissionService()
     pipe._call_hotkeys = ["f3+f4"]
     pipe._hangup_hotkeys = ["f1+f2"]
     pipe._ptt_hotkeys = []
@@ -269,6 +272,7 @@ def test_an_unbound_paste_last_row_arms_nothing() -> None:
 # --------------------------------------------------------------------------
 # Hotkey edges
 # --------------------------------------------------------------------------
+
 
 
 class _RecordingPipeline(SpeechPipeline):
@@ -570,6 +574,7 @@ class _StubSTT:
 @pytest.mark.asyncio
 async def test_start_dictation_records_the_requested_target() -> None:
     pipe = SpeechPipeline.__new__(SpeechPipeline)
+    pipe._permission_gate = FakePermissionService()
     pipe._utterance_stt = _StubSTT()
     pipe._dictation_task = None
     pipe._dictation_stop_event = asyncio.Event()

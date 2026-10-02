@@ -5,6 +5,7 @@ from typing import Any
 
 import jarvis.core.config as cfg
 from jarvis.core.config import BrainConfig, BrainProviderConfig, JarvisConfig
+from tests.fakes.provider_config import use_provider_config
 
 
 class _FakeOpenAI:
@@ -32,12 +33,12 @@ def _override(provider_id: str, url: str, monkeypatch) -> None:
     conf = JarvisConfig(
         brain=BrainConfig(providers={provider_id: BrainProviderConfig(base_url=url)})
     )
-    monkeypatch.setattr(cfg, "load_config", lambda: conf)
+    use_provider_config(monkeypatch, conf)
     monkeypatch.setattr(cfg, "get_provider_secret", lambda pid: "sk-test")
 
 
 def _no_override(monkeypatch) -> None:
-    monkeypatch.setattr(cfg, "load_config", lambda: JarvisConfig())
+    use_provider_config(monkeypatch, JarvisConfig())
     monkeypatch.setattr(cfg, "get_provider_secret", lambda pid: "sk-test")
 
 

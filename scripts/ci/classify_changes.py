@@ -225,6 +225,7 @@ _UPDATER_FILES = {
 LANES = (
     "python",
     "frontend",
+    "wiki_video",
     "deps",
     "realtime",
     "cli",
@@ -267,6 +268,7 @@ def classify(paths: Iterable[str], *, full: bool = False) -> dict[str, bool]:
     return {
         "python": any(_python_relevant(p) for p in changed),
         "frontend": _any(changed, _FRONTEND_PREFIXES, _FRONTEND_FILES),
+        "wiki_video": _any(changed, ("wiki-video/",)),
         "deps": _any(changed, (), _DEPS_FILES),
         "realtime": _any(changed, _REALTIME_PREFIXES, _REALTIME_FILES),
         "cli": _any(changed, _CLI_PREFIXES)

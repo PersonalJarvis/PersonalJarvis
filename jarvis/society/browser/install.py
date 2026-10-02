@@ -277,6 +277,9 @@ def ensure_installed(
 
     root = install_root(data_dir)
     root.mkdir(parents=True, exist_ok=True)
+    # An initial non-strict resolution can retain aliases while directories
+    # are missing. Compare the probe against the now-existing canonical root.
+    root = root.resolve(strict=True)
     with FileLock(str(root / "install.lock"), timeout=960):
         if is_installed(data_dir) and not repair:
             return snapshot(data_dir)

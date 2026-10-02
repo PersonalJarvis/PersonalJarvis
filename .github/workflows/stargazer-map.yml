@@ -24,10 +24,13 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
+          package-manager-cache: false
       - run: node --test .github/scripts/test-stargazer-map.mjs
 
   refresh:
@@ -40,15 +43,16 @@ jobs:
     steps:
       # The geocoder belongs to the website. Pin reviewed code: it runs with
       # this repository's token, never a contributor-controlled checkout.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: PersonalJarvis/personaljarvis.github.io
           ref: 70125a6f2206415a60f15cdf99921f7b0dd4f0f2
           persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
+          package-manager-cache: false
 
       - name: Resolve public profile locations
         env:
@@ -56,7 +60,7 @@ jobs:
         run: node scripts/fetch-stargazers.mjs --repo PersonalJarvis/PersonalJarvis
 
       - name: Publish the aggregate feed
-        uses: actions/github-script@v7
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const fs = require('node:fs');

@@ -32,6 +32,7 @@ import jarvis.speech.pipeline as pipeline_mod
 from jarvis.core.bus import EventBus
 from jarvis.core.config import DictationConfig
 from jarvis.speech.pipeline import PipelineState, SpeechPipeline
+from tests.fakes.fake_permission_service import FakePermissionService
 
 BYTES_PER_SECOND = 16_000 * 2
 
@@ -69,6 +70,7 @@ def _amplitudes_seen(calls: list[bytes]) -> set[int]:
     return seen
 
 
+
 class _ScriptedSTT:
     """Records every PCM it is handed; fails the first ``fail_first`` calls."""
 
@@ -104,6 +106,7 @@ class _ScriptedMic:
 
 def _pipeline(bus: EventBus, stt: _ScriptedSTT, cfg: DictationConfig) -> SpeechPipeline:
     pipe = SpeechPipeline.__new__(SpeechPipeline)
+    pipe._permission_gate = FakePermissionService()
     pipe._bus = bus
     pipe._utterance_stt = stt
     pipe._dictation_task = None
@@ -268,6 +271,7 @@ class _NullBus:
 
 def _delivery_pipeline() -> SpeechPipeline:
     pipe = SpeechPipeline.__new__(SpeechPipeline)
+    pipe._permission_gate = FakePermissionService()
     pipe._bus = _NullBus()
     pipe._dictation_cfg = DictationConfig(target="chat", language="auto")
     pipe._dictation_completion_published = True

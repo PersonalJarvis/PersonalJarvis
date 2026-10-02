@@ -77,6 +77,22 @@ def _document(agent: Any, target: str, entries: list[Entry], original: str = "")
     return prefix.rstrip() + "\n\n" + render(entries)
 
 
+def _canonicalize_book_names(folder: Path) -> None:
+    """Correct directory-entry casing without replacing a different notebook."""
+    for path in folder.iterdir():
+        canonical_name = next(
+            (name for name in FILES.values() if name.casefold() == path.name.casefold()), None
+        )
+        if canonical_name is None or path.name == canonical_name:
+            continue
+        canonical = folder / canonical_name
+        # APFS can retain the old entry's spelling after an atomic replacement.
+        # Only rename an alias of the same file; distinct case-sensitive books
+        # still belong to the journalled legacy migration below.
+        if canonical.exists() and path.samefile(canonical):
+            path.rename(canonical)
+
+
 def _recover(folder: Path, journal: Path) -> None:
     from .memory import atomic_write
 
@@ -98,6 +114,7 @@ def _recover(folder: Path, journal: Path) -> None:
     for name, item in plan["files"].items():
         if _read(folder / name) != item["after"]:
             atomic_write(folder / name, item["after"])
+    _canonicalize_book_names(folder)
     for item in plan["legacy"]:
         legacy = folder / item["name"]
         canonical = folder / ("USER.md" if item["name"].lower() == "user.md" else "MEMORY.md")
@@ -121,6 +138,7 @@ def _ensure_locked(folder: Path, agent: Any) -> None:
     if marker.is_file():
         if json.loads(marker.read_text(encoding="utf-8")).get("version") != 2:
             raise ValueError("Unknown agent memory layout")
+        _canonicalize_book_names(folder)
         journal.unlink(missing_ok=True)  # The marker is the committed migration receipt.
         return
     if journal.is_file():

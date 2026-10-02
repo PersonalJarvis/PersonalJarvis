@@ -19,6 +19,7 @@ import jarvis.speech.pipeline as pipeline_mod
 from jarvis.core.bus import EventBus
 from jarvis.core.events import DictationRefused, DictationStarted, VoiceInputHeld
 from jarvis.speech.pipeline import PipelineState, SpeechPipeline, TurnTakingState
+from tests.fakes.fake_permission_service import FakePermissionService
 
 
 class _StubSTT:
@@ -76,6 +77,7 @@ class _Collector:
 def _pipeline(bus: EventBus) -> SpeechPipeline:
     """A pipeline reduced to the dictation lane, sitting in a live call."""
     pipe = SpeechPipeline.__new__(SpeechPipeline)
+    pipe._permission_gate = FakePermissionService()
     pipe._bus = bus
     pipe._utterance_stt = _StubSTT()
     pipe._dictation_task = None

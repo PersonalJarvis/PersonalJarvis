@@ -5,7 +5,8 @@ import { test } from "node:test";
 const yaml = readFileSync(new URL("../workflows/stargazer-map.yml", import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const script = yaml.split("          script: |\n")[1].replace(/^            /gm, "");
 const execute = new (Object.getPrototypeOf(async function () {}).constructor)(
-  "require", "github", "context", "core", script,
+  // github-script v9 injects getOctokit; declaring it in the script must fail.
+  "require", "github", "context", "core", "getOctokit", script,
 );
 
 const snapshot = {
@@ -33,8 +34,11 @@ async function run({ exists = false, fail = false } = {}) {
       async createOrUpdateFileContents(args) { writes.push({ kind: "file", ...args }); },
     },
   } };
-  await execute(() => ({ readFileSync: () => JSON.stringify(snapshot) }), github,
-    { repo: { owner: "PersonalJarvis", repo: "PersonalJarvis" } }, { info() {} });
+  await execute((specifier) => {
+    assert.equal(specifier, "node:fs", "the publisher only imports a Node built-in");
+    return { readFileSync: () => JSON.stringify(snapshot) };
+  }, github, { repo: { owner: "PersonalJarvis", repo: "PersonalJarvis" } },
+  { info() {} }, () => { throw new Error("no additional authenticated clients expected"); });
   return writes;
 }
 
@@ -66,4 +70,25 @@ test("star and reconciliation triggers use a pinned collector without a personal
   assert.match(yaml, /ref: [a-f0-9]{40}/);
   assert.match(yaml, /GITHUB_TOKEN: \$\{\{ github.token \}\}/);
   assert.doesNotMatch(yaml, /STARGAZERS_TOKEN|pull_request_target/);
+});
+
+test("all actions are immutable and Node setup cannot create a privileged cache", () => {
+  const actions = [...yaml.matchAll(/uses: (actions\/[^\s]+)(?:[^\n]*)/g)];
+  assert.equal(actions.length, 5);
+  for (const [, action] of actions) {
+    assert.match(action, /^actions\/[^@]+@[a-f0-9]{40}$/);
+  }
+  const setups = yaml.split(/- uses: actions\/setup-node@/).slice(1);
+  assert.equal(setups.length, 2);
+  for (const setup of setups) {
+    assert.match(setup.split(/\n\s*- (?:uses|name|run):/)[0], /package-manager-cache: false/);
+  }
+});
+
+test("the required CI gate exercises the publisher without running the collector", () => {
+  const ci = readFileSync(new URL("../workflows/ci.yml", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+  const gates = ci.split("  gates:\n")[1]?.split(/^  [a-z][\w-]*:\s*$/m)[0];
+  assert.ok(gates, "the blocking static gates job exists");
+  assert.match(gates, /node --test \.github\/scripts\/test-stargazer-map\.mjs/);
+  assert.doesNotMatch(gates, /fetch-stargazers|continue-on-error/);
 });

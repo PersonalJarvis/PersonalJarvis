@@ -22,8 +22,9 @@ Commands::
     ratchet_tests.py update --out B.json report*.json          # regenerate
     ratchet_tests.py durations --out D.json dur*.json          # merge timing caches
 
-A missing baseline file means "not bootstrapped yet": ``check`` reports and
-passes, so a first run on a new OS leg can produce its own baseline.
+A missing baseline waives no failures: ``check`` treats every failure as new.
+A first run on another OS must not appear green merely because no reviewed
+baseline exists yet.
 """
 
 from __future__ import annotations
@@ -91,13 +92,14 @@ def _summary(lines: list[str]) -> None:
 
 def cmd_check(args: argparse.Namespace) -> int:
     reports = load_reports(args.reports)
+    if not reports:
+        print("::error::No shard reports found; test execution is unverified.")
+        return 1
     baseline = load_baseline(args.baseline)
     failures = failed_ids(reports)
     if baseline is None:
-        print(f"[ratchet] no baseline at {args.baseline} - report-only bootstrap mode")
-        for fid in sorted(failures):
-            print(f"  failing: {fid}")
-        return 0
+        print(f"[ratchet] no baseline at {args.baseline} - all failures are new")
+        baseline = set()
     flaky_files = load_flaky_files(args.baseline)
     new = sorted(f for f in failures - baseline if not in_flaky_file(f, flaky_files))
     known = sorted(set(failures) - set(new))

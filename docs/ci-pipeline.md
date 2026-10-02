@@ -19,14 +19,15 @@ agent branch ──► pull request ──► CI (lanes) ──► CI gate ─�
 | Stage | What it does | Script |
 | --- | --- | --- |
 | `detect` | Classifies the diff into lanes. Fails open: an empty diff, a pipeline change, the nightly run and a manual run turn every lane on. A push to main classifies its lanes too (the concurrent-job limit is shared), but always runs the whole test suite on Linux and Windows. | `scripts/ci/classify_changes.py` |
-| `static gates` | ~20 repository gates (keys, bundle, mirrors, privacy, docs, CLI coverage, ratchets, bash 3.2, no new German) in one job. Every gate reports. | `scripts/ci/run_gates.py` |
+| `static gates` | ~20 repository gates (keys, bundle, mirrors, privacy, docs, CLI coverage, ratchets, bash 3.2, no new German) plus the stargazer publisher contract with fake GitHub clients. Every gate reports. | `scripts/ci/run_gates.py`, `.github/scripts/test-stargazer-map.mjs` |
 | `python contracts (fast)` | Import cleanliness on the bare install, the named contract guards, skill-routing precision and recall, plugin auth. Blocking, no baseline. | — |
 | `tests linux 1..6` | The whole suite in six shards. Batches of files run in fresh processes with a wall-clock budget; a failed batch is re-run file by file, a failed file once more (a pass there is reported as flaky). | `scripts/ci/run_tests_parallel.py` |
 | `tests windows` | Four shards on full runs; on a pull request one runner takes only the tests the diff can reach. | `scripts/ci/select_tests.py` |
 | `tests macos 1..3` | Nightly and manual runs only (~10x runner cost). | — |
 | `test report + floor` | Sums all Linux shards, enforces the min-passed floor, lists baselined failures that now pass, and on main refreshes the per-file duration cache that balances the shards. | `scripts/ci/ratchet_tests.py` |
 | Lanes | `frontend`, `jarvisctl`, `deps`, `realtime` (3 OS + slim container), `updater` (3 OS: in-app update, native handover, restart helper), `dragdrop`, `browser`, `macOS desktop`, `installer smoke` — each only when its paths change. The `macOS desktop` lane's path gate covers every directory that asks for or acts on a macOS permission (`jarvis/audio/`, `cu/`, `dictation/`, `screen_context/`, `trigger/`, `vision/`, `platform/`), the packaging inputs (`jarvis.spec`, `packaging/macos/`, `jarvis/core/macos_privacy_strings.py`) and `permissions_routes.py` (`scripts/ci/classify_changes.py`); see [`macos-permissions.md`](macos-permissions.md). | — |
-| `CI gate` | Aggregates every job. **The only required check.** Skipped lanes pass; the nightly run is strict and fails on any skip. | `scripts/ci/required_results.py` |
+| `wiki video` | Changes under `wiki-video/` run a clean install, vulnerability audit, lint/TypeScript and webpack bundle. No browser or render is launched. | `wiki-video/package.json` |
+| `CI gate` | Aggregates every job. **The only required check.** Skipped lanes pass in scoped runs; nightly and manual full runs with macOS reject unexpected skips. | `scripts/ci/required_results.py` |
 
 The realtime lane runs the subscription authentication, direct reasoning,
 voice transport, session orchestration, native login provisioning and Live catalog contracts on Windows,
@@ -50,8 +51,9 @@ gh run download <run-id> -p 'tests-linux-*' -D reports
 python scripts/ci/ratchet_tests.py update --out scripts/ci/test-baseline-linux.json reports
 ```
 
-A missing list puts that OS in report-only mode until the first full run
-produces one.
+A missing list waives no failures: every failure on that OS blocks the check.
+A passing report can pass without a baseline, but an empty report directory
+fails. Never add failures to a baseline just to make a new run green.
 
 ### Dispatch-only evidence runs
 

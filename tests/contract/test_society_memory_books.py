@@ -58,6 +58,22 @@ async def test_legacy_migration_preserves_entries_ids_and_original_backup(rt, le
     )
 
 
+async def test_committed_layout_repairs_case_only_alias_without_changing_content(rt):
+    agent = await rt.roster.get("scout")
+    root = rt.memory.root()
+    canonical = ensure_books(root, agent)["memory"]
+    original = canonical.read_bytes()
+    alias = canonical.with_name("memory.md")
+    canonical.rename(alias)
+    if not canonical.exists():
+        pytest.skip("This contract requires a case-insensitive filesystem")
+
+    ensure_books(root, agent)
+
+    assert canonical.read_bytes() == original
+    assert {p.name for p in canonical.parent.glob("*.md")} == {"USER.md", "MEMORY.md"}
+
+
 async def test_writes_reads_and_corrections_are_agent_and_target_scoped(rt):
     scout = await rt.roster.get("scout")
     writer = await rt.roster.get("writer")

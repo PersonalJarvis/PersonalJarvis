@@ -22,6 +22,7 @@ import asyncio
 import pytest
 
 from jarvis.speech.pipeline import PipelineState, SpeechPipeline
+from tests.fakes.fake_permission_service import FakePermissionService
 
 
 class _StubSTT:
@@ -31,6 +32,7 @@ class _StubSTT:
 
 def _make_idle_pipeline() -> SpeechPipeline:
     pipe = SpeechPipeline.__new__(SpeechPipeline)
+    pipe._permission_gate = FakePermissionService()
     pipe._utterance_stt = _StubSTT()
     pipe._dictation_task = None
     pipe._dictation_stop_event = asyncio.Event()
@@ -58,7 +60,7 @@ async def test_start_dictation_clears_stale_hangup() -> None:
         task.cancel()
         try:
             await task
-        except (asyncio.CancelledError, Exception):  # noqa: BLE001
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110 - test task cleanup
             pass
 
     assert started is True
