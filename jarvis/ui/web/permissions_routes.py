@@ -24,7 +24,10 @@ only the person at the Jarvis window sends it: an agent's ``activated=1`` is ign
 
 The Automation row is computed only while ``[ducking].enabled`` is on or the caller
 passes ``?include=automation``: reading it asks a running player, which a user who
-never switched the feature on should never meet. Screen Recording is the SHALLOW
+never switched the feature on should never meet. A player whose real Apple Event was
+refused (``-1743``) although its probe reads granted has an open ``needs_settings``
+episode (``report_failed_use``); the row keeps the probe's ``status`` (no key is added)
+and its ``detail`` names that player. Reading never asks. Screen Recording is the SHALLOW
 preflight here (no window enumeration); that preflight is frozen per process and can
 only go stale NEGATIVE (BUG-161), so a grant given in System Settings shows up only
 once the service has PROVEN it (an ``ensure`` or the episode watcher runs the
@@ -451,12 +454,16 @@ def _automation_players(
 
 def _automation_state(
     service: PermissionService, runtime: _Runtime
-) -> tuple[PermissionState, bool]:
-    """``(state, answered)``; a probe that did not answer in time reads UNAVAILABLE."""
+) -> tuple[PermissionState, bool, list[PermissionState]]:
+    """``(state, answered, per-player states)``; an unanswered probe reads UNAVAILABLE.
+
+    The per-player list follows ``AUTOMATION_TARGETS`` and is empty when the probe did
+    not answer in time.
+    """
     states = _automation_players(service, runtime)
     if states is None:
-        return PermissionState.UNAVAILABLE, False
-    return _worst_automation(states), True
+        return PermissionState.UNAVAILABLE, False, []
+    return _worst_automation(states), True, states
 
 
 def _row_detail(
@@ -466,6 +473,7 @@ def _row_detail(
     darwin: bool,
     restart_hint: bool,
     answered: bool,
+    refused_targets: tuple[str, ...] = (),
 ) -> str:
     """One English sentence for the row, from fixed templates only (never OS text)."""
     if state is PermissionState.NOT_REQUIRED:
@@ -476,6 +484,14 @@ def _row_detail(
         # A real failed use while the state reads granted (a wallpaper-only capture,
         # a deaf event tap): the row stays granted but says what to do.
         return user_detail_for(permission, "restart_hint")
+    if refused_targets:
+        # A real Apple Event to a player was refused (-1743) although its probe reads
+        # granted: the row keeps the probe's status but names each such player.
+        sentences = " ".join(
+            user_detail_for(permission, "needs_settings", target=bundle_id, refused_use=True)
+            for bundle_id in refused_targets
+        )
+        return f"{sentences} {_AUTOMATION_NOTE}"
     if state is PermissionState.GRANTED:
         return ""
     if permission is PermissionId.AUTOMATION and not answered:
@@ -494,10 +510,20 @@ def _build_row(
     info: AppInfo,
     permission: PermissionId,
     restart_hint_for: frozenset[str],
+    refused_for: frozenset[str] = frozenset(),
 ) -> PermissionRow:
     answered = True
+    refused_targets: tuple[str, ...] = ()
     if permission is PermissionId.AUTOMATION:
-        state, answered = _automation_state(service, runtime)
+        state, answered, players = _automation_state(service, runtime)
+        # The signature of a refused send: an open needs_settings episode names a player
+        # whose probe nevertheless reads granted (a plain needs_settings has a probe that
+        # reads undecided, and the episode closes when it turns granted).
+        refused_targets = tuple(
+            bundle_id
+            for bundle_id, player_state in zip(_AUTOMATION_PLAYERS, players, strict=False)
+            if bundle_id in refused_for and player_state is PermissionState.GRANTED
+        )
     else:
         state = service.check(permission)
     darwin = info.platform == "darwin"
@@ -539,6 +565,7 @@ def _build_row(
             darwin=darwin,
             restart_hint=permission.value in restart_hint_for,
             answered=answered,
+            refused_targets=refused_targets,
         ),
         # The textual path of the pane; there is no System Settings off macOS.
         "settings_path": pane if darwin else None,
@@ -578,6 +605,17 @@ def _restart_hints(needed: list[NeededEpisode]) -> frozenset[str]:
     )
 
 
+def _refused_targets(needed: list[NeededEpisode]) -> frozenset[str]:
+    """The players an open ``needs_settings`` Automation episode names (a refused send, maybe)."""
+    return frozenset(
+        episode["target"]
+        for episode in needed
+        if episode["reason"] == "needs_settings"
+        and "automation" in episode["permissions"]
+        and episode["target"] in _AUTOMATION_PLAYERS
+    )
+
+
 def _needed(service: PermissionService) -> list[NeededEpisode]:
     return [cast("NeededEpisode", episode.as_dict()) for episode in service.outstanding()]
 
@@ -589,8 +627,9 @@ def _build_snapshot(
     _refresh_edges(service, runtime)
     needed = _needed(service)
     hints = _restart_hints(needed)
+    refused = _refused_targets(needed)
     rows = [
-        _build_row(service, runtime, info, permission, hints)
+        _build_row(service, runtime, info, permission, hints, refused)
         for permission in _ROW_ORDER
         if include_automation or permission is not PermissionId.AUTOMATION
     ]
@@ -617,8 +656,10 @@ def _single_row(
     """One row without the full snapshot (the card and the Privacy page poll this)."""
     family = PANE_FAMILY[permission]
     info = service.app_info()
-    hints = _restart_hints(_needed(service))
-    return _build_row(service, runtime, info, family, hints)
+    needed = _needed(service)
+    return _build_row(
+        service, runtime, info, family, _restart_hints(needed), _refused_targets(needed)
+    )
 
 
 @router.get("/status", summary="Inspect macOS privacy permissions", response_model=None)

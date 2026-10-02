@@ -81,7 +81,12 @@ from enum import StrEnum
 from typing import Any, Final
 from uuid import UUID, uuid4
 
-from jarvis.core.events import PERMISSION_FEATURES, PermissionNeeded, PermissionResolved
+from jarvis.core.events import (
+    PERMISSION_FEATURES,
+    PERMISSION_NEEDED_ORIGINS,
+    PermissionNeeded,
+    PermissionResolved,
+)
 from jarvis.platform import permissions as _permissions_module
 from jarvis.platform.permissions import (
     APP_NAME,
@@ -157,6 +162,9 @@ _REASK_AFTER_S: Final[dict[PermissionId, float]] = {
 
 # The permissions whose grant may only work after a restart, so a real failed
 # attempt can produce the ``restart_hint`` reason (see ``report_failed_use``).
+# Automation is deliberately NOT here: Apple Events are checked per send, so its
+# failed-use report (-1743 after a granted read) is ``needs_settings``, a different
+# reason with a different way out (``report_use_ok``).
 _RESTART_HINT_FAMILIES: Final = frozenset(
     {PermissionId.SCREEN_RECORDING, PermissionId.INPUT_MONITORING}
 )
@@ -343,6 +351,7 @@ def user_detail_for(
     asking: bool = False,
     outside_app: bool = False,
     launched_as_bundle: bool = False,
+    refused_use: bool = False,
 ) -> str:
     """The full English sentence about the situation: built from fixed templates only.
 
@@ -353,6 +362,9 @@ def user_detail_for(
     the user's situation and none is an imperative aimed at the reader (P9).
     ``launched_as_bundle`` tells a real ``.app`` run from the wrong place (a mounted
     disk image: the grantee is Personal Jarvis itself) from a terminal or IDE run.
+    ``refused_use`` (Automation, ``needs_settings`` only) says the access READS as
+    allowed but a real Apple Event to the named player was refused anyway, so the
+    sentence does not claim the switch is off.
     """
     family = PANE_FAMILY[family]
     subject = _subject(family, target)
@@ -382,6 +394,13 @@ def user_detail_for(
     if reason == "restart_hint":
         return f"{subject} may only take effect after Personal Jarvis is quit and reopened."
     if reason == "needs_settings":
+        player = _player_name(target) if family is PermissionId.AUTOMATION else None
+        if refused_use and player is not None:
+            return (
+                f"macOS refused an Apple event that Personal Jarvis sent to {player}, "
+                f"although {subject} reads as allowed. The user has to check that "
+                f"Personal Jarvis is switched on{where}."
+            )
         if asking:
             return (
                 f"macOS may be showing a dialog about {subject}. The user has to turn "
@@ -489,12 +508,31 @@ class _Slot:
     # granted (or the user came back from Settings and it still fails), so the
     # honest advice is "quit and reopen" (:meth:`PermissionService.report_failed_use`).
     restart_hint: bool = False
+    # True (Automation only): a real Apple Event to this player was refused with
+    # -1743 although the probe read GRANTED (:meth:`PermissionService.report_failed_use`).
+    # The probe is exactly what lied, so a granted read never clears it: only
+    # :meth:`PermissionService.report_use_ok` (a later send landed), ``note_reset``
+    # or the episode's ten minute TTL does.
+    refused_use: bool = False
     # When the Screen Recording window-title oracle last ran for this slot.
     deep_at: float | None = None
 
     @property
     def key(self) -> _SlotKey:
         return (self.family, self.target)
+
+    @property
+    def failed_use(self) -> bool:
+        """A real use failed although the state may read granted: the slot stays open."""
+        return self.restart_hint or self.refused_use
+
+    def refused_while(self, state: PermissionState) -> bool:
+        """Whether the "refused although granted" view applies: flagged AND the probe reads granted.
+
+        A flagged slot whose state turned denied, restricted or undecided is described
+        by that state instead (the more specific and more actionable reason).
+        """
+        return self.refused_use and state in _READY_STATES
 
 
 @dataclass(slots=True)
@@ -1046,6 +1084,7 @@ class PermissionService:
                     if matches(slot.key):
                         slot.asked_at = None
                         slot.restart_hint = False
+                        slot.refused_use = False
                         slot.promoted = False
         self.invalidate(perm)
 
@@ -1651,6 +1690,7 @@ class PermissionService:
                 asking=view.asking,
                 outside_app=view.outside,
                 launched_as_bundle=view.outside_bundle,
+                refused_use=item.slot is not None and item.slot.refused_while(item.state),
             ),
             reason=view.reason,
             can_prompt=view.can_prompt,
@@ -1705,6 +1745,19 @@ class PermissionService:
             # honest advice left is "quit and reopen" (never an automatic restart).
             return _View(
                 PermissionOutcome.NEEDS_SETTINGS, "restart_hint", "blocked", False, has_pane, False
+            )
+        if slot.refused_while(state):
+            # A real Apple Event was refused (-1743) although the probe reads granted:
+            # the probe is what lied, so the honest advice is the Automation pane. It
+            # is never asked for again from here (``can_prompt`` is False) and never a
+            # restart hint: Apple Events are checked per send.
+            return _View(
+                PermissionOutcome.NEEDS_SETTINGS,
+                "needs_settings",
+                "blocked",
+                False,
+                has_pane,
+                False,
             )
         if state in _READY_STATES:
             return self._ready_view(state)
@@ -1857,7 +1910,7 @@ class PermissionService:
         views: list[tuple[_Slot, _View]] = []
         newly_granted: list[_Slot] = []
         for slot in tuple(episode.slots.values()):
-            if slot.state in _READY_STATES and not slot.restart_hint:
+            if slot.state in _READY_STATES and not slot.failed_use:
                 if not slot.notified:
                     newly_granted.append(slot)
                 continue
@@ -1882,6 +1935,7 @@ class PermissionService:
             asking=phase == "os_dialog",
             outside_app=view.outside,
             launched_as_bundle=view.outside_bundle,
+            refused_use=slot_primary.refused_while(slot_primary.state),
         )
         can_prompt = any(candidate.can_prompt for _, candidate in views)
         can_open = any(candidate.can_open_settings for _, candidate in views)
@@ -1990,7 +2044,7 @@ class PermissionService:
                     permissions=tuple(
                         slot.family.value
                         for slot in ep.slots.values()
-                        if slot.state not in _READY_STATES or slot.restart_hint
+                        if slot.state not in _READY_STATES or slot.failed_use
                     ),
                     feature=ep.feature,
                     reason=ep.reason,
@@ -2067,7 +2121,7 @@ class PermissionService:
             for slot in tuple(episode.slots.values()):
                 self._refresh_slot(port, episode, slot, now)
             if any(
-                slot.state not in _READY_STATES or slot.restart_hint
+                slot.state not in _READY_STATES or slot.failed_use
                 for slot in episode.slots.values()
             ) and (now - episode.touched > self._episode_ttl_s):
                 self._close(episode, granted=False, fired=fired)
@@ -2337,21 +2391,42 @@ class PermissionService:
         feature: str,
         target: str | None = None,
         trace_id: UUID | str | None = None,
+        reason: str | None = None,
+        origin: str | None = None,
     ) -> EnsureResult:
         """A consumer reports a REAL failed attempt to use a permission it was granted.
 
-        The one producer of the ``restart_hint`` reason. Screen Recording and Input
-        Monitoring may only take effect after a restart (the preflight is frozen per
-        process, a tap may see no events; community-observed, UNVERIFIED), so when a
-        real capture or tap failed while the live state reads granted, or the user
-        came back from Settings and the preflight is still negative, the honest
-        advice is "quit and reopen", never an automatic restart. Call it from the
-        capture or tap site after a real failure, from a user-started feature only.
+        Two families have a producer here, each with ONE reason it can carry
+        (``reason=None`` means that default; any other value is a state that does not
+        fit and falls back to the plain path below):
 
-        Anything else (another permission, a state that does not fit) falls back to
-        a plain non-interactive :meth:`ensure`. The answer is the view of that
-        episode: ``restart_hint`` is never a grant, and a following ``ensure`` still
-        answers GRANTED while the state reads granted. Never raises.
+        * Screen Recording and Input Monitoring, ``restart_hint``: the preflight is
+          frozen per process and a tap may see no events (community-observed,
+          UNVERIFIED), so when a real capture or tap failed while the live state
+          reads granted, or the user came back from Settings and the preflight is
+          still negative, the honest advice is "quit and reopen", never an automatic
+          restart. Call it from the capture or tap site after a real failure, from a
+          user-started feature only; the episode origin defaults to ``user``.
+        * Automation, ``needs_settings``: an Apple Event to ONE player (``target``, a
+          bundle id from ``AUTOMATION_TARGETS``; anything else is refused with
+          UNAVAILABLE, opens nothing and is never echoed) was refused with ``-1743``
+          although the probe read GRANTED. The probe is exactly what lied (the grant
+          may belong to another app: the attribution of a child ``osascript`` is
+          UNVERIFIED), so this opens ONE episode that a granted read does not close,
+          and that only :meth:`report_use_ok`, :meth:`note_reset` or the episode's
+          ten minute TTL ends. It is NOT a restart hint (Apple Events are checked per
+          send), it never asks (no native request, ``can_prompt`` False) and the
+          origin defaults to ``background``: the report comes from a voice session
+          start, so only the inline status and the Privacy row show it, never the
+          floating card. A live state that no longer reads granted is reported
+          through the plain path (its real reason).
+
+        ``origin`` (``user`` or ``background``) overrides the family default; a value
+        outside the event vocabulary is ignored. Anything else (another permission,
+        a state that does not fit) falls back to a plain non-interactive
+        :meth:`ensure`. The answer is the view of that episode: neither reason is ever
+        a grant, and a following ``ensure`` still answers GRANTED while the state
+        reads granted. Never raises.
         """
         perm = PermissionId(permission)
         family = PANE_FAMILY[perm]
@@ -2360,7 +2435,11 @@ class PermissionService:
             port = self._port()
             if not self._is_darwin(port):
                 return self._not_required(perm)
-            if family not in _RESTART_HINT_FAMILIES:
+            if family is PermissionId.AUTOMATION:
+                return self._report_refused_automation(
+                    port, perm, feature, tgt, trace_id, reason, origin
+                )
+            if family not in _RESTART_HINT_FAMILIES or reason not in (None, "restart_hint"):
                 return self.ensure(perm, feature=feature, interactive=False, target=tgt or None)
             if feature not in PERMISSION_FEATURES:
                 log.warning("report_failed_use() was called with the unknown feature %r.", feature)
@@ -2371,7 +2450,9 @@ class PermissionService:
             if state not in _READY_STATES and not promoted:
                 return self.ensure(perm, feature=feature, interactive=False, trace_id=trace_id)
             item = _Item(requested=perm, family=family, target=tgt, state=state)
-            episode = self._open_episode(feature, [item], True, trace_id, now)
+            episode = self._open_episode(
+                feature, [item], _failed_use_origin(origin, "user") == "user", trace_id, now
+            )
             try:
                 slot = episode.slots[item.slot_key]
                 slot.state = state
@@ -2386,6 +2467,114 @@ class PermissionService:
         except Exception:  # noqa: BLE001 - reporting a failure never raises
             log.debug("report_failed_use(%s) failed.", feature, exc_info=True)
             return self._unavailable(perm, tgt)
+
+    def _report_refused_automation(
+        self,
+        port: Any,
+        perm: PermissionId,
+        feature: str,
+        target: str,
+        trace_id: UUID | str | None,
+        reason: str | None,
+        origin: str | None,
+    ) -> EnsureResult:
+        """The Automation branch of :meth:`report_failed_use`: a send was refused (-1743).
+
+        Reads the live state once. Not granted any more: the plain non-interactive
+        :meth:`ensure` describes it (its real reason, still never a request). Granted:
+        marks the player's slot ``refused_use`` in the (feature, player) episode and
+        publishes ONE ``needs_settings`` / ``blocked`` event (a repeat of the same
+        report is deduplicated by ``_emit_episode``, so a refusal on every session
+        start stays one event). The caller holds no service lock, and the one read is
+        the guarded, hard-timeout Automation read, never a native request.
+        """
+        if not target:
+            # Only the fixed player table is ever acted on, echoed or published.
+            log.debug("A failed Automation use was reported for a target that is not a player.")
+            return self._unavailable(perm, "")
+        if reason not in (None, "needs_settings"):
+            log.debug("A failed Automation use was reported with a reason it cannot carry.")
+            return self.ensure(
+                perm, feature=feature, interactive=False, target=target, trace_id=trace_id
+            )
+        if feature not in PERMISSION_FEATURES:
+            log.warning("report_failed_use() was called with the unknown feature %r.", feature)
+            feature = ""
+        now = self._clock()
+        state = self._read_state(port, perm, target, fresh=True)
+        if state not in _READY_STATES:
+            return self.ensure(
+                perm, feature=feature, interactive=False, target=target, trace_id=trace_id
+            )
+        item = _Item(requested=perm, family=PermissionId.AUTOMATION, target=target, state=state)
+        # An episode this player's ask left behind and that is already answered closes
+        # first, so the background report below never inherits its user origin (and
+        # with it the floating card).
+        self._note_ready(item)
+        user = _failed_use_origin(origin, "background") == "user"
+        episode = self._open_episode(feature, [item], user, trace_id, now)
+        try:
+            slot = episode.slots[item.slot_key]
+            slot.state = state
+            slot.refused_use = True
+            item.slot = slot
+        finally:
+            with self._lock:
+                episode.starting -= 1
+        self._emit_episode(episode)
+        self._ensure_watcher()
+        return self._result(item, self._classify(slot, state, now))
+
+    def report_use_ok(
+        self,
+        permission: PermissionId | str,
+        *,
+        feature: str,
+        target: str | None = None,
+    ) -> bool:
+        """A consumer reports that a REAL use of a permission worked: the mark is stale.
+
+        The counterpart of :meth:`report_failed_use` for Automation: a send to the
+        player landed (the volume command ran), so the ``needs_settings`` episode
+        that an earlier ``-1743`` opened is over. It clears the ``refused_use`` mark
+        of that (feature, player) slot and lets the episode close like any other
+        (``PermissionResolved(granted=True)``). A landed send is stronger evidence than
+        the probe, so the slot reads granted from here on.
+
+        This is the ONLY thing that ends such an episode early: a probe that reads
+        granted (the watcher, a status read, ``ensure``) never does, because that
+        probe is what lied. ``note_reset`` and the ten minute TTL end it too.
+
+        Returns ``True`` when a mark was cleared. Another permission, an unknown
+        player or a feature with nothing to clear returns ``False`` (the restart hints
+        of Screen Recording and Input Monitoring end through ``note_reset``). Reads no
+        state, touches no port, makes no request, never raises (an unknown permission
+        id is the one ``ValueError``, like everywhere else).
+        """
+        perm = PermissionId(permission)
+        family = PANE_FAMILY[perm]
+        tgt = _fixed_target(target) if family is PermissionId.AUTOMATION else ""
+        if family is not PermissionId.AUTOMATION or not tgt:
+            return False
+        if feature not in PERMISSION_FEATURES:
+            feature = ""
+        try:
+            cleared: list[_Episode] = []
+            with self._lock:
+                for episode in self._episodes.values():
+                    slot = episode.slots.get((family, tgt))
+                    if episode.closed or episode.feature != feature or slot is None:
+                        continue
+                    if slot.refused_use:
+                        slot.refused_use = False
+                        slot.state = PermissionState.GRANTED
+                        cleared.append(episode)
+            for episode in cleared:
+                self._emit_episode(episode)
+            return bool(cleared)
+        except Exception:  # noqa: BLE001 - tidying a status line never fails a real send
+            log.debug("report_use_ok(%s) failed.", feature, exc_info=True)
+            return False
 
     def _promoted(self, feature: str, family: PermissionId) -> bool:
         """Whether the user is known to have left to Settings and come back for this."""
@@ -2411,6 +2600,16 @@ def _fixed_target(target: str | None) -> str:
     into a result, an episode or an event.
     """
     return target if target and _player_name(target) is not None else ""
+
+
+def _failed_use_origin(origin: str | None, default: str) -> str:
+    """The episode origin of a failed-use report: the caller's, if it is a known one."""
+    if origin is None:
+        return default
+    if origin in PERMISSION_NEEDED_ORIGINS:
+        return origin
+    log.debug("report_failed_use() was called with an origin outside the event vocabulary.")
+    return default
 
 
 def _on_event_loop_thread() -> bool:

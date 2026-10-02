@@ -7,6 +7,8 @@ the permission behaviour against ``FakeTCC``.
 from __future__ import annotations
 
 import subprocess
+import threading
+import time
 
 import pytest
 
@@ -376,7 +378,137 @@ def test_minus_1743_after_a_granted_read_skips_the_player_and_drops_the_cache():
     d = _ducker(run, access_gate=gate)
     assert d.mute_others(own_pid=1, never=frozenset()) == [2]  # Spotify still ducks
     assert gate.invalidated == [PermissionId.AUTOMATION]
-    assert [c.interactive for c in gate.ensure_calls(PermissionId.AUTOMATION)] == [False]
+    # The service is told ONCE, through the failed-use report: a background episode that
+    # names the player, never an ask (and no longer a non-interactive ensure).
+    (report,) = gate.report_calls("report_failed_use")
+    assert (report.permission, report.feature, report.target) == (
+        PermissionId.AUTOMATION,
+        "audio_ducking",
+        _MUSIC,
+    )
+    assert (report.reason, report.origin, report.interactive) == (
+        "needs_settings",
+        "background",
+        False,
+    )
+    assert gate.ensure_calls(PermissionId.AUTOMATION) == [] and gate.native_free()
+
+
+def test_a_send_that_lands_after_a_refusal_reports_the_success_once():
+    refused = subprocess.CompletedProcess(
+        ["osascript"], 1, stdout="", stderr="Not authorized to send Apple events (-1743)"
+    )
+    gate = FakePermissionService()
+    run = FakeRunner({_MUSIC: refused, _SPOTIFY: "-"})
+    d = _ducker(run, access_gate=gate)
+    assert d.mute_others(own_pid=1, never=frozenset()) == []
+    assert gate.report_calls("report_use_ok") == []  # nothing landed yet
+
+    run._results[_MUSIC] = "65"  # fixed in System Settings: the next duck lands
+    assert d.mute_others(own_pid=1, never=frozenset()) == [1]
+    (ok,) = gate.report_calls("report_use_ok")
+    assert (ok.permission, ok.feature, ok.target) == (
+        PermissionId.AUTOMATION,
+        "audio_ducking",
+        _MUSIC,
+    )
+    d.restore([1])
+    assert d.mute_others(own_pid=1, never=frozenset()) == [1]
+    assert len(gate.report_calls("report_use_ok")) == 1  # a healthy session never reports again
+    assert gate.native_free()
+
+
+def test_a_healthy_session_never_calls_the_failed_use_reports():
+    gate = FakePermissionService()
+    run = FakeRunner({_MUSIC: "65", _SPOTIFY: "40"})
+    d = _ducker(run, access_gate=gate)
+    tokens = d.mute_others(own_pid=1, never=frozenset())
+    d.restore(tokens)
+    assert d.mute_others(own_pid=1, never=frozenset()) == [1, 2]
+    assert gate.report_calls() == []
+
+
+def test_a_player_that_is_not_running_is_no_evidence_that_a_send_landed():
+    """The ``is running`` guard answers ``-`` before any Apple event is sent."""
+    refused = subprocess.CompletedProcess(
+        ["osascript"], 1, stdout="", stderr="Not authorized to send Apple events (-1743)"
+    )
+    gate = FakePermissionService()
+    run = FakeRunner({_MUSIC: refused, _SPOTIFY: "-"})
+    d = _ducker(run, access_gate=gate)
+    d.mute_others(own_pid=1, never=frozenset())
+
+    run._results[_MUSIC] = "-"  # Music quit: nothing was sent, so nothing was proven
+    d.mute_others(own_pid=1, never=frozenset())
+
+    assert gate.report_calls("report_use_ok") == []
+
+
+def test_a_gate_without_the_report_calls_still_gets_the_older_background_episode():
+    """A scripted stub has no ``report_failed_use``: the miss goes through a plain ensure."""
+    refused = subprocess.CompletedProcess(
+        ["osascript"], 1, stdout="", stderr="Not authorized to send Apple events (-1743)"
+    )
+    inner = FakePermissionService()
+
+    class BareGate:
+        def check(self, permission, *, target=None):
+            return inner.check(permission, target=target)
+
+        def ensure(self, permission, **kwargs):
+            return inner.ensure(permission, **kwargs)
+
+    run = FakeRunner({_MUSIC: refused, _SPOTIFY: "70"})
+    d = _ducker(run, access_gate=BareGate())
+    assert d.mute_others(own_pid=1, never=frozenset()) == [2]
+    assert [c.interactive for c in inner.ensure_calls(PermissionId.AUTOMATION)] == [False]
+
+    run._results[_MUSIC] = "65"  # and a landed send is simply not reported
+    assert d.mute_others(own_pid=1, never=frozenset()) == [1, 2]
+
+
+def test_a_report_that_hangs_never_stalls_the_session_and_the_other_player_still_ducks(
+    monkeypatch,
+):
+    release = threading.Event()
+    entered = threading.Event()
+
+    class HungReportGate(FakePermissionService):
+        def report_failed_use(self, permission, **kwargs):
+            entered.set()
+            release.wait(10)
+            return super().report_failed_use(permission, **kwargs)
+
+    refused = subprocess.CompletedProcess(
+        ["osascript"], 1, stdout="", stderr="Not authorized to send Apple events (-1743)"
+    )
+    monkeypatch.setattr(macos, "_PROBE_TIMEOUT_S", 0.05)
+    d = _ducker(FakeRunner({_MUSIC: refused, _SPOTIFY: "70"}), access_gate=HungReportGate())
+    started = time.monotonic()
+    try:
+        assert d.mute_others(own_pid=1, never=frozenset()) == [2]
+        assert entered.is_set()  # the report really was out
+    finally:
+        release.set()
+    assert time.monotonic() - started < 2.0
+
+
+def test_a_report_that_raises_is_logged_and_never_breaks_the_session(caplog):
+    """AP-30: the failure is contained, the session carries on, and it leaves a trace."""
+
+    class BrokenGate(FakePermissionService):
+        def report_failed_use(self, permission, **kwargs):
+            raise RuntimeError("the permission service is broken")
+
+    refused = subprocess.CompletedProcess(
+        ["osascript"], 1, stdout="", stderr="Not authorized to send Apple events (-1743)"
+    )
+    d = _ducker(FakeRunner({_MUSIC: refused, _SPOTIFY: "70"}), access_gate=BrokenGate())
+    with caplog.at_level("DEBUG", logger="jarvis.audio.ducking"):
+        assert d.mute_others(own_pid=1, never=frozenset()) == [2]
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("bounded" in m and "failed" in m for m in messages)
+    assert any("was not delivered to the permission service" in m for m in messages)
 
 
 def test_prewarm_asks_through_the_gate_for_running_players_only():

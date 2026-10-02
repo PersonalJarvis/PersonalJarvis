@@ -817,7 +817,13 @@ asked, nothing gated):
   claims the key only while the tap runs.
 - **Ducking.** Switching "Mute music while dictating" on while a player runs is
   the only asking path (120 s consent runner, no hidden launch of a player);
-  `mute_others` is non-interactive and skips a player that has not consented.
+  `mute_others` is non-interactive and skips a player that has not consented. A
+  player that refuses the Apple event with `-1743` although its read says granted
+  is skipped too and reported as one background `needs_settings` episode that
+  names it (inline status and Privacy row, never the floating card); it ends when
+  a later send to that player lands, not because a probe reads granted. Windows
+  and Linux: nothing happens (no TCC, empty call log); the effect on a real Mac is
+  unverified.
 - **Appshot both-Option shortcut.** Not an Input Monitoring row: whether the
   `CGEventSourceKeyState` read needs a grant is unverified (the repo contradicts
   itself), so the Appshots page carries a status note only.

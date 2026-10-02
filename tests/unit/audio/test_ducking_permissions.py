@@ -21,6 +21,7 @@ from jarvis.audio.ducking import macos
 from jarvis.audio.ducking.controller import AudioDuckController
 from jarvis.audio.ducking.macos import MacOSScriptDucker
 from jarvis.audio.ducking.windows import WindowsPycawDucker
+from jarvis.platform import permission_service as service_module
 from jarvis.platform.permission_service import get_permission_service
 from jarvis.platform.permissions import AUTOMATION_TARGETS, PermissionId
 from tests.fakes.fake_permission_service import FakePermissionService
@@ -33,6 +34,7 @@ from tests.fakes.fake_tcc import (
     install_port,
     make_non_darwin_port,
 )
+from tests.unit.platform.test_permission_service import LoopThread, RecordingBus
 
 _MUSIC = "com.apple.Music"
 _SPOTIFY = "com.spotify.client"
@@ -323,6 +325,157 @@ def test_minus_1743_after_granted_skips_the_player_and_reports_needs_settings(mo
     osa.refuse_with_1743.clear()  # fixed in System Settings: the next duck lands
     assert ducker.mute_others(own_pid=1, never=frozenset()) == [1]
     assert ducker.prewarm().players[0].outcome == "granted"
+
+
+@pytest.fixture
+def events():
+    """The real service with a bus attached, so a test can read what it published."""
+    loop = LoopThread()
+    bus = RecordingBus()
+    get_permission_service().attach_bus(bus, loop.loop)
+    yield SimpleNamespace(bus=bus, flush=loop.flush)
+    # The watcher task lives on this loop: stop the service before the loop.
+    service_module._reset_for_tests()
+    loop.stop()
+
+
+def _two_players_one_refused(monkeypatch):
+    """Music and Spotify both read GRANTED; the real sender is refused for Music only."""
+    tcc, osa, ducker = _world(
+        monkeypatch,
+        installed_players=[_MUSIC, _SPOTIFY],
+        running_players=[_MUSIC, _SPOTIFY],
+        granted=[TccService.AUTOMATION],
+    )
+    osa.refuse_with_1743.add(_MUSIC)
+    return tcc, osa, ducker
+
+
+def test_minus_1743_after_granted_at_mute_time_opens_one_background_episode(monkeypatch, events):
+    tcc, osa, ducker = _two_players_one_refused(monkeypatch)
+
+    # Music (token 1) is skipped, Spotify (token 2) still ducks.
+    assert ducker.mute_others(own_pid=1, never=frozenset()) == [2]
+    events.flush()
+
+    assert osa.sends == [_MUSIC, _SPOTIFY]
+    tcc.assert_no_prompts()  # nothing is asked because of a refusal
+    assert tcc.requests() == [] and tcc.dialogs_shown() == []
+    (episode,) = get_permission_service().outstanding()
+    assert (
+        episode.feature,
+        episode.permissions,
+        episode.reason,
+        episode.phase,
+        episode.origin,
+        episode.target,
+    ) == ("audio_ducking", ("automation",), "needs_settings", "blocked", "background", _MUSIC)
+    assert episode.can_open_settings and not episode.can_prompt
+    assert "Automation access for Music" in episode.detail
+    # ONE event, background origin: only the inline status and the Privacy row show it,
+    # never the floating card (that opens for the user origin only).
+    needed = events.bus.needed()
+    assert [(e.origin, e.reason, e.target) for e in needed] == [
+        ("background", "needs_settings", _MUSIC)
+    ]
+
+
+def test_the_refusal_persists_across_sessions_without_a_second_event_or_a_request(
+    monkeypatch, events
+):
+    tcc, osa, ducker = _two_players_one_refused(monkeypatch)
+
+    first = ducker.mute_others(own_pid=1, never=frozenset())
+    ducker.restore(first)
+    second = ducker.mute_others(own_pid=1, never=frozenset())
+    events.flush()
+
+    assert first == second == [2]  # the ducker keeps skipping Music and keeps ducking Spotify
+    assert osa.sends.count(_MUSIC) == 2  # it retries every session: that is how a fix is noticed
+    assert len(get_permission_service().outstanding()) == 1
+    assert len(events.bus.needed()) == 1 and events.bus.resolved() == []
+    assert tcc.requests() == []
+
+
+def test_a_later_successful_send_clears_the_episode(monkeypatch, events):
+    tcc, osa, ducker = _two_players_one_refused(monkeypatch)
+    ducker.restore(ducker.mute_others(own_pid=1, never=frozenset()))
+    assert len(get_permission_service().outstanding()) == 1
+
+    osa.refuse_with_1743.clear()  # fixed in System Settings: the next duck lands
+    assert ducker.mute_others(own_pid=1, never=frozenset()) == [1, 2]
+    events.flush()
+
+    assert get_permission_service().outstanding() == []
+    [resolved] = events.bus.resolved()
+    assert (resolved.feature, resolved.permissions, resolved.granted) == (
+        "audio_ducking",
+        ("automation",),
+        True,
+    )
+    assert tcc.requests() == []
+
+
+def test_a_probe_that_still_reads_granted_does_not_resolve_it(monkeypatch, events):
+    """The probe is exactly what lied: only a send that landed may end the episode."""
+    tcc, osa, ducker = _two_players_one_refused(monkeypatch)
+    ducker.mute_others(own_pid=1, never=frozenset())
+    service = get_permission_service()
+
+    for _ in range(3):  # what the 2 s watcher and every status read do
+        service.invalidate()
+        assert service.check(PermissionId.AUTOMATION, target=_MUSIC).value == "granted"
+        service.refresh_episodes()
+    events.flush()
+
+    assert [e.reason for e in service.outstanding()] == ["needs_settings"]
+    assert events.bus.resolved() == []
+    assert tcc.requests() == []
+
+
+def test_switching_on_again_after_a_refusal_that_is_then_allowed_for_real_clears_it(
+    monkeypatch, events
+):
+    """A fresh ask that was allowed went through the real sender: the refusal is over."""
+    tcc, osa, ducker = _two_players_one_refused(monkeypatch)
+    ducker.mute_others(own_pid=1, never=frozenset())
+    assert len(get_permission_service().outstanding()) == 1
+
+    tcc.reset(TccService.AUTOMATION, _MUSIC)  # the decision is gone: macOS will ask again
+    get_permission_service().invalidate()
+    report = ducker.prewarm()
+    events.flush()
+
+    music = next(p for p in report.players if p.player == "Music")
+    assert music.outcome == "granted" and music.asked
+    assert [call.target for call in tcc.requests("automation")] == [_MUSIC]  # ONE ask, by prewarm
+    assert get_permission_service().outstanding() == []
+    assert [r.granted for r in events.bus.resolved()] == [True]
+
+
+async def test_a_report_that_hangs_never_holds_the_controller_session_start_up(monkeypatch):
+    """The controller holds its lock around mute_others: a service call must be bounded."""
+    release, entered = threading.Event(), threading.Event()
+
+    class HungReportGate(FakePermissionService):
+        def report_failed_use(self, permission, **kwargs):
+            entered.set()
+            release.wait(10)
+            return super().report_failed_use(permission, **kwargs)
+
+    monkeypatch.setattr(macos, "_PROBE_TIMEOUT_S", 0.05)
+    tcc = FakeTCC(installed_players=[_MUSIC, _SPOTIFY], running_players=[_MUSIC, _SPOTIFY])
+    tcc.grant(TccService.AUTOMATION, _SPOTIFY)  # Music is refused by the real sender
+    ducker = MacOSScriptDucker(run=TccAppleScript(tcc), access_gate=HungReportGate())
+    controller = AudioDuckController(bus=_Bus(), cfg=_cfg(enabled=True), ducker=ducker)
+
+    try:
+        await asyncio.wait_for(controller._on_start(object()), 5)
+        assert entered.is_set()  # the report really was out while the session started
+        assert controller._muted == [2]  # the other player still ducked
+        assert not controller._lock.locked()
+    finally:
+        release.set()
 
 
 def test_ae_denial_constant_matches_the_script_shape_the_ducker_detects():

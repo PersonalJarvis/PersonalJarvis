@@ -84,8 +84,8 @@ The contract is the `PermissionGate` protocol (`jarvis/core/protocols.py`): `che
 (silent, never prompts), `ensure` and `ensure_async` (interactive, only from a gesture
 entry), `ensure_all` and `open_settings`. The service
 (`jarvis/platform/permission_service.py`) adds `outstanding`, `add_listener`,
-`report_failed_use`, `note_reset` and `attach_bus`, which consumers reach only through
-the service or by capability lookup. Off macOS it returns NOT_REQUIRED
+`report_failed_use`, `report_use_ok`, `note_reset` and `attach_bus`, which consumers reach
+only through the service or by capability lookup. Off macOS it returns NOT_REQUIRED
 before touching the port. Two frozen events, `PermissionNeeded` and
 `PermissionResolved`, ride the existing `/ws` forwarder; the Python and TypeScript
 sides are pinned by parity tests (AP-4).
@@ -210,13 +210,19 @@ temporary branch push trigger of commit `59749f859` was reverted in `945fe7949`)
   top of the TCC dialog and has no handler. The UI asks from the gesture before
   `getUserMedia`; the delegate grant stays an open item (risk R1).
 - **`report_failed_use` coverage.** `report_failed_use` produces the `restart_hint` only
-  for Screen Recording and Input Monitoring (`_RESTART_HINT_FAMILIES`). Its two callers are
-  the Input Monitoring tap (`jarvis/trigger/backends/quartz.py`, once per tap when no raw
-  events arrive) and the Screen Recording capture path
+  for Screen Recording and Input Monitoring (`_RESTART_HINT_FAMILIES`). Its callers for
+  those are the Input Monitoring tap (`jarvis/trigger/backends/quartz.py`, once per tap
+  when no raw events arrive) and the Screen Recording capture path
   (`screen_access._unusable_grant_refusal`, when other apps' windows show no readable
-  title while the state reads granted). Accessibility input and the ducking module have
-  no such path; the ducking module maps a `-1743` after a granted read to `needs_settings`
-  instead.
+  title while the state reads granted). Automation has its own path: the ducking module
+  reports a send refused with `-1743` although the probe read granted
+  (`report_failed_use(AUTOMATION, target=<player>, reason="needs_settings",
+  origin="background")`), which opens ONE background `needs_settings` episode that names
+  the player. It is not a restart hint (Apple Events are checked per send), never asks,
+  never raises the floating card, and a probe that reads granted never closes it; only a
+  later send that lands (`report_use_ok`), `note_reset` or the ten minute TTL does. Its
+  effect on a real Mac is unverified (Apple documents `-1743` only as an error code).
+  Accessibility input still has no such path (not implemented).
 - **Sign-off.** Run section 7 of `docs/macos-permissions.md` on an Apple Silicon and an
   Intel Mac, on a `.dmg` and a managed install, and record the results before any row
   is called verified.

@@ -26,6 +26,10 @@ EVENT_POSTING into ACCESSIBILITY (one script, one answer for both ids) and it sa
 ``asked`` only for an answer a real request could have produced (PENDING or
 NEEDS_SETTINGS): a denial, an impossibility and a grant never ask.
 
+The two reports a consumer makes about a REAL attempt (``report_failed_use``: a send was
+refused although the probe read granted; ``report_use_ok``: a later send landed) are
+recorded in the same call log (``report_calls()``) and never count as an ask.
+
 Pair it with the real service and ``FakeTCC`` (``tests/fakes/fake_tcc.py``) when the
 test is about macOS behaviour; use this fake when the test is about the consumer.
 """
@@ -66,7 +70,8 @@ _REASON_OF_OUTCOME: dict[PermissionOutcome, str] = {
 class GateCall:
     """One call a consumer made, in order."""
 
-    method: str  # "check" | "ensure" | "ensure_async" | "open_settings"
+    # "check" | "ensure" | "ensure_async" | "open_settings" | "report_failed_use" | "report_use_ok"
+    method: str
     permission: PermissionId
     feature: str = ""
     interactive: bool = True
@@ -75,6 +80,10 @@ class GateCall:
     trace_id: UUID | str | None = None
     allow_outside_app: bool = False
     force_ask: bool = False
+    # Only a ``report_failed_use`` call carries these (the reason and the episode origin
+    # the consumer asked for); a report never asks, so its ``interactive`` is False.
+    reason: str | None = None
+    origin: str | None = None
 
 
 # Outcomes a native request can have produced: nothing else is ever "asked".
@@ -141,6 +150,9 @@ class FakePermissionService:
         self._queued: dict[PermissionId, deque[PermissionOutcome | EnsureResult]] = {}
         self.settings_opens = settings_opens
         self.calls: list[GateCall] = []
+        # (permission, feature, target) of every failed use reported and not yet
+        # followed by a use that worked: the fake's stand-in for the open episode.
+        self._reported_failures: set[tuple[PermissionId, str, str]] = set()
         for permission, outcome in (outcomes or {}).items():
             self.script(permission, outcome)
 
@@ -251,6 +263,64 @@ class FakePermissionService:
         self.calls.append(GateCall("open_settings", perm))
         return self.settings_opens
 
+    def report_failed_use(
+        self,
+        permission: PermissionId | str,
+        *,
+        feature: str,
+        target: str | None = None,
+        trace_id: UUID | str | None = None,
+        reason: str | None = None,
+        origin: str | None = None,
+    ) -> EnsureResult:
+        """Record a failed-use report; it never asks, so the call is not ``interactive``.
+
+        The real service describes the Automation case (a send refused with -1743 while
+        the probe reads granted) as NEEDS_SETTINGS with reason ``needs_settings``, and
+        so does this fake. Any other permission answers like a non-interactive
+        ``ensure`` (the real service does the same for a state that does not fit; the
+        Screen Recording and Input Monitoring ``restart_hint`` is not modelled here).
+        """
+        perm = PermissionId(permission)
+        self.calls.append(
+            GateCall(
+                "report_failed_use",
+                perm,
+                feature=feature,
+                interactive=False,
+                target=target,
+                trace_id=trace_id,
+                reason=reason,
+                origin=origin,
+            )
+        )
+        if PANE_FAMILY[perm] is PermissionId.AUTOMATION:
+            self._reported_failures.add((PermissionId.AUTOMATION, feature, target or ""))
+            return make_result(
+                perm,
+                PermissionOutcome.NEEDS_SETTINGS,
+                target=target or "",
+                state=PermissionState.GRANTED,
+            )
+        scripted = self._next(perm)
+        if isinstance(scripted, EnsureResult):
+            return scripted
+        return make_result(perm, scripted, target=target or "")
+
+    def report_use_ok(
+        self, permission: PermissionId | str, *, feature: str, target: str | None = None
+    ) -> bool:
+        """Record a use that worked; ``True`` when it ended a reported failed use."""
+        perm = PermissionId(permission)
+        self.calls.append(
+            GateCall("report_use_ok", perm, feature=feature, interactive=False, target=target)
+        )
+        key = (PANE_FAMILY[perm], feature, target or "")
+        if key in self._reported_failures:
+            self._reported_failures.discard(key)
+            return True
+        return False
+
     def _answer(
         self,
         method: str,
@@ -306,6 +376,15 @@ class FakePermissionService:
             call
             for call in self.calls
             if call.method == "check" and (wanted is None or call.permission is wanted)
+        ]
+
+    def report_calls(self, method: str | None = None) -> list[GateCall]:
+        """Every ``report_failed_use`` / ``report_use_ok`` call, optionally of one kind."""
+        return [
+            call
+            for call in self.calls
+            if call.method in ("report_failed_use", "report_use_ok")
+            and (method is None or call.method == method)
         ]
 
     def native_free(self) -> bool:

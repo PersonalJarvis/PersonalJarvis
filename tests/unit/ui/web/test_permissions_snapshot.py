@@ -820,6 +820,116 @@ def test_the_automation_row_never_launches_a_player_or_writes_a_consent_file(
     assert not list(tmp_path.rglob("macos-automation-consent.json"))
 
 
+def _refused_send_env(make_env):
+    """Music and Spotify read granted; a send to Music was refused (-1743), so the service
+    holds one background ``needs_settings`` episode that names Music."""
+    env = make_env(
+        config=_ducking(True),
+        granted=[TccService.AUTOMATION],
+        installed_players=[_MUSIC, _SPOTIFY],
+        running_players=[_MUSIC, _SPOTIFY],
+    )
+    result = get_permission_service().report_failed_use(
+        PermissionId.AUTOMATION, feature="audio_ducking", target=_MUSIC
+    )
+    assert result.reason == "needs_settings"
+    return env
+
+
+def test_a_refused_send_names_the_player_in_the_automation_row_and_in_needed(make_env) -> None:
+    env = _refused_send_env(make_env)
+
+    snapshot = env.status()
+    row = {row["id"]: row for row in snapshot["permissions"]}["automation"]
+
+    # The row keeps the probe's status (no key is added: AP-4), says what happened for the
+    # player that refused, and still offers the pane. It never offers a request.
+    assert row["status"] == "granted" and row["restart_hint"] is False
+    assert row["can_open_settings"] is True and row["can_request"] is False
+    assert "Automation access for Music" in row["detail"]
+    assert "refused an Apple event" in row["detail"]
+    assert "access for Spotify" not in row["detail"]  # only the player that refused is named
+    assert "Checked only while Music or Spotify is running." in row["detail"]
+    [episode] = snapshot["needed"]
+    assert (
+        episode["feature"],
+        episode["permissions"],
+        episode["reason"],
+        episode["phase"],
+        episode["origin"],
+        episode["target"],
+        episode["can_prompt"],
+        episode["can_open_settings"],
+    ) == (
+        "audio_ducking",
+        ["automation"],
+        "needs_settings",
+        "blocked",
+        "background",
+        _MUSIC,
+        False,
+        True,
+    )
+    assert "Automation access for Music" in episode["detail"]
+    assert set(episode) == _typed_keys(NeededEpisode)
+
+
+def test_the_single_automation_row_read_says_the_same_and_stays_prompt_free(make_env) -> None:
+    env = _refused_send_env(make_env)
+
+    row = env.row("automation")
+    again = env.row("automation")  # a read, however often, never asks
+    status = env.status()
+
+    assert row == again
+    assert row["status"] == "granted" and "refused an Apple event" in row["detail"]
+    assert row["can_open_settings"] is True and row["can_request"] is False
+    assert env.rows()["automation"]["detail"] == row["detail"]
+    assert len(status["needed"]) == 1  # reading never resolved or doubled the episode
+    env.tcc.assert_no_prompts()
+    assert env.tcc.requests() == [] and env.tcc.implicit_prompts() == []
+    assert env.tcc.launches == []
+
+
+def test_a_landed_send_empties_the_row_detail_and_needed_again(make_env) -> None:
+    env = _refused_send_env(make_env)
+    assert env.row("automation")["detail"] != ""
+
+    assert (
+        get_permission_service().report_use_ok(
+            PermissionId.AUTOMATION, feature="audio_ducking", target=_MUSIC
+        )
+        is True
+    )
+
+    row = env.row("automation")
+    assert row["status"] == "granted" and row["detail"] == ""
+    assert env.status()["needed"] == []
+
+
+def test_a_needs_settings_episode_whose_probe_is_not_granted_is_not_called_a_refusal(
+    make_env,
+) -> None:
+    """Outside the installed app the ask is withheld: that is plain needs_settings."""
+    env = make_env(
+        config=_ducking(True),
+        bundle_id=None,
+        bundle_path="/usr/bin/python3",
+        installed_players=[_MUSIC],
+        running_players=[_MUSIC],
+    )
+    result = get_permission_service().ensure(
+        PermissionId.AUTOMATION, feature="audio_ducking", target=_MUSIC
+    )
+    assert result.reason == "needs_settings"
+
+    row = env.row("automation")
+
+    assert row["status"] == "not_determined" and "refused" not in row["detail"]
+    [episode] = env.status()["needed"]
+    assert episode["reason"] == "needs_settings" and episode["origin"] == "user"
+
+
 def test_an_automation_probe_that_hangs_is_bounded_and_not_piled_up(
     make_env, monkeypatch: pytest.MonkeyPatch
 ) -> None:

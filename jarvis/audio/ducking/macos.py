@@ -17,8 +17,12 @@ asked ONLY from :meth:`MacOSScriptDucker.prewarm`, which runs when the user
 switches the feature on while a player is open. ``mute_others`` never asks: it
 scripts a player only when the service reads its Automation grant as GRANTED,
 and a player without the grant is skipped for the session (a running one is
-recorded through a background episode, inline status only). The player list is
-shared with the port so the scripts and the permission row can never disagree.
+recorded through a background episode, inline status only). A player whose
+Apple Event is refused with ``-1743`` although the read said GRANTED is skipped
+too, and the service is told through ``report_failed_use`` (one background
+``needs_settings`` episode naming the player); the next send that lands tells it
+through ``report_use_ok`` and the episode ends. The player list is shared with
+the port so the scripts and the permission row can never disagree.
 
 CRITICAL script shape: a bare ``tell application ...`` LAUNCHES the app, so
 every script guards with ``if application id "..." is running`` INSIDE the
@@ -216,8 +220,12 @@ class MacOSScriptDucker:
         self._ask_slot = _BoundedCall("ask")
         # Players whose volume command was refused with -1743 although the service
         # read their grant as GRANTED (the grant may belong to another app: the
-        # attribution of a child osascript is UNVERIFIED). prewarm() reports them
-        # as needs_settings instead of "granted".
+        # attribution of a child osascript is UNVERIFIED), and whose refusal has not
+        # been followed by a send that landed. mute_others() reports the refusal to
+        # the service (report_failed_use) and, on the next landed send, the success
+        # (report_use_ok, only for a player in this set, so a healthy session never
+        # calls the service); prewarm() reports such a player as needs_settings
+        # instead of "granted", the same thing the inline status says.
         self._refused_after_grant: set[str] = set()
 
     @classmethod
@@ -244,8 +252,12 @@ class MacOSScriptDucker:
         reads its Automation grant as GRANTED. Scripting a player macOS has not
         been asked about would raise the consent dialog in the middle of a
         dictation, so a player without the grant is skipped for this session and
-        nothing is ever asked from here (see :meth:`prewarm`). Never launches a
-        player.
+        nothing is ever asked from here (see :meth:`prewarm`). A player that
+        refuses the Apple Event with ``-1743`` although the read said GRANTED is
+        skipped too and reported to the service (``report_failed_use``, one
+        background episode); the next send that lands reports the success
+        (``report_use_ok``). Every service call from here is bounded, because the
+        controller holds its lock around this method. Never launches a player.
         """
         del own_pid  # per-app player volumes never touch our own process
         skip = self._normalized_never(never)
@@ -271,7 +283,7 @@ class MacOSScriptDucker:
                 prev = self._parse_volume(proc, name)
                 if prev is None:
                     continue  # not running, or the script failed → not handled
-                self._refused_after_grant.discard(bundle_id)
+                self._note_send_landed(name, bundle_id)
                 player_running = True
                 if prev > self._duck:
                     self._saved[token] = prev
@@ -457,11 +469,15 @@ class MacOSScriptDucker:
 
         The grant may belong to another app (the attribution of a child
         ``osascript`` is UNVERIFIED) or it was just revoked. The player is
-        skipped for this session; the permission cache is dropped so the next
-        read is live, and the service is told through a non-interactive ensure,
-        which opens the episode when the live state is no longer granted. The
-        service has no call for "a real attempt failed although the probe said
-        granted", so prewarm() reports such a player as ``needs_settings``.
+        skipped for this session and the permission cache is dropped so the next
+        read is live. The service is told through ``report_failed_use``: ONE
+        ``background`` ``needs_settings`` episode naming the player (inline status
+        and Privacy row, never the floating card), and no native request is made
+        because of it. A live state that no longer reads granted is described by
+        the service itself (its real reason). A gate without the call (a scripted
+        stub) gets the older, weaker path: a non-interactive ensure, which opens an
+        episode only when the live state is no longer granted. prewarm() keeps
+        reporting such a player as ``needs_settings`` until a send lands again.
         """
         log.info(
             "ducking: %s refused the volume command although Automation read as granted "
@@ -472,7 +488,55 @@ class MacOSScriptDucker:
         invalidate = getattr(self._gate(), "invalidate", None)
         if callable(invalidate):
             invalidate(PermissionId.AUTOMATION)
-        self._record_background_episode(name, bundle_id)
+        report = getattr(self._gate(), "report_failed_use", None)
+        if not callable(report):
+            self._record_background_episode(name, bundle_id)
+            return
+        self._tell_service(
+            name,
+            bundle_id,
+            "report_failed_use",
+            lambda: report(
+                PermissionId.AUTOMATION,
+                feature=_FEATURE,
+                target=bundle_id,
+                reason="needs_settings",
+                origin="background",
+            ),
+        )
+
+    def _note_send_landed(self, name: str, bundle_id: str) -> None:
+        """A volume command to the player landed: a refusal reported earlier is over.
+
+        Only a player that was reported as refused costs a service call, so a
+        healthy session never touches the service here. The memory is dropped
+        whether or not the call finishes (the send did land; prewarm() must not keep
+        calling the player blocked), and a gate without ``report_use_ok`` is simply
+        not told (the episode then ends through its own ten minute TTL).
+        """
+        if bundle_id not in self._refused_after_grant:
+            return
+        self._refused_after_grant.discard(bundle_id)
+        report = getattr(self._gate(), "report_use_ok", None)
+        if not callable(report):
+            return
+        self._tell_service(
+            name,
+            bundle_id,
+            "report_use_ok",
+            lambda: report(PermissionId.AUTOMATION, feature=_FEATURE, target=bundle_id),
+        )
+
+    def _tell_service(self, name: str, bundle_id: str, what: str, call: Callable[[], Any]) -> None:
+        """Run ONE service report on the player's bounded slot, never past the probe timeout.
+
+        ``mute_others`` runs under the controller's lock, so a report is as bounded
+        as a read: a service call that hangs costs at most :data:`_PROBE_TIMEOUT_S`
+        and the session goes on without it. Nothing here asks the OS anything.
+        """
+        finished, _result = self._reads[bundle_id].run(call, _PROBE_TIMEOUT_S)
+        if not finished:
+            log.debug("ducking: %s for %s was not delivered to the permission service", what, name)
 
     def _ask_player(self, name: str, bundle_id: str) -> PlayerPermission:
         """Ask the service about ONE running player (interactive, off every lock).
@@ -500,10 +564,11 @@ class MacOSScriptDucker:
             return self._player_answer(name, bundle_id, "unavailable")
         if result.granted and bundle_id in self._refused_after_grant:
             if result.asked:
-                # A fresh ask just went through the real sender and was allowed.
-                self._refused_after_grant.discard(bundle_id)
+                # A fresh ask just went through the real sender and was allowed: that
+                # is a send that landed, so the refusal reported earlier is over.
+                self._note_send_landed(name, bundle_id)
             else:
-                return self._player_answer(name, bundle_id, "needs_settings")
+                return self._player_answer(name, bundle_id, "needs_settings", refused_use=True)
         return PlayerPermission(
             player=name,
             target=bundle_id,
@@ -516,8 +581,14 @@ class MacOSScriptDucker:
         )
 
     @staticmethod
-    def _player_answer(name: str, bundle_id: str, reason: str) -> PlayerPermission:
-        """An answer the ducker decided itself (not the service): fixed-template sentence."""
+    def _player_answer(
+        name: str, bundle_id: str, reason: str, *, refused_use: bool = False
+    ) -> PlayerPermission:
+        """An answer the ducker decided itself (not the service): fixed-template sentence.
+
+        ``refused_use`` is the sentence of a player whose volume command was refused
+        although its access reads as allowed (the same one the service's episode carries).
+        """
         from jarvis.platform.permission_service import user_detail_for
 
         return PlayerPermission(
@@ -528,7 +599,9 @@ class MacOSScriptDucker:
             can_open_settings=reason == "needs_settings",
             asked=False,
             outside_installed_app=False,
-            detail=user_detail_for(PermissionId.AUTOMATION, reason, target=bundle_id),
+            detail=user_detail_for(
+                PermissionId.AUTOMATION, reason, target=bundle_id, refused_use=refused_use
+            ),
         )
 
     # ---- internals ---------------------------------------------------------
