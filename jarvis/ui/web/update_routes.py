@@ -890,6 +890,8 @@ async def _frozen_status(current: str) -> dict[str, object]:
         # announced — the user should learn it exists — and apply refuses with
         # this sentence before downloading anything.
         "blocked_reason": None,
+        # The same verdict as a stable code the UI translates.
+        "blocked_code": None,
     }
     await _sweep_old_downloads_once()
 
@@ -932,7 +934,10 @@ async def _frozen_status(current: str) -> dict[str, object]:
     if _is_newer(version, current):
         result["update_available"] = True
         result["notes"] = latest.get("notes")
-        result["blocked_reason"] = update_blocker()
+        blocker = update_blocker()
+        if blocker is not None:
+            result["blocked_reason"] = blocker.message
+            result["blocked_code"] = blocker.code
     return result
 
 
@@ -1063,7 +1068,7 @@ async def _apply_frozen(
     if blocker is not None:
         # Asked before the download: otherwise the user waits for several
         # hundred MB only to learn the app cannot replace itself where it is.
-        raise HTTPException(status_code=409, detail=blocker)
+        raise HTTPException(status_code=409, detail=blocker.message)
 
     _progress.version = release_version
 
