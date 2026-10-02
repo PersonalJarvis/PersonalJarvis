@@ -1,0 +1,414 @@
+{
+  "tests/integration/test_capability_seed_boot.py": [
+    "tests/integration/test_capability_seed_boot.py::test_build_default_brain_seeds_capability_registry"
+  ],
+  "tests/integration/test_launcher_headless.py": [
+    "tests/integration/test_launcher_headless.py::test_headless_starts_and_stops_on_signal",
+    "tests/integration/test_launcher_headless.py::test_headless_stop_event_path"
+  ],
+  "tests/integration/test_provider_routes.py": [
+    "tests/integration/test_provider_routes.py::test_section_health_returns_all_tabs",
+    "tests/integration/test_provider_routes.py::test_list_providers_reports_codex_without_leaking_auth_files"
+  ],
+  "tests/missions/kontrollierer/test_approve_materialises_report.py": [
+    "tests/missions/kontrollierer/test_approve_materialises_report.py::test_approve_builds_english_summary_en_for_file_deliverable"
+  ],
+  "tests/missions/test_worker_tool_broker.py": [
+    "tests/missions/test_worker_tool_broker.py::test_binding_is_filtered_and_executes_only_through_supervisor"
+  ],
+  "tests/review/test_jarvis_agent_files.py": [
+    "tests/review/test_jarvis_agent_files.py::test_subagent_file_exists[path0]",
+    "tests/review/test_jarvis_agent_files.py::test_subagent_file_exists[path1]",
+    "tests/review/test_jarvis_agent_files.py::test_reviewer_frontmatter_strict",
+    "tests/review/test_jarvis_agent_files.py::test_reviewer_body_contains_hard_rules",
+    "tests/review/test_jarvis_agent_files.py::test_worker_frontmatter",
+    "tests/review/test_jarvis_agent_files.py::test_worker_body_mentions_feedback_block"
+  ],
+  "tests/unit/brain/test_manager_screen_context.py": [
+    "tests/unit/brain/test_manager_screen_context.py::test_blind_provider_is_skipped_for_a_screen_turn",
+    "tests/unit/brain/test_manager_screen_context.py::test_dropped_image_never_uses_the_screen_capture_failure_phrase"
+  ],
+  "tests/unit/brain/test_paired_plugin_capture_veto.py": [
+    "tests/unit/brain/test_paired_plugin_capture_veto.py::test_match_skill_for_turn_swaps_disconnected_spotify"
+  ],
+  "tests/unit/brain/test_router_tool_entrypoint_parity.py": [
+    "tests/unit/brain/test_router_tool_entrypoint_parity.py::test_no_new_unreachable_tool_entry_point_appears"
+  ],
+  "tests/unit/brain/test_run_task_agent.py": [
+    "tests/unit/brain/test_run_task_agent.py::test_run_task_deep_tier_requests_deep_model"
+  ],
+  "tests/unit/core/test_colour_env.py": [
+    "tests/unit/core/test_colour_env.py::test_start_up_drops_the_claims_before_anything_else_runs",
+    "tests/unit/core/test_colour_env.py::test_the_drop_is_announced_somewhere_a_person_can_read_it",
+    "tests/unit/core/test_colour_env.py::test_nothing_is_announced_when_there_was_nothing_to_drop"
+  ],
+  "tests/unit/core/test_exclusive_process_lock.py": [
+    "tests/unit/core/test_exclusive_process_lock.py::test_inherited_descriptor_holds_lock_after_parent_close"
+  ],
+  "tests/unit/cu/test_engine_loop.py": [
+    "tests/unit/cu/test_engine_loop.py::test_dispatch_sees_a_screen_recording_grant_given_mid_session",
+    "tests/unit/cu/test_engine_loop.py::test_dispatch_refuses_after_a_proven_screen_recording_grant_is_revoked",
+    "tests/unit/cu/test_engine_loop.py::test_dispatch_off_macos_asks_nothing_and_changes_nothing[linux]",
+    "tests/unit/cu/test_engine_loop.py::test_dispatch_off_macos_asks_nothing_and_changes_nothing[win32]"
+  ],
+  "tests/unit/dictation/test_dictate_keybind.py": [
+    "tests/unit/dictation/test_dictate_keybind.py::test_start_dictation_records_the_requested_target"
+  ],
+  "tests/unit/dictation/test_insert.py": [
+    "tests/unit/dictation/test_insert.py::test_pastes_and_restores_the_previous_clipboard",
+    "tests/unit/dictation/test_insert.py::test_restore_can_be_switched_off",
+    "tests/unit/dictation/test_insert.py::test_unreadable_clipboard_is_not_restored_as_empty",
+    "tests/unit/dictation/test_insert.py::test_genuinely_empty_clipboard_is_restored_as_empty",
+    "tests/unit/dictation/test_insert.py::test_type_method_uses_the_actuator_not_a_chord"
+  ],
+  "tests/unit/dictation/test_insert_verified.py": [
+    "tests/unit/dictation/test_insert_verified.py::test_target_render_confirms_one_paste_and_restores",
+    "tests/unit/dictation/test_insert_verified.py::test_missing_late_unrelated_or_open_evidence_never_retries_or_erases[reads0]",
+    "tests/unit/dictation/test_insert_verified.py::test_missing_late_unrelated_or_open_evidence_never_retries_or_erases[reads1]",
+    "tests/unit/dictation/test_insert_verified.py::test_missing_late_unrelated_or_open_evidence_never_retries_or_erases[reads2]",
+    "tests/unit/dictation/test_insert_verified.py::test_missing_late_unrelated_or_open_evidence_never_retries_or_erases[reads3]",
+    "tests/unit/dictation/test_insert_verified.py::test_early_watcher_returns_without_waiting_and_keeps_text",
+    "tests/unit/dictation/test_insert_verified.py::test_failure_in_one_field_cannot_change_route_for_later_field",
+    "tests/unit/dictation/test_insert_verified.py::test_native_probe_failure_after_sending_cannot_send_again",
+    "tests/unit/dictation/test_insert_verified.py::test_failed_offer_uses_one_plain_chord_but_keeps_windows_clipboard"
+  ],
+  "tests/unit/plugins/brain/test_ollama.py": [
+    "tests/unit/plugins/brain/test_ollama.py::test_client_uses_config_override_root",
+    "tests/unit/plugins/brain/test_ollama.py::test_client_normalizes_pasted_v1_override"
+  ],
+  "tests/unit/plugins/brain/test_provider_base_url.py": [
+    "tests/unit/plugins/brain/test_provider_base_url.py::test_openrouter_uses_override",
+    "tests/unit/plugins/brain/test_provider_base_url.py::test_nvidia_uses_override",
+    "tests/unit/plugins/brain/test_provider_base_url.py::test_openai_uses_override",
+    "tests/unit/plugins/brain/test_provider_base_url.py::test_claude_api_uses_override",
+    "tests/unit/plugins/brain/test_provider_base_url.py::test_gemini_uses_override"
+  ],
+  "tests/unit/plugins/tts/test_realtime_surface_tts.py": [
+    "tests/unit/plugins/tts/test_realtime_surface_tts.py::test_pipeline_tts_credential_map_lists_no_realtime_slots",
+    "tests/unit/plugins/tts/test_realtime_surface_tts.py::test_realtime_slots_are_only_trailing_fallbacks_outside_realtime_ids",
+    "tests/unit/plugins/tts/test_realtime_surface_tts.py::test_pipeline_tts_cannot_see_a_realtime_only_key"
+  ],
+  "tests/unit/realtime/test_voice_scenarios.py": [
+    "tests/unit/realtime/test_voice_scenarios.py::test_scenario_behaves[four-orders-and-the-calendar-fails]",
+    "tests/unit/realtime/test_voice_scenarios.py::test_scenario_behaves[a-failure-names-its-cause]",
+    "tests/unit/realtime/test_voice_scenarios.py::test_scenario_behaves[a-block-alone-is-not-a-breakdown]",
+    "tests/unit/realtime/test_voice_scenarios.py::test_scenario_behaves[partial-success-still-reports-the-work]",
+    "tests/unit/realtime/test_voice_scenarios.py::test_scenario_behaves[every-cause-reaches-the-user]",
+    "tests/unit/realtime/test_voice_scenarios.py::test_scenario_behaves[a-clean-turn-is-left-alone]",
+    "tests/unit/realtime/test_voice_scenarios.py::test_scenario_behaves[a-pending-question-owns-the-turn]",
+    "tests/unit/realtime/test_voice_scenarios.py::test_scenario_behaves[a-gated-call-is-not-a-broken-assistant]"
+  ],
+  "tests/unit/speech/test_dictation_mic_handoff.py": [
+    "tests/unit/speech/test_dictation_mic_handoff.py::test_the_wake_loop_gets_its_microphone_back_after_a_dictation",
+    "tests/unit/speech/test_dictation_mic_handoff.py::test_a_cancelled_dictation_still_releases_the_wake_microphone",
+    "tests/unit/speech/test_dictation_mic_handoff.py::test_a_dying_audio_source_ends_the_dictation_and_frees_wake"
+  ],
+  "tests/unit/speech/test_dictation_stale_hangup.py": [
+    "tests/unit/speech/test_dictation_stale_hangup.py::test_start_dictation_clears_stale_hangup"
+  ],
+  "tests/unit/speech/test_request_voice_session.py": [
+    "tests/unit/speech/test_request_voice_session.py::test_arms_when_idle",
+    "tests/unit/speech/test_request_voice_session.py::test_seeds_brain_on_arm",
+    "tests/unit/speech/test_request_voice_session.py::test_seed_failure_still_arms",
+    "tests/unit/speech/test_request_voice_session.py::test_arms_without_seed_messages",
+    "tests/unit/speech/test_request_voice_session.py::test_taskbar_thread_wakes_owner_loop_immediately"
+  ],
+  "tests/unit/speech/test_wake_language_aware.py": [
+    "tests/unit/speech/test_wake_language_aware.py::test_the_stt_language_list_has_exactly_one_source"
+  ],
+  "tests/unit/test_codex_auth.py": [
+    "tests/unit/test_codex_auth.py::test_guarded_windows_login_closes_job_when_guardian_exits"
+  ],
+  "tests/unit/test_router_delegator_policy.py": [
+    "tests/unit/test_router_delegator_policy.py::TestDelegatorPolicyInPrompt::test_default_on_uncertainty_is_self_serve"
+  ],
+  "tests/unit/test_tts_defaults_parity.py": [
+    "tests/unit/test_tts_defaults_parity.py::test_all_tts_providers_have_defaults_entry"
+  ],
+  "tests/unit/web/test_local_only_install_has_every_tier.py": [
+    "tests/unit/web/test_local_only_install_has_every_tier.py::test_the_dictation_card_follows_the_server_the_user_configured"
+  ],
+  "tests/unit/web/test_realtime_provider_category.py": [
+    "tests/unit/web/test_realtime_provider_category.py::test_openai_realtime_spec_owns_a_dedicated_key",
+    "tests/unit/web/test_realtime_provider_category.py::test_list_providers_includes_active_realtime_provider",
+    "tests/unit/web/test_realtime_provider_category.py::test_list_providers_resolves_gemini_only_fresh_install",
+    "tests/unit/web/test_realtime_provider_category.py::test_realtime_switch_persists_with_key",
+    "tests/unit/web/test_realtime_provider_category.py::test_realtime_switch_preserves_pipeline_mode",
+    "tests/unit/web/test_realtime_provider_category.py::test_realtime_switch_reconnects_the_active_voice_session",
+    "tests/unit/web/test_realtime_provider_category.py::test_realtime_switch_without_key_is_409",
+    "tests/unit/web/test_realtime_provider_category.py::test_get_realtime_options_returns_curated_models_and_voices",
+    "tests/unit/web/test_realtime_provider_category.py::test_get_realtime_options_reflects_pinned_selection",
+    "tests/unit/web/test_realtime_provider_category.py::test_put_realtime_options_persists_voice",
+    "tests/unit/web/test_realtime_provider_category.py::test_put_realtime_options_persists_model_and_voice",
+    "tests/unit/web/test_realtime_provider_category.py::test_put_realtime_options_omitted_field_leaves_it_unwritten",
+    "tests/unit/web/test_realtime_provider_category.py::test_put_realtime_options_without_key_is_409"
+  ],
+  "tests/unit/workspace/test_custom_clis.py": [
+    "tests/unit/workspace/test_custom_clis.py::test_a_stored_cli_is_offered_like_a_built_in",
+    "tests/unit/workspace/test_custom_clis.py::test_detection_never_runs_a_strangers_binary",
+    "tests/unit/workspace/test_custom_clis.py::test_a_logo_is_stored_and_served",
+    "tests/unit/workspace/test_custom_clis.py::test_replacing_a_logo_leaves_no_stale_sibling",
+    "tests/unit/workspace/test_custom_clis.py::test_deleting_an_entry_takes_its_logo_with_it"
+  ],
+  "tests/integration/test_capability_coupling_e2e.py": [
+    "tests/integration/test_capability_coupling_e2e.py::test_hard_positive_file_ops_resolves_to_file_capability"
+  ],
+  "tests/integration/test_when_then_e2e.py": [
+    "tests/integration/test_when_then_e2e.py::test_mission_finished_opens_browser_and_speaks"
+  ],
+  "tests/missions/kontrollierer/test_deliverable.py": [
+    "tests/missions/kontrollierer/test_deliverable.py::test_english_delivered_summary_resolves_to_en_at_pipeline_seam"
+  ],
+  "tests/unit/agentic_ide/test_resume_arrangement.py": [
+    "tests/unit/agentic_ide/test_resume_arrangement.py::test_the_snapshot_keeps_the_tab_order",
+    "tests/unit/agentic_ide/test_resume_arrangement.py::test_the_snapshot_keeps_the_tab_order_after_switching_tabs",
+    "tests/unit/agentic_ide/test_resume_arrangement.py::test_the_snapshot_records_which_workspace_was_on_screen",
+    "tests/unit/agentic_ide/test_resume_arrangement.py::test_resume_rebuilds_the_bar_in_the_same_order",
+    "tests/unit/agentic_ide/test_resume_arrangement.py::test_resume_puts_you_back_in_the_workspace_you_were_using",
+    "tests/unit/agentic_ide/test_resume_arrangement.py::test_terminals_stay_with_their_own_workspace",
+    "tests/unit/agentic_ide/test_resume_arrangement.py::test_terminal_order_inside_a_workspace_survives",
+    "tests/unit/agentic_ide/test_resume_arrangement.py::test_grid_coordinates_survive_per_workspace",
+    "tests/unit/agentic_ide/test_resume_arrangement.py::test_the_arrangement_survives_a_real_restart",
+    "tests/unit/agentic_ide/test_resume_arrangement.py::test_a_snapshot_without_an_active_id_focuses_the_first"
+  ],
+  "tests/unit/agentic_ide/test_workspace_explorer.py": [
+    "tests/unit/agentic_ide/test_workspace_explorer.py::test_listing_includes_hidden_and_dependency_directories"
+  ],
+  "tests/unit/agents/test_node_status_parity.py": [
+    "tests/unit/agents/test_node_status_parity.py::test_node_status_python_typescript_and_ui_parity"
+  ],
+  "tests/unit/audio/test_player_persistent_stream.py": [
+    "tests/unit/audio/test_player_persistent_stream.py::test_live_portaudio_write_error_still_propagates"
+  ],
+  "tests/unit/audio/test_vad_bundled_model.py": [
+    "tests/unit/audio/test_vad_bundled_model.py::test_pyinstaller_spec_collects_bundled_vad_asset"
+  ],
+  "tests/unit/autostart/test_windows_scripts.py": [
+    "tests/unit/autostart/test_windows_scripts.py::test_icon_matches[c:\\\\APP\\\\jarvis.ico,0-C:\\\\app\\\\jarvis.ico-True]"
+  ],
+  "tests/unit/brain/test_model_catalog_local.py": [
+    "tests/unit/brain/test_model_catalog_local.py::test_ollama_honors_base_url_override",
+    "tests/unit/brain/test_model_catalog_local.py::test_local_openai_fetches_v1_models_from_override",
+    "tests/unit/brain/test_model_catalog_local.py::test_local_openai_attaches_optional_stored_key"
+  ],
+  "tests/unit/commands/test_registry_parity.py": [
+    "tests/unit/commands/test_registry_parity.py::test_realtime_switch_exposes_experimental_acknowledgement"
+  ],
+  "tests/unit/dictation/test_polish_boot_safety.py": [
+    "tests/unit/dictation/test_polish_boot_safety.py::test_no_module_under_jarvis_brain_calls_the_polish_pass"
+  ],
+  "tests/unit/plugins/brain/test_local_openai.py": [
+    "tests/unit/plugins/brain/test_local_openai.py::test_client_appends_v1_to_root",
+    "tests/unit/plugins/brain/test_local_openai.py::test_client_normalizes_pasted_v1",
+    "tests/unit/plugins/brain/test_local_openai.py::test_optional_key_is_forwarded_when_stored",
+    "tests/unit/plugins/brain/test_local_openai.py::test_client_timeout_fast_connect_wide_read",
+    "tests/unit/plugins/brain/test_local_openai.py::test_discovery_uses_first_served_model",
+    "tests/unit/plugins/brain/test_local_openai.py::test_discovery_sends_bearer_when_key_stored",
+    "tests/unit/plugins/brain/test_local_openai.py::test_empty_model_list_gives_honest_error",
+    "tests/unit/plugins/brain/test_local_openai.py::test_unreachable_server_gives_honest_error"
+  ],
+  "tests/unit/plugins/test_create_skill_tool.py": [
+    "tests/unit/plugins/test_create_skill_tool.py::test_writes_a_brain_authored_draft_skill"
+  ],
+  "tests/unit/realtime/test_lookup_never_reports_done.py": [
+    "tests/unit/realtime/test_lookup_never_reports_done.py::test_the_fact_list_is_bounded"
+  ],
+  "tests/unit/skills/test_builtin_skills.py": [
+    "tests/unit/skills/test_builtin_skills.py::test_every_bundled_plugin_skill_is_shipped"
+  ],
+  "tests/unit/society/test_cli_routines.py": [
+    "tests/unit/society/test_cli_routines.py::test_routine_approval_delegation_is_only_for_society"
+  ],
+  "tests/unit/speech/test_dictation_beside_live_call.py": [
+    "tests/unit/speech/test_dictation_beside_live_call.py::test_the_key_dictates_without_hanging_up_the_call",
+    "tests/unit/speech/test_dictation_beside_live_call.py::test_a_cancelled_dictation_still_gives_the_call_its_voice_back",
+    "tests/unit/speech/test_dictation_beside_live_call.py::test_hanging_up_the_call_does_not_throw_the_dictation_away",
+    "tests/unit/speech/test_dictation_beside_live_call.py::test_a_pending_call_hangup_is_not_swallowed_by_the_press",
+    "tests/unit/speech/test_dictation_beside_live_call.py::test_push_to_talk_keeps_the_ordinary_handover",
+    "tests/unit/speech/test_dictation_beside_live_call.py::test_no_call_means_no_hold"
+  ],
+  "tests/unit/speech/test_pipeline_push_to_talk.py": [
+    "tests/unit/speech/test_pipeline_push_to_talk.py::test_ptt_press_from_idle_arms_and_opens_session",
+    "tests/unit/speech/test_pipeline_push_to_talk.py::test_ptt_press_after_lost_release_heals_the_latch",
+    "tests/unit/speech/test_pipeline_push_to_talk.py::test_ptt_press_needs_no_background_grant",
+    "tests/unit/speech/test_pipeline_push_to_talk.py::test_ptt_release_signals_when_armed",
+    "tests/unit/speech/test_pipeline_push_to_talk.py::test_ptt_press_bypasses_post_hangup_wake_lock",
+    "tests/unit/speech/test_pipeline_push_to_talk.py::test_ptt_release_closes_capture_then_waits_for_live_probe_before_final_stt"
+  ],
+  "tests/unit/speech/test_stt_provider_live_switch.py": [
+    "tests/unit/speech/test_stt_provider_live_switch.py::test_pipeline_switch_replaces_voice_and_next_dictation_provider"
+  ],
+  "tests/unit/telemetry/test_latency_span_event.py": [
+    "tests/unit/telemetry/test_latency_span_event.py::test_latency_phase_is_a_string_enum_source_of_truth"
+  ],
+  "tests/unit/test_provider_spec.py": [
+    "tests/unit/test_provider_spec.py::test_non_gemini_providers_have_no_alt_credential"
+  ],
+  "tests/unit/ui/web/test_society_figure_routes.py": [
+    "tests/unit/ui/web/test_society_figure_routes.py::test_a_contract_figure_is_accepted_stored_and_served"
+  ],
+  "tests/unit/web/test_agentic_ide_prompt_writer_route.py": [
+    "tests/unit/web/test_agentic_ide_prompt_writer_route.py::test_listing_reports_the_current_choice_and_every_option",
+    "tests/unit/web/test_agentic_ide_prompt_writer_route.py::test_a_disconnected_subscription_is_listed_but_marked",
+    "tests/unit/web/test_agentic_ide_prompt_writer_route.py::test_choosing_a_writer_persists_it",
+    "tests/unit/web/test_agentic_ide_prompt_writer_route.py::test_the_tool_model_option_names_the_model_it_would_use",
+    "tests/unit/web/test_agentic_ide_prompt_writer_route.py::test_an_unpinned_tool_model_is_offered_but_not_selectable",
+    "tests/unit/web/test_agentic_ide_prompt_writer_route.py::test_a_usable_tool_model_can_be_chosen",
+    "tests/unit/web/test_agentic_ide_prompt_writer_route.py::test_a_connected_cli_is_listed_under_its_own_name"
+  ],
+  "tests/unit/web/test_realtime_option_validation.py": [
+    "tests/unit/web/test_realtime_option_validation.py::test_put_realtime_options_rejects_values_outside_curated_catalog[payload0-unsupported_realtime_model]",
+    "tests/unit/web/test_realtime_option_validation.py::test_put_realtime_options_rejects_values_outside_curated_catalog[payload1-unsupported_realtime_voice]",
+    "tests/unit/web/test_realtime_option_validation.py::test_put_realtime_options_allows_fully_omitted_partial_update",
+    "tests/unit/web/test_realtime_option_validation.py::test_put_realtime_options_keeps_explicit_clear_contract",
+    "tests/unit/web/test_realtime_option_validation.py::test_get_realtime_options_reports_preview_capability"
+  ],
+  "tests/contract/test_society_memory_books.py": [
+    "tests/contract/test_society_memory_books.py::test_legacy_migration_preserves_entries_ids_and_original_backup[memory.md]",
+    "tests/contract/test_society_memory_books.py::test_legacy_migration_preserves_entries_ids_and_original_backup[Memory.md]"
+  ],
+  "tests/integration/test_ollama_catalog_is_current.py": [
+    "tests/integration/test_ollama_catalog_is_current.py::test_runtime_default_is_not_a_year_old[embeddinggemma]",
+    "tests/integration/test_ollama_catalog_is_current.py::test_runtime_default_is_not_a_year_old[qwen3-embedding:4b]",
+    "tests/integration/test_ollama_catalog_is_current.py::test_the_shortlist_names_every_registered_tag"
+  ],
+  "tests/integration/test_tasks_recurring.py": [
+    "tests/integration/test_tasks_recurring.py::test_runner_agent_dispatches_to_brain",
+    "tests/integration/test_tasks_recurring.py::test_runner_agent_delivers_result_as_announcement",
+    "tests/integration/test_tasks_recurring.py::test_runner_arms_auto_approver_for_write_grants"
+  ],
+  "tests/integration/test_uninstall_bootstrap.py": [
+    "tests/integration/test_uninstall_bootstrap.py::test_bootstrap_removes_fake_install_despite_running_process"
+  ],
+  "tests/missions/worker_runtime/test_provider_map.py": [
+    "tests/missions/worker_runtime/test_provider_map.py::test_ad6_table_is_complete"
+  ],
+  "tests/unit/brain/test_honesty_language_parity.py": [
+    "tests/unit/brain/test_honesty_language_parity.py::test_no_output_language_call_pins_its_own_default"
+  ],
+  "tests/unit/brain/test_model_catalog.py": [
+    "tests/unit/brain/test_model_catalog.py::TestProviderCatalog::test_stt_providers_select_a_model",
+    "tests/unit/brain/test_model_catalog.py::TestProviderCatalog::test_list_models_for_stt_returns_models",
+    "tests/unit/brain/test_model_catalog.py::TestRealtimeCatalog::test_every_realtime_card_has_a_voice_catalog"
+  ],
+  "tests/unit/brain/test_ollama_overview_resident.py": [
+    "tests/unit/brain/test_ollama_overview_resident.py::test_resident_payload_adds_up_what_the_jobs_load_at_once"
+  ],
+  "tests/unit/codex_app_server/test_transport.py": [
+    "tests/unit/codex_app_server/test_transport.py::test_lazy_start_handshake_scrubs_api_billing_environment_and_reaps_tree",
+    "tests/unit/codex_app_server/test_transport.py::test_exact_windows_codex_runtime_state_is_allowed_and_tampering_is_refused"
+  ],
+  "tests/unit/computers/test_authorize_key.py": [
+    "tests/unit/computers/test_authorize_key.py::test_a_last_line_without_newline_is_not_glued_to_the_new_key",
+    "tests/unit/computers/test_authorize_key.py::test_planting_twice_adds_the_key_once"
+  ],
+  "tests/unit/local_models/test_assistant_tools.py": [
+    "tests/unit/local_models/test_assistant_tools.py::test_test_plan_tool_reports_per_role"
+  ],
+  "tests/unit/plugins/stt/test_dictionary_bias_opt_out.py": [
+    "tests/unit/plugins/stt/test_dictionary_bias_opt_out.py::test_the_dictionary_is_merged_into_the_prompt_by_default",
+    "tests/unit/plugins/stt/test_dictionary_bias_opt_out.py::test_the_opt_out_sends_no_prompt_when_the_dictionary_is_the_only_bias",
+    "tests/unit/plugins/stt/test_dictionary_bias_opt_out.py::test_the_opt_out_keeps_an_explicit_bias_prompt_but_not_the_dictionary",
+    "tests/unit/plugins/stt/test_dictionary_bias_opt_out.py::test_a_named_fallback_honours_the_opt_out_too"
+  ],
+  "tests/unit/realtime/test_local_realtime.py": [
+    "tests/unit/realtime/test_local_realtime.py::test_revive_spawns_windowless_and_rate_limited"
+  ],
+  "tests/unit/realtime/test_openai_live_warm.py": [
+    "tests/unit/realtime/test_openai_live_warm.py::test_start_opens_store_and_permit_concurrently"
+  ],
+  "tests/unit/setup/test_macos_app_bundle.py": [
+    "tests/unit/setup/test_macos_app_bundle.py::test_a_changed_interpreter_still_earns_a_fresh_rebuild"
+  ],
+  "tests/unit/skills/test_builtin_instruction_standard.py": [
+    "tests/unit/skills/test_builtin_instruction_standard.py::test_builtin_meets_instruction_standard[plugin-agentmail]",
+    "tests/unit/skills/test_builtin_instruction_standard.py::test_builtin_meets_instruction_standard[plugin-amd_gpu]",
+    "tests/unit/skills/test_builtin_instruction_standard.py::test_builtin_meets_instruction_standard[plugin-apollo]",
+    "tests/unit/skills/test_builtin_instruction_standard.py::test_builtin_meets_instruction_standard[plugin-aws]",
+    "tests/unit/skills/test_builtin_instruction_standard.py::test_builtin_meets_instruction_standard[plugin-azure]",
+    "tests/unit/skills/test_builtin_instruction_standard.py::test_builtin_meets_instruction_standard[plugin-figma]",
+    "tests/unit/skills/test_builtin_instruction_standard.py::test_builtin_meets_instruction_standard[plugin-gitlab]",
+    "tests/unit/skills/test_builtin_instruction_standard.py::test_builtin_meets_instruction_standard[plugin-google_cloud]",
+    "tests/unit/skills/test_builtin_instruction_standard.py::test_builtin_meets_instruction_standard[plugin-granola]",
+    "tests/unit/skills/test_builtin_instruction_standard.py::test_builtin_meets_instruction_standard[plugin-hubspot]",
+    "tests/unit/skills/test_builtin_instruction_standard.py::test_builtin_meets_instruction_standard[plugin-linkedin]",
+    "tests/unit/skills/test_builtin_instruction_standard.py::test_builtin_meets_instruction_standard[plugin-meta]",
+    "tests/unit/skills/test_builtin_instruction_standard.py::test_builtin_meets_instruction_standard[plugin-microsoft_todo]",
+    "tests/unit/skills/test_builtin_instruction_standard.py::test_builtin_meets_instruction_standard[plugin-onedrive]",
+    "tests/unit/skills/test_builtin_instruction_standard.py::test_builtin_meets_instruction_standard[plugin-onenote]",
+    "tests/unit/skills/test_builtin_instruction_standard.py::test_builtin_meets_instruction_standard[plugin-outlook]",
+    "tests/unit/skills/test_builtin_instruction_standard.py::test_builtin_meets_instruction_standard[plugin-salesforce]",
+    "tests/unit/skills/test_builtin_instruction_standard.py::test_builtin_meets_instruction_standard[plugin-sharepoint]",
+    "tests/unit/skills/test_builtin_instruction_standard.py::test_builtin_meets_instruction_standard[plugin-teams]",
+    "tests/unit/skills/test_builtin_instruction_standard.py::test_builtin_meets_instruction_standard[plugin-x]",
+    "tests/unit/skills/test_builtin_instruction_standard.py::test_builtin_meets_instruction_standard[plugin-youtube_studio]",
+    "tests/unit/skills/test_builtin_instruction_standard.py::test_builtin_meets_instruction_standard[plugin-zoom]"
+  ],
+  "tests/unit/speech/test_dictation_lifecycle_events.py": [
+    "tests/unit/speech/test_dictation_lifecycle_events.py::test_start_announces_the_turn_before_any_audio",
+    "tests/unit/speech/test_dictation_lifecycle_events.py::test_start_arms_the_wake_watchdog_deadline",
+    "tests/unit/speech/test_dictation_lifecycle_events.py::test_releasing_the_key_announces_the_transcribing_phase",
+    "tests/unit/speech/test_dictation_lifecycle_events.py::test_a_dictation_killed_mid_flight_still_closes_its_turn",
+    "tests/unit/speech/test_dictation_lifecycle_events.py::test_discard_cancels_work_and_releases_wake_gate[False]",
+    "tests/unit/speech/test_dictation_lifecycle_events.py::test_discard_cancels_work_and_releases_wake_gate[True]",
+    "tests/unit/speech/test_dictation_lifecycle_events.py::test_a_crashing_dictation_publishes_exactly_one_completion",
+    "tests/unit/speech/test_dictation_lifecycle_events.py::test_a_second_start_while_recording_is_refused_out_loud",
+    "tests/unit/speech/test_dictation_lifecycle_events.py::test_a_voice_session_that_will_not_let_go_is_refused_out_loud",
+    "tests/unit/speech/test_dictation_lifecycle_events.py::test_every_refusal_reason_comes_from_the_shared_vocabulary"
+  ],
+  "tests/unit/speech/test_dictation_no_audio_dropped.py": [
+    "tests/unit/speech/test_dictation_no_audio_dropped.py::test_a_failed_segment_does_not_delete_its_audio",
+    "tests/unit/speech/test_dictation_no_audio_dropped.py::test_a_successful_segment_still_closes",
+    "tests/unit/speech/test_dictation_no_audio_dropped.py::test_the_final_transcription_is_retried",
+    "tests/unit/speech/test_dictation_no_audio_dropped.py::test_the_retry_gives_up_instead_of_hanging"
+  ],
+  "tests/unit/speech/test_dictation_pause_does_not_truncate.py": [
+    "tests/unit/speech/test_dictation_pause_does_not_truncate.py::test_words_after_a_long_pause_still_reach_the_transcript",
+    "tests/unit/speech/test_dictation_pause_does_not_truncate.py::test_a_pause_is_never_uploaded",
+    "tests/unit/speech/test_dictation_pause_does_not_truncate.py::test_the_open_tail_never_grows_past_one_segment",
+    "tests/unit/speech/test_dictation_pause_does_not_truncate.py::test_refused_calls_do_not_cost_the_words",
+    "tests/unit/speech/test_dictation_pause_does_not_truncate.py::test_one_dead_piece_does_not_cost_the_others",
+    "tests/unit/speech/test_dictation_pause_does_not_truncate.py::test_the_final_pass_goes_out_in_pieces",
+    "tests/unit/speech/test_dictation_pause_does_not_truncate.py::test_a_recording_that_ends_early_is_reported"
+  ],
+  "tests/unit/speech/test_dictation_takes_over_voice_session.py": [
+    "tests/unit/speech/test_dictation_takes_over_voice_session.py::test_the_key_takes_the_microphone_from_a_live_voice_session",
+    "tests/unit/speech/test_dictation_takes_over_voice_session.py::test_a_mid_answer_takeover_stops_the_voice_the_clean_way",
+    "tests/unit/speech/test_dictation_takes_over_voice_session.py::test_push_to_talk_is_the_same_collision_through_another_door",
+    "tests/unit/speech/test_dictation_takes_over_voice_session.py::test_the_microphone_is_never_held_by_two_owners_across_the_handover",
+    "tests/unit/speech/test_dictation_takes_over_voice_session.py::test_a_teardown_that_never_finishes_refuses_instead_of_hanging",
+    "tests/unit/speech/test_dictation_takes_over_voice_session.py::test_a_hangup_that_raises_refuses_with_a_reason",
+    "tests/unit/speech/test_dictation_takes_over_voice_session.py::test_releasing_the_key_mid_handover_records_nothing_and_says_why",
+    "tests/unit/speech/test_dictation_takes_over_voice_session.py::test_wake_stays_muted_for_the_whole_handover_and_the_dictation",
+    "tests/unit/speech/test_dictation_takes_over_voice_session.py::test_the_handover_block_expires_even_if_the_task_is_killed_outright",
+    "tests/unit/speech/test_dictation_takes_over_voice_session.py::test_a_second_press_during_a_handover_is_the_already_running_no_op",
+    "tests/unit/speech/test_dictation_takes_over_voice_session.py::test_the_hands_free_toggle_cancels_a_pending_handover",
+    "tests/unit/speech/test_dictation_takes_over_voice_session.py::test_the_handover_refusal_uses_the_shared_vocabulary"
+  ],
+  "tests/unit/speech/test_nonstreaming_residue_honesty.py": [
+    "tests/unit/speech/test_nonstreaming_residue_honesty.py::test_filler_only_turn_is_silent_not_an_error[Tolle Frage!-de]",
+    "tests/unit/speech/test_nonstreaming_residue_honesty.py::test_filler_only_turn_is_silent_not_an_error[Great question.-en]",
+    "tests/unit/speech/test_nonstreaming_residue_honesty.py::test_scrubbed_leak_still_speaks_the_fallback_on_a_turn",
+    "tests/unit/speech/test_nonstreaming_residue_honesty.py::test_ordinary_answer_is_untouched"
+  ],
+  "tests/unit/ui/test_icon_identity.py": [
+    "tests/unit/ui/test_icon_identity.py::test_bundled_app_icon_png_is_white_rounded_tile"
+  ],
+  "tests/unit/ui/web/test_skills_routes.py": [
+    "tests/unit/ui/web/test_skills_routes.py::test_creator_author_writes_a_draft_skill_with_a_brain"
+  ],
+  "tests/unit/web/test_provider_secret_sharing.py": [
+    "tests/unit/web/test_provider_secret_sharing.py::test_realtime_openai_slot_names_its_fallback_family"
+  ],
+  "tests/unit/web/test_realtime_voice_preview.py": [
+    "tests/unit/web/test_realtime_voice_preview.py::test_missing_voice_is_400",
+    "tests/unit/web/test_realtime_voice_preview.py::test_uncatalogued_voice_is_422",
+    "tests/unit/web/test_realtime_voice_preview.py::test_uncatalogued_model_is_422",
+    "tests/unit/web/test_realtime_voice_preview.py::test_missing_credential_is_409",
+    "tests/unit/web/test_realtime_voice_preview.py::test_sampler_failure_is_clean_502",
+    "tests/unit/web/test_realtime_voice_preview.py::test_hung_sampler_times_out_as_502"
+  ],
+  "tests/unit/plugins/tool/test_click_element.py": [
+    "tests/unit/plugins/tool/test_click_element.py"
+  ]
+}

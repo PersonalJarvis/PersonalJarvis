@@ -879,14 +879,14 @@ jobs:
           python -m pip freeze --all > comparison/pip-freeze.txt
       - name: Exercise both trees without a failure baseline
         run: |
-          files="$GITHUB_WORKSPACE/scripts/ci/macos-comparison-files.txt"
+          selection="$GITHUB_WORKSPACE/scripts/ci/macos-comparison-cases.json"
+          harness="$GITHUB_WORKSPACE/scripts/ci/compare_selected_cases.py"
           output="$GITHUB_WORKSPACE/comparison"
           for side in base head; do
             cd "$RUNNER_TEMP/compare-$side"
             python -c 'import jarvis; print(jarvis.__file__)' > "$output/import-$side.txt"
             set +e
-            python scripts/ci/run_tests_parallel.py --files-from "$files" --workers 3 \
-              --report "$output/test-report-$side.json" --junit-out "$output/junit-$side.xml" \
+            python "$harness" "$RUNNER_TEMP/compare-$side" "$selection" "$output" "$side" \
               > "$output/run-$side.log" 2>&1
             rc=$?
             set -e

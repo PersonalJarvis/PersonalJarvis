@@ -1,6 +1,11 @@
 name: Browser runtime
 # Called by ci.yml's `browser` lane (path-gated there) and runnable by hand.
 on:
+  workflow_call:
+    inputs:
+      test_ref:
+        type: string
+        default: ""
   workflow_dispatch:
     inputs:
       test_ref:
