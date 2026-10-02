@@ -36,15 +36,16 @@ jobs:
       - name: Repeat the fake installer in fresh processes
         shell: python
         run: |
-          import json, os, subprocess, sys
+          import json, os, subprocess, sys, tempfile
           from pathlib import Path
           out = Path("race-evidence")
           out.mkdir()
+          print("TEMP:", tempfile.gettempdir(), "RESOLVED:", Path(tempfile.gettempdir()).resolve(), flush=True)
           results = []
-          for i in range(40):
+          for i in range(60):
               result = subprocess.run(
                   [sys.executable, "-m", "pytest", "tests/unit/society/test_browser_install.py::test_simultaneous_installers_promote_only_one_runtime",
-                   "-q", "--tb=short", "--basetemp", str(out / f"tmp-{i}"),
+                   "-q", "--tb=short",
                    "--junitxml", str(out / f"result-{i}.xml")],
                   capture_output=True, text=True, encoding="utf-8", errors="replace",
                   timeout=90, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
