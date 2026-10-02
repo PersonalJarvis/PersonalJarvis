@@ -94,6 +94,8 @@ def registry() -> httpx.Client:
 @pytest.mark.parametrize("entry", RECOMMENDED_MODELS, ids=lambda e: e.id)
 def test_every_curated_model_exists_in_the_library(entry, registry) -> None:
     resp = _manifest(registry, entry.id)
+    if resp.status_code == 429 or resp.status_code >= 500:
+        pytest.skip(f"Ollama registry answered {resp.status_code} for {entry.id}")
     assert resp.status_code == 200, (
         f"'{entry.id}' is offered as a one-click download but the Ollama library "
         f"answered {resp.status_code}. Replace it with a tag that exists — a user "
