@@ -106,6 +106,7 @@ def _call_id(headers: Any) -> str:
         try:
             candidates = urlsplit(location).path.split("/")
         except ValueError:
+            log.debug("Subscription call location was invalid; checking the session header.")
             candidates = []
         for value in reversed(candidates):
             if len(value) <= 128 and _CALL_ID.fullmatch(value):

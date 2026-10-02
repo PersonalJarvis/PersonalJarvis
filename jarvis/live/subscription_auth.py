@@ -189,6 +189,7 @@ class SubscriptionAuth:
             if not result["connected"]:
                 result["reason"] = "The ChatGPT login expired. Sign in again in Agent accounts."
         except SubscriptionAuthError as exc:
+            log.debug("ChatGPT subscription readiness unavailable (%s).", exc.code)
             result["reason"] = str(exc)
         return result
 
