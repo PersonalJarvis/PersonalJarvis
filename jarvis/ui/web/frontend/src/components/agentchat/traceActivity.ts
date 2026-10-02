@@ -8,6 +8,9 @@ import { toolIdentity } from "./toolIdentity";
 export function traceToolName(name: string): string {
   return name.replace(/^(?:functions\.|tools\.)/, "")
     .replace(/^mcp__codex_apps__/, "")
+    // Claude's hosted connectors ("mcp__claude_ai_Gmail__…") are named after
+    // the service, not the road to it.
+    .replace(/^mcp__claude_ai_/, "mcp__")
     .replace(/^mcp__([^_]+)__/, "$1/")
     .replace(/^mcp__/, "").replace(/__/g, "/");
 }

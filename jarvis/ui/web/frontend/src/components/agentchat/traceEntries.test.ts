@@ -4,7 +4,10 @@ import de from "@/i18n/locales/de.json";
 import es from "@/i18n/locales/es.json";
 import { reduceThinkingSteps, type ThinkingStep } from "@/lib/thinkingSteps";
 import type { ToolBlock, TurnBlock } from "./reduce";
-import { buildTimeline, headerLabel, previewOutput, shortPath, timelineMarkdown, traceDuration, type TimelineOptions } from "./traceEntries";
+import {
+  buildTimeline, commandBinary, headerLabel, shortPath, timelineMarkdown, traceDuration, withoutCd,
+  type ActivityEntry, type Call, type TimelineOptions,
+} from "./traceEntries";
 import { stepsToBlocks } from "./VoiceWorkTrace";
 
 type Dict = Record<string, unknown>;
@@ -25,6 +28,13 @@ const tool = (id: string, over: Partial<ToolBlock> = {}): ToolBlock => ({
 const text = (id: string, body: string): TurnBlock => ({ kind: "text", id, text: body });
 const thinking = (id: string, body: string, durationMs = 1000): TurnBlock => ({ kind: "reasoning", id, text: body, durationMs, live: false, startedMs: 0 });
 
+const activity = (blocks: TurnBlock[], over: Partial<TimelineOptions> = {}): ActivityEntry => {
+  const entry = buildTimeline(blocks, opts(over)).entries.find((e) => e.kind === "activity");
+  if (!entry || entry.kind !== "activity") throw new Error("no activity");
+  return entry;
+};
+const only = (block: ToolBlock, over: Partial<TimelineOptions> = {}): Call => activity([block], over).calls[0];
+
 function replay(events: Array<[string, Record<string, unknown>]>): ThinkingStep[] {
   let steps: ThinkingStep[] = [];
   events.forEach(([name, payload], i) => {
@@ -33,101 +43,98 @@ function replay(events: Array<[string, Record<string, unknown>]>): ThinkingStep[
   return steps.map((s) => (s.status === "active" ? { ...s, status: "done" } : s));
 }
 
-describe("trace timeline", () => {
-  it("merges reads, listings and searches into one Codex-style Explored entry", () => {
+describe("trace timeline (Codex-style)", () => {
+  it("alternates the model's words with one line per stretch of calls", () => {
     const line = buildTimeline([
-      tool("r1", { name: "Read", input: { file_path: "C:/repo/src/app/main.ts" }, output: "1→a" }),
-      tool("r2", { name: "Read", input: { file_path: "README.md" }, output: "x" }),
-      tool("l", { name: "LS", input: { path: "src" }, output: "a\nb" }),
-      tool("g", { name: "Grep", input: { pattern: "TODO", path: "src/lib" }, output: "src/lib/a.ts:3" }),
-      tool("r3", { name: "Read", input: { file_path: "package.json" }, output: "{}" }),
+      text("n1", "I'll look at the blog first."),
+      tool("c1"),
+      tool("w1", { name: "search_web", input: { query: "openai docs" }, output: '{"results": [1,2,3]}' }),
+      text("n2", "The blog lives in its own repo."),
+      tool("e1", { name: "Edit", input: { file_path: "post.md", old_string: "a", new_string: "b" }, output: "ok" }),
+      tool("c2", { input: { command: "npm run build" }, output: "built" }),
     ], opts());
-    expect(line.entries).toHaveLength(1);
-    const explore = line.entries[0];
-    expect(explore.kind).toBe("explore");
-    if (explore.kind !== "explore") return;
-    expect(explore.lines).toEqual([
-      { verb: "read", targets: ["…/src/app/main.ts", "README.md"] },
-      { verb: "list", targets: ["src"] },
-      { verb: "search", targets: ["TODO in src/lib"] },
-      { verb: "read", targets: ["package.json"] },
-    ]);
-    expect(explore.durationMs).toBe(1500);
-    expect(line.summary).toBe("Read 3 files, listed a folder, and ran a search");
+    expect(line.entries.map((e) => e.kind)).toEqual(["prose", "activity", "prose", "activity"]);
+    const [, first, , second] = line.entries as [unknown, ActivityEntry, unknown, ActivityEntry];
+    expect(first.summary).toBe("Ran a command, searched the web");
+    expect(second.summary).toBe("Edited a file, ran a command");
+    expect(line.callCount).toBe(4);
   });
 
-  it("shows a command with the first lines it printed", () => {
-    const line = buildTimeline([
-      tool("c", { input: { command: "npm test\n--watch=false" }, output: "PASS a\nPASS b\n\nPASS c\nPASS d\nPASS e" }),
-    ], opts());
-    expect(line.entries[0]).toMatchObject({
-      kind: "command", command: "npm test", status: "done",
-      output: { lines: ["PASS a", "PASS b", "PASS c"], more: 2 },
-    });
-    expect(previewOutput("")).toBeNull();
+  it("names each call in its own words", () => {
+    expect(only(tool("r", { name: "Read", input: { file_path: "C:/repo/src/app/main.ts" }, output: "x" })).text).toBe("Read …/src/app/main.ts");
+    expect(only(tool("i", { name: "Read", input: { file_path: "shots/hero.png" }, output: "" }))).toMatchObject({ kind: "image", text: "Viewed shots/hero.png" });
+    expect(only(tool("g", { name: "Grep", input: { pattern: "TODO", path: "src/lib" }, output: "" })).text).toBe("Searched for TODO in src/lib");
+    expect(only(tool("l", { name: "LS", input: { path: "src" }, output: "" })).text).toBe("Listed src");
+    expect(only(tool("w", { name: "Write", input: { file_path: "new.ts", content: "a\nb" }, output: "ok" }))).toMatchObject({ kind: "write", text: "Created new.ts" });
+    expect(only(tool("e", { name: "Edit", input: { file_path: "app.ts", old_string: "a\nb", new_string: "c" }, output: "ok" }))).toMatchObject({ text: "Edited app.ts", added: 1, removed: 2 });
   });
 
-  it("tells a wrapped command by what it printed", () => {
-    const line = buildTimeline([
-      tool("j", { name: "mcp__jarvis__cli_jarvisctl", input: { command: "jarvisctl outputs list" },
-        output: JSON.stringify({ exit_code: 0, stdout: "a.md\nb.md\n", stderr: "", duration_ms: 12 }) }),
-    ], opts());
-    expect(line.entries[0]).toMatchObject({ kind: "tool", result: "a.md" });
+  it("shows what a command ran, not where, and wears the CLI vendor's logo", () => {
+    const call = only(tool("c", { input: { command: 'cd "C:/Users/me/repo" && gh api repos/x --jq .stars' }, output: "85" }));
+    expect(call).toMatchObject({ kind: "command", text: "gh api repos/x --jq .stars", brand: "gh" });
+    expect(only(tool("p", { input: { command: "npm test" }, output: "" })).brand).toBeNull();
+    expect(withoutCd("Set-Location C:\\x; git status")).toBe("git status");
+    expect(commandBinary("FOO=1 npx vercel deploy")).toBe("vercel");
   });
 
-  it("sizes an edit and names a created file", () => {
-    const line = buildTimeline([
-      tool("e", { name: "Edit", input: { file_path: "src/app.ts", old_string: "a\nb", new_string: "c" }, output: "ok" }),
-      tool("w", { name: "Write", input: { file_path: "src/new.ts", content: "x\ny" }, output: "ok" }),
-    ], opts());
-    expect(line.entries[0]).toMatchObject({ kind: "edit", verb: "edit", path: "src/app.ts", added: 1, removed: 2 });
-    expect(line.entries[1]).toMatchObject({ kind: "edit", verb: "write", path: "src/new.ts" });
-    expect(line.summary).toBe("Edited a file and created a file");
+  it("tells a plugin by its brand, however the call reached it", () => {
+    const viaJarvis = only(tool("g", { name: "mcp__jarvis__gmail", input: { query: "is:unread" }, output: "[]" }));
+    expect(viaJarvis).toMatchObject({ kind: "service", text: "Gmail" });
+    expect(viaJarvis.brand).toBeTruthy();
+    const viaClaude = only(tool("h", { name: "mcp__claude_ai_Gmail__search_threads", input: { query: "newer_than:2d" }, output: "[]" }));
+    expect(viaClaude.kind).toBe("service");
+    expect(viaClaude.text).not.toMatch(/claude/i);
+    const own = only(tool("r", { name: "mcp__jarvis__society_routines", input: {}, output: "{}" }));
+    expect(own).toMatchObject({ kind: "tool", text: "Society routines" });
+    const cli = only(tool("j", { name: "mcp__jarvis__cli_jarvisctl", input: { command: "jarvisctl outputs list" }, output: "" }));
+    expect(cli).toMatchObject({ kind: "command", text: "jarvisctl outputs list" });
   });
 
-  it("keeps the model's words as prose and drops wordless thinking and plumbing", () => {
+  it("keeps Jarvis's own tools in their words and a terse result", () => {
+    const call = only(tool("a", { name: "mcp__jarvis__create_artifact", input: { title: "GitHub Stars" }, output: "The artifact is being built." }));
+    expect(call).toMatchObject({ kind: "family", text: "Created an artifact", detail: "GitHub Stars", result: "The artifact is being built." });
+    const web = only(tool("w", { name: "search_web", input: { query: "x" }, output: '{"results": [1,2]}' }));
+    expect(web).toMatchObject({ kind: "web", result: "2 results" });
+  });
+
+  it("drops wordless thinking and plumbing; keeps reasoning text as quiet prose", () => {
     const line = buildTimeline([
       thinking("r1", "", 820),
-      text("n", "The repo has 85 stars. I'll fetch the timestamps."),
       tool("s", { name: "ToolSearch", input: { query: "select:mcp__jarvis__create_artifact" }, output: "[]" }),
-      tool("a", { name: "mcp__jarvis__create_artifact", input: { title: "GitHub Stars" }, output: "The artifact is being built." }),
       thinking("r2", "**Checking** the result."),
     ], opts());
-    expect(line.entries.map((e) => e.kind)).toEqual(["thought", "tool", "thought"]);
-    expect(line.entries[1]).toMatchObject({ label: "Created an artifact", detail: "GitHub Stars", result: "The artifact is being built." });
-    expect(line.thinkingMs).toBe(820);
-    expect(line.actionCount).toBe(1);
+    expect(line.entries).toEqual([expect.objectContaining({ kind: "prose", tone: "reasoning", text: "**Checking** the result." })]);
+    expect(line.callCount).toBe(0);
   });
 
-  it("names refusals, declines, failures and interruptions in plain words", () => {
-    const line = buildTimeline([
+  it("names refusals, declines, failures and cut-offs in plain words", () => {
+    const calls = activity([
       tool("b", { output: "blacklist: <tool-declared-block>", isError: true }),
       tool("d", { output: null, approval: { approvalId: "x", summary: "", decision: "deny" } }),
       tool("f", { output: "Error: 2 tests failed\n  at run", isError: true }),
       tool("i", { output: null }),
-    ], opts({ status: "cancelled" }));
-    expect(line.entries.map((e) => e.kind === "command" ? [e.status, e.reason] : null)).toEqual([
+    ], { status: "cancelled" }).calls;
+    expect(calls.map((c) => [c.status, c.reason])).toEqual([
       ["blocked", "a safety rule blocks this action"],
       ["declined", ""],
       ["failed", "Error: 2 tests failed"],
       ["interrupted", ""],
     ]);
-    expect(line.problemCount).toBe(4);
   });
 
-  it("leaves running calls, approvals and replies to the live rows while a turn runs", () => {
-    const blocks: TurnBlock[] = [
+  it("keeps a running call in its stretch and hands approvals, questions and replies to the live rows", () => {
+    const line = buildTimeline([
       tool("done"),
       tool("running", { output: null }),
       tool("approve", { output: null, approval: { approvalId: "a", summary: "Delete?", decision: null } }),
       text("reply", "Halfway there."),
       { kind: "reasoning", id: "live", text: "thinking…", durationMs: null, live: true, startedMs: 0 },
-    ];
-    const line = buildTimeline(blocks, opts({ status: "running", live: true }));
-    expect(line.entries.map((e) => e.kind)).toEqual(["command", "live", "live", "live", "live"]);
+    ], opts({ status: "running", live: true }));
+    expect(line.entries.map((e) => e.kind)).toEqual(["activity", "live", "live", "live"]);
+    expect((line.entries[0] as ActivityEntry).calls.map((c) => c.status)).toEqual(["done", "running"]);
   });
 
-  it("tells a stored Jarvis voice turn with registry names, a cut result and a refusal", () => {
+  it("tells a stored Jarvis voice turn: registry names, a preamble, a refusal", () => {
     const steps = replay([
       ["ActionProposed", { tool_name: "find-app-action", args: { query: "computers" } }],
       ["ActionExecuted", { tool_name: "find-app-action", success: true, duration_ms: 4, output_preview: '{"actions": [{"action_id": "add_computer"' }],
@@ -137,10 +144,10 @@ describe("trace timeline", () => {
       ["BrainTurnCompleted", { provider: "grok", model: "grok-4.3" }],
     ]);
     const line = buildTimeline(stepsToBlocks(steps, false, t), opts());
-    expect(line.entries.map((e) => e.kind)).toEqual(["tool", "thought", "tool"]);
-    expect(line.entries[0]).toMatchObject({ label: "Find App Action", detail: "computers" });
-    expect(line.entries[1]).toMatchObject({ text: "I'll check the computers you set up." });
-    expect(line.entries[2]).toMatchObject({ label: "Run App Action", status: "blocked", reason: "a safety rule blocks this action" });
+    expect(line.entries.map((e) => e.kind)).toEqual(["activity", "prose", "activity"]);
+    expect((line.entries[0] as ActivityEntry).calls[0]).toMatchObject({ text: "Find app action", detail: "computers" });
+    expect((line.entries[2] as ActivityEntry).calls[0]).toMatchObject({ text: "Run app action", status: "blocked" });
+    expect(line.problemCount).toBe(1);
     expect(headerLabel(line, 2400, t)).toBe("Worked for 2.4s");
   });
 
@@ -153,31 +160,22 @@ describe("trace timeline", () => {
   it("copies as Markdown in the timeline's own order", () => {
     const line = buildTimeline([
       text("n", "First the port."),
-      tool("c", { durationMs: 1200, output: "8080" }),
-      tool("r", { name: "Read", input: { file_path: "a.ts" }, output: "x" }),
+      tool("c", { output: "8080" }),
       tool("f", { name: "Edit", input: { file_path: "b.ts", old_string: "a", new_string: "b" }, output: "boom", isError: true }),
     ], opts());
     expect(timelineMarkdown(line, headerLabel(line, 4200, t), t)).toBe([
-      "**Worked for 4.2s** — Read a file, ran a command, and edited a file",
+      "**Worked for 4.2s**",
       "",
       "First the port.",
       "",
-      "- Ran `ls` (1.2s)",
-      "  ```",
-      "  8080",
-      "  ```",
-      "",
-      "- Explored",
-      "  - Read a.ts",
-      "",
-      "- Edited `b.ts` (+1 −1) (0.3s)",
-      "  Failed: boom",
+      "*Ran a command, edited a file*",
+      "- `ls`",
+      "- Edited b.ts (+1 −1) — Failed: boom",
     ].join("\n"));
   });
 
-  it("formats durations and paths the way a trace line shows them", () => {
+  it("formats durations and paths the way a line shows them", () => {
     expect(traceDuration(49)).toBe("49ms");
-    expect(traceDuration(4200)).toBe("4.2s");
     expect(traceDuration(125_000)).toBe("2m 05s");
     expect(shortPath("C:\\Users\\me\\repo\\src\\a.ts")).toBe("…/repo/src/a.ts");
   });
@@ -189,9 +187,10 @@ describe("trace timeline", () => {
       tool("a", { name: "search_web", input: { query: "Wetter" }, output: '{"results": []}' }),
       tool("b", { isError: true, output: "boom" }),
       tool("c", { name: "Grep", input: { pattern: "x", path: "src" }, output: "y" }),
-      tool("d", { output: "1\n2\n3\n4\n5" }),
+      tool("d", { name: "Read", input: { file_path: "a.png" }, output: "" }),
+      tool("e", { name: "mcp__linear__list_issues", input: {}, output: "[]" }),
     ], { t: tl, lang, status: "done", live: false });
-    const all = [line.summary, headerLabel(line, 9000, tl), timelineMarkdown(line, headerLabel(line, 9000, tl), tl)].join("\n");
+    const all = timelineMarkdown(line, headerLabel(line, 9000, tl), tl);
     expect(all).not.toMatch(/\{\w+\}|trace_report\./);
   });
 });

@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { formatAppshotHotkey } from "@/lib/appshotApi";
+import { useAppshotEditor } from "@/store/appshotEditor";
 import { useEventStore } from "@/store/events";
 import { AppshotsView } from "@/views/AppshotsView";
 
@@ -218,6 +219,59 @@ describe("AppshotsView shortcut recorder", () => {
     render(<AppshotsView />);
     fireEvent.click(await screen.findByTestId("appshots-region-hotkey-clear"));
     await waitFor(() => expect(puts()).toEqual([{ region_hotkey: "" }]));
+  });
+});
+
+describe("AppshotsView editor", () => {
+  const SHOT = {
+    id: "shot-1",
+    width: 800,
+    height: 500,
+    label: "selected area",
+    app_name: "Editor",
+    trigger: "hotkey",
+    taken_at: 1_700_000_000,
+    delivered_to: "message",
+  };
+
+  beforeEach(() => {
+    useEventStore.setState({ events: [], toasts: [], assistantName: "Jarvis" });
+    useAppshotEditor.setState({ openId: null });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url === "/api/appshot/settings") return json(SETTINGS);
+        if (url === "/api/appshot/latest") return json({ appshot: SHOT });
+        return json({}, 404);
+      }),
+    );
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it("opens from the last appshot and closes on Escape", async () => {
+    render(<AppshotsView />);
+    fireEvent.click(await screen.findByTestId("appshots-preview-edit"));
+    expect(await screen.findByTestId("appshot-editor")).toBeDefined();
+    expect(useAppshotEditor.getState().openId).toBe("shot-1");
+
+    fireEvent.keyDown(window, { key: "r" });
+    expect(
+      screen.getByTestId("appshot-editor-tool-rect").getAttribute("aria-pressed"),
+    ).toBe("true");
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByTestId("appshot-editor")).toBeNull());
+    expect(useAppshotEditor.getState().openId).toBeNull();
+  });
+
+  it("opens when the card in the screen corner asked for it", async () => {
+    useAppshotEditor.getState().open("shot-1");
+    render(<AppshotsView />);
+    expect(await screen.findByTestId("appshot-editor")).toBeDefined();
   });
 });
 

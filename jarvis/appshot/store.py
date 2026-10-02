@@ -101,6 +101,28 @@ class AppshotStore:
                 self._latest = None
             return self._latest
 
+    def replace_image(
+        self, shot_id: str, image: bytes, mime: str, width: int, height: int
+    ) -> Appshot | None:
+        """Swap in the user's edited picture for appshot ``shot_id``.
+
+        Updates the last appshot and, when it is still waiting for the next
+        message, the pending one too — so that message carries the edit.
+        ``None`` when that appshot is no longer held.
+        """
+        with self._lock:
+            latest = self._latest
+            if latest is not None and self._clock() >= self._latest_until:
+                latest = self._latest = None
+            if latest is None or latest.id != shot_id:
+                return None
+            edited = replace(latest, image=image, mime=mime, width=width, height=height)
+            self._latest = edited
+            pending = self._live_pending()
+            if pending is not None and pending.id == shot_id:
+                self._pending = replace(pending, image=image, mime=mime, width=width, height=height)
+            return edited
+
     def mark_delivered(self, shot_id: str, delivered_to: str) -> None:
         with self._lock:
             if self._latest is not None and self._latest.id == shot_id:

@@ -4,7 +4,7 @@ import { buildNavGrid, isWalkable } from "./officeNav";
 import { arrivalPose, knownOnFloor, noteArrivals } from "./officeFloors";
 import { floorLevel, OFFICE_FLOORS, officeSession, player, switchFloor, useOfficeStore } from "./officeStore";
 import { callDirection } from "./ElevatorCallButton";
-import { CAR_BUTTONS, floorForKey, minRideMs, RIDE_STEP_MS, rideLevels } from "./ElevatorCar";
+import { floorForKey, PANEL_FLOORS } from "./ElevatorPanel";
 import { buildArcadeLayout } from "../arcade/arcadeFloorLayout";
 
 const AGENTS: OfficeAgentInput[] = [
@@ -23,23 +23,13 @@ function resetBuilding() {
 afterEach(resetBuilding);
 
 describe("floors", () => {
-  it("stacks the floors bottom to top, and the car's panel lists them top first", () => {
+  it("stacks the floors bottom to top, and the elevator panel lists them top first", () => {
     expect(OFFICE_FLOORS).toEqual(["agents", "coding", "arcade"]);
     expect(OFFICE_FLOORS.map(floorLevel)).toEqual([0, 1, 2]);
-    expect(CAR_BUTTONS).toEqual(["arcade", "coding", "agents"]);
+    expect(PANEL_FLOORS).toEqual(["arcade", "coding", "agents"]);
     expect(callDirection("agents")).toBe("up");
     expect(callDirection("coding")).toBe("both");
     expect(callDirection("arcade")).toBe("down");
-  });
-
-  it("counts every floor a ride passes, in the direction of travel", () => {
-    expect(rideLevels("agents", "arcade")).toEqual([0, 1, 2]);
-    expect(rideLevels("arcade", "agents")).toEqual([2, 1, 0]);
-    expect(rideLevels("coding", "arcade")).toEqual([1, 2]);
-    expect(rideLevels("coding", "coding")).toEqual([1]);
-    // The car stays under way long enough to show each passed floor once.
-    expect(minRideMs("agents", "arcade")).toBe(2 * RIDE_STEP_MS);
-    expect(minRideMs("coding", "agents")).toBe(RIDE_STEP_MS);
   });
 
   it("picks a floor by its number key", () => {

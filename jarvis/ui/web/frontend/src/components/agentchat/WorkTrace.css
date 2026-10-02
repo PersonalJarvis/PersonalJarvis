@@ -31,8 +31,11 @@
   position: relative;
   min-width: 0;
 }
+/* Since 2026-10-02 the rail draws no thread: traces read like the Codex app,
+   prose and quiet lines with nothing joining them. */
 .trace-rail > .trace-step::before,
 .trace-rail > .trace-step::after {
+  display: none;
   content: "";
   position: absolute;
   left: 7.5px;
@@ -157,4 +160,12 @@
 .trace-thought-fade {
   -webkit-mask-image: linear-gradient(to bottom, black calc(100% - 2.5rem), transparent 100%);
   mask-image: linear-gradient(to bottom, black calc(100% - 2.5rem), transparent 100%);
+}
+/* Media the model put in its narration stays small inside a trace. */
+.trace-narration img,
+.trace-narration video {
+  max-height: 10rem;
+  width: auto;
+  max-width: 100%;
+  border-radius: 0.5rem;
 }

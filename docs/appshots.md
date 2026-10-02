@@ -33,8 +33,8 @@ capture:
   drag takes exactly that window;
 - a drag cuts the area out of the dim layer with a marching-ants border and
   its size in real pixels;
-- a plain square magnifier beside the pointer shows the pixels around it with
-  the centre pixel outlined, and a strip underneath with the position (or the
+- a round magnifier beside the pointer shows the pixels around it with the
+  centre pixel outlined, and a small pill underneath with the position (or the
   selection size while dragging) and the zoom; the mouse wheel zooms it from
   2x to 24x, and the last zoom is remembered for the next pick.
 
@@ -53,6 +53,30 @@ rectangle (see below).
 
 A spoken "what do you see?" is the same look (Screen Context); it also plays
 the shutter and shows up as the last appshot.
+
+## The card in the corner, and the editor
+
+After the shutter the picture flies into the bottom-right corner of its
+screen and rests there as a card for about six seconds (longer while the
+pointer is on it):
+
+- **Click** opens the app on the Appshots page with the **appshot editor**:
+  arrow, rectangle, ellipse, pen, highlighter, text, pixelate and crop, with
+  undo/redo (Ctrl+Z / Ctrl+Y) and one-key tools (A, R, E, P, H, T, B, C).
+  **Copy** puts the result on the clipboard, **Save** downloads a PNG, and
+  **Use this version** replaces the held appshot, so the next message carries
+  the edited picture (a picture already sent into a voice call stays as it
+  was). The last appshot on the Appshots page opens the same editor.
+- **Drag** the card into any app that accepts files or images (chat, mail,
+  Explorer/Finder) to drop the picture there.
+- **Right-click** dismisses it.
+
+Only the finished, privacy-filtered appshot can leave by drag — the card's
+own thumbnail is cut from the raw frame and never does. A drag is the one
+moment an appshot touches disk: the picture is written to
+`<temp>/jarvis-appshots/` just then, and files older than an hour are removed
+on the next drag. With `[screen_context].deck_preview_s = 0` (keep nothing)
+the card only opens the editor and shares nothing.
 
 ## Where a shortcut appshot goes
 
@@ -129,7 +153,10 @@ instance) arms the shortcuts.
 last appshot, memory only), `gesture.py` (both-Alt watcher), `hotkey.py`
 (both shortcuts' lifecycle), `region.py` (area selection and its coordinate
 mapping), `picker/` (the area picker sidecar), `effect.py` (shutter hook),
-`delivery.py` (voice calls).
+`delivery.py` (voice calls). The corner card lives in the indicator sidecar
+(`jarvis/cu/indicator/renderer.py`, `_CardWindow`); the editor is
+`frontend/src/views/AppshotEditor.tsx` with its document model in
+`lib/appshotEditorModel.ts`.
 The live model's `take_appshot` tool is `jarvis/plugins/tool/appshot.py`; the
 REST surface is `jarvis/ui/web/appshot_routes.py`; the page is
 `frontend/src/views/AppshotsView.tsx`.
