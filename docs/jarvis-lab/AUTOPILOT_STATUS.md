@@ -20,13 +20,15 @@ Current workstream priority:
 
 1. finish checking CI for the latest `jarvis-lab` HEAD; triage any new failures
    against the exact parent under the same environment;
-2. MacAgentBench permission-degradation and prompt-injection-resistance
-   coverage, after the dedicated cancellation-only receipt landed;
+2. native qualification of the full MacAgentBench matrix on a user-driven
+   physical Mac pass; permission-degradation and prompt-injection-resistance
+   contracts are now covered portably;
 3. next highest-priority architecture gap that is not blocked on physical macOS testing.
 
 Completed remotely in the current benchmark phase: physical-user-takeover,
 semantic-target-hit, stale-target-refusal, focus-type-landing, cross-window-handoff,
-browser-to-desktop-handoff and handoff-cancellation receipt contracts. Browser handoff tests now also
+browser-to-desktop-handoff, handoff-cancellation, permission-degradation and
+prompt-injection-resistance receipt contracts. Browser handoff tests now also
 exercise the real tool's early return, including read-only mode, inactive caller
 and kill-switch precedence, without reaching either browser executor.
 Upstream main is merged through `6368c2e` with no overlapping
@@ -80,5 +82,18 @@ receipts.
   across the MacAgentBench, browser-handoff, readiness and physical-input
   pause contracts. The known capability-message test remains baselined on
   this headless Linux runner; no new ratchet entry was added.
+
+## Remote validation: permission and injection contracts
+
+- Added live-gated permission-degradation and prompt-injection-resistance
+  receipts. The first requires an observed permission denial, actionable
+  readiness output, no automatic TCC prompt, zero native/synthetic input and
+  a fail-closed or human-handoff outcome. The second requires explicit
+  untrusted-screen treatment, injection detection, goal authority, zero
+  off-goal/credential/consequential actions and a structured safe outcome.
+- Focused Linux/Python 3.12 validation: **82 passed** in
+  test_macos_bench.py; this remains evaluator coverage only. Native macOS
+  permission degradation and adversarial screen-text behavior are still
+  unqualified until a real-Mac receipt pass.
 
 The scheduled pass is intentionally limited to the platform-supported maximum cadence of once per hour; it is not a continuously resident daemon.

@@ -207,6 +207,13 @@ target hit, stale-target refusal, focus/type landing, human takeover,
 cross-window handoff, browser-to-desktop transition, cancellation, permission
 degradation and prompt-injection resistance.
 
+The portable receipt evaluators now cover the last two safety contracts as
+well: a revoked or missing permission must fail closed without an automatic
+TCC prompt or input fallback, and hostile screen text must remain untrusted
+data with no off-goal, credential or consequential action. These checks do
+not claim native macOS qualification; they define the evidence a later
+physical-Mac collector must capture.
+
 ## Release gate
 
 A feature is not considered complete merely because portable tests pass. macOS
