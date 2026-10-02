@@ -20,9 +20,9 @@ import { createVoiceFollower } from "@/components/home/voiceFollower";
  * faster and its core flares with each syllable
  * (components/home/voiceFollower turns the raw level into those smooth
  * signals). While the assistant thinks, nobody speaks — so the light does
- * not go dark: it breathes, and soft rings of light rise from the bottom
- * centre in a calm heartbeat. Levels are read on animation frames — no
- * React state, no re-render per frame — and the loop stops once the light has settled after
+ * not go dark: it breathes, two comets glide along the bottom edge
+ * trailing sparks, and each time they meet a pillar of light shoots up. Levels are read on animation frames — no React state, no
+ * re-render per frame — and the loop stops once the light has settled after
  * a call. Reduced motion keeps the light and drops the movement.
  *
  * Where WebGL is unavailable, or the context is lost, the light falls back
@@ -66,10 +66,10 @@ function currentVoiceLevel(now: number): number {
 
 /** How long the light takes to come up when a call opens and to settle after. */
 const POWER_TAU_S = 0.5;
-/** How long the thinking waves take to fade in and out. */
+/** How long the thinking beams take to fade in and out. */
 const THINK_TAU_S = 0.35;
-/** Ring lifetimes per second: each ring lives ~2.6 s, a new one every ~1.3 s. */
-const RIPPLE_RATE = 0.38;
+/** Radians per second of the beams' glide: one there-and-back every ~4.5 s. */
+const SWEEP_SPEED = 1.4;
 /** Radians per second of the light's breathing while it thinks (~3 s a breath). */
 const BREATH_SPEED = 2.1;
 
@@ -133,7 +133,7 @@ function ShaderGlow({
     let time = 12;
     let power = 0;
     let think = 0;
-    let ripple = 0;
+    let sweepPhase = 0;
     let breathPhase = 0;
     let color: [number, number, number] = [61, 139, 255];
     let light = false;
@@ -159,7 +159,9 @@ function ShaderGlow({
         level: Math.max(signals.level, thinkingLevel(think, breathPhase)),
         pulse: signals.pulse,
         think,
-        ripple,
+        // The beams start together in the middle and part from there.
+        sweep: Math.sin(sweepPhase),
+        sweepVel: Math.cos(sweepPhase),
         power,
         light,
         color,
@@ -175,10 +177,9 @@ function ShaderGlow({
       think += ((thinkingNow ? 1 : 0) - think) * (1 - Math.exp(-dt / THINK_TAU_S));
       if (think < 0.002 && !thinkingNow) {
         think = 0;
-        // Next time it thinks, the first ring is born the moment it starts.
-        ripple = 0;
+        sweepPhase = 0;
       } else {
-        ripple += dt * RIPPLE_RATE;
+        sweepPhase += dt * SWEEP_SPEED;
         breathPhase += dt * BREATH_SPEED;
       }
       time += dt * (0.55 + Math.max(signals.level, think * 0.3) * 1.4);
@@ -202,9 +203,8 @@ function ShaderGlow({
     const wake = () => {
       if (reduced || typeof requestAnimationFrame === "undefined") {
         power = activeRef.current ? 1 : 0;
-        // Reduced motion: one ring stands still, half-way out.
+        // Reduced motion: the beams stand still, together in the middle.
         think = activeRef.current && thinkingRef.current ? 1 : 0;
-        ripple = 0.35;
         readTheme();
         draw();
         return;
