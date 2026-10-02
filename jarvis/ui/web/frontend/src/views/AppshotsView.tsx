@@ -330,8 +330,12 @@ export function AppshotsView() {
     );
   })();
 
+  // A backend from before area appshots sends no region fields; the row and
+  // its button stay hidden until the app restarts onto the new backend.
+  const regionSupported = typeof settings?.region_hotkey === "string";
+
   const regionShortcutHint = (() => {
-    if (!settings) return "";
+    if (!settings || !regionSupported) return "";
     if (!settings.readiness.region) {
       return t("appshots.effect_unavailable").replace("{0}", settings.readiness.region_detail);
     }
@@ -407,23 +411,25 @@ export function AppshotsView() {
                     />
                   }
                 />
-                <Row
-                  label={t("appshots.region_shortcut_label")}
-                  hint={regionShortcutHint}
-                  control={
-                    <BrandedSelect
-                      value={settings.region_hotkey || "off"}
-                      options={regionHotkeyOptions}
-                      ariaLabel={t("appshots.region_shortcut_label")}
-                      disabled={disabled || saving}
-                      testId="appshots-region-hotkey"
-                      className="w-44"
-                      onValueChange={(value) =>
-                        void save({ region_hotkey: value === "off" ? "" : value })
-                      }
-                    />
-                  }
-                />
+                {regionSupported && (
+                  <Row
+                    label={t("appshots.region_shortcut_label")}
+                    hint={regionShortcutHint}
+                    control={
+                      <BrandedSelect
+                        value={settings.region_hotkey || "off"}
+                        options={regionHotkeyOptions}
+                        ariaLabel={t("appshots.region_shortcut_label")}
+                        disabled={disabled || saving}
+                        testId="appshots-region-hotkey"
+                        className="w-44"
+                        onValueChange={(value) =>
+                          void save({ region_hotkey: value === "off" ? "" : value })
+                        }
+                      />
+                    }
+                  />
+                )}
                 <Row
                   label={t("appshots.target_label")}
                   hint={targetHint}
@@ -482,19 +488,21 @@ export function AppshotsView() {
                   }
                   control={
                     <div className="flex items-center gap-2">
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        size="sm"
-                        disabled={
-                          disabled || picking || !settings.readiness.region || countdown !== null
-                        }
-                        onClick={() => void tryRegion()}
-                        data-testid="appshots-try-region"
-                      >
-                        {picking && <Loader2 className="animate-spin" aria-hidden />}
-                        {t("appshots.try_region_button")}
-                      </Button>
+                      {regionSupported && (
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          disabled={
+                            disabled || picking || !settings.readiness.region || countdown !== null
+                          }
+                          onClick={() => void tryRegion()}
+                          data-testid="appshots-try-region"
+                        >
+                          {picking && <Loader2 className="animate-spin" aria-hidden />}
+                          {t("appshots.try_region_button")}
+                        </Button>
+                      )}
                       <Button
                         type="button"
                         variant="secondary"

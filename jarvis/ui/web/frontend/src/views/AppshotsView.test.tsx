@@ -129,6 +129,20 @@ describe("AppshotsView area appshots", () => {
     expect(useEventStore.getState().toasts).toEqual([]);
   });
 
+  it("hides the area controls while an older backend is still running", async () => {
+    const { region_hotkey: _hotkey, region_shortcut: _status, ...older } = SETTINGS;
+    fetchMock.mockImplementation(async (url: string) =>
+      url === "/api/appshot/settings"
+        ? json({ ...older, readiness: { capture: true, capture_detail: "", effect: true, effect_detail: "" } })
+        : json({ appshot: null }),
+    );
+    render(<AppshotsView />);
+    await screen.findByTestId("appshots-try");
+    expect(screen.queryByTestId("appshots-region-hotkey")).toBeNull();
+    expect(screen.queryByTestId("appshots-try-region")).toBeNull();
+    expect(screen.queryByText(/undefined/)).toBeNull();
+  });
+
   it("disables the area button where no picker can run", async () => {
     fetchMock.mockImplementation(async (url: string) =>
       url === "/api/appshot/settings"
