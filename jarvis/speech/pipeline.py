@@ -6171,7 +6171,9 @@ class SpeechPipeline:
         ``_cancel_spawn_heartbeats``."""
         loop = asyncio.get_running_loop()
         task = loop.create_task(
-            self._spawn_watchdog_body(),
+            self._spawn_watchdog_body(
+                origin_session_id=getattr(self, "_current_voice_session_id", None)
+            ),
             name=f"spawn-watchdog-{len(self._spawn_watchdog_tasks)}",
         )
         self._spawn_watchdog_tasks.append(task)
@@ -6249,7 +6251,9 @@ class SpeechPipeline:
             recent.append(choice)
         return (choice, lang)
 
-    async def _spawn_watchdog_body(self) -> None:
+    async def _spawn_watchdog_body(
+        self, *, origin_session_id: str | None = None
+    ) -> None:
         """Speak a bounded, varied, language-resolved "still on it" heartbeat
         while a background mission runs.
 
@@ -6270,6 +6274,14 @@ class SpeechPipeline:
         voice session open forever, because the success path never publishes the
         ``JarvisAgentBackgroundCompleted`` event that would otherwise drain it. The
         hard cap bounds the in-flight hold to the heartbeat lifetime.
+
+        A beat belongs to the voice session the mission was started in
+        (``origin_session_id``; ``None`` for a typed chat). It is skipped once
+        a DIFFERENT voice session is open: that call never asked for the
+        mission, and inside a live call the line lands as backend commentary
+        that the duplex model voices over the user and that stalls its reply
+        to a short greeting (live bug 2026-10-02 17:58, "Hallo, was geht ab?"
+        unanswered for 6 s after a chat mission's beat entered the new call).
         """
         try:
             max_count = max(1, getattr(self, "_heartbeat_max_count", 3))
@@ -6283,6 +6295,17 @@ class SpeechPipeline:
                 delay = interval
                 if getattr(self, "_muted", False):
                     log.debug("Spawn-heartbeat: muted, skipping beat %d", beat)
+                    continue
+                current_session_id = getattr(self, "_current_voice_session_id", None)
+                if (
+                    current_session_id is not None
+                    and current_session_id != origin_session_id
+                ):
+                    log.info(
+                        "Spawn-heartbeat #%d skipped — the mission was not "
+                        "started in the open voice session",
+                        beat,
+                    )
                     continue
                 if self._bus is None:
                     return
