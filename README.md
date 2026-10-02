@@ -15,7 +15,7 @@ longer work, and bring the result back to one workspace.
 
 ## See it in action
 
-https://github.com/user-attachments/assets/9930ca95-5015-4ade-9a16-975c77d179fd
+https://github.com/user-attachments/assets/42afcb9f-323b-4a57-9b6d-17aa7a2585b2
 
 <p align="center"><sub>A real, unedited recording of the app with sound: talking to Jarvis by voice, handing work to agents, and following them in the coding workspace.</sub></p>
 
