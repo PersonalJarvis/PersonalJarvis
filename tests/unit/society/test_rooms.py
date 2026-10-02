@@ -43,6 +43,17 @@ async def test_open_writes_room_open_event(rooms):
     assert events[0].payload["members"] == ["a", "b"]
 
 
+async def test_open_generates_distinct_ids_for_same_millisecond(rooms, monkeypatch):
+    service, _ = rooms
+    monkeypatch.setattr("jarvis.society.rooms.now_ms", lambda: 1_800_000_000_000)
+
+    first = await service.open(opened_by="jarvis", members=["a", "b"])
+    second = await service.open(opened_by="jarvis", members=["a", "b"])
+
+    assert first.created_ms == second.created_ms
+    assert first.room_id != second.room_id
+
+
 async def test_turn_order_is_enforced(rooms):
     service, _ = rooms
     room = await service.open(opened_by="jarvis", members=["a", "b"])

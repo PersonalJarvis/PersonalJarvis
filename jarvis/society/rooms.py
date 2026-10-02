@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from typing import Any, Final
+from uuid import uuid4
 
 from .events import MsgType, RoomState, SocietyEnvelope, now_ms
 from .failure_reasons import FailureReason
@@ -124,7 +125,7 @@ class Rooms:
                 FailureReason.BLOCKED_BY_POLICY,
                 f"a room has {MIN_MEMBERS}-{MAX_MEMBERS} members, not {len(unique)}",
             )
-        rid = room_id or f"room-{now_ms():x}-{abs(hash(tuple(unique))) & 0xFFFF:04x}"
+        rid = room_id or f"room-{uuid4().hex}"
         trace_id = f"room:{rid}"
         now = now_ms()
         room = Room(
