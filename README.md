@@ -17,7 +17,7 @@ longer work, and bring the result back to one workspace.
 
 https://github.com/user-attachments/assets/9930ca95-5015-4ade-9a16-975c77d179fd
 
-<p align="center"><sub>A real click-through of the app: every frame is recorded, waiting is sped up, and a few moments are zoomed in.</sub></p>
+<p align="center"><sub>A real, unedited recording of the app with sound: talking to Jarvis by voice, handing work to agents, and following them in the coding workspace.</sub></p>
 
 Want to try Personal Jarvis later? **Star this repository** to keep it handy.
 
