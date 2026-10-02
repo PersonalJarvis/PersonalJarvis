@@ -1,5 +1,5 @@
 /**
- * The TopBar update button: it renders ONLY when the backend reports a managed
+ * The update button (now in the sidebar footer): it renders ONLY when the backend reports a managed
  * install with an available update, and stays hidden on an unmanaged checkout
  * (the dev-tree safety guard surfaced in the UI).
  *
@@ -10,7 +10,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { TopBar } from "@/components/layout/TopBar";
+import { UpdateButton } from "@/components/layout/TopBar";
 import { useEventStore } from "@/store/events";
 
 vi.mock("@/lib/bootStagger", () => ({ bootSettled: () => Promise.resolve() }));
@@ -56,7 +56,7 @@ describe("TopBar update button", () => {
       notes: "Fixes and improvements",
       published_at: null,
     });
-    render(<TopBar />);
+    render(<UpdateButton placement="sidebar" />);
     const button = await screen.findByRole("button", { name: /update available/i });
     // The version rides in the accessible name; the strip itself shows no text.
     expect(button.getAttribute("aria-label")).toContain("v1.0.2");
@@ -73,7 +73,7 @@ describe("TopBar update button", () => {
       notes: "## What's new\n- **Faster** startup\n- Fixed `voice` lag",
       published_at: null,
     });
-    render(<TopBar />);
+    render(<UpdateButton placement="sidebar" />);
     fireEvent.click(await screen.findByRole("button", { name: /update available/i }));
 
     const panel = await screen.findByRole("dialog", { name: "Update available" });
@@ -105,7 +105,7 @@ describe("TopBar update button", () => {
       return { ok: true, status: 200, json: async () => ({}) };
     });
     vi.stubGlobal("fetch", fetchMock);
-    render(<TopBar />);
+    render(<UpdateButton placement="sidebar" />);
     fireEvent.click(await screen.findByRole("button", { name: /update available/i }));
     await screen.findByRole("dialog");
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -124,7 +124,7 @@ describe("TopBar update button", () => {
       notes: null,
       published_at: null,
     });
-    render(<TopBar />);
+    render(<UpdateButton placement="sidebar" />);
     const button = await screen.findByRole("button", { name: /update available/i });
 
     fireEvent.click(button);
@@ -152,9 +152,9 @@ describe("TopBar update button", () => {
       notes: null,
       published_at: null,
     });
-    render(<TopBar />);
-    // The restart button always renders; the update button must not.
-    await waitFor(() => expect(screen.getByRole("button", { name: "Restart" })).toBeTruthy());
+    render(<UpdateButton placement="sidebar" />);
+    // The sidebar keeps a quiet update icon at all times; it must not offer an update.
+    await waitFor(() => expect(fetch).toHaveBeenCalled());
     expect(screen.queryByText("Update available")).toBeNull();
   });
 
@@ -167,8 +167,8 @@ describe("TopBar update button", () => {
       notes: null,
       published_at: null,
     });
-    render(<TopBar />);
-    await waitFor(() => expect(screen.getByRole("button", { name: "Restart" })).toBeTruthy());
+    render(<UpdateButton placement="sidebar" />);
+    await waitFor(() => expect(fetch).toHaveBeenCalled());
     expect(screen.queryByText("Update available")).toBeNull();
   });
 
@@ -202,7 +202,7 @@ describe("TopBar update button", () => {
       }),
     );
 
-    render(<TopBar />);
+    render(<UpdateButton placement="sidebar" />);
     await openAndInstall();
 
     await waitFor(() => {
@@ -250,7 +250,7 @@ describe("TopBar update button", () => {
       }),
     );
 
-    render(<TopBar />);
+    render(<UpdateButton placement="sidebar" />);
     await openAndInstall();
 
     // Three restart attempts with a retry pause happen before the verdict.
@@ -281,7 +281,7 @@ describe("TopBar update button", () => {
       published_at: null,
       pending_update: { version: "1.0.12", target_revision: "b".repeat(40) },
     });
-    render(<TopBar />);
+    render(<UpdateButton placement="sidebar" />);
     const button = await screen.findByRole("button", { name: /finish update/i });
     expect(button.getAttribute("aria-label")).toContain("v1.0.12");
     fireEvent.click(button);
@@ -299,7 +299,7 @@ describe("TopBar update button", () => {
       published_at: null,
       last_result: { ok: false, rolled_back: true, completed_at: 123 },
     });
-    render(<TopBar />);
+    render(<UpdateButton placement="sidebar" />);
     await waitFor(() => {
       expect(
         useEventStore
@@ -344,7 +344,7 @@ describe("TopBar update button", () => {
       }),
     );
 
-    render(<TopBar />);
+    render(<UpdateButton placement="sidebar" />);
     await openAndInstall();
 
     await waitFor(() => {
@@ -390,7 +390,7 @@ describe("TopBar update button", () => {
       }),
     );
 
-    render(<TopBar />);
+    render(<UpdateButton placement="sidebar" />);
     await openAndInstall();
 
     await waitFor(() => expect(screen.getByText("Restarting…")).toBeTruthy());
@@ -439,7 +439,7 @@ describe("TopBar update button", () => {
       }),
     );
 
-    render(<TopBar />);
+    render(<UpdateButton placement="sidebar" />);
     await openAndInstall();
 
     await waitFor(() =>
@@ -488,7 +488,7 @@ describe("TopBar update button", () => {
       }),
     );
 
-    render(<TopBar />);
+    render(<UpdateButton placement="sidebar" />);
     await openAndInstall();
 
     await waitFor(() =>
