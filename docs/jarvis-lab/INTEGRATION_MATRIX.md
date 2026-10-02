@@ -121,13 +121,23 @@ would create two sources of truth without evidence of better recall.
 Future entity links or embeddings remain optional and local-first, with FTS and
 the current deterministic ranker as dependency-free fallbacks.
 
-### D. Local voice/fast commands — queued
+### D. Local voice/fast commands — phase one implemented
 
-After desktop control is qualified, profile wake -> route -> local command
-latency. Commands that can be answered deterministically should not pay an LLM
-round trip. Keep STT language, reply language and interface language as separate
-settings. Italian UI is handled as its own source package; runtime reply/wake
-support must be expanded only through the backend source-of-truth lists.
+The existing pre-LLM `VoiceCommandGate` remains the single deterministic
+meta-command router. JARVIS-LAB now extends that gate with narrow Italian
+utterances for provider/sub-agent switching, cancellation, thinking-depth
+overrides and switches toward reply languages the backend already supports.
+These commands do not pay an LLM round trip and include negative tests so
+descriptive Italian speech does not steal a normal turn.
+
+UI language, STT language, reply language and wake language remain separate
+contracts. In particular, Italian UI does **not** silently add `it` to
+`SUPPORTED_REPLY_LANGUAGES`; Italian reply/wake/STT/TTS support must be
+qualified through their own backend source-of-truth lists before being exposed.
+
+Next voice work: profile wake -> route -> acknowledgement latency, inventory
+already-local command handlers, and add only deterministic fast paths that reuse
+the existing command registry/safety boundaries.
 
 ### E. Evaluation / MacAgentBench — phase zero implemented
 
