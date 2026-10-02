@@ -1105,6 +1105,8 @@ class Terminal:
     # Runtime-only ownership of a result requested through Jarvis, never a UI field.
     delegation_result: Any = None
     delegation_probe_at: float = 0.0
+    # When a delegated stop was first seen without its answer in the transcript.
+    delegation_stopped_at: float = 0.0
     # The current process's records are kept as a fallback if the local history
     # file cannot be written. The full durable history is loaded only when its
     # UI is opened, never in the workspace-state hot path.
