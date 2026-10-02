@@ -92,6 +92,36 @@ HIDDEN_SURFACES: frozenset[str] = frozenset({"society"})
 router = APIRouter(prefix="/api/agent-chat", tags=["agent-chat"])
 
 
+class VoiceChatBody(BaseModel):
+    #: The Jarvis chat on stage; ``None`` = a blank page (the next call opens a new chat).
+    session_id: str | None = None
+
+
+class VoiceChatResponse(BaseModel):
+    session_id: str | None
+    fresh: bool
+
+
+def _voice_chat_answer(svc: AgentChatService) -> VoiceChatResponse:
+    return VoiceChatResponse(session_id=svc.voice_chat_id, fresh=svc.voice_chat_fresh)
+
+
+@router.get("/voice-chat", summary="The Jarvis chat voice calls continue")
+async def get_voice_chat(request: Request) -> VoiceChatResponse:
+    return _voice_chat_answer(_service(request))
+
+
+@router.put("/voice-chat", summary="Continue voice calls in this Jarvis chat")
+async def put_voice_chat(body: VoiceChatBody, request: Request) -> VoiceChatResponse:
+    """Bind the chat the front page shows: calls file into it and start with its history."""
+    svc = _service(request)
+    try:
+        svc.bind_voice_chat(body.session_id or None)
+    except NoSuchSession as exc:
+        raise HTTPException(status_code=404, detail="no-such-jarvis-chat") from exc
+    return _voice_chat_answer(svc)
+
+
 @router.get("/commands", summary="List chat slash commands and their availability")
 def list_chat_commands(request: Request, session_id: str | None = None) -> dict[str, Any]:
     try:

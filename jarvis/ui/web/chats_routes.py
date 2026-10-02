@@ -413,6 +413,17 @@ async def new_voice_run(request: Request) -> NewVoiceRunResponse:
         brain.seed_history([])
         cleared = True
 
+    # A fresh run is a fresh chat too: its turns must not land in the chat the
+    # previous call continued, or the new run would read as part of it.
+    try:
+        from .agent_chat_routes import _service_from_state
+
+        chat = _service_from_state(request.app.state)
+        if chat is not None:
+            chat.bind_voice_chat(None)
+    except Exception as exc:  # noqa: BLE001 — the reset itself already happened
+        log.warning("new voice run could not unbind the voice chat: %s", exc)
+
     ended = False
     pipeline = _optional_pipeline(request)
     if pipeline is not None and hasattr(pipeline, "request_voice_hangup"):

@@ -14,6 +14,7 @@ import {
   patchAgentChatSession,
   resolveAgentChatApproval,
   answerAgentChatQuestion,
+  bindVoiceChat,
   skipAgentChatQuestion,
   type QuestionAnswerInput,
   sendAgentChatMessage,
@@ -277,6 +278,20 @@ const TIMELINE_CACHE_LIMIT = 24;
 
 export function createAgentChatStore(surface: AgentChatSurface, draftNamespace = "") {
   const DRAFT_KEY = draftKey(surface) + (draftNamespace ? `:${draftNamespace}` : "");
+
+  /**
+   * Tell the backend which Jarvis chat is on stage, so a voice call continues
+   * THIS chat — its turns land here and it starts with this chat's history.
+   * `null` = a blank page: the next call opens a new chat. Only the front
+   * page's chat has a voice; the other surfaces never bind.
+   */
+  const bindVoice = (sessionId: string | null) => {
+    if (surface !== "jarvis") return;
+    void bindVoiceChat(sessionId).catch((err: unknown) => {
+      // Not fatal: the composer's voice button binds again before a call.
+      console.info("Voice chat binding failed.", err);
+    });
+  };
 
   let catalogRequest = 0;
   let socket: WebSocket | null = null;
@@ -610,6 +625,7 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
           lastError: null,
           catalog: null,
         });
+        bindVoice(null);
         void get().loadCatalog();
       },
 
@@ -626,6 +642,7 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
           busy: false,
           lastError: null,
         });
+        bindVoice(sessionId);
         void get().loadCatalog();
         connect(sessionId, 0);
       },
@@ -668,6 +685,7 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
               timeline: EMPTY_TIMELINE,
               sessions: [session, ...get().sessions],
             });
+            bindVoice(sid);
             connect(sid, 0);
           }
           await sendAgentChatMessage(sid, content, attachments, toolChoices);
