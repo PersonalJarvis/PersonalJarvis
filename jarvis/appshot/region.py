@@ -71,6 +71,11 @@ class RegionUnavailable(RuntimeError):
     """No area can be selected on this host; the message says why."""
 
 
+#: One picker at a time: a second shortcut press, the page button and the
+#: voice tool must not stack overlays (one Esc would cancel all of them).
+_picking = False
+
+
 # --------------------------------------------------------------------------
 # Pure geometry
 # --------------------------------------------------------------------------
@@ -287,14 +292,48 @@ async def pick_region(*, timeout_s: float = PICK_TIMEOUT_S) -> Selection | None:
 
     Raises :class:`RegionUnavailable` when no picker can run on this host.
     """
-    from jarvis.appshot.picker import EXIT_NO_GUI  # noqa: PLC0415
-
+    global _picking
     ok, reason = picker_capability()
     if not ok:
         raise RegionUnavailable(f"An area cannot be selected here: {reason}.")
-    hint = await asyncio.to_thread(_hint)
+    if _picking:
+        raise RegionUnavailable("An area is already being selected. Finish or press Esc first.")
+    _picking = True
     try:
-        proc = await asyncio.to_thread(_spawn, hint)
+        payload, code, timed_out = await _run_picker(timeout_s)
+    finally:
+        _picking = False
+    if payload is None and not timed_out and code not in (0, None):
+        log.warning("appshot: area picker exited with code %s and no selection", code)
+        raise RegionUnavailable(_exit_message(code))
+    selection = parse_selection(payload) if payload is not None else None
+    if selection is not None:
+        await asyncio.sleep(_SETTLE_S)
+    return selection
+
+
+def _exit_message(code: int) -> str:
+    from jarvis.appshot.picker import EXIT_NO_GUI  # noqa: PLC0415
+
+    if code == EXIT_NO_GUI:
+        return "An area cannot be selected here: the selection overlay found no usable screen."
+    return f"The selection overlay stopped unexpectedly (exit code {code}). Nothing was captured."
+
+
+async def _run_picker(timeout_s: float) -> tuple[dict[str, Any] | None, int | None, bool]:
+    """Spawn, wait for one selection, always reap. ``(payload, exit code, timed out)``."""
+    hint = await asyncio.to_thread(_hint)
+    # Shielded: a caller cancelled mid-spawn must still get the process reaped,
+    # or its overlay would cover the screens until the stdin timeout.
+    spawn = asyncio.ensure_future(asyncio.to_thread(_spawn, hint))
+    try:
+        proc = await asyncio.shield(spawn)
+    except asyncio.CancelledError:
+        with contextlib.suppress(Exception):  # a failed spawn leaves nothing to reap
+            late = await spawn
+            await asyncio.to_thread(_cancel, late)
+            await asyncio.to_thread(_reap, late)
+        raise
     except Exception as exc:  # noqa: BLE001 - surfaced to the user as unavailable
         log.warning("appshot: area picker could not be started", exc_info=True)
         raise RegionUnavailable("The selection overlay could not be started.") from exc
@@ -302,27 +341,24 @@ async def pick_region(*, timeout_s: float = PICK_TIMEOUT_S) -> Selection | None:
         _escape_cancels(proc), name="appshot-region-esc"
     )
     reader = asyncio.ensure_future(asyncio.to_thread(_read_result, proc))
+    timed_out = False
+    payload: dict[str, Any] | None = None
     try:
         try:
             payload = await asyncio.wait_for(asyncio.shield(reader), timeout=timeout_s)
         except TimeoutError:
+            timed_out = True
             await asyncio.to_thread(_cancel, proc)
-            payload = None
     finally:
         escape.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await escape
+        if payload is None and not timed_out:
+            await asyncio.to_thread(_cancel, proc)  # a cancelled caller closes the overlay
         code = await asyncio.to_thread(_reap, proc)
         with contextlib.suppress(Exception):  # EOF after the reap ends the reader
             await reader
-    if payload is None and code == EXIT_NO_GUI:
-        raise RegionUnavailable(
-            "An area cannot be selected here: the selection overlay found no usable screen."
-        )
-    selection = parse_selection(payload) if payload is not None else None
-    if selection is not None:
-        await asyncio.sleep(_SETTLE_S)
-    return selection
+    return payload, code, timed_out
 
 
 __all__ = [

@@ -387,3 +387,96 @@ def test_one_key_for_both_shortcuts_is_refused_before_writing(client, monkeypatc
     assert response.status_code == 400
     assert "two different shortcuts" in response.json()["detail"]
     assert writes == []
+
+
+# ----------------------------------------------------------- picker outcomes
+
+
+@pytest.fixture
+def picker_host(monkeypatch):
+    monkeypatch.setattr(region, "picker_capability", lambda: (True, ""))
+    monkeypatch.setattr(region, "_SETTLE_S", 0.0)
+    region._picking = False
+    yield monkeypatch
+    region._picking = False
+
+
+def _runs(monkeypatch, outcome) -> None:
+    async def run_picker(_timeout_s):
+        return outcome
+
+    monkeypatch.setattr(region, "_run_picker", run_picker)
+
+
+async def test_a_crashed_picker_is_reported_not_taken_for_a_cancel(picker_host) -> None:
+    _runs(picker_host, (None, 1, False))
+    with pytest.raises(region.RegionUnavailable, match="stopped unexpectedly"):
+        await region.pick_region()
+
+
+async def test_a_picker_without_a_screen_says_so(picker_host) -> None:
+    from jarvis.appshot.picker import EXIT_NO_GUI
+
+    _runs(picker_host, (None, EXIT_NO_GUI, False))
+    with pytest.raises(region.RegionUnavailable, match="no usable screen"):
+        await region.pick_region()
+
+
+@pytest.mark.parametrize("outcome", [(None, 0, False), (None, 1, True)])
+async def test_a_clean_exit_or_a_timeout_is_a_quiet_cancel(picker_host, outcome) -> None:
+    _runs(picker_host, outcome)
+    assert await region.pick_region() is None
+
+
+async def test_a_second_picker_is_refused_while_one_is_open(picker_host) -> None:
+    import asyncio
+
+    release = asyncio.Event()
+
+    async def run_picker(_timeout_s):
+        await release.wait()
+        return (None, 0, False)
+
+    picker_host.setattr(region, "_run_picker", run_picker)
+    first = asyncio.create_task(region.pick_region())
+    await asyncio.sleep(0)
+    with pytest.raises(region.RegionUnavailable, match="already being selected"):
+        await region.pick_region()
+    release.set()
+    assert await first is None
+    assert region._picking is False, "the gate opens again after the first pick"
+
+
+async def test_overlapping_reloads_leave_exactly_one_listener(monkeypatch) -> None:
+    import asyncio
+
+    import jarvis.appshot.hotkey as hotkey_module
+    import jarvis.core.config as config_module
+    import jarvis.core.instance as instance_module
+    import jarvis.platform.probes as probes
+
+    class Cfg:
+        class appshot:  # noqa: N801
+            hotkey = "ctrl+alt+a"
+            region_hotkey = "alt+win+a"
+
+    monkeypatch.setattr(config_module, "load_config", lambda: Cfg)
+    monkeypatch.setattr(instance_module, "current_instance", lambda: _Instance())
+    monkeypatch.setattr(probes, "has_hotkey", lambda: True)
+    running: list[int] = []
+
+    async def run_combos(self, combos):
+        running.append(1)
+        try:
+            await asyncio.Event().wait()
+        finally:
+            running.pop()
+
+    monkeypatch.setattr(hotkey_module.AppshotShortcut, "_run_combos", run_combos)
+    shortcut = AppshotShortcut(bus=object())
+    await asyncio.gather(shortcut.reload(), shortcut.reload(), shortcut.reload())
+    await asyncio.sleep(0)
+    assert len(running) == 1
+    await shortcut.stop()
+    await asyncio.sleep(0)
+    assert running == []

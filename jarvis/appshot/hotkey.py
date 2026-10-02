@@ -68,6 +68,9 @@ class AppshotShortcut:
         not_started = ShortcutStatus(hotkey="", armed=False, detail="Not started yet.")
         self._statuses: dict[str, ShortcutStatus] = dict.fromkeys(SCOPE_KEYS, not_started)
         self._subscribed = False
+        # The settings route and the ConfigReloaded subscriber can both reload
+        # for one write; unserialized, the loser's listener would be orphaned.
+        self._reload_lock = asyncio.Lock()
 
     @property
     def status(self) -> ShortcutStatus:
@@ -84,6 +87,10 @@ class AppshotShortcut:
 
     async def reload(self) -> ShortcutStatus:
         """Re-read both shortcuts and re-arm. Never raises."""
+        async with self._reload_lock:
+            return await self._reload()
+
+    async def _reload(self) -> ShortcutStatus:
         await self.stop()
         try:
             from jarvis.core.config import load_config  # noqa: PLC0415
@@ -118,6 +125,7 @@ class AppshotShortcut:
                 )
         except Exception as exc:  # noqa: BLE001 - a bad shortcut must not break boot
             log.warning("appshot: shortcut could not be armed", exc_info=True)
+            await self.stop()  # never leave half of a failed arming running
             failed = ShortcutStatus(
                 hotkey="",
                 armed=False,
