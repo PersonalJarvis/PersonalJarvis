@@ -59,6 +59,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from jarvis.cu.actuate import HumanInputTakeover
 from jarvis.core.events import (
     ActionPlanned,
     AnnouncementRequested,
@@ -1085,6 +1086,73 @@ async def _await_human_handoff_clearance(
                 "[cu] step %d: human-handoff screen cleared -- resuming", step_idx
             )
             return "cleared"
+    return "timeout"
+
+
+async def _await_physical_input_clearance(
+    ctx: ComputerUseContext,
+    task_prompt: str,
+    step_idx: int,
+    cancel_token: CancelToken | None,
+    *,
+    detail: str,
+) -> str:
+    """Yield macOS input ownership to the user and resume only when HID is idle.
+
+    The probe reads Quartz's HID hardware state only; it installs no listeners,
+    posts no events and never treats Jarvis synthetic events as user activity.
+    An unreadable/raising probe stays blocked (fail closed) until the user
+    cancels or the existing human-handoff wait budget expires.
+    """
+    if ctx.bus is not None:
+        from jarvis.voice.action_phrases import (  # noqa: PLC0415
+            action_phrase,
+            resolve_phrase_language,
+        )
+        lang = resolve_phrase_language(None, task_prompt)
+        _publish_announcement_nonblocking(
+            ctx.bus,
+            AnnouncementRequested(
+                text=action_phrase("cu_physical_takeover", lang),
+                priority="normal",
+                language=lang,
+                kind="info",
+            ),
+        )
+
+    log.info(
+        "[cu] step %d: physical user takeover -- yielding input (%s)",
+        step_idx,
+        detail,
+    )
+    from jarvis.cu import human_activity  # noqa: PLC0415
+
+    deadline = time.monotonic() + _HANDOFF_WAIT_TIMEOUT_S
+    last_detail = detail
+    while time.monotonic() < deadline:
+        if cancel_token is not None and cancel_token.is_cancelled():
+            return "cancelled"
+        await asyncio.sleep(_HANDOFF_POLL_S)
+        try:
+            allowed, probe_detail = await asyncio.to_thread(
+                human_activity.human_input_allows_automation
+            )
+        except Exception as exc:  # noqa: BLE001 - unknown ownership must stay blocked
+            allowed = False
+            probe_detail = f"physical-input probe failed: {type(exc).__name__}"
+        last_detail = str(probe_detail or last_detail)
+        if allowed:
+            log.info(
+                "[cu] step %d: physical input idle -- resuming Computer-Use",
+                step_idx,
+            )
+            return "cleared"
+
+    log.warning(
+        "[cu] step %d: physical takeover did not clear before timeout (%s)",
+        step_idx,
+        last_detail,
+    )
     return "timeout"
 
 
@@ -3182,6 +3250,15 @@ async def _refine_click_point(
     return (True, ax, ay)
 
 
+def _raise_for_human_takeover_result(result: Any) -> None:
+    """Turn only the structured takeover outcome back into control flow."""
+    from jarvis.cu.actuate import human_takeover_detail  # noqa: PLC0415
+
+    detail = human_takeover_detail(result)
+    if detail is not None:
+        raise HumanInputTakeover(detail)
+
+
 async def _dispatch_raw_click(
     executor: Any, tool: Any, x: int, y: int, trace_id: Any,
     *, button: str = "left", double: bool = False,
@@ -3203,6 +3280,7 @@ async def _dispatch_raw_click(
         raise
     except Exception as exc:  # noqa: BLE001
         return False, f"click crash: {type(exc).__name__}: {exc}"
+    _raise_for_human_takeover_result(res)
     return (
         bool(getattr(res, "success", False)),
         str(getattr(res, "output", "") or getattr(res, "error", "") or ""),
@@ -3529,7 +3607,7 @@ async def _execute_action(
             hotkey_tool = tools.get("hotkey")
             if hotkey_tool is not None:
                 try:
-                    await asyncio.wait_for(
+                    clear_res = await asyncio.wait_for(
                         executor.execute(
                             hotkey_tool, {"keys": ["ctrl", "a"]},
                             user_utterance="computer-use", trace_id=trace_id,
@@ -3540,6 +3618,7 @@ async def _execute_action(
                     raise
                 except Exception as exc:  # noqa: BLE001
                     return False, f"clear-before-type crash: {type(exc).__name__}: {exc}"
+                _raise_for_human_takeover_result(clear_res)
         # Let a freshly-focused input settle before typing (anti leading-char
         # drop on webview/Tauri terminals; CU typo bug 2026-06-15).
         await asyncio.sleep(_scaled_settle(_PRE_TYPE_SETTLE_S, ctx))
@@ -3555,6 +3634,7 @@ async def _execute_action(
             raise
         except Exception as exc:  # noqa: BLE001
             return False, f"type crash: {type(exc).__name__}: {exc}"
+        _raise_for_human_takeover_result(res)
         success = bool(getattr(res, "success", False))
         output = str(getattr(res, "output", "") or getattr(res, "error", "") or "")
         # Read-back verification (claude-in-chrome parity): a dispatched type that
@@ -3602,6 +3682,7 @@ async def _execute_action(
             raise
         except Exception as exc:  # noqa: BLE001
             return False, f"key crash: {type(exc).__name__}: {exc}"
+        _raise_for_human_takeover_result(res)
         return (
             bool(getattr(res, "success", False)),
             str(getattr(res, "output", "") or getattr(res, "error", "") or ""),
@@ -3624,6 +3705,7 @@ async def _execute_action(
             raise
         except Exception as exc:  # noqa: BLE001
             return False, f"click_element crash: {type(exc).__name__}: {exc}"
+        _raise_for_human_takeover_result(res)
         success = bool(getattr(res, "success", False))
         output = str(getattr(res, "output", "") or getattr(res, "error", "") or "")
         # Post-click state check (audit #1B): re-read the tree and CONFIRM the
@@ -3677,6 +3759,7 @@ async def _execute_action(
             raise
         except Exception as exc:  # noqa: BLE001
             return False, f"scroll crash: {type(exc).__name__}: {exc}"
+        _raise_for_human_takeover_result(res)
         return (
             bool(getattr(res, "success", False)),
             str(getattr(res, "output", "") or getattr(res, "error", "") or ""),
@@ -3711,6 +3794,7 @@ async def _execute_action(
                 raise
             except Exception as exc:  # noqa: BLE001
                 return False, f"drag crash: {type(exc).__name__}: {exc}"
+            _raise_for_human_takeover_result(res)
             return (
                 bool(getattr(res, "success", False)),
                 str(getattr(res, "output", "") or getattr(res, "error", "") or ""),
@@ -5209,6 +5293,40 @@ async def _run_screenshot_loop(
                     trace_id=observation.trace_id, user_goal=task_prompt,
                     monitor_geom=monitor_geom, observation=observation,
                 )
+            except HumanInputTakeover as exc:
+                takeover = await _await_physical_input_clearance(
+                    ctx,
+                    task_prompt,
+                    step_idx,
+                    cancel_token,
+                    detail=str(exc),
+                )
+                await _profile_phase(
+                    ctx, phase="act", step_idx=step_idx, t0=t_act, acc=phase_ms,
+                )
+                if takeover == "cleared":
+                    consecutive_failures = 0
+                    history.append(
+                        f"{tag}: physical user takeover cleared; re-observe before acting"
+                    )
+                    yield _progress(
+                        f"[cu] {tag}: user takeover cleared -- re-observing"
+                    )
+                    break
+                if takeover == "cancelled":
+                    yield _final(
+                        stderr="[cu] cancelled while yielding input to the user\n",
+                        exit_code=_CANCEL_EXIT_CODE,
+                    )
+                    return
+                yield _final(
+                    stderr=(
+                        "[cu] paused for physical user input but ownership did not "
+                        f"return within {_HANDOFF_WAIT_TIMEOUT_S:.0f}s\n"
+                    ),
+                    exit_code=_FAIL_EXIT_CODE,
+                )
+                return
             except TimeoutError:
                 yield _final(
                     stderr=f"[cu] action timeout at {tag}\n",

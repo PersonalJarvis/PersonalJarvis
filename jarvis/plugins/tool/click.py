@@ -203,7 +203,9 @@ class ClickTool:
 
         from jarvis.cu.actuate import (
             ActuationUnavailable,
+            HumanInputTakeover,
             get_actuator,
+            human_takeover_tool_result,
             verified_click,
         )
 
@@ -229,6 +231,8 @@ class ClickTool:
                     f"at ({x},{y})"
                 ),
             )
+        except HumanInputTakeover as exc:
+            return human_takeover_tool_result(exc)
         except ActuationUnavailable as exc:
             return ToolResult(success=False, output=None, error=str(exc))
         except Exception as exc:  # noqa: BLE001

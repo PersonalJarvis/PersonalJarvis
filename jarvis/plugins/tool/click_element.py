@@ -244,18 +244,16 @@ class ClickElementTool:
         # Check immediately before any semantic OR pointer action so right/
         # double clicks cannot bypass the handoff guard.
         if sys.platform == "darwin":
-            from jarvis.cu.human_activity import human_input_allows_automation
+            from jarvis.cu.actuate import (  # noqa: PLC0415
+                HumanInputTakeover,
+                human_takeover_tool_result,
+                require_human_input_clear,
+            )
 
-            allowed, detail = await asyncio.to_thread(human_input_allows_automation)
-            if not allowed:
-                return ToolResult(
-                    success=False,
-                    output=None,
-                    error=(
-                        "Pausing click_element because recent physical mouse or "
-                        f"keyboard activity was detected ({detail})."
-                    ),
-                )
+            try:
+                await asyncio.to_thread(require_human_input_clear)
+            except HumanInputTakeover as exc:
+                return human_takeover_tool_result(exc)
 
         # 5. Accessibility-first on macOS. AXPress acts on the semantic control,
         # not on pixels. Editable controls often expose no AXPress, so AXFocused
@@ -327,14 +325,18 @@ class ClickElementTool:
                     error=f"Click on '{matched.name}' at ({cx},{cy}) failed: {exc}",
                 )
         else:
-            from jarvis.cu.actuate.base import (
+            from jarvis.cu.actuate import (
                 ActuationUnavailable,
+                HumanInputTakeover,
                 get_actuator,
+                human_takeover_tool_result,
                 verified_click,
             )
 
             try:
                 actuator = get_actuator()
+            except HumanInputTakeover as exc:
+                return human_takeover_tool_result(exc)
             except ActuationUnavailable as exc:
                 return ToolResult(success=False, output=None, error=str(exc))
             try:
@@ -353,6 +355,8 @@ class ClickElementTool:
                     return ToolResult(
                         success=False, output=None, error=landing.detail,
                     )
+            except HumanInputTakeover as exc:
+                return human_takeover_tool_result(exc)
             except Exception as exc:  # noqa: BLE001
                 return ToolResult(success=False, output=None, error=str(exc))
 

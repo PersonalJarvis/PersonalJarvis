@@ -238,6 +238,14 @@ _PHRASES: dict[str, dict[str, str]] = {
         "es": "Este paso te necesita, inicia sesión o completa la "
               "verificación y continúo.",
     },
+    "cu_physical_takeover": {
+        "de": "Du benutzt gerade Maus oder Tastatur. Ich gebe dir die Kontrolle "  # i18n-allow
+              "und mache weiter, sobald du fertig bist.",  # i18n-allow
+        "en": "You're using the mouse or keyboard. I'll yield control and "
+              "continue when you're done.",
+        "es": "Estás usando el ratón o el teclado. Te cedo el control y "
+              "continuaré cuando termines.",
+    },
     # Cost / budget guards on the computer-use branch.
     "cost_cooldown": {
         "de": "Cost-Cooldown aktiv, das Tagesbudget ist erschoepft. "  # i18n-allow

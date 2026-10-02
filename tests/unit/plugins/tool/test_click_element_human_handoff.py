@@ -75,4 +75,5 @@ async def test_recent_hardware_input_stops_before_any_action(
     )
 
     assert result.success is False
-    assert "recent physical" in (result.error or "")
+    assert result.output["outcome"] == "human_takeover"
+    assert "physical input 0.020s ago" in (result.error or "")

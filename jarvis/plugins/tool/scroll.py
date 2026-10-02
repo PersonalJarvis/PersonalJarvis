@@ -226,7 +226,11 @@ class ScrollTool:
                     error=f"Scroll {direction} by {amount} failed: {exc}",
                 )
 
-        from jarvis.cu.actuate import ActuationUnavailable
+        from jarvis.cu.actuate import (
+            ActuationUnavailable,
+            HumanInputTakeover,
+            human_takeover_tool_result,
+        )
 
         try:
             await asyncio.to_thread(
@@ -241,6 +245,8 @@ class ScrollTool:
                 success=True,
                 output=f"Scrolled {direction} by {amount}",
             )
+        except HumanInputTakeover as exc:
+            return human_takeover_tool_result(exc)
         except ActuationUnavailable as exc:
             return ToolResult(success=False, output=None, error=str(exc))
         except Exception as exc:  # noqa: BLE001

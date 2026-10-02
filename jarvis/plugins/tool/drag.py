@@ -106,7 +106,11 @@ class DragTool:
                 success=False, output=None,
                 error="drag 'duration_ms' must be a number of milliseconds",
             )
-        from jarvis.cu.actuate import ActuationUnavailable  # noqa: PLC0415
+        from jarvis.cu.actuate import (  # noqa: PLC0415
+            ActuationUnavailable,
+            HumanInputTakeover,
+            human_takeover_tool_result,
+        )
 
         expected_raw = args.get("_expected_window_signature")
         if expected_raw is not None and not isinstance(expected_raw, (list, tuple)):
@@ -141,6 +145,8 @@ class DragTool:
                     duration_s,
                     expected_window_signature=expected_signature,
                 )
+        except HumanInputTakeover as exc:
+            return human_takeover_tool_result(exc)
         except ActuationUnavailable as exc:
             return ToolResult(success=False, output=None, error=str(exc))
         except ImportError as exc:

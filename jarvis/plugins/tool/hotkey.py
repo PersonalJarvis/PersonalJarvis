@@ -163,7 +163,12 @@ class HotkeyTool:
                     error=f"Hotkey '{'+'.join(keys_str)}' failed: {exc}",
                 )
 
-        from jarvis.cu.actuate import ActuationUnavailable, get_actuator
+        from jarvis.cu.actuate import (
+            ActuationUnavailable,
+            HumanInputTakeover,
+            get_actuator,
+            human_takeover_tool_result,
+        )
 
         try:
             actuator = get_actuator()
@@ -177,6 +182,8 @@ class HotkeyTool:
                 success=True,
                 output=f"Hotkey sent ({actuator.name}): {'+'.join(keys_str)}",
             )
+        except HumanInputTakeover as exc:
+            return human_takeover_tool_result(exc)
         except ActuationUnavailable as exc:
             return ToolResult(success=False, output=None, error=str(exc))
         except _ForegroundTargetChanged as exc:

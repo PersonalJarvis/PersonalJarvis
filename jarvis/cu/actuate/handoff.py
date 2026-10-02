@@ -16,6 +16,7 @@ import sys
 import time
 from typing import Any
 
+from jarvis.core.protocols import ToolResult
 from jarvis.cu.actuate.base import (
     LANDING_TOLERANCE,
     ActuationUnavailable,
@@ -25,10 +26,35 @@ from jarvis.cu.human_activity import human_input_allows_automation
 
 # Upper bound between ownership checks during deliberately slow typing/dragging.
 TAKEOVER_POLL_INTERVAL_S = 0.10
+HUMAN_TAKEOVER_OUTCOME = "human_takeover"
 
 
 class HumanInputTakeover(ActuationUnavailable):
     """Physical user input is active, or macOS ownership cannot be proven."""
+
+
+def human_takeover_tool_result(exc: BaseException | str) -> ToolResult:
+    """Preserve takeover as a structured tool outcome across ToolExecutor."""
+    detail = str(exc).strip() or "physical input belongs to the user"
+    return ToolResult(
+        success=False,
+        output={"outcome": HUMAN_TAKEOVER_OUTCOME, "detail": detail},
+        error=detail,
+    )
+
+
+def human_takeover_detail(result: Any) -> str | None:
+    """Return takeover detail from a structured tool result, else None."""
+    if bool(getattr(result, "success", False)):
+        return None
+    output = getattr(result, "output", None)
+    if not isinstance(output, dict):
+        return None
+    if output.get("outcome") != HUMAN_TAKEOVER_OUTCOME:
+        return None
+    return str(output.get("detail") or getattr(result, "error", "") or "").strip() or (
+        "physical input belongs to the user"
+    )
 
 
 def require_human_input_clear() -> None:
@@ -241,9 +267,12 @@ def guard_actuator(actuator: Actuator) -> Actuator:
 
 
 __all__ = [
+    "HUMAN_TAKEOVER_OUTCOME",
     "HumanInputTakeover",
     "HumanTakeoverActuator",
     "TAKEOVER_POLL_INTERVAL_S",
+    "human_takeover_detail",
+    "human_takeover_tool_result",
     "guard_actuator",
     "require_human_input_clear",
 ]

@@ -28,8 +28,11 @@ from jarvis.cu.actuate.base import (
     verified_move,
 )
 from jarvis.cu.actuate.handoff import (
+    HUMAN_TAKEOVER_OUTCOME,
     HumanInputTakeover,
     guard_actuator,
+    human_takeover_detail,
+    human_takeover_tool_result,
     require_human_input_clear,
 )
 
@@ -49,9 +52,12 @@ __all__ = [
     "ActResult",
     "ActuationUnavailable",
     "Actuator",
+    "HUMAN_TAKEOVER_OUTCOME",
     "HumanInputTakeover",
     "LANDING_TOLERANCE",
     "get_actuator",
+    "human_takeover_detail",
+    "human_takeover_tool_result",
     "require_human_input_clear",
     "verified_click",
     "verified_drag",
