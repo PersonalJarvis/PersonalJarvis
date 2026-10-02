@@ -1,8 +1,4 @@
-<<<<<<<< HEAD:jarvis/ui/web/dist/assets/useWebglSurface-BJnWjkQT.js
-import{r as Dr}from"./index-ByrScf2k.js";import{r as tp}from"./graphDimension-dGvwtQd7.js";/**
-========
 /**
->>>>>>>> origin/main:jarvis/ui/web/dist/assets/three.module-_ApSbMXD.js
  * @license
  * Copyright 2010-2026 Three.js Authors
  * SPDX-License-Identifier: MIT
