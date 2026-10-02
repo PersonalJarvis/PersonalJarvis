@@ -157,3 +157,32 @@ The scheduled pass is intentionally limited to the platform-supported maximum ca
   runtime work has shipped.
 - The docs-only commit did not start a workflow run under the repository's
   path filters. Its edit passed `git diff --check` before publication.
+
+
+## Remote validation: room lifecycle and browser containment
+
+- Commit `fa3b4f65` gives each room a UUID-backed ID, removing collisions for
+  identical member lists opened within the same millisecond. Its full run
+  `37043546886` exposed a separate Windows ARM browser pointer-test timeout.
+- Commit `567a24bf` makes room failure terminal and idempotent, and publishes
+  `ROOM_SETTLE` with `failed: true` so the world feed can close the room.
+  Run `37045348583` exposed a Windows ARM worker-recovery leak: Chrome remained
+  alive after the worker exited.
+- Commit `ec4e5a0c` keeps Chromium descendants in the browser worker's
+  kill-on-close Job Object, while preserving the existing breakaway default for
+  other process trees. The focused Job Object flag test covers both policies.
+  GitHub Actions run `37047729974` completed with **47 successful jobs, 3
+  skipped jobs, and no failures**, including Windows ARM browser recovery and
+  the room unit suite.
+- Local Python compilation and a two-case Job Object flag simulation passed.
+  This scratch environment has no pytest or Ruff; the full tests and static
+  gates are validated by the successful GitHub run above.
+
+## Next unblocked society work
+
+- M4 room scheduling remains open. `SocietyScheduler.on_envelope()` still
+  handles assignments and results, not room-open or room-speech events. The
+  next implementation must keep turns serial, resume safely after restart,
+  bound each turn, and pass through the existing scheduler safety, budget, and
+  kill-switch controls. Do not mark M4 shipped until that flow is implemented
+  and tested.
