@@ -58,6 +58,20 @@ def _pipeline_input_held() -> bool:
     return bool(getattr(get_speech_pipeline(), "is_voice_input_held", False))
 
 
+def _pipeline_input_muted() -> bool:
+    """Jarvis's microphone mute. The speech pipeline is its only writer."""
+    from jarvis.core.runtime_refs import get_speech_pipeline
+
+    return bool(getattr(get_speech_pipeline(), "is_muted", False))
+
+
+def _pipeline_input_held() -> bool:
+    """Whether a dictation beside the call holds the user's audio back."""
+    from jarvis.core.runtime_refs import get_speech_pipeline
+
+    return bool(getattr(get_speech_pipeline(), "is_voice_input_held", False))
+
+
 def _summary_index(event: dict) -> int:
     """The summary part a reasoning-summary event belongs to (0 when absent)."""
     try:
