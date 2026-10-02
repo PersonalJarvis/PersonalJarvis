@@ -20,7 +20,7 @@ export type AgentSearchResponse =
 
 // Absolute relevance matters: even the nearest neighbour can be unrelated.
 // Calibrated with multilingual paraphrases and unrelated queries, not a top-k.
-export const MIN_AGENT_SIMILARITY = 0.3;
+export const MIN_AGENT_SIMILARITY = 0.29;
 export const AGENT_SEARCH_MODEL = "Xenova/paraphrase-multilingual-MiniLM-L12-v2";
 export const AGENT_SEARCH_REVISION = "2c4055b12046f11709e9df2c122e59ffbdc2f900";
 

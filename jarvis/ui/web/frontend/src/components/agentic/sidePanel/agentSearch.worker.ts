@@ -1,4 +1,7 @@
-import { env, pipeline, type FeatureExtractionPipeline } from "@huggingface/transformers";
+import { env } from "onnxruntime-web/wasm";
+import wasmUrl from "onnxruntime-web/ort-wasm-simd-threaded.wasm?url";
+import wasmModuleUrl from "onnxruntime-web/ort-wasm-simd-threaded.mjs?url";
+import { createAgentEncoder, type AgentEncoder } from "./agentSearchEncoder";
 import {
   AGENT_SEARCH_MODEL,
   AGENT_SEARCH_REVISION,
@@ -11,11 +14,9 @@ import {
 // Download public model assets only. Terminal text never leaves this worker.
 // One CPU thread and a serial queue keep inference off the UI and avoid sharing
 // a native session concurrently (AP-24). Terminating the worker releases it.
-env.allowLocalModels = false;
-env.backends.onnx.wasm!.numThreads = 1;
-env.backends.onnx.wasm!.proxy = false;
+env.wasm.wasmPaths = { wasm: wasmUrl, mjs: wasmModuleUrl };
 
-let extractor: FeatureExtractionPipeline | null = null;
+let extractor: AgentEncoder | null = null;
 let latestId = 0;
 let pending: Extract<AgentSearchRequest, { type: "search" }> | null = null;
 let running = false;
@@ -29,11 +30,31 @@ function send(message: AgentSearchResponse): void {
 async function embed(text: string): Promise<number[]> {
   const cached = vectors.get(text);
   if (cached) return cached;
-  const output = await extractor!(text, { pooling: "mean", normalize: true });
-  const vector = Array.from(output.data, Number);
+  const vector = await extractor!.embed(text);
   if (vectors.size >= MAX_CACHED_TEXTS) vectors.delete(vectors.keys().next().value!);
   vectors.set(text, vector);
   return vector;
+}
+
+async function loadAsset(file: string): Promise<Uint8Array> {
+  const url = `https://huggingface.co/${AGENT_SEARCH_MODEL}/resolve/${AGENT_SEARCH_REVISION}/${file}`;
+  let cache: Cache | undefined;
+  try {
+    cache = await caches.open("jarvis-terminal-search-v1");
+    const cached = await cache.match(url);
+    if (cached) return new Uint8Array(await cached.arrayBuffer());
+  } catch {
+    // CacheStorage can be unavailable in restricted WebViews. Search still
+    // works online; this warning contains no task text or response body.
+    console.warn("Terminal search model cache is unavailable");
+  }
+  const response = await fetch(url, { credentials: "omit", referrerPolicy: "no-referrer" });
+  if (!response.ok) throw new Error("Search model download failed");
+  if (cache) {
+    try { await cache.put(url, response.clone()); }
+    catch { console.warn("Terminal search model could not be cached"); }
+  }
+  return new Uint8Array(await response.arrayBuffer());
 }
 
 async function drain(): Promise<void> {
@@ -46,11 +67,7 @@ async function drain(): Promise<void> {
       try {
         if (!extractor) {
           send({ type: "loading", id: request.id });
-          extractor = await pipeline("feature-extraction", AGENT_SEARCH_MODEL, {
-            revision: AGENT_SEARCH_REVISION,
-            dtype: "q8",
-            device: "wasm",
-          });
+          extractor = await createAgentEncoder(loadAsset);
         }
         if (request.id !== latestId) continue;
         send({ type: "searching", id: request.id });

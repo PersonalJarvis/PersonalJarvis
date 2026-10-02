@@ -2,15 +2,23 @@
 // weights once, then runs on one CPU thread with synthetic terminal tasks.
 // Run from the frontend directory: node scripts/check-agent-search.mjs
 import assert from "node:assert/strict";
-import { env, pipeline } from "@huggingface/transformers";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { createAgentEncoder } from "../src/components/agentic/sidePanel/agentSearchEncoder.ts";
 import { AGENT_SEARCH_MODEL, AGENT_SEARCH_REVISION, cosineSimilarity, relevantAgentMatches } from "../src/components/agentic/sidePanel/agentSearch.ts";
 
-env.allowLocalModels = false;
-const extractor = await pipeline("feature-extraction", AGENT_SEARCH_MODEL, {
-  revision: AGENT_SEARCH_REVISION,
-  dtype: "q8",
-  device: "cpu",
-  session_options: { intraOpNumThreads: 1, interOpNumThreads: 1 },
+const cache = join(tmpdir(), "jarvis-search-model", AGENT_SEARCH_REVISION);
+await mkdir(cache, { recursive: true });
+const extractor = await createAgentEncoder(async (file) => {
+  const path = join(cache, file.replaceAll("/", "_"));
+  try { return new Uint8Array(await readFile(path)); }
+  catch (error) { if (error.code !== "ENOENT") throw error; }
+  const response = await fetch(`https://huggingface.co/${AGENT_SEARCH_MODEL}/resolve/${AGENT_SEARCH_REVISION}/${file}`);
+  assert.equal(response.ok, true, "Public model download failed");
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  await writeFile(path, bytes);
+  return bytes;
 });
 const tasks = [
   ["auth", "Repair plugin OAuth token refresh and reconnect after the login expires."],
@@ -44,7 +52,7 @@ try {
   const failures = [];
   const cache = new Map();
   const embed = async (text) => {
-    if (!cache.has(text)) cache.set(text, Array.from((await extractor(text, { pooling: "mean", normalize: true })).data));
+    if (!cache.has(text)) cache.set(text, await extractor.embed(text));
     return cache.get(text);
   };
   for (const [query, expected] of examples) {
