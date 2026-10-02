@@ -97,7 +97,7 @@ def requirements_file() -> Path:
 def requirements_sha256() -> str:
     try:
         return hashlib.sha256(requirements_file().read_bytes()).hexdigest()
-    except OSError:
+    except OSError:  # no file means no fingerprint yet
         return ""
 
 
@@ -110,7 +110,7 @@ def engine_version() -> str:
 def _read_json(path: Path) -> dict[str, Any]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, ValueError):  # a missing or broken record reads as empty
         return {}
     return data if isinstance(data, dict) else {}
 
@@ -525,7 +525,7 @@ async def run_engine_selftest(engine: Any, *, home: Path, settings: Any) -> dict
                       "reason": engine.reason or "The local voice did not finish loading."}
         else:
             report = await engine.selftest()
-    except (OSError, RuntimeError, TimeoutError) as exc:
+    except (OSError, RuntimeError, TimeoutError) as exc:  # the failure is saved as the report
         report = {"ok": False, "reason": f"The self-test could not run: {exc}"}
     save_selftest(home, report, settings)
     return report
@@ -581,7 +581,7 @@ def _visible_models(names: Iterable[str]) -> list[str]:
     """Installed tags a user picks from, without Jarvis's own derived aliases."""
     try:
         from jarvis.brain.ollama_inventory import is_hidden_alias  # noqa: PLC0415
-    except ImportError:
+    except ImportError:  # without the inventory, list every name
         return sorted(names)
     return sorted(n for n in names if not is_hidden_alias(n))
 

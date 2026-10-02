@@ -137,12 +137,12 @@ def _voice_chat_answer(svc: AgentChatService) -> VoiceChatResponse:
 
 
 @router.get("/voice-chat", summary="The Jarvis chat voice calls continue")
-async def get_voice_chat(request: Request) -> VoiceChatResponse:
+def get_voice_chat(request: Request) -> VoiceChatResponse:
     return _voice_chat_answer(_service(request))
 
 
 @router.put("/voice-chat", summary="Continue voice calls in this Jarvis chat")
-async def put_voice_chat(body: VoiceChatBody, request: Request) -> VoiceChatResponse:
+def put_voice_chat(body: VoiceChatBody, request: Request) -> VoiceChatResponse:
     """Bind the chat the front page shows: calls file into it and start with its history."""
     svc = _service(request)
     try:
