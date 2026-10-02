@@ -167,7 +167,7 @@ budget is an outage of the whole machine, not an app bug (AP-33); a macOS
 feature asks the OS at first use, from a user gesture, through
 `jarvis/platform/permission_service.py` — no preflight refuses before the OS was
 asked, nothing is asked at launch, nothing acts without a live grant, an agent
-never answers a system dialog (AP-35; `docs/macos-permissions.md`, ADR-0037).
+never answers a system dialog (AP-35; `docs/macos-permissions.md`, ADR-0038).
 Detail and history for any of them: `docs/BUGS.md`.
 
 ## 4. How work ships

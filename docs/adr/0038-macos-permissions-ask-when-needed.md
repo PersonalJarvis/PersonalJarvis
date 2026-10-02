@@ -1,4 +1,4 @@
-# ADR-0037 — macOS permissions are asked for when a feature needs them
+# ADR-0038 — macOS permissions are asked for when a feature needs them
 
 **Status:** Implemented on the branch that introduces it; **not yet exercised on a
 physical Mac**. The behaviour is proven against fake frameworks and Linux gates; the

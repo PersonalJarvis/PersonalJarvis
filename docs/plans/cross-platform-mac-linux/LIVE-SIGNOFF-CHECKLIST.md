@@ -47,7 +47,7 @@ macOS version, display arrangement, and per-display scaling in the sign-off log.
 ## 0. App identity and macOS privacy grants
 
 > Rewritten 2026-10-02 to the ask-when-needed behaviour (AP-35,
-> [ADR-0037](../../adr/0037-macos-permissions-ask-when-needed.md)): a feature asks
+> [ADR-0038](../../adr/0038-macos-permissions-ask-when-needed.md)): a feature asks
 > macOS at the moment the user first uses it, from that gesture; nothing is asked at
 > launch, in onboarding or by a banner, and the app draws nothing around macOS's dialog (its only
 > addition is one toast after a user-started use failed, UI reset 2026-10-02). The earlier rows (press each Allow button in

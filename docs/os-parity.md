@@ -824,7 +824,7 @@ ran against the real `jarvis.spec` with stand-in PyInstaller names and recorded
 usage strings.
 
 **Fix pass 2026-10-02 (macOS: permissions are asked for when a feature needs
-them, BUG-225, AP-35, ADR-0037).** Before this pass every protected macOS
+them, BUG-225, AP-35, ADR-0038).** Before this pass every protected macOS
 feature first asked `runtime_access_granted()` (stable identity AND a live
 grant) and refused when it said no, so macOS was never asked from a feature path
 and an app-wide banner, **Set up everything** and an onboarding step stood in
@@ -881,7 +881,7 @@ a grant taking effect in a running process; the rows are in
 Call/Hangup defaults are follow-ups, not shipped.
 
 **Fix pass 2026-10-02, UI reset (macOS: macOS's own dialog plus one toast,
-ADR-0037 amendment).** The first just-in-time implementation also drew a floating
+ADR-0038 amendment).** The first just-in-time implementation also drew a floating
 card, inline notes, a Shortcuts status note and a Settings > Privacy page around
 macOS's dialog. All of it is deleted. macOS shows its own dialog at first use; the
 app adds ONE short toast with ONE action only when a user-started use failed
@@ -930,7 +930,7 @@ implementations, not stubs.
 | On-demand Screen Context | One-shot capture is wired into the production brain on Windows, macOS, and Linux/X11; UIA/AX/AT-SPI text is source-filtered, the indicator precedes capture, and Wayland/headless/missing grants refuse honestly (on macOS a flat wallpaper-only frame is refused, never delivered) |
 | Appshots (front-window capture on a shortcut, button or request) | Capture, privacy and delivery are OS-neutral (Screen Context engine, `jarvis/appshot`). The both-Alt shortcut reads key state per OS: Windows `GetAsyncKeyState`, macOS `CGEventSourceKeyState` (whether this read needs the Input Monitoring grant is UNVERIFIED; the repo contradicts itself and no Mac measured it, so it is not an Input Monitoring row — see `docs/macos-permissions.md`), Linux/X11 `XQueryKeymap`; Wayland/headless report it unavailable on the Appshots page. The flash is the PySide6 overlay where one can run. Verified live on Windows only; see `docs/appshots.md` |
 | Voice / audio (capture, playback, VAD, wake, STT, TTS, realtime) | Clean; headless disables voice honestly; WASAPI logic is inert-by-data off Windows. macOS microphone: asked at the first dictation, push-to-talk, voice session, wake-word switch or mic self-test, never at launch (2026-10-02 pass) |
-| macOS privacy permissions (TCC) | One just-in-time service (`jarvis/platform/permission_service.py`, AP-35, ADR-0037): `check` is silent, `ensure` asks only from a user gesture and only from the installed app (or after a confirmation naming the grantee); Windows and Linux return NOT_REQUIRED before touching anything. The app draws nothing around macOS's dialog; after a denied user-started use it shows one toast with one action. Verified against fake frameworks and runner packaging probes only, not on a physical Mac (`docs/macos-permissions.md` section 7) |
+| macOS privacy permissions (TCC) | One just-in-time service (`jarvis/platform/permission_service.py`, AP-35, ADR-0038): `check` is silent, `ensure` asks only from a user gesture and only from the installed app (or after a confirmation naming the grantee); Windows and Linux return NOT_REQUIRED before touching anything. The app draws nothing around macOS's dialog; after a denied user-started use it shows one toast with one action. Verified against fake frameworks and runner packaging probes only, not on a physical Mac (`docs/macos-permissions.md` section 7) |
 | Core (launcher, config, keyring, restart, autostart, tray, elevation, paths) | Clean; per-OS autostart (Registry / LaunchAgent / XDG `.desktop`), keyring falls back to a 0600 file on headless hosts |
 | Data / agents (wiki, contacts, telephony, sessions, missions, skills, self-mod, channels, MCP) | Clean; mission workers run on POSIX with a real process-group reaper |
 | Agent society hands (own shell, browser via browser-use, learned skills) | Shell: local subprocess in the agent's workspace on every OS (Git Bash/PowerShell/bash/sh pick as the chat's folder tools), no container by decision. Browser: browser-use lives in a managed venv under the data dir (its pins collide with the app's), installed on demand — `uv`/`venv`, a 3.11–3.13 interpreter preferred, Chromium downloaded once; headless runs need no display, so a headless Linux box runs agents' browsers; the headed login session needs a display (409 without one is the follow-up); attach mode needs a running Chrome with `--remote-debugging-port`. Learning is pure files + the brain, OS-neutral |

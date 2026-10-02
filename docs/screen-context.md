@@ -353,7 +353,7 @@ probe itself is silent (the status route calls it too). Because a capture is
 always started by a person, a missing Screen Recording grant then goes through
 the just-in-time permission service (`screen_access.require_screen_recording_async`),
 which asks macOS once per episode; only a live grant lets the capture continue
-(ADR-0037, `docs/macos-permissions.md`).
+(ADR-0038, `docs/macos-permissions.md`).
 
 Every denial produces a message that names the exact setting to change and is
 recoverable in-app (AGENTS.md §3) — never a stack trace, never a silent no-op.

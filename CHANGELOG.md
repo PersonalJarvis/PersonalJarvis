@@ -23,6 +23,8 @@ versioning per [SemVer](https://semver.org/).
 - **Global shortcuts need only Input Monitoring on macOS.** The listen-only shortcut tap no longer also requires Accessibility, is not started at launch unless already allowed, and re-arms in place when you grant access. A restart is suggested only after real typing produced no events, never forced.
 - **macOS permissions are checked silently and read live.** Features check the grant without prompting and act only on a live "granted"; a native request's result is never treated as proof. Identity now decides only who may ask automatically and who may reset, so a terminal-launched run asks for nothing on its own and offers an explicit "Ask macOS now" confirmation in the toast.
 - **The macOS bundles carry one table of usage strings.** The camera, speech and system-administration keys and the camera entitlement, which nothing in Jarvis uses, are removed; Screen Recording, Apple events, Desktop, Documents, Downloads and volumes are described in one place for both the `.dmg` app and the managed app.
+- Scheduling lives on agent routines; the separate Automations section is retired.
+- Routines can be created, paused, resumed or test-run by voice without a second confirmation.
 
 ### Removed
 
@@ -45,14 +47,6 @@ versioning per [SemVer](https://semver.org/).
 - Onboarding: the pet walks you through the app right after setup, then offers ten first steps.
 - Routines and chat channels keep running after the app window closes.
 - Jarvis can drive the Agentic IDE by voice and open coding agents in a named workspace.
-
-### Changed
-
-- Scheduling lives on agent routines; the separate Automations section is retired.
-- Routines can be created, paused, resumed or test-run by voice without a second confirmation.
-
-### Fixed
-
 - Dictation works during a live call instead of hanging it up.
 - A new agent's first prompt in the Agentic IDE is reliably submitted.
 - Light-mode terminal panes are crisp and readable.

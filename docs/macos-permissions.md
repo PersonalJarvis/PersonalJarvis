@@ -2,8 +2,8 @@
 
 Status: implemented, **not yet exercised on a physical Mac** (section 7 is the checklist that
 closes that gap). Last reviewed: 2026-10-02, reconciled with the finished code on that date
-(AP-35 is in `AGENTS.md`, ADR-0037 and BUG-225; the legacy permission wall is deleted; the
-custom permission UI was then reduced to one toast, 4.10 and the ADR-0037 amendment). Scope:
+(AP-35 is in `AGENTS.md`, ADR-0038 and BUG-225; the legacy permission wall is deleted; the
+custom permission UI was then reduced to one toast, 4.10 and the ADR-0038 amendment). Scope:
 Personal Jarvis on macOS (the downloadable `.dmg` app and the managed source-install app).
 
 ## 1. Summary
@@ -68,7 +68,7 @@ for a gate that stops macOS from asking.
 | 2026-09-30 | `4e2570d76`, `9af34286a` | Onboarding card rebuilt: the permissions step becomes non-blocking. | Softened, still a dedicated up-front step. |
 | 2026-10-01 | `3597dbf5d` | BUG-222 / BUG-224 (details in 2.6). Adds the "wanted" flag and banner "Not now". | One wrong constant disabled the whole permission surface of the `.dmg` app. |
 | 2026-10-01 | `930f8bc9c` | Doc fix: "Telling people they must grant everything is exactly the impression that makes the permission list feel mandatory." | The repo itself notes the effect. |
-| 2026-10-02 | the UI-reset package of this branch | After the just-in-time service was in, the user judged the custom surfaces built around it ("this UI looks completely bad ... Apple already provides the permissions and its UI looks good already"): a floating card, inline notes, a Settings > Privacy page and "Enable global shortcuts" buttons. | **The last layer removed.** macOS shows its own dialog; the app adds one toast after a denial (4.10). The decision is recorded in the ADR-0037 amendment. |
+| 2026-10-02 | the UI-reset package of this branch | After the just-in-time service was in, the user judged the custom surfaces built around it ("this UI looks completely bad ... Apple already provides the permissions and its UI looks good already"): a floating card, inline notes, a Settings > Privacy page and "Enable global shortcuts" buttons. | **The last layer removed.** macOS shows its own dialog; the app adds one toast after a denial (4.10). The decision is recorded in the ADR-0038 amendment. |
 
 ### 2.3 Technically required versus grown
 
@@ -310,7 +310,7 @@ command `jarvis permissions reset` (4.16).
 ### 4.2 Principles (rule AP-35)
 
 AP-35 is the rule name used in code comments and commit messages. It is recorded in the
-`AGENTS.md` register (section 3), in `docs/adr/0037-macos-permissions-ask-when-needed.md` (the
+`AGENTS.md` register (section 3), in `docs/adr/0038-macos-permissions-ask-when-needed.md` (the
 same nine principles) and as the prevention rule of BUG-225 in `docs/BUGS.md`; this table is the
 detailed statement.
 

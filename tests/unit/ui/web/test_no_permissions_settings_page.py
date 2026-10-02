@@ -1,4 +1,4 @@
-"""Settings has no Privacy / Permissions page on any OS (the UI reset, ADR-0037 amendment).
+"""Settings has no Privacy / Permissions page on any OS (the UI reset, ADR-0038 amendment).
 
 macOS shows its own dialog when a feature first needs a permission, and the app adds
 one toast for the silent failure after it. A Settings page for permissions (and its

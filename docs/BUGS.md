@@ -4206,7 +4206,7 @@ never one dialog at a time.
 > degrade honestly") is narrowed: it still holds for the event tap (the tap is
 > created only after `CGPreflightListenEventAccess()` is true, never to provoke a
 > prompt) and for a missing usage string (checked before a native request), but a
-> preflight must never refuse a feature before the OS was asked (AP-35, ADR-0037).
+> preflight must never refuse a feature before the OS was asked (AP-35, ADR-0038).
 > The history below is kept as written.
 
 **Symptom.** With BUG-056+057 shipped, a fresh Mac boot now shows the
@@ -15850,7 +15850,7 @@ and per-0.25 s probes; a tap callback that overran its deadline and was disabled
   `identity_reset` / `restart_required` / `foreground` in the snapshot, the Automation
   consent file and hidden launch, the identity-reset marker. Packaging got one usage-string
   table and lost the camera, speech and system-administration keys.
-- AP-35 and ADR-0037 record the rule; `docs/macos-permissions.md` is the design, the
+- AP-35 and ADR-0038 record the rule; `docs/macos-permissions.md` is the design, the
   evidence table and the manual Mac checklist.
 
 **Prevention (AP-35).** A feature asks the OS at first use from a user gesture through
@@ -15904,7 +15904,7 @@ session). The service, routes, snapshot v2, events and the boot rule are unchang
 is asked when a shortcut is saved; the way back from a stuck "denied" is the switch in System
 Settings or the local `jarvis permissions reset <permission>` (macOS only; the HTTP reset route
 still refuses scripts). The Info.plist strings became target-neutral and gained German and
-Spanish `InfoPlist.strings` in both bundles. Details: ADR-0037 "Amendment: the UI is reduced to a
+Spanish `InfoPlist.strings` in both bundles. Details: ADR-0038 "Amendment: the UI is reduced to a
 toast". Prevention addition: a new permission surface of our own around the OS dialog (card, note,
 status page, up-front screen) is this bug's UI twin again. Guards added:
 `tests/unit/ui/web/test_keybinds_input_monitoring_ask.py`,
@@ -15920,5 +15920,5 @@ process sees a new Screen Recording grant, hold-key semantics, the notarized bui
 permission need. The rows to close these are in `docs/macos-permissions.md` section 7.
 
 **Related.** BUG-058, BUG-083, BUG-159, BUG-161, BUG-217, BUG-222, BUG-223, BUG-224
-(each carries a "superseded" note), ADR-0037, `docs/os-parity.md`,
+(each carries a "superseded" note), ADR-0038, `docs/os-parity.md`,
 `docs/product/privacy-safety-and-support/permissions.md`.
