@@ -4,30 +4,43 @@
     "continue": "Continuar",
     "step_of": "{current} de {total}",
     "welcome": {
+      "skip_all": "Saltar la configuración, ya me oriento",
       "title": "Bienvenido",
-      "lede": "Configuramos tu asistente aquí mismo, en la aplicación. Tarda unos dos minutos.",
+      "lede": "Primero, un vistazo rápido a qué es {name} y cómo funciona. Después lo configuramos aquí mismo, en la aplicación: una clave de API, una suscripción para tus agentes y tu palabra de activación.",
       "language": "Idioma",
       "lang_en": "English",
       "lang_de": "Deutsch",
       "lang_es": "Español",
-      "fact_commands": "Ejecuta comandos, abre aplicaciones y cambia archivos por ti.",
-      "fact_screen": "Puede ver tu pantalla y actuar sobre ella cuando se lo pidas.",
-      "fact_cloud": "Lo que dices va al proveedor de IA que elijas.",
-      "fact_costs": "Ese proveedor cobra el uso en tu cuenta.",
-      "fact_mistakes": "Puede equivocarse, también de formas difíciles de deshacer.",
-      "accept": "Lo entiendo y lo uso bajo mi propia responsabilidad.",
-      "read_terms": "Leer las condiciones de uso completas",
-      "hide_terms": "Ocultar las condiciones",
-      "terms_loading": "Cargando las condiciones…",
-      "start": "Aceptar y continuar",
-      "decline": "Rechazar y salir",
-      "accept_failed": "No se pudo guardar tu aceptación. Comprueba que la aplicación está en marcha y vuelve a intentarlo.",
-      "declined_title": "Cerrando la aplicación",
-      "declined_body": "Has rechazado, así que no se configuró ni se guardó nada. Abre la aplicación cuando quieras y volverá a preguntar."
+      "start": "Empezar"
+    },
+    "how": {
+      "title": "Cómo funciona {name}",
+      "lede": "Tu mascota te guía por la aplicación y te explica cómo funciona {name}.",
+      "next": "Siguiente",
+      "prev": "Atrás",
+      "skip": "Saltar",
+      "finish": "A configurarlo",
+      "beat_of": "Explicación {current} de {total}",
+      "beats": {
+        "hello": "¡Hola, soy {pet}! Antes de configurar nada, te enseño cómo funciona {name}. Es rápido, y verás la aplicación real mientras te lo explico.",
+        "talk": "Todo empieza aquí. Hablas con un solo asistente: {name}. Escribe aquí, o pulsa el botón redondo y habla. Nunca eliges tú una herramienta o un modelo; {name} decide lo que hace falta.",
+        "brain": "Para pensar, {name} necesita un cerebro: un modelo de IA de OpenAI, Google, Anthropic u otro proveedor, o uno en tu propio ordenador. Basta con una clave, y la añadimos juntos en un momento.",
+        "tools": "Luego {name} necesita manos. Puede usar tu ordenador y tu navegador por sí mismo, además de cada app que conectes aquí: correo, calendario, notas, hogar inteligente. Cuando pides algo, elige solo la herramienta adecuada.",
+        "agents": "Los trabajos grandes, como una investigación, un informe o una web, van a los agentes. Son el equipo de {name}: {name} les pasa el trabajo y sigue hablando contigo, y un revisor comprueba el resultado antes de que te llegue.",
+        "ide": "Aquí trabajan agentes de programación como Claude Code y Codex, en terminales reales y en tus propios proyectos. Escríbeles directamente, o deja que {name} los dirija por voz.",
+        "results": "Lo que salga, como páginas, informes o imágenes, va a Artifacts. Las respuestas cortas vuelven directamente al chat o en voz alta.",
+        "memory": "{name} también recuerda. Lo que le cuentas va a sus notas y a tu perfil, guardados en tu ordenador, para que nunca tengas que repetirte.",
+        "safety": "Y tú mantienes el control. Lo inofensivo simplemente ocurre. Todo lo que envía, borra o cuesta dinero espera primero tu sí.",
+        "done": "Esa es toda la idea: hablas, {name} piensa, usa herramientas, llama a agentes y te entrega el resultado. ¿Te atascas luego? Pregúntale a {name}. Ahora démosle un cerebro."
+      }
     },
     "keys": {
+      "next_hint": "Siguiente: conecta las suscripciones que ya pagas para que tus agentes puedan trabajar.",
+      "no_key": "¿Aún sin clave? También sirve un modelo local gratuito (Ajustes → Modelos locales), o sáltalo y añade una más tarde. Sin ninguna, el chat y la voz quedan apagados.",
+      "live_missing": "El chat funciona. La voz en directo necesita una clave de OpenAI o Gemini; mientras tanto {name} habla de la forma clásica, algo más lenta.",
+      "live_ready": "La voz en directo está activa: hablas y {name} responde al instante.",
       "title": "Añade una clave de API",
-      "lede": "Esta es la página Claves API. Pega una clave en la tarjeta de un proveedor y guárdala. Con OpenAI o Gemini basta una sola clave para la voz en directo.",
+      "lede": "Esta es la página de claves de API. Pega una clave en la tarjeta de un proveedor y guárdala; es todo lo que {name} necesita para pensar y hablar. Una clave de OpenAI (ChatGPT) o de Google Gemini también te da la voz en directo.",
       "waiting": "Esperando una clave…",
       "connecting": "Activando todo…",
       "connected": "Conectado: {provider}.",
@@ -38,10 +51,10 @@
     },
     "subscriptions": {
       "title": "Conecta una suscripción para tus agentes",
-      "lede": "Esta es la pestaña Agentes. Inicia sesión con una suscripción que ya pagas. Te recomendamos Claude (Pro o Max) o ChatGPT (Codex). Pulsa Connect en su fila; tu navegador se abre una vez.",
+      "lede": "Esta es la pestaña Agentes. Los agentes funcionan mejor con una suscripción que ya pagas; recomendamos Claude (Pro o Max) o ChatGPT (Codex). Pulsa Conectar en su fila y tu navegador se abre una vez.",
       "waiting": "Aún no hay ninguna suscripción conectada…",
       "connected": "Conectado: {names}.",
-      "why": "Una suscripción tiene un precio mensual fijo, así las tareas grandes de tus agentes no se cobran por llamada a tu clave de API.",
+      "why": "Una suscripción es un precio mensual fijo. Sin ella, los agentes usan tu clave de API y cada encargo se cobra por uso.",
       "later": "Conectaré una más tarde"
     },
     "permissions": {
@@ -58,7 +71,7 @@
     },
     "ready": {
       "title": "Todo listo",
-      "lede": "La aplicación se reinicia una vez para activarlo todo. Después, una breve visita te enseña la aplicación.",
+      "lede": "Esto es lo que está configurado. Ahora, una breve visita te enseña la aplicación.",
       "row_brain": "Cerebro",
       "row_agents": "Agentes",
       "row_voice": "Activación",
@@ -67,11 +80,9 @@
       "shortcut": "Atajo de llamada",
       "autostart": "Iniciar al entrar en la sesión",
       "no_key_note": "Sin clave, el chat y la voz siguen apagados hasta que añadas una en la página Claves API.",
-      "preview_note": "Esto es una repetición, así que no se reinicia nada. Empezar abre la visita.",
-      "restart_note": "El reinicio tarda unos diez segundos.",
-      "start_failed": "No se pudo terminar la configuración. Comprueba que la aplicación está en marcha y vuelve a intentarlo.",
-      "starting": "Iniciando…",
-      "start": "Empezar"
+      "preview_note": "Esto es una repetición, así que no se reinicia nada.",
+      "restart_note": "Al terminar la visita, la aplicación se reinicia una vez (unos diez segundos) para activarlo todo.",
+      "start": "Enséñame la aplicación"
     }
   },
   "app_tour": {
@@ -80,20 +91,114 @@
     "finish": "Terminar",
     "skip": "Saltar visita",
     "step_of": "{current} de {total}",
-    "replay_title": "Configuración y visita guiada",
-    "replay_body": "Te guía de nuevo por la configuración (claves de API, suscripciones de agentes, palabra de activación) y luego por la visita breve de la aplicación. Nada se reinicia.",
+    "replay_title": "Hacer el onboarding de nuevo",
+    "replay_body": "Vuelve a explicar cómo funciona {name}, te guía por la configuración (claves de API, suscripciones de agentes, palabra de activación) y luego por la visita breve de la aplicación. Nada se reinicia.",
     "replay": "Repetir",
     "steps": {
       "voice": "Así hablas con {name}. Haz clic en la barra, di tu palabra de activación o pulsa tu atajo de llamada, y habla. La onda muestra quién está hablando.",
       "new_chat": "¿Prefieres escribir? Empieza aquí un chat nuevo, por texto o por voz. Cada conversación queda en Chats recientes.",
-      "agents": "Los agentes son tu equipo: ayudantes que se encargan de trabajos grandes en segundo plano. Echemos un vistazo.",
       "agents_world": "Este es el Verse, tus agentes trabajando. Haz clic en uno para chatear con él o darle una tarea. Siguiente te lleva de vuelta.",
       "voice_hub": "En Voz tienes el dictado en cualquier aplicación, tu propia lista de palabras y atajos hablados.",
-      "artifacts": "Todo lo que {name} crea, desde páginas hasta imágenes e informes, se guarda en Artefactos.",
-      "ide": "El Agentic IDE ejecuta agentes de programación uno al lado del otro en terminales reales, sobre tus proyectos.",
-      "plugins": "Plugins, skills y MCP conectan a {name} con tus aplicaciones. El icono de la tienda, abajo, abre el Marketplace.",
       "settings": "Aquí están los ajustes, las claves de API, los costes y tu perfil. Puedes repetir esta visita cuando quieras en Ajustes → Aplicación.",
-      "done": "Esa es la visita. Ya está todo listo: habla con {name} cuando quieras."
+      "done": "Esa fue la visita. Habla con {name} cuando quieras, y si alguna vez te atascas, pregúntale a {name}. En Ajustes → Aplicación puedes repetir el onboarding."
+    }
+  },
+  "first_steps": {
+    "title": "Primeros pasos",
+    "progress": "{done}/{total}",
+    "collapse": "Minimizar",
+    "close": "Cerrar",
+    "quest_of": "Paso {current} de {total}",
+    "how_label": "Cómo funciona:",
+    "waiting": "Enviado. Mira el chat: {name} está en ello.",
+    "next": "Siguiente paso",
+    "finish": "Terminar",
+    "skip": "Saltar este",
+    "try": {
+      "send": "Envíalo por mí",
+      "voice": "Abrir el modo de voz",
+      "open": "Llévame allí"
+    },
+    "show": {
+      "memory": "Abrir Notas",
+      "artifact": "Abrir Artifacts",
+      "agent": "Ver en Agentes"
+    },
+    "replay_title": "Primeros pasos con {name}",
+    "replay": "Empezar",
+    "replay_body": "Diez cosas pequeñas y reales para probar con {name}: hablar, usar herramientas, recordar, construir, pasar trabajo a agentes. Cada una se explica después de ocurrir.",
+    "finished": {
+      "title": "¡Ya dominas lo básico!",
+      "body": "Completaste {done} de {total} primeros pasos. A partir de ahora, simplemente habla con {name}: decide si responde, usa una herramienta o llama a un agente. ¿Atascado? Pregúntale a {name}.",
+      "close": "Cerrar"
+    },
+    "quests": {
+      "wake": {
+        "title": "Despierta a {name}",
+        "ask": "Di tu palabra de activación en voz alta, por ejemplo «Hey {name}». O abre el modo de voz y pulsa el botón redondo de la barra del chat. Después pregunta lo que quieras.",
+        "explain": "{name} te escucha. No hace falta más: despiértalo y habla como con una persona.",
+        "how": "Tu palabra de activación se reconoce aquí mismo, en tu ordenador. Solo después tu voz va al cerebro, y la respuesta vuelve hablada."
+      },
+      "ask": {
+        "title": "Haz tu primera pregunta",
+        "ask": "Escribe o di una pregunta. Prueba esta:",
+        "prompt": "¿Qué puedes hacer por mí? Dame tres ejemplos de mi día a día.",
+        "explain": "Ese fue el camino más simple: tus palabras fueron al cerebro y respondió directamente.",
+        "how": "El cerebro es el modelo de IA que conectaste. Las preguntas sencillas no necesitan herramientas, así que la respuesta llega en segundos. Cada chat se guarda en Chats recientes."
+      },
+      "tool": {
+        "title": "Deja que use una herramienta",
+        "ask": "Ahora pide algo que necesite sus manos, no solo su cabeza:",
+        "prompt": "Abre wikipedia.org en mi navegador.",
+        "explain": "Esta vez el cerebro no solo respondió: usó una herramienta para actuar en tu ordenador.",
+        "how": "Las herramientas son las manos de {name}. El cerebro elige una, el control de seguridad la aprueba y se ejecuta. Bajo cada respuesta puedes abrir los pasos y ver cada herramienta usada."
+      },
+      "screen": {
+        "title": "Deja que mire tu pantalla",
+        "ask": "{name} puede ver tu pantalla, pero solo cuando lo pides. Prueba:",
+        "prompt": "¿Qué hay ahora mismo en mi pantalla? Descríbelo brevemente.",
+        "explain": "{name} miró una vez tu pantalla y la describió.",
+        "how": "Mirar la pantalla es una sola captura, tomada solo cuando una petición la necesita. Va al cerebro como una foto. Nada graba tu pantalla en segundo plano."
+      },
+      "memory": {
+        "title": "Enséñale algo",
+        "ask": "Cuéntale a {name} algo que valga la pena guardar:",
+        "prompt": "Recuerda que mi color favorito es el azul y que prefiero respuestas cortas.",
+        "explain": "{name} lo guardó en su memoria y lo usará a partir de ahora.",
+        "how": "Los datos van a tu Wiki y a tu perfil, guardados en tu ordenador. Antes de responder, {name} consulta lo que sabe de ti. Puedes leer y editar cada nota en Notas."
+      },
+      "artifact": {
+        "title": "Haz que cree algo",
+        "ask": "{name} puede construir cosas terminadas: páginas, resúmenes, pequeñas herramientas. Di «artifact» para pedir uno:",
+        "prompt": "Crea un artifact: un resumen de una página sobre los planetas del sistema solar, con un dato curioso de cada uno.",
+        "explain": "{name} empezó a construir la página. Cuando esté lista, aparecerá en Artifacts.",
+        "how": "Un artifact es un trabajo más grande, así que {name} se lo pasa a un ayudante con un modelo potente. Construye una página independiente, y Artifacts la guarda para que la abras más tarde."
+      },
+      "agent": {
+        "title": "Pasa un trabajo grande a un agente",
+        "ask": "Para trabajos largos, {name} llama a un agente. Puedes seguir hablando mientras trabaja:",
+        "prompt": "Investiga los tres mejores portátiles baratos ahora mismo y escríbeme una comparación corta.",
+        "explain": "{name} pasó el trabajo a un agente. Trabaja en segundo plano; el resultado llega a tu chat.",
+        "how": "{name} sigue siendo tu único contacto. Planifica el trabajo y pone en marcha un agente, y un revisor comprueba el resultado antes de que te llegue. Puedes ver el progreso en Agentes."
+      },
+      "team": {
+        "title": "Conoce a tu equipo",
+        "ask": "Los agentes son ayudantes con su propio papel. Abre el área Agentes para conocerlos.",
+        "explain": "Aquí viven y trabajan tus agentes.",
+        "how": "Crea tu propio agente con su papel, modelo e instrucciones, por ejemplo un investigador o una redactora. Haz clic en un agente para chatear con él o darle un encargo. {name} también puede pasarle trabajo por ti."
+      },
+      "plugin": {
+        "title": "Conecta una app",
+        "ask": "Los plugins conectan {name} con las apps que usas: correo, calendario, notas, hogar inteligente y más.",
+        "explain": "Aquí conectas tus apps. Elige una que uses a diario y pulsa Conectar; tu navegador se abre una vez para iniciar sesión.",
+        "how": "Cada app conectada se convierte en una nueva herramienta para {name}. Después solo pregunta, por ejemplo «¿Qué tengo mañana en el calendario?». Todo lo que envía o cambia algo te pregunta antes."
+      },
+      "ide": {
+        "title": "Deja que los agentes programen",
+        "ask": "El Agentic IDE ejecuta agentes de programación como Claude Code y Codex en terminales reales, en tus propios proyectos.",
+        "explain": "Este es el Agentic IDE. Abre una carpeta de proyecto e inicia un agente de programación en un panel.",
+        "how": "Cada panel es una terminal real con su propio agente. Háblales escribiendo, o por voz a través de {name}. Varios pueden trabajar lado a lado en el mismo proyecto."
+      }
     }
   }
 }

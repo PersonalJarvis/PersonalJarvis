@@ -25,8 +25,12 @@ CURRENT_TERMS_VERSION = "1.0"
 # relaunch — and onboarding already ends with one unconditional fresh restart
 # (onboarding_routes._schedule_fresh_restart). Permissions precede voice so the
 # macOS microphone grant exists before the wake-word group's microphone test.
+# "how" (2026-10-01) is an interactive explainer of what the assistant is and
+# how its parts connect, shown before anything is set up — new users went
+# through setup without understanding the product.
 ONBOARDING_STEPS: list[str] = [
     "welcome",
+    "how",
     "keys",
     "subscriptions",
     "permissions",

@@ -11,7 +11,7 @@ import type { TourPlacement } from "../tour/tourSteps";
 /** Must match `ONBOARDING_STEPS` in jarvis/setup/onboarding_meta.py. */
 // Permissions precede voice so the macOS microphone grant exists before the
 // wake-word group's own microphone test.
-export const SETUP_STEP_IDS = ["welcome", "keys", "subscriptions", "permissions", "voice", "ready"] as const;
+export const SETUP_STEP_IDS = ["welcome", "how", "keys", "subscriptions", "permissions", "voice", "ready"] as const;
 
 export type SetupStepId = (typeof SETUP_STEP_IDS)[number];
 
@@ -32,12 +32,17 @@ export interface SetupStep {
 
 export const SETUP_STEPS: Record<SetupStepId, SetupStep> = {
   welcome: { id: "welcome", placement: "inside", width: 420 },
+  // The pet's walk through the real app (HowWalk) places itself beat by beat.
+  how: { id: "how", placement: "inside", width: 500 },
   keys: { id: "keys", section: "apikeys", anchor: "apikeys-page", placement: "left", width: 320 },
   subscriptions: {
     id: "subscriptions",
     section: "apikeys",
     apiKeysTab: "subagents",
-    anchor: "apikeys-page",
+    // The subscription rows themselves (Connect buttons), scrolled into view —
+    // the tab opens on model settings further up.
+    anchor: "apikeys-subscriptions",
+    scrollTo: true,
     placement: "left",
     width: 340,
   },
@@ -71,14 +76,10 @@ export function stepsFor(platform: string | null): SetupStepId[] {
 
 /**
  * Where a resumed setup starts. The backend remembers the last step, so a
- * window reload lands where the user was — never past the consent.
+ * window reload lands where the user was; a fresh start (or an unknown, old
+ * step id) begins at the welcome.
  */
-export function resumeStep(
-  steps: readonly SetupStepId[],
-  saved: string | null,
-  termsAccepted: boolean,
-): SetupStepId {
-  if (!termsAccepted) return "welcome";
+export function resumeStep(steps: readonly SetupStepId[], saved: string | null): SetupStepId {
   const hit = steps.find((id) => id === saved);
-  return hit && hit !== "welcome" ? hit : (steps[1] ?? "welcome");
+  return hit ?? "welcome";
 }

@@ -1133,6 +1133,24 @@ class VoiceMuteChanged(Event):
 
 
 @dataclass(frozen=True, slots=True)
+class VoiceInputHeld(Event):
+    """A live call's microphone is held back while something else listens.
+
+    Published by the speech pipeline when a dictation starts beside a live
+    voice call (``held=True``) and again once that dictation has delivered its
+    text (``held=False``). The call keeps running; only the user's audio stops
+    reaching the realtime model, so the dictated words go into the text field
+    and never become a turn. Separate from ``VoiceMuteChanged`` on purpose:
+    that is the user's own mute, and a dictation must neither show it on
+    every mute icon nor clear it when it ends.
+
+    ``reason`` is free-form for the log (``"dictation"`` today).
+    """
+    held: bool = False
+    reason: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class VoiceSpeakerMuteChanged(Event):
     """Authoritative broadcast that the assistant's voice went silent or audible.
 

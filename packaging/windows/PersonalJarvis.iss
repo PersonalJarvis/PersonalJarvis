@@ -9,9 +9,11 @@
 ;     new setup as the SAME application and upgrades in place instead of leaving
 ;     two entries in "Installed apps".
 ;   * CloseApplications=yes. The in-app updater quits the app and runs this
-;     file with /SILENT /SUPPRESSMSGBOXES /CLOSEAPPLICATIONS /RELAUNCH=1, so
-;     Restart Manager closes anything still holding a file, the files are
-;     replaced, and the second [Run] entry starts Personal Jarvis again.
+;     file with /SILENT /SUPPRESSMSGBOXES /CLOSEAPPLICATIONS /RELAUNCH=1
+;     /WAITPID=<pid> /LOG=<file>, so Setup first waits for the old app to exit
+;     (InitializeSetup), Restart Manager closes anything still holding a file,
+;     the files are replaced, and the second [Run] entry starts Personal
+;     Jarvis again.
 ;     (/RESTARTAPPLICATIONS would only restart apps registered with
 ;     RegisterApplicationRestart, which this one is not.)
 ;   * The uninstaller removes the program directory ONLY. Settings, memory,
@@ -33,6 +35,12 @@
 #ifndef IconFile
   #define IconFile "..\..\assets\icons\jarvis.ico"
 #endif
+; NEVER change this default. It is the identity Windows upgrades against. Only
+; the installer end-to-end test overrides it (/DAppGuid=...), so its throwaway
+; install can never touch, upgrade or uninstall a real Personal Jarvis.
+#ifndef AppGuid
+  #define AppGuid "7F1C4E42-2E5B-4F0A-9E1B-1A7B6C0D5E88"
+#endif
 
 #define AppName "Personal Jarvis"
 #define AppPublisher "Personal Jarvis"
@@ -42,8 +50,8 @@
 #define UserDataDirDisplay "%LOCALAPPDATA%\Jarvis"
 
 [Setup]
-; NEVER change this GUID. It is the identity Windows upgrades against.
-AppId={{7F1C4E42-2E5B-4F0A-9E1B-1A7B6C0D5E88}
+; NEVER change AppGuid's default (see its #define above).
+AppId={{{#AppGuid}}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion}
@@ -119,10 +127,53 @@ const
   JarvisWmSettingChange = $001A;
   JarvisSmtoAbortIfHung = $0002;
 
+  JarvisSynchronize = $00100000;
+  { How long Setup waits for the app it replaces to exit (milliseconds). }
+  JarvisWaitForAppMs = 120000;
+
 function SendMessageTimeout(hWnd: Longint; Msg: Cardinal; wParam: Longint;
   lParam: string; fuFlags: Cardinal; uTimeout: Cardinal;
   var lpdwResult: Cardinal): Longint;
   external 'SendMessageTimeoutW@user32.dll stdcall';
+
+function JarvisOpenProcess(dwDesiredAccess: Cardinal; bInheritHandle: BOOL;
+  dwProcessId: Cardinal): THandle;
+  external 'OpenProcess@kernel32.dll stdcall';
+
+function JarvisWaitForSingleObject(hHandle: THandle; dwMilliseconds: Cardinal): Cardinal;
+  external 'WaitForSingleObject@kernel32.dll stdcall';
+
+function JarvisCloseHandle(hObject: THandle): BOOL;
+  external 'CloseHandle@kernel32.dll stdcall';
+
+{ The in-app updater passes /WAITPID=<pid of the running app> and quits right
+  after starting this file. Setup starts faster than the app shuts down, and a
+  silent install that meets files still in use answers with Abort - the app
+  gone, nothing installed, nothing relaunched. So the first thing Setup does is
+  wait for that process to end. A pid that no longer exists (already exited)
+  opens no handle and costs nothing; a normal interactive install passes no
+  /WAITPID at all. }
+procedure WaitForReplacedApp;
+var
+  Pid: Integer;
+  Handle: THandle;
+begin
+  Pid := StrToIntDef(ExpandConstant('{param:WAITPID|0}'), 0);
+  if Pid <= 0 then
+    Exit;
+  Handle := JarvisOpenProcess(JarvisSynchronize, False, Pid);
+  if Handle = 0 then
+    Exit;
+  Log(Format('Waiting up to %d s for process %d to exit.', [JarvisWaitForAppMs div 1000, Pid]));
+  JarvisWaitForSingleObject(Handle, JarvisWaitForAppMs);
+  JarvisCloseHandle(Handle);
+end;
+
+function InitializeSetup: Boolean;
+begin
+  WaitForReplacedApp;
+  Result := True;
+end;
 
 { Windows only re-reads the Environment key when it is told to. Without this
   broadcast the new PATH is invisible until the user signs out and back in. }

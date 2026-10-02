@@ -9,7 +9,7 @@
  * one, opens a paid call, so the tour points at it and leaves the click to
  * the user.
  */
-import type { MascotAction } from "@/components/MascotGigi";
+import type { PetState } from "@/lib/petStates";
 
 /** What a step may do to the app. Every effect is plain navigation. */
 export type TourEffect = "home-voice" | "open-agents" | "back-home";
@@ -25,13 +25,16 @@ export interface TourStep {
   onExit?: TourEffect;
   /** Drop the step when its anchor never shows (e.g. a section this build lacks). */
   skipIfMissing?: boolean;
-  mascot: MascotAction;
+  /** How the guiding pet looks on this step. */
+  pet: PetState;
 }
 
+// The pet's "how it works" walk in setup already explained tools, agents,
+// the coding workspace and Artifacts; the tour after the restart shows the
+// everyday places around them and does not repeat it.
 export const TOUR_STEPS: readonly TourStep[] = [
-  { id: "voice", anchor: "voice-bar", placement: "below", onEnter: "home-voice", mascot: "wave" },
-  { id: "new_chat", anchor: "new-chat", placement: "right", mascot: "look-right" },
-  { id: "agents", anchor: "nav-agents", placement: "right", onExit: "open-agents", mascot: "look-left" },
+  { id: "voice", anchor: "voice-bar", placement: "below", onEnter: "home-voice", pet: "talking" },
+  { id: "new_chat", anchor: "new-chat", placement: "right", pet: "idle" },
   {
     id: "agents_world",
     anchor: "agents-page",
@@ -39,14 +42,11 @@ export const TOUR_STEPS: readonly TourStep[] = [
     onEnter: "open-agents",
     onExit: "back-home",
     skipIfMissing: true,
-    mascot: "jump",
+    pet: "thinking",
   },
-  { id: "voice_hub", anchor: "nav-dictation", placement: "right", onEnter: "back-home", mascot: "look-right" },
-  { id: "artifacts", anchor: "nav-visualization", placement: "right", skipIfMissing: true, mascot: "look-left" },
-  { id: "ide", anchor: "nav-agentic-ide", placement: "right", skipIfMissing: true, mascot: "spin" },
-  { id: "plugins", anchor: "nav-plugins", placement: "right", skipIfMissing: true, mascot: "look-right" },
-  { id: "settings", anchor: "settings", placement: "right", mascot: "look-left" },
-  { id: "done", anchor: "voice-bar", placement: "below", onEnter: "home-voice", mascot: "jump" },
+  { id: "voice_hub", anchor: "nav-dictation", placement: "right", onEnter: "back-home", pet: "listening" },
+  { id: "settings", anchor: "settings", placement: "right", pet: "thinking" },
+  { id: "done", anchor: "voice-bar", placement: "below", onEnter: "home-voice", pet: "success" },
 ];
 
 export function nextStepIndex(index: number): number | null {

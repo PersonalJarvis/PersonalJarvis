@@ -476,6 +476,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
     <div
       ref={cardRef}
       data-testid="agent-composer"
+      data-tour="chat-composer"
       data-dragging={files.dragging ? "true" : undefined}
       // The whole card is the drop target, not just the text box: someone
       // dragging a screenshot aims at the composer, and a target smaller than

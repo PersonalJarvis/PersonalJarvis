@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { HOW_BEATS } from "./HowWalk";
 import { resumeStep, SETUP_STEP_IDS, SETUP_STEPS, stepsFor } from "./setupSteps";
 
 const SRC = join(__dirname, "..", "..", "..");
@@ -44,10 +45,24 @@ describe("setup steps", () => {
     for (const id of SETUP_STEP_IDS) {
       const anchor = SETUP_STEPS[id].anchor;
       if (!anchor) continue;
-      const literal = code.includes(`data-tour="${anchor}"`);
+      // A literal hook, or one handed to a component as its `tourId`.
+      const literal = code.includes(`data-tour="${anchor}"`) || code.includes(`tourId="${anchor}"`);
       // Settings groups get theirs from a template: data-tour={`settings-${section.id}`}.
       const group = anchor.startsWith("settings-") && code.includes("data-tour={`settings-${section.id}`}");
       expect(literal || group, anchor).toBe(true);
+    }
+  });
+
+  it("let the pet's walk point only at anchors the app actually sets", () => {
+    const code = sources(SRC)
+      .filter((f) => !f.includes(join("components", "onboarding")))
+      .map((f) => readFileSync(f, "utf8"))
+      .join("\n");
+    for (const beat of HOW_BEATS) {
+      if (!beat.anchor) continue;
+      const literal = code.includes(`data-tour="${beat.anchor}"`);
+      const nav = beat.anchor.startsWith("nav-") && code.includes("data-tour={`nav-${item.id}`}");
+      expect(literal || nav, beat.anchor).toBe(true);
     }
   });
 
@@ -64,17 +79,13 @@ describe("setup steps", () => {
 describe("resumeStep", () => {
   const steps = stepsFor("win32");
 
-  it("never skips the consent", () => {
-    expect(resumeStep(steps, "voice", false)).toBe("welcome");
+  it("returns to the saved step", () => {
+    expect(resumeStep(steps, "voice")).toBe("voice");
+    expect(resumeStep(steps, "subscriptions")).toBe("subscriptions");
   });
 
-  it("returns to the saved step once consent exists", () => {
-    expect(resumeStep(steps, "voice", true)).toBe("voice");
-  });
-
-  it("starts after the consent for an unknown or old step id", () => {
-    expect(resumeStep(steps, "api-keys", true)).toBe("keys");
-    expect(resumeStep(steps, null, true)).toBe("keys");
-    expect(resumeStep(steps, "welcome", true)).toBe("keys");
+  it("starts at the welcome for a fresh run or an unknown, old step id", () => {
+    expect(resumeStep(steps, null)).toBe("welcome");
+    expect(resumeStep(steps, "api-keys")).toBe("welcome");
   });
 });
