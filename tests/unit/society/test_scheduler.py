@@ -162,6 +162,31 @@ async def test_global_budget_vetoes(tmp_path: Path):
     assert await _vetoes(store, "t1") == [str(FailureReason.BUDGET_EXHAUSTED)]
     await store.close()
 
+async def test_budget_tracker_getter_is_resolved_for_each_assignment(tmp_path: Path):
+    store = SocietyStore(tmp_path / "budget-getter.db")
+    await store.open()
+    roster = Roster(store)
+    await roster.create(name="Jarvis", tier=Tier.LEAD)
+    await roster.create(name="Scout")
+    dispatcher = FakeDispatcher()
+    current_budget = None
+
+    def get_budget():
+        return current_budget
+
+    SocietyScheduler(
+        store, roster, dispatch=dispatcher, budget_tracker_getter=get_budget
+    ).attach()
+    await store.append_and_publish(_assign("jarvis", "scout", trace="first"))
+    assert len(dispatcher.calls) == 1
+
+    current_budget = FakeBudget(exceeded=True)
+    await store.append_and_publish(_assign("jarvis", "scout", trace="second"))
+
+    assert len(dispatcher.calls) == 1
+    assert await _vetoes(store, "second") == [str(FailureReason.BUDGET_EXHAUSTED)]
+    await store.close()
+
 
 async def test_agent_daily_budget_vetoes(world):
     store, roster, _, dispatcher, _ = world

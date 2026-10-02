@@ -84,6 +84,7 @@ class SocietyScheduler:
         dispatch: DispatchHook | None = None,
         deliver: DeliverHook | None = None,
         budget_tracker: Any | None = None,
+        budget_tracker_getter: Callable[[], Any | None] | None = None,
         trace_message_cap: int = DEFAULT_TRACE_MESSAGE_CAP,
     ) -> None:
         self._store = store
@@ -91,6 +92,7 @@ class SocietyScheduler:
         self._dispatch = dispatch
         self._deliver = deliver
         self._budget = budget_tracker
+        self._budget_getter = budget_tracker_getter
         self._trace_cap = trace_message_cap
         self._delivery_lock = asyncio.Lock()
         #: run_id → agent_id of work the scheduler started and has not seen end.
@@ -223,9 +225,10 @@ class SocietyScheduler:
                 env, FailureReason.MESSAGE_CAP, f"trace exceeded {self._trace_cap} messages"
             )
             return
-        if self._budget is not None:
+        budget = self._budget_getter() if self._budget_getter is not None else self._budget
+        if budget is not None:
             try:
-                self._budget.assert_under_limit(env.trace_id)
+                budget.assert_under_limit(env.trace_id)
             except Exception as exc:  # noqa: BLE001 — BudgetExceeded is the tracker's own type
                 await self._veto(env, FailureReason.BUDGET_EXHAUSTED, str(exc))
                 return

@@ -161,7 +161,7 @@ class SocietyRuntime:
             self.roster,
             dispatch=self._dispatch,
             deliver=deliver,
-            budget_tracker=None,
+            budget_tracker_getter=self._get_budget,
         )
         self.bridge = MissionBridge(
             self.store, owner_of=self.owner_of, on_run_ended=self.scheduler.note_run_ended
