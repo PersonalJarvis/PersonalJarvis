@@ -529,6 +529,17 @@ export interface KeybindsConfig {
    * field appears, the picker hides the buttons and shows ``reason`` instead.
    */
   mouse_buttons?: { supported: boolean; reason?: string };
+  /**
+   * ONE status for the global shortcut tap (not per row), mirroring
+   * `ShortcutsStatus` in `jarvis/trigger/shortcuts_status.py`. Optional because
+   * the frontend and backend are updated separately. A pytest regex parity test
+   * (`test_shortcuts_status_parity.py`) pins the three states to the Python
+   * `SHORTCUTS_STATES`.
+   */
+  shortcuts_status?: {
+    state: "ready" | "needs_input_monitoring" | "unavailable_in_this_mode";
+    detail: string;
+  };
 }
 
 /** Result of a successful PUT /api/settings/keybinds. */

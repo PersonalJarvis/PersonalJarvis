@@ -9,7 +9,8 @@ graceful null-fallback that logs an English message and never raises.
   pre-remove-on-reentry sequence carry hard-won BUG fixes (the F1+F2-went-dead
   class). That logic was **relocated verbatim** into
   ``jarvis/trigger/backends/global_hotkeys.py`` (AD-7); it is not refactored.
-* macOS/Linux (X11) gain ``pynput`` via ``PynputBackend``.
+* macOS uses a listen-only Quartz event tap (``QuartzHotkeyBackend``); Linux
+  (X11) gains ``pynput`` via ``PynputBackend``.
 * Wayland (and any box where ``capabilities.has_hotkey`` is ``False``) gets
   ``NoopBackend``: it logs once that global hotkeys are unavailable by OS design
   and otherwise no-ops (AD-8 / AD-OE6 "zero silent drops").
@@ -48,8 +49,11 @@ class HotkeyBackend(Protocol):
     The lifecycle mirrors what ``HotkeyTrigger.__aenter__``/``__aexit__`` already
     drive: ``register`` arms the bindings, ``start`` begins listening,
     ``stop``/``unregister`` tear down. ``received_any_event`` is the AD-8
-    introspection hook — on macOS a backend that registered but saw zero events
-    is the signal to surface the Input-Monitoring / Accessibility grant hint.
+    introspection hook (true once a BOUND chord fired; not a liveness signal).
+    A backend may also expose optional probes the trigger reads through
+    ``getattr``: ``is_listening()``, ``waiting_for_permission`` (the macOS tap
+    declined to start for want of Input Monitoring) and
+    ``deaf_tap_suspected()`` (a raw-callback counter, see ``quartz.py``).
     """
 
     def register(self, bindings: list[HotkeyBinding], on_event: OnEvent | None = None) -> None:

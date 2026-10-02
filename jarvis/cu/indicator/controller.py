@@ -16,9 +16,12 @@ uses — the engine exits with code 130 and reports an honest cancel.
 
 Degradations (each logs one English line, never crashes, never blocks a
 mission): headless / Wayland / PySide6 missing → no border; hotkey
-backend unavailable (Wayland, missing macOS permission) → no Escape and
+backend unavailable (Wayland, macOS without Input Monitoring) → no Escape and
 therefore no "Esc to cancel" pill (the border must not promise a key that
-cannot work).
+cannot work). The pill is shown only after the Escape listener's backend
+reported that it is actually listening; on macOS that means the event tap is
+running, i.e. Input Monitoring is granted. Nothing here asks for that
+permission and no card is forced.
 """
 
 from __future__ import annotations
@@ -39,6 +42,11 @@ from uuid import UUID
 from jarvis.cu.indicator import capture_guard, protocol, self_input
 
 log = logging.getLogger(__name__)
+
+# How long the pill waits for the Escape listener to report whether its backend
+# is really listening (the macOS tap handshake alone can take a few seconds).
+# An unconfirmed listener never earns the pill.
+_ESC_READY_TIMEOUT_S = 6.0
 
 # "Esc to cancel" pill copy — ALL supported output locales (repo rule:
 # a phrase table always carries every supported language and resolves its
@@ -112,6 +120,11 @@ class CUIndicatorController:
         self._command_lock = threading.Lock()
         self._acks: queue.Queue[str] = queue.Queue()
         self._esc_task: asyncio.Task | None = None
+        # Handshake with the Escape listener: ``_esc_ready`` is set once the
+        # listener's backend answered, ``_esc_holds_key`` says whether it is
+        # actually listening (a dead key must not be promised on the pill).
+        self._esc_ready = asyncio.Event()
+        self._esc_holds_key = False
         self._sidecar_warned = False
         # Monotonic deadline until which an appshot effect owns the sidecar.
         self._snap_until = 0.0
@@ -160,7 +173,7 @@ class CUIndicatorController:
                 self._screen_active.add(event.trace_id)
                 hint = (
                     _ESC_HINTS.get(_resolve_hint_language(), _ESC_HINTS["en"])
-                    if self._active and self._esc_task is not None
+                    if self._active and self._esc_task is not None and self._esc_holds_key
                     else ""
                 )
                 visible = await self._show_border(hint=hint, required=True)
@@ -181,7 +194,7 @@ class CUIndicatorController:
 
     # ------------------------------------------------------------- activation
     async def _activate(self) -> None:
-        esc_armed = self._arm_escape()
+        esc_armed = self._arm_escape() and await self._esc_claims_key()
         hint = (
             _ESC_HINTS.get(_resolve_hint_language(), _ESC_HINTS["en"])
             if esc_armed
@@ -479,6 +492,8 @@ class CUIndicatorController:
         except Exception:  # noqa: BLE001
             return False
         if self._esc_task is None or self._esc_task.done():
+            self._esc_ready = asyncio.Event()
+            self._esc_holds_key = False
             self._esc_task = asyncio.get_running_loop().create_task(
                 self._esc_watch(), name="cu-indicator-esc",
             )
@@ -486,11 +501,33 @@ class CUIndicatorController:
 
     def _disarm_escape(self) -> None:
         task, self._esc_task = self._esc_task, None
+        self._esc_holds_key = False
         if task is not None and not task.done():
             task.cancel()
 
+    async def _esc_claims_key(self) -> bool:
+        """May the pill promise "Esc to cancel"? Only if the listener really runs.
+
+        Waits (bounded) for the Escape listener's backend to answer. A backend
+        that cannot tell (Windows, Linux) answers "listening" as before; the
+        macOS tap answers "no" while Input Monitoring is missing. No task means
+        nothing was armed here, so nothing is asked.
+        """
+        if self._esc_task is None:
+            return True
+        try:
+            await asyncio.wait_for(self._esc_ready.wait(), timeout=_ESC_READY_TIMEOUT_S)
+        except TimeoutError:
+            log.info("[cu-indicator] the Escape listener did not report in time — no Esc hint.")
+            return False
+        return self._esc_holds_key
+
     async def _esc_watch(self) -> None:
         """Armed only while ≥1 CU mission runs; Esc cancels them all."""
+        # This task's own handshake: a replaced task finishing late must not
+        # flip the state of its successor.
+        ready = self._esc_ready
+        me = asyncio.current_task()
         try:
             from jarvis.trigger.hotkey import HotkeyTrigger  # noqa: PLC0415
 
@@ -500,6 +537,18 @@ class CUIndicatorController:
             # itself is typing/clicking.
             trigger = HotkeyTrigger({"cu_cancel": _esc_binding()})
             async with trigger:
+                # ``None`` = the backend cannot say (Windows, Linux): keep the
+                # pill, as before. ``False`` = no listener exists (the macOS
+                # tap without Input Monitoring, the no-op backend, no backend
+                # at all): never promise the key.
+                self._esc_holds_key = trigger.listening() is not False
+                if not self._esc_holds_key:
+                    log.info(
+                        "[cu-indicator] Escape-to-cancel is off: the global key "
+                        "listener is not running (macOS Input Monitoring is not "
+                        "allowed). Cancel via voice or the tray."
+                    )
+                ready.set()
                 async for event_name in trigger.events():
                     if event_name != "cu_cancel":
                         continue
@@ -517,6 +566,12 @@ class CUIndicatorController:
                 "[cu-indicator] Escape listener failed — cancel via voice/"
                 "tray/kill-hotkey still works.", exc_info=True,
             )
+        finally:
+            # Whatever happened, release a pill that is waiting on the answer;
+            # the key is no longer held once this listener is gone.
+            ready.set()
+            if self._esc_task is me:
+                self._esc_holds_key = False
 
     @staticmethod
     def _cancel_all_missions() -> None:

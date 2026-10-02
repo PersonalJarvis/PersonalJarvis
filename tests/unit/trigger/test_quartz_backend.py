@@ -9,6 +9,7 @@ degrade paths; the live tap is exercised on macOS hardware/CI only.
 
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 
@@ -94,12 +95,18 @@ def test_permission_revocation_clears_chords_and_blocks_handlers() -> None:
     assert backend._held == set()
 
 
-def test_start_without_permission_is_a_noop(caplog) -> None:
+def test_start_without_permission_is_a_silent_noop(caplog) -> None:
+    """Boot without Input Monitoring: no tap, INFO only, never a warning."""
     backend = _backend_with_permission(granted=False)
-    backend.start()
+    with caplog.at_level(logging.DEBUG, logger="jarvis.trigger.backends.quartz"):
+        backend.start()
     assert backend._started is False
     assert backend._tap is None
-    assert any("hotkeys disabled" in r.message.lower() for r in caplog.records)
+    assert backend.waiting_for_permission is True
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+    text = " ".join(r.message for r in caplog.records)
+    assert "Input Monitoring" in text
+    assert "Accessibility" not in text and "Settings > Permissions" not in text
 
 
 def test_start_without_quartz_degrades(monkeypatch, caplog) -> None:
