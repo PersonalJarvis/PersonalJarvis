@@ -96,8 +96,8 @@ describe("PetMark", () => {
 describe("petStateForVoice", () => {
   it("maps the voice to the pet's rows", () => {
     expect(petStateForVoice("listening")).toBe("listening");
-    expect(petStateForVoice("thinking")).toBe("thinking");
-    expect(petStateForVoice("connecting")).toBe("thinking");
+    expect(petStateForVoice("thinking")).toBe("working");
+    expect(petStateForVoice("connecting")).toBe("working");
     expect(petStateForVoice("speaking")).toBe("talking");
     expect(petStateForVoice("error")).toBe("error");
     expect(petStateForVoice("idle")).toBe("idle");

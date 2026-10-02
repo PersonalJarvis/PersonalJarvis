@@ -16,9 +16,9 @@ import { useEventStore, type VoiceState } from "@/store/events";
  * at once — `PetChanged` refetches the shared query.
  *
  * `state` fixes the animation row; `reactive` follows the voice instead
- * (listening while you talk, thinking, talking while it answers). Until the
- * pets answer arrives the box stays empty at its final size, so nothing
- * jumps and no stand-in image flashes.
+ * (listening while you talk, working while it thinks, talking while it
+ * answers). Until the pets answer arrives the box stays empty at its final
+ * size, so nothing jumps and no stand-in image flashes.
  */
 export function PetMark({
   size,
@@ -82,7 +82,8 @@ export function petStateForVoice(voice: VoiceState): PetState {
       return "listening";
     case "connecting":
     case "thinking":
-      return "thinking";
+      // Thinking plays the working row, the same as a trace's live line.
+      return "working";
     case "speaking":
       return "talking";
     case "error":

@@ -202,18 +202,14 @@ function Node({ children, live = false }: { children: ReactNode; live?: boolean 
 }
 
 /**
- * What the user's pet does on a live Jarvis trace: it thinks while the model
- * reasons (or before anything has arrived), searches while a search or
- * listing runs, works through any other tool, and talks while the reply
- * streams in.
+ * What the user's pet does on a live Jarvis trace: it plays its working row
+ * whenever Jarvis thinks or works — reasoning, a tool call, the wait before
+ * anything has arrived (the maintainer's choice, 2026-10-02) — and talks
+ * while the reply streams in.
  */
 export function livePetState(blocks: TurnBlock[]): PetState {
   const last = blocks[blocks.length - 1];
-  if (!last || last.kind === "reasoning") return "thinking";
-  if (last.kind === "text") return last.text.trim() ? "talking" : "thinking";
-  if (last.output !== null) return "thinking";
-  const family = operation(last.name);
-  return family === "search" || family === "list" ? "searching" : "working";
+  return last?.kind === "text" && last.text.trim() ? "talking" : "working";
 }
 
 /** The words of whatever is happening right now, with a slow light sweep. */

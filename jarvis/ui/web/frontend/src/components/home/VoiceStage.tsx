@@ -162,7 +162,7 @@ export function VoiceStage({ onExit }: { onExit?: () => void } = {}) {
           )}
           {active && (voiceState === "thinking" || voiceState === "speaking") && !traceShowsPet && (
             <div className="pl-0.5" data-testid="voice-turn-indicator" aria-hidden>
-              <PetMark size={48} state={voiceState === "speaking" ? "talking" : "thinking"} />
+              <PetMark size={48} state={voiceState === "speaking" ? "talking" : "working"} />
             </div>
           )}
         </div>

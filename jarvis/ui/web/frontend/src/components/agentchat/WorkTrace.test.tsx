@@ -220,12 +220,12 @@ describe("rail look", () => {
     expect(container.querySelector("[data-trace-pet]")).toBeNull();
   });
 
-  it("lets the pet think, search, work and talk along with the live step", () => {
-    expect(livePetState([])).toBe("thinking");
-    expect(livePetState([{ ...thought, live: true } as TurnBlock])).toBe("thinking");
-    expect(livePetState([tool("s", { name: "grep", output: null })])).toBe("searching");
-    expect(livePetState([tool("x", { name: "exec_command", output: null })])).toBe("working");
-    expect(livePetState([tool("x", { name: "exec_command" })])).toBe("thinking");
+  it("plays the pet's working row while Jarvis thinks or works, talking while it answers", () => {
+    expect(livePetState([])).toBe("working");
+    expect(livePetState([{ ...thought, live: true } as TurnBlock])).toBe("working");
+    expect(livePetState([tool("s", { name: "grep", output: null })])).toBe("working");
+    expect(livePetState([tool("x", { name: "exec_command" })])).toBe("working");
+    expect(livePetState([reply("empty", "  ")])).toBe("working");
     expect(livePetState([reply("r", "Here it is")])).toBe("talking");
   });
 
