@@ -367,6 +367,7 @@ class SubscriptionLiveVoiceSession(LiveVoiceSession):
                                 if not isinstance(args, dict):
                                     raise ValueError("Arguments must be an object")
                             except (TypeError, ValueError):
+                                log.debug("Subscription reasoning supplied invalid tool arguments.")
                                 result = {
                                     "success": False,
                                     "executed": False,
