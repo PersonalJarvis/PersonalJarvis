@@ -147,6 +147,24 @@ BROWSER_DESKTOP_HANDOFF = MacAgentBenchScenario(
 )
 
 
+HANDOFF_CANCELLATION = MacAgentBenchScenario(
+    id="handoff-cancellation",
+    description=(
+        "Cancellation arrives while a browser or cross-window handoff is still "
+        "pending; Computer-Use must stop before destination actuation."
+    ),
+    live_required=True,
+    readiness_checks=("semantic:ax-tree", "actuation:backend", "handoff:hardware-input"),
+    success_criteria=(
+        "the handoff is still pending when cancellation is requested",
+        "the cancellation is observed and reported as a structured cancellation",
+        "no destination effect is performed after the cancellation",
+        "no browser or desktop action is posted after cancellation",
+        "the handoff does not resume after cancellation",
+    ),
+)
+
+
 def macagentbench_scenarios() -> tuple[MacAgentBenchScenario, ...]:
     """Return the currently specified MacAgentBench live scenarios."""
     return (
@@ -156,6 +174,7 @@ def macagentbench_scenarios() -> tuple[MacAgentBenchScenario, ...]:
         FOCUS_TYPE_LANDING,
         CROSS_WINDOW_HANDOFF,
         BROWSER_DESKTOP_HANDOFF,
+        HANDOFF_CANCELLATION,
     )
 
 
@@ -246,6 +265,25 @@ class BrowserDesktopHandoffReceipt:
     expected_effect_verified: bool
     cancellation_requested: bool = False
     action_after_cancel: bool = False
+
+
+@dataclass(frozen=True)
+class HandoffCancellationReceipt:
+    """Evidence that cancellation wins while a handoff is still pending.
+
+    The receipt deliberately separates cancellation-time evidence from a
+    successful handoff receipt. A cancellation requested after the expected
+    effect has completed is not a passing cancellation scenario.
+    """
+
+    handoff_was_pending: bool
+    cancellation_requested: bool
+    cancellation_observed: bool
+    cancellation_reported: bool
+    intended_effect_performed: bool
+    browser_actions_after_cancel: int
+    desktop_actions_after_cancel: int
+    resumed_after_cancel: bool
 
 
 @dataclass(frozen=True)
@@ -448,11 +486,49 @@ def evaluate_browser_desktop_handoff(
     )
 
 
+def evaluate_handoff_cancellation(
+    receipt: HandoffCancellationReceipt,
+) -> MacAgentBenchEvaluation:
+    """Require cancellation to stop a still-pending handoff before mutation."""
+    failures: list[str] = []
+
+    if not receipt.handoff_was_pending:
+        failures.append("cancellation was not requested while the handoff was pending")
+    if not receipt.cancellation_requested:
+        failures.append("the scenario did not request cancellation")
+    if not receipt.cancellation_observed:
+        failures.append("Computer-Use did not observe the cancellation")
+    if not receipt.cancellation_reported:
+        failures.append("the cancellation was not reported as a structured outcome")
+    if receipt.intended_effect_performed:
+        failures.append("the intended destination effect was performed despite cancellation")
+    if receipt.browser_actions_after_cancel != 0:
+        failures.append(
+            "the browser posted an action after cancellation "
+            f"({receipt.browser_actions_after_cancel} action(s))"
+        )
+    if receipt.desktop_actions_after_cancel != 0:
+        failures.append(
+            "the desktop executor posted an action after cancellation "
+            f"({receipt.desktop_actions_after_cancel} action(s))"
+        )
+    if receipt.resumed_after_cancel:
+        failures.append("the handoff resumed after cancellation")
+
+    return MacAgentBenchEvaluation(
+        scenario_id=HANDOFF_CANCELLATION.id,
+        passed=not failures,
+        failures=tuple(failures),
+    )
+
+
 __all__ = [
     "BROWSER_DESKTOP_HANDOFF",
     "CROSS_WINDOW_HANDOFF",
+    "HANDOFF_CANCELLATION",
     "BrowserDesktopHandoffReceipt",
     "CrossWindowHandoffReceipt",
+    "HandoffCancellationReceipt",
     "MacAgentBenchEvaluation",
     "MacAgentBenchScenario",
     "FOCUS_TYPE_LANDING",
@@ -466,6 +542,7 @@ __all__ = [
     "evaluate_browser_desktop_handoff",
     "evaluate_cross_window_handoff",
     "evaluate_focus_type_landing",
+    "evaluate_handoff_cancellation",
     "evaluate_physical_takeover",
     "evaluate_semantic_target_hit",
     "evaluate_stale_target_refusal",

@@ -188,7 +188,12 @@ identity and a verified effect. Native browser chrome may remain in the same
 window, so this contract deliberately does not require a window switch.
 Both handoff contracts reject actions after cancellation. A cancelled scenario
 that never reaches its intended effect still fails completion; dedicated
-cancellation-only qualification is the next receipt gap.
+cancellation-only qualification is now a separate `handoff-cancellation`
+contract. It requires cancellation while the handoff is pending, a structured
+cancellation outcome, no intended destination effect, no browser or desktop
+actions after cancellation, and no resume. This prevents a cancellation that
+arrived after successful completion from being counted as a passing safety
+receipt.
 
 Portable tests also exercise the real `BrowserTool.execute()` early-return
 path using no-I/O fakes: native chrome, file-picker and cross-app requests must

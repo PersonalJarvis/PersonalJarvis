@@ -20,14 +20,13 @@ Current workstream priority:
 
 1. finish checking CI for the latest `jarvis-lab` HEAD; triage any new failures
    against the exact parent under the same environment;
-2. MacAgentBench dedicated cancellation-only receipt (including cancellation
-   before the intended UI effect), then permission degradation and prompt-injection
-   resistance coverage;
+2. MacAgentBench permission-degradation and prompt-injection-resistance
+   coverage, after the dedicated cancellation-only receipt landed;
 3. next highest-priority architecture gap that is not blocked on physical macOS testing.
 
 Completed remotely in the current benchmark phase: physical-user-takeover,
-semantic-target-hit, stale-target-refusal, focus-type-landing, cross-window-handoff
-and browser-to-desktop-handoff receipt contracts. Browser handoff tests now also
+semantic-target-hit, stale-target-refusal, focus-type-landing, cross-window-handoff,
+browser-to-desktop-handoff and handoff-cancellation receipt contracts. Browser handoff tests now also
 exercise the real tool's early return, including read-only mode, inactive caller
 and kill-switch precedence, without reaching either browser executor.
 Upstream main is merged through `6368c2e` with no overlapping
@@ -55,5 +54,16 @@ receipts.
 - Scope: pure benchmark contracts and no-I/O test coverage only. No new
   orchestrator, safety boundary, memory store, desktop driver or permission
   request. Native macOS transitions and live receipt collection remain unqualified.
+
+## Remote validation: cancellation contract
+
+- The cancellation-only contract requires the handoff to be pending when
+  cancellation is requested, cancellation to be observed and reported as a
+  structured outcome, no intended effect, no browser/desktop actions after the
+  request, and no resume after cancellation.
+- Focused Linux/Python 3.12 run after the contract change: **97 passed** across
+  the MacAgentBench receipts, browser handoff routing, macOS readiness and
+  physical-input pause tests. Ruff and `git diff --check` pass; the existing
+  FastAPI/Starlette test-client deprecation warning remains non-functional.
 
 The scheduled pass is intentionally limited to the platform-supported maximum cadence of once per hour; it is not a continuously resident daemon.

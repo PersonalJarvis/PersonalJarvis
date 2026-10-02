@@ -9,18 +9,21 @@ from jarvis.cu.macos_bench import (
     BROWSER_DESKTOP_HANDOFF,
     CROSS_WINDOW_HANDOFF,
     FOCUS_TYPE_LANDING,
+    HANDOFF_CANCELLATION,
     PHYSICAL_USER_TAKEOVER,
     SEMANTIC_TARGET_HIT,
     STALE_TARGET_REFUSAL,
     BrowserDesktopHandoffReceipt,
     CrossWindowHandoffReceipt,
     FocusTypeLandingReceipt,
+    HandoffCancellationReceipt,
     PhysicalTakeoverReceipt,
     SemanticTargetHitReceipt,
     StaleTargetRefusalReceipt,
     evaluate_browser_desktop_handoff,
     evaluate_cross_window_handoff,
     evaluate_focus_type_landing,
+    evaluate_handoff_cancellation,
     evaluate_physical_takeover,
     evaluate_semantic_target_hit,
     evaluate_stale_target_refusal,
@@ -296,7 +299,23 @@ def browser_desktop_receipt() -> BrowserDesktopHandoffReceipt:
     )
 
 
-@pytest.mark.parametrize("scenario", [CROSS_WINDOW_HANDOFF, BROWSER_DESKTOP_HANDOFF])
+@pytest.fixture
+def handoff_cancellation_receipt() -> HandoffCancellationReceipt:
+    return HandoffCancellationReceipt(
+        handoff_was_pending=True,
+        cancellation_requested=True,
+        cancellation_observed=True,
+        cancellation_reported=True,
+        intended_effect_performed=False,
+        browser_actions_after_cancel=0,
+        desktop_actions_after_cancel=0,
+        resumed_after_cancel=False,
+    )
+
+
+@pytest.mark.parametrize(
+    "scenario", [CROSS_WINDOW_HANDOFF, BROWSER_DESKTOP_HANDOFF, HANDOFF_CANCELLATION]
+)
 def test_handoff_scenarios_remain_live_gated(scenario) -> None:
     scenarios = macagentbench_scenarios()
     assert scenario in scenarios
@@ -381,3 +400,37 @@ def test_handoff_cancellation_stops_actions_after_completed_transition(
         (browser_desktop_receipt, evaluate_browser_desktop_handoff),
     ):
         assert evaluate(replace(receipt, cancellation_requested=True)).passed is True
+
+
+def test_handoff_cancellation_passes_only_while_handoff_is_pending(
+    handoff_cancellation_receipt,
+):
+    result = evaluate_handoff_cancellation(handoff_cancellation_receipt)
+    assert result.to_dict() == {
+        "scenario_id": "handoff-cancellation", "passed": True, "failures": (),
+    }
+
+
+@pytest.mark.parametrize(
+    ("changes", "failure"),
+    [
+        ({"handoff_was_pending": False}, "handoff was pending"),
+        ({"cancellation_requested": False}, "did not request cancellation"),
+        ({"cancellation_observed": False}, "did not observe"),
+        ({"cancellation_reported": False}, "structured outcome"),
+        ({"intended_effect_performed": True}, "destination effect"),
+        ({"browser_actions_after_cancel": 1}, "browser posted"),
+        ({"browser_actions_after_cancel": -1}, "browser posted"),
+        ({"desktop_actions_after_cancel": 1}, "desktop executor posted"),
+        ({"desktop_actions_after_cancel": -1}, "desktop executor posted"),
+        ({"resumed_after_cancel": True}, "resumed after cancellation"),
+    ],
+)
+def test_handoff_cancellation_rejects_late_or_unsafe_outcomes(
+    handoff_cancellation_receipt, changes, failure,
+):
+    result = evaluate_handoff_cancellation(
+        replace(handoff_cancellation_receipt, **changes)
+    )
+    assert result.passed is False
+    assert any(failure in message for message in result.failures)
