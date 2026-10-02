@@ -54,6 +54,7 @@ import base64
 import json
 import logging
 import re
+import sys
 import time
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -3540,12 +3541,20 @@ async def _click_with_refine(
 def _perform_drag(
     x1: int, y1: int, x2: int, y2: int, duration_s: float = 0.4
 ) -> None:
-    """Press the left mouse button at ``(x1, y1)``, drag to ``(x2, y2)``, release.
+    """Press-drag-release through the protected macOS actuation boundary.
 
-    The press-and-hold gesture a plain click cannot do — rotating a map/globe,
-    panning, or moving a slider. pyautogui is imported lazily so the module still
-    loads on a non-desktop host (the harness is desktop-gated anyway).
+    The legacy inline fallback remains for non-macOS hosts where the drag tool
+    is absent in a reduced/test context. macOS must never bypass the shared
+    human-takeover facade, even on this graceful-degradation path.
     """
+    if sys.platform == "darwin":
+        from jarvis.cu.actuate import get_actuator  # noqa: PLC0415
+
+        get_actuator().drag(
+            int(x1), int(y1), int(x2), int(y2), duration_s=max(0.0, duration_s)
+        )
+        return
+
     import pyautogui  # noqa: PLC0415 — lazy: keeps non-desktop import clean
 
     pyautogui.moveTo(x1, y1)
@@ -3808,6 +3817,8 @@ async def _execute_action(
                 timeout=_ACT_TIMEOUT_S,
             )
         except TimeoutError:
+            raise
+        except HumanInputTakeover:  # expected handoff; outer CU loop owns pause/resume
             raise
         except Exception as exc:  # noqa: BLE001
             return False, f"drag crash: {type(exc).__name__}: {exc}"
