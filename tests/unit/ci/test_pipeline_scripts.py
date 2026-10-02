@@ -43,9 +43,46 @@ def test_frontend_source_change_keeps_python_on_because_tests_read_it():
 
 
 def test_unrelated_subproject_skips_python():
-    result = classify_changes.classify(["wiki-video/src/scene.tsx", "homebrew-tap/Formula/x.rb"])
+    result = classify_changes.classify(["homebrew-tap/Formula/x.rb"])
     assert result["python"] is False
     assert not any(result[lane] for lane in classify_changes.LANES)
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["wiki-video/package-lock.json", "wiki-video/package.json", "wiki-video/src/scene.tsx"],
+)
+def test_wiki_video_changes_run_the_video_lane_without_python(path):
+    result = classify_changes.classify([path])
+    assert result["wiki_video"] is True
+    assert not any(result[lane] for lane in classify_changes.LANES if lane != "wiki_video")
+
+
+def test_wiki_video_failure_blocks_the_required_ci_gate():
+    verdict = required_results.evaluate(
+        {"gates": {"result": "success"}, "wiki-video": {"result": "failure"}}
+    )
+    assert verdict["ok"] is False
+    assert verdict["failed"] == ["wiki-video"]
+
+
+def test_wiki_video_workflow_checks_are_connected_to_the_required_gate():
+    import yaml
+
+    root = Path(__file__).resolve().parents[3]
+    jobs = yaml.safe_load((root / ".github/workflows/ci.yml").read_text("utf-8"))["jobs"]
+    assert "wiki-video" in jobs["gate"]["needs"]
+    job = jobs["wiki-video"]
+    assert job["if"] == "needs.detect.outputs.wiki_video == 'true'"
+    assert "wiki_video" in jobs["detect"]["outputs"]
+    commands = [step["run"] for step in job["steps"] if "run" in step]
+    assert commands == [
+        "npm ci --ignore-scripts --no-audit --no-fund",
+        "npm audit --audit-level=high",
+        "npm run lint",
+        "npm run build",
+    ]
+    assert not any(step.get("continue-on-error", False) for step in job["steps"])
 
 
 def test_route_change_turns_on_cli_lane_and_windows_path_is_normalized():
