@@ -44,13 +44,15 @@ _PROVIDER_ALIASES = (
 # The German imperative paradigm needs two stems: "wechsel" and "wechsle".
 _PROVIDER_PATTERN = re.compile(
     r"\b(?:wechsel[n]?|wechsle|änder\w*|aender\w*|setz\w*|stell\w*"  # i18n-allow: German provider-switch input-matching data
-    r"|switch(?:\s+to)?|benutze?|nutze|use|nimm)"
-    r"(?:\s+(?:den|die|das|der|the|deinen|deine|dein|meinen|meine|mein|my))?"  # i18n-allow: German provider-switch input-matching data
-    r"(?:\s+(?:brain[-\s]*provider|provider|anbieter|sprach[-\s]*modell|modell|model))?"
+    r"|switch(?:\s+to)?|benutze?|nutze|use|nimm"
+    r"|cambia\w*|passa|passare|impost\w*|usa)"  # i18n-allow: Italian provider-switch input-matching data
+    r"(?:\s+(?:den|die|das|der|the|deinen|deine|dein|meinen|meine|mein|my"
+    r"|il|lo|la|mio|mia))?"  # i18n-allow: German/Italian provider-switch input-matching data
+    r"(?:\s+(?:brain[-\s]*provider|provider|anbieter|fornitore|sprach[-\s]*modell|modell|model|modello))?"  # i18n-allow: Italian provider-switch input-matching data
     # Optional "von/from <source>" so "switch FROM gemini TO openai" targets the
     # destination after auf/zu/to, not the source (forensic 2026-06-27).
-    r"(?:\s+(?:von|from)\s+(?:" + "|".join(re.escape(p) for p in _PROVIDER_ALIASES) + r"))?"
-    r"(?:\s+(?:auf|zu|to))?\s+"
+    r"(?:\s+(?:von|from|da)\s+(?:" + "|".join(re.escape(p) for p in _PROVIDER_ALIASES) + r"))?"  # i18n-allow: Italian source preposition
+    r"(?:\s+(?:auf|zu|to|a|su))?\s+"  # i18n-allow: Italian destination prepositions
     r"(?P<provider>" + "|".join(re.escape(p) for p in _PROVIDER_ALIASES) + r")\b",
     re.IGNORECASE,
 )
@@ -59,7 +61,8 @@ _PROVIDER_PATTERN = re.compile(
 # sentence start OR preceded by "jarvis", to avoid catching harmless phrases
 # like "stopp doch mal kurz".
 _CANCEL_PATTERN = re.compile(
-    r"^(?:jarvis[,\s]+)?(?:stopp?|abbruch|abbrechen|cancel|stop\s+sub|halt)\b",  # i18n-allow: German cancel-command input-matching data
+    r"^(?:jarvis[,\s]+)?(?:stopp?|abbruch|abbrechen|cancel|stop\s+sub|halt"
+    r"|fermati|interrompi|basta)\b",  # i18n-allow: German/Italian cancel-command input-matching data
     re.IGNORECASE,
 )
 
@@ -69,10 +72,12 @@ _DEEP_PATTERNS = (
     "denk gründlich", "denk gruendlich", "denk tief", "denk mal gründlich",  # i18n-allow: German depth-override input-matching data
     "think hard", "think deeply", "deep thinking",
     "nimm opus", "use opus", "opus-modus",
+    "pensa a fondo", "ragiona a fondo", "pensa approfonditamente",  # i18n-allow: Italian depth commands
 )
 _FAST_PATTERNS = (
     "denk schnell", "denk wieder schnell", "normal denken",
     "nimm haiku", "use haiku", "schnell-modus", "think fast",
+    "pensa veloce", "pensa velocemente", "ragiona velocemente",  # i18n-allow: Italian depth commands
 )
 
 # Reply-language switch (added 2026-06-22, broadened after forensic #2). A
@@ -90,26 +95,33 @@ _LANG_ALIASES: dict[str, str] = {
     "englisch": "en", "english": "en",
     "deutsch": "de", "german": "de",
     "spanisch": "es", "spanish": "es", "español": "es", "espanol": "es", "castellano": "es",
+    "inglese": "en", "tedesco": "de", "spagnolo": "es",  # i18n-allow: Italian speech-input vocabulary
     "automatisch": "auto", "automatik": "auto", "automatic": "auto", "auto": "auto",
+    "automatico": "auto", "automatica": "auto",  # i18n-allow: Italian speech-input vocabulary
 }
 # (a) Unambiguous change verbs — incl. German separable forms ("umändern",  # i18n-allow: quoted German verb-form examples
 # "umstellen") whose "um" prefix breaks a plain "\bänder" boundary.  # i18n-allow: quoted German verb-form example
 _LANG_CHANGE_VERB = re.compile(
     r"\b(?:um(?:stell|schalt|änder|aender|stellung)\w*|wechsel\w*|wechsle"  # i18n-allow: German change-verb input-matching data
-    r"|änder\w*|aender\w*|switch\w*|change\w*)\b",  # i18n-allow: German change-verb input-matching data
+    r"|änder\w*|aender\w*|switch\w*|change\w*"
+    r"|cambi\w*|pass\w*|impost\w*)\b",  # i18n-allow: German/Italian change-verb input-matching data
     re.IGNORECASE,
 )
 # (b) Imperative speak verbs — match directly (no preposition needed):
 # "sprich Englisch", "speak English". German "spreche/spricht" (statements) are
 # intentionally NOT matched.
-_LANG_IMPERATIVE_SPEAK = re.compile(r"\b(?:sprich|speak\w*)\b", re.IGNORECASE)
+_LANG_IMPERATIVE_SPEAK = re.compile(
+    r"\b(?:sprich|speak\w*|parla)\b",  # i18n-allow: Italian imperative speech input
+    re.IGNORECASE,
+)
 # (c) Reply / speech verbs — need a directional preposition to anchor the
 # language as Jarvis's reply target. Broad creation verbs such as "mach(en)" are
 # intentionally excluded: "make an HTML file about what comes up in English" is
 # an artifact request, not a persistent reply-language switch.
 _LANG_OUTPUT_VERB = re.compile(
     r"\b(?:antwort\w*|respond\w*|repl(?:y|ies)|answer\w*|rede|reden|set|stell\w*"
-    r")\b",
+    r"|rispond\w*|parla|impost\w*)\b",  # i18n-allow: Italian output-command input
+
     re.IGNORECASE,
 )
 _LANG_PREP = re.compile(r"\b(?:auf|zu|to|in|on)\b", re.IGNORECASE)
@@ -193,7 +205,8 @@ def _match_language_switch(t: str) -> str | None:
 # (config-soll pinned) so the drift-guard cannot revert it. A sub-agent  # i18n-allow: "config-soll" is a Soll/Ist ("target-state") technical term, not prose
 # QUALIFIER is required, so a bare "switch to gemini" still means the main brain.
 _SUBAGENT_QUALIFIER = re.compile(
-    r"\b(?:sub[-\s]?agent|subagent|sub[-\s]?jarvis|subjarvis|worker|helfer|helper)\b",
+    r"\b(?:sub[-\s]?agent|subagent|sub[-\s]?jarvis|subjarvis|worker|helfer|helper"
+    r"|subagente|sottoagente|agente\s+secondario)\b",  # i18n-allow: Italian sub-agent input
     re.IGNORECASE,
 )
 # Longer variants first so "openai-codex" wins over "openai".
@@ -203,11 +216,18 @@ _SUBAGENT_PROVIDER_WORDS = (
     "openai", "grok", "codex", "gpt",
 )
 _SUBAGENT_SWITCH_VERB = re.compile(
-    r"\b(?:wechsel[n]?|wechsle|umstell\w*|umschalt\w*|stell\w*|set|switch|change|nimm|mach)\b",
+    r"\b(?:wechsel[n]?|wechsle|umstell\w*|umschalt\w*|stell\w*|set|switch|change|nimm|mach"
+    r"|cambia\w*|passa|impost\w*|usa)\b",  # i18n-allow: Italian sub-agent switch input
     re.IGNORECASE,
 )
-_SUBAGENT_PREP = re.compile(r"\b(?:auf|zu|to)\b", re.IGNORECASE)
-_SUBAGENT_PROVIDER_NOUN = re.compile(r"\b(?:provider|anbieter)\b", re.IGNORECASE)
+_SUBAGENT_PREP = re.compile(
+    r"\b(?:auf|zu|to|a|su)\b",  # i18n-allow: Italian directional prepositions
+    re.IGNORECASE,
+)
+_SUBAGENT_PROVIDER_NOUN = re.compile(
+    r"\b(?:provider|anbieter|fornitore)\b",  # i18n-allow: Italian provider noun
+    re.IGNORECASE,
+)
 
 
 def _first_provider_word(text: str) -> str | None:
