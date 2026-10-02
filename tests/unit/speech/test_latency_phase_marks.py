@@ -189,9 +189,9 @@ async def test_ack_receipt_is_scoped_and_does_not_break_transcript(
     pipeline._player = ReceiptPlayer()  # type: ignore[assignment]
     pipeline._latency_tracker = BrokenTracker() if broken_tracker else tracker
     # Identical words on an unrelated source must not count as an instant ack.
-    pipeline._instant_ack_spoken_text = "Ich prüfe die Unterlagen."
+    pipeline._instant_ack_spoken_text = "I'm checking the records."
     await pipeline._on_announcement(AnnouncementRequested(
-        text="Ich prüfe die Unterlagen.", language="de", kind="preamble",
+        text="I'm checking the records.", language="en", kind="preamble",
         source_layer="brain.instant_ack" if instant_ack else "test.unrelated",
     ))
     if confirmed:
