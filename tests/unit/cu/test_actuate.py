@@ -694,6 +694,12 @@ def _fake_quartz_mouse(monkeypatch, *, location=(-1440, 525)):
     )
     monkeypatch.setattr(sys, "platform", "darwin")
     monkeypatch.setitem(sys.modules, "Quartz", quartz)
+
+    # These tests exercise Quartz geometry/event sequencing, not the separate
+    # human-takeover policy. Keep that policy deterministic here; dedicated
+    # takeover tests assert that HID ownership is checked before dispatch.
+    from jarvis.cu.actuate import posix as posix_mod
+    monkeypatch.setattr(posix_mod, "_require_macos_human_input_clear", lambda: None)
     return posted
 
 
@@ -760,9 +766,13 @@ def test_macos_quartz_drag_posts_down_dragged_endpoint_and_up(monkeypatch):
 
 
 def _pyautogui_only_actuator(monkeypatch):
-    """A PosixActuator forced onto the pyautogui fallback with a spy."""
+    """A Linux/X11 PosixActuator forced onto the pyautogui fallback with a spy."""
     from jarvis.cu.actuate import posix as posix_mod
 
+    # This block tests the Linux fallback contract described above. On macOS,
+    # typing intentionally uses finer-grained dispatch so physical takeover can
+    # interrupt a burst; that behavior has dedicated tests elsewhere.
+    monkeypatch.setattr(sys, "platform", "linux")
     calls: dict[str, list] = {"typewrite": []}
 
     class _FakePyautogui:
