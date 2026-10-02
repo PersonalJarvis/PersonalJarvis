@@ -55,6 +55,13 @@ owned profile inside the existing preview. Mouse and keyboard input come only
 from the person controlling that panel. No extension installation is needed for
 this mode. Complete the login in that window, then choose **Hand back to agent**.
 
+A fresh browser opened by the person starts directly in regular Chrome when
+installed Chrome and native capture are available. Agent-initiated browsers
+retain automation, and viewing an existing task never replaces its browser.
+If Google rejects sign-in while the person owns manual control, the preview
+requests the disconnected sign-in mode once for that rejection. It does not
+retry automatically after a failure or solve provider human-verification checks.
+
 The handover waits for Chrome to close cleanly before reopening the same profile
 for agent use. Both phases use the same installed Chrome executable, whose
 identity is remembered for future launches. An older Chrome version is never

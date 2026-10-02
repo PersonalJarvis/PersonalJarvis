@@ -41,8 +41,21 @@ export function AgentBrowserPreview({ agent }: { agent: SocietyAgent }) {
   const install = useBrowserInstallStatus();
   const [expanded, setExpanded] = useState(false);
   const [address, setAddress] = useState("");
+  const attemptedSignInRecovery = useRef(false);
   useEffect(() => setAddress(state.url), [state.url]);
   useEffect(() => { setExpanded(false); }, [agent.agentId]);
+  useEffect(() => { attemptedSignInRecovery.current = false; }, [agent.agentId]);
+  useEffect(() => {
+    if (!rejectedGoogle) attemptedSignInRecovery.current = false;
+    if (rejectedGoogle && state.manual && state.loginAvailable && !state.loginMode
+      && state.connected && state.ready && !state.controlPending && !attemptedSignInRecovery.current) {
+      // Only the person who already owns this browser can recover a rejected
+      // sign-in. Do not cancel an agent task just because someone watches it.
+      attemptedSignInRecovery.current = true;
+      control("takeover", { enabled: true, login: true });
+    }
+  }, [rejectedGoogle, state.manual, state.loginAvailable, state.loginMode, state.connected,
+    state.ready, state.controlPending, control]);
   const status = profileUnavailable
     ? t("society.browser_profiles.profile_unavailable")
     : chromeDisconnected
@@ -57,6 +70,7 @@ export function AgentBrowserPreview({ agent }: { agent: SocietyAgent }) {
     ? t(state.manual ? "society.browser_live.manual" : "society.browser_live.live")
     : t(managedRuntime && install.data && !install.data.installed ? "society.card.browser_setting_up" : "society.card.browser_connecting");
   const buttonClass = "rounded px-2 py-1 text-xs hover:bg-secondary disabled:opacity-40";
+  const signInClass = "rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40";
   const enterUrl = () => {
     const url = /^https?:\/\//i.test(address) ? address : "https://" + address;
     control("navigate", { url });
@@ -169,7 +183,7 @@ export function AgentBrowserPreview({ agent }: { agent: SocietyAgent }) {
       </div>
       <div className="mt-2 flex flex-wrap justify-center gap-1">
         <BrowserProfilesButton agentId={agent.agentId} />
-        {managedRuntime && state.loginAvailable && !state.loginMode && !rejectedGoogle && <button className={buttonClass}
+        {managedRuntime && state.loginAvailable && !state.loginMode && !rejectedGoogle && <button className={signInClass}
           disabled={!live || !state.connected || state.controlPending}
           onClick={() => { setExpanded(true); control("takeover", { enabled: true, login: true }); }}>
           {t("society.browser_profiles.inline_login")}
@@ -189,7 +203,7 @@ export function AgentBrowserPreview({ agent }: { agent: SocietyAgent }) {
         <strong>{t("society.browser_profiles.google_signin_rejected")}</strong>
         <p>{t("society.browser_profiles.inline_login_recovery")}</p>
         <div className="flex flex-wrap items-center gap-3">
-          <button className={buttonClass} disabled={!state.loginAvailable || !state.connected || state.controlPending}
+          <button className={signInClass} disabled={!state.loginAvailable || !state.connected || state.controlPending}
             onClick={() => { setExpanded(true); control("takeover", { enabled: true, login: true }); }}>
             {t("society.browser_profiles.inline_login")}
           </button>

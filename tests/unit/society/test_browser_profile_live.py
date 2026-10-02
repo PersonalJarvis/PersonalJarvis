@@ -60,6 +60,21 @@ async def test_input_must_reference_the_current_browser_generation(tmp_path):
     assert not session.commands
 
 
+async def test_viewing_an_existing_running_browser_never_switches_it_to_login(tmp_path):
+    live = LiveSessions(tmp_path)
+    session = ProfileSession("lead")
+    session.state.update(full_window=True, manual=False, login_mode=False)
+    live.sessions["lead"] = session
+    await session.run_lock.acquire()
+    try:
+        assert await live._ensure_managed(agent("lead"), None, window_view=True) is session
+        assert not session.closed and not session.state["login_mode"]
+        assert not session.commands
+    finally:
+        session.run_lock.release()
+        await live.close()
+
+
 def manager(tmp_path, monkeypatch):
     live = LiveSessions(tmp_path)
 

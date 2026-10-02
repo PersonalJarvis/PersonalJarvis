@@ -138,8 +138,6 @@ class Worker:
                 "Chrome needs an unlocked Windows desktop and the managed capture runtime"
             )
 
-        from playwright.async_api import async_playwright
-
         profile = Path(args["profile_dir"])
         await asyncio.to_thread(profile.mkdir, parents=True, exist_ok=True)
         self.workspace = Path(args["workspace"])
@@ -154,6 +152,14 @@ class Worker:
         self.login_available = bool(
             self.owns_context and native_enabled and await asyncio.to_thread(find_installed_chrome)
         )
+        if args.get("window_view") and self.login_available and not self.login_mode:
+            # A person opening a fresh browser gets ordinary Chrome immediately.
+            # Explicit handback re-enters start while login_mode is still true,
+            # so it can reconnect automation without reopening manual mode.
+            return await self.change_login_mode(True)
+
+        from playwright.async_api import async_playwright
+
         self.playwright = await async_playwright().start()
         if cdp_url:
             connection = await self.playwright.chromium.connect_over_cdp(cdp_url)

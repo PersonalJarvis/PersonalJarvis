@@ -340,6 +340,78 @@ async def test_startup_reuses_durable_chrome_pin_and_never_falls_back_if_invalid
         assert not result["login_mode"] and not result["login_available"]
 
 
+async def test_person_opening_browser_starts_plain_chrome_before_any_automation(
+    runtime, monkeypatch
+):
+    worker = runtime.worker
+    worker.context = worker.browser = worker.playwright = worker.native = None
+    monkeypatch.setitem(
+        sys.modules,
+        "native_window",
+        SimpleNamespace(NativeWindow=NativeSurface, available=lambda: True),
+    )
+    # A plain browser view must not even require the Playwright startup module.
+    monkeypatch.setitem(sys.modules, "playwright.async_api", None)
+    result = await worker.start({**worker.start_args, "window_view": True})
+    assert result["manual"] and result["login_mode"]
+    assert worker.context is worker.playwright is None
+    assert runtime.factory.instances[0].executable == "stable-chrome.exe"
+    assert ("plain", "started") in runtime.events
+
+
+async def test_agent_opening_browser_keeps_automation_startup(runtime, monkeypatch):
+    worker = runtime.worker
+    worker.context = worker.browser = worker.playwright = worker.native = None
+    monkeypatch.setitem(
+        sys.modules,
+        "native_window",
+        SimpleNamespace(NativeWindow=NativeSurface, available=lambda: True),
+    )
+
+    class AutomationBoundary:
+        async def start(self):
+            raise RuntimeError("fixture reached agent startup")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "playwright.async_api",
+        SimpleNamespace(async_playwright=AutomationBoundary),
+    )
+    with pytest.raises(RuntimeError, match="fixture reached agent startup"):
+        await worker.start({**worker.start_args, "window_view": False})
+    assert not runtime.factory.instances and not worker.login_mode
+
+
+async def test_explicit_handback_does_not_reenter_plain_mode_for_a_human_opened_view(
+    runtime, monkeypatch
+):
+    worker = runtime.worker
+    worker.context = worker.browser = worker.playwright = worker.native = None
+    monkeypatch.setitem(
+        sys.modules,
+        "native_window",
+        SimpleNamespace(NativeWindow=NativeSurface, available=lambda: True),
+    )
+    await worker.start({**worker.start_args, "window_view": True})
+    reached_automation = asyncio.Event()
+
+    class AutomationBoundary:
+        async def start(self):
+            reached_automation.set()
+            raise RuntimeError("fixture reached automation startup")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "playwright.async_api",
+        SimpleNamespace(async_playwright=AutomationBoundary),
+    )
+    with pytest.raises(RuntimeError, match="fixture reached automation"):
+        await worker.command("takeover", {"enabled": False, "login": False})
+    assert reached_automation.is_set()
+    assert len(runtime.factory.instances) == 1
+    assert worker.manual and worker.login_mode
+
+
 async def test_worker_shutdown_closes_its_plain_chrome(runtime, monkeypatch):
     worker = runtime.worker
     await worker.command("takeover", {"enabled": True, "login": True})

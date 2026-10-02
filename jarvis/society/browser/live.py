@@ -575,15 +575,16 @@ class LiveSessions:
                     timeout=90,
                 )
                 session.generation = result["generation"]
+                session.login_guard = bool(result.get("login_mode"))
                 session.state = {
                     "kind": "state",
                     "generation": session.generation,
-                    "manual": False,
                     "running": False,
                     "url": "",
                     "target": "",
                     "tabs": [],
                     **session.state,
+                    "manual": bool(result.get("manual")),
                     "full_window": bool(result.get("full_window")),
                     "login_available": bool(result.get("login_available")),
                     "login_mode": bool(result.get("login_mode")),

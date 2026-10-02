@@ -64,16 +64,26 @@ afterEach(() => {
   state.loginMode = false; state.loginAvailable = false;
 });
 describe("live agent browser", () => {
-  test("a rejected Google login starts sign-in inside the same browser panel", async () => {
+  test("a rejected Google login recovers once inside the browser already controlled by its viewer", async () => {
     state.url = "https://accounts.google.com/v3/signin/rejected?flowName=fixture";
     state.manual = true;
     state.loginAvailable = true;
-    mount();
+    const view = mount();
     expect(screen.getByRole("alert").textContent).toContain("Google declined this sign-in");
     expect(screen.getByRole("link", { name: "Google sign-in help" }).getAttribute("href")).toBe("https://support.google.com/accounts/answer/7675428");
+    expect(control).toHaveBeenCalledWith("takeover", { enabled: true, login: true });
+    expect(control).toHaveBeenCalledTimes(1);
+    view.rerender(<QueryClientProvider client={new QueryClient()}><AgentBrowserPreview agent={agent} /></QueryClientProvider>);
+    expect(control).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId("chrome-recovery-dialog")).toBeNull();
+  });
+  test("watching a rejected agent page never automatically replaces its browser", () => {
+    state.url = "https://accounts.google.com/signin/rejected";
+    state.loginAvailable = true;
+    mount();
+    expect(control).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
     expect(control).toHaveBeenCalledWith("takeover", { enabled: true, login: true });
-    expect(screen.queryByTestId("chrome-recovery-dialog")).toBeNull();
   });
   test("older workers cannot receive an unsupported sign-in transition", () => {
     state.url = "https://accounts.google.com/signin/rejected";
