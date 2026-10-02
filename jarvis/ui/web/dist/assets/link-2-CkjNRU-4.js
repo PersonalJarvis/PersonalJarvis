@@ -1,4 +1,10 @@
+<<<<<<<< HEAD:jarvis/ui/web/dist/assets/link-2-CkjNRU-4.js
 import{p as e}from"./index-CnYlGhr5.js";/**
+|||||||| parent of 2acae5534 (chore(ui): rebuild subscription voice settings after integration):jarvis/ui/web/dist/assets/link-2-04TEe_px.js
+import{p as e}from"./index-BQBpmzGP.js";/**
+========
+import{p as e}from"./index-xlkDullg.js";/**
+>>>>>>>> 2acae5534 (chore(ui): rebuild subscription voice settings after integration):jarvis/ui/web/dist/assets/link-2-DU3nOtcJ.js
  * @license lucide-react v0.445.0 - ISC
  *
  * This source code is licensed under the ISC license.

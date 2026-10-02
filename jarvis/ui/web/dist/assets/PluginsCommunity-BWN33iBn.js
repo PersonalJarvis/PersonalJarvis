@@ -1,4 +1,10 @@
+<<<<<<<< HEAD:jarvis/ui/web/dist/assets/PluginsCommunity-BWN33iBn.js
 import{p as M,r as u,al as V,j as e,c as v,ab as U,ai as G,a1 as H,f as J,V as z,ad as $,$ as b,ao as L,ac as W,S as Z,L as k,aa as _,a0 as q,G as X}from"./index-CnYlGhr5.js";import{P as R}from"./branding-DGZ3DZY3.js";/**
+|||||||| parent of 2acae5534 (chore(ui): rebuild subscription voice settings after integration):jarvis/ui/web/dist/assets/PluginsCommunity-D6ZqO8_P.js
+import{p as M,r as u,al as V,j as e,c as v,ab as U,ai as G,a1 as H,f as J,V as z,ad as $,$ as b,ao as L,ac as W,S as Z,L as k,aa as _,a0 as q,G as X}from"./index-BQBpmzGP.js";import{P as R}from"./branding-DGZ3DZY3.js";/**
+========
+import{p as M,r as u,al as V,j as e,c as v,ab as U,ai as G,a1 as H,f as J,V as z,ad as $,$ as b,ao as L,ac as W,S as Z,L as k,aa as _,a0 as q,G as X}from"./index-xlkDullg.js";import{P as R}from"./branding-DGZ3DZY3.js";/**
+>>>>>>>> 2acae5534 (chore(ui): rebuild subscription voice settings after integration):jarvis/ui/web/dist/assets/PluginsCommunity-CiVQ1lNh.js
  * @license lucide-react v0.445.0 - ISC
  *
  * This source code is licensed under the ISC license.

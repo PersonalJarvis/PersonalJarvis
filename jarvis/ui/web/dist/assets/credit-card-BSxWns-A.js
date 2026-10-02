@@ -1,4 +1,10 @@
+<<<<<<<< HEAD:jarvis/ui/web/dist/assets/credit-card-BSxWns-A.js
 import{p as e}from"./index-CnYlGhr5.js";/**
+|||||||| parent of 2acae5534 (chore(ui): rebuild subscription voice settings after integration):jarvis/ui/web/dist/assets/credit-card-C8e1osWd.js
+import{p as e}from"./index-BQBpmzGP.js";/**
+========
+import{p as e}from"./index-xlkDullg.js";/**
+>>>>>>>> 2acae5534 (chore(ui): rebuild subscription voice settings after integration):jarvis/ui/web/dist/assets/credit-card-_TlR4VEc.js
  * @license lucide-react v0.445.0 - ISC
  *
  * This source code is licensed under the ISC license.

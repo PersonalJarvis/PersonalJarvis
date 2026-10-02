@@ -1,4 +1,10 @@
+<<<<<<<< HEAD:jarvis/ui/web/dist/assets/language-select-FNnKLGd7.js
 import{p as v,u as S,i as x,r as y,j as E}from"./index-CnYlGhr5.js";import{C as M}from"./combobox-D8R6G8D8.js";/**
+|||||||| parent of 2acae5534 (chore(ui): rebuild subscription voice settings after integration):jarvis/ui/web/dist/assets/language-select-BMsLGmH9.js
+import{p as v,u as S,i as x,r as y,j as E}from"./index-BQBpmzGP.js";import{C as M}from"./combobox-BP4LXxz2.js";/**
+========
+import{p as v,u as S,i as x,r as y,j as E}from"./index-xlkDullg.js";import{C as M}from"./combobox-J5VIOmkT.js";/**
+>>>>>>>> 2acae5534 (chore(ui): rebuild subscription voice settings after integration):jarvis/ui/web/dist/assets/language-select-Cs47Uzj3.js
  * @license lucide-react v0.445.0 - ISC
  *
  * This source code is licensed under the ISC license.

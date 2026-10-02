@@ -1,4 +1,10 @@
+<<<<<<<< HEAD:jarvis/ui/web/dist/assets/CliLogo-_Ksau1sM.js
 import{c as v,C as k,_ as p,a as m,b,d as h,e as y,f as u,g as f,h as x,i as j,j as M,k as w,l as C,m as z,n as L,o as R,p as B,q as G,r as V,s as D,t as N,u as O}from"./cliVendors-RGrMgUYL.js";import{p as _,j as a,c as o,aQ as A}from"./index-CnYlGhr5.js";import{T as n}from"./terminal-CRDdnXVQ.js";import{C as E}from"./credit-card-BSxWns-A.js";import{D as I}from"./database-C3cFdmlh.js";/**
+|||||||| parent of 2acae5534 (chore(ui): rebuild subscription voice settings after integration):jarvis/ui/web/dist/assets/CliLogo-RxeB4QBh.js
+import{c as v,C as k,_ as p,a as m,b,d as h,e as y,f as u,g as f,h as x,i as j,j as M,k as w,l as C,m as z,n as L,o as R,p as B,q as G,r as V,s as D,t as N,u as O}from"./cliVendors-C3Q-kF2q.js";import{p as _,j as a,c as o,aQ as A}from"./index-BQBpmzGP.js";import{T as n}from"./terminal-6z8pfWM_.js";import{C as E}from"./credit-card-C8e1osWd.js";import{D as I}from"./database-CEBTS37u.js";/**
+========
+import{c as v,C as k,_ as p,a as m,b,d as h,e as y,f as u,g as f,h as x,i as j,j as M,k as w,l as C,m as z,n as L,o as R,p as B,q as G,r as V,s as D,t as N,u as O}from"./cliVendors-C3Q-kF2q.js";import{p as _,j as a,c as o,aQ as A}from"./index-xlkDullg.js";import{T as n}from"./terminal-CN2aUg-K.js";import{C as E}from"./credit-card-_TlR4VEc.js";import{D as I}from"./database-DJ_RXDZX.js";/**
+>>>>>>>> 2acae5534 (chore(ui): rebuild subscription voice settings after integration):jarvis/ui/web/dist/assets/CliLogo-C16NugIs.js
  * @license lucide-react v0.445.0 - ISC
  *
  * This source code is licensed under the ISC license.

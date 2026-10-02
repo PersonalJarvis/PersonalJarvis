@@ -1,4 +1,10 @@
+<<<<<<<< HEAD:jarvis/ui/web/dist/assets/flask-conical-BZbHk7ZH.js
 import{p as a}from"./index-CnYlGhr5.js";/**
+|||||||| parent of 2acae5534 (chore(ui): rebuild subscription voice settings after integration):jarvis/ui/web/dist/assets/flask-conical-AZKq5zrH.js
+import{p as a}from"./index-BQBpmzGP.js";/**
+========
+import{p as a}from"./index-xlkDullg.js";/**
+>>>>>>>> 2acae5534 (chore(ui): rebuild subscription voice settings after integration):jarvis/ui/web/dist/assets/flask-conical-DhRAypOj.js
  * @license lucide-react v0.445.0 - ISC
  *
  * This source code is licensed under the ISC license.
