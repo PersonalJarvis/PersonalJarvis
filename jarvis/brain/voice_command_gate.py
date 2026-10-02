@@ -46,7 +46,7 @@ _PROVIDER_PATTERN = re.compile(
     r"\b(?:wechsel[n]?|wechsle|änder\w*|aender\w*|setz\w*|stell\w*"  # i18n-allow: German provider-switch input-matching data
     r"|switch(?:\s+to)?|benutze?|nutze|use|nimm"
     r"|cambia\w*|passa|passare|impost\w*|usa)"  # i18n-allow: Italian provider-switch input-matching data
-    r"(?:\s+(?:den|die|das|der|the|deinen|deine|dein|meinen|meine|mein|my"
+    r"(?:\s+(?:den|die|das|der|the|deinen|deine|dein|meinen|meine|mein|my"  # i18n-allow: German provider-switch input-matching data
     r"|il|lo|la|mio|mia))?"  # i18n-allow: German/Italian provider-switch input-matching data
     r"(?:\s+(?:brain[-\s]*provider|provider|anbieter|fornitore|sprach[-\s]*modell|modell|model|modello))?"  # i18n-allow: Italian provider-switch input-matching data
     # Optional "von/from <source>" so "switch FROM gemini TO openai" targets the
@@ -61,7 +61,7 @@ _PROVIDER_PATTERN = re.compile(
 # sentence start OR preceded by "jarvis", to avoid catching harmless phrases
 # like "stopp doch mal kurz".
 _CANCEL_PATTERN = re.compile(
-    r"^(?:jarvis[,\s]+)?(?:stopp?|abbruch|abbrechen|cancel|stop\s+sub|halt"
+    r"^(?:jarvis[,\s]+)?(?:stopp?|abbruch|abbrechen|cancel|stop\s+sub|halt"  # i18n-allow: German cancel-command input-matching data
     r"|fermati|interrompi|basta)\b",  # i18n-allow: German/Italian cancel-command input-matching data
     re.IGNORECASE,
 )
@@ -113,7 +113,7 @@ _LANG_ALIASES: dict[str, str] = {
 # "umstellen") whose "um" prefix breaks a plain "\bänder" boundary.  # i18n-allow: quoted German verb-form example
 _LANG_CHANGE_VERB = re.compile(
     r"\b(?:um(?:stell|schalt|änder|aender|stellung)\w*|wechsel\w*|wechsle"  # i18n-allow: German change-verb input-matching data
-    r"|änder\w*|aender\w*|switch\w*|change\w*"
+    r"|änder\w*|aender\w*|switch\w*|change\w*"  # i18n-allow: German change-verb input-matching data
     r"|cambi\w*|pass\w*|impost\w*)\b",  # i18n-allow: German/Italian change-verb input-matching data
     re.IGNORECASE,
 )
