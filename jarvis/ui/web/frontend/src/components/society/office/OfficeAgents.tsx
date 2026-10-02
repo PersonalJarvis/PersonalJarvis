@@ -108,10 +108,10 @@ function Nameplate({ agent, activity, selected, onSelect, height = OFFICE_FIGURE
   );
   return (
     <group ref={anchor} position={[0, height, 0]}>
-      {/* An opened plate draws above its neighbours' plates and bubbles, which sit shoulder to shoulder at a desk row. */}
+      {/* Hover/focus raises a plate above its neighbours; coding titles stay expanded independently. */}
       <Html center zIndexRange={open ? [40, 30] : [20, 0]}>
         <button ref={plate} type="button" data-office-ui className="office-plate" data-state={agent.state} data-selected={selected || undefined}
-          data-pane={pane || undefined} data-open={open || undefined}
+          data-pane={pane || undefined} data-open={pane || open || undefined}
           onClick={(event) => { event.stopPropagation(); onSelect(agent.agentId); }}
           onPointerEnter={() => setOpen(true)} onPointerLeave={() => setOpen(false)}
           onFocus={() => setOpen(true)} onBlur={() => setOpen(false)}
@@ -121,7 +121,7 @@ function Nameplate({ agent, activity, selected, onSelect, height = OFFICE_FIGURE
               {agent.tier === "lead" ? "★" : (pane ? agent.provider : agent.name).slice(0, 1).toUpperCase()}
             </span>
           )}
-          {pane ? <PanePlateText agent={agent} open={open} state={state} /> : (
+          {pane ? <PanePlateText agent={agent} state={state} /> : (
             <>
               <span className="office-plate-name" title={agent.name}>{agent.name}</span>
               {state}
@@ -150,14 +150,13 @@ function PaneLogo({ url, ground }: { url: string; ground: "ink" | "dark" | "any"
 }
 
 /**
- * A coding pane's plate: its title on two lines (subject, then result and run
- * state), so the words that tell four "Office …" panes apart are never the ones
- * clipped. Hovered or focused, it opens to the whole title, the call-sign that
- * finds the pane in the IDE, and the opening of what it was last asked.
+ * A coding pane's plate always shows its whole title (subject, then result and
+ * run state), the call-sign that finds the pane in the IDE, and the opening of
+ * what it was last asked. Only the prompt preview is clamped, never the title.
  */
-function PanePlateText({ agent, open, state }: { agent: SocietyAgent; open: boolean; state: ReactNode }) {
+function PanePlateText({ agent, state }: { agent: SocietyAgent; state: ReactNode }) {
   const { subject, result } = plateTitle(agent.name);
-  const asked = open ? promptOpening(agent.description) : "";
+  const asked = promptOpening(agent.description);
   return (
     <span className="office-plate-text">
       <span className="office-plate-name">{subject}</span>
@@ -165,7 +164,7 @@ function PanePlateText({ agent, open, state }: { agent: SocietyAgent; open: bool
         {result ? <span className="office-plate-result">{result}</span> : null}
         {state}
       </span>
-      {open ? <span className="office-plate-sign">{agent.title}</span> : null}
+      <span className="office-plate-sign">{agent.title}</span>
       {asked && asked !== agent.name ? <span className="office-plate-asked">“{asked}”</span> : null}
     </span>
   );
