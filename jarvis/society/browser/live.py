@@ -374,7 +374,9 @@ class LiveSessions:
             if not install.is_installed(self.data_dir):
                 await asyncio.to_thread(install.ensure_installed, self.data_dir)
             folder = (self.data_dir / "society" / agent_id).resolve()
-            tree = make_process_tree("agent-browser")
+            # Chromium may explicitly break away from its parent Job Object;
+            # keep browser descendants inside the kill-on-close boundary.
+            tree = make_process_tree("agent-browser", allow_breakaway=False)
             process_options: dict[str, Any] = {"start_new_session": True} if os.name != "nt" else {}
             proc = await asyncio.create_subprocess_exec(
                 str(install.venv_python(self.data_dir)),

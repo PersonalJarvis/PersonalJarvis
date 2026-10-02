@@ -127,7 +127,7 @@ class _WindowsJob:
     def supports_containment(self) -> bool:
         return not self._closed
 
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str, *, allow_breakaway: bool = True) -> None:
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
         kernel32.CreateJobObjectW.restype = wintypes.HANDLE
@@ -157,9 +157,10 @@ class _WindowsJob:
         self._name = name
         try:
             info = _JobObjectExtendedLimitInformation()
-            info.BasicLimitInformation.LimitFlags = (
-                _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | _JOB_OBJECT_LIMIT_BREAKAWAY_OK
-            )
+            flags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+            if allow_breakaway:
+                flags |= _JOB_OBJECT_LIMIT_BREAKAWAY_OK
+            info.BasicLimitInformation.LimitFlags = flags
             if not kernel32.SetInformationJobObject(
                 handle,
                 _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
@@ -296,19 +297,23 @@ class _PosixProcessGroup:
                 )
 
 
-def make_process_tree(name: str) -> ProcessTree:
+def make_process_tree(name: str, *, allow_breakaway: bool = True) -> ProcessTree:
     """A kill-on-close container for one spawned process tree.
 
     Never raises. A host where containment cannot be set up gets the honest
     no-op: a terminal that opens and leaves debris behind is worth far more
     than one that refuses to open.
 
+    ``allow_breakaway`` controls whether Windows descendants may explicitly
+    escape this job. It defaults to True for tools that need their own jobs;
+    contained browser workers disable it so Chromium children stay owned.
+
     ``name`` appears in the log lines only; it is never a Windows object name
     (see :class:`_WindowsJob`).
     """
     if sys.platform == "win32":
         try:
-            return _WindowsJob(name)
+            return _WindowsJob(name, allow_breakaway=allow_breakaway)
         except Exception as exc:  # noqa: BLE001 - containment is a safeguard
             logger.warning(
                 "Could not create a job object for {} — its descendants will "
