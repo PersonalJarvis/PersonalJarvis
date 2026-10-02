@@ -43,7 +43,7 @@ def _quartz_seconds_since_input() -> float | None:
             kCGAnyInputEventType,
             kCGEventSourceStateHIDSystemState,
         )
-    except (ImportError, ModuleNotFoundError):
+    except (ImportError, ModuleNotFoundError):  # optional Quartz bridge may be unavailable
         return None
     try:
         value = float(
@@ -98,7 +98,7 @@ def macos_human_activity(
         )
     try:
         age_f = float(age)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # invalid native probe values fail closed
         return HumanActivity(
             available=False,
             seconds_since_input=None,
