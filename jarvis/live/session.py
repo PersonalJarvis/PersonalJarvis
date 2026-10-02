@@ -29,6 +29,16 @@ REASONING_SNAPSHOT_INTERVAL_S = 0.3
 #: Reasoning items whose summary may be streaming at once (a bound, not a goal).
 _REASONING_ITEMS_MAX = 16
 
+#: How long a handed-over agent report may wait for the model to start
+#: answering it. Past that it counts as not delivered and stays owed.
+REPORT_START_TIMEOUT_S = 20.0
+
+
+def _speech_pipeline() -> Any:
+    from jarvis.core.runtime_refs import get_speech_pipeline
+
+    return get_speech_pipeline()
+
 
 def _pipeline_input_muted() -> bool:
     """Jarvis's microphone mute. The speech pipeline is its only writer."""
@@ -144,11 +154,24 @@ class LiveVoiceSession:
         self._timeline_offset = 0
         self._had_unconfirmed_wire = False
         self._initial_seed: list[dict] = []
+        # An agent report handed to this call: "sent" until the model starts
+        # answering it, "started" while it does, then "done" or "failed". The
+        # speech pipeline reads the outcome at the next pause, so a report the
+        # model never voiced stays owed instead of silently counting as heard.
+        self._report_state = ""
+        self._report_response_id = ""
+        self._report_timeout: asyncio.TimerHandle | None = None
+        self._end_reported = False
         self._language = resolve_output_language(
             getattr(config.brain, "reply_language", "auto"),
             "auto",
             "",
         )
+
+    @property
+    def surface(self) -> str:
+        """Where the call's media lives: ``browser`` (WebView) or ``desktop``."""
+        return self._surface
 
     @property
     def active_provider(self) -> str:
@@ -181,6 +204,118 @@ class LiveVoiceSession:
             return "thinking"
         return "listening"
 
+    @property
+    def ready_for_report(self) -> bool:
+        """True at a real conversational pause: nobody speaks, nothing runs.
+
+        An agent's report may start only then; it never talks over the user,
+        a running answer or a tool that is still working.
+        """
+        return bool(
+            self.is_active
+            and not self._recovering
+            and not self._resume_needs_input
+            and not self._input_active
+            and not self._thinking
+            and not self._speaking
+            and not self.playback_active
+            and not self._has_pending_work()
+            and self._report_state not in {"sent", "started"}
+        )
+
+    @property
+    def report_pending(self) -> bool:
+        """A handed-over report the model has not finished answering yet."""
+        return self._report_state in {"sent", "started"}
+
+    def take_report_outcome(self) -> str:
+        """``"completed"`` or ``"failed"`` once a handed-over report settled.
+
+        ``""`` while it is still on its way (or when none was handed over).
+        Reading a settled outcome clears it, so it is reported exactly once.
+        """
+        if self._report_state not in {"done", "failed"}:
+            return ""
+        outcome = "completed" if self._report_state == "done" else "failed"
+        self._report_state = ""
+        self._report_response_id = ""
+        return outcome
+
+    def _report_sent(self) -> None:
+        self._report_state = "sent"
+        self._report_response_id = ""
+        self._cancel_report_timeout()
+        self._report_timeout = asyncio.get_running_loop().call_later(
+            REPORT_START_TIMEOUT_S, self._report_start_timed_out
+        )
+
+    def _report_started(self, response_id: str = "") -> None:
+        if self._report_state != "sent":
+            return
+        self._cancel_report_timeout()
+        self._report_state = "started"
+        self._report_response_id = response_id
+
+    def _report_finished(self, *, delivered: bool) -> None:
+        if self._report_state != "started":
+            return
+        self._report_state = "done" if delivered else "failed"
+
+    def _cancel_report_timeout(self) -> None:
+        if self._report_timeout is not None:
+            self._report_timeout.cancel()
+            self._report_timeout = None
+
+    def _report_start_timed_out(self) -> None:
+        self._report_timeout = None
+        if self._report_state != "sent":
+            return
+        log.warning(
+            "Live call did not start answering an agent report within %.0f s; "
+            "it stays owed.",
+            REPORT_START_TIMEOUT_S,
+        )
+        self._report_state = "failed"
+        self._notify_pause()
+
+    def _notify_pause(self) -> None:
+        """Tell the speech pipeline that owed agent replies may be offered now.
+
+        The pipeline owns the queue of finished agent work; this session only
+        knows when the conversation pauses. Without this signal a browser call
+        never reaches a turn boundary the pipeline can see, and every result
+        waited until the call ended (live 2026-10-02: Scout's report).
+        """
+        if self._closing or not self.ready_for_report:
+            return
+        hook = getattr(_speech_pipeline(), "live_call_paused", None)
+        if not callable(hook):
+            return
+        try:
+            hook(self)
+        except Exception:  # noqa: BLE001 — a failed offer stays queued for the next pause
+            log.warning("Live call pause could not be signalled", exc_info=True)
+
+    def _notify_ended(self) -> None:
+        """Settle an owed reply that was still on its way when the call ended."""
+        if self._end_reported:
+            return
+        self._end_reported = True
+        self._cancel_report_timeout()
+        hook = getattr(_speech_pipeline(), "live_call_ended", None)
+        if not callable(hook):
+            return
+        try:
+            hook(self)
+        except Exception:  # noqa: BLE001 — the reply stays in the chat either way
+            log.warning("Live call end could not be signalled", exc_info=True)
+
+    def _track_job(self, task: asyncio.Task) -> None:
+        """Keep a tool task; a finished task may open the floor for a report."""
+        self._jobs.add(task)
+        task.add_done_callback(self._jobs.discard)
+        task.add_done_callback(lambda _task: self._notify_pause())
+
     async def _emit_indicator(self, message: dict) -> None:
         """Send a speaking/thinking indicator without breaking the session.
 
@@ -198,6 +333,9 @@ class LiveVoiceSession:
             await self._send_json(message)
         except Exception:  # noqa: BLE001 — indicators must not kill voice
             log.debug("Live indicator frame could not be sent", exc_info=True)
+        # Every speaking/thinking/listening change passes here: the one place
+        # that sees the conversation come to a pause.
+        self._notify_pause()
 
     async def _publish_phase(self, phase: str | None = None) -> None:
         """Mirror the media state to native and remote surfaces on the same bus."""
@@ -316,6 +454,8 @@ class LiveVoiceSession:
             return
         previous_phase = self.phase
         previous_playback = self.playback_active
+        first_media = not self._media_received
+        was_ready = self.ready_for_report
         # A frontend rebuild can reach an already-running process whose eager
         # audio module predates the lazily imported Live session. Optional
         # meters must degrade instead of terminating a paid voice connection.
@@ -341,6 +481,10 @@ class LiveVoiceSession:
             await self._emit_indicator({"type": self.phase})
         if self._closing:
             return
+        if first_media or not was_ready:
+            # The page's audio is live, or the user just stopped talking
+            # without a phase change ("listening" covers both).
+            self._notify_pause()
         if levels.playback_active:
             level_tap.publish(levels.output_level)
             level_tap.note_playing(0.3)
@@ -552,6 +696,12 @@ class LiveVoiceSession:
                     "input_muted": self._input_muted,
                 }
             )
+            if not offer:
+                # Audio already flows over this socket: agent results that
+                # finished before the call may be offered at once. A WebRTC
+                # call waits for the page's first media report instead, so a
+                # result is never spoken into a connection nobody hears yet.
+                self._notify_pause()
         except BaseException as exc:
             if isinstance(exc, Exception):
                 await self._announce_start_failure(exc)
@@ -690,6 +840,9 @@ class LiveVoiceSession:
             await self._send_json({"type": "input_mute", "muted": self._input_muted})
         except Exception:  # noqa: BLE001 — the frames are dropped here regardless
             log.warning("Voice page missed the microphone mute", exc_info=True)
+        if not self._input_muted:
+            # Results parked while muted may be offered now.
+            self._notify_pause()
 
     async def handle_audio_frame(self, pcm: bytes) -> None:
         if (
@@ -737,6 +890,7 @@ class LiveVoiceSession:
             from jarvis.live.runtime import unregister
 
             unregister(self.session_id)
+            self._notify_ended()
             self._closed.set()
 
     async def _event(self, event: dict) -> None:
@@ -901,6 +1055,8 @@ class LiveVoiceSession:
             self._response_revisions[self._response_id] = self._tools.revision
             self._delegation_responses[delegation] = self._response_id
             self._responses.setdefault(self._response_id, [])
+            # The first response after a handed-over report is its answer.
+            self._report_started(self._response_id)
             if self._bus is not None:
                 from jarvis.core.events import BrainTurnStarted
 
@@ -946,6 +1102,10 @@ class LiveVoiceSession:
             if rid in self._completed:
                 return
             self._completed.add(rid)
+            if rid == self._report_response_id:
+                # "incomplete" is a barge-in: the user heard the start and
+                # chose to talk; the report itself is in the conversation.
+                self._report_finished(delivered=kind != "response.failed")
             calls = self._responses.pop(rid, [])
             revision = self._response_revisions.pop(rid, self._tools.revision)
             # A backend response completing is not a speech boundary. Its
@@ -990,8 +1150,7 @@ class LiveVoiceSession:
             )
             if calls and kind == "response.completed" and not self._closing:
                 task = asyncio.create_task(self._run_calls(calls, revision), name="live-tools")
-                self._jobs.add(task)
-                task.add_done_callback(self._jobs.discard)
+                self._track_job(task)
 
     async def _run_calls(self, calls: list[dict], revision: int) -> None:
         assert self._tools is not None
@@ -1154,15 +1313,7 @@ class LiveVoiceSession:
         a turn is in flight — the caller parks it and retries at the next
         boundary — so it never talks over the user or a running answer.
         """
-        if (
-            self._recovering
-            or self._resume_needs_input
-            or self._input_active
-            or self._thinking
-            or self._speaking
-            or self.playback_active
-            or self._has_pending_work()
-        ):
+        if not self.ready_for_report:
             return False
         from jarvis.realtime.report_prompt import report_update_prompt
 
@@ -1173,22 +1324,30 @@ class LiveVoiceSession:
             language=language,
             kind=str(kwargs.get("spoken_kind") or "completion"),
         )
-        await self._connection.send(
-            {
-                "type": "response.item.create",
-                "item": {
-                    "type": "message",
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_text",
-                            "text": "[Application event, not the user speaking]\n" + prompt,
-                        }
-                    ],
-                },
-            }
-        )
-        await self._connection.send({"type": "response.create"})
+        # Marked before the wire: the model's answer can arrive while the
+        # send is still being awaited, and must count as this report's.
+        self._report_sent()
+        try:
+            await self._connection.send(
+                {
+                    "type": "response.item.create",
+                    "item": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_text",
+                                "text": "[Application event, not the user speaking]\n" + prompt,
+                            }
+                        ],
+                    },
+                }
+            )
+            await self._connection.send({"type": "response.create"})
+        except BaseException:
+            self._cancel_report_timeout()
+            self._report_state = ""
+            raise
         return True
 
     async def attach_appshot(self, image: bytes, mime: str, note: str) -> bool:
@@ -1241,6 +1400,7 @@ class LiveVoiceSession:
 
         unregister(self.session_id)
         self._closing = True
+        self._notify_ended()
         await self._publish_phase("idle")
         self._hangup_reason = reason
         if self._connection is not None:
