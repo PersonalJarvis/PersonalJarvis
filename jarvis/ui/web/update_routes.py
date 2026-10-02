@@ -65,7 +65,6 @@ import platform as platform_module
 import re
 import shutil
 import sys
-import tempfile
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -85,8 +84,12 @@ from jarvis.core.installer_update import (
     InstallerUpdateError,
     apply_installer,
     download_and_verify,
+    download_workdir,
     installer_asset_name,
+    machine_for_update,
     select_asset,
+    sweep_stale_downloads,
+    update_blocker,
 )
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 
@@ -829,7 +832,23 @@ def _on_git_progress(line: str) -> None:
 
 def _frozen_asset_name() -> str | None:
     """The installer asset this machine installs, or ``None`` if there is none."""
-    return installer_asset_name(sys.platform, platform_module.machine())
+    return installer_asset_name(sys.platform, machine_for_update())
+
+
+# Old update downloads are reclaimed once per process, on the first status
+# check — not on every poll, and never on the boot path itself (AP-26).
+_downloads_swept = False
+
+
+async def _sweep_old_downloads_once() -> None:
+    global _downloads_swept
+    if _downloads_swept:
+        return
+    _downloads_swept = True
+    try:
+        await asyncio.to_thread(sweep_stale_downloads)
+    except Exception:  # noqa: BLE001 - housekeeping never fails the fail-open status check
+        log.warning("[update] could not reclaim old update downloads", exc_info=True)
 
 
 def _frozen_release_assets(
@@ -866,7 +885,13 @@ async def _frozen_status(current: str) -> dict[str, object]:
         # verdict; the fields stay present so the UI reads one shape.
         "pending_update": None,
         "last_result": None,
+        # Why THIS install cannot replace itself (run from a disk image, a
+        # read-only folder, outside its AppImage), or None. The update is still
+        # announced — the user should learn it exists — and apply refuses with
+        # this sentence before downloading anything.
+        "blocked_reason": None,
     }
+    await _sweep_old_downloads_once()
 
     asset_name = _frozen_asset_name()
     if asset_name is None:
@@ -907,6 +932,7 @@ async def _frozen_status(current: str) -> dict[str, object]:
     if _is_newer(version, current):
         result["update_available"] = True
         result["notes"] = latest.get("notes")
+        result["blocked_reason"] = update_blocker()
     return result
 
 
@@ -1033,6 +1059,12 @@ async def _apply_frozen(
             ),
         )
 
+    blocker = update_blocker()
+    if blocker is not None:
+        # Asked before the download: otherwise the user waits for several
+        # hundred MB only to learn the app cannot replace itself where it is.
+        raise HTTPException(status_code=409, detail=blocker)
+
     _progress.version = release_version
 
     def on_bytes(written: int, total: int | None) -> None:
@@ -1046,7 +1078,7 @@ async def _apply_frozen(
             detail=f"{_human_bytes(written)} / {_human_bytes(total)}",
         )
 
-    workdir = Path(tempfile.mkdtemp(prefix="jarvis-update-"))
+    workdir = download_workdir()
     try:
         _progress.enter(PHASE_DOWNLOADING, detail=asset.name)
         installer = await download_and_verify(
@@ -1067,9 +1099,7 @@ async def _apply_frozen(
         relaunch = _desktop_can_quit(request)
         # hdiutil, a directory swap and a detached spawn all block; keep the
         # event loop (and therefore the UI this answer travels back over) free.
-        handover = await asyncio.to_thread(
-            lambda: apply_installer(installer, relaunch=relaunch)
-        )
+        handover = await asyncio.to_thread(lambda: apply_installer(installer, relaunch=relaunch))
     except HTTPException:
         shutil.rmtree(workdir, ignore_errors=True)
         raise
