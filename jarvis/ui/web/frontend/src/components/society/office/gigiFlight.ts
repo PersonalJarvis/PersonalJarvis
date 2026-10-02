@@ -130,15 +130,15 @@ function approach(rate: number, dt: number): number {
   return 1 - Math.exp(-rate * dt);
 }
 
-export function createGigiFlight(x: number, z: number, heading = 0): GigiFlightState {
+export function createGigiFlight(x: number, z: number, heading = 0, ground = false): GigiFlightState {
   return {
-    x, z, vx: 0, vz: 0, base: GIGI_HOVER_M, vBase: 0, yaw: heading, pitch: 0, roll: 0, spin: 0,
+    x, z, vx: 0, vz: 0, base: ground ? 0 : GIGI_HOVER_M, vBase: 0, yaw: heading, pitch: 0, roll: 0, spin: 0,
     idleBlend: 1, workBlend: 0, sleepBlend: 0, happyBlend: 0, glow: 0.35, scale: 1,
   };
 }
 
-export function createGigiPose(): GigiFlightPose {
-  return { x: 0, y: GIGI_HOVER_M, z: 0, yaw: 0, pitch: 0, roll: 0, scale: 1, glow: 0.35, speed: 0 };
+export function createGigiPose(ground = false): GigiFlightPose {
+  return { x: 0, y: ground ? 0 : GIGI_HOVER_M, z: 0, yaw: 0, pitch: 0, roll: 0, scale: 1, glow: 0.35, speed: 0 };
 }
 
 /**
@@ -205,7 +205,8 @@ export function stepGigiFlight(state: GigiFlightState, input: GigiFlightInput, o
   // ---- Height -------------------------------------------------------------
   const baseTarget = ground ? 0
     : mode === "sleep" && !input.speaking ? GIGI_SLEEP_HOVER_M : mode === "follow" ? GIGI_FOLLOW_HOVER_M : GIGI_HOVER_M;
-  if (reduced) { state.base = baseTarget; state.vBase = 0; }
+  // Ground pets start on the floor, also when replacing a hovering companion.
+  if (ground || reduced) { state.base = baseTarget; state.vBase = 0; }
   else if (dt > 0) {
     springStep(state.base, state.vBase, baseTarget, HEIGHT_OMEGA, dt, scratch);
     state.base = scratch[0]; state.vBase = scratch[1];
@@ -246,8 +247,10 @@ export function stepGigiFlight(state: GigiFlightState, input: GigiFlightInput, o
   const leanTarget = reduced || ground ? 0 : GIGI_MAX_LEAN * clamp(speed / LEAN_FULL_SPEED, 0, 1);
   // Turning towards +x (yaw increasing) tips the top towards +x: negative roll.
   const bankTarget = reduced || ground ? 0 : clamp(-yawRate * clamp(speed, 0, 2) * 0.12, -MAX_BANK, MAX_BANK);
-  state.pitch += (leanTarget - state.pitch) * approach(6, dt);
-  state.roll += (bankTarget - state.roll) * approach(6, dt);
+  // A freshly selected ground pet must not inherit a flyer's fading lean:
+  // tilting a raised torso shifts its projection away from the floor marker.
+  state.pitch = ground ? 0 : state.pitch + (leanTarget - state.pitch) * approach(6, dt);
+  state.roll = ground ? 0 : state.roll + (bankTarget - state.roll) * approach(6, dt);
 
   // ---- Happy spin (wave): one full turn every few seconds, always finished ----
   if (reduced) state.spin = 0;

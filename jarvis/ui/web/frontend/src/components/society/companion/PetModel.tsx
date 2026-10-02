@@ -8,7 +8,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useGLTF } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
 import {
-  BoxGeometry, Color, InstancedMesh, Matrix4, MeshStandardMaterial, Object3D, Quaternion, Vector3, type Group,
+  Box3, BoxGeometry, Color, InstancedMesh, Matrix4, MeshStandardMaterial, Object3D, Quaternion, Vector3, type Group,
 } from "three";
 import type { CompanionPet } from "./petCompanions";
 import { createRigState, rigPose, stepRig, type PartMotion, type PetMood } from "./petRig";
@@ -68,7 +68,18 @@ export function PetModel({ pet, drive, reduced, paused }: {
         });
       }
     });
-    return { model, parts };
+    const groundOffset = new Vector3();
+    if (pet.id === "miso") {
+      // The cat's torso sits behind the exported origin. Centre its rest-pose
+      // footprint once, before scaling/turning; animated paws, head and tail
+      // must never steer the floor marker or move the rotation pivot.
+      const torso = model.getObjectByName("miso_Torso");
+      if (torso) {
+        new Box3().setFromObject(torso).getCenter(groundOffset);
+        groundOffset.set(-groundOffset.x, 0, -groundOffset.z);
+      }
+    }
+    return { model, parts, groundOffset };
   }, [scene, pet.id]);
   const rig = useRef(createRigState());
   const pose = useMemo(() => new Map<string, PartMotion>(), []);
@@ -83,7 +94,13 @@ export function PetModel({ pet, drive, reduced, paused }: {
       if (part) applyMotion(part, motion);
     }
   });
-  return <primitive object={instance.model} scale={pet.heightM / pet.modelHeightM} dispose={null} />;
+  return (
+    <group scale={pet.heightM / pet.modelHeightM}>
+      <group position={instance.groundOffset}>
+        <primitive object={instance.model} dispose={null} />
+      </group>
+    </group>
+  );
 }
 
 /** Reads a same-origin sprite sheet into voxel frames; null while loading or when unusable. */

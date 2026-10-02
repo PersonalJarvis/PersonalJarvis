@@ -139,6 +139,8 @@ export function GigiFlyer({ owner, mode, speaking, paused, reduced, clear, child
   /** Floor markers and labels share the rendered position, without the body's lift, turn or scale. */
   children?: ReactNode;
 }) {
+  const pet = useCompanionPet((s) => s.pet);
+  const ground = !companionFlies(pet);
   const groundRoot = useRef<Group>(null);
   // JSX must not reset the animated anchor to a newer target on a React render,
   // especially while paused or while switching between following and errands.
@@ -151,8 +153,8 @@ export function GigiFlyer({ owner, mode, speaking, paused, reduced, clear, child
   const trail = useRef<Points>(null);
   const light = useRef<PointLight>(null);
   const orbit = useRef<Group>(null);
-  const flight = useRef(createGigiFlight(owner.current.x, owner.current.z, owner.current.heading));
-  const pose = useMemo(() => createGigiPose(), []);
+  const flight = useRef(createGigiFlight(owner.current.x, owner.current.z, owner.current.heading, ground));
+  const pose = useRef(createGigiPose(ground)).current;
   const clock = useRef(0);
   const last = useRef({ x: owner.current.x, z: owner.current.z });
   const emitDebt = useRef(0);
@@ -160,8 +162,6 @@ export function GigiFlyer({ owner, mode, speaking, paused, reduced, clear, child
   const side = useRef<1 | -1>(1);
   const tint = useMemo(() => new Color(), []);
   const appearance = useMemo(() => ({ ...defaultCompanion("jarvis"), sizeM: GIGI_OFFICE_SIZE_M }), []);
-  const pet = useCompanionPet((s) => s.pet);
-  const ground = !companionFlies(pet);
   const groundRef = useRef(ground);
   groundRef.current = ground;
   const drive = useRef<PetDrive>({ speed: 0, mood: "idle" });

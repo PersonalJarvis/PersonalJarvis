@@ -116,9 +116,11 @@ function groundObjects(scene: THREE.Scene) {
 
 function expectCentered(scene: THREE.Scene) {
   const { cat, ring } = groundObjects(scene);
-  const at = cat.getWorldPosition(new THREE.Vector3());
+  const torso = cat.getObjectByName("miso_Torso");
+  if (!torso) throw new Error("The shipped cat must have its authored torso");
+  const at = new THREE.Box3().setFromObject(torso).getCenter(new THREE.Vector3());
   const centre = ring.getWorldPosition(new THREE.Vector3());
-  expect(Math.hypot(at.x - centre.x, at.z - centre.z), "cat ground pivot versus ring centre").toBeLessThan(1e-6);
+  expect(Math.hypot(at.x - centre.x, at.z - centre.z), "cat torso projection versus ring centre").toBeLessThan(1e-6);
   // The parent floor is y=2 at scale 1.6; body hops and pulses cannot lift or resize the marker.
   expect(centre.y).toBeCloseTo(2 + 0.015 * 1.6, 6);
   expect(ring.getWorldScale(new THREE.Vector3()).x).toBeCloseTo(1.6, 6);
@@ -126,6 +128,15 @@ function expectCentered(scene: THREE.Scene) {
 }
 
 describe("the lead pet's floor anchor", () => {
+  it("starts on the floor instead of descending from a flyer's hover height", async () => {
+    const view = await mount(false);
+    view.scene.updateMatrixWorld(true);
+    const { cat } = groundObjects(view.scene);
+    expect(cat.getWorldPosition(new THREE.Vector3()).y).toBeCloseTo(2, 6);
+    await view.frame(1 / 60);
+    expect(cat.getWorldPosition(new THREE.Vector3()).y).toBeCloseTo(2, 6);
+  });
+
   it.each([1 / 144, 1 / 30, 0.25])("keeps the real cat centred through motion and turns at dt=%s", async (dt) => {
     const view = await mount(false);
     // Straight travel, a right turn, a reversal, then standing still.

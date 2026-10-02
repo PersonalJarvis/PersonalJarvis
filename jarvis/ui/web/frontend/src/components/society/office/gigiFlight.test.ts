@@ -8,6 +8,22 @@ const MODES: GigiFlightMode[] = ["idle", "work", "talk", "wave", "sleep", "follo
 const DT = 1 / 60;
 
 describe("a pet on the floor (ground mode)", () => {
+  it("starts grounded and clears a previous flyer's height and bank immediately", () => {
+    expect(createGigiFlight(2, -3, 0.7, true).base).toBe(0);
+    expect(createGigiPose(true).y).toBe(0);
+    const state = createGigiFlight(2, -3);
+    state.pitch = 0.2;
+    state.roll = -0.3;
+    state.vBase = 0.4;
+    const pose = stepGigiFlight(state, {
+      targetX: 2, targetZ: -3, moving: false, mode: "idle", speaking: false, t: 0, dt: DT, ground: true,
+    });
+    expect(pose.y).toBe(0);
+    expect(pose.pitch).toBe(0);
+    expect(pose.roll).toBe(0);
+    expect(state.vBase).toBe(0);
+  });
+
   it("lands on the floor, never leans or banks, and hops only while standing happy", () => {
     const state = createGigiFlight(0, 0);
     const pose = createGigiPose();
