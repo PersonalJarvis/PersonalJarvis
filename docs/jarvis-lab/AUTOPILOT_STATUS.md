@@ -107,7 +107,8 @@ receipts.
   but had no playback-confirmed stage. This follow-up adds
   `ack_playback_confirmed` to the turn trace and latency report, derived from
   the existing post-playback `SpeechSpoken` receipt. It does not add a new
-  command route.
+  command route. The receipt matcher is cleared at the start of each utterance
+  so repeated wording cannot inherit a previous turn's ack attribution.
 - Wake-to-route remains unmeasured: the per-turn tracker begins after utterance
   capture, while wake-to-bar event budgets have their own focused test. Do not
   describe current measurements as wake-to-ack end-to-end latency until the

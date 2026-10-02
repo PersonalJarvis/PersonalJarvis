@@ -1,5 +1,5 @@
-Warning: truncated output (original token count: 236764)
-Total output lines: 18216
+Warning: truncated output (original token count: 236827)
+Total output lines: 18220
 
 """Speech pipeline with call/hangup state and parallel wake detection.
 
@@ -4648,11 +4648,7 @@ class SpeechPipeline:
         try:
             _spawn(asyncio.get_running_loop())
             return
-        except …116764 tokens truncated…ait_ms:{release_wait_ms}",
-                    f"warmup_wait_ms:{round(warmup_wait_ms)}",
-                    f"stt_queue_wait_ms:{round(stt_queue_wait_ms)}",
-                    "post_recording_wait_ms:"
-                    f"{round((time.perf_counter() - capture_closed_at) * 1000.0)}",
+        except …116827 tokens truncated…) - capture_closed_at) * 1000.0)}",
                     f"truncation_repairs:{truncation_repairs}",
                     f"tail_repairs:{tail_repairs}",
                     f"pause_trim_ms:{round(pause_trim_bytes * 1000 / bytes_per_second)}",
@@ -6036,6 +6032,10 @@ class SpeechPipeline:
         empty tail flushes never produce a row.
         """
         self._latency_tracker = None
+        # The playback receipt matcher is scoped to one utterance. Clear it
+        # before any early return so a later identical phrase cannot inherit
+        # the previous turn's instant-ack attribution.
+        self._instant_ack_spoken_text = None
         try:
             self._continuation_dispatched_this_turn = False
             return await self._handle_utterance_turn(
