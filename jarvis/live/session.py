@@ -1232,6 +1232,9 @@ class LiveVoiceSession:
         """
         if not self.is_active or self._recovering or self._resume_needs_input:
             return False
+        from jarvis.core.image_references import appshot_context
+
+        note += "\n\n" + appshot_context(self.session_id, image, mime, self._config)
         await self._connection.send(
             {
                 "type": "session.thinking.append",

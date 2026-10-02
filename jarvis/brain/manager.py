@@ -10895,6 +10895,12 @@ class BrainManager:
             tuple(history_override) if history_override is not None else None
         )
         override_token = _TURN_OVERRIDE.set(turn_override)
+        from jarvis.core.image_references import active_scope
+
+        image_scope_token = active_scope.set(
+            "conversation:" + conversation_id if conversation_id else
+            "brain:" + str(id(self)) if use_history else "turn:" + str(trace_id or uuid4())
+        )
         skill_state = _SkillTurnState(self)
         skill_token = _SKILL_TURN_STATE.set(skill_state)
         try:
@@ -10924,6 +10930,7 @@ class BrainManager:
             self._skill_injected_inline_fallback = skill_state.injected_inline
             _SKILL_TURN_STATE.reset(skill_token)
             _TURN_OVERRIDE.reset(override_token)
+            active_scope.reset(image_scope_token)
             _TURN_HISTORY_OVERRIDE.reset(history_token)
             _PUBLISH_RESPONSE_EVENT.reset(token)
 
@@ -11436,7 +11443,19 @@ class BrainManager:
         # capability gate. Placed AFTER navigation so a section command still
         # moves the UI even when a pane happens to share that word. Returns None
         # on every turn that does not address a terminal.
-        ide_reply = await self._run_agentic_ide_fast_path(
+        # Image-based assignments must reach workspace-orchestrate's scoped
+        # selection and materialization boundary, not the text-only fast paths.
+        from jarvis.core.image_references import get_store as image_reference_store
+        from jarvis.core.image_references import scope_for
+
+        visual_assignment = (
+            screen_context.has_image
+            or bool(getattr(self, "_pending_turn_images", {}).get(turn_trace_id))
+            or bool(getattr(self, "_pending_drop_images", ()))
+            or "Visual reference IDs" in user_text
+            or bool(image_reference_store().available(scope_for(trace_id=turn_trace_id)))
+        )
+        ide_reply = None if visual_assignment else await self._run_agentic_ide_fast_path(
             user_text,
             trace_id=turn_trace_id,
             consume_pending_voice_attachments=consume_pending_voice_attachments,
@@ -11458,8 +11477,10 @@ class BrainManager:
         # addressed-terminal path because ``detect_spawn`` stands down for an
         # addressed pane ("sag Mika, sie soll ein Terminal öffnen" is Mika's
         # work), which makes the two mutually exclusive by construction.
-        ide_spawn_reply = await self._run_agentic_ide_spawn_fast_path(
-            user_text, trace_id=turn_trace_id,
+        ide_spawn_reply = (
+            None if visual_assignment else await self._run_agentic_ide_spawn_fast_path(
+                user_text, trace_id=turn_trace_id,
+            )
         )
         if ide_spawn_reply is not None:
             await self._record_response_side_effects(

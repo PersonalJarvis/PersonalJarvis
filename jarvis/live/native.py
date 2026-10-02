@@ -654,11 +654,15 @@ class NativeLiveVoiceSession(LiveVoiceSession):
         what it looks at when the user asks. Servers without image input
         decline, and the caller parks the appshot for the next message.
         """
-        del note
         send_image = getattr(self._connection, "send_image", None)
         if not self.is_active or not callable(send_image):
             return False
         await send_image(image, mime)
+        # Native transports have no silent text-input contract. The workspace
+        # tool asks the model to select this scoped ID before it can hand off work.
+        from jarvis.core.image_references import appshot_context
+
+        appshot_context(self.session_id, image, mime, self._config)
         return True
 
     async def end(self, *, reason: str = "client_stop") -> None:
