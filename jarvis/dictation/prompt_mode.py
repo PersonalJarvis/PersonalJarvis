@@ -336,7 +336,7 @@ _BLANK_RUN_RE: Final[re.Pattern[str]] = re.compile(r"\n{3,}")
 
 # What counts as a literal worth carrying: an identifier or path
 # (``auth_handler``, ``src/app.ts``, ``JarvisBar``), a version or number of
-# two digits or more, and anything the user put in quotes. Deliberately NOT
+# any length, and anything the user put in quotes. Deliberately NOT
 # ordinary words: the prompt is a rewrite, and a guard over every noun would
 # reject every honest one.
 _IDENTIFIER_RE: Final[re.Pattern[str]] = re.compile(
@@ -350,20 +350,12 @@ _IDENTIFIER_RE: Final[re.Pattern[str]] = re.compile(
     """,
     re.VERBOSE,
 )
-_NUMBER_RE: Final[re.Pattern[str]] = re.compile(r"\b\d{2,}(?:[.,]\d+)*\b")
+_NUMBER_RE: Final[re.Pattern[str]] = re.compile(r"(?<!\w)[+-]?\d+(?:[.,]\d+)*\b")
 # Double quotes only. A lone ``'`` is an apostrophe far more often than a
 # quotation mark in a transcript ("it's", "don't"), and treating one as an
 # opening quote turns the rest of the sentence into a "literal" the prompt is
 # then required to reproduce word for word.
 _QUOTED_RE: Final[re.Pattern[str]] = re.compile("[\"“„«]([^\"“”„«»\n]{2,60})[\"”»]")
-
-#: How many of the transcript's literals may go missing before the prompt is
-#: rejected. Not zero: a recognizer writes the same spoken name two ways in
-#: one breath ("JarvisBar", "Jarvis Bar"), and rejecting on one of those costs
-#: a good prompt. One is a slip; a quarter of them is a writer that stopped
-#: reading.
-_MAX_LOST_LITERALS: Final[int] = 1
-_LOST_LITERAL_SHARE: Final[float] = 0.25
 
 #: How far the prompt may shrink against the transcript before it counts as
 #: thinned, and the shortest transcript this is measured on at all. A written
@@ -654,7 +646,7 @@ def strip_closing_sign_off(text: str) -> str:
 def transcript_literals(text: str) -> list[str]:
     """The literals in *text* a faithful prompt has to carry.
 
-    Identifiers and paths, numbers of two digits or more, and quoted spans.
+    Identifiers and paths, all explicit numbers, and quoted spans.
     Case is preserved in what comes back (the caller folds it) so a log line
     can name the thing that went missing the way the user said it.
     """
@@ -674,7 +666,19 @@ def transcript_literals(text: str) -> list[str]:
 def lost_literals(raw: str, prompt: str) -> list[str]:
     """Which of the transcript's literals the prompt does not carry."""
     target = str(prompt or "").casefold()
-    return [token for token in transcript_literals(raw) if token.casefold() not in target]
+    numbers = set(_NUMBER_RE.findall(target))
+    missing = []
+    for token in transcript_literals(raw):
+        if _NUMBER_RE.fullmatch(token) and token not in numbers:
+            missing.append(token)
+            continue
+        # A spoken CamelCase name may be written with spaces. Accept that
+        # spelling repair, without permitting a different identifier or value.
+        parts = re.split(r"(?<=[a-z])(?=[A-Z])", token)
+        pattern = r"[ \t]*".join(re.escape(part.casefold()) for part in parts)
+        if not re.search(r"(?<!\w)" + pattern + r"(?!\w)", target):
+            missing.append(token)
+    return missing
 
 
 def looks_thinned(raw: str, prompt: str) -> bool:
@@ -735,12 +739,8 @@ def prompt_guard_reason(raw: str, prompt: str, *, protected: Sequence[str] = ())
         needle = str(term or "").strip().casefold()
         if needle and needle in source and needle not in target:
             return "lost_protected_term"
-    literals = transcript_literals(raw)
-    if literals:
-        missing = lost_literals(raw, body)
-        allowed = max(_MAX_LOST_LITERALS, int(len(literals) * _LOST_LITERAL_SHARE))
-        if len(missing) > allowed:
-            return "dropped_detail"
+    if lost_literals(raw, body):
+        return "dropped_detail"
     if looks_thinned(raw, body):
         return "dropped_context"
     if looks_inflated(raw, body):

@@ -25,6 +25,7 @@ vi.mock("@/views/ChatsView", () => ({
 
 import { LanguageTab } from "@/views/voice/LanguageTab";
 import { setUiLanguage } from "@/i18n";
+import { DICTATION_SETTINGS_EVENT } from "@/hooks/usePromptMode";
 
 interface RouteResult {
   status?: number;
@@ -412,7 +413,7 @@ describe("LanguageTab — the wording pass", () => {
       screen.getByTestId("dictation-polish-description"),
     );
     const text = (description.textContent ?? "").toLowerCase();
-    expect(text).toContain("rewrites the structure");
+    expect(text).toContain("punctuation");
     expect(text).toContain("meaning");
     expect(text).toContain("history");
   });
@@ -436,9 +437,9 @@ describe("LanguageTab — the wording pass", () => {
       screen.getByTestId("dictation-polish-sends-text"),
     );
     const text = (note.textContent ?? "").toLowerCase();
-    expect(text).toContain("sent to the model");
-    expect(text).toContain("raw text");
-    expect(text).toContain("history");
+    expect(text).toContain("sent to the selected text model");
+    expect(text).toContain("local speech recognition");
+    expect(text).toContain("explicitly choose a cloud provider");
     // No scare language and no banner styling: this is a normal cloud feature
     // the user chose, described plainly.
     expect(text).not.toContain("warning");
@@ -860,7 +861,7 @@ describe("LanguageTab — the wording pass", () => {
     );
     expect(name.textContent).toContain("Groq");
     // Nothing to fix, so nothing is asked for.
-    expect(screen.queryByTestId("dictation-translate-key")).toBeNull();
+    expect(screen.queryByTestId("dictation-wording-key")).toBeNull();
   });
 
   it("asks for the key right here when nothing can answer", async () => {
@@ -883,10 +884,10 @@ describe("LanguageTab — the wording pass", () => {
     );
     expect(notice.textContent).toBeTruthy();
     // And the field that fixes it, on the same card.
-    expect(screen.getByTestId("dictation-translate-key")).toBeTruthy();
+    expect(screen.getByTestId("dictation-wording-key")).toBeTruthy();
   });
 
-  it("offers the provider picker on the card when the formatter is off", async () => {
+  it("offers the shared provider picker when only translation is on", async () => {
     installFetchMock(
       routes({
         "GET /api/dictation/settings": () => ({
@@ -902,7 +903,7 @@ describe("LanguageTab — the wording pass", () => {
 
     expect(
       await waitFor(() =>
-        screen.getByTestId("dictation-translate-polish-provider"),
+        screen.getByTestId("dictation-polish-provider"),
       ),
     ).toBeTruthy();
   });
@@ -931,4 +932,65 @@ describe("LanguageTab — the wording pass", () => {
     ).toBeNull();
   });
 
+});
+
+
+describe("LanguageTab feature combinations", () => {
+  it("ignores a late test result after settings change on another surface", async () => {
+    installFetchMock(routes());
+    const original = globalThis.fetch;
+    let finish!: () => void;
+    globalThis.fetch = async (input, init) => {
+      if (String(input) === "/api/dictation/polish/test") {
+        await new Promise<void>((resolve) => { finish = resolve; });
+        return { ok: true, json: async () => POLISH_TEST } as Response;
+      }
+      return original(input, init);
+    };
+    render(<LanguageTab hideHeader />);
+    const button = await waitFor(() => screen.getByTestId("dictation-polish-test"));
+    fireEvent.click(button);
+    fireEvent(window, new CustomEvent(DICTATION_SETTINGS_EVENT, {
+      detail: { settings: { polish_precision: true } },
+    }));
+    finish();
+    await waitFor(() => expect(button.hasAttribute("disabled")).toBe(false));
+    expect(screen.queryByTestId("dictation-polish-test-result")).toBeNull();
+  });
+
+  it.each(Array.from({ length: 16 }, (_, mask) => mask))(
+    "offers one provider and test control for active combination %i", async (mask) => {
+      installFetchMock(routes({
+        "GET /api/dictation/settings": () => ({ body: {
+          settings: { ...SETTINGS, polish: Boolean(mask & 1), polish_precision: Boolean(mask & 2), prompt_mode: Boolean(mask & 4), translate: Boolean(mask & 8) },
+          choices: CHOICES, wording_provider: WORDING_READY,
+        } }),
+      }));
+      render(<LanguageTab hideHeader />);
+      await waitFor(() => expect(screen.getByTestId("dictation-polish-toggle").hasAttribute("disabled")).toBe(false));
+      expect(screen.queryAllByTestId("dictation-polish-provider")).toHaveLength(mask ? 1 : 0);
+      expect(screen.queryAllByTestId("dictation-polish-test")).toHaveLength(mask ? 1 : 0);
+    },
+  );
+
+  it("keeps controls stable while a settings write is pending", async () => {
+    const calls = installFetchMock(routes());
+    const original = globalThis.fetch;
+    let finish!: () => void;
+    globalThis.fetch = async (input, init) => {
+      if (String(input) === "/api/dictation/settings" && init?.method === "PUT") {
+        await new Promise<void>((resolve) => { finish = resolve; });
+        return { ok: true, json: async () => ({ settings: { ...SETTINGS, polish: false } }) } as Response;
+      }
+      return original(input, init);
+    };
+    render(<LanguageTab hideHeader />);
+    const toggle = await waitFor(() => screen.getByTestId("dictation-polish-toggle"));
+    fireEvent.click(toggle);
+    expect(screen.getByTestId("dictation-precision-toggle").hasAttribute("disabled")).toBe(true);
+    expect(screen.getByTestId("dictation-polish-test").hasAttribute("disabled")).toBe(true);
+    finish();
+    await waitFor(() => expect(toggle.hasAttribute("disabled")).toBe(false));
+    expect(calls.some(c => c.url === "/api/dictation/polish/test")).toBe(false);
+  });
 });
