@@ -137,6 +137,14 @@ def _read(key: tuple, now: float) -> Evidence:
                     continue  # The writer may not have completed its last JSON line.
                 if not isinstance(row, dict):
                     continue
+                if (
+                    agent == "claude" and row.get("type") == "system"
+                    and row.get("subtype") == "turn_duration"
+                    and result.state in {"stopped", "failed", "asking"}
+                ):
+                    # Timing bookkeeping must not turn a cancellation or an
+                    # unanswered question into a successful turn boundary.
+                    continue
                 change = transition(agent, row)
                 if (
                     change and 0 < change[1] <= time.time()

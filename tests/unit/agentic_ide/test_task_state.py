@@ -154,3 +154,17 @@ async def test_unchanged_file_is_not_parsed_again(pane, monkeypatch):
 def test_claude_protocol_markers(data, expected):
     result = task_state.transition("claude", data)
     assert (result[0] if result else None) == expected
+
+
+@pytest.mark.asyncio
+async def test_claude_timing_footer_cannot_erase_an_interruption(pane, monkeypatch):
+    term, registry, path = pane
+    term.agent = "claude"
+    monkeypatch.setattr(task_state.agent_transcript, "_claude_file", lambda *_: path)
+    at = datetime.now(UTC).isoformat()
+    append(path, {
+        "timestamp": at, "type": "user",
+        "message": {"content": "[Request interrupted by user]"},
+    }, {"timestamp": at, "type": "system", "subtype": "turn_duration"})
+    await task_state.refresh(registry)
+    assert activity.read_activity(term) == "stopped"
