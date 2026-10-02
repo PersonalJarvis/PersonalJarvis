@@ -879,6 +879,7 @@ jobs:
           python -m pip freeze --all > comparison/pip-freeze.txt
       - name: Exercise both trees without a failure baseline
         run: |
+          export PYTHONPATH="$GITHUB_WORKSPACE/scripts/ci"
           selection="$GITHUB_WORKSPACE/scripts/ci/macos-comparison-cases.json"
           harness="$GITHUB_WORKSPACE/scripts/ci/compare_selected_cases.py"
           output="$GITHUB_WORKSPACE/comparison"
