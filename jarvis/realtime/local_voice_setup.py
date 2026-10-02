@@ -596,11 +596,38 @@ def _visible_models(names: Iterable[str]) -> list[str]:
     return sorted(n for n in names if not is_hidden_alias(n))
 
 
+async def _without_toolless(names: set[str]) -> set[str]:
+    """Drop models that declare capabilities but not ``tools`` (embedding, OCR).
+
+    Live voice needs tool calls; an embedding model on the picker can never
+    answer. A model whose capabilities are unknown stays (empty = unknown,
+    never "can do nothing"), and so does every name when Ollama's inventory
+    cannot be read.
+    """
+    try:
+        from jarvis.brain.ollama_inventory import (  # noqa: PLC0415
+            OllamaServerError,
+            cached_snapshot,
+            same_model,
+        )
+        from jarvis.brain.ollama_pull import server_root  # noqa: PLC0415
+    except ImportError:
+        return names
+    try:
+        snapshot = await cached_snapshot(server_root())
+    except OllamaServerError as exc:
+        log.info("Ollama inventory unreadable; offering every installed model: %s", exc)
+        return names
+    toolless = [m.name for m in snapshot.models if m.capabilities and "tools" not in m.capabilities]
+    return {n for n in names if not any(same_model(n, t) for t in toolless)}
+
+
 async def card_status(
     cfg: Any,
     *,
     installed_llms: Callable[[], Awaitable[tuple[set[str], str | None]]] | None = None,
     machine: str | None = None,
+    tool_capable: Callable[[set[str]], Awaitable[set[str]]] | None = None,
 ) -> dict[str, Any]:
     """Everything the Local voice card renders, in one payload.
 
@@ -627,6 +654,9 @@ async def card_status(
 
         installed_llms = installed_models
     names, llm_error = await installed_llms()
+    choices = set(names)
+    if choices and not llm_error:
+        choices = await (tool_capable or _without_toolless)(choices)
 
     section = getattr(cfg, "voice_engine", None)
     configured = str(getattr(section, "llm_model", "") or "")
@@ -636,7 +666,7 @@ async def card_status(
     elif recorded.get("llm_model"):
         llm_model, llm_source = str(recorded["llm_model"]), "setup"
     else:
-        llm_model, _present = choose_llm(machine, names)
+        llm_model, _present = choose_llm(machine, choices)
         llm_source = "default"
     llm_installed = None if llm_error else any(_same_tag(llm_model, n) for n in names)
 
@@ -666,7 +696,7 @@ async def card_status(
         "llm_source": llm_source,
         "llm_installed": llm_installed,
         "llm_error": llm_error or "",
-        "llm_choices": _visible_models(names),
+        "llm_choices": _visible_models(choices),
         "voice": settings.tts,
         "voices": list(VOICE_ENGINE_VOICES),
         "machine_class": machine,
