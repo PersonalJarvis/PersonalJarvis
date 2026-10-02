@@ -39,6 +39,7 @@ from jarvis.ui.window_watchdog import (
 GRACE = 20.0
 SETTLE = 20.0
 PATIENCE = 40.0
+HUNG = 45.0
 
 
 def _policy(**kw: Any) -> BlankWindowPolicy:
@@ -47,6 +48,7 @@ def _policy(**kw: Any) -> BlankWindowPolicy:
         settle_s=kw.pop("settle_s", SETTLE),
         reload_budget=kw.pop("reload_budget", 3),
         silent_patience_s=kw.pop("silent_patience_s", PATIENCE),
+        hung_patience_s=kw.pop("hung_patience_s", HUNG),
     )
 
 
@@ -99,11 +101,49 @@ def test_a_healthy_page_is_not_reloaded_when_webview_stops_answering_probes() ->
     """A busy WebView can miss several probes while the painted app stays live."""
     p = _policy()
     assert p.decide(_obs(0.0, page="up")).action is Action.WAIT
-    for t in (10.0, GRACE + 1, GRACE * 10):
+    for t in (10.0, GRACE + 1, HUNG - 1):
         assert p.decide(_obs(t, page="unknown")).action is Action.WAIT
-    assert p.decide(_obs(GRACE * 10 + 1, page="up")).action is Action.WAIT
-    assert p.decide(_obs(GRACE * 10 + 2, page="blank")).action is Action.WAIT
-    assert p.decide(_obs(GRACE * 11 + 3, page="blank")).action is Action.RELOAD
+    assert p.decide(_obs(HUNG + 1, page="up")).action is Action.WAIT
+    # The silence ended: a fresh one gets the full patience again.
+    assert p.decide(_obs(HUNG + 2, page="unknown")).action is Action.WAIT
+    assert p.decide(_obs(2 * HUNG, page="unknown")).action is Action.WAIT
+    assert p.decide(_obs(2 * HUNG + 1, page="blank")).action is Action.WAIT
+    assert p.decide(_obs(2 * HUNG + GRACE + 2, page="blank")).action is Action.RELOAD
+
+
+def test_a_page_that_stays_silent_is_hung_and_recovered() -> None:
+    """Live 2026-10-02: the renderer spun a core for seven minutes, unhealed.
+
+    Silence that outlasts the patience while the server answers is not a busy
+    page any more — it is reloaded, flagged so the renderer is ended first.
+    """
+    p = _policy()
+    p.decide(_obs(0.0, page="up"))
+    assert p.decide(_obs(5.0, page="unknown")).action is Action.WAIT
+    verdict = p.decide(_obs(5.0 + HUNG, page="unknown"))
+    assert verdict.action is Action.RELOAD
+    assert verdict.hung is True
+    assert verdict.after_up is True
+    # The next attempt waits a full patience again, not one tick.
+    assert p.decide(_obs(10.0 + HUNG, page="unknown")).action is Action.WAIT
+    assert p.decide(_obs(5.0 + 2 * HUNG, page="unknown")).action is Action.RELOAD
+
+
+def test_hung_recoveries_are_budgeted() -> None:
+    """A page that hangs again after every reload must not be reloaded forever."""
+    p = _policy(reload_budget=2)
+    p.decide(_obs(0.0, page="up"))
+    p.decide(_obs(1.0, page="unknown"))
+    actions = [p.decide(_obs(1.0 + i * HUNG, page="unknown")).action for i in range(1, 6)]
+    assert actions.count(Action.RELOAD) == 2
+
+
+def test_a_silent_page_behind_a_silent_server_is_not_called_hung() -> None:
+    """The page may only be waiting on a blocked backend; reloading cannot help."""
+    p = _policy()
+    p.decide(_obs(0.0, page="up"))
+    for t in (5.0, HUNG, 3 * HUNG):
+        assert p.decide(_obs(t, page="unknown", healthy=False)).action is Action.WAIT
 
 
 def test_confirmed_late_blank_recovers_even_when_later_probes_time_out() -> None:
@@ -409,6 +449,54 @@ def test_the_watchdog_reloads_the_configured_url() -> None:
 
     wd._apply(window, Verdict(Action.RELOAD))
     assert window.loaded_urls == ["http://127.0.0.1:1234"]
+
+
+def test_a_hung_reload_ends_the_renderer_first_and_gets_a_fresh_probe() -> None:
+    """A same-origin reload is committed to the busy renderer and never lands."""
+    from jarvis.ui.window_watchdog import Verdict
+
+    window = _FakeWindow()
+    calls: list[str] = []
+
+    def _end() -> list[int]:
+        calls.append(f"end:{len(window.loaded_urls)}")
+        return [4242]
+
+    wd = _watchdog(window, end_hung_renderer=_end)
+    old_caller = wd._caller
+    assert wd._apply(window, Verdict(Action.RELOAD, after_up=True, hung=True))
+    assert calls == ["end:0"], "the renderer must be ended BEFORE the reload"
+    assert window.loaded_urls == ["http://127.0.0.1:47821?jarvis_recovery=1"]
+    assert wd._caller is not old_caller
+
+
+def test_an_ordinary_reload_never_ends_a_renderer() -> None:
+    from jarvis.ui.window_watchdog import Verdict
+
+    window = _FakeWindow()
+    calls: list[int] = []
+    wd = _watchdog(window, end_hung_renderer=lambda: calls.append(1) or [])
+    assert wd._apply(window, Verdict(Action.RELOAD))
+    assert calls == []
+
+
+def test_a_failing_renderer_end_still_reloads() -> None:
+    from jarvis.ui.window_watchdog import Verdict
+
+    def _boom() -> list[int]:
+        raise RuntimeError("access denied")
+
+    window = _FakeWindow()
+    wd = _watchdog(window, end_hung_renderer=_boom)
+    assert wd._apply(window, Verdict(Action.RELOAD, after_up=True, hung=True))
+    assert window.loaded_urls
+
+
+def test_ending_busy_renderers_without_any_renderer_is_a_no_op() -> None:
+    """In-process web views (macOS, Linux) and the test runner have no renderer child."""
+    from jarvis.ui.window_watchdog import end_busy_renderers
+
+    assert end_busy_renderers(sample_s=0.0) == []
 
 
 def test_the_watchdog_writes_the_detail_it_was_given() -> None:

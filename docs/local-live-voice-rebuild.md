@@ -1,6 +1,8 @@
 # Local Live Voice — Rebuild Plan
 
-- **Status:** Proposed. Analysis and plan only; nothing is implemented yet.
+- **Status:** Accepted 2026-10-01. P0 (measurement) done on Windows/NVIDIA
+  and Linux CPU, Mac pending hardware; P1 (engine core) built and measured,
+  see section 12. P2 (Jarvis integration) is next.
 - **Date:** 2026-10-01
 - **Decision record:** [ADR-0037](adr/0037-jarvis-owned-local-voice-engine.md)
 - **Supersedes:** the recovery plan in
@@ -383,16 +385,20 @@ LLM first token and tokens per second on the voice profile, and one synthetic
 round trip. It picks the highest tier that meets the latency target, and the
 card shows the measured expected response time.
 
-| Machine class | Core (always) | Natural | Premium | Expected first audio (estimate) |
+Defaults after the P0 bake-off (section 12); speech always runs on the CPU.
+
+| Machine class | LLM (Ollama) | Default voice | Premium option | Expected first audio |
 | --- | --- | --- | --- | --- |
-| CPU only, incl. headless | Parakeet CPU + Piper; LLM 2–4B on CPU | Pocket if its real-time factor ≥ 1.5 | — | 2–5 s, labelled slow |
-| Mac 8 GB | Parakeet CPU + Piper; LLM 2B | Pocket | — | 1.5–3 s |
-| Mac 16 GB, base chip | as above, LLM 4B | Pocket | — | 1.2–2.5 s |
-| Mac Pro/Max | as above | Pocket | Qwen3-TTS 0.6B (MLX); 1.7B and a 9–12B LLM from 24 GB | 0.8–1.2 s |
-| NVIDIA 6–8 GB | LLM 4B on GPU, speech on CPU | Pocket | Qwen3-TTS 0.6B only if ≥ 2.5 GB stay free after the LLM | 0.8–1.2 s |
-| NVIDIA 12 GB | LLM 8–9B | Pocket | Qwen3-TTS 0.6B | 0.7–1.0 s |
-| NVIDIA 16 GB and up | LLM 9–12B | Pocket | Qwen3-TTS 1.7B | 0.6–0.9 s |
-| AMD or Intel GPU | speech on CPU; LLM through Ollama ROCm or llama.cpp Vulkan | Pocket | — | measured |
+| CPU only, incl. headless | `qwen3.5:2b` | Pocket if its real-time factor ≥ 1.5, else Piper | — | ~2 s, labelled slow (estimate) |
+| Mac 16 GB, base chip | `qwen3.5:4b` (unmeasured) | Pocket | — | 1.2–1.8 s (estimate) |
+| Mac Pro/Max | `qwen3.5:4b` (unmeasured) | Pocket | Qwen3-TTS via MLX after measuring | 0.8–1.2 s (estimate) |
+| NVIDIA 6–8 GB | `qwen3.5:4b` | Pocket | — | see section 12 |
+| NVIDIA 12 GB and up | `qwen3.5:4b` | Pocket | Qwen3-TTS 1.7B if the listening test favours it | see section 12 |
+| AMD or Intel GPU | `qwen3.5:4b` through Ollama ROCm/Vulkan | Pocket | — | measured by the self-test |
+
+No 8–12B model called tools better than the 4B, and all were slower
+(section 12.3), so the free memory of larger cards goes to the voice, not to a
+bigger LLM. `gemma4:12b-it-qat` stays an opt-in for the best German on 16 GB+.
 
 Premium keeps at least 20 % accelerator headroom at steady state. The gate
 reads free memory (NVML on NVIDIA; available unified memory on macOS, a new
@@ -480,6 +486,12 @@ loses.
 
 A phase is done when its gate passes, not when its code is merged. Day counts
 are rough planning estimates.
+
+Status 2026-10-01: P0 passed on Windows NVIDIA and the CPU container; the Mac
+run waits for hardware. P1 code is complete and the kill drill passed; the
+real-time worker latency, soak and offline-boot gates are still open
+(section 12.4). P2 has started with the `local-voice` adapter, which is not
+registered as a provider yet.
 
 | Phase | Content | Gate |
 | --- | --- | --- |
@@ -575,12 +587,75 @@ removed.
 
 ## 11. Not verified yet
 
-- Every Mac and Linux statement comes from documentation, wheel metadata or
-  code reading; nothing was run there.
-- End-to-end latency of the new stack is an estimate built from the stage
-  measurements in the cited sources.
-- The context-size estimate (8K) comes from reading the code, not from counted
-  tokens.
+- macOS: nothing was run there yet (no hardware); every Mac statement still
+  comes from documentation and wheel metadata.
+- Linux was run only as a CPU-only `python:3.11-slim` container; Linux NVIDIA
+  is unverified.
+- Turn-taking on real speech (hesitations, false cut-offs) needs recorded
+  voices; the synthetic hesitation set is invalid because TTS prosody gives
+  the pause away.
+- The P1 gates "500-turn soak" and "boot with the network unplugged" (beyond
+  `HF_HUB_OFFLINE=1`) are still open.
+
+## 12. Measured results (P0/P1, 2026-10-01)
+
+Machine: Windows 11, 8-core desktop CPU, 34 GB RAM, NVIDIA RTX 5070 Ti
+16 GB, with other work running (often under 6 GB RAM free); container:
+`python:3.11-slim`, 4 vCPU, no GPU. Commands are in
+`python -m jarvis.voice_engine.bench`; reports land in the engine home, not in
+the repo.
+
+### 12.1 Speech recognition (Parakeet TDT 0.6B v3 int8, CPU)
+
+On synthetic speech the word error rate is 3.5–4.3 % in German and under 1 %
+in English. A whole utterance decodes in p50 135–170 ms on the desktop
+(about 16× real time, p95 under 270 ms) and 225 ms in the 4 vCPU container. Parakeet drops a
+first word that starts at sample 0, so the engine appends a short noise-floor
+tail and the bench pads 0.2 s.
+
+### 12.2 Voices (German, first audio and speed)
+
+| Voice | First audio | Speed | Character error rate after re-transcription |
+| --- | --- | --- | --- |
+| Piper (thorsten medium) | 71–92 ms | ~30× real time | low, robotic sound |
+| Pocket TTS | 83 ms (136 ms in the container) | ~4× (2.57× in the container) | 1.9 % |
+| Qwen3-TTS 1.7B (CUDA) | 240 ms | 1.9× | 3.1 %, ~4.5 GiB VRAM |
+| Qwen3-TTS 0.6B (CUDA) | 226 ms | — | 6.2 %, one sentence destroyed |
+| Pocket large | — | 0.87× | too slow for live use |
+
+Pocket is the default voice everywhere it reaches 1.5× real time; Piper is the
+floor. Qwen3-TTS 0.6B and Pocket large are dropped; Qwen3-TTS 1.7B stays a
+premium option pending a blind listening test.
+
+### 12.3 LLM tool calling (Ollama, `think: false`, `num_ctx` 8192)
+
+| Model | German score | English score | VRAM | Verdict |
+| --- | --- | --- | --- | --- |
+| `qwen3.5:4b` | 0.942 | 1.0 | 3.2 GB | default for every GPU class |
+| `gemma4:12b-it-qat` | second best | — | 7.7 GB | opt-in, slower |
+| `granite4.2:8b` | 0.924 | 0.93 | — | best 8–9B, no gain over the 4B |
+| `qwen3.5:9b` | 0.11 | — | — | fails German, invents actions |
+| `qwen3.5:2b` | — | — | CPU | CPU-only default, first clause ~1.5 s |
+
+Ollama's `prompt_eval_count` includes cached tokens. Qwen3.5 does not reuse a
+cached prefix across new conversations, so the engine primes the cache when a
+session opens. The Mistral chat template defeats the cache.
+
+### 12.4 End to end and process
+
+| Check | Result |
+| --- | --- |
+| Bench e2e, `qwen3.5:4b` + Piper | dialog p50 749 ms, tool turn p50 990 ms |
+| Bench e2e, `qwen3.5:4b` + Pocket | dialog p50 856 ms |
+| Worker boot (Windows, all models) | 11.5 s to ready; self-test de/en character errors 0, LLM 390 ms |
+| Worker memory | about 2.1 GB resident |
+| Kill drill | worker gone 0.06 s after the app's pipe closes, 0 orphans |
+| CPU container | boots and talks; STT 225 ms, Pocket first audio 136 ms |
+
+Three Windows worker bugs found on the way, all fixed: a blocking stdin read
+deadlocked a DLL load (the worker now peeks the pipe), library prints on stdout
+corrupted the protocol (the protocol now owns a private copy of the pipe), and
+Pocket probed a gated Hugging Face repo (`HF_HUB_OFFLINE=1`).
 
 ## Sources
 

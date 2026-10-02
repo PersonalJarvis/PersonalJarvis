@@ -14,6 +14,8 @@ import os
 import queue
 import sys
 import threading
+import time
+from collections.abc import Callable
 from typing import Any, BinaryIO
 
 from jarvis.voice_engine import ENGINE_VERSION
@@ -43,11 +45,10 @@ class StdioTransport:
 
     def _read(self, loop: asyncio.AbstractEventLoop, inbox: asyncio.Queue[Any]) -> None:
         reader = p.FrameReader()
+        read = _windows_pipe_reader(self._source) or self._blocking_read
         try:
             while True:
-                data = self._source.read1(65536) if hasattr(self._source, "read1") else (
-                    self._source.read(65536)
-                )
+                data = read()
                 if not data:
                     break
                 for frame in reader.feed(data):
@@ -56,6 +57,11 @@ class StdioTransport:
             log.error("input stream failed: %s", exc)
         finally:
             loop.call_soon_threadsafe(inbox.put_nowait, None)
+
+    def _blocking_read(self) -> bytes:
+        if hasattr(self._source, "read1"):
+            return self._source.read1(65536)
+        return self._source.read(65536)
 
     def _write(self) -> None:
         while True:
@@ -74,6 +80,45 @@ class StdioTransport:
 
     def close(self) -> None:
         self._outbox.put(None)
+
+
+def _windows_pipe_reader(source: BinaryIO) -> Callable[[], bytes] | None:
+    """A reader that never leaves a blocking read pending on a Windows pipe.
+
+    While one thread sits in a synchronous ReadFile on the inherited stdin
+    pipe, Windows blocks other threads that touch the standard handles while
+    loading a DLL; importing scipy's BLAS for Pocket TTS hung the worker for
+    good. Peeking first and reading only what is already there avoids it, at
+    the cost of a 5 ms poll while idle.
+    """
+    if sys.platform != "win32":
+        return None
+    import ctypes  # noqa: PLC0415 - Windows only
+    import msvcrt  # noqa: PLC0415 - Windows only
+    from ctypes import wintypes  # noqa: PLC0415
+
+    try:
+        handle = msvcrt.get_osfhandle(source.fileno())
+    except (OSError, ValueError, AttributeError):
+        return None
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    peek = kernel32.PeekNamedPipe
+    peek.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD, ctypes.c_void_p,
+                     ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p]
+    peek.restype = wintypes.BOOL
+    available = wintypes.DWORD(0)
+    if not peek(handle, None, 0, None, ctypes.byref(available), None):
+        return None  # not a pipe (a file or console): plain reads are safe
+
+    def read() -> bytes:
+        while True:
+            if not peek(handle, None, 0, None, ctypes.byref(available), None):
+                return b""  # the writer closed the pipe: end of input
+            if available.value:
+                return os.read(source.fileno(), min(available.value, 65536))
+            time.sleep(0.005)
+
+    return read
 
 
 class _Emitter:
@@ -243,8 +288,23 @@ def main() -> int:
     if not sys.flags.utf8_mode:
         log.warning("Python UTF-8 mode is off; start the worker with PYTHONUTF8=1 "
                     "(some voice packages read their configs in the locale encoding)")
-    transport = StdioTransport(sys.stdin.buffer, sys.stdout.buffer)
+    transport = StdioTransport(sys.stdin.buffer, _private_stdout())
     return asyncio.run(Worker(transport).run())
+
+
+def _private_stdout() -> BinaryIO:
+    """Keep the protocol pipe to ourselves and send every other write to stderr.
+
+    Voice packages print to stdout (Pocket TTS does while loading); one stray
+    line in the frame stream breaks the protocol, so the pipe is duplicated
+    for the transport and file descriptor 1 (and ``sys.stdout``) now point at
+    stderr, which also covers native code writing to fd 1.
+    """
+    sys.stdout.flush()
+    pipe = os.fdopen(os.dup(sys.stdout.fileno()), "wb", buffering=0)
+    os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
+    sys.stdout = sys.stderr
+    return pipe
 
 
 if __name__ == "__main__":

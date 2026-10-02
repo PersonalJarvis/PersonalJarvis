@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import os
 import sys
 from collections.abc import Callable
@@ -16,6 +17,8 @@ from pathlib import Path
 from typing import Any
 
 from jarvis.voice_engine import protocol as p
+
+log = logging.getLogger("jarvis.voice_engine.client")
 
 # Same flag as jarvis.core.process_utils.NO_WINDOW_CREATIONFLAGS (AP-1).
 _NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
@@ -31,6 +34,10 @@ def worker_env(*, package_root: Path | None = None, home: Path | None = None,
         "PYTHONUNBUFFERED": "1",
         "HF_HUB_DISABLE_SYMLINKS_WARNING": "1",
         "HF_HUB_DISABLE_PROGRESS_BARS": "1",
+        # After setup the engine never touches the network (plan R8). Pocket TTS
+        # otherwise probes a gated repository on every load and, offline, sat in
+        # retries before falling back to the cached weights.
+        "HF_HUB_OFFLINE": "1",
     })
     if package_root is not None:
         env["PYTHONPATH"] = str(package_root)
@@ -83,6 +90,12 @@ class EngineClient:
                         self.audio_frames.put_nowait(frame)
                     else:
                         self.messages.put_nowait(frame)
+        except p.ProtocolError as exc:
+            # A corrupt stream cannot be resynchronised; stop the worker so the
+            # caller sees an exit instead of waiting on a silent pipe.
+            log.error("voice engine sent an invalid frame: %s", exc)
+            if self._process is not None and self._process.returncode is None:
+                self._process.kill()
         finally:
             self.messages.put_nowait({"type": EXITED})
 
