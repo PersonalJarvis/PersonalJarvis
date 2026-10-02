@@ -335,7 +335,7 @@ Control-strip actions: `bell` (handled in the surface, reported through
 | `GET /api/pets/{id}/sheet.png` | The sprite sheet |
 | `GET /api/pets/template.png` | The empty sprite-sheet template (48 px cells, rows in state order) |
 | `PUT /api/pets/active` | `{pet_id}` → saves `[ui] pet_id`, applies live |
-| `PUT /api/pets/settings` | `{scale?, bubble?, strip_always?}` → saves, applies live |
+| `PUT /api/pets/settings` | `{scale?, bubble?, strip_always?, preview?}` → applies live, then saves; `preview: true` (a size-slider drag step) only applies live, writes nothing and sends no `PetChanged` |
 | `POST /api/pets/visibility` | `{visible}` → runtime only |
 | `POST /api/pets` | multipart: `sheet` (PNG), `name`, `description`, optional `manifest` (JSON), optional `frame_size` → the new pet |
 | `DELETE /api/pets/{id}` | user-created pets only |

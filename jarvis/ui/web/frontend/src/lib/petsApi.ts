@@ -94,6 +94,11 @@ export function savePetSettings(patch: PetSettingsPatch): Promise<unknown> {
   return putJson("/api/pets/settings", patch);
 }
 
+/** Resize the desktop pet live without saving: one step of a slider drag. */
+export function previewPetScale(scale: number): Promise<unknown> {
+  return putJson("/api/pets/settings", { scale, preview: true });
+}
+
 export function setPetVisible(visible: boolean): Promise<unknown> {
   return request("/api/pets/visibility", {
     method: "POST",
