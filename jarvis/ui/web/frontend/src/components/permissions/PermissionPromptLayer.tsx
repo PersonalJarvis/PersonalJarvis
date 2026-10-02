@@ -14,7 +14,12 @@ import { Button } from "@/components/ui/button";
 import { useRestartApp } from "@/hooks/useRestartApp";
 import { fill, useT, useUiLanguage } from "@/i18n";
 import { onSharedReturnToWindow } from "@/lib/focusRefresh";
-import { promptSentence, FALLBACK_APP_NAME } from "@/lib/permissionCopy";
+import {
+  FALLBACK_APP_NAME,
+  isOutsideAskEpisode,
+  promptHeadingKey,
+  promptSentence,
+} from "@/lib/permissionCopy";
 import {
   PERMISSION_CARD_OFFSET_VAR,
   RESOLVED_HOLD_MS,
@@ -143,7 +148,7 @@ export default function PermissionPromptLayer(): ReactNode {
   const name = appName || FALLBACK_APP_NAME;
   // What a screen reader hears when the card opens: the heading and the sentence.
   const announcement = top
-    ? `${t(`permissions.prompt.heading.${top.reason}`)}. ${promptSentence({ t, language, episode: top, appName: name })}`
+    ? `${t(promptHeadingKey(top))}. ${promptSentence({ t, language, episode: top, appName: name })}`
     : confirmation
       ? t("permissions.prompt.allowed")
       : "";
@@ -434,7 +439,7 @@ function PermissionPromptCard({
         <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
         <div className="min-w-0 flex-1 text-xs leading-relaxed">
           <h2 id={headingId} className="text-sm font-medium text-foreground-strong">
-            {t(`permissions.prompt.heading.${episode.reason}`)}
+            {t(promptHeadingKey(episode))}
           </h2>
           <p className="mt-1 break-words" data-testid="permission-prompt-sentence">
             {sentence}
@@ -477,7 +482,8 @@ function PermissionPromptCard({
               {fill(t("permissions.path_label"), { path })}
             </p>
           )}
-          {episode.outside_app && (
+          {/* The dedicated outside sentence above already names the grantee. */}
+          {episode.outside_app && !isOutsideAskEpisode(episode) && (
             <p className="mt-1 break-words text-muted-foreground">
               {fill(t("permissions.prompt.outside_note"), { app: appName })}
             </p>

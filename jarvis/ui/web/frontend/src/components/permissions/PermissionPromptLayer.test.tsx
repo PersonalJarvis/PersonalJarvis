@@ -288,12 +288,55 @@ describe("the buttons per reason", () => {
     open(needed({ reason: "needs_settings", can_prompt: true, outside_app: true }));
 
     const confirm = await screen.findByRole("button", { name: "Allow for the app that started Personal Jarvis" });
-    expect(screen.getByText(/not running as an installed app/)).toBeTruthy();
+    expect(screen.getByTestId("permission-prompt-sentence").textContent).toContain("not running as an installed app");
     expect(posts("/request")).toHaveLength(0); // nothing is asked before the confirmation
     fireEvent.click(confirm);
 
     await waitFor(() => expect(posts("/request")).toHaveLength(1));
     expect(posts("/request")[0].body).toEqual({ feature: "dictation", allow_outside_app: true });
+  });
+
+  it.each(["not_determined", "needs_settings"] as const)(
+    "outside the installed app (%s) the sentence matches the button instead of promising an OS dialog or a Settings switch",
+    async (reason) => {
+      render(<PermissionPromptLayer />);
+      open(needed({ reason, can_prompt: true, outside_app: true }));
+
+      await screen.findByRole("button", { name: "Allow for the app that started Personal Jarvis" });
+      const sentence = screen.getByTestId("permission-prompt-sentence").textContent ?? "";
+      // Nothing was asked, the grantee is named, and the button is said to be the ask.
+      expect(sentence).toMatch(/^Nothing has been asked yet\. Personal Jarvis is not running as an installed app/);
+      expect(sentence).toContain("access to “Microphone” for the app that started it");
+      expect(sentence).toContain("The button below asks macOS now");
+      // None of the per-feature promises that contradict that button.
+      expect(sentence).not.toMatch(/Continue and macOS will ask you|Switch it on for/);
+      // The heading agrees, and the old outside note is not repeated under the sentence.
+      expect(screen.getByRole("group").getAttribute("aria-labelledby")).toBeTruthy();
+      expect(screen.getByRole("heading", { level: 2 }).textContent).toBe("Confirm before macOS asks");
+      const card = screen.getByTestId("permission-prompt-card").textContent ?? "";
+      expect(card.match(/not running as an installed app/g)).toHaveLength(1);
+    },
+  );
+
+  it("keeps the feature sentence and the outside note when the reason is still a denial", async () => {
+    render(<PermissionPromptLayer />);
+    open(needed({ reason: "denied", can_prompt: true, outside_app: true }));
+
+    await screen.findByRole("button", { name: "Allow for the app that started Personal Jarvis" });
+    expect(screen.getByTestId("permission-prompt-sentence").textContent).toContain("is turned off for Personal Jarvis");
+    expect(screen.getByRole("heading", { level: 2 }).textContent).toBe("Access is turned off");
+    expect(screen.getByText(/not running as an installed app/)).toBeTruthy();
+  });
+
+  it("inside the installed app the feature sentence is unchanged", async () => {
+    render(<PermissionPromptLayer />);
+    open(needed({ reason: "not_determined", can_prompt: true }));
+
+    await screen.findByRole("button", { name: "Continue" });
+    expect(screen.getByTestId("permission-prompt-sentence").textContent).toBe(
+      "Dictation needs access to “Microphone”. Continue and macOS will ask you.",
+    );
+    expect(screen.getByRole("heading", { level: 2 }).textContent).toBe("macOS will ask you next");
   });
 
   it("Not now hides the card and sends nothing", async () => {

@@ -537,7 +537,9 @@
     "connect_failed": "Sprachverbindung fehlgeschlagen ({0}): {1}",
     "paused": "Pausiert",
     "indicator_label": "Sprachstatus",
-    "blocked_by_permission": "Mikrofon blockiert"
+    "blocked_by_permission": "Mikrofon blockiert",
+    "blocked_by_permission_short": "Mikro gesperrt",
+    "ready_blocked_title": "Die Sprachsteuerung ist bereit, aber das Mikrofon ist blockiert. Behebe das in den Systemeinstellungen."
   },
   "sidebar": {
     "extensions_label": "Plugins / Skills / MCP",
@@ -2376,7 +2378,8 @@
         "needs_settings": "In den Systemeinstellungen einschalten",
         "restricted": "Dein Mac schränkt das ein",
         "restart_hint": "Zum Abschließen neu starten",
-        "unavailable": "Gerade nicht verfügbar"
+        "unavailable": "Gerade nicht verfügbar",
+        "outside_app": "Bestätige, bevor macOS fragt"
       },
       "generic": {
         "not_determined": "Diese Funktion braucht Zugriff auf {permissions}. Wähle „Weiter“, dann fragt dich macOS.",
@@ -2487,6 +2490,7 @@
       "reset_asked": "Zurückgesetzt. macOS fragt jetzt erneut.",
       "reset_manual": "Das Zurücksetzen hat nicht geklappt. Schalte den Schalter in den Systemeinstellungen aus und wieder ein. Wenn es dann immer noch nicht geht, starte deinen Mac neu.",
       "outside_note": "{app} läuft nicht als installierte App, deshalb würde macOS das für die App vermerken, die es gestartet hat, zum Beispiel dein Terminal. Du kannst es für diese App erlauben oder {app} installieren, damit die App einen eigenen Eintrag bekommt.",
+      "outside_sentence": "Es wurde noch nichts angefragt. {app} läuft nicht als installierte App, deshalb würde macOS den Zugriff auf {permissions} für die App vermerken, die es gestartet hat, zum Beispiel dein Terminal. Die Schaltfläche unten fragt macOS jetzt, und die Antwort gilt für diese App. Oder installiere {app}, damit die App einen eigenen Eintrag bekommt.",
       "name": "„{0}“",
       "more": "+{n} weitere",
       "details": "Details",

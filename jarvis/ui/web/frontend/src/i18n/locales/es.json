@@ -537,7 +537,9 @@
     "connect_failed": "La conexión de voz falló ({0}): {1}",
     "paused": "En pausa",
     "indicator_label": "Estado de voz",
-    "blocked_by_permission": "Micrófono bloqueado"
+    "blocked_by_permission": "Micrófono bloqueado",
+    "blocked_by_permission_short": "Micro bloqueado",
+    "ready_blocked_title": "La voz está lista, pero el micrófono está bloqueado. Arréglalo en Ajustes del Sistema."
   },
   "sidebar": {
     "extensions_label": "Plugins / Skills / MCP",
@@ -2376,7 +2378,8 @@
         "needs_settings": "Actívalo en Ajustes del Sistema",
         "restricted": "Tu Mac lo restringe",
         "restart_hint": "Reinicia para terminar",
-        "unavailable": "No disponible ahora mismo"
+        "unavailable": "No disponible ahora mismo",
+        "outside_app": "Confirma antes de que macOS pregunte"
       },
       "generic": {
         "not_determined": "Esta función necesita acceso a {permissions}. Pulsa «Continuar» y macOS te preguntará.",
@@ -2487,6 +2490,7 @@
       "reset_asked": "Restablecido. macOS preguntará de nuevo ahora.",
       "reset_manual": "No se pudo restablecer. Desactiva y vuelve a activar el interruptor en Ajustes del Sistema. Si aun así no funciona, reinicia tu Mac.",
       "outside_note": "{app} no se está ejecutando como app instalada, así que macOS lo registraría para la app que la inició, por ejemplo tu terminal. Puedes permitirlo para esa app o instalar {app} para que tenga su propia entrada.",
+      "outside_sentence": "Todavía no se ha preguntado nada. {app} no se está ejecutando como app instalada, así que macOS registraría el acceso a {permissions} para la app que la inició, por ejemplo tu terminal. El botón de abajo pregunta ahora a macOS y la respuesta vale para esa app. O instala {app} para que tenga su propia entrada.",
       "name": "«{0}»",
       "more": "+{n} más",
       "details": "Detalles",

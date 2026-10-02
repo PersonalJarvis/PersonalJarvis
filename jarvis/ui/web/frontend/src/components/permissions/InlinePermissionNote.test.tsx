@@ -169,6 +169,35 @@ describe("InlinePermissionNote", () => {
     expect(calls[0].body).toEqual({ feature: "wake_word" });
   });
 
+  it("outside the installed app the note says nothing was asked and the button is the ask", async () => {
+    publish("PermissionNeeded", needed({ reason: "needs_settings", can_prompt: true, outside_app: true, origin: "user" }));
+    render(<InlinePermissionNote feature="wake_word" />);
+
+    const sentence = screen.getByTestId("inline-permission-sentence").textContent ?? "";
+    expect(sentence).toBe(
+      "Nothing has been asked yet. Personal Jarvis is not running as an installed app, so macOS would record access to “Microphone” for the app that started it, such as your terminal. The button below asks macOS now, and the answer applies to that app. Or install Personal Jarvis to give it its own entry.",
+    );
+    expect(sentence).not.toMatch(/Continue and macOS will ask you|Switch it on for/);
+    expect(calls).toEqual([]); // the sentence alone asks nothing
+
+    fireEvent.click(screen.getByRole("button", { name: "Allow for the app that started Personal Jarvis" }));
+    await waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0].body).toEqual({ feature: "wake_word", allow_outside_app: true });
+  });
+
+  it("a route answer the surface already holds gets the same outside sentence", () => {
+    render(
+      <InlinePermissionNote
+        feature="wake_word"
+        local={{ permissions: ["microphone"], reason: "not_determined", can_prompt: true, outside_app: true }}
+      />,
+    );
+
+    expect(screen.getByTestId("inline-permission-sentence").textContent).toMatch(
+      /^Nothing has been asked yet\. Personal Jarvis is not running as an installed app/,
+    );
+  });
+
   it("offers no host-only action to a remote browser", () => {
     setEmbedded(false);
     publish("PermissionNeeded", needed());

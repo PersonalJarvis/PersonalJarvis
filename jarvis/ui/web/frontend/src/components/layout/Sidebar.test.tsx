@@ -549,12 +549,16 @@ describe("Sidebar voice status when macOS blocks the microphone", () => {
   });
   afterEach(() => cleanup());
 
-  test("a dead wake word is never silent: a quiet 'Microphone blocked' look and words", () => {
+  test("a dead wake word is never silent: a quiet 'Mic blocked' look and words", () => {
     microphoneBlocked();
     renderSidebar();
 
+    // The visible word is the short one so it fits next to the name; the full
+    // sentence is the dot's accessible name and the row's hover text.
     expect(screen.getByRole("img", { name: "Microphone blocked" })).toBeTruthy();
-    expect(screen.getByText("Microphone blocked")).toBeTruthy();
+    expect(screen.getByTestId("sidebar-voice-label").textContent).toBe("Mic blocked");
+    expect(screen.queryByText("Microphone blocked")).toBeNull();
+    expect(screen.getByTestId("sidebar-voice-label").parentElement?.getAttribute("title")).toBe("Microphone blocked");
     // Not the red of a fault and not the green of "ready": a hollow ring in neutral ink.
     const dot = screen.getByTestId("sidebar-voice-dot");
     expect(dot.className).toContain("ring-muted-foreground");
@@ -562,10 +566,34 @@ describe("Sidebar voice status when macOS blocks the microphone", () => {
     expect(dot.className).not.toContain("bg-destructive");
   });
 
+  test("the blocked word never squeezes the assistant name: the name keeps its width and the word gives way", () => {
+    useEventStore.setState({ assistantName: "Assistant" });
+    microphoneBlocked();
+    renderSidebar();
+
+    const name = screen.getByTestId("sidebar-assistant-name");
+    expect(name.textContent).toBe("Assistant");
+    expect(name.className).toContain("shrink-0");
+    expect(name.className).toContain("max-w-[60%]");
+    const label = screen.getByTestId("sidebar-voice-label");
+    expect(label.className).toContain("min-w-0");
+    expect(label.className).toContain("truncate");
+  });
+
+  test("with nothing to report the name is not capped", () => {
+    useEventStore.setState({ assistantName: "Assistant" });
+    renderSidebar();
+
+    const name = screen.getByTestId("sidebar-assistant-name");
+    expect(name.className).not.toContain("shrink-0");
+    expect(name.className).not.toContain("max-w-");
+    expect(screen.queryByTestId("sidebar-voice-label")).toBeNull();
+  });
+
   test("goes back to 'Ready' once the grant arrives", () => {
     microphoneBlocked();
     renderSidebar();
-    expect(screen.getByText("Microphone blocked")).toBeTruthy();
+    expect(screen.getByText("Mic blocked")).toBeTruthy();
 
     act(() => {
       usePermissionsStore
@@ -573,14 +601,14 @@ describe("Sidebar voice status when macOS blocks the microphone", () => {
         .ingest("PermissionResolved", "", { permissions: ["microphone"], feature: "wake_word", granted: true }, Date.now());
     });
 
-    expect(screen.queryByText("Microphone blocked")).toBeNull();
+    expect(screen.queryByText("Mic blocked")).toBeNull();
     expect(screen.getByRole("img", { name: "Ready" })).toBeTruthy();
   });
 
   test("macOS asking by itself is not a block", () => {
     microphoneBlocked({ phase: "os_dialog", reason: "not_determined" });
     renderSidebar();
-    expect(screen.queryByText("Microphone blocked")).toBeNull();
+    expect(screen.queryByText("Mic blocked")).toBeNull();
     expect(screen.getByRole("img", { name: "Ready" })).toBeTruthy();
   });
 
@@ -588,7 +616,7 @@ describe("Sidebar voice status when macOS blocks the microphone", () => {
     useEventStore.setState({ voiceState: "listening" });
     microphoneBlocked();
     renderSidebar();
-    expect(screen.queryByText("Microphone blocked")).toBeNull();
+    expect(screen.queryByText("Mic blocked")).toBeNull();
     expect(screen.getByRole("img", { name: "Listening" })).toBeTruthy();
   });
 });

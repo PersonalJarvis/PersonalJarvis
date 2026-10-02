@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { Loader2, Mic } from "lucide-react";
+import { Loader2, Mic, MicOff } from "lucide-react";
 import { useT } from "@/i18n";
+import { useVoiceBlockedByPermission } from "@/hooks/useVoiceBlockedByPermission";
 import { useVoiceReadiness } from "@/hooks/useVoiceReadiness";
 
 /**
@@ -16,6 +17,11 @@ import { useVoiceReadiness } from "@/hooks/useVoiceReadiness";
  *     (the `{name}` i18n token resolves to the configured assistant name,
  *     falling back to the neutral "Assistant" — never a hardcoded brand)
  *   - on becoming ready -> a brief green "Ready — you can speak now" confirmation
+ *   - on becoming ready with the microphone blocked by macOS -> the honest
+ *     "Voice is ready, but the microphone is blocked" line instead, so the banner
+ *     never says "you can speak now" while the sidebar header says "Microphone
+ *     blocked" (both read `useVoiceBlockedByPermission`). macOS asking by itself
+ *     is not a block there, so that case keeps the normal confirmation.
  */
 export function VoiceWarmingBanner() {
   const t = useT();
@@ -23,6 +29,7 @@ export function VoiceWarmingBanner() {
   // empty-state, so all three readiness surfaces agree (no more "banner says
   // starting up while the centre says Ready for commands").
   const { warming, ready } = useVoiceReadiness();
+  const micBlocked = useVoiceBlockedByPermission();
 
   // Flash an explicit "you can speak now" confirmation on the warming -> ready
   // transition, so the go-ahead is a positive signal, not the banner silently
@@ -42,10 +49,14 @@ export function VoiceWarmingBanner() {
 
   if (!warming && !justReady) return null;
 
+  // Warming outranks it (the sidebar says "Voice starting…" then too); only the
+  // go-ahead is withheld while macOS has the microphone blocked.
+  const state = warming ? "warming" : micBlocked ? "blocked" : "ready";
+
   return (
     <div
       data-testid="voice-warming-banner"
-      data-state={warming ? "warming" : "ready"}
+      data-state={state}
       role="status"
       aria-live="polite"
       // No wash. The banner spans the whole window, and a full-bleed region
@@ -54,16 +65,20 @@ export function VoiceWarmingBanner() {
       // be, instead of by a tinted slab across the top of the app.
       className="flex items-center gap-3 border-b border-border px-4 py-2.5"
     >
-      {warming ? (
+      {state === "warming" ? (
         <Loader2 className="h-4 w-4 shrink-0 animate-spin text-warning" aria-hidden />
+      ) : state === "blocked" ? (
+        <MicOff className="h-4 w-4 shrink-0 text-warning" aria-hidden />
       ) : (
         <Mic className="h-4 w-4 shrink-0 text-success" aria-hidden />
       )}
       <div className="flex min-w-0 flex-col">
         <span className="text-body font-medium text-foreground-strong">
-          {warming
+          {state === "warming"
             ? t("voice_state.warming_title")
-            : t("voice_state.ready_title")}
+            : state === "blocked"
+              ? t("voice_state.ready_blocked_title")
+              : t("voice_state.ready_title")}
         </span>
         {warming && (
           <span className="text-meta text-muted-foreground">

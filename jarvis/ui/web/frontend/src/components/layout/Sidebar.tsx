@@ -341,6 +341,11 @@ export function Sidebar({
   // connected, warmed-up pipeline at rest. See the header row below. A
   // microphone macOS has not allowed IS news: a dead wake word is never silent.
   const voiceHasNews = !connected || showSpinner || voiceState !== "idle" || micBlocked;
+  // The words beside the name have a few dozen pixels. "Microphone blocked" does
+  // not fit next to a name in the narrow header (it cut off as "Microphone bloc…"
+  // and squeezed the name to "Assist…"), so it has a shorter label; the full
+  // sentence stays in the hover text and in the dot's accessible name.
+  const voiceShortLabel = micBlocked ? t("voice_state.blocked_by_permission_short") : voiceLabel;
 
   // Dragged past the snap point the sidebar becomes a rail of icons. Everything
   // that only makes sense with a label beside it steps aside; the
@@ -437,7 +442,17 @@ export function Sidebar({
               className="flex min-w-0 flex-1 items-center gap-2 text-sm"
               title={voiceLabel}
             >
-              <span className="truncate font-medium text-foreground-strong">{assistantName}</span>
+              {/* With a status word beside it the name keeps its own width (up to
+                  most of the row) and the word gives way, never the other way round. */}
+              <span
+                data-testid="sidebar-assistant-name"
+                className={cn(
+                  "truncate font-medium text-foreground-strong",
+                  voiceHasNews && "max-w-[60%] shrink-0",
+                )}
+              >
+                {assistantName}
+              </span>
               {devTag && (
                 // A mark, not a status: the fill is the neutral accent, so it
                 // never competes with the green/amber/red the voice dot
@@ -469,7 +484,9 @@ export function Sidebar({
                 />
               )}
               {voiceHasNews && (
-                <span className="truncate text-xs text-muted-foreground">{voiceLabel}</span>
+                <span data-testid="sidebar-voice-label" className="min-w-0 truncate text-xs text-muted-foreground">
+                  {voiceShortLabel}
+                </span>
               )}
             </div>
           )}

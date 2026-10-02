@@ -37,6 +37,8 @@ const EXPLICIT = [
   "components/agentchat/DictationButton.tsx",
   "views/settings/MuteMusicPermissionNote.tsx",
   "hooks/useVoiceBlockedByPermission.ts",
+  // The ready banner states the microphone block next to the sidebar's quiet look.
+  "components/layout/VoiceWarmingBanner.tsx",
 ];
 const FILES = [...new Set([...EXPLICIT, ...SWEPT])];
 

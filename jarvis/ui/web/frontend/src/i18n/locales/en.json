@@ -537,7 +537,9 @@
     "connect_failed": "Voice connect failed ({0}): {1}",
     "paused": "Paused",
     "indicator_label": "Voice state",
-    "blocked_by_permission": "Microphone blocked"
+    "blocked_by_permission": "Microphone blocked",
+    "blocked_by_permission_short": "Mic blocked",
+    "ready_blocked_title": "Voice is ready, but the microphone is blocked. Fix it in System Settings."
   },
   "sidebar": {
     "extensions_label": "Plugins / Skills / MCP",
@@ -2376,7 +2378,8 @@
         "needs_settings": "Turn it on in System Settings",
         "restricted": "Your Mac restricts this",
         "restart_hint": "Restart to finish",
-        "unavailable": "Not available right now"
+        "unavailable": "Not available right now",
+        "outside_app": "Confirm before macOS asks"
       },
       "generic": {
         "not_determined": "This feature needs access to {permissions}. Continue and macOS will ask you.",
@@ -2487,6 +2490,7 @@
       "reset_asked": "Reset. macOS will ask again now.",
       "reset_manual": "That did not reset it. Turn the switch off and on again in System Settings. If it still does not work, restart your Mac.",
       "outside_note": "{app} is not running as an installed app, so macOS would record this for the app that started it, such as your terminal. You can allow it for that app, or install {app} to give it its own entry.",
+      "outside_sentence": "Nothing has been asked yet. {app} is not running as an installed app, so macOS would record access to {permissions} for the app that started it, such as your terminal. The button below asks macOS now, and the answer applies to that app. Or install {app} to give it its own entry.",
       "name": "“{0}”",
       "more": "+{n} more",
       "details": "Details",
