@@ -10,7 +10,7 @@ text — and hands it to the conversation as context. Settings live under
 | Trigger | What happens |
 |---|---|
 | **Window shortcut** — both Alt keys at once by default (both Option keys on a Mac) | The front window is captured and delivered per **Appshot destination**. |
-| **Area shortcut** — Alt+Win+A by default (Option+Command+A on a Mac) | Every screen dims; drag a rectangle and exactly that part is captured and delivered the same way. Esc or a right-click cancels and sends nothing. |
+| **Area shortcut** — both Shift keys at once by default | Every screen dims; drag a rectangle and exactly that part is captured and delivered the same way. Esc or a right-click cancels and sends nothing. |
 | **Voice or chat** — "take an appshot", "mach einen Appshot", "haz un appshot" | The turn that asked captures the front window and answers with it. Only an explicit request for the whole screen ("an appshot of my full screen") captures the monitor the cursor is on instead — the live model's `take_appshot` passes `scope: "screen"` for it. |
 | **Try it** buttons on the Appshots page | "Take appshot in 3 s" waits three seconds so you can switch windows; "Select area" opens the area picker at once. Both then behave like the shortcuts. |
 
@@ -94,8 +94,16 @@ and served with `Cache-Control: no-store`.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `hotkey` | `"alt+alt"` | Window appshot. `alt+alt` = both Alt keys; any other combo in the shared hotkey syntax; `""` = off |
-| `region_hotkey` | `"alt+win+a"` | Area appshot, same syntax. Must differ from `hotkey` (the app refuses one key for both) |
+| `hotkey` | `"alt+alt"` | Window appshot. `alt+alt` / `shift+shift` / `ctrl+ctrl` = both keys of that pair; any other combo in the shared hotkey syntax; `""` = off |
+| `region_hotkey` | `"shift+shift"` | Area appshot, same syntax. Must differ from `hotkey` (the app refuses one key for both) |
+
+Both shortcuts are changed on the Appshots page: **Change** records the next
+key gesture (hold the keys, then let go; Esc cancels), the X turns the
+shortcut off. Pressing the same modifier on both sides records the matching
+two-sided gesture. For Shift and Ctrl, which are held all the time while
+typing, the second key has to follow the first within half a second, so a
+capital letter typed with one Shift never fires it; both-Alt keeps its
+original any-order behaviour.
 | `target` | `"auto"` | `auto` · `message` · `voice` (table above) |
 | `sound` | `true` | Shutter sound; also needs `[ui].sound_effects` |
 | `effect` | `true` | Flash and corner thumbnail |

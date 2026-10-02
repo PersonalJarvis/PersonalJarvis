@@ -502,3 +502,157 @@ def test_window_rects_land_on_the_picker_screen_in_logical_pixels() -> None:
 def test_no_monitors_means_no_snap_targets() -> None:
     screen = {"x": 0, "y": 0, "w": 100, "h": 100, "dpr": 1}
     assert region.snap_rects_on_screen(screen, (100, 100), [], [[0, 0, 50, 50]], min_px=1) == []
+
+
+# ---------------------------------------------------------- two-sided gestures
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("Shift+Shift", "shift+shift"),
+        ("left_shift + right_shift", "shift+shift"),
+        ("right_ctrl+left_ctrl", "ctrl+ctrl"),
+        ("ctrl+right_ctrl", "ctrl+ctrl"),
+        ("alt+right_alt", "alt+alt"),
+        ("ctrl+shift+s", "ctrl+shift+s"),
+    ],
+)
+def test_two_sided_gestures_fold_to_one_spelling(raw: str, expected: str) -> None:
+    from jarvis.appshot.hotkey import is_gesture, normalize_hotkey
+
+    assert normalize_hotkey(raw) == expected
+    assert is_gesture(expected) == (expected != "ctrl+shift+s")
+
+
+class _Keys:
+    def __init__(self) -> None:
+        self.state = (False, False)
+
+    def __call__(self):
+        return self.state
+
+
+class _Clock:
+    def __init__(self) -> None:
+        self.now = 10.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def _watcher(monkeypatch, together_s):
+    import jarvis.platform.self_input as self_input
+    from jarvis.appshot.gesture import BothKeysWatcher
+
+    monkeypatch.setattr(self_input, "synthetic_input_recent", lambda *a, **k: False)
+    keys, clock, fired = _Keys(), _Clock(), []
+    watcher = BothKeysWatcher(
+        lambda: fired.append(1), probe=keys, clock=clock, together_s=together_s
+    )
+    return watcher, keys, clock, fired
+
+
+def test_both_shift_pressed_together_fires(monkeypatch) -> None:
+    watcher, keys, clock, fired = _watcher(monkeypatch, 0.5)
+    keys.state = (True, False)
+    watcher.step()
+    clock.now += 0.1
+    keys.state = (True, True)
+    assert watcher.step()
+    assert fired == [1]
+
+
+def test_holding_one_shift_while_typing_then_the_other_does_not_fire(monkeypatch) -> None:
+    watcher, keys, clock, fired = _watcher(monkeypatch, 0.5)
+    keys.state = (True, False)
+    watcher.step()
+    clock.now += 1.5  # typing capitals with the left Shift
+    keys.state = (True, True)
+    assert not watcher.step()
+    keys.state = (False, False)
+    watcher.step()
+    clock.now += 1.0
+    keys.state = (True, True)
+    assert watcher.step(), "after letting go, a real joint press works again"
+    assert fired == [1]
+
+
+def test_alt_keeps_its_any_order_behaviour(monkeypatch) -> None:
+    watcher, keys, clock, fired = _watcher(monkeypatch, None)
+    keys.state = (True, False)
+    watcher.step()
+    clock.now += 2.0
+    keys.state = (True, True)
+    assert watcher.step()
+
+
+async def test_two_gestures_arm_two_watchers(monkeypatch) -> None:
+    import jarvis.appshot.gesture as gesture
+    import jarvis.appshot.hotkey as hotkey_module
+    import jarvis.core.config as config_module
+    import jarvis.core.instance as instance_module
+
+    class Cfg:
+        class appshot:  # noqa: N801
+            hotkey = "alt+alt"
+            region_hotkey = "shift+shift"
+
+    families: list = []
+    started: list = []
+
+    def make_probe(family="alt"):
+        families.append(family)
+        return (lambda: (False, False)), ""
+
+    class Watcher:
+        def __init__(self, on_fire, *, probe, together_s=None):
+            self.together_s = together_s
+
+        def start(self):
+            started.append(self.together_s)
+
+        def stop(self):
+            started.remove(self.together_s)
+
+    monkeypatch.setattr(config_module, "load_config", lambda: Cfg)
+    monkeypatch.setattr(instance_module, "current_instance", lambda: _Instance())
+    monkeypatch.setattr(gesture, "make_probe", make_probe)
+    monkeypatch.setattr(gesture, "BothKeysWatcher", Watcher)
+
+    shortcut = hotkey_module.AppshotShortcut(bus=object())
+    await shortcut.reload()
+
+    assert families == ["alt", "shift"]
+    assert sorted(started, key=str) == [0.5, None]
+    assert shortcut.status_for("window").armed and shortcut.status_for("region").armed
+    await shortcut.stop()
+    assert started == []
+
+
+def test_a_gesture_passes_the_settings_route(client, monkeypatch) -> None:
+    import jarvis.core.config as config_module
+    import jarvis.core.config_writer as writer
+
+    class Cfg:
+        class appshot:  # noqa: N801
+            hotkey = "alt+alt"
+            region_hotkey = "alt+win+a"
+            target = "auto"
+            sound = True
+            effect = True
+
+        class screen_context:  # noqa: N801
+            enabled = True
+
+        class ui:  # noqa: N801
+            sound_effects = True
+
+    writes: list = []
+    monkeypatch.setattr(config_module, "load_config", lambda: Cfg)
+    monkeypatch.setattr(writer, "set_appshot_settings", lambda values: writes.append(values))
+
+    response = client.put("/api/appshot/settings", json={"region_hotkey": "Left_Shift+Right_Shift"})
+
+    assert response.status_code == 200, response.text
+    assert writes == [{"region_hotkey": "shift+shift"}]

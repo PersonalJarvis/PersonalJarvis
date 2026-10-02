@@ -18,7 +18,9 @@ import {
   type AppshotSettings,
   type AppshotSettingsPatch,
 } from "@/lib/appshotApi";
+import { gestureFamily } from "@/lib/appshotChord";
 import { cn } from "@/lib/utils";
+import { AppshotShortcutField } from "@/views/AppshotShortcutField";
 import { useEventStore } from "@/store/events";
 
 /**
@@ -34,8 +36,13 @@ import { useEventStore } from "@/store/events";
  */
 
 const IS_MAC = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform || "");
-const PRESET_HOTKEYS = ["alt+alt", "ctrl+alt+a", ""] as const;
-const REGION_PRESET_HOTKEYS = ["alt+win+a", "ctrl+alt+s", ""] as const;
+
+/** The key a two-sided gesture is made of, as printed on this keyboard. */
+function gestureKeyName(family: "alt" | "shift" | "ctrl"): string {
+  if (family === "alt") return IS_MAC ? "Option" : "Alt";
+  if (family === "ctrl") return IS_MAC ? "Control" : "Ctrl";
+  return "Shift";
+}
 const TRY_DELAY_S = 3;
 
 export function AppshotGlyph({ className }: { className?: string }) {
@@ -120,21 +127,6 @@ function PreviewDemo() {
       <p className="mt-3 text-sm text-muted-foreground">{t("appshots.preview_empty")}</p>
     </div>
   );
-}
-
-function shortcutOptions(
-  presets: readonly string[],
-  current: string,
-  offLabel: string,
-): BrandedSelectOption[] {
-  const options: BrandedSelectOption[] = presets.map((value) => ({
-    value: value || "off",
-    label: value ? formatAppshotHotkey(value, IS_MAC) : offLabel,
-  }));
-  if (current && !presets.includes(current)) {
-    options.unshift({ value: current, label: formatAppshotHotkey(current, IS_MAC) });
-  }
-  return options;
 }
 
 function deliveredLabel(t: (key: string) => string, deliveredTo: string): string {
@@ -292,19 +284,6 @@ export function AppshotsView() {
     }
   }, [pushToast]);
 
-  const hotkeyOptions = useMemo(
-    () => shortcutOptions(PRESET_HOTKEYS, settings?.hotkey ?? "", t("appshots.shortcut_off")),
-    [settings?.hotkey, t],
-  );
-  const regionHotkeyOptions = useMemo(
-    () =>
-      shortcutOptions(
-        REGION_PRESET_HOTKEYS,
-        settings?.region_hotkey ?? "",
-        t("appshots.shortcut_off"),
-      ),
-    [settings?.region_hotkey, t],
-  );
 
   const targetOptions = useMemo<BrandedSelectOption[]>(
     () => [
@@ -324,6 +303,10 @@ export function AppshotsView() {
     if (settings.hotkey === "alt+alt") {
       return IS_MAC ? t("appshots.shortcut_both_option_hint") : t("appshots.shortcut_both_alt_hint");
     }
+    const family = gestureFamily(settings.hotkey);
+    if (family) {
+      return t("appshots.shortcut_both_keys_hint").replace("{0}", gestureKeyName(family));
+    }
     return t("appshots.shortcut_combo_hint").replace(
       "{0}",
       formatAppshotHotkey(settings.hotkey, IS_MAC),
@@ -342,6 +325,10 @@ export function AppshotsView() {
     if (!settings.region_hotkey) return t("appshots.region_shortcut_hint_off");
     if (settings.enabled && !settings.region_shortcut.armed && settings.region_shortcut.detail) {
       return t("appshots.shortcut_unavailable").replace("{0}", settings.region_shortcut.detail);
+    }
+    const family = gestureFamily(settings.region_hotkey);
+    if (family) {
+      return t("appshots.region_shortcut_both_keys_hint").replace("{0}", gestureKeyName(family));
     }
     return t("appshots.region_shortcut_hint").replace(
       "{0}",
@@ -400,14 +387,12 @@ export function AppshotsView() {
                   label={t("appshots.shortcut_label")}
                   hint={shortcutHint}
                   control={
-                    <BrandedSelect
-                      value={settings.hotkey || "off"}
-                      options={hotkeyOptions}
-                      ariaLabel={t("appshots.shortcut_label")}
+                    <AppshotShortcutField
+                      value={settings.hotkey}
+                      isMac={IS_MAC}
                       disabled={disabled || saving}
                       testId="appshots-hotkey"
-                      className="w-44"
-                      onValueChange={(value) => void save({ hotkey: value === "off" ? "" : value })}
+                      onSave={(hotkey) => save({ hotkey })}
                     />
                   }
                 />
@@ -416,16 +401,12 @@ export function AppshotsView() {
                     label={t("appshots.region_shortcut_label")}
                     hint={regionShortcutHint}
                     control={
-                      <BrandedSelect
-                        value={settings.region_hotkey || "off"}
-                        options={regionHotkeyOptions}
-                        ariaLabel={t("appshots.region_shortcut_label")}
+                      <AppshotShortcutField
+                        value={settings.region_hotkey}
+                        isMac={IS_MAC}
                         disabled={disabled || saving}
                         testId="appshots-region-hotkey"
-                        className="w-44"
-                        onValueChange={(value) =>
-                          void save({ region_hotkey: value === "off" ? "" : value })
-                        }
+                        onSave={(regionHotkey) => save({ region_hotkey: regionHotkey })}
                       />
                     }
                   />

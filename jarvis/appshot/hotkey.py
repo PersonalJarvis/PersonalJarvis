@@ -5,11 +5,12 @@ Two shortcuts, one per scope:
 * ``[appshot].hotkey`` takes the front window;
 * ``[appshot].region_hotkey`` first lets the user drag out an area.
 
-Each is either ``alt+alt`` (both Alt keys, watched by
-:mod:`jarvis.appshot.gesture`), any combo in the shared hotkey syntax (armed
-through the regular per-OS :class:`~jarvis.trigger.hotkey.HotkeyTrigger`), or
-empty (off). Only the instance that owns ambient duties arms them — a dev app
-beside the live one would otherwise take every appshot twice.
+Each is either a both-keys gesture — ``alt+alt``, ``shift+shift`` or
+``ctrl+ctrl``, watched by :mod:`jarvis.appshot.gesture` — any combo in the
+shared hotkey syntax (armed through the regular per-OS
+:class:`~jarvis.trigger.hotkey.HotkeyTrigger`), or empty (off). Only the
+instance that owns ambient duties arms them — a dev app beside the live one
+would otherwise take every appshot twice.
 """
 
 from __future__ import annotations
@@ -23,6 +24,26 @@ from typing import Any
 log = logging.getLogger(__name__)
 
 BOTH_ALT = "alt+alt"
+BOTH_SHIFT = "shift+shift"
+BOTH_CTRL = "ctrl+ctrl"
+#: Spellings of the two-sided gestures that fold onto their canonical form.
+_GESTURE_ALIASES: dict[str, str] = {
+    "alt+alt": BOTH_ALT,
+    "left_alt+right_alt": BOTH_ALT,
+    "right_alt+left_alt": BOTH_ALT,
+    "alt+altgr": BOTH_ALT,
+    "altgr+alt": BOTH_ALT,
+    "alt+right_alt": BOTH_ALT,
+    "right_alt+alt": BOTH_ALT,
+    "shift+shift": BOTH_SHIFT,
+    "left_shift+right_shift": BOTH_SHIFT,
+    "right_shift+left_shift": BOTH_SHIFT,
+    "ctrl+ctrl": BOTH_CTRL,
+    "left_ctrl+right_ctrl": BOTH_CTRL,
+    "right_ctrl+left_ctrl": BOTH_CTRL,
+    "ctrl+right_ctrl": BOTH_CTRL,
+    "right_ctrl+ctrl": BOTH_CTRL,
+}
 
 #: Scope → the ``[appshot]`` key holding its shortcut.
 SCOPE_KEYS: dict[str, str] = {"window": "hotkey", "region": "region_hotkey"}
@@ -41,11 +62,16 @@ class ShortcutStatus:
 
 
 def normalize_hotkey(value: str) -> str:
-    """Canonical spelling: lower case, no spaces, both-Alt aliases folded."""
+    """Canonical spelling: lower case, no spaces, both-keys aliases folded."""
     combo = "+".join(part.strip().lower() for part in str(value or "").split("+") if part.strip())
-    if combo in {"alt+alt", "left_alt+right_alt", "right_alt+left_alt", "alt+altgr", "altgr+alt"}:
-        return BOTH_ALT
-    return combo
+    return _GESTURE_ALIASES.get(combo, combo)
+
+
+def is_gesture(hotkey: str) -> bool:
+    """A both-keys gesture, not a combo for the shared hotkey backends."""
+    from jarvis.appshot.gesture import GESTURES  # noqa: PLC0415
+
+    return hotkey in GESTURES
 
 
 def configured_hotkeys(block: Any) -> dict[str, str]:
@@ -62,7 +88,7 @@ class AppshotShortcut:
     def __init__(self, bus: Any) -> None:
         self._bus = bus
         self._loop: asyncio.AbstractEventLoop | None = None
-        self._watcher: Any | None = None
+        self._watchers: list[Any] = []
         self._trigger_task: asyncio.Task[None] | None = None
         self._busy = False
         not_started = ShortcutStatus(hotkey="", armed=False, detail="Not started yet.")
@@ -113,8 +139,8 @@ class AppshotShortcut:
                     self._statuses[scope] = ShortcutStatus(
                         hotkey, False, "This is already the shortcut for the front window."
                     )
-                elif hotkey == BOTH_ALT:
-                    self._statuses[scope] = await self._arm_both_alt(scope)
+                elif is_gesture(hotkey):
+                    self._statuses[scope] = await self._arm_gesture(scope, hotkey)
                 else:
                     self._statuses[scope] = self._check_combo(hotkey)
                     if self._statuses[scope].armed:
@@ -142,8 +168,8 @@ class AppshotShortcut:
         return self.status
 
     async def stop(self) -> None:
-        watcher, self._watcher = self._watcher, None
-        if watcher is not None:
+        watchers, self._watchers = self._watchers, []
+        for watcher in watchers:
             await asyncio.to_thread(watcher.stop)
         task, self._trigger_task = self._trigger_task, None
         if task is not None and not task.done():
@@ -151,16 +177,26 @@ class AppshotShortcut:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
 
-    async def _arm_both_alt(self, scope: str) -> ShortcutStatus:
-        from jarvis.appshot.gesture import BothAltWatcher, make_probe  # noqa: PLC0415
+    async def _arm_gesture(self, scope: str, hotkey: str) -> ShortcutStatus:
+        from jarvis.appshot.gesture import (  # noqa: PLC0415
+            GESTURES,
+            BothKeysWatcher,
+            make_probe,
+            together_window,
+        )
 
-        probe, reason = await asyncio.to_thread(make_probe)
+        family = GESTURES[hotkey]
+        probe, reason = await asyncio.to_thread(make_probe, family)
         if probe is None:
-            return ShortcutStatus(hotkey=BOTH_ALT, armed=False, detail=reason)
-        watcher = BothAltWatcher(lambda: self._fire_threadsafe(scope), probe=probe)
+            return ShortcutStatus(hotkey=hotkey, armed=False, detail=reason)
+        watcher = BothKeysWatcher(
+            lambda: self._fire_threadsafe(scope),
+            probe=probe,
+            together_s=together_window(family),
+        )
         watcher.start()
-        self._watcher = watcher
-        return ShortcutStatus(hotkey=BOTH_ALT, armed=True)
+        self._watchers.append(watcher)
+        return ShortcutStatus(hotkey=hotkey, armed=True)
 
     @staticmethod
     def _check_combo(hotkey: str) -> ShortcutStatus:
@@ -266,10 +302,13 @@ async def start_appshot_shortcut(bus: Any) -> AppshotShortcut:
 
 __all__ = [
     "BOTH_ALT",
+    "BOTH_CTRL",
+    "BOTH_SHIFT",
     "SCOPE_KEYS",
     "AppshotShortcut",
     "ShortcutStatus",
     "configured_hotkeys",
+    "is_gesture",
     "get_shortcut",
     "normalize_hotkey",
     "start_appshot_shortcut",

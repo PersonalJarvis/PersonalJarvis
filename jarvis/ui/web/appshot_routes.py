@@ -116,9 +116,9 @@ async def get_settings() -> dict[str, Any]:
 async def put_settings(request: Request, patch: SettingsPatch) -> dict[str, Any]:
     """Write the changed switches, then re-arm the shortcut in place."""
     from jarvis.appshot.hotkey import (  # noqa: PLC0415
-        BOTH_ALT,
         configured_hotkeys,
         get_shortcut,
+        is_gesture,
         normalize_hotkey,
     )
     from jarvis.core.config import load_config  # noqa: PLC0415
@@ -135,7 +135,7 @@ async def put_settings(request: Request, patch: SettingsPatch) -> dict[str, Any]
         if key not in changes:
             continue
         changes[key] = normalize_hotkey(changes[key])
-        if changes[key] and changes[key] != BOTH_ALT:
+        if changes[key] and not is_gesture(changes[key]):
             from jarvis.trigger.hotkey import validate_hotkey  # noqa: PLC0415
 
             verdict = validate_hotkey(changes[key])

@@ -159,6 +159,68 @@ describe("AppshotsView area appshots", () => {
   });
 });
 
+describe("AppshotsView shortcut recorder", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    useEventStore.setState({ events: [], toasts: [], assistantName: "Jarvis" });
+    fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/appshot/settings" && init?.method === "PUT") {
+        return json({ ...SETTINGS, ...JSON.parse(String(init.body)) });
+      }
+      if (url === "/api/appshot/settings") return json(SETTINGS);
+      return json({ appshot: null });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  const puts = () =>
+    fetchMock.mock.calls
+      .filter(([url, init]) => url === "/api/appshot/settings" && init?.method === "PUT")
+      .map(([, init]) => JSON.parse(String(init.body)));
+
+  function press(codes: string[]) {
+    for (const code of codes) fireEvent.keyDown(window, { code, key: code });
+    for (const code of [...codes].reverse()) fireEvent.keyUp(window, { code, key: code });
+  }
+
+  it("records both Shift keys as the area shortcut", async () => {
+    render(<AppshotsView />);
+    fireEvent.click(await screen.findByTestId("appshots-region-hotkey-change"));
+    press(["ShiftLeft", "ShiftRight"]);
+    await waitFor(() => expect(puts()).toEqual([{ region_hotkey: "shift+shift" }]));
+  });
+
+  it("records an ordinary combo for the window shortcut", async () => {
+    render(<AppshotsView />);
+    fireEvent.click(await screen.findByTestId("appshots-hotkey-change"));
+    press(["ControlLeft", "ShiftLeft", "KeyS"]);
+    await waitFor(() => expect(puts()).toEqual([{ hotkey: "ctrl+shift+s" }]));
+  });
+
+  it("Esc cancels without saving, and a lone modifier explains itself", async () => {
+    render(<AppshotsView />);
+    const change = await screen.findByTestId("appshots-hotkey-change");
+    fireEvent.click(change);
+    press(["Escape"]);
+    fireEvent.click(change);
+    press(["ShiftLeft"]);
+    await screen.findByRole("alert");
+    expect(puts()).toEqual([]);
+  });
+
+  it("the X turns a shortcut off", async () => {
+    render(<AppshotsView />);
+    fireEvent.click(await screen.findByTestId("appshots-region-hotkey-clear"));
+    await waitFor(() => expect(puts()).toEqual([{ region_hotkey: "" }]));
+  });
+});
+
 describe("formatAppshotHotkey", () => {
   it("names the both-Alt gesture per platform", () => {
     expect(formatAppshotHotkey("alt+alt", false)).toBe("Alt + Alt");

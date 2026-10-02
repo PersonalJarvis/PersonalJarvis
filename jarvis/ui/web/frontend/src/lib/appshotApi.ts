@@ -122,7 +122,7 @@ export async function claimPendingAppshot(meta: AppshotMeta): Promise<File | nul
   return new File([blob], `appshot-${stamp}.${extension}`, { type: blob.type || "image/jpeg" });
 }
 
-/** "alt+alt" → "Alt + Alt" (⌥ on a Mac); any other combo, title-cased. */
+/** "alt+alt" → "Alt + Alt" (⌥ on a Mac), "shift+shift" → "Shift + Shift"; any other combo, title-cased. */
 export function formatAppshotHotkey(hotkey: string, isMac: boolean): string {
   if (!hotkey) return "";
   if (hotkey === "alt+alt") return isMac ? "⌥ + ⌥" : "Alt + Alt";
@@ -133,6 +133,7 @@ export function formatAppshotHotkey(hotkey: string, isMac: boolean): string {
       if (key === "ctrl") return isMac ? "⌃" : "Ctrl";
       if (key === "alt") return isMac ? "⌥" : "Alt";
       if (key === "shift") return isMac ? "⇧" : "Shift";
+      if (key === "right_alt") return isMac ? "⌥" : "AltGr";
       if (key === "win" || key === "cmd" || key === "super") return isMac ? "⌘" : "Win";
       return key.length === 1 ? key.toUpperCase() : key.charAt(0).toUpperCase() + key.slice(1);
     })
