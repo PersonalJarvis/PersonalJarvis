@@ -1,345 +1,103 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-import { bootSettled } from "@/lib/bootStagger";
+import { onSharedReturnToWindow } from "@/lib/focusRefresh";
+import {
+  fetchPermissionSnapshot,
+  openPermissionSettings,
+  requestPermission,
+  resetPermission,
+  type PermissionRequestOptions,
+} from "@/lib/permissionsApi";
+import type {
+  PermissionEnsurePayload,
+  PermissionId,
+  PermissionOperationPayload,
+  PermissionSnapshot,
+} from "@/lib/permissionSnapshot";
+import { usePermissionsStore } from "@/store/permissions";
 
-export type PermissionId =
-  | "microphone"
-  | "screen_recording"
-  | "accessibility"
-  | "input_monitoring"
-  | "event_posting"
-  | "automation"
-  | "credential_store";
-
-export type PermissionState =
-  | "granted"
-  | "not_determined"
-  | "denied"
-  | "restricted"
-  | "not_granted"
-  | "unavailable"
-  | "not_required";
-
-export interface PermissionItem {
-  id: PermissionId;
-  status: PermissionState;
-  /** Every feature that could use this permission. */
-  required: string[];
-  /**
-   * Whether a feature the user has turned on needs this permission right now.
-   * An optional row (`false`) stays listed and can be allowed by hand, but it is
-   * never nagged about and never part of the guided flow — a Music/Spotify
-   * consent for a "mute music" switch that is off. A backend that does not send
-   * the flag wants everything, as it always did.
-   */
-  wanted?: boolean;
-  can_request: boolean;
-  can_open_settings: boolean;
-  /**
-   * Whether dropping this app's own TCC record is a sensible next step. Always
-   * read this instead of testing `status === "denied"`: the Screen Recording
-   * and Accessibility preflights report a grant stranded on an older app
-   * signature as plain "not_granted", so the denial test hid the reset from
-   * exactly the two rows that need it most (BUG-159).
-   */
-  can_reset: boolean;
-  restart_required: boolean;
-  detail?: string | null;
-}
-
-/** Set when a rebuild changed the app signature and macOS discarded the grants. */
-export interface PermissionIdentityReset {
-  reason: string;
-  services: string[];
-}
-
-export interface PermissionFeature {
-  ready: boolean;
-  missing: PermissionId[];
-  /** Whether the user has this feature turned on; absent on an older backend. */
-  active?: boolean;
-}
-
-export interface PermissionSnapshot {
-  platform: string;
-  supported: boolean;
-  headless: boolean;
-  app_identity: {
-    app_name?: string;
-    expected_bundle_id?: string;
-    bundle_id?: string | null;
-    bundle_path?: string | null;
-    launched_as_bundle?: boolean;
-    stable?: boolean;
-    foreground?: boolean;
-  };
-  permissions: PermissionItem[];
-  features: Record<string, PermissionFeature>;
-  identity_reset?: PermissionIdentityReset | null;
-  restart_required: boolean;
-}
+export type {
+  PermissionId,
+  PermissionRow,
+  PermissionSnapshot,
+  PermissionState,
+} from "@/lib/permissionSnapshot";
 
 /**
- * The guided flow asks in this order: the pure dialogs first (a click each),
- * then the rows that end in a System Settings switch, so the user is never
- * bounced between Settings and the app more than once per row.
+ * A passive read of the macOS permission snapshot for the Privacy page, plus
+ * the three gestures a row offers.
+ *
+ * Passive means: it reads on mount, when the person comes back to the window
+ * (one coalesced, jittered refetch, see `lib/focusRefresh`) and after an
+ * action it ran itself. There is no interval, no wizard queue and no restart
+ * machinery here: nothing polls while the person looks at the page, and
+ * nothing asks macOS until they press a button.
  */
-export const SETUP_ORDER: readonly PermissionId[] = [
-  "microphone",
-  "automation",
-  "accessibility",
-  "input_monitoring",
-  "screen_recording",
-  "event_posting",
-  "credential_store",
-];
-
-export interface SetupProgress {
-  id: PermissionId;
-  index: number;
-  total: number;
-  /** "prompt" while the native dialog is up, "settings" once only a switch in System Settings is left. */
-  phase: "prompt" | "settings";
-}
-
-export type SetupOutcome = "complete" | "cancelled" | "timeout" | "restart";
-
-const SETTLED_STATES = new Set(["granted", "not_required"]);
-
-/** Whether something the user turned on needs this row (see `PermissionItem.wanted`). */
-export function isWanted(item: PermissionItem): boolean {
-  return item.wanted !== false;
-}
-
-/** A row the guided flow still has to deal with. */
-export function needsSetup(item: PermissionItem): boolean {
-  return (
-    item.required.length > 0 &&
-    isWanted(item) &&
-    !SETTLED_STATES.has(item.status) &&
-    !item.restart_required &&
-    item.status !== "unavailable" &&
-    item.status !== "restricted"
-  );
-}
-
-function settled(item: PermissionItem | undefined): boolean {
-  return !item || !needsSetup(item);
-}
-
-const EMPTY_SNAPSHOT: PermissionSnapshot = {
-  platform: "unknown",
-  supported: false,
-  headless: false,
-  app_identity: {},
-  permissions: [],
-  features: {},
-  identity_reset: null,
-  restart_required: false,
-};
-
-async function readJson(res: Response): Promise<unknown> {
-  const payload = await res.json().catch(() => null);
-  if (!res.ok) {
-    const detail = payload && typeof payload === "object"
-      ? "detail" in payload
-        ? String((payload as { detail: unknown }).detail)
-        : "message" in payload
-          ? String((payload as { message: unknown }).message)
-          : `HTTP ${res.status}`
-      : `HTTP ${res.status}`;
-    throw new Error(detail);
-  }
-  return payload;
-}
-
-function normalizeSnapshot(payload: unknown): PermissionSnapshot {
-  if (!payload || typeof payload !== "object") return EMPTY_SNAPSHOT;
-  const outer = payload as { snapshot?: unknown };
-  const raw = outer.snapshot ?? payload;
-  if (!raw || typeof raw !== "object") return EMPTY_SNAPSHOT;
-  const value = raw as Partial<PermissionSnapshot>;
-  return {
-    ...EMPTY_SNAPSHOT,
-    ...value,
-    app_identity: value.app_identity ?? {},
-    permissions: Array.isArray(value.permissions) ? value.permissions : [],
-    features: value.features ?? {},
-  };
-}
-
-/** Fired when something that decides which permissions are wanted just changed. */
-export const PERMISSIONS_REFRESH_EVENT = "jarvis:permissions-refresh";
-
-/**
- * Ask every mounted permission view to read the status again. A feature switch
- * ("Mute music while dictating") changes which rows are wanted without the
- * window gaining focus, so without this the banner would only notice at the
- * next focus event.
- */
-export function requestPermissionsRefresh(): void {
-  window.dispatchEvent(new Event(PERMISSIONS_REFRESH_EVENT));
-}
-
 export function usePermissions() {
   const [snapshot, setSnapshot] = useState<PermissionSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<PermissionId | null>(null);
-  const [setupProgress, setSetupProgress] = useState<SetupProgress | null>(null);
-  const setupCancelled = useRef(false);
+  const inflight = useRef<Promise<void> | null>(null);
+  const mounted = useRef(true);
 
-  const fetchSnapshot = useCallback(async (): Promise<PermissionSnapshot> => {
-    const next = normalizeSnapshot(await readJson(await fetch("/api/permissions/status")));
-    setSnapshot(next);
-    return next;
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
   }, []);
 
-  const refetch = useCallback(async () => {
-    try {
-      await fetchSnapshot();
-      setError(null);
-    } catch (exc) {
-      setError(exc instanceof Error ? exc.message : String(exc));
-    } finally {
-      setLoading(false);
-    }
-  }, [fetchSnapshot]);
+  const activatedNext = useRef(false);
 
-  const mutate = useCallback(
-    async (
-      id: PermissionId,
-      action: "request" | "open-settings" | "reset",
-    ): Promise<PermissionSnapshot> => {
+  const refetch = useCallback((options: { activated?: boolean } = {}): Promise<void> => {
+    if (options.activated) activatedNext.current = true;
+    // Single-flight: a focus event during a read joins it instead of starting another.
+    // An `activated` hint that arrives mid-read is not lost: one more read follows it.
+    if (inflight.current) {
+      return options.activated ? inflight.current.then(() => refetch()) : inflight.current;
+    }
+    const activated = activatedNext.current;
+    activatedNext.current = false;
+    const run = (async () => {
+      try {
+        const next = await fetchPermissionSnapshot({ activated });
+        if (!mounted.current) return;
+        if (next) {
+          setSnapshot(next);
+          usePermissionsStore.getState().setSnapshot(next);
+          setError(null);
+        } else {
+          setError("unreadable");
+        }
+      } catch (exc) {
+        if (mounted.current) setError(exc instanceof Error ? exc.message : String(exc));
+      } finally {
+        inflight.current = null;
+        if (mounted.current) setLoading(false);
+      }
+    })();
+    inflight.current = run;
+    return run;
+  }, []);
+
+  useEffect(() => {
+    void refetch();
+    return onSharedReturnToWindow(() => void refetch({ activated: true }));
+  }, [refetch]);
+
+  /** Run a gesture, then read the page again so the row shows what macOS now says. */
+  const act = useCallback(
+    async <T>(id: PermissionId, call: () => Promise<T>): Promise<T> => {
       setPendingId(id);
       try {
-        const payload = await readJson(
-          await fetch(`/api/permissions/${id}/${action}?dry_run=false`, {
-            method: "POST",
-          }),
-        );
-        const next = normalizeSnapshot(payload);
-        setSnapshot(next);
-        setError(null);
-        return next;
-      } catch (exc) {
-        setError(exc instanceof Error ? exc.message : String(exc));
-        throw exc;
+        return await call();
       } finally {
-        setPendingId(null);
+        if (mounted.current) setPendingId(null);
+        await refetch();
       }
     },
-    [],
-  );
-
-  /**
-   * The one-click flow: walk every missing row, fire its dialog (or open its
-   * Settings pane) and wait for macOS to report the grant before moving on.
-   * Ends with one automatic restart when a granted row only applies to a
-   * fresh process (Screen Recording, Input Monitoring, Accessibility) and
-   * `autoRestart` is set — onboarding owns its own final restart instead.
-   */
-  const setupAll = useCallback(
-    async (options: { autoRestart?: boolean; pollMs?: number; rowTimeoutMs?: number } = {}) => {
-      const { autoRestart = false, pollMs = 1500, rowTimeoutMs = 180_000 } = options;
-      setupCancelled.current = false;
-      let latest = await fetchSnapshot();
-      const queue = SETUP_ORDER.filter((id) =>
-        latest.permissions.some((item) => item.id === id && needsSetup(item)),
-      );
-      let outcome: SetupOutcome = "complete";
-      try {
-        for (const [index, id] of queue.entries()) {
-          const item = latest.permissions.find((entry) => entry.id === id);
-          if (settled(item)) continue;
-          setSetupProgress({ id, index: index + 1, total: queue.length, phase: "prompt" });
-          if (item?.can_request) {
-            latest = await mutate(id, "request");
-          } else if (item?.can_open_settings) {
-            latest = await mutate(id, "open-settings");
-          } else {
-            continue;
-          }
-          const deadline = Date.now() + rowTimeoutMs;
-          let current = latest.permissions.find((entry) => entry.id === id);
-          while (!settled(current)) {
-            if (setupCancelled.current) {
-              outcome = "cancelled";
-              return outcome;
-            }
-            if (Date.now() > deadline) {
-              outcome = "timeout";
-              return outcome;
-            }
-            setSetupProgress({ id, index: index + 1, total: queue.length, phase: "settings" });
-            await new Promise((resolve) => window.setTimeout(resolve, pollMs));
-            latest = await fetchSnapshot();
-            current = latest.permissions.find((entry) => entry.id === id);
-          }
-        }
-        if (autoRestart && latest.restart_required) {
-          outcome = "restart";
-          const response = await fetch("/api/settings/restart-app", { method: "POST" });
-          if (!response.ok) {
-            throw new Error(
-              response.status === 409 ? "restart-missions-running" : `restart-failed:${response.status}`,
-            );
-          }
-        }
-        return outcome;
-      } finally {
-        setSetupProgress(null);
-      }
-    },
-    [fetchSnapshot, mutate],
-  );
-
-  const cancelSetup = useCallback(() => {
-    setupCancelled.current = true;
-  }, []);
-
-  useEffect(() => {
-    // Non-critical: the banner can appear a few seconds late; the first-mount
-    // burst must not spend a connection on it (see bootStagger).
-    void bootSettled().then(refetch);
-  }, [refetch]);
-
-  useEffect(() => {
-    const refreshWhenVisible = () => {
-      if (document.visibilityState === "visible") void refetch();
-    };
-    window.addEventListener("focus", refreshWhenVisible);
-    document.addEventListener("visibilitychange", refreshWhenVisible);
-    window.addEventListener(PERMISSIONS_REFRESH_EVENT, refreshWhenVisible);
-    return () => {
-      window.removeEventListener("focus", refreshWhenVisible);
-      document.removeEventListener("visibilitychange", refreshWhenVisible);
-      window.removeEventListener(PERMISSIONS_REFRESH_EVENT, refreshWhenVisible);
-    };
-  }, [refetch]);
-
-  const waitingForSystemSettings = useMemo(
-    () =>
-      snapshot?.permissions.some(
-        (permission) =>
-          permission.required.length > 0 &&
-          isWanted(permission) &&
-          !["granted", "not_required", "unavailable"].includes(permission.status),
-      ) ?? false,
-    [snapshot],
-  );
-
-  useEffect(() => {
-    if (!waitingForSystemSettings) return;
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === "visible") void refetch();
-    }, 2500);
-    return () => window.clearInterval(timer);
-  }, [refetch, waitingForSystemSettings]);
-
-  const setupNeeded = useMemo(
-    () => snapshot?.permissions.some(needsSetup) ?? false,
-    [snapshot],
+    [refetch],
   );
 
   return {
@@ -348,18 +106,11 @@ export function usePermissions() {
     error,
     pendingId,
     refetch,
-    request: async (id: PermissionId) => {
-      await mutate(id, "request");
-    },
-    openSettings: async (id: PermissionId) => {
-      await mutate(id, "open-settings");
-    },
-    reset: async (id: PermissionId) => {
-      await mutate(id, "reset");
-    },
-    setupAll,
-    cancelSetup,
-    setupProgress,
-    setupNeeded,
+    request: (id: PermissionId, options?: PermissionRequestOptions): Promise<PermissionEnsurePayload> =>
+      act(id, () => requestPermission(id, options)),
+    openSettings: (id: PermissionId): Promise<PermissionOperationPayload> =>
+      act(id, () => openPermissionSettings(id)),
+    reset: (id: PermissionId): Promise<PermissionOperationPayload> =>
+      act(id, () => resetPermission(id)),
   };
 }

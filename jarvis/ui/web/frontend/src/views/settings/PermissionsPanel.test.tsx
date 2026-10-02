@@ -1,186 +1,295 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import type { PermissionItem, PermissionSnapshot } from "@/hooks/usePermissions";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const request = vi.fn();
-const openSettings = vi.fn();
-const reset = vi.fn();
-const setupAll = vi.fn().mockResolvedValue("complete");
-const cancelSetup = vi.fn();
+import { useI18nStore } from "@/i18n";
+import { resetConnectBudgetForTests } from "@/lib/connectBudget";
+import { useEventStore } from "@/store/events";
+import { usePermissionsStore } from "@/store/permissions";
+import { PermissionsPanel } from "./PermissionsPanel";
 
-let mockSnapshot: PermissionSnapshot | null = null;
-let mockSetupNeeded = false;
+interface Call {
+  url: string;
+  method: string;
+}
 
-vi.mock("@/i18n", () => ({
-  useT: () => (key: string) => key,
-}));
+let calls: Call[] = [];
+let permissionRows: Array<Record<string, unknown>> = [];
+let platform = "darwin";
+let outside = false;
+let resetStatus = 200;
+let headless = false;
 
-vi.mock("@/store/events", () => ({
-  useEventStore: (selector: (state: { pushToast: ReturnType<typeof vi.fn> }) => unknown) =>
-    selector({ pushToast: vi.fn() }),
-}));
-
-vi.mock("@/hooks/usePermissions", () => ({
-  usePermissions: () => ({
-    snapshot: mockSnapshot,
-    loading: false,
-    error: null,
-    pendingId: null,
-    refetch: vi.fn(),
-    request,
-    openSettings,
-    reset,
-    setupAll,
-    cancelSetup,
-    setupProgress: null,
-    setupNeeded: mockSetupNeeded,
-  }),
-}));
-
-import { PermissionRows, SetupAllControl } from "./PermissionsPanel";
-
-function snapshotWith(row: Partial<PermissionItem>): PermissionSnapshot {
+function row(id: string, overrides: Record<string, unknown> = {}) {
   return {
-    platform: "darwin",
-    supported: true,
-    headless: false,
-    app_identity: { stable: true },
-    permissions: [
-      {
-        id: "screen_recording",
-        status: "not_granted",
-        required: ["computer_use"],
-        can_request: true,
-        can_open_settings: true,
-        can_reset: false,
-        restart_required: false,
-        ...row,
-      } as PermissionItem,
-    ],
-    features: { computer_use: { ready: false, missing: ["screen_recording"] } },
-    restart_required: false,
+    id,
+    label: id,
+    status: "not_determined",
+    used_for: [],
+    can_request: true,
+    can_open_settings: true,
+    can_reset: true,
+    restart_hint: false,
+    detail: "English backend text that must never be shown",
+    settings_path: "System Settings > Privacy & Security > X",
+    ...overrides,
   };
 }
 
+function snapshotBody() {
+  return {
+    platform,
+    supported: true,
+    headless,
+    app_identity: { app_name: "Personal Jarvis", bundle_id: "x", bundle_path: null, launched_as_bundle: true, stable: !outside },
+    outside_installed_app: outside,
+    permissions: permissionRows,
+    needed: [],
+  };
+}
+
+beforeEach(() => {
+  calls = [];
+  platform = "darwin";
+  outside = false;
+  resetStatus = 200;
+  permissionRows = [
+    row("microphone", { status: "granted", can_request: false, can_reset: false }),
+    row("screen_recording", { status: "not_determined" }),
+    row("accessibility", { status: "denied", can_request: false }),
+    row("input_monitoring", { status: "restricted", can_request: false, can_open_settings: false, can_reset: false, settings_path: "System Settings > Privacy & Security > Input Monitoring" }),
+    row("credential_store", { status: "granted", can_request: false, can_open_settings: false, can_reset: false, settings_path: null }),
+  ];
+  resetConnectBudgetForTests();
+  useI18nStore.getState().setUi("en", { push: false });
+  useEventStore.setState({ toasts: [] });
+  usePermissionsStore.setState({ snapshot: null });
+  headless = false;
+  // The desktop shell's flag: this window sits at the machine the permissions belong to.
+  (window as unknown as { __JARVIS_EMBEDDED_DESKTOP?: boolean }).__JARVIS_EMBEDDED_DESKTOP = true;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      calls.push({ url, method });
+      if (url === "/api/settings/restart-app") return { ok: true, status: 200, json: async () => ({}) } as Response;
+      if (method === "POST" && url.includes("/reset")) {
+        return {
+          ok: resetStatus < 400,
+          status: resetStatus,
+          json: async () => ({ ok: resetStatus < 400, permission_id: "x", action: "reset", performed: true, dry_run: false, message: "x", permission: null }),
+        } as Response;
+      }
+      if (method === "POST") {
+        return { ok: true, status: 200, json: async () => ({ ok: true, permission: "x", outcome: "pending", asked: true }) } as Response;
+      }
+      return { ok: true, status: 200, json: async () => snapshotBody() } as Response;
+    }),
+  );
+});
+
 afterEach(() => {
   cleanup();
-  vi.clearAllMocks();
-  mockSnapshot = null;
+  vi.unstubAllGlobals();
+  delete (window as unknown as { __JARVIS_EMBEDDED_DESKTOP?: boolean }).__JARVIS_EMBEDDED_DESKTOP;
 });
 
-describe("PermissionRows", () => {
-  it("keeps System Settings available when a native request can also run", () => {
-    mockSnapshot = snapshotWith({});
-    render(<PermissionRows />);
+const posts = (suffix: string) => calls.filter((call) => call.method === "POST" && call.url.includes(suffix));
 
-    expect(screen.getByRole("button", { name: "permissions.request" })).toBeDefined();
-    expect(
-      screen.getByRole("button", { name: "permissions.open_settings" }),
-    ).toBeDefined();
+async function renderPanel() {
+  render(<PermissionsPanel />);
+  await screen.findByTestId("permission-row-microphone");
+}
+
+describe("Settings > Privacy (passive)", () => {
+  it("says the app asks only when a feature needs it, with the app name from the snapshot", async () => {
+    await renderPanel();
+
+    expect(screen.getByRole("heading", { name: "Privacy" })).toBeTruthy();
+    expect(screen.getByText(/Personal Jarvis asks only when a feature needs it\./)).toBeTruthy();
   });
 
-  it("offers the reset on a stranded grant that never reads 'denied' (BUG-159)", () => {
-    // The old rule was `status === "denied"`, which the Screen Recording and
-    // Accessibility preflights never produce — the recovery button was
-    // unreachable on exactly the rows a signature change strands.
-    mockSnapshot = snapshotWith({ can_request: false, can_reset: true });
-    render(<PermissionRows />);
+  it("shows Granted / Off or not asked / Denied / Restricted, and never the backend's English detail", async () => {
+    await renderPanel();
 
-    fireEvent.click(screen.getByRole("button", { name: "permissions.ask_again" }));
-    expect(reset).toHaveBeenCalledWith("screen_recording");
-    expect(screen.getByText("permissions.stale_grant_hint")).toBeDefined();
+    expect(screen.getByTestId("permission-status-microphone").textContent).toBe("Granted");
+    expect(screen.getByTestId("permission-status-screen_recording").textContent).toBe("Off or not asked");
+    expect(screen.getByTestId("permission-status-accessibility").textContent).toBe("Denied");
+    expect(screen.getByTestId("permission-status-input_monitoring").textContent).toBe("Restricted");
+    expect(screen.queryByText(/English backend text/)).toBeNull();
   });
 
-  it("hides the reset while a grant is in place", () => {
-    mockSnapshot = snapshotWith({ status: "granted", can_request: false, can_reset: false });
-    render(<PermissionRows />);
+  it("puts the textual System Settings path next to 'Open System Settings'", async () => {
+    await renderPanel();
+    const accessibility = screen.getByTestId("permission-row-accessibility");
 
-    expect(screen.queryByRole("button", { name: "permissions.ask_again" })).toBeNull();
+    expect(within(accessibility).getByRole("button", { name: "Open System Settings" })).toBeTruthy();
+    expect(screen.getByTestId("permission-path-accessibility").textContent).toBe(
+      "System Settings > Privacy & Security > Accessibility",
+    );
   });
 
-  it("marks a row nothing the user turned on needs as optional, but keeps it usable", () => {
-    mockSnapshot = snapshotWith({
-      id: "automation",
-      required: ["audio_ducking"],
-      wanted: false,
-      status: "not_determined",
-    });
-    render(<PermissionRows />);
+  it("offers Allow only where macOS can still be asked, and Ask again only where the backend says so", async () => {
+    await renderPanel();
 
-    expect(screen.getByTestId("permission-optional-automation")).toBeDefined();
-    expect(screen.getByText(/permissions\.optional_hint/)).toBeDefined();
-    // Still there for anyone who wants to allow it by hand.
-    fireEvent.click(screen.getByRole("button", { name: "permissions.request" }));
-    expect(request).toHaveBeenCalledWith("automation");
+    const screenRow = within(screen.getByTestId("permission-row-screen_recording"));
+    expect(screenRow.getByRole("button", { name: "Allow" })).toBeTruthy();
+    expect(screenRow.getByRole("button", { name: "Ask again" })).toBeTruthy();
+
+    const granted = within(screen.getByTestId("permission-row-microphone"));
+    expect(granted.queryByRole("button", { name: "Allow" })).toBeNull();
+    expect(granted.queryByRole("button", { name: "Ask again" })).toBeNull();
+
+    const restricted = within(screen.getByTestId("permission-row-input_monitoring"));
+    expect(restricted.queryByRole("button")).toBeNull();
   });
 
-  it("does not label a wanted row as optional", () => {
-    mockSnapshot = snapshotWith({ wanted: true });
-    render(<PermissionRows />);
+  it("has no wizard, no scoring, no banner and no 'Optional' marks", async () => {
+    await renderPanel();
 
-    expect(screen.queryByTestId("permission-optional-screen_recording")).toBeNull();
-    expect(screen.queryByText(/permissions\.optional_hint/)).toBeNull();
-  });
-});
-
-describe("Set up everything", () => {
-  afterEach(() => {
-    mockSetupNeeded = false;
-  });
-
-  it("offers the one-click flow only while a row still needs setup", () => {
-    mockSnapshot = snapshotWith({});
-    mockSetupNeeded = true;
-    render(<PermissionRows />);
-
-    fireEvent.click(screen.getByTestId("permissions-setup-all"));
-
-    // Settings/banner mode applies the grants itself; onboarding (deferred
-    // restart note) leaves the restart to its own final step.
-    expect(setupAll).toHaveBeenCalledWith({ autoRestart: true });
-  });
-
-  it("leaves the final restart to onboarding", () => {
-    mockSnapshot = snapshotWith({});
-    mockSetupNeeded = true;
-    render(<PermissionRows compact deferRestartNote />);
-
-    fireEvent.click(screen.getByTestId("permissions-setup-all"));
-
-    expect(setupAll).toHaveBeenCalledWith({ autoRestart: false });
-  });
-
-  it("hides the flow once everything is granted or the app runs outside its bundle", () => {
-    mockSnapshot = snapshotWith({ status: "granted" });
-    mockSetupNeeded = false;
-    const { unmount } = render(<PermissionRows />);
-    expect(screen.queryByTestId("permissions-setup-all")).toBeNull();
-    unmount();
-
-    mockSnapshot = { ...snapshotWith({}), app_identity: { stable: false } };
-    mockSetupNeeded = true;
-    render(<PermissionRows />);
+    expect(screen.queryByText(/Set up everything/i)).toBeNull();
+    expect(screen.queryByText(/Optional/i)).toBeNull();
+    expect(screen.queryByText(/Action needed/i)).toBeNull();
     expect(screen.queryByTestId("permissions-setup-all")).toBeNull();
   });
 
-  it("names the step and the waiting phase while running, with a way out", () => {
-    const onCancel = vi.fn();
-    render(
-      <SetupAllControl
-        progress={{ id: "accessibility", index: 2, total: 5, phase: "settings" }}
-        onStart={vi.fn()}
-        onCancel={onCancel}
-      />,
+  it("Allow asks, then reads the page again", async () => {
+    await renderPanel();
+    const before = calls.filter((call) => call.method === "GET").length;
+
+    fireEvent.click(within(screen.getByTestId("permission-row-screen_recording")).getByRole("button", { name: "Allow" }));
+
+    await waitFor(() => expect(posts("/screen_recording/request")).toHaveLength(1));
+    await waitFor(() => expect(calls.filter((call) => call.method === "GET").length).toBe(before + 1));
+  });
+
+  it("Open System Settings opens the right pane", async () => {
+    await renderPanel();
+
+    fireEvent.click(within(screen.getByTestId("permission-row-accessibility")).getByRole("button", { name: "Open System Settings" }));
+
+    await waitFor(() => expect(posts("/accessibility/open-settings")).toHaveLength(1));
+  });
+
+  it("Ask again resets, says what to do next, and a refused reset (already allowed) is a calm note", async () => {
+    await renderPanel();
+    fireEvent.click(within(screen.getByTestId("permission-row-screen_recording")).getByRole("button", { name: "Ask again" }));
+    await waitFor(() => expect(posts("/screen_recording/reset")).toHaveLength(1));
+    await waitFor(() =>
+      expect(useEventStore.getState().toasts.map((toast) => toast.message)).toContain("Reset. Press Allow to be asked again."),
     );
 
-    // The i18n stub echoes keys, so the step line is the bare template key;
-    // the phase line tells the user what macOS is waiting for.
-    expect(screen.getByTestId("permissions-setup-progress").textContent).toContain(
-      "permissions.setup_running",
+    resetStatus = 409;
+    fireEvent.click(within(screen.getByTestId("permission-row-accessibility")).getByRole("button", { name: "Ask again" }));
+    await waitFor(() =>
+      expect(useEventStore.getState().toasts.map((toast) => toast.message)).toContain(
+        "This is already allowed, so there is nothing to reset.",
+      ),
     );
-    expect(screen.getByText("permissions.setup_wait_settings")).toBeDefined();
-    expect(screen.queryByTestId("permissions-setup-all")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "permissions.setup_cancel" }));
-    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("a Keychain that was declined offers 'Try again', and says where the keys are for now", async () => {
+    permissionRows = [row("credential_store", { status: "not_granted", can_request: true, can_open_settings: false, can_reset: false, settings_path: null })];
+    await (async () => {
+      render(<PermissionsPanel />);
+      await screen.findByTestId("permission-row-credential_store");
+    })();
+
+    const keychain = within(screen.getByTestId("permission-row-credential_store"));
+    expect(keychain.getByRole("button", { name: "Try again" })).toBeTruthy();
+    expect(keychain.getByText(/kept in a local file for now/)).toBeTruthy();
+    expect(screen.queryByTestId("permission-path-credential_store")).toBeNull();
+  });
+
+  it("a row that only applies after a restart offers 'Quit and reopen' through the shared restart guard", async () => {
+    permissionRows = [row("screen_recording", { status: "not_granted", restart_hint: true, can_request: false })];
+    render(<PermissionsPanel />);
+    await screen.findByTestId("permission-row-screen_recording");
+
+    expect(screen.getByTestId("permission-status-screen_recording").textContent).toBe("Restart needed");
+    fireEvent.click(screen.getByRole("button", { name: "Quit and reopen" }));
+
+    await waitFor(() => expect(posts("/api/settings/restart-app")).toHaveLength(1));
+  });
+
+  it("explains a run outside the installed app", async () => {
+    outside = true;
+    await renderPanel();
+
+    expect(screen.getByText(/is not running as an installed app/)).toBeTruthy();
+  });
+
+  it("shows the rows read-only, with no host action button, in a remote browser", async () => {
+    delete (window as unknown as { __JARVIS_EMBEDDED_DESKTOP?: boolean }).__JARVIS_EMBEDDED_DESKTOP;
+    permissionRows = [
+      row("screen_recording", { status: "not_determined" }),
+      row("accessibility", { status: "denied", can_request: false, restart_hint: true }),
+    ];
+    await (async () => {
+      render(<PermissionsPanel />);
+      await screen.findByTestId("permission-row-screen_recording");
+    })();
+
+    expect(screen.getByTestId("permission-status-screen_recording")).toBeTruthy();
+    expect(screen.getByTestId("permission-path-screen_recording")).toBeTruthy();
+    for (const name of ["Allow", "Ask again", "Open System Settings", "Quit and reopen"]) {
+      expect(screen.queryByRole("button", { name })).toBeNull();
+    }
+  });
+
+  it("shows no host action button on a headless backend either", async () => {
+    headless = true;
+    permissionRows = [row("screen_recording", { status: "not_determined" })];
+    render(<PermissionsPanel />);
+    await screen.findByTestId("permission-row-screen_recording");
+
+    expect(screen.queryByRole("button", { name: "Open System Settings" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Allow" })).toBeNull();
+  });
+
+  it("is hidden on a non-macOS backend", async () => {
+    platform = "win32";
+    permissionRows = [row("microphone", { status: "not_required", can_request: false, can_open_settings: false, can_reset: false, settings_path: null })];
+
+    const { container } = render(<PermissionsPanel />);
+    await waitFor(() => expect(usePermissionsStore.getState().snapshot?.platform).toBe("win32"));
+
+    expect(container.textContent).toBe("");
+  });
+
+  it("reads on mount and after the person returns, never on a timer", async () => {
+    vi.useFakeTimers();
+    try {
+      render(<PermissionsPanel />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      const reads = () => calls.filter((call) => call.method === "GET").length;
+      expect(reads()).toBe(1);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5 * 60_000);
+      });
+      expect(reads()).toBe(1);
+
+      act(() => {
+        window.dispatchEvent(new Event("focus"));
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000);
+      });
+      expect(reads()).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("says so, with a way to retry, when the backend cannot be read", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+
+    render(<PermissionsPanel />);
+
+    expect(await screen.findByText("Could not read the current permission status.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Check again" })).toBeTruthy();
   });
 });

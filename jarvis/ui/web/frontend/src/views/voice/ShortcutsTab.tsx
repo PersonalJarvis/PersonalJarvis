@@ -4,6 +4,7 @@ import { AlertTriangle, Keyboard } from "lucide-react";
 import { ViewHeader } from "@/views/ChatsView";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { ShortcutsStatusNote } from "@/components/permissions/ShortcutsStatusNote";
 import { KeybindRow } from "@/views/settings/KeybindRow";
 import { useKeybinds, type KeybindAction } from "@/hooks/useHotkey";
 import { useEventStore } from "@/store/events";
@@ -79,7 +80,7 @@ const ROWS: {
 export function ShortcutsTab({ hideHeader = false }: ShortcutsTabProps = {}) {
   const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
-  const { config, loading, error, saveKeybind } = useKeybinds();
+  const { config, loading, error, saveKeybind, refetch } = useKeybinds();
   const [status, setStatus] = useState<ShortcutsStatus | null>(null);
 
   const refetchStatus = useCallback(async () => {
@@ -144,6 +145,14 @@ export function ShortcutsTab({ hideHeader = false }: ShortcutsTabProps = {}) {
             </p>
           )}
           {error && <p className="text-meta text-destructive">{error}</p>}
+
+          {/* What global shortcuts need from macOS, said once for the three
+              keys below (one status for the whole tap, not one per row). */}
+          <ShortcutsStatusNote
+            status={config?.shortcuts_status}
+            onChanged={() => void refetch()}
+            className="rounded-xl border border-border bg-card p-4"
+          />
 
           {/* A setting that contradicts its own label is degraded, not
               broken — so a --warning glyph on an ordinary card, never the

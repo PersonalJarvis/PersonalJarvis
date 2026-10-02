@@ -5,6 +5,7 @@ import type { useOnboarding } from "@/hooks/useOnboarding";
 import { loadLocaleChunk } from "@/i18n";
 import { requestedApiKeysTab } from "@/lib/apiKeysTab";
 import { useEventStore } from "@/store/events";
+import { usePermissionsStore } from "@/store/permissions";
 import { SetupTour } from "./SetupTour";
 
 type Onb = ReturnType<typeof useOnboarding>;
@@ -49,7 +50,6 @@ function stubFetch() {
       const method = init?.method ?? "GET";
       calls.push({ url, method });
       const reply = (body: unknown) => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
-      if (url === "/api/permissions/status") return reply({ platform: "win32" });
       if (url === "/api/providers") return reply({ providers });
       if (url === "/api/setup/starter-plans") return reply({ plans: [plan], selected: null, custom_id: "custom" });
       if (url === "/api/settings/wake-word") return reply(wakeWord);
@@ -162,11 +162,50 @@ it("asks for a wake word before going on, with a way to leave it for later", asy
   expect(onb.saveStep).toHaveBeenLastCalledWith("ready", ["voice"]);
 });
 
+it("resumes a stored legacy permissions step at the voice step and never asks the permission route", async () => {
+  const onb = fakeOnb({ ...accepted, current_step: "permissions" });
+  render(<SetupTour onb={onb} preview={false} onFinished={vi.fn()} />);
+  await screen.findByTestId("setup-voice-later");
+  expect(screen.getByTestId("setup-card").dataset.step).toBe("voice");
+  // Onboarding asks macOS nothing and does not even read the permission snapshot.
+  expect(calls.some((c) => c.url.startsWith("/api/permissions"))).toBe(false);
+});
+
 it("goes on from the wake word once one is saved", async () => {
   wakeWord = { phrase: "Hey George", enabled: true };
   render(<SetupTour onb={fakeOnb({ ...accepted, current_step: "voice" })} preview={false} onFinished={vi.fn()} />);
   await waitFor(() => expect((screen.getByTestId("onboarding-primary") as HTMLButtonElement).disabled).toBe(false));
   expect(screen.queryByTestId("setup-voice-later")).toBeNull();
+});
+
+it("keeps Continue enabled while macOS blocks the microphone for the wake word (the note lives in the panel)", async () => {
+  wakeWord = { phrase: "Hey George", enabled: true };
+  // The wake switch saved, then macOS refused the microphone: an episode is open for the feature.
+  usePermissionsStore.getState().ingest(
+    "PermissionNeeded",
+    "t",
+    {
+      permissions: ["microphone"],
+      feature: "wake_word",
+      reason: "denied",
+      phase: "blocked",
+      origin: "user",
+      target: "",
+      can_prompt: false,
+      can_open_settings: true,
+      outside_app: false,
+      detail: "",
+    },
+    Date.now(),
+  );
+  try {
+    render(<SetupTour onb={fakeOnb({ ...accepted, current_step: "voice" })} preview={false} onFinished={vi.fn()} />);
+    await waitFor(() => expect((screen.getByTestId("onboarding-primary") as HTMLButtonElement).disabled).toBe(false));
+    // The tour never reads or asks the permission route itself.
+    expect(calls.some((c) => c.url.startsWith("/api/permissions"))).toBe(false);
+  } finally {
+    usePermissionsStore.getState().ingest("PermissionResolved", "t", { permissions: ["microphone"], feature: "wake_word", granted: false }, Date.now());
+  }
 });
 
 it("switches on the plan a key saved during the step completes", async () => {

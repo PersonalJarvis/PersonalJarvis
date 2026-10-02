@@ -2,6 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Trash2 } from "lucide-react";
 
 import { PageHeader } from "@/components/layout/PageHeader";
+import { InlinePermissionNote } from "@/components/permissions/InlinePermissionNote";
+import { ShortcutsStatusNote } from "@/components/permissions/ShortcutsStatusNote";
+import { useKeybinds } from "@/hooks/useHotkey";
 import { Button } from "@/components/ui/button";
 import { BrandedSelect, type BrandedSelectOption } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
@@ -175,6 +178,9 @@ export function AppshotsView() {
     (s) => s.events.find((event) => event.name === "AppshotTaken")?.id ?? "",
   );
   const [settings, setSettings] = useState<AppshotSettings | null>(null);
+  // The ONE status of the global shortcut tap: a combination shortcut (not the
+  // both-Option gesture, whose permission need is unverified) rides on it.
+  const { config: keybinds, refetch: refetchKeybinds } = useKeybinds();
   const [latest, setLatest] = useState<AppshotMeta | null>(null);
   const [saving, setSaving] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
@@ -277,10 +283,25 @@ export function AppshotsView() {
     [t],
   );
 
+  const shortcutsState = keybinds?.shortcuts_status?.state;
+  // A combination shortcut that macOS has not allowed yet is explained by the
+  // note under the row, in the person's language; the backend's English "Not
+  // active: ..." sentence would only repeat it.
+  const comboNeedsPermission =
+    Boolean(settings?.hotkey) &&
+    settings?.hotkey !== "alt+alt" &&
+    (shortcutsState === "needs_input_monitoring" ||
+      (shortcutsState === "unavailable_in_this_mode" && IS_MAC));
+
   const shortcutHint = (() => {
     if (!settings) return "";
     if (!settings.hotkey) return t("appshots.shortcut_hint_off");
-    if (settings.enabled && !settings.shortcut.armed && settings.shortcut.detail) {
+    if (
+      settings.enabled &&
+      !settings.shortcut.armed &&
+      settings.shortcut.detail &&
+      !comboNeedsPermission
+    ) {
       return t("appshots.shortcut_unavailable").replace("{0}", settings.shortcut.detail);
     }
     if (settings.hotkey === "alt+alt") {
@@ -318,6 +339,15 @@ export function AppshotsView() {
           </div>
         </div>
 
+        {/* Screen Recording, said here when an appshot was refused for it (the
+            floating card stays quiet while this page explains it). */}
+        <InlinePermissionNote
+          feature="appshot"
+          allowedKey="permissions.inline.appshot.allowed"
+          className="mt-5 rounded-xl border border-border bg-card p-4"
+          testId="appshots-permission-note"
+        />
+
         <div className="mt-5 grid gap-5 lg:grid-cols-2">
           <div className="divide-y divide-border self-start rounded-xl border border-border bg-card">
             {!settings ? (
@@ -353,7 +383,15 @@ export function AppshotsView() {
                       onValueChange={(value) => void save({ hotkey: value === "off" ? "" : value })}
                     />
                   }
-                />
+                >
+                  {settings.hotkey && settings.hotkey !== "alt+alt" && (
+                    <ShortcutsStatusNote
+                      status={keybinds?.shortcuts_status}
+                      onChanged={() => void refetchKeybinds()}
+                      className="mt-3"
+                    />
+                  )}
+                </Row>
                 <Row
                   label={t("appshots.target_label")}
                   hint={targetHint}

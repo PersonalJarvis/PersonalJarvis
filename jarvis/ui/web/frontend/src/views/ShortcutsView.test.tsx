@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { ShortcutsView } from "./ShortcutsView";
 import { useEventStore } from "@/store/events";
+import { EMPTY_PROMPTS } from "@/lib/permissionPrompts";
+import { usePermissionsStore } from "@/store/permissions";
 import {
   QUICK_SWITCH_STORAGE_KEY,
   readQuickSwitchSettings,
@@ -90,5 +92,45 @@ describe("ShortcutsView", () => {
     render(<ShortcutsView />);
     fireEvent.click(screen.getByTestId("shortcuts-edit-dictation"));
     expect(useEventStore.getState().activeSection).toBe("voice-shortcuts");
+  });
+});
+
+describe("ShortcutsView on macOS without Input Monitoring", () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    delete (window as unknown as { __JARVIS_EMBEDDED_DESKTOP?: boolean }).__JARVIS_EMBEDDED_DESKTOP;
+  });
+
+  it("says what global shortcuts need once, for the whole page, and not once per section", async () => {
+    (window as unknown as { __JARVIS_EMBEDDED_DESKTOP?: boolean }).__JARVIS_EMBEDDED_DESKTOP = true;
+    usePermissionsStore.setState({
+      ...EMPTY_PROMPTS,
+      inline: {},
+      snapshot: {
+        platform: "darwin",
+        supported: true,
+        headless: false,
+        app_identity: { app_name: "Personal Jarvis", bundle_id: null, bundle_path: null, launched_as_bundle: true, stable: true },
+        outside_installed_app: false,
+        permissions: [],
+        needed: [],
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({ ...KEYBINDS, shortcuts_status: { state: "needs_input_monitoring", detail: "" } }),
+          { status: 200 },
+        ),
+      ),
+    );
+
+    render(<ShortcutsView />);
+
+    expect(await screen.findByTestId("shortcuts-status-note")).toBeTruthy();
+    expect(screen.getAllByTestId("shortcuts-status-note")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Enable global shortcuts" })).toBeTruthy();
   });
 });

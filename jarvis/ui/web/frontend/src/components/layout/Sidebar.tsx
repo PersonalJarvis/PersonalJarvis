@@ -20,6 +20,7 @@ import { useEventStore } from "@/store/events";
 import { useSectionPrefetch } from "@/hooks/useSectionPrefetch";
 import { useVoiceReadiness } from "@/hooks/useVoiceReadiness";
 import { useVoiceMode } from "@/hooks/useVoiceMode";
+import { useVoiceBlockedByPermission } from "@/hooks/useVoiceBlockedByPermission";
 import { useSectionHealth } from "@/hooks/useProviders";
 import { usePluginAttention } from "@/hooks/usePluginAttention";
 import { clsx } from "clsx";
@@ -93,6 +94,12 @@ const VOICE_STATE_STYLE: Record<string, { dot: string; pulse: boolean }> = {
   // Not a supervisor state — the surface's own "a realtime transport is
   // negotiating" phase, which no backend state covers. Half up, so amber.
   connecting: { dot: "bg-warning", pulse: true },
+  // Voice is up but macOS has not allowed the microphone, so a wake word would
+  // be dead and silent. Neither working nor broken, and not a red alarm for a
+  // switch the person has not flipped yet: a hollow ring in neutral ink, with
+  // the words "Microphone blocked" beside it (the explanation and the way to
+  // System Settings live in the wake-word panel and the permission card).
+  blocked_by_permission: { dot: "bg-transparent ring-1 ring-inset ring-muted-foreground", pulse: false },
 };
 
 export interface SidebarProps {
@@ -306,9 +313,16 @@ export function Sidebar({
   // voiceWarming / bootWarming / warming come from the shared useVoiceReadiness
   // hook so the sidebar dot, the banner and the chat empty-state never disagree.
   const showSpinner = warming || voiceMode.connecting;
+  // Only an idle, warmed-up, connected pipeline can be "blocked": a live
+  // conversation proves the microphone works.
+  const voiceBlocked = useVoiceBlockedByPermission();
+  const micBlocked =
+    voiceBlocked && connected && !voiceWarming && !voiceMode.connecting && voiceState === "idle";
   const vs = voiceMode.connecting
     ? VOICE_STATE_STYLE.connecting
-    : VOICE_STATE_STYLE[voiceState] ?? VOICE_STATE_STYLE.idle;
+    : micBlocked
+      ? VOICE_STATE_STYLE.blocked_by_permission
+      : VOICE_STATE_STYLE[voiceState] ?? VOICE_STATE_STYLE.idle;
   // A negotiating realtime transport outranks the pipeline's own state: the
   // subscription route needs 15-45 s before it can hear anything, and showing
   // the stale pre-call state there is what made a live handshake look frozen.
@@ -320,10 +334,13 @@ export function Sidebar({
       ? t("voice_state.starting")
       : voiceMode.connecting
         ? t("voice_state.connecting")
-        : t(`voice_state.${voiceState}`);
+        : micBlocked
+          ? t("voice_state.blocked_by_permission")
+          : t(`voice_state.${voiceState}`);
   // The header spells the state out only when it is news — anything but a
-  // connected, warmed-up pipeline at rest. See the header row below.
-  const voiceHasNews = !connected || showSpinner || voiceState !== "idle";
+  // connected, warmed-up pipeline at rest. See the header row below. A
+  // microphone macOS has not allowed IS news: a dead wake word is never silent.
+  const voiceHasNews = !connected || showSpinner || voiceState !== "idle" || micBlocked;
 
   // Dragged past the snap point the sidebar becomes a rail of icons. Everything
   // that only makes sense with a label beside it steps aside; the

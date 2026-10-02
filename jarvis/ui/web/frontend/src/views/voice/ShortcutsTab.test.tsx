@@ -18,6 +18,8 @@ vi.mock("@/views/ChatsView", () => ({
 }));
 
 import { ShortcutsTab } from "@/views/voice/ShortcutsTab";
+import { EMPTY_PROMPTS } from "@/lib/permissionPrompts";
+import { usePermissionsStore } from "@/store/permissions";
 
 const KEYBINDS = {
   call: "f3+f4",
@@ -46,6 +48,9 @@ const STATUS = {
  * `status` overrides the dictation-status slice, which drives the two notices
  * (push-to-talk silently on toggle, insertion impossible on this host).
  */
+/** `shortcuts_status` of GET /api/settings/keybinds; a test sets it, afterEach clears it. */
+let shortcutsStatus: { state: string; detail: string } | undefined;
+
 function stubFetch(status: Record<string, unknown> | null = STATUS) {
   const calls: { url: string; method: string; body: unknown }[] = [];
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
@@ -74,7 +79,10 @@ function stubFetch(status: Record<string, unknown> | null = STATUS) {
     if (url === "/api/dictation/settings") {
       return { ok: true, json: async () => ({ ok: true }) };
     }
-    return { ok: true, json: async () => CONFIG };
+    return {
+      ok: true,
+      json: async () => (shortcutsStatus ? { ...CONFIG, shortcuts_status: shortcutsStatus } : CONFIG),
+    };
   });
   vi.stubGlobal("fetch", fetchMock);
   return calls;
@@ -91,7 +99,26 @@ function comboText(action: string): string {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  shortcutsStatus = undefined;
+  delete (window as unknown as { __JARVIS_EMBEDDED_DESKTOP?: boolean }).__JARVIS_EMBEDDED_DESKTOP;
 });
+
+function onMac() {
+  (window as unknown as { __JARVIS_EMBEDDED_DESKTOP?: boolean }).__JARVIS_EMBEDDED_DESKTOP = true;
+  usePermissionsStore.setState({
+    ...EMPTY_PROMPTS,
+    inline: {},
+    snapshot: {
+      platform: "darwin",
+      supported: true,
+      headless: false,
+      app_identity: { app_name: "Personal Jarvis", bundle_id: null, bundle_path: null, launched_as_bundle: true, stable: true },
+      outside_installed_app: false,
+      permissions: [],
+      needed: [],
+    },
+  });
+}
 
 describe("ShortcutsTab", () => {
   it("shows all three dictation shortcuts with their current combos", async () => {
@@ -273,5 +300,37 @@ describe("ShortcutsTab", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  describe("global shortcuts on macOS (Input Monitoring)", () => {
+    it("says once for all three keys what they need, and enables from the click", async () => {
+      onMac();
+      shortcutsStatus = { state: "needs_input_monitoring", detail: "English backend sentence" };
+      const calls = stubFetch();
+      render(<ShortcutsTab />);
+
+      const note = await screen.findByTestId("shortcuts-status-note");
+      expect(note.textContent).toContain("Global shortcuts work while another app is in front");
+      expect(note.textContent).not.toContain("English backend sentence");
+      expect(note.textContent?.toLowerCase()).not.toContain("denied");
+      // Nothing was asked just by opening the tab.
+      expect(calls.filter((c) => c.url.includes("/api/permissions"))).toEqual([]);
+
+      fireEvent.click(screen.getByRole("button", { name: "Enable global shortcuts" }));
+      await waitFor(() =>
+        expect(
+          calls.some((c) => c.method === "POST" && c.url === "/api/permissions/input_monitoring/request?dry_run=false"),
+        ).toBe(true),
+      );
+    });
+
+    it("stays out of the way when the shortcuts work, and on other systems", async () => {
+      onMac();
+      shortcutsStatus = { state: "ready", detail: "" };
+      stubFetch();
+      render(<ShortcutsTab />);
+      await waitFor(() => expect(comboText("dictate")).toBe("Ctrl+AltGr+J"));
+      expect(screen.queryByTestId("shortcuts-status-note")).toBeNull();
+    });
   });
 });

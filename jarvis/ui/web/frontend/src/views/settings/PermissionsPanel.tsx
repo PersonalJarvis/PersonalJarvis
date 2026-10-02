@@ -1,131 +1,97 @@
 import {
   Accessibility,
-  CheckCircle2,
   CircleAlert,
   Keyboard,
   KeyRound,
   Loader2,
   Mic,
   Monitor,
-  MousePointer2,
   Music,
   RefreshCw,
   ShieldCheck,
-  Wand2,
 } from "lucide-react";
-import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { useEventStore } from "@/store/events";
-import { useT } from "@/i18n";
+import { useRestartApp } from "@/hooks/useRestartApp";
+import { hasEmbeddedDesktopBridge } from "@/lib/embeddedDesktop";
+import { usePermissions } from "@/hooks/usePermissions";
+import { fill, useT } from "@/i18n";
+import { FALLBACK_APP_NAME } from "@/lib/permissionCopy";
+import { PermissionApiError } from "@/lib/permissionsApi";
 import {
-  usePermissions,
-  type PermissionId,
-  type PermissionItem,
-  type PermissionSnapshot,
-  type SetupProgress,
-} from "@/hooks/usePermissions";
+  isReadyState,
+  type PermissionRow,
+  type PermissionRowId,
+} from "@/lib/permissionSnapshot";
+import { useEventStore } from "@/store/events";
 import { SettingsBlock } from "@/views/settings/SettingsBlock";
+
+type PermissionsState = ReturnType<typeof usePermissions>;
 
 const ICONS = {
   microphone: Mic,
   screen_recording: Monitor,
   accessibility: Accessibility,
   input_monitoring: Keyboard,
-  event_posting: MousePointer2,
   automation: Music,
   credential_store: KeyRound,
-} satisfies Record<PermissionId, typeof Mic>;
+} satisfies Record<PermissionRowId, typeof Mic>;
 
-const READY_STATES = new Set(["granted", "not_required"]);
-
-export function PermissionRows({
-  compact = false,
-  deferRestartNote = false,
-  onSnapshot,
-}: {
-  compact?: boolean;
-  /**
-   * Onboarding mode: the guide ends with ONE unconditional fresh restart,
-   * so a granted-but-stale permission shows a calm "applies after the
-   * final restart" note instead of the amber restart-now demand.
-   */
-  deferRestartNote?: boolean;
-  onSnapshot?: (snapshot: PermissionSnapshot | null) => void;
-}) {
+/**
+ * Settings > Privacy: a PASSIVE page. It shows what macOS allows right now and
+ * where to change it; it never asks on its own, never nags, never walks anyone
+ * through a wizard and never polls. It reads on mount, when the person comes
+ * back to the window, and after an action it ran itself (see `usePermissions`).
+ *
+ * The app asks only at the moment a feature needs a permission (the floating
+ * prompt card and the inline notes in each feature's own place); this page is
+ * the way back to the right System Settings pane afterwards, plus "Allow" and
+ * "Ask again" for a row macOS can still be asked about.
+ *
+ * Hidden off macOS: the Settings page does not list the section there, and the
+ * panel renders nothing if it is mounted anyway.
+ */
+export function PermissionRows({ permissions }: { permissions: PermissionsState }) {
   const t = useT();
   const pushToast = useEventStore((state) => state.pushToast);
-  const [restarting, setRestarting] = useState(false);
-  const {
-    snapshot,
-    loading,
-    error,
-    pendingId,
-    refetch,
-    request,
-    openSettings,
-    reset,
-    setupAll,
-    cancelSetup,
-    setupProgress,
-    setupNeeded,
-  } = usePermissions();
+  const restartApp = useRestartApp();
+  const { snapshot, loading, error, pendingId, refetch, request, openSettings, reset } = permissions;
 
-  useEffect(() => {
-    onSnapshot?.(snapshot);
-  }, [onSnapshot, snapshot]);
-
-  async function run(action: () => Promise<void>) {
+  async function run(action: () => Promise<unknown>, success?: string) {
     try {
       await action();
+      if (success) pushToast("info", success);
     } catch (exc) {
-      pushToast("error", exc instanceof Error ? exc.message : String(exc));
-    }
-  }
-
-  async function runSetup() {
-    try {
-      // Onboarding ends with its own unconditional restart; everywhere else
-      // the flow applies the new access itself so nothing is left to click.
-      const outcome = await setupAll({ autoRestart: !deferRestartNote });
-      if (outcome === "restart") {
-        pushToast("info", t("permissions.setup_restarting"));
-      } else if (outcome === "timeout") {
-        pushToast("warning", t("permissions.setup_timeout"));
-      }
-    } catch (exc) {
-      const message = exc instanceof Error ? exc.message : String(exc);
       pushToast(
         "error",
-        message === "restart-missions-running"
-          ? t("topbar.restart_missions_running")
-          : message,
+        exc instanceof PermissionApiError && exc.status === 429
+          ? t("permissions.rate_limited")
+          : t("permissions.action_failed"),
       );
     }
   }
 
-  async function restartApp() {
-    if (restarting) return;
-    setRestarting(true);
+  async function runReset(id: PermissionRowId) {
     try {
-      const response = await fetch("/api/settings/restart-app", { method: "POST" });
-      if (response.status === 409) {
-        pushToast("warning", t("topbar.restart_missions_running"));
-        setRestarting(false);
+      await reset(id);
+      pushToast("info", t("permissions.reset_done"));
+    } catch (exc) {
+      if (exc instanceof PermissionApiError && exc.status === 409) {
+        pushToast("info", t("permissions.reset_refused"));
         return;
       }
-      if (!response.ok) throw new Error(`restart-failed:${response.status}`);
-      // A successful response schedules process shutdown, so keep the button
-      // disabled while the window closes and returns through LaunchServices.
-    } catch {
-      pushToast("error", t("permissions.restart_failed"));
-      setRestarting(false);
+      pushToast(
+        "error",
+        exc instanceof PermissionApiError && exc.status === 429
+          ? t("permissions.rate_limited")
+          : t("permissions.action_failed"),
+      );
     }
   }
 
   if (loading && !snapshot) {
     return (
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        <Loader2 className="h-3.5 w-3.5 motion-safe:animate-spin" />
         {t("permissions.loading")}
       </div>
     );
@@ -143,226 +109,143 @@ export function PermissionRows({
     );
   }
 
-  const items = snapshot?.permissions ?? [];
-  if (items.length === 0 || snapshot?.platform !== "darwin") {
-    return (
-      <div className="flex items-start gap-2 rounded-lg border border-border bg-background p-3 text-xs text-muted-foreground">
-        <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-        {t("permissions.not_required")}
-      </div>
-    );
+  if (!snapshot || snapshot.platform !== "darwin" || snapshot.permissions.length === 0) {
+    return null;
   }
+
+  const appName = snapshot.app_identity.app_name || FALLBACK_APP_NAME;
+  // Allow, Ask again, Open System Settings and Quit and reopen act on THIS computer
+  // (a macOS dialog, a System Settings window, a restart). From a phone, a LAN
+  // browser or a headless host the person cannot see that screen: the rows,
+  // pills and path text stay, the buttons do not.
+  const canAct = hasEmbeddedDesktopBridge() && !snapshot.headless;
 
   return (
     <div className="space-y-2">
-      {snapshot?.app_identity.stable === false && (
+      {snapshot.outside_installed_app && (
         <div className="flex items-start gap-2 rounded-lg bg-secondary p-3 text-xs text-foreground">
-          <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-          {t("permissions.identity_warning")}
+          <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+          {fill(t("permissions.outside_app_note"), { app: appName })}
         </div>
       )}
-      {/* A rebuild changed the app's signature, so macOS discarded every
-          recorded grant. Without this the app just looks amnesic. */}
-      {snapshot?.identity_reset && (
-        <div className="flex items-start gap-2 rounded-lg bg-secondary p-3 text-xs text-foreground">
-          <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-          {t("permissions.identity_reset")}
-        </div>
-      )}
-      {/* One click for the whole list: every dialog in turn, the Settings
-          pane for the rows macOS only grants there, then the restart that
-          applies them — instead of six buttons and a restart to find. */}
-      {setupNeeded && snapshot?.app_identity.stable !== false && (
-        <SetupAllControl
-          progress={setupProgress}
-          onStart={() => void runSetup()}
-          onCancel={cancelSetup}
-        />
-      )}
-      {items.map((permission) => (
-        <PermissionRow
-          key={permission.id}
-          item={permission}
-          busy={pendingId === permission.id}
-          compact={compact}
-          onRequest={() => run(() => request(permission.id))}
-          onOpenSettings={() => run(() => openSettings(permission.id))}
-          onReset={() => run(() => reset(permission.id))}
+      {snapshot.permissions.map((row) => (
+        <PrivacyRow
+          key={row.id}
+          row={row}
+          appName={appName}
+          canAct={canAct}
+          busy={pendingId === row.id}
+          restarting={restartApp.restarting}
+          restartLabel={restartApp.forceArmed || restartApp.restarting ? restartApp.buttonLabel : null}
+          onRequest={() => run(() => request(row.id))}
+          onOpenSettings={() => run(() => openSettings(row.id))}
+          onReset={() => runReset(row.id)}
+          onRestart={() => void restartApp.restart()}
         />
       ))}
-      {snapshot?.restart_required && deferRestartNote && (
-        <p className="text-xs text-muted-foreground">
-          {t("permissions.restart_deferred")}
-        </p>
-      )}
-      {snapshot?.restart_required && !deferRestartNote && (
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-secondary p-3">
-          <p className="text-xs text-foreground">{t("permissions.restart_required")}</p>
-          <Button size="sm" disabled={restarting} onClick={() => void restartApp()}>
-            {restarting && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
-            {t(restarting ? "permissions.restarting" : "permissions.restart_now")}
-          </Button>
-        </div>
-      )}
-      {error && <p className="text-xs text-destructive">{error}</p>}
+      {error && <p className="text-xs text-destructive">{t("permissions.load_failed")}</p>}
     </div>
   );
 }
 
-export function SetupAllControl({
-  progress,
-  onStart,
-  onCancel,
-}: {
-  progress: SetupProgress | null;
-  onStart: () => void;
-  onCancel: () => void;
-}) {
-  const t = useT();
-  if (!progress) {
-    return (
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-secondary p-3">
-        <p className="text-xs text-foreground">{t("permissions.setup_all_hint")}</p>
-        <Button size="sm" data-testid="permissions-setup-all" onClick={onStart}>
-          <Wand2 className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-          {t("permissions.setup_all")}
-        </Button>
-      </div>
-    );
-  }
-  const step = t("permissions.setup_running")
-    .replace("{0}", String(progress.index))
-    .replace("{1}", String(progress.total))
-    .replace("{2}", t(`permissions.items.${progress.id}.title`));
-  return (
-    <div
-      className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-secondary p-3"
-      data-testid="permissions-setup-progress"
-      aria-live="polite"
-    >
-      <div className="min-w-0 flex-1">
-        <p className="flex items-center gap-2 text-xs font-medium text-foreground">
-          <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
-          {step}
-        </p>
-        <p className="mt-0.5 text-xs text-muted-foreground">
-          {t(
-            progress.phase === "settings"
-              ? "permissions.setup_wait_settings"
-              : "permissions.setup_wait_prompt",
-          )}
-        </p>
-      </div>
-      <Button size="sm" variant="outline" onClick={onCancel}>
-        {t("permissions.setup_cancel")}
-      </Button>
-    </div>
-  );
-}
-
-function PermissionRow({
-  item,
+function PrivacyRow({
+  row,
+  appName,
+  canAct,
   busy,
-  compact,
+  restarting,
+  restartLabel,
   onRequest,
   onOpenSettings,
   onReset,
+  onRestart,
 }: {
-  item: PermissionItem;
+  row: PermissionRow;
+  appName: string;
+  /** The viewer sits at the machine the permissions belong to (embedded desktop window). */
+  canAct: boolean;
   busy: boolean;
-  compact: boolean;
+  restarting: boolean;
+  restartLabel: string | null;
   onRequest: () => void;
   onOpenSettings: () => void;
   onReset: () => void;
+  onRestart: () => void;
 }) {
   const t = useT();
-  const Icon = ICONS[item.id];
-  const ready = READY_STATES.has(item.status);
-  // Nothing the person turned on needs this row: it stays here to be allowed by
-  // hand, but it is neither nagged about nor part of "Set up everything".
-  const optional = item.wanted === false;
-  const showRequest = !ready && item.can_request;
-  // The Core Graphics boolean preflights cannot distinguish "not asked" from
-  // "asked and denied". Keep the Settings escape hatch visible alongside the
-  // first-party request button so a prior denial is always recoverable.
-  const showSettings = !ready && item.can_open_settings;
-  // macOS auto-denies an app that ever created an input listener before the
-  // user was asked, and a signature change orphans recorded grants (BUG-083)
-  // — either way macOS never prompts again. "Ask again" drops OUR OWN record
-  // (tccutil, scoped to this app's bundle id) so the real system dialog can
-  // fire once more. The backend decides when that helps: keying it off a
-  // "denied" status hid it from Screen Recording and Accessibility, whose
-  // boolean preflights report a stranded grant as "not_granted" (BUG-159).
-  const showReset = item.can_reset;
-  // No prompt left AND the grant is missing: the checkmark the user sees in
-  // System Settings belongs to an older signature of the app. Say so, because
-  // toggling it there is exactly what they will otherwise try forever.
-  const showStaleHint = item.can_reset && !item.can_request;
-  // Screen Recording is the one probe macOS freezes per process: after the
-  // user grants it in System Settings, the live value stays stale until the
-  // app restarts. Show the honest pending label instead of the stale state;
-  // every other permission reads live TCC state and keeps its real status.
-  const statusKey =
-    !ready && item.restart_required && item.id === "screen_recording"
-      ? "restart_pending"
-      : item.status;
+  const Icon = ICONS[row.id] ?? ShieldCheck;
+  const ready = isReadyState(row.status);
+  const isKeychain = row.id === "credential_store";
+  // macOS applies some grants only to a fresh process: say so and offer the restart here.
+  const needsRestart = row.restart_hint && !ready;
+  const pillKey = needsRestart ? "restart_pending" : row.status;
+  const pathKey = `permissions.items.${row.id}.path`;
+  const path = row.settings_path ? t(pathKey) : "";
+  const hasPath = path !== "" && path !== pathKey;
+  // No prompt left AND the grant is missing: the checkmark shown in System
+  // Settings belongs to an older signature of the app (BUG-159). The backend
+  // decides when "Ask again" helps (`can_reset`).
+  const showStaleHint = row.can_reset && !row.can_request && !ready && !isKeychain;
 
   return (
-    <div className={`rounded-lg border border-border bg-background ${compact ? "p-3" : "p-4"}`}>
+    <div
+      className="rounded-lg border border-border bg-background p-4"
+      data-testid={`permission-row-${row.id}`}
+    >
       <div className="flex flex-wrap items-center gap-3">
-        <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <Icon className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
         <div className="min-w-[12rem] flex-1">
-          <div className="text-sm font-medium">
-            {t(`permissions.items.${item.id}.title`)}
-            {optional && (
-              <span
-                data-testid={`permission-optional-${item.id}`}
-                className="ml-2 rounded-full bg-secondary px-2 py-0.5 text-micro font-medium text-muted-foreground"
-              >
-                {t("permissions.optional")}
-              </span>
-            )}
-          </div>
-          {/* Compact rows drop descriptions to stay scannable — except when
-              the grant is missing: a user deciding whether to allow access
-              (e.g. the startup Keychain prompt) needs the why right here. */}
-          {(!compact || !ready) && (
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              {t(`permissions.items.${item.id}.description`)}
-              {optional && !ready && <> {t("permissions.optional_hint")}</>}
-            </p>
-          )}
+          <div className="text-sm font-medium">{t(`permissions.items.${row.id}.title`)}</div>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {t(`permissions.items.${row.id}.description`)}
+          </p>
         </div>
         <span
           className={`rounded-full px-2 py-1 text-micro font-medium ${
-            ready
-              ? "bg-muted-foreground/10 text-muted-foreground"
-              : "bg-secondary text-foreground"
+            ready ? "bg-muted-foreground/10 text-muted-foreground" : "bg-secondary text-foreground"
           }`}
+          data-testid={`permission-status-${row.id}`}
         >
-          {t(`permissions.status.${statusKey}`)}
+          {t(`permissions.status.${pillKey}`)}
         </span>
-        {showRequest && (
+        {canAct && row.can_request && !ready && (
           <Button size="sm" disabled={busy} onClick={onRequest}>
-            {busy && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
-            {t("permissions.request")}
+            {busy && <Loader2 className="mr-1.5 h-3.5 w-3.5 motion-safe:animate-spin" />}
+            {t(isKeychain ? "permissions.try_again" : "permissions.request")}
           </Button>
         )}
-        {showSettings && (
-          <Button size="sm" variant="outline" disabled={busy} onClick={onOpenSettings}>
-            {busy && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
-            {t("permissions.open_settings")}
-          </Button>
-        )}
-        {showReset && (
+        {canAct && row.can_reset && (
           <Button size="sm" variant="ghost" disabled={busy} onClick={onReset}>
-            {busy && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
             {t("permissions.ask_again")}
           </Button>
         )}
       </div>
-      {showStaleHint && (
-        <p className="mt-2 text-xs text-foreground">{t("permissions.stale_grant_hint")}</p>
+      {hasPath && (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          {canAct && row.can_open_settings && (
+            <Button size="sm" variant="outline" disabled={busy} onClick={onOpenSettings}>
+              {t("permissions.open_settings")}
+            </Button>
+          )}
+          <span className="min-w-0 break-words text-xs text-muted-foreground" data-testid={`permission-path-${row.id}`}>
+            {path}
+          </span>
+        </div>
+      )}
+      {isKeychain && !ready && (
+        <p className="mt-2 text-xs text-foreground">{t("permissions.keychain_declined")}</p>
+      )}
+      {showStaleHint && <p className="mt-2 text-xs text-foreground">{t("permissions.stale_grant_hint")}</p>}
+      {needsRestart && (
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-secondary p-3">
+          <p className="text-xs text-foreground">{fill(t("permissions.restart_hint"), { app: appName })}</p>
+          {canAct && (
+            <Button size="sm" disabled={restarting} onClick={onRestart}>
+              {restarting && <Loader2 className="mr-1.5 h-3.5 w-3.5 motion-safe:animate-spin" />}
+              {restartLabel ?? t("permissions.restart_action")}
+            </Button>
+          )}
+        </div>
       )}
     </div>
   );
@@ -370,17 +253,21 @@ function PermissionRow({
 
 export function PermissionsPanel() {
   const t = useT();
+  const permissions = usePermissions();
+  const { snapshot } = permissions;
+  // Hidden off macOS (the Settings nav hides the entry too): there is no privacy
+  // database to explain on Windows or Linux.
+  if (snapshot && snapshot.platform !== "darwin") return null;
+  const appName = snapshot?.app_identity.app_name || FALLBACK_APP_NAME;
   return (
     <div className="mt-8 space-y-4">
-      <h3 className="text-lg font-semibold text-foreground-strong">
-        {t("permissions.group_title")}
-      </h3>
+      <h3 className="text-lg font-semibold text-foreground-strong">{t("permissions.group_title")}</h3>
       <SettingsBlock
         icon={ShieldCheck}
         title={t("permissions.title")}
-        description={t("permissions.description")}
+        description={fill(t("permissions.description"), { app: appName })}
       >
-        <PermissionRows />
+        <PermissionRows permissions={permissions} />
       </SettingsBlock>
     </div>
   );

@@ -23,15 +23,14 @@ describe("setup steps", () => {
     expect([...block![1].matchAll(/"([a-z-]+)"/g)].map((m) => m[1])).toEqual([...SETUP_STEP_IDS]);
   });
 
-  it("ask for permissions on macOS only", () => {
-    expect(stepsFor("darwin")).toContain("permissions");
-    expect(stepsFor("win32")).not.toContain("permissions");
-    expect(stepsFor("linux")).not.toContain("permissions");
-    expect(stepsFor(null)).not.toContain("permissions");
+  it("have no permissions step: macOS asks where a feature needs it", () => {
+    expect(stepsFor()).toEqual(["welcome", "keys", "subscriptions", "voice", "ready"]);
+    expect([...SETUP_STEP_IDS]).not.toContain("permissions");
+    expect(Object.keys(SETUP_STEPS)).not.toContain("permissions");
   });
 
   it("start with the consent and end with the start", () => {
-    const steps = stepsFor("darwin");
+    const steps = stepsFor();
     expect(steps[0]).toBe("welcome");
     expect(steps[steps.length - 1]).toBe("ready");
   });
@@ -62,7 +61,7 @@ describe("setup steps", () => {
 });
 
 describe("resumeStep", () => {
-  const steps = stepsFor("win32");
+  const steps = stepsFor();
 
   it("never skips the consent", () => {
     expect(resumeStep(steps, "voice", false)).toBe("welcome");
@@ -70,6 +69,13 @@ describe("resumeStep", () => {
 
   it("returns to the saved step once consent exists", () => {
     expect(resumeStep(steps, "voice", true)).toBe("voice");
+  });
+
+  it("maps a stored legacy permissions step to the voice step on every OS", () => {
+    // An older build stored "permissions" (macOS only) right before "voice".
+    expect(resumeStep(steps, "permissions", true)).toBe("voice");
+    // Still never past the consent.
+    expect(resumeStep(steps, "permissions", false)).toBe("welcome");
   });
 
   it("starts after the consent for an unknown or old step id", () => {

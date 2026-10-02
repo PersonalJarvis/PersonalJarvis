@@ -20,13 +20,13 @@ import {
 import { PaneResizer } from "@/components/layout/PaneResizer";
 import { useResizablePane } from "@/hooks/useResizablePane";
 import { TopBar } from "@/components/layout/TopBar";
-import { PermissionsAlertBanner } from "@/components/layout/PermissionsAlertBanner";
 import { ReadyCelebration } from "@/components/ReadyCelebration";
 import { InputIsolationBanner } from "@/components/layout/InputIsolationBanner";
 import { VoiceWarmingBanner } from "@/components/layout/VoiceWarmingBanner";
 import { MainView } from "@/components/layout/MainView";
 import { ToastLayer } from "@/components/ToastLayer";
 import { CommandActivityLayer } from "@/components/CommandActivityLayer";
+import { PermissionPromptHost } from "@/components/permissions/PermissionPromptHost";
 import { EditContextMenu } from "@/components/EditContextMenu";
 /*
   Lazy on purpose. The overlay pulls in the dialog primitives, the keyboard
@@ -389,13 +389,9 @@ export default function App() {
             top-left corner so this gray shows in the curve. */}
         <div className="h-8 shrink-0" data-testid="caption-rule" />
         <div className={activeSection === "agents" ? "flex min-h-0 min-w-0 flex-1 flex-col" : "jarvis-sheet flex min-h-0 min-w-0 flex-1 flex-col"}>
-        {/* App-wide macOS permission alert — topmost so a missing grant is
-            impossible to miss on any view. No-op on other platforms. */}
-        <PermissionsAlertBanner />
         {/* Outside input software (dictation, text expanders, auto-type) cannot
-            reach an elevated window. Sits next to the permission alert because
-            it is the same class of problem: an OS-level gate the user must be
-            told about, since nothing else reports it. */}
+            reach an elevated window: an OS-level gate the user must be told
+            about, since nothing else reports it. */}
         <InputIsolationBanner />
         <TopBar navToggle={navToggle} />
         {!(["agentic-ide", "chat-workspace", "agentic-ide-classic"].includes(activeSection)) && <VoiceWarmingBanner />}
@@ -409,6 +405,10 @@ export default function App() {
       </main>
 
       <ToastLayer />
+      {/* A missing macOS permission is explained here, where the person is,
+          only when a feature they used needs it: one card, owner window only,
+          never at launch. Mounts its (lazy) card only while there is one. */}
+      <PermissionPromptHost />
       <CommandActivityLayer />
       {/* Right-click Cut/Copy/Paste. The desktop WebView ships with its own
           context menu disabled, so without this there is no mouse-driven paste

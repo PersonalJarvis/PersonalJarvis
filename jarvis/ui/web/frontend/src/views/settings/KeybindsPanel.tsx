@@ -1,6 +1,7 @@
 import { Keyboard } from "lucide-react";
 import { useT } from "@/i18n";
 import { useKeybinds, type KeybindAction } from "@/hooks/useHotkey";
+import { ShortcutsStatusNote } from "@/components/permissions/ShortcutsStatusNote";
 import { KeybindRow } from "@/views/settings/KeybindRow";
 
 const _KEYBIND_ROWS: { action: KeybindAction; labelKey: string }[] = [
@@ -30,15 +31,24 @@ const _KEYBIND_ROWS: { action: KeybindAction; labelKey: string }[] = [
  * backend keeps serving the whole set. Fewer rows here, never less data.
  *
  * `bare` drops the card, icon and heading, for a host that draws its own (the
- * Keyboard shortcuts page).
+ * Keyboard shortcuts page). That host also says, once for the whole page, what
+ * global shortcuts need from macOS (`ShortcutsStatusNote`); the card version
+ * says it here, above the rows.
  */
 export function KeybindsPanel({ bare = false }: { bare?: boolean } = {}) {
   const t = useT();
-  const { config, loading, error, saveKeybind } = useKeybinds();
+  const { config, loading, error, saveKeybind, refetch } = useKeybinds();
 
   const rows = (
     <>
       {error && <p className="text-meta text-destructive">{error}</p>}
+      {!bare && (
+        <ShortcutsStatusNote
+          status={config?.shortcuts_status}
+          onChanged={() => void refetch()}
+          className="mb-stack rounded-md bg-secondary p-3"
+        />
+      )}
       <div className="space-y-stack">
         {_KEYBIND_ROWS.map((row) => (
           <KeybindRow

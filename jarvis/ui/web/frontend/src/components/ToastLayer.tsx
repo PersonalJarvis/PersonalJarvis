@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { useEventStore, type Toast } from "@/store/events";
 import { cn } from "@/lib/utils";
+import { PERMISSION_CARD_OFFSET_VAR } from "@/lib/permissionPrompts";
 import { openDownloadedFile, revealInFolder } from "@/lib/fileActions";
 import { canNativeDrag, startNativeFileDrag } from "@/lib/nativeDrag";
 import { useT } from "@/i18n";
@@ -41,12 +42,18 @@ export function ToastLayer() {
   const dismiss = useEventStore((s) => s.dismissToast);
 
   return (
-    // z-[60]: the onboarding gate overlays the whole app at z-50 and renders
-    // later in the DOM; toasts (e.g. failed permission requests during
-    // first-run setup) must stay visible above it.
+    // z-[60]: above the onboarding gate (z-50), which renders later in the DOM.
+    // NOT above the blocking setup spotlight (z-110): a toast raised while it is
+    // up stays dimmed behind it, which is why the macOS permission card has its
+    // own layer at z-[115] (see PermissionPromptLayer).
     // top-12: below the caption strip — at the top edge a toast covered the
     // restart and window buttons whose outcome it reports.
-    <div className="pointer-events-none fixed right-4 top-12 z-[60] flex w-[320px] flex-col gap-2">
+    // marginTop: the permission card sits in this same top-right column; while it
+    // is up its height arrives through this variable so toasts start beneath it.
+    <div
+      className="pointer-events-none fixed right-4 top-12 z-[60] flex w-[320px] flex-col gap-2"
+      style={{ marginTop: `var(${PERMISSION_CARD_OFFSET_VAR}, 0px)` }}
+    >
       {toasts.map((toast) => {
         const Icon = ICON_FOR_KIND[toast.kind];
         // A saved-file toast in the desktop shell is a native drag handle: press

@@ -2,16 +2,27 @@ import en from "@/i18n/locales/en.json";
 import de from "@/i18n/locales/de.json";
 import es from "@/i18n/locales/es.json";
 import type { UiLanguage } from "@/i18n";
+import { privacySectionVisible } from "@/store/permissions";
 
 type LocaleTree = Record<string, unknown>;
 
 const LOCALES: Record<UiLanguage, LocaleTree> = { en, de, es };
 
-/** Each Settings page group owns the copy used to search its controls. */
-const SEARCH_GROUPS = [
+/**
+ * Each Settings page group owns the copy used to search its controls.
+ *
+ * `keys` are paths under `settings_view`; `rootKeys` are paths from the locale
+ * root, for a group whose copy lives in its own namespace (Privacy keeps its
+ * rows under `permissions`).
+ */
+const SEARCH_GROUPS: readonly { id: string; keys: readonly string[]; rootKeys?: readonly string[] }[] = [
   { id: "languages", keys: ["language", "languages_group_title"] },
   { id: "app", keys: ["app_settings_group_title", "autostart", "appearance", "jarvis_api"] },
-  { id: "permissions", keys: ["nav.permissions"] },
+  {
+    id: "permissions",
+    keys: ["nav.permissions"],
+    rootKeys: ["permissions.title", "permissions.items"],
+  },
   { id: "realtime-voice", keys: ["realtime_voice"] },
   { id: "system-prompt", keys: ["system_prompt"] },
   { id: "wake-word", keys: ["wake_word"] },
@@ -21,7 +32,7 @@ const SEARCH_GROUPS = [
   { id: "music", keys: ["music", "music_group_title"] },
   { id: "more", keys: ["rows", "team_proxy", "codex_title", "safety_title"] },
   { id: "overlay-taskbar", keys: ["overlay_style", "bar_size", "overlay_taskbar_group_title"] },
-] as const;
+];
 
 const SEARCH_PAGES = [
   { id: "profile", keys: ["profile_view"] },
@@ -79,9 +90,14 @@ export function searchSettingsOptions(
   if (!needle) return [];
   const settings = atPath(LOCALES[language], "settings_view") as LocaleTree;
 
-  return SEARCH_GROUPS.flatMap(({ id, keys }) => {
+  return SEARCH_GROUPS.flatMap(({ id, keys, rootKeys }) => {
+    // Privacy exists on macOS only: never offer a jump to a group that is not on the page.
+    if (id === "permissions" && !privacySectionVisible()) return [];
     const label = translate(`settings_view.nav.${id.replaceAll("-", "_")}`);
-    const matches = matchingCopy(settings, keys, needle);
+    const matches = [
+      ...matchingCopy(settings, keys, needle),
+      ...matchingCopy(LOCALES[language], rootKeys ?? [], needle),
+    ];
     if (!normalize(label).includes(needle) && matches.length === 0) return [];
     // Prefer a control label to a long explanation or a saved-state toast.
     return [{ id, label, detail: shortDetail(matches, label) }];

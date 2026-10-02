@@ -6,14 +6,20 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { useCapabilities } from "@/hooks/useCapabilities";
 import { useVoiceMode } from "@/hooks/useVoiceMode";
-import { useT } from "@/i18n";
+import { useInlinePermission } from "@/hooks/useInlinePermission";
+import { fill, useT, useUiLanguage } from "@/i18n";
+import { BROWSER_VOICE_FEATURE, askHostMicrophone, type HostMicrophoneAnswer } from "@/lib/hostMicrophone";
+import { FALLBACK_APP_NAME, listPermissionNames, promptSentence } from "@/lib/permissionCopy";
 import {
   browserRealtimeSupportIssue,
   RealtimeAudioClient,
   RealtimeAudioSupportError,
   type BrowserRealtimeSupportIssue,
 } from "@/lib/realtimeAudio";
+import { hasEmbeddedDesktopBridge } from "@/lib/embeddedDesktop";
+import { isMacClient } from "@/lib/permissionPrompts";
 import { useEventStore, type VoiceState } from "@/store/events";
+import { usePermissionsStore } from "@/store/permissions";
 import { cn } from "@/lib/utils";
 import {
   clearVoiceInputLevel,
@@ -29,27 +35,10 @@ import {
 
 type ConnectionState = "idle" | "connecting" | "connected" | "error";
 
-/** True only inside a pywebview host, never from the backend's machine flag.
- *
- * A normal Chrome window can connect to the same local desktop backend, where
- * `native_file_actions` is also true. Checking the client bridge keeps browser
- * microphone control visible there without enabling a second microphone in the
- * embedded desktop window.
- */
-export function hasEmbeddedDesktopBridge(): boolean {
-  const host = window as unknown as {
-    __JARVIS_EMBEDDED_DESKTOP?: boolean;
-    pywebview?: { api?: unknown };
-    chrome?: { webview?: { postMessage?: unknown } };
-    webkit?: { messageHandlers?: Record<string, unknown> };
-  };
-  return Boolean(
-    host.__JARVIS_EMBEDDED_DESKTOP ||
-      host.pywebview?.api ||
-      typeof host.chrome?.webview?.postMessage === "function" ||
-      host.webkit?.messageHandlers?.jarvisFileDrag,
-  );
-}
+// Defined in lib/embeddedDesktop.ts (a module with no UI imports, so permission
+// surfaces can ask it cheaply); re-exported here because this is where the
+// rest of the shell has always imported it from.
+export { hasEmbeddedDesktopBridge };
 
 /** Map the socket state plus the shared voice state onto one visualizer look.
  *
@@ -82,6 +71,8 @@ export function waveformPhase(
  */
 export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: boolean } = {}) {
   const t = useT();
+  const language = useUiLanguage();
+  const appName = usePermissionsStore((store) => store.snapshot?.app_identity.app_name ?? "");
   const capabilities = useCapabilities();
   const { mode, realtimeAvailable, requiresWebRtcOffer, startBudgetMs, browserAudio } =
     useVoiceMode();
@@ -97,6 +88,11 @@ export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: 
   // A non-fatal note from the provider (a recoverable warning, an unusable
   // WebRTC answer). Distinct from `error`, which means the call is over.
   const [notice, setNotice] = useState("");
+  // The host's microphone is waiting on the person (macOS asking, or a Settings
+  // switch): while this control says so itself, the floating permission card
+  // must not say it a second time (see useInlinePermission).
+  const [hostMicNoteAt, setHostMicNoteAt] = useState(0);
+  const hostMicNote = hostMicNoteAt > 0;
   // The last surface-spoken reply, kept so a browser that cannot synthesise
   // speech still SHOWS the answer instead of swallowing the whole turn.
   const [spokenText, setSpokenText] = useState("");
@@ -111,6 +107,13 @@ export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: 
   const activeSection = useEventStore((store) => store.activeSection);
   const detachedViews = useEventStore((store) => store.detachedViews);
   const embedded = hasEmbeddedDesktopBridge();
+  // Only macOS gates the microphone on a system permission; on Windows and Linux
+  // the embedded window requests nothing and adds no round trip before the stream.
+  const hostMicGate = embedded && typeof navigator !== "undefined" && isMacClient(navigator.userAgent);
+  // While this control itself says the host microphone is waiting on the person,
+  // it is the inline surface: the floating card stays quiet.
+  const { resolved: hostMicResolved } = useInlinePermission(BROWSER_VOICE_FEATURE, hostMicNote);
+  const hostMicGrantedAt = hostMicResolved?.granted ? hostMicResolved.ts : 0;
   // Match the desktop's media owner across main and detached windows. An
   // external tab must never compete with the desktop for a wake request.
   const wakeOwner = controlOnly && (embedded
@@ -147,6 +150,38 @@ export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: 
     [t],
   );
 
+  /** The sentence for a host-microphone answer that stops the start (macOS asking, or blocked). */
+  const hostMicrophoneSentence = useCallback(
+    (answer: Extract<HostMicrophoneAnswer, { kind: "pending" | "blocked" }>) =>
+      answer.kind === "pending"
+        ? fill(t("permissions.inline.os_dialog"), {
+            permissions: listPermissionNames(t, ["microphone"], language),
+          })
+        : promptSentence({
+            t,
+            language,
+            appName: appName || FALLBACK_APP_NAME,
+            episode: {
+              feature: BROWSER_VOICE_FEATURE,
+              reason: answer.reason,
+              permissions: ["microphone"],
+            },
+          }),
+    [appName, language, t],
+  );
+
+  // The person answered macOS (or flipped the Settings switch): replace the
+  // waiting/blocked text with "allowed - press again". Nothing starts by itself.
+  useEffect(() => {
+    // A grant from before this note was raised is not the answer to it.
+    if (!hostMicNote || hostMicGrantedAt < hostMicNoteAt) return;
+    setHostMicNoteAt(0);
+    setError("");
+    setState((current) => (current === "error" ? "idle" : current));
+    setVoice("idle");
+    setNotice(t("permissions.inline.browser_voice.allowed"));
+  }, [hostMicGrantedAt, hostMicNote, hostMicNoteAt, setVoice, t]);
+
   const stop = useCallback(async () => {
     connectionGenerationRef.current += 1;
     const client = clientRef.current;
@@ -155,6 +190,7 @@ export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: 
     setEffectiveProvider("");
     setError("");
     setNotice("");
+    setHostMicNoteAt(0);
     setSpokenText("");
     levelRef.current = 0;
     clearVoiceInputLevel("browser");
@@ -165,16 +201,44 @@ export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: 
     await client?.disconnect();
   }, [setVoice]);
 
-  const start = useCallback(async () => {
+  /**
+   * `gesture` is true only for the person's own click. That click is the moment
+   * the desktop window asks macOS for the microphone (before `getUserMedia`); a
+   * start the desktop made by itself (a wake word, a request event) never asks.
+   */
+  const start = useCallback(async ({ gesture = false }: { gesture?: boolean } = {}) => {
     if (!realtimeAvailable || clientRef.current || state === "connecting") return;
     const generation = connectionGenerationRef.current + 1;
     connectionGenerationRef.current = generation;
     setState("connecting");
     setError("");
+    setNotice("");
+    setHostMicNoteAt(0);
     setEffectiveProvider("");
     levelRef.current = 0;
     clearVoiceInputLevel("browser");
     clearVoiceOutputLevel("browser");
+    // The embedded desktop window reaches the SAME macOS microphone permission
+    // the native pipeline uses; ask for it from this gesture, before the stream
+    // opens. A remote browser keeps the browser's own site-settings message.
+    if (gesture && hostMicGate) {
+      const answer = await askHostMicrophone();
+      if (connectionGenerationRef.current !== generation) return;
+      if (answer.kind === "pending") {
+        // macOS is asking; the person answers there and presses Start again.
+        setState("idle");
+        setNotice(hostMicrophoneSentence(answer));
+        setHostMicNoteAt(Date.now());
+        return;
+      }
+      if (answer.kind === "blocked") {
+        setState("error");
+        setError(hostMicrophoneSentence(answer));
+        setHostMicNoteAt(Date.now());
+        setVoice("error");
+        return;
+      }
+    }
     let client: RealtimeAudioClient;
     const isCurrent = () =>
       connectionGenerationRef.current === generation && clientRef.current === client;
@@ -322,16 +386,32 @@ export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: 
       void client.disconnect();
       clearVoiceInputLevel("browser");
       setState("error");
-      setError(
-        cause instanceof RealtimeAudioSupportError
-          ? supportMessage(cause.issue)
-          : cause instanceof DOMException && cause.name === "NotAllowedError"
-            ? t("sidebar.realtime_microphone_denied")
-            : t("sidebar.realtime_error"),
-      );
+      let message: string;
+      if (cause instanceof RealtimeAudioSupportError) {
+        message = supportMessage(cause.issue);
+      } else if (cause instanceof DOMException && cause.name === "NotAllowedError") {
+        // In the desktop window a refused stream is first of all macOS: map it
+        // to the same permission episode as every other feature (the request
+        // answers with what is really off). Only when macOS says it is fine,
+        // or this is a remote browser, is it the browser's own site settings.
+        message = t("sidebar.realtime_microphone_denied");
+        if (gesture && hostMicGate) {
+          const answer = await askHostMicrophone();
+          if (connectionGenerationRef.current !== generation) return;
+          if (answer.kind === "pending" || answer.kind === "blocked") {
+            message = hostMicrophoneSentence(answer);
+            setHostMicNoteAt(Date.now());
+          }
+        }
+      } else {
+        message = t("sidebar.realtime_error");
+      }
+      setError(message);
       setVoice("error");
     }
   }, [
+    hostMicGate,
+    hostMicrophoneSentence,
     pushToast,
     realtimeAvailable,
     requiresWebRtcOffer,
@@ -468,7 +548,7 @@ export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: 
         disabled={unavailable || connecting}
         aria-label={label}
         aria-pressed={connected}
-        onClick={() => void (connected ? stop() : start())}
+        onClick={() => void (connected ? stop() : start({ gesture: true }))}
         className="w-full touch-manipulation gap-2"
       >
         <Icon

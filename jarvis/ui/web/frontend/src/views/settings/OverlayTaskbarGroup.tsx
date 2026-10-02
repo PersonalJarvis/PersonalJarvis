@@ -10,7 +10,8 @@ import { StylePreview } from "@/components/overlay/OverlayStylePreviews";
 import { useBarPersistent } from "@/hooks/useBarPersistent";
 import { useBarFollowCursor } from "@/hooks/useBarFollowCursor";
 import { BarSizeGroup } from "@/views/settings/BarSizeGroup";
-import { useMuteMusic } from "@/hooks/useMuteMusic";
+import { useMuteMusic, type MuteMusicPermission } from "@/hooks/useMuteMusic";
+import { MuteMusicPermissionNote, muteMusicLines } from "@/views/settings/MuteMusicPermissionNote";
 import { useSoundEffects } from "@/hooks/useSoundEffects";
 import { useRestartApp } from "@/hooks/useRestartApp";
 import { useEventStore } from "@/store/events";
@@ -67,6 +68,7 @@ function ToggleRow({
   checked,
   disabled,
   onToggle,
+  children,
 }: {
   icon: React.ComponentType<{ className?: string }>;
   title: string;
@@ -74,6 +76,8 @@ function ToggleRow({
   checked: boolean;
   disabled?: boolean;
   onToggle: (next: boolean) => void;
+  /** Status under the description (an inline permission note). */
+  children?: React.ReactNode;
 }) {
   return (
     <div className="flex items-start gap-3 p-4">
@@ -81,6 +85,7 @@ function ToggleRow({
       <div className="min-w-0 flex-1">
         <div className="font-medium">{title}</div>
         <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
+        {children}
       </div>
       <Switch
         checked={checked}
@@ -167,21 +172,42 @@ function MuteMusicRow() {
   const { enabled, loading, setEnabled } = useMuteMusic();
   const pushToast = useEventStore((s) => s.pushToast);
   const [saving, setSaving] = useState(false);
+  // Switching ON is the gesture that may make macOS ask for Automation access
+  // to a running player: the request stays out until the dialog is answered
+  // (`saving`), and the per-player answer is written under the switch.
+  const [permission, setPermission] = useState<MuteMusicPermission | null>(null);
+  const [answeredAt, setAnsweredAt] = useState(0);
+  const [askingOn, setAskingOn] = useState(false);
 
   async function onToggle(next: boolean) {
     setSaving(true);
+    setAskingOn(next);
+    setPermission(null);
     try {
-      await setEnabled(next);
-      pushToast(
-        "success",
-        next
-          ? t("taskbar_view.mute_music.enabled_toast")
-          : t("taskbar_view.mute_music.disabled_toast"),
-      );
+      const result = await setEnabled(next);
+      let blocked = false;
+      if (next && result.permission) {
+        setPermission(result.permission);
+        setAnsweredAt(Date.now());
+        blocked = muteMusicLines(result.permission, false).some((line) => line.tone === "blocked");
+      }
+      // The switch is saved either way, but when a running player was refused
+      // "Mute music while dictating is on" would be a false success: the line
+      // under the switch says which player will not be lowered (the wake-word
+      // switch makes the same call).
+      if (!blocked) {
+        pushToast(
+          "success",
+          next
+            ? t("taskbar_view.mute_music.enabled_toast")
+            : t("taskbar_view.mute_music.disabled_toast"),
+        );
+      }
     } catch (e) {
       pushToast("error", (e as Error).message);
     } finally {
       setSaving(false);
+      setAskingOn(false);
     }
   }
 
@@ -193,7 +219,14 @@ function MuteMusicRow() {
       checked={enabled ?? false}
       disabled={loading || saving}
       onToggle={onToggle}
-    />
+    >
+      <MuteMusicPermissionNote
+        active={Boolean(enabled) || askingOn}
+        permission={permission}
+        asking={askingOn}
+        since={answeredAt}
+      />
+    </ToggleRow>
   );
 }
 

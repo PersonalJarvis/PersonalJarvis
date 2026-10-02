@@ -5,14 +5,23 @@ def test_meta_constants():
     assert m.CURRENT_TERMS_VERSION == "1.0"
     # Setup runs inside the real app (2026-09-30): consent, one key on the API
     # Keys page, a subscription for the agents on its Agents tab (2026-10-01),
-    # macOS permissions, the wake word in Settings, then the start.
-    assert m.ONBOARDING_STEPS == ["welcome", "keys", "subscriptions", "permissions", "voice", "ready"]
-    # Restart batching (2026-07-18): permissions + voice sit LAST before the
-    # final step so the single unconditional completion restart covers both.
-    assert m.ONBOARDING_STEPS.index("permissions") < m.ONBOARDING_STEPS.index("voice")
+    # the wake word in Settings, then the start. There is no macOS permissions
+    # step: permissions are asked just in time, where a feature needs them.
+    assert m.ONBOARDING_STEPS == ["welcome", "keys", "subscriptions", "voice", "ready"]
+    # Restart batching (2026-07-18): voice sits LAST before the final step so
+    # the single unconditional completion restart covers it.
     assert m.ONBOARDING_STEPS[-2] == "voice"
     # Retired step ids must not come back through a partial revert.
-    for retired in ("terms", "language", "api-keys", "wake-word", "finish", "brain", "agents"):
+    for retired in (
+        "terms",
+        "language",
+        "api-keys",
+        "wake-word",
+        "finish",
+        "brain",
+        "agents",
+        "permissions",
+    ):
         assert retired not in m.ONBOARDING_STEPS
     assert len(m.WAKE_WORD_LEGAL_REFERENCES) >= 3
     for ref in m.WAKE_WORD_LEGAL_REFERENCES:

@@ -25,8 +25,9 @@ function param(name: string): string | null {
  * First run, in two acts, both on the real app — there is no setup screen.
  *
  * 1. Setup: the window dims and a guide walks the user to the app's own
- *    places — consent, the API Keys page, the wake word in Settings (and the
- *    macOS permissions) — until onboarding is complete. Fails open: while
+ *    places — consent, the API Keys page, the wake word in Settings — until
+ *    onboarding is complete (macOS permissions are asked later, where a
+ *    feature needs them; no step of setup asks for one). Fails open: while
  *    loading or on a fetch error it renders nothing, so a broken guide never
  *    traps anyone.
  * 2. The tour: after the completion restart, a spotlight explains the app

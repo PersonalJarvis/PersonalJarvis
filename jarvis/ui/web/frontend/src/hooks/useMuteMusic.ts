@@ -1,6 +1,39 @@
 import { useCallback, useEffect, useState } from "react";
 
-import { requestPermissionsRefresh } from "@/hooks/usePermissions";
+import type { PermissionNeededReason } from "@/lib/permissionEvents";
+import type { PermissionOutcome } from "@/lib/permissionSnapshot";
+
+/**
+ * The permission answer for ONE media player (`PlayerPermission.as_dict()` in
+ * `jarvis/audio/ducking/protocol.py`). `outcome` is a `PermissionOutcome` value,
+ * `reason` a `PermissionNeeded` reason; `detail` is an English support sentence
+ * the UI never renders (it writes its own, naming `player`).
+ */
+export interface MuteMusicPlayerPermission {
+  player: string;
+  target: string;
+  outcome: PermissionOutcome;
+  /** A `PermissionNeeded` reason; empty when nothing is needed (granted). */
+  reason: PermissionNeededReason | "";
+  can_open_settings: boolean;
+  asked: boolean;
+  outside_installed_app: boolean;
+  detail: string;
+}
+
+/**
+ * What switching the feature ON found out (`DuckPermissionReport.as_dict()`).
+ * macOS answers for a player only while it RUNS, so `players` holds just the
+ * running ones and `not_running` names the rest.
+ */
+export interface MuteMusicPermission {
+  feature: string;
+  checked: boolean;
+  asked: boolean;
+  note: string;
+  not_running: string[];
+  players: MuteMusicPlayerPermission[];
+}
 
 /** "Mute music while dictating" (ducking.enabled). */
 export interface MuteMusicResult {
@@ -8,6 +41,8 @@ export interface MuteMusicResult {
   enabled: boolean;
   persisted: boolean;
   applied_live: boolean;
+  /** Only on macOS, only when switching on; absent elsewhere and from an older backend. */
+  permission?: MuteMusicPermission;
 }
 
 export function useMuteMusic() {
@@ -43,8 +78,6 @@ export function useMuteMusic() {
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.detail ?? `HTTP ${res.status}`);
       setEnabledState(Boolean(body.enabled));
-      // Switching this on makes the Music/Spotify Automation row wanted (off: not).
-      requestPermissionsRefresh();
       return body as MuteMusicResult;
     },
     [],

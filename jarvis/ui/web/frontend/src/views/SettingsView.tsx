@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Settings,
   Mic,
@@ -15,6 +15,12 @@ import { LanguagesGroup } from "@/views/settings/LanguagesGroup";
 import { MusicGroup } from "@/views/settings/MusicGroup";
 import { AppSettingsGroup } from "@/views/settings/AppSettingsGroup";
 import { PermissionsPanel } from "@/views/settings/PermissionsPanel";
+import { usePrivacySectionVisible } from "@/store/permissions";
+import {
+  InlinePermissionNote,
+  type LocalPermissionState,
+} from "@/components/permissions/InlinePermissionNote";
+import { wakeActivationLocalState } from "@/components/permissions/wakeActivation";
 import { RealtimeVoiceGroup } from "@/views/settings/RealtimeVoiceGroup";
 import { SilenceWindowGroup } from "@/views/settings/SilenceWindowGroup";
 import { VolumeGroup } from "@/views/settings/VolumeGroup";
@@ -74,7 +80,14 @@ export function SettingsView({ searchTarget, onSearchTargetHandled }: {
 } = {}) {
   const t = useT();
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [activeSection, setActiveSection] = useState<string>(SECTIONS[0].id);
+  const [activeSection, setActiveSection] = useState<string>(ALL_SECTIONS[0].id);
+  // macOS-only: Privacy explains the macOS privacy database, which Windows and
+  // Linux do not have, so the entry (and its page) is not offered there.
+  const privacyVisible = usePrivacySectionVisible();
+  const sections = useMemo(
+    () => ALL_SECTIONS.filter((section) => section.id !== "permissions" || privacyVisible),
+    [privacyVisible],
+  );
 
   // The nav follows the scroll: the topmost group intersecting the upper
   // third of the column is the active one.
@@ -97,7 +110,8 @@ export function SettingsView({ searchTarget, onSearchTargetHandled }: {
     );
     root.querySelectorAll<HTMLElement>("[data-settings-section]").forEach((el) => observer.observe(el));
     return () => observer.disconnect();
-  }, []);
+    // `sections` changes when the macOS-only Privacy group appears or goes.
+  }, [sections]);
 
   const jumpTo = useCallback((id: string) => {
     setActiveSection(id);
@@ -131,9 +145,9 @@ export function SettingsView({ searchTarget, onSearchTargetHandled }: {
         ref={scrollRef}
       >
         <div className="flex gap-10 px-8 pb-12 pt-4">
-          <SettingsSectionNav sections={SECTIONS} active={activeSection} onPick={jumpTo} />
+          <SettingsSectionNav sections={sections} active={activeSection} onPick={jumpTo} />
           <div className="min-w-0 flex-1 space-y-10">
-            {SECTIONS.map((section) => (
+            {sections.map((section) => (
               <section
                 key={section.id}
                 id={`settings-${section.id}`}
@@ -154,7 +168,7 @@ export function SettingsView({ searchTarget, onSearchTargetHandled }: {
 }
 
 /** The groups in page order; the nav on the left reads the same list. */
-const SECTIONS: readonly { id: string; labelKey: string; render: () => React.ReactNode }[] = [
+const ALL_SECTIONS: readonly { id: string; labelKey: string; render: () => React.ReactNode }[] = [
   { id: "languages", labelKey: "settings_view.nav.languages", render: () => <LanguagesGroup /> },
   { id: "app", labelKey: "settings_view.nav.app", render: () => <AppSettingsGroup /> },
   { id: "permissions", labelKey: "settings_view.nav.permissions", render: () => <PermissionsPanel /> },
@@ -349,6 +363,12 @@ function WakeWordPanel() {
   // word (needs a local model for the user's word), off = Call shortcut only.
   const [enabled, setEnabled] = useState(false);
   const [togglingActivation, setTogglingActivation] = useState(false);
+  // What the switch-on found out about the microphone (macOS may have asked, or
+  // needs a Settings switch). Shown as an inline note instead of a success
+  // toast; the store's episode takes over once the backend publishes it.
+  const [activationPermission, setActivationPermission] = useState<LocalPermissionState | null>(
+    null,
+  );
   // In-app recovery for the degraded-wake-word scenario: downloads the Vosk
   // model that wake_phrase.py's degrade message points at (Settings -> Wake
   // word -> "Download wake model"). Mirrors the local-speech-install status
@@ -390,16 +410,24 @@ function WakeWordPanel() {
   async function onToggleActivation(next: boolean) {
     setTogglingActivation(true);
     setEnabled(next); // optimistic
+    setActivationPermission(null);
     try {
       const activation = await setWakeActivation(next);
-      pushToast(
-        activation.restart_required ? "info" : "success",
-        t(
-          activation.restart_required
-            ? "settings_view.wake_word.restart_required"
-            : "settings_view.wake_word.activation_saved",
-        ),
-      );
+      // The switch is saved either way. Without a microphone grant the wake word
+      // hears nothing yet, so "saved" alone would be a false success: explain the
+      // permission in place instead (the note names what macOS needs).
+      const blocked = next ? wakeActivationLocalState(activation.permission) : null;
+      setActivationPermission(blocked);
+      if (blocked === null || activation.restart_required) {
+        pushToast(
+          activation.restart_required ? "info" : "success",
+          t(
+            activation.restart_required
+              ? "settings_view.wake_word.restart_required"
+              : "settings_view.wake_word.activation_saved",
+          ),
+        );
+      }
     } catch (e) {
       setEnabled(!next); // revert on failure
       pushToast("error", (e as Error).message);
@@ -536,6 +564,19 @@ function WakeWordPanel() {
           <p className="mt-1 text-meta text-muted-foreground">
             {t("settings_view.wake_word.activation_hint")}
           </p>
+          {/* The microphone, said where the switch is: macOS asking, a Settings
+              switch to flip, or "allowed" after a grant. Only while the wake
+              word is on; the floating card stays quiet beside it. */}
+          {enabled && (
+            <InlinePermissionNote
+              feature="wake_word"
+              allowedKey="permissions.inline.wake_word.allowed"
+              local={activationPermission}
+              onResolved={() => setActivationPermission(null)}
+              className="mt-stack rounded-md bg-secondary p-3"
+              testId="wake-word-permission-note"
+            />
+          )}
 
           {error && (
             <p className="mt-stack text-meta text-destructive">{error}</p>

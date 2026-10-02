@@ -536,7 +536,8 @@
     "connecting": "Connecting…",
     "connect_failed": "Voice connect failed ({0}): {1}",
     "paused": "Paused",
-    "indicator_label": "Voice state"
+    "indicator_label": "Voice state",
+    "blocked_by_permission": "Microphone blocked"
   },
   "sidebar": {
     "extensions_label": "Plugins / Skills / MCP",
@@ -2305,90 +2306,237 @@
     "vision_note": "Only models that can see images are listed - Computer-Use reads the screen from screenshots, so a text-only model cannot run it."
   },
   "permissions": {
-    "group_title": "Privacy permissions",
-    "title": "macOS permissions",
-    "description": "Grant only the system access needed for voice, Computer-Use, global shortcuts, and window control. Jarvis never edits the macOS privacy database.",
+    "group_title": "Privacy",
+    "title": "macOS privacy permissions",
+    "description": "{app} asks only when a feature needs it. This page shows which permissions macOS allows right now and where to change them.",
     "loading": "Checking system permissions…",
     "load_failed": "Could not read the current permission status.",
     "refresh": "Check again",
-    "not_required": "No extra desktop privacy permissions are required on this operating system.",
-    "identity_warning": "Launch Personal Jarvis from its app bundle before granting access. macOS attaches permissions to the exact app identity.",
-    "restart_required": "Restart Personal Jarvis before using the newly granted access.",
-    "restart_now": "Restart now",
-    "restarting": "Restarting…",
-    "restart_failed": "Personal Jarvis could not restart. Quit and reopen it manually.",
     "request": "Allow",
-    "open_settings": "Open Settings",
-    "optional": "Optional",
-    "optional_hint": "Only needed if you turn on the matching feature.",
+    "try_again": "Try again",
+    "open_settings": "Open System Settings",
+    "ask_again": "Ask again",
+    "see_all": "See all permissions",
+    "path_label": "Find it under {path}.",
+    "stale_grant_hint": "macOS will not ask for this access again. If System Settings already shows it as enabled, that record belongs to an older version of the app — tap “Ask again” and allow access once more.",
+    "outside_app_note": "{app} is not running as an installed app, so macOS records access for the app that started it. “Ask again” works only in the installed app.",
+    "restart_hint": "macOS applies this access only after {app} restarts.",
+    "restart_action": "Quit and reopen",
+    "restart_failed": "Personal Jarvis could not restart. Quit and reopen it manually.",
+    "keychain_declined": "Keychain access was declined, so API keys are kept in a local file for now. Try again to store them encrypted in the macOS Keychain.",
+    "action_failed": "That did not work. Please try again in a moment.",
+    "rate_limited": "Please wait a few seconds before trying again.",
+    "reset_done": "Reset. Press Allow to be asked again.",
+    "reset_refused": "This is already allowed, so there is nothing to reset.",
     "status": {
-      "granted": "Allowed",
-      "not_determined": "Not requested",
+      "granted": "Granted",
+      "not_determined": "Off or not asked",
       "denied": "Denied",
       "restricted": "Restricted",
-      "not_granted": "Not allowed",
+      "not_granted": "Off or not asked",
       "unavailable": "Unavailable",
       "not_required": "Not required",
-      "restart_pending": "Restart pending"
+      "restart_pending": "Restart needed"
     },
     "items": {
       "microphone": {
         "title": "Microphone",
-        "description": "Required for wake-word and local voice input."
+        "description": "Used for voice conversations, dictation and the wake word.",
+        "path": "System Settings > Privacy & Security > Microphone"
       },
       "screen_recording": {
         "title": "Screen Recording",
-        "description": "Required for Computer-Use to see every connected display."
+        "description": "Used when the assistant looks at your screen: Computer Use, screen context and appshots.",
+        "path": "System Settings > Privacy & Security > Screen & System Audio Recording"
       },
       "accessibility": {
         "title": "Accessibility",
-        "description": "Required for reliable clicks, typing, focus, and window control."
+        "description": "Used to click, type, focus and move windows for you, and to type dictated text into other apps.",
+        "path": "System Settings > Privacy & Security > Accessibility"
       },
       "input_monitoring": {
         "title": "Input Monitoring",
-        "description": "Required for global keyboard shortcuts."
-      },
-      "event_posting": {
-        "title": "Input control",
-        "description": "Required for Computer-Use to send mouse and keyboard events."
+        "description": "Used for global keyboard shortcuts that work while another app is in front.",
+        "path": "System Settings > Privacy & Security > Input Monitoring"
       },
       "automation": {
         "title": "Automation (Music & Spotify)",
-        "description": "Lets Jarvis turn Music and Spotify down while you dictate and back up afterwards. Asked once per player — a closed player is opened briefly in the background for the dialog."
+        "description": "Used to lower Music and Spotify while you dictate. macOS checks it only while a player is running.",
+        "path": "System Settings > Privacy & Security > Automation"
       },
       "credential_store": {
         "title": "Keychain (API keys)",
-        "description": "Stores your API keys encrypted in the macOS Keychain instead of a plain file — that is the Keychain prompt you see when the app starts. Your keys stay on your Mac and are never sent anywhere."
+        "description": "Used to keep your API keys encrypted in the macOS Keychain. Your keys stay on your Mac."
       }
     },
-    "banner": {
-      "title": "Action needed: macOS permissions are missing",
-      "impact": "Not working right now: {0}",
-      "hint": "Use the buttons to allow access — macOS opens the right System Settings page for each permission. {name} re-checks automatically.",
-      "collapse": "Hide details",
-      "expand": "Show details",
-      "dismiss": "Not now"
+    "prompt": {
+      "heading": {
+        "not_determined": "macOS will ask you next",
+        "denied": "Access is turned off",
+        "needs_settings": "Turn it on in System Settings",
+        "restricted": "Your Mac restricts this",
+        "restart_hint": "Restart to finish",
+        "unavailable": "Not available right now"
+      },
+      "generic": {
+        "not_determined": "This feature needs access to {permissions}. Continue and macOS will ask you.",
+        "denied": "This feature cannot work because access to {permissions} is turned off for {app}. Turn it on in System Settings, then come back.",
+        "restricted": "This feature cannot use {permissions} because your Mac restricts it, for example through a device profile or Screen Time. Only an administrator can change that.",
+        "needs_settings": "This feature needs access to {permissions}. Switch it on for {app} in System Settings, then come back.",
+        "restart_hint": "This feature has access to {permissions} now, but macOS applies it only after {app} restarts. Quit and reopen {app} to finish.",
+        "unavailable": "This feature could not check access to {permissions} right now, for example because no desktop session is available."
+      },
+      "voice": {
+        "not_determined": "Talking to {app} by voice needs access to {permissions}. Continue and macOS will ask you.",
+        "denied": "Talking to {app} by voice cannot work because access to {permissions} is turned off for {app}. Turn it on in System Settings, then come back.",
+        "restricted": "Talking to {app} by voice cannot use {permissions} because your Mac restricts it, for example through a device profile or Screen Time. Only an administrator can change that.",
+        "needs_settings": "Talking to {app} by voice needs access to {permissions}. Switch it on for {app} in System Settings, then come back.",
+        "restart_hint": "Talking to {app} by voice has access to {permissions} now, but macOS applies it only after {app} restarts. Quit and reopen {app} to finish.",
+        "unavailable": "Talking to {app} by voice could not check access to {permissions} right now, for example because no desktop session is available."
+      },
+      "dictation": {
+        "not_determined": "Dictation needs access to {permissions}. Continue and macOS will ask you.",
+        "denied": "Dictation cannot work because access to {permissions} is turned off for {app}. Turn it on in System Settings, then come back.",
+        "restricted": "Dictation cannot use {permissions} because your Mac restricts it, for example through a device profile or Screen Time. Only an administrator can change that.",
+        "needs_settings": "Dictation needs access to {permissions}. Switch it on for {app} in System Settings, then come back.",
+        "restart_hint": "Dictation has access to {permissions} now, but macOS applies it only after {app} restarts. Quit and reopen {app} to finish.",
+        "unavailable": "Dictation could not check access to {permissions} right now, for example because no desktop session is available."
+      },
+      "wake_word": {
+        "not_determined": "The wake word needs access to {permissions}. Continue and macOS will ask you.",
+        "denied": "The wake word cannot work because access to {permissions} is turned off for {app}. Turn it on in System Settings, then come back.",
+        "restricted": "The wake word cannot use {permissions} because your Mac restricts it, for example through a device profile or Screen Time. Only an administrator can change that.",
+        "needs_settings": "The wake word needs access to {permissions}. Switch it on for {app} in System Settings, then come back.",
+        "restart_hint": "The wake word has access to {permissions} now, but macOS applies it only after {app} restarts. Quit and reopen {app} to finish.",
+        "unavailable": "The wake word could not check access to {permissions} right now, for example because no desktop session is available."
+      },
+      "computer_use": {
+        "not_determined": "Computer Use needs access to {permissions}. Continue and macOS will ask you.",
+        "denied": "Computer Use cannot work because access to {permissions} is turned off for {app}. Turn it on in System Settings, then come back.",
+        "restricted": "Computer Use cannot use {permissions} because your Mac restricts it, for example through a device profile or Screen Time. Only an administrator can change that.",
+        "needs_settings": "Computer Use needs access to {permissions}. Switch it on for {app} in System Settings, then come back.",
+        "restart_hint": "Computer Use has access to {permissions} now, but macOS applies it only after {app} restarts. Quit and reopen {app} to finish.",
+        "unavailable": "Computer Use could not check access to {permissions} right now, for example because no desktop session is available."
+      },
+      "screen_context": {
+        "not_determined": "Screen context needs access to {permissions}. Continue and macOS will ask you.",
+        "denied": "Screen context cannot work because access to {permissions} is turned off for {app}. Turn it on in System Settings, then come back.",
+        "restricted": "Screen context cannot use {permissions} because your Mac restricts it, for example through a device profile or Screen Time. Only an administrator can change that.",
+        "needs_settings": "Screen context needs access to {permissions}. Switch it on for {app} in System Settings, then come back.",
+        "restart_hint": "Screen context has access to {permissions} now, but macOS applies it only after {app} restarts. Quit and reopen {app} to finish.",
+        "unavailable": "Screen context could not check access to {permissions} right now, for example because no desktop session is available."
+      },
+      "appshot": {
+        "not_determined": "Appshots need access to {permissions}. Continue and macOS will ask you.",
+        "denied": "Appshots cannot work because access to {permissions} is turned off for {app}. Turn it on in System Settings, then come back.",
+        "restricted": "Appshots cannot use {permissions} because your Mac restricts it, for example through a device profile or Screen Time. Only an administrator can change that.",
+        "needs_settings": "Appshots need access to {permissions}. Switch it on for {app} in System Settings, then come back.",
+        "restart_hint": "Appshots have access to {permissions} now, but macOS applies it only after {app} restarts. Quit and reopen {app} to finish.",
+        "unavailable": "Appshots could not check access to {permissions} right now, for example because no desktop session is available."
+      },
+      "window_control": {
+        "not_determined": "Window control needs access to {permissions}. Continue and macOS will ask you.",
+        "denied": "Window control cannot work because access to {permissions} is turned off for {app}. Turn it on in System Settings, then come back.",
+        "restricted": "Window control cannot use {permissions} because your Mac restricts it, for example through a device profile or Screen Time. Only an administrator can change that.",
+        "needs_settings": "Window control needs access to {permissions}. Switch it on for {app} in System Settings, then come back.",
+        "restart_hint": "Window control has access to {permissions} now, but macOS applies it only after {app} restarts. Quit and reopen {app} to finish.",
+        "unavailable": "Window control could not check access to {permissions} right now, for example because no desktop session is available."
+      },
+      "dictation_insert": {
+        "not_determined": "Typing your dictation into other apps needs access to {permissions}. Continue and macOS will ask you.",
+        "denied": "Typing your dictation into other apps cannot work because access to {permissions} is turned off for {app}. Turn it on in System Settings, then come back.",
+        "restricted": "Typing your dictation into other apps cannot use {permissions} because your Mac restricts it, for example through a device profile or Screen Time. Only an administrator can change that.",
+        "needs_settings": "Typing your dictation into other apps needs access to {permissions}. Switch it on for {app} in System Settings, then come back.",
+        "restart_hint": "Typing your dictation into other apps has access to {permissions} now, but macOS applies it only after {app} restarts. Quit and reopen {app} to finish.",
+        "unavailable": "Typing your dictation into other apps could not check access to {permissions} right now, for example because no desktop session is available."
+      },
+      "global_shortcuts": {
+        "not_determined": "Global shortcuts need access to {permissions}. Continue and macOS will ask you.",
+        "denied": "Global shortcuts cannot work because access to {permissions} is turned off for {app}. Turn it on in System Settings, then come back.",
+        "restricted": "Global shortcuts cannot use {permissions} because your Mac restricts it, for example through a device profile or Screen Time. Only an administrator can change that.",
+        "needs_settings": "Global shortcuts need access to {permissions}. Switch it on for {app} in System Settings, then come back.",
+        "restart_hint": "Global shortcuts have access to {permissions} now, but macOS applies it only after {app} restarts. Quit and reopen {app} to finish.",
+        "unavailable": "Global shortcuts could not check access to {permissions} right now, for example because no desktop session is available."
+      },
+      "audio_ducking": {
+        "not_determined": "Lowering the music while you dictate needs access to {permissions}. Continue and macOS will ask you.",
+        "denied": "Lowering the music while you dictate cannot work because access to {permissions} is turned off for {app}. Turn it on in System Settings, then come back.",
+        "restricted": "Lowering the music while you dictate cannot use {permissions} because your Mac restricts it, for example through a device profile or Screen Time. Only an administrator can change that.",
+        "needs_settings": "Lowering the music while you dictate needs access to {permissions}. Switch it on for {app} in System Settings, then come back.",
+        "restart_hint": "Lowering the music while you dictate has access to {permissions} now, but macOS applies it only after {app} restarts. Quit and reopen {app} to finish.",
+        "unavailable": "Lowering the music while you dictate could not check access to {permissions} right now, for example because no desktop session is available."
+      },
+      "browser_voice": {
+        "not_determined": "Voice in the browser needs access to {permissions}. Continue and macOS will ask you.",
+        "denied": "Voice in the browser cannot work because access to {permissions} is turned off for {app}. Turn it on in System Settings, then come back.",
+        "restricted": "Voice in the browser cannot use {permissions} because your Mac restricts it, for example through a device profile or Screen Time. Only an administrator can change that.",
+        "needs_settings": "Voice in the browser needs access to {permissions}. Switch it on for {app} in System Settings, then come back.",
+        "restart_hint": "Voice in the browser has access to {permissions} now, but macOS applies it only after {app} restarts. Quit and reopen {app} to finish.",
+        "unavailable": "Voice in the browser could not check access to {permissions} right now, for example because no desktop session is available."
+      },
+      "action": {
+        "continue": "Continue",
+        "open_settings": "Open System Settings",
+        "check_again": "Check again",
+        "not_now": "Not now",
+        "restart": "Quit and reopen",
+        "allow_outside": "Allow for the app that started {app}",
+        "reset": "Already on? Reset and ask again"
+      },
+      "still_off": "It still looks off. If System Settings already shows it as on, that entry may belong to an older version of the app.",
+      "reset_asked": "Reset. macOS will ask again now.",
+      "reset_manual": "That did not reset it. Turn the switch off and on again in System Settings. If it still does not work, restart your Mac.",
+      "outside_note": "{app} is not running as an installed app, so macOS would record this for the app that started it, such as your terminal. You can allow it for that app, or install {app} to give it its own entry.",
+      "name": "“{0}”",
+      "more": "+{n} more",
+      "details": "Details",
+      "allowed": "Allowed. You can carry on.",
+      "steps_label": "What is still needed"
     },
-    "features": {
-      "voice": "Voice & wake word",
-      "computer_use": "Computer-Use",
-      "global_hotkeys": "Global shortcuts",
-      "window_control": "Window control",
-      "audio_ducking": "Music ducking while dictating",
-      "api_keys": "Secure API-key storage"
+    "inline": {
+      "os_dialog": "macOS is asking for access to {permissions}. Answer its question to continue.",
+      "dismiss": "Dismiss",
+      "dictation": {
+        "allowed": "Microphone allowed. Press the microphone again to start dictating.",
+        "refused": {
+          "microphone_unavailable": "The microphone is not available right now, so dictation did not start.",
+          "no_stt": "No speech-to-text provider is set up yet. Add one under API Keys, then try again.",
+          "already_running": "A dictation is already recording.",
+          "handover_failed": "Dictation could not take over the microphone from the voice conversation. Try again in a moment.",
+          "voice_session_active": "A voice conversation is using the microphone. End it first, then dictate.",
+          "pipeline_not_running": "Voice is not running yet, so dictation cannot start. Try again in a moment.",
+          "generic": "Dictation did not start. Try again in a moment."
+        }
+      },
+      "wake_word": {
+        "allowed": "Microphone allowed. The wake word can listen now."
+      },
+      "appshot": {
+        "allowed": "Screen Recording allowed. Take the appshot again."
+      },
+      "audio_ducking": {
+        "asking": "If Music or Spotify is open, macOS may ask whether {app} may control it. Answer it there.",
+        "none_running": "No music player is running, so nothing was checked. macOS asks for access to Music or Spotify only while the player is running.",
+        "player_granted": "{app} may lower {player}.",
+        "player_pending": "macOS is asking whether {app} may control {player}. Answer it there.",
+        "player_blocked": "{app} may not control {player}, so it will not be lowered while you dictate. Allow it under Automation in System Settings.",
+        "player_unavailable": "macOS cannot check whether {app} may control {player} right now, so it will not be lowered while you dictate.",
+        "player_not_running": "{player} is not running. Access is checked while it runs."
+      },
+      "browser_voice": {
+        "allowed": "Microphone allowed. Press the button again to start the conversation."
+      }
     },
-    "restart_deferred": "Newly granted access turns on with the automatic restart at the end of setup - nothing to do now.",
-    "setup_all": "Set up everything",
-    "setup_all_hint": "One click walks you through every remaining permission and applies them at the end.",
-    "setup_running": "Step {0} of {1}: {2}",
-    "setup_wait_prompt": "Answer the macOS dialog — this continues on its own.",
-    "setup_wait_settings": "Turn on Personal Jarvis in the System Settings pane that just opened, then come back — this continues on its own.",
-    "setup_cancel": "Stop",
-    "setup_restarting": "All set — Personal Jarvis restarts once to apply the new access.",
-    "setup_timeout": "Setup paused: a permission was not granted in time. Use “Set up everything” again whenever you like.",
-    "ask_again": "Ask again",
-    "stale_grant_hint": "macOS will not ask for this access again. If System Settings already shows it as enabled, that record belongs to an older version of the app — tap “Ask again” and allow access once more.",
-    "identity_reset": "Since the app was last rebuilt, macOS treats Personal Jarvis as a new app and discarded every access you had granted. Please allow them once more — they will stick from then on."
+    "shortcuts": {
+      "needs_input_monitoring": "Global shortcuts work while another app is in front. For that, macOS needs your OK to let {app} watch the keyboard (Input Monitoring). The buttons and your voice keep working without it.",
+      "enable": "Enable global shortcuts",
+      "blocked": "Switch on {app} under Input Monitoring in System Settings, then come back. The buttons and your voice keep working meanwhile.",
+      "restart_hint": "Input Monitoring is allowed, but macOS passes key presses to {app} only after it restarts. Quit and reopen {app} to finish enabling global shortcuts.",
+      "unavailable": "Global shortcuts are not available here right now, for example because of a device policy on this Mac. The buttons and your voice keep working.",
+      "allowed": "Input Monitoring allowed. Global shortcuts are on.",
+      "tip_title": "Dictate from any app",
+      "tip_body": "Enable global shortcuts to start dictating with a key while another app is in front."
+    }
   },
   "settings_hub": {
     "subtitle": "Everything about you, your keys and this app — in one place.",
@@ -2456,7 +2604,7 @@
     "nav": {
       "languages": "Languages",
       "app": "App",
-      "permissions": "Privacy permissions",
+      "permissions": "Privacy",
       "screen_context": "Screen context",
       "realtime_voice": "Realtime voice",
       "system_prompt": "System prompt",

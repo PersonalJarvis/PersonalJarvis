@@ -25,7 +25,6 @@ const MASCOT: Record<SetupStepId, MascotAction> = {
   keys: "look-left",
   subscriptions: "spin",
   voice: "look-right",
-  permissions: "look-left",
   ready: "jump",
 };
 
@@ -37,10 +36,9 @@ const LANGS: UiLanguage[] = ["en", "de", "es"];
  * There is no setup screen of its own: the window dims, and the guide walks
  * the user to the places where each thing is really set — the API Keys page
  * for one key, its Agents tab for a subscription, the wake-word group in
- * Settings, on macOS the permissions —
- * and waits there with a small card. The dim takes clicks, the hole does
- * not: only the part being set up can be used, so nothing else starts before
- * setup is done. Every step but the consent has a way on without doing it.
+ * Settings — and waits there with a small card. The dim takes clicks, the hole
+ * does not: only the part being set up can be used, so nothing else starts
+ * before setup is done. Every step but the consent has a way on without doing it.
  *
  * The last step completes onboarding; the backend then restarts the app once
  * and the tour of the app follows. `preview` (a replay) never completes and
@@ -60,35 +58,17 @@ export function SetupTour({
 }) {
   const t = useT();
   const ready = useLocaleChunk("onboarding");
-  const [platform, setPlatform] = useState<string | null>(null);
-  const steps = useMemo(() => stepsFor(platform), [platform]);
+  const steps = useMemo(() => stepsFor(), []);
   // A replay shows every step from the start; a real first run resumes where
   // it left off (never past the consent).
   const [stepId, setStepId] = useState<SetupStepId>(() =>
     preview
       ? (startAt ?? "welcome")
-      : resumeStep(stepsFor(null), onb.state?.current_step ?? null, Boolean(onb.state?.terms.accepted)),
+      : resumeStep(steps, onb.state?.current_step ?? null, Boolean(onb.state?.terms.accepted)),
   );
   const [skipped, setSkipped] = useState<string[]>(() => onb.state?.skipped_steps ?? []);
   const [cue, setCue] = useState(0);
   const step = SETUP_STEPS[stepId];
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const res = await fetch("/api/permissions/status");
-        if (!res.ok) return;
-        const data = (await res.json()) as { platform?: string };
-        if (!cancelled && typeof data.platform === "string") setPlatform(data.platform);
-      } catch {
-        // Best-effort: without the probe there is simply no permissions step.
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   // Open the app's own place for this step before pointing at it — on the
   // API Keys page also the right tab.
@@ -179,7 +159,6 @@ export function SetupTour({
           {stepId === "keys" && <KeysStep next={next} later={later} cheer={cheer} />}
           {stepId === "subscriptions" && <SubscriptionsStep next={next} later={later} />}
           {stepId === "voice" && <VoiceStep next={next} later={later} />}
-          {stepId === "permissions" && <PermissionsStep next={next} />}
           {stepId === "ready" && <ReadyStep onb={onb} preview={preview} onFinished={onFinished} />}
         </div>
         {footer}
@@ -519,17 +498,6 @@ function VoiceStep({ next, later }: { next: () => void; later: () => void }) {
           </QuietAction>
         </div>
       )}
-    </div>
-  );
-}
-
-/** macOS only: the permission rows of Settings are open behind the card. */
-function PermissionsStep({ next }: { next: () => void }) {
-  const t = useT();
-  return (
-    <div className="space-y-3">
-      <p className="text-xs leading-relaxed text-muted-foreground">{t("first_run.permissions.note")}</p>
-      <PrimaryAction onClick={next}>{t("first_run.continue")}</PrimaryAction>
     </div>
   );
 }

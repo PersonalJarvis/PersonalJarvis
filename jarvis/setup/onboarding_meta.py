@@ -20,16 +20,19 @@ CURRENT_TERMS_VERSION = "1.0"
 # Agents tab, the wake-word group in Settings) and points at it. The tour of the app runs
 # AFTER the completion restart and is tracked separately
 # (``tour_completed_at`` in jarvis.setup.state).
-# Restart batching (maintainer mandate 2026-07-18): permissions and voice sit
-# LAST, directly before ready, because both only take full effect after a
-# relaunch — and onboarding already ends with one unconditional fresh restart
-# (onboarding_routes._schedule_fresh_restart). Permissions precede voice so the
-# macOS microphone grant exists before the wake-word group's microphone test.
+# Restart batching (maintainer mandate 2026-07-18): voice sits LAST, directly
+# before ready, because it only takes full effect after a relaunch — and
+# onboarding already ends with one unconditional fresh restart
+# (onboarding_routes._schedule_fresh_restart).
+# There is NO permissions step (just-in-time permissions, AP-35): nothing asks
+# macOS for anything during first run except where a switch IS the gesture (the
+# wake-word switch on the voice step asks for the microphone there, and says so
+# inside the spotlight hole). A stored legacy step id "permissions" resumes at
+# "voice" (frontend ``resumeStep``); the backend never validates the stored id.
 ONBOARDING_STEPS: list[str] = [
     "welcome",
     "keys",
     "subscriptions",
-    "permissions",
     "voice",
     "ready",
 ]

@@ -1,7 +1,6 @@
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 
-import { PERMISSIONS_REFRESH_EVENT } from "./usePermissions";
 import { useMuteMusic } from "./useMuteMusic";
 
 vi.mock("@/lib/bootStagger", () => ({ bootSettled: () => Promise.resolve() }));
@@ -29,48 +28,70 @@ function stubBackend(put: { ok: boolean; body: unknown; status?: number }) {
   );
 }
 
-it("tells the permission views to look again once the switch is saved", async () => {
-  // Switching "mute music" on makes the Music/Spotify Automation row wanted,
-  // and the permission banner has no other way to learn that before the window
-  // is next focused.
+it("saves the switch and reports what the backend answered", async () => {
   stubBackend({
     ok: true,
     body: { ok: true, enabled: true, persisted: true, applied_live: true },
   });
-  const refreshed = vi.fn();
-  window.addEventListener(PERMISSIONS_REFRESH_EVENT, refreshed);
 
-  try {
-    const { result } = renderHook(() => useMuteMusic());
-    await waitFor(() => expect(result.current.enabled).toBe(false));
+  const { result } = renderHook(() => useMuteMusic());
+  await waitFor(() => expect(result.current.enabled).toBe(false));
 
-    await act(async () => {
-      await result.current.setEnabled(true);
-    });
+  let saved: unknown;
+  await act(async () => {
+    saved = await result.current.setEnabled(true);
+  });
 
-    expect(result.current.enabled).toBe(true);
-    expect(refreshed).toHaveBeenCalledTimes(1);
-  } finally {
-    window.removeEventListener(PERMISSIONS_REFRESH_EVENT, refreshed);
-  }
+  expect(result.current.enabled).toBe(true);
+  expect(saved).toMatchObject({ ok: true, enabled: true, persisted: true, applied_live: true });
+});
+
+it("hands the per-player permission answer through and fires no refresh event", async () => {
+  const permission = {
+    feature: "audio_ducking",
+    checked: true,
+    asked: true,
+    note: "",
+    not_running: ["Music"],
+    players: [
+      {
+        player: "Spotify",
+        target: "com.spotify.client",
+        outcome: "granted",
+        reason: "",
+        can_open_settings: true,
+        asked: true,
+        outside_installed_app: false,
+        detail: "",
+      },
+    ],
+  };
+  stubBackend({ ok: true, body: { ok: true, enabled: true, persisted: true, applied_live: true, permission } });
+  const refreshes = vi.fn();
+  window.addEventListener("jarvis:permissions-refresh", refreshes);
+
+  const { result } = renderHook(() => useMuteMusic());
+  await waitFor(() => expect(result.current.enabled).toBe(false));
+  let saved: { permission?: unknown } = {};
+  await act(async () => {
+    saved = await result.current.setEnabled(true);
+  });
+
+  expect(saved.permission).toEqual(permission);
+  // The old banner listened for this; nothing does any more, so nothing sends it.
+  expect(refreshes).not.toHaveBeenCalled();
+  window.removeEventListener("jarvis:permissions-refresh", refreshes);
 });
 
 it("stays quiet when the switch could not be saved", async () => {
   stubBackend({ ok: false, status: 500, body: { detail: "config is locked" } });
-  const refreshed = vi.fn();
-  window.addEventListener(PERMISSIONS_REFRESH_EVENT, refreshed);
 
-  try {
-    const { result } = renderHook(() => useMuteMusic());
-    await waitFor(() => expect(result.current.enabled).toBe(false));
+  const { result } = renderHook(() => useMuteMusic());
+  await waitFor(() => expect(result.current.enabled).toBe(false));
 
-    await act(async () => {
-      await expect(result.current.setEnabled(true)).rejects.toThrow("config is locked");
-    });
+  await act(async () => {
+    await expect(result.current.setEnabled(true)).rejects.toThrow("config is locked");
+  });
 
-    expect(result.current.enabled).toBe(false);
-    expect(refreshed).not.toHaveBeenCalled();
-  } finally {
-    window.removeEventListener(PERMISSIONS_REFRESH_EVENT, refreshed);
-  }
+  expect(result.current.enabled).toBe(false);
 });
