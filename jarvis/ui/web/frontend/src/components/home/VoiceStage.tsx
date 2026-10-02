@@ -28,7 +28,8 @@ import { traceModel } from "@/lib/thinkingSteps";
  * the bottom a composer-shaped card (components/home/VoiceComposer) that
  * says what is happening and carries Start / Stop. Behind it a soft light
  * rises from the bottom edge and breathes with the voices
- * (components/home/VoiceGlow); while the assistant thinks or speaks, its
+ * (components/home/VoiceGlow) — and keeps moving while the assistant
+ * thinks, so a silent turn never looks dead; while it thinks or speaks, its
  * mark pulses under the last line. While the answer is being spoken, the
  * words not yet said stay grey and light up as the voice reaches them
  * (components/home/useSpokenCursor — an estimate from the playback level,
@@ -108,7 +109,7 @@ export function VoiceStage({ onExit }: { onExit?: () => void } = {}) {
         data-testid="voice-stage"
         data-empty="true"
       >
-        <VoiceGlow active={active} />
+        <VoiceGlow active={active} thinking={voiceState === "thinking"} />
         <div className="relative flex w-full max-w-[680px] flex-1 flex-col justify-center gap-7 px-6 pb-[14vh]">
           <Greeting subtitle={t("home.voice_subtitle")} />
           <VoiceComposer hint={hint} onExit={onExit} />
@@ -123,7 +124,7 @@ export function VoiceStage({ onExit }: { onExit?: () => void } = {}) {
       data-testid="voice-stage"
       data-empty="false"
     >
-      <VoiceGlow active={active} />
+      <VoiceGlow active={active} thinking={voiceState === "thinking"} />
       <ScrollArea ref={rootRef} className="relative min-h-0 w-full flex-1" data-testid="voice-transcript">
         <div
           ref={contentRef}

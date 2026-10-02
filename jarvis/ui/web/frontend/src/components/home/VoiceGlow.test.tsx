@@ -13,6 +13,11 @@ describe("VoiceGlow", () => {
     expect(glow.children).toHaveLength(3);
   });
 
+  it("keeps the light up while the assistant thinks", () => {
+    render(<VoiceGlow active thinking />);
+    expect(screen.getByTestId("voice-glow").children).toHaveLength(3);
+  });
+
   it("rests as a faint, still wash while no call is open", () => {
     render(<VoiceGlow active={false} />);
     for (const pool of Array.from(screen.getByTestId("voice-glow").children) as HTMLElement[]) {
