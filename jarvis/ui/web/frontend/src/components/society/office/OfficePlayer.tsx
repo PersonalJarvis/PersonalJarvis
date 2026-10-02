@@ -106,7 +106,8 @@ function nearestInteractable(layout: OfficeLayout): Selection | null {
     if (d <= AGENT_TALK_RANGE && d < bestDistance) { best = { kind: "agent", id }; bestDistance = d; }
   }
   for (const item of layout.furniture) {
-    if (item.kind !== "arcade") continue;
+    // The break room's cabinet, and every game cabinet on the arcade floor.
+    if (item.kind !== "arcade" && item.kind !== "retroCabinet") continue;
     // The cabinet's screen faces its local +z; you play standing in front of it.
     const fx = item.x + Math.sin(item.rotationY) * 0.85, fz = item.z + Math.cos(item.rotationY) * 0.85;
     const d = Math.hypot(fx - player.x, fz - player.z);

@@ -123,6 +123,9 @@ function FullMapDialog({ onClose, layout, agents, selectedId }: Omit<OfficeFullM
     break: t("society.office.room_break"),
     command: t("society.office.room_command"),
     server: t("society.office.room_server"),
+    arcade: t("society.office.room_arcade"),
+    prizes: t("society.office.room_prizes"),
+    snack: t("society.office.room_snack"),
   };
   const openSpace = t("society.office.open_space");
   const youLabel = t("society.office.minimap_you");

@@ -40,3 +40,20 @@
 .office-stage-compact .office-panel-slot { top:auto; bottom:48px; right:8px; width:calc(100% - 16px); max-height:62%; }
 .office-stage-compact .office-prompt { bottom:48px; max-width:calc(100% - 16px); font-size:12px; }
 .office-stage-compact .office-note { font-size:11px; }
+
+/* The elevator's floor picker: a small panel in the middle of the stage, top floor first. */
+.office-lift-backdrop { position:absolute; inset:0; z-index:64; display:flex; align-items:center; justify-content:center; padding:16px; background:hsl(var(--background) / .35); }
+.office-lift { width:min(320px, 100%); padding:10px; display:flex; flex-direction:column; gap:8px; }
+.office-lift-head { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:2px 2px 0 4px; }
+.office-lift-head h2 { margin:0; font-size:14px; font-weight:700; }
+.office-lift-floors { display:flex; flex-direction:column; gap:6px; }
+.office-lift-floor { display:flex; align-items:center; gap:10px; width:100%; padding:8px 10px; border:1px solid hsl(var(--border)); border-radius:10px; background:hsl(var(--background) / .6); color:inherit; text-align:left; cursor:pointer; }
+.office-lift-floor:hover:not(:disabled) { background:hsl(var(--accent)); color:hsl(var(--accent-foreground)); }
+.office-lift-floor:focus-visible { outline:2px solid hsl(var(--ring)); outline-offset:2px; }
+.office-lift-floor:disabled { cursor:default; opacity:.7; }
+.office-lift-number { flex:none; display:inline-flex; align-items:center; justify-content:center; width:30px; height:30px; border-radius:999px; border:2px solid hsl(var(--border)); font-weight:700; font-variant-numeric:tabular-nums; }
+.office-lift-floor:disabled .office-lift-number { border-color:#f5b83d; color:#f5b83d; box-shadow:0 0 8px rgb(245 184 61 / .45); }
+.office-lift-text { display:flex; flex-direction:column; min-width:0; }
+.office-lift-text b { font-size:13px; }
+.office-lift-text small { font-size:11px; color:hsl(var(--muted-foreground)); }
+.office-lift-keys { margin:0; padding:0 4px 2px; font-size:10px; color:hsl(var(--muted-foreground)); }

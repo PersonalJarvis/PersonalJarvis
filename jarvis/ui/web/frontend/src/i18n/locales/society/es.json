@@ -818,6 +818,20 @@
       "cp_break_hint": "Hacer una pausa de café",
       "cp_elevator": "Ascensor",
       "cp_elevator_hint": "Pulsa el botón de llamada junto a las puertas",
+      "elevator_choose": "Elige una planta",
+      "elevator_here": "Estás aquí",
+      "elevator_keys": "0–2 elige planta · ↑/↓ moverse · Esc cierra",
+      "floor_name_agents": "Planta de agentes",
+      "floor_name_coding": "Planta de código",
+      "floor_name_arcade": "Planta arcade",
+      "floor_about_agents": "Tus agentes de Jarvis trabajando",
+      "floor_about_coding": "Sesiones de código del IDE",
+      "floor_about_arcade": "Máquinas retro para jugar",
+      "riding_up_to": "Subiendo · {0}",
+      "riding_down_to": "Bajando · {0}",
+      "arcade_floor_title": "Planta arcade",
+      "arcade_floor_subtitle": "Máquinas jugables: {0}",
+      "arcade_floor_hint": "Acércate a una máquina y pulsa E para jugar",
       "cp_spawn": "Punto de aparición",
       "cp_spawn_hint": "Crea un nuevo agente de Jarvis",
       "cp_launch": "Punto de aparición",
@@ -861,6 +875,7 @@
         "ctl_sit": "Sentarte en la silla del líder; E otra vez te levanta",
         "ctl_screen": "Haz clic en un monitor para abrir el chat de ese agente",
         "ctl_close": "Cerrar un panel o el mapa",
+        "ctl_elevator_floor": "Elegir planta en el ascensor",
         "ctl_map": "Abrir o cerrar el mapa grande",
         "ctl_guide": "Abrir o cerrar esta ayuda",
         "ctl_minimap_focus": "Haz clic en el minimapa para mirar allí",
@@ -870,6 +885,10 @@
         "ctl_arcade_shoot": "Disparar o empezar una partida",
         "ctl_arcade_pause": "Pausa",
         "ctl_arcade_leave": "Salir del arcade",
+        "ctl_arcade_play": "Jugar a la máquina que tienes delante",
+        "ctl_arcade_start": "Empezar o reiniciar una partida",
+        "ctl_arcade_action": "Botón principal: disparar, saltar, girar",
+        "ctl_arcade_action_b": "Segundo botón: soltar, bomba, cambiar",
         "mouse_click": "Clic",
         "mouse_double": "Doble clic",
         "mouse_drag": "Arrastrar",
@@ -894,12 +913,8 @@
       "coding_title": "Planta de código",
       "coding_subtitle": "Sesiones de código en la planta: {0}",
       "coding_empty": "No hay ningún agente de código en marcha. Inicia uno en el IDE y ocupará un escritorio aquí.",
-      "floor_up": "Subir a la planta de código",
-      "floor_down": "Bajar a la planta de agentes",
       "ledger_coding": "Lista de sesiones",
       "open_ide": "Abrir el IDE",
-      "riding_up": "Subiendo a la planta de código",
-      "riding_down": "Bajando a la planta de agentes",
       "prompt_pane": "Ver a {0}",
       "since_now": "ahora mismo",
       "since_minutes": "desde hace {0} min",
@@ -1007,8 +1022,6 @@
       "fleet_result": "Alcanzados {0} de {1}.",
       "fleet_result_missed": "No alcanzados: {0}",
       "elevator_press": "Haz clic en el botón",
-      "elevator_up_count": "Arriba ahora mismo: {0}",
-      "elevator_down_count": "Abajo ahora mismo: {0}",
       "arcade_prompt": "Jugar a Asteroid Run",
       "arcade_title": "Asteroid Run",
       "arcade_score": "Puntos",
@@ -1028,6 +1041,9 @@
       "room_reception": "Recepción",
       "room_break": "Sala de descanso",
       "room_server": "Sala de servidores",
+      "room_arcade": "Sala arcade",
+      "room_prizes": "Mostrador de premios",
+      "room_snack": "Bar de aperitivos",
       "dog_treat": "Darle el hueso",
       "dog_take_bone": "Coger una golosina",
       "dog_pet": "Acariciar al perro",
@@ -1167,6 +1183,74 @@
       "errand_flying": "Lleva una tarea a {0}",
       "errand_task": "Aquí tienes una tarea nueva.",
       "errand_ack": "¡Entendido, voy!"
+    },
+    "arcade": {
+      "play_prompt": "Jugar a {0}",
+      "score": "Puntos",
+      "best": "Récord",
+      "lives": "Vidas",
+      "level": "Nivel",
+      "loading": "Cargando juego…",
+      "load_failed": "No se pudo cargar este juego.",
+      "retry": "Reintentar",
+      "press_start": "Pulsa Espacio o Intro para empezar",
+      "tap_start": "Toca A para empezar",
+      "paused": "En pausa",
+      "resume_hint": "Pulsa P o Espacio para continuar",
+      "tap_resume": "Toca A para continuar",
+      "game_over": "Fin del juego",
+      "you_win": "¡Has ganado!",
+      "new_best": "¡Nuevo récord!",
+      "play_again": "Pulsa Espacio o Intro para jugar otra vez",
+      "tap_again": "Toca A para jugar otra vez",
+      "keys_hint": "Intro empezar · P pausa · Esc / E salir",
+      "pause": "Pausa",
+      "pad_up": "Arriba",
+      "pad_down": "Abajo",
+      "pad_left": "Izquierda",
+      "pad_right": "Derecha",
+      "games": {
+        "asteroid_run": {
+          "tagline": "Vuela por el campo de asteroides y ábrete paso a disparos.",
+          "how": "WASD/flechas dirigir · Espacio láser · Clic en una roca: misil · Shift turbo · P pausa · Esc salir"
+        },
+        "neon_snake": {
+          "tagline": "Come, crece y nunca te muerdas la cola.",
+          "how": "Flechas/WASD dirigir · P pausa · Esc salir"
+        },
+        "brick_breaker": {
+          "tagline": "Rompe cada ladrillo y atrapa los potenciadores.",
+          "how": "←/→ o ratón mover · Espacio/clic lanzar · P pausa · Esc salir"
+        },
+        "paddle_duel": {
+          "tagline": "El primero en llegar a siete vence a la máquina.",
+          "how": "↑/↓ o ratón mover · Espacio sacar · P pausa · Esc salir"
+        },
+        "block_drop": {
+          "tagline": "Apila los bloques que caen y limpia las líneas completas.",
+          "how": "←/→ mover · ↑/Espacio girar · ↓ bajar rápido · Shift caída directa · P pausa · Esc salir"
+        },
+        "maze_muncher": {
+          "tagline": "Come todos los puntos y burla a cuatro bichos glitch.",
+          "how": "Flechas para girar (los giros se guardan) · los orbes de poder vuelven comestibles a los bichos · P pausa · Esc salir"
+        },
+        "desert_dash": {
+          "tagline": "Corre por las dunas: salta los cactus y agáchate ante los pájaros.",
+          "how": "↑/Espacio saltar (mantén para más altura) · ↓ agacharse / caer rápido · P pausa · Esc salir"
+        },
+        "pixel_raiders": {
+          "tagline": "Resiste a una flota alienígena en plena marcha.",
+          "how": "←/→ mover · Espacio disparar · P pausa · Esc salir"
+        },
+        "road_hopper": {
+          "tagline": "Salta entre el tráfico y el río para llegar a casa.",
+          "how": "Flechas saltar · P pausa · Esc salir"
+        },
+        "city_defense": {
+          "tagline": "Derriba las cabezas nucleares antes de que alcancen tus ciudades.",
+          "how": "Ratón apuntar + clic disparar · Flechas apuntar · Espacio disparar · Shift elegir batería · P pausa · Esc salir"
+        }
+      }
     }
   }
 }

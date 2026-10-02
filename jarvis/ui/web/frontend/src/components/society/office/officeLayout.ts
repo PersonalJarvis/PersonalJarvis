@@ -64,11 +64,14 @@ export interface Department extends Rect {
   tint: number;
 }
 
-/** "command" (Mission Control) and "server" only exist on the coding floor, in place of the lead office and the wardrobe. */
-export type RoomKind = "lead" | "team" | "wardrobe" | "reception" | "break" | "command" | "server";
+/**
+ * "command" (Mission Control) and "server" only exist on the coding floor, in place of the lead office and the wardrobe.
+ * "arcade" (the main hall), "prizes" (the prize counter corner) and "snack" (the snack bar) only exist on the arcade floor.
+ */
+export type RoomKind = "lead" | "team" | "wardrobe" | "reception" | "break" | "command" | "server" | "arcade" | "prizes" | "snack";
 
-/** Which floor a layout draws: the society agents' office, or the coding agents' floor above it. */
-export type OfficeVariant = "agents" | "coding";
+/** Which floor a layout draws: the society agents' office, the coding agents' floor above it, or the arcade floor on top. */
+export type OfficeVariant = "agents" | "coding" | "arcade";
 
 export interface Door { side: "north" | "south" | "east" | "west"; /** Centre of the gap along the wall. */ at: number; width: number }
 
@@ -128,7 +131,10 @@ export type FurnitureKind =
   | "brandWall" | "agentTotem" | "lobbySofa" | "lobbyArmchair" | "lobbyTable" | "sideTable" | "lobbyLamp" | "oliveTree"
   | "awardCase" | "entranceMat" | "lobbyRug"
   // The spawn point in the middle of both floors: the flat pad and the terminal standing on it.
-  | "spawnPad" | "spawnTerminal";
+  | "spawnPad" | "spawnTerminal"
+  // Arcade floor: the playable game cabinets (id `cabinet-<gameId>`, see arcade/arcadeGames.ts), the prize
+  // counter, the token changer, a claw machine, an air-hockey table, a pinball machine and a snack-bar counter.
+  | "retroCabinet" | "prizeCounter" | "tokenMachine" | "clawMachine" | "airHockey" | "pinball" | "snackCounter";
 
 /**
  * Footprint (x-extent × z-extent before rotation) and height of each piece.
@@ -217,6 +223,14 @@ export const FURNITURE_SIZE: Record<FurnitureKind, { w: number; d: number; h: nu
   // tops out at 2.2 m). The pad fits the 3.2 m aisle crossing with a margin to every department.
   spawnPad: { w: 2 * 1.42, d: 2 * 1.42, h: 0.02, solid: false },
   spawnTerminal: { w: 1.2, d: 0.7, h: 2.2, solid: true },
+  // Arcade floor. A cabinet's screen and controls face its local +z; the person plays standing in front of it.
+  retroCabinet: { w: 0.8, d: 0.8, h: 1.95, solid: true },
+  prizeCounter: { w: 3.4, d: 0.9, h: 2.2, solid: true },
+  tokenMachine: { w: 0.6, d: 0.5, h: 1.7, solid: true },
+  clawMachine: { w: 1.0, d: 1.0, h: 2.0, solid: true },
+  airHockey: { w: 2.1, d: 1.2, h: 0.95, solid: true },
+  pinball: { w: 0.75, d: 1.45, h: 1.9, solid: true },
+  snackCounter: { w: 2.6, d: 0.8, h: 1.1, solid: true },
 };
 
 /**
@@ -457,7 +471,7 @@ export function footprint(item: Pick<Furniture, "x" | "z" | "kind" | "rotationY"
   return { minX: item.x - w / 2, maxX: item.x + w / 2, minZ: item.z - d / 2, maxZ: item.z + d / 2 };
 }
 
-function wallsOf(room: Room): WallSegment[] {
+export function wallsOf(room: Room): WallSegment[] {
   if (!room.walled) return [];
   const sides: { side: Door["side"]; a: Point; b: Point }[] = [
     { side: "north", a: { x: room.minX, z: room.minZ }, b: { x: room.maxX, z: room.minZ } },
@@ -495,7 +509,7 @@ export function archPosts(room: Rect): Point[] {
   return [{ x: cx - ARCH.halfSpan, z }, { x: cx + ARCH.halfSpan, z }];
 }
 
-function wallRect(w: WallSegment): Rect {
+export function wallRect(w: WallSegment): Rect {
   const t = WALL_THICKNESS / 2;
   return { minX: Math.min(w.x1, w.x2) - t, maxX: Math.max(w.x1, w.x2) + t, minZ: Math.min(w.z1, w.z2) - t, maxZ: Math.max(w.z1, w.z2) + t };
 }

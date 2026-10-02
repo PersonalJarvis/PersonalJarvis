@@ -170,6 +170,10 @@ export const ROOM_FLOOR_COLOURS = {
   // Mission Control: dark graphite microcement.
   command: { base: "#454b54", accents: ["#3e444c", "#4d535c", "#41474f", "#51575f"] },
   server: { base: "#c3c8cf", accents: ["#c9ced4", "#bcc2c9"] },
+  // Arcade floor: the hall's midnight carpet, the prize corner's plum, the snack bar's checker red.
+  arcade: { base: "#1a1430", accents: ["#211a3d", "#151027", "#2a1f4a"] },
+  prizes: { base: "#3a1838", accents: ["#431c41", "#33152f"] },
+  snack: { base: "#5a1e22", accents: ["#e9e2d6", "#4c191c"] },
 } as const;
 
 /** Checkpoint gold: floor ring, hexagon token and the label badge. */

@@ -133,9 +133,9 @@ A second floor for the coding agents that run in the Agentic IDE's terminal
 panes. It shares the office's engine, style and controls; only the people and
 the floor plan differ.
 
-- **Elevator**: the reception elevator is a checkpoint on both floors. Its
-  panel offers "Up to the coding floor" in the agents office and "Down to the
-  agents office" on the coding floor. The ride is a short door-like fade, and
+- **Elevator**: the reception elevator is a checkpoint on every floor. Its
+  call button opens the floor picker (see §5e; before the arcade floor it
+  simply went up or down). The ride is a short door-like fade, and
   the person steps out at the elevator of the other floor. The floor survives
   a remount of the stage.
 - **Floor plan** (`buildOfficeLayout(agents, { variant: "coding" })`): one
@@ -261,6 +261,40 @@ navigation work as before. Still in the earlier style and waiting on the
 maintainer's review of this reference before they follow: the lead suite, the
 reception desk, the team room table and chairs, the lockers and
 mirror, the coffee bar, the water cooler and the arcade.
+
+## 5e. Arcade floor (2026-10-02)
+
+A third floor on top of the building: a retro arcade hall with ten playable
+cabinets. No agents work here; it is a place for the person (and their pet,
+which follows like on the coding floor).
+
+- **Elevator**: pressing the call button (click, or E at the doors) opens a
+  floor picker (`ElevatorPanel.tsx`) that lists all three floors top first;
+  a click, Enter on the focused floor or the floor's number key (0 agents,
+  1 coding, 2 arcade) rides there, Escape closes it. The call button shows
+  up, down or both arrows depending on the floor (`callDirection`).
+- **Floor plan** (`arcade/arcadeFloorLayout.ts`, `buildArcadeLayout()`): a
+  fixed hall with the main room, a prize counter corner and a snack bar by
+  the elevator. Cabinets are furniture of kind `retroCabinet` with the id
+  `cabinet-<gameId>`; the person plays standing 0.85 m in front of one
+  (`OfficePlayer` nearest-interactable, E opens it). Tests prove every play
+  spot is reachable from the elevator.
+- **Look** (`arcade/ArcadeHall.tsx`, `ArcadeHallProps.tsx`,
+  `arcadeHallLook.ts`, `arcadeScreens.ts`): blacklight carpet, neon from
+  self-lit materials (one shadow light, three small point lights), merged
+  geometry per machine, two-frame attract screens on every cabinet; the
+  cabinet the person stands at shows its game's title screen live.
+- **Games** (`arcade/games/*.ts`, contract in `arcade/retroGame.ts`, registry
+  in `arcade/arcadeGames.ts`): Neon Snake, Brick Breaker, Paddle Duel, Block
+  Drop, Maze Muncher, Desert Dash, Pixel Raiders, Road Hopper and City
+  Defense are original Canvas 2D games (pure state + fixed 60 Hz step, no
+  assets, no ROMs), code-split and loaded on first play. Asteroid Run, the
+  break room's 3D game, has a cabinet here too.
+- **Cabinet overlay** (`arcade/RetroArcadeOverlay.tsx`): a modal at the
+  cabinet with marquee, crisp integer scaling, start / pause (P, blur) /
+  game over, best score per game in localStorage, keyboard, gamepad, mouse
+  where a game aims with it, and a touch pad on coarse pointers. Escape or E
+  leaves.
 
 ## 6. Plan
 

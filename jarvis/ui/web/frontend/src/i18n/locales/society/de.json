@@ -818,6 +818,20 @@
       "cp_break_hint": "Kaffeepause ausrufen",
       "cp_elevator": "Aufzug",
       "cp_elevator_hint": "Den Ruf-Knopf neben den Türen drücken",
+      "elevator_choose": "Etage wählen",
+      "elevator_here": "Du bist hier",
+      "elevator_keys": "0–2 wählt die Etage · ↑/↓ wechseln · Esc schließt",
+      "floor_name_agents": "Agenten-Etage",
+      "floor_name_coding": "Coding-Etage",
+      "floor_name_arcade": "Arcade-Etage",
+      "floor_about_agents": "Deine Jarvis-Agenten bei der Arbeit",
+      "floor_about_coding": "Coding-Sessions aus der IDE",
+      "floor_about_arcade": "Retro-Automaten zum Spielen",
+      "riding_up_to": "Aufwärts · {0}",
+      "riding_down_to": "Abwärts · {0}",
+      "arcade_floor_title": "Arcade-Etage",
+      "arcade_floor_subtitle": "Spielbare Automaten: {0}",
+      "arcade_floor_hint": "Geh zu einem Automaten und drück E zum Spielen",
       "cp_spawn": "Spawn-Punkt",
       "cp_spawn_hint": "Einen neuen Jarvis-Agenten spawnen",
       "cp_launch": "Spawn-Punkt",
@@ -861,6 +875,7 @@
         "ctl_sit": "Auf den Chefsessel setzen; E noch einmal steht auf",
         "ctl_screen": "Monitor anklicken öffnet den Chat dieses Agenten",
         "ctl_close": "Panel oder Karte schließen",
+        "ctl_elevator_floor": "Etage im Aufzug wählen",
         "ctl_map": "Große Karte öffnen oder schließen",
         "ctl_guide": "Diese Hilfe öffnen oder schließen",
         "ctl_minimap_focus": "Minikarte anklicken, um dorthin zu schauen",
@@ -870,6 +885,10 @@
         "ctl_arcade_shoot": "Schießen oder Runde starten",
         "ctl_arcade_pause": "Pause",
         "ctl_arcade_leave": "Arcade verlassen",
+        "ctl_arcade_play": "Den Automaten vor dir spielen",
+        "ctl_arcade_start": "Spiel starten oder neu starten",
+        "ctl_arcade_action": "Hauptknopf: feuern, springen, drehen",
+        "ctl_arcade_action_b": "Zweiter Knopf: fallen lassen, Bombe, wechseln",
         "mouse_click": "Klick",
         "mouse_double": "Doppelklick",
         "mouse_drag": "Ziehen",
@@ -894,12 +913,8 @@
       "coding_title": "Coding-Etage",
       "coding_subtitle": "Coding-Sessions auf der Etage: {0}",
       "coding_empty": "Kein Coding-Agent läuft. Starte einen in der IDE, dann bekommt er hier einen Schreibtisch.",
-      "floor_up": "Hoch zur Coding-Etage",
-      "floor_down": "Runter zur Agenten-Etage",
       "ledger_coding": "Session-Liste",
       "open_ide": "IDE öffnen",
-      "riding_up": "Fahrt hoch zur Coding-Etage",
-      "riding_down": "Fahrt runter zur Agenten-Etage",
       "prompt_pane": "Nach {0} sehen",
       "since_now": "gerade eben",
       "since_minutes": "seit {0} Min.",
@@ -1007,8 +1022,6 @@
       "fleet_result": "{0} von {1} erreicht.",
       "fleet_result_missed": "Nicht erreicht: {0}",
       "elevator_press": "Knopf anklicken",
-      "elevator_up_count": "Gerade oben: {0}",
-      "elevator_down_count": "Gerade unten: {0}",
       "arcade_prompt": "Asteroid Run spielen",
       "arcade_title": "Asteroid Run",
       "arcade_score": "Punkte",
@@ -1028,6 +1041,9 @@
       "room_reception": "Empfang",
       "room_break": "Pausenraum",
       "room_server": "Serverraum",
+      "room_arcade": "Spielhalle",
+      "room_prizes": "Preistheke",
+      "room_snack": "Snackbar",
       "dog_treat": "Knochen geben",
       "dog_take_bone": "Leckerli nehmen",
       "dog_pet": "Hund streicheln",
@@ -1167,6 +1183,74 @@
       "errand_flying": "Bringt {0} eine Aufgabe",
       "errand_task": "Hier ist eine neue Aufgabe für dich.",
       "errand_ack": "Verstanden, bin dran!"
+    },
+    "arcade": {
+      "play_prompt": "{0} spielen",
+      "score": "Punkte",
+      "best": "Rekord",
+      "lives": "Leben",
+      "level": "Level",
+      "loading": "Spiel wird geladen …",
+      "load_failed": "Dieses Spiel konnte nicht geladen werden.",
+      "retry": "Erneut versuchen",
+      "press_start": "Leertaste oder Enter zum Starten",
+      "tap_start": "Tippe auf A zum Starten",
+      "paused": "Pause",
+      "resume_hint": "P oder Leertaste zum Weiterspielen",
+      "tap_resume": "Tippe auf A zum Weiterspielen",
+      "game_over": "Game over",
+      "you_win": "Gewonnen!",
+      "new_best": "Neuer Rekord!",
+      "play_again": "Leertaste oder Enter für eine neue Runde",
+      "tap_again": "Tippe auf A für eine neue Runde",
+      "keys_hint": "Enter Start · P Pause · Esc / E verlassen",
+      "pause": "Pause",
+      "pad_up": "Hoch",
+      "pad_down": "Runter",
+      "pad_left": "Links",
+      "pad_right": "Rechts",
+      "games": {
+        "asteroid_run": {
+          "tagline": "Flieg durchs Asteroidenfeld und schieß dir den Weg frei.",
+          "how": "WASD/Pfeile lenken · Leertaste Laser · Klick auf einen Felsen: Rakete · Shift Boost · P Pause · Esc verlassen"
+        },
+        "neon_snake": {
+          "tagline": "Fressen, wachsen und nie in den eigenen Schwanz beißen.",
+          "how": "Pfeile/WASD lenken · P Pause · Esc verlassen"
+        },
+        "brick_breaker": {
+          "tagline": "Zerschlag jeden Stein, fang die Extras.",
+          "how": "←/→ oder Maus bewegen · Leertaste/Klick abschießen · P Pause · Esc verlassen"
+        },
+        "paddle_duel": {
+          "tagline": "Wer zuerst sieben hat, schlägt die Maschine.",
+          "how": "↑/↓ oder Maus bewegen · Leertaste aufschlagen · P Pause · Esc verlassen"
+        },
+        "block_drop": {
+          "tagline": "Stapel die fallenden Blöcke und räume volle Reihen ab.",
+          "how": "←/→ bewegen · ↑/Leertaste drehen · ↓ schneller fallen · Shift sofort ablegen · P Pause · Esc verlassen"
+        },
+        "maze_muncher": {
+          "tagline": "Futtere jeden Punkt und überliste vier Glitch-Käfer.",
+          "how": "Pfeiltasten lenken (Abbiegen wird vorgemerkt) · Kraftkugeln machen die Käfer essbar · P Pause · Esc verlassen"
+        },
+        "desert_dash": {
+          "tagline": "Sprinte über die Dünen: spring über Kakteen, duck dich vor Vögeln.",
+          "how": "↑/Leertaste springen (halten für höher) · ↓ ducken / schneller landen · P Pause · Esc verlassen"
+        },
+        "pixel_raiders": {
+          "tagline": "Halte die Stellung gegen eine marschierende Alien-Flotte.",
+          "how": "←/→ bewegen · Leertaste feuern · P Pause · Esc verlassen"
+        },
+        "road_hopper": {
+          "tagline": "Hüpf über Straße und Fluss nach Hause.",
+          "how": "Pfeiltasten hüpfen · P Pause · Esc verlassen"
+        },
+        "city_defense": {
+          "tagline": "Schieß die Sprengköpfe ab, bevor sie deine Städte treffen.",
+          "how": "Maus zielen + Klick feuern · Pfeiltasten zielen · Leertaste feuern · Shift Batterie wählen · P Pause · Esc verlassen"
+        }
+      }
     }
   }
 }

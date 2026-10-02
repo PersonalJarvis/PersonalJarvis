@@ -2,11 +2,11 @@
  * The elevator's call button, on the shaft to the right of the doors.
  *
  * Riding needs a press of this button: a click on it (or E while standing at
- * the elevator) lights it, then the doors close. On the agents floor it
- * shows an up arrow, on the coding floor a down arrow. While the person
- * stands at the elevator it breathes softly and a pill above it says where it
- * goes; clicking it from afar only walks the character over (see
- * `elevatorCall.ts`).
+ * the elevator) opens the floor picker; picking a floor lights it, then the
+ * doors close. The ground floor shows an up arrow, the top floor a down
+ * arrow, the floors between both. While the person stands at the elevator it
+ * breathes softly and a pill above it invites a press; clicking it from afar
+ * only walks the character over (see `elevatorCall.ts`).
  */
 import { useEffect, useMemo, useRef } from "react";
 import { Html } from "@react-three/drei";
@@ -16,48 +16,60 @@ import { useT } from "@/i18n";
 import { cachedCanvasTexture } from "./canvasMaterials";
 import { callButtonPose } from "./elevatorCall";
 import type { Furniture } from "./officeLayout";
-import type { OfficeFloor } from "./officeStore";
+import { floorLevel, OFFICE_FLOORS, type OfficeFloor } from "./officeStore";
 
 const BUTTON_RADIUS = 0.09;
 const IDLE = "#3b3f48";
 const LIT = "#f5b83d";
 
-/** A white arrow on a transparent square; "up" points to +y. */
-function arrowTexture(direction: "up" | "down") {
+type ArrowDirection = "up" | "down" | "both";
+
+/** Which way the elevator can go from `floor`: up from the bottom, down from the top, both in between. */
+export function callDirection(floor: OfficeFloor): ArrowDirection {
+  const level = floorLevel(floor);
+  return level <= 0 ? "up" : level >= OFFICE_FLOORS.length - 1 ? "down" : "both";
+}
+
+/** White arrows on a transparent square; "up" points to +y, "both" stacks a small up and down arrow. */
+function arrowTexture(direction: ArrowDirection) {
   return cachedCanvasTexture(`elevator-arrow:${direction}`, 128, 128, (ctx, w, h) => {
     ctx.clearRect(0, 0, w, h);
     ctx.fillStyle = "#ffffff";
-    ctx.beginPath();
-    const tip = direction === "up" ? h * 0.24 : h * 0.76;
-    const base = direction === "up" ? h * 0.7 : h * 0.3;
-    ctx.moveTo(w / 2, tip);
-    ctx.lineTo(w * 0.24, base);
-    ctx.lineTo(w * 0.76, base);
-    ctx.closePath();
-    ctx.fill();
+    const arrow = (up: boolean, top: number, bottom: number, half: number) => {
+      ctx.beginPath();
+      ctx.moveTo(w / 2, up ? top : bottom);
+      ctx.lineTo(w / 2 - half, up ? bottom : top);
+      ctx.lineTo(w / 2 + half, up ? bottom : top);
+      ctx.closePath();
+      ctx.fill();
+    };
+    if (direction === "both") {
+      arrow(true, h * 0.14, h * 0.44, w * 0.22);
+      arrow(false, h * 0.56, h * 0.86, w * 0.22);
+    } else {
+      arrow(direction === "up", h * 0.24, h * 0.76, w * 0.26);
+    }
   });
 }
 
-export function ElevatorCallButton({ shaft, floor, near, lit, count, animate, onPress }: {
+export function ElevatorCallButton({ shaft, floor, near, lit, animate, onPress }: {
   shaft: Furniture;
   floor: OfficeFloor;
   /** The person stands at the elevator: the button invites a press. */
   near: boolean;
   /** Pressed: glowing until the ride starts. */
   lit: boolean;
-  /** How many work on the other floor; null while unknown. */
-  count: number | null;
   animate: boolean;
   onPress: () => void;
 }) {
   const t = useT();
   const pose = callButtonPose(shaft);
-  const up = floor === "agents";
+  const direction = callDirection(floor);
   const button = useMemo(() => new MeshStandardMaterial({ color: IDLE, roughness: 0.35, metalness: 0.3, emissive: LIT, emissiveIntensity: 0 }), []);
   const arrow = useMemo(() => new MeshStandardMaterial({
-    map: arrowTexture(up ? "up" : "down"), transparent: true, depthWrite: false, roughness: 0.5,
+    map: arrowTexture(direction), transparent: true, depthWrite: false, roughness: 0.5,
     emissive: "#ffffff", emissiveIntensity: 0.25,
-  }), [up]);
+  }), [direction]);
   useEffect(() => () => button.dispose(), [button]);
   useEffect(() => () => arrow.dispose(), [arrow]);
   useEffect(() => () => { document.body.style.cursor = ""; }, []);
@@ -80,9 +92,6 @@ export function ElevatorCallButton({ shaft, floor, near, lit, count, animate, on
     event.stopPropagation();
     onPress();
   };
-  const label = t(up ? "society.office.floor_up" : "society.office.floor_down");
-  const countText = count === null ? null
-    : t(up ? "society.office.elevator_up_count" : "society.office.elevator_down_count").replace("{0}", String(count));
 
   return (
     <group position={[pose.x, pose.y, pose.z]} rotation={[0, pose.rotationY, 0]} name="elevator-call-button">
@@ -100,8 +109,8 @@ export function ElevatorCallButton({ shaft, floor, near, lit, count, animate, on
       {near && !lit && (
         <Html center position={[0, 0.62, 0.05]} zIndexRange={[24, 0]} pointerEvents="none">
           <span className="office-call-pill" data-office-ui>
-            <b>{label}</b>
-            <small>{t("society.office.elevator_press")}{countText ? ` · ${countText}` : ""}</small>
+            <b>{t("society.office.elevator_choose")}</b>
+            <small>{t("society.office.elevator_press")}</small>
           </span>
         </Html>
       )}
