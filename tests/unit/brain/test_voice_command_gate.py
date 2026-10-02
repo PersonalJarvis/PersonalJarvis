@@ -287,3 +287,11 @@ def test_italian_language_commands_only_target_supported_reply_languages(
 )
 def test_italian_harmless_phrases_do_not_trigger_fast_commands(text: str) -> None:
     assert match_voice_command(text) is None
+
+
+def test_italian_reply_language_is_not_enabled_by_the_command_gate() -> None:
+    """UI Italian does not silently widen the backend reply-language contract."""
+    m = match_voice_command(
+        "rispondi in italiano"  # i18n-allow: Italian speech-input test vocabulary
+    )
+    assert m is None or m.kind != "language_switch"
