@@ -1381,6 +1381,102 @@ describe("resizing the workspace", () => {
    * rearrange anything — which pane sits in which column, and which pane is
    * stacked under which, is exactly what the user asked to keep.
    */
+  /*
+   * Sideways drags depend on WHERE the seam is held: near the middle of a
+   * pane's height they move that one boundary, near its top or bottom end
+   * they move the aligned boundary of every pane stacked under it as well.
+   */
+  describe("a vertical seam held at its end", () => {
+    const twoRows: LayoutNode = {
+      direction: "column",
+      children: [
+        { direction: "row", children: [{ pane: "mika" }, { pane: "nova" }], weights: [1, 1] },
+        { direction: "row", children: [{ pane: "vega" }, { pane: "aria" }], weights: [1, 1] },
+      ],
+      weights: [1, 1],
+    };
+    const panes: Array<[string, number]> = [
+      ["Mika", 0],
+      ["Nova", 1],
+      ["Vega", 0],
+      ["Aria", 1],
+    ];
+
+    /** jsdom lays nothing out, so the top seam is given a 300 px tall box. */
+    function topSeam(): HTMLElement {
+      const seam = screen.getByTestId("pane-seam-0:1");
+      vi.spyOn(seam, "getBoundingClientRect").mockReturnValue({
+        top: 0,
+        height: 300,
+        left: 498,
+        width: 4,
+      } as DOMRect);
+      return seam;
+    }
+
+    function dragTopSeam(atY: number, fromX: number, toX: number) {
+      const seam = topSeam();
+      act(() => {
+        seam.dispatchEvent(
+          new MouseEvent("pointerdown", { clientX: fromX, clientY: atY, bubbles: true }),
+        );
+      });
+      act(() => {
+        window.dispatchEvent(new MouseEvent("pointermove", { clientX: toX }));
+      });
+      act(() => {
+        window.dispatchEvent(new MouseEvent("pointerup"));
+      });
+    }
+
+    it("moves only its own boundary when held in the middle", () => {
+      const restore = measured(1000, 600);
+      try {
+        renderGrid(sessionWith(panes, twoRows));
+        dragTopSeam(150, 500, 600);
+        expect(widthOf("Mika")).toBe(60);
+        expect(widthOf("Vega")).toBe(50);
+      } finally {
+        restore();
+      }
+    });
+
+    it("moves the whole stack when held near its bottom end", () => {
+      const restore = measured(1000, 600);
+      try {
+        renderGrid(sessionWith(panes, twoRows));
+        dragTopSeam(280, 500, 600);
+        expect(widthOf("Mika")).toBe(60);
+        expect(widthOf("Vega")).toBe(60);
+      } finally {
+        restore();
+      }
+    });
+
+    it("lights the seams that would follow before the press", () => {
+      const restore = measured(1000, 600);
+      try {
+        renderGrid(sessionWith(panes, twoRows));
+        const seam = topSeam();
+        const below = screen.getByTestId("pane-seam-1:1");
+        act(() => {
+          seam.dispatchEvent(
+            new MouseEvent("pointermove", { clientX: 500, clientY: 20, bubbles: true }),
+          );
+        });
+        expect(below.getAttribute("data-linked")).toBe("true");
+        act(() => {
+          seam.dispatchEvent(
+            new MouseEvent("pointermove", { clientX: 500, clientY: 150, bubbles: true }),
+          );
+        });
+        expect(below.getAttribute("data-linked")).toBeNull();
+      } finally {
+        restore();
+      }
+    });
+  });
+
   it("evens every terminal out on one click", async () => {
     const restore = measured(1800, 900);
     try {

@@ -312,8 +312,14 @@ export function treeSeams(root: LayoutNode): PaneSeam[] {
  */
 export const SEAM_END_ZONE = 0.3;
 
-/** How far apart two stacked seams may be and still count as one line. */
-export const SEAM_LINK_TOLERANCE_PX = 8;
+/**
+ * How far apart two stacked seams may be and still count as one line.
+ *
+ * Generous on purpose: rows dragged separately rarely line up to the pixel
+ * (the first live workspace checked sat 9 px apart), and a line that sits
+ * within this much reads as "the same boundary" — the drag straightens it.
+ */
+export const SEAM_LINK_TOLERANCE_PX = 24;
 
 /** Do two seam ends touch? Both come from the same cursor sums. */
 const EDGE_EPSILON = 1e-6;
