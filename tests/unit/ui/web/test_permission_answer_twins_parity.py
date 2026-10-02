@@ -114,7 +114,7 @@ def test_wake_route_answers_with_the_shared_vocabulary(
         can_open_settings=True,
     )
     service = SimpleNamespace(ensure=lambda *args, **kwargs: result)
-    monkeypatch.setattr(settings_routes.sys, "platform", "darwin")
+    monkeypatch.setattr(settings_routes, "_is_macos", lambda: True)
     monkeypatch.setattr(settings_routes, "_microphone_service", lambda request: service)
 
     answer = settings_routes._ask_microphone_for_wake_switch(SimpleNamespace(), enabled=True)
@@ -130,7 +130,7 @@ def test_the_failure_answer_of_the_wake_route_stays_inside_the_vocabulary(
     def boom(*args: object, **kwargs: object) -> None:
         raise RuntimeError("no service")
 
-    monkeypatch.setattr(settings_routes.sys, "platform", "darwin")
+    monkeypatch.setattr(settings_routes, "_is_macos", lambda: True)
     monkeypatch.setattr(
         settings_routes, "_microphone_service", lambda request: SimpleNamespace(ensure=boom)
     )

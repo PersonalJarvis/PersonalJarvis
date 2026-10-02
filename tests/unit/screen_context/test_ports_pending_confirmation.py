@@ -16,6 +16,7 @@ from __future__ import annotations
 import sys
 import types
 from contextlib import nullcontext
+from types import SimpleNamespace
 
 import pytest
 
@@ -62,6 +63,9 @@ def _native_fails_with(monkeypatch: pytest.MonkeyPatch, reason: str) -> None:
         return None
 
     monkeypatch.setattr(window_capture, "grab_window", native)
+    # The rect fallback is refused on Windows by design (ports.py branches on os.name):
+    # these tests model a Mac, so they must not depend on the host OS.
+    monkeypatch.setattr(ports, "os", SimpleNamespace(name="posix"))
     monkeypatch.setattr(ports, "_is_wayland", lambda: False)
     monkeypatch.setattr(ports, "_input_space", nullcontext)
     monkeypatch.setattr("jarvis.cu.indicator.capture_guard.indicator_suppressed", nullcontext)

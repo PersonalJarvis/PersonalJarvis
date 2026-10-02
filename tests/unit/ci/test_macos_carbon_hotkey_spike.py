@@ -675,13 +675,14 @@ def _run(outcome: Any, name: str = "duplicate_register", **kwargs: Any):
 
 def test_run_experiment_records_a_signal_death_as_a_crash_with_the_last_step() -> None:
     stdout = b"STEP install_handler=0\nSTEP register=0\n"
-    row, runner = _run(_Done(-11, stdout, b"Fatal Python error: Segmentation fault\n"))
-    assert row["outcome"] == "crash" and row["signal"] == "SIGSEGV" and row["returncode"] == -11
+    segv = -int(signal.SIGSEGV)  # the host signal table decides the name
+    row, runner = _run(_Done(segv, stdout, b"Fatal Python error: Segmentation fault\n"))
+    assert row["outcome"] == "crash" and row["signal"] == "SIGSEGV" and row["returncode"] == segv
     assert row["last_step"] == "register=0"
     assert "Segmentation fault" in row["stderr_tail"]
     assert row["duration_s"] == 2.5
     argv, kwargs = runner.calls[0]
-    assert argv == ["/py/python3", "/x/spike.py", "--child", "duplicate_register"]
+    assert argv == ["/py/python3", str(Path("/x/spike.py")), "--child", "duplicate_register"]
     assert kwargs["timeout"] == _experiment().timeout_s
     assert kwargs["stdin"] == subprocess.DEVNULL
     assert kwargs["env"]["PYTHONFAULTHANDLER"] == "1"
@@ -778,7 +779,8 @@ def _process_is_gone(pid: int, timeout_s: float = 5.0) -> bool:
         if has_proc:
             try:
                 stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
-            except FileNotFoundError:
+            except (FileNotFoundError, ProcessLookupError):
+                # ESRCH (not ENOENT) is raised while the killed task is still exiting.
                 return True
             if stat.rsplit(") ", 1)[1].split()[0] == "Z":
                 return True
@@ -906,7 +908,7 @@ def test_the_real_runner_drives_run_experiment_end_to_end_with_a_timeout(tmp_pat
 
 
 def test_run_experiment_control_expectation() -> None:
-    row, _ = _run(_Done(-6), name="control_signal_capture")
+    row, _ = _run(_Done(-int(signal.SIGABRT)), name="control_signal_capture")
     assert row["outcome"] == "crash" and row["signal"] == "SIGABRT"
     assert row["as_expected"] is True
     row, _ = _run(_Done(0, b""), name="control_signal_capture")

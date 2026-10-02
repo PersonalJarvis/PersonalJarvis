@@ -18,7 +18,7 @@ def _default_to_permissionless_test_platform(monkeypatch):
     """Keep generic route tests independent of this Mac's TCC state."""
     import jarvis.ui.web.settings_routes as settings_routes
 
-    monkeypatch.setattr(settings_routes.sys, "platform", "linux")
+    monkeypatch.setattr(settings_routes, "_is_macos", lambda: False)
 
 
 @pytest.fixture
@@ -103,7 +103,7 @@ def test_mic_level_never_500s_on_helper_error(monkeypatch):
 def _macos_app(monkeypatch, outcome: PermissionOutcome) -> tuple[FastAPI, FakePermissionService]:
     import jarvis.ui.web.settings_routes as settings_routes
 
-    monkeypatch.setattr(settings_routes.sys, "platform", "darwin")
+    monkeypatch.setattr(settings_routes, "_is_macos", lambda: True)
     gate = FakePermissionService()
     gate.script(PermissionId.MICROPHONE, outcome)
     app = FastAPI()
@@ -260,7 +260,7 @@ def test_non_macos_routes_never_touch_the_permission_service(monkeypatch):
         return -20.0
 
     monkeypatch.setattr(d, "measure_mic_dbfs", fake_measure)
-    monkeypatch.setattr(settings_routes.sys, "platform", "linux")
+    monkeypatch.setattr(settings_routes, "_is_macos", lambda: False)
     gate = FakePermissionService()
     app = FastAPI()
     app.state.permission_service = gate

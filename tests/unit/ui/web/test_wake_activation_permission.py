@@ -66,7 +66,7 @@ def _persist_nothing(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
 def _on_macos(monkeypatch: pytest.MonkeyPatch, **tcc_kwargs: object) -> FakeTCC:
     tcc = FakeTCC(**tcc_kwargs)
     install_port(monkeypatch, tcc.port("darwin"))
-    monkeypatch.setattr(settings_routes.sys, "platform", "darwin")
+    monkeypatch.setattr(settings_routes, "_is_macos", lambda: True)
     return tcc
 
 
@@ -153,7 +153,7 @@ def test_switching_off_asks_nothing_and_says_nothing_is_required(
 def test_the_route_asks_through_the_injected_service_with_a_zero_wait(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(settings_routes.sys, "platform", "darwin")
+    monkeypatch.setattr(settings_routes, "_is_macos", lambda: True)
     gate = FakePermissionService()
     gate.script("microphone", PermissionOutcome.PENDING)
 
@@ -174,7 +174,7 @@ def test_the_route_asks_through_the_injected_service_with_a_zero_wait(
 
 
 def test_a_broken_service_never_fails_the_switch(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(settings_routes.sys, "platform", "darwin")
+    monkeypatch.setattr(settings_routes, "_is_macos", lambda: True)
 
     class _Broken:
         def ensure(self, *_a: object, **_k: object) -> object:
@@ -199,7 +199,7 @@ def test_other_platforms_never_touch_the_permission_layer(
 ) -> None:
     port, tcc = make_non_darwin_port("linux")
     install_port(monkeypatch, port)
-    monkeypatch.setattr(settings_routes.sys, "platform", "linux")
+    monkeypatch.setattr(settings_routes, "_is_macos", lambda: False)
     gate = FakePermissionService()
 
     body = (

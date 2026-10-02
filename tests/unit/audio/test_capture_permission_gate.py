@@ -503,7 +503,10 @@ async def test_a_stall_restart_ensures_non_interactively(monkeypatch: pytest.Mon
         device=0, permission_feature="dictation", interactive=True, permission_gate=gate
     )
     async with mic:
-        await _wait_for(lambda: mic.restart_count >= 1)
+        # Wait for what is asserted (the second, non-interactive ensure), not for the
+        # restart counter: the watchdog bumps the counter BEFORE it asks again, and a
+        # slow runner would otherwise leave the capture mid-restart.
+        await _wait_for(lambda: len(gate.ensure_calls(PermissionId.MICROPHONE)) >= 2)
 
     first, restart = gate.ensure_calls(PermissionId.MICROPHONE)[:2]
     assert first.interactive is True
@@ -638,6 +641,10 @@ async def test_zeros_with_a_grant_that_is_gone_end_as_a_revoke_not_as_a_silence_
             (stream,) = audio.starts
             tcc.deny(MIC)
             await _pump_zeros(stream, frames=40)
+            # The revoke is decided by the watchdog's tick (an executor hop): wait for it
+            # instead of relying on how long the zero pump took (timer resolution differs
+            # between hosts, Windows has a 15.6 ms clock).
+            await _wait_for(lambda: mic.revoked)
             await asyncio.wait_for(anext(mic.stream()), timeout=3.0)
 
     assert default_bus_events == []  # the service's episode is the notice here

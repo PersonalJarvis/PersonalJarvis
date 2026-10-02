@@ -53,6 +53,13 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 
+def _is_macos() -> bool:
+    """True on macOS. A seam so tests do not patch ``sys.platform`` for the whole process:
+    a global patch makes a first-time import of a third-party package take the wrong
+    platform branch (numpy calls ``os.uname`` when it sees ``linux``, which Windows lacks)."""
+    return sys.platform == "darwin"
+
+
 def _realtime_available_provider(cfg: object) -> str | None:
     """Reachable realtime provider name for ``cfg``, or ``None``.
 
@@ -1115,7 +1122,7 @@ def _microphone_state_value(request: Request) -> str:
     Off macOS there is nothing to ask and the answer is ``"not_required"`` without
     the service being touched.
     """
-    if sys.platform != "darwin":
+    if not _is_macos():
         return "not_required"
     try:
         state = _microphone_service(request).check("microphone")
@@ -1557,7 +1564,7 @@ def _ask_microphone_for_wake_switch(request: Request, *, enabled: bool) -> dict[
         "reason": "",
         "can_open_settings": False,
     }
-    if not enabled or sys.platform != "darwin":
+    if not enabled or not _is_macos():
         return answer
     try:
         result = _microphone_service(request).ensure(
@@ -1725,7 +1732,7 @@ async def wake_word_self_test(request: Request) -> dict[str, object]:
     # The test button is the just-in-time moment for the microphone: a first press
     # on an undecided Mac raises the OS dialog and waits for the answer (up to a
     # minute) without pinning a worker thread. Only a live grant measures anything.
-    if sys.platform == "darwin":
+    if _is_macos():
         asked = await _microphone_service(request).ensure_async(
             "microphone", feature="wake_word", interactive=True, wait_s=60.0
         )
