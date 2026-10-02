@@ -2489,6 +2489,24 @@ class Registry:
         self._cold_start_holds.add(task)
         task.add_done_callback(self._cold_start_holds.discard)
 
+    def start_pending(self, wanted: str, workspace_id: str | None = None) -> Terminal:
+        """Start a pane nobody has opened yet, without waiting for a viewer.
+
+        A new pane's agent is spawned by the first viewer that attaches, so a
+        pane opened from somewhere that never shows it (the office's spawn
+        point) stayed ``pending`` and its first task was given up on (live
+        2026-10-02: T2 started only when its workspace was opened a minute
+        later). Anything other than ``pending`` is left alone: a running pane
+        must not be restarted, and an exited or failed one is the user's call.
+        """
+        found = self.find_terminal(wanted, workspace_id)
+        if found is None:
+            raise self._unknown_terminal(wanted)
+        session, term = found
+        if term.status == "pending" and not term.pty_id:
+            self._start_in_background(session, term)
+        return term
+
     def _host_went_away(self) -> bool:
         """Did the PTY host this process was attached to just drop away?"""
         current = self._pty

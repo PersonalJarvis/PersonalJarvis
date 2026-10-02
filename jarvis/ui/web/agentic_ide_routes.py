@@ -3657,6 +3657,21 @@ def _picks_now(term: Any, read_result: Any) -> dict[str, str]:
     return out
 
 
+@router.post("/terminals/{name}/start", summary="Start a terminal nobody has opened yet")
+async def terminal_start(name: str, workspace: str | None = None) -> dict:
+    """Start the pane's agent now instead of when a viewer first attaches.
+
+    For callers that open panes without showing them — the office's spawn
+    point hands each new pane a task and would otherwise wait on a pane that
+    never starts. A pane that is already running is not touched.
+    """
+    try:
+        term = get_registry().start_pending(name, workspace)
+    except SessionError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"terminal": term.name, "status": term.status}
+
+
 @router.post(
     "/terminals/{name}/interrupt",
     summary="Interrupt what one terminal's agent is doing (Escape)",
