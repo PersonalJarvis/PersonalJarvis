@@ -65,10 +65,13 @@ it("keeps live and interrupted conversation tools in the left lane", () => {
   expect(screen.getByText("I will send the mail next.")).toBeTruthy();
   expect(screen.queryByText("Interrupted without a result")).toBeNull();
   expect(screen.queryByText("Inspect archive.")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Thought for 4.1s" }));
-  expect(screen.getByText("Interrupted without a result")).toBeTruthy();
-  // Opening the fold expands the whole chain, not one more chevron level.
-  expect(screen.getByText("Inspect archive.")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: /^Thought for 4\.1s/ }));
+  // Opening the fold shows the whole written report in one tap: the reason
+  // in the model's words, the step, and that it never returned.
+  const report = screen.getByTestId("trace-report");
+  expect(report.textContent).toContain("Inspect archive.");
+  expect(report.textContent).toContain("Searched the files for archive.");
+  expect(report.textContent).toContain("It stopped before it returned a result.");
   expect(container.querySelectorAll(".mx-auto")).toHaveLength(0);
   expect(screen.getByTestId("work-trace").className).toMatch(/self-start/);
 });
@@ -83,9 +86,12 @@ it("folds a failure with the surrounding work, keeping only the reply out", () =
   expect(screen.queryByText("Upload failed")).toBeNull();
   expect(screen.getByText("I could not finish.")).toBeTruthy();
   expect(screen.queryByText("Report contents")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Thought for 2.0s" }));
-  expect(screen.getAllByText("Upload failed").length).toBeGreaterThan(0);
-  // The open fold expands tool details too — no second tap needed.
+  fireEvent.click(screen.getByRole("button", { name: /^Thought for 2\.0s.*1 not done/ }));
+  // The failure reads as a sentence with the tool's own reason.
+  expect(screen.getByText("It failed: Upload failed.")).toBeTruthy();
+  // The raw output stays one tap further, under the step's details.
+  expect(screen.queryByText("Report contents")).toBeNull();
+  fireEvent.click(screen.getAllByRole("button", { name: "Details" })[0]);
   expect(screen.getByText("Report contents")).toBeTruthy();
 });
 
@@ -98,8 +104,9 @@ it("folds failures but keeps pending approvals visible in the conversation style
   expect(screen.queryByText("Delivery failed")).toBeNull();
   expect(screen.getByText("Send this message?")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Approve" })).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "Thought for 1.0s" }));
-  expect(screen.getAllByText("Delivery failed").length).toBeGreaterThan(0);
+  fireEvent.click(screen.getByRole("button", { name: /^Thought for 1\.0s/ }));
+  expect(screen.getByText("It failed: Delivery failed.")).toBeTruthy();
+  expect(screen.getByText("It is waiting for your approval.")).toBeTruthy();
   // The approval card survives opening the fold — it still needs a tap.
   expect(screen.getByRole("button", { name: "Approve" })).toBeTruthy();
 });
@@ -130,16 +137,20 @@ it("folds successful work and post-reply errors behind one toggle without reorde
   expect(screen.getByText("Your report is ready.")).toBeTruthy();
   expect(screen.queryByText("Upload failed")).toBeNull();
   expect(screen.queryByText("Report contents")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Thought for 1.0s" }));
-  // One tap opens the whole chain: the post-reply error and the tool details.
-  expect(screen.getAllByText("Upload failed").length).toBeGreaterThan(0);
+  fireEvent.click(screen.getByRole("button", { name: /^Thought for 1\.0s/ }));
+  // One tap opens the whole report: every step in order, the post-reply
+  // error included, with the reply kept where it was.
+  const report = screen.getByTestId("trace-report");
+  const text = report.textContent ?? "";
+  expect(text.indexOf("Read report.csv.")).toBeGreaterThanOrEqual(0);
+  expect(text.indexOf("Read report.csv.")).toBeLessThan(text.indexOf("Wrote report.csv."));
+  expect(text).toContain("It failed: Upload failed.");
+  expect(screen.getAllByText("Your report is ready.")).toHaveLength(1);
+  // Each step's raw call stays tappable on its own.
+  fireEvent.click(screen.getAllByRole("button", { name: "Details" })[0]);
   expect(screen.getAllByText("Report contents").length).toBeGreaterThan(0);
-  // Inner rows stay tappable: collapsing the group hides the details again.
-  fireEvent.click(screen.getByRole("button", { name: "Read files Created files" }));
+  fireEvent.click(screen.getAllByRole("button", { name: "Details" })[0]);
   expect(screen.queryAllByText("Report contents")).toHaveLength(0);
-  expect(screen.getAllByText("Upload failed").length).toBeGreaterThan(0);
-  fireEvent.click(screen.getByRole("button", { name: "Read files Created files" }));
-  expect(screen.getAllByText("Report contents").length).toBeGreaterThan(0);
 });
 
 it("does not offer a thought toggle when the turn is only a reply", () => {
@@ -163,7 +174,7 @@ it("hides intermediate replies behind one thought toggle once the turn completes
   expect(screen.queryByText("I will inspect the files first.")).toBeNull();
   expect(screen.queryByText("Used tools")).toBeNull();
   expect(screen.getByText("The report is ready.")).toBeTruthy();
-  const toggle = screen.getByRole("button", { name: "Thought for 4.0s" });
+  const toggle = screen.getByRole("button", { name: /^Thought for 4\.0s/ });
   expect(toggle.getAttribute("aria-expanded")).toBe("false");
   fireEvent.click(toggle);
   expect(toggle.getAttribute("aria-expanded")).toBe("true");

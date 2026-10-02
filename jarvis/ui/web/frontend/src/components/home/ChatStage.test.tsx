@@ -764,9 +764,9 @@ describe("ChatStage (agent chat)", () => {
     render(<ChatStage />);
 
     const trace = screen.getByTestId("work-trace");
-    expect(within(trace).getByRole("button", { name: "Thought for 1.0s" })).toBeTruthy();
-    expect(within(trace).getByRole("button", { name: "Thought for 4.0s" })).toBeTruthy();
-    const text = trace.textContent!;
+    // The finished turn folds into its written report; one tap opens it.
+    fireEvent.click(within(trace).getByRole("button", { name: /^Thought for 6\.0s/ }));
+    const text = within(trace).getByTestId("trace-report").textContent!;
     expect(text.indexOf("First the port.")).toBeLessThan(text.indexOf("Get-NetTCPConnection"));
     expect(text.indexOf("Get-NetTCPConnection")).toBeLessThan(text.indexOf("It is listening."));
   });
@@ -790,8 +790,9 @@ describe("ChatStage (agent chat)", () => {
     expect(outcome.textContent).toContain("448");
     // Only the output side reaches the receipt.
     expect(outcome.textContent).not.toContain("35.4k");
-    // The failure reads on the row itself, without opening anything.
-    expect(screen.getByText(/permission check failed for command/).textContent).toContain("permission check failed");
+    // With no answer the report IS the outcome: it stands open and the
+    // failure reads without opening anything.
+    expect(screen.getByText(/permission check failed for command/).textContent).toContain("It failed");
     // Nothing claims to still be working.
     expect(screen.queryByTestId("agent-turn-live")).toBeNull();
   });
@@ -807,19 +808,16 @@ describe("ChatStage (agent chat)", () => {
     ]);
     useAgentChatStore.setState({ activeSessionId: "s5", timeline });
     render(<ChatStage />);
-    const fold = screen.queryByTestId("conversation-work-fold");
-    if (fold) fireEvent.click(within(fold).getByRole("button"));
-    const activity = document.querySelector<HTMLElement>("[data-trace-summary]");
-    if (activity) fireEvent.click(within(activity).getByRole("button"));
-
-    const [shell, grep] = Array.from(document.querySelectorAll<HTMLElement>("[data-trace-tool]"));
-    fireEvent.click(within(shell).getByRole("button"));
+    const report = screen.getByTestId("trace-report");
+    const [shell, grep] = Array.from(report.querySelectorAll<HTMLElement>("li[data-kind='action']"));
+    expect(shell.textContent).toContain("Ran the command ls -la.");
+    expect(grep.textContent).toContain("Searched the files for TODO.");
     // The full receipt is available on demand.
+    fireEvent.click(within(shell).getByRole("button", { name: "Details" }));
     expect(within(shell).getByText("Input")).toBeTruthy();
     expect(shell.textContent).toContain("a.py");
-
-    fireEvent.click(within(grep).getByRole("button"));
-    // More than the summary could say, so the whole input is worth printing.
+    // More than the sentence could say, so the whole input is worth printing.
+    fireEvent.click(within(grep).getByRole("button", { name: "Details" }));
     expect(within(grep).getByText("Input")).toBeTruthy();
   });
 
@@ -837,22 +835,19 @@ describe("ChatStage (agent chat)", () => {
     ]);
     useAgentChatStore.setState({ activeSessionId: "s9", timeline });
     render(<ChatStage />);
-    const fold = screen.queryByTestId("conversation-work-fold");
-    if (fold) fireEvent.click(within(fold).getByRole("button"));
-    const activity = document.querySelector<HTMLElement>("[data-trace-summary]");
-    if (activity) fireEvent.click(within(activity).getByRole("button"));
-
-    const tools = Array.from(document.querySelectorAll<HTMLElement>("[data-trace-tool]"));
-    expect(tools[0].textContent).toContain("Run command");
-    fireEvent.click(within(tools[0]).getByRole("button"));
+    fireEvent.click(screen.getByRole("button", { name: /^Thought for 12s/ }));
+    const report = screen.getByTestId("trace-report");
+    const tools = Array.from(report.querySelectorAll<HTMLElement>("li[data-kind='action']"));
+    expect(tools[0].textContent).toContain("Ran the command Get-ChildItem -Path 'C:\\Users'.");
+    fireEvent.click(within(tools[0]).getByRole("button", { name: "Details" }));
     expect(tools[0].textContent).toContain("PowerShell");
-    expect(tools[0].textContent).toContain("Get-ChildItem");
-    // An MCP call is named after its server, and wears its mark.
+    // An MCP call is named after its server.
     expect(tools[1].textContent).toContain("GitHub");
 
-    // Thinking with no readable text still shows its time and does not open.
-    const reasoning = screen.getByRole("button", {name: "Thought for 8.6s"});
-    expect(reasoning.hasAttribute("disabled")).toBe(true);
+    // Thinking with no readable text is no step of its own; its time is
+    // told in the overview.
+    expect(tools).toHaveLength(2);
+    expect(report.querySelector("[data-trace-overview]")?.textContent).toContain("8.6 s of that went into thinking.");
 
     const footer = within(screen.getByTestId("work-trace")).getByRole("status");
     expect(footer.textContent).toContain("12s");

@@ -11,12 +11,14 @@ const tool = (id: string, over: Partial<ToolBlock> = {}): ToolBlock => ({
 const thought: TurnBlock = { kind: "reasoning", id: "reason", text: "**Check** the input.", live: false, durationMs: 8000, startedMs: 1000 };
 const reply = (id: string, text: string): TextBlock => ({ kind: "text", id, text });
 const props = { startedMs: 1000, durationMs: 12000, status: "done" as TurnStatus };
+/** Finished rows are drawn by the classic look; the rail writes a report. */
+const rows = { ...props, look: "classic" as const };
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe("work trace", () => {
   it("summarizes integrations and mutations in first-use order with original logos", () => {
     const blocks = [tool("linear", {name:"mcp__codex_apps__linear_list_issues"}), tool("edit", {name:"apply_patch"}), tool("shell", {name:"exec_command"}), tool("again", {name:"linear/get_issue"})];
-    const {container} = render(<WorkTrace {...props} blocks={blocks} />);
+    const {container} = render(<WorkTrace {...rows} blocks={blocks} />);
     const summary = screen.getByRole("button", {name:"Used Linear Edited files Ran commands"});
     expect(summary.getAttribute("aria-expanded")).toBe("false");
     expect(summary.querySelector("img, [data-logo]")).toBeTruthy();
@@ -41,7 +43,7 @@ describe("work trace", () => {
     const blocks = [tool("a",{name:"linear/get_issue"}),tool("b",{name:"exec_command"})];
     const {rerender} = render(<WorkTrace {...props} status="running" blocks={blocks} />);
     expect(screen.getByRole("button",{name:"Using Linear Running commands"}).getAttribute("aria-expanded")).toBe("true");
-    rerender(<WorkTrace {...props} blocks={blocks} />);
+    rerender(<WorkTrace {...rows} blocks={blocks} />);
     expect(screen.getByRole("button",{name:"Used Linear Ran commands"}).getAttribute("aria-expanded")).toBe("false");
   });
 
@@ -57,6 +59,7 @@ describe("work trace", () => {
   it("preserves reasoning, call, next step and final answer order", () => {
     const blocks = [thought, tool("a"), { kind: "text" as const, id: "next", text: "Next, check the tests." }, tool("b"), { kind: "text" as const, id: "final", text: "Everything is ready." }];
     render(<WorkTrace {...props} blocks={blocks} />);
+    fireEvent.click(screen.getByRole("button", { name: /^Thought for 12s/ }));
     const text = screen.getByTestId("work-trace").textContent!;
     expect(text.indexOf("Check the input")).toBeLessThan(text.indexOf("a.ts"));
     expect(text.indexOf("a.ts")).toBeLessThan(text.indexOf("Next, check"));
@@ -67,7 +70,7 @@ describe("work trace", () => {
 
   it("groups fourteen successful reads and expands their full receipts", () => {
     const blocks = Array.from({length: 14}, (_, i) => tool(`file${i}`));
-    render(<WorkTrace {...props} blocks={blocks} />);
+    render(<WorkTrace {...rows} blocks={blocks} />);
     const group = screen.getByRole("button", { name: "Read 14 files" });
     expect(group.getAttribute("aria-expanded")).toBe("false");
     expect(screen.queryByText("file0.ts")).toBeNull();
@@ -89,14 +92,18 @@ describe("work trace", () => {
     const group = screen.getByRole("button", { name: "Read 2 files" });
     fireEvent.click(group); fireEvent.click(group);
     expect(group.getAttribute("aria-expanded")).toBe("true");
-    rerender(<WorkTrace {...props} blocks={blocks} />);
-    expect(group.getAttribute("aria-expanded")).toBe("false");
+    rerender(<WorkTrace {...rows} blocks={blocks} />);
+    expect(screen.getByRole("button", { name: "Read 2 files" }).getAttribute("aria-expanded")).toBe("false");
   });
 
   it("keeps errors and pending approval visible beside folded success", () => {
     render(<WorkTrace {...props} blocks={[tool("a"),tool("b"),tool("err",{isError:true,output:"Permission denied"}),tool("approval",{output:null,approval:{approvalId:"ap",summary:"Delete generated files?",decision:null}})]} onDecide={() => undefined} />);
-    expect(screen.getByText("Permission denied")).toBeTruthy();
+    // The approval stays actionable beside the folded report; the toggle
+    // already says that a step went wrong.
     expect(screen.getByText("Delete generated files?")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Approve" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /^Thought for 12s.*4 steps.*1 not done/ }));
+    expect(screen.getByText("It failed: Permission denied.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Approve" })).toBeTruthy();
   });
 
@@ -122,16 +129,21 @@ describe("work trace", () => {
 
   it("renders edit input, a diff and output on demand", () => {
     render(<WorkTrace {...props} blocks={[tool("edit",{name:"Edit",input:{file_path:"app.ts",old_string:"oldValue",new_string:"newValue"},output:"File updated"})]} />);
-    fireEvent.click(screen.getByRole("button",{name:/Edit/}));
+    fireEvent.click(screen.getByRole("button", { name: /^Thought for 12s/ }));
+    expect(screen.getByText(/Added 1 lines and removed 1\./)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
     expect(screen.getByLabelText("Changes").textContent).toContain("− oldValue");
     expect(screen.getByLabelText("Changes").textContent).toContain("+ newValue");
     expect(screen.getByText("File updated")).toBeTruthy();
   });
 
   it.each(["cancelled", "error"] as const)("does not leave tools spinning after %s", status => {
-    const {container} = render(<WorkTrace {...props} status={status} blocks={[tool("a",{output:null})]} />);
+    const {container, rerender} = render(<WorkTrace {...rows} status={status} blocks={[tool("a",{output:null})]} />);
     expect(container.querySelector('[data-state="interrupted"]')).toBeTruthy();
     expect(container.querySelector('[data-state="running"]')).toBeNull();
+    rerender(<WorkTrace {...props} status={status} blocks={[tool("a",{output:null})]} />);
+    fireEvent.click(screen.getByRole("button", { name: /^Thought for 12s/ }));
+    expect(screen.getByText("It stopped before it returned a result.")).toBeTruthy();
   });
 
   it("updates the live clock and releases timers at completion", () => {
@@ -144,8 +156,12 @@ describe("work trace", () => {
   });
 
   it("does not interpret tool output as HTML", () => {
-    const {container} = render(<WorkTrace {...props} blocks={[tool("a",{output:'<img src=x onerror=alert(1)>'})]} />);
-    fireEvent.click(screen.getByRole("button", {name:/Read file/}));
+    const {container} = render(<WorkTrace {...props} blocks={[tool("a",{name:"run_shell",input:{command:"<b>echo</b>"},output:'<img src=x onerror=alert(1)>'})]} />);
+    fireEvent.click(screen.getByRole("button", { name: /^Thought for 12s/ }));
+    // Neither the sentence nor the result turns runtime text into markup.
+    expect(container.querySelector('img, b')).toBeNull();
+    expect(screen.getByTestId("trace-report").textContent).toContain('It returned “<img src=x onerror=alert(1)>”.');
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
     expect(container.querySelector('img')).toBeNull();
     expect(screen.getByText('<img src=x onerror=alert(1)>')).toBeTruthy();
   });
@@ -160,9 +176,12 @@ describe("work trace", () => {
   });
 
   it.each(["RunCommand", "RunShellCommand", "run_shell"])("shows the short duration beside a readable %s label", name => {
-    render(<WorkTrace {...props} blocks={[tool("shell", { name, input: { command: "read skill instructions" }, durationMs: 49 })]} />);
+    const { rerender } = render(<WorkTrace {...rows} blocks={[tool("shell", { name, input: { command: "read skill instructions" }, durationMs: 49 })]} />);
     expect(screen.getByRole("button", { name: /Run command.*49ms/ })).toBeTruthy();
     expect(screen.queryByText("0.0s")).toBeNull();
+    rerender(<WorkTrace {...props} blocks={[tool("shell", { name, input: { command: "read skill instructions" }, durationMs: 49 })]} />);
+    fireEvent.click(screen.getByRole("button", { name: /^Thought for 12s/ }));
+    expect(screen.getByText("49 ms")).toBeTruthy();
   });
 
   it("keeps the last reply visible and treats earlier text as foldable work", () => {
@@ -186,17 +205,17 @@ describe("work trace", () => {
 
 describe("rail look", () => {
   it("threads thoughts, tools and the state line on one rail by default", () => {
-    const { container } = render(<WorkTrace {...props} blocks={[thought, tool("a", { name: "exec_command" })]} />);
+    const { container } = render(<WorkTrace {...props} status="running" blocks={[thought, tool("a", { name: "exec_command" })]} />);
     expect(screen.getByTestId("work-trace").getAttribute("data-look")).toBe("rail");
     const rails = container.querySelectorAll(".trace-rail");
     expect(rails).toHaveLength(1);
     const steps = rails[0].querySelectorAll(":scope > .trace-step");
     expect(steps).toHaveLength(3);
-    expect(steps[2].querySelector("[role='status']")?.textContent).toContain("Done");
+    expect(steps[2].querySelector("[role='status']")?.textContent).toContain("Working");
   });
 
   it("breaks the rail around a reply so narration stands on its own", () => {
-    const { container } = render(<WorkTrace {...props} blocks={[tool("a", { name: "exec_command" }), reply("mid", "Halfway there."), tool("b", { name: "exec_command" })]} />);
+    const { container } = render(<WorkTrace {...props} status="running" blocks={[tool("a", { name: "exec_command" }), reply("mid", "Halfway there."), tool("b", { name: "exec_command", output: null })]} />);
     const rails = container.querySelectorAll(".trace-rail");
     expect(rails).toHaveLength(2);
     expect(rails[0].textContent).not.toContain("Halfway there.");
@@ -245,7 +264,7 @@ describe("rail look", () => {
   it("shows the services a folded conversation turn used on its toggle", () => {
     const blocks = [tool("linear", { name: "mcp__codex_apps__linear_list_issues" }), reply("done", "Three issues are open.")];
     render(<WorkTrace {...props} conversation blocks={blocks} />);
-    const toggle = screen.getByRole("button", { name: "Thought for 12s" });
+    const toggle = screen.getByRole("button", { name: /^Thought for 12s/ });
     expect(toggle.querySelector("img, [data-logo]")).toBeTruthy();
   });
 });
