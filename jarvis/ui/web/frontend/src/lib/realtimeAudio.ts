@@ -401,6 +401,11 @@ export class RealtimeAudioClient {
   private finalized: (() => void) | null = null;
   private serverClosed = false;
   private reconnecting = false;
+  // Jarvis's microphone mute (pet strip, Jarvis Bar, orb), sent by the
+  // backend. A WebRTC call carries this track straight to the provider, so
+  // the backend cannot drop its audio; a disabled track sends silence.
+  private inputMuted = false;
+  private inputStopped = false;
 
   constructor(
     private cb: RealtimeCallbacks = {},
@@ -477,6 +482,22 @@ export class RealtimeAudioClient {
     };
   }
 
+  private syncInputTracks(): void {
+    const enabled = !this.inputMuted && !this.inputStopped;
+    this.stream?.getAudioTracks().forEach(track => { track.enabled = enabled; });
+  }
+
+  private applyInputMute(muted: unknown): void {
+    if (typeof muted !== "boolean") return;
+    this.inputMuted = muted;
+    this.syncInputTracks();
+  }
+
+  private stopInput(): void {
+    this.inputStopped = true;
+    this.syncInputTracks();
+  }
+
   connect(): Promise<void> {
     if (this.ready) return Promise.resolve();
     if (this.connecting) return this.connecting;
@@ -490,6 +511,8 @@ export class RealtimeAudioClient {
     this.intentionalClose = false;
     this.serverClosed = false;
     this.reconnecting = false;
+    this.inputMuted = false;
+    this.inputStopped = false;
     try {
       const supportIssue = browserRealtimeSupportIssue();
       if (supportIssue) throw new RealtimeAudioSupportError(supportIssue);
@@ -723,7 +746,9 @@ export class RealtimeAudioClient {
         } else if (type === "audio_stopping") {
           this.startupNode?.port.postMessage({ type: "suspend" });
           this.webRtcTransport.muteOutput();
-          this.stream?.getAudioTracks().forEach(track => { track.enabled = false; });
+          this.stopInput();
+        } else if (type === "input_mute") {
+          this.applyInputMute(message.muted);
         } else if (type === "audio_closed") {
           this.serverClosed = true;
           this.finalized?.();
@@ -748,6 +773,8 @@ export class RealtimeAudioClient {
           // The local control channel can already relay levels while RTP
           // finishes its handshake. Native and browser bars share this input.
           this.controlReady = true;
+          // Before the retained opening is released below.
+          this.applyInputMute(message.input_muted);
           this.sendMediaLevels(true);
           this.setOutputRate(message.output_sample_rate);
           void this.finishAudioReady(message)
@@ -926,7 +953,7 @@ export class RealtimeAudioClient {
     if (this.options.browserAudio && this.ready && !this.serverClosed && this.ws?.readyState === WebSocket.OPEN) {
       this.ready = false;
       this.webRtcTransport.muteOutput();
-      this.stream?.getAudioTracks().forEach(track => { track.enabled = false; });
+      this.stopInput();
       await new Promise<void>(resolve => {
         const timer = window.setTimeout(resolve, 16_000);
         this.finalized = () => { window.clearTimeout(timer); resolve(); };

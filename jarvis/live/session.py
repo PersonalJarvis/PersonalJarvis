@@ -30,6 +30,20 @@ REASONING_SNAPSHOT_INTERVAL_S = 0.3
 _REASONING_ITEMS_MAX = 16
 
 
+def _pipeline_input_muted() -> bool:
+    """Jarvis's microphone mute. The speech pipeline is its only writer."""
+    from jarvis.core.runtime_refs import get_speech_pipeline
+
+    return bool(getattr(get_speech_pipeline(), "is_muted", False))
+
+
+def _pipeline_input_held() -> bool:
+    """Whether a dictation beside the call holds the user's audio back."""
+    from jarvis.core.runtime_refs import get_speech_pipeline
+
+    return bool(getattr(get_speech_pipeline(), "is_voice_input_held", False))
+
+
 def _summary_index(event: dict) -> int:
     """The summary part a reasoning-summary event belongs to (0 when absent)."""
     try:
@@ -104,6 +118,15 @@ class LiveVoiceSession:
         self._mic_feedback_owned = False
         self._mic_feedback_warning = False
         self._input_active = False
+        # The mute on the pet strip, the Jarvis Bar or the orb. A browser call
+        # owns its microphone in the WebView, out of reach of the pipeline's own
+        # capture gate, so the session drops the frames and tells the page.
+        # ``_input_muted`` is what the frame gate and the page obey: the
+        # user's mute OR a dictation holding the input (see ``VoiceInputHeld``).
+        self._input_muted = False
+        self._user_muted = False
+        self._input_held = False
+        self._watching_input_mute = False
         self._media_timeout: asyncio.TimerHandle | None = None
         self._active_model = ""
         self._archive_turn_id = str(uuid4())
@@ -300,10 +323,14 @@ class LiveVoiceSession:
             callable(getattr(mic_level, name, None))
             for name in ("claim_external", "release_external", "publish")
         )
-        if microphone_ready:
+        # While a dictation holds the input, its own capture drives the meter:
+        # the page's track is silenced, and claiming the meter here would
+        # flatten the dictation's bars with the page's zeros.
+        meter_owned = microphone_ready and not self._input_held
+        if meter_owned:
             mic_level.claim_external(self.session_id)
             self._mic_feedback_owned = True
-        elif not self._mic_feedback_warning:
+        elif not microphone_ready and not self._mic_feedback_warning:
             self._mic_feedback_warning = True
             log.warning("Browser microphone meter needs an app restart; voice remains connected")
         self._media_received = True
@@ -319,7 +346,7 @@ class LiveVoiceSession:
             level_tap.note_playing(0.3)
         elif previous_playback:
             level_tap.reset_playing()
-        if microphone_ready:
+        if meter_owned:
             mic_level.publish(levels.input_level, owner=self.session_id)
         if self._media_timeout is not None:
             self._media_timeout.cancel()
@@ -510,6 +537,7 @@ class LiveVoiceSession:
             if self._closing:
                 return
             await self._take_startup_input(message)
+            self._watch_input_mute()
             await self._send_json(
                 {
                     "type": "audio_ready",
@@ -521,6 +549,7 @@ class LiveVoiceSession:
                     "requires_webrtc_answer": bool(offer),
                     "webrtc_answer_sdp": self._connection.answer_sdp,
                     "continuous": True,
+                    "input_muted": self._input_muted,
                 }
             )
         except BaseException as exc:
@@ -594,11 +623,80 @@ class LiveVoiceSession:
             if prefix is not None:
                 await self._send_json(prefix)
 
+    def _watch_input_mute(self) -> None:
+        """Adopt the current microphone mute and follow it until the call ends."""
+        self._user_muted = _pipeline_input_muted()
+        self._input_held = _pipeline_input_held()
+        self._input_muted = self._user_muted or self._input_held
+        if self._bus is None or self._watching_input_mute:
+            return
+        from jarvis.core.events import VoiceInputHeld, VoiceMuteChanged
+
+        self._bus.subscribe(VoiceMuteChanged, self._on_input_mute_changed)
+        self._bus.subscribe(VoiceInputHeld, self._on_input_held_changed)
+        self._watching_input_mute = True
+
+    def _stop_watching_input_mute(self) -> None:
+        if not self._watching_input_mute or self._bus is None:
+            return
+        from jarvis.core.events import VoiceInputHeld, VoiceMuteChanged
+
+        self._bus.unsubscribe(VoiceMuteChanged, self._on_input_mute_changed)
+        self._bus.unsubscribe(VoiceInputHeld, self._on_input_held_changed)
+        self._watching_input_mute = False
+
+    async def _on_input_mute_changed(self, event: Any) -> None:
+        """Follow the user's own microphone mute."""
+        self._user_muted = bool(event.muted)
+        await self._apply_input_mute()
+
+    async def _on_input_held_changed(self, event: Any) -> None:
+        """Follow a dictation that borrows the user's voice beside the call.
+
+        The call stays open; only the audio stops reaching the model until the
+        dictated text has been delivered, so it never becomes a spoken turn.
+        """
+        self._input_held = bool(event.held)
+        log.info(
+            "Live call input %s (%s).",
+            "held" if self._input_held else "released",
+            getattr(event, "reason", "") or "unknown",
+        )
+        if self._input_held:
+            self._release_mic_meter()
+        await self._apply_input_mute()
+
+    def _release_mic_meter(self) -> None:
+        """Hand the microphone meter back so a dictation's own levels show."""
+        if not self._mic_feedback_owned:
+            return
+        from jarvis.audio import mic_level
+
+        release = getattr(mic_level, "release_external", None)
+        if callable(release):
+            release(self.session_id)
+        self._mic_feedback_owned = False
+
+    async def _apply_input_mute(self) -> None:
+        """Drop the user's audio from now on and let the page silence its track.
+
+        Dropping frames here covers the PCM socket. A WebRTC call sends its
+        audio straight to the provider, so only the page can silence that one.
+        """
+        self._input_muted = self._user_muted or self._input_held
+        if self._closing:
+            return
+        try:
+            await self._send_json({"type": "input_mute", "muted": self._input_muted})
+        except Exception:  # noqa: BLE001 — the frames are dropped here regardless
+            log.warning("Voice page missed the microphone mute", exc_info=True)
+
     async def handle_audio_frame(self, pcm: bytes) -> None:
         if (
             self._connection is None
             or self._closing
             or self._recovering
+            or self._input_muted
             or self._connection.answer_sdp
         ):
             return
@@ -1137,6 +1235,7 @@ class LiveVoiceSession:
         if self._ended:
             return
         self._ended = True
+        self._stop_watching_input_mute()
         self._clear_media_levels()
         from jarvis.live.runtime import unregister
 
