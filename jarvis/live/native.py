@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import logging
 import time
 from dataclasses import replace
@@ -13,15 +14,91 @@ from uuid import uuid4
 
 from jarvis.core.paths import user_data_dir
 from jarvis.core.runtime_refs import get_supervisor_tool_gateway
+from jarvis.core.tool_budget import VOICE_TOOL_BUDGET_S
 from jarvis.live.product import PRODUCT_BRIEF
 from jarvis.live.runtime import claim, register, unregister
 from jarvis.live.session import LiveVoiceSession
 from jarvis.live.state import LiveLedger, TranscriptFragment
 from jarvis.live.tools import LiveTools, take_images
 from jarvis.realtime.audio import StreamingPcm16Resampler
-from jarvis.realtime.protocol import RealtimeSessionConfig
+from jarvis.realtime.protocol import RealtimeSessionConfig, RealtimeUnavailableError
 
 log = logging.getLogger(__name__)
+
+# How long a provider's readiness probe may take before the call is refused
+# (release SLO: an honest refusal within one second, spoken and visible).
+_DUPLEX_PROBE_BUDGET_S = 1.0
+# Spoken only when the provider gives no reason of its own (or its probe hangs).
+_DUPLEX_REFUSAL_FALLBACK = "The selected voice engine cannot take a call right now."
+# Ceiling for ONE native tool call before the live model is released with an
+# honest "still running" result; the tool itself keeps running. Ported from
+# ``_NATIVE_TOOL_DEADLINE_S`` in ``jarvis/realtime/session.py``. A module
+# attribute so tests can pin it low.
+_TOOL_DEADLINE_S = VOICE_TOOL_BUDGET_S
+# Session built-ins of ``LiveTools``: always declared, whatever the budget.
+_SESSION_TOOLS = frozenset({"end_call", "discover_tools", "call_tool", "confirm_action"})
+# Under a declaration budget (a provider's ``tool_declaration_budget_tokens``
+# or ``[voice].realtime_tool_declaration_budget_tokens``, the smaller wins), at
+# most this many catalog tools are declared directly; every other tool stays
+# reachable through discover_tools/call_tool. A small local model pays a full
+# LLM round per discovery step, so the frequent tools come first.
+_DIRECT_TOOL_LIMIT = 12
+_DIRECT_TOOL_PREFERENCE = (
+    "workspace-orchestrate",
+    "find-app-action",
+    "run-app-action",
+    "search_web",
+    "open_app",
+    "take_appshot",
+    "screen_snapshot",
+    "google_calendar",
+    "gmail",
+    "youtube_music",
+    "spotify",
+    "home_assistant",
+    "wiki-recall",
+    "product_help",
+)
+
+
+def _declared_name(declaration: dict) -> str:
+    """The canonical tool name behind a declaration (catalog tools are aliased)."""
+    name = str(declaration.get("name", ""))
+    if name in _SESSION_TOOLS:
+        return name
+    return str(declaration.get("description", "")).split(": ", 1)[0]
+
+
+def _fit_declarations(declarations: list[dict], budget_chars: int) -> tuple[dict, ...]:
+    """Session built-ins plus a curated direct set that fits ``budget_chars``."""
+    session = [d for d in declarations if d.get("name") in _SESSION_TOOLS]
+    rank = {name: index for index, name in enumerate(_DIRECT_TOOL_PREFERENCE)}
+    catalog = sorted(
+        (d for d in declarations if d.get("name") not in _SESSION_TOOLS),
+        key=lambda d: rank.get(_declared_name(d), len(rank)),
+    )
+    used = sum(len(json.dumps(d)) for d in session)
+    direct: list[dict] = []
+    for declaration in catalog:
+        if len(direct) >= _DIRECT_TOOL_LIMIT:
+            break
+        size = len(json.dumps(declaration))
+        if used + size > budget_chars:
+            continue
+        used += size
+        direct.append(declaration)
+    return (*session, *direct)
+
+
+def _log_late_probe(task: asyncio.Future) -> None:
+    """Retrieve a readiness probe that outlived its refusal, so nothing is lost."""
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        log.warning("Native voice readiness probe failed after the refusal: %s", exc)
+    else:
+        log.info("Native voice readiness probe answered late: %s", task.result())
 
 
 class NativeLiveVoiceSession(LiveVoiceSession):
@@ -42,8 +119,11 @@ class NativeLiveVoiceSession(LiveVoiceSession):
             claim(self.session_id)
             self._initial_seed = self._take_initial_context()
             settings = getattr(self._config.brain, "providers", {}).get(self.active_provider)
-            tier = self._config.brain.realtime
-            model = getattr(tier, "model", "") or getattr(settings, "model", "") or ""
+            # The active provider's own model only. ``[brain.realtime].model``
+            # belongs to whichever card last wrote it (the OpenAI Live card)
+            # and survives a provider switch, so Gemini or the local engine
+            # was handed another provider's model id. Empty = adapter default.
+            model = getattr(settings, "model", "") or ""
             self._active_model = model
             language_rule = (
                 "Use the user's language and follow explicit language changes. "
@@ -78,12 +158,10 @@ class NativeLiveVoiceSession(LiveVoiceSession):
                 history=tuple(
                     {"role": item["role"], "text": item["delta"]} for item in self._initial_seed
                 ),
-                tools=tuple(
-                    {key: value for key, value in declaration.items() if key != "type"}
-                    for declaration in self._tools.declarations()
-                ),
+                tools=self._tool_declarations(),
             )
             self._native_config = cfg
+            await self._refuse_unless_duplex_ready()
             from jarvis.live.recovery import connection_permit
 
             await connection_permit()
@@ -140,6 +218,102 @@ class NativeLiveVoiceSession(LiveVoiceSession):
             await self.end(reason="error")
             raise
 
+    def _declaration_budget_tokens(self) -> int:
+        """The smaller of the config bound and the provider's own budget; 0 = none.
+
+        Same rule as ``RealtimeVoiceSession._declaration_budget_chars``: the
+        provider's budget is a capability (AP-21), never a name check.
+        """
+        configured = int(
+            getattr(
+                getattr(self._config, "voice", None),
+                "realtime_tool_declaration_budget_tokens",
+                0,
+            )
+            or 0
+        )
+        declared = int(getattr(self._provider, "tool_declaration_budget_tokens", 0) or 0)
+        budgets = [budget for budget in (configured, declared) if budget > 0]
+        return min(budgets) if budgets else 0
+
+    def _tool_declarations(self) -> tuple[dict, ...]:
+        assert self._tools is not None
+        declarations = [
+            {key: value for key, value in declaration.items() if key != "type"}
+            for declaration in self._tools.declarations()
+        ]
+        budget = self._declaration_budget_tokens()
+        if budget <= 0:
+            return tuple(declarations)
+        fitted = _fit_declarations(declarations, budget * 4)
+        # AP-30: a trimmed tool set looks exactly like a complete one.
+        log.info(
+            "Native voice declares %d of %d tools under a %d-token budget for %s; "
+            "the rest stay reachable through discover_tools",
+            len(fitted),
+            len(declarations),
+            budget,
+            self.active_provider,
+        )
+        return fitted
+
+    async def _refuse_unless_duplex_ready(self) -> None:
+        """Refuse within a second, in the provider's own words, when it cannot talk.
+
+        A provider without the probe is assumed ready. A probe that outlives
+        the budget keeps running in the background: it may be starting an
+        engine, which must not be torn in half.
+        """
+        probe = getattr(self._provider, "can_open_duplex_session", None)
+        if not callable(probe):
+            return
+        check = asyncio.ensure_future(probe())
+        try:
+            ready = bool(await asyncio.wait_for(asyncio.shield(check), _DUPLEX_PROBE_BUDGET_S))
+        except TimeoutError:
+            check.add_done_callback(_log_late_probe)
+            ready = False
+        except Exception:
+            log.warning("Native voice readiness probe failed", exc_info=True)
+            ready = False
+        if ready:
+            return
+        reason = (
+            str(getattr(self._provider, "duplex_unavailable_reason", "") or "").strip()
+            or _DUPLEX_REFUSAL_FALLBACK
+        )
+        self._detail = reason
+        log.warning("Native voice refused to start (%s): %s", self.active_provider, reason)
+        try:
+            await self._send_json(
+                {
+                    "type": "error_spoken",
+                    "text": reason,
+                    "detail": reason,
+                    "language": self._language,
+                    "spoken_kind": "reply",
+                    "provider": self.active_provider,
+                }
+            )
+        except Exception:  # noqa: BLE001 — the refusal still propagates
+            log.warning("Native voice refusal notice could not be sent", exc_info=True)
+        raise RealtimeUnavailableError(reason)
+
+    async def _interrupt_reply(self) -> None:
+        """Barge-in: stop the provider's reply and flush what the browser holds."""
+        interrupt = getattr(self._connection, "interrupt", None)
+        if callable(interrupt):
+            try:
+                await interrupt()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.warning(
+                    "Native voice interrupt failed; flushing playback anyway", exc_info=True
+                )
+        self.playback_active = False
+        await self._emit_indicator({"type": "audio_clear"})
+
     async def handle_audio_frame(self, pcm: bytes) -> None:
         if (
             self._connection is not None
@@ -184,7 +358,20 @@ class NativeLiveVoiceSession(LiveVoiceSession):
             }
         )
 
-    async def _request_native_response(self) -> None:
+    async def _request_native_response(self, language: str = "") -> None:
+        # The turn's language is decided once (``turn_language``); a provider
+        # that can take it per session hears it before it answers.
+        update = getattr(self._connection, "update_session", None)
+        if language and callable(update):
+            try:
+                await update(language=language)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                if not self._closing:
+                    log.warning(
+                        "Native voice language update failed; answering anyway", exc_info=True
+                    )
         try:
             await self._connection.request_response()
         except asyncio.CancelledError:
@@ -258,7 +445,7 @@ class NativeLiveVoiceSession(LiveVoiceSession):
                     )
                     self._tools.language = self._language
                     if not getattr(self._connection, "creates_responses_automatically", True):
-                        task = asyncio.create_task(self._request_native_response())
+                        task = asyncio.create_task(self._request_native_response(self._language))
                         self._control_tasks.add(task)
                         task.add_done_callback(self._control_tasks.discard)
             if role == "assistant" or event.is_final:
@@ -298,8 +485,11 @@ class NativeLiveVoiceSession(LiveVoiceSession):
             self._jobs.add(task)
             task.add_done_callback(self._jobs.discard)
         elif event.type in {"interrupted", "speech_started"}:
+            barge_in = event.type == "speech_started" and (self._speaking or self.playback_active)
             self._speaking = False
             self._thinking = False
+            if barge_in:
+                await self._interrupt_reply()
             await self._emit_indicator({"type": "tts_cancel"})
         elif event.type == "turn_complete":
             self._transcript.finish("assistant")
@@ -343,12 +533,23 @@ class NativeLiveVoiceSession(LiveVoiceSession):
     async def _call(self, event: Any, revision: int) -> None:
         assert self._tools is not None
         try:
-            result = await self._tools.execute(
-                f"{self._wire_epoch}:{event.call_id or uuid4()}",
-                event.tool_name,
-                event.tool_args or {},
-                revision,
+            work = asyncio.ensure_future(
+                self._tools.execute(
+                    f"{self._wire_epoch}:{event.call_id or uuid4()}",
+                    event.tool_name,
+                    event.tool_args or {},
+                    revision,
+                )
             )
+            try:
+                # ``shield``: the deadline releases the LIVE MODEL, never the
+                # tool; an action mid-flight finishes and keeps its receipt.
+                result = await asyncio.wait_for(asyncio.shield(work), _TOOL_DEADLINE_S)
+            except asyncio.CancelledError:
+                work.cancel()  # cancelling the call still cancels its tool, as before
+                raise
+            except TimeoutError:
+                result = self._release_slow_tool(work, str(event.tool_name or ""))
             images = take_images(result)
             if self._closing:
                 return
@@ -368,6 +569,46 @@ class NativeLiveVoiceSession(LiveVoiceSession):
             raise
         except Exception:
             log.exception("Native tool call failed; receipt retained")
+
+    def _release_slow_tool(self, work: asyncio.Future, name: str) -> dict:
+        """Answer the model honestly while the tool runs on in the background."""
+        started = time.monotonic()
+        log.warning(
+            "Native tool %s still running after %.0fs; releasing the live model with a "
+            "pending result, the tool finishes in the background",
+            name,
+            _TOOL_DEADLINE_S,
+        )
+        # Kept in ``_jobs``: a call that ends now still waits for its receipt.
+        self._jobs.add(work)
+        work.add_done_callback(self._jobs.discard)
+
+        def _late(done: asyncio.Future) -> None:
+            waited_ms = round((time.monotonic() - started) * 1000)
+            if done.cancelled():
+                log.info("Late native tool %s was cancelled", name)
+            elif done.exception() is not None:
+                log.warning("Late native tool %s failed: %s", name, done.exception())
+            else:
+                outcome = done.result()
+                log.info(
+                    "Late native tool %s finished %d ms after its release (success=%s)",
+                    name,
+                    waited_ms,
+                    bool(isinstance(outcome, dict) and outcome.get("success")),
+                )
+
+        work.add_done_callback(_late)
+        return {
+            "success": False,
+            "pending": True,
+            "error": (
+                f"This tool is still running after {_TOOL_DEADLINE_S:.0f} seconds and will "
+                "finish in the background. Tell the user in one short sentence that it is "
+                "taking longer than usual; do not call it again in this turn and do not "
+                "claim it is done."
+            ),
+        }
 
     async def handle_control(self, message: dict) -> None:
         if self._closing:
