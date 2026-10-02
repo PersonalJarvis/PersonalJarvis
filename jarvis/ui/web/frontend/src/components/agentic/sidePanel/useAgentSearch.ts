@@ -26,6 +26,7 @@ export function useAgentSearch(query: string, documents: AgentSearchDocument[]) 
   useEffect(() => {
     const id = ++sequence.current;
     let timeout: ReturnType<typeof setTimeout> | undefined;
+    let idleTimeout: ReturnType<typeof setTimeout> | undefined;
     let disposed = false;
     const cancel: AgentSearchRequest = { type: "cancel", id };
     worker.current?.postMessage(cancel);
@@ -57,6 +58,12 @@ export function useAgentSearch(query: string, documents: AgentSearchDocument[]) 
           if (answer.type === "result") {
             clearTimeout(timeout);
             setState({ key, status: "ready", matches: answer.matches });
+            // The IDE can stay mounted behind another view. Keep the visible
+            // results, but release the model's RAM after a minute without work.
+            idleTimeout = setTimeout(() => {
+              worker.current?.terminate();
+              worker.current = null;
+            }, 60_000);
           } else {
             setState({ key, status: answer.type, matches: [] });
           }
@@ -75,6 +82,7 @@ export function useAgentSearch(query: string, documents: AgentSearchDocument[]) 
       disposed = true;
       clearTimeout(timer);
       clearTimeout(timeout);
+      clearTimeout(idleTimeout);
     };
   }, [key, retry]);
 

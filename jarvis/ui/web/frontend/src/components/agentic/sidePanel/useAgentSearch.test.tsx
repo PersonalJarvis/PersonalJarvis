@@ -76,6 +76,17 @@ describe("local agent search lifecycle", () => {
     expect(SearchWorker.instances).toHaveLength(2);
   });
 
+  it("releases idle model memory while retaining the displayed results", () => {
+    const { result } = renderHook(() => useAgentSearch("calls", documents));
+    debounce();
+    const worker = SearchWorker.instances[0];
+    act(() => worker.reply({ type: "result", id: worker.lastId, matches: [{ id: "voice@w1", score: 0.8 }] }));
+    act(() => vi.advanceTimersByTime(60_000));
+    expect(worker.terminated).toBe(true);
+    expect(result.current.status).toBe("ready");
+    expect(result.current.matches).toHaveLength(1);
+  });
+
   it("times out stuck inference and releases memory on clear and unmount", () => {
     const { result, rerender, unmount } = renderHook(({ query }) => useAgentSearch(query, documents), { initialProps: { query: "calls" } });
     debounce();
