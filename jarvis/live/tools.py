@@ -95,6 +95,7 @@ class LiveTools:
         *,
         language: str,
         backend_model: str,
+        model_selection: Any = None,
     ) -> None:
         self.gateway = gateway
         self.ledger = ledger
@@ -103,6 +104,7 @@ class LiveTools:
         self.backend_model = backend_model
         # Recent user caption segments, newest last (see ``user_text``).
         self._recent_user: list[str] = []
+        self.model_selection = model_selection
         self.user_text = ""
         self.revision = 0
         self.cancel_token = CancelToken()
@@ -315,7 +317,9 @@ class LiveTools:
             from jarvis.core.model_selection import ModelSelection, use_operation_model
 
             if self.backend_model:
-                with use_operation_model(ModelSelection("openai", self.backend_model)):
+                with use_operation_model(
+                    self.model_selection or ModelSelection("openai", self.backend_model)
+                ):
                     result = await self.gateway.execute_confirmed(trace, self._request(trace))
             else:
                 result = await self.gateway.execute_confirmed(trace, self._request(trace))
@@ -359,7 +363,9 @@ class LiveTools:
         from jarvis.core.model_selection import ModelSelection, use_operation_model
 
         if self.backend_model:
-            with use_operation_model(ModelSelection("openai", self.backend_model)):
+            with use_operation_model(
+                self.model_selection or ModelSelection("openai", self.backend_model)
+            ):
                 result = await self.gateway.execute(canonical, args, self._request(trace))
         else:
             if canonical in {

@@ -744,6 +744,13 @@ class SkillCreatorService:
             seen.add(key)
             return True
 
+        from jarvis.core.model_selection import operation_model
+
+        selection = operation_model.get()
+        if selection is not None and selection.brain_override is not None:
+            if _fresh(selection.brain_override):
+                yield selection.brain_override, f"operation:{selection.provider}/{selection.model}"
+            return
         bm = self._brain
         if self._seat_only:
             if _fresh(bm):
@@ -753,9 +760,6 @@ class SkillCreatorService:
         # its thinking model) outranks the chat brain's active model: without
         # this, a skill drafted from a cheap voice session ran on the chat
         # tier's frontier model instead (live 2026-09-29: ~$0.06 per draft).
-        from jarvis.core.model_selection import operation_model
-
-        selection = operation_model.get()
         get_brain = getattr(bm, "_get_brain", None) if bm is not None else None
         if selection is not None and selection.model and callable(get_brain):
             try:

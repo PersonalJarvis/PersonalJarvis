@@ -600,6 +600,7 @@ discord = "jarvis.channels.discord:DiscordChannel"
 # "codex-subscription-voice"), which uses the audited app-server TEXT protocol.
 openai-realtime = "jarvis.plugins.realtime.openai_realtime:OpenAIRealtimeProvider"
 openai-live = "jarvis.plugins.realtime.openai_live:OpenAILiveProvider"
+openai-live-subscription = "jarvis.plugins.realtime.openai_subscription_live:OpenAISubscriptionLiveProvider"
 gemini-live = "jarvis.plugins.realtime.gemini_live:GeminiLiveProvider"
 # Same duplex socket on Google Cloud Vertex AI. A DISTINCT credential family:
 # a Cloud project and an AI Studio account fail independently, so crossing

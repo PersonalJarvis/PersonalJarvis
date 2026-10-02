@@ -98,7 +98,7 @@ async def test_start_opens_store_and_permit_concurrently(monkeypatch, tmp_path) 
         module, "get_supervisor_tool_gateway", lambda: SimpleNamespace()
     )
     monkeypatch.setattr(module, "user_data_dir", lambda: tmp_path)
-    monkeypatch.setattr(module.LiveTools, "declarations", lambda self: [])
+    monkeypatch.setattr(module.LiveTools, "declarations", lambda self, **_kwargs: [])
     monkeypatch.setattr("jarvis.live.recovery.connection_permit", _slow_permit)
     monkeypatch.setattr(module, "LiveLedger", _slow_ledger)
 

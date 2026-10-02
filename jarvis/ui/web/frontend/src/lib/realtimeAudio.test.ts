@@ -7,6 +7,7 @@ import {
   browserRealtimeSupportIssue,
   buildAudioSocketUrl,
   RealtimeAudioClient,
+  RealtimeWebRtcTransport,
   StreamingPcm16Resampler,
 } from "./realtimeAudio";
 
@@ -43,6 +44,7 @@ class FakePeerConnection {
   static instances: FakePeerConnection[] = [];
   static offerSdp = "offer-sdp";
   iceGatheringState: RTCIceGatheringState = "complete";
+  connectionState: RTCPeerConnectionState = "new";
   localDescription: RTCSessionDescription | null = null;
   remoteDescriptions: RTCSessionDescriptionInit[] = [];
   addTransceiver = vi.fn();
@@ -50,8 +52,9 @@ class FakePeerConnection {
   channel = Object.assign(new EventTarget(), { close: vi.fn() });
   createDataChannel = vi.fn(() => this.channel);
   close = vi.fn();
-  addEventListener = vi.fn();
-  removeEventListener = vi.fn();
+  events = new EventTarget();
+  addEventListener = vi.fn(this.events.addEventListener.bind(this.events));
+  removeEventListener = vi.fn(this.events.removeEventListener.bind(this.events));
   ontrack: ((event: RTCTrackEvent) => void) | null = null;
 
   constructor() {
@@ -64,6 +67,8 @@ class FakePeerConnection {
   });
   setRemoteDescription = vi.fn(async (description: RTCSessionDescriptionInit) => {
     this.remoteDescriptions.push(description);
+    this.connectionState = "connected";
+    this.events.dispatchEvent(new Event("connectionstatechange"));
     this.channel.dispatchEvent(new MessageEvent("message", { data: '{"type":"session.started"}' }));
   });
 }
@@ -121,6 +126,74 @@ function installVoiceBrowserFakes() {
 }
 
 describe("realtime audio client", () => {
+  it("uses audio-only subscription SDP and releases microphone audio only after the peer connects", async () => {
+    installVoiceBrowserFakes();
+    vi.stubGlobal("Audio", class { play = async () => undefined; pause = () => undefined; });
+    const client = new RealtimeAudioClient({}, {
+      browserAudio: true, requiresWebRtcOffer: true, webRtcStartEventRequired: false,
+    });
+    const connecting = client.connect();
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    const socket = FakeWebSocket.instances[0];
+    const peer = FakePeerConnection.instances[0];
+    const gate = FakeAudioNode.instances.find(node => node.name === "pcm-startup")!;
+    expect(peer.createDataChannel).not.toHaveBeenCalled();
+    expect(peer.addTrack.mock.calls[0][0]).toBe("buffered-track");
+    peer.setRemoteDescription = vi.fn(async () => undefined);
+    socket.open();
+    socket.receive({ type: "audio_ready", requires_webrtc_answer: true, webrtc_answer_sdp: "answer" });
+    await Promise.resolve();
+    expect(gate.port.postMessage.mock.calls.some(([message]) => message.type === "start")).toBe(false);
+    peer.connectionState = "connected";
+    peer.events.dispatchEvent(new Event("connectionstatechange"));
+    await connecting;
+    expect(gate.port.postMessage.mock.calls.filter(([message]) => message.type === "start")).toHaveLength(1);
+    socket.receive({ type: "audio_closed" });
+    await client.disconnect();
+  });
+
+  it.each(["failed", "closed"] as const)("rejects a subscription peer that becomes %s", async (state) => {
+    vi.stubGlobal("RTCPeerConnection", FakePeerConnection);
+    const transport = new RealtimeWebRtcTransport();
+    await transport.createOffer(undefined, false);
+    const peer = FakePeerConnection.instances[0];
+    peer.setRemoteDescription = vi.fn(async () => undefined);
+    const answering = transport.applyAnswer("answer");
+    const rejected = expect(answering).rejects.toThrow("media connection failed");
+    peer.connectionState = state;
+    peer.events.dispatchEvent(new Event("connectionstatechange"));
+    await rejected;
+    transport.close();
+  });
+
+  it("bounds audio-only startup and removes its connection listener on timeout", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("RTCPeerConnection", FakePeerConnection);
+    const transport = new RealtimeWebRtcTransport();
+    await transport.createOffer(undefined, false, 1000);
+    const peer = FakePeerConnection.instances[0];
+    peer.setRemoteDescription = vi.fn(async () => undefined);
+    const answering = transport.applyAnswer("answer");
+    const rejected = expect(answering).rejects.toThrow("GPT-Live did not start");
+    await vi.advanceTimersByTimeAsync(1000);
+    await rejected;
+    expect(peer.removeEventListener).toHaveBeenCalledWith("connectionstatechange", expect.any(Function));
+    transport.close();
+    vi.useRealTimers();
+  });
+
+  it("cancels audio-only startup immediately when the user closes the transport", async () => {
+    vi.stubGlobal("RTCPeerConnection", FakePeerConnection);
+    const transport = new RealtimeWebRtcTransport();
+    await transport.createOffer(undefined, false);
+    FakePeerConnection.instances[0].setRemoteDescription = vi.fn(async () => undefined);
+    const answering = transport.applyAnswer("answer");
+    const rejected = expect(answering).rejects.toThrow(/closed/);
+    await Promise.resolve();
+    transport.close();
+    await rejected;
+  });
+
   it("uses buffered RTP and forwards input levels before the media handshake completes", async () => {
     installVoiceBrowserFakes();
     vi.stubGlobal("Audio", class { play = async () => undefined; pause = () => undefined; });

@@ -3596,6 +3596,15 @@ class BrainManager:
         under a ``TurnOverride`` gets its own instance, so its client — and
         the credential that client resolved — is never the voice brain's.
         """
+        from jarvis.core.model_selection import operation_model
+
+        selected = operation_model.get()
+        if selected is not None and selected.brain_override is not None:
+            if name != selected.provider or (model and model != selected.model):
+                raise RuntimeError(
+                    "This operation cannot switch its selected model or billing account."
+                )
+            return selected.brain_override
         key = (name if scope is None else f"{name}@{scope}", model)
         if key in self._brain_cache:
             return self._brain_cache[key]

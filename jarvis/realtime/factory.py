@@ -102,7 +102,21 @@ def _identified_provider_candidates(
                 if credential_candidates
                 else None
             )
-            if api_key:
+            external_kind = getattr(provider_cls, "external_credentials_kind", "")
+            if external_kind == "chatgpt_oauth":
+                if provider_id not in explicit_ids:
+                    continue
+                from jarvis.live.recovery import connection_permit
+                from jarvis.live.subscription_auth import SubscriptionAuth
+
+                auth = SubscriptionAuth.from_runtime_config(cfg)
+                if not defer_external_login_probe and not auth.status_snapshot()["connected"]:
+                    continue
+                provider = provider_cls(
+                    credentials=auth.credentials, connection_permit=connection_permit,
+                )
+                provider.subscription_auth = auth
+            elif api_key:
                 provider = provider_cls(api_key=api_key)
             else:
                 external_login_ready = getattr(
@@ -446,6 +460,17 @@ def _warn_on_same_family_delegate_chain(
         log.debug("Realtime credential-family diagnostics failed.", exc_info=True)
 
 
+def realtime_webrtc_start_event_required(cfg: Any) -> bool:
+    """Select the media readiness contract without starting a provider session."""
+    for provider_id in _explicit_provider_ids(cfg)[:1]:
+        try:
+            provider = load(_GROUP, provider_id, protocol=RealtimeProvider)
+            return bool(getattr(provider, "webrtc_start_event_required", True))
+        except Exception:
+            log.warning("WebRTC readiness capability unavailable", exc_info=True)
+    return True
+
+
 def realtime_browser_audio(cfg: Any) -> bool:
     """Whether the selected engine needs browser echo-cancelled audio."""
     for provider_id in _explicit_provider_ids(cfg)[:1]:
@@ -482,6 +507,13 @@ def build_realtime_session(
             log.info("Realtime voice has no credential-ready provider; using pipeline mode.")
             return None
         primary_provider = providers[0]
+        if getattr(primary_provider, "client_managed_delegation", False):
+            from jarvis.live.subscription import SubscriptionLiveVoiceSession
+
+            return SubscriptionLiveVoiceSession(
+                session_id=session_id, send_binary=send_binary, send_json=send_json,
+                providers=providers, config=cfg, bus=bus, brain=brain, surface=surface,
+            )
         if getattr(primary_provider, "native_tool_orchestration", False):
             from jarvis.live.native import NativeLiveVoiceSession
 
@@ -490,11 +522,20 @@ def build_realtime_session(
                 providers=providers, config=cfg, bus=bus, brain=brain, surface=surface,
             )
         if getattr(primary_provider, "continuous_conversation", False):
+            import copy
+
             from jarvis.live.session import LiveVoiceSession
 
+            # A direct provider switch (including CLI) selects its own billing
+            # path even when the other Live profile was edited most recently.
+            live_config = cfg
+            profile = getattr(cfg, "live", None)
+            if profile is not None and getattr(profile, "auth_mode", "api_key") != "api_key":
+                live_config = copy.copy(cfg)
+                live_config.live = profile.model_copy(update={"auth_mode": "api_key"})
             return LiveVoiceSession(
                 session_id=session_id, send_binary=send_binary, send_json=send_json,
-                providers=providers, config=cfg, bus=bus, brain=brain, surface=surface,
+                providers=providers, config=live_config, bus=bus, brain=brain, surface=surface,
             )
         _warn_on_same_family_delegate_chain(
             cfg,
