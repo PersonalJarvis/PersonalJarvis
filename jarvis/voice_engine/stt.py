@@ -17,7 +17,10 @@ from jarvis.voice_engine.audio import STT_RATE
 
 
 def default_threads() -> int:
-    return max(1, min(4, (os.cpu_count() or 2) // 2))
+    """All cores on small machines (measured: half of 4 vCPUs left Piper slower
+    than Pocket in the Linux container), half of them, at most 4, elsewhere."""
+    cores = os.cpu_count() or 2
+    return cores if cores <= 4 else min(4, cores // 2)
 
 
 class ParakeetStt:

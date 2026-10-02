@@ -6,7 +6,6 @@ voice files come from Piper.
 
 from __future__ import annotations
 
-import os
 import threading
 from collections.abc import Iterator
 from pathlib import Path
@@ -14,6 +13,7 @@ from pathlib import Path
 import numpy as np
 
 from jarvis.voice_engine.models import is_present, model_path
+from jarvis.voice_engine.stt import default_threads
 
 VOICES = {"de": "piper-de-thorsten-medium", "en": "piper-en-ryan-medium"}
 
@@ -32,7 +32,7 @@ class PiperTts:
                     tokens=str(voice_dir / "tokens.txt"),
                     data_dir=str(voice_dir / "espeak-ng-data"),
                 ),
-                num_threads=threads or max(1, min(4, (os.cpu_count() or 2) // 2)),
+                num_threads=threads or default_threads(),
                 provider="cpu",
             ),
         )
