@@ -8,6 +8,7 @@ import pytest
 from jarvis.agentic_ide.terminal_input import (
     DEVICE_ATTRIBUTES,
     THEME_COLOURS,
+    ColourQueryWatch,
     TerminalQueryResponder,
     classify_terminal_input,
     is_newline_chord_only,
@@ -67,6 +68,25 @@ def test_an_answered_query_is_never_answered_twice() -> None:
     responder.feed(BG_QUERY)
 
     assert responder.feed("Welcome to Codex\r\n") == ""
+
+
+def test_the_colour_question_is_noticed_once_even_when_split() -> None:
+    watch = ColourQueryWatch()
+
+    watch.feed("banner \x1b]11", 1.0)
+    assert watch.asked_at is None
+    watch.feed(";?\x07 composer", 2.0)
+    assert watch.asked_at == 2.0
+
+    # The retained tail must not report the same question again later.
+    watch.feed("more output", 3.0)
+    assert watch.asked_at == 2.0
+
+    watch.feed(DA_QUERY + "\x1b]10;rgb:ffff/ffff/ffff\x07", 4.0)
+    assert watch.asked_at == 2.0, "device attributes and colour SETTING are not the question"
+
+    watch.reset()
+    assert watch.asked_at is None
 
 
 def test_ordinary_output_is_not_mistaken_for_a_query() -> None:

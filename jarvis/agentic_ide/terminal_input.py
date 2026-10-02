@@ -205,10 +205,52 @@ class TerminalQueryResponder:
         return f"\x1b]{which};{_rgb(colour)}{match.group('terminator')}"
 
 
+_COLOUR_QUERY_RE = re.compile(r"\x1b\](?:10|11);\?(?:\x07|\x1b\\)")
+
+
+@dataclass(slots=True)
+class ColourQueryWatch:
+    """Remember when a pane's CLI last asked its terminal for its colours.
+
+    Fed from the output the app sees, which is always AFTER the reply went
+    out: the PTY's reader (or the PTY host) answers a query before it hands
+    the bytes on. So ``asked_at`` doubles as "answered at".
+
+    It exists for a CLI that reads that answer straight from its console
+    input while it starts. Codex paints its composer first and asks for the
+    colours a second or more later; a prompt typed into that gap is still
+    sitting in the input when the question goes out, the CLI reads the
+    prompt where it expected the answer, and the colour reply then lands in
+    the composer as ``]10;rgb:f4f4/f4f4/f6f6\\]11;rgb:1212/1414/1a1a\\``
+    (reproduced 2026-10-02 on Codex 0.159.3). Readiness waits for this.
+    """
+
+    asked_at: float | None = None
+    _tail: str = field(default="", repr=False)
+
+    def feed(self, data: str, now: float) -> None:
+        """Note a colour query in ``data``, even one split across two reads."""
+        if not data:
+            return
+        combined = self._tail + data
+        consumed = 0
+        for match in _COLOUR_QUERY_RE.finditer(combined):
+            self.asked_at = now
+            consumed = match.end()
+        # A query already noted must not be noted again from the retained tail.
+        self._tail = combined[max(consumed, len(combined) - _TAIL_KEEP) :]
+
+    def reset(self) -> None:
+        """Forget everything — a fresh process has asked nothing yet."""
+        self.asked_at = None
+        self._tail = ""
+
+
 __all__ = [
     "DEFAULT_APPEARANCE",
     "DEVICE_ATTRIBUTES",
     "THEME_COLOURS",
+    "ColourQueryWatch",
     "TerminalQueryResponder",
     "classify_terminal_input",
     "is_newline_chord_only",

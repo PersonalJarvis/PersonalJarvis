@@ -9,6 +9,14 @@ from typing import Any
 
 READY_TIMEOUT_S = 45.0
 READY_POLL_S = 0.25
+#: How long after its colour question was answered such a CLI gets to read the
+#: answer. The reply is written before the app even sees the question, so this
+#: only covers the CLI's own parsing.
+COLOUR_PROBE_SETTLE_S = 0.3
+#: How long a pane that declares the colour question may go without asking it
+#: before readiness stops waiting — a CLI version that dropped the question, or
+#: an adopted agent whose question was cut out of the replay.
+COLOUR_PROBE_WAIT_S = 10.0
 _INPUT_MARKERS = ("›", "❯", ">")
 log = logging.getLogger(__name__)
 
@@ -35,7 +43,32 @@ def ready_for_prompt(term: Any) -> bool:
     spec = workspace_agents.get_agent(getattr(term, "agent", ""))
     if spec is not None and not spec.needs_input_line_wait:
         return True
-    return input_line_visible(term, spec)
+    if not input_line_visible(term, spec):
+        return False
+    if spec is not None and spec.asks_colours_after_input_line:
+        return colour_probe_settled(term)
+    return True
+
+
+def colour_probe_settled(term: Any, now: float | None = None) -> bool:
+    """Has this pane's CLI asked for its colours and had time to read the reply?
+
+    Codex paints its composer, then asks the terminal for its colours and
+    reads the answer from its keyboard input. A prompt typed in between is
+    read where the answer was expected, and the answer is then typed into the
+    composer as ``]10;rgb:…\\]11;rgb:…\\`` (maintainer report 2026-10-02).
+    A pane without a watch, or one that never asks within
+    ``COLOUR_PROBE_WAIT_S`` of starting, is not held back.
+    """
+    watch = getattr(term, "colour_queries", None)
+    if watch is None:
+        return True
+    moment = time.time() if now is None else now
+    asked_at = getattr(watch, "asked_at", None)
+    if asked_at is not None:
+        return moment - asked_at >= COLOUR_PROBE_SETTLE_S
+    started_at = getattr(term, "started_at", None)
+    return not started_at or moment - started_at >= COLOUR_PROBE_WAIT_S
 
 
 def input_line_visible(term: Any, spec: Any | None = None) -> bool:

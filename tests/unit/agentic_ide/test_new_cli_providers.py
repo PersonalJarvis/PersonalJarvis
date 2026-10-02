@@ -30,7 +30,12 @@ from typing import Any
 import pytest
 
 from jarvis.agentic_ide import agent_sessions, drops
-from jarvis.agentic_ide.fleet_actions import _ready_for_prompt
+from jarvis.agentic_ide.fleet_actions import (
+    COLOUR_PROBE_SETTLE_S,
+    COLOUR_PROBE_WAIT_S,
+    _ready_for_prompt,
+)
+from jarvis.agentic_ide.terminal_input import ColourQueryWatch
 from jarvis.workspace import agents as workspace_agents
 
 # --------------------------------------------------------------- the registry
@@ -825,6 +830,40 @@ def test_a_booting_pane_of_a_new_cli_is_not_prompted_yet() -> None:
     assert _ready_for_prompt(_Pane("codex", ("» Ask Codex anything",))) is True
     # The one measured exception keeps its fast path.
     assert _ready_for_prompt(_Pane("claude", ("anything",))) is True
+
+
+def test_codex_is_not_prompted_before_its_colour_question_is_answered() -> None:
+    """Codex paints its composer, THEN asks for the screen colours.
+
+    A prompt typed into that gap is read where the colour answer was expected,
+    and the answer is typed into the composer as ``]10;rgb:…`` text instead
+    (maintainer report 2026-10-02, reproduced on Codex 0.159.3).
+    """
+    composer = ("› Ask Codex anything",)
+    now = time.time()
+
+    booting = _Pane("codex", composer)
+    booting.started_at = now
+    booting.colour_queries = ColourQueryWatch()
+    assert _ready_for_prompt(booting) is False
+
+    booting.colour_queries.feed("\x1b]10;?\x1b\\\x1b]11;?\x1b\\", time.time())
+    assert _ready_for_prompt(booting) is False, "the CLI still needs a moment to read the answer"
+
+    booting.colour_queries.asked_at = now - COLOUR_PROBE_SETTLE_S
+    assert _ready_for_prompt(booting) is True
+
+    # A Codex that never asks is not held back forever.
+    silent = _Pane("codex", composer)
+    silent.started_at = now - COLOUR_PROBE_WAIT_S
+    silent.colour_queries = ColourQueryWatch()
+    assert _ready_for_prompt(silent) is True
+
+    # Only a CLI that declares the question waits for it.
+    other = _Pane("opencode", ("> ",))
+    other.started_at = now
+    other.colour_queries = ColourQueryWatch()
+    assert _ready_for_prompt(other) is True
 
 
 # ----------------------------------------------------- DeepSeek Harness

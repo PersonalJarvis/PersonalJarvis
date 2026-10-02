@@ -278,6 +278,13 @@ class WorkspaceAgent:
     #: input-marker row. Ratatui CLIs can draw the same marker while disabling
     #: keyboard input; cursor visibility is the stable distinction.
     requires_visible_input_cursor: bool = False
+    #: True when this CLI asks its terminal for the screen colours shortly
+    #: AFTER its input line appears and reads the answer from its keyboard
+    #: input. A prompt typed into that gap corrupts the answer, which then
+    #: shows up in the composer as ``]10;rgb:…`` text, so readiness also waits
+    #: for that question to be asked and answered
+    #: (:func:`jarvis.agentic_ide.fleet_actions.colour_probe_settled`).
+    asks_colours_after_input_line: bool = False
     #: Maximum resumed panes of this CLI and account that may still be starting.
     #: Zero means no provider-specific limit beyond the shared machine gate.
     #: Use this when parallel starts contend on one vendor runtime store; the
@@ -799,6 +806,7 @@ _AGENTS: dict[str, WorkspaceAgent] = {
         instruction_filename="AGENTS.md",
         input_markers=("›", "»"),
         requires_visible_input_cursor=True,
+        asks_colours_after_input_line=True,
         # Two simultaneous resumes against Codex's shared SQLite/runtime store
         # were measured beyond 90 s while one resume initialized substantially
         # faster. Serialize only this shared-store boot phase. Claude and every

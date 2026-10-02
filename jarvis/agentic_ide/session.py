@@ -110,6 +110,7 @@ from .folders import ProjectProfile, probe_project
 from .names import free_positions, normalize, position_of, resolve
 from .terminal_input import (
     THEME_COLOURS,
+    ColourQueryWatch,
     TerminalQueryResponder,
     classify_terminal_input,
     is_pointer_noise_only,
@@ -1249,6 +1250,11 @@ class Terminal:
     # into a prompt the agent has long since opened, which is the corruption
     # this exists to prevent. Only live output reaches it.
     queries: TerminalQueryResponder = field(default_factory=TerminalQueryResponder)
+    # When this process's CLI asked for its colours — seen in the output the
+    # app receives, so on every backend including the PTY host. Readiness
+    # waits on it for a CLI that asks only after painting its input line
+    # (``fleet_actions.colour_probe_settled``).
+    colour_queries: ColourQueryWatch = field(default_factory=ColourQueryWatch)
     # Where this pane's output currently goes, or None while nobody is looking.
     #
     # A mutable slot rather than a closure captured at spawn time, and that is
@@ -2608,6 +2614,10 @@ class Registry:
         term.transcript.feed(result.replay)
         term.replay.clear()
         term.replay.feed(result.replay)
+        # The agent has been running all along; a colour question in its
+        # replay was answered back then, by the host.
+        term.colour_queries.reset()
+        term.colour_queries.feed(result.replay, time.time())
         if result.truncated:
             term.replay.truncated = True
         term.pty_id = info.terminal_id
@@ -2657,6 +2667,7 @@ class Registry:
             term.transcript.feed(text)
             term.replay.feed(text)
             term.last_output_at = time.time()
+            term.colour_queries.feed(text, term.last_output_at)
             for viewer in _viewers(term):
                 await viewer(text)
 
@@ -4198,6 +4209,7 @@ class Registry:
         # in the replay buffer belongs to a terminal that no longer exists, and
         # replaying it to the next viewer would show output from a dead agent.
         term.replay.clear()
+        term.colour_queries.reset()
         _watch(term, on_output, on_exit, cols, rows, on_geometry=on_geometry)
         term.reattached = False
         # This pane is wanted again, so the last deliberate kill is history.
@@ -4216,6 +4228,7 @@ class Registry:
             term.transcript.feed(text)
             term.replay.feed(text)
             term.last_output_at = time.time()
+            term.colour_queries.feed(text, term.last_output_at)
             # To EVERY viewer, not only the newest one. A pane open in two
             # places has two screens and both are supposed to show the same
             # agent; sending to one of them is how a window ends up frozen
@@ -4463,7 +4476,9 @@ class Registry:
             from . import fleet_actions
 
             try:
-                ready = await fleet_actions.wait_for_prompt_ready(
+                # The input line, not full prompt readiness: the slot guards
+                # the shared store's boot, which is over once the line exists.
+                ready = await fleet_actions.wait_for_input_line(
                     session,
                     [term.name],
                     timeout_s=fleet_actions.READY_TIMEOUT_S,
