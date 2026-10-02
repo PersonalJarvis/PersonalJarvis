@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 236827)
-Total output lines: 18220
-
 """Speech pipeline with call/hangup state and parallel wake detection.
 
 Wake detection runs in IDLE through two paths sharing one microphone fanout:
@@ -4648,7 +4645,8934 @@ class SpeechPipeline:
         try:
             _spawn(asyncio.get_running_loop())
             return
-        except …116827 tokens truncated…) - capture_closed_at) * 1000.0)}",
+        except RuntimeError:
+            pass
+        owner = getattr(self, "_runtime_loop", None)
+        if owner is None or not owner.is_running():
+            log.debug("%s not published: no running loop.", type(event).__name__)
+            return
+        try:
+            owner.call_soon_threadsafe(_spawn, owner)
+        except RuntimeError as exc:
+            log.debug("%s publish scheduling failed: %s", type(event).__name__, exc)
+
+    def _spawn_turn_polish(self, raw: str, *, language: str) -> None:
+        """Re-read a finished voice turn as prose, AFTER the turn has moved on.
+
+        Returns immediately, always. The brain already has ``raw`` verbatim and
+        is already answering; this schedules the polish pass beside that work and
+        publishes ``TranscriptPolished`` if a usable rewrite comes back. Nothing
+        in the turn waits for it, and nothing in the turn changes because of it —
+        the polished text is for the surfaces that DISPLAY and STORE the turn.
+
+        Putting the pass in front of the brain instead would be the obvious
+        implementation and the wrong one: it spends the whole latency ceiling
+        between the user finishing a sentence and Jarvis starting to answer,
+        every single turn, to improve a transcript nobody is reading yet.
+
+        Deliberately does NOT translate, even with ``[dictation].translate`` on.
+        That switch is about dictated text on its way into a document. A
+        conversation transcript is a record of what was said, and a record in a
+        different language from the one the assistant answered in is not a
+        readable conversation.
+
+        Fail-open twice, like the dictation call site: ``polish_transcript``
+        never raises and returns the raw text on every non-``applied`` status,
+        and the task additionally swallows anything the import or the publish
+        surfaces. A wording pass may never cost a turn.
+        """
+        text = str(raw or "").strip()
+        if not text:
+            return
+        cfg = getattr(self._config, "dictation", None)
+        # Both switches, because this EXTENDS the formatter rather than being a
+        # second one. Checked here rather than inside the task so the common
+        # case — the feature is off — costs one attribute read and no task.
+        if not getattr(cfg, "polish", False):
+            return
+        if not getattr(cfg, "polish_conversation", False):
+            return
+
+        async def _run() -> None:
+            try:
+                from jarvis.core.events import TranscriptPolished
+                from jarvis.dictation.polish import polish_transcript
+
+                result = await polish_transcript(
+                    text,
+                    language=language,
+                    cfg=cfg,
+                    protected_terms=self._dictation_protected_terms(),
+                    style=str(getattr(cfg, "polish_style", "neutral") or "neutral"),
+                )
+                log.debug(
+                    "turn polish: %s (%s, %d ms%s).",
+                    result.status,
+                    result.provider or "no provider",
+                    result.latency_ms,
+                    f", {result.reason}" if result.reason else "",
+                )
+                # ``applied`` is the only status that carries a DIFFERENT string;
+                # every other one hands back exactly what went in, and publishing
+                # that would make every consumer re-render the text it already
+                # has and log a change that never happened.
+                if result.status != "applied":
+                    return
+                await self._publish_event(
+                    TranscriptPolished(
+                        source_layer="speech.stt",
+                        text=result.text,
+                        raw_text=text,
+                        status=result.status,
+                        provider=result.provider,
+                        latency_ms=result.latency_ms,
+                    )
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 — a wording pass never costs a turn
+                log.debug("turn polish failed; the raw transcript stands.",
+                          exc_info=True)
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No loop means no turn in flight either; nothing to polish.
+            return
+        # Same strong-reference discipline as ``_publish_detached``: the loop
+        # holds only a weak one, so a fire-and-forget task can be collected
+        # mid-flight and the polish would simply never happen.
+        pending = getattr(self, "_turn_polish_tasks", None)
+        if pending is None:
+            pending = set()
+            self._turn_polish_tasks = pending
+        task = loop.create_task(_run(), name="turn-polish")
+        pending.add(task)
+        task.add_done_callback(pending.discard)
+
+    async def _publish_utterance_captured(self, pcm: bytes) -> None:
+        duration_ms = int((len(pcm) / 2) / 16_000 * 1000)
+        audio_ref = hashlib.sha256(pcm).hexdigest()[:16]
+        await self._publish_event(
+            UtteranceCaptured(
+                source_layer="speech.vad",
+                audio_ref=audio_ref,
+                duration_ms=duration_ms,
+            )
+        )
+
+    # ------------------------------------------------------------------
+    # Skills-Brain-Integration: Phase Skills-1
+    # ------------------------------------------------------------------
+
+    async def _try_skill_direct_trigger(self, text: str, lang: str) -> bool:
+        """Pre-brain hook: voice-pattern match against installed skills.
+
+        Instruction-skill model (2026-06-09 rebuild, AD-S4): a trigger match
+        no longer macro-runs the skill and reads raw Markdown aloud. It notes
+        the match on the BrainManager (``note_skill_trigger``) and returns
+        ``False`` so the normal brain turn proceeds — the manager injects the
+        rendered skill instructions into that turn (guaranteed invocation,
+        uniform voice output through scrub_for_voice). Always returns
+        ``False``; the brain path is never bypassed anymore.
+        """
+        skill_ctx = try_get_skill_context()
+        if skill_ctx is None:
+            return False
+        if self._trigger_matcher is None:
+            self._trigger_matcher = TriggerMatcher(skill_ctx.registry)
+        match_result = self._trigger_matcher.match_voice_with_match(text, lang=lang)
+        if match_result is None:
+            return False
+        matched, regex_match = match_result
+
+        # The last non-empty capture group is the "content" (e.g. the tail
+        # after the trigger phrase: "merk dir: <content>"). Skills reference
+        # it as {{ content }} in their Jinja render context.
+        content = ""
+        groups = regex_match.groups()
+        for grp in reversed(groups):
+            if grp and grp.strip():
+                content = grp.strip()
+                break
+
+        log.info("Skill trigger matched: '%s' for '%s'", matched.name, text)
+        await self._emit_skill_direct(matched.name, "voice_direct")
+        note = getattr(self._brain, "note_skill_trigger", None)
+        if callable(note):
+            note(matched.name, content=content, source="trigger")
+        else:
+            log.warning(
+                "brain has no note_skill_trigger — skill %s rides on the "
+                "routing-guard probe only", matched.name,
+            )
+        return False
+
+    async def _emit_skill_direct(self, skill_name: str, trigger_type: str) -> None:
+        """Bus-Event SkillDirectTriggered — no-op wenn kein bus konfiguriert."""
+        if self._bus is None:
+            return
+        try:
+            await self._bus.publish(SkillDirectTriggered(
+                source_layer="speech.pipeline",
+                skill_name=skill_name,
+                trigger_type=trigger_type,
+            ))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("SkillDirectTriggered-Publish fehlgeschlagen: %s", exc)
+
+    async def _skill_cron_loop(self, stop_event: asyncio.Event) -> None:
+        """Cron scheduler for skills.
+
+        Runs as a parallel asyncio task; yields a skill when its cron trigger
+        fires and hands it to ``_handle_cron_skill`` (instruction-skill model,
+        AD-S4: the brain executes the skill; the spoken result goes out as an
+        announcement through the normal scrubbed announcement path).
+        """
+        ctx = try_get_skill_context()
+        if ctx is None:
+            return
+        if self._trigger_matcher is None:
+            self._trigger_matcher = TriggerMatcher(ctx.registry)
+        matcher = self._trigger_matcher
+        try:
+            async for skill in matcher.run_cron_scheduler(stop_event):
+                try:
+                    await self._handle_cron_skill(skill)
+                except Exception as exc:  # noqa: BLE001
+                    log.exception("Cron skill '%s' failed: %s", skill.name, exc)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            log.exception("Skill-Cron-Loop crashed: %s", exc)
+
+    async def _handle_cron_skill(self, skill: Any) -> None:
+        """Run one scheduled skill fire through the brain (AD-S4 extension).
+
+        The brain receives a synthetic scheduled-run turn with the skill
+        noted (``note_skill_trigger`` → instruction injection + SkillInvoked
+        source="cron"); the reply is queued as a held ``AnnouncementRequested``
+        and spoken at the next call, and a total provider failure stays
+        silent. Falls back to the legacy macro runner when the
+        wired brain cannot take the handoff (echo/mock brains).
+        """
+        from jarvis.skills.schema import SkillLifecycleState
+
+        state = getattr(skill, "state", None)
+        if state not in (
+            SkillLifecycleState.ACTIVE, SkillLifecycleState.VALIDATED,
+        ):
+            log.debug("cron fire for %s skipped (state=%s)", skill.name, state)
+            return
+        fm = getattr(skill, "frontmatter", None)
+        if fm is not None and fm.risk_policy.default_tier == "block":
+            log.info("cron fire for %s skipped (block tier)", skill.name)
+            return
+
+        await self._emit_skill_direct(skill.name, "cron")
+        note = getattr(self._brain, "note_skill_trigger", None)
+        if not callable(note):
+            # Legacy fallback: no brain handoff available (echo/mock brain).
+            ctx = try_get_skill_context()
+            if ctx is not None:
+                result = await ctx.runner.run(skill, args={"_trigger": "cron"})
+                log.info(
+                    "Cron skill '%s' (legacy runner): success=%s",
+                    skill.name, result.success,
+                )
+            return
+
+        note(skill.name, source="cron")
+        # Compose the scheduled-run instruction in the conversation language so
+        # the brain answers in that language (it derives the reply language from
+        # the prompt text) — a German chat must not receive an English briefing
+        # (forensic 2026-06-23: the screenshot's English "Good morning, Chef…"
+        # announcement). ``lang`` also tags the announcement so the resolver
+        # speaks it in the same language. de strings are functional brain
+        # prompts, not user-facing artifacts (i18n-allow).
+        lang = self._output_language(None, "")
+        _prompts = {
+            "de": (
+                "[Geplanter Lauf] Es ist Zeit für den Skill '{name}'. Führe "  # i18n-allow
+                "jetzt seine Anweisungen aus und berichte das Ergebnis kurz."  # i18n-allow
+            ),
+            "es": (
+                "[ejecución programada] Es hora del skill '{name}'. Ejecuta sus "
+                "instrucciones ahora e informa brevemente el resultado."
+            ),
+            "en": (
+                "[scheduled run] It is time for the '{name}' skill. Execute its "
+                "instructions now and report the result briefly."
+            ),
+        }
+        reply = await self._brain(
+            _prompts.get(lang, _prompts["en"]).format(name=skill.name)
+        )
+        text = (reply or "").strip()
+        if self._brain_turn_failed():
+            # Nobody called Jarvis for this turn: a provider-chain failure on a
+            # scheduled run is not news worth speaking into an idle room (live
+            # 2026-09-29 08:00: the daily triage skill failed on every provider
+            # and Jarvis announced "my stored API key is being rejected" out of
+            # nowhere). The API-keys view shows the broken key; the log keeps
+            # the chain diagnostic.
+            log.warning(
+                "Cron skill '%s' failed on every provider; staying silent", skill.name
+            )
+            return
+        if text and self._bus is not None:
+            try:
+                # Held for the next call like every other background result
+                # (_HELD_FOR_CALL_SOURCES): a scheduled run never speaks
+                # into a room where nobody called Jarvis.
+                await self._bus.publish(
+                    AnnouncementRequested(
+                        source_layer="skills.cron",
+                        text=text,
+                        language=lang,
+                        priority="normal",
+                        kind=SPOKEN_KIND_COMPLETION,
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.warning("cron skill announcement failed: %s", exc)
+        log.info("Cron skill '%s' executed via brain turn", skill.name)
+
+    @staticmethod
+    def _is_agent_reply(event: AnnouncementRequested) -> bool:
+        """A readback that is owed to the user but must wait for an open call.
+
+        An agent's reply, and every piece of background news nobody asked for
+        in this conversation (a routine or automation result, a scheduled job
+        failing or recovering). Spoken into an idle machine it is Jarvis
+        talking without having been called; held here, it is delivered at the
+        next call, once, and only after the audio actually finished.
+        """
+        return event.source_layer in _HELD_FOR_CALL_SOURCES and event.kind in _READBACK_KINDS
+
+    def _agent_reply_needs_session(self) -> bool:
+        hangup = getattr(self, "_hangup_event", None)
+        return bool(
+            getattr(self, "_muted", False)
+            or (hangup is not None and hangup.is_set())
+            or getattr(self, "_turn_state", TurnTakingState.IDLE) is TurnTakingState.IDLE
+            or getattr(self, "_voice_engine_transitioning", False)
+        )
+
+    def _defer_agent_reply(self, event: AnnouncementRequested) -> None:
+        pending = getattr(self, "_deferred_announcements", None)
+        if pending is None:
+            pending = self._deferred_announcements = []
+        if event not in pending:
+            pending.append(event)
+
+    def _settle_agent_reply(self, *, completed: bool) -> None:
+        """Only a drained speaker queue confirms a realtime agent readback."""
+        event = getattr(self, "_agent_reply_inflight", None)
+        self._agent_reply_inflight = None
+        self._agent_reply_inflight_text = ""
+        if event is not None and not completed:
+            retries = getattr(self, "_agent_reply_retries", None)
+            if retries is None:
+                retries = self._agent_reply_retries = []
+            if event not in retries:
+                retries.append(event)
+            log.info("Agent reply interrupted; retained for the next voice session")
+
+    def _restore_agent_replies(self) -> None:
+        """Rejoin the existing floor-aware queue when a new call starts."""
+        for event in getattr(self, "_agent_reply_retries", []):
+            self._defer_agent_reply(event)
+        self._agent_reply_retries = []
+        pending = getattr(self, "_deferred_announcements", None)
+        if pending:
+            pending.sort(key=lambda event: event.timestamp_ns)
+
+    def _retry_agent_reply_after_boundary(self) -> None:
+        """Let the live wrapper finish resetting after the speaker drains."""
+        previous = getattr(self, "_agent_reply_retry_task", None)
+        if previous is not None and not previous.done():
+            return
+        if self._agent_reply_needs_session():
+            return
+        self._agent_reply_retry_task = asyncio.create_task(
+            self._retry_pending_agent_replies(), name="agent-reply-boundary"
+        )
+
+    async def _retry_pending_agent_replies(self) -> None:
+        while True:
+            # No provider request is made while its wrapper reports busy.
+            # This closes the gap between the desktop's LISTENING callback
+            # and the provider wrapper clearing its completed turn state.
+            await asyncio.sleep(0.1)
+            if (
+                self._agent_reply_needs_session()
+                or self._turn_state is not TurnTakingState.LISTENING
+                or getattr(self, "_agent_reply_inflight", None) is not None
+            ):
+                return
+            event = next((event for event in self._deferred_announcements
+                          if self._is_agent_reply(event)), None)
+            if event is None:
+                return
+            self._deferred_announcements.remove(event)
+            try:
+                await self._on_announcement(event)
+            except asyncio.CancelledError:
+                self._defer_agent_reply(event)
+                raise
+            except Exception:
+                self._defer_agent_reply(event)
+                log.warning("Agent reply retry failed; retained for a later turn", exc_info=True)
+                return
+
+    async def _on_announcement(self, event: AnnouncementRequested) -> None:
+        """Deliver a readback through the live voice or the classic TTS path.
+
+        Agent replies wait for an open call. Interrupt-priority announcements
+        retain the existing player-stop behavior. Classic playback uses
+        synthesize() and play_chunks(), the same path as ordinary answers.
+        """
+        event_kind = getattr(event, "kind", None)
+        is_readback = event_kind in _READBACK_KINDS
+        is_agent_reply = self._is_agent_reply(event)
+        if is_readback:
+            # Muting controls audio, not conversational memory. A mission that
+            # finishes while muted must still be available to the next follow-up.
+            session = getattr(self, "_active_realtime_handle", None)
+            remember = getattr(session, "remember_announcement_context", None)
+            if callable(remember):
+                try:
+                    # The full report too, so "what exactly did it change?"
+                    # can be answered on the next turn.
+                    report = str(getattr(event, "report", None) or "").strip()
+                    remember(
+                        text=event.text,
+                        spoken_kind=event_kind,
+                        detail=getattr(event, "detail", None),
+                        **({"report": report} if report else {}),
+                    )
+                except Exception:  # noqa: BLE001 -- memory mirror is best-effort
+                    log.debug(
+                        "Realtime announcement context mirror failed",
+                        exc_info=True,
+                    )
+        from jarvis.core.delegation import RESULT_SOURCES, ResultInbox
+
+        if event.source_layer in RESULT_SOURCES:
+            inbox = getattr(self, "_delegation_inbox", None)
+            if inbox is None:
+                inbox = self._delegation_inbox = ResultInbox()
+            inbox.add(event)
+            self._schedule_delegation_results()
+            return
+        if is_agent_reply:
+            if event == getattr(self, "_agent_reply_inflight", None):
+                return
+            if (
+                event.source_layer == "delegation.batch"
+                and self._turn_state is not TurnTakingState.LISTENING
+            ):
+                self._defer_agent_reply(event)
+                return
+            if self._agent_reply_needs_session():
+                self._defer_agent_reply(event)
+                log.info("Agent reply retained until an unmuted voice session is available")
+                return
+        if getattr(self, "_muted", False):
+            log.debug("Announcement suppressed — voice muted: %r", event.text)
+            return
+        # Hangup-Gate: once "auflegen" fired, queued/late announcements
+        # (Flash-Brain preamble, spawn-watchdog, late background readback)
+        # must not punch through. The gate clears at the start of the next
+        # session in `_state_loop` (line ~1726).
+        hangup = getattr(self, "_hangup_event", None)
+        # A readback (kind in _READBACK_KINDS — "completion" or "subagent") is a
+        # FRESH turn delivering the answer the user asked for — an offloaded
+        # background mission/sub-agent that finished after "auflegen" — so it must
+        # punch through the hangup gate (AD-OE5/OE6 zero-silent-drop). A stale
+        # preamble / untagged late announcement stays dropped. Live bug
+        # 2026-06-14: a heavy research mission's result was silently dropped
+        # because the user hung up 13 s after the optimistic ACK.
+        if hangup is not None and hangup.is_set() and not is_readback:
+            log.info(
+                "Announcement nach Hangup unterdrückt: %r", event.text[:80]
+            )
+            return
+        # A completion / sub-agent readback IS the mission's answer — cancel any
+        # pending "still on it" heartbeats so a reassurance never lands AFTER the
+        # result (the success path does not publish JarvisAgentBackgroundCompleted,
+        # so the heartbeat is not otherwise drained on completion). 2026-06-19.
+        if is_readback:
+            self._cancel_spawn_heartbeats()
+        log.info(
+            "📢 Announcement: %r (prio=%s lang=%s)",
+            event.text, event.priority, event.language,
+        )
+        # When the Pre-Thinking-Ack Flash-Brain is wired in, the legacy
+        # per-tool template emitter on `brain.router.ack` would double-speak:
+        # the Flash-Brain already published its preamble on
+        # `brain.ack_brain`, and the router's `generate_ack(tool_name, ...)`
+        # callback would fire afterwards on the same utterance. Silently
+        # drop the legacy source while the Flash-Brain is active so the user
+        # only hears one ack per turn.
+        if (
+            getattr(self, "_ack_brain", None) is not None
+            and getattr(event, "source_layer", None) == "brain.router.ack"
+        ):
+            log.debug(
+                "Skipping legacy router-ack announcement %r — Flash-Brain active.",
+                event.text,
+            )
+            return
+        is_preamble = event_kind == "preamble"
+        is_progress = event_kind == "progress"
+        # 2026-05-26 cross-surface voice incoherence guard. After an
+        # interrupt-priority announcement (typically a MissionFailed
+        # readback) the user has just heard a terminal statement; a
+        # follow-up "preamble" from any subscriber (Flash-Brain or
+        # skill announcement) lands as an incoherent
+        # second sentence — see diagnosis README. Suppress preambles
+        # inside the configured quiet window.
+        if is_preamble and self._last_interrupt_announcement_ts is not None:
+            ack_cfg = (
+                getattr(self._config, "ack_brain", None)
+                if self._config is not None
+                else None
+            )
+            quiet_ms = getattr(
+                ack_cfg, "suppress_preamble_after_interrupt_ms", 5000
+            )
+            if quiet_ms > 0:
+                elapsed = time.monotonic() - self._last_interrupt_announcement_ts
+                if elapsed * 1000.0 < quiet_ms:
+                    log.info(
+                        "Preamble announcement suppressed — within %d ms "
+                        "post-interrupt quiet window (elapsed=%.0f ms): %r",
+                        quiet_ms, elapsed * 1000.0, event.text[:80],
+                    )
+                    return
+        # Symmetric turn-boundary guard (AD-OE5) + idle guard (live bug 2026-07-01).
+        # A background "still on it" heartbeat (kind="progress") is only meaningful
+        # while the user is ACTIVELY in a session waiting for the mission — the mic
+        # is open and Jarvis is LISTENING. It is dropped in every other state:
+        # during a foreground turn (THINKING/JARVIS_SPEAKING/…) it would talk over
+        # that turn, and while IDLE there is NO active session at all, so speaking
+        # it is Jarvis "talking out of nowhere" into a machine the user walked away
+        # from (live bug 2026-07-01: a force-spawned mission's three bounded beats
+        # spoke into fresh, empty wake sessions after the user hung up). An
+        # interrupt is a deliberate barge and still punches through.
+        current_turn_state = getattr(self, "_turn_state", TurnTakingState.IDLE)
+        if (
+            event.priority != "interrupt"
+            and is_progress
+            and current_turn_state is not TurnTakingState.LISTENING
+        ):
+            log.info(
+                "Progress announcement dropped — no active listening session (%s): %r",
+                getattr(current_turn_state, "value", current_turn_state),
+                event.text[:80],
+            )
+            return
+        if event.priority != "interrupt" and (
+            current_turn_state in _USER_HOLDS_FLOOR_STATES
+        ):
+            # A preamble or a "still on it" heartbeat (kind="progress") is only
+            # meaningful in the moment — once the user holds the floor it is
+            # stale, so DROP it (never defer/replay it after the user finishes or
+            # after the mission answer; events.py: progress = "droppable when
+            # stale"). Completion/readback below owes the user information and is
+            # deferred instead.
+            if is_preamble or is_progress:
+                log.info(
+                    "Announcement dropped — user holds the floor (%s): %r",
+                    event_kind or "normal",
+                    event.text[:80],
+                )
+                return
+            # Completion/readback owes the user information → park it and flush
+            # at the next turn-boundary (AD-OE6 zero-silent-drop).
+            if is_agent_reply:
+                self._defer_agent_reply(event)
+            else:
+                self._deferred_announcements.append(event)
+            log.info(
+                "Announcement deferred — user holds the floor: %r",
+                event.text[:80],
+            )
+            return
+        # A preamble ("I'm about to think about this") is only coherent BEFORE
+        # the answer is voiced. If the turn is already JARVIS_SPEAKING by the
+        # time it reaches the handler, the answer (or another readback) is being
+        # spoken right now, so the preamble is stale → drop it instead of
+        # queueing it behind the answer on the shared player (live bug
+        # 2026-06-20: the ack "Ich schaue mir jetzt …" played AFTER the tool
+        # result). The floor guard above only covers the USER holding the floor;
+        # this covers Jarvis already speaking. The remaining race — the answer
+        # starting DURING the preamble's synthesis / play-lock wait — is caught
+        # by the should_play predicate handed to play_chunks below.
+        if is_preamble and (
+            getattr(self, "_turn_state", TurnTakingState.IDLE)
+            is TurnTakingState.JARVIS_SPEAKING
+        ):
+            log.info(
+                "Preamble dropped — Jarvis already speaking the answer: %r",
+                event.text[:80],
+            )
+            return
+        # Usefulness gate (2026-07-06 interim-ack redesign): the grounded
+        # router ack publishes the instant a tool is SELECTED — too early to
+        # know whether the bridge is even needed. When the voice turn is
+        # currently PROCESSING, hold the ack for the commit grace and only
+        # speak it if the brain is STILL busy afterwards (same AD-OE5 helper
+        # the Flash-Brain streaming path uses); a turn that answers within
+        # the grace stays ack-free. Announcements arriving with no voice turn
+        # in flight (chat path) keep legacy behavior.
+        source_layer = getattr(event, "source_layer", None)
+        is_instant_ack = bool(
+            is_preamble and source_layer == self._INSTANT_ACK_SOURCE_LAYER
+        )
+        if (
+            is_preamble
+            and source_layer == "brain.router.ack"
+            and self._interim_line_spoke_recently(PROGRESS_AFTER_S)
+        ):
+            # Instant acknowledgment (2026-08-17): the user just heard an
+            # interim line for this turn. A second "let me check" seconds later
+            # is the double-tap; the grounded router ack is welcome again only
+            # once the wait has grown long enough to deserve a progress line.
+            last = getattr(self, "_last_preamble_spoken", None)
+            log.info(
+                "Grounded ack dropped — an interim line spoke %.1fs ago: %r",
+                time.monotonic() - (last[1] if last else time.monotonic()),
+                event.text[:80],
+            )
+            return
+        if (
+            is_preamble
+            and source_layer == "brain.router.ack"
+            and getattr(self, "_turn_state", TurnTakingState.IDLE)
+            is TurnTakingState.PROCESSING
+        ):
+            ack_cfg = getattr(getattr(self, "_config", None), "ack_brain", None)
+            commit_grace_ms = int(
+                getattr(ack_cfg, "grounded_ack_commit_grace_ms", 900) or 0
+            )
+            if commit_grace_ms > 0 and not await self._await_ack_turn_commit(
+                commit_grace_ms
+            ):
+                log.info(
+                    "Grounded ack dropped — turn left PROCESSING during the "
+                    "%d ms commit grace (state=%s): %r",
+                    commit_grace_ms,
+                    getattr(self._turn_state, "name", self._turn_state),
+                    event.text[:80],
+                )
+                return
+        if event.priority == "interrupt":
+            # Arm the quiet window BEFORE TTS so a synchronous publish of a
+            # preamble immediately afterwards sees the up-to-date timestamp.
+            self._last_interrupt_announcement_ts = time.monotonic()
+            try:
+                self._player.stop()
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Player-Stop vor Announcement fehlgeschlagen: %s", exc)
+        # Phase-1 output filter also applies to bus announcements (skill
+        # output, Jarvis-Agent announce, vision privacy notices). Mandate path #2.
+        # Pre-Thinking-Ack Flash-Brain (kind="preamble"): the AckGenerator
+        # already ran scrub_for_voice with ack_mode=True. We still re-scrub
+        # here as a safety net, but pass ack_mode=is_preamble so legitimate
+        # filler-opener phrases ("Lass mich kurz nachschauen.") are
+        # preserved on the second pass too.
+        # Resolve the announcement's spoken language through the ONE
+        # authoritative resolver — the live brain.reply_language pin and the
+        # sticky conversation_language win over whatever an emitter stamped on
+        # the event, and an undetectable/None tag falls back to the resolved
+        # turn language, never a hardcoded German default (forensic 2026-06-23:
+        # a German voice chat spoke an English "ANNOUNCEMENT" because
+        # event.language was trusted verbatim). The event tag is only a hint,
+        # passed where the STT tag normally goes.
+        ann_lang = self._output_language(event.language, event.text or "")
+        scrubbed = scrub_for_voice(
+            event.text, language=ann_lang, ack_mode=is_preamble
+        )
+        if scrubbed.actions:
+            log.info(
+                "🧹 Announcement-Filter [%s]: %s (fallback=%s)",
+                ann_lang, scrubbed.actions, scrubbed.fallback_used,
+            )
+        if is_harmless_scrub_residue(scrubbed):
+            # The whole announcement was filler/honorific/markdown, so the
+            # residue guard emptied it and handed back the generic error
+            # phrase. Nothing failed — speaking it would report an incident
+            # that never happened. Stay silent, but say so in the log.
+            log.info(
+                "Announcement carried no substance (%s) — staying silent "
+                "instead of speaking the error phrase: %r",
+                scrubbed.actions,
+                (event.text or "")[:80],
+            )
+            return
+        if not scrubbed.cleaned.strip():
+            log.info("Announcement nach Filter leer — schweige.")
+            return
+        # Duplicate-wording safety net (2026-07-06 interim-ack redesign): no
+        # emitter may speak the SAME preamble/progress line twice in quick
+        # succession, regardless of source (grounded ack, Flash-Brain, skill) —
+        # forensic 2026-07-05: one session spoke the identical grounded ack
+        # three times. Only the ephemeral kinds are deduped;
+        # completion/interrupt readbacks deliver owed answers and may repeat.
+        if is_preamble or is_progress:
+            dedup_cfg = getattr(getattr(self, "_config", None), "ack_brain", None)
+            dedup_window_s = float(
+                getattr(dedup_cfg, "preamble_dedup_window_s", 180) or 0
+            )
+            spoken_text = scrubbed.cleaned.strip()
+            last_spoken = getattr(self, "_last_preamble_spoken", None)
+            if (
+                not is_instant_ack
+                and dedup_window_s > 0
+                and last_spoken is not None
+                and last_spoken[0] == spoken_text
+                and (time.monotonic() - last_spoken[1]) < dedup_window_s
+            ):
+                log.info(
+                    "Preamble dropped — identical wording spoken %.0fs ago: %r",
+                    time.monotonic() - last_spoken[1],
+                    event.text[:80],
+                )
+                return
+            # v2 anti-loop backstop: hard cap on spoken preamble/progress
+            # lines per rolling 60 s window, ANY source. Kills the historical
+            # "kept saying it forever" bug class at the last shared
+            # chokepoint. Completion/interrupt readbacks never enter this
+            # branch (owed answers are exempt).
+            rate_limit = int(
+                getattr(dedup_cfg, "preamble_rate_limit_per_min", 3) or 0
+            )
+            spoken_times = getattr(self, "_preamble_spoken_times", None)
+            if spoken_times is None:
+                spoken_times = deque(maxlen=32)
+                self._preamble_spoken_times = spoken_times
+            now_monotonic = time.monotonic()
+            # The instant ack is exempt from the anti-loop cap: it is armed
+            # exactly once per user utterance and cancels its predecessor, so
+            # it cannot loop -- and a user issuing four commands in a minute
+            # deserves four first-signs-of-life (maintainer rule 2026-08-17).
+            if rate_limit > 0 and not is_instant_ack:
+                recent_count = sum(
+                    1 for t in spoken_times if now_monotonic - t < 60.0
+                )
+                if recent_count >= rate_limit:
+                    log.warning(
+                        "Preamble dropped — rate-limit backstop (%d spoken in "
+                        "the last 60s, cap %d): %r",
+                        recent_count, rate_limit, event.text[:80],
+                    )
+                    return
+            self._last_preamble_spoken = (spoken_text, now_monotonic)
+            if is_instant_ack:
+                # Not counted against the cap either: one instant line must
+                # never eat the budget of a later owed progress line.
+                self._note_instant_ack_spoken(spoken_text, now_monotonic)
+            else:
+                spoken_times.append(now_monotonic)
+        if await self._deliver_announcement_via_realtime(
+            event,
+            text=scrubbed.cleaned,
+            language=ann_lang,
+        ):
+            # The live session publishes SpeechSpoken with the wording it
+            # actually generated. Emitting or synthesizing here would create a
+            # second, classic-pipeline voice and duplicate the readback.
+            self._last_announcement_spoken_monotonic = time.monotonic()
+            return
+        if self._realtime_session_owns_voice():
+            # The live call rejected the delivery only because it is BUSY
+            # (its delegate turn is thinking). The classic TTS voice must
+            # never speak into a healthy realtime call — the user hears a
+            # sudden second voice/engine (forensic 2026-07-13 17:39, the
+            # wiki preamble). Ephemeral lines are stale by the time the
+            # live model could speak them → drop; owed readbacks are parked
+            # and replayed at the next turn boundary, where the idle live
+            # model accepts them (or the call has ended and classic TTS is
+            # the honest remaining surface).
+            if is_preamble or is_progress:
+                log.info(
+                    "Announcement dropped — a live realtime call owns the "
+                    "voice: %r",
+                    event.text[:80],
+                )
+                return
+            if is_agent_reply:
+                self._defer_agent_reply(event)
+                self._retry_agent_reply_after_boundary()
+            else:
+                self._deferred_announcements.append(event)
+            log.info(
+                "Announcement deferred — a live realtime call owns the "
+                "voice: %r",
+                event.text[:80],
+            )
+            return
+        if is_agent_reply and self._agent_reply_needs_session():
+            self._defer_agent_reply(event)
+            return
+        # Re-check the hangup gate at the moment of SPEAKING, not only at
+        # arrival: the user can hang up during the seconds between the two
+        # (scrub, dedup, the realtime-delivery probe), and the entry check
+        # has already passed by then. A stale ephemeral line then plays into
+        # or right after the ended call as a phantom second voice (forensic
+        # 2026-07-13 18:37: hotkey hang-up landed 1.2 s after the preamble
+        # entered this handler). Owed readbacks still punch through, exactly
+        # like at the entry gate (AD-OE5/OE6).
+        if hangup is not None and hangup.is_set() and not is_readback:
+            log.info(
+                "Announcement dropped — session hung up while it was being "
+                "prepared: %r",
+                event.text[:80],
+            )
+            return
+        # We are now committed to actually speaking this announcement (past every
+        # suppression / defer / empty guard). Record it as voice activity so the
+        # idle-timeout branch in ``_active_session`` re-arms a fresh window: an
+        # out-of-band readback (mission completion/failure) hands the floor back
+        # to the user just like an inline answer, and must not be followed by an
+        # idle hangup seconds later (live bug 2026-06-18 08:52). Set BEFORE the
+        # TTS playback so the grace also covers the readback's own play time.
+        self._last_announcement_spoken_monotonic = time.monotonic()
+        # Document the announcement in the session log — it is voiced through
+        # this bypass path, not _speak, so it would otherwise be invisible.
+        # ``detail`` carries an optional technical diagnostic (e.g. a failed
+        # Computer-Use exit code + harness reason) that is NOT spoken but is
+        # surfaced in the transcript for debugging.
+        # A finished sub-agent / mission readback (completion / subagent) hands
+        # the floor BACK to the user — drive the UI/orb into SPEAKING for its
+        # duration so the mascot animates. The out-of-band announcement path
+        # bypasses the turn-state machine, which is why a readback used to play
+        # with no visual "Jarvis is talking" signal (2026-06-19). Only readbacks
+        # animate (a preamble / progress nudge keeps its prior visual), and the
+        # restore is DETERMINISTIC — IDLE once the user has hung up, else
+        # LISTENING (the mic is still open). Not capturing a prior state keeps
+        # this race-free against a concurrently-flushed deferred announcement.
+        animate = is_readback and self._supervisor is not None
+        if animate:
+            await self._transition("SPEAKING")
+        self._assistant_work_count = getattr(self, "_assistant_work_count", 0) + 1
+        agent_reply_completed = False
+        try:
+            # Drive the TTS pin from the SAME resolved language as the scrub,
+            # not from event.language again — a None/auto tag here used to send
+            # language_code=None, which lets the multilingual TTS (Cartesia)
+            # fall back to its English voice on German text (the British-accent
+            # symptom; forensic 2026-06-23).
+            lang_code = self._bcp47(ann_lang)
+            self._register_assistant_speech(scrubbed.cleaned)
+            try:
+                chunks = self._tts.synthesize(scrubbed.cleaned, language_code=lang_code)
+            except TypeError:
+                chunks = self._tts.synthesize(scrubbed.cleaned)
+            if is_preamble or is_agent_reply:
+                # Staleness gate evaluated by the player right before it writes
+                # audio: if the answer has started speaking by the time the
+                # preamble's synthesis + play-lock wait completes, drop it so it
+                # is never voiced after the answer (2026-06-20 misorder fix).
+                # TypeError fallback mirrors the synthesize() compat shim above:
+                # an older player / test fake without the should_play kwarg still
+                # plays (the synchronous JARVIS_SPEAKING guard already covers the
+                # already-speaking case; only the in-flight race is then uncovered).
+                try:
+                    playback_result = await self._player.play_chunks(
+                        chunks,
+                        should_play=lambda: (
+                            not self._agent_reply_needs_session()
+                            and (event.source_layer != "delegation.batch"
+                                 or self._turn_state is TurnTakingState.LISTENING)
+                            if is_agent_reply
+                            else getattr(self, "_turn_state", TurnTakingState.IDLE)
+                            is not TurnTakingState.JARVIS_SPEAKING
+                        ),
+                    )
+                except TypeError:
+                    playback_result = await self._player.play_chunks(chunks)
+            else:
+                playback_result = await self._player.play_chunks(chunks)
+            agent_reply_completed = self._playback_confirmed(playback_result) and (
+                not is_agent_reply or not self._agent_reply_needs_session()
+            )
+            if agent_reply_completed:
+                self._emit_spoken(
+                    scrubbed.cleaned,
+                    ann_lang,
+                    _announcement_spoken_kind(getattr(event, "kind", None)),
+                    getattr(event, "detail", None),
+                )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Announcement playback failed: %s", exc)
+        finally:
+            if is_agent_reply and not agent_reply_completed:
+                self._defer_agent_reply(event)
+            self._assistant_work_count -= 1
+            self._last_announcement_spoken_monotonic = time.monotonic()
+            if animate:
+                hungup = hangup is not None and hangup.is_set()
+                await self._transition("IDLE" if hungup else "LISTENING")
+
+    def _realtime_session_owns_voice(self) -> bool:
+        """True while an accepted realtime call is the only valid voice.
+
+        Provider health is deliberately irrelevant here. The handle is cleared
+        only after the realtime lifecycle unwinds; until then, classic TTS must
+        stay silent rather than becoming a second voice inside the same call.
+        """
+        if getattr(self, "_active_voice_mode", None) != "realtime":
+            return False
+        session = getattr(self, "_active_realtime_handle", None)
+        return session is not None
+
+    def _schedule_delegation_results(self) -> None:
+        """One coalescing task; a user's conversation always keeps the floor."""
+        inbox = getattr(self, "_delegation_inbox", None)
+        task = getattr(self, "_delegation_result_task", None)
+        if (
+            inbox is None or not inbox.pending
+            or (task is not None and not task.done())
+            or self._agent_reply_needs_session()
+            or self._turn_state is not TurnTakingState.LISTENING
+            or getattr(self, "_agent_reply_inflight", None) is not None
+        ):
+            return
+        self._delegation_result_task = asyncio.create_task(
+            self._flush_delegation_results(), name="delegation-results"
+        )
+
+    async def _flush_delegation_results(self) -> None:
+        from jarvis.core.delegation import BATCH_WINDOW_S
+
+        event = None
+        try:
+            await asyncio.sleep(BATCH_WINDOW_S)
+            if (
+                self._agent_reply_needs_session()
+                or self._turn_state is not TurnTakingState.LISTENING
+                or getattr(self, "_agent_reply_inflight", None) is not None
+            ):
+                return
+            event = self._delegation_inbox.take()
+            if event is not None:
+                await self._on_announcement(event)
+        except asyncio.CancelledError:
+            if event is not None:
+                self._defer_agent_reply(event)
+            raise
+        except Exception:
+            if event is not None:
+                self._defer_agent_reply(event)
+            log.warning("Delegation result delivery deferred", exc_info=True)
+        finally:
+            self._delegation_result_task = None
+            self._schedule_delegation_results()
+
+    async def _deliver_announcement_via_realtime(
+        self,
+        event: AnnouncementRequested,
+        *,
+        text: str,
+        language: str,
+    ) -> bool:
+        """Offer a standardized readback to the active duplex model.
+
+        The live wrapper rejects busy, failed, or unsupported sessions. While
+        the accepted realtime handle still exists, ``_on_announcement`` drops
+        or defers that output; only a fully unwound call may use classic TTS.
+        """
+        if getattr(self, "_active_voice_mode", None) != "realtime":
+            return False
+        session = getattr(self, "_active_realtime_handle", None)
+        deliver = getattr(session, "deliver_announcement", None)
+        if not callable(deliver):
+            return False
+        agent_reply = self._is_agent_reply(event)
+        if agent_reply:
+            if getattr(self, "_agent_reply_inflight", None) is not None:
+                return False
+            # Register before transport I/O so fast playback cannot race acceptance.
+            self._agent_reply_inflight = event
+            self._agent_reply_inflight_text = text
+        accepted = False
+        # The raw report goes to the live model as data to reason over; only
+        # sessions that understand it are handed the keyword.
+        report = str(getattr(event, "report", None) or "").strip()
+        extra: dict[str, Any] = {"report": report} if report else {}
+        try:
+            accepted = bool(
+                await deliver(
+                    text=text,
+                    language=language,
+                    spoken_kind=_announcement_spoken_kind(
+                        getattr(event, "kind", None)
+                    ),
+                    detail=getattr(event, "detail", None),
+                    **extra,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 -- classic path is load-bearing
+            log.warning("Realtime announcement handoff failed: %s", exc)
+            return False
+        finally:
+            if agent_reply and not accepted and self._agent_reply_inflight is event:
+                self._agent_reply_inflight = None
+                self._agent_reply_inflight_text = ""
+        if accepted:
+            log.info(
+                "Announcement handed to active realtime provider %s: %r",
+                getattr(self, "_active_realtime_provider", "") or "unknown",
+                text[:80],
+            )
+        return accepted
+
+    # ------------------------------------------------------------------
+    # Instant acknowledgment (2026-08-17)
+    # ------------------------------------------------------------------
+
+    _INSTANT_ACK_SOURCE_LAYER = "brain.instant_ack"
+
+    def _instant_ack_enabled(self) -> bool:
+        ack_cfg = getattr(getattr(self, "_config", None), "ack_brain", None)
+        return bool(getattr(ack_cfg, "instant_ack", True))
+
+    def _agent_brand_name(self) -> str:
+        """Wake-word-derived agent brand for spoken lines (never hardcoded)."""
+        try:
+            from jarvis.brain.assistant_name import agent_brand
+
+            return agent_brand(getattr(self, "_config", None))
+        except Exception:  # noqa: BLE001 — a spoken line must not depend on config shape
+            return "Assistant-Agent"
+
+    def _arm_instant_ack(self, text: str, language: str) -> None:
+        """Schedule the instant ack for a heavy turn; a no-op for plain talk.
+
+        The plan comes from the same deterministic planner the brain uses
+        (regex, no I/O). Long work (research, screen, mission) speaks at
+        once; short work (an action, a personal lookup) waits a grace window
+        and speaks only if the turn is STILL processing — a fast result stays
+        chatter-free. Actions get a request-specific line from the flash
+        composer or nothing (maintainer rule: no stock "on it" for actions).
+        """
+        seq = int(getattr(self, "_instant_ack_turn_seq", 0)) + 1
+        self._instant_ack_turn_seq = seq
+        previous = getattr(self, "_instant_ack_task", None)
+        if previous is not None and not previous.done():
+            previous.cancel()
+        self._instant_ack_task = None
+        if not self._instant_ack_enabled():
+            return
+        try:
+            from jarvis.brain.ack_generator import is_voice_control_utterance
+            from jarvis.society.lead_card import society_agent_names, society_owns_task
+
+            if is_voice_control_utterance(text):
+                return
+            if society_owns_task(text):
+                return
+            plan = plan_instant_ack(plan_turn(text, agent_names=society_agent_names()), text)
+        except Exception:  # noqa: BLE001 — planning must never break the turn
+            log.debug("Instant ack: planning failed", exc_info=True)
+            return
+        if plan is None:
+            return
+        log.info(
+            "Instant ack armed: class=%s delay=%.1fs contextual=%s",
+            plan.work_class.value,
+            plan.delay_s,
+            plan.contextual,
+        )
+        self._turn_tool_activity = ""
+        self._instant_ack_task = asyncio.create_task(
+            self._instant_ack_body(plan, text, language, seq),
+            name="instant-ack",
+        )
+        previous_progress = getattr(self, "_instant_progress_task", None)
+        if previous_progress is not None and not previous_progress.done():
+            previous_progress.cancel()
+        self._instant_progress_task = asyncio.create_task(
+            self._instant_progress_body(language, seq),
+            name="instant-ack-progress",
+        )
+
+    async def _instant_ack_body(
+        self, plan: InstantAckPlan, text: str, language: str, seq: int
+    ) -> None:
+        try:
+            if plan.delay_s > 0:
+                if not await self._await_ack_turn_commit(int(plan.delay_s * 1000)):
+                    log.info(
+                        "Instant ack dropped — turn left PROCESSING inside the "
+                        "%.1fs grace (class=%s)",
+                        plan.delay_s,
+                        plan.work_class.value,
+                    )
+                    return
+            if not self._instant_ack_still_wanted(seq):
+                return
+            if plan.contextual:
+                line = await compose_contextual_ack(
+                    getattr(self._brain, "_readback_composer", None),
+                    utterance=text,
+                    language=language,
+                    agent_brand=self._agent_brand_name(),
+                )
+                if not line:
+                    log.info(
+                        "Instant ack skipped — no valid contextual line for the "
+                        "action (no composer, timeout, or rejected output)"
+                    )
+                    return
+            else:
+                line = ""
+                if self._instant_ack_compose_all():
+                    # Opt-in: a request-specific line for the pooled classes
+                    # too ("I'm pulling the flight data for Friday."), same
+                    # validator, the pool line as the instant fallback.
+                    line = await compose_contextual_ack(
+                        getattr(self._brain, "_readback_composer", None),
+                        utterance=text,
+                        language=language,
+                        agent_brand=self._agent_brand_name(),
+                    )
+                if not line:
+                    line = pick_instant_ack_text(
+                        plan.work_class, language, agent_brand=self._agent_brand_name()
+                    )
+            if not line or not self._instant_ack_still_wanted(seq):
+                return
+            tracker = getattr(self, "_latency_tracker", None)
+            if tracker is not None:
+                try:
+                    tracker.mark(LatencyPhase.ACK_FIRST_TOKEN)
+                except Exception:  # noqa: BLE001, S110 — telemetry never breaks voice
+                    pass
+            await self._publish_event(
+                AnnouncementRequested(
+                    source_layer=self._INSTANT_ACK_SOURCE_LAYER,
+                    text=line,
+                    priority="normal",
+                    language=language,
+                    kind="preamble",
+                )
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — the ack is best-effort by design
+            log.warning("Instant ack failed", exc_info=True)
+
+    def _instant_ack_compose_all(self) -> bool:
+        ack_cfg = getattr(getattr(self, "_config", None), "ack_brain", None)
+        return bool(getattr(ack_cfg, "instant_ack_compose_all", False))
+
+    async def _on_action_proposed(self, event: ActionProposed) -> None:
+        """Remember the tool the current voice turn is running (progress line)."""
+        if getattr(self, "_turn_state", TurnTakingState.IDLE) is not TurnTakingState.PROCESSING:
+            return
+        self._turn_tool_activity = str(getattr(event, "tool_name", "") or "")
+
+    async def _instant_progress_body(self, language: str, seq: int) -> None:
+        """One honest progress line when the work outlasts the ack by 8 s.
+
+        Grounded in the tool the turn is ACTUALLY running (``ActionProposed``):
+        "still searching", "still reading through your records", "still on the
+        screen" — the generic pool only when no tool is known. Skipped when a
+        background agent took over (its reply states the handover) or when
+        any interim line spoke in the last 8 s (the grounded router ack may
+        have covered it). At most one per turn.
+        """
+        try:
+            armed_at = time.monotonic()
+            await asyncio.sleep(PROGRESS_AFTER_S)
+            # The line is owed PROGRESS_AFTER_S after the turn's OWN instant
+            # ack — which speaks well after arm for short work (grace window
+            # + composer budget) — not after arm, and asyncio may wake a hair
+            # early: wait out the remainder instead of dropping the line
+            # (before 2026-08-18 the "spoke recently" gate below saw the
+            # turn's own ack and silenced every progress line).
+            ack_task = getattr(self, "_instant_ack_task", None)
+            if ack_task is not None and not ack_task.done():
+                # Short work's ack is still inside its grace / composer
+                # budget: the progress line follows it, never races it.
+                await asyncio.wait({ack_task})
+            while self._instant_ack_still_wanted(seq):
+                own_at = getattr(self, "_instant_ack_spoken_at", None)
+                if own_at is None or own_at < armed_at:
+                    break  # no ack of THIS turn spoke (a stale stamp is an older turn's)
+                remaining = PROGRESS_AFTER_S - (time.monotonic() - own_at)
+                if remaining <= 0.0:
+                    break
+                await asyncio.sleep(remaining)
+            if not self._instant_ack_still_wanted(seq):
+                return
+            if self._other_interim_line_spoke_recently(PROGRESS_AFTER_S):
+                return
+            activity = classify_tool_activity(getattr(self, "_turn_tool_activity", ""))
+            if activity is ToolActivity.HANDOVER:
+                return
+            line = pick_progress_text(activity, language)
+            if not line or not self._instant_ack_still_wanted(seq):
+                return
+            log.info("Instant progress line (activity=%s): %r", activity.value, line)
+            # kind="preamble", not "progress": a progress announcement is the
+            # background-mission heartbeat and is dropped unless LISTENING; this
+            # line belongs to the FOREGROUND turn that is still PROCESSING and
+            # obeys the same gates as the instant ack (speaking answer, floor).
+            await self._publish_event(
+                AnnouncementRequested(
+                    source_layer=self._INSTANT_ACK_SOURCE_LAYER,
+                    text=line,
+                    priority="normal",
+                    language=language,
+                    kind="preamble",
+                )
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — best-effort by design
+            log.warning("Instant progress line failed", exc_info=True)
+
+    def _interim_line_spoke_recently(self, within_s: float) -> bool:
+        """Any preamble/progress line (instant ack, router ack, heartbeat) just spoke."""
+        last = getattr(self, "_last_preamble_spoken", None)
+        return bool(last is not None and (time.monotonic() - last[1]) < within_s)
+
+    def _other_interim_line_spoke_recently(self, within_s: float) -> bool:
+        """An interim line OTHER than this turn's own instant ack just spoke
+        (grounded router ack, heartbeat) — the wait is covered."""
+        last = getattr(self, "_last_preamble_spoken", None)
+        if last is None:
+            return False
+        if last[1] == getattr(self, "_instant_ack_spoken_at", None):
+            return False
+        return (time.monotonic() - last[1]) < within_s
+
+    def _instant_ack_still_wanted(self, seq: int) -> bool:
+        """The line is only coherent while THIS turn is still thinking."""
+        if int(getattr(self, "_instant_ack_turn_seq", 0)) != seq:
+            return False
+        if getattr(self, "_turn_state", TurnTakingState.IDLE) is not TurnTakingState.PROCESSING:
+            return False
+        return not bool(getattr(self, "_brain_first_frame_played", False))
+
+    def _note_instant_ack_spoken(self, text: str, at: float | None = None) -> None:
+        """Record the moment an instant ack actually went to the speaker.
+
+        ``at`` is the same monotonic stamp stored in ``_last_preamble_spoken``
+        so the progress line can tell the turn's own ack from other emitters.
+        """
+        self._instant_ack_spoken_at = time.monotonic() if at is None else at
+        self._instant_ack_spoken_text = text
+        note_spoken(text)
+
+    def _instant_ack_spoke_recently(self, within_s: float) -> bool:
+        spoken_at = getattr(self, "_instant_ack_spoken_at", None)
+        return spoken_at is not None and (time.monotonic() - spoken_at) < within_s
+
+    async def _await_ack_turn_commit(self, grace_ms: int) -> bool:
+        """Poll the turn-state for up to ``grace_ms``; True only if it stays
+        PROCESSING throughout — the continuation grace from AD-OE5.
+
+        The Pre-Thinking-Ack is ready a few hundred ms after the VAD endpoint,
+        often before the VAD has registered that the user merely paused and kept
+        talking. Returning False the instant the turn leaves PROCESSING (the
+        continuation interrupt flips it to LISTENING/USER_SPEAKING, or the brain
+        answered → JARVIS_SPEAKING) lets the caller drop the ack before it can
+        speak over the user.
+        """
+        step_s = 0.05
+        steps = max(1, int(grace_ms / 1000.0 / step_s))
+        for _ in range(steps):
+            if self._turn_state is not TurnTakingState.PROCESSING:
+                return False
+            await asyncio.sleep(step_s)
+        return self._turn_state is TurnTakingState.PROCESSING
+
+    async def _spawn_flash_brain_ack(self, utterance: str, language: str) -> None:
+        """Run the Pre-Thinking-Ack Flash-Brain and publish its output —
+        but only when the main brain is still thinking by then.
+
+        User-feedback 2026-05-13: a Flash-Brain ack that lands while the
+        main answer is already arriving feels redundant and chatty. The
+        ack should ONLY surface when the brain is actually slow. After
+        the ack is generated, this task polls ``self._turn_state``
+        every 100 ms for up to ``suppress_if_brain_faster_than_ms``; if
+        the state has already moved to ``JARVIS_SPEAKING`` or
+        ``LISTENING`` (i.e. the brain already started or finished
+        speaking), the ack is dropped silently. Only if the brain is
+        still in ``PROCESSING`` when the timer expires does the ack get
+        published.
+
+        Fire-and-forget — any failure swallows so a Flash-Brain stall
+        never blocks the main response path.
+        """
+        if self._ack_brain is None:
+            return
+
+        # Wave 3 (omni-latency): streaming ack path. Speak the first ack
+        # sentence the moment it is ready, but ONLY if the main brain has not
+        # already started speaking. No post-buffer poll — the ack exists to
+        # bridge the wait, so it must not add its own delay. Falls back to the
+        # legacy run()+poll path when streaming is disabled or unavailable.
+        ack_cfg = getattr(self._config, "ack_brain", None) if self._config else None
+        run_stream = getattr(self._ack_brain, "run_stream", None)
+        if getattr(ack_cfg, "streaming", False) and run_stream is not None:
+            spoke = False
+            grace_ms = int(getattr(ack_cfg, "ack_continuation_grace_ms", 1200))
+            try:
+                async for sentence in run_stream(utterance, language=language):
+                    if not sentence:
+                        continue
+                    # Continuation grace (AD-OE5). The streaming ack is ready
+                    # ~700 ms after the VAD endpoint — often BEFORE the VAD has
+                    # registered that the user merely paused and is still
+                    # talking (live incident 2026-06-17 12:42: the ack spoke
+                    # ~795 ms before the continuation was detected). Before the
+                    # FIRST audible sentence, poll until the turn leaves
+                    # PROCESSING (user resumed → continuation interrupt, or the
+                    # brain already answered) — drop the ack then — or the grace
+                    # elapses with the turn still committed.
+                    if not spoke and grace_ms > 0:
+                        if not await self._await_ack_turn_commit(grace_ms):
+                            log.info(
+                                "Flash-Brain ack suppressed — turn left PROCESSING "
+                                "during continuation grace (state=%s)",
+                                self._turn_state.name,
+                            )
+                            return
+                    # Gate: the ack ("I'm about to think about this") is only
+                    # valid while the turn is STILL thinking about the committed
+                    # utterance. Any other state — brain already speaking/done,
+                    # or the user (re)speaking — drops it.
+                    if self._turn_state is not TurnTakingState.PROCESSING:
+                        log.info(
+                            "Flash-Brain ack suppressed — turn no longer "
+                            "PROCESSING (state=%s)",
+                            self._turn_state.name,
+                        )
+                        return
+                    tracker = getattr(self, "_latency_tracker", None)
+                    if tracker is not None and not spoke:
+                        tracker.mark(LatencyPhase.ACK_FIRST_TOKEN)
+                    try:
+                        await self._publish_event(
+                            AnnouncementRequested(
+                                source_layer="brain.ack_brain",
+                                text=sentence,
+                                priority="normal",
+                                language=language,
+                                kind="preamble",
+                            )
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning("Flash-Brain ack publish failed: %s", exc)
+                    spoke = True
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Flash-Brain ack stream raised: %s", exc)
+            return
+
+        try:
+            ack = await self._ack_brain.run(utterance, language=language)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Flash-Brain ack task raised: %s", exc)
+            return
+        if not ack:
+            return  # silent — generator decided to suppress (any of F1-F10)
+
+        # Suppress-if-fast gate. Read threshold from config (or
+        # fallback to 2000 ms if the runtime is wired without one).
+        suppress_ms = 2000
+        try:
+            cfg_ack = getattr(self._config, "ack_brain", None) if self._config else None
+            if cfg_ack is not None:
+                suppress_ms = int(
+                    getattr(cfg_ack, "suppress_if_brain_faster_than_ms", suppress_ms)
+                )
+        except Exception:  # noqa: BLE001, S110 — retain the safe default
+            pass
+
+        if suppress_ms > 0:
+            # Poll the turn-state until either the brain has moved on
+            # (drop the ack) or the threshold has elapsed (publish).
+            poll_step_s = 0.1
+            poll_steps = max(1, int(suppress_ms / 1000.0 / poll_step_s))
+            for _ in range(poll_steps):
+                await asyncio.sleep(poll_step_s)
+                # Drop the ack the instant the turn leaves PROCESSING — the
+                # brain answered (JARVIS_SPEAKING) OR the user resumed
+                # (USER_SPEAKING / LISTENING). The latter is the AD-OE5
+                # continuation guard the streaming path enforces via the grace.
+                if self._turn_state is not TurnTakingState.PROCESSING:
+                    log.info(
+                        "Flash-Brain ack suppressed — turn no longer PROCESSING "
+                        "within %d ms (state=%s)",
+                        suppress_ms,
+                        self._turn_state.name,
+                    )
+                    return
+
+        try:
+            await self._publish_event(
+                AnnouncementRequested(
+                    source_layer="brain.ack_brain",
+                    text=ack,
+                    priority="normal",
+                    language=language,
+                    kind="preamble",
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Flash-Brain ack publish failed: %s", exc)
+
+    async def _on_background_completed(
+        self, event: JarvisAgentBackgroundCompleted
+    ) -> None:
+        """Proaktive Voice-Ansage wenn ein Background-Jarvis-Agent-Task fertig wird.
+
+        User-Wunsch 2026-05-11 (Bug-Report Voice-Spawn-Latenz): Completion-
+        Voice-Meldung soll hoerbar sein, damit der User auch dann Bescheid
+        weiss, wenn er zwischenzeitlich anderes gemacht hat. Phrasen sind
+        fix + ohne "Sir" + ohne Engineering-Jargon, damit der Output-Filter
+        (``scrub_for_voice``) nicht den Spruch komplett wegwirft.
+
+        Vorher (2026-04-25 .. 2026-05-10) war dieser Pfad mit einem fruehen
+        ``return`` suppress't — Wunsch damals war "keine standardisierten
+        Bestaetigungs-Phrasen". 2026-05-11 widerrufen.
+
+        CRIT-5 (2026-05-17): cancel the oldest pending spawn-watchdog --
+        FIFO matches the sequential dispatch model. If the watchdog has
+        already fired and emitted "Bin noch dran.", the cancel is a
+        cheap no-op.
+        """
+        if self._spawn_watchdog_tasks:
+            task = self._spawn_watchdog_tasks.pop(0)
+            if not task.done():
+                task.cancel()
+        if getattr(self, "_muted", False):
+            log.debug("Background-completed announcement suppressed — voice muted")
+            return
+        # WS3b (live bug 2026-06-14): a Jarvis-Agent mission that completes AFTER
+        # the user hung up still owes them its result. This readback is a FRESH
+        # turn (the answer they asked for), not a stale leftover from the aborted
+        # turn, so it must NOT be dropped by the hangup gate (AD-OE6
+        # zero-silent-drop). The mission ran in its own subprocess + Job Object;
+        # hangup never killed it. The mute guard above still silences a
+        # deliberately-muted session, and the phrases below stay priority
+        # "normal" → queued behind any current speech, never barging
+        # mid-utterance (AD-OE5).
+        # Resolve the readback language from the original request utterance,
+        # falling back to the worker summary text (pin > conversation-stickiness
+        # > detected utterance/summary > default) so an English/Spanish user
+        # never hears "Fertig." in German, and the "Done./Fertig." prefix never
+        # mismatches the summary language (forensic 2026-06-23: announcement
+        # emitters bypassed the resolver).
+        lang = self._output_language(
+            None,
+            getattr(event, "utterance", "") or getattr(event, "summary", "") or "",
+        )
+        ph = self._BG_READBACK_PHRASES.get(lang, self._BG_READBACK_PHRASES["en"])
+        if event.success and event.summary:
+            summ = event.summary.strip()
+            if len(summ) > 200:
+                summ = summ[:200].rsplit(" ", 1)[0] + "…"
+            text = ph["done_summ"].format(s=summ)
+        elif event.success:
+            text = ph["done"]
+        else:
+            err_short = (event.error or ph["unknown_err"])[:80]
+            text = ph["fail"].format(e=err_short)
+        # Defense-in-Depth: Summary/Error kann aus dem Jarvis-Agent-Pfad kommen
+        # und Engineering-Tokens (Sub-Agent, Subprocess, MCP) enthalten.
+        # scrub_for_voice filtert die raus, sonst leakt Worker-Mechanik
+        # in den Voice-Kanal (vgl. Mandat-Pfad #2 Output-Filter).
+        scrubbed = scrub_for_voice(text, language=lang)
+        if scrubbed.actions:
+            log.info(
+                "🧹 Background-Filter: %s (fallback=%s)",
+                scrubbed.actions, scrubbed.fallback_used,
+            )
+        if is_harmless_scrub_residue(scrubbed) or not scrubbed.cleaned.strip():
+            # The worker's own summary did not survive the filter. Speaking the
+            # residue guard's error phrase would invent a failure on a mission
+            # that succeeded as often as not — but silence is not the answer
+            # either: the user is waiting for THIS result (AD-OE6,
+            # zero-silent-drop). Retry with the deterministic phrase that
+            # carries no summary, which is hand-tuned to pass the filter.
+            plain = (
+                ph["done"] if event.success
+                else ph["fail"].format(e=ph["unknown_err"])
+            )
+            log.info(
+                "Jarvis-Agent background finished (success=%s) — the readback "
+                "carried no substance (%s), falling back to the summary-less "
+                "phrase instead of the error phrase: %r",
+                event.success,
+                scrubbed.actions,
+                text[:80],
+            )
+            if plain != text:
+                scrubbed = scrub_for_voice(plain, language=lang)
+            if is_harmless_scrub_residue(scrubbed) or not scrubbed.cleaned.strip():
+                # Even the canned line does not survive. Staying silent beats
+                # claiming a failure, but it means a completion went
+                # unannounced — say so in the log, loudly.
+                log.warning(
+                    "Jarvis-Agent background finished (success=%s) and was "
+                    "NEVER announced: both the summary and the canned phrase "
+                    "were filtered away (%s)",
+                    event.success,
+                    scrubbed.actions,
+                )
+                return
+        cleaned = scrubbed.cleaned.strip()
+        log.info(
+            "Jarvis-Agent background fertig (success=%s, dauer=%.1fs) — Ansage: %r",
+            event.success, event.duration_s, cleaned,
+        )
+        # AD-OE5: this path plays straight to the player, bypassing
+        # ``_on_announcement``. If the user holds the floor, park the readback
+        # as a completion announcement and let the turn-boundary flush replay it
+        # through the choke point (which then emits it to the session log + plays
+        # it). Returning here means it is neither logged-as-spoken nor played
+        # until the floor clears — no barge, no double-emit.
+        if getattr(self, "_turn_state", TurnTakingState.IDLE) in _USER_HOLDS_FLOOR_STATES:
+            self._deferred_announcements.append(
+                AnnouncementRequested(
+                    source_layer="harness.jarvis_agent.background",
+                    text=cleaned,
+                    language=lang,
+                    priority="normal",
+                    kind="subagent",
+                )
+            )
+            log.info(
+                "Background completion deferred — user holds the floor: %r",
+                cleaned[:80],
+            )
+            return
+        # Document the sub-agent readback in the session log — it is voiced
+        # through this background path, not _speak, so it would otherwise be
+        # invisible in the Transcription view. Tagged ``subagent`` so it renders
+        # on the attributed "Jarvis Sub-Agent / Output" track.
+        # Re-arm the readback grace exactly like ``_on_announcement`` (:2386): a
+        # background result delivered through THIS direct path also hands the
+        # floor back to the user, so ``_active_session`` must keep the mic open
+        # afterward instead of idle-hanging-up seconds later (2026-06-19).
+        self._last_announcement_spoken_monotonic = time.monotonic()
+        # Laufendes Playback stoppen damit die Ansage prompt durchkommt.
+        try:
+            self._player.stop()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Player-Stop vor Background-Ansage fehlgeschlagen: %s", exc)
+        # Animate the mascot/orb for this readback too (same as _on_announcement);
+        # restore DETERMINISTICALLY afterward — IDLE if the user hung up, else
+        # LISTENING. No prior-state capture, so this never races a concurrently
+        # flushed deferred announcement.
+        animate = self._supervisor is not None
+        hangup = getattr(self, "_hangup_event", None)
+        if animate:
+            await self._transition("SPEAKING")
+        self._assistant_work_count = getattr(self, "_assistant_work_count", 0) + 1
+        try:
+            self._register_assistant_speech(cleaned)
+            try:
+                chunks = self._tts.synthesize(cleaned, language_code=self._bcp47(lang))
+            except TypeError:
+                chunks = self._tts.synthesize(cleaned)
+            playback_result = await self._player.play_chunks(chunks)
+            self._touch_assistant_speech_activity()
+            if self._playback_confirmed(playback_result):
+                self._emit_spoken(cleaned, lang, SPOKEN_KIND_SUBAGENT)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Background-completed Voice-Ansage failed: %s", exc)
+        finally:
+            self._assistant_work_count -= 1
+            self._last_announcement_spoken_monotonic = time.monotonic()
+            if animate:
+                hungup = hangup is not None and hangup.is_set()
+                await self._transition("IDLE" if hungup else "LISTENING")
+
+    async def _on_spawn_announcement(self, event: JarvisAgentAnnouncement) -> None:
+        """Spawn-ACK ist auf User-Wunsch (2026-05-12) deaktiviert.
+
+        History:
+            2026-04-25 .. 2026-05-10 — Pfad war stumm (User-Wunsch).
+            2026-05-11 — kurz reaktiviert mit fixer Phrase "Okay, mache ich."
+                         weil der User ein Voice-Feedback wollte um stille
+                         Timeouts vom erfolgreichen Spawn unterscheiden zu
+                         koennen.
+            2026-05-12 — User widerruft. Jede Spawn-ACK-Phrase nervt; der
+                         User unterscheidet Spawn vs. Timeout jetzt visuell
+                         (Sub-Agents-Board) und ueber den Background-
+                         Completed-Voice-Readback am Ende der Mission.
+
+        Der Bus-Event selbst (``JarvisAgentAnnouncement``) wird in
+        ``spawn_worker.py`` weiterhin publisht und vom UI gelesen — wir
+        unterdruecken hier nur den Voice-Pfad. Cleanup-Logging behalten wir
+        einmalig pro Event, damit man im Log noch sehen kann dass der ACK
+        absichtlich ueber-sprungen wurde (debug-friendly bei spaeteren
+        Voice-Bug-Reports).
+        """
+        log.info(
+            "Spawn-ACK suppress't (User-Wunsch 2026-05-12) — action=%r target=%r",
+            event.action, event.target,
+        )
+        # CRIT-5 (2026-05-17) + heartbeat rework (2026-06-19): schedule the
+        # background-mission heartbeat so the user hears a varied, language-
+        # resolved "still on it" reassurance while a long mission runs (first
+        # beat well before the old 90 s, then bounded). _on_background_completed
+        # cancels it on the crash path; a completion readback cancels it via
+        # _cancel_spawn_heartbeats in the happy path.
+        self._schedule_spawn_watchdog()
+        return
+
+    def _schedule_spawn_watchdog(self) -> None:
+        """Start the background-mission heartbeat: a bounded series of varied,
+        language-resolved "still on it" reassurances while the mission has not
+        completed (see ``_spawn_watchdog_body``). FIFO-cancelled by
+        ``_on_background_completed``; also cancelled on a completion readback via
+        ``_cancel_spawn_heartbeats``."""
+        loop = asyncio.get_running_loop()
+        task = loop.create_task(
+            self._spawn_watchdog_body(),
+            name=f"spawn-watchdog-{len(self._spawn_watchdog_tasks)}",
+        )
+        self._spawn_watchdog_tasks.append(task)
+
+    def _live_spawn_watchdogs(self) -> list[asyncio.Task[None]]:
+        """Drop finished spawn-watchdog tasks; return the still-live ones.
+
+        A watchdog counts as a "background mission in flight" only while it is
+        still running its bounded heartbeat sequence. Once the sequence is
+        exhausted (or it is cancelled) it is ``done()`` and must no longer hold the voice
+        session open — otherwise the idle-timeout override in ``_active_session``
+        and the keep-listening branch in ``_finish_after_response`` would keep
+        the session in LISTENING *forever* after a force-spawn. In production the
+        success path never publishes ``JarvisAgentBackgroundCompleted`` (the
+        readback travels the MissionAnnouncer → ``AnnouncementRequested`` path,
+        and ``_on_background_completed`` — the only code that pops the list —
+        fires solely on the crash path), so the list is otherwise never drained.
+        Pruning bounds the in-flight extension to the watchdog lifetime.
+        """
+        self._spawn_watchdog_tasks[:] = [
+            t for t in self._spawn_watchdog_tasks if not t.done()
+        ]
+        return self._spawn_watchdog_tasks
+
+    def _background_mission_in_flight(self) -> bool:
+        """True while anything is still working for the user in the background:
+        a Jarvis-Agent spawn watchdog counting down OR a live Computer-Use
+        mission.
+
+        Consumed by the idle-timeout branch in ``_active_session`` and the
+        single-turn hangup decision in ``_finish_after_response`` so the voice
+        session does not hang up mid-mission (live bug 2026-06-10: the idle
+        timeout fired 40 s into a running CU mission; the mission kept
+        clicking invisibly for two more minutes and spoke its failure
+        announcement into a dead session). Bounded on both legs: watchdogs
+        self-remove after their bounded heartbeat sequence, and the CU token is
+        cleared in the harness ``finally`` with a hard mission deadline."""
+        if self._live_spawn_watchdogs():
+            return True
+        try:
+            from jarvis.harness.computer_use_context import (  # noqa: PLC0415
+                cu_mission_active,
+            )
+
+            return cu_mission_active()
+        except Exception:  # noqa: BLE001 — probe must never break the session
+            return False
+
+    def _pick_heartbeat_phrase(self) -> tuple[str, str]:
+        """Pick one varied "still on it" heartbeat phrase + its language.
+
+        Language flows through the single output-language resolver
+        (``_output_language``: ``brain.reply_language`` pin > sticky
+        conversation language > ``DEFAULT_LOCALE``) — never hard-coded "de", so
+        a German / English / Spanish conversation hears the heartbeat in its own
+        language. The phrase comes from the varied ``STILL_RUNNING_PHRASES`` pool
+        with a small no-repeat guard so consecutive beats differ. The pool lives
+        in the allowlisted spawn-announcement module (keeps the German/Spanish
+        runtime strings out of this file); a lazy import + neutral fallback keeps
+        the spoken path crash-proof.
+        """
+        lang = _phrase_lang(self._output_language(None, ""))
+        try:
+            from jarvis.brain.ack_brain.spawn_announcement import (  # noqa: PLC0415
+                STILL_RUNNING_PHRASES,
+            )
+
+            pool = STILL_RUNNING_PHRASES.get(lang) or STILL_RUNNING_PHRASES["en"]
+        except Exception:  # noqa: BLE001 — the heartbeat must never crash the loop
+            return ("Still working on it.", lang)
+        recent = getattr(self, "_heartbeat_recent", None)
+        choices = [p for p in pool if recent is None or p not in recent] or list(pool)
+        choice = random.choice(choices)  # noqa: S311 — phrase variety, not crypto
+        if recent is not None:
+            recent.append(choice)
+        return (choice, lang)
+
+    async def _spawn_watchdog_body(self) -> None:
+        """Speak a bounded, varied, language-resolved "still on it" heartbeat
+        while a background mission runs.
+
+        Replaces the old one-shot, German-only "Bin noch dran." (2026-06-19):
+        the first beat fires after ``_spawn_watchdog_delay_s`` (90 s of silence
+        read as a crash), then up to ``_heartbeat_max_count`` total,
+        ``_heartbeat_interval_s`` apart, so the wait feels alive instead of dead.
+        Each beat is picked fresh (``_pick_heartbeat_phrase``) and emitted as a
+        ``priority="normal"`` ``AnnouncementRequested`` — which the AD-OE5 floor
+        guard in ``_on_announcement`` drops if the user holds the floor (never
+        speaks over the user). A muted session stays silent. ``CancelledError``
+        (mission finished / completion readback) exits quietly.
+
+        On EVERY terminal path the task removes itself from
+        ``_spawn_watchdog_tasks``. That list is the "background mission in flight"
+        signal read by ``_active_session``'s idle-timeout override and by
+        ``_finish_after_response``; a done-but-still-listed task would hold the
+        voice session open forever, because the success path never publishes the
+        ``JarvisAgentBackgroundCompleted`` event that would otherwise drain it. The
+        hard cap bounds the in-flight hold to the heartbeat lifetime.
+        """
+        try:
+            max_count = max(1, getattr(self, "_heartbeat_max_count", 3))
+            interval = getattr(self, "_heartbeat_interval_s", 60.0)
+            delay = self._spawn_watchdog_delay_s
+            for beat in range(1, max_count + 1):
+                try:
+                    await asyncio.sleep(delay)
+                except asyncio.CancelledError:
+                    return
+                delay = interval
+                if getattr(self, "_muted", False):
+                    log.debug("Spawn-heartbeat: muted, skipping beat %d", beat)
+                    continue
+                if self._bus is None:
+                    return
+                phrase, lang = self._pick_heartbeat_phrase()
+                log.info(
+                    "Spawn-heartbeat #%d (mission still running) — %r (%s)",
+                    beat, phrase, lang,
+                )
+                try:
+                    await self._bus.publish(
+                        AnnouncementRequested(
+                            text=phrase,
+                            language=lang,
+                            priority="normal",
+                            # "progress" = droppable when stale: if the user
+                            # holds the floor when this lands, _on_announcement
+                            # DROPS it (never defers/replays a stale "still on
+                            # it" after the user finishes or after the answer).
+                            kind="progress",
+                        )
+                    )
+                except Exception:  # noqa: BLE001
+                    log.warning(
+                        "Spawn-heartbeat: AnnouncementRequested publish failed",
+                        exc_info=True,
+                    )
+        finally:
+            # Self-remove on every exit. _on_background_completed may have
+            # already popped this task (FIFO cancel) — remove() is then a
+            # harmless no-op (ValueError swallowed).
+            me = asyncio.current_task()
+            try:
+                self._spawn_watchdog_tasks.remove(me)
+            except ValueError:
+                pass
+
+    def _cancel_spawn_heartbeats(self) -> None:
+        """Cancel every pending spawn heartbeat.
+
+        Called when a mission delivers its actual answer (a readback —
+        ``kind="completion"`` or ``kind="subagent"``) so Jarvis never says "still
+        on it" right AFTER the result. The
+        success path does not publish ``JarvisAgentBackgroundCompleted``, so the
+        heartbeat is otherwise only drained by its own cap; this is the precise
+        hook that silences it the moment the answer lands. Each cancelled task
+        still self-removes from ``_spawn_watchdog_tasks`` in its ``finally``.
+        """
+        tasks = getattr(self, "_spawn_watchdog_tasks", None)
+        if not tasks:
+            return
+        for task in list(tasks):
+            if not task.done():
+                task.cancel()
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    async def run(self) -> None:
+        # Capture the loop that owns ``_call_event`` / ``_hangup_event`` before
+        # warm-up. UI controls can become clickable while warm-up is still in
+        # progress, so recording it later would leave a small unsafe window.
+        self._runtime_loop = asyncio.get_running_loop()
+        await self._warmup()
+        # Permanent-Vision: Background-Refresh-Loop hier im Pipeline-Event-Loop
+        # starten. Ohne das kriegt `VisionContextProvider.current()` nie einen
+        # gecachten Frame und der Router-Brain sieht den Screen nicht. Fehler
+        # beim Start duerfen die Voice-Session nicht toeten — Text-Only-
+        # Fallback greift weiter.
+        if self._vision_provider is not None:
+            try:
+                await self._vision_provider.start()
+                log.info("VisionContextProvider Background-Loop gestartet.")
+            except Exception as exc:  # noqa: BLE001
+                log.error(
+                    "VisionContextProvider.start() fehlgeschlagen — "
+                    "Router laeuft ohne Screen-Kontext: %s",
+                    exc,
+                    exc_info=True,
+                )
+        # Push-to-talk and dictation want BOTH key edges; call/hangup keep the
+        # single-fire-on-release contract. One producer for boot and live re-arm.
+        hotkey_bindings, ptt_events = self._build_hotkey_bindings()
+        log.info(
+            "Pipeline ready. CALL=[%s] PTT=[%s] HANGUP=[%s] DICTATE=[%s/%s] "
+            "DICTATE-TOGGLE=[%s] PASTE-LAST=[%s] PET-TOGGLE=[%s] OWW=%s "
+            "WAKE=%s (threshold=%.2f) WHISPER-WAKE=%s TURN-MODE=%s",
+            ", ".join(self._call_hotkeys),
+            ", ".join(self._ptt_hotkeys) or "off",
+            ", ".join(self._hangup_hotkeys),
+            ", ".join(self._dictate_hotkeys) or "off",
+            self._dictate_mode,
+            ", ".join(getattr(self, "_dictate_toggle_hotkeys", None) or []) or "off",
+            ", ".join(getattr(self, "_paste_last_hotkeys", None) or []) or "off",
+            ", ".join(getattr(self, "_pet_toggle_hotkeys", None) or []) or "off",
+            "on" if self._openwakeword_enabled else "off",
+            list(self._wake._keywords),
+            self._wake._threshold,
+            "on" if self._whisper_wake_enabled else "off",
+            # Observability for the single-turn vs conversation pendulum: the
+            # mode was previously invisible in the log, which made it impossible
+            # to tell from telemetry whether a `turn_complete` hangup was the
+            # configured single-turn behavior or a regression. See
+            # feedback_voice_session_mode + BUG-009-style env-propagation traps.
+            "conversation (until 'auflegen'/idle/hotkey)"
+            if self._continue_listening_after_response
+            else "single-turn (fresh wake per turn)",
+        )
+        def _log_task_exit(task: asyncio.Task) -> None:
+            # Asyncio verschluckt Task-Exceptions sonst silent — wir hatten
+            # genau diesen Bug 2026-04-26 (Mic-Open mit ungueltiger Sample-Rate
+            # killte den Wake-Task ohne ein einziges Log).
+            if task.cancelled():
+                return
+            exc = task.exception()
+            if exc is not None:
+                log.error(
+                    "Pipeline-Task '%s' beendet mit Exception: %s",
+                    task.get_name(),
+                    exc,
+                    exc_info=exc,
+                )
+
+        async with HotkeyTrigger(hotkey_bindings, push_to_talk=ptt_events) as trigger:
+            # Kept for the hold-key watchdog (``_watch_dictation_hold_key``),
+            # which asks the live trigger whether the chord is physically down.
+            self._hotkey_trigger = trigger
+            hotkey_task = asyncio.create_task(self._hotkey_loop(trigger), name="hotkey")
+            hotkey_task.add_done_callback(_log_task_exit)
+            # Live keybind re-arm: set_keybinds() flips _hotkey_reload_event and
+            # this task re-registers the new combos in place (no app restart).
+            hotkey_reload_task = asyncio.create_task(
+                self._hotkey_reload_loop(trigger), name="hotkey-reload"
+            )
+            hotkey_reload_task.add_done_callback(_log_task_exit)
+            wake_task = (
+                asyncio.create_task(self._wake_loop(), name="wake")
+                if self._wake_listening_enabled()
+                else None
+            )
+            if wake_task is not None:
+                wake_task.add_done_callback(_log_task_exit)
+            else:
+                log.info(
+                    "Wake listener disabled; microphone stays closed until a hotkey call."
+                )
+            main_task = asyncio.create_task(self._state_loop(), name="state")
+            main_task.add_done_callback(_log_task_exit)
+
+            # Skills-Brain-Integration: Cron-Scheduler-Task starten wenn Skills bereit.
+            # Wenn kein SkillContext gesetzt ist, ueberspringen wir den Cron-Pfad
+            # ohne Fehler (Headless-Mode, Tests).
+            self._cron_stop.clear()
+            cron_ctx = try_get_skill_context()
+            if cron_ctx is not None:
+                self._cron_task = asyncio.create_task(
+                    self._skill_cron_loop(self._cron_stop), name="skill-cron"
+                )
+                log.info("Skill-Cron-Scheduler aktiv.")
+
+            try:
+                await main_task
+            finally:
+                self._hotkey_trigger = None
+                self._cron_stop.set()
+                tasks_to_cancel: list[asyncio.Task] = [hotkey_task, hotkey_reload_task]
+                if wake_task is not None:
+                    tasks_to_cancel.append(wake_task)
+                if self._cron_task is not None:
+                    tasks_to_cancel.append(self._cron_task)
+                for t in tasks_to_cancel:
+                    t.cancel()
+                for t in tasks_to_cancel:
+                    try:
+                        await t
+                    except (asyncio.CancelledError, Exception):  # noqa: S110
+                        # Shutdown has already cancelled these owned tasks.
+                        pass
+                if self._vision_provider is not None:
+                    try:
+                        await self._vision_provider.stop()
+                    except Exception as exc:  # noqa: BLE001
+                        log.debug("VisionContextProvider.stop() swallow: %s", exc)
+                self._cron_task = None
+                # Phase-B confirmation-audio render is fire-and-forget; cancel it
+                # here so it is never orphaned past pipeline shutdown.
+                await self._cancel_warmup_background()
+
+    async def _emit_boot_status(self, *, ready: bool, detail: str = "") -> None:
+        """Publish a VoiceBootStatus on the bus (guarded — never breaks boot).
+
+        ``ready=False`` is emitted at the very start of warm-up; ``ready=True``
+        only once ALL deferred loaders (wake model + VAD + TTS client) have
+        completed, from ``_warmup_deferred_loaders`` — the first honest moment
+        the user can both be heard AND get a spoken reply. (It runs after Phase A
+        has returned, so the wake loop is already listening by then.)
+        """
+        if self._bus is None:
+            return
+        try:
+            await self._bus.publish(VoiceBootStatus(ready=ready, detail=detail))
+        except Exception as exc:  # noqa: BLE001 — status signal never breaks boot
+            log.warning("VoiceBootStatus(ready=%s) publish failed: %s", ready, exc)
+
+    async def _cancel_warmup_background(self) -> None:
+        """Cancel + await the fire-and-forget warm-up tasks on shutdown.
+
+        Three background tasks run off the wake-critical path: Phase B (the ACK +
+        task-ack confirmation-audio pre-render), the deferred wake/VAD/TTS
+        loaders (``_warmup_deferred_loaders``), and the boot-ready audio cue
+        (``_warmup_ready_cue_task``, created at the end of the deferred loaders).
+        When ``run()`` is cancelled (the normal desktop-shutdown path) all must
+        be cancelled and awaited, otherwise they are orphaned: under
+        ``pythonw.exe`` there is no stderr to surface the "Task exception was
+        never retrieved" warning, and a late TTS render could write stale PCM
+        into ``_ack_pcm`` / ``_task_ack_pcm`` after a live TTS-provider switch
+        already cleared them. Guarded so shutdown never raises.
+        """
+        self._dictation_warmup_shutdown = True
+        for attr in (
+            "_warmup_background_task",
+            "_warmup_ready_cue_task",
+            "_deferred_warmup_task",
+            "_dictation_warmup_task",
+            "_audio_topology_task",
+        ):
+            task = getattr(self, attr, None)
+            if task is None:
+                continue
+            if not task.done():
+                task.cancel()
+            try:
+                # Bounded: a wedged native call inside a background worker
+                # (e.g. a PortAudio re-init mid-refresh) must not hang the
+                # whole shutdown; the orphaned worker dies with the process.
+                await asyncio.wait_for(asyncio.shield(task), timeout=2.0)
+            except TimeoutError:
+                log.warning(
+                    "Warm-up background task %s did not stop within 2s.", attr
+                )
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
+                # Shutdown is best-effort after the bounded wait above.
+                pass
+            setattr(self, attr, None)
+
+    async def _warmup(self) -> None:
+        log.info("Warm-up: Whisper / Silero / Wake-Word / TTS …")
+        await self._emit_boot_status(ready=False, detail="warmup_start")
+
+        # --- Phase A: start the wake LOOP, nothing else -------------------
+        # Phase A blocks on the absolute minimum so the wake loop is listening
+        # fast: the audio-device table settling (BUG-014 guard) and the wake
+        # start. The heavy VAD / STT / TTS loads are deliberately NOT here — they
+        # move to the background ``_warmup_deferred_loaders`` so they never gate
+        # wake-loop start. NOTE: a started wake loop is NOT the same as "ready to
+        # converse"; honest readiness (incl. TTS) is signalled later, from the
+        # deferred loaders (see below).
+        phase_a_start = time.monotonic()
+        await self._warmup_phase_a()
+        phase_a_ms = (time.monotonic() - phase_a_start) * 1000.0
+        log.info("Warm-up Phase A (critical listening path) done in %.0f ms.", phase_a_ms)
+        # Honest readiness (2026-06-29): Phase A only starts the wake LOOP — it
+        # does NOT mean the user can hold a conversation yet (VAD + TTS, and the
+        # custom-wake Whisper model, are still loading in
+        # _warmup_deferred_loaders below). Readiness is therefore NOT signalled
+        # here. BOTH the VoiceBootStatus(ready=True) and the audible "you can
+        # speak" cue now fire at the END of _warmup_deferred_loaders — the first
+        # moment wake (model) + VAD + TTS are ALL genuinely up. Previously the
+        # openWakeWord path flipped ready in Phase A and the custom-phrase path
+        # flipped it right after the wake model alone — either way the UI said
+        # "ready" while TTS was still loading, so the user spoke and nothing came
+        # back ("it says ready but I can't talk"). ready=False was already
+        # emitted at warmup_start above, so the UI stays in its honest
+        # "starting up / preparing to listen" state until the deferred loaders
+        # complete.
+
+        # --- Phase B: confirmation audio, off the critical path -----------
+        # Pre-rendering the ACK + ~20 task-ack phrases used to dominate warm-up
+        # (~20 sequential TTS round-trips). Fire it as a background task so it
+        # never delays the ready signal; if the wake word fires before the ACK
+        # is cached, the chime above plays instead.
+        self._warmup_background_task = asyncio.create_task(
+            self._warmup_phase_b(), name="warmup-confirmation-audio"
+        )
+        log.info("Warm-up Phase A complete — confirmation audio rendering in background.")
+
+    def _log_audio_topology_done(self, task: asyncio.Task) -> None:
+        """A silently dead hot-swap watcher must leave a diagnostic (BUG-102)."""
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            log.warning("Audio topology watcher died: %s", exc)
+
+    def _log_warmup_ready_cue_done(self, task: asyncio.Task) -> None:
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Warm-up ready cue failed: %s", exc)
+
+    async def _warmup_phase_a(self) -> None:
+        """Bring up ONLY the wake-critical listening path, then return.
+
+        The wake loop is started the moment this returns, so it must block on
+        the absolute minimum: the audio-device table settling (BUG-014 guard)
+        and the OpenWakeWord model starting. That is everything the wake path
+        needs to hear "Hey Jarvis" and spawn the orb.
+
+        The heavy VAD / STT / TTS-client loads are deliberately NOT here. Each
+        of them lazy-imports a large C-extension (onnxruntime for the wake model
+        and Silero-VAD, ctranslate2 for local Whisper); run concurrently inside
+        the boot storm they serialize on the Python import lock and starve to
+        7-24 s (measured: ``wake-start=14187, vad-load=12672``). Because the wake
+        loop used to start only after the WHOLE warm-up finished, gating it on
+        those loads left the wake word dead for that entire window — the
+        "~10 s delay / nothing spawns" regression. They are only needed AFTER a
+        wake and are lazy-safe (each object re-ensures its model on first use),
+        so they move to a background deferred task (``_warmup_deferred_loaders``)
+        that never gates wake readiness.
+        """
+        async def _start_wake() -> None:
+            if self._openwakeword_enabled:
+                await self._wake.start()
+
+        # return_exceptions=True (inside _gather_timed): a slow/failing loader
+        # must not abort the other. The per-loader timing exposes which one
+        # dominates the wake-critical warm-up (boot-perf forensic).
+        timings, results = await _gather_timed(
+            [
+                ("audio-stabilize", self._stabilize_audio_devices),
+                ("wake-start", _start_wake),
+            ]
+        )
+        self._warmup_phase_a_timings = timings
+        log.info(
+            "Warm-up Phase A (wake-critical) per-loader (ms): %s",
+            ", ".join(
+                f"{name}={timings[name]:.0f}"
+                for name in sorted(timings, key=lambda n: -timings[n])
+            ),
+        )
+        for name, res in zip(("audio-stabilize", "wake-start"), results, strict=True):
+            if isinstance(res, Exception):
+                log.warning("Warm-up Phase A task '%s' failed: %s", name, res)
+
+        # Heavy model loads move off the wake-ready path — fire-and-forget so a
+        # wake can fire (and the orb spawn) while they are still loading. A wake
+        # that arrives first simply triggers a one-off lazy load on the VAD/STT
+        # object instead of waiting out the whole warm-up. Cancelled on shutdown
+        # via ``_cancel_warmup_background``.
+        self._deferred_warmup_task = asyncio.create_task(
+            self._warmup_deferred_loaders(), name="warmup-deferred-loaders"
+        )
+
+    async def _warmup_deferred_loaders(self) -> None:
+        """Background pre-load of the FULL conversational stack (wake model +
+        VAD + TTS), then signal HONEST readiness.
+
+        Runs OFF the wake-critical path (see ``_warmup_phase_a``): the wake loop
+        is already listening by the time this starts, so a wake mid-load just
+        triggers a one-off lazy load on the VAD/STT/TTS object. What this owns is
+        the *honest* readiness signal — ``VoiceBootStatus(ready=True)`` and the
+        audible "you can speak" cue fire ONLY at the very end, once wake (model),
+        VAD endpointing AND the TTS reply path are all initialized. Flipping
+        ready before TTS was up was the "it says ready but I can't talk" bug
+        (2026-06-29).
+
+        Ordering / GIL: the wake-model load is the one heavy CUDA/GIL step, kept
+        FIRST and ALONE (racing it against the VAD load serialized both on the
+        import + CUDA-init lock to ~11.8 s — forensic 2026-06-22). The TTS client
+        init is network-bound (releases the GIL on I/O), so it is kicked off
+        CONCURRENTLY with the wake warm-up to overlap its latency instead of
+        paying it sequentially afterwards. VAD loads after the wake model. Every
+        load is guarded so one slow/failing load never strands readiness — it
+        will lazy-load / fall back on first use.
+        """
+        deferred_t0 = time.monotonic()
+
+        # TTS client init is network-bound → overlap it with the (CUDA-heavy)
+        # wake warm-up rather than adding it on afterwards. Idempotent: a later
+        # lazy ``_ensure_client`` on first synth is a harmless no-op.
+        async def _init_tts() -> None:
+            await asyncio.to_thread(self._tts._ensure_client)
+
+        tts_task = asyncio.create_task(_init_tts(), name="warmup-tts-init")
+        try:
+            # PRIORITY: pre-warm the WAKE model FIRST and ALONE. For a custom wake
+            # phrase (stt_match / rolling-whisper) ``self._stt`` IS the wake model,
+            # and until it is in memory + warmed the wake loop cannot transcribe.
+            # Prime with one REAL inference (not just the model load): the first
+            # transcribe is cold (CUDA kernel JIT / cuDNN algo search), and that
+            # cost used to land on the user's first "Hey Jarvis" (swallowed wake,
+            # forensic 2026-06-28). ``warm_up`` pays it here; falls back to
+            # ``_ensure_model``.
+            if self._stt is not None:
+                _wake_t0 = time.monotonic()
+                try:
+                    _prime = getattr(self._stt, "warm_up", None)
+                    await asyncio.to_thread(
+                        _prime if callable(_prime) else self._stt._ensure_model
+                    )
+                    log.info(
+                        "Wake-model pre-warm done in %.0f ms (priority, no GIL race).",
+                        (time.monotonic() - _wake_t0) * 1000.0,
+                    )
+                except Exception as exc:  # noqa: BLE001 — lazy load on first use still works
+                    log.warning("Wake-model pre-warm failed (will lazy-load): %s", exc)
+
+            # VAD after the wake model (both touch heavy C-extensions; serialize
+            # to dodge the import/CUDA-init lock contention measured above).
+            _vad_t0 = time.monotonic()
+            try:
+                await asyncio.to_thread(self._vad._ensure_model)
+                log.info("VAD load done in %.0f ms.", (time.monotonic() - _vad_t0) * 1000.0)
+            except Exception as exc:  # noqa: BLE001 — lazy load on first use still works
+                log.warning("Warm-up deferred loader 'vad-load' failed: %s", exc)
+
+            # Join the concurrently-running TTS init (started before the wake warm).
+            tts_err: Exception | None = None
+            try:
+                await tts_task
+            except Exception as exc:  # noqa: BLE001 — lazy load on first synth still works
+                tts_err = exc
+                log.warning("Warm-up deferred loader 'tts-init' failed: %s", exc)
+
+            log.info(
+                "Warm-up deferred loaders done in %.0f ms (tts-init=%s).",
+                (time.monotonic() - deferred_t0) * 1000.0,
+                "ok" if tts_err is None else "failed",
+            )
+
+            # --- HONEST READINESS: the full stack is up (or attempted) ------
+            # Wake model warmed + VAD loaded + TTS client init done → the user
+            # can now actually be heard AND get a spoken reply. Signal ready and
+            # play the audible cue here, exactly once, at the first truthful
+            # moment. Even on a failed VAD/TTS load we still flip ready (each
+            # lazy-loads / falls back on first use) rather than stranding the UI
+            # in "starting up" forever. The cue is fire-and-forget so a
+            # slow/wedged output device never sits between ready=True and a
+            # responsive wake loop.
+            await self._emit_boot_status(ready=True, detail="listening")
+            self._warmup_ready_cue_task = asyncio.create_task(
+                self._play_ready_cue(), name="warmup-ready-cue"
+            )
+            self._warmup_ready_cue_task.add_done_callback(self._log_warmup_ready_cue_done)
+            # Hot-swap watcher (BUG-102): starts only AFTER honest readiness —
+            # never on the boot critical path (AP-26). Polls the out-of-process
+            # device probe and refreshes PortAudio when a headset is plugged
+            # in or pulled, so mic and speaker follow the user's devices at
+            # runtime on every OS instead of dying on a frozen device table.
+            # ``getattr`` default keeps ``__new__``-built test/hot-reload
+            # instances (which skip ``__init__``) working.
+            if getattr(self, "_audio_topology_task", None) is None:
+                from jarvis.audio.topology import watch_topology
+
+                self._audio_topology_task = asyncio.create_task(
+                    watch_topology(self._player, self._output_device),
+                    name="audio-topology-watch",
+                )
+                self._audio_topology_task.add_done_callback(
+                    self._log_audio_topology_done
+                )
+            # Warming voice/wake STT above does not warm dictation's separate,
+            # prompt-free provider. Start it only AFTER honest readiness so its
+            # model load + first CUDA decode can never delay boot (AP-26).
+            self._schedule_dictation_warmup()
+        finally:
+            # Never orphan the concurrently-started TTS init: if this deferred
+            # task is cancelled (desktop shutdown) before the ``await tts_task``
+            # join above is reached, CancelledError propagates straight here. Cancel
+            # + await it so a late ``_ensure_client`` failure can't surface as an
+            # unretrieved-exception warning under pythonw.exe. No-op on the normal
+            # path (tts_task already awaited → done). Swallowed; re-raises the
+            # original CancelledError after cleanup.
+            if not tts_task.done():
+                tts_task.cancel()
+                try:
+                    await tts_task
+                except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
+                    # Preserve the original cancellation after owned-task cleanup.
+                    pass
+
+    async def _warmup_phase_b(self) -> None:
+        """Background pre-render of confirmation audio (never blocks ready).
+
+        Order matters: the wake ACK "Ja?" is rendered first (highest priority —
+        it is the immediate wake feedback), then the task-ack phrases are
+        rendered concurrently. Fully guarded; any failure degrades to the chime.
+        """
+        bg_start = time.monotonic()
+        await self._prerender_ack_phrase()
+        await self._prerender_task_acks()
+        bg_ms = (time.monotonic() - bg_start) * 1000.0
+        log.info("Warm-up Phase B (confirmation audio) done in %.0f ms.", bg_ms)
+
+    async def _prerender_ack_phrase(self) -> None:
+        """Cache the wake-ACK phrase ("Ja?") PCM, or fall back to the chime."""
+        # Skip the ACK pre-render when the phrase is empty (user preference: no
+        # spoken wake reaction, chime only). Gemini-TTS would raise an API error
+        # on "" anyway.
+        if not self._ack_phrase:
+            log.info("ACK phrase disabled — chime only on wake.")
+            self._ack_pcm = b""
+            return
+        try:
+            log.info("Pre-rendering ACK phrase '%s' …", self._ack_phrase)
+            chunks: list[AudioChunk] = []
+            async for c in self._tts.synthesize(self._ack_phrase):
+                chunks.append(c)
+            self._ack_pcm = b"".join(c.pcm for c in chunks)
+            log.info("ACK phrase cached (%d KB).", len(self._ack_pcm) // 1024)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("ACK pre-render failed (%s) — chime only as feedback.", exc)
+            self._ack_pcm = b""
+
+    async def _stabilize_audio_devices(self) -> None:
+        """Wait for the audio device enumeration to settle, then re-resolve the
+        output device against the now-fresh PortAudio table.
+
+        Permanent cure for the post-reboot device-index drift (BUG-014 class):
+        Jarvis can autostart before Windows finishes enumerating audio
+        endpoints, freezing a partial table that points the speaker index at a
+        stale/silent device. Fully guarded — must never block or break boot.
+        """
+        try:
+            # If the launcher prefetched the (blocking ~1.5 s) device settle in a
+            # daemon thread at boot, reuse its already-settled result instead of
+            # re-paying the poll wait on the wake-critical path. Falls back to a
+            # fresh settle when no prefetch ran / it is still polling — identical
+            # to today's behavior, so this can only help, never slow boot.
+            from jarvis.audio.device_init import get_prefetched_audio_result
+
+            info = get_prefetched_audio_result()
+            if info is None:
+                info = await asyncio.to_thread(wait_for_stable_audio_devices)
+            log.info(
+                "Audio-Geräte stabilisiert: %d Geräte (stable=%s, %.1fs, %d reinit).",
+                info.get("device_count", 0),
+                info.get("stable"),
+                info.get("waited_s", 0.0),
+                info.get("reinits", 0),
+            )
+            self._player.set_device(self._output_device)
+        except Exception as exc:  # noqa: BLE001 — audio robustness never breaks boot
+            log.warning("Audio-Geräte-Stabilisierung übersprungen (%s).", exc)
+
+    async def _play_ready_cue(self) -> None:
+        """Play the ascending boot-ready tone once. Silent no-op on a headless
+        VPS / when no output device exists, or when the global "Sound effects"
+        switch is off — never raises."""
+        await self._play_earcon(READY_PCM)
+
+    async def _prerender_task_acks(self) -> None:
+        phrases = iter_all_start_ack()
+        log.info("Pre-rendere %d Task-Ack-Phrasen …", len(phrases))
+
+        async def _render_one(lang: str, phrase: str) -> bool:
+            """Render + cache one phrase. Returns True on a non-empty cache.
+
+            Each call writes a distinct ``(lang, phrase)`` key into the shared
+            dict; the write sits between two awaits, so the cooperative
+            event-loop scheduler never preempts it (these are asyncio tasks on
+            one loop, not OS threads) — concurrent writes are safe without a
+            lock. A single failure degrades to no cache entry → chime fallback,
+            never raises.
+            """
+            try:
+                chunks: list[AudioChunk] = []
+                try:
+                    it = self._tts.synthesize(phrase, language_code=self._bcp47(lang))
+                except TypeError:
+                    it = self._tts.synthesize(phrase)
+                async for c in it:
+                    chunks.append(c)
+                pcm = b"".join(c.pcm for c in chunks)
+                if pcm:
+                    self._task_ack_pcm[(lang, phrase)] = pcm
+                    return True
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Task-Ack pre-render '%s' (%s) fehlgeschlagen: %s", phrase, lang, exc)
+            return False
+
+        # Render all phrases concurrently — the dominant warm-up cost was these
+        # ~20 sequential TTS round-trips. _render_one never raises, so a plain
+        # gather is enough (no return_exceptions needed).
+        results = await asyncio.gather(*(_render_one(lang, phrase) for lang, phrase in phrases))
+        ok = sum(1 for r in results if r)
+        log.info("Task-Ack-Cache: %d/%d Phrasen bereit.", ok, len(phrases))
+
+    # ------------------------------------------------------------------
+    # Hotkey-Loop
+    # ------------------------------------------------------------------
+
+    async def _hotkey_loop(self, trigger: HotkeyTrigger) -> None:
+        async for event_name in trigger.events():
+            # One raising handler must not end this loop: it is the ONLY
+            # consumer of every global shortcut, and its death is invisible
+            # from the desktop (a log line the WebView cannot show) — every
+            # key simply stops working until a restart. The edge is dropped,
+            # the next one is served (AP-18 for the hotkey lane, BUG-191).
+            try:
+                self._dispatch_hotkey_event(event_name)
+            except Exception:  # noqa: BLE001 — contained on purpose, logged in full
+                log.exception("Hotkey %r handler failed; the edge was dropped.", event_name)
+
+    def _dispatch_hotkey_event(self, event_name: str) -> None:
+        """Route one hotkey edge to its handler (the body of ``_hotkey_loop``)."""
+        if event_name == "call":
+            log.info("📞 CALL via Hotkey")
+            # A deliberate key press — exempt from the post-hangup wake
+            # lock (no speaker-echo path), same contract as PTT below.
+            self._explicit_call_pending = True
+            self._call_event.set()
+        elif event_name == "ptt_press":
+            self._on_ptt_press()
+        elif event_name == "ptt_release":
+            self._on_ptt_release()
+        elif event_name == "dictate_press":
+            self._on_dictate_press()
+        elif event_name == "dictate_release":
+            self._on_dictate_release()
+        elif event_name == "dictate":
+            # Legacy [dictation].mode = "toggle": one press starts, the
+            # next stops. Only reached when the HOLD key is in toggle mode.
+            self._on_dictate_toggle()
+        elif event_name == "dictate_toggle":
+            # The dedicated hands-free key. Same handler, its own binding.
+            self._on_dictate_toggle()
+        elif event_name == "paste_last":
+            self._on_paste_last()
+        elif event_name == "pet_toggle":
+            self._on_pet_toggle()
+        elif event_name == "hangup":
+            log.info("📵 HANGUP via Hotkey")
+            self._trigger_voice_hangup()
+
+    # ------------------------------------------------------------------
+    # Dictation hotkey edges
+    # ------------------------------------------------------------------
+
+    def _on_dictate_press(self) -> None:
+        """Dictation key DOWN — start recording into the focused text field.
+
+        Idempotent by design: every backend reports a press exactly once per
+        real chord-down (the Windows poller too — ``HotkeyChecker.run`` fires
+        ``on_press`` only on the ``key_state != 1`` transition, whatever older
+        comments in this file claimed), but a stray duplicate edge inside the
+        grace window is still treated as the same hold. Only the first edge
+        from "key up" starts anything.
+
+        **The latch heals itself.** A key-up edge can be lost — the pynput and
+        Quartz backends clear their own chord state without firing ``on_release``
+        when the input permission is revoked mid-chord, and a focus change, a
+        UAC prompt or an RDP reconnect can do the same. A latch that only a
+        release could clear then swallowed EVERY later press, which presents as
+        "the dictation shortcut just stopped working" with no error and no way
+        back except an app restart. So a press that arrives long after the last
+        one reported the key down is treated as what it physically is — a fresh
+        press on a key nobody is holding — not as a repeat. A second press edge
+        can only exist if the chord went up in between, so anything past the
+        grace window is either a lost key-up or a genuinely new press, and both
+        want the same repair.
+
+        **A press while a dictation nobody is holding is running is its STOP**
+        (BUG-191). The latch says "up", yet the lane is busy: a hands-free key,
+        the bar, a REST call started it — or a release edge never made it here
+        and the recording is still open. Before this, that press went to
+        ``start_dictation``, was refused as ``already_running`` (a refusal the
+        bar deliberately paints as nothing), and the latch was dropped again:
+        the key did nothing, visibly, forever, and only a restart ended the
+        recording. The dictation key is the kill switch of its own lane — an
+        explicit press ends whatever is running and delivers it, which is what
+        the user pressing it means.
+        """
+        now = time.monotonic()
+        last_seen = float(getattr(self, "_dictate_key_seen_at", 0.0))
+        latched = bool(getattr(self, "_dictate_key_down", False))
+        stale = latched and (now - last_seen) > _DICTATE_HOLD_REPEAT_GRACE_S
+        self._dictate_key_seen_at = now
+        if latched and not stale:
+            return  # the same hold, re-reported inside the grace window
+        if stale:
+            log.info(
+                "Dictation key-up edge was lost %.1fs ago — clearing the stale "
+                "hold latch so the shortcut keeps working.",
+                now - last_seen,
+            )
+            self._dictate_key_down = False
+            if self.dictation_active():
+                # The orphaned recording is still running with the microphone
+                # open. Treat this press as the release that never arrived:
+                # finish and deliver what was said instead of starting a second
+                # dictation on top of it. The latch is clear, so the user's next
+                # press starts a fresh one.
+                self.stop_dictation()
+                return
+        if self.dictation_active():
+            log.info(
+                "Dictation key pressed while a dictation nobody is holding is "
+                "still running (via=%s, %.1fs since the last edge) — finishing "
+                "it instead of refusing the press.",
+                getattr(self, "_dictation_started_by", "") or "unknown",
+                now - last_seen if last_seen else 0.0,
+            )
+            self.stop_dictation()
+            return
+        self._dictate_key_down = True
+        log.info("Dictation key down — starting a hold recording.")
+        if not self.start_dictation(
+            target=self._configured_dictation_target(), source="hold_key"
+        ):
+            # Could not start (no microphone, no STT). Drop the latch
+            # immediately so the NEXT press is a fresh attempt rather than
+            # being swallowed as a repeat. A live voice session is NOT one of
+            # these: it is accepted and handed over, and the latch has to stay
+            # so the release can cancel a handover that is still running.
+            self._dictate_key_down = False
+
+    def _on_dictate_release(self) -> None:
+        """Dictation key UP — stop recording and submit what was held."""
+        if not self._dictate_key_down:
+            log.debug("Dictation key up with no hold latched — nothing to submit.")
+            return
+        self._dictate_key_down = False
+        log.info(
+            "Dictation key up after %.1fs — submitting the hold recording.",
+            time.monotonic() - float(getattr(self, "_dictate_key_seen_at", 0.0) or 0.0),
+        )
+        self.stop_dictation()
+
+    def _on_dictate_toggle(self) -> None:
+        """Toggle mode: start if idle, stop if running.
+
+        ``dictation_active`` covers the handover window too, so the second press
+        of a hands-free toggle cancels a voice-session handover that has not
+        finished instead of falling through and asking for a second dictation.
+        """
+        if self.dictation_active():
+            log.info("Dictation toggle key — stopping the running dictation.")
+            self.stop_dictation()
+            return
+        log.info("Dictation toggle key — starting a hands-free recording.")
+        self.start_dictation(
+            target=self._configured_dictation_target(), source="toggle_key"
+        )
+
+    def _on_pet_toggle(self) -> None:
+        """Pet shortcut — hide the desktop pet, or show it and bring it forward.
+
+        The pipeline owns the shortcut, not the pet: it only announces the
+        press. ``OrbBusBridge`` turns ``PetVisibilityToggleRequested`` into
+        ``surface.toggle_visible()``, which every other overlay style ignores.
+        Scheduled, never awaited — this runs inside the hotkey loop, which must
+        not wait on bus subscribers.
+        """
+        log.info("Pet visibility toggle via hotkey")
+        self._publish_event_soon(PetVisibilityToggleRequested(source="hotkey"))
+
+    def _on_paste_last(self) -> None:
+        """"Insert the last dictation again" key — re-deliver the last transcript.
+
+        Needs no microphone, no speech-to-text and no recording, which is the
+        whole point: it stays useful exactly where dictation itself cannot run.
+
+        Scheduled as a task rather than executed here, because the work behind
+        it is blocking — it parses the history file and sleeps around the paste
+        chord — and this handler runs ON the pipeline's event loop, the same
+        loop a live voice turn uses (AP-9). A press while one is still running
+        is dropped rather than queued: two overlapping pastes race over the
+        clipboard restore and the loser puts the WRONG content back.
+        """
+        if getattr(self, "_paste_last_busy", False):
+            log.debug("paste-last key ignored: a paste is already in flight")
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            log.debug("paste-last key ignored: no running event loop")
+            return
+        self._paste_last_busy = True
+        loop.create_task(self._paste_last_dictation(), name="dictation-paste-last")
+
+    async def _paste_last_dictation(self) -> None:
+        """The blocking half of :meth:`_on_paste_last`. Never raises.
+
+        Goes through ``insert_last_dictation`` — the SAME delivery path the
+        REST route and a fresh dictation use — so the three can never drift
+        apart. Anything short of "the text was typed where you were pointing"
+        is announced on the bus instead of logged: the reported bug for this
+        whole feature was a key that looked bound and did nothing visible.
+        """
+        try:
+            from jarvis.dictation.insert import insert_last_dictation
+
+            result = await asyncio.to_thread(
+                insert_last_dictation, settings=getattr(self, "_dictation_cfg", None)
+            )
+        except Exception as exc:  # noqa: BLE001 — a paste is never worth a crash
+            log.warning("paste-last failed (non-fatal)", exc_info=True)
+            self._refuse_dictation(
+                "paste_unavailable",
+                "The last dictation could not be pasted again "
+                f"({type(exc).__name__}).",
+            )
+            return
+        finally:
+            self._paste_last_busy = False
+
+        reason = str(getattr(result, "reason", "") or "")
+        detail = str(getattr(result, "detail", "") or "")
+        insert = getattr(result, "insert", None)
+        status = str(getattr(insert, "status", "") or "")
+        log.info(
+            "📋 paste-last: ok=%s reason=%s status=%s (%d chars)",
+            bool(getattr(result, "ok", False)),
+            reason or "-",
+            status or "-",
+            len(str(getattr(result, "text", "") or "")),
+        )
+        if getattr(result, "ok", False) and status not in ("clipboard_only", "paste_sent"):
+            return  # the text is in the field the user was looking at — proof enough
+        # Everything else owes an explanation: nothing saved, history off, or a
+        # host that cannot type into another window (the text is on the
+        # clipboard then, which the detail sentence says).
+        token = {
+            "not_found": "nothing_to_paste",
+            "history_disabled": "history_disabled",
+        }.get(reason, "paste_unavailable")
+        self._refuse_dictation(
+            token, detail or "The last dictation could not be pasted again."
+        )
+
+    def _configured_dictation_target(self) -> str:
+        """``[dictation].target`` — ``auto`` by default, resolved at start."""
+        cfg = getattr(self, "_dictation_cfg", None)
+        return str(getattr(cfg, "target", "auto") or "auto")
+
+    def _on_ptt_press(self) -> None:
+        """Push-to-talk DOWN edge — arm raw recording and open the session.
+
+        Idempotent: ``global_hotkeys`` re-fires on_press on every key-repeat
+        poll while the chord is held, so a second press during an active
+        session (or while already armed) is a no-op. Only a fresh press from
+        IDLE starts a recording, which keeps PTT from racing a running
+        wake-word session.
+
+        **The latch heals itself** (same repair as ``_on_dictate_press``): the
+        up edge can be lost — a focus change, a UAC prompt, an RDP reconnect,
+        a checker restart mid-hold, or a backend that clears its chord state
+        without firing ``on_release``. A latch only a release could clear then
+        left the recording pill open for the full max-hold and swallowed every
+        later press as key-repeat. The two cases are told apart by TIME: a
+        real hold re-reports itself every poll tick (tens of milliseconds), so
+        a press arriving past the grace window is physically a fresh press on
+        a key nobody is holding — treat it as the release that never arrived
+        and submit what was held.
+        """
+        now = time.monotonic()
+        last_seen = float(getattr(self, "_ptt_key_seen_at", 0.0))
+        latched = self._ptt_mode
+        stale = latched and (now - last_seen) > _PTT_HOLD_REPEAT_GRACE_S
+        self._ptt_key_seen_at = now
+        if latched and not stale:
+            return  # the same hold, re-reported by a polling backend
+        if stale:
+            log.info(
+                "PTT key-up edge was lost %.1fs ago — treating this press as "
+                "the release that never arrived.",
+                now - last_seen,
+            )
+            # The running session is parked on this event; setting it submits
+            # the capture and the session teardown clears ``_ptt_mode`` — the
+            # exact path a real release takes, so nothing else may be touched
+            # here. The NEXT press then starts fresh from IDLE.
+            self._ptt_release_event.set()
+            return
+        if self._state != PipelineState.IDLE:
+            return
+        if not self._activation_allowed():
+            # Push-to-talk is gated by the SAME predicate as wake, so a running
+            # dictation refuses it too — deliberately: both lanes open their own
+            # microphone stream, and two native input streams on one device is
+            # the BUG-014 family. The reason is resolved, never guessed, so the
+            # log cannot claim "window not visible" during a dictation.
+            log.info(
+                "PTT press ignored: %s",
+                self._activation_block_reason() or "activation not allowed",
+            )
+            return
+        # NB: the post-hangup wake-lock is deliberately NOT consulted here. That
+        # lock exists to stop Jarvis' own TTS tail from re-triggering the *wake
+        # word* (audio echo). PTT is an explicit key press — no echo path — so
+        # gating it would only block intentional rapid re-presses for 3 s.
+        log.info("🎙 PTT DOWN — recording (hold to talk, release to send)")
+        self._ptt_mode = True
+        self._ptt_release_event.clear()
+        self._explicit_call_pending = True
+        self._arm_call_event()
+
+    def _on_ptt_release(self) -> None:
+        """Push-to-talk UP edge — stop recording and submit what was held.
+
+        A no-op when no PTT recording is armed (e.g. the press was ignored
+        because a session was already running). Safe to call spuriously.
+        """
+        if not self._ptt_mode:
+            return
+        log.info("🎙 PTT UP — submit")
+        self._ptt_release_event.set()
+
+    def request_voice_session(
+        self, *, seed_messages: list[tuple[str, str]] | None = None
+    ) -> bool:
+        """Arm a wake-style voice session from outside the audio path.
+
+        The "Speak in this conversation" button (``POST /api/chats/{kind}/
+        {cid}/speak``) calls this to start a session that already remembers a
+        past conversation — functionally "Hey Jarvis", but with seeded context.
+
+        Web routes run on the pipeline loop, while the native Jarvis Bar calls
+        this from its dedicated Tk thread. The final arming edge is therefore
+        marshalled through the owner loop when necessary; setting an
+        ``asyncio.Event`` directly from Tk can leave the selector asleep until
+        unrelated I/O happens to wake it.
+
+        Returns ``False`` (no-op) when a session is already active or arming,
+        or when the desktop app is not visible (``_activation_allowed``). The
+        brain is seeded ONLY when we actually arm, so a rejected request never
+        pollutes an unrelated in-flight session's history. Like PTT (an
+        explicit user action with no audio-echo path), the post-hangup
+        wake-lock is intentionally not consulted here.
+        """
+        if self._ptt_mode or self._state != PipelineState.IDLE:
+            log.info("request_voice_session ignored: pipeline not idle.")
+            return False
+        if not self._activation_allowed():
+            log.info(
+                "request_voice_session ignored: %s",
+                self._activation_block_reason() or "activation not allowed",
+            )
+            return False
+        if seed_messages:
+            brain = getattr(self, "_brain", None)
+            seed = getattr(brain, "seed_history", None)
+            if callable(seed):
+                try:
+                    seed(seed_messages)
+                except Exception:  # noqa: BLE001 — seeding must never block arming
+                    log.warning(
+                        "request_voice_session: brain seed failed", exc_info=True
+                    )
+        self._ptt_mode = False  # wake-style, not raw PTT recording
+        self._last_wake_keyword = "chat_resume"
+        log.info(
+            "Voice session requested (wake-style, seeded=%d turns).",
+            len(seed_messages or []),
+        )
+        self._explicit_call_pending = True
+        return self._arm_call_event()
+
+    def request_voice_hangup(self) -> bool:
+        """Hang up the voice channel from outside the audio path.
+
+        The voice orb's click and ``jarvis api voice hangup`` land here — the
+        same absolute-kill contract as the hangup hotkey (2026-05-20: no matter
+        what is playing or queued, the voice channel goes silent now). Safe to
+        call while idle; answers ``False`` instead of raising so a UI click can
+        report honestly rather than 500.
+        """
+        try:
+            self._trigger_voice_hangup()
+            return True
+        except Exception:  # noqa: BLE001 — a failed hangup must report, never raise
+            log.warning("request_voice_hangup failed", exc_info=True)
+            return False
+
+    def _arm_call_event(self) -> bool:
+        """Set the call edge on its owning asyncio loop.
+
+        Native overlay callbacks run on a Tk thread. ``asyncio.Event.set`` may
+        flip the flag from that thread without waking the loop's selector, so
+        the state task resumes only after an unrelated timer or socket event.
+        ``call_soon_threadsafe`` provides both the wakeup and the memory edge.
+        Same-loop callers retain the direct, allocation-free path.
+        """
+        owner = getattr(self, "_runtime_loop", None)
+        try:
+            current = asyncio.get_running_loop()
+        except RuntimeError:
+            current = None
+        if owner is not None and owner.is_running() and current is not owner:
+            try:
+                owner.call_soon_threadsafe(self._call_event.set)
+                return True
+            except RuntimeError:
+                log.warning("Voice session request failed: owner loop is closed.")
+                return False
+        self._call_event.set()
+        return True
+
+    def _configured_voice_mode(self) -> str:
+        """Return the normalized configured engine for the next session."""
+        config = getattr(self, "_config", None)
+        if config is not None:
+            from jarvis.voice.subscription_profile import (  # noqa: PLC0415
+                subscription_voice_selected,
+            )
+
+            if subscription_voice_selected(config):
+                return "pipeline"
+        mode = str(
+            getattr(
+                getattr(getattr(self, "_config", None), "voice", None),
+                "mode",
+                "pipeline",
+            )
+            or "pipeline"
+        ).strip().lower()
+        return "realtime" if mode == "realtime" else "pipeline"
+
+    def voice_engine_status(self) -> dict[str, Any]:
+        """Snapshot configured and effective voice-engine state for the UI.
+
+        ``configured_mode`` is the user's selection for new calls.
+        ``active_session_mode`` is what the currently open call actually uses.
+        They may differ while a controlled reconnect is in progress or when
+        every realtime provider failed and classic fallback was entered.
+        """
+        active_mode = getattr(self, "_active_voice_mode", None)
+        session_id = getattr(self, "_current_voice_session_id", None)
+        config = getattr(self, "_config", None)
+        configured_profile = ""
+        if config is not None:
+            from jarvis.voice.subscription_profile import (  # noqa: PLC0415
+                configured_voice_profile,
+            )
+
+            configured_profile = configured_voice_profile(config)
+        return {
+            "configured_mode": self._configured_voice_mode(),
+            "configured_profile": configured_profile,
+            "session_active": bool(session_id),
+            "session_id": str(session_id or ""),
+            "active_session_mode": active_mode,
+            "active_session_profile": (
+                configured_profile if active_mode == "pipeline" and session_id else ""
+            ),
+            "active_session_provider": (
+                getattr(self, "_active_realtime_provider", "")
+                if active_mode == "realtime"
+                else ""
+            ),
+            "active_session_model": (
+                getattr(self, "_active_realtime_model", "")
+                if active_mode == "realtime"
+                else ""
+            ),
+            "transitioning": bool(
+                getattr(self, "_voice_engine_transitioning", False)
+                or getattr(self, "_reopen_after_engine_change", False)
+            ),
+            # Why the LAST realtime start attempt failed (None once a session
+            # is up): {provider, message, at}. The surfaces render it when a
+            # connecting window closes without a session instead of falling
+            # silently back to "idle".
+            "last_start_error": getattr(self, "_last_realtime_start_error", None),
+        }
+
+    def apply_voice_mode(self, mode: str) -> bool:
+        """Apply a mode selection and reconnect an incompatible active call.
+
+        Returns ``True`` when the current session was scheduled for a controlled
+        close-and-reopen. An idle pipeline simply uses the new value on its next
+        activation.
+        """
+        normalized = str(mode or "").strip().lower()
+        if normalized not in {"pipeline", "realtime"}:
+            raise ValueError(f"Unsupported voice mode: {mode!r}")
+        voice = getattr(getattr(self, "_config", None), "voice", None)
+        if voice is not None:
+            voice.mode = normalized
+        active_mode = getattr(self, "_active_voice_mode", None)
+        if self._state != PipelineState.IDLE and active_mode != normalized:
+            return self._schedule_engine_reopen(f"mode:{normalized}")
+        return False
+
+    def apply_voice_profile(self, profile: str) -> bool:
+        """Apply a session-scoped voice composition without restarting the app."""
+        from jarvis.voice.subscription_profile import (  # noqa: PLC0415
+            CODEX_SUBSCRIPTION_VOICE_PROFILE,
+            CodexSubscriptionVoiceBrain,
+        )
+
+        normalized = str(profile or "").strip().lower()
+        if normalized not in {"", CODEX_SUBSCRIPTION_VOICE_PROFILE}:
+            raise ValueError(f"Unsupported voice profile: {profile!r}")
+        voice = getattr(getattr(self, "_config", None), "voice", None)
+        if voice is not None:
+            voice.profile = normalized
+            if normalized:
+                voice.mode = "pipeline"
+        if normalized:
+            if not isinstance(self._brain, CodexSubscriptionVoiceBrain):
+                self._brain = CodexSubscriptionVoiceBrain(
+                    getattr(self, "_base_brain", self._brain),
+                    self._config,
+                )
+        else:
+            self._brain = getattr(self, "_base_brain", self._brain)
+        if getattr(self, "_state", PipelineState.IDLE) != PipelineState.IDLE:
+            return self._schedule_engine_reopen(f"profile:{normalized or 'default'}")
+        return False
+
+    def reconnect_realtime_session(self, *, reason: str) -> bool:
+        """Reconnect an active realtime call after provider/model changes."""
+        if self._configured_voice_mode() != "realtime":
+            return False
+        if self._state == PipelineState.IDLE:
+            return False
+        return self._schedule_engine_reopen(reason)
+
+    def _schedule_engine_reopen(self, reason: str) -> bool:
+        if self._state == PipelineState.IDLE:
+            return False
+        self._reopen_after_engine_change = True
+        self._engine_change_reason = str(reason or "configuration_change")
+        self._voice_engine_transitioning = True
+        log.info(
+            "Voice engine changed during an active session; reconnecting (%s).",
+            self._engine_change_reason,
+        )
+        self._trigger_voice_hangup()
+        return True
+
+    def _post_hangup_lock_seconds(self) -> float:
+        """Wake-lock duration for the session that just ended (one-shot).
+
+        SHORT (`_explicit_hangup_lock_s`) after a user HARD hangup — the
+        JarvisBar close / hotkey / "auflegen" stopped the player, so there is no
+        TTS tail to echo and the long lock would only swallow the user's very
+        next "Hey <wake>". Otherwise the FULL `_post_hangup_lock_s` guards the
+        speaker tail of a natural end / farewell. Consumes the hard-hangup flag
+        so it applies to exactly one session end.
+        """
+        hard = self._explicit_hard_hangup
+        self._explicit_hard_hangup = False
+        return self._explicit_hangup_lock_s if hard else self._post_hangup_lock_s
+
+    def request_hangup(self) -> None:
+        """End the live voice session from outside the audio path.
+
+        The jarvis-bar's hover-to-close cross calls this (and any future UI
+        close affordance). The bar runs on a dedicated Tk thread, while the
+        hangup event and its waiters belong to the pipeline's asyncio loop.
+        Marshal the complete hard-stop chokepoint onto that owning loop; calling
+        ``asyncio.Event.set()`` directly from Tk is unsupported and can fail to
+        wake the waiter until unrelated I/O arrives. Repeated clicks during one
+        teardown are idempotent. A no-op request while idle is cleared when the
+        next session starts.
+        """
+        pending = getattr(self, "_external_hangup_pending", None)
+        handoff_close = getattr(self, "_wake_handoff_hangup_pending", None)
+        handoff_ready = bool(
+            getattr(self, "_state", PipelineState.IDLE) is PipelineState.IDLE
+            and getattr(self, "_wake_handoff_ready", None)
+            and self._wake_handoff_ready.is_set()
+        )
+        candidate_active = bool(
+            getattr(self, "_state", PipelineState.IDLE) is PipelineState.IDLE
+            and getattr(self, "_wake_preroll_active", False)
+        )
+        if handoff_ready and handoff_close is not None:
+            # Set synchronously on the caller thread. The owner-loop callback
+            # can otherwise lose a race with the already-armed state task.
+            handoff_close.set()
+        if (
+            pending is not None
+            and pending.is_set()
+            and not handoff_ready
+            and not candidate_active
+        ):
+            # A second stop gesture while the first is still being honoured
+            # is idempotent — unless the first one is OLD. A hangup that has
+            # been "pending" for many seconds with the session still active
+            # is a teardown that never finished (BUG-185: a swallowed cancel
+            # left the pipeline stuck in its own finally for an afternoon).
+            # That must not vanish at debug level: say it, and let the
+            # request through so the chokepoint runs again.
+            requested_at = float(getattr(self, "_hangup_requested_at", 0.0) or 0.0)
+            age = time.monotonic() - requested_at if requested_at else 0.0
+            if age < _HANGUP_LATCH_STALE_S:
+                log.debug("request_hangup ignored: external hangup already pending")
+                return
+            log.warning(
+                "request_hangup: a hangup has been pending for %.1fs and the "
+                "voice session is still active — the teardown did not finish; "
+                "delivering the stop again (BUG-185).",
+                age,
+            )
+        if pending is not None:
+            pending.set()
+        self._hangup_requested_at = time.monotonic()
+        log.info("📵 request_hangup — closing the voice session")
+
+        def _dispatch() -> None:
+            try:
+                if (
+                    getattr(self, "_state", PipelineState.IDLE)
+                    is PipelineState.IDLE
+                    and getattr(self, "_wake_handoff_ready", None)
+                    and self._wake_handoff_ready.is_set()
+                    and handoff_close is not None
+                ):
+                    handoff_close.set()
+                if (
+                    getattr(self, "_state", PipelineState.IDLE)
+                    is PipelineState.IDLE
+                    and getattr(self, "_wake_preroll_active", False)
+                ):
+                    # The bar can be visible during wake verification before a
+                    # real session exists. Its X cancels that candidate; it
+                    # must not be reinterpreted as a new voice-session click.
+                    cancel_event = getattr(self, "_wake_cancel_event", None)
+                    if cancel_event is not None:
+                        cancel_event.set()
+                    if pending is not None:
+                        pending.clear()
+                    return
+                self._trigger_voice_hangup()
+            except Exception:
+                # A failed dispatch must be retryable; successful requests stay
+                # latched until the authoritative session teardown reaches IDLE.
+                if pending is not None:
+                    pending.clear()
+                raise
+
+        owner = getattr(self, "_runtime_loop", None)
+        try:
+            current = asyncio.get_running_loop()
+        except RuntimeError:
+            current = None
+        if owner is not None and owner.is_running() and current is not owner:
+            try:
+                owner.call_soon_threadsafe(_dispatch)
+                return
+            except RuntimeError:
+                # The loop closed between is_running() and scheduling. The
+                # synchronous fallback still stops audio/CU and is harmless
+                # when no asyncio waiter remains alive.
+                log.debug("request_hangup: owner loop closed during dispatch")
+        _dispatch()
+
+    def request_ptt_toggle(self) -> None:
+        """Toggle endpoint-free dictation — the jarvis-bar's square button.
+
+        First call opens a mic with NO silence-endpoint (speak as long as you
+        want, pauses included); the second call submits. Thread-safe like the
+        other request_* entries: it just drives the existing PTT press/release
+        edges, whose primitives (``Event.set``, bool flags) are safe from the
+        Tk thread. ``_on_ptt_press`` is a no-op unless idle; ``_on_ptt_release``
+        is a no-op unless a PTT recording is armed — so a stray toggle never
+        misbehaves.
+        """
+        if self._ptt_mode:
+            self._on_ptt_release()  # submit what was dictated
+        else:
+            self._on_ptt_press()    # open an endpoint-free mic
+
+    def is_session_active(self) -> bool:
+        """Ground truth for "a live voice session is in progress right now".
+
+        The jarvis-bar uses this to decide whether a close-X click is a real
+        hang-up or a useless no-op. The bar's visual mode can get stuck in the
+        active "listen" look when a wake popped it but the post-hangup wake-lock
+        cooldown rejected the session — no ``VoiceSessionStarted`` is published
+        and no ``IDLE`` state follows, so nothing resets the bar (freeze
+        forensic 2026-06-28).
+
+        ``_state`` becomes ACTIVE before ``VoiceSessionStarted`` is published,
+        while ``_turn_state`` does not leave IDLE until every start subscriber
+        returns. A slow subscriber therefore creates a real session-start window
+        where checking only the turn-state misclassifies the visible X as an
+        idle-body click and calls ``request_voice_session()`` instead of hanging
+        up. Treat either lifecycle signal as active so the close control remains
+        valid throughout startup, the live turn, and teardown. A visible wake
+        candidate also counts as active for this control only: its close action
+        routes to ``request_hangup()``, which retracts the pending candidate
+        instead of accidentally starting a session.
+        """
+        return (
+            getattr(self, "_state", PipelineState.IDLE) is not PipelineState.IDLE
+            or
+            getattr(self, "_turn_state", TurnTakingState.IDLE)
+            is not TurnTakingState.IDLE
+            or bool(getattr(self, "_wake_preroll_active", False))
+            or bool(
+                getattr(self, "_wake_handoff_ready", None)
+                and self._wake_handoff_ready.is_set()
+            )
+        )
+
+    def _trigger_voice_hangup(self, *, stop_player: bool = True) -> None:
+        """Hard-stop the voice channel — the single hangup chokepoint.
+
+        User intent (2026-05-20): "auflegen" is an absolute kill switch.
+        No matter what Jarvis is currently saying, announcing, or queueing,
+        a hangup must silence the voice channel immediately. Background
+        Jarvis-Agent missions keep running (they live in their own subprocess
+        + Job Object); only their *voice readback* is suppressed via the
+        ``_hangup_event`` gate on the bus-driven announcement handlers.
+
+        ``stop_player=False`` is used when the brain itself emitted the
+        farewell ("Goodbye, Ruben.") — we let that final utterance play.
+        """
+        if not getattr(self, "_termination_producer", ""):
+            self._termination_producer = "speech.pipeline._trigger_voice_hangup"
+        if stop_player:
+            try:
+                self._player.stop()
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Stopping the player during hangup failed: %s", exc)
+            # Player stopped => no TTS tail => the next session end uses the
+            # SHORT wake-lock so the user can re-wake immediately. A farewell
+            # hangup (stop_player=False) keeps the full speaker-tail guard.
+            self._explicit_hard_hangup = True
+        self._session_end_reason = HANGUP_VOICE_PATTERN
+        self._hangup_event.set()
+        # BUG-CU-HANGUP (2026-05-28): "auflegen" must also STOP a running
+        # Computer-Use mission immediately — otherwise Jarvis keeps clicking
+        # the screen in the background after the user told it to stop. This is
+        # CU-scoped (cancels only the active CU token), so Jarvis-Agent
+        # background missions are unaffected (their voice readback is muted via
+        # the _hangup_event gate, matching the documented hangup contract).
+        try:
+            from jarvis.harness.computer_use_context import cancel_active_cu
+            if cancel_active_cu("voice_hangup"):
+                log.info("Voice-Hangup: active Computer-Use mission cancelled.")
+        except Exception:  # noqa: BLE001 — hangup must never crash
+            log.debug("CU cancel-on-hangup failed (non-fatal)", exc_info=True)
+        # The X must also stop a CHAT turn, not only a voice turn. A chat turn
+        # runs on a separate dispatcher (``desktop_app._on_user_message``) that
+        # never observes ``_hangup_event`` — so before this it kept thinking
+        # through every X press (live bug 2026-06-19: ~27 ignored presses). The
+        # cancel is edge-triggered and loop-safe (this may run on the Tk thread).
+        try:
+            from jarvis.core.runtime_refs import cancel_active_chat_turn
+            if cancel_active_chat_turn():
+                log.info("Voice-Hangup: active chat turn cancelled.")
+        except Exception:  # noqa: BLE001 — hangup must never crash
+            log.debug("chat-turn cancel-on-hangup failed (non-fatal)", exc_info=True)
+        # Discard any pending continuation fragment so it can't leak into the
+        # next voice session (the user has explicitly ended this one), and
+        # cancel its clarifying-question timer so no question fires after hangup.
+        try:
+            self._cancel_clarify_question()
+            self._cancel_continuation_drain()
+            self._continuation_buffer.discard()
+            win = getattr(self, "_continuation_window", None)
+            if win is not None:
+                win.clear()
+        except Exception:  # noqa: BLE001 — hangup must never crash
+            log.debug("ContinuationBuffer.discard() failed (non-fatal)", exc_info=True)
+
+    # ------------------------------------------------------------------
+    # Wake loop and capture handoff
+    # ------------------------------------------------------------------
+
+    def _begin_wake_preroll(
+        self, recent: tuple[AudioChunk, ...] = ()
+    ) -> None:
+        """Retain audio from the first truthful wake visual onward."""
+        if self._wake_preroll_active:
+            return
+        self._pending_session_preroll.clear()
+        self._pending_session_preroll.extend(recent)
+        self._wake_preroll_active = True
+        self._wake_preroll_confirmed = False
+
+    def _discard_wake_preroll(self) -> None:
+        self._wake_preroll_active = False
+        self._wake_preroll_confirmed = False
+        self._pending_session_preroll.clear()
+
+    def _take_wake_preroll(self) -> tuple[AudioChunk, ...]:
+        chunks = (
+            tuple(self._pending_session_preroll)
+            if self._wake_preroll_confirmed
+            else ()
+        )
+        self._discard_wake_preroll()
+        return chunks
+
+    async def _claim_wake_capture_for_session(
+        self,
+    ) -> _SessionInputBuffer | None:
+        """Transfer the live wake mic to the session without closing it."""
+        if self._wake_handoff_ready.is_set():
+            buffer = self._wake_handoff_buffer
+            self._wake_handoff_buffer = None
+            self._wake_handoff_ready.clear()
+            if buffer is None:
+                raise RuntimeError("Wake microphone offered an empty handoff.")
+            return buffer
+        if self._wake_capture_released.is_set():
+            # The wake task may already have passed its IDLE check and be one
+            # scheduling turn away from entering the capture context. Give it
+            # that turn before deciding no wake microphone exists; otherwise a
+            # hotkey can open a second native stream during the pre-open race.
+            await asyncio.sleep(0)
+            if self._wake_capture_released.is_set():
+                return None
+        self._wake_stop_event.set()
+        handoff_wait = asyncio.create_task(
+            self._wake_handoff_ready.wait(), name="wake-handoff-ready"
+        )
+        release_wait = asyncio.create_task(
+            self._wake_capture_released.wait(), name="wake-capture-release"
+        )
+        try:
+            await asyncio.wait(
+                {handoff_wait, release_wait},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            for task in (handoff_wait, release_wait):
+                if not task.done():
+                    task.cancel()
+            for task in (handoff_wait, release_wait):
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+            self._wake_stop_event.clear()
+        # Prefer a concrete handoff if readiness and physical release raced in
+        # the same loop tick. Otherwise the old wake stream is authoritatively
+        # closed and the caller may safely open one fallback capture.
+        if not self._wake_handoff_ready.is_set():
+            if self._wake_capture_released.is_set():
+                return None
+            raise RuntimeError("Wake microphone ownership ended ambiguously.")
+        buffer = self._wake_handoff_buffer
+        self._wake_handoff_buffer = None
+        self._wake_handoff_ready.clear()
+        if buffer is None:
+            raise RuntimeError("Wake microphone handoff produced no input buffer.")
+        return buffer
+
+    async def _abort_pending_wake_handoff(self) -> None:
+        """Release an offered wake stream when the state loop rejects the call."""
+        wake_capture_was_open = not self._wake_capture_released.is_set()
+        preview_was_visible = bool(
+            self._wake_preroll_active or self._wake_handoff_ready.is_set()
+        )
+        self._discard_wake_preroll()
+        try:
+            buffer = await self._claim_wake_capture_for_session()
+        except Exception as exc:  # noqa: BLE001 - rejection must not kill state loop
+            log.warning("Pending wake handoff could not be released: %s", exc)
+            self._wake_cancel_event.set()
+            self._wake_handoff_hangup_pending.clear()
+            self._external_hangup_pending.clear()
+            self._hangup_event.clear()
+            self._explicit_hard_hangup = False
+            return
+        if buffer is not None:
+            await buffer.close()
+            await self._wake_capture_released.wait()
+        try:
+            if preview_was_visible or wake_capture_was_open or buffer is not None:
+                # WakeWordDetected may already have put the bar into LISTENING
+                # even though no VoiceSessionStarted will follow. Explicitly
+                # retract that preview so UI state matches the mic lease.
+                await self._publish_event(
+                    WakeCandidateDetected(source_layer="speech", active=False)
+                )
+        finally:
+            self._wake_handoff_hangup_pending.clear()
+            self._external_hangup_pending.clear()
+            self._hangup_event.clear()
+            self._explicit_hard_hangup = False
+
+    @asynccontextmanager
+    async def _capture_first_session_input(
+        self,
+    ) -> AsyncIterator[_SessionInputBuffer]:
+        """Borrow the wake mic or open exactly one fallback session mic."""
+        from jarvis.realtime.factory import realtime_browser_audio
+
+        browser_media = (
+            not getattr(self, "_ptt_mode", False)
+            and getattr(self, "_active_voice_mode", None) == "realtime"
+            and realtime_browser_audio(getattr(self, "_config", None))
+        )
+        buffer = await self._claim_wake_capture_for_session()
+        if browser_media and buffer is None:
+            browser_buffer = _SessionInputBuffer()
+            try:
+                yield browser_buffer
+            finally:
+                await browser_buffer.close()
+            return
+        if buffer is not None:
+            try:
+                yield buffer
+            finally:
+                await buffer.close()
+                # ``buffer.released`` lets the wake owner begin teardown. Wait
+                # for the stronger signal too so no disconnect sound or engine
+                # re-arm can race the still-open native microphone.
+                await self._wake_capture_released.wait()
+            return
+
+        async with MicrophoneCapture(
+            device=self._input_device,
+            max_queue_chunks=REALTIME_QUEUE_CHUNKS,
+            device_priority=self._input_priority,
+        ) as mic:
+            buffer = _SessionInputBuffer(capture=mic)
+
+            async def _unmuted_capture() -> AsyncIterator[AudioChunk]:
+                async for chunk in mic.stream():
+                    # Filter at capture time, not only at the eventual consumer:
+                    # a realtime fallback may replay retained frames after the
+                    # user unmutes and must never resurrect muted audio.
+                    if not getattr(self, "_muted", False):
+                        yield chunk
+
+            buffer.start(_unmuted_capture())
+            try:
+                yield buffer
+            finally:
+                await buffer.close()
+
+    async def _release_unclaimed_wake_handoff(self) -> None:
+        """Give back a wake stream that was offered but never taken.
+
+        The wake owner parks on ``buffer.released`` once it has offered its
+        stream, so a claimer that unwinds between the offer and the claim would
+        strand it there — it cannot even reach its own cleanup. Closing the
+        buffer here is the release signal. Safe to call when nothing is pending,
+        and it never suspends for an offered handoff (that buffer has no pump
+        task), so it also works from inside a task being cancelled.
+        """
+        buffer = getattr(self, "_wake_handoff_buffer", None)
+        ready = getattr(self, "_wake_handoff_ready", None)
+        if buffer is None and (ready is None or not ready.is_set()):
+            return
+        self._wake_handoff_buffer = None
+        if ready is not None:
+            ready.clear()
+        if buffer is not None:
+            await buffer.close()
+
+    async def _claim_wake_capture_for_dictation(self) -> _SessionInputBuffer | None:
+        """Take the wake microphone over for a dictation, or return ``None``.
+
+        A dictation is a session start like any other: whatever already owns the
+        input device hands the live stream over, so the two never run side by
+        side. Without this the common case — the wake loop sitting in
+        ``_run_parallel_wake``, its steady state whenever Jarvis is idle — meant
+        a dictation key press opened a SECOND native input stream on the same
+        device for the whole dictation (AP-24 / the BUG-014 family).
+
+        ``None`` means "no wake stream exists"; the caller then opens exactly one
+        capture of its own. A pipeline built via ``__new__`` (the unit-test
+        pattern) has no wake plumbing at all and takes the same path.
+        """
+        if getattr(self, "_wake_handoff_ready", None) is None:
+            return None
+        try:
+            return await self._claim_wake_capture_for_session()
+        except asyncio.CancelledError:
+            # A dictation cancelled INSIDE the handoff window would otherwise
+            # leave the wake loop waiting forever on a stream nobody will ever
+            # release: permanently deaf with an app restart as the only cure
+            # (BUG-037). Give the offered stream back before unwinding.
+            await self._release_unclaimed_wake_handoff()
+            raise
+        except Exception as exc:  # noqa: BLE001 — never a crashed dictation
+            log.warning("Dictation could not take over the wake microphone: %s", exc)
+            await self._release_unclaimed_wake_handoff()
+        # The lease ended ambiguously. Waiting for the wake side to finish
+        # closing is the only safe way to reach a fallback capture; opening one
+        # now could be the second stream this whole path exists to prevent.
+        try:
+            await asyncio.wait_for(
+                self._wake_capture_released.wait(),
+                timeout=_DICTATION_WAKE_RELEASE_TIMEOUT_S,
+            )
+        except TimeoutError:
+            raise RuntimeError(
+                "The wake microphone did not release in time; refusing to open "
+                "a second input stream for this dictation."
+            ) from None
+        return None
+
+    @asynccontextmanager
+    async def _capture_dictation_input(self) -> AsyncIterator[_ChunkSource]:
+        """Own exactly ONE microphone for the duration of a dictation.
+
+        Mirrors ``_capture_first_session_input``: borrow the live wake stream
+        when there is one, otherwise open a single fallback capture. On the way
+        out the borrowed stream is closed and the wake owner is awaited, so the
+        wake loop re-arms its own microphone as soon as the dictation's block on
+        activation lifts — including on the crash path, because the release runs
+        in a ``finally``.
+
+        Either way the stream ends up bound for a BULK consumer. That mattered
+        more than it looked: the borrowed path is the one that actually runs on
+        any install with a wake word, and it used to inherit the wake stream's
+        shallow default. So the deep queue written for dictation below was dead
+        code on exactly the machines that needed it, and a stalled loop cost
+        seconds of speech — measured on the maintainer's box at 7.4 s gone from
+        a 15.4 s recording, with nothing anywhere saying so.
+        """
+        buffer = await self._claim_wake_capture_for_dictation()
+        if buffer is not None:
+            restore_depth: int | None = None
+            capture = getattr(buffer, "capture", None)
+            if capture is not None:
+                try:
+                    restore_depth = capture.set_queue_depth(
+                        _DICTATION_CAPTURE_QUEUE_CHUNKS
+                    )
+                except Exception:  # noqa: BLE001 — a bound is a safeguard, never a gate
+                    log.debug("dictation could not deepen the capture queue", exc_info=True)
+            try:
+                yield buffer
+            finally:
+                if capture is not None and restore_depth is not None:
+                    # Hand the wake detector its shallow bound back. Leaving the
+                    # deep one on would trade this fix for the other failure:
+                    # a wake word scored against seconds-stale audio.
+                    try:
+                        capture.set_queue_depth(restore_depth)
+                    except Exception:  # noqa: BLE001 — teardown never fails a dictation
+                        log.debug("capture queue depth not restored", exc_info=True)
+                # ``close()`` sets ``released`` before it awaits anything, so
+                # the wake owner is freed even if this task is being cancelled.
+                await buffer.close()
+                # BOUNDED. This used to wait forever, and a wake owner whose
+                # teardown wedged would have held the dictation task — and
+                # every "a dictation is already running" refusal — open until
+                # a restart (BUG-191 family). The wake side is told, loudly,
+                # and the dictation goes on to deliver what it recorded.
+                try:
+                    await asyncio.wait_for(
+                        self._wake_capture_released.wait(),
+                        timeout=_DICTATION_WAKE_RELEASE_TIMEOUT_S,
+                    )
+                except TimeoutError:
+                    log.warning(
+                        "The wake microphone did not confirm its release within "
+                        "%.1fs after the dictation gave the stream back — "
+                        "finishing the dictation anyway.",
+                        _DICTATION_WAKE_RELEASE_TIMEOUT_S,
+                    )
+            return
+
+        async with MicrophoneCapture(
+            device=self._input_device,
+            device_priority=self._input_priority,
+            # A dictation is a BULK consumer: every frame is the user's words,
+            # so the queue's drop-oldest policy deletes speech rather than
+            # staleness. It cannot be turned off (the audio thread must never
+            # block), so the defence is depth — enough slack that a slow
+            # provider call cannot cost words.
+            max_queue_chunks=_DICTATION_CAPTURE_QUEUE_CHUNKS,
+        ) as mic:
+            yield mic
+
+    def _wake_listening_enabled(self) -> bool:
+        return self._openwakeword_enabled or self._whisper_wake_enabled
+
+    async def _wake_loop(self) -> None:
+        """Listen for a wake phrase through two parallel paths while idle.
+
+        One microphone stream fans out into two queues:
+        (1) openWakeWord queue -> fast primary detector.
+        (2) Whisper wake queue -> robust fallback.
+
+        The first detector hit arms ``call_event`` and cancels both detectors.
+        """
+        log.info(
+            "Wake-Loop gestartet (oww=%s, whisper=%s, gate=%s).",
+            "on" if self._openwakeword_enabled else "off",
+            "on" if self._whisper_wake_enabled else "off",
+            "open" if self._activation_allowed() else "closed",
+        )
+        # Both detectors off: PARK, do not die. The old code did
+        # ``await asyncio.Event().wait()`` on a FRESH event nobody ever sets —
+        # a permanent sleep that not even a later live wake-word change could
+        # re-arm (only an app restart). Wait on ``_wake_reload_event`` instead so
+        # a ``set_wake_plan`` that re-enables a detector wakes the loop back up,
+        # in-app. The 30 s timeout re-logs the parked state so a genuinely dead
+        # listener stays visible without busy-spinning. (Mission: "no dead state
+        # blocks waking"; AP-22: recovery must be reachable in-app, not a restart.)
+        while not self._wake_listening_enabled():
+            log.warning(
+                "Both wake detectors are disabled — wake is PARKED until a "
+                "wake-word change re-enables one (voice still works via hotkey). "
+                "Waiting on a live wake-plan reload, not sleeping forever."
+            )
+            try:
+                await asyncio.wait_for(self._wake_reload_event.wait(), timeout=30.0)
+            except TimeoutError:
+                pass
+            finally:
+                self._wake_reload_event.clear()
+        gate_blocked_logged_at = 0.0
+        while True:
+            if not self._activation_allowed():
+                now = time.time()
+                if now - gate_blocked_logged_at > 30.0:
+                    # Name the REAL reason. This line used to guess between two
+                    # causes and the wrong guess once misled a live freeze
+                    # diagnosis, so the reason comes from ONE resolver that
+                    # knows every branch of the gate — including a running
+                    # dictation, which is the third way to close it.
+                    log.info(
+                        "Wake loop is waiting — activation gate closed (%s).",
+                        self._activation_block_reason() or "reason unknown",
+                    )
+                    gate_blocked_logged_at = now
+                await asyncio.sleep(0.25)
+                continue
+            if self._state != PipelineState.IDLE:
+                await asyncio.sleep(0.1)
+                continue
+            try:
+                log.info(
+                    "🎧 Wake-Listener aktiv — sag '%s' …",
+                    getattr(self, "_wake_phrase_label", "the wake word"),
+                )
+                await self._run_parallel_wake()
+            except Exception as exc:  # noqa: BLE001
+                log.exception("Wake loop failed: %s", exc)
+                await asyncio.sleep(0.5)
+
+    def _should_show_optimistic_candidate(self) -> bool:
+        """Whether an unverified OWW hit may pop the overlay bar immediately.
+
+        The optimistic reveal exists so a genuine "Hey Jarvis" feels instant on
+        the precise pretrained model, where false candidates are rare and a
+        reject costs one brief bar flash. Custom ONNX and Vosk grammar stage-one
+        candidates both match ordinary speech frequently, so those engines wait
+        for the authoritative ``WakeWordDetected`` event after full verification.
+        (vosk_kws additionally gets the PROVIDER-gated early candidate below —
+        that one is mini-verified, not raw, and does not pass through here.)
+        """
+        if self._state != PipelineState.IDLE:
+            return False
+        if self._dictation_blocks_activation():
+            # A dictation leaves ``_state`` at IDLE on purpose, so without this
+            # clause an unverified candidate would still flash the bar out of
+            # its dictation look and back, mid-recording.
+            return False
+        plan = getattr(self, "_wake_plan", None)
+        if plan is None:
+            return True
+        return getattr(plan, "engine", "") == "openwakeword"
+
+    async def _vosk_early_candidate_listener(self, active: bool) -> None:
+        """Visual-only bar signal from the vosk provider's mini-verify.
+
+        Deliberately NOT routed through ``_should_show_optimistic_candidate``:
+        that helper gates the RAW pre-verify reveal (openwakeword-only, see
+        revert 5fe5c4d2). The vosk provider only calls this after its
+        mini-verify passed — re-score confidence + span RMS + localized sound
+        confirm on the truncated ring — measured at 0/2500 room-speech windows
+        shown for "hey jarvis" (calibration 2026-07-11), so the flicker class
+        that forced the revert cannot recur. Retracts (active=False) always
+        pass through so a shown bar can never stay stuck.
+        """
+        if active and self._state != PipelineState.IDLE:
+            return  # a session is already running; nothing to reveal
+        if active and self._dictation_blocks_activation():
+            return  # a dictation owns the bar; never flash the wake look over it
+        if active:
+            self._begin_wake_preroll()
+        else:
+            self._discard_wake_preroll()
+        await self._publish_event(
+            WakeCandidateDetected(source_layer="speech", active=active)
+        )
+
+    async def _verify_oww_hit(self, pcm_snapshot: bytes) -> bool:
+        """Second-stage gate: ask the utterance STT whether the few seconds
+        leading up to an OpenWakeWord hit actually contained the configured
+        wake phrase. Returns True if the phrase's matcher confirms it.
+
+        STT-outage failure modes degrade OPEN (return True with a log line) so
+        a misconfigured STT, a network blip, or a rate-limit cannot brick the
+        wake — we'd rather accept the occasional false positive than have the
+        user shout into a dead listener. A clear, non-matching transcript
+        (genuine other speech) suppresses, preserving the bare-"Jarvis"
+        BUG-009 guard. How a WORKING STT that heard no speech (empty
+        transcript / silence-hallucination boilerplate) is treated depends on
+        the engine: a user-trained custom_onnx hit SUPPRESSES (live forensic
+        2026-07-01 — such models false-fire on breath/noise, so "no speech
+        heard" is evidence of a false fire, not an STT problem), while any
+        other OWW hit keeps the historical degrade-open behaviour (forensic
+        2026-06-28 — short real wakes often mis-transcribe to nothing).
+        """
+        if not self._require_hey_prefix:
+            return True
+        # The STT re-verification runs for user-trained custom_onnx models
+        # (live forensic 2026-07-01: a few-shot model scored breath/ambient/
+        # other speech up to 1.000 — a false-positive storm; the transcript
+        # matched against the phrase's own sound-folded fuzzy matcher is the
+        # real discriminator). Since the product ships no pretrained model
+        # (design 2026-07-07), custom_onnx plans are the only source of OWW
+        # hits; vosk_kws is exempt via verify_prefix=False (its own confirm).
+        plan = getattr(self, "_wake_plan", None)
+        if plan is not None and not getattr(plan, "verify_prefix", True):
+            return True
+        # A user-trained custom_onnx model is a WEAK discriminator (live
+        # forensic 2026-07-01/02: scores up to 1.000 on breath/ambient/other
+        # speech, 15 fires in 25 s at the worst). Its hits get the strict
+        # treatment throughout this gate.
+        custom_model_hit = (
+            plan is not None and getattr(plan, "engine", "") == "custom_onnx"
+        )
+        # Silence gate (custom only, BEFORE any STT round-trip): a hit whose
+        # trailing audio is essentially silent is a breath/noise false fire by
+        # definition — there is no speech an STT could confirm. Suppressing it
+        # here (a) kills the "fires out of nowhere" storm at zero cost and
+        # (b) stops the fire flood from hammering the verify STT into
+        # 429/timeouts (live 2026-07-02: that flood-induced outage is what
+        # opened the degrade-open hole and produced ghost activations).
+        if custom_model_hit and pcm_snapshot:
+            tail_rms = pcm_tail_rms(pcm_snapshot)
+            if tail_rms < CUSTOM_WAKE_MIN_RMS:
+                log.info(
+                    "wake-verify: suppressed — near-silent audio "
+                    "(rms %.4f < %.3f) on a custom-model hit; skipping STT",
+                    tail_rms,
+                    CUSTOM_WAKE_MIN_RMS,
+                )
+                return False
+        if self._utterance_stt is None:
+            log.warning(
+                "require_hey_prefix=True but no utterance STT — accepting OWW hit"
+            )
+            return True
+        # Nothing captured yet (empty ring buffer) — there is genuinely no audio
+        # to confirm the wake, so reject without an STT round-trip. (Whether a
+        # NON-empty buffer with no usable transcript suppresses or degrades
+        # open is engine-dependent — see below.)
+        if not pcm_snapshot:
+            return False
+        # Pass the RESOLVED wake language. Omitting it fell back to the
+        # parameter default ("de"), so every custom-model wake on earth was
+        # verified by telling the cloud STT the audio is German — a systematic
+        # garble for an English, Spanish or any other user, on the one engine
+        # AP-25 names as the endgame. Uses the same resolver the wake plan and
+        # the model download use, so selection and verification always agree.
+        try:
+            from jarvis.speech.wake_model_fetch import resolve_wake_language
+
+            verify_language = resolve_wake_language(self._config)
+        except Exception:  # noqa: BLE001 — never let a language lookup kill a wake
+            verify_language = None
+        matched, text = await verify_wake_with_stt(
+            self._utterance_stt,
+            pcm_snapshot,
+            language=verify_language,
+            matcher=getattr(self, "_wake_matcher", None),
+        )
+        if matched:
+            return True
+        # For a custom-model hit, a WORKING STT that heard no wake phrase —
+        # an empty transcript or a known silence-hallucination boilerplate —
+        # is evidence of a false fire and must SUPPRESS. Any other OWW hit
+        # keeps the documented degrade-open behaviour (historical forensic
+        # 2026-06-28: false fires happened on real speech, so an empty
+        # transcript there really does mean the STT failed).
+        #
+        # Persistent verify-STT failure (Groq 429/503/timeout after retries):
+        # - non-custom hit: degrade OPEN. Candidates are rare, so an
+        #   unreachable STT is a provider problem, not evidence about what the
+        #   user said; accepting keeps the wake alive through an outage (AP-22).
+        # - custom_onnx: FAIL CLOSED (live 2026-07-02, 3 ghost activations
+        #   overnight). The fire flood of a weak model eventually hits an STT
+        #   timeout, and degrade-open then activates Jarvis although nobody
+        #   spoke. The session a wake opens needs that same STT to hear
+        #   anything (it would be a deaf session), and hotkey/orb-click remain
+        #   as in-app activation paths — honest degradation, not a bricked
+        #   wake.
+        if text is None:
+            if custom_model_hit:
+                log.info(
+                    "wake-verify: suppressed — verify STT unreachable on a "
+                    "custom-model hit (fail-closed: the session would be deaf "
+                    "without STT; hotkey/orb-click still activate)"
+                )
+                return False
+            log.info(
+                "wake-verify: verify STT unreachable on a strong OWW hit — "
+                "accepting (degrade-open; an STT outage must not brick the "
+                "wake, AP-22)"
+            )
+            return True
+        text = text.strip()
+        # KNOWN STT hallucination boilerplate ("Untertitelung des ZDF, 2020",
+        # "Vielen Dank."). Whisper emits these on silence/noise buffers.
+        # - custom_onnx: the buffer held silence/noise → the model false-fired
+        #   on breath/ambient → suppress (fail-closed).
+        # - non-custom hit: forensic 2026-06-28 showed short REAL wake
+        #   buffers hallucinate these for ~half of all valid wakes → accept
+        #   (degrade-open), else the wake "stops working" intermittently.
+        # An arbitrary non-matching transcript (genuine OTHER speech) still
+        # suppresses for both, so the bare-"Jarvis" guard (BUG-009) stays.
+        if text and _STT_HALLUCINATION_RE.search(text) is not None:
+            if custom_model_hit:
+                log.info(
+                    "wake-verify: suppressed — STT hallucination %r on a "
+                    "custom-model hit (silence/noise false fire, fail-closed)",
+                    text[:80],
+                )
+                return False
+            log.info(
+                "wake-verify: STT hallucination %r on a strong OWW hit — "
+                "accepting (degrade-open, not a real rejection)",
+                text[:80],
+            )
+            return True
+        # The verify STT WORKED and produced an empty transcript.
+        # - custom_onnx: no speech in the buffer → breath/noise false fire →
+        #   suppress. This is the "fires out of nowhere" half of the
+        #   2026-07-01 storm.
+        # - non-custom hit: an empty transcription on a strong hit is far
+        #   more likely a silence-mis-transcription of a short real wake than
+        #   a spontaneous model fire → accept (degrade-open, forensic
+        #   2026-06-28 "the wake sometimes stops working entirely").
+        if not text:
+            if custom_model_hit:
+                log.info(
+                    "wake-verify: suppressed — empty transcript on a "
+                    "custom-model hit (no speech captured, fail-closed)"
+                )
+                return False
+            log.info(
+                "wake-verify: verify STT returned no transcript on a strong OWW "
+                "hit — accepting (degrade-open)"
+            )
+            return True
+        log.info(
+            "wake-verify: suppressed — transcript %r has no wake prefix", text[:80]
+        )
+        return False
+
+    async def _run_parallel_wake(self) -> None:
+        """Fan one wake microphone into all detectors until the first hit."""
+        # Detector backlogs are latency budgets, not arbitrary chunk counts.
+        # Keep OWW within ~0.6 s and the slower Whisper consumer within ~1.2 s;
+        # both queues drop oldest on overflow, so an overloaded host evaluates
+        # recent audio instead of a wake word heard several seconds ago.
+        #
+        # A detector that can CATCH UP in batches (``coalesce_catchup_s``, see
+        # ``_wake_catchup_budget``) may declare a deeper ``intake_backlog_s``:
+        # its confirm pass blocks its own consumption for 0.4-0.9 s on a weak
+        # CPU, which overflowed the 0.6 s queue at every candidate (live
+        # 2026-08-19, ``oww_q=19``) and dropped frames INSIDE the audio it
+        # was about to verify — the re-score then heard '' and the user had to
+        # repeat. With batching it drains a deeper backlog in one or two
+        # decodes, so nothing it could still use is ever dropped; a detector
+        # without batching keeps the shallow budget, because for it a deeper
+        # queue would only mean a later wake.
+        coalesce, intake_chunks = _wake_catchup_budget(self._wake)
+        oww_queue: asyncio.Queue = asyncio.Queue(maxsize=intake_chunks)
+        whisper_queue: asyncio.Queue = asyncio.Queue(
+            maxsize=REALTIME_QUEUE_CHUNKS * 2
+        )
+        detector_queues = [oww_queue] if self._openwakeword_enabled else []
+        if self._whisper_wake_enabled and self._whisper_wake is not None:
+            detector_queues.append(whisper_queue)
+        if not detector_queues:
+            await asyncio.sleep(1.0)
+            return
+
+        # Rolling PCM ring buffer for post-OWW prefix verification (see
+        # ``_verify_oww_hit``). 2.5 s at 16 kHz mono int16 ≈ 80 kB, well above
+        # the longest natural "Hey Jarvis" plus a little headroom. We keep the
+        # buffer regardless of whether prefix verification is enabled so the
+        # cost is identical between modes and a runtime config flip never
+        # needs to re-arm fanout.
+        ring_bytes = bytearray()
+        RING_MAX = 16_000 * 2 * 3  # ~3 s
+        # Rolling overlap for the EXPLICIT (hotkey/PTT) handoff seed: it must
+        # cover the whole press-to-claim latency — key poll (~20 ms), the
+        # cross-thread call edge, one state-loop turn and the stop-event round
+        # trip — or the user's first syllables land in the wake detectors
+        # instead of the session.
+        recent_chunks: deque[AudioChunk] = deque(
+            maxlen=capture_chunks_for_duration(0.5)
+        )  # ~500 ms overlap
+        wake_confirmed = False
+        handoff_buffer: _SessionInputBuffer | None = None
+
+        async def _fanout(mic: MicrophoneCapture) -> None:
+            source_error: BaseException | None = None
+            try:
+                async for chunk in mic.stream():
+                    # Input mute (Jarvis-scoped): if the user mutes while a wake
+                    # session is already mid-wait, stop feeding the detectors so
+                    # Jarvis goes deaf immediately — without touching the OS mic.
+                    # (A fresh mute while IDLE is already handled by _wake_loop's
+                    # _activation_allowed() gate, which never opens the mic.)
+                    muted = getattr(self, "_muted", False)
+                    # A dictation is the second way this stream stops belonging
+                    # to the wake word. It is the same STATE gate the activation
+                    # predicate uses (never transcript content — AP-27).
+                    dictating = self._dictation_blocks_activation()
+                    if handoff_buffer is not None:
+                        # The stream has been handed to whoever claimed it. Mute
+                        # still starves a VOICE session (input-only mute), but
+                        # never the dictation lane: an explicit dictation press
+                        # is the user deliberately speaking into their own text
+                        # field, and the lane's own fallback capture has always
+                        # ignored mute. Dropping frames here would make a
+                        # dictation silently record nothing whenever the wake
+                        # microphone happened to be the one it took over.
+                        if muted and not dictating:
+                            continue
+                        handoff_buffer.put(chunk)
+                        continue
+                    if muted or dictating:
+                        # Nothing claimed the stream, so these frames would go
+                        # to the wake detectors. While a dictation is running
+                        # they are the user's dictated words: feeding them to a
+                        # detector both risks tripping the wake word mid-
+                        # dictation and shares this native engine with the
+                        # dictation's own transcription (AP-24).
+                        continue
+                    ring_bytes.extend(chunk.pcm)
+                    if len(ring_bytes) > RING_MAX:
+                        del ring_bytes[: len(ring_bytes) - RING_MAX]
+                    recent_chunks.append(chunk)
+                    if self._wake_preroll_active:
+                        self._pending_session_preroll.append(chunk)
+                        _feed_live_mic_level(chunk)
+                    for q in detector_queues:
+                        try:
+                            q.put_nowait(chunk)
+                        except asyncio.QueueFull:
+                            # Keep detector latency bounded by dropping its oldest frame.
+                            try:
+                                q.get_nowait()
+                                q.put_nowait(chunk)
+                            except asyncio.QueueEmpty:
+                                pass
+            except asyncio.CancelledError:
+                raise
+            except BaseException as exc:  # noqa: BLE001 - surface to consumers
+                source_error = exc
+                raise
+            finally:
+                if handoff_buffer is not None:
+                    handoff_buffer.finish(error=source_error)
+
+        def _activate_handoff(*, confirmed: bool) -> _SessionInputBuffer:
+            nonlocal handoff_buffer
+            if handoff_buffer is not None:
+                return handoff_buffer
+            if confirmed:
+                initial = self._take_wake_preroll()
+            else:
+                # An explicit click/hotkey may arrive while a wake candidate is
+                # still being verified. Preserve that already-visible interval;
+                # otherwise seed the full rolling overlap. The user starts
+                # talking AT the press, and the press precedes this claim by
+                # the key-poll + call-edge + state-loop latency — seeding only
+                # the last block (the old behaviour) cut the first syllables
+                # off every "press and talk" capture.
+                initial = (
+                    tuple(self._pending_session_preroll)
+                    if self._wake_preroll_active
+                    else tuple(recent_chunks)
+                )
+                self._discard_wake_preroll()
+            handoff_buffer = _SessionInputBuffer(initial=initial, capture=mic)
+            self._wake_handoff_buffer = handoff_buffer
+            self._wake_handoff_ready.set()
+            return handoff_buffer
+
+        async def _run_oww() -> str:
+            # Capability-gated catch-up: a detector that can consume variable
+            # chunk sizes (vosk_kws) advertises how much backlogged audio may
+            # be coalesced into one catch-up batch, so a busy CPU never leaves
+            # it grinding through seconds-stale audio (the inconsistent
+            # multi-second wake delay, live 2026-07-21). ``coalesce`` comes
+            # from the same resolver that sized the queue above.
+            async for kw in self._wake.detect(
+                _queue_iter(oww_queue, coalesce_max_chunks=coalesce)
+            ):
+                return f"oww:{kw}"
+            return ""
+
+        async def _run_whisper() -> str:
+            if self._whisper_wake is None:
+                await asyncio.Event().wait()  # never completes
+                return ""
+            async for kw in self._whisper_wake.detect(_queue_iter(whisper_queue)):
+                return f"whisper:{kw}"
+            return ""
+
+        # NOTE: the wake mic keeps the DEEP default queue on purpose. Its
+        # detectors offload inference (openWakeWord ``to_thread``; whisper-wake
+        # ``await transcribe_pcm``), so the event loop stays free and the cheap
+        # ``_fanout`` drains this queue near-instantly — it never fills, so a
+        # shallow depth would be inert here anyway. The wake path's real staleness
+        # lever is the per-detector queues below (``oww_queue`` / ``whisper_queue``),
+        # which belong to the wake layer; this change deliberately does not touch
+        # them. The drop-OLDEST overflow policy (capture ``_safe_put``) still
+        # applies and is safe here.
+        async with _wake_capture_with_release(
+            MicrophoneCapture(
+                device=self._input_device, device_priority=self._input_priority
+            ),
+            self._wake_capture_released,
+        ) as mic:
+            fanout_task = asyncio.create_task(_fanout(mic), name="fanout")
+            oww_task = (
+                asyncio.create_task(_run_oww(), name="oww-wake")
+                if self._openwakeword_enabled
+                else None
+            )
+            tasks = [fanout_task]
+            if oww_task is not None:
+                tasks.append(oww_task)
+            if self._whisper_wake_enabled:
+                whisper_task = asyncio.create_task(_run_whisper(), name="whisper-wake")
+                tasks.append(whisper_task)
+            else:
+                whisper_task = None  # type: ignore[assignment]
+
+            async def _detector_heartbeat() -> None:
+                """Log every ten seconds while all detector tasks remain alive.
+
+                Missing output while the watchdog is running exposes a silently
+                failed task, such as a queue deadlock or swallowed exception.
+                """
+                def _detector_state(task: asyncio.Task[Any] | None) -> str:
+                    """alive / parked / FAILED / off.
+
+                    ``DEAD`` used to cover all of "stopped normally",
+                    "cancelled" and "raised", so the log screamed DEAD for the
+                    ENTIRELY NORMAL case of a detector parked while a voice
+                    session owns the microphone — verified against the desktop
+                    logs, where every DEAD window coincides with an active
+                    session and recovers when it ends. That cost a forensic
+                    detour: a healthy state that reads as a crash is worse than
+                    no signal at all.
+                    """
+                    if task is None:
+                        return "off"
+                    if not task.done():
+                        return "alive"
+                    if task.cancelled():
+                        return "parked"
+                    return "FAILED" if task.exception() is not None else "parked"
+
+                while True:
+                    await asyncio.sleep(10.0)
+                    # The detector's OWN counters name exactly the failure modes
+                    # a recall complaint has to distinguish (candidates seen,
+                    # gated on energy, suppressed by the confirm, suppressed by
+                    # cooldown, fired). They were maintained and never read, so
+                    # "how many of my wakes were suppressed?" needed a debugger.
+                    # Read-only: nothing here may ever feed a decision.
+                    try:
+                        stats = getattr(self._wake, "stats", None)
+                        detector_stats = stats() if callable(stats) else {}
+                    except Exception:  # noqa: BLE001 — diagnostics never break the loop
+                        detector_stats = {}
+                    log.info(
+                        "wake-detectors-heartbeat: fanout=%s oww=%s whisper=%s "
+                        "oww_q=%d wsp_q=%d%s",
+                        "alive" if not fanout_task.done() else "FAILED",
+                        _detector_state(oww_task),
+                        _detector_state(whisper_task),
+                        oww_queue.qsize(),
+                        whisper_queue.qsize(),
+                        (
+                            " " + " ".join(f"{k}={v}" for k, v in detector_stats.items())
+                            if detector_stats
+                            else ""
+                        ),
+                    )
+                    # Surface a detector task that exited with an exception.
+                    for t in (oww_task, whisper_task):
+                        if t is None or not t.done():
+                            continue
+                        try:
+                            t.result()
+                        except asyncio.CancelledError:
+                            pass
+                        except Exception as exc:  # noqa: BLE001
+                            log.error("Detector task %s failed: %s", t.get_name(), exc)
+
+            heartbeat_task = asyncio.create_task(_detector_heartbeat(), name="wake-heartbeat")
+
+            # Live-apply: a set_wake_plan() flips _wake_reload_event so we abort
+            # this mic/detector session and let _wake_loop re-arm with the new
+            # model/matcher — the wake word changes without an app restart.
+            reload_task = asyncio.create_task(
+                self._wake_reload_event.wait(), name="wake-reload"
+            )
+            tasks.append(reload_task)
+            handoff_task = asyncio.create_task(
+                self._wake_stop_event.wait(), name="wake-session-handoff"
+            )
+            tasks.append(handoff_task)
+            cancel_task = asyncio.create_task(
+                self._wake_cancel_event.wait(), name="wake-candidate-cancel"
+            )
+            tasks.append(cancel_task)
+
+            async def _cancel_candidate() -> None:
+                self._wake_cancel_event.clear()
+                if self._wake_preroll_active:
+                    await self._publish_event(
+                        WakeCandidateDetected(source_layer="speech", active=False)
+                    )
+                self._discard_wake_preroll()
+
+            try:
+                # Wait for one detector, a live reload, or a session handoff.
+                done, _pending = await asyncio.wait(
+                    tasks, return_when=asyncio.FIRST_COMPLETED
+                )
+                if cancel_task in done:
+                    await _cancel_candidate()
+                    return
+                if fanout_task in done:
+                    if not fanout_task.cancelled():
+                        exc = fanout_task.exception()
+                        if exc is not None:
+                            log.warning("Wake microphone fanout ended: %s", exc)
+                    return
+                if handoff_task in done:
+                    buffer = _activate_handoff(confirmed=False)
+                    await buffer.released.wait()
+                    return
+                if reload_task in done:
+                    self._wake_reload_event.clear()
+                    log.info(
+                        "🔁 Wake-Live-Reload — re-arming with the new wake word."
+                    )
+                    return  # finally cancels detectors + closes mic; loop re-enters
+                for t in done:
+                    if t in {reload_task, handoff_task, cancel_task}:
+                        continue
+                    result = t.result()
+                    if result:
+                        # The detector hit marks the earliest truthful visual
+                        # edge. Do not seed pre-hit audio: it contains the wake
+                        # phrase itself and could become a phantom user turn.
+                        self._begin_wake_preroll()
+                        log.info("🎙 Wake candidate from %s", result)
+                        # Prefix verifier: an OWW hit is only a *candidate*
+                        # until the cloud STT confirms "hey/hi/hallo + jarv"
+                        # in the few seconds before the trigger. Whisper-wake
+                        # already enforces the same pattern, so its hits skip
+                        # the second stage. See ``_verify_oww_hit``.
+                        if result.startswith("oww:"):
+                            # Optimistic VISUAL reveal: pop the overlay bar NOW,
+                            # before the slow STT prefix-verify below, so the bar
+                            # feels instant on "Hey Jarvis". This is visual-only
+                            # (WakeCandidateDetected never opens a session turn),
+                            # so a rejected candidate costs a brief bar flash, not
+                            # a phantom session — retracted just below on reject.
+                            # Custom-model candidates never reveal optimistically
+                            # (constant flicker, see the helper's docstring).
+                            show_candidate = self._should_show_optimistic_candidate()
+                            if show_candidate:
+                                await self._publish_event(
+                                    WakeCandidateDetected(
+                                        source_layer="speech", active=True
+                                    )
+                                )
+                            verify_task = asyncio.create_task(
+                                self._verify_oww_hit(bytes(ring_bytes)),
+                                name="wake-prefix-verify",
+                            )
+                            verify_done, _ = await asyncio.wait(
+                                {
+                                    verify_task,
+                                    handoff_task,
+                                    cancel_task,
+                                    fanout_task,
+                                },
+                                return_when=asyncio.FIRST_COMPLETED,
+                            )
+                            if cancel_task in verify_done:
+                                verify_task.cancel()
+                                try:
+                                    await verify_task
+                                except asyncio.CancelledError:
+                                    pass
+                                await _cancel_candidate()
+                                return
+                            if fanout_task in verify_done:
+                                verify_task.cancel()
+                                try:
+                                    await verify_task
+                                except asyncio.CancelledError:
+                                    pass
+                                await _cancel_candidate()
+                                if not fanout_task.cancelled():
+                                    exc = fanout_task.exception()
+                                    if exc is not None:
+                                        log.warning(
+                                            "Wake microphone fanout ended during "
+                                            "candidate verification: %s",
+                                            exc,
+                                        )
+                                return
+                            if handoff_task in verify_done:
+                                verify_task.cancel()
+                                try:
+                                    await verify_task
+                                except asyncio.CancelledError:
+                                    pass
+                                buffer = _activate_handoff(confirmed=False)
+                                await buffer.released.wait()
+                                return
+                            verified = verify_task.result()
+                            if not verified:
+                                if show_candidate:
+                                    await self._publish_event(
+                                        WakeCandidateDetected(
+                                            source_layer="speech", active=False
+                                        )
+                                    )
+                                log.info(
+                                    "🚫 Wake rejected: no greeting prefix in the "
+                                    "last three seconds of transcript."
+                                )
+                                # Clear the detector's debounce cooldown: this
+                                # candidate was a false positive, so a genuine
+                                # "Hey Jarvis" spoken right after must NOT be
+                                # swallowed for the full cooldown window.
+                                note_rejected = getattr(
+                                    self._wake, "note_rejected_candidate", None
+                                )
+                                if callable(note_rejected):
+                                    note_rejected()
+                                break
+                        log.info("🎙 Wake confirmed by %s", result)
+                        if self._state == PipelineState.IDLE:
+                            # The state-loop SILENTLY drops a wake that arrives
+                            # inside the post-hangup echo lock (or when the app
+                            # is not activatable) — it just ``continue``s. But
+                            # _emit_wake below publishes WakeWordDetected, which
+                            # flips the overlay bar to its "listen" look. Emitting
+                            # for a wake the loop will then drop leaves the bar
+                            # stuck "listening" with no session behind it, and the
+                            # user is ignored ("wake triggers, nothing happens").
+                            # Mirror the loop's gate HERE, before _emit_wake, and
+                            # retract the optimistic candidate instead of lying.
+                            now = time.time()
+                            locked = now < self._wake_lock_until
+                            # The vosk provider may have shown a mini-verified
+                            # early candidate for THIS wake — consume the flag
+                            # either way; retract below if the wake is dropped.
+                            consume = getattr(
+                                self._wake, "consume_early_candidate", None
+                            )
+                            early_shown = consume() if callable(consume) else False
+                            if locked or not self._activation_allowed():
+                                if locals().get("show_candidate") or early_shown:
+                                    await self._publish_event(
+                                        WakeCandidateDetected(
+                                            source_layer="speech", active=False
+                                        )
+                                    )
+                                if locked:
+                                    log.info(
+                                        "🔒 Wake lock active; discarding detection "
+                                        "for another %.1fs.",
+                                        max(0.0, self._wake_lock_until - now),
+                                    )
+                                else:
+                                    # Same resolver as every other gated site —
+                                    # a hardcoded guess here named the wrong
+                                    # cause during a live diagnosis.
+                                    log.info(
+                                        "Wake detection discarded: %s.",
+                                        self._activation_block_reason()
+                                        or "activation not allowed",
+                                    )
+                                break
+                            # The UI consumes WakeWordDetected plus supervisor
+                            # state to reveal its listening surface.
+                            keyword = result.split(":", 1)[-1] if ":" in result else result
+                            self._wake_preroll_confirmed = True
+                            wake_confirmed = True
+                            buffer = _activate_handoff(confirmed=True)
+                            await self._emit_wake(keyword)
+                            self._arm_call_event()
+                            await buffer.released.wait()
+                        break
+            finally:
+                heartbeat_task.cancel()
+                try:
+                    await heartbeat_task
+                except (asyncio.CancelledError, Exception):  # noqa: S110 - teardown
+                    pass
+                for t in tasks:
+                    if not t.done():
+                        t.cancel()
+                for t in tasks:
+                    try:
+                        await t
+                    except (asyncio.CancelledError, Exception):  # noqa: S110 - teardown
+                        pass
+                # An exception/cancellation between offering the buffer and the
+                # state loop claiming it must not leave a ready latch pointing
+                # at stale audio for the next activation.
+                if (
+                    handoff_buffer is not None
+                    and self._wake_handoff_buffer is handoff_buffer
+                ):
+                    self._wake_handoff_buffer = None
+                    self._wake_handoff_ready.clear()
+                    await handoff_buffer.close()
+                self._wake_cancel_event.clear()
+                self._wake_stop_event.clear()
+                if not wake_confirmed:
+                    self._discard_wake_preroll()
+
+    # ------------------------------------------------------------------
+    # State-Loop
+    # ------------------------------------------------------------------
+
+    async def _state_loop(self) -> None:
+        while True:
+            await self._call_event.wait()
+            self._call_event.clear()
+            now = time.time()
+            # Consume the explicit-edge marker for THIS call before any gate
+            # decides. ``_ptt_mode`` is included defensively: it is only ever
+            # armed by a genuine press from IDLE, so it carries the same
+            # deliberate-user-action meaning even if the marker was lost.
+            explicit_call = bool(
+                getattr(self, "_explicit_call_pending", False)
+            ) or bool(getattr(self, "_ptt_mode", False))
+            self._explicit_call_pending = False
+            if not self._activation_allowed():
+                # Resolved, never guessed: this backstop closes for a mute and
+                # for a running dictation too, and a log line that names the
+                # window instead is exactly what misled an earlier diagnosis.
+                log.info(
+                    "Voice call ignored: %s.",
+                    self._activation_block_reason() or "activation not allowed",
+                )
+                # A discarded call consumes any PTT arming with it — otherwise a
+                # stale ``_ptt_mode`` would reroute the NEXT (wake-word) call
+                # into the raw-recording path that has no key to release.
+                self._ptt_mode = False
+                await self._abort_pending_wake_handoff()
+                continue
+            if now < self._wake_lock_until and not explicit_call:
+                # The speaker-echo lock gates only WAKE-WORD calls: the tail of
+                # Jarvis' own TTS can re-trigger the wake word, but it cannot
+                # press a key. Dropping explicit presses here made a quick
+                # follow-up ("press and talk") record nothing until the lock
+                # expired — the opening words of the capture were missing.
+                remaining = self._wake_lock_until - now
+                log.info("Wake lock active; ignoring call for %.1fs.", remaining)
+                self._ptt_mode = False
+                await self._abort_pending_wake_handoff()
+                continue
+            # Preserve a close accepted after the confirmed wake offered its
+            # microphone but before this loop entered ACTIVE. Clearing it here
+            # would reopen the visibly closed bar and submit the buffered words.
+            handoff_offered = bool(
+                self._wake_handoff_buffer is not None
+                or self._wake_handoff_ready.is_set()
+            )
+            handoff_close_latch = getattr(
+                self, "_wake_handoff_hangup_pending", None
+            )
+            preserve_handoff_close = bool(
+                handoff_offered
+                and handoff_close_latch is not None
+                and handoff_close_latch.is_set()
+            )
+            if handoff_close_latch is not None:
+                handoff_close_latch.clear()
+            if not preserve_handoff_close:
+                self._external_hangup_pending.clear()
+                self._hangup_event.clear()
+                # Forget a hard-hangup flag left by a no-op while truly idle.
+                # A close after handoff is real and retains the short wake lock.
+                self._explicit_hard_hangup = False
+            self._state = PipelineState.ACTIVE
+            # Reset per-session completeness signal state: a new session
+            # starts "fresh" so the first INCOMPLETE gets an earcon, not a
+            # spoken cue. (The spoken-cue path is for mid-conversation use.)
+            self._session_has_assistant_spoken = False
+            session_id = str(uuid4())
+            self._termination_producer = ""
+            self._termination_detail = {}
+            self._idle_deadline_monotonic = None
+            self._last_user_activity_monotonic = None
+            self._last_answer_floor_monotonic = None
+            self._last_announcement_spoken_monotonic = None
+            self._previous_turn_state = None
+            self._current_voice_session_id = session_id
+            self._restore_agent_replies()
+            self._active_voice_mode = self._configured_voice_mode()
+            self._active_realtime_provider = ""
+            self._active_realtime_model = ""
+            self._voice_engine_transitioning = self._active_voice_mode == "realtime"
+            session_started_at = time.time()
+            wake_keyword = (
+                "push_to_talk"
+                if self._ptt_mode
+                else (self._last_wake_keyword or "hotkey")
+            )
+            self._last_wake_keyword = ""
+            hangup_reason = HANGUP_ERROR
+            try:
+                # Reuse the already-open wake microphone when available. The
+                # handoff never owns two native streams at once and retains all
+                # frames heard after the visible wake candidate.
+                async with self._capture_first_session_input() as input_buffer:
+                    # This event is the UI's authoritative "being listened to
+                    # now" signal. Capture is already armed before any
+                    # subscriber can reveal the listening bar.
+                    await self._publish_event(
+                        VoiceSessionStarted(
+                            source_layer="speech.pipeline",
+                            session_id=session_id,
+                            wake_keyword=wake_keyword,
+                            language="de",
+                        )
+                    )
+                    # A close accepted while a slow start subscriber runs must
+                    # release the borrowed capture without entering a provider.
+                    if (
+                        self._hangup_event.is_set()
+                        or self._external_hangup_pending.is_set()
+                    ):
+                        hangup_reason = HANGUP_HOTKEY
+                        self._termination_producer = "speech.pipeline._state_loop.startup_hangup"
+                        log.info("Voice session cancelled during startup.")
+                    else:
+                        log.info(
+                            "Voice session accepted (configured engine=%s).",
+                            self._active_voice_mode,
+                        )
+                        await self._set_turn_state(TurnTakingState.LISTENING)
+                        # Activation feedback is now visual-only. Playing a
+                        # chime or spoken ACK while a portable desktop mic is
+                        # live forces an impossible choice: discard simultaneous
+                        # user speech or feed speaker echo into STT. The visible
+                        # bar is the truthful zero-loss acknowledgement.
+                        hangup_reason = await self._active_session(
+                            input_buffer=input_buffer
+                        )
+            except asyncio.CancelledError:
+                hangup_reason = HANGUP_SHUTDOWN
+                self._termination_producer = "speech.pipeline._state_loop.cancelled"
+                raise
+            except Exception as exc:  # noqa: BLE001
+                self._termination_producer = "speech.pipeline._state_loop.error"
+                log.exception("Voice session failed: %s", exc)
+            finally:
+                termination = self._termination_snapshot(hangup_reason)
+                reopen_after_engine_change = bool(
+                    getattr(self, "_reopen_after_engine_change", False)
+                )
+                engine_change_reason = str(
+                    getattr(self, "_engine_change_reason", "")
+                )
+                self._reopen_after_engine_change = False
+                self._engine_change_reason = ""
+                self._current_voice_session_id = None
+                self._active_voice_mode = None
+                self._active_realtime_provider = ""
+                self._active_realtime_model = ""
+                self._voice_engine_transitioning = False
+                # PTT is one-shot per hold — disarm before the next session so a
+                # stale flag can never reroute a later wake-word session into
+                # the raw-recording path.
+                self._ptt_mode = False
+                # Tear down any pending incomplete-utterance hold so a clarify
+                # question can never fire into a dead session (e.g. the turn
+                # ended via idle-timeout, not the hangup handler) and a held
+                # fragment can never leak into the next session.
+                try:
+                    self._cancel_clarify_question()
+                    self._cancel_continuation_drain()
+                    self._continuation_buffer.discard()
+                    win = getattr(self, "_continuation_window", None)
+                    if win is not None:
+                        win.clear()
+                except Exception:  # noqa: BLE001 — teardown must never crash
+                    log.debug("Clarify/continuation teardown failed", exc_info=True)
+                # Hanging up ends a coding-agent brief that is still being
+                # written, the same way it does on the realtime engine (see
+                # ``RealtimeVoiceSession._abandon_spoken_workspace_briefs``):
+                # composing takes 10-30 s, and a pane typed into after the user
+                # stopped waiting is work they no longer asked for. Idempotent —
+                # a realtime call that already dropped its briefs leaves none
+                # here. Skipped on an engine reconnect: that session re-arms and
+                # the order the user gave is still live.
+                if not reopen_after_engine_change:
+                    try:
+                        from jarvis.agentic_ide.fanout import cancel_spoken_deliveries
+
+                        cancel_spoken_deliveries(
+                            reason=f"the call ended ({hangup_reason or 'unknown'})"
+                        )
+                    except Exception:  # noqa: BLE001 — teardown must never crash
+                        log.debug("Workspace brief teardown failed", exc_info=True)
+                # Whatever was spoken after the last utterance (the goodbye, a
+                # late announcement) is settled BEFORE the session closes, or
+                # the recorder has no open session to file it under.
+                spend = getattr(self, "_speech_spend", None)
+                if spend is not None:
+                    spend.flush()
+                await self._publish_event(
+                    VoiceSessionEnded(
+                        source_layer=termination["producer"],
+                        session_id=session_id,
+                        hangup_reason=hangup_reason,
+                        duration_s=max(0.0, time.time() - session_started_at),
+                        detail=json.dumps(termination, ensure_ascii=True),
+                    )
+                )
+                self._state = PipelineState.IDLE
+                # Return the supervisor to IDLE and hide the active surface.
+                await self._set_turn_state(TurnTakingState.IDLE)
+                self._external_hangup_pending.clear()
+                if reopen_after_engine_change and self._activation_allowed():
+                    # An internal engine reconnect has no response tail to
+                    # protect against. Re-arm immediately with the latest
+                    # config; a disconnect earcon would leak into the new mic.
+                    self._explicit_hard_hangup = False
+                    self._wake_lock_until = 0.0
+                    self._last_wake_keyword = "engine_switch"
+                    self._call_event.set()
+                    log.info(
+                        "Voice session re-armed after engine change (%s).",
+                        engine_change_reason or "configuration_change",
+                    )
+                else:
+                    # Normal disconnect earcon followed by speaker-echo lock.
+                    # Skipped when the dictation lane is what ended this session:
+                    # the user's microphone is open a few milliseconds later (or
+                    # already is), and a tone played into it is speaker echo the
+                    # transcription then has to eat.
+                    if not self._dictation_blocks_activation():
+                        await self._play_earcon(DISCONNECT_PCM)
+                    lock_s = self._post_hangup_lock_seconds()
+                    self._wake_lock_until = time.time() + lock_s
+                    log.info(
+                        "Voice session ended; returning to idle (wake lock %.1fs).",
+                        lock_s,
+                    )
+
+    def _earcons_enabled(self) -> bool:
+        """Whether synthesized UI earcons may play.
+
+        Read fresh from the shared config object so the Settings → Behavior
+        "Sound effects" master switch applies live (no restart). Defensive
+        default ``True`` — a missing field must never silence tones.
+        """
+        ui = getattr(getattr(self, "_config", None), "ui", None)
+        return bool(getattr(ui, "sound_effects", True))
+
+    async def _play_earcon(
+        self, pcm: bytes, *, sample_rate: int = CHIME_SAMPLE_RATE
+    ) -> None:
+        """Play a synthesized earcon unless the global "Sound effects" switch
+        is off. Never raises — an earcon failure must not crash a turn (AD-OE6).
+        Does NOT gate the spoken TTS voice, which is not an earcon.
+        """
+        if not self._earcons_enabled():
+            return
+        try:
+            await self._player.play_pcm(pcm, sample_rate=sample_rate)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("Earcon playback skipped (%s).", exc)
+
+    async def _play_ack(self, *, ptt: bool = False) -> None:
+        """Play the legacy chime and optional pre-rendered acknowledgement.
+
+        Push-to-talk plays ONLY the chime: the user is already holding the key
+        and talking, so a spoken acknowledgement would cover their opening words. The
+        chime is immediate feedback that recording is live; speech is not.
+        """
+        try:
+            if ptt:
+                # Chime only, and NO dead-zone: the mic opens the instant this
+                # returns and the user is already holding the key + talking. The
+                # 400ms sleep below exists to keep the spoken "Ja?" from leaking
+                # into the mic — PTT has no spoken ACK, so running it would just
+                # swallow the opening words of every capture (and turn a short
+                # hold into a silent no-op, since the mic is not open yet when
+                # the key is released). ``play_pcm`` returns only once the chime
+                # has played out, so it is not awaited here.
+                # Strong reference: the loop holds only a weak one.
+                pending = getattr(self, "_earcon_tasks", None)
+                if pending is None:
+                    pending = set()
+                    self._earcon_tasks = pending
+                chime = asyncio.create_task(
+                    self._play_earcon(CHIME_PCM), name="ptt-earcon"
+                )
+                pending.add(chime)
+                chime.add_done_callback(pending.discard)
+                return
+            await self._play_earcon(CHIME_PCM)
+            if self._ack_pcm:
+                await self._player.play_pcm(self._ack_pcm, sample_rate=24_000)
+            # Brief echo suppression keeps a pre-rendered acknowledgement from
+            # leaking through open-back headphones and retriggering VAD.
+            await asyncio.sleep(0.4)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Acknowledgement playback failed: %s", exc)
+
+    @asynccontextmanager
+    async def _session_input_source(
+        self,
+        input_buffer: _SessionInputBuffer | None,
+        *,
+        discard_suppressed: bool = False,
+    ) -> AsyncIterator[AsyncIterator[AudioChunk]]:
+        """Yield a pre-opened session stream or own a fallback capture."""
+        if input_buffer is not None:
+            discard_before = (
+                lambda: int(getattr(self, "_input_suppressed_until_ns", 0))
+            ) if discard_suppressed else None
+            yield input_buffer.stream(discard_before_ns=discard_before)
+            return
+        async with MicrophoneCapture(
+            device=self._input_device,
+            max_queue_chunks=REALTIME_QUEUE_CHUNKS,
+            device_priority=self._input_priority,
+        ) as mic:
+            yield mic.stream()
+
+    async def _active_session(
+        self, *, input_buffer: _SessionInputBuffer | None = None
+    ) -> str:
+        # Fresh session → never inherit a half-accumulated dictation from a
+        # previous session that ended mid-carry (hangup / idle-timeout).
+        self._carry_pcm = bytearray()
+        self._carry_started_monotonic = None
+        self._last_endpoint_reason = None
+        # A fresh session never inherits a previous session's readback grace.
+        self._last_announcement_spoken_monotonic = None
+        self._last_answer_floor_monotonic = None
+        if self._ptt_mode:
+            # Push-to-talk is deliberately a discrete classic turn: the key-up
+            # edge is its endpoint and the duplex protocols do not expose one
+            # provider-neutral commit primitive. Normal wake/hotkey sessions
+            # use Realtime when selected.
+            self._active_voice_mode = "pipeline"
+            self._active_realtime_provider = ""
+            self._active_realtime_model = ""
+            self._voice_engine_transitioning = False
+            return await self._ptt_session(input_buffer=input_buffer)
+        requested_mode = self._configured_voice_mode()
+        self._active_voice_mode = requested_mode
+        self._voice_engine_transitioning = requested_mode == "realtime"
+        if requested_mode == "realtime":
+            realtime_reason = await self._active_realtime_session(
+                input_buffer=input_buffer
+            )
+            if realtime_reason is not None:
+                return realtime_reason
+            # Speak the "realtime unavailable" notice only when the user
+            # EXPLICITLY picked realtime ([voice].mode present in the TOML).
+            # Since "realtime" became the product default, a fresh keyless
+            # install lands here on every call and must degrade silently
+            # instead of nagging before each pipeline session.
+            voice_cfg = getattr(self._config, "voice", None)
+            explicitly_chosen = "mode" in (
+                getattr(voice_cfg, "model_fields_set", None) or ()
+            )
+            if explicitly_chosen:
+                if input_buffer is None:
+                    await self._speak_realtime_unavailable()
+                else:
+                    # Capture-first sessions cannot play a fallback notice into
+                    # their own live microphone without either recording the
+                    # speaker echo or discarding simultaneous user speech.
+                    lang = _phrase_lang(self._output_language(None, ""))
+                    await self._publish_event(
+                        MessageSent(
+                            source_layer="speech.pipeline",
+                            thread_id="voice",
+                            role="system",
+                            text=_REALTIME_UNAVAILABLE_PHRASE[lang],
+                        )
+                    )
+                    log.warning(
+                        "Realtime unavailable; continuing with classic voice "
+                        "with a visual status notice."
+                    )
+        self._active_voice_mode = "pipeline"
+        self._active_realtime_provider = ""
+        self._active_realtime_model = ""
+        self._voice_engine_transitioning = False
+        async with self._session_input_source(
+            input_buffer, discard_suppressed=True
+        ) as input_chunks:
+            vad_iter = self._vad.utterances(
+                self._session_input_stream(input_chunks)
+            ).__aiter__()
+            # The VAD ``__anext__`` task PERSISTS across idle windows. Cancelling
+            # it kills the underlying async generator (the next ``__anext__``
+            # raises ``StopAsyncIteration``), so when a background mission keeps
+            # the session open past the idle timeout we must re-await the SAME
+            # pending task — never recreate it on the dead generator (that was
+            # the spawn-in-flight override no-op: it ``continue``d, the loop top
+            # recreated ``__anext__`` on a cancelled generator, and the session
+            # hung up with HANGUP_SHUTDOWN anyway). The task is recreated only
+            # after it has yielded an utterance.
+            next_task: asyncio.Task[bytes] | None = None
+            try:
+                while not self._hangup_event.is_set():
+                    if not self._assistant_work_in_flight():
+                        await self._set_turn_state(TurnTakingState.LISTENING)
+                        await self._publish_event(ListeningStarted(source_layer="speech"))
+                    if next_task is None:
+                        next_task = asyncio.create_task(vad_iter.__anext__())
+                    hangup_task = asyncio.create_task(self._hangup_event.wait())
+                    self._idle_deadline_monotonic = (
+                        time.monotonic() + self._idle_timeout_s
+                        if getattr(self, "_idle_hangup_enabled", True) else None
+                    )
+                    try:
+                        done, _pending = await asyncio.wait(
+                            {next_task, hangup_task},
+                            # Idle auto-hangup disabled (``session_idle_timeout_s``
+                            # <= 0) → wait indefinitely for an utterance or a
+                            # manual hangup; the idle-expiry branch below is then
+                            # never reached, so the session stays active until the
+                            # user hangs up. Otherwise bound the LISTENING window
+                            # so a silent session hangs up after the timeout.
+                            timeout=(
+                                self._idle_timeout_s
+                                if getattr(self, "_idle_hangup_enabled", True)
+                                else None
+                            ),
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                    except asyncio.CancelledError:
+                        next_task.cancel()
+                        hangup_task.cancel()
+                        raise
+                    # The hangup waiter is recreated each iteration — always drop
+                    # it. The VAD task is preserved unless it actually completed.
+                    if hangup_task not in done:
+                        hangup_task.cancel()
+                    if hangup_task in done:
+                        next_task.cancel()
+                        if not getattr(self, "_termination_producer", ""):
+                            self._termination_producer = (
+                                "speech.pipeline._active_session.hangup_event"
+                            )
+                        return HANGUP_HOTKEY
+                    if next_task not in done:
+                        if self._assistant_work_in_flight():
+                            log.debug(
+                                "Idle window expired during assistant work; keeping session open."
+                            )
+                            continue
+                        # Idle timeout — the VAD is still waiting for speech.
+                        # ``_live_spawn_watchdogs`` prunes fired/cancelled
+                        # watchdogs (the watchdog self-removes after its single
+                        # progress phrase), so this extension is bounded to the
+                        # watchdog lifetime and can never wedge the session open
+                        # forever. While a mission is genuinely in flight, keep
+                        # ``next_task`` pending so the generator survives the
+                        # next idle window and the readback lands in a live
+                        # session.
+                        if self._background_mission_in_flight():
+                            log.info(
+                                "Idle-Timeout reached but a background mission is "
+                                "in flight - keeping the voice session open."
+                            )
+                            continue
+                        # A background mission JUST spoke its readback out-of-band
+                        # (Computer-Use / Jarvis-Agent completion or failure). That
+                        # readback handed the floor back to the user exactly like a
+                        # normal inline answer — but, delivered via ``_on_announcement``
+                        # OFF this loop, it did NOT reset the idle window, which may
+                        # have been armed mid-mission. Re-arm a fresh window so the
+                        # user can react instead of being hung up on seconds after
+                        # the result (live bug 2026-06-18 08:52: a CU failure
+                        # readback at :02 was followed by an idle_timeout hangup at
+                        # :18, ~10 s after the user heard the failure — no hangup
+                        # command was ever given). Bounded by ``_post_readback_grace_s``
+                        # (one full idle window's worth); then idle resumes normally.
+                        last_spoken = self._last_announcement_spoken_monotonic
+                        if (
+                            last_spoken is not None
+                            and (time.monotonic() - last_spoken)
+                            < self._post_readback_grace_s
+                        ):
+                            log.info(
+                                "Idle-Timeout reached shortly after a spoken "
+                                "readback - keeping the voice session open so the "
+                                "user can respond."
+                            )
+                            continue
+                        # A normal/inline answer — or one dispatched OFF this loop
+                        # via the delegation grace / completion timer — just handed
+                        # the floor back to the user. The idle window armed at the
+                        # user's utterance ticked down DURING the (slow) turn, so
+                        # re-arm one fresh window instead of hanging up seconds after
+                        # the answer lands (forensic 2026-06-27 08:49). Bounded: the
+                        # stamp is cleared, so the next idle window hangs up normally.
+                        if self._within_post_answer_grace():
+                            log.info(
+                                "Idle-Timeout reached right after Jarvis answered - "
+                                "re-arming a fresh window so the user can respond."
+                            )
+                            self._last_answer_floor_monotonic = None
+                            continue
+                        log.info("⏲ Idle-Timeout — lege auf.")
+                        next_task.cancel()
+                        self._termination_producer = "speech.pipeline._active_session.idle_timeout"
+                        return HANGUP_IDLE_TIMEOUT
+                    # The VAD yielded (or raised) — consume it, then recreate the
+                    # task on the next loop iteration.
+                    try:
+                        utterance_pcm: bytes = next_task.result()
+                    except StopAsyncIteration:
+                        next_task = None
+                        self._termination_producer = (
+                            "speech.pipeline._active_session.input_exhausted"
+                        )
+                        return HANGUP_SHUTDOWN
+                    except Exception as exc:  # noqa: BLE001
+                        log.exception("VAD failed: %s", exc)
+                        next_task = None
+                        # An exception closes the async generator. Reading it
+                        # again can only produce StopAsyncIteration, disguising
+                        # this capture failure as an application shutdown.
+                        self._termination_producer = "speech.pipeline._active_session.vad_error"
+                        self._termination_detail = {
+                            **getattr(self, "_termination_detail", {}),
+                            "input_error_type": type(exc).__name__,
+                            "input_replay_overrun": "replay window" in str(exc),
+                        }
+                        return HANGUP_ERROR
+                    next_task = None
+                    await self._set_turn_state(TurnTakingState.WAITING_FOR_FINAL_TRANSCRIPT)
+                    await self._publish_utterance_captured(utterance_pcm)
+                    if not await self._handle_utterance(utterance_pcm):
+                        return self._session_end_reason or HANGUP_VOICE_PATTERN
+            finally:
+                # A still-pending VAD task (idle hangup, exception, app cancel)
+                # must be cancelled so the generator + mic stream unwind cleanly.
+                if next_task is not None and not next_task.done():
+                    next_task.cancel()
+        return HANGUP_HOTKEY
+
+    async def _active_realtime_session(
+        self, *, input_buffer: _SessionInputBuffer | None = None
+    ) -> str | None:
+        """Run one desktop duplex session, or request classic fallback.
+
+        Imports stay lazy so the optional realtime stack never enters the boot
+        critical path. The session owns provider-family fallback and resampling;
+        this adapter owns only the local microphone, speaker, and lifecycle.
+        Desktop starts half-duplex because PortAudio has no portable acoustic
+        echo cancellation. The browser surface provides full duplex with Web
+        Audio echo cancellation.
+        """
+        from jarvis.realtime.factory import realtime_browser_audio, realtime_handshake_budget_s
+
+        if realtime_browser_audio(self._config):
+            from jarvis.live.runtime import run_browser_call
+
+            return await run_browser_call(
+                self._bus, self._hangup_event,
+                timeout_s=max(45.0, realtime_handshake_budget_s(self._config) + 5.0),
+                input_buffer=input_buffer,
+                session_id=self._current_voice_session_id or "",
+            )
+        allow_classic_fallback = True
+        try:
+            from jarvis.realtime.desktop import (
+                DesktopRealtimeBargeInDetector,
+                DesktopRealtimePlayback,
+            )
+            from jarvis.realtime.factory import (
+                build_realtime_session,
+                realtime_implicit_usage_fallback_allowed,
+            )
+            allow_classic_fallback = realtime_implicit_usage_fallback_allowed(
+                self._config
+            )
+        except ImportError as exc:
+            log.warning("Realtime desktop stack is unavailable: %s", exc)
+            return None
+
+        session_id = getattr(self, "_current_voice_session_id", None) or str(uuid4())
+        playback = DesktopRealtimePlayback(self._player)
+        barge_detector = DesktopRealtimeBargeInDetector(
+            output_active=level_tap.playback_active
+        )
+        # Per-frame Silero inference runs OFF the voice event loop — the same
+        # BUG-062/BUG-084 class the classic barge monitor already fixed with
+        # to_thread; inline it stalled playback on slow CPUs (Intel-Mac test
+        # machine). ONE worker preserves frame order and the detector's
+        # internal state; _run_voice_critical_thread would spawn a fresh
+        # thread per frame.
+        barge_feed_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix=f"rt-barge-feed-{session_id}"
+        )
+        # Second detector for the SILENT wait (see the thinking-phase branch in
+        # _send_microphone). A separate instance rather than a mode flag on the
+        # one above: that one's state machine is keyed to a playback response
+        # (start_output/stop_output per answer, per-response echo calibration),
+        # and interleaving a second, differently-armed window through it would
+        # corrupt the calibration the playback barge depends on.
+        #
+        # ``output_active=None`` is what makes it work at all: with the
+        # playback probe attached, ``feed`` returns None forever while nothing
+        # plays (jarvis/realtime/desktop.py — the ``_playback_started`` gate),
+        # which is precisely why no detector existed for this phase. With no
+        # probe the window opens on start_output(). For the same reason the
+        # echo machinery is inert here and wants to be: nothing is playing, so
+        # there is no echo to discriminate, and the only question left is the
+        # one Silero answers — is this sustained, deliberate speech.
+        #
+        # The grace period drops to a token value: on the playback detector it
+        # exists to collect echo for the adaptive floor, and here there is
+        # none to collect. Detection strictness is unchanged (0.97 / 12 frames
+        # ~= 0.4 s of speech), so a cough or a door does not take the floor.
+        thinking_detector = DesktopRealtimeBargeInDetector(
+            grace_s=0.05, output_active=None
+        )
+        # The microphone must fall quiet ONCE before the thinking barge arms,
+        # or the user's own trailing words would arm it against themselves.
+        thinking_barge_quiet_since = 0.0
+
+        def thinking_barge_armed(active_session: Any, now: float) -> bool:
+            nonlocal thinking_barge_quiet_since
+            owed = getattr(active_session, "owes_the_user_a_reply", None)
+            if not callable(owed) or not owed():
+                thinking_barge_quiet_since = 0.0
+                return False
+            speaking_now = getattr(active_session, "_user_is_speaking", None)
+            if callable(speaking_now) and speaking_now():
+                # Still the same utterance the provider just committed.
+                thinking_barge_quiet_since = 0.0
+                return False
+            if not thinking_barge_quiet_since:
+                thinking_barge_quiet_since = now
+            return (now - thinking_barge_quiet_since) >= _THINKING_BARGE_QUIET_S
+        # Provider PCM is owned by ``playback``; the independent surface-TTS
+        # fallback used to bypass that adapter and was awaited inline. A barge
+        # then stopped PortAudio but left the TTS producer alive, so its next
+        # chunk reopened the stream and resumed untracked speech. Keep explicit
+        # ownership of that producer so every output-cancel boundary can stop
+        # generation before it aborts the shared player.
+        surface_playback_task: asyncio.Task[Any] | None = None
+        surface_playback_epoch = 0
+        terminal_output_closed = False
+        # A grounded surface reply that arrived while the voice was muted.
+        # Held (newest wins) and re-delivered on unmute instead of being
+        # silently discarded — see the error_spoken mute branch.
+        held_muted_reply: dict[str, Any] | None = None
+        muted_reply_flush_task: asyncio.Task[Any] | None = None
+        turn_complete = asyncio.Event()
+        speaking = False
+        post_output_echo_guard_until = 0.0
+        # End of the tail's physically-audible phase (device latency residue);
+        # frames captured past it but still inside the echo guard are buffered
+        # in ``tail_pending`` and flushed once the guard expires.
+        post_output_hw_tail_until = 0.0
+        tail_pending: deque[bytes] = deque()
+        tail_pending_bytes = 0
+        semantic_turn_committed = False
+        # Per-segment accumulator of the session's assistant transcript
+        # deltas: registered with the PIPELINE's own text echo guard when the
+        # segment closes, so a session teardown → classic fallback cannot
+        # answer a late speaker echo of realtime output (BUG-089).
+        assistant_transcript_parts: list[str] = []
+
+        def _reported_output_latency_s() -> float:
+            try:
+                latency = float(getattr(self._player, "output_latency_s", 0.0))
+            except (TypeError, ValueError):
+                return 0.0
+            return min(_REALTIME_OUTPUT_LATENCY_CAP_S, max(0.0, latency))
+
+        def _reported_input_latency_s() -> float:
+            try:
+                from jarvis.audio.capture import (  # noqa: PLC0415
+                    last_input_latency_s,
+                )
+
+                return max(0.0, float(last_input_latency_s()))
+            except Exception:  # noqa: BLE001 - a missing figure only costs margin
+                log.debug(
+                    "Capture latency unavailable; echo tail keeps its fixed "
+                    "margin only",
+                    exc_info=True,
+                )
+                return 0.0
+
+        def _clear_tail_pending() -> None:
+            nonlocal tail_pending_bytes
+            tail_pending.clear()
+            tail_pending_bytes = 0
+
+        def _close_output_segment(*, preserve_echo_tail: bool) -> None:
+            """Keep half-duplex protection through physical speaker drain."""
+            nonlocal post_output_echo_guard_until, post_output_hw_tail_until
+            nonlocal speaking
+            was_audible = speaking or bool(assistant_transcript_parts)
+            speaking = False
+            # The provider queue has drained here, but a persistent PortAudio
+            # stream may still hold up to one reported device-latency of audio.
+            # Include that hardware horizon before the ordinary acoustic tail.
+            if assistant_transcript_parts:
+                self._register_assistant_speech(
+                    " ".join(assistant_transcript_parts)
+                )
+                assistant_transcript_parts.clear()
+            elif was_audible:
+                self._touch_assistant_speech_activity()
+            if preserve_echo_tail:
+                output_latency_s = _reported_output_latency_s()
+                # A frame handed to us now was RECORDED one capture latency
+                # ago, so the audible phase reaches that much further back.
+                # Without it the guard released frames still carrying the
+                # assistant's own voice, the provider heard itself, and the
+                # model answered its own last sentence.
+                input_latency_s = _reported_input_latency_s()
+                audible_s = (
+                    output_latency_s
+                    + input_latency_s
+                    + _REALTIME_HW_ECHO_TAIL_MARGIN_S
+                )
+                # Never end the tail before the audible phase it protects; on a
+                # slow capture path that simply leaves nothing to buffer, which
+                # is correct - those frames are echo, not the user.
+                guard_s = max(
+                    _REALTIME_POST_OUTPUT_ECHO_GUARD_S + output_latency_s,
+                    audible_s,
+                )
+                now = time.monotonic()
+                post_output_echo_guard_until = now + guard_s
+                post_output_hw_tail_until = now + audible_s
+                log.info(
+                    "Realtime echo tail armed for %.3fs (device output latency "
+                    "%.3fs, capture latency %.3fs, audible phase %.3fs).",
+                    guard_s,
+                    output_latency_s,
+                    input_latency_s,
+                    audible_s,
+                )
+                return
+            post_output_echo_guard_until = 0.0
+            post_output_hw_tail_until = 0.0
+            _clear_tail_pending()
+            barge_detector.stop_output()
+
+        async def _warm_barge_detector() -> None:
+            try:
+                await _run_voice_critical_thread(barge_detector.warmup)
+                # BOTH detectors, or the thinking-phase one is silently dead:
+                # ``feed`` returns None while ``_ready`` is false, so an
+                # unwarmed detector looks exactly like a room that never
+                # speaks. They share the bundled ONNX model, so the second
+                # warmup is a cache hit, not a second load.
+                await _run_voice_critical_thread(thinking_detector.warmup)
+            except Exception as exc:  # noqa: BLE001 -- voice still works without local VAD
+                log.warning(
+                    "Realtime desktop barge-in detector unavailable; "
+                    "continuing half-duplex: %s",
+                    exc,
+                )
+
+        barge_warm_task = asyncio.create_task(
+            _warm_barge_detector(), name=f"rt-barge-warm-{session_id}"
+        )
+
+        async def _cancel_output_playback(*, terminal: bool = False) -> None:
+            """Cancel surface generation and provider playback as one unit."""
+
+            nonlocal surface_playback_epoch, surface_playback_task
+            nonlocal terminal_output_closed
+            if terminal:
+                terminal_output_closed = True
+            # Invalidate the parent callback before cancelling its child. A new
+            # surface fallback may start while the old callback is unwinding;
+            # only the newest epoch may close the shared speaking segment.
+            surface_playback_epoch += 1
+            surface_task = surface_playback_task
+            surface_playback_task = None
+            if surface_task is not None and not surface_task.done():
+                # Cancel before AudioPlayer.stop(): a blocked native write can
+                # still unwind after the abort, but the owning coroutine can no
+                # longer advance its async generator and reopen the stream.
+                surface_task.cancel()
+            if terminal:
+                await playback.close()
+            else:
+                await playback.cancel()
+            if surface_task is not None:
+                await asyncio.gather(surface_task, return_exceptions=True)
+
+        async def _flush_held_reply_on_unmute() -> None:
+            """Deliver the held grounded reply the moment the user unmutes.
+
+            Polling the mute flag keeps this free of bus subscriptions and
+            Tk-thread marshalling; 200 ms is well under the human threshold
+            for "it answered when I unmuted". Replaying through ``_send_json``
+            re-runs the full error_spoken contract (epoch cancel, echo-guard
+            registration, mode-separated TTS resolve) — and if the user
+            re-muted in the gap, the reply is simply held again.
+            """
+            nonlocal held_muted_reply
+            while getattr(self, "_muted", False):
+                if terminal_output_closed:
+                    return
+                await asyncio.sleep(0.2)
+            pending, held_muted_reply = held_muted_reply, None
+            if pending is None or terminal_output_closed:
+                return
+            log.info(
+                "Voice unmuted — delivering the held realtime reply now."
+            )
+            await _send_json(pending)
+
+        def _hold_muted_surface_reply(
+            message: dict[str, Any], cleaned: str
+        ) -> None:
+            nonlocal held_muted_reply, muted_reply_flush_task
+            held_muted_reply = dict(message)
+            log.warning(
+                "Realtime surface reply arrived while voice is muted — "
+                "holding %d chars for delivery on unmute instead of "
+                "dropping the answer.",
+                len(cleaned),
+            )
+            if muted_reply_flush_task is None or muted_reply_flush_task.done():
+                muted_reply_flush_task = asyncio.create_task(
+                    _flush_held_reply_on_unmute(),
+                    name=f"rt-muted-reply-flush-{session_id}",
+                )
+
+        async def _send_binary(pcm: bytes) -> None:
+            nonlocal post_output_echo_guard_until, post_output_hw_tail_until
+            nonlocal semantic_turn_committed, speaking
+            if terminal_output_closed:
+                return
+            semantic_turn_committed = True
+            if not speaking:
+                post_output_echo_guard_until = 0.0
+                post_output_hw_tail_until = 0.0
+                # Frames buffered during the previous turn's tail belong to a
+                # user moment the provider has already moved past; uploading
+                # them under fresh assistant output would interleave stale
+                # audio into the new turn.
+                _clear_tail_pending()
+                speaking = True
+                barge_detector.start_output()
+                await self._set_turn_state(TurnTakingState.JARVIS_SPEAKING)
+            if terminal_output_closed:
+                return
+            await playback.send_binary(pcm)
+
+        async def _send_json(message: dict[str, Any]) -> None:
+            nonlocal semantic_turn_committed, speaking
+            nonlocal surface_playback_epoch, surface_playback_task
+            kind = str(message.get("type", ""))
+            if kind == "audio_starting":
+                # The provider handshake is ABOUT to run and can legitimately
+                # take tens of seconds. Until this arrived, the session was
+                # accepted into LISTENING (see the activation path) and nothing
+                # touched that again until the transport was up — so the bar,
+                # the orb and the web UI all claimed the user was being heard
+                # while the provider had not accepted a single frame (ST-7).
+                self._active_realtime_language = str(
+                    message.get("language", "") or ""
+                )
+                log.info(
+                    "Realtime desktop session starting: provider=%s language=%s "
+                    "budget=%ss",
+                    message.get("provider", "unknown"),
+                    self._active_realtime_language or "unknown",
+                    message.get("handshake_budget_s", "unknown"),
+                )
+                # SupervisorState.CONNECTING exists since the 2026-08-06
+                # campaign; the surfaces show a live "connecting" look for
+                # the whole handshake instead of freezing on their previous
+                # state (the WARN branch that used to sit here is retired).
+                await self._transition(_REALTIME_CONNECTING_STATE)
+            elif kind == "language":
+                # Mid-call language flip from the ONE resolver. Recorded so the
+                # surface can label the call honestly; never re-derived here.
+                self._active_realtime_language = str(
+                    message.get("language", "") or ""
+                )
+                log.info(
+                    "Realtime desktop call language: %s",
+                    self._active_realtime_language or "unknown",
+                )
+            elif kind == "audio_ready":
+                if speaking:
+                    # A transport that just completed its handshake cannot be
+                    # mid-output: an open segment here is stale state from
+                    # before an in-place rebuild whose dead turn never sent
+                    # its turn_complete. Left open, the echo guard feeds
+                    # every microphone frame only to the local barge-in
+                    # detector and the rebuilt session hears nothing
+                    # (BUG-085). Drain politely first so a salvaged audio
+                    # tail keeps its last words.
+                    await playback.finish_turn()
+                    _close_output_segment(preserve_echo_tail=True)
+                    await self._set_turn_state(TurnTakingState.LISTENING)
+                playback.set_sample_rate(
+                    int(message.get("output_sample_rate", 24_000) or 24_000)
+                )
+                self._active_voice_mode = "realtime"
+                self._active_realtime_provider = str(
+                    message.get("provider", "") or ""
+                )
+                self._active_realtime_model = str(message.get("model", "") or "")
+                self._voice_engine_transitioning = False
+                # A session is up — whatever failed on the way here is history.
+                self._last_realtime_start_error = None
+                log.info(
+                    "Realtime desktop session ready: provider=%s model=%s input=%sHz output=%sHz",
+                    message.get("provider", "unknown"),
+                    message.get("model", "unknown"),
+                    message.get("input_sample_rate", "unknown"),
+                    message.get("output_sample_rate", "unknown"),
+                )
+                # The handshake put the machine into CONNECTING; nothing took it
+                # back out. On a hosted provider that gap is under a second and
+                # the next event papers over it, but a self-hosted server needs
+                # seconds, and the bar sat on "connecting" for a call that was
+                # already listening (field report 2026-08-06). Say the true
+                # state now: from here the session hears the user.
+                await self._transition("LISTENING")
+            elif kind == "transcript":
+                role = str(message.get("role", ""))
+                if role == "user" and bool(message.get("is_final", False)):
+                    # A final user transcript can already have triggered a tool
+                    # inside RealtimeVoiceSession. Replaying its raw audio through
+                    # classic STT after a later provider failure could execute the
+                    # same side effect twice.
+                    semantic_turn_committed = True
+                    await self._set_turn_state(TurnTakingState.PROCESSING)
+                elif role == "assistant":
+                    semantic_turn_committed = True
+                    delta = str(message.get("text", "") or "")
+                    if delta:
+                        assistant_transcript_parts.append(delta)
+            elif kind == "thinking":
+                # A short Realtime bridge sentence has finished, while the
+                # delegated action continues. Drain that exact audio segment
+                # before returning the taskbar/orb to THINKING. The next audio
+                # delta starts a fresh SPEAKING segment through _send_binary.
+                semantic_turn_committed = True
+                await playback.finish_turn()
+                _close_output_segment(
+                    preserve_echo_tail=speaking,
+                )
+                await self._set_turn_state(TurnTakingState.PROCESSING)
+            elif kind == "provider_fallback":
+                # One provider's handshake failed; the session may still cross
+                # to the next family. Recorded so the status surfaces can name
+                # the reason if nothing comes up — audio_ready clears it.
+                self._last_realtime_start_error = {
+                    "provider": str(message.get("provider", "") or ""),
+                    "message": str(message.get("error", "") or ""),
+                    "at": time.time(),
+                }
+            elif kind == "audio_failed":
+                # Terminal: no provider could open a session. Without this
+                # branch the desktop surfaces watched the connecting window
+                # expire into idle with no reason shown (live 2026-08-08).
+                self._last_realtime_start_error = {
+                    "provider": str(message.get("provider", "") or ""),
+                    "message": str(message.get("error", "") or ""),
+                    "at": time.time(),
+                }
+            elif kind == "tts_cancel":
+                self._settle_agent_reply(completed=False)
+                _close_output_segment(preserve_echo_tail=False)
+                await _cancel_output_playback()
+                await self._set_turn_state(TurnTakingState.LISTENING)
+            elif kind == "hangup":
+                self._settle_agent_reply(completed=False)
+                semantic_turn_committed = True
+                _close_output_segment(preserve_echo_tail=False)
+                await _cancel_output_playback()
+            elif kind == "output_recover":
+                recover = getattr(self._player, "recover_output_device", None)
+                if callable(recover):
+                    recover()
+            elif kind == "turn_complete":
+                semantic_turn_committed = True
+                playback_completed = await playback.finish_turn()
+                interrupted_during_drain = not speaking
+                self._settle_agent_reply(completed=bool(
+                    playback_completed and not interrupted_during_drain
+                    and not self._agent_reply_needs_session()
+                ))
+                _close_output_segment(
+                    preserve_echo_tail=not interrupted_during_drain,
+                )
+                await self._set_turn_state(TurnTakingState.LISTENING)
+                if (
+                    not self._continue_listening_after_response
+                    and not interrupted_during_drain
+                ):
+                    turn_complete.set()
+            elif kind == "error_spoken":
+                if terminal_output_closed:
+                    return
+                semantic_turn_committed = True
+                text = str(message.get("text", "") or "").strip()
+                language = _phrase_lang(
+                    str(message.get("language", "") or "")
+                    or self._output_language(None, text)
+                )
+                scrubbed = scrub_for_voice(text, language=language)
+                if is_harmless_scrub_residue(scrubbed):
+                    # Filler-only surface text. The residue guard turned it
+                    # into the generic error phrase; re-rendering that would
+                    # announce a failure the user does not have.
+                    # Only the scrub actions and the length: the filler text
+                    # itself stems from the provider message and carries no
+                    # diagnostic value worth logging.
+                    log.info(
+                        "Realtime surface fallback carried no substance (%s) "
+                        "— dropping it instead of speaking the error phrase "
+                        "(%d chars)",
+                        scrubbed.actions,
+                        len(text),
+                    )
+                    return
+                cleaned = scrubbed.cleaned.strip()
+                if cleaned and getattr(self, "_muted", False):
+                    # Voice muted at delivery time (orb double-double-click):
+                    # this is the GROUNDED answer to a question the user asked
+                    # while unmuted — discarding it makes the whole turn
+                    # inaudible with a transcript that claims Jarvis spoke
+                    # (live 2026-07-21 17:45: mute landed 0.5 s before the
+                    # surface fallback; "Tomorrow is Wednesday." was never
+                    # heard). Mute still means quiet NOW, so hold the reply
+                    # and deliver it the moment the user unmutes.
+                    _hold_muted_surface_reply(message, cleaned)
+                    return
+                surface_tts = (
+                    self._resolve_realtime_surface_tts(
+                        self._active_realtime_provider
+                    )
+                    if cleaned
+                    else None
+                )
+                if cleaned and surface_tts is None:
+                    # STRICT mode separation (maintainer mandate 2026-07-17):
+                    # a realtime session must never spend pipeline credentials
+                    # or speak with the pipeline's [tts] voice — not even as a
+                    # last resort. Without a realtime-scoped TTS the reply
+                    # stays TEXT-ONLY (the transcript already carries it);
+                    # this log line is the honest audible-gap marker.
+                    log.warning(
+                        "Realtime surface fallback has no realtime-scoped TTS "
+                        "for provider %r — keeping the turn text-only instead "
+                        "of borrowing the pipeline voice (mode separation).",
+                        self._active_realtime_provider,
+                    )
+                if cleaned and surface_tts is not None:
+                    # Realtime has already failed to render this grounded text.
+                    # Re-render through the REALTIME-scoped TTS (same provider
+                    # family + realtime credential slots + session voice —
+                    # strict mode separation 2026-07-17) on the same
+                    # AudioPlayer as an independent last mile. The existing mic
+                    # pump and local barge detector remain active, so this does
+                    # not open a second microphone or replay the user's request.
+                    await _cancel_output_playback()
+                    if terminal_output_closed:
+                        return
+                    surface_playback_epoch += 1
+                    active_surface_epoch = surface_playback_epoch
+                    speaking = True
+                    barge_detector.start_output()
+                    # Pre-synthesis registration mirrors _speak (BUG-084): the
+                    # canned phrase is about to be audible on this machine's
+                    # speakers, and its echo must never become a classic turn
+                    # (BUG-089).
+                    self._register_assistant_speech(cleaned)
+                    await self._set_turn_state(TurnTakingState.JARVIS_SPEAKING)
+                    if (
+                        terminal_output_closed
+                        or surface_playback_epoch != active_surface_epoch
+                    ):
+                        # A cancel can arrive while the state callback yields,
+                        # before there is a child playback task to own. Its
+                        # epoch invalidates this render before synthesis starts.
+                        return
+                    try:
+                        # Voice-identity continuity: the realtime session names
+                        # the voice it was speaking with, so this last mile does
+                        # not flip speakers mid-conversation (Fenrir→Charon,
+                        # live forensic 2026-07-17 10:04). Honored only when the
+                        # resolved TTS actually offers that voice — a capability
+                        # check, never a provider pin (AP-21); no match keeps
+                        # the TTS's own configured voice exactly as before.
+                        voice_hint = (
+                            str(message.get("voice", "") or "").strip() or None
+                        )
+                        if voice_hint:
+                            try:
+                                list_voices = getattr(
+                                    surface_tts, "list_voices", None
+                                )
+                                known = (
+                                    set(list_voices() or [])
+                                    if callable(list_voices)
+                                    else set()
+                                )
+                            except Exception:  # noqa: BLE001 -- a hint must never block speech
+                                known = set()
+                            if voice_hint not in known:
+                                voice_hint = None
+                        lang_code = self._bcp47(language)
+                        # Pass ``voice`` only when a validated hint exists:
+                        # protocol-compatible TTS doubles/legacy providers
+                        # without that kwarg must keep their language_code
+                        # instead of dropping to the bare-text retry.
+                        synth_kwargs: dict[str, Any] = {
+                            "language_code": lang_code,
+                        }
+                        if voice_hint:
+                            synth_kwargs["voice"] = voice_hint
+                        try:
+                            chunks = surface_tts.synthesize(
+                                cleaned, **synth_kwargs
+                            )
+                        except TypeError:
+                            try:
+                                chunks = surface_tts.synthesize(
+                                    cleaned, language_code=lang_code
+                                )
+                            except TypeError:
+                                chunks = surface_tts.synthesize(cleaned)
+                        active_surface_task = asyncio.create_task(
+                            self._player.play_chunks(
+                                chunks,
+                                should_play=lambda: (
+                                    surface_playback_epoch
+                                    == active_surface_epoch
+                                ),
+                            ),
+                            name=f"rt-surface-tts-{session_id}",
+                        )
+                        surface_playback_task = active_surface_task
+                        try:
+                            playback_result = await active_surface_task
+                        except asyncio.CancelledError:
+                            current_task = asyncio.current_task()
+                            if current_task is not None and current_task.cancelling():
+                                raise
+                            # A concurrent local barge-in cancels the owned child
+                            # task, not this provider-pump callback. The turn stays
+                            # alive and simply records no spoken receipt.
+                            playback_result = False
+                        finally:
+                            if surface_playback_task is active_surface_task:
+                                surface_playback_task = None
+                        if self._playback_confirmed(playback_result):
+                            if (
+                                cleaned == getattr(self, "_agent_reply_inflight_text", "")
+                                and not self._agent_reply_needs_session()
+                            ):
+                                self._settle_agent_reply(completed=True)
+                            self._emit_spoken(
+                                cleaned,
+                                language,
+                                str(
+                                    message.get("spoken_kind", "")
+                                    or SPOKEN_KIND_REPLY
+                                ),
+                                detail=(
+                                    str(message.get("detail", "") or "")
+                                    or None
+                                ),
+                                tts=surface_tts,
+                            )
+                    except Exception as exc:  # noqa: BLE001 -- final voice fallback
+                        log.warning(
+                            "Realtime surface TTS fallback failed: %s",
+                            exc,
+                        )
+                    finally:
+                        if surface_playback_epoch == active_surface_epoch:
+                            _close_output_segment(
+                                preserve_echo_tail=speaking,
+                            )
+                            # A progress/preamble line is not the end of the
+                            # turn. Returning to LISTENING here made the
+                            # Jarvis Bar look ready while the Tool Model was
+                            # still running (live 2026-08-19: "I'll play
+                            # that" → still bars → music starts seconds
+                            # later). The thinking look stays until the
+                            # result is spoken.
+                            spoken_kind = str(
+                                message.get("spoken_kind", "") or ""
+                            )
+                            await self._set_turn_state(
+                                TurnTakingState.PROCESSING
+                                if spoken_kind
+                                in (
+                                    SPOKEN_KIND_PROGRESS,
+                                    SPOKEN_KIND_PREAMBLE,
+                                )
+                                else TurnTakingState.LISTENING
+                            )
+            elif kind == "provider_error":
+                # Only the redacted, capped error text -- never the raw
+                # message dict, whose provider detail may echo a credential
+                # or a provider error body (AP-34).
+                log.warning(
+                    "Realtime desktop status: provider_error: %s",
+                    safe_preview(message.get("error"), max_chars=300),
+                )
+            elif kind == "provider_fallback":
+                # The call is crossing to a DIFFERENT provider family, which can
+                # mean a different billing path (AP-22). The user-facing notice
+                # rides the bus (``ErrorOccurred`` on the ``realtime.*`` layer,
+                # published alongside this frame) so it reaches every surface in
+                # the UI language; this branch exists so the desktop dispatch
+                # never drops the frame in silence (AP-30). The rebuilt session
+                # announces itself with a fresh ``audio_ready``, whose own
+                # branch above returns the turn state to LISTENING.
+                log.warning(
+                    "Realtime desktop provider fallback: from=%s status=%s error=%s",
+                    message.get("provider", "unknown"),
+                    message.get("status", "unknown"),
+                    message.get("error", ""),
+                )
+            elif kind == "provider_warning":
+                # Recoverable: the session continues on the same provider.
+                log.warning(
+                    "Realtime desktop provider warning: %s",
+                    message.get("error", ""),
+                )
+
+        # Open the microphone BEFORE building the realtime session AND before
+        # the provider handshake, buffering locally until the session accepts
+        # audio. Both stages used to gate the mic open — measured live
+        # 2026-07-11: ~0.6s build_realtime_session (delegate-tool assembly) +
+        # 1.6-2.9s provider handshake — and the user's first words after
+        # "Hey Jarvis" fell into that hole ("bar spawns instantly but speech
+        # only counts ~0.5s+ later"). Now capture starts ~150ms after the
+        # wake (resolve cache makes the open itself ~10ms) and the buffered
+        # frames are flushed the moment the handshake completes — nothing is
+        # lost, the first reply is at worst handshake-delayed. The pump
+        # closure late-binds ``session``: the provider_ready gate only opens
+        # after the session object exists.
+        provider_ready = asyncio.Event()
+        preroll: deque[bytes] = deque()
+        preroll_bytes = 0
+        wait_tasks: set[asyncio.Task[Any]] = set()
+        # Default: this session ends by handing the SAME call to the classic
+        # pipeline. Every genuine hangup path below overwrites it. The marker
+        # keeps ``RealtimeVoiceSession.end`` from announcing a session end that
+        # never happened — the pipeline's own teardown owns that.
+        reason = (
+            HANGUP_DESKTOP_FALLBACK
+            if allow_classic_fallback
+            else HANGUP_ERROR
+        )
+        session: Any | None = None
+        microphone_task: asyncio.Task[Any] | None = None
+        try:
+            async with self._session_input_source(input_buffer) as input_chunks:
+                async def _flush_tail_pending() -> None:
+                    """Forward microphone audio buffered during the echo tail.
+
+                    The tail's post-audible phase holds no speaker echo by
+                    construction, so its frames are the user's own words (or
+                    room silence the provider VAD ignores). Delivering them
+                    late — instead of never — is what closes the post-turn
+                    deaf window.
+                    """
+                    nonlocal tail_pending_bytes
+                    if not tail_pending:
+                        return
+                    frames = list(tail_pending)
+                    _clear_tail_pending()
+                    log.info(
+                        "Realtime echo tail expired; forwarding %d buffered "
+                        "microphone frames (%.2fs).",
+                        len(frames),
+                        sum(len(f) for f in frames) / (16_000 * 2),
+                    )
+                    for pcm in frames:
+                        await session.handle_audio_frame(pcm)
+
+                async def _send_microphone() -> None:
+                    nonlocal post_output_echo_guard_until, preroll_bytes
+                    nonlocal tail_pending_bytes, thinking_barge_quiet_since
+                    async for chunk in self._session_input_stream(input_chunks):
+                        # ``handle_audio_frame`` bounds its provider send with a
+                        # timeout; on 3.11 that can eat the teardown's cancel
+                        # (BUG-185). One frame later it is honoured here.
+                        raise_if_cancelling()
+                        if not provider_ready.is_set():
+                            if (
+                                preroll_bytes + len(chunk.pcm)
+                                > _SESSION_START_BUFFER_MAX_BYTES
+                            ):
+                                raise RuntimeError(
+                                    "Realtime startup exceeded the 30-second "
+                                    "audio buffer; command prefix preserved, "
+                                    "session aborted."
+                                )
+                            preroll.append(chunk.pcm)
+                            preroll_bytes += len(chunk.pcm)
+                            continue
+                        while preroll:
+                            buffered = preroll.popleft()
+                            preroll_bytes = max(0, preroll_bytes - len(buffered))
+                            await session.handle_audio_frame(buffered)
+                        now = time.monotonic()
+                        echo_guard_active = bool(
+                            speaking or now < post_output_echo_guard_until
+                        )
+                        if echo_guard_active:
+                            interrupted_pcm = await asyncio.get_running_loop(
+                            ).run_in_executor(
+                                barge_feed_executor,
+                                barge_detector.feed,
+                                chunk.pcm,
+                            )
+                            if interrupted_pcm is None:
+                                # Provider half-duplex remains intact: speaker
+                                # echo, including the hardware playback tail,
+                                # is inspected locally but never uploaded.
+                                # Past the audible phase the frame cannot be
+                                # echo anymore — retain it for the tail flush
+                                # instead of dropping the user's first words.
+                                if (
+                                    not speaking
+                                    and now >= post_output_hw_tail_until
+                                ):
+                                    tail_pending.append(chunk.pcm)
+                                    tail_pending_bytes += len(chunk.pcm)
+                                    while (
+                                        tail_pending_bytes
+                                        > _REALTIME_TAIL_PENDING_MAX_BYTES
+                                        and len(tail_pending) > 1
+                                    ):
+                                        dropped = tail_pending.popleft()
+                                        tail_pending_bytes -= len(dropped)
+                                continue
+                            log.info(
+                                "Realtime desktop barge-in confirmed by local CPU VAD"
+                            )
+                            # The detector's capture supersedes the buffered
+                            # tail frames (they overlap its pre-speech window).
+                            _clear_tail_pending()
+                            post_output_echo_guard_until = 0.0
+                            await session.handle_control({"type": "barge_in"})
+                            await session.handle_audio_frame(interrupted_pcm)
+                            continue
+                        if bool(getattr(barge_detector, "active", False)):
+                            barge_detector.stop_output()
+                        await _flush_tail_pending()
+                        # THINKING-PHASE BARGE-IN. Everything above this line
+                        # only runs while audio plays, which is why speaking
+                        # over Jarvis worked and speaking over his THINKING
+                        # did nothing (live 2026-08-13 12:11:12: the provider
+                        # edge was deferred and he answered the original
+                        # question 11.7 s later regardless). The same Silero
+                        # detector, armed for the silent wait, closes that
+                        # hole with the mechanism that already works.
+                        #
+                        # Arming is deliberately two-condition:
+                        #   - the session owes a reply and nothing is audible;
+                        #   - the microphone has fallen quiet since the turn
+                        #     was committed, so the user's OWN trailing words
+                        #     cannot arm it against themselves (that shape is
+                        #     turn fragmentation, handled by the session's
+                        #     _user_is_speaking hold, not by a barge).
+                        # The frame is still uploaded either way — unlike the
+                        # playback branch there is no echo to withhold, and
+                        # the words have to reach the provider or the
+                        # interruption would take the floor and say nothing.
+                        if thinking_barge_armed(session, now):
+                            if not thinking_detector.active:
+                                thinking_detector.start_output()
+                            confirmed_pcm = await asyncio.get_running_loop(
+                            ).run_in_executor(
+                                barge_feed_executor,
+                                thinking_detector.feed,
+                                chunk.pcm,
+                            )
+                            if confirmed_pcm is not None:
+                                log.info(
+                                    "Realtime desktop barge-in confirmed by "
+                                    "local CPU VAD while Jarvis was thinking"
+                                )
+                                thinking_detector.stop_output()
+                                thinking_barge_quiet_since = 0.0
+                                await session.handle_control(
+                                    {"type": "barge_in"}
+                                )
+                                # The detector's own capture carries the
+                                # opening syllables its confirmation consumed;
+                                # uploading the raw frame too would double them.
+                                await session.handle_audio_frame(confirmed_pcm)
+                                continue
+                        elif thinking_detector.active:
+                            thinking_detector.stop_output()
+                        await session.handle_audio_frame(chunk.pcm)
+
+                # A shared capture buffer already owns and meters production
+                # input, so leave it unread until the provider accepts audio.
+                # The legacy direct-call path has no such producer and starts
+                # its local pump immediately.
+                if input_buffer is None:
+                    microphone_task = asyncio.create_task(
+                        _send_microphone(), name=f"rt-mic-{session_id}"
+                    )
+
+                hangup_task = asyncio.create_task(
+                    self._hangup_event.wait(), name=f"rt-hangup-{session_id}"
+                )
+                wait_tasks.add(hangup_task)
+                build_started_at = time.monotonic()
+                build_task = asyncio.create_task(
+                    _run_voice_critical_thread(
+                        lambda: build_realtime_session(
+                            cfg=self._config,
+                            bus=self._bus,
+                            session_id=session_id,
+                            send_binary=_send_binary,
+                            send_json=_send_json,
+                            half_duplex=True,
+                            surface="desktop",
+                            brain=getattr(self, "_brain", None),
+                        )
+                    ),
+                    name=f"rt-build-{session_id}",
+                )
+                wait_tasks.add(build_task)
+                done, _pending = await asyncio.wait(
+                    {build_task, hangup_task}, return_when=asyncio.FIRST_COMPLETED
+                )
+                if hangup_task in done and self._hangup_event.is_set():
+                    reason = HANGUP_HOTKEY
+                    build_task.cancel()
+                    return HANGUP_HOTKEY
+                session = build_task.result()
+                build_ms = (time.monotonic() - build_started_at) * 1000.0
+                log.info("Realtime desktop session assembled in %.0f ms.", build_ms)
+                if session is None:
+                    if allow_classic_fallback:
+                        return None
+                    log.warning(
+                        "Selected realtime access is unavailable; automatic "
+                        "usage-billed classic fallback is disabled."
+                    )
+                    reason = HANGUP_ERROR
+                    return HANGUP_ERROR
+                allow_classic_fallback = bool(
+                    getattr(session, "allow_classic_fallback", True)
+                )
+                # Desktop plays provider PCM through the process-local
+                # AudioPlayer, whose write path stamps level_tap's playback
+                # window — a PHYSICAL "audio is audible right now" probe. The
+                # session's half-duplex mute release uses it so the mic stays
+                # shut while the prebuffered/device-drained reply tail is
+                # still audible (provider-frame silence alone reopened into
+                # that tail and fed the reply back in on open speakers).
+                # Capability injection: only this surface owns the player, so
+                # only this surface installs the probe (getattr keeps older
+                # session objects working).
+                probe_setter = getattr(session, "set_playback_probe", None)
+                if callable(probe_setter):
+                    probe_setter(level_tap.playback_active)
+                handshake_started_at = time.monotonic()
+                handshake_task = asyncio.create_task(
+                    session.handle_control(
+                        {"type": "audio_start", "sample_rate": 16_000}
+                    ),
+                    name=f"rt-handshake-{session_id}",
+                )
+                wait_tasks.add(handshake_task)
+                done, _pending = await asyncio.wait(
+                    {handshake_task, hangup_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if hangup_task in done and self._hangup_event.is_set():
+                    reason = HANGUP_HOTKEY
+                    handshake_task.cancel()
+                    return HANGUP_HOTKEY
+                handshake_task.result()
+                self._active_realtime_handle = session
+                log.info(
+                    "Realtime desktop provider handshake completed in %.0f ms "
+                    "(%.0f ms total startup).",
+                    (time.monotonic() - handshake_started_at) * 1000.0,
+                    (time.monotonic() - build_started_at) * 1000.0,
+                )
+                # Completed startup tasks must not remain in the live-session
+                # FIRST_COMPLETED set; either would make a healthy realtime
+                # session unwind into classic voice immediately.
+                wait_tasks.discard(build_task)
+                wait_tasks.discard(handshake_task)
+                provider_ready.set()
+                if microphone_task is None:
+                    microphone_task = asyncio.create_task(
+                        _send_microphone(), name=f"rt-mic-{session_id}"
+                    )
+                await self._set_turn_state(TurnTakingState.LISTENING)
+                provider_task = asyncio.create_task(
+                    session.wait_finished(), name=f"rt-provider-{session_id}"
+                )
+                wait_tasks.update({microphone_task, provider_task, hangup_task})
+                if not self._continue_listening_after_response:
+                    wait_tasks.add(
+                        asyncio.create_task(
+                            turn_complete.wait(), name=f"rt-turn-{session_id}"
+                        )
+                    )
+                done, _pending = await asyncio.wait(
+                    wait_tasks, return_when=asyncio.FIRST_COMPLETED
+                )
+                if hangup_task in done and self._hangup_event.is_set():
+                    reason = HANGUP_HOTKEY
+                    return HANGUP_HOTKEY
+                # Voice hang-up ("auflegen" / end_call): the session ends its
+                # own pump and reports the reason — end the call for real
+                # instead of unwinding into the classic pipeline. Checked
+                # before turn_complete: in single-turn mode both fire, and
+                # voice_pattern is the more specific cause.
+                session_hangup = str(getattr(session, "hangup_reason", "") or "")
+                if session_hangup:
+                    reason = session_hangup
+                    return session_hangup
+                if turn_complete.is_set():
+                    reason = HANGUP_TURN_COMPLETE
+                    return HANGUP_TURN_COMPLETE
+                for task in done:
+                    if task.cancelled():
+                        continue
+                    exc = task.exception()
+                    if exc is not None:
+                        log.warning(
+                            "Realtime desktop task ended with %s: %s",
+                            type(exc).__name__,
+                            exc,
+                        )
+                if semantic_turn_committed:
+                    # Once a final transcript/output exists, replaying from the
+                    # capture buffer's beginning can duplicate an already-run
+                    # tool or feed Jarvis's own output back into classic STT.
+                    # End honestly; the next activation starts with a clean mic.
+                    reason = HANGUP_ERROR
+                    log.warning(
+                        "Realtime session ended after a committed turn; refusing "
+                        "unsafe audio replay through classic voice."
+                    )
+                    return HANGUP_ERROR
+                # A startup/early provider failure has committed no semantic
+                # user turn, so classic may safely replay the retained opening.
+                if allow_classic_fallback:
+                    return None
+                reason = HANGUP_ERROR
+                log.warning(
+                    "Realtime provider failed before a committed turn; "
+                    "automatic usage-billed classic fallback is disabled."
+                )
+                return HANGUP_ERROR
+        except asyncio.CancelledError:
+            reason = "shutdown"
+            raise
+        except Exception as exc:  # noqa: BLE001 — classic fallback is load-bearing
+            log.warning("Realtime desktop session failed; using pipeline: %s", exc)
+            if semantic_turn_committed:
+                reason = HANGUP_ERROR
+                log.warning(
+                    "Realtime failure followed a committed turn; refusing unsafe "
+                    "audio replay through classic voice."
+                )
+                return HANGUP_ERROR
+            if allow_classic_fallback:
+                return None
+            reason = HANGUP_ERROR
+            log.warning(
+                "Realtime startup failed; automatic usage-billed classic "
+                "fallback is disabled."
+            )
+            return HANGUP_ERROR
+        finally:
+            if getattr(self, "_active_realtime_handle", None) is session:
+                self._settle_agent_reply(completed=False)
+                self._active_realtime_handle = None
+            # Invalidate even when synthesis is paused before child-task
+            # creation; terminal teardown must own that pre-playback window too.
+            try:
+                await _cancel_output_playback(terminal=True)
+            except Exception as exc:  # noqa: BLE001 -- teardown remains best-effort
+                log.warning("Realtime terminal playback close failed: %s", exc)
+            barge_detector.stop_output()
+            barge_feed_executor.shutdown(wait=False, cancel_futures=True)
+            if muted_reply_flush_task is not None:
+                if not muted_reply_flush_task.done():
+                    muted_reply_flush_task.cancel()
+                try:
+                    await muted_reply_flush_task
+                except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110 - teardown
+                    pass
+            if held_muted_reply is not None:
+                # Honest audible-gap marker: the session ended while the voice
+                # was still muted, so the grounded reply never became audible.
+                # The transcript carries the text.
+                log.warning(
+                    "Realtime session ended while voice was muted — the held "
+                    "reply was never audible; the transcript carries it."
+                )
+            if not barge_warm_task.done():
+                barge_warm_task.cancel()
+            try:
+                await barge_warm_task
+            except asyncio.CancelledError:
+                pass
+            # The mic pump may not be in wait_tasks yet when the session
+            # build/handshake failed — cancel it explicitly either way.
+            if microphone_task is not None and not microphone_task.done():
+                microphone_task.cancel()
+            for task in wait_tasks:
+                if not task.done():
+                    task.cancel()
+            # Re-delivered and BOUNDED, never a bare ``await task`` (BUG-185).
+            # The mic pump awaits ``wait_for`` per frame, and on Python 3.11
+            # that swallows a cancel landing in the same loop step the frame
+            # completes (CPython gh-86296) — live 2026-08-25 20:23: two
+            # cancels eaten, this finally then awaited the pump for as long
+            # as the app ran, ``_state`` never returned to IDLE, and every
+            # dictation press refused ``handover_failed`` until a restart.
+            # A pump that outlives the budget is abandoned here; the capture
+            # context below closes its source, which ends the generator.
+            for task in wait_tasks:
+                await cancel_and_reap(
+                    task,
+                    budget_s=_SESSION_TASK_REAP_BUDGET_S,
+                    heartbeat_s=_SESSION_TASK_REAP_HEARTBEAT_S,
+                )
+            if microphone_task is not None:
+                await cancel_and_reap(
+                    microphone_task,
+                    budget_s=_SESSION_TASK_REAP_BUDGET_S,
+                    heartbeat_s=_SESSION_TASK_REAP_HEARTBEAT_S,
+                )
+            if session is not None:
+                # Defense in depth around the two bounded closes inside end()
+                # (provider socket 5 s + turn-completed 3 s): should end() ever
+                # stall anywhere else, this outer bound still frees the realtime
+                # finally so the supervisor reaches its own IDLE teardown —
+                # returning _state to IDLE (wake re-arms) and publishing the
+                # SystemStateChanged(IDLE) that repaints the JarvisBar. Without
+                # it a single unbounded await here strands the session ACTIVE.
+                try:
+                    await asyncio.wait_for(
+                        session.end(reason=reason), timeout=8.0
+                    )
+                except TimeoutError:
+                    log.warning(
+                        "Realtime session.end() timed out during teardown; "
+                        "forcing the supervisor back to idle so wake re-arms."
+                    )
+                except Exception as exc:  # noqa: BLE001 — teardown best-effort
+                    log.warning("Realtime session.end() failed: %s", exc)
+            # ``session.end`` quiesces the provider pump. Close once more to
+            # collect any callback that had already crossed the surface
+            # boundary when terminal teardown began. ``close`` is idempotent
+            # and permanently rejects later audio.
+            try:
+                await _cancel_output_playback(terminal=True)
+            except Exception as exc:  # noqa: BLE001 -- teardown remains best-effort
+                log.warning("Realtime final playback cleanup failed: %s", exc)
+
+    async def _ptt_session(
+        self, *, input_buffer: _SessionInputBuffer | None = None
+    ) -> str:
+        """Push-to-talk turn: record raw mic audio until the key is released,
+        then submit the whole capture as ONE prompt (one-shot).
+
+        Unlike :meth:`_active_session`, the VAD is bypassed entirely: the key
+        defines the endpoint, not silence detection. A continuous drain task
+        copies every mic chunk into ``buffer`` with no gaps; the main wait races
+        the release edge, a hangup, and a max-hold safety cap. On release the
+        buffer is transcribed + answered exactly like a wake-word utterance,
+        then the session ends (the next prompt needs another hold).
+        """
+        buffer = bytearray()
+        hung_up = False
+        async with self._session_input_source(input_buffer) as input_chunks:
+            mic_open_at = time.monotonic()
+            await self._set_turn_state(TurnTakingState.LISTENING)
+            await self._publish_event(ListeningStarted(source_layer="speech"))
+
+            async def _drain() -> None:
+                # Raw capture — no _session_input_stream TTS-echo filter: PTT
+                # plays only a short chime (no spoken ACK), and the user is
+                # holding the key with deliberate intent to record now.
+                async for chunk in input_chunks:
+                    buffer.extend(chunk.pcm)
+                    # PTT bypasses the VAD, where mic_level.feed normally lives,
+                    # so feed the live loudness here too — otherwise the overlay
+                    # dictation bars stay flat and you cannot tell it is hearing
+                    # you. Same normalized RMS as the VAD; zero-cost when no
+                    # overlay is subscribed.
+                    if mic_level.has_subscribers():
+                        samples = pcm_bytes_to_np(chunk.pcm)
+                        if samples.size:
+                            mic_level.feed(
+                                float(np.sqrt(np.mean(np.square(samples))))
+                            )
+
+            drain_task = asyncio.create_task(_drain(), name="ptt-drain")
+            release_task = asyncio.create_task(self._ptt_release_event.wait())
+            hangup_task = asyncio.create_task(self._hangup_event.wait())
+            # Background live-transcript feed (cosmetic — the bubble). NOT part
+            # of the wait-set: it must never end the session, only mirror what
+            # is being held into the orb bubble. It is quiesced after the input
+            # lease closes so releasing the key always ends capture first.
+            live_stop_event = asyncio.Event()
+            live_inference_active = asyncio.Event()
+            live_task = (
+                asyncio.create_task(
+                    self._ptt_live_transcribe(
+                        lambda: bytes(buffer),
+                        stop_event=live_stop_event,
+                        inference_active=live_inference_active,
+                    ),
+                    name="ptt-live-transcript",
+                )
+                if self._ptt_partial_interval_s > 0
+                else None
+            )
+            wait_set = {drain_task, release_task, hangup_task}
+            try:
+                done, _pending = await asyncio.wait(
+                    wait_set,
+                    timeout=self._ptt_max_hold_s,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+            except asyncio.CancelledError:
+                if live_task is not None:
+                    live_stop_event.set()
+                for t in list(wait_set) + ([live_task] if live_task else []):
+                    t.cancel()
+                raise
+            if not done:
+                log.warning(
+                    "PTT max-hold %.0fs reached — submitting what was held.",
+                    self._ptt_max_hold_s,
+                )
+            hung_up = hangup_task in done or self._hangup_event.is_set()
+            # Freeze the cosmetic probe before awaiting any other teardown so
+            # key-up cannot race one more growing-buffer transcription into
+            # flight after capture has ended.
+            live_stop_event.set()
+            # The key-up edge ends CAPTURE immediately.  The cosmetic live-STT
+            # probe is stopped separately below: blindly cancelling an
+            # ``asyncio.to_thread`` local-Whisper call only cancels its asyncio
+            # wrapper, not the native inference.  Starting final STT against the
+            # same model then deterministically raises TranscribeBusy and drops
+            # the submitted prompt (AP-24).
+            for t in wait_set:
+                t.cancel()
+            for t in wait_set:
+                try:
+                    await t
+                except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
+                    pass
+            if input_buffer is not None:
+                # PTT is one-shot, so it will never replay this capture. Release
+                # a wake-handoff/fallback pump now instead of retaining its mic
+                # lease while final STT and the answer run.
+                await input_buffer.close()
+
+        # The microphone/input lease is closed before waiting for a cosmetic
+        # native transcription to settle: key-up therefore ends recording even
+        # if the partial STT call itself is slow or wedged.
+        if not hung_up:
+            await self._set_turn_state(TurnTakingState.WAITING_FOR_FINAL_TRANSCRIPT)
+        if live_task is not None:
+            await self._stop_ptt_live_transcription(
+                live_task,
+                stop_event=live_stop_event,
+                inference_active=live_inference_active,
+                wait_for_inference=not hung_up,
+            )
+
+        if hung_up:
+            return HANGUP_HOTKEY
+
+        # A too-short hold (accidental tap / instant release) carries no real
+        # speech — submitting empty audio would just transcribe to nothing or a
+        # Whisper hallucination. 300 ms @ 16 kHz int16 = 9600 bytes.
+        min_bytes = int(0.3 * 16_000 * 2)
+        if len(buffer) < min_bytes:
+            log.info(
+                "PTT: hold too short (%.0f ms recorded, %.0f ms mic-open) — nothing to submit.",
+                (len(buffer) / 2) / 16_000 * 1000,
+                (time.monotonic() - mic_open_at) * 1000,
+            )
+            return HANGUP_TURN_COMPLETE
+
+        pcm = bytes(buffer)
+        # The key — not the VAD — is the endpoint, so there is never a forced-cut
+        # carry to merge. Clear it defensively before the single turn.
+        self._carry_pcm = bytearray()
+        self._carry_started_monotonic = None
+        self._last_endpoint_reason = None
+        await self._publish_utterance_captured(pcm)
+        # One-shot: run exactly one turn, then end the session regardless of the
+        # _handle_utterance return value (it may request continuation, which PTT
+        # does not honour). A hangup phrase inside the turn still wins.
+        # skip_completion: the key release is the endpoint — submit straight to
+        # the brain, never park the turn in the incomplete-sentence buffer.
+        await self._handle_utterance(pcm, skip_completion=True)
+        if self._hangup_event.is_set():
+            return self._session_end_reason or HANGUP_VOICE_PATTERN
+        return HANGUP_TURN_COMPLETE
+
+    async def _stop_ptt_live_transcription(
+        self,
+        task: asyncio.Task[None],
+        *,
+        stop_event: asyncio.Event,
+        inference_active: asyncio.Event,
+        wait_for_inference: bool,
+    ) -> None:
+        """Quiesce the cosmetic PTT probe before final STT or wake re-arm.
+
+        Native STT calls running through ``asyncio.to_thread`` cannot be
+        cancelled.  On a normal key release, allow the one already-running
+        probe to finish before the authoritative final transcription starts.
+        Bound that wait by the same ceiling as final STT; a provider exposing
+        ``recover()`` then swaps in a fresh engine/lock before the orphaned call
+        is cancelled, which is the AP-24 recovery contract.  A hard hangup does
+        not wait for cosmetic output, but still recovers a busy native engine so
+        the wake listener never inherits it.
+        """
+        stop_event.set()
+
+        def _retrieve_late_result(done: asyncio.Task) -> None:
+            if done.cancelled():
+                return
+            try:
+                exc = done.exception()
+            except asyncio.CancelledError:
+                return
+            if exc is not None:
+                log.debug("Detached PTT live transcript failed: %s", exc)
+
+        async def _cancel_bounded(label: str) -> None:
+            task.cancel()
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=0.25)
+            except TimeoutError:
+                log.warning(
+                    "%s ignored cancellation for 250 ms; continuing without it.",
+                    label,
+                )
+                task.add_done_callback(_retrieve_late_result)
+            except asyncio.CancelledError:
+                current = asyncio.current_task()
+                if current is not None and current.cancelling():
+                    raise
+                # The child task itself acknowledged cancellation.
+            except Exception as exc:  # noqa: BLE001 — cosmetic failure is contained
+                log.debug("%s failed while stopping: %s", label, exc)
+
+        if task.done():
+            try:
+                task.result()
+            except asyncio.CancelledError:
+                pass
+            except Exception as exc:  # noqa: BLE001 — cosmetic failure is contained
+                log.debug("PTT live transcript ended with an error: %s", exc)
+            return
+
+        # A sleeping probe or a local-preview call is purely cosmetic and does
+        # not own the authoritative STT provider. Cancel it immediately on the
+        # endpoint edge instead of adding its remaining preview timeout to the
+        # user's release-to-text latency. Only a provider call marked by
+        # ``inference_active`` needs the AP-24 quiescence wait below.
+        if not inference_active.is_set():
+            await _cancel_bounded("Cosmetic PTT probe")
+            return
+
+        timed_out = False
+        if wait_for_inference:
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(task),
+                    timeout=max(0.1, self._stt_final_timeout_s),
+                )
+                return
+            except TimeoutError:
+                timed_out = True
+                log.warning(
+                    "PTT live transcript did not quiesce within %.1fs; "
+                    "recovering before final transcription.",
+                    self._stt_final_timeout_s,
+                )
+            except asyncio.CancelledError:
+                await _cancel_bounded("PTT live transcript")
+                raise
+            except Exception as exc:  # noqa: BLE001 — cosmetic probe failure is contained
+                if task.done():
+                    log.debug("PTT live transcript ended with an error: %s", exc)
+                    return
+
+        if inference_active.is_set():
+            recover = getattr(self._utterance_stt, "recover", None)
+            if callable(recover):
+                try:
+                    recover()
+                except Exception:  # noqa: BLE001 — cleanup must never drop teardown
+                    log.warning(
+                        "PTT live-transcript STT recovery failed; continuing "
+                        "with provider-level fallback.",
+                        exc_info=True,
+                    )
+            elif timed_out:
+                log.warning(
+                    "PTT live-transcript provider has no recovery hook; "
+                    "cancelling the timed-out probe before final STT."
+                )
+        await _cancel_bounded("PTT live transcript")
+
+    async def _ptt_live_transcribe(
+        self,
+        snapshot: Callable[[], bytes],
+        *,
+        stop_event: asyncio.Event,
+        inference_active: asyncio.Event,
+    ) -> None:
+        """Background live-transcript feed for the held push-to-talk audio.
+
+        Every ``_ptt_partial_interval_s`` it transcribes the held-so-far buffer
+        and publishes it as a non-final ``TranscriptionUpdate`` so the orb
+        bubble shows the live transcript while the key is down — parity with the
+        wake-word path's VAD stability probe (PTT bypasses the VAD, so it needs
+        its own feed). Purely cosmetic and best-effort: every error is swallowed
+        and the loop continues. It NEVER drives the turn — the authoritative
+        transcription is the final one in ``_handle_utterance``. On release,
+        ``_ptt_session`` signals ``stop_event`` and lets an in-flight native call
+        settle before final STT, so the two never share one inference engine.
+        """
+        interval = self._ptt_partial_interval_s
+        stt = getattr(self, "_utterance_stt", None)
+        if stt is None or interval <= 0:
+            return
+        # A sub-~0.4s snapshot is almost always a Whisper hallucination on
+        # near-silence; wait until enough audio has accumulated before probing.
+        min_bytes = int(0.4 * 16_000 * 2)
+        try:
+            while not stop_event.is_set():
+                try:
+                    await asyncio.wait_for(stop_event.wait(), timeout=interval)
+                except TimeoutError:
+                    pass
+                if stop_event.is_set():
+                    return
+                pcm = snapshot()
+                if len(pcm) < min_bytes:
+                    continue
+                try:
+                    inference_active.set()
+                    try:
+                        transcript = await stt.transcribe_pcm(pcm)
+                    finally:
+                        inference_active.clear()
+                except Exception as exc:  # noqa: BLE001 — cosmetic, keep going
+                    log.debug("PTT live-transcript probe failed: %s", exc)
+                    continue
+                if stop_event.is_set():
+                    return
+                text = (getattr(transcript, "text", "") or "").strip() if transcript else ""
+                if not text:
+                    continue
+                try:
+                    await self._publish_event(
+                        TranscriptionUpdate(
+                            source_layer="speech.stt",
+                            text=text,
+                            is_final=False,
+                        )
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    log.debug("PTT live-transcript publish failed: %s", exc)
+        except asyncio.CancelledError:
+            pass
+
+    # ------------------------------------------------------------------
+    # Chat mic-dictation (transcribe-only → chat input, never the brain)
+    # ------------------------------------------------------------------
+
+    def dictation_available(self) -> bool:
+        """True if the server can run mic-dictation (a mic + an STT exist).
+
+        Lets the UI hide the mic button on a headless host with no capture
+        device (cloud-first: a missing capability is a clean no-op, AD-OE6).
+        """
+        return (
+            self._utterance_stt is not None
+            and self._input_device != "none"
+            and self._capture_permission_allowed()
+        )
+
+    def dictation_engine_status(self) -> dict[str, Any]:
+        """Which recognizer the dictation lane will really use, for the UI.
+
+        The settings name a provider; the lane in front of the microphone may
+        be a different one (an environment override, a keyless family crossed
+        to another, the on-device final pass ahead of them all — P-41). Four
+        days of dictations ran on a recognizer the settings did not name
+        before anyone could see it. This answers with what is actually armed:
+
+        ``local`` — whether the on-device pass is in front; ``provider`` /
+        ``model`` — the recognizer that answers the next press (the local
+        engine when it is up, else the first cloud family behind it);
+        ``fallback`` — the provider one step behind; ``detail`` — why the
+        local engine is NOT in front right now, when it is not (a full card,
+        a CPU-only host, a missing runtime), so the reason is a sentence on
+        the card instead of a log line. Never raises.
+        """
+        status: dict[str, Any] = {
+            "local": False,
+            "provider": "",
+            "model": "",
+            "fallback": "",
+            "detail": "",
+        }
+        try:
+            stt = self._dictation_stt()
+        except Exception as exc:  # noqa: BLE001 — a status probe never breaks the view
+            log.debug("dictation engine status: provider unavailable (%s)", exc)
+            return status
+        if stt is None:
+            return status
+        # Walk down through the transparent wrappers (meter, dictionary) to the
+        # chain; each one delegates unknown attributes, so the private handles
+        # of FallbackSTT are reachable without naming the wrappers.
+        primary = getattr(stt, "_primary", None)
+        alternates = list(getattr(stt, "_alternate_names", ()) or ())
+        if primary is None:
+            status["provider"] = str(
+                getattr(stt, "provider_label", "") or getattr(stt, "name", "") or ""
+            )
+            status["model"] = str(getattr(stt, "last_used_model", "") or "")
+            return status
+        from jarvis.dictation.local_final import LocalFinalSTT
+
+        if isinstance(primary, LocalFinalSTT):
+            status["local"] = bool(primary.is_warm)
+            status["detail"] = "" if primary.is_warm else str(primary.unavailable_reason)
+            if primary.is_warm:
+                status["provider"] = primary.provider_label
+                status["model"] = primary.last_used_model
+                status["fallback"] = alternates[0] if alternates else ""
+            else:
+                status["provider"] = alternates[0] if alternates else ""
+                status["fallback"] = alternates[1] if len(alternates) > 1 else ""
+                status["model"] = ""
+            return status
+        status["provider"] = str(getattr(stt, "provider_label", "") or "")
+        status["model"] = str(getattr(stt, "last_used_model", "") or "")
+        status["fallback"] = alternates[0] if alternates else ""
+        return status
+
+    def start_dictation(self, *, target: str = "chat", source: str = "api") -> bool:
+        """Begin a transcribe-only dictation session (idempotent-safe).
+
+        ``source`` names the door the request came through — ``hold_key``,
+        ``toggle_key``, ``ws``, ``rest`` or the default ``api`` — purely so the
+        start line in the log says so and the hold-key watchdog knows whether a
+        release edge is owed (BUG-191: a recording that never ended could not
+        be traced to its trigger, because the log never said which one it was).
+
+        ``target`` decides where the finished transcript goes:
+
+        * ``"chat"`` — publish the transcript only. This is the chat composer's
+          mic button: the text lands in the app's own input box.
+        * ``"insert"`` — additionally paste it into the focused text field of
+          whatever application is in front. This is dictation mode proper.
+
+        Returns ``False`` when it cannot start — no microphone, no STT, or a
+        dictation already running. A live voice conversation is NOT one of
+        those cases any more: see the handover below.
+
+        **The dictation key wins.** Pressing it is a deliberate, explicit user
+        action; a conversation left open in the background is not. On this
+        machine's configuration a session never ends by itself (idle auto-hangup
+        is off by maintainer mandate and the hangup key is unbound), so a single
+        wake word at any point in the day used to make EVERY later dictation
+        press refuse — silently — until the app was restarted. So a press now
+        hangs the conversation up through the ordinary hangup chokepoint (the
+        same one the bar's close-X uses), waits for the microphone to actually
+        come back, and then records. This is the maintainer's own kill-switch
+        doctrine: an explicit stop gesture beats whatever Jarvis is in the
+        middle of, INCLUDING a half-spoken answer, and the answer is cut off the
+        clean way — the player stops, the session unwinds through its normal
+        teardown, and a bounded wait means a wedged teardown refuses honestly
+        instead of hanging or deafening the key forever.
+
+        **Every refusal is announced**, not just logged: each one publishes a
+        ``DictationRefused`` carrying a stable reason token and a finished
+        English sentence. Before that, a refused shortcut produced a
+        ``log.info`` in a file the desktop app cannot display (AGENTS.md §9), so
+        the key simply did nothing and the user had no way to learn why. The
+        boolean return is unchanged, so every existing caller (hotkey edge, WS
+        handler, REST route) keeps working; ``True`` from the handover path
+        means "accepted", and its failure arrives as ``DictationRefused``.
+
+        This NEVER routes to the brain: it spawns ``_dictation_session`` which
+        only publishes ``DictationStarted`` / ``DictationTranscript`` /
+        ``DictationTranscribing`` / ``DictationCompleted`` events.
+        """
+        if not self._capture_permission_allowed():
+            self._refuse_dictation(
+                "microphone_unavailable",
+                "Microphone access is not ready — check the microphone "
+                "permission and make sure the desktop window is available.",
+            )
+            return False
+        if self._utterance_stt is None:
+            self._refuse_dictation(
+                "no_stt",
+                "No speech-to-text provider is configured, so there is nothing "
+                "to transcribe with. Add a provider key in Settings.",
+            )
+            return False
+        if self.dictation_active():
+            self._refuse_dictation(
+                "already_running",
+                "A dictation is already recording.",
+            )
+            return False
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._refuse_dictation(
+                "pipeline_not_running",
+                "The voice pipeline is not running, so dictation cannot start.",
+            )
+            return False
+        if self._live_call_owns_microphone():
+            # A live call keeps running: its input is held, not hung up.
+            return self._commit_dictation(
+                loop, target=target, source=source, beside_call=True
+            )
+        if self._voice_session_holds_microphone():
+            return self._begin_dictation_handover(loop, target=target, source=source)
+        return self._commit_dictation(loop, target=target, source=source)
+
+    def _live_call_owns_microphone(self) -> bool:
+        """True while a live realtime call captures the microphone in the WebView.
+
+        Such a call owns its own capture (getUserMedia, with the browser's echo
+        cancellation), so a dictation does not have to take the device away
+        from it. Instead the dictation records through its own capture and the
+        call's input is HELD until the text is delivered (``VoiceInputHeld``):
+        the conversation stays open and the dictated words never become a turn.
+        Push-to-talk is excluded — its raw recording is the pipeline's own
+        stream, and that lane keeps the ordinary handover.
+        """
+        if getattr(self, "_ptt_mode", False):
+            return False
+        try:
+            from jarvis.live.runtime import owns_microphone
+        except Exception:  # noqa: BLE001 — no live stack means no live call
+            log.debug("live call registry unavailable", exc_info=True)
+            return False
+        return owns_microphone()
+
+    @property
+    def is_voice_input_held(self) -> bool:
+        """Whether a dictation currently holds a live call's input back.
+
+        Read by a call that starts DURING such a dictation, so it adopts the
+        hold instead of hearing the dictated words.
+        """
+        return bool(getattr(self, "_voice_input_held", False))
+
+    def _set_voice_input_held(self, held: bool) -> None:
+        """Hold or release a live call's input and tell the call. Never raises."""
+        if bool(getattr(self, "_voice_input_held", False)) == held:
+            return
+        self._voice_input_held = held
+        log.info(
+            "Live call input %s for the dictation.",
+            "held" if held else "released",
+        )
+        self._publish_event_soon(VoiceInputHeld(held=held, reason="dictation"))
+
+    def _on_beside_call_dictation_done(self, _task: asyncio.Task[None]) -> None:
+        """Give the call its voice back once the dictation has fully ended.
+
+        A done-callback rather than a ``finally``: it runs for every end of the
+        task, including one cancelled before its first step, so the call can
+        never be left deaf. The task ends only after the text was delivered,
+        which is the moment the user may talk to the call again.
+        """
+        try:
+            self._dictation_beside_call = False
+            self._set_voice_input_held(False)
+        except Exception:  # noqa: BLE001 — a release must never become a crash
+            log.warning("Releasing the live call input failed", exc_info=True)
+
+    def _voice_session_holds_microphone(self) -> bool:
+        """True while the VOICE lane owns the one input device.
+
+        Push-to-talk arms its raw recording before the state machine leaves
+        IDLE, so both halves are needed; either one means the dictation lane
+        must not open a stream of its own (AP-24 / the BUG-014 family).
+        ``getattr`` defaults keep pipelines built via ``__new__`` working.
+        """
+        return bool(getattr(self, "_ptt_mode", False)) or (
+            getattr(self, "_state", PipelineState.IDLE) is not PipelineState.IDLE
+        )
+
+    def _begin_dictation_handover(
+        self, loop: asyncio.AbstractEventLoop, *, target: str, source: str = "api"
+    ) -> bool:
+        """Take the microphone from a live voice conversation, then dictate.
+
+        Returns ``True`` when the press is ACCEPTED: the conversation has been
+        told to hang up and the dictation starts a moment later, once the device
+        has actually been released. That ordering is the whole point, because
+        two native input streams on one device is the AP-24 class of bug.
+        ``False`` means the hangup itself could not even be requested, which is
+        refused out loud like any other dead end.
+
+        The wake gate is closed here rather than at the commit point: ending the
+        conversation returns the pipeline to IDLE with the wake loop free to
+        re-arm, and a wake word firing inside that gap would take the microphone
+        straight back from the user who just pressed the key. The deadline
+        covers only the handover — ``_commit_dictation`` re-arms it for the
+        recording — so a handover that dies without running its own teardown
+        still cannot deafen wake for more than this window (BUG-037).
+        """
+        self._dictation_wake_block_until = (
+            time.time() + _DICTATION_HANDOVER_TIMEOUT_S + 1.0
+        )
+        try:
+            # Hang up SYNCHRONOUSLY, on the press itself — never from inside the
+            # waiting task. A task cancelled before its first step (a
+            # press-and-release a few milliseconds apart, which is a normal
+            # human gesture) never executes a single line of its body, so a
+            # hangup scheduled in there would simply not happen and the key
+            # would be back to doing nothing at all.
+            #
+            # This is the ordinary hangup entry point — the same one the bar's
+            # close-X calls. It stops the player immediately, cancels a running
+            # Computer-Use mission and a live chat turn, and lets the session
+            # unwind through its own teardown. Deliberately NOT a second
+            # teardown of our own: one chokepoint, one contract.
+            self.request_hangup()
+        except Exception as exc:  # noqa: BLE001 — an honest refusal, not a crash
+            log.warning("Dictation handover could not hang up the session: %s", exc)
+            self._refuse_dictation(
+                "handover_failed",
+                "The running voice conversation could not be ended, so the "
+                "dictation did not start. Close the voice bar and press the "
+                "key again.",
+            )
+            return False
+        task = loop.create_task(
+            self._dictate_when_the_microphone_is_free(loop, target=target, source=source),
+            name="dictation-handover",
+        )
+        # The terminal guarantee lives in a done-callback, not in the
+        # coroutine's own ``except``, for the same never-started reason.
+        task.add_done_callback(self._on_handover_settled)
+        self._dictation_handover_task = task
+        log.info(
+            "Dictation key pressed during a live voice session — hung up, "
+            "waiting for the microphone."
+        )
+        return True
+
+    async def _dictate_when_the_microphone_is_free(
+        self, loop: asyncio.AbstractEventLoop, *, target: str, source: str = "api"
+    ) -> None:
+        """Wait for the hung-up session to release the device, then dictate.
+
+        The hangup has already been requested (see ``_begin_dictation_handover``);
+        this is only the wait, and it is BOUNDED. The pipeline reaches IDLE after
+        its capture context has exited, so waiting for that state is what keeps
+        the dictation from opening a second native stream on the same device
+        (AP-24). Nothing here can leave the wake gate closed — the gate is
+        derived from this task being alive, so it reopens the moment this
+        returns, raises or is cancelled (BUG-037).
+        """
+        try:
+            deadline = loop.time() + _DICTATION_HANDOVER_TIMEOUT_S
+            while self._voice_session_holds_microphone():
+                if loop.time() >= deadline:
+                    log.warning(
+                        "Dictation handover timed out after %.1fs — the voice "
+                        "session still holds the microphone.",
+                        _DICTATION_HANDOVER_TIMEOUT_S,
+                    )
+                    self._refuse_dictation(
+                        "handover_failed",
+                        "The voice conversation did not give the microphone back "
+                        "in time, so the dictation did not start. Try the key "
+                        "again in a moment.",
+                    )
+                    return
+                await asyncio.sleep(_DICTATION_HANDOVER_POLL_S)
+            self._commit_dictation(loop, target=target, source=source)
+        finally:
+            # Not the terminal guarantee — a task cancelled before its first
+            # step never runs this. ``_on_handover_settled`` is what always
+            # runs; this only releases the handle as early as possible.
+            self._dictation_handover_task = None
+
+    def _on_handover_settled(self, task: asyncio.Task[None]) -> None:
+        """Terminal guarantee for the handover: it commits, or it explains.
+
+        Runs for EVERY end of the handover task, including one cancelled before
+        it ever started — the fastest press-and-release, and the case a plain
+        ``except asyncio.CancelledError`` inside the coroutine silently misses.
+        Never raises: a callback that throws here would surface as a stray
+        "exception in callback" and take the explanation with it (AP-18).
+        """
+        try:
+            if getattr(self, "_dictation_handover_task", None) is task:
+                self._dictation_handover_task = None
+            if task.cancelled():
+                # The key was let go (or a toggle stopped it) while the
+                # conversation was still shutting down. Starting the recording
+                # now would leave a dictation nobody is holding a key for,
+                # running to the duration cap — so say what happened instead.
+                # The hangup itself already went through, which is exactly why
+                # pressing again works — USUALLY. The sentence checks rather
+                # than assumes: a session whose teardown is wedged still holds
+                # the device at this moment (BUG-185), and "the microphone is
+                # free now" was exactly the lie the user read ten times in a
+                # row while nothing they pressed could work.
+                if self._voice_session_holds_microphone():
+                    detail = (
+                        "The voice conversation is still shutting down, so "
+                        "nothing was recorded. Hold the key a little longer, "
+                        "or press it again once the voice bar has closed."
+                    )
+                else:
+                    detail = (
+                        "The voice conversation was still shutting down when "
+                        "the dictation key was released, so nothing was "
+                        "recorded. The microphone is free now — press the key "
+                        "again."
+                    )
+                self._refuse_dictation("handover_failed", detail)
+                return
+            error = task.exception()
+            if error is not None:
+                log.warning("Dictation handover failed: %s", error, exc_info=error)
+                self._refuse_dictation(
+                    "handover_failed",
+                    "Handing the microphone over from the voice conversation "
+                    "failed, so the dictation did not start. Try the key again.",
+                )
+        except Exception:  # noqa: BLE001 — a refusal must never become a crash
+            log.debug("Dictation handover callback failed", exc_info=True)
+
+    def _commit_dictation(
+        self,
+        loop: asyncio.AbstractEventLoop,
+        *,
+        target: str,
+        source: str = "api",
+        beside_call: bool = False,
+    ) -> bool:
+        """Arm the wake block, announce the turn and spawn the recording task.
+
+        The commit point shared by the direct start and the handover, so both
+        arrive in the dictation lane through exactly one door. Always returns
+        ``True``; every reason not to be here is checked by ``start_dictation``.
+
+        ``beside_call`` means a live call keeps running next to this dictation:
+        its input is held until the task ends, and the call's hangup event is
+        left alone — it belongs to the call, not to this recording.
+        """
+        self._dictation_started_by = str(source or "api")
+        self._dictation_discard_requested = False
+        self._dictation_beside_call = beside_call
+        # A fresh dictation session must NOT inherit a stale hangup. ``_hangup_event``
+        # is set by every "auflegen" and is otherwise only cleared when the next
+        # VOICE session is accepted (``_run_session``). The dictation lane shares
+        # that event in its ``asyncio.wait`` gate, so a leftover hangup from an
+        # earlier voice call would finalize this session on its first tick — the
+        # mic appears to "stop the instant you click it". Clear it here, mirroring
+        # the voice-path ``self._hangup_event.clear()`` at session accept. Beside
+        # a live call the event is the CALL's: clearing it could swallow a
+        # hangup the user just asked for, and the lane does not wait on it.
+        hangup = getattr(self, "_hangup_event", None)
+        if hangup is not None and not beside_call:
+            hangup.clear()
+        if beside_call:
+            # Held BEFORE the recording task exists, so the call stops hearing
+            # the user as early as possible.
+            self._set_voice_input_held(True)
+        # Stored RAW ("auto" / "insert" / "chat"). ``auto`` is resolved when the
+        # recording ENDS, not here: the window that matters is the one in front
+        # when the text is delivered. Clicking "Start dictating" in the app and
+        # then switching to the target application is a normal flow, and
+        # resolving at start would have sent that text to the chat box.
+        self._dictation_target = target if target in ("insert", "chat") else "auto"
+        self._dictation_stop_event = asyncio.Event()
+        # Watchdog deadline for the wake-word block (see
+        # ``_dictation_blocks_activation``). It is a TIMESTAMP, copying the
+        # ``_wake_lock_until`` pattern, so a dictation task that somehow never
+        # terminates still cannot leave the wake word deaf forever — the worst
+        # case is bounded instead of needing an app restart (BUG-037). The
+        # allowance on top of the recording cap covers the closing
+        # transcription, which runs after the microphone is already released.
+        # A 0 recording ceiling means "speak as long as you like", and this
+        # deadline must NOT inherit that. Unbounded here would re-open BUG-037:
+        # a dictation task that somehow never terminates would leave the wake
+        # word deaf until the app is restarted. So an unlimited recording still
+        # gets a bounded — generously bounded — wake block. The two are allowed
+        # to disagree: the worst case of this one expiring early is a wake word
+        # that answers during a very long dictation, which is recoverable in a
+        # second; the worst case of it never expiring needs a restart.
+        block_s = getattr(self, "_dictation_max_s", _DICTATION_DEFAULT_MAX_S)
+        if not block_s:
+            block_s = _DICTATION_UNBOUNDED_WAKE_BLOCK_S
+        self._dictation_wake_block_until = time.time() + float(block_s) + 60.0
+        # Reset BEFORE the task exists: the teardown guarantee below reads this
+        # to decide whether a terminal event still has to be published.
+        self._dictation_completion_published = False
+        # Announce the turn BEFORE the first audio frame. Queued ahead of the
+        # session task on purpose: nothing has opened the microphone yet when
+        # this method returns, so a UI surface can show "listening" at key-down
+        # speed instead of waiting for the first partial transcript — which
+        # costs a partial interval plus an STT round-trip, and for a short press
+        # never arrives at all.
+        self._publish_event_soon(
+            DictationStarted(
+                source_layer="speech.dictation", target=self._dictation_target
+            )
+        )
+        self._dictation_task = loop.create_task(
+            self._dictation_session(), name="dictation"
+        )
+        if beside_call:
+            self._dictation_task.add_done_callback(self._on_beside_call_dictation_done)
+        log.info(
+            "🎙️ dictation started (transcribe-only, target=%s, via=%s%s).",
+            self._dictation_target,
+            self._dictation_started_by,
+            ", beside a live call" if beside_call else "",
+        )
+        return True
+
+    def _refuse_dictation(self, reason: str, detail: str) -> None:
+        """Log AND announce a refused dictation start.
+
+        ``reason`` must come from ``DICTATION_REFUSAL_REASONS`` — the single
+        vocabulary for this value, checked here so a new branch that forgets to
+        extend it is caught in the log instead of reaching a UI that has never
+        heard of the token (AP-4 / BUG-008).
+        """
+        if reason not in DICTATION_REFUSAL_REASONS:
+            log.warning(
+                "Unknown dictation refusal reason %r — add it to "
+                "DICTATION_REFUSAL_REASONS.",
+                reason,
+            )
+        log.info("start_dictation refused (%s): %s", reason, detail)
+        self._publish_event_soon(
+            DictationRefused(
+                source_layer="speech.dictation", reason=reason, detail=detail
+            )
+        )
+
+    def dictation_active(self) -> bool:
+        """Is the dictation lane engaged right now? (REST/UI status, cheap.)
+
+        True for the recording AND for the handover that is clearing a voice
+        conversation out of the way for one. Both count, because both mean the
+        key has been pressed and the lane is owed exactly one outcome — a second
+        start in that window is the ``already_running`` no-op, not a race for
+        the microphone.
+        """
+        for name in ("_dictation_task", "_dictation_handover_task"):
+            task = getattr(self, name, None)
+            if task is not None and not task.done():
+                return True
+        return False
+
+    def stop_dictation(self) -> bool:
+        """Signal the active dictation session to finish (best-effort).
+
+        A handover still in flight is CANCELLED rather than stopped: the
+        recording it was about to start has not begun, and letting it start now
+        would leave a dictation nobody is holding a key for, running to the
+        duration cap. The cancellation publishes its own refusal, so a hold
+        gesture released mid-handover still tells the user what happened.
+        """
+        handover = getattr(self, "_dictation_handover_task", None)
+        if handover is not None and not handover.done():
+            handover.cancel()
+            # Belt and braces: should a recording ALSO be alive (a handover
+            # that already committed but has not cleared its handle yet), the
+            # stop must reach it too — returning here used to leave the
+            # recording running with the stop swallowed (BUG-191).
+            task = getattr(self, "_dictation_task", None)
+            if task is not None and not task.done():
+                self._dictation_stop_event.set()
+            return True
+        if self._dictation_task is None or self._dictation_task.done():
+            return False
+        self._dictation_stop_event.set()
+        return True
+
+    def request_dictation_stop(self, *, discard: bool = False) -> bool:
+        """End a running dictation from OUTSIDE the pipeline's loop — the bar's X.
+
+        The dictation counterpart of ``request_hangup``: the Jarvis Bar runs on
+        its own Tk thread (or in a child process, on macOS), while the stop
+        event and its waiter belong to the pipeline's asyncio loop, so the
+        request is marshalled onto that loop. ``discard=True`` is what the
+        close-X means — make it go away, deliver nothing — and matches what the
+        same X does to a voice session; the default finishes and delivers, like
+        the key. Returns whether a dictation was there to stop, so a caller can
+        tell "stopped" from "nothing was running".
+
+        Until BUG-191 the bar drew its X in the dictation modes and resolved
+        every click on it to nothing, on the theory that another way to stop
+        always existed. With a lost release edge there was none.
+        """
+        active = self.dictation_active()
+        if not active:
+            log.debug("request_dictation_stop: no dictation is running.")
+            return False
+        log.info(
+            "📵 request_dictation_stop — %s the running dictation (via=%s).",
+            "discarding" if discard else "finishing",
+            getattr(self, "_dictation_started_by", "") or "unknown",
+        )
+
+        def _dispatch() -> None:
+            try:
+                if discard:
+                    self._dictation_discard_requested = True
+                self._dictate_key_down = False
+                self.stop_dictation()
+                if discard:
+                    # The stop event only ends capture. After release the lane
+                    # may be waiting on model startup, STT or formatting, so an
+                    # explicit discard must cancel that work as well. The task's
+                    # completion handler closes the UI and releases the wake gate.
+                    task = getattr(self, "_dictation_task", None)
+                    if task is not None and not task.done():
+                        # Let a just-created session enter its cleanup scope
+                        # before cancellation; repeated X clicks must not cancel
+                        # the cleanup itself.
+                        def _cancel() -> None:
+                            if not task.done() and not task.cancelling():
+                                task.cancel()
+
+                        if current is not None or (
+                            owner is not None and owner.is_running()
+                        ):
+                            asyncio.get_running_loop().call_soon(_cancel)
+                        else:
+                            _cancel()
+            except Exception:  # noqa: BLE001 — a stop gesture must never crash
+                log.exception("request_dictation_stop dispatch failed")
+
+        owner = getattr(self, "_runtime_loop", None)
+        try:
+            current = asyncio.get_running_loop()
+        except RuntimeError:
+            current = None
+        if owner is not None and owner.is_running() and current is not owner:
+            try:
+                owner.call_soon_threadsafe(_dispatch)
+                return True
+            except RuntimeError:
+                log.debug("request_dictation_stop: owner loop closed during dispatch")
+        _dispatch()
+        return True
+
+    async def _watch_dictation_hold_key(self) -> None:
+        """Finish a HOLD recording whose key is physically up — the lost release.
+
+        Runs beside the recording only for a dictation the hold key started.
+        Every ``_DICTATE_HOLD_WATCH_POLL_S`` it asks the live trigger whether
+        the dictation chord is down. ``None`` means this backend cannot tell
+        (no listener, no package, Wayland): the watchdog stands down at once
+        and the lane keeps working from edges alone — it never invents a
+        release. ``False`` for ``_DICTATE_HOLD_LOST_RELEASE_S`` straight means
+        the key-up happened and its edge never arrived; the recording is then
+        ended through the same stop event a real release sets, so what was
+        said is delivered exactly as if the edge had come (BUG-191).
+        """
+        trigger = getattr(self, "_hotkey_trigger", None)
+        probe = getattr(trigger, "chord_is_down", None)
+        if trigger is None or not callable(probe):
+            return
+        up_since: float | None = None
+        while True:
+            answer = probe("dictate")
+            if answer is None:
+                log.debug(
+                    "hold-key watchdog: this hotkey backend cannot report key "
+                    "state — the recording relies on the release edge alone."
+                )
+                return
+            now = time.monotonic()
+            if answer:
+                up_since = None
+            elif up_since is None:
+                up_since = now
+            elif now - up_since >= _DICTATE_HOLD_LOST_RELEASE_S:
+                log.warning(
+                    "The dictation hold key has been physically up for %.1fs and "
+                    "no release edge arrived — finishing the recording as the "
+                    "release would have (the key-up edge was lost).",
+                    now - up_since,
+                )
+                self._dictate_key_down = False
+                self._dictation_stop_event.set()
+                return
+            await asyncio.sleep(_DICTATE_HOLD_WATCH_POLL_S)
+
+    def _dictation_stt(self) -> Any:
+        """The provider this lane transcribes with — NOT the voice one (F14).
+
+        Two things are wrong with reusing ``self._utterance_stt`` here, and both
+        of them are silent.
+
+        **The bias prompt.** ``[stt].bias_prompt`` is decoder priming for the
+        VOICE path: a paragraph of vocabulary that steers Whisper towards the
+        words a conversation with this assistant tends to contain. The repo
+        already documents it as a silence-hallucination amplifier and
+        deliberately withholds it from the local engine for exactly that reason
+        — and then handed it to the dictation lane anyway, which is the one lane
+        whose input is long, whose pauses are frequent, and whose output goes
+        straight into somebody's document. It also biases decoding towards the
+        prompt's own language, which is the second half of the wrong-language
+        problem the delivery gates deal with. Dictation therefore builds its own
+        instance with the voice prompt REMOVED, honouring
+        ``[dictation].bias_prompt`` instead — absent by default, which is the
+        point: a dictation is not a conversation and has no vocabulary to guess.
+        The user's STT dictionary is NOT dropped: ``build_stt_from_config``
+        merges those words separately, and they are the one bias a person asked
+        for by name.
+
+        **The fallback chain (AP-22).** The lane binds one provider for the
+        whole session, so a depleted key ended the dictation even with three
+        other keyed families sitting unused. ``_resolve_stt_fallback_chain``
+        answers with one provider per CREDENTIAL family — never two ids reading
+        the same keyring slot, because a 429 on a key is not survived by a
+        sibling that draws on the same key — and ``FallbackSTT`` builds each of
+        them lazily, on the first call that actually needs it (AP-26). It is
+        the same resolver the voice lane's crossover uses, so ``[stt].fallback``
+        means one thing in both lanes.
+
+        Degrades to the voice instance on any failure: a dictation with the
+        wrong prompt is enormously better than a dictation with no provider.
+        Built once and cached, because the alternative is re-resolving keys and
+        re-constructing a client on every press.
+        """
+        cached = getattr(self, "_dictation_stt_instance", None)
+        if cached is not None:
+            return cached
+
+        fallback = getattr(self, "_utterance_stt", None)
+        config = getattr(self, "_config", None)
+        stt_cfg = getattr(config, "stt", None) if config is not None else None
+        if stt_cfg is None:
+            return fallback
+
+        try:
+            from jarvis.plugins.stt import build_stt_from_config
+
+            dictation_cfg = getattr(self, "_dictation_cfg", None)
+            # ``[dictation].bias_prompt`` is read through getattr so this is
+            # correct both before and after the key exists as a field: absent
+            # reads as empty, which is the shipped behaviour we want anyway.
+            own_prompt = str(getattr(dictation_cfg, "bias_prompt", "") or "").strip()
+            patched = stt_cfg.model_copy(update={"bias_prompt": own_prompt})
+            # No dictionary words in the decoder prompt either (BUG-211): a
+            # prompt-capable Whisper recites the primed list over every pause
+            # and a lone recited item survives the echo guard. The dictionary
+            # still corrects the finished transcript — see the wrapper below.
+            instance = build_stt_from_config(patched, dictionary_bias=False)
+        except Exception as exc:  # noqa: BLE001 — never lose dictation over this
+            log.warning(
+                "Dictation-specific STT could not be built (%s); reusing the "
+                "voice provider, bias prompt included.",
+                exc,
+            )
+            return fallback
+
+        # The chain and the dictionary are each wrapped in their OWN guard:
+        # neither is worth losing the prompt-free instance we already have, and
+        # collapsing all three into one try meant an import error in either
+        # wrapper silently handed the voice provider — bias prompt included —
+        # back to the dictation lane.
+        try:
+            from jarvis.plugins.stt import build_named_stt_provider, stt_family_id
+
+            configured = str(getattr(stt_cfg, "provider", "") or "").strip()
+            alternates = list(_resolve_stt_fallback_chain(stt_cfg, configured))
+            configured_instance = instance
+
+            def _build(name: str) -> Any:
+                if name == configured:
+                    return configured_instance
+                return build_named_stt_provider(name, patched, dictionary_bias=False)
+
+            # The on-device final pass goes IN FRONT of whatever the voice lane
+            # uses, hosted out of process (2026-09-02 forensics: 220 of 220
+            # dictations ran on a cloud recognizer the settings did not name,
+            # because the voice lane had been moved there to keep CUDA out of
+            # this process — the dictation lane inherited that move and paid
+            # for it in round-trips and truncated windows). The worker declines
+            # itself on a full card, a CPU-only host or a missing runtime with
+            # a crossable failure, so the configured provider is one step
+            # behind on every press (AP-22) and never a restart away.
+            local_final = self._dictation_local_final(dictation_cfg)
+            if local_final is not None:
+                from jarvis.speech.stt_fallback import FallbackSTT
+
+                chain = [configured, *alternates] if configured else alternates
+                # A local worker cannot fail over to another cold native engine
+                # in the desktop process. Preserve the existing upload policy:
+                # only already-authorized cloud alternates may receive audio.
+                chain = [name for name in chain if stt_family_id(name) != "local"]
+                local_final._allow_cpu = not chain
+                instance = FallbackSTT(
+                    local_final,
+                    chain,
+                    _build,
+                    primary_name=local_final.provider_label,
+                )
+                log.info(
+                    "Dictation STT chain armed: %s/%s (out of process) -> %s "
+                    "(no voice bias prompt).",
+                    local_final.provider_label,
+                    local_final.last_used_model,
+                    ", ".join(chain) or "<no cloud family keyed>",
+                )
+            elif alternates:
+                from jarvis.speech.stt_fallback import FallbackSTT
+
+                instance = FallbackSTT(
+                    instance, alternates, _build, primary_name=configured
+                )
+                log.info(
+                    "Dictation STT chain armed: %s -> %s (no voice bias prompt).",
+                    configured or type(instance).__name__,
+                    ", ".join(alternates),
+                )
+        except Exception as exc:  # noqa: BLE001 — one provider is still a provider
+            log.warning("Dictation STT fallback chain unavailable: %s", exc)
+
+        # The user's spoken-vocabulary corrections apply to dictation the same
+        # way they apply to a voice turn — they are post-STT string work, so
+        # they ride on TOP of the fallback chain rather than under it and
+        # survive a cross to another family.
+        try:
+            from jarvis.speech.stt_dictionary import wrap_stt_with_dictionary
+
+            instance = wrap_stt_with_dictionary(instance)
+        except Exception as exc:  # noqa: BLE001 — corrections are not load-bearing
+            log.warning("STT dictionary wrapper unavailable for dictation: %s", exc)
+
+        # Dictation transcribes minute-long buffers; unmetered it was the
+        # largest invisible hearing cost on a pipeline box.
+        instance = meter_stt(
+            instance, getattr(self, "_speech_spend", None), trace_id=self._speech_trace
+        )
+        self._dictation_stt_instance = instance
+        return instance
+
+    async def _warm_dictation_provider(self, provider: Any) -> None:
+        """Prime one dictation provider off-path; never make boot depend on it."""
+        warm = getattr(provider, "warm_up", None)
+        if not callable(warm):
+            return
+        started = time.monotonic()
+        try:
+            await asyncio.to_thread(warm)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — lazy final STT still gets a chance
+            log.warning("Dictation STT warm-up failed; using lazy load: %s", exc)
+        else:
+            if not getattr(provider, "is_warm", True):
+                log.info(
+                    "Dictation STT warm-up ended without a ready engine; retry remains enabled."
+                )
+                return
+            self._dictation_warmup_succeeded_provider = provider
+            log.info(
+                "Dictation STT warm-up done in %.0f ms.",
+                (time.monotonic() - started) * 1000.0,
+            )
+
+    def _schedule_dictation_warmup(self, provider: Any = None) -> None:
+        """Start one tracked post-ready warm-up for the current provider."""
+        if getattr(self, "_dictation_warmup_shutdown", False):
+            return
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        provider = provider if provider is not None else self._dictation_stt()
+        if provider is None or not callable(getattr(provider, "warm_up", None)):
+            return
+        if (
+            getattr(self, "_dictation_warmup_succeeded_provider", None) is provider
+            and getattr(provider, "is_warm", True)
+        ):
+            return
+        current = getattr(self, "_dictation_warmup_task", None)
+        current_provider = getattr(self, "_dictation_warmup_provider", None)
+        if current is not None and not current.done():
+            if current_provider is provider:
+                return
+            # A live provider switch must not race two native warm-ups. Once the
+            # old task settles, warm whichever provider is current at that time.
+            if not getattr(self, "_dictation_warmup_reschedule", False):
+                self._dictation_warmup_reschedule = True
+
+                def _schedule_current(_done: asyncio.Task) -> None:
+                    self._dictation_warmup_reschedule = False
+                    self._schedule_dictation_warmup()
+
+                current.add_done_callback(_schedule_current)
+            return
+        # Do not retain a previous provider (and its GPU model) after a live
+        # switch. The active task/provider fields below become the sole owner.
+        if getattr(self, "_dictation_warmup_succeeded_provider", None) is not provider:
+            self._dictation_warmup_succeeded_provider = None
+        self._dictation_warmup_provider = provider
+        self._dictation_warmup_task = asyncio.create_task(
+            self._warm_dictation_provider(provider),
+            name="dictation-stt-warmup",
+        )
+
+    async def _await_warmup_or_cold_load(
+        self, task: asyncio.Task, provider: Any
+    ) -> None:
+        """Join a warm-up, staying patient while its engine is still building.
+
+        Raises ``TimeoutError`` exactly like a bare ``wait_for`` would, so the
+        caller's wedge handling is unchanged — but only after the provider has
+        stopped making progress. A provider that does not expose ``is_loading``
+        (every cloud one) keeps the plain short join it has always had.
+        """
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(task), timeout=_DICTATION_WARMUP_JOIN_TIMEOUT_S
+            )
+            return
+        except TimeoutError:
+            if not getattr(provider, "is_loading", False):
+                raise
+        # Still constructing the native engine. Keep joining in short hops so a
+        # build that finishes — or stalls — is noticed promptly either way. The
+        # load gets the long ceiling; once it ends, whatever the warm-up still
+        # owes (its priming inference) gets a fresh short one, because that part
+        # IS bounded work and a hang there is the wedge the caller handles.
+        log.info(
+            "Dictation STT is still building its local engine after %.0fs; "
+            "waiting for it instead of restarting the load from zero.",
+            _DICTATION_WARMUP_JOIN_TIMEOUT_S,
+        )
+        load_deadline = (
+            time.monotonic()
+            + _DICTATION_WARMUP_COLD_LOAD_TIMEOUT_S
+            - _DICTATION_WARMUP_JOIN_TIMEOUT_S
+        )
+        prime_deadline: float | None = None
+        while True:
+            deadline = load_deadline if prime_deadline is None else prime_deadline
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(task), timeout=min(2.0, remaining)
+                )
+                return
+            except TimeoutError:
+                if prime_deadline is None and not getattr(
+                    provider, "is_loading", False
+                ):
+                    prime_deadline = (
+                        time.monotonic() + _DICTATION_WARMUP_JOIN_TIMEOUT_S
+                    )
+
+    async def _join_dictation_warmup(self, provider: Any) -> Any:
+        """Join matching warm-up before authoritative STT, returning its provider.
+
+        A timeout abandons the entire provider instance, never its native model
+        in place: its worker may still be constructing or decoding. The caller
+        receives a fresh instance with a fresh engine and lock (AP-24).
+        """
+        task = getattr(self, "_dictation_warmup_task", None)
+        warmup_provider = getattr(self, "_dictation_warmup_provider", None)
+        if task is not None and warmup_provider is not provider:
+            # A live provider switch may arrive while the old native model is
+            # still loading. Join that generation before scheduling or calling
+            # the replacement so two native engines do not contend at once.
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(task), timeout=_DICTATION_WARMUP_JOIN_TIMEOUT_S
+                )
+            except TimeoutError:
+                log.warning(
+                    "Previous dictation STT warm-up did not stop within %.0fs; "
+                    "abandoning that provider instance before the live switch.",
+                    _DICTATION_WARMUP_JOIN_TIMEOUT_S,
+                )
+                task.cancel()
+            except asyncio.CancelledError:
+                current = asyncio.current_task()
+                if current is not None and current.cancelling():
+                    raise
+            if getattr(self, "_dictation_warmup_task", None) is task:
+                self._dictation_warmup_task = None
+                self._dictation_warmup_provider = None
+            self._schedule_dictation_warmup(provider)
+            task = getattr(self, "_dictation_warmup_task", None)
+        if (
+            task is None
+            or getattr(self, "_dictation_warmup_provider", None) is not provider
+        ):
+            return provider
+        # A local engine that is still COMING UP is not something to wait out
+        # when there is a provider behind it: the first load after a PC reboot
+        # took 137 s (2026-09-03), and a press that waited for it would be far
+        # slower than the cloud round-trip it is holding up. Leave the warm-up
+        # running — cancelling it here is what used to spawn a second engine
+        # onto the same card — and let the chain cross for THIS press.
+        # Without an alternate there is nothing to cross to, so the patient
+        # join stays: an honest wait beats an honest error.
+        if getattr(provider, "is_loading", False) and getattr(
+            provider, "_alternate_names", ()
+        ):
+            log.info(
+                "Dictation STT is still starting its local engine; this press "
+                "goes to the next provider and the load keeps running."
+            )
+            return provider
+        try:
+            await self._await_warmup_or_cold_load(task, provider)
+            return provider
+        except TimeoutError:
+            if getattr(provider, "is_loading", False) and not task.done():
+                # A deadline ends this press's wait, not the worker's native
+                # initialization. Retain its owner so the next press cannot
+                # spawn a second model onto the same device (RUB-37/AP-24).
+                log.warning(
+                    "Dictation engine is still starting after the warm-up "
+                    "deadline; retaining its in-flight load."
+                )
+                return provider
+            log.warning(
+                "Dictation STT warm-up did not finish within %.0fs; replacing "
+                "the provider instance before transcription.",
+                _DICTATION_WARMUP_JOIN_TIMEOUT_S,
+            )
+            task.cancel()
+            if getattr(self, "_dictation_stt_instance", None) is provider:
+                self._dictation_stt_instance = None
+            fresh = self._dictation_stt()
+            self._dictation_warmup_succeeded_provider = None
+            self._dictation_warmup_provider = None
+            self._dictation_warmup_task = None
+            return fresh
+        except asyncio.CancelledError:
+            current = asyncio.current_task()
+            if current is not None and current.cancelling():
+                raise
+            log.warning(
+                "Dictation STT warm-up was cancelled independently; replacing "
+                "the provider instance before transcription."
+            )
+            if getattr(self, "_dictation_stt_instance", None) is provider:
+                self._dictation_stt_instance = None
+            fresh = self._dictation_stt()
+            self._dictation_warmup_succeeded_provider = None
+            self._dictation_warmup_provider = None
+            self._dictation_warmup_task = None
+            return fresh
+
+    def _dictation_local_final(self, dictation_cfg: Any) -> Any:
+        """The out-of-process on-device final-pass provider, or ``None``.
+
+        ``None`` when the user switched it off (``[dictation].local_engine``)
+        or the local runtime is not importable here — the cheap, static
+        reasons. The expensive, changing ones (free accelerator memory, a
+        CPU-only worker, a spawn that fails) are the provider's own business:
+        it answers every call it cannot take with a CROSSABLE failure, so the
+        chain behind it decides per press, not per boot.
+        """
+        if not bool(getattr(dictation_cfg, "local_engine", True)):
+            return None
+        try:
+            from jarvis.dictation.local_final import (
+                DEFAULT_FINAL_MODEL,
+                DEFAULT_MIN_FREE_GB,
+                LocalFinalSTT,
+            )
+            from jarvis.dictation.local_preview import faster_whisper_available
+
+            if not faster_whisper_available():
+                log.info(
+                    "Dictation stays on the configured provider: the local speech "
+                    "engine (faster-whisper) is not installed in this Python."
+                )
+                return None
+            model = str(getattr(dictation_cfg, "local_model", "") or "").strip()
+            min_free = getattr(dictation_cfg, "local_min_free_gb", DEFAULT_MIN_FREE_GB)
+            return LocalFinalSTT(
+                model or DEFAULT_FINAL_MODEL,
+                min_free_gb=float(min_free if min_free is not None else 0.0),
+            )
+        except Exception as exc:  # noqa: BLE001 — the cloud chain is still a chain
+            log.warning("Local dictation engine unavailable (%s); using the chain.", exc)
+            return None
+
+    def _reset_dictation_stt(self) -> None:
+        """Drop every cached STT fallback so the next use resolves them again.
+
+        Called from every place that swaps the voice provider or the recognition
+        language. Without it a live settings change would apply to conversations
+        and silently not to dictation — the exact class of divergence that makes
+        "it works here, not there" unanswerable.
+
+        The VOICE lane's crossover cache is cleared from the same hook, and for
+        the same reason: it holds provider instances built from the OLD
+        recognition language and a chain resolved against the OLD configured
+        provider, so keeping it would answer a live language switch with
+        yesterday's language the moment the primary failed. The method keeps its
+        name because every caller already reaches for it at exactly the right
+        moment; what it clears is "the caches a provider swap invalidates".
+        """
+        self._dictation_stt_instance = None
+        self._dictation_warmup_succeeded_provider = None
+        self._voice_stt_fallback_chain = None
+        self._voice_stt_fallback_instances = {}
+
+    def _dictation_protected_terms(self) -> tuple[str, ...]:
+        """Spellings the polish pass may not "correct" into something familiar.
+
+        The reference dictation tool's own documentation warns about this
+        failure direction explicitly: a rewrite model turns an unfamiliar
+        technical term into the common word it resembles, and the user cannot
+        tell it happened because the sentence still reads fine. So the words a
+        user has already told us they care about travel with the request and are
+        checked afterwards by the drift guard.
+
+        Three sources, all of them things the user chose: the STT dictionary
+        (words they added by hand for exactly this reason), the configured wake
+        word (a name, and names are what get "corrected"), and the assistant
+        name derived from it. Nothing here is a secret and nothing is free text
+        from a voice turn — AP-2 territory stays out of the prompt.
+
+        Never raises and never blocks: an unreadable dictionary costs the guard
+        its input, not the user their dictation.
+        """
+        terms: list[str] = []
+        try:
+            from jarvis.speech.stt_dictionary import dictionary_bias_words
+
+            terms.extend(dictionary_bias_words())
+        except Exception as exc:  # noqa: BLE001 — an unreadable store is not fatal
+            log.debug("dictation protected terms: dictionary unavailable (%s)", exc)
+        phrase = getattr(self, "_wake_phrase_label", "") or ""
+        for word in str(phrase).split():
+            if len(word) >= 2:
+                terms.append(word)
+        seen: set[str] = set()
+        unique: list[str] = []
+        for term in terms:
+            key = term.strip().casefold()
+            if key and key not in seen:
+                seen.add(key)
+                unique.append(term.strip())
+        return tuple(unique)
+
+    async def _dictation_session(self) -> None:
+        """Capture mic audio, transcribe it in segments, deliver the result.
+
+        A stripped-down ``_ptt_session``: take the one microphone over (or open
+        it when nothing else holds it), drain into a buffer,
+        publish a live ``DictationTranscript`` while speaking, and on the stop
+        event (or the max-duration cap) produce the final text, clean it, and —
+        when the target is ``insert`` — paste it into the focused field of
+        whatever application is in front. It deliberately does NOT use the VAD
+        endpointing, the brain, TTS, or the turn-state machine, and the whole
+        thing is wrapped fail-open so a dictation error can never break a later
+        real voice turn (BUG-020 discipline).
+
+        **Segmented transcription.** The previous version re-transcribed the
+        ENTIRE growing buffer on every tick. That is O(n²) in audio seconds: a
+        two-minute dictation re-sent the whole recording ~100 times, and on a
+        paid API every one of those was billed. Now a segment is closed roughly
+        every ``segment_seconds`` — at the quietest point nearby, so words are
+        not cut in half — transcribed exactly once, and never re-sent. Only the
+        open tail is re-transcribed for the live preview, so on release only
+        that tail remains to be finalized.
+
+        **AP-24.** The live probe and the final transcription must never run
+        concurrently on one native engine. ``inference_active`` + the shared
+        ``_stop_ptt_live_transcription`` handshake are what keep them apart —
+        cancelling an ``asyncio.to_thread`` would only cancel the wrapper, not
+        the native call, and the next transcribe would then raise TranscribeBusy.
+        """
+        # NOT ``self._utterance_stt``: the dictation lane transcribes through its
+        # own provider, without the voice bias prompt and with its own
+        # cross-family fallback chain (see ``_dictation_stt``).
+        stt = self._dictation_stt()
+        if stt is None:
+            # ``start_dictation`` already refused this case; only a provider
+            # swapped out between the two calls can land here. Close the turn
+            # anyway, so a surface that opened on ``DictationStarted`` can never
+            # be left showing a dictation that is not running.
+            self._dictation_completion_published = True
+            self._publish_event_soon(
+                DictationCompleted(
+                    source_layer="speech.dictation",
+                    outcome="failed",
+                    detail=stt_failure_message("no_stt"),
+                    error="no_stt",
+                )
+            )
+            return
+        self._schedule_dictation_warmup(stt)
+        # ``getattr`` defaults keep pipelines built via ``__new__`` working —
+        # a widely used pattern in this repo's unit tests, which bypass
+        # ``__init__`` entirely.
+        cfg = getattr(self, "_dictation_cfg", None)
+        target = getattr(self, "_dictation_target", "chat")
+        buffer = bytearray()
+        started_at = time.monotonic()
+        interval = float(
+            getattr(cfg, "partial_interval_s", None)
+            if getattr(cfg, "partial_interval_s", None) is not None
+            else self._ptt_partial_interval_s
+        )
+        segment_seconds = float(getattr(cfg, "segment_seconds", 8.0) or 0.0)
+        # 16 kHz mono int16 -> 32000 bytes per second.
+        bytes_per_second = 16_000 * 2
+        segment_bytes = int(segment_seconds * bytes_per_second)
+        # The FINAL pass over the whole recording. Short segments answer "what
+        # is on screen while I speak"; this answers "what did I say", and they
+        # are not the same question. A recognizer handed eight seconds is not
+        # sure which language it is hearing, and an unsure model does not
+        # mislabel — it TRANSLATES, which is why one continuous recording used
+        # to arrive half in the language spoken and half in English.
+        final_quality_pass = bool(getattr(cfg, "final_quality_pass", True))
+        final_window_bytes = int(
+            float(getattr(cfg, "final_window_seconds", 25.0) or 25.0) * bytes_per_second
+        )
+        final_overlap_bytes = int(
+            float(getattr(cfg, "final_overlap_seconds", 1.5) or 0.0) * bytes_per_second
+        )
+        # Whether the language may CHANGE inside one dictation. While it may,
+        # the final pass asks each long window to detect the language rather
+        # than being told one, so a pin steers the cleanup and the polish pass
+        # without locking the recognizer (which is what turned a pin into a
+        # translation of everything else the speaker said).
+        code_switching = bool(getattr(cfg, "code_switching", True))
+        # PortAudio gives this lane raw PCM but no portable NS/AGC/AEC controls.
+        # Keep the samples byte-identical until a measured backend advertises
+        # those capabilities, and make the honest degradation visible in the
+        # per-dictation audit. The import is lazy so headless boot stays clean.
+        from jarvis.dictation.audio_preprocessing import (
+            AudioQualityAccumulator,
+            assess_desktop_audio_preprocessing,
+        )
+
+        audio_cfg = getattr(getattr(self, "_config", None), "audio", None)
+        audio_preprocessing = assess_desktop_audio_preprocessing(
+            echo_cancellation_requested=bool(
+                getattr(audio_cfg, "echo_cancellation", True)
+            ),
+        )
+        audio_quality = AudioQualityAccumulator()
+        capture_reported_dropouts = 0
+        capture_restart_count = 0
+        capture_overflows = 0
+        # Sub-0.4s of audio is almost always a near-silence Whisper
+        # hallucination; wait until enough has accumulated before transcribing.
+        min_bytes = int(0.4 * bytes_per_second)
+
+        # Text of segments already closed and transcribed — never re-sent.
+        closed_parts: list[str] = []
+        # How many bytes of ``buffer`` the closed segments cover.
+        closed_bytes = 0
+        last_published = ""
+        stop_event = asyncio.Event()
+        inference_active = asyncio.Event()
+        language = ""
+        # Loudest sample seen in any stretch judged so far. The silence test uses
+        # it as the session's reference for "what speech sounds like here", so a
+        # quiet microphone is measured against itself rather than an absolute
+        # that was never calibrated for it.
+        session_peak = 0.0
+        # Audio closed without a request because it held no speech. Reported at
+        # the end: it is the difference between "the provider was slow" and
+        # "you paused for ninety seconds", and only one of those is a bug.
+        skipped_silence_bytes = 0
+        # Added to the probe interval after a failed call; see the constants.
+        error_backoff_s = 0.0
+        # The last transcription error, or None. Resolved ONCE per session at
+        # the end: it is what separates "the provider rejected us" from "you
+        # said nothing", and without it a 401 arrives in the history looking
+        # exactly like silence — with no hint that a key needs fixing.
+        #
+        # A REASON CODE from ``jarvis.speech.stt_failure``, never the provider's
+        # own error text. This value is stored in the history and rendered under
+        # the user's words, and what it used to render was a Python exception
+        # class plus a vendor URL plus a link to an HTTP specification — three
+        # things that answer no question a person dictating a sentence has, and
+        # a string no locale can translate. The technical text is not lost; it
+        # rides along in ``stt_error_detail`` and goes to the log in full.
+        stt_error: str | None = None
+        # The provider's own words for the same failure. Log-only, deliberately:
+        # it is the half that names the endpoint and the client library, which
+        # is exactly what a debugger needs and exactly what a user must not be
+        # handed.
+        stt_error_detail: str = ""
+        # EVERY failure this session saw, in order, and never cleared. The
+        # single ``stt_error`` slot above is overwritten by the next call and
+        # blanked by the next SUCCESS, which is correct for "what went wrong
+        # last" and useless for "did anything go wrong at all": a segment that
+        # failed permanently in the middle, followed by one good segment, left
+        # no trace anywhere. The report below reads this list, the slot above
+        # keeps feeding the retry ladder's log lines.
+        stt_failures: list[str] = []
+        # Audio a failure consumed that nothing ever read again — the ONLY
+        # honest measure of "words the user said and will never see". A failure
+        # during the session is not this: a segment kept open after a failed
+        # call is retried on the next tick and again in the final pass, and a
+        # stale error left on the last tick is not a loss either. Only the final
+        # pass can lose audio, because after it the buffer is gone.
+        lost_audio_bytes = 0
+        # ``[dictation].language`` as chosen by the user. ``auto`` is passed
+        # THROUGH to the provider rather than dropped: omitting the argument
+        # means "no opinion", which lands on whatever ``[stt].language`` is
+        # pinned to — so a user dictating German with the recognition language on
+        # English got English words back and no setting in the dictation view
+        # could fix it (live bug 2026-07-28). Resolved here rather than inside
+        # the closure so the config is read once per session, not per segment.
+        dictation_language = (
+            str(getattr(cfg, "language", "auto") or "auto").strip().lower() or "auto"
+        )
+        # What THIS session has established is being spoken, read from the audio
+        # rather than from a transcript. Empty until a reading earns it; once
+        # set, every later segment is told this language instead of asking a
+        # 4-second clip to detect it — the whole of the German-in, English-out
+        # repair (see ``resolve_recognition_language``). It is re-read as the
+        # session runs, so a user who switches language is followed, not pinned.
+        #
+        # It STARTS from what recent dictations established rather than from
+        # nothing, and that is what makes the repair work on a short one. The
+        # in-session anchor is read from an on-device preview, which needs both
+        # a local engine and enough time to run — so on a host without one, or
+        # on a two-second "carry on", it is never set at all and every upload
+        # goes out as "auto". That is precisely the case Whisper gets wrong:
+        # measured on the live history, dictations under 4 s came back tagged
+        # English 59-64 % of the time for a speaker who was overwhelmingly
+        # speaking German, and a mis-detected clip is not merely mislabelled —
+        # it is TRANSLATED. Carrying the recent reading across gives the short
+        # ones the context their own audio cannot supply.
+        session_language = self._recent_dictation_language()
+        # The language the on-device preview keeps hearing INSTEAD of
+        # ``session_language``, and how many consecutive readings have said so.
+        # Both reset the moment a reading agrees again, so only a sustained
+        # disagreement can overrule the anchor (see
+        # ``accept_recognition_correction``).
+        contradicting_language = ""
+        contradicting_streak = 0
+        # Per-dictation quality telemetry. Ordered-set lists keep the payload
+        # compact while preserving a fallback or language-switch sequence.
+        stt_providers: list[str] = []
+        stt_models: list[str] = []
+        detected_languages: list[str] = []
+        stt_latency_ms = 0.0
+        warmup_wait_ms = 0.0
+        stt_queue_wait_ms = 0.0
+        stt_calls = 0
+        final_window_count = 0
+        # Windows whose transcript stopped at a mid-recording pause and were
+        # recovered by re-reading their speech runs. Reported in the audit so
+        # "the provider keeps dropping my second sentence" is measurable.
+        truncation_repairs = 0
+        # The final pass, INCREMENTAL. It used to run only after key release —
+        # the whole recording, window after window — so the wait for the text
+        # grew with every second spoken. Now each final window is closed and
+        # read as soon as the recording has grown past it, while the user is
+        # still talking; on release only the open tail is left. The shape of
+        # the windows is unchanged (``next_quality_window`` is the very step
+        # ``quality_windows`` takes), only WHEN they are read moved.
+        #
+        # ``final_reads`` maps a window's index to ``(text, was_read)`` once its
+        # read finished; ``final_tasks`` holds the reads in flight;
+        # ``final_next_start`` is the byte offset the next window begins at.
+        final_reads: dict[int, tuple[str, bool]] = {}
+        final_tasks: dict[int, asyncio.Task[None]] = {}
+        final_next_start = 0
+        final_next_index = 0
+        # Windows read BEFORE release — the ones the user no longer waits for.
+        final_prefetched = 0
+        # Consecutive final windows that exhausted every attempt. Past
+        # ``_DICTATION_FINAL_DEAD_PIECES`` the provider is down, not flaky, and
+        # further windows are counted as lost rather than asked for.
+        dead_windows = 0
+        # Tails read back in on the strength of the transcript's OWN
+        # timestamps (a subset of ``truncation_repairs``), and how much pause
+        # the uploads left out — both in the audit so the two repairs stay
+        # measurable apart from each other.
+        tail_repairs = 0
+        pause_trim_bytes = 0
+        # Wall-clock from key release to the final text being ready — the
+        # number a person actually feels, kept apart from ``stt_latency_ms``
+        # (the SUM of call durations, which concurrency makes larger than the
+        # wait it describes).
+        release_wait_ms = 0
+        # One gate for every provider call this session makes. Width follows
+        # the provider's own word: a cloud HTTP client takes several requests
+        # at once, a native engine takes exactly one (AP-24) — and the gate is
+        # what stops a prefetched window and the live probe from colliding on
+        # it.
+        stt_gate = asyncio.Semaphore(
+            _DICTATION_CONCURRENT_READS
+            if getattr(stt, "supports_concurrent_requests", False)
+            else 1
+        )
+        # ``auto`` is passed explicitly rather than omitted: an absent language
+        # argument means "no opinion" to a provider, which lands on whatever the
+        # recognition language is pinned to — the exact inheritance that used
+        # to write German speech in English.
+        final_ask_for = (
+            "auto"
+            if code_switching or dictation_language == "auto"
+            else dictation_language
+        )
+        # INCREMENTAL POLISH. Once the final windows are read while the user is
+        # still speaking, the wording pass became the wait that grew with the
+        # dictation: 0.6-1.3 s for a long one, on text that had mostly been
+        # final for a minute. So each window is formatted as soon as it is read
+        # — one stretch at a time, each in the light of the already-formatted
+        # text before it — and on release only the last stretch is left to
+        # format. ``prefix_polish_raw`` is the merged RAW text of the windows
+        # formatted so far (a strict prefix of the final raw transcript, which
+        # is what lets ``_finish_dictation`` cut the remaining tail off);
+        # ``prefix_polish_text`` is their formatted text. The whole-text pass
+        # stays the fallback for every case the prefix does not hold.
+        prefix_polish_raw = ""
+        prefix_polish_text = ""
+        prefix_polish_windows = 0
+        prefix_polish_deltas = 0
+        prefix_polish_failed = False
+        prefix_polish_stopped = False
+        prefix_polish_task: asyncio.Task[None] | None = None
+        probe_task: asyncio.Task[None] | None = None
+
+        def _append_unique(values: list[str], value: object) -> None:
+            text = str(value or "").strip()
+            if text and text not in values:
+                values.append(text)
+
+        def _language_audit_tag(value: object) -> str:
+            raw = str(value or "").strip().lower().replace("_", "-")
+            if not raw or raw in ("auto", "unknown", "und"):
+                return ""
+            normalized = normalize_language_tag(raw)
+            if normalized != "unknown":
+                return normalized
+            # Preserve an ISO-like tag for every language outside the UI's
+            # de/en/es phrase set. Telemetry must not collapse the roughly 100
+            # recognition languages to "unknown" merely because chat output
+            # currently supports three locales.
+            return raw.split("-", 1)[0][:32]
+
+        def _record_stt_identity(transcript: Any) -> None:
+            provider = (
+                getattr(stt, "last_used_provider", "")
+                or getattr(stt, "name", "")
+                or getattr(stt, "provider_label", "")
+            )
+            model = (
+                getattr(stt, "last_used_model", "")
+                or getattr(stt, "_model", "")
+                or getattr(stt, "_model_name", "")
+            )
+            _append_unique(stt_providers, provider)
+            _append_unique(stt_models, model)
+            _append_unique(
+                detected_languages,
+                _language_audit_tag(getattr(transcript, "language", "")),
+            )
+            for segment in getattr(transcript, "segments", ()) or ():
+                if isinstance(segment, dict):
+                    _append_unique(
+                        detected_languages,
+                        _language_audit_tag(segment.get("language")),
+                    )
+
+        async def _transcribe(
+            pcm: bytes,
+            *,
+            ask_for: str | None = None,
+            probe: bool = False,
+            sink: dict[str, Any] | None = None,
+        ) -> tuple[str, str, bool, BaseException | None]:
+            """One transcription. ``(text, language, ok, error)``; never raises.
+
+            ``ask_for`` overrides which language the provider is told. Left
+            ``None`` it is derived from the pin and the session's own reading,
+            which is right for a short segment; the FINAL pass passes ``auto``
+            deliberately, because its windows are long enough to detect from
+            and a language handed to a recognizer is a language it will
+            translate INTO.
+
+            Records the failure in ``stt_error`` instead of swallowing it. A
+            later successful call clears it again — a single flaky segment in an
+            otherwise working dictation is not a failed dictation. The same
+            failure is ALSO appended to ``stt_failures``, which is never
+            cleared: the clearing is what makes the slot honest about "the last
+            thing that happened" and blind to "something went wrong earlier".
+
+            ``ok`` is the part the caller cannot do without: an empty ``text``
+            has TWO causes that need opposite handling — silence (the segment is
+            genuinely done) and a failed call (the audio has not been read yet).
+            Without this flag the segment loop treated both as "done" and
+            advanced past audio nobody had transcribed, so one network hiccup
+            deleted eight seconds of speech from the middle of the result with
+            nothing anywhere saying so. That is the reported "I said more than
+            this" bug in its entirety.
+
+            ``error`` is the EXCEPTION OBJECT, and it is the reason this returns
+            four values instead of three. The reason code stored in
+            ``stt_error`` is a user-facing word; the retry ladder needs the HTTP
+            status behind it to tell a rate limit (wait and try again) from a
+            dead key (stop). Collapsing every failure into ``("", "", False)``
+            destroyed exactly that, which is why the ladder used to retry a 401
+            three times and re-fire into a 429 window 0.6 s after being told to
+            wait.
+
+            Every call is bounded. ``wait_for`` cancels our await, not a native
+            thread — so this is a ceiling on how long the LANE waits, never a
+            guarantee that the provider stopped working. That is still the whole
+            difference between a dictation that ends with an honest error and
+            one that never ends at all.
+
+            ``probe`` marks a call made by the live probe task. Only those
+            raise ``inference_active``, because that flag answers one question
+            — "is the PROBE mid-call?" — for ``_stop_ptt_live_transcription``;
+            a prefetched final window in flight must not make the release wait
+            for a probe that is idle.
+
+            ``sink``, when given, receives what the tuple has no room for and
+            only the final pass needs: ``transcript_end_s`` — where the
+            provider's transcript ends on its own clock (``None`` without
+            segment timestamps), which is how a dropped tail is told apart
+            from a slow speaker.
+            """
+            # ``stt_failures`` is appended to, never rebound, so it needs no
+            # ``nonlocal`` — the list object itself is the shared state.
+            nonlocal stt, stt_error, stt_error_detail, session_language
+            nonlocal stt_calls, stt_latency_ms, warmup_wait_ms, stt_queue_wait_ms
+            ceiling = max(
+                float(getattr(self, "_stt_final_timeout_s", 8.0) or 8.0),
+                (len(pcm) / bytes_per_second)
+                * _DICTATION_TRANSCRIBE_TIMEOUT_PER_AUDIO_S,
+            )
+            if ask_for is None:
+                ask_for = resolve_recognition_language(
+                    pinned=dictation_language, session_language=session_language
+                )
+            # Startup/live-switch warm-up and this call share one native task.
+            # Joining it avoids both an 11 s cold final decode and a concurrent
+            # model call that would return TranscribeBusy (AP-24).
+            queued_at = time.perf_counter()
+            async with stt_gate:
+                stt_queue_wait_ms += (time.perf_counter() - queued_at) * 1000.0
+                warmup_started = time.perf_counter()
+                try:
+                    stt = await self._join_dictation_warmup(stt)
+                finally:
+                    warmup_wait_ms += (time.perf_counter() - warmup_started) * 1000.0
+                if probe:
+                    inference_active.set()
+                call_started = time.perf_counter()
+                try:
+                    try:
+                        transcript = await asyncio.wait_for(
+                            stt.transcribe_pcm(pcm, language=ask_for),
+                            timeout=ceiling,
+                        )
+                    except TypeError:
+                        # Provider predates the keyword (contract allows a bare
+                        # ``transcribe_pcm(pcm)``). Fall back rather than call the
+                        # choice a failure — precedent: rolling_whisper_wake.
+                        transcript = await asyncio.wait_for(
+                            stt.transcribe_pcm(pcm), timeout=ceiling
+                        )
+                except TimeoutError as exc:
+                    stt_error_detail = (
+                        f"the provider did not answer within {ceiling:.0f}s "
+                        f"for {len(pcm) / bytes_per_second:.1f}s of audio"
+                    )
+                    stt_error = classify_stt_failure(exc)
+                    stt_failures.append(stt_error)
+                    log.warning("dictation transcribe timed out: %s", stt_error_detail)
+                    return "", "", False, exc
+                except Exception as exc:  # noqa: BLE001 — one failed call is not fatal
+                    stt_error_detail = f"{type(exc).__name__}: {exc}".strip()
+                    stt_error = classify_stt_failure(exc)
+                    stt_failures.append(stt_error)
+                    log.debug("dictation transcribe failed: %s", stt_error_detail)
+                    return "", "", False, exc
+                finally:
+                    stt_calls += 1
+                    stt_latency_ms += (time.perf_counter() - call_started) * 1000.0
+                    if probe:
+                        inference_active.clear()
+            stt_error = None
+            stt_error_detail = ""
+            # ``raw_text`` when the provider offers it, ``text`` otherwise. A
+            # provider may now clean its own transcript (filler sounds, decoder
+            # loops, stutters) before handing it over, which is right for a
+            # voice command and wrong here: this lane owns a user switch for
+            # filler removal, runs its own cleanup right after with the
+            # language the USER pinned, and stores the untouched string in the
+            # dictation history so a person can see what was changed. Reading
+            # the cleaned string would make that switch a no-op nobody could
+            # observe (AP-31) and would put an already-edited sentence in the
+            # column labelled "raw". Providers without the field are unchanged.
+            text = (
+                getattr(transcript, "raw_text", "")
+                or getattr(transcript, "text", "")
+                or ""
+            ).strip()
+            lang = str(getattr(transcript, "language", "") or "")
+            _record_stt_identity(transcript)
+            if sink is not None:
+                sink["transcript_end_s"] = _transcript_end_s(transcript)
+            return text, lang, True, None
+
+        def preview_only_engine() -> Any:
+            """The on-device engine that may serve the live line, or ``None``.
+
+            ``None`` means a closed segment has to go to the provider — either
+            because this host has no local engine (a base or headless install)
+            or because the final pass is off, in which case those segments ARE
+            the transcript and preview-grade text would not do.
+            """
+            if not final_quality_pass:
+                return None
+            from jarvis.dictation.local_preview import local_preview
+
+            return local_preview()
+
+        async def _close_finished_segments() -> bool:
+            """Close every segment the buffer already holds. ``False`` on a
+            failed call, which leaves that segment — and everything after it —
+            open for a later attempt.
+
+            Draining in a LOOP rather than one segment per tick is what keeps
+            the open tail bounded. One-per-tick can only keep up while every
+            call is fast; the moment the provider slows down or refuses, the
+            tail grows, and since the live preview re-uploads that whole tail on
+            every tick, each round then costs more than the last. That spiral is
+            what turned a rate limit into a dictation with most of its words
+            missing: the loop stopped producing text, the upload work stalled the
+            event loop, and the microphone queue dropped real speech to keep up.
+
+            **What these segments are FOR** depends on the final pass. With it
+            on and an on-device engine present, the text produced here only ever
+            reaches the live line, so it is transcribed locally and costs no
+            quota at all — the delivered words come from the long-window pass
+            after the key is released. Without a local engine (a base or
+            headless install) the segments go to the provider exactly as before,
+            because a growing live line is worth more than the requests it
+            spends and because that text is then also the fallback if the final
+            pass cannot run.
+            """
+            nonlocal closed_bytes, language, session_peak, skipped_silence_bytes
+            if not segment_bytes:
+                return True
+            from jarvis.dictation.segment import (
+                is_silent_segment,
+                quietest_cut,
+                segment_energy,
+            )
+
+            local_engine = preview_only_engine()
+            while len(buffer) - closed_bytes >= segment_bytes:
+                if stop_event.is_set():
+                    return True
+                tail = bytes(buffer[closed_bytes:])
+                # Cut at the quietest point in the last stretch, which keeps the
+                # cut off the middle of a word in the overwhelming majority of
+                # cases.
+                cut = quietest_cut(tail, segment_bytes, bytes_per_second)
+                if cut < min_bytes:
+                    return True
+                piece = tail[:cut]
+                peak, _rms = segment_energy(piece)
+                session_peak = max(session_peak, peak)
+                if is_silent_segment(piece, session_peak=session_peak):
+                    # A pause. Sending it would spend a request to be told
+                    # nothing — or, far worse, to be told "Thank you for
+                    # watching", which is what a transcription model does with
+                    # silence and what put invented sentences in the middle of
+                    # real dictations. Close it unread.
+                    closed_bytes += cut
+                    skipped_silence_bytes += cut
+                    continue
+                if local_engine is not None:
+                    # Preview-grade and free. A busy engine answers ``None``,
+                    # which costs this stretch its line on screen and nothing
+                    # else — the final pass reads the audio regardless.
+                    local_text = await local_engine.transcribe(
+                        piece,
+                        language=(
+                            None if dictation_language == "auto" else dictation_language
+                        ),
+                    )
+                    text, lang, ok = (local_text or ""), "", True
+                else:
+                    text, lang, ok, _exc = await _transcribe(piece, probe=True)
+                if stop_event.is_set():
+                    return True
+                if not ok:
+                    # The CALL failed — the audio is unread, not silent. Closing
+                    # the segment here would delete those seconds from the result
+                    # permanently (a closed segment is never re-sent) and the
+                    # next successful call would clear ``stt_error``, so the user
+                    # would be handed a transcript with a hole in it and no hint
+                    # that anything went wrong. Leave it open: a later tick
+                    # retries it, and the final pass sees it regardless.
+                    log.info(
+                        "dictation segment kept open after a failed "
+                        "transcription (%s: %s) — backing off rather than "
+                        "dropping %.1fs of audio.",
+                        stt_error or "unknown",
+                        stt_error_detail or "no detail",
+                        cut / bytes_per_second,
+                    )
+                    return False
+                if text:
+                    closed_parts.append(text)
+                    language = lang or language
+                # Advance on SUCCESS only: a segment that transcribed to nothing
+                # really was silence, and re-sending it forever would rebuild the
+                # very O(n²) loop this replaces.
+                closed_bytes += cut
+            return True
+
+        async def _probe() -> None:
+            """Close finished segments and publish the live transcript."""
+            nonlocal last_published, language, error_backoff_s, session_language
+            nonlocal contradicting_language, contradicting_streak
+            from jarvis.dictation.local_preview import local_preview
+            from jarvis.dictation.preview_budget import preview_budget
+            from jarvis.dictation.segment import is_silent_segment
+
+            try:
+                while not stop_event.is_set():
+                    try:
+                        await asyncio.wait_for(
+                            stop_event.wait(), timeout=interval + error_backoff_s
+                        )
+                    except TimeoutError:
+                        pass
+                    if stop_event.is_set():
+                        return
+
+                    # Final windows first: a window the recording has grown
+                    # past is read NOW, in the background, so the user never
+                    # waits for it after release. Launching costs no call on
+                    # this task — the read runs beside the probe behind the
+                    # provider gate.
+                    _prefetch_final_windows()
+
+                    # Closing segments has priority over the preview: it is the
+                    # half that produces the final text, and the half that keeps
+                    # the tail — and therefore every upload — small.
+                    if not await _close_finished_segments():
+                        error_backoff_s = min(
+                            _DICTATION_ERROR_BACKOFF_MAX_S,
+                            max(_DICTATION_ERROR_BACKOFF_MIN_S, error_backoff_s * 2),
+                        )
+                        continue
+                    if stop_event.is_set():
+                        return
+
+                    tail = bytes(buffer[closed_bytes:])
+                    # Hard cap on the preview upload. After the drain above the
+                    # tail is normally shorter than one segment anyway; this is
+                    # the backstop for the case where it is not (a cut that
+                    # landed too early, or the legacy unsegmented mode), so a
+                    # preview can never grow into a multi-megabyte request that
+                    # blocks the loop the microphone is being drained on.
+                    if segment_bytes and len(tail) > segment_bytes:
+                        tail = tail[-segment_bytes:]
+                    tail_text = ""
+                    want_preview = len(tail) >= min_bytes and not is_silent_segment(
+                        tail, session_peak=session_peak
+                    )
+                    # LOCAL FIRST. The preview re-sends the open tail on every
+                    # tick and throws the answer away on the next one, so on the
+                    # provider it was spending the per-minute limit on a
+                    # cosmetic feature — and the segment closes that actually
+                    # produce the transcript were the ones refused. Locally it
+                    # costs no quota at all and is an order of magnitude faster
+                    # (measured on the maintainer's GPU: 63 ms for a 4 s tail,
+                    # against 400-1500 ms for a round-trip). The transcript
+                    # itself is never produced here.
+                    engine = local_preview() if want_preview else None
+                    if engine is not None:
+                        # The preview is pinned by the USER's choice and never by
+                        # the session's own derived anchor. That distinction is
+                        # the whole repair: faster-whisper reports no detection
+                        # at all when it is handed a language
+                        # (``LocalPreviewTranscriber._transcribe_sync`` —
+                        # "a language the CALLER pinned is not a detection"), so
+                        # feeding the anchor back in here left the one component
+                        # that reads the AUDIO unable to say anything the anchor
+                        # had not already decided. A wrong anchor then had no
+                        # contradicting evidence anywhere in the loop.
+                        # ``[dictation].language`` still pins it outright, which
+                        # is what a person setting that switch is asking for.
+                        local_text = await engine.transcribe(
+                            tail,
+                            language=(
+                                None if dictation_language == "auto"
+                                else dictation_language
+                            ),
+                        )
+                        if stop_event.is_set():
+                            return
+                        # An installed local engine owns the cosmetic preview
+                        # lane even while it is warming, busy, or rebuilding.
+                        # ``None`` means "keep the previous line", not "send the
+                        # same throwaway tail to the paid provider". Falling
+                        # through here was the source of repeated 402 -> local
+                        # fallback decodes during one dictation.
+                        want_preview = False
+                        # The reading this preview took from the AUDIO. Free —
+                        # the decoder produced it either way — and the only
+                        # reading a cloud provider's translated words cannot
+                        # contradict. It steers the segment uploads that
+                        # actually produce the transcript.
+                        heard = str(getattr(engine, "last_language", "") or "")
+                        heard_probability = getattr(
+                            engine, "last_language_probability", 0.0
+                        )
+                        if not session_language:
+                            accepted = accept_recognition_reading(
+                                language=heard,
+                                probability=heard_probability,
+                            )
+                            if accepted:
+                                session_language = accepted
+                                # An on-device reading cannot have been produced
+                                # by a translation, so it is the best anchor
+                                # there is — worth keeping for the NEXT
+                                # dictation, which may be too short to earn one
+                                # of its own.
+                                self._remember_dictation_language(
+                                    accepted, on_device=True
+                                )
+                                log.info(
+                                    "dictation recognition language established "
+                                    "from the audio: %s — later segments are "
+                                    "transcribed as that language instead of "
+                                    "re-detecting on each one.",
+                                    accepted,
+                                )
+                        elif heard:
+                            # The session already has a language, and the audio
+                            # disagrees. Count how often in a row, because ONE
+                            # confident-but-wrong reading is ordinary and a run
+                            # of them is a speaker the anchor got wrong.
+                            if heard == contradicting_language:
+                                contradicting_streak += 1
+                            else:
+                                contradicting_language = heard
+                                contradicting_streak = 1
+                            if accept_recognition_correction(
+                                current=session_language,
+                                language=heard,
+                                probability=heard_probability,
+                                streak=contradicting_streak,
+                            ):
+                                log.info(
+                                    "dictation recognition language corrected "
+                                    "from %s to %s — the audio disagreed with "
+                                    "the anchor %d readings in a row.",
+                                    session_language,
+                                    heard,
+                                    contradicting_streak,
+                                )
+                                session_language = heard
+                                contradicting_language = ""
+                                contradicting_streak = 0
+                                self._remember_dictation_language(
+                                    heard, on_device=True
+                                )
+                        if local_text is not None:
+                            tail_text = local_text
+                    # Cloud preview only where no local engine can run (a base or
+                    # headless install), and then strictly within its budget so
+                    # it can never again outbid the transcript for requests.
+                    if want_preview and preview_budget().try_spend():
+                        tail_text, lang, ok, _exc = await _transcribe(
+                            tail, probe=True
+                        )
+                        if stop_event.is_set():
+                            return
+                        if not ok:
+                            error_backoff_s = min(
+                                _DICTATION_ERROR_BACKOFF_MAX_S,
+                                max(
+                                    _DICTATION_ERROR_BACKOFF_MIN_S,
+                                    error_backoff_s * 2,
+                                ),
+                            )
+                            continue
+                        language = lang or language
+                    error_backoff_s = 0.0
+                    # Published even when the tail was skipped as silence: a
+                    # segment may just have closed, and freezing the preview
+                    # through every pause is exactly what "it stopped
+                    # transcribing" looked like from the user's side.
+                    live = " ".join([*closed_parts, tail_text]).strip()
+                    if not live or live == last_published:
+                        continue
+                    last_published = live
+                    try:
+                        await self._publish_dictation_event(
+                            DictationTranscript(
+                                source_layer="speech.dictation",
+                                text=live,
+                                is_final=False,
+                            )
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        log.debug("dictation partial publish failed: %s", exc)
+            except asyncio.CancelledError:
+                pass
+
+        async def _read_piece(
+            piece: bytes,
+            *,
+            ask_for: str | None = None,
+            sink: dict[str, Any] | None = None,
+        ) -> tuple[str, bool]:
+            """One piece of audio, retried. ``(text, was_read)``; never raises.
+
+            The retry ladder both final paths share. Unlike a probe tick there
+            is no "next time" here — the buffer is gone once the caller
+            returns — so a transient failure is worth waiting out, and a
+            permanent one is not worth asking about twice.
+
+            ``was_read`` is FALSE only when the piece has had its last chance.
+            An empty ``text`` with ``was_read`` true is a genuinely silent
+            piece, which is not a loss.
+            """
+            nonlocal language, session_language
+            for attempt in range(_DICTATION_FINAL_ATTEMPTS):
+                text, lang, ok, exc = await _transcribe(
+                    piece, ask_for=ask_for, sink=sink
+                )
+                language = lang or language
+                if ok:
+                    # The first piece to come back also answers "what language
+                    # is this" for the SHORT-segment path, where the question
+                    # is otherwise put to four seconds of audio and answered
+                    # with a translation. It is consulted only when neither a
+                    # user pin nor the cross-dictation anchor already has, both
+                    # of which outrank it — and the final long-window pass
+                    # deliberately does not consult it at all, because a window
+                    # that long detects better on its own than any carried-over
+                    # reading can promise.
+                    if not session_language:
+                        code = str(lang or "").strip().lower()
+                        if code and code not in ("auto", "unknown", "und"):
+                            session_language = code
+                    return text, True
+                # A failure the provider will give us again is not worth
+                # asking for again. A 401 answered three times over 1.8 s is
+                # 1.8 s of the user staring at a spinner to learn what the
+                # first answer already said, and every one of those calls
+                # hits a provider that has already refused.
+                if not _dictation_retry_worthwhile(exc):
+                    log.info(
+                        "final dictation transcription refused (%s) — not "
+                        "retrying: this is not a failure a second attempt "
+                        "survives.",
+                        stt_error_detail or stt_error or "unknown error",
+                    )
+                    return "", False
+                if attempt + 1 >= _DICTATION_FINAL_ATTEMPTS:
+                    break
+                # The server's own ``Retry-After`` wins when it sent one —
+                # re-firing 0.6 s into a window it just told us lasts 30 s only
+                # extends the window. Without a header, widening backoff: three
+                # attempts inside one second all land in the same rate-limit
+                # window, which is the case this retry exists for. Bounded
+                # either way — the user has stopped speaking and is waiting for
+                # their text.
+                delay = min(
+                    _DICTATION_FINAL_RETRY_MAX_S,
+                    max(
+                        _stt_retry_delay(exc, attempt),
+                        _DICTATION_FINAL_RETRY_DELAY_S * (2**attempt),
+                    ),
+                )
+                log.info(
+                    "final dictation transcription failed (%s) — retry %d/%d "
+                    "in %.1fs.",
+                    stt_error_detail or stt_error or "unknown error",
+                    attempt + 1,
+                    _DICTATION_FINAL_ATTEMPTS - 1,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+            return "", False
+
+        async def _repair_truncated_read(
+            piece: bytes,
+            text: str,
+            *,
+            ask_for: str | None,
+            transcript_end_s: float | None = None,
+        ) -> str:
+            """``text`` for ``piece``, with a pause-dropped tail read back in.
+
+            Two detectors, tried in this order:
+
+            * **The transcript's own clock.** When the provider sent segment
+              timestamps, a transcript that ends
+              ``_DICTATION_TAIL_DROP_MIN_S`` or more before the window's speech
+              does (``speech_runs``, energy) has lost its tail. Only that tail
+              is re-read, from half a second before the transcript's end, in
+              the language the long window detected; the head the provider got
+              right is kept verbatim and the two are merged at the seam. This
+              is the precise detector — a dropped last sentence is a fifth of
+              the text and sits far above the token floor below — and it is
+              the one the polish pass can trust, because the re-read is short
+              and pause-free.
+            * **Tokens against voiced seconds**, as before, for providers
+              without timestamps and for a window that came back short without
+              a clock to say where it stopped.
+
+            A recognizer handed audio with a sustained mid-recording pause can
+            stop at the pause and silently drop everything after it — the
+            transcript arrives fluent, punctuated, and half the length of what
+            was said. Detected here on energy alone: when the transcript's
+            token count is far below what its VOICED seconds must have
+            contained (``_DICTATION_TRUNCATION_TOKENS_PER_VOICED_S``), the
+            piece is re-read in parts and the merged result replaces the
+            original only when it actually carries more speech.
+
+            Where to cut is decided by the audio, in that order of preference:
+
+            * **At its pauses**, when the energy scan found more than one
+              speech run. Those seams cost nothing — no word sits on them.
+            * **In half at its quietest middle moment**, when it found only
+              one. That case used to return early and stand: continuous speech
+              that came back half-transcribed had no pause to split on, so the
+              guard looked at the most ordinary truncation there is and did
+              nothing. A recognizer that stops short on a long read rarely
+              stops at the same place on a short one.
+
+            The parts are told the language the long window just detected
+            rather than asked to detect it themselves — a short clip guessing
+            its language is the translation trap the long windows exist to
+            avoid. A part that cannot be read keeps the original transcript: a
+            dropped middle is worse than the dropped tail it would repair.
+            """
+            nonlocal truncation_repairs, tail_repairs
+            from jarvis.dictation.merge import (
+                merge_transcripts,
+                transcript_token_count,
+            )
+            from jarvis.dictation.segment import (
+                halve_at_quietest,
+                is_silent_segment,
+                speech_runs,
+            )
+
+            runs = speech_runs(
+                piece,
+                session_peak=session_peak,
+                bytes_per_second=bytes_per_second,
+            )
+            if not runs:  # No speech to be missing any of.
+                return text
+            voiced_s = sum(end - start for start, end in runs) / bytes_per_second
+            tokens = transcript_token_count(text)
+            run_ask = language if (not ask_for or ask_for == "auto") else ask_for
+            voiced_end_s = runs[-1][1] / bytes_per_second
+            if (
+                transcript_end_s is not None
+                and voiced_end_s - transcript_end_s >= _DICTATION_TAIL_DROP_MIN_S
+            ):
+                tail_from = _align_pcm(
+                    int(
+                        max(0.0, transcript_end_s - _DICTATION_TAIL_REREAD_BACK_S)
+                        * bytes_per_second
+                    )
+                )
+                tail_piece = piece[tail_from:]
+                if len(tail_piece) >= min_bytes and not is_silent_segment(
+                    tail_piece, session_peak=session_peak
+                ):
+                    log.warning(
+                        "final dictation window's transcript ends at %.1fs but "
+                        "its speech runs to %.1fs — re-reading the dropped tail.",
+                        transcript_end_s,
+                        voiced_end_s,
+                    )
+                    tail_text, tail_read = await _read_piece(
+                        tail_piece, ask_for=run_ask or None
+                    )
+                    if tail_read and tail_text:
+                        merged = merge_transcripts([text, tail_text])
+                        if transcript_token_count(merged) > tokens:
+                            truncation_repairs += 1
+                            tail_repairs += 1
+                            return merged
+            if tokens >= voiced_s * _DICTATION_TRUNCATION_TOKENS_PER_VOICED_S:
+                return text
+            split_at_pauses = len(runs) > 1
+            if not split_at_pauses:
+                # Halve the RUN, never the window. A window is mostly silence
+                # whenever the speaker paused to think, and halving that hands
+                # one request a stretch with no speech in it — the single most
+                # reliable way to make a recognizer invent a sentence, and a
+                # request spent to be told nothing. Offsets are mapped back so
+                # the reads still come from the window's own audio.
+                speech_start, speech_end = runs[0]
+                halves = halve_at_quietest(
+                    piece[speech_start:speech_end],
+                    bytes_per_second=bytes_per_second,
+                )
+                if not halves:  # Too short to halve — nothing useful to ask twice.
+                    return text
+                runs = [
+                    (speech_start + start, speech_start + end)
+                    for start, end in halves
+                ]
+            log.warning(
+                "final dictation window looks truncated (%d tokens for %.1fs "
+                "of speech) — re-reading it %s.",
+                tokens,
+                voiced_s,
+                "split at its pauses" if split_at_pauses else "in two halves",
+            )
+            parts: list[str] = []
+            for start, end in runs:
+                run_piece = piece[start:end]
+                if len(run_piece) < min_bytes:
+                    continue
+                if is_silent_segment(run_piece, session_peak=session_peak):
+                    # Costs nothing to check and saves a request over silence,
+                    # which is the one input a recognizer answers with words
+                    # nobody said. Skipped, never counted as a failed read: a
+                    # piece with no speech in it has nothing to contribute.
+                    continue
+                run_text, run_read = await _read_piece(
+                    run_piece, ask_for=run_ask or None
+                )
+                if not run_read:
+                    return text
+                if run_text:
+                    parts.append(run_text)
+            merged = merge_transcripts(parts)
+            if transcript_token_count(merged) > tokens:
+                truncation_repairs += 1
+                return merged
+            return text
+
+        async def _polish_delta(delta_raw: str, preceding: str) -> tuple[str, str]:
+            """One more stretch of the dictation, cleaned and formatted in the
+            light of what is already delivered. ``(text, status)``; never
+            raises, never loses the words (the cleaned stretch is the floor).
+            The same cleanup and the same pass ``_finish_dictation`` runs on a
+            whole text, applied to a stretch — so a stretch formatted early and
+            a tail formatted at release come out of the same machinery.
+            """
+            text = delta_raw
+            try:
+                from jarvis.dictation.cleanup import clean_transcript, tidy_transcript
+                from jarvis.dictation.polish import polish_enabled, polish_transcript
+
+                lang = resolve_dictation_language(
+                    pinned=dictation_language, reported=language, text=delta_raw
+                )
+                outcome = clean_transcript(
+                    delta_raw,
+                    language=lang,
+                    remove_fillers=bool(getattr(cfg, "remove_fillers", True)),
+                    max_removed_fraction=float(
+                        getattr(cfg, "filler_max_removed_fraction", 0.25)
+                    ),
+                )
+                text = tidy_transcript(outcome.text)
+                if not text.strip():
+                    return "", "skipped_short"
+                if not polish_enabled(cfg):
+                    return text, "off"
+                protected = getattr(self, "_dictation_protected_terms", None)
+                result = await polish_transcript(
+                    text,
+                    language=lang,
+                    cfg=cfg,
+                    protected_terms=protected() if callable(protected) else (),
+                    style=str(getattr(cfg, "polish_style", "neutral") or "neutral"),
+                    preceding_text=preceding,
+                )
+                return result.text, result.status
+            except Exception:  # noqa: BLE001 — never lose the words to the polish
+                log.debug("incremental dictation polish failed; keeping the stretch", exc_info=True)
+                return text, "provider_error"
+
+        async def _advance_prefix_polish() -> None:
+            """Format every final window that is read and not yet formatted, in
+            order, stopping at the first one still in flight. Re-kicked by each
+            window as it lands, so the formatted prefix follows the recording
+            at one window's distance.
+            """
+            nonlocal prefix_polish_raw, prefix_polish_text, prefix_polish_windows
+            nonlocal prefix_polish_deltas, prefix_polish_failed
+            from jarvis.dictation.merge import merge_transcripts
+
+            while not prefix_polish_failed and not prefix_polish_stopped:
+                reading = final_reads.get(prefix_polish_windows)
+                if reading is None:
+                    return
+                window_text = (reading[0] or "").strip()
+                if prefix_polish_raw:
+                    merged = merge_transcripts([prefix_polish_raw, window_text])
+                else:
+                    merged = window_text
+                if not merged.startswith(prefix_polish_raw):
+                    # The seam was rewritten — the prefix is no longer a prefix
+                    # of the transcript, and the whole-text pass takes over.
+                    prefix_polish_failed = True
+                    log.debug("incremental dictation polish stopped: seam rewritten")
+                    return
+                delta = merged[len(prefix_polish_raw) :].strip()
+                if delta:
+                    piece, _status = await _polish_delta(delta, prefix_polish_text)
+                    if prefix_polish_stopped:
+                        return
+                    if piece:
+                        prefix_polish_text = " ".join(
+                            part for part in (prefix_polish_text, piece) if part
+                        )
+                    prefix_polish_deltas += 1
+                prefix_polish_raw = merged
+                prefix_polish_windows += 1
+
+        def _kick_prefix_polish() -> None:
+            """Start the formatting worker unless it is running or given up."""
+            nonlocal prefix_polish_task
+            if prefix_polish_failed or prefix_polish_stopped or not final_quality_pass:
+                return
+            if not bool(getattr(cfg, "polish", True)) or bool(getattr(cfg, "translate", False)):
+                return
+            if prefix_polish_task is not None and not prefix_polish_task.done():
+                return
+            prefix_polish_task = asyncio.create_task(
+                _advance_prefix_polish(), name="dictation-prefix-polish"
+            )
+
+        async def _settle_prefix_polish() -> None:
+            """Let the worker finish the windows it already has — normally the
+            last one, started the moment it was read — within one polish budget.
+            Past that, retain the completed prefix and retire its worker. The
+            finish path formats only the remaining tail instead of repeating
+            every completed window while the old formatter is still running.
+            """
+            nonlocal prefix_polish_failed, prefix_polish_stopped
+            _kick_prefix_polish()
+            task = prefix_polish_task
+            if task is None:
+                return
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(task), timeout=_DICTATION_PREFIX_POLISH_WAIT_S
+                )
+            except TimeoutError:
+                prefix_polish_stopped = True
+                task.cancel()
+                done, _pending = await asyncio.wait(
+                    (task,), timeout=_DICTATION_POLISH_CANCEL_WAIT_S
+                )
+
+                def consume(done_task: asyncio.Task) -> None:
+                    if done_task.cancelled():
+                        return
+                    if done_task.exception() is not None:
+                        log.debug("Retired dictation formatter finished with an error")
+
+                if done:
+                    consume(task)
+                else:
+                    # No late result may mutate the captured prefix above.
+                    task.add_done_callback(consume)
+                log.info(
+                    "incremental dictation polish did not finish within %.1fs; "
+                    "keeping its completed prefix and formatting the remaining tail.",
+                    _DICTATION_PREFIX_POLISH_WAIT_S,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 — a formatter failure never costs the text
+                prefix_polish_failed = True
+                log.debug("incremental dictation polish worker failed", exc_info=True)
+
+        async def _read_final_window(idx: int, start: int, end: int) -> None:
+            """Read ONE final window of the recording and file its result.
+
+            Runs as its own task — during the recording for a prefetched
+            window, after release for the tail — so everything it needs is
+            taken from the shared buffer and everything it learns goes into
+            ``final_reads``; ``_final_quality_text`` assembles the windows in
+            order once all of them are in. Never raises: a window that could
+            not be read is filed as ``("", False)`` and its audio counted as
+            lost, which is what degrades the outcome and keeps the recording
+            for a later Restore.
+            """
+            nonlocal session_peak, lost_audio_bytes, dead_windows, pause_trim_bytes
+            from jarvis.dictation.segment import (
+                compress_pauses,
+                is_silent_segment,
+                segment_energy,
+            )
+
+            try:
+                piece = bytes(buffer[start:end])
+                if len(piece) < min_bytes:
+                    final_reads[idx] = ("", True)
+                    return
+                peak, _rms = segment_energy(piece)
+                session_peak = max(session_peak, peak)
+                if is_silent_segment(piece, session_peak=session_peak):
+                    final_reads[idx] = ("", True)
+                    return
+                if dead_windows >= _DICTATION_FINAL_DEAD_PIECES:
+                    # The provider is not flaky, it is down. Counting this
+                    # window as lost is what degrades the outcome, and the
+                    # degraded outcome is what keeps the audio for a later
+                    # Restore — far better than making the user wait through
+                    # another full retry ladder to be told the same thing.
+                    lost_audio_bytes += max(0, (end - start) - final_overlap_bytes)
+                    final_reads[idx] = ("", False)
+                    log.warning(
+                        "final dictation window %d not read — %d consecutive "
+                        "windows already failed (%s); %.1fs of audio kept for "
+                        "a later retry rather than making you wait.",
+                        idx,
+                        dead_windows,
+                        stt_error_detail or stt_error or "unknown error",
+                        (end - start) / bytes_per_second,
+                    )
+                    return
+                # What is UPLOADED: the window with every sustained pause cut
+                # to half a second, so the recognizer never sits in the pause
+                # that makes it stop. The recording itself is untouched; the
+                # loss accounting below stays in the recording's own bytes.
+                sent = compress_pauses(
+                    piece, session_peak=session_peak, bytes_per_second=bytes_per_second
+                )
+                pause_trim_bytes += max(0, len(piece) - len(sent))
+                sink: dict[str, Any] = {}
+                text, was_read = await _read_piece(sent, ask_for=final_ask_for, sink=sink)
+                if was_read:
+                    dead_windows = 0
+                    if text:
+                        text = await _repair_truncated_read(
+                            sent,
+                            text,
+                            ask_for=final_ask_for,
+                            transcript_end_s=sink.get("transcript_end_s"),
+                        )
+                else:
+                    dead_windows += 1
+                    # Only the audio this window did not SHARE with its
+                    # neighbour is at risk; the overlap is read by the window
+                    # after it. Counting the whole window would report a loss
+                    # the user never experienced.
+                    lost_audio_bytes += max(0, (end - start) - final_overlap_bytes)
+                final_reads[idx] = (text, was_read)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 — one window must not end the pass
+                log.warning(
+                    "final dictation window %d crashed (non-fatal)",
+                    idx,
+                    exc_info=True,
+                )
+                lost_audio_bytes += max(0, (end - start) - final_overlap_bytes)
+                final_reads[idx] = ("", False)
+            finally:
+                # Whatever this window produced, the formatter may now have
+                # one more stretch to work on.
+                _kick_prefix_polish()
+
+        def _launch_final_window(start: int, end: int, *, prefetched: bool) -> None:
+            nonlocal final_next_index, final_prefetched
+            idx = final_next_index
+            final_next_index += 1
+            if prefetched:
+                final_prefetched += 1
+            final_tasks[idx] = asyncio.create_task(
+                _read_final_window(idx, start, end),
+                name=f"dictation-final-{idx}",
+            )
+
+        def _prefetch_final_windows() -> None:
+            """Close and start reading every final window the recording holds.
+
+            Called from the probe on every tick. A window is closed the moment
+            the recording has grown a full window past the last one — at the
+            quietest point near the nominal length, exactly where the one-shot
+            pass would have cut it — and its read starts at once. The scan is
+            handed one window of audio, so the copy stays bounded however long
+            the recording gets; only ``total`` tells it how much there is.
+            """
+            nonlocal final_next_start
+            if not final_quality_pass or final_window_bytes <= 0:
+                return
+            from jarvis.dictation.segment import next_quality_window
+
+            total = len(buffer)
+            while total - final_next_start > final_window_bytes:
+                start = final_next_start
+                scan = bytes(buffer[start : start + final_window_bytes])
+                (w_start, w_end), final_next_start = next_quality_window(
+                    scan,
+                    start=start,
+                    total=total,
+                    window_bytes=final_window_bytes,
+                    overlap_bytes=final_overlap_bytes,
+                    bytes_per_second=bytes_per_second,
+                )
+                _launch_final_window(w_start, w_end, prefetched=True)
+
+        async def _final_quality_text(audio: bytes) -> str:
+            """The WHOLE recording read in long, overlapping windows.
+
+            This is the transcript the user is handed, and it is a different
+            request from the one the live line makes. Two properties, both of
+            them the point:
+
+            * **Long windows.** A recognizer detects the spoken language from
+              the audio it is given. Eight seconds is not enough to be sure,
+              and an unsure model does not merely mislabel — it TRANSLATES.
+              That is why one continuous German recording used to arrive with
+              one paragraph verbatim and the next in fluent English.
+            * **Auto-detect per window, not a carried-over pin.** With
+              ``[dictation].code_switching`` on (the default) nothing tells the
+              recognizer which language to expect, so a speaker who switches
+              language mid-sentence is transcribed as they spoke rather than
+              translated into whichever language the session had decided on.
+              A user who turns it off gets their pin handed over outright.
+
+            Overlapping windows mean a word on a boundary is spoken in full
+            inside at least one of them; the duplicate that creates is removed
+            from the text (``jarvis.dictation.merge``), which is possible,
+            while recovering half a word is not.
+
+            Most windows were already read while the user was speaking
+            (``_prefetch_final_windows``). What is left here is the open tail —
+            and, should the probe have been slow or absent, any window it did
+            not get to — started together and awaited together, so the wait
+            after release is one window's read, not the recording's length.
+
+            Returns ``""`` when nothing could be read — the caller then falls
+            back to the incremental text rather than losing the dictation.
+            """
+            nonlocal final_window_count, final_next_start
+            from jarvis.dictation.merge import merge_transcripts
+            from jarvis.dictation.segment import quality_windows
+
+            total = len(audio)
+            if total > final_next_start:
+                base = final_next_start
+                for start, end in quality_windows(
+                    audio[base:],
+                    window_bytes=final_window_bytes,
+                    overlap_bytes=final_overlap_bytes,
+                    bytes_per_second=bytes_per_second,
+                ):
+                    _launch_final_window(base + start, base + end, prefetched=False)
+                final_next_start = total
+            final_window_count = len(final_tasks)
+            if not final_tasks:
+                return ""
+            await asyncio.gather(*final_tasks.values(), return_exceptions=True)
+            parts = [
+                final_reads[idx][0]
+                for idx in sorted(final_reads)
+                if final_reads[idx][0]
+            ]
+            return merge_transcripts(parts)
+
+        async def _finalize_tail(tail: bytes) -> str:
+            """Transcribe everything still open, in segment-sized pieces.
+
+            One upload for the whole remainder is the wrong shape for the last
+            call the audio ever gets: after a stretch of failures the remainder
+            can be minutes long, and then a single timeout loses ALL of it. Piece
+            by piece, one bad piece costs one piece. Each is retried, because
+            unlike a probe tick there is no "next time" — the buffer is gone when
+            this returns.
+
+            "The buffer is gone when this returns" is also why this is the ONE
+            place that counts ``lost_audio_bytes``. Everywhere else a failure
+            only postpones a read; here it ends it, and the seconds behind those
+            bytes are words the user said that nothing will ever transcribe.
+            """
+            nonlocal session_peak, lost_audio_bytes, pause_trim_bytes
+            from jarvis.dictation.segment import (
+                compress_pauses,
+                is_silent_segment,
+                quietest_cut,
+                segment_energy,
+            )
+
+            parts: list[str] = []
+            remaining = tail
+            dead_streak = 0
+            while len(remaining) >= min_bytes:
+                if dead_streak >= _DICTATION_FINAL_DEAD_PIECES:
+                    # "Kept for a later retry" means kept in the AUDIO SIDECAR,
+                    # which only happens because these bytes are counted here:
+                    # the count is what degrades the outcome, and the degraded
+                    # outcome is what makes the recording worth keeping.
+                    lost_audio_bytes += len(remaining)
+                    log.warning(
+                        "final dictation transcription abandoned after %d "
+                        "consecutive failed pieces (%s) — %.1fs of audio kept "
+                        "for a later retry rather than making you wait.",
+                        dead_streak,
+                        stt_error_detail or stt_error or "unknown error",
+                        len(remaining) / bytes_per_second,
+                    )
+                    break
+                if segment_bytes and len(remaining) > segment_bytes:
+                    cut = quietest_cut(remaining, segment_bytes, bytes_per_second)
+                    if cut < min_bytes:
+                        cut = min(len(remaining), segment_bytes)
+                else:
+                    cut = len(remaining)
+                piece, remaining = remaining[:cut], remaining[cut:]
+                peak, _rms = segment_energy(piece)
+                session_peak = max(session_peak, peak)
+                if is_silent_segment(piece, session_peak=session_peak):
+                    continue
+                sent = compress_pauses(
+                    piece, session_peak=session_peak, bytes_per_second=bytes_per_second
+                )
+                pause_trim_bytes += max(0, len(piece) - len(sent))
+                sink: dict[str, Any] = {}
+                text, piece_read = await _read_piece(sent, sink=sink)
+                if piece_read:
+                    if text:
+                        text = await _repair_truncated_read(
+                            sent,
+                            text,
+                            ask_for=None,
+                            transcript_end_s=sink.get("transcript_end_s"),
+                        )
+                        parts.append(text)
+                    dead_streak = 0
+                else:
+                    # The refusal nobody retries and the retry ladder run to
+                    # its end both land here. Either way this piece has had its
+                    # last chance, and the transcript the user is about to be
+                    # handed is missing exactly this much of what they said.
+                    dead_streak += 1
+                    lost_audio_bytes += len(piece)
+            return " ".join(parts).strip()
+
+        final_text = ""
+        raw_text = ""
+        # Which read produced the delivered words: ``applied`` (the long-window
+        # pass), ``failed`` (it produced nothing and the live-segment text was
+        # delivered instead), ``off``, or ``empty``. Reported in the telemetry
+        # so "the transcript is worse than usual" has an answer.
+        final_pass_status = "off"  # noqa: S105 - quality status, not a credential
+        hung_up = False
+        # Set when the RECORDING ended before the user did — a different failure
+        # from a transcription that went wrong, and one that used to be invisible.
+        capture_error: str | None = None
+        # True once the delivery half has been entered, so the crash handler
+        # below can tell "we never got to deliver" from "delivery itself blew
+        # up" and never runs the delivery twice.
+        finished = False
+        try:
+            # ONE microphone owner at a time: this takes the live wake stream
+            # over when there is one and opens its own capture otherwise, so a
+            # dictation never runs a second native input stream beside the wake
+            # loop's (AP-24). The wake side gets its stream back on exit.
+            async with self._capture_dictation_input() as source:
+                # PortAudio's overflow counter is cumulative for the stream;
+                # what this dictation lost is the difference from here.
+                overflow_base = _capture_counter(source, "overflow_count")
+
+                async def _drain() -> None:
+                    async for chunk in source.stream():
+                        audio_quality.add_chunk(
+                            chunk.pcm,
+                            sample_rate_hz=int(
+                                getattr(chunk, "sample_rate", 16_000) or 16_000
+                            ),
+                            timestamp_ns=int(
+                                getattr(chunk, "timestamp_ns", 0) or 0
+                            ),
+                        )
+                        buffer.extend(chunk.pcm)
+                        # Feed the live loudness so the bar's equalizer moves
+                        # while dictating — same normalized RMS as the VAD and
+                        # PTT sites, zero cost when no overlay is subscribed.
+                        if mic_level.has_subscribers():
+                            samples = pcm_bytes_to_np(chunk.pcm)
+                            if samples.size:
+                                mic_level.feed(
+                                    float(np.sqrt(np.mean(np.square(samples))))
+                                )
+
+                drain_task = asyncio.create_task(_drain(), name="dictation-drain")
+                probe_task = (
+                    asyncio.create_task(_probe(), name="dictation-probe")
+                    if interval > 0
+                    else None
+                )
+                stop_task = asyncio.create_task(self._dictation_stop_event.wait())
+                # Beside a live call the hangup event is the CALL's: hanging up
+                # the conversation must not throw away what is being dictated.
+                hangup_event = (
+                    asyncio.Event()
+                    if getattr(self, "_dictation_beside_call", False)
+                    else self._hangup_event
+                )
+                hangup_task = asyncio.create_task(hangup_event.wait())
+                # Only a recording the HOLD key started is owed a release edge;
+                # the watchdog ends it when the key is physically up and that
+                # edge never came (BUG-191). It sets the stop event, so it is
+                # not a waiter of its own.
+                hold_task = (
+                    asyncio.create_task(
+                        self._watch_dictation_hold_key(), name="dictation-hold-watch"
+                    )
+                    if getattr(self, "_dictation_started_by", "") == "hold_key"
+                    else None
+                )
+                wait_set = {stop_task, hangup_task, drain_task}
+                try:
+                    done, _pending = await asyncio.wait(
+                        wait_set,
+                        # ``None`` is asyncio's "wait as long as it takes", which
+                        # is precisely what a 0 ceiling means. Releasing the key,
+                        # the stop event and a hangup all still end the recording;
+                        # only the clock stops being one of the ways.
+                        timeout=self._dictation_max_s or None,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    hung_up = hangup_task in done or hangup_event.is_set()
+                    if getattr(self, "_dictation_discard_requested", False):
+                        # The bar's close-X: end it like a hangup — nothing
+                        # transcribed, nothing delivered.
+                        hung_up = True
+                    # Say which way the recording ended. The one report that
+                    # started BUG-191 had four minutes of "final window" reads
+                    # and not one line saying what the recording was waiting
+                    # for, or that nothing had reached it.
+                    if stop_task in done:
+                        ended_by = "discard" if hung_up else "stop"
+                    elif hangup_task in done:
+                        ended_by = "hangup"
+                    elif drain_task in done:
+                        ended_by = "input ended"
+                    else:
+                        ended_by = f"the {self._dictation_max_s:.0f}s recording cap"
+                    log.info(
+                        "dictation recording ended by %s after %.1fs (via=%s).",
+                        ended_by,
+                        time.monotonic() - started_at,
+                        getattr(self, "_dictation_started_by", "") or "unknown",
+                    )
+                    if drain_task in done and not drain_task.cancelled():
+                        # The RECORDING stopped on its own. Every way that
+                        # happens (a handoff buffer whose replay window the
+                        # drain fell behind, a microphone that went away) ends
+                        # the dictation early with whatever was captured so far
+                        # — which reads, from the user's side, exactly like "it
+                        # stopped transcribing halfway through". It was swallowed
+                        # here with the cancellations; name it instead, so the
+                        # history row and the completion message say what
+                        # happened rather than presenting a truncated transcript
+                        # as the whole thing.
+                        drain_exc = drain_task.exception()
+                        if drain_exc is not None:
+                            # The stored value is the reason CODE, for the same
+                            # reason ``stt_error`` is one: this ends up under the
+                            # user's own words in the history. The exception text
+                            # goes to the log, where it is useful.
+                            capture_error = "recording_interrupted"
+                            log.warning(
+                                "dictation recording ended early — %s: %s",
+                                capture_error,
+                                f"{type(drain_exc).__name__}: {drain_exc}".strip(),
+                            )
+                        else:
+                            # A source that simply RAN OUT is not a fault — it is
+                            # how a finite stream ends. Noted, never promoted to
+                            # an error: doing so would mask a real transcription
+                            # failure behind a message about the microphone.
+                            log.info(
+                                "dictation input stream ended; finalizing what "
+                                "was captured."
+                            )
+                    capture_overflows = max(
+                        0, _capture_counter(source, "overflow_count") - overflow_base
+                    )
+                    # Queue drops and hardware overflows are both frames that
+                    # never became audio; either is a real hole in the recording.
+                    capture_reported_dropouts = max(
+                        capture_reported_dropouts,
+                        int(getattr(source, "dropped_frames", 0) or 0) + capture_overflows,
+                    )
+                    capture_restart_count = max(
+                        capture_restart_count,
+                        int(getattr(source, "restart_count", 0) or 0),
+                    )
+                finally:
+                    # Freeze the probe BEFORE tearing anything else down so a
+                    # stop edge cannot race one more transcription into flight.
+                    stop_event.set()
+                    side_tasks = [drain_task, stop_task, hangup_task]
+                    if hold_task is not None:
+                        side_tasks.append(hold_task)
+                    for t in side_tasks:
+                        t.cancel()
+                    for t in side_tasks:
+                        try:
+                            await t
+                        except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
+                            # These probe tasks were explicitly cancelled above.
+                            pass
+
+            # The microphone lease is now closed on EVERY end path — key
+            # release, hands-free toggle, duration cap, REST/WS stop. That is
+            # the honest moment to say "no longer listening, still working":
+            # announce it here rather than from ``stop_dictation``, which only
+            # sets an event and does not know when the stream actually stopped.
+            # A hangup skips it: nothing will be transcribed, and
+            # ``DictationCompleted`` follows immediately.
+            capture_closed_at = time.perf_counter()
+            if not hung_up:
+                await self._publish_dictation_event(
+                    DictationTranscribing(source_layer="speech.dictation")
+                )
+
+            # The mic lease is closed before waiting on the probe, so releasing
+            # the key always ends the recording even if a probe call is slow.
+            if probe_task is not None:
+                await self._stop_ptt_live_transcription(
+                    probe_task,
+                    stop_event=stop_event,
+                    inference_active=inference_active,
+                    wait_for_inference=not hung_up,
+                )
+
+            if not hung_up:
+                if final_quality_pass:
+                    # Read the WHOLE recording once more, in long overlapping
+                    # windows. The short segments above answered "what is on
+                    # screen while I speak"; this answers "what did I say", and
+                    # a recognizer given twenty-five seconds instead of eight
+                    # knows which language it is hearing — which is the whole
+                    # difference between a transcript and a translation.
+                    release_started = time.monotonic()
+                    quality_text = await _final_quality_text(bytes(buffer))
+                    release_wait_ms = round(
+                        (time.monotonic() - release_started) * 1000.0
+                    )
+                    # Give the formatter the windows it has not seen yet
+                    # (normally the one just read) before delivery decides how
+                    # much of the text still needs formatting.
+                    await _settle_prefix_polish()
+                    if quality_text:
+                        raw_text = quality_text
+                        final_pass_status = "applied"  # noqa: S105 - status token
+                    else:
+                        # Nothing came back. Deliver what the live line already
+                        # produced rather than nothing — but do NOT run the
+                        # piecewise pass on top: it would ask the same provider
+                        # for the same audio a second time and double a wait
+                        # the user has already paid once. What the failed
+                        # windows cost is counted as lost audio, which is what
+                        # degrades the outcome and keeps the recording for a
+                        # later Restore.
+                        raw_text = " ".join(closed_parts).strip()
+                        final_pass_status = "failed" if raw_text else "empty"
+                        if raw_text:
+                            log.warning(
+                                "the final dictation pass produced nothing "
+                                "(%s); delivering the live-segment text "
+                                "instead, which is preview quality.",
+                                stt_error_detail or stt_error or "no detail",
+                            )
+                else:
+                    # Finalize ONLY the open tail — every closed segment is
+                    # already transcribed, by the configured provider.
+                    tail_text = await _finalize_tail(bytes(buffer[closed_bytes:]))
+                    raw_text = " ".join([*closed_parts, tail_text]).strip()
+                    final_pass_status = "off"  # noqa: S105 - status token
+                final_text = raw_text
+
+            # How long the user SPOKE — measured from the audio, not the clock.
+            # The clock starts before the microphone opens and stops after the
+            # last provider call, retry sleeps included, so a slow or
+            # rate-limited provider inflated the stored duration by seconds. That
+            # number is not decoration: the statistics sidecar divides the word
+            # count by it, so an inflated duration under-reports the user's words
+            # per minute and stretches every streak built on it. The captured PCM
+            # cannot drift — the capture contract is 16 kHz mono int16
+            # (``jarvis.audio.capture.SAMPLE_RATE``), so the byte count IS the
+            # recording length. The wall clock stays for the log line, where
+            # "spoke for 4 s, waited 11 s" is precisely the useful sentence.
+            wall_clock_s = max(0.0, time.monotonic() - started_at)
+            duration_s = len(buffer) / bytes_per_second
+            lost_audio_s = lost_audio_bytes / bytes_per_second
+            # The reason to REPORT when audio was permanently lost. Read from
+            # the never-cleared list rather than the live slot, because the slot
+            # is blanked by the next success: a piece that failed for good,
+            # followed by one that worked, ended the session with lost seconds
+            # and ``stt_error is None`` — a dictation with a hole in it and
+            # nothing anywhere saying why.
+            lost_reason = stt_failures[-1] if (lost_audio_bytes and stt_failures) else None
+            quality_metrics = audio_quality.snapshot(
+                reported_dropouts=capture_reported_dropouts
+            )
+            finished = True
+            result = await self._finish_dictation(
+                raw_text=raw_text,
+                language=language,
+                duration_s=duration_s,
+                target=target,
+                hung_up=hung_up,
+                # A recording that ended early outranks a transcription error:
+                # it explains a short transcript that every later layer would
+                # otherwise present as complete. A permanent LOSS outranks the
+                # live slot for the same reason in the other direction — it is
+                # the failure that actually cost the user something.
+                stt_error=capture_error or lost_reason or stt_error,
+                lost_audio_s=lost_audio_s,
+                dropped_audio_s=quality_metrics.dropout_duration_ms / 1000.0,
+                audio=bytes(buffer),
+                polished_prefix=(
+                    (prefix_polish_raw, prefix_polish_text)
+                    if prefix_polish_raw and not prefix_polish_failed
+                    else None
+                ),
+                stt_providers=tuple(stt_providers),
+                stt_models=tuple(stt_models),
+                detected_languages=tuple(detected_languages),
+                stt_latency_ms=round(stt_latency_ms),
+                stt_calls=stt_calls,
+                stt_errors=tuple(dict.fromkeys(stt_failures)),
+                stt_audit=(
+                    f"final_pass:{final_pass_status}",
+                    f"final_windows:{final_window_count}",
+                    f"final_windows_prefetched:{final_prefetched}",
+                    f"release_wait_ms:{release_wait_ms}",
+                    f"warmup_wait_ms:{round(warmup_wait_ms)}",
+                    f"stt_queue_wait_ms:{round(stt_queue_wait_ms)}",
+                    "post_recording_wait_ms:"
+                    f"{round((time.perf_counter() - capture_closed_at) * 1000.0)}",
                     f"truncation_repairs:{truncation_repairs}",
                     f"tail_repairs:{tail_repairs}",
                     f"pause_trim_ms:{round(pause_trim_bytes * 1000 / bytes_per_second)}",
