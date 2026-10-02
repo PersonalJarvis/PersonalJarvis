@@ -102,8 +102,14 @@ class ChatApprovalBridge:
         self._grants: dict[str, ChatGrant] = {}
         self._args: OrderedDict[UUID, dict[str, Any]] = OrderedDict()
         self._tasks: set[asyncio.Task[None]] = set()
+        #: Open cards by ticket. A ticket settled anywhere else — the executor's
+        #: own timeout, another surface's answer — closes its card here, so a
+        #: late click can no longer read "approved" for a call that was refused.
+        self._asking: dict[UUID, asyncio.Task[None]] = {}
         bus.subscribe(ActionProposed, self._on_proposed)
         bus.subscribe(ActionApprovalRequired, self._on_required)
+        bus.subscribe(ActionApproved, self._on_settled)
+        bus.subscribe(ActionDenied, self._on_settled)
 
     # ------------------------------------------------------------ grants
 
@@ -157,9 +163,28 @@ class ChatApprovalBridge:
                 name=f"agent-chat-approval-{grant.session_id[:8]}",
             )
             self._tasks.add(task)
+            self._asking[event.trace_id] = task
             task.add_done_callback(self._tasks.discard)
+            task.add_done_callback(lambda done, tid=event.trace_id: self._forget(tid, done))
         except Exception:  # noqa: BLE001 — AP-18: a subscriber never raises into the bus
             log.warning("chat approval bridge: could not handle an approval request", exc_info=True)
+
+    def _forget(self, trace_id: UUID, task: asyncio.Task[Any] | None) -> None:
+        if self._asking.get(trace_id) is task:
+            del self._asking[trace_id]
+
+    async def _on_settled(self, event: ActionApproved | ActionDenied) -> None:
+        """Close the card of a ticket that was decided without it."""
+        try:
+            task = self._asking.pop(event.trace_id, None)
+            if task is not None and not task.done():
+                log.info(
+                    "chat approval bridge: %s was settled elsewhere; closing its card",
+                    event.tool_name,
+                )
+                task.cancel()
+        except Exception:  # noqa: BLE001 — AP-18: a subscriber never raises into the bus
+            log.warning("chat approval bridge: could not close a settled card", exc_info=True)
 
     # ------------------------------------------------------------ policy
 
@@ -196,6 +221,8 @@ class ChatApprovalBridge:
         except Exception:  # noqa: BLE001 — the ticket must be answered either way
             log.warning("chat approval bridge: the card failed; denying", exc_info=True)
             decision = "deny"
+        # Our own answer below must not read as "settled elsewhere".
+        self._forget(event.trace_id, asyncio.current_task())
         if decision in ("allow", "allow_always"):
             if decision == "allow_always":
                 grant.always_allowed.add(_bare(event.tool_name))
