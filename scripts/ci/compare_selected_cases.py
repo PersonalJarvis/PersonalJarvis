@@ -35,7 +35,10 @@ def main() -> None:
     work = args.output / f"logs-{args.side}"
     work.mkdir()
     runner = Runner(
-        argparse.Namespace(markers=DEFAULT_MARKERS, pytest_args="--continue-on-collection-errors -p preview_completion_stress"),
+        argparse.Namespace(
+            markers=DEFAULT_MARKERS,
+            pytest_args="--continue-on-collection-errors -p preview_completion_stress",
+        ),
         {},
         work,
     )
