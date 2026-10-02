@@ -294,8 +294,20 @@ def test_secure_event_input_never_reads_as_a_deaf_tap(monkeypatch: pytest.Monkey
         backend.stop()
 
 
-def test_the_secure_input_probe_is_lazy_and_reads_unknown_off_macos() -> None:
-    """Off a Mac the Carbon framework does not exist: unknown, never an exception."""
+def test_the_secure_input_probe_is_lazy_and_reads_unknown_when_carbon_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing Carbon framework reads "unknown", never an exception.
+
+    Hermetic: on a real Mac the framework exists, so the load is made to fail
+    instead of relying on the host being something other than a Mac.
+    """
+    import ctypes
+
+    def _no_framework(*_args: object, **_kwargs: object) -> object:
+        raise OSError("Carbon.framework is not available")
+
+    monkeypatch.setattr(ctypes.cdll, "LoadLibrary", _no_framework)
     assert quartz_mod._secure_event_input_enabled() is None
 
 

@@ -504,6 +504,10 @@ def test_the_blank_sample_does_not_alias_on_power_of_two_native_sizes():
     assert not frame_is_blank((width, height), bytes(data))
 
 
-def test_the_default_window_evidence_is_none_without_the_native_bridge():
-    # No Quartz here: "no evidence", never an exception.
+def test_the_default_window_evidence_is_none_without_the_native_bridge(monkeypatch):
+    # Hermetic: a real Mac runner ships Quartz, so make the import fail rather
+    # than assume the host has no native bridge. "No evidence", never an exception.
+    import sys
+
+    monkeypatch.setitem(sys.modules, "Quartz", None)
     assert screen_access._default_window_evidence() is None
