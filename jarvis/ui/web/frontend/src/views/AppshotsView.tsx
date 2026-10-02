@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, Trash2 } from "lucide-react";
+import { Loader2, PenLine, Trash2 } from "lucide-react";
 
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
@@ -21,7 +21,9 @@ import {
 import { gestureFamily } from "@/lib/appshotChord";
 import { cn } from "@/lib/utils";
 import { AppshotShortcutField } from "@/views/AppshotShortcutField";
+import { useAppshotEditor } from "@/store/appshotEditor";
 import { useEventStore } from "@/store/events";
+import { AppshotEditor } from "@/views/AppshotEditor";
 
 /**
  * Appshots — show the assistant the window you are working in.
@@ -147,7 +149,17 @@ function deliveredLabel(t: (key: string) => string, deliveredTo: string): string
   }
 }
 
-function LatestPreview({ shot, onForget }: { shot: AppshotMeta; onForget: () => void }) {
+function LatestPreview({
+  shot,
+  revision,
+  onForget,
+  onEdit,
+}: {
+  shot: AppshotMeta;
+  revision: number;
+  onForget: () => void;
+  onEdit: () => void;
+}) {
   const t = useT();
   const time = new Date(shot.taken_at * 1000).toLocaleTimeString([], {
     hour: "2-digit",
@@ -157,13 +169,19 @@ function LatestPreview({ shot, onForget }: { shot: AppshotMeta; onForget: () => 
   const delivered = deliveredLabel(t, shot.delivered_to);
   return (
     <div className="flex h-full flex-col">
-      <div className="flex aspect-[16/10] w-full items-center justify-center overflow-hidden rounded-lg bg-secondary/60 p-3">
+      <button
+        type="button"
+        onClick={onEdit}
+        title={t("appshots.editor.open")}
+        className="group flex aspect-[16/10] w-full items-center justify-center overflow-hidden rounded-lg bg-secondary/60 p-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-border-strong"
+        data-testid="appshots-preview-edit"
+      >
         <img
-          src={latestAppshotImageUrl(shot.id)}
+          src={latestAppshotImageUrl(shot.id, revision)}
           alt={t("appshots.preview_alt").replace("{0}", where)}
-          className="max-h-full max-w-full rounded-md object-contain shadow-sm ring-1 ring-border"
+          className="max-h-full max-w-full rounded-md object-contain shadow-sm ring-1 ring-border transition-opacity group-hover:opacity-90"
         />
-      </div>
+      </button>
       <div className="mt-3 flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate text-base font-medium text-foreground">{where}</p>
@@ -171,10 +189,16 @@ function LatestPreview({ shot, onForget }: { shot: AppshotMeta; onForget: () => 
             {[time, `${shot.width} × ${shot.height}`, delivered].filter(Boolean).join(" · ")}
           </p>
         </div>
-        <Button type="button" variant="ghost" size="sm" onClick={onForget}>
-          <Trash2 aria-hidden />
-          {t("appshots.forget")}
-        </Button>
+        <div className="flex shrink-0 items-center gap-1">
+          <Button type="button" variant="ghost" size="sm" onClick={onEdit}>
+            <PenLine aria-hidden />
+            {t("appshots.editor.open")}
+          </Button>
+          <Button type="button" variant="ghost" size="sm" onClick={onForget}>
+            <Trash2 aria-hidden />
+            {t("appshots.forget")}
+          </Button>
+        </div>
       </div>
     </div>
   );
@@ -191,6 +215,10 @@ export function AppshotsView() {
   const [saving, setSaving] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
   const [picking, setPicking] = useState(false);
+  const editorId = useAppshotEditor((s) => s.openId);
+  const openEditor = useAppshotEditor((s) => s.open);
+  const closeEditor = useAppshotEditor((s) => s.close);
+  const [revision, setRevision] = useState(0);
   // While a shortcut field records (or refuses a gesture), its row says so
   // in place of the description.
   const [fieldStatus, setFieldStatus] = useState<{ window: string | null; region: string | null }>({
@@ -532,12 +560,34 @@ export function AppshotsView() {
 
           <div className="rounded-xl border border-border bg-card p-5">
             <p className="mb-3 text-base font-medium text-foreground">{t("appshots.preview_title")}</p>
-            {latest ? <LatestPreview shot={latest} onForget={() => void forget()} /> : <PreviewDemo />}
+            {latest ? (
+              <LatestPreview
+                shot={latest}
+                revision={revision}
+                onForget={() => void forget()}
+                onEdit={() => openEditor(latest.id)}
+              />
+            ) : (
+              <PreviewDemo />
+            )}
           </div>
         </div>
 
         <p className="mt-5 text-sm text-muted-foreground">{t("appshots.voice_hint")}</p>
       </div>
+      {editorId !== null && (
+        <AppshotEditor
+          appshotId={editorId}
+          onClose={() => {
+            closeEditor();
+            // An applied edit changed the held picture: show the new one.
+            setRevision((n) => n + 1);
+            fetchLatestAppshot()
+              .then((body) => setLatest(body.appshot))
+              .catch(() => undefined);
+          }}
+        />
+      )}
     </div>
   );
 }
