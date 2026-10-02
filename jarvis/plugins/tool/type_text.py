@@ -269,10 +269,18 @@ class TypeTextTool:
                 output=f"Typed {len(text)} chars ({actuator.name})",
             )
         except ActuationUnavailable as exc:
+            # A permission refusal keeps its stable "[permission_needed:" prefix
+            # at the START of the error (the engine maps it); other causes are
+            # wrapped as before.
+            message = str(exc)
             return ToolResult(
                 success=False,
                 output=None,
-                error=f"text input unavailable: {exc}",
+                error=(
+                    message
+                    if message.startswith("[permission_needed:")
+                    else f"text input unavailable: {message}"
+                ),
             )
         except _ForegroundTargetChanged as exc:
             return ToolResult(
