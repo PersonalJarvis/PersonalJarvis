@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { groupTrace, groupActivityTrace, splitConversationTurn, WorkTrace, traceDuration } from "./WorkTrace";
+import { groupTrace, groupActivityTrace, livePetState, splitConversationTurn, WorkTrace, traceDuration } from "./WorkTrace";
 import { traceToolIdentity } from "./traceActivity";
 import type { TextBlock, ToolBlock, TurnBlock, TurnStatus } from "./reduce";
 
@@ -208,6 +208,25 @@ describe("rail look", () => {
     expect(running.querySelector(".trace-shimmer")?.textContent).toBe("Run command");
     expect(running.querySelector(".trace-node-live")).toBeTruthy();
     expect(screen.getByRole("status").querySelector(".trace-shimmer")?.textContent).toBe("Working");
+  });
+
+  it("puts the pet on a live Jarvis trace and the plain node everywhere else", () => {
+    const blocks = [tool("a", { name: "exec_command", output: null })];
+    const { container, rerender } = render(<WorkTrace {...props} status="running" durationMs={null} blocks={blocks} companion />);
+    expect(container.querySelector("[data-trace-pet]")?.getAttribute("data-trace-pet")).toBe("working");
+    rerender(<WorkTrace {...props} status="running" durationMs={null} blocks={blocks} />);
+    expect(container.querySelector("[data-trace-pet]")).toBeNull();
+    rerender(<WorkTrace {...props} blocks={[tool("a", { name: "exec_command" })]} companion />);
+    expect(container.querySelector("[data-trace-pet]")).toBeNull();
+  });
+
+  it("lets the pet think, search, work and talk along with the live step", () => {
+    expect(livePetState([])).toBe("thinking");
+    expect(livePetState([{ ...thought, live: true } as TurnBlock])).toBe("thinking");
+    expect(livePetState([tool("s", { name: "grep", output: null })])).toBe("searching");
+    expect(livePetState([tool("x", { name: "exec_command", output: null })])).toBe("working");
+    expect(livePetState([tool("x", { name: "exec_command" })])).toBe("thinking");
+    expect(livePetState([reply("r", "Here it is")])).toBe("talking");
   });
 
   it("drops the shimmer once the turn is finished", () => {

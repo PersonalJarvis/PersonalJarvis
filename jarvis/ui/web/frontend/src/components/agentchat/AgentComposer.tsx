@@ -38,7 +38,7 @@ import { ComposerChipField, type ComposerChipFieldHandle } from "@/components/ag
 import type { ToolChoice } from "@/components/agentchat/toolChoices";
 import { readComposerDraft, useComposerDraft, writeComposerDraft } from "./composerDrafts";
 import { useAppshotClaim } from "@/components/agentchat/useAppshotClaim";
-import { GigiMark } from "@/components/GigiMark";
+import { PetMark } from "@/components/pets/PetMark";
 import { useVoiceModeSwitch } from "@/components/home/assistantStatus";
 import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
@@ -833,7 +833,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
           className="inline-flex h-7 max-w-[180px] shrink-0 items-center gap-1.5 rounded-lg bg-secondary px-2 text-xs font-medium text-foreground"
         >
           {surface === "jarvis" ? (
-            <GigiMark size={18} />
+            <PetMark size={20} />
           ) : (
             <FolderCode className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
           )}

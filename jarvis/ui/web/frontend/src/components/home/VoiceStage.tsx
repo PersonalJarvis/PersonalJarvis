@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ScrollToEndButton } from "@/components/ui/scroll-to-end-button";
 import { Greeting } from "@/components/home/Greeting";
-import { GigiMark } from "@/components/GigiMark";
+import { PetMark } from "@/components/pets/PetMark";
 import { VoiceComposer } from "@/components/home/VoiceComposer";
 import { VoiceGlow } from "@/components/home/VoiceGlow";
 import { useSpokenCursor } from "@/components/home/useSpokenCursor";
@@ -29,8 +29,8 @@ import { traceModel } from "@/lib/thinkingSteps";
  * says what is happening and carries Start / Stop. Behind it a soft light
  * rises from the bottom edge and breathes with the voices
  * (components/home/VoiceGlow) — and keeps moving while the assistant
- * thinks, so a silent turn never looks dead; while it thinks or speaks, its
- * mark pulses under the last line. While the answer is being spoken, the
+ * thinks, so a silent turn never looks dead; while it thinks or speaks, the
+ * user's pet thinks or talks under the last line. While the answer is being spoken, the
  * words not yet said stay grey and light up as the voice reaches them
  * (components/home/useSpokenCursor — an estimate from the playback level,
  * since no voice path reports a per-word position). `onExit`, where the host page has a typed
@@ -92,6 +92,9 @@ export function VoiceStage({ onExit }: { onExit?: () => void } = {}) {
   // once its final line has landed while the audio still plays — that line.
   const speaking = active && voiceState === "speaking";
   const lastIsAnswer = !liveAnswer && lastLine?.who === "assistant";
+  // A live work trace at the bottom already shows the pet on its live line;
+  // a second one under it would say the same thing twice.
+  const traceShowsPet = !liveLine && !liveAnswer && lastLine?.who === "steps" && Boolean(lastLine.live);
   const spoken = useSpokenCursor(
     liveAnswer || (lastIsAnswer ? lastLine.text : ""),
     speaking,
@@ -157,9 +160,9 @@ export function VoiceStage({ onExit }: { onExit?: () => void } = {}) {
           {liveAnswer && (
             <TranscriptLine who={assistantName} text={liveAnswer} user={false} live spoken={spoken} />
           )}
-          {active && (voiceState === "thinking" || voiceState === "speaking") && (
+          {active && (voiceState === "thinking" || voiceState === "speaking") && !traceShowsPet && (
             <div className="pl-0.5" data-testid="voice-turn-indicator" aria-hidden>
-              <GigiMark size={22} className="rounded-md animate-pulse motion-reduce:animate-none" />
+              <PetMark size={48} state={voiceState === "speaking" ? "talking" : "thinking"} />
             </div>
           )}
         </div>

@@ -3,6 +3,8 @@ import { Brain, Check, ChevronRight, CircleAlert, CircleDashed, FilePenLine, Fil
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useT } from "@/i18n";
+import { PetMark } from "@/components/pets/PetMark";
+import type { PetState } from "@/lib/petStates";
 import { cn } from "@/lib/utils";
 import type { ApprovalDecision } from "@/lib/agentChatApi";
 import { isQuestionTool, type ReasoningBlock, type TextBlock, type ToolBlock, type TurnBlock, type TurnItem, type TurnStatus } from "./reduce";
@@ -197,6 +199,21 @@ function Rail({ items }: { items: RailItem[] }) {
 /** The node a step hangs on: a 16 px column centred on the row's first line. */
 function Node({ children, live = false }: { children: ReactNode; live?: boolean }) {
   return <span aria-hidden className={cn("trace-node", live && "trace-node-live")}>{children}</span>;
+}
+
+/**
+ * What the user's pet does on a live Jarvis trace: it thinks while the model
+ * reasons (or before anything has arrived), searches while a search or
+ * listing runs, works through any other tool, and talks while the reply
+ * streams in.
+ */
+export function livePetState(blocks: TurnBlock[]): PetState {
+  const last = blocks[blocks.length - 1];
+  if (!last || last.kind === "reasoning") return "thinking";
+  if (last.kind === "text") return last.text.trim() ? "talking" : "thinking";
+  if (last.output !== null) return "thinking";
+  const family = operation(last.name);
+  return family === "search" || family === "list" ? "searching" : "working";
 }
 
 /** The words of whatever is happening right now, with a slow light sweep. */
@@ -620,9 +637,15 @@ type WorkTraceProps = {
   blocks: TurnBlock[]; status: TurnStatus; startedMs: number; durationMs: number | null; error?: string | null;
   onDecide?: Decide; renderText?: (text: string, id: string) => ReactNode; className?: string;
   receipt?: ReactNode; completionLabel?: string; conversation?: boolean;
+  /**
+   * The trace is Jarvis's own (the front-page chat, a voice turn): the live
+   * line shows the user's pet at work instead of a spinning circle. Agent
+   * and coding-pane traces keep the plain node.
+   */
+  companion?: boolean;
 };
 
-function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error, onDecide, renderText, className, receipt, completionLabel, conversation = false }: WorkTraceProps) {
+function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error, onDecide, renderText, className, receipt, completionLabel, conversation = false, companion = false }: WorkTraceProps) {
   const t = useT();
   const rail = useRail();
   const blocks = useMemo(() => withoutQuestionPolls(rawBlocks), [rawBlocks]);
@@ -666,10 +689,13 @@ function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error
     // whenever the trace has no reply between it and the work); a finished
     // conversation turn closes with a quiet line under its reply instead.
     const statusOnRail = !conversation || live;
+    const petState = companion && working ? livePetState(blocks) : null;
     const statusLine = <div role="status" aria-live="polite" data-trace-status={outcome}
       className={cn("flex min-w-0 flex-wrap items-start gap-x-3 text-xs leading-6 text-muted-foreground",
         statusOnRail ? "py-1" : "pb-2 pt-1", status === "error" && "text-destructive", pending && "text-foreground")}>
-      <Node live={working}><Icon className={cn(nodeIcon, working && "motion-safe:animate-spin")} /></Node>
+      {petState
+        ? <span aria-hidden className="trace-node trace-node-pet" data-trace-pet={petState}><PetMark size={32} state={petState} /></span>
+        : <Node live={working}><Icon className={cn(nodeIcon, working && "motion-safe:animate-spin")} /></Node>}
       <span className="inline-flex min-w-0 flex-1 flex-wrap items-center gap-x-2">
         <span><Live on={working}>{outcomeLabel}</Live></span>
         {(live || durationMs !== null) ? <span aria-live="off" className="tabular-nums">{traceDuration(live ? elapsed : durationMs ?? 0)}</span> : null}
@@ -715,7 +741,7 @@ function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error
   </div>;
 }
 
-export function TurnTrace({ turn, ...props }: { turn: TurnItem; onDecide?: Decide; renderText?: (text: string, id: string) => ReactNode; conversation?: boolean; look?: TraceLook }) {
+export function TurnTrace({ turn, ...props }: { turn: TurnItem; onDecide?: Decide; renderText?: (text: string, id: string) => ReactNode; conversation?: boolean; look?: TraceLook; companion?: boolean }) {
   const t = useT();
   const tokens = outputTokens(turn.usage ?? turn.liveUsage);
   const answered = turn.blocks.some(block => block.kind === "text" && block.text.trim());

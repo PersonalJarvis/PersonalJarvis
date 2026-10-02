@@ -21,18 +21,27 @@ import { cn } from "@/lib/utils";
  * frame, and the talking row (drawn closed to widest) swings back and forth.
  * The timer stops while the sprite is off-screen, and under
  * `prefers-reduced-motion` the sprite shows frame 0 and never moves.
+ *
+ * `px` asks for an exact edge length instead: the app's own marks (the
+ * sidebar, the greeting, a trace's live line) are smaller than one source
+ * frame. A whole-number factor stays pixel-crisp; a fractional one is
+ * resampled smoothly, because nearest-neighbour at, say, 0.42 drops whole
+ * rows of the outline.
  */
 export function PetSprite({
   pet,
   state,
-  scale,
+  scale = 1,
+  px,
   label,
   className,
 }: {
   pet: Pick<Pet, "sheet_url" | "frame_size" | "animations">;
   state: PetState;
   /** Display factor; rounded to a whole number so pixels stay square. */
-  scale: number;
+  scale?: number;
+  /** Exact edge length in CSS pixels; overrides `scale`. */
+  px?: number;
   /** Accessible name; the sprite is decorative without one. */
   label?: string;
   className?: string;
@@ -43,7 +52,8 @@ export function PetSprite({
   const onScreen = useOnScreen(boxRef);
 
   const size = pet.frame_size;
-  const factor = Math.max(1, Math.round(scale));
+  const factor = px !== undefined && px > 0 ? px / size : Math.max(1, Math.round(scale));
+  const crisp = Number.isInteger(factor);
   const animation = resolvePetAnimation(pet.animations, state);
   const row = animation?.row ?? 0;
   const frames = animation?.frames ?? 1;
@@ -104,7 +114,7 @@ export function PetSprite({
         <div
           ref={cellRef}
           data-testid="pet-sprite-cell"
-          className="absolute left-0 top-0 bg-no-repeat [image-rendering:pixelated]"
+          className={cn("absolute left-0 top-0 bg-no-repeat", crisp && "[image-rendering:pixelated]")}
           style={{
             width: size,
             height: size,

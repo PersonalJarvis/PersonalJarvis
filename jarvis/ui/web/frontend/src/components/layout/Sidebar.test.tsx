@@ -234,10 +234,9 @@ describe("Sidebar header avatar", () => {
     overlayMock.style = "jarvis_bar";
   });
 
-  // The mark is a bundled import, so its URL carries a build hash and there is
-  // nothing stable to assert. What matters is that the avatar shows the mark
-  // and not a stale public/ path a browser would serve from cache.
-  test("renders the Gigi app mark from the bundle, not a public path", () => {
+  // The mark is the user's pet (Gigi by default), drawn by PetMark from the
+  // pets answer — never the old static Gigi image.
+  test("renders the pet mark, not the old Gigi image", () => {
     // The mark heads the identity row, which returns when the quick
     // switcher (and with it the search bar) is switched off.
     useQuickSwitchSettings.setState({ enabled: false });
@@ -246,10 +245,8 @@ describe("Sidebar header avatar", () => {
     const avatar = container.querySelector('[data-testid="sidebar-style-avatar"]');
     expect(avatar).not.toBeNull();
     expect(avatar?.getAttribute("data-variant")).toBe("logo");
-    const logo = avatar?.querySelector("img") as HTMLImageElement;
-    const src = logo.getAttribute("src") ?? "";
-    expect(src).toContain("jarvis-mark");
-    expect(src.startsWith("/jarvis-")).toBe(false);
+    expect(avatar?.querySelector('[data-testid="pet-mark"]')).toBeTruthy();
+    expect(avatar?.querySelector("img")).toBeNull();
   });
 });
 

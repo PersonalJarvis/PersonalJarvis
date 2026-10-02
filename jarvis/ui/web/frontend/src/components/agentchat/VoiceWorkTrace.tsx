@@ -27,5 +27,5 @@ export function VoiceWorkTrace({ steps, live = false, durationMs, className }: {
       startedMs: step.startedTs, approval: null };
   }), [steps, live, t]);
   return <WorkTrace blocks={blocks} status={live ? "running" : steps.some(step => step.status === "error") ? "error" : "done"}
-    startedMs={steps[0]?.startedTs ?? Date.now()} durationMs={durationMs ?? null} className={className} />;
+    startedMs={steps[0]?.startedTs ?? Date.now()} durationMs={durationMs ?? null} className={className} companion />;
 }

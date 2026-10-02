@@ -30,7 +30,7 @@ import { SidebarSearchBar } from "@/components/layout/SidebarSearchBar";
 import { useQuickSwitchSettings } from "@/store/quickSwitchSettings";
 import { useAppInstance } from "@/hooks/useAppInstance";
 import { usePublishIdentity } from "@/components/marketplace/PublishIdentity";
-import { GigiMark } from "@/components/GigiMark";
+import { PetMark } from "@/components/pets/PetMark";
 import { MarketplaceIcon } from "@/components/icons/sectionIcons";
 import { startNewTextChat } from "@/lib/newChat";
 import { useUserName } from "@/hooks/useUserName";
@@ -396,7 +396,7 @@ export function Sidebar({
                 {devTag}
               </span>
             )}
-            <GigiMark size={railed ? 36 : 20} />
+            <PetMark size={railed ? 36 : 20} reactive />
           </span>}
           {/* One quiet row, like the workspace switcher in Linear or Cursor:
               mark, name, status dot. It used to be a two-line identity card

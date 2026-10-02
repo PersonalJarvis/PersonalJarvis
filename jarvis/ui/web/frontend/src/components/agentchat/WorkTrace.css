@@ -65,6 +65,21 @@
 .trace-node-live {
   color: hsl(var(--accent));
 }
+/* A Jarvis trace's live line: the user's pet (32 px) stands where the
+   spinner was, centred on the thread. It is wider than the 16 px node
+   column and exactly as tall as the 32 px status row, so it overhangs
+   sideways and nothing below moves when the turn ends and it turns back
+   into a check. */
+.trace-node-pet {
+  position: relative;
+  overflow: visible;
+}
+.trace-node-pet > * {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
 .trace-dot {
   display: block;
   height: 5px;
