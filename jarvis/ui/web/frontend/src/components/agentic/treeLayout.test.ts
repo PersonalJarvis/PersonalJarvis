@@ -7,11 +7,15 @@ import { describe, expect, it } from "vitest";
 
 import {
   dragSeam,
+  dragSeams,
   evenSeam,
   evenedTree,
+  grabsSeamEnd,
   isEvenTree,
+  stackedSeams,
   treeLayout,
   treeLeaves,
+  treeSeams,
   type LayoutNode,
   type LayoutSplit,
 } from "./treeLayout";
@@ -264,5 +268,82 @@ describe("evening out", () => {
     // lines up two terminals, so each of the three ends up the same width.
     expect(levelled.weights[1]).toBeCloseTo(2 / 3);
     expect(levelled.weights[2]).toBeCloseTo(4 / 3);
+  });
+});
+
+/** Two rows of two: the stack a sideways drag can move as one line. */
+const twoRows = (top = [1, 1], bottom = [1, 1]): LayoutSplit => ({
+  direction: "column",
+  children: [
+    { direction: "row", children: [{ pane: "t1" }, { pane: "t2" }], weights: top },
+    { direction: "row", children: [{ pane: "t3" }, { pane: "t4" }], weights: bottom },
+  ],
+  weights: [1, 1],
+});
+
+const rowWeights = (tree: LayoutNode, index: number) =>
+  ((tree as LayoutSplit).children[index] as LayoutSplit).weights;
+
+describe("stacked seam drags", () => {
+  it("grabs the whole stack only near a seam's top or bottom end", () => {
+    const rect = { top: 100, height: 300 };
+    expect(grabsSeamEnd(rect, 110)).toBe(true);
+    expect(grabsSeamEnd(rect, 250)).toBe(false);
+    expect(grabsSeamEnd(rect, 390)).toBe(true);
+    expect(grabsSeamEnd({ top: 0, height: 0 }, 0)).toBe(false);
+  });
+
+  it("links the aligned seams of panes stacked under each other", () => {
+    const seams = treeSeams(twoRows());
+    const top = seams.find((seam) => seam.id === "0:1")!;
+    const line = stackedSeams(seams, top, 1000);
+    expect(line.map((seam) => seam.id)).toEqual(["0:1", "1:1"]);
+  });
+
+  it("does not link seams that sit visibly apart, or a horizontal seam", () => {
+    const seams = treeSeams(twoRows([1, 1], [1, 3]));
+    const top = seams.find((seam) => seam.id === "0:1")!;
+    expect(stackedSeams(seams, top, 1000)).toEqual([top]);
+    const across = seams.find((seam) => seam.orientation === "horizontal")!;
+    expect(stackedSeams(seams, across, 1000)).toEqual([across]);
+  });
+
+  it("stops the line at a full-width pane in between", () => {
+    const tree: LayoutNode = {
+      direction: "column",
+      children: [
+        { direction: "row", children: [{ pane: "t1" }, { pane: "t2" }], weights: [1, 1] },
+        { pane: "t5" },
+        { direction: "row", children: [{ pane: "t3" }, { pane: "t4" }], weights: [1, 1] },
+      ],
+      weights: [1, 1, 1],
+    };
+    const seams = treeSeams(tree);
+    const top = seams.find((seam) => seam.id === "0:1")!;
+    expect(stackedSeams(seams, top, 1000)).toEqual([top]);
+  });
+
+  it("moves every seam of the line together", () => {
+    const tree = twoRows();
+    const seams = treeSeams(tree);
+    const lead = seams.find((seam) => seam.id === "0:1")!;
+    const next = dragSeams(tree, stackedSeams(seams, lead, 1000), lead, 100, 1000);
+    expect(rowWeights(next, 0)[0]).toBeCloseTo(1.2);
+    expect(rowWeights(next, 1)[0]).toBeCloseTo(1.2);
+  });
+
+  it("stops the whole line at the tightest pane's minimum", () => {
+    // The bottom seam already sits further right, so its right pane runs out
+    // of room first — the top seam must stop at the same x, not keep going.
+    const tree = twoRows([1, 1], [1.01, 0.99]);
+    const seams = treeSeams(tree);
+    const lead = seams.find((seam) => seam.id === "0:1")!;
+    const line = stackedSeams(seams, lead, 1000);
+    expect(line).toHaveLength(2);
+    const next = dragSeams(tree, line, lead, 1000, 1000);
+    expect(rowWeights(next, 0)[0]).toBeCloseTo(rowWeights(next, 1)[0]);
+    const { boxes } = treeLayout(next, panes("t1", "t2", "t3", "t4"));
+    expect(boxes[1]!.w * 1000).toBeGreaterThanOrEqual(119.999);
+    expect(boxes[3]!.w * 1000).toBeGreaterThanOrEqual(119.999);
   });
 });
