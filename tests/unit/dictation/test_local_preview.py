@@ -8,6 +8,7 @@ its PAID plan too — and the half carrying the user's words got the 429s.
 from __future__ import annotations
 
 import asyncio
+import threading
 
 import pytest
 
@@ -55,6 +56,46 @@ class _Engine(LocalPreviewTranscriber):
 
             time.sleep(self.delay)
         return self.text, self.detected, self.probability
+
+
+class _ObservedGuard:
+    """A real lock whose release can be awaited without guessing a duration."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.released = asyncio.Event()
+
+    def acquire(self, **kwargs):
+        return self._lock.acquire(**kwargs)
+
+    def locked(self):
+        return self._lock.locked()
+
+    def release(self):
+        self._lock.release()
+        self.released.set()
+
+
+class _ControlledEngine(_Engine):
+    """Keep native work alive until the test explicitly permits completion."""
+
+    def __init__(self):
+        super().__init__()
+        self.started = asyncio.Event()
+        self.finish = threading.Event()
+        self._loop = asyncio.get_running_loop()
+        self._busy = _ObservedGuard()
+
+    def _transcribe_sync(self, pcm, language, **kwargs):
+        self.calls += 1
+        self._loop.call_soon_threadsafe(self.started.set)
+        self.finish.wait()
+        return self.text, self.detected, self.probability
+
+    async def finish_and_wait(self):
+        self.finish.set()
+        if self._busy.locked():
+            await asyncio.wait_for(self._busy.released.wait(), timeout=5.0)
 
 
 async def test_preview_text_comes_back():
@@ -233,22 +274,28 @@ def test_a_cuda_model_that_cannot_decode_falls_back_to_cpu(monkeypatch):
     assert getattr(engine._model, "marker", None) is cpu_model
 
 
-async def test_a_timed_out_native_call_keeps_the_engine_busy_until_it_really_ends():
+async def test_a_timed_out_native_call_keeps_the_engine_busy_until_it_really_ends(monkeypatch):
     """AP-24: the timeout bounds the wait; it does not stop the native thread."""
     import jarvis.dictation.local_preview as mod
 
-    engine = _Engine(delay=0.15)
-    original = mod.PREVIEW_TIMEOUT_S
-    mod.PREVIEW_TIMEOUT_S = 0.02
+    engine = _ControlledEngine()
+    monkeypatch.setattr(mod, "PREVIEW_TIMEOUT_S", 0.02)
     try:
-        assert await engine.transcribe(b"\x00" * 32000) is None
+        first = asyncio.create_task(engine.transcribe(b"\x00" * 32000))
+        await asyncio.wait_for(engine.started.wait(), timeout=5.0)
+        assert await first is None
         assert await engine.transcribe(b"\x00" * 32000) is None
         assert engine.calls == 1, "the still-running native call must own the engine"
-        await asyncio.sleep(0.2)
-        assert await engine.transcribe(b"\x00" * 32000) is None
+        await engine.finish_and_wait()
+        engine.finish.clear()
+        engine.started.clear()
+        engine._busy.released.clear()
+        second = asyncio.create_task(engine.transcribe(b"\x00" * 32000))
+        await asyncio.wait_for(engine.started.wait(), timeout=5.0)
+        assert await second is None
         assert engine.calls == 2
     finally:
-        mod.PREVIEW_TIMEOUT_S = original
+        await engine.finish_and_wait()
 
 
 async def test_a_wedged_native_preview_rotates_to_a_fresh_model_and_guard():
@@ -422,18 +469,19 @@ def test_a_dropped_engine_is_rebuilt_on_the_next_device_not_the_same_one(monkeyp
     assert calls[-1] == ("cpu", "int8")
 
 
-async def test_a_late_but_successful_preview_ends_the_failure_streak():
+async def test_a_late_but_successful_preview_ends_the_failure_streak(monkeypatch):
     """Slow is not wedged: a worker that comes back resets the drop counter."""
     import jarvis.dictation.local_preview as mod
 
-    engine = _Engine(delay=0.05)
-    original = mod.PREVIEW_TIMEOUT_S
-    mod.PREVIEW_TIMEOUT_S = 0.01
+    engine = _ControlledEngine()
+    monkeypatch.setattr(mod, "PREVIEW_TIMEOUT_S", 0.01)
     try:
-        assert await engine.transcribe(b"\x00" * 32000) is None  # times out, worker runs on
+        first = asyncio.create_task(engine.transcribe(b"\x00" * 32000))
+        await asyncio.wait_for(engine.started.wait(), timeout=5.0)
+        assert await first is None  # times out, worker runs on
         assert engine._failures == 1
-        await asyncio.sleep(0.15)  # the worker finishes late
+        await engine.finish_and_wait()
         assert engine._failures == 0
         assert engine.ready is True
     finally:
-        mod.PREVIEW_TIMEOUT_S = original
+        await engine.finish_and_wait()
