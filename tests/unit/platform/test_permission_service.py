@@ -63,6 +63,26 @@ _SR = PermissionId.SCREEN_RECORDING
 _IM = PermissionId.INPUT_MONITORING
 _AUTOMATION = PermissionId.AUTOMATION
 
+# Constructor arguments of ``PermissionService`` a test may pass through ``make_env``
+# (every other keyword goes to ``FakeTCC``).
+_SERVICE_KWARGS = frozenset(
+    {
+        "automation_timeout_s",
+        "automation_quarantine_s",
+        "automation_refresh_wait_s",
+        "oracle_every_s",
+        "ask_runner",
+        "negative_ttl_s",
+        "granted_ttl_s",
+        "episode_ttl_s",
+    }
+)
+
+
+def _run_inline(work: Callable[[], None]) -> None:
+    work()
+
+
 # A watcher interval that never ticks inside a test: edges are driven by hand
 # through ``refresh_episodes`` unless the test is about the watcher itself.
 _NEVER = 3600.0
@@ -183,14 +203,21 @@ def make_env(
         attach: bool = True,
         watch_interval_s: float = _NEVER,
         tcc: FakeTCC | None = None,
-        **tcc_kwargs: Any,
+        inline_ask: bool = True,
+        **service_kwargs: Any,
     ) -> Env:
+        tcc_kwargs = {k: v for k, v in service_kwargs.items() if k not in _SERVICE_KWARGS}
+        service_kwargs = {k: v for k, v in service_kwargs.items() if k in _SERVICE_KWARGS}
         tcc = tcc if tcc is not None else FakeTCC(**tcc_kwargs)
         install_port(monkeypatch, tcc.port(platform))  # type: ignore[arg-type]
         clock = FakeClock()
         bus = RecordingBus()
+        if inline_ask:
+            # The Automation request normally runs on its own daemon thread; most
+            # tests keep its answer inline. The threaded path has its own tests.
+            service_kwargs.setdefault("ask_runner", _run_inline)
         service = PermissionService(
-            clock=clock, sleep=clock.sleep, watch_interval_s=watch_interval_s
+            clock=clock, sleep=clock.sleep, watch_interval_s=watch_interval_s, **service_kwargs
         )
         created.append(service)
         if attach:
@@ -1093,6 +1120,7 @@ def test_a_listener_fires_per_permission_even_before_the_whole_episode_is_done(
     env.settle()
     assert fired == ["ax"] and len(env.service.outstanding()) == 1
     env.tcc.grant("screen_recording")
+    env.clock.advance(10)  # the frozen preflight needs the oracle, which is rate limited
     env.settle()
     assert fired == ["ax", "sr"] and env.service.outstanding() == []
 

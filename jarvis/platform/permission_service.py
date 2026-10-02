@@ -17,27 +17,42 @@ THREADING RULE (read before calling)
   only. A loop caller uses :meth:`ensure_async`, which makes ONE ``to_thread``
   call for the native request and then ``await asyncio.sleep`` polls, so a wait
   never pins an executor worker; or it passes ``wait_s=0`` (the request is made,
-  the answer arrives later through :class:`PermissionResolved`).
+  the answer arrives later through :class:`PermissionResolved`). Even
+  ``ensure(wait_s=0)`` from a loop thread stays cheap: it never runs the
+  window-title oracle there and never waits for an Automation probe.
 * Nothing here raises for a native failure: every one becomes UNAVAILABLE with a
   fixed-template sentence and a debug log. The one exception is a programming
   error, an unknown permission id (``ValueError``).
 * The service lock guards ONLY dictionary mutation. A native call, a poll, a
   publish, a listener call and a log line never run under it.
+* Automation is the one permission whose state read can HANG (Apple forums
+  thread 666528: ``AEDeterminePermissionToAutomateTarget`` for a running player
+  without a window) and whose request blocks for as long as a dialog is open. Both
+  therefore run on daemon threads: every Automation read goes through
+  :class:`_AutomationGuard` (a hard timeout, one call in flight per player, a
+  quarantine after a timeout), and the Automation request runs on its own daemon
+  thread, so ``ensure`` answers PENDING at once and the answer arrives through
+  :class:`PermissionResolved`. On an event-loop thread an Automation read never
+  waits at all.
 
 EPISODES
 
-An episode is one coalesced "feature X is waiting on permissions Y". Its key is
-(feature, the permission families it needs, plus the Automation target), and a
-key has at most one open record regardless of ``wait_s``: a retry loop that
-re-enters inside an episode gets PENDING with ``asked=False`` and never a second
-native request. At most ONE native request is made per permission per episode,
-and a per-process cooldown (Accessibility and Input Monitoring: once per 10
-minutes, Screen Recording: once per process, the OS dialog class: while a dialog
-may still be open) covers the retries across episodes. There is NO persisted
-"asked" memory: it would resurrect the dead end after ``tccutil reset``, a
+An episode is one coalesced "feature X is waiting on permissions Y". A feature
+has at most one open record per permission regardless of ``wait_s``: a call that
+overlaps an open episode of the same feature joins it (so granting one member of a
+coalesced pair never opens a second record), and a retry loop that re-enters inside
+an episode gets PENDING with ``asked=False`` and never a second native request.
+At most ONE native request is made per permission per episode, and a per-process
+cooldown (Accessibility and Input Monitoring: once per 10 minutes, Screen
+Recording: once per process, the OS dialog class: while a dialog may still be
+open) covers the retries across episodes. An explicit click (``force_ask``) skips
+that cooldown and the per-episode rule for the PROMPT-ONCE permissions, never a
+denial and never a DIALOG-class dialog that may still be open. There is NO
+persisted "asked" memory: it would resurrect the dead end after ``tccutil reset``, a
 re-sign or another bundle id (BUG-083). An episode ends when every permission it
-needs is granted (``PermissionResolved(granted=True)``), or when nobody touched
-it for ten minutes (``PermissionResolved(granted=False)``).
+needs is granted (``PermissionResolved(granted=True)``), or when nobody touched it
+for ten minutes (``PermissionResolved(granted=False)``: it is closed unresolved, the
+permission was still not granted at the last read).
 
 The EPISODE WATCHER (an asyncio task when :meth:`attach_bus` gave the service a
 loop, else one daemon thread) polls the open permissions every two seconds,
@@ -56,6 +71,7 @@ document stays labelled unverified where it is relied on.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import math
 import threading
@@ -95,17 +111,43 @@ _POLL_S: Final = 0.25
 _WATCH_INTERVAL_S: Final = 2.0
 # An episode nobody touched for this long is closed without a grant.
 _EPISODE_TTL_S: Final = 600.0
-# A PROMPT-ONCE dialog only offers "Open System Settings": once this long has
-# passed since the request (or the app was refocused) and the switch is still
-# off, the user is "blocked" on Settings and the app may show its own card.
+# A PROMPT-ONCE dialog only offers "Open System Settings" (community-observed,
+# UNVERIFIED): once this long has passed since the request (or the app was
+# refocused) and the switch is still off, the user is "blocked" on Settings and
+# the app may show its own card. Both the 15 s and the 130 s below are our own
+# figures, not Apple's.
 _BLOCKED_AFTER_S: Final = 15.0
+# A DIALOG-class dialog (microphone, automation) that has been open this long
+# without an answer stops being "macOS is asking" and turns "blocked", so a
+# dialog the user ignored never leaves the feature silently dead.
+_DIALOG_CEILING_S: Final = 130.0
+
+# The Screen Recording window-title oracle enumerates the on-screen windows. It
+# runs on a gesture entry (an interactive ensure) and, for an episode a gesture
+# opened, at most this often (or at once after an app refocus). Whether the
+# enumeration itself can trigger the macOS 15 "bypass the system picker" alert is
+# UNVERIFIED, hence the low cadence; the shallow preflight is read every pass.
+_ORACLE_EVERY_S: Final = 10.0
+
+# Automation reads: a hard timeout for one Apple Event probe, and how long a
+# target that did not answer is left alone afterwards. A watcher pass or a poll
+# waits only this long for a probe (a hung one must not stall the other
+# permissions), picking the answer up on the next pass.
+_AUTOMATION_READ_TIMEOUT_S: Final = 5.0
+_AUTOMATION_QUARANTINE_S: Final = 600.0
+_AUTOMATION_REFRESH_WAIT_S: Final = 0.25
+
+# After a native request FAILED (the call raised or the symbol was missing) a retry
+# loop must not hammer it: the next automatic attempt waits this long. An explicit
+# click is never held back, and a failure is not "asked once per process" any more.
+_FAILED_RETRY_S: Final = 30.0
 
 # Per-process cooldown between two native requests for one permission. The OS
 # dialog class keeps a request "in flight" for as long as its dialog may be open
 # (the Automation runner is killed after 120 s); Accessibility's prompt call can
 # re-show while untrusted, so we rate-limit it ourselves; Screen Recording shows
-# its request at most once per process (Apple: the request returns at once and
-# the dialog appears once).
+# its request at most once per process (community-observed, UNVERIFIED: Apple
+# documents only the declaration of ``CGRequestScreenCaptureAccess``).
 _REASK_AFTER_S: Final[dict[PermissionId, float]] = {
     PermissionId.MICROPHONE: 120.0,
     PermissionId.AUTOMATION: 120.0,
@@ -113,6 +155,12 @@ _REASK_AFTER_S: Final[dict[PermissionId, float]] = {
     PermissionId.ACCESSIBILITY: 600.0,
     PermissionId.INPUT_MONITORING: 600.0,
 }
+
+# The permissions whose grant may only work after a restart, so a real failed
+# attempt can produce the ``restart_hint`` reason (see ``report_failed_use``).
+_RESTART_HINT_FAMILIES: Final = frozenset(
+    {PermissionId.SCREEN_RECORDING, PermissionId.INPUT_MONITORING}
+)
 
 _READY_STATES: Final = frozenset({PermissionState.GRANTED, PermissionState.NOT_REQUIRED})
 _UNDECIDED_STATES: Final = frozenset({PermissionState.NOT_DETERMINED, PermissionState.NOT_GRANTED})
@@ -295,22 +343,33 @@ def user_detail_for(
     target: str = "",
     asking: bool = False,
     outside_app: bool = False,
+    launched_as_bundle: bool = False,
 ) -> str:
-    """The full English sentence for people: built from fixed templates only.
+    """The full English sentence about the situation: built from fixed templates only.
 
     Never carries exception text, a filesystem path or a window title. The Settings
     path it names comes from the fixed table in the port. ``asking`` means macOS
-    is showing (or may be showing) its own dialog right now.
+    is showing (or may be showing) its own dialog right now. Agents read these
+    sentences too (``jarvis permissions status``), so each one states a fact about
+    the user's situation and none is an imperative aimed at the reader (P9).
+    ``launched_as_bundle`` tells a real ``.app`` run from the wrong place (a mounted
+    disk image: the grantee is Personal Jarvis itself) from a terminal or IDE run.
     """
     family = PANE_FAMILY[family]
     subject = _subject(family, target)
     pane = SETTINGS_PATH_TEXT.get(family)
     where = f" in {pane}" if pane else ""
     if outside_app:
+        if launched_as_bundle:
+            return (
+                "Personal Jarvis is running from outside its installed location, so "
+                f"macOS may record {subject} for this copy only. The user has to confirm "
+                "that to continue, or allow it in System Settings."
+            )
         return (
             "Personal Jarvis is not running as an installed app, so "
-            f"{subject} would be granted to the app that started it. Confirm that "
-            "to continue, or allow it yourself in System Settings."
+            f"{subject} would be granted to the app that started it. The user has to "
+            "confirm that to continue, or allow it in System Settings."
         )
     if reason == "restricted":
         return (
@@ -320,22 +379,19 @@ def user_detail_for(
     if reason == "unavailable":
         return f"Personal Jarvis cannot ask for {subject} in this session."
     if reason == "denied":
-        return f"{subject} is turned off for Personal Jarvis. Turn it on{where}."
+        return f"{subject} is turned off for Personal Jarvis. The user has to turn it on{where}."
     if reason == "restart_hint":
         return f"{subject} may only take effect after Personal Jarvis is quit and reopened."
     if reason == "needs_settings":
         if asking:
             return (
-                f"macOS may be showing a dialog about {subject}. Turn Personal Jarvis on{where}, "
-                "then come back."
+                f"macOS may be showing a dialog about {subject}. The user has to turn "
+                f"Personal Jarvis on{where}, then return to the app."
             )
-        return f"{subject} is off for Personal Jarvis. Turn it on{where}."
+        return f"{subject} is off for Personal Jarvis. The user has to turn it on{where}."
     # not_determined
     if asking:
-        return (
-            f"macOS is asking whether Personal Jarvis may have {subject}. "
-            "Choose Allow in the system dialog."
-        )
+        return f"Waiting for the user to answer the macOS dialog about {subject}."
     return f"Personal Jarvis needs {subject} for this feature and has not asked for it yet."
 
 
@@ -361,6 +417,11 @@ def agent_detail_for(
         situation = f"{subject} cannot be requested in this session."
     elif reason == "denied":
         situation = f"{subject} is turned off and the user has to turn it on in System Settings."
+    elif reason == "restart_hint":
+        situation = (
+            f"{subject} is allowed but does not work in this running app yet; "
+            "the user may have to quit and reopen Personal Jarvis."
+        )
     elif asking:
         situation = f"macOS is asking the user about {subject} right now."
     else:
@@ -391,6 +452,9 @@ class _View:
     can_prompt: bool
     can_open_settings: bool
     outside: bool
+    # Only meaningful with ``outside``: the process IS a real ``.app``, run from the
+    # wrong place, so the grantee is Personal Jarvis itself and not a terminal.
+    outside_bundle: bool = False
 
     @property
     def asking(self) -> bool:
@@ -416,6 +480,18 @@ class _Slot:
     # known to have left the dialog.
     promoted: bool = False
     notified: bool = False
+    # With ``outside``: the process is a real bundle run from the wrong place.
+    outside_bundle: bool = False
+    # True while the Automation request runs on its own daemon thread (the dialog
+    # may be open); ``ask_done`` is set when that thread has finished.
+    asking: bool = False
+    ask_done: threading.Event | None = None
+    # True: a real attempt to USE the permission failed although the state reads
+    # granted (or the user came back from Settings and it still fails), so the
+    # honest advice is "quit and reopen" (:meth:`PermissionService.report_failed_use`).
+    restart_hint: bool = False
+    # When the Screen Recording window-title oracle last ran for this slot.
+    deep_at: float | None = None
 
     @property
     def key(self) -> _SlotKey:
@@ -441,6 +517,11 @@ class _Episode:
     detail: str = ""
     published: set[tuple[Any, ...]] = field(default_factory=set)
     closed: bool = False
+    # Callers of ``_start`` that have not finished their asks yet. While it is
+    # positive the episode is invisible (no event, not in ``outstanding``): its
+    # slots are not claimed yet, so a classify now would say "blocked, can_prompt"
+    # while the OS dialog is still being requested.
+    starting: int = 0
 
 
 @dataclass(slots=True)
@@ -466,6 +547,133 @@ class _Plan:
     feature: str
     interactive: bool
     episode: _Episode | None = None
+    # An explicit user click: skips the per-process cooldown of PROMPT-ONCE asks.
+    force_ask: bool = False
+    # Whether this call may run the window-title oracle (a gesture entry that is
+    # not on an event-loop thread).
+    deep: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class _GuardRead:
+    """What one guarded Automation read produced.
+
+    ``kind`` is ``"value"`` (``state`` is the port's answer), ``"pending"`` (the
+    probe is still running; ``state`` is the last answer, or ``None``),
+    ``"quarantined"`` (a probe hung and the target is left alone) or ``"failed"``.
+    """
+
+    kind: str
+    state: PermissionState | None = None
+
+
+@dataclass(slots=True)
+class _GuardCall:
+    done: threading.Event
+    # Real time (``time.monotonic``) after which the call counts as hung.
+    deadline: float
+
+
+class _AutomationGuard:
+    """Runs every Automation state read on a daemon thread, with a hard timeout.
+
+    ``AEDeterminePermissionToAutomateTarget`` can hang for a running player that
+    has no window (Apple forums thread 666528, a DTS engineer called it a bug), and
+    a native call cannot be cancelled. So a read never runs on the caller's thread:
+    at most ONE call is in flight per target (a second reader joins it), a reader
+    waits at most ``wait_s`` (0 on an event loop), and a call that outlives
+    ``timeout_s`` quarantines its target for ``quarantine_s``: the target reads
+    "unknown" at once and no further thread is started for it, so a hung probe
+    never piles up threads and never stalls the other permissions. The hung thread
+    is simply abandoned; its late answer is discarded.
+    """
+
+    def __init__(
+        self, *, timeout_s: float, quarantine_s: float, clock: Callable[[], float]
+    ) -> None:
+        self._timeout_s = timeout_s
+        self._quarantine_s = quarantine_s
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._inflight: dict[str, _GuardCall] = {}
+        self._quarantine: dict[str, float] = {}
+        self._last: dict[str, PermissionState] = {}
+        self._failed: set[str] = set()
+
+    @property
+    def timeout_s(self) -> float:
+        return self._timeout_s
+
+    def read(
+        self, target: str, probe: Callable[[], PermissionState], *, wait_s: float
+    ) -> _GuardRead:
+        now = self._clock()
+        with self._lock:
+            until = self._quarantine.get(target)
+            if until is not None:
+                if now < until:
+                    return _GuardRead("quarantined")
+                del self._quarantine[target]
+            call = self._inflight.get(target)
+            if call is not None and call.done.is_set():
+                del self._inflight[target]
+                call = None
+            if call is not None and time.monotonic() >= call.deadline:
+                # The previous probe is still hung: do not start a second thread.
+                self._quarantine_locked(target, now)
+                return _GuardRead("quarantined")
+            if call is None:
+                call = _GuardCall(
+                    done=threading.Event(), deadline=time.monotonic() + self._timeout_s
+                )
+                self._inflight[target] = call
+                self._failed.discard(target)
+                threading.Thread(
+                    target=self._run,
+                    args=(target, probe, call),
+                    name="permission-automation-probe",
+                    daemon=True,
+                ).start()
+        if wait_s > 0:
+            call.done.wait(min(wait_s, max(0.0, call.deadline - time.monotonic())))
+        with self._lock:
+            if call.done.is_set():
+                if self._inflight.get(target) is call:
+                    del self._inflight[target]
+                if target in self._failed:
+                    return _GuardRead("failed")
+                return _GuardRead("value", self._last.get(target))
+            if time.monotonic() >= call.deadline:
+                self._quarantine_locked(target, self._clock())
+                return _GuardRead("quarantined")
+            return _GuardRead("pending", self._last.get(target))
+
+    def _quarantine_locked(self, target: str, now: float) -> None:
+        self._quarantine[target] = now + self._quarantine_s
+        self._last.pop(target, None)
+        log.debug("The Automation probe for %s hung; it is left alone for a while.", target)
+
+    def _run(self, target: str, probe: Callable[[], PermissionState], call: _GuardCall) -> None:
+        try:
+            state = probe()
+        except Exception:  # noqa: BLE001 - the thread must never die loudly; the reader reports it
+            log.debug("The Automation probe for %s failed.", target, exc_info=True)
+            with self._lock:
+                self._failed.add(target)
+        else:
+            with self._lock:
+                if target not in self._quarantine:
+                    self._last[target] = state
+        finally:
+            call.done.set()
+
+    def forget(self) -> None:
+        """Drop every record (tests and process teardown)."""
+        with self._lock:
+            self._inflight.clear()
+            self._quarantine.clear()
+            self._last.clear()
+            self._failed.clear()
 
 
 # ----------------------------------------------------------------------
@@ -486,6 +694,11 @@ class PermissionService:
         episode_ttl_s: float = _EPISODE_TTL_S,
         granted_ttl_s: float = _GRANTED_TTL_S,
         negative_ttl_s: float = _NEGATIVE_TTL_S,
+        automation_timeout_s: float = _AUTOMATION_READ_TIMEOUT_S,
+        automation_quarantine_s: float = _AUTOMATION_QUARANTINE_S,
+        automation_refresh_wait_s: float = _AUTOMATION_REFRESH_WAIT_S,
+        oracle_every_s: float = _ORACLE_EVERY_S,
+        ask_runner: Callable[[Callable[[], None]], None] | None = None,
     ) -> None:
         # Seams, so a test drives time without sleeping.
         self._clock = clock
@@ -495,14 +708,34 @@ class PermissionService:
         self._episode_ttl_s = episode_ttl_s
         self._granted_ttl_s = granted_ttl_s
         self._negative_ttl_s = negative_ttl_s
+        self._automation_refresh_wait_s = automation_refresh_wait_s
+        self._oracle_every_s = oracle_every_s
+        # Starts the Automation request off the calling thread (a daemon thread by
+        # default); a test injects a synchronous runner to keep the answer inline.
+        self._ask_runner = ask_runner if ask_runner is not None else _start_daemon_thread
+        self._automation = _AutomationGuard(
+            timeout_s=automation_timeout_s, quarantine_s=automation_quarantine_s, clock=clock
+        )
 
         self._lock = threading.Lock()
         # check() cache: immutable (state, expires_at) tuples, assigned whole, so
-        # a read needs no lock.
+        # a read needs no lock. ``_cache_gen`` counts invalidations: a read that
+        # started before one never stores its (possibly stale) answer.
         self._cache: dict[tuple[PermissionId, str], tuple[PermissionState, float, bool]] = {}
+        self._cache_gen = 0
+        # True once the window-title oracle (or the preflight) proved Screen
+        # Recording granted in this process. The per-process-frozen preflight can
+        # only go stale NEGATIVE (BUG-161), so a proven grant must not flap back to
+        # "not granted" when the 1 s cache entry expires; only a capture error
+        # (:meth:`invalidate`) or a reset drops it.
+        self._sr_proven = False
+        # Ports whose ``state()`` takes no ``deep``/``target`` (a pre-JIT stub).
+        self._legacy_state_ports: dict[type, bool] = {}
         self._episodes: dict[_EpisodeKey, _Episode] = {}
         # Per-process "last native request" stamps (the cooldown); never persisted.
         self._last_native: dict[_SlotKey, float] = {}
+        # When a native request last FAILED, per slot (see ``_FAILED_RETRY_S``).
+        self._failed_native: dict[_SlotKey, float] = {}
         self._listeners: dict[PermissionId, tuple[Callable[[], None], ...]] = {}
         # (bus, loop) as ONE tuple so a reader never sees half of an attach.
         self._sink: tuple[Any, asyncio.AbstractEventLoop] | None = None
@@ -533,6 +766,31 @@ class PermissionService:
         # Resolved per call and never cached, so a test stub applies at once.
         return _permissions_module.get_system_permission_port()
 
+    def _call_state(
+        self, port: Any, perm: PermissionId, target: str, deep: bool
+    ) -> PermissionState:
+        """One ``port.state`` call, in the vocabulary the port understands."""
+        kind = type(port)
+        legacy = self._legacy_state_ports.get(kind)
+        if legacy is None:
+            # Probe the signature ONCE instead of catching TypeError: a TypeError
+            # raised inside a pyobjc bridge must not turn into a deep retry.
+            try:
+                params = inspect.signature(port.state).parameters
+                legacy = "deep" not in params and not any(
+                    p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
+                )
+            except (TypeError, ValueError):
+                # No inspectable signature (a builtin or a C-level callable): assume
+                # the modern one, a wrong guess surfaces as a logged read failure.
+                log.debug("The port's state() signature cannot be inspected.", exc_info=True)
+                legacy = False
+            self._legacy_state_ports[kind] = legacy
+        if legacy:
+            # A hand-written port from before the JIT API: state(permission) only.
+            return PermissionState(port.state(perm))
+        return PermissionState(port.state(perm, target=target or None, deep=deep))
+
     @staticmethod
     def _is_darwin(port: Any) -> bool:
         platform = getattr(port, "platform", None)
@@ -553,6 +811,14 @@ class PermissionService:
         GRANTED answer is cached for about one second (bypassed on purpose by
         :meth:`invalidate` after a capture error), a negative for about 250 ms.
         Off macOS it answers NOT_REQUIRED without asking the port anything.
+
+        Screen Recording reads the preflight only, but an oracle-proven grant (an
+        ``ensure`` or the watcher saw it) is remembered, so it never flaps back to
+        "not granted" while the frozen preflight still says so. Automation needs a
+        ``target`` (without one it answers UNAVAILABLE: the aggregate read would
+        probe every player); its read runs on a guarded daemon thread, answers
+        UNAVAILABLE for a player whose probe hung, and on an event-loop thread never
+        waits (the last answer, else NOT_DETERMINED while the probe still runs).
         """
         perm = PermissionId(permission)
         try:
@@ -568,13 +834,20 @@ class PermissionService:
         """Forget the cached answer(s) so the next read goes to the OS.
 
         Call it after a capture error that suggests the grant changed (a revoked
-        Screen Recording grant must not stay "granted" for another second).
+        Screen Recording grant must not stay "granted" for another second). It also
+        drops the remembered Screen Recording proof, so the next deep read decides
+        again. A read already in flight when this runs never stores its answer.
         """
+        self._cache_gen += 1
         if permission is None:
             self._cache = {}
+            self._sr_proven = False
             return
         perm = PermissionId(permission)
-        self._cache = {key: value for key, value in self._cache.items() if key[0] is not perm}
+        if PANE_FAMILY[perm] is PermissionId.SCREEN_RECORDING:
+            self._sr_proven = False
+        # A snapshot of the items: another thread may insert while this runs.
+        self._cache = {key: value for key, value in list(self._cache.items()) if key[0] is not perm}
 
     def check_deep(
         self, permission: PermissionId | str, *, target: str | None = None
@@ -641,7 +914,10 @@ class PermissionService:
         restricted, unavailable) and for one with no native request to make; a
         denial is a stable state and macOS will not ask again. It does not look at
         the installed-app verdict: outside the installed app an ask is still
-        possible after an explicit confirmation (:meth:`ensure` ``allow_outside_app``).
+        possible after an explicit confirmation (:meth:`ensure` ``allow_outside_app``),
+        and it does not look at the per-process cooldown either: the "Allow" button
+        is an explicit click, and an explicit click (``force_ask``) skips the
+        cooldown of the PROMPT-ONCE permissions, so the button never does nothing.
         """
         perm = PermissionId(permission)
         family = PANE_FAMILY[perm]
@@ -668,16 +944,27 @@ class PermissionService:
         *,
         fresh: bool = False,
         deep: bool = False,
+        automation_wait_s: float | None = None,
     ) -> PermissionState:
         """One state read, through the cache unless ``fresh``.
 
         ``deep`` adds the Screen Recording window-title oracle, which sees a grant
         the per-process-frozen preflight still denies (BUG-161) but enumerates the
         on-screen windows. Only a gesture entry or the watcher (never a hot path,
-        never the event loop) passes it; ``check()`` never does.
+        never the event loop) passes it; ``check()`` never does. An oracle-proven
+        grant is remembered (``_sr_proven``) so a shallow read does not undo it.
+
+        Automation reads go through :class:`_AutomationGuard`; ``automation_wait_s``
+        is how long this call may wait for the probe (default: the guard's hard
+        timeout, and nothing at all on an event-loop thread).
         """
         key = (perm, target)
+        family = PANE_FAMILY[perm]
         now = self._clock()
+        if family is PermissionId.AUTOMATION and not target:
+            # The aggregate read probes every running player and rewrites the
+            # consent record: a caller names a player.
+            return PermissionState.UNAVAILABLE
         if not fresh:
             entry = self._cache.get(key)
             # A shallow negative must not answer a deep read: the oracle may know better.
@@ -687,18 +974,36 @@ class PermissionService:
                 and (entry[2] or not deep or entry[0] in _READY_STATES)
             ):
                 return entry[0]
-        try:
+        gen = self._cache_gen
+        if family is PermissionId.AUTOMATION:
+            wait = automation_wait_s
+            if wait is None:
+                wait = 0.0 if _on_event_loop_thread() else self._automation.timeout_s
+            got = self._automation.read(
+                target, lambda: self._call_state(port, perm, target, deep), wait_s=wait
+            )
+            if got.kind == "value" and got.state is not None:
+                state = got.state
+            elif got.kind == "pending":
+                # Still answering: the last answer, else "unknown" (the port's own
+                # reading of a player it cannot see). Not cached.
+                return got.state if got.state is not None else PermissionState.NOT_DETERMINED
+            else:
+                return PermissionState.UNAVAILABLE
+        else:
             try:
-                raw = port.state(perm, target=target or None, deep=deep)
-            except TypeError:
-                # A hand-written port from before the JIT API: state(permission) only.
-                raw = port.state(perm)
-            state = PermissionState(raw)
-        except Exception:  # noqa: BLE001 - a native failure is "unavailable", never a crash
-            log.debug("The %s state read failed.", perm.value, exc_info=True)
-            state = PermissionState.UNAVAILABLE
+                state = self._call_state(port, perm, target, deep)
+            except Exception:  # noqa: BLE001 - a native failure is "unavailable", never a crash
+                log.debug("The %s state read failed.", perm.value, exc_info=True)
+                state = PermissionState.UNAVAILABLE
+        if family is PermissionId.SCREEN_RECORDING and gen == self._cache_gen:
+            if state is PermissionState.GRANTED:
+                self._sr_proven = True
+            elif self._sr_proven and state in _UNDECIDED_STATES:
+                state = PermissionState.GRANTED
         ttl = self._granted_ttl_s if state is PermissionState.GRANTED else self._negative_ttl_s
-        self._cache[key] = (state, now + ttl, deep)
+        if gen == self._cache_gen:
+            self._cache[key] = (state, now + ttl, deep)
         self._observe(perm, target, state)
         return state
 
@@ -711,26 +1016,40 @@ class PermissionService:
             and state in _DECIDED_STATES
             and key in self._last_native
         ):
-            with self._lock:
-                self._last_native.pop(key, None)
+            # One atomic dict operation, no lock: check() must stay lock-free (design
+            # 3.2 item 10), and a stamp a concurrent claim reads just before this is
+            # harmless (it only delays one re-ask).
+            self._last_native.pop(key, None)
 
     def note_reset(self, permission: PermissionId | str, *, target: str | None = None) -> None:
         """A ``tccutil reset`` happened: forget the per-process cooldown for it.
 
         The route that resets a permission calls this so "Ask again" really asks.
+        An Automation reset without a ``target`` forgets every player (``tccutil``
+        resets the whole Apple Events row of the app).
         """
         perm = PermissionId(permission)
         family = PANE_FAMILY[perm]
+        every_player = family is PermissionId.AUTOMATION and not target
         key = (family, (target or "") if family is PermissionId.AUTOMATION else "")
+
+        def matches(slot_key: _SlotKey) -> bool:
+            return slot_key[0] is family if every_player else slot_key == key
+
         with self._lock:
-            self._last_native.pop(key, None)
+            for stamp_key in [k for k in self._last_native if matches(k)]:
+                self._last_native.pop(stamp_key, None)
+            for stamp_key in [k for k in self._failed_native if matches(k)]:
+                self._failed_native.pop(stamp_key, None)
             # An episode that is still open remembers it already asked (one native
             # request per permission per episode); after a reset that memory
             # describes a decision macOS no longer has, so the next ensure may ask.
             for episode in self._episodes.values():
-                slot = episode.slots.get(key)
-                if slot is not None:
-                    slot.asked_at = None
+                for slot in episode.slots.values():
+                    if matches(slot.key):
+                        slot.asked_at = None
+                        slot.restart_hint = False
+                        slot.promoted = False
         self.invalidate(perm)
 
     # ------------------------------------------------------------ ensure
@@ -745,6 +1064,7 @@ class PermissionService:
         target: str | None = None,
         trace_id: UUID | str | None = None,
         allow_outside_app: bool = False,
+        force_ask: bool = False,
     ) -> EnsureResult:
         """Make sure a permission is granted, asking macOS at most once per episode.
 
@@ -752,7 +1072,10 @@ class PermissionService:
         ``interactive=False`` (a background consumer) never does and only records a
         background-origin episode. ``wait_s`` > 0 waits for the answer in 250 ms
         polls: WORKER THREADS ONLY (see the module docstring); 0 returns PENDING at
-        once. Never raises for a native failure.
+        once. ``force_ask`` marks an explicit click on an "Allow" button: it skips
+        the per-process cooldown of the PROMPT-ONCE permissions (never the
+        per-episode single request, never a denial). Never raises for a native
+        failure.
         """
         return self.ensure_all(
             [permission],
@@ -762,6 +1085,7 @@ class PermissionService:
             target=target,
             trace_id=trace_id,
             allow_outside_app=allow_outside_app,
+            force_ask=force_ask,
         )[0]
 
     def ensure_all(
@@ -774,6 +1098,7 @@ class PermissionService:
         target: str | None = None,
         trace_id: UUID | str | None = None,
         allow_outside_app: bool = False,
+        force_ask: bool = False,
     ) -> list[EnsureResult]:
         """``ensure`` for several permissions: ONE coalesced episode and ONE event.
 
@@ -781,12 +1106,21 @@ class PermissionService:
         sees one prompt for the pair. The results come back in request order.
         """
         wanted = [PermissionId(item) for item in permissions]
-        tgt = target or ""
+        tgt = _fixed_target(target)
         try:
             port = self._port()
             if not self._is_darwin(port):
                 return [self._not_required(perm) for perm in wanted]
-            plan = self._start(port, wanted, tgt, feature, interactive, trace_id, allow_outside_app)
+            plan = self._start(
+                port,
+                wanted,
+                target or "",
+                feature,
+                interactive,
+                trace_id,
+                allow_outside_app,
+                force_ask,
+            )
             if wait_s > 0 and interactive:
                 self._wait_sync(port, plan, wait_s)
             return self._finish(plan)
@@ -804,11 +1138,14 @@ class PermissionService:
         target: str | None = None,
         trace_id: UUID | str | None = None,
         allow_outside_app: bool = False,
+        force_ask: bool = False,
     ) -> EnsureResult:
         """``ensure`` for the event loop: native async, never pins an executor worker.
 
         The native request runs in ONE ``asyncio.to_thread`` call; the wait is
-        ``await asyncio.sleep`` polls that read the (cheap) state on the loop.
+        ``await asyncio.sleep`` polls, each of which reads the state on the loop
+        only when that read is cheap (a probe that can be slow, the window-title
+        oracle and Automation, takes one short thread hop instead).
         """
         results = await self.ensure_all_async(
             [permission],
@@ -818,6 +1155,7 @@ class PermissionService:
             target=target,
             trace_id=trace_id,
             allow_outside_app=allow_outside_app,
+            force_ask=force_ask,
         )
         return results[0]
 
@@ -831,15 +1169,25 @@ class PermissionService:
         target: str | None = None,
         trace_id: UUID | str | None = None,
         allow_outside_app: bool = False,
+        force_ask: bool = False,
     ) -> list[EnsureResult]:
         """The coalesced, loop-friendly form of :meth:`ensure_all`."""
         wanted = [PermissionId(item) for item in permissions]
-        tgt = target or ""
+        tgt = _fixed_target(target)
         try:
             port = self._port()
             if not self._is_darwin(port):
                 return [self._not_required(perm) for perm in wanted]
-            args = (port, wanted, tgt, feature, interactive, trace_id, allow_outside_app)
+            args = (
+                port,
+                wanted,
+                target or "",
+                feature,
+                interactive,
+                trace_id,
+                allow_outside_app,
+                force_ask,
+            )
             if self._all_ready_cheaply(port, wanted):
                 # Nothing to ask and no native call to make: no thread hop needed.
                 plan = self._start(*args)
@@ -852,12 +1200,13 @@ class PermissionService:
                     if remaining <= 0:
                         break
                     await asyncio.sleep(min(self._poll_s, remaining))
-                    if self._needs_deep_poll(plan):
-                        # The window-title oracle enumerates windows: one short
-                        # thread hop per poll, never a worker held across the sleep.
-                        await asyncio.to_thread(self._poll, port, plan, True)
+                    if self._needs_thread_poll(plan):
+                        # The window-title oracle enumerates windows and an
+                        # Automation probe can be slow: one short thread hop per
+                        # poll, never a worker held across the sleep.
+                        await asyncio.to_thread(self._poll, port, plan)
                     else:
-                        self._poll(port, plan, False)
+                        self._poll(port, plan)
             return self._finish(plan)
         except asyncio.CancelledError:
             raise
@@ -886,31 +1235,38 @@ class PermissionService:
         interactive: bool,
         trace_id: UUID | str | None,
         allow_outside_app: bool,
+        force_ask: bool = False,
     ) -> _Plan:
         """Read the states, open or join the episode, make the native request if allowed.
 
         Blocking (it may call into the OS), so the async path runs it in a thread.
-        It never waits for an answer.
+        It never waits for an answer. The window-title oracle runs only for an
+        interactive call that is not on an event-loop thread: a background consumer
+        and a loop caller read the preflight alone.
         """
         if feature not in PERMISSION_FEATURES:
-            log.debug("ensure() was called with the unknown feature %r.", feature)
+            log.warning("ensure() was called with the unknown feature %r.", feature)
+            feature = ""
         now = self._clock()
+        deep = interactive and not _on_event_loop_thread()
         items: list[_Item] = []
         for perm in wanted:
             family = PANE_FAMILY[perm]
-            tgt = target if family is PermissionId.AUTOMATION else ""
+            tgt = _fixed_target(target) if family is PermissionId.AUTOMATION else ""
             item = _Item(requested=perm, family=family, target=tgt)
-            if family is PermissionId.AUTOMATION and _player_name(tgt) is None:
+            if family is PermissionId.AUTOMATION and not tgt:
                 # Only the fixed player table may be asked about (nothing else is
-                # ever interpolated into the consent script).
-                log.debug("Automation was requested for %r, which is not a scriptable player.", tgt)
+                # ever interpolated into the consent script, echoed or published).
+                log.debug("Automation was requested for a target that is not a scriptable player.")
                 item.bad_target = True
                 item.state = PermissionState.UNAVAILABLE
             else:
-                item.state = self._read_state(port, perm, tgt, deep=True)
+                item.state = self._read_state(port, perm, tgt, deep=deep)
             items.append(item)
 
-        plan = _Plan(items=items, feature=feature, interactive=interactive)
+        plan = _Plan(
+            items=items, feature=feature, interactive=interactive, force_ask=force_ask, deep=deep
+        )
         pending = [item for item in items if item.state not in _READY_STATES]
         for item in items:
             if item.state in _READY_STATES:
@@ -920,10 +1276,17 @@ class PermissionService:
 
         episode = self._open_episode(feature, pending, interactive, trace_id, now)
         plan.episode = episode
-        for item in pending:
-            item.slot = episode.slots[item.slot_key]
-            item.slot.state = item.state
-            self._maybe_ask(port, plan, item, allow_outside_app, now)
+        try:
+            for item in pending:
+                item.slot = episode.slots[item.slot_key]
+                item.slot.state = item.state
+                item.slot.notified = False
+                if deep and item.family is PermissionId.SCREEN_RECORDING:
+                    item.slot.deep_at = now
+                self._maybe_ask(port, plan, item, allow_outside_app, now)
+        finally:
+            with self._lock:
+                episode.starting -= 1
         self._emit_episode(episode)
         self._ensure_watcher()
         return plan
@@ -948,45 +1311,132 @@ class PermissionService:
             return
         if not plan.interactive:
             return  # a background consumer never asks
+        # Everything below is decided afresh on every gesture: an earlier
+        # "unavailable" (a player that was not running) must not stick to the slot
+        # for the rest of the episode. A request that FAILED stays "unavailable"
+        # for a short while, so a retry loop does not hammer a broken native call.
+        slot.unavailable = not plan.force_ask and self._failed_recently(slot.key, now)
+        if not self._desktop_session_ok(port):
+            # No window server (a headless backend, an ssh session, a launchd job):
+            # nothing could be shown, and a native request there is a silently dead
+            # feature (P8). The same case is where a bundle-less process fools the
+            # usage-string guard below, so it is refused first.
+            slot.unavailable = True
+            return
         outside = self._outside_installed_app(port) and not allow_outside_app
         slot.outside = outside
+        slot.outside_bundle = outside and self._launched_as_bundle(port)
         if outside:
             return
         if not self._usage_string_ok(port, item.family):
             slot.unavailable = True
             return
-        if not self._claim(plan.episode, slot, now):
+        if not self._claim(plan.episode, slot, now, force=plan.force_ask):
             return
         # The state read above can be stale by now (another thread's request may
         # have been answered in between): never ask about a decision that exists.
-        current = self._read_state(port, item.requested, item.target, fresh=True, deep=True)
+        deep = self._deep_for(plan, slot, now)
+        current = self._read_state(port, item.requested, item.target, fresh=True, deep=deep)
         if current not in _UNDECIDED_STATES:
             item.state = current
             slot.state = current
             self._release_claim(slot)
             return
+        if item.family is PermissionId.AUTOMATION:
+            # The consent runner blocks for as long as the dialog is open (up to
+            # 120 s): it runs on its own daemon thread and the caller hears PENDING.
+            item.asked = True
+            self._begin_automation_ask(port, plan.episode, slot, item)
+            return
         outcome = self._request_native(port, item)
         item.asked = True
         if outcome == "unavailable":
+            # Nothing is in flight: a later attempt may try again (after the retry
+            # window, or at once for an explicit click).
             slot.unavailable = True
+            self._release_claim(slot, failed=True)
             return
-        fresh = self._read_state(port, item.requested, item.target, fresh=True, deep=True)
+        # Right after the request: an answer that arrived at once (a dialog answered
+        # in place, a switch already on) must be seen by THIS call, oracle included.
+        fresh = self._read_state(port, item.requested, item.target, fresh=True, deep=plan.deep)
         item.state = fresh
         slot.state = fresh
-        if (
-            outcome == "no_dialog"
-            and fresh in _UNDECIDED_STATES
-            and item.family is PermissionId.AUTOMATION
-        ):
-            # The consent runner finished without a dialog and nothing was
-            # decided: the player is not running. Nothing is in flight, so a
-            # later attempt (once the player runs) may ask again.
+        if plan.deep and item.family is PermissionId.SCREEN_RECORDING:
+            slot.deep_at = self._clock()
+
+    def _begin_automation_ask(self, port: Any, episode: _Episode, slot: _Slot, item: _Item) -> None:
+        """Run the (blocking) Automation request off the calling thread."""
+        done = threading.Event()
+        slot.asking = True
+        slot.ask_done = done
+
+        def work() -> None:
+            try:
+                outcome = self._request_native(port, item)
+                self._settle_automation_ask(port, slot, item, outcome)
+            except Exception:  # noqa: BLE001 - a thread must not die loudly
+                log.debug("Settling the Automation request failed.", exc_info=True)
+                slot.unavailable = True
+                self._release_claim(slot)
+            finally:
+                slot.asking = False
+                done.set()
+            self._emit_episode(episode)
+
+        try:
+            self._ask_runner(work)
+        except Exception:  # noqa: BLE001 - e.g. the process cannot start another thread
+            log.debug("The Automation request could not be started.", exc_info=True)
+            slot.asking = False
             slot.unavailable = True
+            done.set()
             self._release_claim(slot)
+
+    def _settle_automation_ask(self, port: Any, slot: _Slot, item: _Item, outcome: str) -> None:
+        """Read the answer after the consent runner returned and classify what it means."""
+        fresh = self._read_state(
+            port,
+            item.requested,
+            item.target,
+            fresh=True,
+            automation_wait_s=self._automation.timeout_s,
+        )
+        item.state = fresh
+        slot.state = fresh
+        if outcome == "unavailable":
+            slot.unavailable = True
+            self._release_claim(slot, failed=True)
+        elif fresh in _UNDECIDED_STATES:
+            if outcome == "no_dialog":
+                # The runner finished without a dialog and nothing was decided: the
+                # player is not running. Nothing is in flight, so a later attempt
+                # (once the player runs) may ask again.
+                slot.unavailable = True
+                self._release_claim(slot)
+            elif outcome == "timed_out":
+                # Nobody answered before the runner was killed: a slow user is not a
+                # missing player. The view is "not asked yet, may ask" again.
+                self._release_claim(slot)
 
     @staticmethod
     def _outside_installed_app(port: Any) -> bool:
         return bool(getattr(port, "outside_installed_app", False))
+
+    @staticmethod
+    def _launched_as_bundle(port: Any) -> bool:
+        return bool(getattr(port, "launched_as_bundle", False))
+
+    @staticmethod
+    def _desktop_session_ok(port: Any) -> bool:
+        """Whether a window server answers (a stub port without the probe is assumed to)."""
+        check = getattr(port, "has_desktop_session", None)
+        if check is None:
+            return True
+        try:
+            return bool(check())
+        except Exception:  # noqa: BLE001 - an unreadable session fails closed, like the port
+            log.debug("Reading the desktop session failed.", exc_info=True)
+            return False
 
     @staticmethod
     def _usage_string_ok(port: Any, family: PermissionId) -> bool:
@@ -1012,29 +1462,42 @@ class PermissionService:
             return "unavailable"
         return str(outcome)
 
-    def _claim(self, episode: _Episode, slot: _Slot, now: float) -> bool:
+    def _claim(self, episode: _Episode, slot: _Slot, now: float, *, force: bool = False) -> bool:
         """Atomically decide that THIS caller makes the native request.
 
         At most one per permission per episode, and at most one per cooldown
-        window per process. The decision and the stamp are one critical section,
-        so many threads racing here produce one request; the request itself runs
-        after the lock is released.
+        window per process. ``force`` (an explicit click on "Allow") skips both for
+        a PROMPT-ONCE permission, nothing else: a person re-clicking is not a retry
+        loop, and the button would otherwise do nothing for the ten minutes an
+        episode lives (the route rate limits the clicks). A DIALOG-class dialog may
+        still be open, so it is never asked twice. The decision and the stamp are one
+        critical section, so many threads racing here produce one request; the
+        request itself runs after the lock is released.
         """
         window = _REASK_AFTER_S.get(slot.family, math.inf)
+        skip_cooldown = force and REQUEST_CLASS.get(slot.family) is RequestClass.PROMPT_ONCE
         with self._lock:
-            if slot.asked_at is not None:
+            if slot.asked_at is not None and not skip_cooldown:
+                return False
+            if not force and self._failed_recently(slot.key, now):
                 return False
             last = self._last_native.get(slot.key)
-            if last is not None and now - last < window:
+            if not skip_cooldown and last is not None and now - last < window:
                 return False
             self._last_native[slot.key] = now
             slot.asked_at = now
             return True
 
-    def _release_claim(self, slot: _Slot) -> None:
+    def _release_claim(self, slot: _Slot, *, failed: bool = False) -> None:
         with self._lock:
             slot.asked_at = None
             self._last_native.pop(slot.key, None)
+            if failed:
+                self._failed_native[slot.key] = self._clock()
+
+    def _failed_recently(self, key: _SlotKey, now: float) -> bool:
+        failed_at = self._failed_native.get(key)
+        return failed_at is not None and now - failed_at < _FAILED_RETRY_S
 
     # ---- waiting ----------------------------------------------------------
 
@@ -1048,33 +1511,82 @@ class PermissionService:
                 continue
             if REQUEST_CLASS.get(item.family) not in _ASKABLE_CLASSES:
                 continue
-            if slot.asked_at is not None or slot.key in self._last_native:
+            if slot.asking or slot.asked_at is not None or slot.key in self._last_native:
                 return True
         return False
 
     @staticmethod
-    def _needs_deep_poll(plan: _Plan) -> bool:
+    def _needs_thread_poll(plan: _Plan) -> bool:
+        """Whether a poll may be slow: the oracle enumerates windows, Automation can hang."""
         return any(
-            item.family is PermissionId.SCREEN_RECORDING and item.state not in _READY_STATES
+            item.state not in _READY_STATES
+            and (
+                item.family is PermissionId.AUTOMATION
+                or (item.family is PermissionId.SCREEN_RECORDING and plan.deep)
+            )
             for item in plan.items
         )
 
-    def _poll(self, port: Any, plan: _Plan, deep: bool = True) -> None:
+    @staticmethod
+    def _pending_ask(plan: _Plan) -> threading.Event | None:
+        """The "finished" event of an Automation request still running for this plan."""
+        for item in plan.items:
+            slot = item.slot
+            if slot is not None and slot.asking and slot.ask_done is not None:
+                return slot.ask_done
+        return None
+
+    def _oracle_due(self, slot: _Slot, now: float) -> bool:
+        return slot.deep_at is None or now - slot.deep_at >= self._oracle_every_s
+
+    def _deep_for(self, plan: _Plan, slot: _Slot, now: float) -> bool:
+        """Whether this read may run the window-title oracle: a gesture entry, rate limited.
+
+        ``_start`` stamps the slot when it ran the oracle, so the claim re-read and the
+        polls of the same ``ensure`` call stay shallow (the one read right after a
+        request is the exception: it must see an answer that arrived at once).
+        """
+        return (
+            plan.deep
+            and slot.family is PermissionId.SCREEN_RECORDING
+            and self._oracle_due(slot, now)
+        )
+
+    def _poll(self, port: Any, plan: _Plan) -> None:
+        now = self._clock()
         for item in plan.items:
             slot = item.slot
             if slot is None or item.state in _READY_STATES:
                 continue
-            state = self._read_state(port, item.requested, item.target, fresh=True, deep=deep)
+            deep = self._deep_for(plan, slot, now)
+            state = self._read_state(
+                port,
+                item.requested,
+                item.target,
+                fresh=True,
+                deep=deep,
+                automation_wait_s=self._automation_refresh_wait_s,
+            )
             item.state = state
             slot.state = state
+            if deep:
+                slot.deep_at = now
 
     def _wait_sync(self, port: Any, plan: _Plan, wait_s: float) -> None:
         deadline = self._clock() + wait_s
+        # A second, real-time bound: while a request thread runs we wait on ITS
+        # event in real seconds, which an injected test clock does not advance.
+        real_deadline = time.monotonic() + wait_s
         while self._waiting(plan):
-            remaining = deadline - self._clock()
+            remaining = min(deadline - self._clock(), real_deadline - time.monotonic())
             if remaining <= 0:
                 break
-            self._sleep(min(self._poll_s, remaining))
+            step = min(self._poll_s, remaining)
+            ask = self._pending_ask(plan)
+            if ask is not None:
+                ask.wait(step)  # wakes the moment the request thread has finished
+            else:
+                self._sleep(step)
             self._poll(port, plan)
 
     # ---- results ----------------------------------------------------------
@@ -1087,8 +1599,15 @@ class PermissionService:
             if slot is None:
                 results.append(self._result(item, self._ready_view(item.state)))
                 continue
-            slot.state = item.state
-            results.append(self._result(item, self._classify(slot, item.state, now)))
+            # The slot is the shared truth (the watcher and the request thread write
+            # it too); the item may be one poll behind.
+            item.state = slot.state
+            if item.state in _READY_STATES:
+                # A grant is a grant (P2): a restart hint on the slot never turns a
+                # live GRANTED into a refusal, it only keeps the card honest.
+                results.append(self._result(item, self._ready_view(item.state)))
+            else:
+                results.append(self._result(item, self._classify(slot, item.state, now)))
         if plan.episode is not None:
             self._emit_episode(plan.episode)
         return results
@@ -1129,6 +1648,7 @@ class PermissionService:
                 target=item.target,
                 asking=view.asking,
                 outside_app=view.outside,
+                launched_as_bundle=view.outside_bundle,
             ),
             reason=view.reason,
             can_prompt=view.can_prompt,
@@ -1151,7 +1671,7 @@ class PermissionService:
     @staticmethod
     def _unavailable(perm: PermissionId, target: str) -> EnsureResult:
         family = PANE_FAMILY[perm]
-        tgt = target if family is PermissionId.AUTOMATION else ""
+        tgt = _fixed_target(target) if family is PermissionId.AUTOMATION else ""
         return EnsureResult(
             permission=perm,
             outcome=PermissionOutcome.UNAVAILABLE,
@@ -1172,13 +1692,20 @@ class PermissionService:
         The phase is ``os_dialog`` while macOS is (or may be) asking and ``blocked``
         once the user has to act. A PROMPT-ONCE dialog only points at Settings, so
         it turns ``blocked`` after :data:`_BLOCKED_AFTER_S` seconds or an app
-        refocus (UNVERIFIED how long a real dialog stays up; the figure is ours).
+        refocus, and a DIALOG-class dialog after :data:`_DIALOG_CEILING_S` without an
+        answer (UNVERIFIED how long a real dialog stays up; both figures are ours).
         """
-        if state in _READY_STATES:
-            return self._ready_view(state)
         family = slot.family
         cls = REQUEST_CLASS.get(family, RequestClass.NONE)
         has_pane = family in SETTINGS_PATH_TEXT
+        if slot.restart_hint:
+            # A real attempt failed although the state may read granted: the one
+            # honest advice left is "quit and reopen" (never an automatic restart).
+            return _View(
+                PermissionOutcome.NEEDS_SETTINGS, "restart_hint", "blocked", False, has_pane, False
+            )
+        if state in _READY_STATES:
+            return self._ready_view(state)
         if state is PermissionState.RESTRICTED:
             return _View(
                 PermissionOutcome.UNAVAILABLE, "restricted", "blocked", False, False, False
@@ -1191,7 +1718,13 @@ class PermissionService:
             return _View(PermissionOutcome.DENIED, "denied", "blocked", False, has_pane, False)
         if slot.outside:
             return _View(
-                PermissionOutcome.NEEDS_SETTINGS, "needs_settings", "blocked", True, has_pane, True
+                PermissionOutcome.NEEDS_SETTINGS,
+                "needs_settings",
+                "blocked",
+                True,
+                has_pane,
+                True,
+                slot.outside_bundle,
             )
         stamp = slot.asked_at if slot.asked_at is not None else self._last_native.get(slot.key)
         if stamp is None:
@@ -1200,8 +1733,17 @@ class PermissionService:
                 PermissionOutcome.PENDING, "not_determined", "blocked", True, has_pane, False
             )
         if cls is RequestClass.DIALOG:
+            if slot.asking or now - stamp < _DIALOG_CEILING_S:
+                return _View(
+                    PermissionOutcome.PENDING, "not_determined", "os_dialog", False, has_pane, False
+                )
             return _View(
-                PermissionOutcome.PENDING, "not_determined", "os_dialog", False, has_pane, False
+                PermissionOutcome.NEEDS_SETTINGS,
+                "needs_settings",
+                "blocked",
+                False,
+                has_pane,
+                False,
             )
         if slot.promoted or now - stamp >= _BLOCKED_AFTER_S:
             return _View(
@@ -1226,7 +1768,13 @@ class PermissionService:
         trace_id: UUID | str | None,
         now: float,
     ) -> _Episode:
-        """Get or create the one record for this (feature, permissions) key."""
+        """Get or create the one record for this feature and these permissions.
+
+        An open episode of the same feature that shares a permission with the
+        pending set is JOINED (and gains the slots it lacks), so granting one member
+        of a coalesced pair never opens a second record for the same permission.
+        The caller gets it with ``starting`` raised and must lower it again.
+        """
         slot_keys = sorted({item.slot_key for item in pending}, key=lambda k: (k[0].value, k[1]))
         key: _EpisodeKey = (feature, tuple((fam.value, tgt) for fam, tgt in slot_keys))
         origin = "user" if interactive else "background"
@@ -1234,25 +1782,22 @@ class PermissionService:
         with self._lock:
             episode = self._episodes.get(key)
             if episode is None:
-                slots: dict[_SlotKey, _Slot] = {}
-                for item in pending:
-                    slot_key = item.slot_key
-                    existing = slots.get(slot_key)
-                    probe = (
-                        PermissionId.EVENT_POSTING
-                        if item.requested is PermissionId.EVENT_POSTING
-                        else item.family
-                    )
-                    if existing is None:
-                        slots[slot_key] = _Slot(
-                            family=item.family, target=item.target, probe=probe, state=item.state
-                        )
-                    elif probe is PermissionId.EVENT_POSTING:
-                        existing.probe = probe
+                wanted_keys = set(slot_keys)
+                episode = next(
+                    (
+                        candidate
+                        for candidate in self._episodes.values()
+                        if candidate.feature == feature
+                        and not candidate.closed
+                        and wanted_keys & set(candidate.slots)
+                    ),
+                    None,
+                )
+            if episode is None:
                 episode = _Episode(
                     key=key,
                     feature=feature,
-                    slots=slots,
+                    slots={},
                     origin=origin,
                     trace_id=trace,
                     opened_ns=time.time_ns(),
@@ -1266,6 +1811,21 @@ class PermissionService:
                     episode.origin = "user"
                 if trace_id is not None:
                     episode.trace_id = trace
+            for item in pending:
+                slot_key = item.slot_key
+                existing = episode.slots.get(slot_key)
+                probe = (
+                    PermissionId.EVENT_POSTING
+                    if item.requested is PermissionId.EVENT_POSTING
+                    else item.family
+                )
+                if existing is None:
+                    episode.slots[slot_key] = _Slot(
+                        family=item.family, target=item.target, probe=probe, state=item.state
+                    )
+                elif probe is PermissionId.EVENT_POSTING:
+                    existing.probe = probe
+            episode.starting += 1
         return episode
 
     def _note_ready(self, item: _Item) -> None:
@@ -1278,19 +1838,24 @@ class PermissionService:
                 slot.state = item.state
             self._emit_episode(episode)
 
-    def _emit_episode(self, episode: _Episode) -> None:
+    def _emit_episode(self, episode: _Episode, fired: set[PermissionId] | None = None) -> None:
         """Bring subscribers up to date with an episode: grants, closing, one event.
 
         Idempotent: the dedup key is (permissions, feature, reason, phase, origin),
-        so a repeated silent call changes nothing.
+        so a repeated silent call changes nothing. An episode whose caller has not
+        finished its asks yet (``starting``) is left alone: nothing is claimed
+        there, so a classify would announce "blocked, can prompt" while the OS
+        dialog is still being requested. ``fired`` collects the families whose
+        listeners already ran in this pass, so two episodes for one permission
+        call a re-arm once.
         """
-        if episode.closed:
+        if episode.closed or episode.starting > 0:
             return
         now = self._clock()
         views: list[tuple[_Slot, _View]] = []
         newly_granted: list[_Slot] = []
         for slot in tuple(episode.slots.values()):
-            if slot.state in _READY_STATES:
+            if slot.state in _READY_STATES and not slot.restart_hint:
                 if not slot.notified:
                     newly_granted.append(slot)
                 continue
@@ -1300,9 +1865,9 @@ class PermissionService:
                 fresh = [slot for slot in newly_granted if not slot.notified]
                 for slot in fresh:
                     slot.notified = True
-            self._call_listeners([slot.family for slot in fresh])
+            self._call_listeners([slot.family for slot in fresh], fired)
         if not views:
-            self._close(episode, granted=True)
+            self._close(episode, granted=True, fired=fired)
             return
 
         reason, phase, view = self._aggregate(views)
@@ -1314,6 +1879,7 @@ class PermissionService:
             target=slot_primary.target,
             asking=phase == "os_dialog",
             outside_app=view.outside,
+            launched_as_bundle=view.outside_bundle,
         )
         can_prompt = any(candidate.can_prompt for _, candidate in views)
         can_open = any(candidate.can_open_settings for _, candidate in views)
@@ -1373,7 +1939,9 @@ class PermissionService:
         )
         return primary.reason, phase, primary
 
-    def _close(self, episode: _Episode, *, granted: bool) -> None:
+    def _close(
+        self, episode: _Episode, *, granted: bool, fired: set[PermissionId] | None = None
+    ) -> None:
         """End an episode once: remove it, tell the bus, call the listeners."""
         with self._lock:
             if episode.closed:
@@ -1391,7 +1959,7 @@ class PermissionService:
             permissions = tuple(slot.family.value for slot in episode.slots.values())
             trace = episode.trace_id
         if unnotified:
-            self._call_listeners([slot.family for slot in unnotified])
+            self._call_listeners([slot.family for slot in unnotified], fired)
         log.debug("Permission episode for %s ended (granted=%s).", episode.feature, granted)
         self._publish(
             PermissionResolved(
@@ -1404,12 +1972,24 @@ class PermissionService:
         )
 
     def outstanding(self) -> list[Episode]:
-        """The open episodes, oldest first: what a UI hydrates its cards from."""
+        """The open episodes, oldest first: what a UI hydrates its cards from.
+
+        An episode still being started (its asks are not finished) is not listed
+        yet, and ``permissions`` names only what is still missing (the same set the
+        ``PermissionNeeded`` event carries).
+        """
         with self._lock:
-            open_episodes = sorted(self._episodes.values(), key=lambda ep: ep.opened_ns)
+            open_episodes = sorted(
+                (ep for ep in self._episodes.values() if ep.starting <= 0 and ep.reason),
+                key=lambda ep: ep.opened_ns,
+            )
             return [
                 Episode(
-                    permissions=tuple(slot.family.value for slot in ep.slots.values()),
+                    permissions=tuple(
+                        slot.family.value
+                        for slot in ep.slots.values()
+                        if slot.state not in _READY_STATES or slot.restart_hint
+                    ),
                     feature=ep.feature,
                     reason=ep.reason,
                     phase=ep.phase,
@@ -1430,12 +2010,16 @@ class PermissionService:
 
         The window-focus handler calls it; a request that only offered "Open
         System Settings" has then done all it can, and the app may show its card.
+        The refocus also makes the next watcher pass run the Screen Recording
+        oracle at once (the user probably just flipped the switch).
         """
         with self._lock:
             episodes = list(self._episodes.values())
         for episode in episodes:
             changed = False
             for slot in tuple(episode.slots.values()):
+                if slot.family is PermissionId.SCREEN_RECORDING:
+                    slot.deep_at = None
                 if (
                     slot.asked_at is not None
                     and not slot.promoted
@@ -1452,6 +2036,13 @@ class PermissionService:
         What the watcher runs every two seconds; a status route calls it too, so
         an edge is emitted whichever path sees it first. Blocking (it reads the
         OS): not for the event loop.
+
+        Every slot is read independently: an Automation probe that hangs costs a
+        pass at most :data:`_AUTOMATION_REFRESH_WAIT_S` (and nothing once its
+        player is quarantined), and the episodes without Automation are read and
+        published FIRST, so a stuck player never delays a microphone grant. The
+        Screen Recording oracle runs only for an episode a gesture opened, and at
+        most every ``oracle_every_s`` seconds.
         """
         with self._lock:
             episodes = list(self._episodes.values())
@@ -1463,18 +2054,44 @@ class PermissionService:
             for episode in episodes:
                 self._close(episode, granted=True)
             return
-        now = self._clock()
+        episodes.sort(
+            key=lambda ep: any(slot.family is PermissionId.AUTOMATION for slot in ep.slots.values())
+        )
+        fired: set[PermissionId] = set()
         for episode in episodes:
             if episode.closed:
                 continue
+            now = self._clock()
             for slot in tuple(episode.slots.values()):
-                slot.state = self._read_state(port, slot.probe, slot.target, deep=True)
-            if any(slot.state not in _READY_STATES for slot in episode.slots.values()) and (
-                now - episode.touched > self._episode_ttl_s
-            ):
-                self._close(episode, granted=False)
+                self._refresh_slot(port, episode, slot, now)
+            if any(
+                slot.state not in _READY_STATES or slot.restart_hint
+                for slot in episode.slots.values()
+            ) and (now - episode.touched > self._episode_ttl_s):
+                self._close(episode, granted=False, fired=fired)
                 continue
-            self._emit_episode(episode)
+            self._emit_episode(episode, fired)
+
+    def _refresh_slot(self, port: Any, episode: _Episode, slot: _Slot, now: float) -> None:
+        """Re-read one slot; a failure of this read never costs the other slots theirs."""
+        deep = (
+            slot.family is PermissionId.SCREEN_RECORDING
+            and episode.origin == "user"
+            and self._oracle_due(slot, now)
+        )
+        try:
+            slot.state = self._read_state(
+                port,
+                slot.probe,
+                slot.target,
+                deep=deep,
+                automation_wait_s=self._automation_refresh_wait_s,
+            )
+        except Exception:  # noqa: BLE001 - one slot's failed read must not starve the others
+            log.debug("Re-reading the %s permission failed.", slot.family.value, exc_info=True)
+            return
+        if deep:
+            slot.deep_at = now
 
     # ------------------------------------------------------------ watcher
 
@@ -1593,10 +2210,13 @@ class PermissionService:
             self._watch_loop = None
             self._episodes = {}
             self._last_native = {}
+            self._failed_native = {}
             self._listeners = {}
             self._sink = None
         stop.set()
         self._cache = {}
+        self._sr_proven = False
+        self._automation.forget()
         if task is not None and loop is not None and not loop.is_closed():
             try:
                 loop.call_soon_threadsafe(task.cancel)
@@ -1628,9 +2248,16 @@ class PermissionService:
 
         return unsubscribe
 
-    def _call_listeners(self, families: Sequence[PermissionId]) -> None:
+    def _call_listeners(
+        self, families: Sequence[PermissionId], fired: set[PermissionId] | None = None
+    ) -> None:
+        """Run the listeners of these families; ``fired`` skips ones already run in this pass."""
         callbacks: list[Callable[[], None]] = []
         for family in families:
+            if fired is not None:
+                if family in fired:
+                    continue
+                fired.add(family)
             callbacks.extend(self._listeners.get(family, ()))
         if not callbacks:
             return
@@ -1673,22 +2300,136 @@ class PermissionService:
     # ------------------------------------------------------------ settings
 
     def open_settings(self, permission: PermissionId | str) -> bool:
-        """Open the System Settings pane of a permission. Never raises."""
+        """Open the System Settings pane of a permission. Never raises.
+
+        Light: it goes through the port's ``open_pane`` (no snapshot, so no
+        Automation probe and no oracle read) and needs a desktop session, not the
+        installed-app identity (opening a pane is not a prompt, design P6). A
+        user who goes to Settings also keeps their open episodes alive: the ten
+        minute clock starts again.
+        """
         perm = PermissionId(permission)
+        family = PANE_FAMILY[perm]
         try:
             port = self._port()
             if not self._is_darwin(port):
                 return False
-            operation = port.open_settings(PANE_FAMILY[perm])
-            return bool(getattr(operation, "ok", operation))
+            opener = getattr(port, "open_pane", None)
+            if opener is not None:
+                opened = bool(opener(family))
+            else:
+                # A hand-written port from before the light entry point.
+                operation = port.open_settings(family)
+                opened = bool(getattr(operation, "ok", operation))
         except Exception:  # noqa: BLE001 - opening a pane is best-effort
             log.debug("Opening the %s pane failed.", perm.value, exc_info=True)
             return False
+        if opened:
+            now = self._clock()
+            with self._lock:
+                for episode in self._episodes.values():
+                    if any(slot.family is family for slot in episode.slots.values()):
+                        episode.touched = now
+        return opened
+
+    # ------------------------------------------------------- failed attempts
+
+    def report_failed_use(
+        self,
+        permission: PermissionId | str,
+        *,
+        feature: str,
+        target: str | None = None,
+        trace_id: UUID | str | None = None,
+    ) -> EnsureResult:
+        """A consumer reports a REAL failed attempt to use a permission it was granted.
+
+        The one producer of the ``restart_hint`` reason. Screen Recording and Input
+        Monitoring may only take effect after a restart (the preflight is frozen per
+        process, a tap may see no events; community-observed, UNVERIFIED), so when a
+        real capture or tap failed while the live state reads granted, or the user
+        came back from Settings and the preflight is still negative, the honest
+        advice is "quit and reopen", never an automatic restart. Call it from the
+        capture or tap site after a real failure, from a user-started feature only.
+
+        Anything else (another permission, a state that does not fit) falls back to
+        a plain non-interactive :meth:`ensure`. The answer is the view of that
+        episode: ``restart_hint`` is never a grant, and a following ``ensure`` still
+        answers GRANTED while the state reads granted. Never raises.
+        """
+        perm = PermissionId(permission)
+        family = PANE_FAMILY[perm]
+        tgt = _fixed_target(target) if family is PermissionId.AUTOMATION else ""
+        try:
+            port = self._port()
+            if not self._is_darwin(port):
+                return self._not_required(perm)
+            if family not in _RESTART_HINT_FAMILIES:
+                return self.ensure(perm, feature=feature, interactive=False, target=tgt or None)
+            if feature not in PERMISSION_FEATURES:
+                log.warning("report_failed_use() was called with the unknown feature %r.", feature)
+                feature = ""
+            now = self._clock()
+            state = self._read_state(port, perm, tgt, fresh=True, deep=not _on_event_loop_thread())
+            promoted = self._promoted(feature, family)
+            if state not in _READY_STATES and not promoted:
+                return self.ensure(perm, feature=feature, interactive=False, trace_id=trace_id)
+            item = _Item(requested=perm, family=family, target=tgt, state=state)
+            episode = self._open_episode(feature, [item], True, trace_id, now)
+            try:
+                slot = episode.slots[item.slot_key]
+                slot.state = state
+                slot.restart_hint = True
+                item.slot = slot
+            finally:
+                with self._lock:
+                    episode.starting -= 1
+            self._emit_episode(episode)
+            self._ensure_watcher()
+            return self._result(item, self._classify(slot, state, now))
+        except Exception:  # noqa: BLE001 - reporting a failure never raises
+            log.debug("report_failed_use(%s) failed.", feature, exc_info=True)
+            return self._unavailable(perm, tgt)
+
+    def _promoted(self, feature: str, family: PermissionId) -> bool:
+        """Whether the user is known to have left to Settings and come back for this."""
+        with self._lock:
+            return any(
+                slot.promoted
+                for episode in self._episodes.values()
+                if episode.feature == feature
+                for slot in episode.slots.values()
+                if slot.family is family
+            )
 
 
 # ----------------------------------------------------------------------
 # Module helpers and the process singleton
 # ----------------------------------------------------------------------
+
+
+def _fixed_target(target: str | None) -> str:
+    """The Automation target if it is one of the fixed players, else ``""``.
+
+    Nothing a caller invents (an app name, a path, another bundle id) is ever echoed
+    into a result, an episode or an event.
+    """
+    return target if target and _player_name(target) is not None else ""
+
+
+def _on_event_loop_thread() -> bool:
+    """Whether the calling thread is running an asyncio loop (it must never block)."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        # Not an error: "no running loop in this thread" is exactly the answer.
+        return False
+    return True
+
+
+def _start_daemon_thread(work: Callable[[], None]) -> None:
+    """The default ``ask_runner``: run ``work`` on its own daemon thread."""
+    threading.Thread(target=work, name="permission-automation-ask", daemon=True).start()
 
 
 def _coerce_trace(trace_id: UUID | str | None) -> UUID:

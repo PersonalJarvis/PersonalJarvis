@@ -21,7 +21,10 @@ Results are real :class:`EnsureResult` objects whose sentences come from the sam
 fixed templates as the real service, so a consumer that renders ``user_detail`` or
 forwards ``agent_detail`` is tested against the production wording. The fake's own
 rule is only the one the real service guarantees: ``result.granted`` is true for
-GRANTED and NOT_REQUIRED and for nothing else.
+GRANTED and NOT_REQUIRED and for nothing else. Like the real service it folds
+EVENT_POSTING into ACCESSIBILITY (one script, one answer for both ids) and it says
+``asked`` only for an answer a real request could have produced (PENDING or
+NEEDS_SETTINGS): a denial, an impossibility and a grant never ask.
 
 Pair it with the real service and ``FakeTCC`` (``tests/fakes/fake_tcc.py``) when the
 test is about macOS behaviour; use this fake when the test is about the consumer.
@@ -71,6 +74,11 @@ class GateCall:
     target: str | None = None
     trace_id: UUID | str | None = None
     allow_outside_app: bool = False
+    force_ask: bool = False
+
+
+# Outcomes a native request can have produced: nothing else is ever "asked".
+_ASKING_OUTCOMES = frozenset({PermissionOutcome.PENDING, PermissionOutcome.NEEDS_SETTINGS})
 
 
 def make_result(
@@ -146,7 +154,7 @@ class FakePermissionService:
         One outcome is sticky. Several are served one per ``ensure`` call, and the
         last one sticks. A ready-made :class:`EnsureResult` is returned as it is.
         """
-        perm = PermissionId(permission)
+        perm = PANE_FAMILY[PermissionId(permission)]
         if not outcomes:
             raise ValueError("script() needs at least one outcome")
         resolved = [
@@ -161,12 +169,14 @@ class FakePermissionService:
         self.script(permission, PermissionOutcome.GRANTED)
 
     def _head(self, permission: PermissionId) -> PermissionOutcome | EnsureResult:
+        permission = PANE_FAMILY[permission]
         queue = self._queued.get(permission)
         if queue:
             return queue[0]
         return self._sticky.get(permission, self._default)
 
     def _next(self, permission: PermissionId) -> PermissionOutcome | EnsureResult:
+        permission = PANE_FAMILY[permission]
         queue = self._queued.get(permission)
         if queue:
             return queue.popleft()
@@ -194,6 +204,7 @@ class FakePermissionService:
         target: str | None = None,
         trace_id: UUID | str | None = None,
         allow_outside_app: bool = False,
+        force_ask: bool = False,
     ) -> EnsureResult:
         return self._answer(
             "ensure",
@@ -204,6 +215,7 @@ class FakePermissionService:
             target=target,
             trace_id=trace_id,
             allow_outside_app=allow_outside_app,
+            force_ask=force_ask,
         )
 
     async def ensure_async(
@@ -216,6 +228,7 @@ class FakePermissionService:
         target: str | None = None,
         trace_id: UUID | str | None = None,
         allow_outside_app: bool = False,
+        force_ask: bool = False,
     ) -> EnsureResult:
         return self._answer(
             "ensure_async",
@@ -226,6 +239,7 @@ class FakePermissionService:
             target=target,
             trace_id=trace_id,
             allow_outside_app=allow_outside_app,
+            force_ask=force_ask,
         )
 
     def ensure_all(self, permissions: Any, *, feature: str, **kwargs: Any) -> list[EnsureResult]:
@@ -248,6 +262,7 @@ class FakePermissionService:
         target: str | None,
         trace_id: UUID | str | None,
         allow_outside_app: bool,
+        force_ask: bool,
     ) -> EnsureResult:
         perm = PermissionId(permission)
         self.calls.append(
@@ -260,6 +275,7 @@ class FakePermissionService:
                 target=target,
                 trace_id=trace_id,
                 allow_outside_app=allow_outside_app,
+                force_ask=force_ask,
             )
         )
         scripted = self._next(perm)
@@ -268,7 +284,7 @@ class FakePermissionService:
         return make_result(
             perm,
             scripted,
-            asked=interactive and scripted is not PermissionOutcome.GRANTED,
+            asked=interactive and scripted in _ASKING_OUTCOMES,
             target=target or "",
         )
 

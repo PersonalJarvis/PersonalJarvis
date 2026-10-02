@@ -527,13 +527,16 @@ class PermissionNeeded(Event):
 
 @dataclass(frozen=True, slots=True)
 class PermissionResolved(Event):
-    """The episode ended: the permission is now granted, or it was withdrawn.
+    """The episode ended: the permission is now granted, or the episode was closed unresolved.
 
     Published by the permission service's episode watcher once the live state
     changes, so consumers that parked on a missing permission (the wake word
     loop, a hotkey backend) re-arm in process instead of polling. ``granted``
     is the live verdict when the episode closed; a consumer that needs the
-    permission acts on ``True`` only.
+    permission acts on ``True`` only. ``False`` means nobody touched the episode
+    for ten minutes and the permission was still not granted at the last read
+    (it does not mean the user withdrew anything), and a grant that arrives later
+    is no longer announced until a gesture opens a new episode.
     """
 
     permissions: tuple[str, ...] = ()

@@ -241,7 +241,9 @@ def build_world(
         scenario.prepare(tcc)
         install_port(monkeypatch, tcc.port(platform))  # type: ignore[arg-type]
         bus = _RecordingBus()
-        service = PermissionService(watch_interval_s=3600.0)
+        # The Automation request normally runs on its own daemon thread; the table
+        # asserts the final outcome, so it runs inline here.
+        service = PermissionService(watch_interval_s=3600.0, ask_runner=lambda work: work())
         service.attach_bus(bus, bus_loop)
         services.append(service)
         return World(service, tcc, bus, bus_loop)

@@ -8,7 +8,7 @@ Mac: every macOS behaviour is a MODEL (see the fidelity ledger in ``fake_tcc.py`
 
 The key sets of the snapshot cross Python, JSON and the TypeScript twin the frontend
 reads (AP-4): the TypedDicts of ``permissions_routes`` are the Python side, read back
-here against the real answer and, once it exists, against the TypeScript interfaces.
+here against the real answer and against the TypeScript interfaces.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import subprocess
 import threading
 import time
 from collections.abc import Iterator
@@ -31,7 +32,7 @@ from fastapi.testclient import TestClient
 from jarvis.core.events import PERMISSION_FEATURES, PermissionResolved
 from jarvis.platform import permission_service as service_module
 from jarvis.platform.permission_service import Episode, PermissionService, get_permission_service
-from jarvis.platform.permissions import SystemPermissionPort
+from jarvis.platform.permissions import PermissionId, SystemPermissionPort
 from jarvis.ui.web import permissions_routes as routes
 from jarvis.ui.web.control_auth import require_control_key_or_session
 from jarvis.ui.web.permissions_routes import (
@@ -46,8 +47,9 @@ from tests.fakes.fake_tcc import DMG_BUNDLE_ID, DialogPolicy, FakeTCC, TccServic
 _MUSIC = "com.apple.Music"
 _SPOTIFY = "com.spotify.client"
 _REPO_ROOT = Path(__file__).resolve().parents[4]
-# The TypeScript twin of the snapshot types. The frontend stage creates it; until it
-# exists the TypedDicts are checked against the real answer only.
+# The TypeScript twin of the snapshot types (interfaces PermissionSnapshot,
+# PermissionAppIdentity, PermissionRow, PermissionNeededEpisode). It must exist: a
+# missing file is a failure, never a skip.
 _TS_TWIN = _REPO_ROOT / "jarvis/ui/web/frontend/src/lib/permissionSnapshot.ts"
 
 _REMOVED_KEYS = {"features", "wanted", "active", "identity_reset", "restart_required", "foreground"}
@@ -286,16 +288,95 @@ def _ts_interface(name: str) -> dict[str, str]:
     ],
 )
 def test_typescript_twin_matches_the_typed_dict(typed_dict: type, interface: str) -> None:
-    if not _TS_TWIN.exists():
-        pytest.skip(
-            f"{_TS_TWIN.relative_to(_REPO_ROOT)} does not exist yet: the frontend stage creates it "
-            "with the interfaces PermissionSnapshot, PermissionAppIdentity, PermissionRow and "
-            "PermissionNeededEpisode, and this parity turns on by itself"
-        )
     py_fields = _typed_keys(typed_dict)
     ts_fields = _ts_interface(interface)
     extra, missing = set(ts_fields) - py_fields, py_fields - set(ts_fields)
     assert not extra and not missing, f"{interface} drift: extra={extra}, missing={missing}"
+
+
+def _ts_union(name: str) -> set[str]:
+    source = _TS_TWIN.read_text(encoding="utf-8")
+    match = re.search(rf"export type {name} =((?:\s*\|?\s*\"[a-z_]+\")+);", source)
+    assert match, f"union {name} missing from {_TS_TWIN.name}"
+    return set(re.findall(r'"([a-z_]+)"', match.group(1)))
+
+
+def test_typescript_twin_speaks_the_same_state_outcome_and_row_vocabulary() -> None:
+    """The values behind the interfaces cross the same five layers (AP-4)."""
+    from jarvis.platform.permission_service import PermissionOutcome
+    from jarvis.platform.permissions import PermissionId, PermissionState
+
+    assert _ts_union("PermissionState") == {state.value for state in PermissionState}
+    assert _ts_union("PermissionOutcome") == {outcome.value for outcome in PermissionOutcome}
+
+    source = _TS_TWIN.read_text(encoding="utf-8")
+    ids = re.search(r"export const PERMISSION_ROW_IDS = \[(.*?)\] as const;", source, re.S)
+    assert ids, "PERMISSION_ROW_IDS missing"
+    row_ids = re.findall(r'"([a-z_]+)"', ids.group(1))
+    assert row_ids == [permission.value for permission in routes._ROW_ORDER]
+    # PermissionId = the rows plus the one alias the routes still accept.
+    assert set(row_ids) | {"event_posting"} == {permission.value for permission in PermissionId}
+    assert "event_posting" in source
+
+
+@pytest.mark.parametrize(
+    ("typed_dict", "interface"),
+    [
+        (routes.EnsurePayload, "PermissionEnsurePayload"),
+        (routes.OperationPayload, "PermissionOperationPayload"),
+        (routes.RateLimitedPayload, "PermissionRateLimitedPayload"),
+    ],
+)
+def test_typescript_twin_matches_the_answer_typed_dicts(typed_dict: type, interface: str) -> None:
+    """The three answer shapes of the ask routes are twinned key for key as well (AP-4)."""
+    py_fields = _typed_keys(typed_dict)
+    ts_fields = _ts_interface(interface)
+    extra, missing = set(ts_fields) - py_fields, py_fields - set(ts_fields)
+    assert not extra and not missing, f"{interface} drift: extra={extra}, missing={missing}"
+
+
+@pytest.mark.parametrize(
+    ("interface", "field", "declared"),
+    [
+        ("PermissionRow", "id", "PermissionRowId"),
+        ("PermissionRow", "status", "PermissionState"),
+        ("PermissionNeededEpisode", "feature", "PermissionFeature"),
+        ("PermissionNeededEpisode", "reason", "PermissionNeededReason"),
+        ("PermissionNeededEpisode", "phase", "PermissionNeededPhase"),
+        ("PermissionNeededEpisode", "origin", "PermissionNeededOrigin"),
+        ("PermissionEnsurePayload", "outcome", "PermissionOutcome"),
+        ("PermissionEnsurePayload", "state", "PermissionState"),
+    ],
+)
+def test_typescript_twin_declares_the_enumerated_fields_with_their_union(
+    interface: str, field: str, declared: str
+) -> None:
+    """A twin that widened an enumerated field to ``string`` would let a new value through."""
+    assert _ts_interface(interface)[field] == declared
+
+
+def test_the_real_answers_carry_exactly_the_keys_of_their_typed_dicts(
+    make_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = make_env(default_policy=DialogPolicy.NEVER_ANSWERED)
+    monkeypatch.setattr(subprocess, "run", env.tcc.run_tccutil)
+
+    ensured = env.post("microphone/request").json()
+    refused = env.post("microphone/request")  # inside the route's own cooldown
+    opened = env.post("microphone/open-settings").json()
+    env.tcc.deny("microphone")
+    reset = env.post("microphone/reset").json()
+
+    assert set(ensured) == _typed_keys(routes.EnsurePayload)
+    assert set(opened) == _typed_keys(routes.OperationPayload)
+    assert set(reset) == _typed_keys(routes.OperationPayload)
+    assert set(opened["permission"]) == _typed_keys(PermissionRow)
+    if refused.status_code == 429:  # the harness limiter has no cooldown: cover the 429 shape
+        assert set(refused.json()) == _typed_keys(routes.RateLimitedPayload)
+    limited = routes._rate_limited(
+        routes._Refusal("permission", 4.2), "request", PermissionId.MICROPHONE
+    )
+    assert set(json.loads(limited.body)) == _typed_keys(routes.RateLimitedPayload)
 
 
 # ----------------------------------------------------------------------
@@ -480,7 +561,9 @@ def test_a_headless_session_offers_no_dialog_and_no_window(make_env) -> None:
         assert not (row["can_request"] or row["can_open_settings"] or row["can_reset"]), row["id"]
 
 
-def test_outside_the_installed_app_asking_stays_possible_but_resetting_does_not(make_env) -> None:
+def test_outside_the_installed_app_asking_and_opening_a_pane_stay_possible_but_resetting_does_not(
+    make_env,
+) -> None:
     env = make_env(bundle_id=None, bundle_path=None)
 
     snapshot = env.status()
@@ -491,7 +574,9 @@ def test_outside_the_installed_app_asking_stays_possible_but_resetting_does_not(
     row = next(row for row in snapshot["permissions"] if row["id"] == "microphone")
     assert row["can_request"] is True  # after an explicit confirmation naming the grantee
     assert row["can_reset"] is False  # tccutil is scoped to the installed app's own bundle id
-    assert row["can_open_settings"] is False  # the port still refuses it outside the app
+    # Opening a pane is not an action on the permission (P6): it needs a desktop
+    # session, not the installed-app identity.
+    assert row["can_open_settings"] is True
 
 
 def test_the_installed_app_reports_a_stable_identity(make_env) -> None:
@@ -725,10 +810,12 @@ def test_an_automation_probe_that_hangs_is_bounded_and_not_piled_up(
 ) -> None:
     env = make_env(installed_players=[_MUSIC], running_players=[_MUSIC])
     release = threading.Event()
+    reached = threading.Event()  # set by the stub itself: no assertion races a slow thread start
     entered: list[int] = []
 
     def hanging(service: PermissionService):
         entered.append(1)
+        reached.set()
         release.wait(10)
         return routes._worst_automation([])
 
@@ -744,6 +831,7 @@ def test_an_automation_probe_that_hangs_is_bounded_and_not_piled_up(
         for row in (first, second):
             assert row["status"] == "unavailable" and row["can_request"] is False
             assert row["detail"].startswith("The Automation check did not answer in time.")
+        assert reached.wait(5)
         assert entered == [1]  # one hung thread, never a second
     finally:
         release.set()

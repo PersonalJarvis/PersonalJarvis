@@ -277,8 +277,10 @@ class RequestClass(StrEnum):
 
     # An OS dialog with an answer button: the user can allow or deny in place.
     DIALOG = "dialog"
-    # A request shows at most one dialog, and it only offers "Open System
-    # Settings": the user still has to flip a switch there.
+    # A request shows at most one dialog that, as far as we know, only offers
+    # "Open System Settings": the user still has to flip a switch there. That
+    # shape is community-observed, not documented by Apple (UNVERIFIED), and the
+    # policy treats it as the cautious reading.
     PROMPT_ONCE = "prompt_once"
     # The OS prompts by itself on first access; there is no request call to make.
     # No :class:`PermissionId` has this class today (Files & Folders is not a
@@ -343,9 +345,13 @@ def settings_path_text(permission_id: PermissionId | str) -> str | None:
 #   no_dialog    - nothing is open: access was already granted or decided, the
 #                  Automation target was not running, or the request was
 #                  synchronous and has finished: read ``state()`` for the answer.
+#   timed_out    - Automation only: the consent runner was killed after waiting
+#                  for an answer nobody gave. Not "the player is not running":
+#                  the user may simply not have looked yet, so the caller may ask
+#                  again later.
 #   unavailable  - the request could not be made (not macOS, a missing framework
 #                  or symbol, an unusable target, or a native error).
-NativeRequestOutcome = Literal["dialog_shown", "no_dialog", "unavailable"]
+NativeRequestOutcome = Literal["dialog_shown", "no_dialog", "timed_out", "unavailable"]
 
 # Apple Event Manager constants for AEDeterminePermissionToAutomateTarget
 # (macOS 10.14+). Four-char codes are big-endian uint32; the OSStatus values
@@ -728,6 +734,10 @@ class SystemPermissionPort:
         # change while this process runs. Caching it is NOT a cached
         # permission probe — every TCC state read in _state() stays live.
         self._bundle_identity_cache: tuple[str | None, str | None, bool, bool] | None = None
+        # The pane URL THIS process last opened in System Settings (operation
+        # state, not a probe): a running Settings is closed before an open only
+        # when it may show another pane than the one asked for.
+        self._last_opened_url: str | None = None
 
     @property
     def platform(self) -> PlatformName:
@@ -803,6 +813,39 @@ class SystemPermissionPort:
         if self.platform != "darwin":
             return True
         return not self._stable_identity()
+
+    @property
+    def launched_as_bundle(self) -> bool:
+        """Whether the main bundle is a real ``.app`` (cached; ``False`` off macOS).
+
+        Together with :attr:`outside_installed_app` it tells a copy run from a
+        mounted disk image or the Downloads folder (a bundle, wrongly placed:
+        the grantee is Personal Jarvis itself) from a terminal or IDE run (no
+        bundle: the grantee is the app that started it).
+        """
+        if self.platform != "darwin":
+            return False
+        return bool(self._bundle_identity()[2])
+
+    def has_desktop_session(self) -> bool:
+        """Whether a window server answers, so a dialog or a pane can be shown at all.
+
+        One AppKit round trip: a status route or an ask path calls it, a hot path
+        does not. Fails closed (``False``) when AppKit cannot be read, like the
+        ``headless`` flag of the snapshot. Off macOS it is the display probe.
+        """
+        if self.platform != "darwin":
+            from .probes import display_present
+
+            return bool(display_present())
+        appkit = self._load("AppKit")
+        if appkit is None:
+            return False
+        try:
+            return appkit.NSWorkspace.sharedWorkspace().frontmostApplication() is not None
+        except Exception:  # noqa: BLE001 - fail closed for prompt safety
+            log.debug("Could not read the macOS desktop session.", exc_info=True)
+            return False
 
     def usage_string_present(self, permission_id: PermissionId | str) -> bool:
         """Whether the main bundle carries the usage string the permission needs.
@@ -1524,9 +1567,11 @@ class SystemPermissionPort:
         EVENT_POSTING is an alias of ACCESSIBILITY for asking, so both make the
         one Accessibility request. Automation needs ``target`` (a bundle id from
         :data:`AUTOMATION_TARGETS`); it runs through a killable child, never
-        launches the player, and is synchronous: when it returns, any dialog has
-        been answered or torn down. A failure is logged at debug and reported
-        as ``"unavailable"``.
+        launches the player, and is synchronous: it returns once the dialog was
+        answered or the child was killed after the timeout (``"timed_out"``; that
+        macOS then tears the dialog down is UNVERIFIED), so it can block for
+        minutes and belongs on a worker thread. A failure is logged at debug
+        and reported as ``"unavailable"``.
         """
         try:
             permission = PermissionId(permission_id)
@@ -1616,10 +1661,13 @@ class SystemPermissionPort:
         try:
             completed = self._automation_consent_runner(_automation_consent_script(target))
         except subprocess.TimeoutExpired:
-            # The runner has killed the child, so no dialog is left open; the
-            # state read tells whether the user answered in time.
+            # The runner has killed the child. Whether macOS tears down the
+            # dialog the child raised is not documented by Apple (UNVERIFIED), so
+            # the state read stays the only truth about an answer, and the caller
+            # hears "timed_out" rather than "no_dialog" (a player that is not
+            # running): the user may simply not have looked yet.
             log.debug("The Automation consent for %s was not answered in time.", target)
-            return "no_dialog"
+            return "timed_out"
         if completed is None:
             return "unavailable"
         log.debug(
@@ -1727,6 +1775,33 @@ class SystemPermissionPort:
             after,
         )
 
+    def open_pane(self, permission_id: PermissionId | str) -> bool:
+        """Open the System Settings pane of a permission; nothing else. Never raises.
+
+        The light twin of :meth:`open_settings`: no snapshot, so no Automation
+        probe, no window-title oracle and no consent-file write. Opening a pane is
+        not a prompt and not an action on the permission, so it does not need the
+        installed-app identity (design P6: identity decides who may RESET and
+        whether we may auto-ASK, not who may open a pane); it only needs a desktop
+        session. ``False`` when there is no pane, no session or the open failed.
+        """
+        try:
+            permission = PermissionId(permission_id)
+        except (ValueError, TypeError):
+            log.debug("Opening the pane of the unknown permission %r ignored.", permission_id)
+            return False
+        if self.platform != "darwin" or permission not in _SETTINGS_URLS:
+            return False
+        try:
+            if not self.has_desktop_session():
+                log.debug("No desktop session: the %s pane is not opened.", permission.value)
+                return False
+            opened = self._open_settings(permission)
+        except Exception:  # noqa: BLE001 - the native settings boundary
+            log.debug("Opening the %s pane failed.", permission.value, exc_info=True)
+            return False
+        return opened
+
     def _quit_system_settings(self, appkit: Any) -> None:
         """Close a running System Settings so the pane deep link can navigate.
 
@@ -1761,9 +1836,19 @@ class SystemPermissionPort:
         foundation = self._load("Foundation")
         if appkit is None or foundation is None:
             return False
-        self._quit_system_settings(appkit)
-        url = foundation.NSURL.URLWithString_(_SETTINGS_URLS[permission_id])
-        return bool(appkit.NSWorkspace.sharedWorkspace().openURL_(url))
+        url_text = _SETTINGS_URLS[permission_id]
+        # Terminate a running Settings only when it may show ANOTHER pane than the
+        # one asked for: the anchor of a running instance is ignored (observed on
+        # macOS 15.7, not documented, UNVERIFIED), but closing the window the user
+        # already has on the right pane for no reason is rude. What this process
+        # last opened is all we know; the user may have navigated since.
+        if self._last_opened_url != url_text:
+            self._quit_system_settings(appkit)
+        url = foundation.NSURL.URLWithString_(url_text)
+        opened = bool(appkit.NSWorkspace.sharedWorkspace().openURL_(url))
+        if opened:
+            self._last_opened_url = url_text
+        return opened
 
     def reset(
         self,
@@ -1869,6 +1954,77 @@ class SystemPermissionPort:
             f"{_LABELS[permission_id]} was reset - the system prompt can "
             "appear again on the next request.",
             self.snapshot(active_features=active_features),
+        )
+
+    def reset_row(
+        self, permission_id: PermissionId, *, dry_run: bool = False
+    ) -> PermissionOperation:
+        """:meth:`reset` without the two snapshots: only ``tccutil``, nothing is probed.
+
+        The same rules (own bundle id, installed app only, a dry run changes
+        nothing) and the same answer shape, with an empty ``snapshot``: the caller
+        reads the one permission it cares about before and after. No Automation
+        probe, no window-title oracle and no consent-file write happen here.
+        """
+        service = _TCC_RESET_SERVICES.get(permission_id)
+        label = _LABELS[permission_id]
+
+        def refused(message: str) -> PermissionOperation:
+            return PermissionOperation(
+                False, permission_id.value, "reset", False, dry_run, False, message, {}
+            )
+
+        if self.platform != "darwin" or service is None:
+            return refused(f"{label} has no resettable macOS record.")
+        if dry_run:
+            return PermissionOperation(
+                True,
+                permission_id.value,
+                "reset",
+                False,
+                True,
+                False,
+                f"Would reset this app's {label} record.",
+                {},
+            )
+        bundle_id, _path, _launched, stable = self._bundle_identity()
+        if not stable or not bundle_id:
+            return refused(
+                "Relaunch Personal Jarvis from its installed app before resetting a permission."
+            )
+        import subprocess  # lazy: this method is darwin-only at runtime
+
+        from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
+
+        try:
+            result = subprocess.run(
+                ["/usr/bin/tccutil", "reset", service, bundle_id],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+                creationflags=NO_WINDOW_CREATIONFLAGS,
+            )
+            performed = result.returncode == 0
+            detail = (result.stderr or result.stdout or "").strip()
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            # Not silent: the reason travels on as the operation's own detail.
+            performed = False
+            detail = str(exc)
+        if not performed:
+            return refused(
+                f"Could not reset the {label} record: {detail[-200:] or 'unknown error'}"
+            )
+        self._restart_required.discard(permission_id)
+        return PermissionOperation(
+            True,
+            permission_id.value,
+            "reset",
+            True,
+            False,
+            False,
+            f"{label} was reset - the system prompt can appear again on the next request.",
+            {},
         )
 
     def open_settings(

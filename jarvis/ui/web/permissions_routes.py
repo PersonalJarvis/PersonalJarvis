@@ -18,8 +18,10 @@ The Automation row is computed only while ``[ducking].enabled`` is on or the cal
 passes ``?include=automation``: reading it asks a running player, which a user who
 never switched the feature on should never meet. Screen Recording is the SHALLOW
 preflight here (no window enumeration); that preflight is frozen per process and can
-only go stale NEGATIVE (BUG-161), so a grant given in System Settings shows up at
-once only while an episode watches it. Off macOS every row is ``not_required`` and
+only go stale NEGATIVE (BUG-161), so a grant given in System Settings shows up only
+once the service has PROVEN it (an ``ensure`` or the episode watcher runs the
+window-title oracle, rate limited) and then keeps reading granted until a capture
+error invalidates it. Off macOS every row is ``not_required`` and
 ``needed`` is empty. ``event_posting`` is an alias of ``accessibility`` and has no
 row of its own.
 
@@ -42,6 +44,7 @@ from fastapi import APIRouter, Body, Depends, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, field_validator
 
+from jarvis.core import control_key as _control_key
 from jarvis.core.events import PERMISSION_FEATURES
 from jarvis.platform import permissions as _permissions_module
 from jarvis.platform.permission_service import (
@@ -61,7 +64,9 @@ from jarvis.platform.permissions import (
     settings_path_text,
 )
 
-from .control_auth import require_control_key_or_session
+from .control_auth import _bearer_token, require_control_key_or_session
+from .missions_auth import validate_token
+from .surface_security import COOKIE_NAME
 
 log = logging.getLogger(__name__)
 
@@ -235,6 +240,10 @@ _KEYCHAIN_DECLINED: Final = (
 _AUTOMATION_PROBE_TIMEOUT_S: Final = 2.5
 _REFRESH_TIMEOUT_S: Final = 2.5
 _AUTOMATION_ASK_WAIT_S: Final = 2.0
+# How long ONE Automation ask waits for the consent runner before it answers PENDING:
+# long enough to see "the player is not running" (the guarded script ends at once),
+# short enough that two candidates still fit inside the wait above.
+_AUTOMATION_SETTLE_S: Final = 0.75
 
 # Rate limits for the two routes that can make the OS show something: /request and
 # /open-settings. A cooldown per (action, permission) plus a global cap, so a UI bug
@@ -407,26 +416,34 @@ def _worst_automation(states: list[PermissionState]) -> PermissionState:
     return PermissionState.GRANTED
 
 
-def _read_automation(service: PermissionService) -> PermissionState:
+def _read_automation(service: PermissionService) -> list[PermissionState]:
     """Read-only, per player: never the aggregate read (it rewrites the consent record)."""
-    return _worst_automation(
-        [
-            service.check(PermissionId.AUTOMATION, target=bundle_id)
-            for bundle_id in _AUTOMATION_PLAYERS
-        ]
+    return [
+        service.check(PermissionId.AUTOMATION, target=bundle_id)
+        for bundle_id in _AUTOMATION_PLAYERS
+    ]
+
+
+def _automation_players(
+    service: PermissionService, runtime: _Runtime
+) -> list[PermissionState] | None:
+    """One state per scriptable player, or ``None`` when the probe did not answer in time."""
+    result = runtime.automation_probe.run(
+        lambda: _read_automation(service), _AUTOMATION_PROBE_TIMEOUT_S
     )
+    if result.ok and isinstance(result.value, list):
+        return result.value
+    return None
 
 
 def _automation_state(
     service: PermissionService, runtime: _Runtime
 ) -> tuple[PermissionState, bool]:
     """``(state, answered)``; a probe that did not answer in time reads UNAVAILABLE."""
-    result = runtime.automation_probe.run(
-        lambda: _read_automation(service), _AUTOMATION_PROBE_TIMEOUT_S
-    )
-    if result.ok and isinstance(result.value, PermissionState):
-        return result.value, True
-    return PermissionState.UNAVAILABLE, False
+    states = _automation_players(service, runtime)
+    if states is None:
+        return PermissionState.UNAVAILABLE, False
+    return _worst_automation(states), True
 
 
 def _row_detail(
@@ -485,10 +502,10 @@ def _build_row(
         "status": state.value,
         "used_for": list(_USED_FOR[permission]),
         "can_request": can_request,
-        # Opening a pane is not a prompt. The port still refuses it outside the
-        # installed app (its own gate, retired with the port cleanup), so the row
-        # does not promise what the route would answer with a 409.
-        "can_open_settings": interactive and info.stable and pane is not None,
+        # Opening a pane is not a prompt and not an action on the permission, so
+        # it does not need the installed-app identity (design P6): it needs a
+        # desktop session and a pane, which is exactly what the route checks.
+        "can_open_settings": interactive and pane is not None,
         # tccutil is scoped to this app's own bundle id, so only the installed app
         # may reset (P6); a developer run must not wipe the installed app's rows.
         "can_reset": (
@@ -641,6 +658,19 @@ class PermissionRequestBody(BaseModel):
         return value
 
 
+def _is_agent_caller(request: Request) -> bool:
+    """Whether the request authenticated only with the Bearer control key.
+
+    That is how a coding agent drives Jarvis through the CLI; the desktop UI uses
+    its session cookie or open local access. Two things are for a person at the UI
+    only (P9): confirming that macOS may record a grant for the app that started
+    Jarvis, and an explicit click that skips the re-ask cooldown.
+    """
+    if validate_token(request.cookies.get(COOKIE_NAME, "")):
+        return False
+    return bool(_control_key.verify_control_key(_bearer_token(request)))
+
+
 def _operation(
     permission_id: PermissionId,
     action: str,
@@ -737,13 +767,16 @@ def _ask_automation(
     feature: str,
     target: str | None,
     allow_outside_app: bool,
+    force_ask: bool,
 ) -> EnsureResult:
     """Ask for ONE player: the named one, else the first that can still be asked.
 
-    Blocking (the consent runner returns once the dialog is answered or killed), so
-    the route runs it through :class:`_Bounded`. A player that is not running is not
-    launched and not asked (the runner is guarded), which reads UNAVAILABLE here; the
-    next player is tried.
+    The service runs the consent runner on its own thread and this call waits only
+    :data:`_AUTOMATION_SETTLE_S` for it, so a closed player (the guarded script ends
+    at once) is told from an open dialog. It still runs through :class:`_Bounded`,
+    because the state read before the ask can hang. A player that is not running is
+    not launched and not asked (the runner is guarded), which reads UNAVAILABLE
+    here; the next player is tried.
     """
     if target:
         candidates = [target]
@@ -760,9 +793,10 @@ def _ask_automation(
             permission,
             feature=feature,
             interactive=True,
-            wait_s=0.0,
+            wait_s=_AUTOMATION_SETTLE_S,
             target=bundle_id,
             allow_outside_app=allow_outside_app,
+            force_ask=force_ask,
         )
         # ``asked`` is true even when the guarded script found the player closed and
         # showed nothing; only the outcome says whether this player is worth stopping at.
@@ -834,6 +868,21 @@ def request_permission(
     confirmed which app receives the grant. Rate limited (429).
     """
     options = body if body is not None else PermissionRequestBody()
+    agent_caller = _is_agent_caller(request)
+    if options.allow_outside_app and agent_caller:
+        # Confirming "macOS may grant this to the app that started Jarvis" is a
+        # decision for a person looking at the dialog that names the grantee, never
+        # for an agent that holds the control key (P9).
+        return JSONResponse(
+            status_code=403,
+            content={
+                "error": "confirmation_requires_ui",
+                "detail": (
+                    "Confirming a grant for the app that started Jarvis needs the Jarvis "
+                    "window; the control key cannot do it."
+                ),
+            },
+        )
     label = _ROW_LABELS.get(PANE_FAMILY[permission_id], permission_id.value)
     if dry_run:
         return _operation(
@@ -860,6 +909,7 @@ def request_permission(
                 feature=feature,
                 target=options.target,
                 allow_outside_app=options.allow_outside_app,
+                force_ask=not agent_caller,
             ),
             _AUTOMATION_ASK_WAIT_S,
         )
@@ -879,6 +929,9 @@ def request_permission(
         interactive=True,
         wait_s=0.0,
         allow_outside_app=options.allow_outside_app,
+        # An explicit click on "Allow" is never held back by the re-ask cooldown; a
+        # request that only carries the control key (an agent) is (P4).
+        force_ask=not agent_caller,
     )
     return _ensure_payload(result)
 
@@ -956,6 +1009,12 @@ def reset_permission(
     runtime = _runtime(request)
     family = PANE_FAMILY[permission_id]
     label = _ROW_LABELS.get(family, permission_id.value)
+    if not dry_run:
+        # "Reset, then request" in a loop would defeat the re-ask limits (P4), so a
+        # reset is rate limited like the other two routes that change what macOS shows.
+        refusal = runtime.limiter.admit("reset", family)
+        if refusal is not None:
+            return _rate_limited(refusal, "reset", permission_id)
     info = service.app_info()
     if info.platform != "darwin":
         return _operation_response(
@@ -968,7 +1027,16 @@ def reset_permission(
             )
         )
     if family is PermissionId.AUTOMATION:
-        live, _answered = _automation_state(service, runtime)
+        players = _automation_players(service, runtime)
+        # tccutil drops the whole Apple Events row, so ONE working player is enough
+        # to refuse: the strictest-answer aggregate would hide it behind another
+        # player that was never asked.
+        if players is not None and PermissionState.GRANTED in players:
+            live = PermissionState.GRANTED
+        else:
+            live = (
+                _worst_automation(players) if players is not None else PermissionState.UNAVAILABLE
+            )
     else:
         live = service.check_deep(permission_id)
     if live in _READY:
@@ -992,7 +1060,9 @@ def reset_permission(
             )
         )
     port = _permissions_module.get_system_permission_port()
-    operation = port.reset(permission_id, dry_run=dry_run)
+    # The light entry point: no snapshot, so no Automation probe and no window-title
+    # oracle behind a route that must stay bounded.
+    operation = port.reset_row(permission_id, dry_run=dry_run)
     if operation.ok and operation.performed:
         # "Ask again" must really ask: forget this process's request cooldown.
         service.note_reset(permission_id)

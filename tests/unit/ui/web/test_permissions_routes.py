@@ -307,10 +307,12 @@ def test_an_automation_dialog_that_is_still_open_answers_pending_and_does_not_ho
     service = get_permission_service()
     entered: list[str | None] = []
     release = threading.Event()
+    reached = threading.Event()  # set by the stub itself: no assertion races a slow thread start
     real_ensure = service.ensure
 
     def blocking_ensure(*args, **kwargs):
         entered.append(kwargs.get("target"))
+        reached.set()
         release.wait(10)  # the consent runner, blocked on an open dialog
         return real_ensure(*args, **kwargs)
 
@@ -322,12 +324,13 @@ def test_an_automation_dialog_that_is_still_open_answers_pending_and_does_not_ho
         elapsed = time.monotonic() - started
 
         assert body["outcome"] == "pending" and body["asked"] is True
-        assert body["can_prompt"] is False and "macOS is asking" in body["user_detail"]
+        assert body["can_prompt"] is False and "Waiting for the user" in body["user_detail"]
         assert elapsed < 5.0
         # While that call is still blocked a second one starts nothing.
         env.clock.advance(6)
         again = env.post("automation/request").json()
         assert again["outcome"] == "pending" and again["asked"] is False
+        assert reached.wait(5)
         assert entered == [_MUSIC]
     finally:
         release.set()
@@ -446,13 +449,19 @@ def test_a_refused_call_is_not_counted(make_env) -> None:
     assert env.post("screen_recording/request").status_code == 200  # the 2nd counted call
 
 
-def test_reset_is_not_rate_limited_but_is_guarded_by_the_live_state(
+def test_reset_is_rate_limited_like_the_other_routes_that_change_what_macos_shows(
     make_env, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # "Reset, then request" in a loop would defeat the re-ask limits (P4).
     env = make_env()
     _use_fake_tccutil(monkeypatch, env.tcc)
 
     assert env.post("microphone/reset").status_code == 200
+    again = env.post("microphone/reset")
+    assert again.status_code == 429 and again.json()["action"] == "reset"
+    assert len(env.tcc.tccutil_calls) == 1  # the refusal never reached tccutil
+
+    env.clock.advance(5.1)
     assert env.post("microphone/reset").status_code == 200
 
 
@@ -657,3 +666,125 @@ def test_no_route_reaches_the_old_readiness_aggregation(make_env, monkeypatch) -
     assert env.client.get("/api/permissions/status").status_code == 200
     assert env.client.get("/api/permissions/microphone").status_code == 200
     assert env.post("microphone/request").status_code == 200
+
+
+def test_open_settings_and_reset_are_light_and_never_snapshot_or_probe_other_permissions(
+    make_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both "way out" routes used to run two full snapshots each: the Automation probe of
+    every running player, the window-title oracle and a consent-file write."""
+    from jarvis.platform.permissions import SystemPermissionPort
+
+    env = make_env(
+        default_policy=DialogPolicy.NEVER_ANSWERED,
+        installed_players=[_MUSIC],
+        running_players=[_MUSIC],
+    )
+    _use_fake_tccutil(monkeypatch, env.tcc)
+
+    def forbidden(self, **kwargs):  # noqa: ANN001, ARG001
+        raise AssertionError("open-settings and reset must not aggregate readiness")
+
+    monkeypatch.setattr(SystemPermissionPort, "snapshot", forbidden)
+    assert env.post("accessibility/open-settings").status_code == 200
+    assert env.post("microphone/reset").status_code == 200
+
+    assert env.tcc.probes("screen_recording") == []  # no oracle, no preflight
+    assert env.tcc.probes("automation") == []  # no Apple Event probe of the player
+    assert len(env.tcc.workspace_opened_urls) == 1 and len(env.tcc.tccutil_calls) == 1
+
+
+def test_open_settings_works_outside_the_installed_app_because_it_is_not_a_prompt(
+    make_env,
+) -> None:
+    env = make_env(bundle_id=None, bundle_path=None)
+
+    body = env.post("microphone/open-settings").json()
+
+    assert body["ok"] is True and body["performed"] is True
+    assert body["permission"]["can_open_settings"] is True  # the row says what the route does
+    assert len(env.tcc.workspace_opened_urls) == 1
+
+
+# ----------------------------------------------------------------------
+# Who may confirm a grant for the app that started Jarvis, and who may skip the cooldown
+# ----------------------------------------------------------------------
+
+
+@pytest.fixture
+def control_key(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
+    """A valid Bearer control key: the way a coding agent drives the CLI."""
+    monkeypatch.setattr(
+        routes._control_key,
+        "verify_control_key",
+        lambda token: token == "agent-key",  # noqa: S105 - a test key, not a secret
+    )
+    return {"Authorization": "Bearer agent-key"}
+
+
+def test_an_agent_with_only_the_control_key_cannot_confirm_a_grant_for_another_app(
+    make_env, control_key: dict[str, str]
+) -> None:
+    env = make_env(bundle_id=None, bundle_path=None, default_policy=DialogPolicy.NEVER_ANSWERED)
+
+    env.client.cookies.clear()  # an agent has no browser session, only the control key
+    refused = env.post("microphone/request", json={"allow_outside_app": True}, headers=control_key)
+
+    assert refused.status_code == 403
+    assert refused.json()["error"] == "confirmation_requires_ui"
+    assert env.tcc.requests() == [] and env.tcc.implicit_prompts() == []
+    # The same agent may still ask without the confirmation (nothing is requested
+    # outside the installed app, the answer says so).
+    plain = env.post("microphone/request", headers=control_key).json()
+    assert plain["outside_installed_app"] is True and plain["asked"] is False
+
+
+def test_the_ui_may_confirm_a_grant_for_the_app_that_started_jarvis(make_env) -> None:
+    env = make_env(bundle_id=None, bundle_path=None, default_policy=DialogPolicy.NEVER_ANSWERED)
+
+    body = env.post("microphone/request", json={"allow_outside_app": True}).json()
+
+    assert body["asked"] is True and len(env.tcc.requests("microphone")) == 1
+
+
+def test_only_an_explicit_ui_click_skips_the_reask_cooldown(
+    make_env, control_key: dict[str, str]
+) -> None:
+    gate = FakePermissionService({PermissionId.ACCESSIBILITY: "pending"})
+    env = make_env(service=gate)
+
+    env.post("accessibility/request")  # the person clicked "Allow" in the Jarvis window
+    env.clock.advance(6)
+    env.client.cookies.clear()  # an agent has no browser session, only the control key
+    env.post("accessibility/request", headers=control_key)
+
+    ui_call, agent_call = gate.ensure_calls(PermissionId.ACCESSIBILITY)
+    assert ui_call.force_ask is True and agent_call.force_ask is False
+
+
+def test_the_allow_button_asks_again_in_the_real_service_after_the_cooldown_of_a_dismissed_prompt(
+    make_env,
+) -> None:
+    env = make_env(default_policy=DialogPolicy.NEVER_ANSWERED)
+
+    first = env.post("accessibility/request").json()
+    env.clock.advance(6)  # past the route's own 5 s cooldown, inside the 10 minute re-ask window
+    second = env.post("accessibility/request").json()
+
+    assert first["asked"] is True and second["asked"] is True
+    assert len(env.tcc.requests("accessibility")) == 2
+
+
+def test_reset_is_refused_while_any_player_is_still_allowed(
+    make_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The strictest-answer aggregate hid a working player behind one never asked."""
+    env = make_env(installed_players=[_MUSIC, _SPOTIFY], running_players=[_MUSIC, _SPOTIFY])
+    env.tcc.grant("automation", _MUSIC)  # Spotify was never asked
+    _use_fake_tccutil(monkeypatch, env.tcc)
+
+    response = env.post("automation/reset")
+
+    assert response.status_code == 409
+    assert "allowed right now" in response.json()["message"]
+    assert env.tcc.tccutil_calls == []  # the working Music grant was not thrown away

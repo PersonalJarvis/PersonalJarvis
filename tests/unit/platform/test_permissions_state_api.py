@@ -866,9 +866,8 @@ def test_automation_runs_one_guarded_script_and_never_launches_the_player(
         SimpleNamespace(returncode=0, stdout="-\n", stderr=""),  # player not running
         SimpleNamespace(returncode=0, stdout="+\n", stderr=""),  # event sent and permitted
         SimpleNamespace(returncode=1, stdout="", stderr="execution error: (-1743)"),  # denied
-        subprocess.TimeoutExpired(cmd="osascript", timeout=120.0),  # nobody answered
     ],
-    ids=["not_running", "permitted", "denied", "timed_out"],
+    ids=["not_running", "permitted", "denied"],
 )
 def test_a_finished_automation_request_leaves_no_dialog_open(result: Any) -> None:
     world = _World()
@@ -876,6 +875,16 @@ def test_a_finished_automation_request_leaves_no_dialog_open(result: Any) -> Non
 
     # Synchronous: the answer, if any, is in state(); the return value is not one.
     assert world.port().request_native(PermissionId.AUTOMATION, target=_SPOTIFY) == "no_dialog"
+    assert world.requests == ["consent_runner"]
+
+
+def test_an_unanswered_automation_request_is_timed_out_not_a_missing_player() -> None:
+    world = _World()
+    world.consent_result = subprocess.TimeoutExpired(cmd="osascript", timeout=120.0)
+
+    # Nobody answered before the runner was killed: the caller must not read that as
+    # "the player is not running" (which "no_dialog" means), it may ask again later.
+    assert world.port().request_native(PermissionId.AUTOMATION, target=_SPOTIFY) == "timed_out"
     assert world.requests == ["consent_runner"]
 
 

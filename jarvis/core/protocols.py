@@ -11,7 +11,7 @@ Streaming is first-class: every Brain/STT/TTS/Harness response is an
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 from uuid import UUID
@@ -844,6 +844,20 @@ class PermissionGate(Protocol):
         allow_outside_app: bool = False,
     ) -> EnsureResult:
         """``ensure`` for the event loop; never pins an executor worker while it waits."""
+        ...
+
+    def ensure_all(
+        self,
+        permissions: Iterable[PermissionId | str],
+        *,
+        feature: str,
+        interactive: bool = True,
+        wait_s: float = 0.0,
+        target: str | None = None,
+        trace_id: UUID | str | None = None,
+        allow_outside_app: bool = False,
+    ) -> list[EnsureResult]:
+        """``ensure`` for several permissions: ONE coalesced episode and ONE event."""
         ...
 
     def open_settings(self, permission: PermissionId | str) -> bool:
