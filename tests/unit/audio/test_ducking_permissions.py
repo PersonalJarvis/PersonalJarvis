@@ -160,7 +160,11 @@ def test_a_dialog_still_open_at_the_end_of_the_wait_is_pending_and_never_granted
         return tcc.automation_consent_runner(script)
 
     install_port(monkeypatch, tcc.port("darwin", automation_consent_runner=stuck_consent_runner))
-    monkeypatch.setattr(macos, "_ASK_BUDGET_S", 0.5)
+    # The wait must end well BEFORE the hung-call backstop. With a 0.5 s budget the real
+    # margin (10 % of it) is 50 ms, which a loaded macOS runner can eat: the backstop then
+    # wins and the expected "pending" comes back as "unavailable".
+    monkeypatch.setattr(macos, "_ASK_BUDGET_S", 3.0)
+    monkeypatch.setattr(macos, "_ask_wait_s", lambda: 0.3)
     started = time.monotonic()
     try:
         (music,) = MacOSScriptDucker(run=TccAppleScript(tcc)).prewarm().players
