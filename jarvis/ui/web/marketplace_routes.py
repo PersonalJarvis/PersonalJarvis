@@ -76,7 +76,7 @@ from jarvis.marketplace.discord_connect import (
     on_discord_disconnected,
 )
 from jarvis.marketplace.instance_url import InstanceUrlError, normalize_instance_url
-from jarvis.marketplace.revoke import revoke_tokens
+from jarvis.marketplace.revoke import revoke_unless_shared
 from jarvis.marketplace.telegram_connect import (
     on_telegram_connected,
     on_telegram_disconnected,
@@ -155,6 +155,9 @@ class _PluginStatusMeta:
     # then says "unknown" rather than inventing a cause.
     reauth_reason: str | None = None
     reauth_at: str | None = None
+    # When the provider itself ends the refresh grant (Google: an OAuth app in
+    # Testing status). ``None`` when the provider stated no fixed lifetime.
+    refresh_expires_at: str | None = None
 
 
 def _plugin_status_meta(plugin_id: str, store: TokenStore) -> _PluginStatusMeta:
@@ -183,6 +186,7 @@ def _plugin_status_meta(plugin_id: str, store: TokenStore) -> _PluginStatusMeta:
         reauth_at=(
             tokens.reauth_at.isoformat() if tokens.needs_reauth and tokens.reauth_at else None
         ),
+        refresh_expires_at=tokens.extra.get("refresh_expires_at") or None,
     )
 
 
@@ -379,6 +383,7 @@ async def list_plugins(response: Response) -> dict[str, Any]:
         item["last_refreshed"] = meta.last_refreshed
         item["reauth_reason"] = meta.reauth_reason
         item["reauth_at"] = meta.reauth_at
+        item["refresh_expires_at"] = meta.refresh_expires_at
         item["unavailable_reason"] = None
         if spec.id == "amd_gpu" and spec.auth.mode == "local":
             from jarvis.marketplace.amd_mcp import amd_unavailable_reason
@@ -995,7 +1000,7 @@ async def disconnect(plugin_id: str, request: Request) -> dict[str, Any]:
     try:
         tokens = store.load(plugin_id)
         if tokens is not None:
-            revocation = await revoke_tokens(spec, tokens)
+            revocation = await revoke_unless_shared(spec, tokens, store)
     except Exception as exc:  # noqa: BLE001 - never block the disconnect
         log.info("plugin %s revocation skipped: %s", plugin_id, exc)
         revocation = "failed"
@@ -1020,8 +1025,10 @@ async def disconnect(plugin_id: str, request: Request) -> dict[str, Any]:
         "plugin_id": plugin_id,
         "status": "not_connected",
         "live_applied": live_applied,
-        # "revoked" | "unsupported" | "failed" — so the UI can say honestly
-        # whether the user still has to remove the app at the provider.
+        # "revoked" | "unsupported" | "failed" | "shared" — so the UI can say
+        # honestly whether the user still has to remove the app at the
+        # provider. "shared": other connected plugins still use the same
+        # project-wide grant (Google), so it stays until the last one goes.
         "revocation": revocation,
     }
 
@@ -1650,7 +1657,7 @@ async def community_uninstall(plugin_id: str) -> dict[str, Any]:
     revocation = "unsupported"
     if tokens is not None:
         try:
-            revocation = await revoke_tokens(spec, tokens)
+            revocation = await revoke_unless_shared(spec, tokens, store)
         except Exception as exc:  # noqa: BLE001 - never block the uninstall
             log.info("plugin %s revocation skipped: %s", plugin_id, exc)
             revocation = "failed"

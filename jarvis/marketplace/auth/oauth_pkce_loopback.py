@@ -99,6 +99,27 @@ def _basic_token_header(client_id: str, secret: str | None, method: str) -> dict
     return {"Authorization": "Basic " + base64.b64encode(credentials).decode("ascii")}
 
 
+def _refresh_expires_at(payload: dict) -> datetime | None:
+    """When the provider caps the refresh grant itself, return when it ends.
+
+    Google sends ``refresh_token_expires_in`` when a grant has a fixed lifetime
+    (an OAuth app in Testing status, or access the user granted for a limited
+    time). No refresh can extend it, so it is stored where it is learned
+    instead of surfacing days later as an unexplained reconnect.
+    """
+    nested = payload.get("authed_user")
+    raw = (nested.get("refresh_token_expires_in") if isinstance(nested, dict) else None) or (
+        payload.get("refresh_token_expires_in")
+    )
+    try:
+        seconds = int(raw)
+    except (TypeError, ValueError):
+        return None
+    if seconds <= 0:
+        return None
+    return datetime.now(UTC) + timedelta(seconds=seconds)
+
+
 @dataclass
 class _PendingPkceFlow:
     config: PkceLoopbackConfig
@@ -306,6 +327,17 @@ class PkceLoopbackHandler:
         scope = payload.get("authed_user", {}).get("scope") or payload.get("scope")
         if scope:
             extra["scope"] = scope
+        grant_ends = _refresh_expires_at(payload)
+        if grant_ends is not None:
+            extra["refresh_expires_at"] = grant_ends.isoformat()
+            log.warning(
+                "plugin %s: the provider limits this sign-in to %.1f days (ends %s); "
+                "refreshing cannot extend it. For Google this usually means the "
+                "OAuth app is in Testing status.",
+                pending.config.plugin_id,
+                (grant_ends - datetime.now(UTC)).total_seconds() / 86_400,
+                grant_ends.isoformat(timespec="minutes"),
+            )
         # Bind the refresh token to the exact OAuth client that obtained it.
         # A user can later replace/delete the family-level client secret (or a
         # recovered keyring can expose an older value), but OAuth refresh tokens
@@ -382,6 +414,9 @@ class PkceLoopbackHandler:
         )
         extra = dict(current.extra)
         extra["token_endpoint_auth_method"] = auth_method
+        grant_ends = _refresh_expires_at(payload)
+        if grant_ends is not None:
+            extra["refresh_expires_at"] = grant_ends.isoformat()
         if not bound_client_id:
             # A successful legacy refresh proves which currently configured
             # client owns the grant. Persist that pair now so later config or
