@@ -78,10 +78,15 @@ float noise(vec2 p) {
   return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
 }
 
-// One comet along x: a round head ahead, an exponential tail behind.
-float comet(float x, float head, float dir, float width, float tail) {
-  float o = (x - head) * dir;
-  return o > 0.0 ? exp(-o * o / (width * width)) : exp(o / tail);
+// One comet along x moving at velocity v: the same falloff on both sides
+// of the head, the side behind it stretched by its speed. Every length is a
+// continuous function of v, so at a turn the tail shrinks into a round
+// head and regrows on the other side — it never flips over in one frame
+// (a sign(v) switch did exactly that, a visible hitch at both ends).
+float comet(float x, float head, float v, float base, float stretch) {
+  float o = x - head;
+  float len = base + stretch * max(0.0, o > 0.0 ? -v : v);
+  return exp(-pow(abs(o) / len, 1.5));
 }
 
 float fbm(vec2 p) {
@@ -114,14 +119,14 @@ void main() {
   // Thinking: two comets mirrored about the middle, each with a tail that
   // stretches with its speed. Screen-blended, not summed, so where they
   // cross the light swells instead of blowing out.
-  float reach = uSpan * 0.95;
+  // The turn points stay clear of the side fade, so a head is never
+  // dimmed or cut off by the edge while it slows down and turns.
+  float reach = min(uSpan * 0.95, 0.34);
   float width = uSpan * 0.14;
-  float tail = uSpan * (0.12 + 0.55 * abs(uSweepVel));
-  float dir = uSweepVel < 0.0 ? -1.0 : 1.0;
   float h1 = 0.5 + reach * uSweep;
   float h2 = 0.5 - reach * uSweep;
-  float b1 = comet(uv.x, h1, dir, width, tail);
-  float b2 = comet(uv.x, h2, -dir, width, tail);
+  float b1 = comet(uv.x, h1, uSweepVel, width, uSpan * 0.55);
+  float b2 = comet(uv.x, h2, -uSweepVel, width, uSpan * 0.55);
   float lateral = 1.0 - (1.0 - b1) * (1.0 - b2);
   float beams = lateral * uThink;
   float beam = beams * (exp(-y / 0.13) + 0.4 * exp(-y / 0.4));
