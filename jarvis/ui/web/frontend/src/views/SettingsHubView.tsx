@@ -23,7 +23,7 @@ import { cn } from "@/lib/utils";
  * (General · System · Activity) and the selected section on the right:
  *
  *   General: Settings, Keyboard shortcuts, Appshots, My Pets, Profile,
- *            SOUL.md, Contacts, Socials
+ *            {name} (the assistant), Contacts, Socials
  *   System: Computers, API Keys, Local models, Jarvis actions
  *   Activity: Spend, Feedback
  *
@@ -47,8 +47,8 @@ const SettingsTab = lazy(() =>
 const ProfileTab = lazy(() =>
   import("@/views/ProfileView").then((m) => ({ default: m.ProfileView })),
 );
-const SoulTab = lazy(() =>
-  import("@/views/SoulView").then((m) => ({ default: m.SoulView })),
+const AssistantTab = lazy(() =>
+  import("@/views/AssistantProfileView").then((m) => ({ default: m.AssistantProfileView })),
 );
 const ContactsTab = lazy(() =>
   import("@/views/contacts/ContactsView").then((m) => ({
@@ -141,7 +141,7 @@ const HUB_NAV_GROUPS: readonly { labelKey: string; ids: readonly HubNavId[] }[] 
 const TAB_CONTENT: Record<HubNavId | "telephony-setup", LazyExoticComponent<ComponentType>> = {
   settings: SettingsTab,
   profile: ProfileTab,
-  "agent-instructions": SoulTab,
+  "agent-instructions": AssistantTab,
   contacts: ContactsTab,
   socials: SocialsTab,
   apikeys: ApiKeysTab,

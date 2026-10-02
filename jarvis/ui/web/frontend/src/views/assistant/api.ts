@@ -1,5 +1,5 @@
 /**
- * The SOUL.md page's data layer — the shapes `soul_routes.py` returns and the
+ * The assistant profile page's data layer — the shapes `soul_routes.py` returns and the
  * three writes the page makes (save SOUL.md, save or clear the standing
  * instructions, forget one note).
  *

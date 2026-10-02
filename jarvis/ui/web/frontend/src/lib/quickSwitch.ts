@@ -82,7 +82,7 @@ const ALIASES: Partial<Record<string, readonly string[]>> = {
   sessions: ["transcripts", "recordings", "history"],
   run_inspector: ["runs", "debug", "trace"],
   computers: ["servers", "ssh", "vps", "remote", "machines"],
-  "agent-instructions": ["soul", "soul md", "character", "persona", "instructions", "memory md", "agents md"],
+  "agent-instructions": ["assistant", "soul", "soul md", "character", "persona", "instructions", "memory md"],
   marketplace: ["store", "shop", "install"],
   board: ["stats", "dashboard", "activity"],
   docs: ["documentation", "help", "manual"],

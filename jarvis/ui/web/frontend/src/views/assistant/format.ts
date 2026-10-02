@@ -47,3 +47,9 @@ export function newest(times: readonly (number | null | undefined)[]): number | 
   const known = times.filter((t): t is number => typeof t === "number");
   return known.length ? Math.max(...known) : null;
 }
+
+/** `key_one` for exactly one, `key_other` otherwise, with `{0}` filled in. */
+export function plural(t: (key: string) => string, key: string, count: number, lang?: UiLanguage): string {
+  const n = lang ? count.toLocaleString(lang) : String(count);
+  return t(`${key}_${count === 1 ? "one" : "other"}`).replace("{0}", n);
+}
