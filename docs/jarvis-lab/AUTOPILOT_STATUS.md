@@ -18,12 +18,18 @@ Safety constraints remain unchanged:
 
 Current workstream priority:
 
-1. finish checking CI for the latest `jarvis-lab` HEAD; triage any new failures
-   against the exact parent under the same environment;
+1. implement M4 room turns under the existing `SocietyScheduler`: serialized
+   dispatch, restart-safe ownership, and bounded turns through the existing
+   safety, budget, and kill-switch controls;
 2. native qualification of the full MacAgentBench matrix on a user-driven
    physical Mac pass; permission-degradation and prompt-injection-resistance
-   contracts are now covered portably;
-3. next highest-priority architecture gap that is not blocked on physical macOS testing.
+   contracts are covered portably;
+3. continue with the next highest-priority architecture gap that does not
+   require the physical Mac pass.
+
+Latest code HEAD `ec4e5a0c` passed GitHub Actions run `37047729974` with 47
+successful jobs, 3 skipped, and no failures. The status-only commit that follows
+does not match CI path filters.
 
 Completed remotely in the current benchmark phase: physical-user-takeover,
 semantic-target-hit, stale-target-refusal, focus-type-landing, cross-window-handoff,
