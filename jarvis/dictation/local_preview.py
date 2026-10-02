@@ -103,18 +103,28 @@ def faster_whisper_available() -> bool:
 def _child_python() -> str:
     """The interpreter for the preview worker, beside the running executable.
 
-    ``sys.executable`` in the desktop app is the venv's GUI entry point
-    (``PersonalJarvis.exe``), which cannot take ``-m`` — the real
-    ``python(.exe)`` lives in the same Scripts/bin directory.
+    ``sys.executable`` in the desktop app is the branded ``PersonalJarvis.exe``,
+    which cannot take ``-m``. Usually the real ``python(.exe)`` lives in the
+    same directory, but the per-user branded copy in
+    ``%LOCALAPPDATA%\\PersonalJarvis\\bin`` carries only the runtime DLLs — so
+    the active environment's own interpreter directory, then the base
+    install's, are searched next. Without that fallback every dictation after
+    a launch through that copy failed with "no local dictation worker".
     """
     exe = Path(sys.executable)
     if exe.stem.lower().startswith("python"):
         return str(exe)
-    for name in ("python.exe", "python"):
-        candidate = exe.parent / name
-        if candidate.exists():
-            return str(candidate)
-    raise RuntimeError(f"no python interpreter beside {exe}")
+    names = ("python.exe", "python") if sys.platform == "win32" else ("python3", "python")
+    dirs = [exe.parent]
+    for prefix in dict.fromkeys((sys.prefix, sys.base_prefix)):
+        root = Path(prefix)
+        dirs += [root / "Scripts", root] if sys.platform == "win32" else [root / "bin"]
+    for directory in dirs:
+        for name in names:
+            candidate = directory / name
+            if candidate.is_file():
+                return str(candidate)
+    raise RuntimeError(f"no python interpreter beside {exe} or in {sys.prefix}")
 
 
 def _close_worker_process(proc: subprocess.Popen[bytes]) -> None:

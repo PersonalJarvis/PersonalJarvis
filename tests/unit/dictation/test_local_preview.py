@@ -437,3 +437,46 @@ async def test_a_late_but_successful_preview_ends_the_failure_streak():
         assert engine.ready is True
     finally:
         mod.PREVIEW_TIMEOUT_S = original
+
+
+def test_the_worker_interpreter_is_found_when_the_branded_exe_stands_alone(
+    monkeypatch, tmp_path
+):
+    """The per-user branded copy has no python beside it (2026-10-02).
+
+    ``%LOCALAPPDATA%/PersonalJarvis/bin`` holds only ``PersonalJarvis.exe`` and
+    the runtime DLLs; the interpreter lives in the environment's own directory.
+    """
+    import sys
+
+    from jarvis.dictation import local_preview
+
+    branded_dir = tmp_path / "bin"
+    branded_dir.mkdir()
+    branded = branded_dir / "PersonalJarvis.exe"
+    branded.write_bytes(b"")
+    env = tmp_path / "env"
+    interp_dir = env / "Scripts" if sys.platform == "win32" else env / "bin"
+    interp_dir.mkdir(parents=True)
+    interp = interp_dir / ("python.exe" if sys.platform == "win32" else "python3")
+    interp.write_bytes(b"")
+    monkeypatch.setattr(sys, "executable", str(branded))
+    monkeypatch.setattr(sys, "prefix", str(env))
+    monkeypatch.setattr(sys, "base_prefix", str(tmp_path / "missing"))
+
+    assert local_preview._child_python() == str(interp)
+
+
+def test_a_missing_worker_interpreter_still_fails_loudly(monkeypatch, tmp_path):
+    import sys
+
+    from jarvis.dictation import local_preview
+
+    branded = tmp_path / "PersonalJarvis.exe"
+    branded.write_bytes(b"")
+    monkeypatch.setattr(sys, "executable", str(branded))
+    monkeypatch.setattr(sys, "prefix", str(tmp_path / "nowhere"))
+    monkeypatch.setattr(sys, "base_prefix", str(tmp_path / "nowhere"))
+
+    with pytest.raises(RuntimeError, match="no python interpreter"):
+        local_preview._child_python()
