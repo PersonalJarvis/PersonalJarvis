@@ -1237,3 +1237,91 @@ def test_orders_still_reach_computer_use(utterance: str) -> None:
 def test_information_question_classifier(utterance: str, is_question: bool) -> None:
     """The TASK-or-QUESTION decision itself, on already-normalised input."""
     assert _is_information_question(utterance) is is_question
+
+
+
+# ---------------------------------------------------------------------------
+# Italian local desktop fast paths (JARVIS-LAB)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("text", "app"),
+    [
+        ("Apri Safari", "safari"),  # i18n-allow: Italian voice fixture
+        ("Aprimi Spotify", "spotify"),  # i18n-allow: Italian voice fixture
+        ("Puoi aprire Chrome?", "chrome"),  # i18n-allow: Italian voice fixture
+        ("Avvia Terminal", "wt"),  # i18n-allow: Italian voice fixture
+        ("Apri la calcolatrice", "calc"),  # i18n-allow: Italian voice fixture
+    ],
+)
+def test_italian_known_app_open_uses_direct_fast_path(text: str, app: str) -> None:
+    plan = match_local_action(text, lang="it", _registry=None)
+    assert plan is not None
+    assert plan.mode is LocalActionMode.DIRECT
+    assert plan.tool_calls == (
+        LocalToolCall(name="open_app", args={"app_name": app}),
+    )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Apri WhatsApp e scrivi a mamma ciao",  # i18n-allow: Italian voice fixture
+        "Clicca il pulsante verde",  # i18n-allow: Italian voice fixture
+        "Scorri verso il basso",  # i18n-allow: Italian voice fixture
+        "Fai uno screenshot",  # i18n-allow: Italian voice fixture
+        "Minimizza la finestra",  # i18n-allow: Italian voice fixture
+        "Trascina il file a sinistra",  # i18n-allow: Italian voice fixture
+        "Usa Computer-Use per aprire Spotify",  # i18n-allow: Italian voice fixture
+    ],
+)
+def test_italian_desktop_orders_route_to_computer_use(text: str) -> None:
+    plan = match_local_action(text, lang="it", _registry=None)
+    assert plan is not None, f"{text!r} fell through"
+    assert plan.mode is LocalActionMode.COMPUTER_USE
+    assert plan.harness == "screenshot"
+    assert plan.prompt == text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Come clicco su questo pulsante?",  # i18n-allow: Italian voice fixture
+        "Cosa succede se clicco il pulsante?",  # i18n-allow: Italian voice fixture
+        "Come apro Safari?",  # i18n-allow: Italian voice fixture
+    ],
+)
+def test_italian_questions_do_not_seize_the_desktop(text: str) -> None:
+    plan = match_local_action(text, lang="it", _registry=None)
+    assert plan is None or plan.mode is not LocalActionMode.COMPUTER_USE
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Non aprire Spotify",  # i18n-allow: Italian voice fixture
+        "Non avviare Chrome",  # i18n-allow: Italian voice fixture
+    ],
+)
+def test_italian_negated_open_never_launches(text: str) -> None:
+    assert match_local_action(text, lang="it", _registry=None) is None
+
+
+@pytest.mark.parametrize(
+    ("text", "is_question"),
+    [
+        ("Come clicco su un pulsante?", True),  # i18n-allow: Italian voice fixture
+        ("Cosa succede se clicco qui?", True),  # i18n-allow: Italian voice fixture
+        ("Clicca il pulsante", False),  # i18n-allow: Italian voice fixture
+        ("Scorri verso il basso", False),  # i18n-allow: Italian voice fixture
+    ],
+)
+def test_italian_task_vs_question_guard(text: str, is_question: bool) -> None:
+    assert _is_information_question(text.lower()) is is_question
+
+
+def test_italian_unsupported_copy_is_available_without_an_llm() -> None:
+    response = _unsupported_response("", "it")
+    assert "Non posso ancora farlo" in response  # i18n-allow: Italian runtime copy
+    assert "MCP" in response
