@@ -1,9 +1,10 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { ChatsSurface } from "@/views/ChatsSurface";
 import { SurfaceSwitch } from "@/components/home/SurfaceSwitch";
 import { useHomeStore } from "@/store/home";
 import { readHomeSurface } from "@/lib/homeSurface";
+import { useEventStore } from "@/store/events";
 
 /**
  * The front page is one section with one switch: Voice (the Jarvis bar) or
@@ -27,6 +28,7 @@ describe("ChatsSurface (the front page)", () => {
   beforeEach(() => {
     window.localStorage.clear();
     useHomeStore.setState({ surface: readHomeSurface() });
+    useEventStore.setState({ activeSection: "chats", voiceState: "idle" });
   });
 
   afterEach(cleanup);
@@ -36,6 +38,25 @@ describe("ChatsSurface (the front page)", () => {
     expect(await screen.findByTestId("chat")).toBeTruthy();
     expect(screen.queryByTestId("voice")).toBeNull();
     expect(screen.getByTestId("home-view").getAttribute("data-surface")).toBe("chat");
+  });
+
+  it("shows voice mode when a wake-word call starts without a composer click", async () => {
+    render(<><SurfaceSwitch /><ChatsSurface /></>);
+    expect(await screen.findByTestId("chat")).toBeTruthy();
+    act(() => useHomeStore.getState().ingest("VoiceSessionStarted", {
+      session_id: "wake-call", wake_keyword: "jarvis",
+    }, 1));
+    expect(screen.getByTestId("voice")).toBeTruthy();
+    expect(screen.queryByTestId("chat")).toBeNull();
+    expect(screen.getByTestId("home-view").getAttribute("data-surface")).toBe("voice");
+    expect(window.localStorage.getItem(STORAGE_KEY)).toBe("voice");
+
+    // Returning to typing stays explicit; normal voice updates cannot undo it.
+    fireEvent.click(screen.getByTestId("home-surface-chat"));
+    act(() => useHomeStore.getState().ingest("SystemStateChanged", {
+      previous: "LISTENING", new_state: "THINKING",
+    }, 2));
+    expect(await screen.findByTestId("chat")).toBeTruthy();
   });
 
   it("switches to the chat stage from the sidebar switch and remembers it", async () => {
