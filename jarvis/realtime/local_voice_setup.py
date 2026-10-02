@@ -477,13 +477,16 @@ def _run_setup(deps: SetupDeps) -> None:
 # ---------------------------------------------------------------- self-test
 
 
-def selftest_fingerprint(settings: Any) -> dict[str, str]:
+def selftest_fingerprint(settings: Any) -> dict[str, Any]:
     """What a self-test result is bound to; any change makes it stale (plan 4.10)."""
     return {
         "engine_version": engine_version(),
         "requirements_sha256": requirements_sha256(),
         "llm_model": str(getattr(settings, "llm_model", "")),
         "tts": str(getattr(settings, "tts", "")),
+        "languages": list(getattr(settings, "languages", [])),
+        "tts_options": dict(getattr(settings, "tts_options", {})),
+        "llm_base_url": str(getattr(settings, "llm_base_url", "")),
     }
 
 
@@ -569,6 +572,8 @@ def _live_state(engine: Any) -> tuple[str, str, float, str]:
     if engine._client is None:  # noqa: SLF001 - the adapter's own state, read-only
         if engine.phase == "failed":
             return "failed", "", 0.0, engine.reason
+        if engine.phase == "starting":
+            return "starting", engine.stage or "process", engine.progress, ""
         return "stopped", "", 0.0, ""
     if engine.phase == "ready":
         return "ready", "", 1.0, ""

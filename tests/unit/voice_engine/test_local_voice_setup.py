@@ -220,3 +220,22 @@ def test_a_stored_selftest_goes_stale_when_the_model_changes(_isolated_home: Pat
     assert moved["stale"] is True
     raw = json.loads((_isolated_home / "selftest.json").read_text(encoding="utf-8"))
     assert raw["fingerprint"]["engine_version"] == setup.engine_version()
+
+
+@pytest.mark.parametrize("field,value", [
+    ("languages", ["en"]), ("tts_options", {"voice": "other"}),
+    ("llm_base_url", "http://127.0.0.1:11435"),
+])
+def test_changed_speech_or_server_settings_invalidate_a_selftest(
+    _isolated_home: Path, field: str, value,
+) -> None:
+    settings = SimpleNamespace(llm_model="qwen3.5:4b", tts="pocket", languages=["de", "en"],
+                               tts_options={}, llm_base_url="http://127.0.0.1:11434")
+    setup.save_selftest(_isolated_home, {"ok": True}, settings)
+    setattr(settings, field, value)
+    assert setup.load_selftest(_isolated_home, settings)["stale"] is True
+
+
+def test_process_handshake_is_visible_as_starting() -> None:
+    engine = SimpleNamespace(_client=None, phase="starting", stage="process", progress=0.0)
+    assert setup._live_state(engine) == ("starting", "process", 0.0, "")
