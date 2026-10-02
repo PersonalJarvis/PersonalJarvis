@@ -1,10 +1,17 @@
-"""Jarvis' own two notebooks and the prompt snapshot built from them.
+"""Jarvis' own notebooks and the prompt snapshot built from them.
 
-The files are the Society lead's notebooks (``<vault>/society/jarvis/USER.md``
-and ``MEMORY.md``), written through the same locked, journaled
-``jarvis.society.memory_books`` layer the agents use. One format means the
-lead avatar's knowledge view and Obsidian show exactly what Jarvis learned,
-and a correction made there is what the next prompt reads.
+``user`` and ``memory`` are the Society lead's notebooks
+(``<vault>/society/jarvis/USER.md`` and ``MEMORY.md``), written through the
+same locked, journaled ``jarvis.society.memory_books`` layer the agents use.
+One format means the lead avatar's knowledge view and Obsidian show exactly
+what Jarvis learned, and a correction made there is what the next prompt
+reads.
+
+``soul`` is the assistant's own character: the learned section of
+``data/workspace/SOUL.md`` (:mod:`jarvis.memory.soul`). It is not part of
+this snapshot — :mod:`jarvis.brain.identity` renders the whole SOUL.md at
+the top of every prompt — but the reviewer reads and writes it like the
+other two, so the assistant keeps its own character file up to date.
 
 ``snapshot_block`` is what the prompts call. It is cheap on purpose: the
 rendered text is cached and only re-read when a notebook file's mtime moves,
@@ -28,7 +35,10 @@ log = logging.getLogger(__name__)
 #: The Society lead's reserved identity (``jarvis.society.roster.LEAD_AGENT_ID``),
 #: spelled here so a prompt build never imports the society package.
 OWNER_ID: Final[str] = "jarvis"
-TARGETS: Final[tuple[str, ...]] = ("user", "memory")
+TARGETS: Final[tuple[str, ...]] = ("user", "memory", "soul")
+#: The targets kept in the Society lead's folder; ``soul`` lives in SOUL.md.
+BOOK_TARGETS: Final[tuple[str, ...]] = ("user", "memory")
+SOUL: Final[str] = "soul"
 LEDGER_NAME: Final[str] = ".learning-ledger.jsonl"
 STATE_NAME: Final[str] = ".learning-state.json"
 #: Minimum seconds between two mtime checks from the prompt path.
@@ -71,10 +81,20 @@ class JarvisNotebook:
         *,
         name: str = "Jarvis",
         budgets: dict[str, int] | None = None,
+        soul_path: Path | None = None,
     ) -> None:
+        from jarvis.memory.soul import LEARNED_PROMPT_CHARS
+
         self._vault = Path(vault)
         self._owner = SimpleNamespace(agent_id=OWNER_ID, name=name or "Jarvis")
-        self.budgets = {"user": 1_500, "memory": 1_000, **(budgets or {})}
+        #: SOUL.md; ``None`` leaves the ``soul`` target empty and read-only.
+        self.soul_path = Path(soul_path) if soul_path is not None else None
+        self.budgets = {
+            "user": 1_500,
+            "memory": 1_000,
+            SOUL: LEARNED_PROMPT_CHARS,
+            **(budgets or {}),
+        }
         self._lock = threading.Lock()
         self._cache: dict[bool, str] = {}
         self._signature: tuple[float, ...] | None = None
@@ -96,7 +116,16 @@ class JarvisNotebook:
     def entries(self) -> dict[str, list[Any]]:
         from jarvis.society.memory_books import read_books
 
-        return read_books(self._vault, self._owner)
+        books = read_books(self._vault, self._owner)
+        books[SOUL] = self._soul_entries()
+        return books
+
+    def _soul_entries(self) -> list[Any]:
+        from jarvis.memory.soul import Soul
+
+        if self.soul_path is None or not self.soul_path.is_file():
+            return []
+        return Soul.load(self.soul_path).learned()
 
     def usage(self, entries: dict[str, list[Any]] | None = None) -> dict[str, tuple[int, int]]:
         """``target -> (chars used, budget)`` as the reviewer sees it."""
@@ -134,7 +163,7 @@ class JarvisNotebook:
         from jarvis.society.memory_books import edit_book
 
         if target not in TARGETS:
-            raise ValueError("target must be user or memory")
+            raise ValueError("target must be user, memory or soul")
         before = ""
         current = self.entries()
         if operation != "add":
@@ -149,6 +178,15 @@ class JarvisNotebook:
             grown = used + len(text) + (2 if operation == "add" else -len(before))
             if grown > budget * _HARD_LIMIT and grown > used:
                 raise ValueError(f"the {target} notebook is full; consolidate first")
+        if target == SOUL:
+            if not self._edit_soul(
+                text, operation=operation, entry_id=entry_id, importance=importance, origin=origin
+            ):
+                return None
+            after = text if operation != "remove" else ""
+            change = Change(target, operation, entry_id, before, after)
+            self._append_ledger(change, evidence=evidence, source=source)
+            return change
         for attempt in range(_REPLACE_ATTEMPTS):
             try:
                 result = edit_book(
@@ -174,6 +212,41 @@ class JarvisNotebook:
         self._append_ledger(change, evidence=evidence, source=source)
         self.invalidate()
         return change
+
+    def _edit_soul(
+        self, text: str, *, operation: str, entry_id: str, importance: int, origin: str
+    ) -> bool:
+        """One change to SOUL.md's learned section, under its lock."""
+        from jarvis.memory.soul import edit_soul
+        from jarvis.society.notebook import change
+
+        if self.soul_path is None:
+            raise ValueError("no SOUL.md is configured")
+
+        def mutate(soul: Any) -> bool:
+            current = soul.learned()
+            updated = change(
+                current,
+                text,
+                operation=operation,
+                entry_id=entry_id,
+                importance=max(1, min(10, int(importance))),
+                origin=origin,
+            )
+            if updated == current:
+                return False
+            soul.set_learned(updated)
+            return True
+
+        for attempt in range(_REPLACE_ATTEMPTS):
+            try:
+                return edit_soul(self.soul_path, mutate)
+            except PermissionError:
+                # Same Windows file-sharing hiccup as the notebooks above.
+                if attempt == _REPLACE_ATTEMPTS - 1:
+                    raise
+                time.sleep(0.05 * (attempt + 1))
+        return False
 
     def read_state(self) -> dict[str, Any]:
         """Small loop bookkeeping (compaction times) next to the notebooks."""
@@ -249,11 +322,11 @@ class JarvisNotebook:
 
         folder = self.folder
         if not folder.is_dir():
-            return {target: [] for target in TARGETS}
+            return {target: [] for target in BOOK_TARGETS}
         try:
             with FileLock(str(folder / ".memory-books.lock"), timeout=_READ_LOCK_S):
                 books: dict[str, list[Any]] = {}
-                for target in TARGETS:
+                for target in BOOK_TARGETS:
                     path = folder / FILES[target]
                     raw = path.read_text(encoding="utf-8") if path.is_file() else ""
                     books[target] = parse(body(raw))
@@ -266,10 +339,11 @@ class JarvisNotebook:
         from jarvis.society.notebook import select_entries
 
         books = books if books is not None else self.entries()
-        if not any(books[target] for target in TARGETS):
+        # SOUL.md reaches the prompt whole through jarvis.brain.identity.
+        if not any(books.get(target) for target in BOOK_TARGETS):
             return ""
         parts = [_HEADER]
-        for target in TARGETS:
+        for target in BOOK_TARGETS:
             budget = self.budgets[target] // (2 if compact else 1)
             selected, omitted = select_entries(books[target], max_chars=budget)
             if not selected:
@@ -317,7 +391,15 @@ class JarvisNotebook:
         return text
 
     def warm(self) -> None:
-        """Migrate or create the files and render both profiles (off the voice path)."""
+        """Migrate or create the files and render both profiles (off the voice path).
+
+        Also writes the live assistant name into SOUL.md's name line, so a
+        person reading the file sees the name the wake word gives.
+        """
+        from jarvis.memory.soul import sync_name
+
+        if self.soul_path is not None:
+            sync_name(self.soul_path, self._owner.name)
         self.paths()
         self.invalidate()
         for compact in (False, True):
@@ -351,12 +433,14 @@ def snapshot_block(*, compact: bool = False) -> str:
 def notebook_from_config(config: Any) -> JarvisNotebook:
     """Build the notebook for ``config``'s vault, name and budgets."""
     from jarvis.brain.assistant_name import resolve_assistant_name
+    from jarvis.brain.identity import soul_path
     from jarvis.society.memory import resolve_society_vault
 
     learning = config.memory.learning
     return JarvisNotebook(
         resolve_society_vault(config),
         name=resolve_assistant_name(config),
+        soul_path=soul_path(),
         budgets={
             "user": int(learning.user_budget_chars),
             "memory": int(learning.memory_budget_chars),

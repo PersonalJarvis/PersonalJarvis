@@ -102,12 +102,10 @@ from jarvis.voice.action_phrases import (
 from jarvis.voice.contextual_readback import render_readback
 
 from .action_honesty import has_unbacked_action_claim, replace_unbacked_action_claim
-from .assistant_name import (
-    DEFAULT_ASSISTANT_NAME,
-    resolve_assistant_name,
-)
+from .assistant_name import resolve_assistant_name
 from .dispatcher import BrainDispatcher
 from .evidence_gate import live_surface_covers
+from .identity import identity_block
 from .intent_router import RoutingDecision, classify
 from .local_action_gate import (
     HARNESS_NAME,
@@ -4229,25 +4227,20 @@ class BrainManager:
             return "\n\n".join(part for part in parts if part)
         parts: list[str] = []
 
-        # Configurable assistant identity. Derived solely from the wake phrase
-        # (so a custom wake word "Micron" makes the assistant call itself
-        # Micron). The persona files are name-neutral as of 2026-06-29 (no baked-in
-        # "Jarvis" to override anymore), so this simply states the resolved name
-        # prominently and early. Skipped only for the neutral pre-onboarding
-        # fallback ("Assistant"), where the product imposes no name at all.
-        # Placed first so it frames everything.
+        # The assistant's identity, placed first so it frames everything: the
+        # wake-word name (Personal Jarvis is the app, never the assistant's
+        # name) plus its character from SOUL.md, read through an mtime cache
+        # so what the learning loop writes there reaches the next turn. The
+        # realtime and GPT-Live instructions build the same block
+        # (jarvis/brain/identity.py), so every surface answers "who are you"
+        # the same way.
         name = resolve_assistant_name(getattr(self, "_config", None))
-        if name != DEFAULT_ASSISTANT_NAME:
-            parts.append(
-                f"DEIN NAME IST {name.upper()}. Du heisst {name}. Stell dich, "
-                f"wenn ueberhaupt, als {name} vor und unterschreibe als {name}."
+        parts.append(
+            identity_block(
+                getattr(self, "_config", None),
+                path=getattr(getattr(self, "_soul", None), "path", None),
             )
-
-        if self._soul is not None:
-            try:
-                parts.append(self._soul.render_for_prompt())
-            except Exception:  # noqa: BLE001
-                pass
+        )
 
         # Mandate phase 2 (reactivated 2026-04-28): persona block from
         # JARVIS_PERSONA.md incl. ECHO-PARAPHRASE section and hangup contract.

@@ -23,6 +23,22 @@ from jarvis.realtime.audio import StreamingPcm16Resampler
 
 log = logging.getLogger(__name__)
 
+
+def _identity(config: Any) -> str:
+    """Who the assistant is (wake-word name + SOUL.md); ``""`` on a fault.
+
+    ``""`` makes the session config fall back to the nameless directive, so
+    an identity fault never blocks a call.
+    """
+    try:
+        from jarvis.brain.identity import identity_block
+
+        return identity_block(config)
+    except Exception:  # noqa: BLE001 — never block a call on the identity block
+        log.warning("live voice: identity block unavailable", exc_info=True)
+        return ""
+
+
 #: Smallest gap between two live snapshots of one streaming reasoning summary.
 #: The summary arrives token by token; the bus sees a few snapshots a second.
 REASONING_SNAPSHOT_INTERVAL_S = 0.3
@@ -467,7 +483,9 @@ class LiveVoiceSession:
         )
         prompt_language = getattr(self._config.brain, "reply_language", "auto")
         config = profile.session_config(
-            language=prompt_language, tools=self._tools.declarations(defer_catalog=True)
+            language=prompt_language,
+            tools=self._tools.declarations(defer_catalog=True),
+            identity=_identity(self._config),
         )
         self._base_session_config = config
         offer = str(message.get("webrtc_offer_sdp", ""))

@@ -89,6 +89,36 @@ The prompt path never waits on a writer and never creates files: it reads the
 notebooks under a 50 ms lock attempt and otherwise serves the last good text.
 Typed chat turns contribute only what the person typed, never attachments.
 
+## SOUL.md: the assistant's own character
+
+The third target, `soul`, is the assistant itself. It lives in
+`data/workspace/SOUL.md` (`jarvis/memory/soul.py`), not in the vault:
+
+| Part of SOUL.md | Maintained by |
+| --- | --- |
+| `- **Name:**` line under `## Who I am` | the loop at start (`JarvisNotebook.warm`), mirrored from the wake word; the wake word stays the only control for the name |
+| `## Calibration` between the `curator:calibration` markers | the review: id-tagged entries in the Society notebook format, under a file lock, ledgered like the other two |
+| role, vibe, `## Tone rules`, `## Limits` | the user, by hand; nothing rewrites them |
+
+The review shows the reviewer the `soul` entries next to the other two and
+accepts `target: "soul"` for lasting statements about how the user wants the
+assistant to be and present itself, under the same evidence and guard rules.
+The signal filter also marks turns addressed to the assistant's own manner
+("your name is", "you are too formal", "be more ...", and the German and
+Spanish equivalents). The name itself
+is never stored as an entry.
+
+SOUL.md is not part of the learned snapshot below. `jarvis/brain/identity.py`
+renders it, after a name directive ("YOUR NAME IS GEORGE ... Personal Jarvis
+is the name of the app you run inside, not your name"), at the very top of
+every surface: the classic brain prompt (and with it the CLI chat seats), the
+realtime voice instructions and the GPT-Live session, both its voice model
+and its thinking model. The render is cached on the file's modification time,
+so a review or a hand edit applies on the next turn. Regression this fixes: a
+GPT-Live call answered "I'm Personal Jarvis" although the wake word named the
+assistant George (2026-10-02); the live instructions hardcoded the product
+name and never read SOUL.md.
+
 ## Size and compaction
 
 The notebooks ride along on every brain turn and every realtime instruction
@@ -147,6 +177,9 @@ engines. No upstream code was copied.
 `tests/unit/memory/learning/test_jarvis_learning.py` covers the evidence and
 safety rules, ledger and budgets, every trigger, the dead-reviewer fallbacks,
 the voice and chat inputs, and both prompt integrations;
+`test_soul_learning.py` covers the `soul` target end to end;
+`tests/unit/memory/test_soul.py` and `tests/unit/brain/test_identity.py` cover
+the file format and the identity block on every surface;
 `test_compaction.py` covers deduplication, safe and refused merges, the
 outdated rule, the cooldown, the hard ceiling and the bounded ledger. The loop uses only
 `pathlib`, JSON, asyncio and the existing `filelock` dependency, so it runs
