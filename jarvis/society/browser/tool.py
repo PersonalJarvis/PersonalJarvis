@@ -112,7 +112,7 @@ _DESKTOP_HANDOFF_RE: Final[re.Pattern[str]] = re.compile(
     r"minimi[sz]e\s+(?:the\s+)?browser|maximi[sz]e\s+(?:the\s+)?browser|"
     r"switch\s+(?:to|between)\s+(?:another\s+)?app|drag\s+.*\s+between\s+apps|"
     r"finder\s+(?:window|dialog)|dock\s+icon|"
-    r"adressleiste|browser[- ]menü|lesezeichenleiste|datei(?:auswahl|dialog)|"
+    r"adressleiste|browser[- ]menü|lesezeichenleiste|datei(?:auswahl|dialog)|"  # i18n-allow: German browser chrome vocabulary
     r"fenster\s+(?:verschieben|verkleinern|maximieren|minimieren)|app\s+wechseln|"
     r"barra\s+degli\s+indirizzi|barra\s+(?:degli\s+)?strumenti\s+del\s+browser|"
     r"menu\s+del\s+browser|icona\s+(?:dell['’]?estensione|estensione)|"
