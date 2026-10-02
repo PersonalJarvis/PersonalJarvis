@@ -135,3 +135,25 @@ The scheduled pass is intentionally limited to the platform-supported maximum ca
 - Commit: `b4ddd738`. The preceding CI attempt's sole macOS realtime-contract
   job was cancelled while queued; the portable matrix was green. Native Mac
   qualification remains a user-driven follow-up.
+
+## Remote validation: timestamp-aware dictation repair
+
+- Commit `9bb12bc3` prevents the token-rate floor from re-reading a short
+  transcript when provider timestamps show speech reaches the end of the clip.
+  Providers without timestamps retain the token-based truncation check; the
+  known dropped-tail repair remains active.
+- Focused Linux/Python 3.12 validation: **11 passed** in
+  `test_pause_trim_and_tail_repair.py`; Ruff and `git diff --check` pass.
+  GitHub Actions run `37030228068` completed **30/30 jobs successfully**.
+- This addresses the false-repair mechanism in BUG-200, but the report remains
+  open pending same-audio A/B evidence and a historical baseline; no retained
+  dictation audio was present in this checkout.
+
+## Remote validation: society research status
+
+- Commit `8618c168` marks the 2026-09-01 gap-check verdict as superseded by
+  `../agent-society/MASTERPLAN.md` sections 2 and 7–8. This closes planning-level
+  contradictions and records safeguards; it does not claim unfinished M3/M4
+  runtime work has shipped.
+- The docs-only commit did not start a workflow run under the repository's
+  path filters. Its edit passed `git diff --check` before publication.
