@@ -539,7 +539,10 @@
     "indicator_label": "Estado de voz",
     "blocked_by_permission": "Micrófono bloqueado",
     "blocked_by_permission_short": "Micro bloqueado",
-    "ready_blocked_title": "La voz está lista, pero el micrófono está bloqueado. Arréglalo en Ajustes del Sistema."
+    "ready_blocked_title": "La voz está lista, pero el micrófono está bloqueado. Arréglalo en Ajustes del Sistema.",
+    "not_allowed_yet": "Micrófono aún sin permitir",
+    "not_allowed_yet_short": "Micro sin permitir",
+    "ready_not_asked_title": "La voz está lista, pero el micrófono aún no está permitido. Desactiva y vuelve a activar la palabra de activación para que macOS pregunte."
   },
   "sidebar": {
     "extensions_label": "Plugins / Skills / MCP",
@@ -2321,7 +2324,8 @@
     "see_all": "Ver todos los permisos",
     "path_label": "Lo encuentras en {path}.",
     "stale_grant_hint": "macOS ya no volverá a preguntar por este acceso. Si Ajustes del Sistema ya lo muestra activado, ese registro pertenece a una versión anterior de la app: pulsa «Preguntar de nuevo» y concede el acceso otra vez.",
-    "outside_app_note": "{app} no se está ejecutando como app instalada, así que macOS registra el acceso para la app que la inició. «Preguntar de nuevo» solo funciona en la app instalada.",
+    "outside_app_note": "{app} se inició desde otra app, por ejemplo tu terminal, así que macOS registra el acceso para esa app y para todo lo que ejecutes en ella. «Preguntar de nuevo» solo funciona en la app instalada.",
+    "outside_app_note_bundle": "{app} no se ejecuta desde la carpeta Aplicaciones, así que macOS registra el acceso solo para esta copia. «Preguntar de nuevo» solo funciona en la app instalada.",
     "restart_hint": "macOS solo aplica este acceso cuando {app} se reinicia.",
     "restart_action": "Salir y volver a abrir",
     "restart_failed": "Personal Jarvis no pudo reiniciarse. Ciérralo y ábrelo de nuevo manualmente.",
@@ -2383,97 +2387,97 @@
       },
       "generic": {
         "not_determined": "Esta función necesita acceso a {permissions}. Pulsa «Continuar» y macOS te preguntará.",
-        "denied": "Esta función no puede funcionar porque el acceso a {permissions} está desactivado para {app}. Actívalo en Ajustes del Sistema y vuelve aquí.",
+        "denied": "Esta función no puede funcionar porque el acceso a {permissions} está desactivado para {app}. Activa {app} allí, en Ajustes del Sistema, y vuelve aquí.",
         "restricted": "Esta función no puede usar {permissions} porque tu Mac lo restringe, por ejemplo mediante un perfil de dispositivo o Tiempo de uso. Solo un administrador puede cambiarlo.",
-        "needs_settings": "Esta función necesita acceso a {permissions}. Actívalo para {app} en Ajustes del Sistema y vuelve aquí.",
+        "needs_settings": "Esta función necesita acceso a {permissions}. Activa {app} allí, en Ajustes del Sistema, y vuelve aquí.",
         "restart_hint": "Esta función ya tiene acceso a {permissions}, pero macOS solo lo aplica cuando {app} se reinicia. Cierra y vuelve a abrir {app} para terminar.",
         "unavailable": "Esta función no pudo comprobar el acceso a {permissions} ahora mismo, por ejemplo porque no hay una sesión de escritorio disponible."
       },
       "voice": {
         "not_determined": "Hablar con {app} por voz necesita acceso a {permissions}. Pulsa «Continuar» y macOS te preguntará.",
-        "denied": "Hablar con {app} por voz no puede funcionar porque el acceso a {permissions} está desactivado para {app}. Actívalo en Ajustes del Sistema y vuelve aquí.",
+        "denied": "Hablar con {app} por voz no puede funcionar porque el acceso a {permissions} está desactivado para {app}. Activa {app} allí, en Ajustes del Sistema, y vuelve aquí.",
         "restricted": "Hablar con {app} por voz no puede usar {permissions} porque tu Mac lo restringe, por ejemplo mediante un perfil de dispositivo o Tiempo de uso. Solo un administrador puede cambiarlo.",
-        "needs_settings": "Hablar con {app} por voz necesita acceso a {permissions}. Actívalo para {app} en Ajustes del Sistema y vuelve aquí.",
+        "needs_settings": "Hablar con {app} por voz necesita acceso a {permissions}. Activa {app} allí, en Ajustes del Sistema, y vuelve aquí.",
         "restart_hint": "Hablar con {app} por voz ya tiene acceso a {permissions}, pero macOS solo lo aplica cuando {app} se reinicia. Cierra y vuelve a abrir {app} para terminar.",
         "unavailable": "Hablar con {app} por voz no pudo comprobar el acceso a {permissions} ahora mismo, por ejemplo porque no hay una sesión de escritorio disponible."
       },
       "dictation": {
         "not_determined": "El dictado necesita acceso a {permissions}. Pulsa «Continuar» y macOS te preguntará.",
-        "denied": "El dictado no puede funcionar porque el acceso a {permissions} está desactivado para {app}. Actívalo en Ajustes del Sistema y vuelve aquí.",
+        "denied": "El dictado no puede funcionar porque el acceso a {permissions} está desactivado para {app}. Activa {app} allí, en Ajustes del Sistema, y vuelve aquí.",
         "restricted": "El dictado no puede usar {permissions} porque tu Mac lo restringe, por ejemplo mediante un perfil de dispositivo o Tiempo de uso. Solo un administrador puede cambiarlo.",
-        "needs_settings": "El dictado necesita acceso a {permissions}. Actívalo para {app} en Ajustes del Sistema y vuelve aquí.",
+        "needs_settings": "El dictado necesita acceso a {permissions}. Activa {app} allí, en Ajustes del Sistema, y vuelve aquí.",
         "restart_hint": "El dictado ya tiene acceso a {permissions}, pero macOS solo lo aplica cuando {app} se reinicia. Cierra y vuelve a abrir {app} para terminar.",
         "unavailable": "El dictado no pudo comprobar el acceso a {permissions} ahora mismo, por ejemplo porque no hay una sesión de escritorio disponible."
       },
       "wake_word": {
         "not_determined": "La palabra de activación necesita acceso a {permissions}. Pulsa «Continuar» y macOS te preguntará.",
-        "denied": "La palabra de activación no puede funcionar porque el acceso a {permissions} está desactivado para {app}. Actívalo en Ajustes del Sistema y vuelve aquí.",
+        "denied": "La palabra de activación no puede funcionar porque el acceso a {permissions} está desactivado para {app}. Activa {app} allí, en Ajustes del Sistema, y vuelve aquí.",
         "restricted": "La palabra de activación no puede usar {permissions} porque tu Mac lo restringe, por ejemplo mediante un perfil de dispositivo o Tiempo de uso. Solo un administrador puede cambiarlo.",
-        "needs_settings": "La palabra de activación necesita acceso a {permissions}. Actívalo para {app} en Ajustes del Sistema y vuelve aquí.",
+        "needs_settings": "La palabra de activación necesita acceso a {permissions}. Activa {app} allí, en Ajustes del Sistema, y vuelve aquí.",
         "restart_hint": "La palabra de activación ya tiene acceso a {permissions}, pero macOS solo lo aplica cuando {app} se reinicia. Cierra y vuelve a abrir {app} para terminar.",
         "unavailable": "La palabra de activación no pudo comprobar el acceso a {permissions} ahora mismo, por ejemplo porque no hay una sesión de escritorio disponible."
       },
       "computer_use": {
         "not_determined": "Computer-Use necesita acceso a {permissions}. Pulsa «Continuar» y macOS te preguntará.",
-        "denied": "Computer-Use no puede funcionar porque el acceso a {permissions} está desactivado para {app}. Actívalo en Ajustes del Sistema y vuelve aquí.",
+        "denied": "Computer-Use no puede funcionar porque el acceso a {permissions} está desactivado para {app}. Activa {app} allí, en Ajustes del Sistema, y vuelve aquí.",
         "restricted": "Computer-Use no puede usar {permissions} porque tu Mac lo restringe, por ejemplo mediante un perfil de dispositivo o Tiempo de uso. Solo un administrador puede cambiarlo.",
-        "needs_settings": "Computer-Use necesita acceso a {permissions}. Actívalo para {app} en Ajustes del Sistema y vuelve aquí.",
+        "needs_settings": "Computer-Use necesita acceso a {permissions}. Activa {app} allí, en Ajustes del Sistema, y vuelve aquí.",
         "restart_hint": "Computer-Use ya tiene acceso a {permissions}, pero macOS solo lo aplica cuando {app} se reinicia. Cierra y vuelve a abrir {app} para terminar.",
         "unavailable": "Computer-Use no pudo comprobar el acceso a {permissions} ahora mismo, por ejemplo porque no hay una sesión de escritorio disponible."
       },
       "screen_context": {
         "not_determined": "El contexto de pantalla necesita acceso a {permissions}. Pulsa «Continuar» y macOS te preguntará.",
-        "denied": "El contexto de pantalla no puede funcionar porque el acceso a {permissions} está desactivado para {app}. Actívalo en Ajustes del Sistema y vuelve aquí.",
+        "denied": "El contexto de pantalla no puede funcionar porque el acceso a {permissions} está desactivado para {app}. Activa {app} allí, en Ajustes del Sistema, y vuelve aquí.",
         "restricted": "El contexto de pantalla no puede usar {permissions} porque tu Mac lo restringe, por ejemplo mediante un perfil de dispositivo o Tiempo de uso. Solo un administrador puede cambiarlo.",
-        "needs_settings": "El contexto de pantalla necesita acceso a {permissions}. Actívalo para {app} en Ajustes del Sistema y vuelve aquí.",
+        "needs_settings": "El contexto de pantalla necesita acceso a {permissions}. Activa {app} allí, en Ajustes del Sistema, y vuelve aquí.",
         "restart_hint": "El contexto de pantalla ya tiene acceso a {permissions}, pero macOS solo lo aplica cuando {app} se reinicia. Cierra y vuelve a abrir {app} para terminar.",
         "unavailable": "El contexto de pantalla no pudo comprobar el acceso a {permissions} ahora mismo, por ejemplo porque no hay una sesión de escritorio disponible."
       },
       "appshot": {
         "not_determined": "Los appshots necesitan acceso a {permissions}. Pulsa «Continuar» y macOS te preguntará.",
-        "denied": "Los appshots no pueden funcionar porque el acceso a {permissions} está desactivado para {app}. Actívalo en Ajustes del Sistema y vuelve aquí.",
+        "denied": "Los appshots no pueden funcionar porque el acceso a {permissions} está desactivado para {app}. Activa {app} allí, en Ajustes del Sistema, y vuelve aquí.",
         "restricted": "Los appshots no pueden usar {permissions} porque tu Mac lo restringe, por ejemplo mediante un perfil de dispositivo o Tiempo de uso. Solo un administrador puede cambiarlo.",
-        "needs_settings": "Los appshots necesitan acceso a {permissions}. Actívalo para {app} en Ajustes del Sistema y vuelve aquí.",
+        "needs_settings": "Los appshots necesitan acceso a {permissions}. Activa {app} allí, en Ajustes del Sistema, y vuelve aquí.",
         "restart_hint": "Los appshots ya tienen acceso a {permissions}, pero macOS solo lo aplica cuando {app} se reinicia. Cierra y vuelve a abrir {app} para terminar.",
         "unavailable": "Los appshots no pudieron comprobar el acceso a {permissions} ahora mismo, por ejemplo porque no hay una sesión de escritorio disponible."
       },
       "window_control": {
         "not_determined": "El control de ventanas necesita acceso a {permissions}. Pulsa «Continuar» y macOS te preguntará.",
-        "denied": "El control de ventanas no puede funcionar porque el acceso a {permissions} está desactivado para {app}. Actívalo en Ajustes del Sistema y vuelve aquí.",
+        "denied": "El control de ventanas no puede funcionar porque el acceso a {permissions} está desactivado para {app}. Activa {app} allí, en Ajustes del Sistema, y vuelve aquí.",
         "restricted": "El control de ventanas no puede usar {permissions} porque tu Mac lo restringe, por ejemplo mediante un perfil de dispositivo o Tiempo de uso. Solo un administrador puede cambiarlo.",
-        "needs_settings": "El control de ventanas necesita acceso a {permissions}. Actívalo para {app} en Ajustes del Sistema y vuelve aquí.",
+        "needs_settings": "El control de ventanas necesita acceso a {permissions}. Activa {app} allí, en Ajustes del Sistema, y vuelve aquí.",
         "restart_hint": "El control de ventanas ya tiene acceso a {permissions}, pero macOS solo lo aplica cuando {app} se reinicia. Cierra y vuelve a abrir {app} para terminar.",
         "unavailable": "El control de ventanas no pudo comprobar el acceso a {permissions} ahora mismo, por ejemplo porque no hay una sesión de escritorio disponible."
       },
       "dictation_insert": {
         "not_determined": "Insertar tu dictado en otras apps necesita acceso a {permissions}. Pulsa «Continuar» y macOS te preguntará.",
-        "denied": "Insertar tu dictado en otras apps no puede funcionar porque el acceso a {permissions} está desactivado para {app}. Actívalo en Ajustes del Sistema y vuelve aquí.",
+        "denied": "Insertar tu dictado en otras apps no puede funcionar porque el acceso a {permissions} está desactivado para {app}. Activa {app} allí, en Ajustes del Sistema, y vuelve aquí.",
         "restricted": "Insertar tu dictado en otras apps no puede usar {permissions} porque tu Mac lo restringe, por ejemplo mediante un perfil de dispositivo o Tiempo de uso. Solo un administrador puede cambiarlo.",
-        "needs_settings": "Insertar tu dictado en otras apps necesita acceso a {permissions}. Actívalo para {app} en Ajustes del Sistema y vuelve aquí.",
+        "needs_settings": "Insertar tu dictado en otras apps necesita acceso a {permissions}. Activa {app} allí, en Ajustes del Sistema, y vuelve aquí.",
         "restart_hint": "Insertar tu dictado en otras apps ya tiene acceso a {permissions}, pero macOS solo lo aplica cuando {app} se reinicia. Cierra y vuelve a abrir {app} para terminar.",
         "unavailable": "Insertar tu dictado en otras apps no pudo comprobar el acceso a {permissions} ahora mismo, por ejemplo porque no hay una sesión de escritorio disponible."
       },
       "global_shortcuts": {
         "not_determined": "Los atajos de teclado globales necesitan acceso a {permissions}. Pulsa «Continuar» y macOS te preguntará.",
-        "denied": "Los atajos de teclado globales no pueden funcionar porque el acceso a {permissions} está desactivado para {app}. Actívalo en Ajustes del Sistema y vuelve aquí.",
+        "denied": "Los atajos de teclado globales no pueden funcionar porque el acceso a {permissions} está desactivado para {app}. Activa {app} allí, en Ajustes del Sistema, y vuelve aquí.",
         "restricted": "Los atajos de teclado globales no pueden usar {permissions} porque tu Mac lo restringe, por ejemplo mediante un perfil de dispositivo o Tiempo de uso. Solo un administrador puede cambiarlo.",
-        "needs_settings": "Los atajos de teclado globales necesitan acceso a {permissions}. Actívalo para {app} en Ajustes del Sistema y vuelve aquí.",
+        "needs_settings": "Los atajos de teclado globales necesitan acceso a {permissions}. Activa {app} allí, en Ajustes del Sistema, y vuelve aquí.",
         "restart_hint": "Los atajos de teclado globales ya tienen acceso a {permissions}, pero macOS solo lo aplica cuando {app} se reinicia. Cierra y vuelve a abrir {app} para terminar.",
         "unavailable": "Los atajos de teclado globales no pudieron comprobar el acceso a {permissions} ahora mismo, por ejemplo porque no hay una sesión de escritorio disponible."
       },
       "audio_ducking": {
         "not_determined": "Bajar el volumen de la música mientras dictas necesita acceso a {permissions}. Pulsa «Continuar» y macOS te preguntará.",
-        "denied": "Bajar el volumen de la música mientras dictas no puede funcionar porque el acceso a {permissions} está desactivado para {app}. Actívalo en Ajustes del Sistema y vuelve aquí.",
+        "denied": "Bajar el volumen de la música mientras dictas no puede funcionar porque el acceso a {permissions} está desactivado para {app}. Activa {app} allí, en Ajustes del Sistema, y vuelve aquí.",
         "restricted": "Bajar el volumen de la música mientras dictas no puede usar {permissions} porque tu Mac lo restringe, por ejemplo mediante un perfil de dispositivo o Tiempo de uso. Solo un administrador puede cambiarlo.",
-        "needs_settings": "Bajar el volumen de la música mientras dictas necesita acceso a {permissions}. Actívalo para {app} en Ajustes del Sistema y vuelve aquí.",
+        "needs_settings": "Bajar el volumen de la música mientras dictas necesita acceso a {permissions}. Activa {app} allí, en Ajustes del Sistema, y vuelve aquí.",
         "restart_hint": "Bajar el volumen de la música mientras dictas ya tiene acceso a {permissions}, pero macOS solo lo aplica cuando {app} se reinicia. Cierra y vuelve a abrir {app} para terminar.",
         "unavailable": "Bajar el volumen de la música mientras dictas no pudo comprobar el acceso a {permissions} ahora mismo, por ejemplo porque no hay una sesión de escritorio disponible."
       },
       "browser_voice": {
         "not_determined": "La voz en el navegador necesita acceso a {permissions}. Pulsa «Continuar» y macOS te preguntará.",
-        "denied": "La voz en el navegador no puede funcionar porque el acceso a {permissions} está desactivado para {app}. Actívalo en Ajustes del Sistema y vuelve aquí.",
+        "denied": "La voz en el navegador no puede funcionar porque el acceso a {permissions} está desactivado para {app}. Activa {app} allí, en Ajustes del Sistema, y vuelve aquí.",
         "restricted": "La voz en el navegador no puede usar {permissions} porque tu Mac lo restringe, por ejemplo mediante un perfil de dispositivo o Tiempo de uso. Solo un administrador puede cambiarlo.",
-        "needs_settings": "La voz en el navegador necesita acceso a {permissions}. Actívalo para {app} en Ajustes del Sistema y vuelve aquí.",
+        "needs_settings": "La voz en el navegador necesita acceso a {permissions}. Activa {app} allí, en Ajustes del Sistema, y vuelve aquí.",
         "restart_hint": "La voz en el navegador ya tiene acceso a {permissions}, pero macOS solo lo aplica cuando {app} se reinicia. Cierra y vuelve a abrir {app} para terminar.",
         "unavailable": "La voz en el navegador no pudo comprobar el acceso a {permissions} ahora mismo, por ejemplo porque no hay una sesión de escritorio disponible."
       },
@@ -2484,17 +2488,22 @@
         "not_now": "Ahora no",
         "restart": "Salir y volver a abrir",
         "allow_outside": "Permitir para la app que inició {app}",
+        "allow_outside_bundle": "Preguntar a macOS ahora",
         "reset": "¿Ya está activado? Restablecer y preguntar de nuevo"
       },
       "still_off": "Sigue pareciendo desactivado. Si Ajustes del Sistema ya lo muestra como activado, es posible que esa entrada pertenezca a una versión anterior de la app.",
+      "restart_maybe": "Es posible que macOS lo aplique solo después de reiniciar {app}.",
       "reset_asked": "Restablecido. macOS preguntará de nuevo ahora.",
       "reset_manual": "No se pudo restablecer. Desactiva y vuelve a activar el interruptor en Ajustes del Sistema. Si aun así no funciona, reinicia tu Mac.",
-      "outside_note": "{app} no se está ejecutando como app instalada, así que macOS lo registraría para la app que la inició, por ejemplo tu terminal. Puedes permitirlo para esa app o instalar {app} para que tenga su propia entrada.",
-      "outside_sentence": "Todavía no se ha preguntado nada. {app} no se está ejecutando como app instalada, así que macOS registraría el acceso a {permissions} para la app que la inició, por ejemplo tu terminal. El botón de abajo pregunta ahora a macOS y la respuesta vale para esa app. O instala {app} para que tenga su propia entrada.",
+      "outside_note": "{app} se inició desde otra app, por ejemplo tu terminal, así que macOS lo registraría para esa app y para todo lo que ejecutes en ella. Instala {app} para que tenga su propia entrada.",
+      "outside_note_bundle": "{app} no se ejecuta desde la carpeta Aplicaciones, así que macOS lo registraría solo para esta copia. Muévela a Aplicaciones para tener una entrada permanente.",
+      "outside_sentence": "{app} se inició desde otra app, por ejemplo tu terminal, así que macOS registraría el acceso a {permissions} para esa app y para todo lo que ejecutes en ella. El botón pregunta ahora a macOS.",
+      "outside_sentence_bundle": "{app} no se ejecuta desde la carpeta Aplicaciones, así que macOS registraría el acceso a {permissions} solo para esta copia. Muévela a Aplicaciones para tener una entrada permanente, o pregunta a macOS ahora.",
       "name": "«{0}»",
       "more": "+{n} más",
       "details": "Detalles",
       "allowed": "Permitido. Puedes continuar.",
+      "allowed_retry": "Permitido. Pídele a Jarvis que repita la tarea.",
       "steps_label": "Lo que aún falta"
     },
     "inline": {
@@ -2532,7 +2541,7 @@
       }
     },
     "shortcuts": {
-      "needs_input_monitoring": "Los atajos globales funcionan aunque otra app esté en primer plano. Para eso, macOS necesita tu permiso para que {app} vigile el teclado (Monitorización de entrada). Los botones y tu voz siguen funcionando sin ello.",
+      "needs_input_monitoring": "Los atajos funcionan en otras apps cuando permites la Monitorización de entrada. Los botones y la voz funcionan sin ella.",
       "enable": "Activar atajos globales",
       "blocked": "Activa {app} en Ajustes del Sistema, en Monitorización de entrada, y vuelve aquí. Mientras tanto, los botones y tu voz siguen funcionando.",
       "restart_hint": "La monitorización de entrada está permitida, pero macOS solo entrega las pulsaciones de teclas a {app} después de reiniciarla. Cierra y vuelve a abrir {app} para terminar de activar los atajos globales.",

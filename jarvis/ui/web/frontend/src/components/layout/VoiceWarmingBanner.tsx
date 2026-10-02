@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { Loader2, Mic, MicOff } from "lucide-react";
 import { useT } from "@/i18n";
-import { useVoiceBlockedByPermission } from "@/hooks/useVoiceBlockedByPermission";
+import {
+  useVoiceBlockedByPermission,
+  useVoiceNotAskedByPermission,
+} from "@/hooks/useVoiceBlockedByPermission";
 import { useVoiceReadiness } from "@/hooks/useVoiceReadiness";
 
 /**
@@ -30,6 +33,7 @@ export function VoiceWarmingBanner() {
   // starting up while the centre says Ready for commands").
   const { warming, ready } = useVoiceReadiness();
   const micBlocked = useVoiceBlockedByPermission();
+  const micNotAsked = useVoiceNotAskedByPermission();
 
   // Flash an explicit "you can speak now" confirmation on the warming -> ready
   // transition, so the go-ahead is a positive signal, not the banner silently
@@ -51,7 +55,13 @@ export function VoiceWarmingBanner() {
 
   // Warming outranks it (the sidebar says "Voice starting…" then too); only the
   // go-ahead is withheld while macOS has the microphone blocked.
-  const state = warming ? "warming" : micBlocked ? "blocked" : "ready";
+  const state = warming
+    ? "warming"
+    : micBlocked
+      ? "blocked"
+      : micNotAsked
+        ? "not_asked"
+        : "ready";
 
   return (
     <div
@@ -67,7 +77,7 @@ export function VoiceWarmingBanner() {
     >
       {state === "warming" ? (
         <Loader2 className="h-4 w-4 shrink-0 animate-spin text-warning" aria-hidden />
-      ) : state === "blocked" ? (
+      ) : state === "blocked" || state === "not_asked" ? (
         <MicOff className="h-4 w-4 shrink-0 text-warning" aria-hidden />
       ) : (
         <Mic className="h-4 w-4 shrink-0 text-success" aria-hidden />
@@ -78,7 +88,9 @@ export function VoiceWarmingBanner() {
             ? t("voice_state.warming_title")
             : state === "blocked"
               ? t("voice_state.ready_blocked_title")
-              : t("voice_state.ready_title")}
+              : state === "not_asked"
+                ? t("voice_state.ready_not_asked_title")
+                : t("voice_state.ready_title")}
         </span>
         {warming && (
           <span className="text-meta text-muted-foreground">

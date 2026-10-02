@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
+import { hasEmbeddedDesktopBridge } from "@/lib/embeddedDesktop";
+import { requestPermission } from "@/lib/permissionsApi";
 import {
   MOUSE_BUTTON_TOKENS,
   detectKeyboardPlatform,
@@ -562,6 +564,8 @@ export function useKeybinds() {
   const [config, setConfig] = useState<KeybindsConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // The status the last read reported: saving a shortcut asks for what it needs.
+  const statusRef = useRef<KeybindsConfig["shortcuts_status"] | undefined>(undefined);
 
   const refetch = useCallback(async () => {
     setError(null);
@@ -569,6 +573,7 @@ export function useKeybinds() {
       const res = await fetch("/api/settings/keybinds");
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: KeybindsConfig = await res.json();
+      statusRef.current = data.shortcuts_status;
       setConfig(data);
     } catch (e) {
       setError((e as Error).message);
@@ -596,6 +601,17 @@ export function useKeybinds() {
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
         throw new Error(body.detail ?? `HTTP ${res.status}`);
+      }
+      // Saving a global shortcut is the moment it needs Input Monitoring (macOS): ask
+      // now, from this click, instead of leaving a shortcut that silently does nothing.
+      // Never part of the save itself: a failed or refused ask changes nothing here
+      // (the status note under the list says what is missing and offers the button).
+      if (statusRef.current?.state === "needs_input_monitoring" && hasEmbeddedDesktopBridge()) {
+        try {
+          await requestPermission("input_monitoring", { feature: "global_shortcuts" });
+        } catch {
+          // Rate limited or the host cannot ask (a remote window): the status note stays.
+        }
       }
       window.dispatchEvent(new CustomEvent("jarvis:keybinds-changed"));
       return body as KeybindSaveResult;

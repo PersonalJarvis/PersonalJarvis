@@ -227,6 +227,14 @@ describe("what opens the card", () => {
   });
 });
 
+/** Switch the snapshot to "started from another app" (a terminal), not a .app copy outside Applications. */
+function startedFromAnotherApp(): void {
+  const { snapshot } = usePermissionsStore.getState();
+  usePermissionsStore.setState({
+    snapshot: snapshot && { ...snapshot, app_identity: { ...snapshot.app_identity, launched_as_bundle: false } },
+  });
+}
+
 describe("the buttons per reason", () => {
   it("denied: Open System Settings opens the pane of the first missing permission", async () => {
     render(<PermissionPromptLayer />);
@@ -284,11 +292,12 @@ describe("the buttons per reason", () => {
   });
 
   it("outside the installed app the confirmation names the grantee and sends the consent flag", async () => {
+    startedFromAnotherApp();
     render(<PermissionPromptLayer />);
     open(needed({ reason: "needs_settings", can_prompt: true, outside_app: true }));
 
     const confirm = await screen.findByRole("button", { name: "Allow for the app that started Personal Jarvis" });
-    expect(screen.getByTestId("permission-prompt-sentence").textContent).toContain("not running as an installed app");
+    expect(screen.getByTestId("permission-prompt-sentence").textContent).toContain("started from another app");
     expect(posts("/request")).toHaveLength(0); // nothing is asked before the confirmation
     fireEvent.click(confirm);
 
@@ -299,33 +308,49 @@ describe("the buttons per reason", () => {
   it.each(["not_determined", "needs_settings"] as const)(
     "outside the installed app (%s) the sentence matches the button instead of promising an OS dialog or a Settings switch",
     async (reason) => {
+      startedFromAnotherApp();
       render(<PermissionPromptLayer />);
       open(needed({ reason, can_prompt: true, outside_app: true }));
 
       await screen.findByRole("button", { name: "Allow for the app that started Personal Jarvis" });
       const sentence = screen.getByTestId("permission-prompt-sentence").textContent ?? "";
-      // Nothing was asked, the grantee is named, and the button is said to be the ask.
-      expect(sentence).toMatch(/^Nothing has been asked yet\. Personal Jarvis is not running as an installed app/);
-      expect(sentence).toContain("access to “Microphone” for the app that started it");
-      expect(sentence).toContain("The button below asks macOS now");
+      // The grantee is named (and what the grant covers), and the button is said to be the ask.
+      expect(sentence).toMatch(/^Personal Jarvis was started from another app/);
+      expect(sentence).toContain("access to “Microphone” for that app and for everything you run in it");
+      expect(sentence).toContain("The button asks macOS now");
       // None of the per-feature promises that contradict that button.
       expect(sentence).not.toMatch(/Continue and macOS will ask you|Switch it on for/);
       // The heading agrees, and the old outside note is not repeated under the sentence.
       expect(screen.getByRole("group").getAttribute("aria-labelledby")).toBeTruthy();
       expect(screen.getByRole("heading", { level: 2 }).textContent).toBe("Confirm before macOS asks");
       const card = screen.getByTestId("permission-prompt-card").textContent ?? "";
-      expect(card.match(/not running as an installed app/g)).toHaveLength(1);
+      expect(card.match(/started from another app/g)).toHaveLength(1);
     },
   );
 
   it("keeps the feature sentence and the outside note when the reason is still a denial", async () => {
+    startedFromAnotherApp();
     render(<PermissionPromptLayer />);
     open(needed({ reason: "denied", can_prompt: true, outside_app: true }));
 
     await screen.findByRole("button", { name: "Allow for the app that started Personal Jarvis" });
     expect(screen.getByTestId("permission-prompt-sentence").textContent).toContain("is turned off for Personal Jarvis");
     expect(screen.getByRole("heading", { level: 2 }).textContent).toBe("Access is turned off");
-    expect(screen.getByText(/not running as an installed app/)).toBeTruthy();
+    expect(screen.getByText(/started from another app/)).toBeTruthy();
+  });
+
+  it("a .app run from a disk image says so and offers to ask macOS, with no terminal in sight", async () => {
+    render(<PermissionPromptLayer />); // the default snapshot is a .app copy (launched_as_bundle)
+    open(needed({ reason: "needs_settings", can_prompt: true, outside_app: true }));
+
+    const confirm = await screen.findByRole("button", { name: "Ask macOS now" });
+    const sentence = screen.getByTestId("permission-prompt-sentence").textContent ?? "";
+    expect(sentence).toContain("running from outside your Applications folder");
+    expect(sentence).not.toMatch(/terminal/i);
+    fireEvent.click(confirm);
+
+    await waitFor(() => expect(posts("/request")).toHaveLength(1));
+    expect(posts("/request")[0].body).toEqual({ feature: "dictation", allow_outside_app: true });
   });
 
   it("inside the installed app the feature sentence is unchanged", async () => {
@@ -416,6 +441,26 @@ describe("coming back from System Settings", () => {
     await waitFor(() => expect(posts("/microphone/request")).toHaveLength(1));
     expect((await screen.findByTestId("permission-prompt-message")).textContent).toBe(
       "Reset. macOS will ask again now.",
+    );
+  });
+
+  it("suggests Quit and reopen before a reset for Screen Recording, which macOS may apply only to a new process", async () => {
+    rows = { screen_recording: row("screen_recording", { status: "not_granted", can_reset: true }) };
+    render(<PermissionPromptLayer />);
+    open(needed({ feature: "computer_use", permissions: ["screen_recording"], reason: "needs_settings" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open System Settings" }));
+    await waitFor(() => expect(posts("/open-settings")).toHaveLength(1));
+    expect(screen.queryByRole("button", { name: "Quit and reopen" })).toBeNull();
+
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+
+    const restart = await screen.findByRole("button", { name: "Quit and reopen" }, { timeout: 2_000 });
+    const reset = screen.getByRole("button", { name: "Already on? Reset and ask again" });
+    expect(restart.compareDocumentPosition(reset) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByTestId("permission-prompt-restart-maybe").textContent).toBe(
+      "macOS may apply this only after Personal Jarvis restarts.",
     );
   });
 
@@ -600,6 +645,22 @@ describe("the confirmation", () => {
     expect(live.getAttribute("aria-live")).toBe("polite");
     expect(live.textContent).toBe("Allowed. You can carry on.");
     expect(screen.queryByTestId("permission-prompt-card")).toBeNull();
+  });
+
+  it("tells the person to ask again after a Computer Use mission stopped for the permission", async () => {
+    // The mission already ended (blocked_permission); nothing resumes it after the grant.
+    render(<PermissionPromptLayer />);
+    open(needed({ feature: "computer_use", permissions: ["accessibility"] }));
+    await screen.findByTestId("permission-prompt-card");
+
+    act(() => {
+      usePermissionsStore
+        .getState()
+        .ingest("PermissionResolved", "t1", { permissions: ["accessibility"], feature: "computer_use", granted: true }, Date.now());
+    });
+
+    expect(await screen.findByTestId("permission-allowed-card")).toBeTruthy();
+    expect(screen.getByTestId("permission-live-region").textContent).toBe("Allowed. Ask Jarvis to try the task again.");
   });
 
   it("stays quiet for a grant the card never showed", () => {

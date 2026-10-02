@@ -138,8 +138,7 @@ describe("ShortcutsStatusNote", () => {
   it("explains in a full sentence, never the backend's English, and never says 'denied'", () => {
     render(<ShortcutsStatusNote status={NEEDS} />);
     const sentence = screen.getByTestId("shortcuts-status-sentence").textContent ?? "";
-    expect(sentence).toContain("Global shortcuts work while another app is in front");
-    expect(sentence).toContain("Personal Jarvis");
+    expect(sentence).toContain("Shortcuts work in other apps once you allow Input Monitoring");
     expect(sentence).not.toContain("English backend sentence");
     expect(sentence.toLowerCase()).not.toContain("denied");
     expect(screen.getByRole("button", { name: "Enable global shortcuts" })).toBeTruthy();
@@ -176,7 +175,7 @@ describe("ShortcutsStatusNote", () => {
     );
   });
 
-  it("names the grantee and asks again only after the person confirms (not running as the installed app)", async () => {
+  it("names this copy and asks again only after the person confirms (a .app outside Applications)", async () => {
     requestAnswer = {
       ...requestAnswer,
       outcome: "needs_settings",
@@ -189,10 +188,10 @@ describe("ShortcutsStatusNote", () => {
     fireEvent.click(screen.getByRole("button", { name: "Enable global shortcuts" }));
 
     await waitFor(() => expect(screen.getByTestId("shortcuts-status-note").getAttribute("data-mode")).toBe("outside"));
-    expect(screen.getByTestId("shortcuts-status-sentence").textContent).toContain("is not running as an installed app");
+    expect(screen.getByTestId("shortcuts-status-sentence").textContent).toContain("running from outside your Applications folder");
     expect(calls).toHaveLength(1);
 
-    fireEvent.click(screen.getByRole("button", { name: "Allow for the app that started Personal Jarvis" }));
+    fireEvent.click(screen.getByRole("button", { name: "Ask macOS now" }));
     await waitFor(() => expect(calls).toHaveLength(2));
     expect(calls[1].body).toEqual({ feature: "global_shortcuts", allow_outside_app: true });
   });

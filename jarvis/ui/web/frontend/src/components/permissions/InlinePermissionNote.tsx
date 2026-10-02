@@ -10,7 +10,12 @@ import type {
   PermissionNeededPhase,
   PermissionNeededReason,
 } from "@/lib/permissionEvents";
-import { FALLBACK_APP_NAME, listPermissionNames, promptSentence } from "@/lib/permissionCopy";
+import {
+  FALLBACK_APP_NAME,
+  listPermissionNames,
+  outsideCopyKeys,
+  promptSentence,
+} from "@/lib/permissionCopy";
 import { RESOLVED_HOLD_MS, type PromptEpisode } from "@/lib/permissionPrompts";
 import {
   PermissionApiError,
@@ -191,6 +196,9 @@ export function InlinePermissionNote({
   const t = useT();
   const language = useUiLanguage();
   const appName = usePermissionsStore((state) => state.snapshot?.app_identity.app_name ?? "");
+  const launchedAsBundle = usePermissionsStore(
+    (state) => state.snapshot?.app_identity.launched_as_bundle === true,
+  );
   const { episode: stored, resolved } = useInlinePermission(feature, false);
   const episode = stored ?? (local ? toEpisode(feature, local) : null);
 
@@ -234,7 +242,7 @@ export function InlinePermissionNote({
         permissions: listPermissionNames(t, episode.permissions, language),
       });
     } else {
-      sentence = promptSentence({ t, language, episode, appName: name });
+      sentence = promptSentence({ t, language, episode, appName: name, launchedAsBundle });
       actions = embedded
         ? promptActions(episode, {
             returnedFromSettings: false,
@@ -251,7 +259,7 @@ export function InlinePermissionNote({
   const label = (action: PromptAction): string => {
     switch (action) {
       case "allow_outside":
-        return fill(t("permissions.prompt.action.allow_outside"), { app: name });
+        return fill(t(outsideCopyKeys(launchedAsBundle).action), { app: name });
       case "restart":
         return restartApp.restarting || restartApp.forceArmed
           ? restartApp.buttonLabel

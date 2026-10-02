@@ -8,7 +8,7 @@ import { useRestartApp } from "@/hooks/useRestartApp";
 import type { KeybindsConfig } from "@/hooks/useHotkey";
 import { fill, useT, useUiLanguage } from "@/i18n";
 import { onSharedReturnToWindow } from "@/lib/focusRefresh";
-import { FALLBACK_APP_NAME, listPermissionNames } from "@/lib/permissionCopy";
+import { FALLBACK_APP_NAME, listPermissionNames, outsideCopyKeys } from "@/lib/permissionCopy";
 import { RESOLVED_HOLD_MS } from "@/lib/permissionPrompts";
 import {
   PermissionApiError,
@@ -95,6 +95,9 @@ export function ShortcutsStatusNote({
   const language = useUiLanguage();
   const mac = usePrivacySectionVisible();
   const appName = usePermissionsStore((state) => state.snapshot?.app_identity.app_name ?? "");
+  const launchedAsBundle = usePermissionsStore(
+    (state) => state.snapshot?.app_identity.launched_as_bundle === true,
+  );
   const { episode, resolved } = useInlinePermission(SHORTCUTS_FEATURE, false);
   const restartApp = useRestartApp();
   const embedded = hasEmbeddedDesktopBridge();
@@ -204,7 +207,7 @@ export function ShortcutsStatusNote({
       sentence = fill(t("permissions.shortcuts.blocked"), { app: name });
       break;
     case "outside":
-      sentence = fill(t("permissions.prompt.outside_note"), { app: name });
+      sentence = fill(t(outsideCopyKeys(launchedAsBundle).note), { app: name });
       break;
     case "restart":
       sentence = fill(t("permissions.shortcuts.restart_hint"), { app: name });
@@ -277,7 +280,7 @@ export function ShortcutsStatusNote({
                 {busy === "allow_outside" && (
                   <Loader2 className="h-3.5 w-3.5 motion-safe:animate-spin" aria-hidden />
                 )}
-                {fill(t("permissions.prompt.action.allow_outside"), { app: name })}
+                {fill(t(outsideCopyKeys(launchedAsBundle).action), { app: name })}
               </Button>
             )}
             {(mode === "blocked" || mode === "outside") && (

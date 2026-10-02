@@ -99,12 +99,15 @@ describe("VoiceWarmingBanner", () => {
     expect(banner.textContent).not.toMatch(/speak now/i);
   });
 
-  it("agrees with the sidebar's hook for the not-determined episode a background wake word opens", () => {
-    // Same predicate as the sidebar header: blocked + waiting on the person is blocked.
+  it("says the microphone has not been allowed yet (not blocked) for the episode a background wake word opens", () => {
+    // Nothing was denied and macOS was never asked: System Settings has no entry to fix.
     microphoneEpisode({ reason: "not_determined", can_prompt: true });
     mountAndBecomeReady();
 
-    expect(screen.getByTestId("voice-warming-banner").getAttribute("data-state")).toBe("blocked");
+    const banner = screen.getByTestId("voice-warming-banner");
+    expect(banner.getAttribute("data-state")).toBe("not_asked");
+    expect(banner.textContent).toContain("has not been allowed yet");
+    expect(banner.textContent).not.toMatch(/blocked|speak now|Fix it in System Settings/i);
   });
 
   it("keeps the normal confirmation while macOS is simply asking (its own dialog is not a block)", () => {

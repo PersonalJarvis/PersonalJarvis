@@ -15,7 +15,7 @@ import { useRestartApp } from "@/hooks/useRestartApp";
 import { hasEmbeddedDesktopBridge } from "@/lib/embeddedDesktop";
 import { usePermissions } from "@/hooks/usePermissions";
 import { fill, useT } from "@/i18n";
-import { FALLBACK_APP_NAME } from "@/lib/permissionCopy";
+import { FALLBACK_APP_NAME, outsideCopyKeys } from "@/lib/permissionCopy";
 import { PermissionApiError } from "@/lib/permissionsApi";
 import {
   isReadyState,
@@ -125,7 +125,9 @@ export function PermissionRows({ permissions }: { permissions: PermissionsState 
       {snapshot.outside_installed_app && (
         <div className="flex items-start gap-2 rounded-lg bg-secondary p-3 text-xs text-foreground">
           <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
-          {fill(t("permissions.outside_app_note"), { app: appName })}
+          {fill(t(outsideCopyKeys(snapshot.app_identity.launched_as_bundle).panelNote), {
+            app: appName,
+          })}
         </div>
       )}
       {snapshot.permissions.map((row) => (
@@ -134,10 +136,24 @@ export function PermissionRows({ permissions }: { permissions: PermissionsState 
           row={row}
           appName={appName}
           canAct={canAct}
+          outsideApp={snapshot.outside_installed_app}
+          launchedAsBundle={snapshot.app_identity.launched_as_bundle}
           busy={pendingId === row.id}
           restarting={restartApp.restarting}
           restartLabel={restartApp.forceArmed || restartApp.restarting ? restartApp.buttonLabel : null}
-          onRequest={() => run(() => request(row.id))}
+          onRequest={() =>
+            // Outside the installed app the click IS the confirmation: the note above
+            // names who receives the grant, and without the flag the backend would ask
+            // nothing and the button would do nothing at all.
+            run(() =>
+              request(
+                row.id,
+                snapshot.outside_installed_app && row.id !== "credential_store"
+                  ? { allow_outside_app: true }
+                  : undefined,
+              ),
+            )
+          }
           onOpenSettings={() => run(() => openSettings(row.id))}
           onReset={() => runReset(row.id)}
           onRestart={() => void restartApp.restart()}
@@ -152,6 +168,8 @@ function PrivacyRow({
   row,
   appName,
   canAct,
+  outsideApp,
+  launchedAsBundle,
   busy,
   restarting,
   restartLabel,
@@ -164,6 +182,9 @@ function PrivacyRow({
   appName: string;
   /** The viewer sits at the machine the permissions belong to (embedded desktop window). */
   canAct: boolean;
+  /** The app runs outside its installed location: "Allow" confirms the grantee. */
+  outsideApp: boolean;
+  launchedAsBundle: boolean;
   busy: boolean;
   restarting: boolean;
   restartLabel: string | null;
@@ -213,7 +234,11 @@ function PrivacyRow({
         {canAct && row.can_request && !ready && (
           <Button size="sm" disabled={busy} onClick={onRequest}>
             {busy && <Loader2 className="mr-1.5 h-3.5 w-3.5 motion-safe:animate-spin" />}
-            {t(isKeychain ? "permissions.try_again" : "permissions.request")}
+            {isKeychain
+              ? t("permissions.try_again")
+              : outsideApp
+                ? fill(t(outsideCopyKeys(launchedAsBundle).action), { app: appName })
+                : t("permissions.request")}
           </Button>
         )}
         {canAct && row.can_reset && (

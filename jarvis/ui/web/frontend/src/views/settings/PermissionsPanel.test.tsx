@@ -10,6 +10,7 @@ import { PermissionsPanel } from "./PermissionsPanel";
 interface Call {
   url: string;
   method: string;
+  body?: unknown;
 }
 
 let calls: Call[] = [];
@@ -71,7 +72,7 @@ beforeEach(() => {
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = init?.method ?? "GET";
-      calls.push({ url, method });
+      calls.push({ url, method, body: typeof init?.body === "string" ? JSON.parse(init.body) : undefined });
       if (url === "/api/settings/restart-app") return { ok: true, status: 200, json: async () => ({}) } as Response;
       if (method === "POST" && url.includes("/reset")) {
         return {
@@ -227,7 +228,28 @@ describe("Settings > Privacy (passive)", () => {
     outside = true;
     await renderPanel();
 
-    expect(screen.getByText(/is not running as an installed app/)).toBeTruthy();
+    expect(screen.getByText(/running from outside your Applications folder/)).toBeTruthy();
+  });
+
+  it("outside the installed app Allow is the confirmation and sends the consent flag", async () => {
+    outside = true;
+    permissionRows = [row("microphone", { status: "not_determined", can_request: true })];
+    await renderPanel();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Ask macOS now" }));
+
+    await waitFor(() => expect(posts("/api/permissions/microphone/request")).toHaveLength(1));
+    expect(posts("/api/permissions/microphone/request")[0].body).toEqual({ allow_outside_app: true });
+  });
+
+  it("inside the installed app Allow asks without the consent flag", async () => {
+    permissionRows = [row("microphone", { status: "not_determined", can_request: true })];
+    await renderPanel();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Allow" }));
+
+    await waitFor(() => expect(posts("/api/permissions/microphone/request")).toHaveLength(1));
+    expect(posts("/api/permissions/microphone/request")[0].body).toBeUndefined();
   });
 
   it("shows the rows read-only, with no host action button, in a remote browser", async () => {

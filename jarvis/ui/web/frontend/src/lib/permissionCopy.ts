@@ -92,6 +92,25 @@ export function listPermissionNames(
 }
 
 /**
+ * The i18n keys of the outside-the-installed-app copy. Who receives the grant
+ * depends on HOW the app runs: a real .app copy started from a mounted DMG or
+ * from Downloads (`launched_as_bundle`) is itself the grantee, only for this
+ * copy; any other launch (a terminal, an IDE) makes the app that started
+ * Jarvis the grantee, and then the grant covers everything run in it. The
+ * wording differs, so the person is never told to look for a terminal they
+ * never opened.
+ */
+export function outsideCopyKeys(launchedAsBundle: boolean) {
+  const suffix = launchedAsBundle ? "_bundle" : "";
+  return {
+    sentence: `permissions.prompt.outside_sentence${suffix}`,
+    note: `permissions.prompt.outside_note${suffix}`,
+    action: `permissions.prompt.action.allow_outside${suffix}`,
+    panelNote: `permissions.outside_app_note${suffix}`,
+  };
+}
+
+/**
  * The full sentence the card (and an inline note) shows for an episode. Outside
  * the installed app it is the one dedicated `permissions.prompt.outside_sentence`
  * (it already names the grantee), otherwise the per-(feature, reason) sentence.
@@ -103,10 +122,12 @@ export function promptSentence(input: {
   appName: string;
   /** The permissions to name; defaults to all of the episode's. */
   missing?: readonly string[];
+  /** `app_identity.launched_as_bundle`: a .app copy run outside Applications. */
+  launchedAsBundle?: boolean;
 }): string {
-  const { t, language, episode, appName, missing } = input;
+  const { t, language, episode, appName, missing, launchedAsBundle } = input;
   const key = isOutsideAskEpisode(episode)
-    ? "permissions.prompt.outside_sentence"
+    ? outsideCopyKeys(launchedAsBundle === true).sentence
     : promptCopyKey(episode.feature, episode.reason);
   return fill(t(key), {
     app: appName || FALLBACK_APP_NAME,

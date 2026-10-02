@@ -13,7 +13,8 @@
  * "Reset and ask again" appears only once the person came back from System
  * Settings and the permission still reads off: that is the stranded-grant case
  * (an entry that belongs to an older build), and the backend says whether a
- * reset is possible (`can_reset`).
+ * reset is possible (`can_reset`). For Screen Recording and Input Monitoring,
+ * which macOS may apply only after a restart, "Quit and reopen" comes first.
  */
 import type { PromptEpisode } from "@/lib/permissionPrompts";
 
@@ -41,6 +42,12 @@ export interface PromptActionContext {
   stillOff: boolean;
   /** The backend allows "Ask again" (a tccutil reset) for the missing permission. */
   canReset: boolean;
+  /**
+   * The missing permission is one macOS may apply only to a NEW process (Screen
+   * Recording, Input Monitoring; community-observed, UNVERIFIED). A reset would
+   * throw a correct grant away, so "Quit and reopen" comes before it.
+   */
+  restartMayHelp?: boolean;
 }
 
 export function promptActions(
@@ -65,8 +72,9 @@ export function promptActions(
       if (episode.outside_app && episode.can_prompt) actions.push("allow_outside");
       else if (episode.can_prompt) actions.push("continue");
       if (episode.can_open_settings) actions.push("open_settings", "check_again");
-      if (context.returnedFromSettings && context.stillOff && context.canReset) {
-        actions.push("reset");
+      if (context.returnedFromSettings && context.stillOff) {
+        if (context.restartMayHelp) actions.push("restart");
+        if (context.canReset) actions.push("reset");
       }
       break;
   }

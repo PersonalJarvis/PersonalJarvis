@@ -566,6 +566,15 @@ describe("Sidebar voice status when macOS blocks the microphone", () => {
     expect(dot.className).not.toContain("bg-destructive");
   });
 
+  test("a microphone macOS was never asked about says so, instead of sending anyone to Settings", () => {
+    microphoneBlocked({ reason: "not_determined", can_prompt: true });
+    renderSidebar();
+
+    expect(screen.getByRole("img", { name: "Microphone not allowed yet" })).toBeTruthy();
+    expect(screen.getByTestId("sidebar-voice-label").textContent).toBe("Mic not allowed");
+    expect(screen.queryByText(/blocked/i)).toBeNull();
+  });
+
   test("the blocked word never squeezes the assistant name: the name keeps its width and the word gives way", () => {
     useEventStore.setState({ assistantName: "Assistant" });
     microphoneBlocked();

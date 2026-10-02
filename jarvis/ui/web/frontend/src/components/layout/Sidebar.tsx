@@ -20,7 +20,10 @@ import { useEventStore } from "@/store/events";
 import { useSectionPrefetch } from "@/hooks/useSectionPrefetch";
 import { useVoiceReadiness } from "@/hooks/useVoiceReadiness";
 import { useVoiceMode } from "@/hooks/useVoiceMode";
-import { useVoiceBlockedByPermission } from "@/hooks/useVoiceBlockedByPermission";
+import {
+  useVoiceBlockedByPermission,
+  useVoiceNotAskedByPermission,
+} from "@/hooks/useVoiceBlockedByPermission";
 import { useSectionHealth } from "@/hooks/useProviders";
 import { usePluginAttention } from "@/hooks/usePluginAttention";
 import { clsx } from "clsx";
@@ -316,11 +319,15 @@ export function Sidebar({
   // Only an idle, warmed-up, connected pipeline can be "blocked": a live
   // conversation proves the microphone works.
   const voiceBlocked = useVoiceBlockedByPermission();
-  const micBlocked =
-    voiceBlocked && connected && !voiceWarming && !voiceMode.connecting && voiceState === "idle";
+  const voiceNotAsked = useVoiceNotAskedByPermission();
+  const micIdle = connected && !voiceWarming && !voiceMode.connecting && voiceState === "idle";
+  const micBlocked = voiceBlocked && micIdle;
+  // Never asked (not denied): the same quiet look, but the words must not send
+  // anyone to a System Settings pane that has no entry yet.
+  const micNotAsked = voiceNotAsked && !voiceBlocked && micIdle;
   const vs = voiceMode.connecting
     ? VOICE_STATE_STYLE.connecting
-    : micBlocked
+    : micBlocked || micNotAsked
       ? VOICE_STATE_STYLE.blocked_by_permission
       : VOICE_STATE_STYLE[voiceState] ?? VOICE_STATE_STYLE.idle;
   // A negotiating realtime transport outranks the pipeline's own state: the
@@ -336,16 +343,23 @@ export function Sidebar({
         ? t("voice_state.connecting")
         : micBlocked
           ? t("voice_state.blocked_by_permission")
-          : t(`voice_state.${voiceState}`);
+          : micNotAsked
+            ? t("voice_state.not_allowed_yet")
+            : t(`voice_state.${voiceState}`);
   // The header spells the state out only when it is news — anything but a
   // connected, warmed-up pipeline at rest. See the header row below. A
   // microphone macOS has not allowed IS news: a dead wake word is never silent.
-  const voiceHasNews = !connected || showSpinner || voiceState !== "idle" || micBlocked;
+  const voiceHasNews =
+    !connected || showSpinner || voiceState !== "idle" || micBlocked || micNotAsked;
   // The words beside the name have a few dozen pixels. "Microphone blocked" does
   // not fit next to a name in the narrow header (it cut off as "Microphone bloc…"
   // and squeezed the name to "Assist…"), so it has a shorter label; the full
   // sentence stays in the hover text and in the dot's accessible name.
-  const voiceShortLabel = micBlocked ? t("voice_state.blocked_by_permission_short") : voiceLabel;
+  const voiceShortLabel = micBlocked
+    ? t("voice_state.blocked_by_permission_short")
+    : micNotAsked
+      ? t("voice_state.not_allowed_yet_short")
+      : voiceLabel;
 
   // Dragged past the snap point the sidebar becomes a rail of icons. Everything
   // that only makes sense with a label beside it steps aside; the

@@ -142,7 +142,7 @@ describe("AppshotsView permissions, said where the feature lives", () => {
     render(<AppshotsView />);
 
     const note = await screen.findByTestId("shortcuts-status-note");
-    expect(note.textContent).toContain("Global shortcuts work while another app is in front");
+    expect(note.textContent).toContain("Shortcuts work in other apps once you allow Input Monitoring");
     expect(screen.getByRole("button", { name: "Enable global shortcuts" })).toBeTruthy();
     expect(document.body.textContent).not.toContain("ENGLISH tap is not running");
   });

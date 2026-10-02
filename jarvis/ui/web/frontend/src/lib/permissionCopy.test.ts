@@ -7,6 +7,7 @@ import { PERMISSION_FEATURES, PERMISSION_NEEDED_REASONS } from "./permissionEven
 import {
   isOutsideAskEpisode,
   listPermissionNames,
+  outsideCopyKeys,
   promptCopyKey,
   promptHeadingKey,
   promptSentence,
@@ -56,7 +57,10 @@ describe("every pair the card can render has a full sentence in all three locale
         "reset_asked",
         "reset_manual",
         "outside_note",
+        "outside_note_bundle",
         "outside_sentence",
+        "outside_sentence_bundle",
+        "action.allow_outside_bundle",
         "heading.outside_app",
         "name",
         "more",
@@ -165,17 +169,33 @@ describe("the outside-app copy", () => {
           language: "en",
           episode: { feature, reason, permissions: ["microphone"], ...outside },
           appName: "Acme Voice",
+          launchedAsBundle: false,
         });
-        // Nothing has been asked and no OS dialog is promised: it names the grantee instead.
-        expect(sentence, `${feature} ${reason}`).toMatch(/^Nothing has been asked yet\./);
-        expect(sentence).toContain("Acme Voice is not running as an installed app");
+        // No OS dialog is promised: it names the grantee (the launcher) and what the grant covers.
+        expect(sentence, `${feature} ${reason}`).toMatch(/^Acme Voice was started from another app/);
         expect(sentence).toContain("“Microphone”");
-        expect(sentence).toContain("the app that started it");
+        expect(sentence).toContain("for that app and for everything you run in it");
         expect(sentence).not.toMatch(/Continue and macOS will ask you|Switch it on for/);
         sentences.add(sentence);
       }
     }
     expect(sentences.size).toBe(1);
+  });
+
+  it("names this copy, not a terminal, for a .app run from a disk image or Downloads", () => {
+    const sentence = promptSentence({
+      t: translate,
+      language: "en",
+      episode: { feature: "voice", reason: "not_determined", permissions: ["microphone"], ...outside },
+      appName: "Acme Voice",
+      launchedAsBundle: true,
+    });
+    expect(sentence).toContain("Acme Voice is running from outside your Applications folder");
+    expect(sentence).toContain("“Microphone” for this copy only");
+    expect(sentence).not.toMatch(/terminal/i);
+    expect(outsideCopyKeys(true).action).toBe("permissions.prompt.action.allow_outside_bundle");
+    expect(outsideCopyKeys(false).action).toBe("permissions.prompt.action.allow_outside");
+    expect(translate("permissions.prompt.action.allow_outside_bundle")).toBe("Ask macOS now");
   });
 
   it("keeps the feature sentence for a denied episode, and when not outside", () => {
@@ -201,14 +221,17 @@ describe("the outside-app copy", () => {
     for (const language of ["en", "de", "es"] as const) {
       await loadUiLocale(language);
       useI18nStore.getState().setUi(language, { push: false });
-      const sentence = promptSentence({
-        t: translate,
-        language,
-        episode: { feature: "dictation", reason: "needs_settings", permissions: ["microphone", "accessibility"], ...outside },
-        appName: "Personal Jarvis",
-      });
-      expect(sentence, language).not.toMatch(/\{\w+\}|permissions\.prompt/);
-      expect(sentence, language).toContain("Personal Jarvis");
+      for (const launchedAsBundle of [false, true]) {
+        const sentence = promptSentence({
+          t: translate,
+          language,
+          episode: { feature: "dictation", reason: "needs_settings", permissions: ["microphone", "accessibility"], ...outside },
+          appName: "Personal Jarvis",
+          launchedAsBundle,
+        });
+        expect(sentence, language).not.toMatch(/\{\w+\}|permissions\.prompt/);
+        expect(sentence, language).toContain("Personal Jarvis");
+      }
       const heading = translate(promptHeadingKey({ reason: "needs_settings", ...outside }));
       expect(heading, language).not.toMatch(/permissions\.prompt/);
     }

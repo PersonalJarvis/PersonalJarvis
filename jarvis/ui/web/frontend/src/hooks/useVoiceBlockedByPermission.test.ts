@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { EMPTY_PROMPTS } from "@/lib/permissionPrompts";
 import { usePermissionsStore } from "@/store/permissions";
-import { useVoiceBlockedByPermission } from "./useVoiceBlockedByPermission";
+import { useVoiceBlockedByPermission, useVoiceNotAskedByPermission } from "./useVoiceBlockedByPermission";
 
 function publish(overrides: Record<string, unknown> = {}) {
   act(() => {
@@ -41,6 +41,17 @@ describe("useVoiceBlockedByPermission", () => {
     const { result } = renderHook(() => useVoiceBlockedByPermission());
     publish();
     expect(result.current).toBe(true);
+  });
+
+  it("is not blocked, but not asked yet, when the microphone was never answered", () => {
+    const { result } = renderHook(() => ({
+      blocked: useVoiceBlockedByPermission(),
+      notAsked: useVoiceNotAskedByPermission(),
+    }));
+    publish({ reason: "not_determined", can_prompt: true });
+    expect(result.current).toEqual({ blocked: false, notAsked: true });
+    publish({ feature: "voice", reason: "denied" }); // a real denial outranks it
+    expect(result.current).toEqual({ blocked: true, notAsked: false });
   });
 
   it("is not blocked while macOS is asking by itself, or when only a restart is pending", () => {

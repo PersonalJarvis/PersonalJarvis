@@ -169,13 +169,13 @@ describe("InlinePermissionNote", () => {
     expect(calls[0].body).toEqual({ feature: "wake_word" });
   });
 
-  it("outside the installed app the note says nothing was asked and the button is the ask", async () => {
+  it("outside the installed app the note names the launcher and the button is the ask", async () => {
     publish("PermissionNeeded", needed({ reason: "needs_settings", can_prompt: true, outside_app: true, origin: "user" }));
     render(<InlinePermissionNote feature="wake_word" />);
 
     const sentence = screen.getByTestId("inline-permission-sentence").textContent ?? "";
     expect(sentence).toBe(
-      "Nothing has been asked yet. Personal Jarvis is not running as an installed app, so macOS would record access to “Microphone” for the app that started it, such as your terminal. The button below asks macOS now, and the answer applies to that app. Or install Personal Jarvis to give it its own entry.",
+      "Personal Jarvis was started from another app, such as your terminal, so macOS would record access to “Microphone” for that app and for everything you run in it. The button asks macOS now.",
     );
     expect(sentence).not.toMatch(/Continue and macOS will ask you|Switch it on for/);
     expect(calls).toEqual([]); // the sentence alone asks nothing
@@ -194,8 +194,32 @@ describe("InlinePermissionNote", () => {
     );
 
     expect(screen.getByTestId("inline-permission-sentence").textContent).toMatch(
-      /^Nothing has been asked yet\. Personal Jarvis is not running as an installed app/,
+      /^Personal Jarvis was started from another app/,
     );
+  });
+
+  it("a .app run from a disk image names this copy, never a terminal, and asks macOS", async () => {
+    usePermissionsStore.setState({
+      snapshot: {
+        platform: "darwin",
+        supported: true,
+        headless: false,
+        app_identity: { app_name: "Personal Jarvis", bundle_id: "x", bundle_path: "/Volumes/J/J.app", launched_as_bundle: true, stable: true },
+        outside_installed_app: true,
+        permissions: [],
+        needed: [],
+      },
+    });
+    publish("PermissionNeeded", needed({ reason: "needs_settings", can_prompt: true, outside_app: true, origin: "user" }));
+    render(<InlinePermissionNote feature="wake_word" />);
+
+    const sentence = screen.getByTestId("inline-permission-sentence").textContent ?? "";
+    expect(sentence).toContain("running from outside your Applications folder");
+    expect(sentence).not.toMatch(/terminal/i);
+
+    fireEvent.click(screen.getByRole("button", { name: "Ask macOS now" }));
+    await waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0].body).toEqual({ feature: "wake_word", allow_outside_app: true });
   });
 
   it("offers no host-only action to a remote browser", () => {

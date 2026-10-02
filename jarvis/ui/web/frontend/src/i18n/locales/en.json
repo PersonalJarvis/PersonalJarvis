@@ -539,7 +539,10 @@
     "indicator_label": "Voice state",
     "blocked_by_permission": "Microphone blocked",
     "blocked_by_permission_short": "Mic blocked",
-    "ready_blocked_title": "Voice is ready, but the microphone is blocked. Fix it in System Settings."
+    "ready_blocked_title": "Voice is ready, but the microphone is blocked. Fix it in System Settings.",
+    "not_allowed_yet": "Microphone not allowed yet",
+    "not_allowed_yet_short": "Mic not allowed",
+    "ready_not_asked_title": "Voice is ready, but the microphone has not been allowed yet. Switch the wake word off and on to be asked."
   },
   "sidebar": {
     "extensions_label": "Plugins / Skills / MCP",
@@ -2321,7 +2324,8 @@
     "see_all": "See all permissions",
     "path_label": "Find it under {path}.",
     "stale_grant_hint": "macOS will not ask for this access again. If System Settings already shows it as enabled, that record belongs to an older version of the app — tap “Ask again” and allow access once more.",
-    "outside_app_note": "{app} is not running as an installed app, so macOS records access for the app that started it. “Ask again” works only in the installed app.",
+    "outside_app_note": "{app} was started from another app, such as your terminal, so macOS records access for that app and for everything you run in it. “Ask again” works only in the installed app.",
+    "outside_app_note_bundle": "{app} is running from outside your Applications folder, so macOS records access for this copy only. “Ask again” works only in the installed app.",
     "restart_hint": "macOS applies this access only after {app} restarts.",
     "restart_action": "Quit and reopen",
     "restart_failed": "Personal Jarvis could not restart. Quit and reopen it manually.",
@@ -2484,17 +2488,22 @@
         "not_now": "Not now",
         "restart": "Quit and reopen",
         "allow_outside": "Allow for the app that started {app}",
+        "allow_outside_bundle": "Ask macOS now",
         "reset": "Already on? Reset and ask again"
       },
       "still_off": "It still looks off. If System Settings already shows it as on, that entry may belong to an older version of the app.",
+      "restart_maybe": "macOS may apply this only after {app} restarts.",
       "reset_asked": "Reset. macOS will ask again now.",
       "reset_manual": "That did not reset it. Turn the switch off and on again in System Settings. If it still does not work, restart your Mac.",
-      "outside_note": "{app} is not running as an installed app, so macOS would record this for the app that started it, such as your terminal. You can allow it for that app, or install {app} to give it its own entry.",
-      "outside_sentence": "Nothing has been asked yet. {app} is not running as an installed app, so macOS would record access to {permissions} for the app that started it, such as your terminal. The button below asks macOS now, and the answer applies to that app. Or install {app} to give it its own entry.",
+      "outside_note": "{app} was started from another app, such as your terminal, so macOS would record this for that app and for everything you run in it. Install {app} to give it its own entry.",
+      "outside_note_bundle": "{app} is running from outside your Applications folder, so macOS would record this for this copy only. Move it to Applications for one permanent entry.",
+      "outside_sentence": "{app} was started from another app, such as your terminal, so macOS would record access to {permissions} for that app and for everything you run in it. The button asks macOS now.",
+      "outside_sentence_bundle": "{app} is running from outside your Applications folder, so macOS would record {permissions} for this copy only. Move it to Applications for one permanent entry, or ask macOS now.",
       "name": "“{0}”",
       "more": "+{n} more",
       "details": "Details",
       "allowed": "Allowed. You can carry on.",
+      "allowed_retry": "Allowed. Ask Jarvis to try the task again.",
       "steps_label": "What is still needed"
     },
     "inline": {
@@ -2532,7 +2541,7 @@
       }
     },
     "shortcuts": {
-      "needs_input_monitoring": "Global shortcuts work while another app is in front. For that, macOS needs your OK to let {app} watch the keyboard (Input Monitoring). The buttons and your voice keep working without it.",
+      "needs_input_monitoring": "Shortcuts work in other apps once you allow Input Monitoring. Buttons and voice work without it.",
       "enable": "Enable global shortcuts",
       "blocked": "Switch on {app} under Input Monitoring in System Settings, then come back. The buttons and your voice keep working meanwhile.",
       "restart_hint": "Input Monitoring is allowed, but macOS passes key presses to {app} only after it restarts. Quit and reopen {app} to finish enabling global shortcuts.",

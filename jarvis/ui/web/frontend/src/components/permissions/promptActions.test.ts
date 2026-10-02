@@ -27,6 +27,25 @@ describe("promptActions", () => {
     expect(promptActions(denied, { returnedFromSettings: true, stillOff: true, canReset: false })).not.toContain("reset");
   });
 
+  it("Screen Recording and Input Monitoring offer Quit and reopen BEFORE a reset once back from Settings", () => {
+    const denied = { ...base, reason: "denied" as const };
+    const back = { returnedFromSettings: true, stillOff: true, canReset: true };
+
+    expect(promptActions(denied, { ...back, restartMayHelp: true })).toEqual([
+      "open_settings",
+      "check_again",
+      "restart",
+      "reset",
+      "not_now",
+    ]);
+    // Any other permission keeps the plain reset.
+    expect(promptActions(denied, back)).not.toContain("restart");
+    // Not back from Settings yet: no restart suggestion (nothing says the grant exists).
+    expect(promptActions(denied, { ...back, returnedFromSettings: false, restartMayHelp: true })).not.toContain(
+      "restart",
+    );
+  });
+
   it("restart_hint: Quit and reopen only", () => {
     expect(promptActions({ ...base, reason: "restart_hint" }, idle)).toEqual(["restart", "not_now"]);
   });

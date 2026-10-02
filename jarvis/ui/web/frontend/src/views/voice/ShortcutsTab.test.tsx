@@ -310,7 +310,7 @@ describe("ShortcutsTab", () => {
       render(<ShortcutsTab />);
 
       const note = await screen.findByTestId("shortcuts-status-note");
-      expect(note.textContent).toContain("Global shortcuts work while another app is in front");
+      expect(note.textContent).toContain("Shortcuts work in other apps once you allow Input Monitoring");
       expect(note.textContent).not.toContain("English backend sentence");
       expect(note.textContent?.toLowerCase()).not.toContain("denied");
       // Nothing was asked just by opening the tab.

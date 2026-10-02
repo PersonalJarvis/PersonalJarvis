@@ -18,6 +18,7 @@ import {
   FALLBACK_APP_NAME,
   isOutsideAskEpisode,
   promptHeadingKey,
+  outsideCopyKeys,
   promptSentence,
 } from "@/lib/permissionCopy";
 import {
@@ -75,6 +76,15 @@ type MessageKey =
   | "permissions.rate_limited"
   | "permissions.action_failed";
 
+/**
+ * What the "Allowed" confirmation says. A Computer Use mission that stopped for a
+ * permission has already ended (nothing resumes it), so "you can carry on" would
+ * be wrong there: the person has to ask again.
+ */
+function allowedKeyFor(feature: string): string {
+  return feature === "computer_use" ? "permissions.prompt.allowed_retry" : "permissions.prompt.allowed";
+}
+
 export default function PermissionPromptLayer(): ReactNode {
   const episodes = usePermissionsStore((state) => state.episodes);
   const resolved = usePermissionsStore((state) => state.resolved);
@@ -82,6 +92,9 @@ export default function PermissionPromptLayer(): ReactNode {
   const owner = usePermissionsStore((state) => state.owner);
   const headless = usePermissionsStore((state) => state.snapshot?.headless === true);
   const appName = usePermissionsStore((state) => state.snapshot?.app_identity.app_name ?? "");
+  const launchedAsBundle = usePermissionsStore(
+    (state) => state.snapshot?.app_identity.launched_as_bundle === true,
+  );
   const t = useT();
 
   const language = useUiLanguage();
@@ -148,9 +161,9 @@ export default function PermissionPromptLayer(): ReactNode {
   const name = appName || FALLBACK_APP_NAME;
   // What a screen reader hears when the card opens: the heading and the sentence.
   const announcement = top
-    ? `${t(promptHeadingKey(top))}. ${promptSentence({ t, language, episode: top, appName: name })}`
+    ? `${t(promptHeadingKey(top))}. ${promptSentence({ t, language, episode: top, appName: name, launchedAsBundle })}`
     : confirmation
-      ? t("permissions.prompt.allowed")
+      ? t(allowedKeyFor(confirmation.feature))
       : "";
 
   return createPortal(
@@ -184,6 +197,7 @@ export default function PermissionPromptLayer(): ReactNode {
           key={top.key}
           episode={top}
           appName={name}
+          launchedAsBundle={launchedAsBundle}
           more={visible.length - 1}
           onMore={() => setCursor((value) => value + 1)}
         />
@@ -198,7 +212,7 @@ export default function PermissionPromptLayer(): ReactNode {
           )}
         >
           <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" aria-hidden />
-          <p className="min-w-0 flex-1 text-xs leading-relaxed">{t("permissions.prompt.allowed")}</p>
+          <p className="min-w-0 flex-1 text-xs leading-relaxed">{t(allowedKeyFor(confirmation.feature))}</p>
         </div>
       ) : null}
     </div>,
@@ -209,11 +223,14 @@ export default function PermissionPromptLayer(): ReactNode {
 function PermissionPromptCard({
   episode,
   appName,
+  launchedAsBundle,
   more,
   onMore,
 }: {
   episode: PromptEpisode;
   appName: string;
+  /** `app_identity.launched_as_bundle`: picks the outside-app wording. */
+  launchedAsBundle: boolean;
   more: number;
   onMore: () => void;
 }) {
@@ -308,7 +325,10 @@ function PermissionPromptCard({
     returnedFromSettings: returned,
     stillOff,
     canReset,
+    restartMayHelp: primary === "screen_recording" || primary === "input_monitoring",
   });
+  // Back from Settings, still off, and a restart is offered before a reset: say why.
+  const restartMaybe = episode.reason !== "restart_hint" && actions.includes("restart");
 
   const run = async (action: PromptAction, work: () => Promise<void>) => {
     setBusy(action);
@@ -391,7 +411,7 @@ function PermissionPromptCard({
       case "continue":
         return t("permissions.prompt.action.continue");
       case "allow_outside":
-        return fill(t("permissions.prompt.action.allow_outside"), { app: appName });
+        return fill(t(outsideCopyKeys(launchedAsBundle).action), { app: appName });
       case "open_settings":
         return t("permissions.prompt.action.open_settings");
       case "check_again":
@@ -415,6 +435,7 @@ function PermissionPromptCard({
     episode,
     appName,
     missing: unmet.length > 0 ? unmet : undefined,
+    launchedAsBundle,
   });
   const pathKey = `permissions.items.${primary}.path`;
   const path = t(pathKey);
@@ -485,7 +506,12 @@ function PermissionPromptCard({
           {/* The dedicated outside sentence above already names the grantee. */}
           {episode.outside_app && !isOutsideAskEpisode(episode) && (
             <p className="mt-1 break-words text-muted-foreground">
-              {fill(t("permissions.prompt.outside_note"), { app: appName })}
+              {fill(t(outsideCopyKeys(launchedAsBundle).note), { app: appName })}
+            </p>
+          )}
+          {restartMaybe && (
+            <p className="mt-1 break-words text-foreground" data-testid="permission-prompt-restart-maybe">
+              {fill(t("permissions.prompt.restart_maybe"), { app: appName })}
             </p>
           )}
           {message && (
