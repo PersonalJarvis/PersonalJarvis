@@ -649,6 +649,10 @@ def test_macos_pyautogui_fallback_maps_command_and_option(monkeypatch):
         hotkey=lambda *keys: sent.append(keys),
     )
     monkeypatch.setattr(sys, "platform", "darwin")
+    # This test covers key-name mapping only. Physical-input ownership is a
+    # separate fail-closed contract with dedicated takeover tests below.
+    from jarvis.cu.actuate import posix as posix_mod
+    monkeypatch.setattr(posix_mod, "_require_macos_human_input_clear", lambda: None)
 
     actuator.key_combo(["cmd", "option", "left"])
 
