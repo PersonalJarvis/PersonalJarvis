@@ -69,6 +69,15 @@ function soloWorkspace(project: IdeProject): ProjectWorkspace | null {
   return workspace.name.trim().toLowerCase() === project.name.trim().toLowerCase() ? workspace : null;
 }
 
+/** The agent sessions behind a row: a quiet number that makes room for the row's actions on hover. */
+function SessionCount({ count, hover }: { count: number; hover: "group" | "group/space" }) {
+  const fade = hover === "group"
+    ? "group-hover:opacity-0 group-focus-within:opacity-0"
+    : "group-hover/space:opacity-0 group-focus-within/space:opacity-0";
+  return <span aria-label={`${count} agent ${count === 1 ? "session" : "sessions"}`}
+    className={`shrink-0 text-[13px] tabular-nums text-muted-foreground/70 transition-opacity [@media(hover:none)]:opacity-0 ${fade}`}>{count}</span>;
+}
+
 function readExpansion(): Record<string, boolean> {
   try {
     const value: unknown = JSON.parse(localStorage.getItem(EXPANSION_KEY) ?? "{}");
@@ -426,6 +435,7 @@ export function IdeProjectTree() {
     const isProjectDropBefore = projectDropTarget?.id === project.id && projectDropTarget.before;
     const isProjectDropAfter = projectDropTarget?.id === project.id && !projectDropTarget.before;
     const solo = soloWorkspace(project);
+    const count = project.workspaces.reduce((total, workspace) => total + workspace.terminals, 0);
     const soloSelected = solo !== null && solo.id === activeWorkspaceId;
     const soloPending = solo !== null && solo.id === pendingWorkspaceId;
     const soloBlocked = solo !== null && solo.status === "closed" && !solo.restorable;
@@ -502,6 +512,8 @@ export function IdeProjectTree() {
                 : <Folder aria-hidden className="h-4 w-4 shrink-0 text-muted-foreground" strokeWidth={1.75} />}
             <span className="min-w-0 flex-1 truncate">{project.name}</span>
             {soloPending && <span className="sr-only">Switching workspace</span>}
+            {/* An open project's rows carry their own counts; the total only speaks for a folded one. */}
+            {count > 0 && (solo || !open) && <SessionCount count={count} hover="group" />}
           </button>
           <div className={`absolute inset-y-0 right-0 flex items-center rounded-r-md bg-gradient-to-l from-muted from-60% to-transparent pl-5 pr-1 transition-opacity ${projectMenuOpen ? "opacity-100" : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100"}`} data-project-menu={project.id}>
             <button type="button" aria-label={`Project actions for ${project.name}`} title="Project actions" aria-haspopup="menu" aria-expanded={projectMenuOpen}
@@ -624,7 +636,8 @@ export function IdeProjectTree() {
             className={`flex min-h-8 min-w-0 flex-1 items-center gap-2 rounded-md py-1 pl-[34px] pr-2 text-left text-[15px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-45 ${selected || pending ? "text-foreground" : workspace.status === "open" ? "text-foreground/80" : "text-muted-foreground"} ${draggable ? "cursor-grab active:cursor-grabbing" : ""}`}>
             {/* Text aligns under the project name, the way Codex indents threads under a folder. */}
             <span className="min-w-0 flex-1 truncate">{workspace.name}</span>
-            {pending && <Loader2 aria-hidden className="h-3 w-3 shrink-0 animate-spin text-muted-foreground" />}
+            {pending ? <Loader2 aria-hidden className="h-3 w-3 shrink-0 animate-spin text-muted-foreground" />
+              : workspace.terminals > 0 && <SessionCount count={workspace.terminals} hover="group/space" />}
             {pending && <span className="sr-only">Switching workspace</span>}
             </button>
             {(() => {

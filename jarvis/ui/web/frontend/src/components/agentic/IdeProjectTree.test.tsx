@@ -107,17 +107,18 @@ it("expands a manually collapsed project when its first workspace becomes active
   expect(screen.getByTestId("ide-workspace-p1-w1")).toBeDefined();
 });
 
-it("keeps rows plain: no session counts or status marks", () => {
-  const busy = { ...project(), workspaces: [
-    { ...project().workspaces[0], status: "open", live_terminals: 2, terminals: 6 },
-    { ...project().workspaces[0], id: "p1-w2", status: "closed", live_terminals: 0, terminals: 3 },
-  ] } as IdeProject;
-  useIdeProjectsStore.setState({ projects: [busy] });
+it("counts agent sessions per row, and on the header only when folded", () => {
+  const withTwo = { ...project(), workspaces: [
+    { ...project().workspaces[0], terminals: 6 },
+    { ...project().workspaces[0], id: "p1-w2", terminals: 3 },
+  ] };
+  useIdeProjectsStore.setState({ projects: [withTwo] });
   render(<IdeProjectTree />);
-  expect(screen.queryByText("6")).toBeNull();
+  // Open, the rows carry their own counts; folded, the header sums them.
+  expect(screen.getByLabelText("6 agent sessions").textContent).toBe("6");
+  expect(screen.queryByLabelText("9 agent sessions")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Collapse App" }));
-  expect(screen.queryByText("9")).toBeNull();
-  expect(screen.queryByLabelText(/agent sessions?|agents? running/)).toBeNull();
+  expect(screen.getByLabelText("9 agent sessions").textContent).toBe("9");
 });
 
 it("renders a project whose only workspace shares its name as one row", async () => {
@@ -126,7 +127,7 @@ it("renders a project whose only workspace shares its name as one row", async ()
   render(<IdeProjectTree />);
   expect(screen.queryByRole("button", { name: /Collapse App|Expand App/ })).toBeNull();
   expect(screen.getAllByText(/^app$/i)).toHaveLength(1);
-  expect(screen.queryByText("4")).toBeNull();
+  expect(screen.getByLabelText("4 agent sessions")).toBeDefined();
   fireEvent.click(screen.getByRole("button", { name: "Open App" }));
   expect(useIdeProjectsStore.getState().action).toMatchObject({ kind: "activate-workspace", workspaceId: "p1-w1" });
   fireEvent.click(screen.getByRole("button", { name: "Project actions for App" }));
