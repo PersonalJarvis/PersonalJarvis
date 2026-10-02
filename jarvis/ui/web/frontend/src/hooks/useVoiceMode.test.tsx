@@ -38,6 +38,18 @@ afterEach(() => {
 });
 
 describe("useVoiceMode realtime discovery", () => {
+  it.each([undefined, true, false])("passes the declared WebRTC startup contract (%s)", async (required) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response(true, { webrtc_start_event_required: required })));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(() => useVoiceMode(), { wrapper });
+    await waitFor(() => expect(result.current.statusKnown).toBe(true));
+    expect(result.current.webRtcStartEventRequired).toBe(required ?? true);
+    client.clear();
+  });
+
   it("rechecks a transient cold-boot unavailable result", async () => {
     const fetchMock = vi
       .fn()

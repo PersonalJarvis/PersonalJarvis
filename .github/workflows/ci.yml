@@ -589,7 +589,23 @@ jobs:
           python -m pip install -e .
           python -m pip install pytest pytest-asyncio
       - name: Provider-neutral realtime contract
-        run: python -m pytest tests/contract/test_gpt_live.py tests/contract/test_realtime_provider_contract.py tests/contract/test_realtime_reliability_gate.py -q -p no:cacheprovider
+        run: >-
+          python -m pytest
+          tests/contract/test_gpt_live.py
+          tests/contract/test_live_profile_catalog.py
+          tests/contract/test_subscription_access_boundary.py
+          tests/contract/test_subscription_report_pipeline.py
+          tests/contract/test_realtime_provider_contract.py
+          tests/contract/test_realtime_reliability_gate.py
+          tests/unit/live/test_subscription_auth.py
+          tests/unit/live/test_subscription_reasoning.py
+          tests/unit/live/test_subscription_session.py
+          tests/unit/live/test_subscription_wire.py
+          tests/unit/live/test_login_helper.py
+          tests/unit/test_agent_login_flow.py
+          tests/unit/clis/test_prober_cancellation.py
+          tests/unit/ui/web/test_registry_bootstrap_shutdown.py
+          -q -p no:cacheprovider
 
   # The in-app updater on every OS it ships to. Each one replaces a running
   # app differently (Inno handover, .app swap, AppImage swap, git transaction
@@ -691,7 +707,23 @@ jobs:
               raise SystemExit("python:3.11-slim unexpectedly loaded PortAudio")
           PY
       - name: Headless realtime degradation contract
-        run: python -m pytest tests/contract/test_gpt_live.py tests/contract/test_realtime_provider_contract.py tests/contract/test_realtime_reliability_gate.py -q -p no:cacheprovider
+        run: >-
+          python -m pytest
+          tests/contract/test_gpt_live.py
+          tests/contract/test_live_profile_catalog.py
+          tests/contract/test_subscription_access_boundary.py
+          tests/contract/test_subscription_report_pipeline.py
+          tests/contract/test_realtime_provider_contract.py
+          tests/contract/test_realtime_reliability_gate.py
+          tests/unit/live/test_subscription_auth.py
+          tests/unit/live/test_subscription_reasoning.py
+          tests/unit/live/test_subscription_session.py
+          tests/unit/live/test_subscription_wire.py
+          tests/unit/live/test_login_helper.py
+          tests/unit/test_agent_login_flow.py
+          tests/unit/clis/test_prober_cancellation.py
+          tests/unit/ui/web/test_registry_bootstrap_shutdown.py
+          -q -p no:cacheprovider
 
   soak:
     name: realtime contract soak (not release evidence)

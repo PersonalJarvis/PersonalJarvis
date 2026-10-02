@@ -108,6 +108,17 @@ class LiveLedger:
                 (session, max(0, seconds), int(finalized)),
             )
 
+    def transcript_snapshot(self, fragment: TranscriptFragment) -> None:
+        """Replace one provider-owned caption segment, including final corrections."""
+        with self._lock, self._db:
+            self._db.execute(
+                "INSERT INTO live_transcripts VALUES (?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(session_id,event_id) DO UPDATE SET "
+                "delta=excluded.delta, end_ms=excluded.end_ms",
+                (fragment.session_id, fragment.event_id, fragment.role, fragment.delta,
+                 fragment.start_ms, fragment.end_ms),
+            )
+
     def close(self) -> None:
         with self._lock:
             self._db.close()

@@ -169,7 +169,7 @@ def test_config_matches_frontend_interface():
 
     source = Path("jarvis/ui/web/frontend/src/components/providers/LiveProfile.tsx").read_text()
     body = source.split("export interface LiveProfileValue {", 1)[1].split("}", 1)[0]
-    assert set(re.findall(r"(\w+):", body)) == set(LiveConfig.model_fields)
+    assert set(re.findall(r"(\w+)\??:", body)) == set(LiveConfig.model_fields)
 
 
 @pytest.mark.asyncio

@@ -99,7 +99,7 @@ describe("ApiKeysView two-mode", () => {
     expect(screen.queryByRole("tab", { name: /tool model/i })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /^realtime/i }));
     expect(screen.queryByRole("tab", { name: /tool model/i })).toBeNull();
-    expect(screen.getByText(/Chat, memory and all background work run on the provider you choose under Agents/)).toBeTruthy();
+    expect(screen.getByText(/Chat, memory and background work use the provider you choose under Agents/)).toBeTruthy();
   });
 
   it("defaults to Pipeline mode showing Brain/Voice/Subagents tabs, no Realtime tab", () => {
@@ -151,7 +151,7 @@ describe("ApiKeysView two-mode", () => {
   it("offers one provider setup instead of the legacy recommendation block", () => {
     renderKeys();
     fireEvent.click(screen.getByRole("button", { name: /^realtime/i }));
-    expect(screen.getByRole("group", { name: "Voice provider settings" })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Provider" })).toBeTruthy();
     expect(screen.queryByText(/personal recommendation/i)).toBeNull();
   });
 

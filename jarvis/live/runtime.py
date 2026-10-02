@@ -6,6 +6,7 @@ import asyncio
 from typing import Any
 
 _active: dict[str, Any] = {}
+_owners: dict[str, asyncio.AbstractEventLoop] = {}
 _opening: set[str] = set()
 _watchers: set[tuple[asyncio.AbstractEventLoop, asyncio.Event]] = set()
 _detached: set[asyncio.Task] = set()
@@ -40,17 +41,36 @@ def claim(session_id: str) -> None:
 def register(session: Any) -> None:
     _opening.discard(session.session_id)
     _active[session.session_id] = session
+    _owners[session.session_id] = asyncio.get_running_loop()
     _notify()
 
 
 def unregister(session_id: str) -> None:
     _opening.discard(session_id)
     _active.pop(session_id, None)
+    _owners.pop(session_id, None)
     _notify()
 
 
 def active() -> tuple[Any, ...]:
     return tuple(_active.values())
+
+
+async def on_session_loop(session: Any, operation: Any, **kwargs: Any) -> Any:
+    """Execute an active browser session operation on its owning event loop."""
+    owner = _owners.get(session.session_id)
+    if owner is None or not owner.is_running() or owner.is_closed():
+        raise RuntimeError("The browser voice session is no longer available.")
+
+    async def invoke() -> Any:
+        if _active.get(session.session_id) is not session:
+            raise RuntimeError("The browser voice session changed before delivery.")
+        return await operation(**kwargs)
+
+    if asyncio.get_running_loop() is owner:
+        return await invoke()
+    future = asyncio.run_coroutine_threadsafe(invoke(), owner)
+    return await asyncio.wrap_future(future)
 
 
 def owns_microphone(*, except_session_id: str | None = None) -> bool:
@@ -59,7 +79,9 @@ def owns_microphone(*, except_session_id: str | None = None) -> bool:
 
 
 async def close_all(reason: str = "hotkey") -> None:
-    await asyncio.gather(*(session.end(reason=reason) for session in active()))
+    await asyncio.gather(
+        *(on_session_loop(session, session.end, reason=reason) for session in active())
+    )
 
 
 async def run_browser_call(

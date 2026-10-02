@@ -5079,7 +5079,30 @@ class SpeechPipeline:
         """
         return event.source_layer in _HELD_FOR_CALL_SOURCES and event.kind in _READBACK_KINDS
 
+    @staticmethod
+    def _live_call() -> Any | None:
+        """Browser voice owns media independently of the native PCM handle."""
+        from jarvis.live.runtime import active
+
+        return next((session for session in active()
+                     if getattr(session, "is_active", True)), None)
+
+    def _realtime_voice_handle(self) -> Any | None:
+        if getattr(self, "_active_voice_mode", None) == "realtime":
+            native = getattr(self, "_active_realtime_handle", None)
+            if native is not None:
+                return native
+        return self._live_call()
+
+    def _agent_reply_floor_open(self) -> bool:
+        live = self._live_call()
+        if live is not None:
+            return bool(getattr(live, "ready_for_report", True))
+        return getattr(self, "_turn_state", TurnTakingState.IDLE) is TurnTakingState.LISTENING
+
     def _agent_reply_needs_session(self) -> bool:
+        if self._live_call() is not None:
+            return bool(getattr(self, "_muted", False))
         hangup = getattr(self, "_hangup_event", None)
         return bool(
             getattr(self, "_muted", False)
@@ -5100,6 +5123,7 @@ class SpeechPipeline:
         event = getattr(self, "_agent_reply_inflight", None)
         self._agent_reply_inflight = None
         self._agent_reply_inflight_text = ""
+        self._agent_reply_inflight_session = None
         if event is not None and not completed:
             retries = getattr(self, "_agent_reply_retries", None)
             if retries is None:
@@ -5116,6 +5140,52 @@ class SpeechPipeline:
         pending = getattr(self, "_deferred_announcements", None)
         if pending:
             pending.sort(key=lambda event: event.timestamp_ns)
+
+    def live_call_paused(self, session: Any) -> None:
+        """Consume the receipt on the call's loop, then settle on the pipeline loop."""
+        take = getattr(session, "take_report_outcome", None)
+        outcome = take() if callable(take) else ""
+        self._call_on_runtime_loop(self._on_live_call_boundary, session, outcome, False)
+
+    def live_call_ended(self, session: Any) -> None:
+        take = getattr(session, "take_report_outcome", None)
+        outcome = take() if callable(take) else ""
+        self._call_on_runtime_loop(self._on_live_call_boundary, session, outcome, True)
+
+    def _call_on_runtime_loop(self, callback: Any, *args: Any) -> None:
+        owner = getattr(self, "_runtime_loop", None)
+        try:
+            current = asyncio.get_running_loop()
+        except RuntimeError:
+            current = None  # A native callback may arrive without an event loop.
+        if owner is not None and owner.is_running() and current is not owner:
+            owner.call_soon_threadsafe(callback, *args)
+        elif current is not None:
+            callback(*args)
+
+    def _on_live_call_boundary(self, session: Any, outcome: str, ended: bool) -> None:
+        current_live = session is self._live_call()
+        session_id = str(getattr(session, "session_id", ""))
+        if (
+            not ended and current_live
+            and getattr(self, "_live_replies_restored_for", None) != session_id
+        ):
+            # Restore earlier calls before settling this call's failed report;
+            # that fresh failure must not immediately restart inference here.
+            self._live_replies_restored_for = session_id
+            self._restore_agent_replies()
+        if getattr(self, "_agent_reply_inflight_session", None) is session:
+            if outcome in {"completed", "failed"} or ended:
+                # A failed/cancelled/unfinished report stays owed to the next
+                # call. Never loop through inference merely because audio failed.
+                self._settle_agent_reply(completed=outcome == "completed")
+        if ended:
+            return
+        if not current_live:
+            return
+        self._schedule_delegation_results()
+        if getattr(self, "_deferred_announcements", None):
+            self._retry_agent_reply_after_boundary()
 
     def _retry_agent_reply_after_boundary(self) -> None:
         """Let the live wrapper finish resetting after the speaker drains."""
@@ -5136,12 +5206,14 @@ class SpeechPipeline:
             await asyncio.sleep(0.1)
             if (
                 self._agent_reply_needs_session()
-                or self._turn_state is not TurnTakingState.LISTENING
+                or not self._agent_reply_floor_open()
                 or getattr(self, "_agent_reply_inflight", None) is not None
             ):
                 return
+            live = self._live_call() is not None
             event = next((event for event in self._deferred_announcements
-                          if self._is_agent_reply(event)), None)
+                          if self._is_agent_reply(event)
+                          or (live and event.kind in _READBACK_KINDS)), None)
             if event is None:
                 return
             self._deferred_announcements.remove(event)
@@ -5154,6 +5226,8 @@ class SpeechPipeline:
                 self._defer_agent_reply(event)
                 log.warning("Agent reply retry failed; retained for a later turn", exc_info=True)
                 return
+            if live and event in self._deferred_announcements:
+                return  # Wait for a real boundary instead of retrying a busy call.
 
     async def _on_announcement(self, event: AnnouncementRequested) -> None:
         """Deliver a readback through the live voice or the classic TTS path.
@@ -5200,7 +5274,7 @@ class SpeechPipeline:
                 return
             if (
                 event.source_layer == "delegation.batch"
-                and self._turn_state is not TurnTakingState.LISTENING
+                and not self._agent_reply_floor_open()
             ):
                 self._defer_agent_reply(event)
                 return
@@ -5291,7 +5365,10 @@ class SpeechPipeline:
         # from (live bug 2026-07-01: a force-spawned mission's three bounded beats
         # spoke into fresh, empty wake sessions after the user hung up). An
         # interrupt is a deliberate barge and still punches through.
-        current_turn_state = getattr(self, "_turn_state", TurnTakingState.IDLE)
+        current_turn_state = (
+            TurnTakingState.LISTENING if self._live_call() is not None
+            else getattr(self, "_turn_state", TurnTakingState.IDLE)
+        )
         if (
             event.priority != "interrupt"
             and is_progress
@@ -5654,10 +5731,7 @@ class SpeechPipeline:
         only after the realtime lifecycle unwinds; until then, classic TTS must
         stay silent rather than becoming a second voice inside the same call.
         """
-        if getattr(self, "_active_voice_mode", None) != "realtime":
-            return False
-        session = getattr(self, "_active_realtime_handle", None)
-        return session is not None
+        return self._realtime_voice_handle() is not None
 
     def _schedule_delegation_results(self) -> None:
         """One coalescing task; a user's conversation always keeps the floor."""
@@ -5667,7 +5741,7 @@ class SpeechPipeline:
             inbox is None or not inbox.pending
             or (task is not None and not task.done())
             or self._agent_reply_needs_session()
-            or self._turn_state is not TurnTakingState.LISTENING
+            or not self._agent_reply_floor_open()
             or getattr(self, "_agent_reply_inflight", None) is not None
         ):
             return
@@ -5683,7 +5757,7 @@ class SpeechPipeline:
             await asyncio.sleep(BATCH_WINDOW_S)
             if (
                 self._agent_reply_needs_session()
-                or self._turn_state is not TurnTakingState.LISTENING
+                or not self._agent_reply_floor_open()
                 or getattr(self, "_agent_reply_inflight", None) is not None
             ):
                 return
@@ -5715,27 +5789,39 @@ class SpeechPipeline:
         the accepted realtime handle still exists, ``_on_announcement`` drops
         or defers that output; only a fully unwound call may use classic TTS.
         """
-        if getattr(self, "_active_voice_mode", None) != "realtime":
-            return False
-        session = getattr(self, "_active_realtime_handle", None)
+        session = self._realtime_voice_handle()
         deliver = getattr(session, "deliver_announcement", None)
         if not callable(deliver):
             return False
         agent_reply = self._is_agent_reply(event)
-        if agent_reply:
+        browser = session is self._live_call()
+        report = str(getattr(event, "report", None) or "").strip()
+        if browser and agent_reply and not report:
+            report = text
+        receipt_capable = callable(getattr(session, "take_report_outcome", None)) and hasattr(
+            session, "report_pending"
+        )
+        # Native handles settle on their existing audio/turn callbacks. Legacy
+        # API browser handles only promise boolean acceptance, so waiting for a
+        # subscription-only report receipt would strand every later handoff.
+        tracked_reply = (
+            (agent_reply and not browser)
+            or bool(browser and receipt_capable and (agent_reply or report))
+        )
+        if tracked_reply:
             if getattr(self, "_agent_reply_inflight", None) is not None:
                 return False
             # Register before transport I/O so fast playback cannot race acceptance.
             self._agent_reply_inflight = event
             self._agent_reply_inflight_text = text
+            self._agent_reply_inflight_session = session
         accepted = False
         # The raw report goes to the live model as data to reason over; only
         # sessions that understand it are handed the keyword.
-        report = str(getattr(event, "report", None) or "").strip()
         extra: dict[str, Any] = {"report": report} if report else {}
         try:
-            accepted = bool(
-                await deliver(
+            async def handoff() -> bool:
+                return bool(await deliver(
                     text=text,
                     language=language,
                     spoken_kind=_announcement_spoken_kind(
@@ -5743,15 +5829,22 @@ class SpeechPipeline:
                     ),
                     detail=getattr(event, "detail", None),
                     **extra,
-                )
-            )
+                ))
+
+            if browser:
+                from jarvis.live.runtime import on_session_loop
+
+                accepted = bool(await on_session_loop(session, handoff))
+            else:
+                accepted = await handoff()
         except Exception as exc:  # noqa: BLE001 -- classic path is load-bearing
             log.warning("Realtime announcement handoff failed: %s", exc)
             return False
         finally:
-            if agent_reply and not accepted and self._agent_reply_inflight is event:
+            if tracked_reply and not accepted and self._agent_reply_inflight is event:
                 self._agent_reply_inflight = None
                 self._agent_reply_inflight_text = ""
+                self._agent_reply_inflight_session = None
         if accepted:
             log.info(
                 "Announcement handed to active realtime provider %s: %r",

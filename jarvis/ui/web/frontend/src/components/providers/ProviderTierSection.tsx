@@ -70,6 +70,7 @@ import { useEventStore } from "@/store/events";
 import { useProviderTestStore, verificationOf, type Verification } from "@/store/providerTests";
 import { agentBrand, agentsBrand } from "@/lib/agentBrand";
 import { robustCopy } from "@/lib/clipboard";
+import { hasExperimentalConsent, rememberExperimentalConsent } from "@/lib/experimentalConsent";
 import { filterForLocalMode } from "@/lib/localMode";
 import {
   realtimeTransportIssueKey,
@@ -110,34 +111,6 @@ export interface CategoryMeta {
 // Realtime only when a realtime provider actually has a key
 // (`realtimeAvailable`), so the switch can never pin the boot default to an
 // unreachable engine. See `EngineModeSwitch` below for the exact rule.
-/** Remembered acknowledgement of an experimental provider route.
- *
- * The notice is worth showing once — it explains whose plan pays and that the
- * route can change without notice. Showing it on EVERY switch is the
- * confirmation fatigue this project rejects, and it taught the user to click
- * it away unread, which defeats the point of having it. */
-function experimentalConsentKey(providerId: string): string {
-  return `jarvis.experimentalConsent.${providerId}`;
-}
-
-function hasExperimentalConsent(providerId: string): boolean {
-  try {
-    return window.localStorage.getItem(experimentalConsentKey(providerId)) === "1";
-  } catch {
-    // A WebView with storage disabled simply asks again next time: annoying,
-    // never broken, and never silently skipping the notice.
-    return false;
-  }
-}
-
-function rememberExperimentalConsent(providerId: string): void {
-  try {
-    window.localStorage.setItem(experimentalConsentKey(providerId), "1");
-  } catch {
-    // Same trade-off as above — the dialog reappears, nothing else breaks.
-  }
-}
-
 export type VoiceEngineMode = "pipeline" | "realtime";
 
 // The three provider slots the maintainer's setup recommendation speaks about
@@ -1007,6 +980,9 @@ export function ProviderCard({
   expanded = true,
   onToggleExpanded,
   configuration,
+  hideCredentialControls = false,
+  billingOverride,
+  billingPending = false,
 }: {
   descriptor: ProviderDescriptor;
   onChanged: () => void;
@@ -1024,6 +1000,11 @@ export function ProviderCard({
   onToggleExpanded?: () => void;
   /** Provider-owned setup shares the existing credential and verification controls. */
   configuration?: ReactNode;
+  /** A provider-owned subscription editor supplies its own sign-in controls. */
+  hideCredentialControls?: boolean;
+  /** Display-only draft billing choice; never changes activation or auth. */
+  billingOverride?: ProviderDescriptor["billing"];
+  billingPending?: boolean;
 }) {
   const t = useT();
   const [activating, setActivating] = useState(false);
@@ -1335,7 +1316,7 @@ export function ProviderCard({
   // words. It used to be "gemini-live · API key auth" — the catalog id and
   // developer vocabulary; the id still travels on the row's testid and for
   // assistive tech, and the billing line already says how you sign in.
-  const summary = t(`provider_billing.${descriptor.billing}`);
+  const summary = t(`provider_billing.${billingOverride ?? descriptor.billing}`);
   const collapsible = Boolean(onToggleExpanded);
   const rowTitle = descriptor.active
     ? t("apikeys_view.active_tooltip")
@@ -1440,6 +1421,7 @@ export function ProviderCard({
           </div>
           <p className="mt-0.5 truncate text-xs text-muted-foreground">
             {summary}
+            {billingPending ? ` · ${t("live.billing_pending")}` : null}
             <span className="sr-only">{` · ${descriptor.id}`}</span>
           </p>
         </div>
@@ -1525,7 +1507,7 @@ export function ProviderCard({
 
           {/* The key row stays visible: a collapsed disclosure hid the only
               place to enter or replace the key behind a tiny triangle. */}
-          {configuration && descriptor.configured ? (
+          {!hideCredentialControls && (configuration && descriptor.configured ? (
             <div data-testid={`provider-key-${descriptor.id}`} className="space-y-2 rounded-lg border border-border px-3 py-2.5">
               <p className="flex items-center gap-1.5 text-sm font-medium text-foreground">
                 <KeyRound aria-hidden="true" className="h-3.5 w-3.5 text-muted-foreground" />
@@ -1533,7 +1515,7 @@ export function ProviderCard({
               </p>
               <AuthWidget descriptor={descriptor} onChanged={onChanged} onSavedActivate={handleSavedActivate} />
             </div>
-          ) : <AuthWidget descriptor={descriptor} onChanged={onChanged} onSavedActivate={handleSavedActivate} />}
+          ) : <AuthWidget descriptor={descriptor} onChanged={onChanged} onSavedActivate={handleSavedActivate} />)}
 
           {configuration}
 
@@ -1616,14 +1598,14 @@ export function ProviderCard({
 
           {/* Footer: the live connectivity test, visually separated from the
               configuration body so "set up" and "verify" read as two steps. */}
-          <div className="border-t border-border pt-2.5">
+          {!hideCredentialControls && <div className="border-t border-border pt-2.5">
             <ProviderTestControl
               providerId={descriptor.id}
               providerLabel={descriptor.label}
               section={descriptor.tier}
               active={descriptor.active}
             />
-          </div>
+          </div>}
         </div>
       )}
     </div>
