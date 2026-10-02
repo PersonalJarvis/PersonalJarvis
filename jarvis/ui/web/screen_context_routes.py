@@ -207,9 +207,21 @@ def _resolved_locale(locale: str, text: str) -> str:
     )
 
 
+def _issue_text(issue: Any) -> str:
+    """The sentence of a permission issue: a structured issue carries ``message``."""
+    if not issue:
+        return ""
+    return str(getattr(issue, "message", issue))
+
+
 @router.get("/status")
 async def status(request: Request) -> dict[str, Any]:
-    """Capability and live state — answers honestly on a machine with no screen."""
+    """Capability and live state — answers honestly on a machine with no screen.
+
+    Never prompts: the permission probes it runs only READ the state. A capture
+    that a person starts is what asks macOS (``POST /capture`` ->
+    ``ScreenContextService.capture``), never a status poll.
+    """
     import asyncio  # noqa: PLC0415
 
     service = _get_service(request)
@@ -251,7 +263,7 @@ async def status(request: Request) -> dict[str, Any]:
         for ready, reason in (
             (service.settings.enabled, "Screen Context is switched off."),
             (display_ready, "No interactive display was found."),
-            (permission_ready, str(permission_error or "")),
+            (permission_ready, _issue_text(permission_error)),
             (capture_ready, capture_reason),
             (indicator_ready, indicator_reason),
             (vision_ready, vision_reason),
@@ -272,7 +284,7 @@ async def status(request: Request) -> dict[str, Any]:
             "capture": {"ready": capture_ready, "detail": capture_reason},
             "permission": {
                 "ready": permission_ready,
-                "detail": str(permission_error or ""),
+                "detail": _issue_text(permission_error),
             },
             "indicator": {"ready": indicator_ready, "detail": indicator_reason},
             "vision": {"ready": vision_ready, "detail": vision_reason},

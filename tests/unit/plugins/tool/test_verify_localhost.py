@@ -105,27 +105,125 @@ async def test_http_call_is_offloaded_via_to_thread(
     assert recorder.calls[0][0] is httpx.get
 
 
-@pytest.mark.asyncio
-async def test_screenshot_refuses_capture_when_screen_recording_is_blocked(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A wallpaper-only macOS capture must never be reported as evidence."""
+def _http_ok(monkeypatch: pytest.MonkeyPatch) -> None:
     import httpx
 
     monkeypatch.setattr(
         httpx, "get", lambda *_a, **_k: _FakeResponse(status_code=200, text="hi")
     )
-    monkeypatch.setattr(
-        "jarvis.vision.screenshot.warn_if_screen_recording_denied",
-        lambda: True,
-    )
+
+
+@pytest.mark.asyncio
+async def test_screenshot_degrades_honestly_and_never_asks_when_screen_recording_is_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The screenshot is an optional extra, not a gesture: it reads the state silently.
+
+    A wallpaper-only macOS capture must never be reported as evidence, and the
+    degradation carries the prohibitive permission text. The REAL permission
+    service runs on ``FakeTCC``; its call log proves nothing was requested.
+    """
+    from tests.fakes.fake_tcc import FakeTCC, install_port
+
+    _http_ok(monkeypatch)
+    tcc = FakeTCC()
+    install_port(monkeypatch, tcc.port("darwin"))
 
     tool = VerifyLocalhostTool()
-    result = await tool.execute(
-        {"port": 5173, "take_screenshot": True}, ctx=None
-    )
+    result = await tool.execute({"port": 5173, "take_screenshot": True}, ctx=None)
 
     assert result.success is True
     assert result.artifacts
     error = result.artifacts[0]["screenshot_error"]
-    assert "Screen Recording permission is not granted" in error
+    assert error.startswith("[permission_needed:screen_recording] ")
+    assert "must not" in error
+    assert "screenshot_path" not in result.artifacts[0]
+    tcc.assert_no_prompts()
+
+
+def _install_fake_mss(monkeypatch: pytest.MonkeyPatch, pixels, saved: list[str]) -> None:
+    import sys
+    import types
+
+    size, rgb = pixels
+
+    class _Raw:
+        pass
+
+    raw = _Raw()
+    raw.size = size  # type: ignore[attr-defined]
+    raw.rgb = rgb  # type: ignore[attr-defined]
+
+    class _Sct:
+        monitors = [{"left": 0, "top": 0, "width": size[0], "height": size[1]}] * 2
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+
+        def grab(self, _monitor):
+            return raw
+
+    def to_png(_rgb, _size, output):
+        saved.append(output)
+
+    fake_mss = types.ModuleType("mss")
+    fake_mss.mss = _Sct  # type: ignore[attr-defined]
+    fake_mss.tools = types.ModuleType("mss.tools")  # type: ignore[attr-defined]
+    fake_mss.tools.to_png = to_png  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "mss", fake_mss)
+    monkeypatch.setitem(sys.modules, "mss.tools", fake_mss.tools)
+
+
+@pytest.mark.asyncio
+async def test_screenshot_is_taken_when_the_grant_is_live(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jarvis.platform import screen_access
+    from tests.fakes.fake_screen_pixels import textured_pixels
+    from tests.fakes.fake_tcc import FakeTCC, TccService, install_port
+
+    _http_ok(monkeypatch)
+    screen_access.reset_window_evidence_cache()
+    tcc = FakeTCC(granted=[TccService.SCREEN_RECORDING])
+    install_port(monkeypatch, tcc.port("darwin"))
+    monkeypatch.setattr(screen_access, "_window_evidence", lambda: (3, 2))
+    saved: list[str] = []
+    _install_fake_mss(monkeypatch, textured_pixels((64, 36)), saved)
+
+    result = await VerifyLocalhostTool().execute({"port": 5173, "take_screenshot": True}, ctx=None)
+
+    assert result.artifacts == ({"screenshot_path": "monitor-1.png"},)
+    assert saved == ["monitor-1.png"]
+    tcc.assert_no_prompts()
+
+
+@pytest.mark.asyncio
+async def test_a_wallpaper_screenshot_is_never_evidence_even_when_the_state_says_granted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The grab is pixel-checked: a photographic wallpaper is not a screenshot."""
+    from jarvis.platform import screen_access
+    from tests.fakes.fake_screen_pixels import photo_wallpaper_pixels
+    from tests.fakes.fake_tcc import FakeTCC, TccService, install_port
+
+    _http_ok(monkeypatch)
+    screen_access.reset_window_evidence_cache()
+    tcc = FakeTCC(granted=[TccService.SCREEN_RECORDING])
+    install_port(monkeypatch, tcc.port("darwin"))
+    # Other apps' windows are on screen and none has a readable title: the grant
+    # is not usable although the preflight says granted.
+    monkeypatch.setattr(screen_access, "_window_evidence", lambda: (2, 0))
+    saved: list[str] = []
+    _install_fake_mss(monkeypatch, photo_wallpaper_pixels((64, 36)), saved)
+
+    result = await VerifyLocalhostTool().execute({"port": 5173, "take_screenshot": True}, ctx=None)
+
+    assert result.artifacts
+    assert result.artifacts[0]["screenshot_error"].startswith(
+        "[permission_needed:screen_recording] "
+    )
+    assert saved == []
+    tcc.assert_no_prompts()

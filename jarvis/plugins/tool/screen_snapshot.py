@@ -30,15 +30,18 @@ Flow in `execute`:
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
 from typing import Any
 
 from jarvis.core.protocols import ExecutionContext, ToolResult
-from jarvis.vision.screenshot import (
-    select_capture_monitor,
-    warn_if_screen_recording_denied,
+from jarvis.platform.screen_access import (
+    ScreenCaptureRefused,
+    require_screen_recording_async,
+    verify_frame_is_real,
 )
+from jarvis.vision.screenshot import select_capture_monitor
 
 _MAX_BYTES = 500_000
 _DEFAULT_JPEG_QUALITY = 85
@@ -123,18 +126,15 @@ class ScreenSnapshotTool:
 
         # On macOS without the Screen-Recording grant, mss "succeeds" but
         # captures only the desktop wallpaper — a success=True wallpaper JPEG
-        # would silently blind the model. Refuse honestly instead (§3:
-        # degrade with an actionable message, recoverable in-app).
-        if warn_if_screen_recording_denied():
-            return ToolResult(
-                success=False,
-                output=None,
-                error=(
-                    "Screen capture is blocked: macOS Screen Recording "
-                    "permission is not granted. Grant it in System Settings "
-                    "> Privacy & Security > Screen Recording, then retry."
-                ),
-            )
+        # would silently blind the model. This tool body is the gesture entry of
+        # a capture a person asked for: it asks macOS (once per episode, through
+        # the permission service) instead of refusing on our own preflight, and
+        # only a live GRANTED captures. Anything else is an honest, prohibitive
+        # error naming the permission (the model must not answer a system dialog).
+        try:
+            await require_screen_recording_async("screen_context")
+        except ScreenCaptureRefused as refused:
+            return ToolResult(success=False, output=None, error=refused.agent_detail)
 
         try:
             from jarvis.cu.indicator.capture_guard import (  # noqa: PLC0415
@@ -163,6 +163,18 @@ class ScreenSnapshotTool:
                 output=None,
                 error=f"Screenshot failed: {exc}",
             )
+
+        # The silent-failure trap: a blank frame while the state claims granted is
+        # never a success (the permission episode is opened by the check itself).
+        try:
+            await asyncio.to_thread(
+                verify_frame_is_real,
+                tuple(raw.size),
+                raw.rgb,
+                feature="screen_context",
+            )
+        except ScreenCaptureRefused as refused:
+            return ToolResult(success=False, output=None, error=refused.agent_detail)
 
         jpeg_bytes = _encode_with_budget(image, _MAX_BYTES)
         data_b64 = base64.b64encode(jpeg_bytes).decode("ascii")

@@ -381,6 +381,28 @@ class SurfaceCapturer(Protocol):
         ...
 
 
+def _refuse_while_confirmation_pending() -> None:
+    """A native window capture timed out while macOS may be asking the user.
+
+    PENDING, never DENIED: when the live state says granted the rect-grab fallback
+    below is safe and carries on; when it does not (a request is still in flight)
+    that fallback would return the wallpaper, so say that macOS may be asking.
+    Silent: nothing is asked here.
+    """
+    try:
+        from jarvis.platform import screen_access, window_capture  # noqa: PLC0415
+
+        if window_capture.last_grab_failure() != "pending_confirmation":
+            return
+        if not screen_access.screen_recording_blocked():
+            return
+        message = screen_access.refusal_pending().user_detail
+    except Exception:  # noqa: BLE001 — classifying a timeout never breaks the capture
+        log.debug("pending-confirmation check failed", exc_info=True)
+        return
+    raise CaptureUnavailable(message)
+
+
 class NativeSurfaceCapturer:
     """Native per-window capture where the OS offers it, rect grab otherwise.
 
@@ -407,8 +429,12 @@ class NativeSurfaceCapturer:
                 from jarvis.cu.indicator.capture_guard import (  # noqa: PLC0415
                     indicator_suppressed,
                 )
-                from jarvis.platform.window_capture import grab_window  # noqa: PLC0415
+                from jarvis.platform.window_capture import (  # noqa: PLC0415
+                    clear_grab_failure,
+                    grab_window,
+                )
 
+                clear_grab_failure()
                 with indicator_suppressed(), _input_space():
                     native = grab_window(
                         int(window_handle),
@@ -418,6 +444,7 @@ class NativeSurfaceCapturer:
                     return native
             except Exception:  # noqa: BLE001 — platform policy below decides fallback
                 log.debug("native window capture failed", exc_info=True)
+            _refuse_while_confirmation_pending()
             if os.name == "nt":
                 raise CaptureUnavailable(
                     "The focused Windows window could not be captured safely. "
@@ -519,10 +546,14 @@ class AccessibilityTextReader:
 def capture_permission_error() -> CapturePermissionIssue | None:
     """``None`` when capture is permitted, else an actionable English message.
 
-    Deliberately uncached: macOS can revoke a TCC grant while Jarvis runs, and
-    a cached "granted" would produce a wallpaper-only capture that looks like a
-    successful screenshot of an empty desktop. One native call per capture is
-    the right price for not lying about what was seen.
+    SILENT: it reads the state and never asks macOS, so ``GET
+    /api/screen-context/status`` and every other status probe may call it freely.
+    The capture a person starts asks through the permission service first
+    (``ScreenContextService.capture``); this only describes why a capture would
+    not be allowed right now. Deliberately not cached beyond the permission
+    service's sub-second read cache: macOS can revoke a TCC grant while Jarvis
+    runs, and a stale "granted" would produce a wallpaper-only capture that looks
+    like a successful screenshot of an empty desktop.
     """
     if _is_wayland():
         return CapturePermissionIssue(
@@ -534,22 +565,14 @@ def capture_permission_error() -> CapturePermissionIssue | None:
             ),
         )
     try:
-        from jarvis.platform.permissions import (  # noqa: PLC0415
-            PermissionId,
-            get_system_permission_port,
-        )
+        from jarvis.platform import screen_access  # noqa: PLC0415
 
-        port = get_system_permission_port()
-        if port.runtime_access_granted(PermissionId.SCREEN_RECORDING):
+        state = screen_access.screen_recording_state()
+        if screen_access.state_allows_capture(state):
             return None
         return CapturePermissionIssue(
             code="capture_permission",
-            message=(
-                "Screen capture is blocked because this app does not have the "
-                "screen-recording permission. Grant it in your system privacy "
-                "settings (macOS: System Settings > Privacy & Security > Screen "
-                "Recording), then ask again."
-            ),
+            message=screen_access.refusal_for_state(state).user_detail,
         )
     except Exception:  # noqa: BLE001 — an unavailable probe must not block Windows/Linux
         log.debug("screen-recording permission probe failed", exc_info=True)
@@ -557,21 +580,29 @@ def capture_permission_error() -> CapturePermissionIssue | None:
 
 
 def accessibility_permission_error() -> str | None:
-    """``None`` when UI text may be read, else an actionable English message."""
-    try:
-        from jarvis.platform.permissions import (  # noqa: PLC0415
-            PermissionId,
-            get_system_permission_port,
-        )
+    """``None`` when UI text may be read, else an actionable English message.
 
-        port = get_system_permission_port()
-        if port.runtime_access_granted(PermissionId.ACCESSIBILITY):
+    Reading UI text is background work: it never asks for Accessibility and the
+    status route never prompts. A missing grant only drops the on-screen text;
+    the screen image stays available.
+    """
+    try:
+        from jarvis.platform.permission_service import user_detail_for  # noqa: PLC0415
+        from jarvis.platform.permissions import PermissionId, PermissionState  # noqa: PLC0415
+        from jarvis.platform.screen_access import permission_gate  # noqa: PLC0415
+
+        state = permission_gate().check(PermissionId.ACCESSIBILITY)
+        if state in (PermissionState.GRANTED, PermissionState.NOT_REQUIRED):
             return None
+        reason = {
+            PermissionState.DENIED: "denied",
+            PermissionState.RESTRICTED: "restricted",
+            PermissionState.UNAVAILABLE: "unavailable",
+        }.get(state, "needs_settings")
         return (
-            "Visible UI text could not be read because the accessibility "
-            "permission is missing. The screen image is still available; "
-            "grant accessibility in your system privacy settings to include "
-            "on-screen text."
+            "Visible UI text could not be read. "
+            f"{user_detail_for(PermissionId.ACCESSIBILITY, reason)} "
+            "The screen image is still available."
         )
     except Exception:  # noqa: BLE001
         log.debug("accessibility permission probe failed", exc_info=True)

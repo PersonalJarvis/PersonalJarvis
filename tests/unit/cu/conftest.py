@@ -1,13 +1,21 @@
 """Computer-Use unit-test fixtures.
 
-The capture path probes the LIVE macOS Screen-Recording TCC state before
-every grab (``_require_macos_screen_recording_permission``). These unit tests
+The capture path reads the LIVE macOS Screen-Recording TCC state: the perception
+entry asks for a missing grant (``_ensure_screen_recording_for_perception``),
+the helpers read it silently (``_helper_capture_blocked``), the engine's per-action
+gate raises without asking (``_require_macos_screen_recording_permission``) and a
+blank frame is sanity-checked (``_verify_perception_frame``). These unit tests
 drive capture/engine logic through injected fake grabbers — the real TCC
 state of the host must not decide their outcome (CI runners and dev shells
 have no grant, so every capture-touching test would fail on real darwin
-hosts while passing everywhere else). The gate's own behavior is covered by
-``tests/unit/cu/test_capture_permission_gate``-style tests that patch the
-permission port explicitly.
+hosts while passing everywhere else). The permission behavior itself is covered
+by the ``real_tcc_gate`` tests, which run the real permission service on a
+``FakeTCC`` and so stay deterministic on every host.
+
+The engine's per-action guard (``engine._blocked_before_dispatch``: a deep Screen
+Recording read plus the system-consent window list) is neutralised by the
+``patched`` fixture of ``test_engine_loop.py``, not here: the tests of the guard
+call ``_dispatch_tool`` directly through a ``FakeTCC`` world and need it live.
 """
 
 from __future__ import annotations
@@ -19,9 +27,9 @@ import pytest
 def _screen_recording_gate_open(
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Neutralize the live TCC probe; a no-op off darwin by design.
+    """Neutralize the live TCC reads; a no-op off darwin by design.
 
-    Tests that exercise the gate itself opt back in with
+    Tests that exercise the permission behavior itself opt back in with
     ``@pytest.mark.real_tcc_gate`` (they fake the permission port and the
     platform explicitly, so they stay deterministic on every host).
     """
@@ -32,6 +40,11 @@ def _screen_recording_gate_open(
     monkeypatch.setattr(
         capture, "_require_macos_screen_recording_permission", lambda: None
     )
+    monkeypatch.setattr(
+        capture, "_ensure_screen_recording_for_perception", lambda: None
+    )
+    monkeypatch.setattr(capture, "_verify_perception_frame", lambda _raw: None)
+    monkeypatch.setattr(capture, "_helper_capture_blocked", lambda: False)
 
 
 @pytest.fixture(autouse=True)
