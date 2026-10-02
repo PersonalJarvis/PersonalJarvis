@@ -144,6 +144,12 @@ it("marks a queued workspace before the active workspace changes", () => {
   const row = screen.getByTestId("ide-workspace-p1-w1");
   expect(row.getAttribute("aria-busy")).toBe("true");
   expect(row.textContent).toContain("Switching workspace");
+  // The ⋯ button shares the spinner's spot, so it stays hidden while switching.
+  const menu = screen.getByRole("button", { name: "Workspace actions for Work" });
+  expect(menu.className).toContain("pointer-events-none");
+  expect(menu.className).not.toContain("group-hover/space:opacity-100");
+  act(() => useIdeProjectsStore.getState().setPendingWorkspaceId(null));
+  expect(menu.className).toContain("group-hover/space:opacity-100");
 });
 
 it("gives every workspace row a ⋯ menu and dispatches Jarvis Live", () => {

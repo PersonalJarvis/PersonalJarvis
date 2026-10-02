@@ -642,10 +642,18 @@ export function IdeProjectTree() {
             </button>
             {(() => {
               const spaceMenuOpen = contextMenu?.kind === "workspace" && contextMenu.workspaceId === workspace.id;
+              // The switching spinner sits exactly where this button appears;
+              // the row is still hovered right after the click, so the two
+              // glyphs stacked into one smudge. While switching, the spinner
+              // owns that spot.
+              const reveal = pending && !spaceMenuOpen
+                ? "pointer-events-none opacity-0"
+                : `focus-visible:opacity-100 group-hover/space:opacity-100 group-focus-within/space:opacity-100 [@media(hover:none)]:opacity-100 ${spaceMenuOpen ? "bg-background/70 text-foreground opacity-100" : "opacity-0"}`;
               return <button type="button" aria-label={`Workspace actions for ${workspace.name}`} title="Workspace actions"
                 aria-haspopup="menu" aria-expanded={spaceMenuOpen} data-tree-menu-anchor
+                tabIndex={pending && !spaceMenuOpen ? -1 : undefined}
                 onClick={(event) => toggleAnchoredMenu(event, { kind: "workspace", projectId: project.id, workspaceId: workspace.id })}
-                className={`absolute right-1 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground transition-opacity hover:bg-background/70 hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover/space:opacity-100 group-focus-within/space:opacity-100 [@media(hover:none)]:opacity-100 ${spaceMenuOpen ? "bg-background/70 text-foreground opacity-100" : "opacity-0"}`}>
+                className={`absolute right-1 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground transition-opacity hover:bg-background/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${reveal}`}>
                 <MoreHorizontal className="h-3.5 w-3.5" />
               </button>;
             })()}
