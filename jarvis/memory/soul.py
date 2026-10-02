@@ -100,6 +100,27 @@ class Soul:
                 pass
             raise
 
+    # ── body ─────────────────────────────────────────────────────────────
+
+    @property
+    def body(self) -> str:
+        """The Markdown under the frontmatter, as the person edits it."""
+        return self._body
+
+    def set_body(self, text: str) -> bool:
+        """Replace the hand-written Markdown; True when it changed.
+
+        The frontmatter is kept. The managed parts (name line, learned
+        section) are whatever the new text says; the next name sync and the
+        next learned note restore them if the person removed them.
+        """
+        body = (text or "").replace("\r\n", "\n").strip()
+        body = body + "\n" if body else ""
+        if body == self._body:
+            return False
+        self._body = body
+        return True
+
     # ── name ─────────────────────────────────────────────────────────────
 
     @property

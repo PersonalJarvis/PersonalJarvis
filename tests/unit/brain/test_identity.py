@@ -109,3 +109,19 @@ def test_the_realtime_instructions_open_with_the_identity() -> None:
     for compact in (False, True):
         text = _session_instructions("en", identity=block, compact=compact)
         assert text.startswith(block)
+
+
+def test_a_gpt_live_call_carries_the_standing_instructions(tmp_path: Path, monkeypatch) -> None:
+    # The live call answered "I have not seen a George.md" (2026-10-02):
+    # GPT-Live never received the instructions file the other surfaces read.
+    import jarvis.core.config as core_config
+    from jarvis.brain import agent_instructions
+    from jarvis.live.session import _identity
+
+    monkeypatch.setattr(core_config, "DATA_DIR", tmp_path)
+    config = _config("Hey George")
+    agent_instructions.save_agent_instructions(config, "Call me Ruben. Answer in German.")
+    text = _identity(config)
+    assert text.startswith("YOUR NAME IS GEORGE")
+    assert "(from George.md)" in text
+    assert "Call me Ruben. Answer in German." in text

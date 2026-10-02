@@ -39,7 +39,29 @@ def _identity(config: Any) -> str:
     except Exception:  # noqa: BLE001 — never block a call on the identity block
         log.warning("live voice: identity block unavailable", exc_info=True)
         return ""
-    return identity + _memory()
+    return identity + _instructions(config) + _memory()
+
+
+#: Same cap as the realtime engines' preferences block: a pathological file
+#: must never bloat the session instructions.
+_INSTRUCTIONS_MAX_CHARS = 64_000
+
+
+def _instructions(config: Any) -> str:
+    """The user's standing instructions (``<Name>.md``); ``""`` on a fault.
+
+    The typed brain and the realtime engines already honour this file; a
+    GPT-Live call did not, so the model could neither follow it nor say what
+    was in it when asked (2026-10-02).
+    """
+    try:
+        from jarvis.brain.agent_instructions import render_for_prompt
+
+        block = render_for_prompt(config, max_chars=_INSTRUCTIONS_MAX_CHARS)
+    except Exception:  # noqa: BLE001 — never block a call on the instructions file
+        log.warning("live voice: standing instructions unavailable", exc_info=True)
+        return ""
+    return "\n\n" + block if block else ""
 
 
 def _memory() -> str:

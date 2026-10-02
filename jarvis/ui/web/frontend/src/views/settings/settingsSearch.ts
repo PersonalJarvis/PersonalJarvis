@@ -25,7 +25,7 @@ const SEARCH_GROUPS = [
 
 const SEARCH_PAGES = [
   { id: "profile", keys: ["profile_view"] },
-  { id: "agent-instructions", keys: ["agent_instructions"] },
+  { id: "agent-instructions", keys: ["soul_view"] },
   { id: "contacts", keys: ["contacts"] },
   { id: "socials", keys: ["socials"] },
   { id: "apikeys", keys: ["apikeys_view", "apikeys_voice", "apikeys_model", "apikeys_cu_model"] },
