@@ -7,6 +7,7 @@ import { ViewErrorBoundary } from "./components/ViewErrorBoundary";
 import { AuthGate } from "./components/AuthGate";
 import { installPreloadRecovery } from "./lib/preloadRecovery";
 import { POLL_MS, installBundleWatch } from "./lib/bundleWatch";
+import { reloadHeld } from "./lib/reloadHold";
 import { browserSafeReloadDeps, reloadWhenServable } from "./lib/safeReload";
 import { loadUiLocale, useI18nStore } from "./i18n";
 import "./index.css";
@@ -58,6 +59,7 @@ installPreloadRecovery({
       }).then((response) => (response.ok ? response.text() : "")),
     reload: () => reloadWhenServable(browserSafeReloadDeps()),
     idleFor: () => (lastInput === null ? null : Date.now() - lastInput),
+    held: reloadHeld,
     visible: () => document.visibilityState !== "hidden",
     every: (fn, ms) => window.setInterval(fn, ms),
     stop: (handle) => window.clearInterval(handle),
