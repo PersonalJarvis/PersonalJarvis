@@ -30,10 +30,19 @@ export function useFileMeta(): (file: SoulFile) => string {
   };
 }
 
+/** Drops HTML comments, including nested leftovers and an unclosed opener. */
+function withoutComments(text: string): string {
+  let previous: string;
+  do {
+    previous = text;
+    text = text.replace(/<!--[\s\S]*?-->/g, "");
+  } while (text !== previous);
+  return text.replace(/<!--|-->/g, "");
+}
+
 /** Inline Markdown made readable: emphasis markers and comments dropped. */
 function clean(line: string): string {
-  return line
-    .replace(/<!--.*?-->/g, "")
+  return withoutComments(line)
     .replace(/\*\*(.+?)\*\*/g, "$1")
     .replace(/(^|\s)_([^_]+)_(?=[\s.,;:!?]|$)/g, "$1$2")
     .replace(/^_|_$/g, "")
@@ -57,7 +66,7 @@ export function previewLines(file: SoulFile, max = 4): string[] {
   };
   for (const raw of file.content.split("\n")) {
     const trimmed = raw.trim();
-    if (!trimmed || trimmed.startsWith("#") || /^<!--.*-->$/.test(trimmed)) {
+    if (!trimmed || trimmed.startsWith("#") || (trimmed.startsWith("<!--") && trimmed.endsWith("-->"))) {
       flush();
     } else if (/^[-*]\s+/.test(trimmed)) {
       flush();
