@@ -292,6 +292,17 @@ async def test_a_cli_dialog_is_reported_from_the_screen(pane, monkeypatch):
     assert "current terminal question" in events[0].report
 
 
+@pytest.mark.asyncio
+async def test_a_pane_that_worked_again_gets_a_fresh_grace(pane):
+    pending = await arm(pane)
+    term, _ = pane
+    events = []
+    assert not await ft.publish_result("completed", term, pending, events.append, now=200.0)
+    term.last_output_at = 500.0  # It resumed on its own and stopped again much later.
+    assert not await ft.publish_result("completed", term, pending, events.append, now=510.0)
+    assert not events and term.delegation_stopped_at == 510.0
+
+
 def test_report_grace_outlasts_the_conversation_lookup():
     from jarvis.agentic_ide.session import CONVERSATION_DELAYS_S
 

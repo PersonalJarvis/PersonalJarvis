@@ -252,7 +252,8 @@ async def publish_result(
         if kind == "completed" and not report and _readable(term):
             moment = time.time() if now is None else now
             stopped_at = getattr(term, "delegation_stopped_at", 0.0) or 0.0
-            if not stopped_at:
+            # A pane that moved again since the clock started is a new stop.
+            if not stopped_at or (getattr(term, "last_output_at", 0.0) or 0.0) > stopped_at:
                 term.delegation_stopped_at = stopped_at = moment
             if moment - stopped_at < REPORT_GRACE_S:
                 return False
