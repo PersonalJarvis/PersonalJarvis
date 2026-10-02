@@ -47,7 +47,7 @@ class _Executor:
         self.confirmed.append((trace_id, kwargs))
         return ToolResult(success=True, output="confirmed")
 
-    async def cancel_pending(self, trace_id: Any) -> bool:
+    async def cancel_pending(self, trace_id: Any, *, reason: str = "voice_vetoed") -> bool:
         self.cancelled.append(trace_id)
         return True
 

@@ -89,6 +89,7 @@ import {
   type TerminalAppearance,
 } from "./terminalThemes";
 import { clearTuiCanvasFill } from "./terminalGlass";
+import { createLightPaneInk } from "./terminalLightInk";
 import {
   extractPaneDrop,
   extractPasteFiles,
@@ -112,11 +113,10 @@ import { attachTerminalBridge } from "@/lib/editActions";
 import { robustCopy, robustPaste } from "@/lib/clipboard";
 import {
   TERMINAL_FONT_STACK,
-  TERMINAL_FONT_WEIGHT,
-  TERMINAL_FONT_WEIGHT_BOLD,
   alignTerminalCells,
   syncTerminalFont,
   terminalFontSettled,
+  terminalFontWeights,
   whenTerminalFontReady,
 } from "@/lib/terminalFont";
 import {
@@ -961,10 +961,13 @@ export function AgenticTerminal({
     const activateLink = createTerminalLinkActivator(linkOptions);
     const term = new Terminal({
       convertEol: false,
-      // The pane shell supplies the shared section glass. xterm otherwise
-      // paints an opaque canvas over it, hiding both that glass and the desktop
-      // artwork even when the surrounding React container is translucent.
-      allowTransparency: true,
+      // A dark pane keeps the canvas clear so the shared section glass and the
+      // desktop artwork show through. A light pane is opaque: xterm rasterises
+      // glyphs on a transparent canvas with greyscale anti-aliasing only, and
+      // dark ink on paper drawn that way reads thin and grey — on a 4K screen
+      // at 100 % scaling, barely legible (maintainer, 2026-10-01). On an
+      // opaque ground the glyph atlas gets the system's subpixel smoothing.
+      allowTransparency: appearanceRef.current !== "light",
       // A CLI configured for the other ground paints truecolor a palette can
       // never remap — dark-theme white text into a light pane. This floor
       // nudges any unreadable foreground toward legibility; the theme's
@@ -975,10 +978,11 @@ export function AgenticTerminal({
       // module exists to prevent.
       fontFamily: TERMINAL_FONT_STACK,
       fontSize: fontSizeRef.current,
-      // Medium body text — see TERMINAL_FONT_WEIGHT for why Regular reads thin
-      // and grey under the WebGL renderer next to a native terminal.
-      fontWeight: TERMINAL_FONT_WEIGHT,
-      fontWeightBold: TERMINAL_FONT_WEIGHT_BOLD,
+      // Medium body text, SemiBold on a light pane — see TERMINAL_FONT_WEIGHT
+      // and TERMINAL_FONT_WEIGHT_LIGHT for why Regular reads thin and grey
+      // under the WebGL renderer next to a native terminal.
+      fontWeight: terminalFontWeights(appearanceRef.current).body,
+      fontWeightBold: terminalFontWeights(appearanceRef.current).bold,
       // The font's own line height, like a standalone terminal. JetBrains Mono
       // already carries 1.32em of leading; at 1.2 on top a row was ~1.6em tall,
       // so a pane showed large text gaps between small glyphs. At 1.0 the larger
@@ -1245,13 +1249,18 @@ export function AgenticTerminal({
      */
     let resumeResize: (() => void) | null = null;
 
+    /** This pane's light-ground re-inker; it tracks the CLI's faint state. */
+    const lightInk = createLightPaneInk();
+
     /** Hand bytes to xterm, keeping the count of what is still being parsed. */
     const writeToTerminal = (text: string, afterWrite?: () => void) => {
       parsing += 1;
       // A TUI that paints its theme ground on every cell would hide the
       // glass this pane sits on. Default-background those fills here, on
-      // the way into xterm — see ./terminalGlass.
-      term.write(clearTuiCanvasFill(text), () => {
+      // the way into xterm — see ./terminalGlass. A light pane also re-inks
+      // the dark-theme truecolor most CLIs paint — see ./terminalLightInk.
+      const glass = clearTuiCanvasFill(text);
+      term.write(appearanceRef.current === "light" ? lightInk(glass) : glass, () => {
         parsing = Math.max(0, parsing - 1);
         afterWrite?.();
         // The parser is between chunks — the one safe moment to reflow.
@@ -2439,6 +2448,13 @@ export function AgenticTerminal({
     const theme = themeFor(appearance);
     if (term.options.theme === theme) return;
     term.options.theme = theme;
+    // Opaque on paper for subpixel-smoothed glyphs — see the constructor.
+    term.options.allowTransparency = appearance !== "light";
+    // A light pane draws one cut heavier (TERMINAL_FONT_WEIGHT_LIGHT). Every
+    // cut has the same advance, so the grid stays put and only glyphs change.
+    const weights = terminalFontWeights(appearance);
+    term.options.fontWeight = weights.body;
+    term.options.fontWeightBold = weights.bold;
     clearTerminalTextureAtlas(term);
   }, [appearance, terminalEpoch]);
 

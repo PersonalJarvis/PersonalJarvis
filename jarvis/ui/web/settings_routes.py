@@ -2316,6 +2316,82 @@ async def put_autostart(body: AutostartBody, request: Request) -> dict[str, obje
     }
 
 
+# ---------------------------------------------------------------------------
+# Background agents: what keeps running after the window closes
+# (jarvis/core/background_service.py). GET reports the setting, the login mode
+# and the work a quit would hand over right now; PUT changes either setting.
+# ---------------------------------------------------------------------------
+
+
+class BackgroundBody(BaseModel):
+    keep_agents_running: bool | None = Field(default=None)
+    background_only_at_login: bool | None = Field(default=None)
+
+
+def _background_payload(request: Request) -> dict[str, object]:
+    import sys as _sys
+
+    from jarvis.core.background_service import SERVICE_FLAG, keep_running_enabled, work_from_state
+    from jarvis.core.instance import current_instance
+
+    cfg = _config(request)
+    autostart_cfg = getattr(cfg, "autostart", None)
+    work = work_from_state(request.app.state)
+    return {
+        "keep_agents_running": keep_running_enabled(cfg),
+        "background_only_at_login": bool(getattr(autostart_cfg, "background_only", False)),
+        "autostart_enabled": bool(getattr(autostart_cfg, "enabled", True)),
+        # This process IS the windowless service (a browser on its port).
+        "running_as_service": SERVICE_FLAG in _sys.argv,
+        # Only the default app hands off; a dev instance stops with its window.
+        "supported": current_instance().owns_ambient_duties,
+        "work": {
+            "routines": work.routines,
+            "running": work.running,
+            "channels": list(work.channels),
+        },
+    }
+
+
+@router.get("/background")
+def get_background(request: Request) -> dict[str, object]:
+    return _background_payload(request)
+
+
+@router.put("/background")
+async def put_background(body: BackgroundBody, request: Request) -> dict[str, object]:
+    from jarvis.core import config_writer
+
+    cfg = _config(request)
+    if body.keep_agents_running is not None:
+        value = bool(body.keep_agents_running)
+        config_writer.set_background_keep_running(value)
+        section = getattr(cfg, "background", None)
+        if section is not None:
+            try:
+                section.keep_agents_running = value  # type: ignore[attr-defined]
+            except Exception as exc:  # noqa: BLE001 — frozen model: the toml write still counts
+                log.debug("in-memory background.keep_agents_running update skipped: %s", exc)
+    if body.background_only_at_login is not None:
+        value = bool(body.background_only_at_login)
+        config_writer.set_autostart_background_only(value)
+        autostart_cfg = getattr(cfg, "autostart", None)
+        if autostart_cfg is not None:
+            try:
+                autostart_cfg.background_only = value  # type: ignore[attr-defined]
+            except Exception as exc:  # noqa: BLE001 — same as above
+                log.debug("in-memory autostart.background_only update skipped: %s", exc)
+        enabled, _caps, manager, spec = _autostart_components(request)
+        if enabled:
+            # The login entry carries the mode in its command line; refresh it
+            # now (user-initiated, so Windows may ask once to update its task).
+            try:
+                await asyncio.to_thread(manager.install, spec, interactive=True)
+            except Exception as exc:  # noqa: BLE001 — persisted; the boot reconcile retries
+                log.warning("autostart refresh after a login-mode change failed: %s", exc)
+    return _background_payload(request)
+
+
 _OVERLAY_STYLES = OVERLAY_STYLES
 
 

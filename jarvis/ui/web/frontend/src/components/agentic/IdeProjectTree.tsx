@@ -72,7 +72,7 @@ function soloWorkspace(project: IdeProject): ProjectWorkspace | null {
 /** Running agents glow, an open but idle workspace is a solid dot, a saved (closed) one a hollow ring. */
 function statusDotClass(workspace: ProjectWorkspace): string {
   if (workspace.status !== "open") return "border border-muted-foreground/45";
-  return workspace.live_terminals > 0 ? "bg-emerald-500 ring-[3px] ring-emerald-500/15" : "bg-muted-foreground/40";
+  return workspace.live_terminals > 0 ? "bg-accent ring-[3px] ring-accent/15" : "bg-muted-foreground/40";
 }
 
 function readExpansion(): Record<string, boolean> {

@@ -715,6 +715,7 @@ class SubprocessMascotOverlay(SubprocessBarOverlay):
         pet_id: str | None = None,
         pet_scale: float = 1.0,
         pet_bubble: bool = True,
+        pet_strip_always: bool = False,
     ) -> None:
         super().__init__()
         self._mascot_path = mascot_path
@@ -727,9 +728,12 @@ class SubprocessMascotOverlay(SubprocessBarOverlay):
         self._pet_id = pet_id
         self._pet_scale = float(pet_scale)
         self._pet_bubble = bool(pet_bubble)
+        self._pet_strip_always = bool(pet_strip_always)
         self._speaker_muted = False
         self._user_visible = True
         self._on_compose: Callable[[], None] | None = None
+        #: The pet's bell, mirrored from the host's ``notify_toggle`` events.
+        self._notifications_enabled = True
 
     def _init_payload(self) -> dict[str, Any]:
         return {
@@ -740,6 +744,7 @@ class SubprocessMascotOverlay(SubprocessBarOverlay):
             "pet_id": self._pet_id,
             "pet_scale": self._pet_scale,
             "pet_bubble": self._pet_bubble,
+            "pet_strip_always": self._pet_strip_always,
         }
 
     @property
@@ -761,21 +766,35 @@ class SubprocessMascotOverlay(SubprocessBarOverlay):
         self._pet_id = str(pet_id or "")
         self._send({"op": "set_pet", "pet_id": self._pet_id})
 
-    def set_pet_look(self, scale: float | None = None, bubble: bool | None = None) -> None:
+    def set_pet_look(
+        self,
+        scale: float | None = None,
+        bubble: bool | None = None,
+        strip_always: bool | None = None,
+    ) -> None:
         if scale is not None:
             self._pet_scale = float(scale)
         if bubble is not None:
             self._pet_bubble = bool(bubble)
+        if strip_always is not None:
+            self._pet_strip_always = bool(strip_always)
         self._send(
             {
                 "op": "set_pet_look",
                 "scale": None if scale is None else float(scale),
                 "bubble": None if bubble is None else bool(bubble),
+                "strip_always": None if strip_always is None else bool(strip_always),
             }
         )
 
     def set_pet_outcome(self, kind: str) -> None:
         self._send({"op": "set_pet_outcome", "kind": str(kind)})
+
+    def set_pet_action(self, kind: str | None) -> None:
+        self._send({"op": "set_pet_action", "kind": None if kind is None else str(kind)})
+
+    def set_pet_busy(self, busy: bool) -> None:
+        self._send({"op": "set_pet_busy", "busy": bool(busy)})
 
     def show_status(self, title: str = "", detail: str = "") -> None:
         self._send({"op": "show_status", "title": str(title), "detail": str(detail)})
@@ -803,7 +822,23 @@ class SubprocessMascotOverlay(SubprocessBarOverlay):
     def set_on_compose(self, callback: Callable[[], None] | None) -> None:
         self._on_compose = callback
 
+    def push_notice(self, kind: str = "info", title: str = "", detail: str = "") -> None:
+        self._send(
+            {"op": "push_notice", "kind": str(kind), "title": str(title), "detail": str(detail)}
+        )
+
+    @property
+    def notifications_enabled(self) -> bool:
+        return self._notifications_enabled
+
+    def set_notifications_enabled(self, enabled: bool) -> None:
+        self._notifications_enabled = bool(enabled)
+        self._send({"op": "set_notifications_enabled", "enabled": self._notifications_enabled})
+
     def _dispatch_event(self, msg: dict[str, Any]) -> None:
+        if msg.get("event") == "notify_toggle":
+            self._notifications_enabled = bool(msg.get("enabled", True))
+            return
         if msg.get("event") != "compose":
             super()._dispatch_event(msg)
             return
@@ -822,6 +857,8 @@ class SubprocessMascotOverlay(SubprocessBarOverlay):
             self._send({"op": "set_speaker_muted", "muted": True})
         if not self._user_visible:
             self._send({"op": "set_visible", "visible": False})
+        if not self._notifications_enabled:
+            self._send({"op": "set_notifications_enabled", "enabled": False})
 
     def set_style(self, style: str) -> None:
         """Re-style the hosted orb window live (mascot <-> voice orb).

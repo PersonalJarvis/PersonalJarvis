@@ -1,24 +1,29 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { ChatsSurface } from "@/views/ChatsSurface";
-import { SurfaceSwitch } from "@/components/home/SurfaceSwitch";
 import { useHomeStore } from "@/store/home";
 import { readHomeSurface } from "@/lib/homeSurface";
 
 /**
- * The front page is one section with one switch: Voice (the Jarvis bar) or
- * Chat (the typed column). What is under test is the shell's switching and
- * persistence, not what either stage renders — both stages and the header
- * are stubbed.
+ * The front page is ONE chat with a voice mode inside it (2026-10-01). What
+ * is under test is the shell: it opens on the chat, voice mode swaps in the
+ * spoken stage and hands it the way back to typing, and the mode is remembered. Both
+ * stages are stubbed; the composer's voice button is ChatStage's own test.
  */
-vi.mock("@/components/home/HomeHeader", () => ({
-  HomeHeader: () => <div data-testid="home-header-stub" />,
-}));
 vi.mock("@/components/home/VoiceStage", () => ({
-  VoiceStage: () => <div data-testid="voice">voice</div>,
+  VoiceStage: ({ onExit }: { onExit?: () => void }) => (
+    <div data-testid="voice">
+      <button type="button" data-testid="voice-mode-exit" onClick={onExit}>
+        back
+      </button>
+    </div>
+  ),
 }));
 vi.mock("@/components/home/ChatStage", () => ({
   ChatStage: () => <div data-testid="chat">chat</div>,
+}));
+vi.mock("@/components/home/HomeAgentChat", () => ({
+  default: ({ agentId }: { agentId: string }) => <div data-testid="agent-chat">{agentId}</div>,
 }));
 
 const STORAGE_KEY = "jarvis.home.surface.v2";
@@ -26,67 +31,51 @@ const STORAGE_KEY = "jarvis.home.surface.v2";
 describe("ChatsSurface (the front page)", () => {
   beforeEach(() => {
     window.localStorage.clear();
-    useHomeStore.setState({ surface: readHomeSurface() });
+    useHomeStore.setState({ surface: readHomeSurface(), agentChatId: null });
   });
 
   afterEach(cleanup);
 
-  it("opens on the chat stage by default", async () => {
+  it("gives the page to an agent's chat picked in the sidebar, and back on a new chat", async () => {
+    useHomeStore.getState().openAgentChat("agent-7");
+    render(<ChatsSurface />);
+    expect((await screen.findByTestId("agent-chat")).textContent).toBe("agent-7");
+    expect(screen.queryByTestId("chat")).toBeNull();
+    const { startNewTextChat } = await import("@/lib/newChat");
+    act(() => startNewTextChat());
+    expect(await screen.findByTestId("chat")).toBeTruthy();
+    expect(useHomeStore.getState().agentChatId).toBeNull();
+  });
+
+  it("opens on the chat by default, with nothing above it", async () => {
     render(<ChatsSurface />);
     expect(await screen.findByTestId("chat")).toBeTruthy();
     expect(screen.queryByTestId("voice")).toBeNull();
+    expect(screen.queryByTestId("voice-mode-exit")).toBeNull();
     expect(screen.getByTestId("home-view").getAttribute("data-surface")).toBe("chat");
   });
 
-  it("switches to the chat stage from the sidebar switch and remembers it", async () => {
-    useHomeStore.setState({ surface: "voice" });
-    render(
-      <>
-        <SurfaceSwitch />
-        <ChatsSurface />
-      </>,
-    );
-
-    fireEvent.click(screen.getByTestId("home-surface-chat"));
-
-    expect(await screen.findByTestId("chat")).toBeTruthy();
-    expect(screen.queryByTestId("voice")).toBeNull();
-    expect(window.localStorage.getItem(STORAGE_KEY)).toBe("chat");
-    expect(screen.getByTestId("home-surface-chat").getAttribute("aria-selected")).toBe("true");
-  });
-
-  it("opens on the chat stage when that is the stored choice", async () => {
-    window.localStorage.setItem(STORAGE_KEY, "chat");
+  it("ignores the retired Voice | Chat switch's stored choice", async () => {
+    window.localStorage.setItem("jarvis.home.surface.v1", "voice");
     useHomeStore.setState({ surface: readHomeSurface() });
     render(<ChatsSurface />);
     expect(await screen.findByTestId("chat")).toBeTruthy();
   });
 
-  it("switches back to voice", () => {
-    window.localStorage.setItem(STORAGE_KEY, "chat");
+  it("goes back to typing from voice mode and remembers it", async () => {
+    window.localStorage.setItem(STORAGE_KEY, "voice");
     useHomeStore.setState({ surface: readHomeSurface() });
-    render(
-      <>
-        <SurfaceSwitch />
-        <ChatsSurface />
-      </>,
-    );
-    fireEvent.click(screen.getByTestId("home-surface-voice"));
+    render(<ChatsSurface />);
     expect(screen.getByTestId("voice")).toBeTruthy();
-    expect(window.localStorage.getItem(STORAGE_KEY)).toBe("voice");
+    fireEvent.click(screen.getByTestId("voice-mode-exit"));
+    expect(await screen.findByTestId("chat")).toBeTruthy();
+    expect(window.localStorage.getItem(STORAGE_KEY)).toBe("chat");
   });
 
-  it("lands on chat when the stored value is corrupt", async () => {
+  it("lands on the chat when the stored value is corrupt", async () => {
     window.localStorage.setItem(STORAGE_KEY, "garbage");
     useHomeStore.setState({ surface: readHomeSurface() });
     render(<ChatsSurface />);
     expect(await screen.findByTestId("chat")).toBeTruthy();
-  });
-
-  it("migrates the old voice-first preference to chat once", () => {
-    window.localStorage.setItem("jarvis.home.surface.v1", "voice");
-    expect(readHomeSurface()).toBe("chat");
-    window.localStorage.setItem(STORAGE_KEY, "voice");
-    expect(readHomeSurface()).toBe("voice");
   });
 });

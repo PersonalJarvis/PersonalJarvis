@@ -595,9 +595,10 @@ class ToolExecutor:
         ))
         return result
 
-    async def cancel_pending(self, trace_id: UUID) -> bool:
+    async def cancel_pending(self, trace_id: UUID, *, reason: str = "voice_vetoed") -> bool:
         """Drop the action stashed for ``trace_id`` ("nein"). Returns whether one
-        existed. Publishes ``ActionDenied`` for the audit trail."""
+        existed. Publishes ``ActionDenied`` for the audit trail; ``reason`` says
+        why, so a call that merely ended is not recorded as the user's veto."""
         pending = self._pending_voice.pop(trace_id, None)
         if pending is None:
             return False
@@ -605,6 +606,6 @@ class ToolExecutor:
         await self._bus.publish(ActionDenied(
             trace_id=trace_id,
             tool_name=tool.name,
-            reason="voice_vetoed",
+            reason=reason,
         ))
         return True

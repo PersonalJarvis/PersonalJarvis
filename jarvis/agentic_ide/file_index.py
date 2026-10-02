@@ -17,6 +17,9 @@ Design constraints that shaped it:
 * **Bounded, always.** A user can open ANY folder, including a home directory or
   a network share. The walk carries a hard file budget, a depth limit, and the
   shared skip list, so the worst case is a truncated index, never a hang.
+* **Git first.** In a checkout the file list comes from ``git ls-files``, so
+  gitignored data, caches and build output never crowd the code out. Without
+  git, or outside a checkout, the bounded walk stands in.
 * **Lexical, not semantic.** Matching is token overlap against path segments and
   file stems. No embedding, no model call — it must work on a machine with no
   API key at all, and a wrong suggestion costs the agent one glance.
@@ -31,9 +34,13 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
+import subprocess
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from loguru import logger
 
 from .folders import _SKIP_DIRS
 
@@ -575,8 +582,94 @@ def _entry_size(item: os.DirEntry[str]) -> int:
         return 0
 
 
+def _make_entry(rel: str, name: str, size: int) -> _Entry:
+    stem = os.path.splitext(name)[0]
+    parent = rel.rsplit("/", 1)[0] if "/" in rel else ""
+    return _Entry(
+        rel=rel,
+        stem_tokens=frozenset(tokenize(stem)),
+        path_tokens=frozenset(tokenize(parent)) | frozenset(tokenize(stem)),
+        is_test=(
+            "test" in rel.lower().split("/")[0]
+            or stem.lower().startswith("test_")
+            or stem.lower().endswith(("_test", ".test", ".spec"))
+        ),
+        is_doc=_is_doc(rel, name),
+        dir_names=frozenset(part.lower() for part in parent.split("/") if part),
+        size=size,
+    )
+
+
+_GIT_TIMEOUT_S = 15.0
+
+
+def _git_paths(base: Path) -> list[str] | None:
+    """Tracked plus untracked-but-not-ignored files, or None without git.
+
+    A checkout's runtime data, caches and build output are gitignored, and in
+    a walk they crowd the code out: measured on this repository 2026-10-01,
+    21 000 of the 30 000 indexed files came from two ignored data folders and
+    the walk stopped at its cap. Git already knows which files are the
+    project. The walk below stays the fallback for folders that are no
+    checkout or machines without git.
+    """
+    try:
+        if not (base / ".git").exists():
+            return None
+    except OSError:  # an unreadable folder is no checkout; the walk decides
+        return None
+    git = shutil.which("git")
+    if not git:
+        return None
+    from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
+
+    try:
+        proc = subprocess.run(
+            [git, "-C", str(base), "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+            capture_output=True,
+            timeout=_GIT_TIMEOUT_S,
+            creationflags=NO_WINDOW_CREATIONFLAGS,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.debug("Agentic IDE file index: git ls-files failed in {}: {}", base, exc)
+        return None
+    if proc.returncode != 0:
+        return None
+    return [p for p in proc.stdout.decode("utf-8", errors="replace").split("\0") if p]
+
+
+def _index_from_git(base: Path, paths: list[str]) -> FileIndex:
+    """The index built from git's file list, under the walk's own rules."""
+    index = FileIndex(root=str(base))
+    for raw in paths:
+        if len(index.entries) >= _MAX_FILES:
+            index.truncated = True
+            break
+        rel = raw.replace("\\", "/")
+        if rel.endswith("/"):
+            continue  # an untracked nested checkout; never one file to point at
+        parts = rel.split("/")
+        dirs, name = parts[:-1], parts[-1]
+        if len(dirs) > _MAX_DEPTH or not _is_interesting(name):
+            continue
+        if any(
+            part in _SKIP_DIRS
+            or part in _COPY_DIRS
+            or (part.startswith(".") and part not in _KEEP_HIDDEN)
+            for part in dirs
+        ):
+            continue
+        try:
+            size = (base / rel).stat().st_size
+        except OSError:
+            continue  # deleted since git listed it
+        index.entries.append(_make_entry(rel, name, size))
+    return index
+
+
 def build_index(root: str | Path) -> FileIndex:
-    """Walk ``root`` once and return its bounded file index.
+    """List ``root`` once and return its bounded file index.
 
     Blocking by design — callers run it in a worker thread (see ``index_for``).
     """
@@ -587,6 +680,10 @@ def build_index(root: str | Path) -> FileIndex:
             return index
     except OSError:
         return index
+
+    listed = _git_paths(base)
+    if listed is not None:
+        return _index_from_git(base, listed)
 
     stack: list[tuple[Path, int]] = [(base, 0)]
     while stack:
@@ -618,23 +715,7 @@ def build_index(root: str | Path) -> FileIndex:
                     except OSError:
                         continue
                     rel = os.path.relpath(item.path, base).replace(os.sep, "/")
-                    stem = os.path.splitext(name)[0]
-                    parent = rel.rsplit("/", 1)[0] if "/" in rel else ""
-                    index.entries.append(
-                        _Entry(
-                            rel=rel,
-                            stem_tokens=frozenset(tokenize(stem)),
-                            path_tokens=frozenset(tokenize(parent)) | frozenset(tokenize(stem)),
-                            is_test=(
-                                "test" in rel.lower().split("/")[0]
-                                or stem.lower().startswith("test_")
-                                or stem.lower().endswith(("_test", ".test", ".spec"))
-                            ),
-                            is_doc=_is_doc(rel, name),
-                            dir_names=frozenset(part.lower() for part in parent.split("/") if part),
-                            size=_entry_size(item),
-                        )
-                    )
+                    index.entries.append(_make_entry(rel, name, _entry_size(item)))
         except (PermissionError, OSError):
             continue
     return index

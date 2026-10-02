@@ -198,6 +198,7 @@ bar_persistent = true        # keep the bar visible at all times (not only durin
 pet_id = "gigi"              # desktop pet (orb_style = "pet"): built-in id, your own u… id, or "none"
 pet_scale = 1.0              # pet size multiplier, 0.5–2.0
 pet_bubble = true            # show the pet's status bubble (what Jarvis is doing)
+pet_strip_always = false     # true: the pet's buttons always show; false: only while active or hovered
 
 # ── Memory ──
 [memory]

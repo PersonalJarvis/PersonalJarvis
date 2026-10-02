@@ -35,9 +35,33 @@ versioning per [SemVer](https://semver.org/).
 - **macOS: the downloaded app is recognised as an installed app.** The `.dmg` app was never accepted as one, so (checked against faked macOS frameworks, not yet on a Mac) its microphone, shortcuts and Computer Use stayed disabled even with every permission granted, and no Allow button was offered. It is now recognised, `jarvis permissions` finds it, and `jarvis permissions reset` targets its own permission records.
 - **macOS: the downloaded app is built to be able to use its permissions.** The v2.5.0 image (read on Linux, not run on a Mac) was missing the microphone framework in its frozen archive and was marked background-only in its `Info.plist`. The build now includes the framework, clears the flag, and new checks fail the macOS job if either comes back — including one that boots the built app and asks it for its microphone permission. Built and checked on both macOS CI runners (Apple Silicon and Intel); not yet tried on a Mac of your own.
 - **macOS: the release workflow is prepared to sign and notarize the image.** `packaging/macos/build.sh` now imports the Developer ID certificate secrets the workflow already passed along (rehearsed and run against a stand-in keychain command, not yet end to end). Until the Apple secrets are added the image stays ad-hoc signed: the first launch needs Open Anyway and an update can ask for the permissions again.
-- Restore the installation-guide link on the PyPI package page and unblock package publication.
+- A quiet, Claude-style front page: one greeting, one composer, and a voice mode that lives inside the chat with a flowing aurora glow.
+- Open any agent's chat on the front page from the sidebar; `@` in the Jarvis chat names your agents and connected plugins.
+- Reasoning traces drawn as a threaded rail, with a wider, calmer column for agent chats.
+- A restyled sidebar with search, your most-used agents, every recent chat, and the update button in its footer.
+- Zoom the whole app window with Ctrl + Plus / Minus / 0.
+- Artifacts open on a gallery with live previews.
+- Pets gain new characters (Ember, Pip), idle acts, action states, a pixel-art control strip, thought bubbles, notification cards and a phone button to call Jarvis.
+- Onboarding: the pet walks you through the app right after setup, then offers ten first steps.
+- Routines and chat channels keep running after the app window closes.
+- Jarvis can drive the Agentic IDE by voice and open coding agents in a named workspace.
 
-This patch includes all v2.5.0 features: desktop pets, profile and keyboard-shortcut settings, workspace shell tabs, improved terminal editing, task recovery, native updates, and subscription-bound background work.
+### Changed
+
+- Scheduling lives on agent routines; the separate Automations section is retired.
+- Routines can be created, paused, resumed or test-run by voice without a second confirmation.
+
+### Fixed
+
+- Dictation works during a live call instead of hanging it up.
+- A new agent's first prompt in the Agentic IDE is reliably submitted.
+- Light-mode terminal panes are crisp and readable.
+- A hung main window recovers on its own instead of waiting forever.
+- Live voice: no hang-up unless you ask, a spoken yes confirms the pending action, and call transcripts are stored while the call runs.
+- Credentials stay out of the app-action catalog.
+- Restore the installation-guide link on the PyPI package page and unblock package publication.
+- Build Linux installers through the official Ubuntu archive when the runner's default mirror stalls.
+- Publish the Debian installer alongside the AppImage and other desktop packages.
 
 ---
 

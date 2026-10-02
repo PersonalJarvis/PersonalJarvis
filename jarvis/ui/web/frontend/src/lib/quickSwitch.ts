@@ -22,8 +22,20 @@
  * locale, plus a few English synonyms, while the row shows the label of the
  * active language.
  */
-import type { LucideIcon } from "lucide-react";
-import { BookA, Grid3x3, Keyboard, Languages, MessageSquare, Mic, Phone, Puzzle, Plug, Sparkles, FlaskConical, KeyRound } from "lucide-react";
+import { KeyRound, type LucideIcon } from "lucide-react";
+import {
+  ChatIcon,
+  ConnectorIcon,
+  DictionaryIcon,
+  LanguageIcon,
+  PaneGridIcon,
+  PhoneIcon,
+  PluginIcon,
+  ShortcutsIcon,
+  SkillIcon,
+  TestFlaskIcon,
+  VoiceIcon,
+} from "@/components/icons/sectionIcons";
 import en from "@/i18n/locales/en.json";
 import de from "@/i18n/locales/de.json";
 import es from "@/i18n/locales/es.json";
@@ -60,13 +72,12 @@ const ALIASES: Partial<Record<string, readonly string[]>> = {
   chat: ["home", "start", "message", "conversation"],
   "agentic-ide": ["ide", "code", "coding", "terminal", "panes", "workspace"],
   "agentic-ide-classic": ["terminal", "grid", "panes"],
-  agents: ["society", "world", "team"],
+  agents: ["society", "world", "team", "routines", "schedule", "automations"],
   settings: ["preferences", "options", "config", "configuration", "general"],
   apikeys: ["keys", "credentials", "tokens", "providers"],
   "local-models": ["ollama", "llama", "offline", "models"],
   memory: ["notes", "knowledge", "obsidian"],
   visualization: ["outputs", "results", "images", "pages"],
-  tasks: ["routines", "schedule", "cron", "recurring"],
   costs: ["tokens", "usage", "money", "billing", "budget"],
   sessions: ["transcripts", "recordings", "history"],
   run_inspector: ["runs", "debug", "trace"],
@@ -135,7 +146,7 @@ function expand(item: NavItem): QuickSwitchEntry[] {
           surface: "voice",
           labelKey: "sidebar.surface_voice",
           fallbackLabel: "Voice",
-          icon: Mic,
+          icon: VoiceIcon,
           aliases: ALIASES.voice,
         }),
         entry(item, {
@@ -143,36 +154,36 @@ function expand(item: NavItem): QuickSwitchEntry[] {
           surface: "chat",
           labelKey: "sidebar.surface_chat",
           fallbackLabel: "Chat",
-          icon: MessageSquare,
+          icon: ChatIcon,
           aliases: ALIASES.chat,
         }),
       ];
     case "plugins":
       return [
-        tab("plugins", "nav.plugins", Plug, "nav.extensions"),
-        tab("skills", "nav.skills", Sparkles, "nav.extensions"),
-        tab("mcps", "nav.mcps", Puzzle, "nav.extensions"),
+        tab("plugins", "nav.plugins", PluginIcon, "nav.extensions"),
+        tab("skills", "nav.skills", SkillIcon, "nav.extensions"),
+        tab("mcps", "nav.mcps", ConnectorIcon, "nav.extensions"),
       ];
     case "clis":
       return [
         entry(item, { labelKey: "nav.clis", fallbackLabel: "CLIs" }),
-        tab("cli-test-hub", "nav.cli_test_hub", FlaskConical, "nav.clis"),
+        tab("cli-test-hub", "nav.cli_test_hub", TestFlaskIcon, "nav.clis"),
       ];
     case "agentic-ide":
       return [
         entry(item),
-        tab("agentic-ide-classic", "quick_switch.terminal_grid", Grid3x3, "nav.agentic_ide"),
+        tab("agentic-ide-classic", "quick_switch.terminal_grid", PaneGridIcon, "nav.agentic_ide"),
       ];
     case "apikeys":
-      return [entry(item), tab("telephony", "nav.telephony", Phone, "nav.apikeys")];
+      return [entry(item), tab("telephony", "nav.telephony", PhoneIcon, "nav.apikeys")];
     case "settings":
-      return [entry(item), tab("languages", "nav.languages", Languages, "nav.settings")];
+      return [entry(item), tab("languages", "nav.languages", LanguageIcon, "nav.settings")];
     case "dictation":
       return [
         entry(item),
-        tab("dictionary", "nav.dictionary", BookA, "nav.voice"),
-        tab("voice-shortcuts", "nav.voice_shortcuts", Keyboard, "nav.voice"),
-        tab("voice-language", "nav.voice_language", Languages, "nav.voice"),
+        tab("dictionary", "nav.dictionary", DictionaryIcon, "nav.voice"),
+        tab("voice-shortcuts", "nav.voice_shortcuts", ShortcutsIcon, "nav.voice"),
+        tab("voice-language", "nav.voice_language", LanguageIcon, "nav.voice"),
         tab("voice-api-keys", "nav.voice_api_keys", KeyRound, "nav.voice"),
       ];
     default:
@@ -245,19 +256,50 @@ export function scoreTerm(term: string, needle: string): number {
   return 0;
 }
 
-/** How far a tab ranks below a top-level page with the same match quality. */
-const TAB_PENALTY = 25;
+/**
+ * Up to this many letters a query only matches what a row is CALLED, from its
+ * first letter: "a" lists exactly the rows whose name starts with A. Longer
+ * queries also reach a row through its other-language names and synonyms
+ * ("einst" finds Settings, "ollama" Local models).
+ */
+export const SHORT_QUERY = 2;
+
+/** Alphabetical, case- and accent-blind, numbers in natural order. */
+export function compareLabels(a: string, b: string): number {
+  return a.localeCompare(b, undefined, { sensitivity: "base", numeric: true });
+}
+
+/**
+ * The order every result group shares: rows whose name STARTS with the query
+ * first, then the rest; alphabetical within each. So "a" reads like an index
+ * (Aa… first, Az… last) and an exact name is still on top — "Voice" before
+ * "Voice Shortcuts" — because the shortest matching name sorts first.
+ */
+export function compareMatches(
+  a: { label: string; prefix: boolean },
+  b: { label: string; prefix: boolean },
+): number {
+  if (a.prefix !== b.prefix) return a.prefix ? -1 : 1;
+  return compareLabels(a.label, b.label);
+}
+
+/** Does this name start with the query (accents and case folded)? */
+export function labelStartsWith(label: string, needle: string): boolean {
+  return normalizeQuery(label).startsWith(needle);
+}
 
 export interface RankedEntry {
   entry: QuickSwitchEntry;
   label: string;
-  score: number;
+  /** The name starts with the query — these rows lead the group. */
+  prefix: boolean;
 }
 
 /**
- * The entries that match, best first. An empty query lists everything in
- * sidebar order, so the switcher doubles as a browsable map of the app.
- * Ties keep sidebar order — `Array.prototype.sort` is stable.
+ * The entries that match, in `compareMatches` order. An empty query matches
+ * nothing: the switcher shows its field alone until something is typed.
+ * Two rows with the same name (the API Keys page and the voice tab of that
+ * name) keep the page first.
  */
 export function rankQuickSwitch(
   query: string,
@@ -265,19 +307,21 @@ export function rankQuickSwitch(
   entries: readonly QuickSwitchEntry[] = QUICK_SWITCH_ENTRIES,
 ): RankedEntry[] {
   const needle = normalizeQuery(query);
-  const all = entries.map((item) => {
+  if (!needle) return [];
+  const rows: RankedEntry[] = [];
+  for (const item of entries) {
     const label = labelFor(item);
-    let score = needle
-      ? Math.max(0, ...entryTerms(item, label).map((term) => scoreTerm(term, needle)))
-      : 1;
-    // A tab inside another area yields to a page of its own on the same word:
-    // "API Keys" means the API Keys page, not the voice section's key tab, and
-    // a word for "language" the app languages, not the dictation language. Large enough to
-    // drop an exact tab hit (100) below a page's prefix hit (80).
-    if (needle && score > 0 && item.parentLabelKey) score = Math.max(1, score - TAB_PENALTY);
-    return { entry: item, label, score };
-  });
-  return all.filter((row) => row.score > 0).sort((a, b) => b.score - a.score);
+    const prefix = labelStartsWith(label, needle);
+    const matches =
+      prefix ||
+      (needle.length > SHORT_QUERY &&
+        entryTerms(item, label).some((term) => scoreTerm(term, needle) > 0));
+    if (matches) rows.push({ entry: item, label, prefix });
+  }
+  return rows.sort(
+    (a, b) =>
+      compareMatches(a, b) || Number(Boolean(a.entry.parentLabelKey)) - Number(Boolean(b.entry.parentLabelKey)),
+  );
 }
 
 /**
@@ -296,9 +340,14 @@ export function strongSettingsMatches<T extends { label: string; detail?: string
   if (!needle) return [];
   return matches
     .filter((match) =>
-      [match.label, match.detail ?? ""].some((text) => scoreTerm(normalizeQuery(text), needle) >= 60),
+      needle.length <= SHORT_QUERY
+        ? labelStartsWith(match.label, needle)
+        : [match.label, match.detail ?? ""].some((text) => scoreTerm(normalizeQuery(text), needle) >= 60),
     )
-    .slice(0, limit);
+    .map((match) => ({ match, label: match.label, prefix: labelStartsWith(match.label, needle) }))
+    .sort(compareMatches)
+    .slice(0, limit)
+    .map((row) => row.match);
 }
 
 /**

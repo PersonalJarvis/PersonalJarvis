@@ -34,6 +34,8 @@ class Sessions:
             raise SessionError("The selected coding agent is busy; nothing was sent.")
         if self.fail:
             raise RuntimeError("transport interrupted after possible write")
+        if args["action"] in {"input", "observe"}:
+            return {"input_token": "token-1", "response_mode": "dialog", "screen_excerpt": "?"}
         return {"delivery": "accepted", "submitted": True, "completed": False}
 
 
@@ -243,9 +245,11 @@ async def test_live_roundtrip_uses_gateway_executor_and_durable_addressed_receip
         ledger.close()
 
 
-def test_send_requires_application_permission_and_reads_remain_safe(rig):
+def test_send_runs_without_a_spoken_question_and_reads_remain_safe(rig):
+    # Live 2026-10-01: a hand-off the user ordered three times was still met
+    # with "shall I send it?". Sending to the user's own agent is logged only.
     tool = WorkspaceOrchestrationTool(rig[0])
-    assert tool.risk_tier_for_args({"action": "send"}) == "ask"
+    assert tool.risk_tier_for_args({"action": "send"}) == "monitor"
     for action in ("inspect", "resolve", "context"):
         assert tool.risk_tier_for_args({"action": action}) == "safe"
 
@@ -292,3 +296,265 @@ def test_confirmation_identifies_target_and_task(rig):
         "agent": "pane:3",
         "task": "Fix Linux installer",
     }
+
+
+async def test_a_mistyped_request_id_still_delivers_exactly_once(rig):
+    # Live 2026-10-01: the voice model dropped one "0" from the 32-character id.
+    resolved = await rig[0].run({"action": "resolve"})
+    rid = resolved["request_id"]
+    garbled = rid[:20] + rid[21:]
+    ids = {k: resolved["target"][k] for k in ("project_id", "workspace_id", "terminal_id")}
+    first = await rig[0].run({"action": "send", **ids, "request_id": garbled, "prompt": "Task"})
+    assert first["status"] == "accepted"
+    retry = rid[:5] + rid[6:]
+    again = await rig[0].run({"action": "send", **ids, "request_id": retry, "prompt": "Task"})
+    assert again == first
+    assert len(rig[2].calls) == 1
+
+
+async def test_send_without_request_id_uses_the_latest_resolve(rig):
+    resolved = await rig[0].run({"action": "resolve"})
+    ids = {k: resolved["target"][k] for k in ("project_id", "workspace_id", "terminal_id")}
+    result = await rig[0].run({"action": "send", **ids, "prompt": "Task"})
+    assert result["status"] == "accepted"
+    assert (await rig[0].run({"action": "send", **ids, "prompt": "Task"}))["status"] == "accepted"
+    assert len(rig[2].calls) == 1
+    other = await rig[0].run({"action": "send", **ids, "prompt": "Another task"})
+    assert other["status"] == "accepted"
+    assert len(rig[2].calls) == 2
+
+
+async def test_garbled_target_ids_are_repaired_from_the_resolve(rig):
+    resolved = await rig[0].run({"action": "resolve"})
+    target = resolved["target"]
+    result = await rig[0].run(
+        {
+            "action": "send",
+            "project_id": target["project_id"][:-1],
+            "workspace_id": target["workspace_id"][1:],
+            "terminal_id": target["terminal_id"],
+            "request_id": resolved["request_id"],
+            "prompt": "Task",
+        }
+    )
+    assert result["status"] == "accepted"
+    assert rig[2].calls[0]["workspace_id"] == target["workspace_id"]
+
+
+async def test_context_ignores_a_broken_request_id(rig):
+    resolved = await target(rig)
+    result = await rig[0].run({"action": "context", **resolved, "request_id": "not-an-id"})
+    assert result["status"] == "observed" or result.get("delivery") == "accepted"
+
+
+async def test_spoken_workspace_name_with_filler_words_resolves(rig):
+    resolved = await target(rig, project="Jarvis-Works", workspace="Personal-Jarvis-Workspace")
+    assert resolved["workspace"] == "Personal Jarvis"
+
+
+async def test_an_unmatched_reference_lists_every_open_workspace(rig):
+    result = await rig[0].run({"action": "resolve", "workspace": "Something else entirely"})
+    assert result["status"] == "needs_clarification"
+    names = {c["workspace"] for c in result["candidates"]}
+    assert names == {"Personal Jarvis", "Other project"}
+    assert "Something else entirely" in result["reason"]
+
+
+@pytest.fixture
+def runnable(monkeypatch):
+    from jarvis.agentic_ide import session as session_mod
+
+    monkeypatch.setattr(session_mod, "agent_argv", lambda name: (f"/usr/bin/{name}",))
+
+
+async def test_new_agents_open_in_the_named_background_workspace(rig, runnable):
+    # Live 2026-10-01: "spawn a new Claude Code agent in the VMs workspace"
+    # became an invisible mission worker; no pane ever appeared there.
+    orchestrator, registry, sessions = rig
+    owner = registry.sessions[0]
+    owner.name = "VM`s"
+    before_active = registry.active_id
+    existing = [t.history_id for t in owner.terminals]
+    published = []
+
+    async def publish(event):
+        published.append(event)
+
+    orchestrator.publish = publish
+    result = await orchestrator.run(
+        {"action": "create", "workspace": "VMs Workspace", "cli": "Claude Cotec", "count": 2}
+    )
+    assert result["status"] == "created", result
+    assert result["workspace_id"] == owner.id
+    assert [a["cli"] for a in result["agents"]] == ["claude", "claude"]
+    assert len(owner.terminals) == len(existing) + 2
+    assert [t.history_id for t in owner.terminals[: len(existing)]] == existing
+    assert registry.active_id == before_active
+    assert not sessions.calls
+    assert published and published[0].session_id == owner.id
+    assert len(published[0].names) == 2
+
+
+async def test_a_new_agent_with_a_task_is_briefed_through_a_receipted_send(rig, runnable):
+    orchestrator, registry, sessions = rig
+    result = await orchestrator.run(
+        {
+            "action": "create",
+            "workspace": "Personal Jarvis",
+            "cli": "Claude Code",
+            "prompt": "Deep-dive the update path",
+        }
+    )
+    assert result["status"] == "created", result
+    new_pane = result["agents"][0]["terminal_id"]
+    assert [d["status"] for d in result["deliveries"]] == ["accepted"]
+    assert sessions.calls[0]["terminal_id"] == new_pane
+    assert sessions.calls[0]["prompt"] == "Deep-dive the update path"
+
+
+async def test_an_unknown_cli_asks_instead_of_opening_a_substitute(rig, runnable):
+    owner = rig[1].sessions[0]
+    count = len(owner.terminals)
+    result = await rig[0].run(
+        {"action": "create", "workspace": "Personal Jarvis", "cli": "Banana"}
+    )
+    assert result["status"] == "needs_clarification" and result["kind"] == "cli"
+    assert len(owner.terminals) == count
+
+
+async def test_no_idle_agent_points_to_create(rig):
+    for term in rig[1].session.terminals:
+        term.activity = "working"
+    result = await rig[0].run({"action": "resolve"})
+    assert result["status"] == "unavailable"
+    assert "create" in result["reason"]
+
+
+def test_create_is_a_logged_action_with_a_valid_live_schema(rig):
+    import jsonschema
+
+    tool = WorkspaceOrchestrationTool(rig[0])
+    args = {"action": "create", "workspace": "VMs", "cli": "Codex", "count": 3, "prompt": "x"}
+    jsonschema.validate(args, tool.schema)
+    assert tool.risk_tier_for_args(args) == "monitor"
+    assert tool.describe_args(args)["agent"] == "3 new Codex"
+
+
+async def test_mixed_clis_open_in_one_call(rig, runnable):
+    # The maintainer's benchmark: "five Claude Code and three Codex" at once.
+    orchestrator, registry, _ = rig
+    owner = registry.sessions[0]
+    before = len(owner.terminals)
+    result = await orchestrator.run(
+        {
+            "action": "create",
+            "workspace": "Personal Jarvis",
+            "agents": [{"cli": "Claude Code", "count": 5}, {"cli": "Codex", "count": 3}],
+        }
+    )
+    assert result["status"] == "created", result
+    assert [a["cli"] for a in result["agents"]] == ["claude"] * 5 + ["codex"] * 3
+    assert len(owner.terminals) == before + 8
+
+
+async def test_open_workspace_creates_a_new_workspace_with_mixed_agents(rig, runnable, tmp_path):
+    orchestrator, registry, _ = rig
+    folder = tmp_path / "Fresh"
+    folder.mkdir()
+    published = []
+
+    async def publish(event):
+        published.append(event)
+
+    orchestrator.publish = publish
+    result = await orchestrator.run(
+        {
+            "action": "open_workspace",
+            "folder": str(folder),
+            "agents": [{"cli": "claude", "count": 2}, {"cli": "codex", "count": 1}],
+        }
+    )
+    assert result["status"] == "opened", result
+    assert [a["cli"] for a in result["agents"]] == ["claude", "claude", "codex"]
+    assert registry.get(result["workspace_id"]) is not None
+    assert published
+
+
+async def test_open_workspace_without_a_folder_lists_known_projects(rig):
+    result = await rig[0].run({"action": "open_workspace"})
+    assert result["status"] == "needs_clarification" and result["kind"] == "folder"
+    assert {c["project"] for c in result["candidates"]} == {"Personal Jarvis", "Other project"}
+
+
+async def test_respond_answers_the_question_a_pane_shows(rig):
+    orchestrator, registry, sessions = rig
+    name = registry.sessions[0].terminals[0].name
+    result = await orchestrator.run(
+        {"action": "respond", "workspace": "Personal Jarvis", "agent": name, "prompt": "1"}
+    )
+    assert result["status"] == "accepted", result
+    respond = sessions.calls[-1]
+    assert respond["action"] == "respond" and respond["prompt"] == "1"
+    assert respond["input_token"] == "token-1" and respond["response_mode"] == "dialog"  # noqa: S105 - a fake input token
+
+
+async def test_keys_and_interrupt_press_only_whitelisted_keys(rig, monkeypatch):
+    orchestrator, registry, _ = rig
+    pressed = []
+    monkeypatch.setattr(
+        registry, "write", lambda key, data, workspace_id=None: pressed.append(data) or True
+    )
+    owner = registry.sessions[0]
+    args = {"workspace": "Personal Jarvis", "agent": owner.terminals[0].name}
+    assert (await orchestrator.run({"action": "keys", **args, "keys": ["down", "enter"]}))[
+        "status"
+    ] == "pressed"
+    assert (await orchestrator.run({"action": "interrupt", **args}))["status"] == "pressed"
+    assert pressed == ["\x1b[B", "\r", "\x1b"]
+    refused = await orchestrator.run({"action": "keys", **args, "keys": ["rm -rf /"]})
+    assert refused["status"] == "not_accepted"
+    assert len(pressed) == 3
+
+
+async def test_close_removes_one_named_pane(rig):
+    orchestrator, registry, _ = rig
+    owner = registry.sessions[0]
+    owner.terminals.append(Terminal("t2", "Nova", "codex", "Codex", 1, status="live"))
+    result = await orchestrator.run(
+        {"action": "close", "workspace": "Personal Jarvis", "agent": "Nova"}
+    )
+    assert result["status"] == "closed", result
+    assert [t.name for t in owner.terminals] == ["Alex"]
+
+
+async def test_show_brings_a_background_workspace_on_screen(rig):
+    orchestrator, registry, _ = rig
+    background = next(s for s in registry.sessions if s.id != registry.active_id)
+    result = await orchestrator.run({"action": "show", "workspace": background.name})
+    assert result["status"] == "shown", result
+    assert registry.active_id == background.id
+
+
+async def test_the_same_words_later_are_a_new_instruction(rig):
+    from jarvis.agentic_ide import orchestration
+
+    resolved = await target(rig)
+    args = {"action": "send", **resolved, "prompt": "continue"}
+    assert (await rig[0].run(args))["status"] == "accepted"
+    assert (await rig[0].run(args))["status"] == "accepted"
+    assert len(rig[2].calls) == 1  # an immediate repeat is a retry
+    issued = rig[0]._issued
+    for request_id, (pane, at, sent) in list(issued.items()):
+        issued[request_id] = (pane, at - orchestration._RETRY_WINDOW_S - 1, sent)
+    assert (await rig[0].run(args))["status"] == "accepted"
+    assert len(rig[2].calls) == 2
+
+
+def test_pane_reads_are_safe_and_every_new_action_validates(rig):
+    import jsonschema
+
+    tool = WorkspaceOrchestrationTool(rig[0])
+    assert tool.risk_tier_for_args({"action": "observe"}) == "safe"
+    for action in ("respond", "keys", "interrupt", "close", "open_workspace", "restore", "show"):
+        jsonschema.validate({"action": action}, tool.schema)
+        assert tool.risk_tier_for_args({"action": action}) == "monitor"

@@ -11,7 +11,7 @@ export function GitStatusLine({ info, className }: { info: GitRepoInfo; classNam
     </span>
     {info.is_worktree && <span className="rounded-full border border-border px-1.5 text-[10px]">worktree</span>}
     <span className="flex items-center gap-1" title={changes ? `${changes} uncommitted` : "Nothing uncommitted"}>
-      <span className={cn("h-1.5 w-1.5 rounded-full", info.conflicted ? "bg-destructive" : changes ? "bg-warning" : "bg-success")} aria-hidden />
+      <span className={cn("h-1.5 w-1.5 rounded-full", info.conflicted ? "bg-destructive" : changes ? "bg-warning" : "bg-accent")} aria-hidden />
       {changes ? `${changes} ${changes === 1 ? "change" : "changes"}` : "clean"}
     </span>
     {(info.insertions > 0 || info.deletions > 0) && <span className="font-mono">

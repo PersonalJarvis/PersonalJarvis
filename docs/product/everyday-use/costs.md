@@ -12,7 +12,7 @@ last_reviewed: 2026-10-01
 phase: "-"
 audience: end-user
 tags: [costs, tokens, providers, usage]
-related: [tasks-and-reminders, automations, providers-and-api-keys]
+related: [tasks-and-reminders, jarvis-agents, providers-and-api-keys]
 ---
 
 Open **Spend & Tokens** to see which recorded activity used tokens and how its
@@ -167,5 +167,5 @@ Use `jarvis costs --help` to discover the supported summaries and filters.
 
 ## Next Steps
 
-For scheduled activity, see [Automations](automations). To create a specific
-one-off task, see [Tasks and Reminders](tasks-and-reminders).
+For recurring work, see the routines on your [Agents](jarvis-agents). To
+create a specific one-off task, see [Tasks and Reminders](tasks-and-reminders).

@@ -49,6 +49,40 @@ def test_display_level_snaps_to_exact_zero_after_silence():
     assert k <= 8  # ≤ ~150 ms at 60 fps
 
 
+def test_quieter_sample_glides_instead_of_snapping_the_row_down():
+    """While Jarvis is still speaking, a quieter level sample must not drop the
+    whole row in one frame — at 25 fps against ~60-100 ms level samples that
+    made the equalizer step and hold instead of move (2026-10-01)."""
+    r = R.JarvisBarRenderer()
+    for k in range(5):
+        r.render(k * 0.04, "speak", 0.8)
+    r.render(0.20, "speak", 0.3)
+    assert r._st.display_level > 0.55  # noqa: SLF001
+    for k in range(1, 15):
+        r.render(0.20 + k * 0.04, "speak", 0.3)
+    assert abs(r._st.display_level - 0.3) < 0.01  # noqa: SLF001
+
+
+def test_level_release_is_frame_rate_independent():
+    one = R.smooth_level(0.8, 0.3, 0.04)
+    two = R.smooth_level(R.smooth_level(0.8, 0.3, 0.02), 0.3, 0.02)
+    assert abs(one - two) < 1e-9
+
+
+def test_pixel_bar_box_grows_symmetrically_around_a_fixed_centre():
+    """Float edges rounded independently made a stroke grow on one side and
+    its centre hop a pixel as the level moved — a visible shimmer."""
+    boxes = [R.pixel_bar_box(37.37, 41.6, 2.35, h / 10.0) for h in range(30, 400)]
+    widths = {b[2] - b[0] for b in boxes}
+    lefts = {b[0] for b in boxes}
+    centres = {b[1] + b[3] for b in boxes}
+    assert len(widths) == 1 and len(lefts) == 1
+    assert len(centres) == 1
+    for x0, y0, x1, y1 in boxes:
+        assert all(isinstance(v, int) for v in (x0, y0, x1, y1))
+        assert y1 - y0 >= x1 - x0  # never shorter than its own width
+
+
 # --- thinking: the travelling sweep ------------------------------------------
 # The look the mission deck's header bar uses for "working", brought onto the
 # desktop bar (maintainer, 2026-08-20). It replaced the "orbital core", which

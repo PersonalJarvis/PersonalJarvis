@@ -1,8 +1,8 @@
 # Routine trigger sources
 
 Routines use the existing task store, scheduler, agent permissions and execution
-history. Create and manage them in an agent chat or through **Routines** and
-**Automations**. A trigger decides when to submit the saved action; it does not
+history. Create and manage them in an agent chat or through the agent's
+**Routines**. A trigger decides when to submit the saved action; it does not
 grant access to an account or install an external subscription.
 
 | Group | Entry points | Requirements |

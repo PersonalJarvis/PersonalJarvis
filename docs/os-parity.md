@@ -199,6 +199,29 @@ Server without winget. Covered by `tests/unit/computers/test_posix_remote.py`,
 `tests/unit/society/test_remote_placement.py` against scripted SSH servers.
 
 
+## Background agent service (2026-10-01, T3)
+
+Quitting the desktop app with an armed routine or a running chat channel hands
+the app to a windowless service (`launcher --background-service`), which hands
+it back when the app opens again (`docs/background-service.md`). The service
+is the headless backend, so it boots wherever `--headless` boots, including a
+bare `python:3.11-slim`.
+
+- **Spawn:** Windows uses `DETACHED_PROCESS | CREATE_NO_WINDOW |
+  CREATE_BREAKAWAY_FROM_JOB` with `pythonw.exe`, and WMI
+  `Win32_Process.Create` when the app's job refuses breakaway (the PTY host's
+  route). macOS and Linux use `start_new_session`. A frozen build re-enters
+  its own executable with `--background-service` first.
+- **Tray:** Windows and Linux desktops with a notification area show a pystray
+  icon (Open / Stop background agents). macOS shows none (status items need
+  the main thread) and logs one line; a host without a display logs one line.
+- **Login:** `[autostart] background_only` puts `--background-service` into the
+  login entry on all three (Task Scheduler / startup shortcut, LaunchAgent via
+  LaunchServices `--args`, XDG `.desktop`).
+- **Verified:** Windows 11 live (detached spawn, parent wait, routine fired,
+  hand-back 2.4 s). Linux: headless `python:3.11-slim` in Docker (boot, no
+  tray, hand-back 3.1 s). macOS: same code paths, unit-tested, not run live.
+
 ## Persistent Agentic IDE terminals (2026-09-28, T3)
 
 Coding-agent panes now live in a separate PTY host process
@@ -273,6 +296,22 @@ durable retry behavior. Native macOS desktop/PTY acceptance and real-device
 audio are not established by the portable tests. See
 [workspace architecture](igentic-workspaces.md) for the product and execution
 contract.
+
+## Whole-window zoom (2026-10-01, T2)
+
+Ctrl + `+` / `-` / `0` (Command on macOS; rebindable under Settings → Keyboard
+shortcuts) zoom the whole app window. The level goes to the WebView engine,
+never to CSS `zoom`, so `100vh` layouts reflow instead of overflowing:
+Windows sets WebView2 `ZoomFactor` on the UI thread, macOS 11+ sets
+WKWebView `pageZoom` on the main thread, Linux sets WebKitGTK
+`zoom_level` on the GLib loop (`jarvis/ui/window_zoom.py`). The Qt backend,
+macOS 10.x, a browser tab and a headless server answer `ok: false`; the page
+then leaves the keys alone (a browser keeps its own zoom). `+` and `-` are
+matched by the character typed, so German and US layouts both work
+(`lib/appZoom.ts`). Windows verified live on the Dev instance; macOS and
+Linux branches are unit-tested with fakes only. Tests:
+`tests/unit/ui/test_window_zoom.py`, `src/lib/appZoom.test.ts`,
+`src/hooks/useAppZoom.test.tsx`.
 
 ## Window caption (2026-09-21, T2)
 

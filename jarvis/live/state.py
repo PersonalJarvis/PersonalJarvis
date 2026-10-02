@@ -144,6 +144,10 @@ class LiveLedger:
             result = json.loads(raw)
             if result.get("confirmation_required") or result.get("blocked"):
                 continue
+            # A refusal that ran nothing (schema error, unapproved yes, refused
+            # hang-up) leaves nothing half-done; it must not end the call.
+            if result.get("executed") is False:
+                continue
             if result.get("status") in {
                 "superseded",
                 "voice_closed_before_execution",

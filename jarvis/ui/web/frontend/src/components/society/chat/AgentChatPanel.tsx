@@ -85,7 +85,12 @@ const STAMP_GAP_MS = 30 * 60_000;
  * Messages use the full conversation lane; each bubble limits its own prose
  * width. The composer follows the lane so replies read left to right.
  */
-const CHAT_MEASURE = "mx-auto w-full min-w-0";
+/**
+ * The conversation's reading column. The scroller around it spans the whole
+ * pane, so a wide window keeps the words in one comfortable, centred column
+ * while the scroll area (and its edge) reaches the window's side.
+ */
+const CHAT_MEASURE = "mx-auto w-full min-w-0 max-w-[52rem]";
 
 /** The line appended to a message that names an agent; Jarvis delegates on it. */
 const DELEGATE_MARK = "[to jarvis]";
@@ -685,7 +690,7 @@ export function Transcript({
   let lastStamp = 0;
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
-      <div ref={rootRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6" data-testid="society-transcript">
+      <div ref={rootRef} className="chat-scroller min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6" data-testid="society-transcript">
         <div ref={contentRef} className={cn(CHAT_MEASURE, "flex flex-col gap-3")}>
         {items.map((item) => {
           const ts = item.type === "turn" ? item.startedMs : item.tsMs;

@@ -278,7 +278,7 @@ def test_the_target_length_sits_inside_the_hard_ceiling():
     3000 budget — a model reads "under N" as "be brief".
     """
     assert TARGET_MIN_CHARS < TARGET_MAX_CHARS < MAX_BODY_CHARS
-    assert TARGET_MAX_CHARS == 900
+    assert TARGET_MAX_CHARS == 1200
     assert TARGET_MIN_CHARS == 280
 
 

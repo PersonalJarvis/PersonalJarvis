@@ -655,6 +655,57 @@ def visual_mode(
     return "speak"
 
 
+#: Release time constant (seconds) while the voice is still sounding but got
+#: quieter. The level feeds arrive in steps — ~60 ms native TTS blocks, ~100 ms
+#: browser realtime snapshots — against a 25-60 fps frame loop, so a per-frame
+#: fall snapped the whole row down at every sample and held it flat until the
+#: next one: the equalizer stepped instead of moving. A short glide between
+#: samples keeps it fluid. Rises stay instant (onset sync) and a drop to
+#: silence keeps the fast fall + snap to zero, so neither the "reacts late"
+#: nor the "keeps moving after I stopped" defect can come back.
+LEVEL_RELEASE_TAU_S = 0.12
+
+
+def smooth_level(current: float, target: float, dt: float) -> float:
+    """One frame of the equalizer's level envelope. Pure, frame-rate aware.
+
+    - ``target > current`` → rise almost instantly (0.8 per frame);
+    - ``target <= 0`` (silence) → fall fast (0.5 per frame) and snap to an
+      exact zero once sub-visible;
+    - otherwise (quieter, still sounding) → glide down with
+      ``LEVEL_RELEASE_TAU_S``, measured in seconds so 25 fps (Tk) and 60 fps
+      (Qt) surfaces move alike.
+    """
+    if target > current:
+        return ease(current, target, 0.8)
+    if target <= 0.0:
+        nxt = ease(current, 0.0, 0.5)
+        return 0.0 if nxt < 0.02 else nxt
+    dt = 0.0 if dt < 0.0 else 0.25 if dt > 0.25 else dt
+    return ease(current, target, 1.0 - math.exp(-dt / LEVEL_RELEASE_TAU_S))
+
+
+def pixel_bar_box(
+    x: float, cy: float, half_w: float, h: float
+) -> tuple[int, int, int, int]:
+    """Whole-pixel box for one equalizer/sweep stroke.
+
+    Handing ImageDraw float edges let it round the top and the bottom edge
+    independently (and half-to-even), so as a level changed by a fraction of a
+    pixel a stroke grew on one side only, its centre hopped by a pixel, and
+    near the resting height it flipped between Pillow's circle and capsule
+    paths — a shimmer on top of the real motion. Here the width is fixed, the
+    stroke grows in whole pixel PAIRS around one fixed centre row, and it is
+    never shorter than its own width (a round dot at rest).
+    """
+    w = max(2, math.floor(2.0 * half_w + 0.5))
+    extra = max(0, math.floor((h - w) / 2.0 + 0.5))
+    hh = w + 2 * extra
+    x0 = math.floor(x - w / 2.0 + 0.5)
+    y0 = math.floor(cy - hh / 2.0 + 0.5)
+    return x0, y0, x0 + w, y0 + hh
+
+
 def bar_heights(
     t: float, level: float, n: int, *, max_h: float, min_h: float
 ) -> list[float]:
@@ -772,6 +823,8 @@ class _RenderState:
     # at INSTANTIATION time, after apply_display_scale() may have rescaled
     # the module geometry — a plain default would freeze the import-time value.
     display_level: float = 0.0
+    # ``t`` of the previous frame, for the time-based level release.
+    last_t: float | None = None
     # live pill width/height, eased toward the target
     pw: float = field(default_factory=lambda: float(COLLAPSED_W))
     ph: float = field(default_factory=lambda: float(COLLAPSED_H))
@@ -822,18 +875,14 @@ class JarvisBarRenderer:
         # crawling there over a third of a second.
         self._st.pw = ease(self._st.pw, tw, 0.5)
         self._st.ph = ease(self._st.ph, th, 0.5)
-        # Asymmetric level easing: rise almost instantly so the bars move in
-        # sync with the voice, fall fast and snap to dead zero — a lingering
+        # Asymmetric level envelope (``smooth_level``): rise almost instantly so
+        # the bars move in sync with the voice, glide between quieter samples,
+        # and fall fast + snap to dead zero on silence — a lingering
         # sub-visible tail otherwise keeps the equalizer wiggling in silence.
-        # 0.8 reaches ~96% of a rising target within two 16 ms frames; the
-        # onset of a word registers the same tick its level sample arrives.
         level_target = ext_level if active else 0.0
-        rising = level_target > self._st.display_level
-        self._st.display_level = ease(
-            self._st.display_level, level_target, 0.8 if rising else 0.5
-        )
-        if not rising and level_target <= 0.0 and self._st.display_level < 0.02:
-            self._st.display_level = 0.0
+        dt = 0.0 if self._st.last_t is None else t - self._st.last_t
+        self._st.last_t = t
+        self._st.display_level = smooth_level(self._st.display_level, level_target, dt)
         pw, ph = self._st.pw, self._st.ph
 
         frame = np.empty((WIN_H, WIN_W, 3), dtype=np.uint8)
@@ -1150,11 +1199,8 @@ class JarvisBarRenderer:
             t, self._st.display_level, n, max_h=bar_max_for(ph), min_h=bar_min_for(ph)
         )
         for x, h in zip(evenly_spaced(cx, span, n), hs, strict=True):
-            d.rounded_rectangle(
-                [x - half_w, cy - h / 2, x + half_w, cy + h / 2],
-                radius=half_w,
-                fill=self._accent,
-            )
+            box = pixel_bar_box(x, cy, half_w, h)
+            d.rounded_rectangle(box, radius=(box[2] - box[0]) / 2.0, fill=self._accent)
 
     def _draw_thinking(
         self,
@@ -1191,8 +1237,5 @@ class JarvisBarRenderer:
             # to fade with: mixing toward the pill's own background is what an
             # opacity would look like over it anyway, and it costs one lerp.
             color = _lerp_rgb(PILL_BG, self._accent, THINK_DIM + (1.0 - THINK_DIM) * g)
-            d.rounded_rectangle(
-                [x - half_w, cy - h / 2, x + half_w, cy + h / 2],
-                radius=half_w,
-                fill=color,
-            )
+            box = pixel_bar_box(x, cy, half_w, h)
+            d.rounded_rectangle(box, radius=(box[2] - box[0]) / 2.0, fill=color)

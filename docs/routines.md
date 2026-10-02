@@ -1,7 +1,7 @@
 # Agent routines
 
-Routines reuse the Automations task store and scheduler. Each routine belongs
-to an agent, appears in its Routines rail and in Automations, and executes
+Routines run on the task store and scheduler (`jarvis/tasks`). Each routine
+belongs to an agent, appears in its Routines rail, and executes
 through that agent's canonical chat with its current instructions and permissions.
 Creating a routine never grants additional plugin permissions.
 
@@ -79,8 +79,8 @@ event uses `{"kind":"event_hook","event_name":"crm.customer.created"}`.
 Both kinds accept optional `conditions`, `max_firings` and `cooldown_seconds`.
 Conditions compare scalar JSON fields; dotted paths access nested objects.
 
-Use **Connect webhook** on the agent's routine or in its expanded Automations
-row. The app shows the endpoint and a masked, copyable credential. Credentials
+Use **Connect webhook** on the agent's routine. The app shows the endpoint and
+a masked, copyable credential. Credentials
 are stored through the existing portable secret store and never included in the
 routine specification or returned by the agent's routine tools. Rotation revokes
 the old credential without changing other routines.

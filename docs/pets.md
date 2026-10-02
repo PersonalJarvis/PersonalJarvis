@@ -18,8 +18,15 @@ one click.
 - **The figure.** It reacts to Jarvis in real time (see *States*). It can be
   dragged anywhere, and its position is remembered per monitor
   (`[overlay.mascot] position_*`, shared with the mascot).
-- **The control strip** under the figure, from left to right:
-  - pen: raise the main window and open a new chat (`ComposeRequested`);
+- **The control strip** under the figure. At rest only the figure shows; the
+  strip appears while Jarvis listens, thinks or talks, while notification cards
+  are up, and while the pointer is on the pet. With the pet "None", or with
+  **Always show the buttons** on (My Pets → Customize, `[ui] pet_strip_always`),
+  it always shows. From left to right:
+  - bell: done cards on or off for this run (see *Cards*). Off
+    shows a red, struck-through bell and sends the cards on screen away; on
+    rings the bell. Like the speaker mute it never survives a restart, so a
+    bell forgotten off cannot hide tomorrow's "your agent is done";
   - microphone: mute Jarvis's microphone (`VoiceMuteToggleRequested`, mirrored
     from `VoiceMuteChanged`);
   - talk indicator (three strokes, the Jarvis bar's equalizer cut down to
@@ -29,14 +36,18 @@ one click.
     thinking or transcribing;
   - speaker: silence the assistant's voice for this session (TTS volume 0,
     mirrored from `VoiceSpeakerMuteChanged`).
-- **The thinking card** under the strip: a rounded pill with a bold title
-  (what Jarvis is working on) and one muted detail line (the current thought
-  or step). It appears ONLY while Jarvis is really thinking and shows what it
-  thinks — never the live transcript and never the reply, which the user hears
-  anyway (see *The thinking card* below). It can be switched off
-  (`[ui] pet_bubble`).
+- **The thought bubble** above the pet's head while Jarvis thinks, drawn in
+  the pets' pixel art: a white pixel cloud with a dark outline and two small
+  puffs trailing down to the head. Bobbing dots while Jarvis just thinks, the
+  current step ("Search the web") while it works. Never the live transcript,
+  never the reply. It can be switched off (`[ui] pet_bubble`). See *The
+  thought bubble*.
+- **Done cards** under the strip (above the pet when there is no room below):
+  little pixel-art letters — the pet gets mail — when Jarvis answered a typed
+  chat or a job Jarvis started came back: a pixel envelope with a check badge,
+  what was asked, the start of the answer (see *Cards*).
 - **The pet "None"** (`pet_id = "none"`) shows the control strip and the
-  card without a figure.
+  cards without a figure.
 
 The pet stays on screen while Jarvis is idle. The global shortcut
 (`[trigger] hotkey_pet_toggle`, default `alt+win+p`) hides it or brings it
@@ -44,20 +55,68 @@ back and to the front; hiding lasts until the next app start. The shortcut is
 changed on the My Pets page (Customize); an empty value switches it off. On
 Wayland, global shortcuts are a no-op, as for every other shortcut.
 
-## The thinking card
+## Cards
 
-The card mirrors Jarvis's real thinking, fed by bus events in
+One window (`ui/orb/notice_stack.py`) holds the done cards;
+`ui/orb/pet_cards.py` draws them in the same pixel-art language as the thought
+bubble, at the pet sprite's pixel size: a sheet of cream paper with the
+sprites' dark outline, a shaded bottom row, a folded top-right corner and a
+hard one-pixel drop shadow; a pixel envelope that drops in, then a green check
+badge (a red cross when it failed) that pops onto its corner; the text in the
+pets' dark ink. Both windows show their frames through
+`ui/orb/layered_surface.py`: on Windows with real per-pixel alpha
+(`jarvis/platform/layered_window.py`, `UpdateLayeredWindow`), so cards fade in
+and out; elsewhere, or when Windows refuses a frame, flattened onto the colour
+key with hard edges.
+
+Done cards are about Jarvis and nothing else (`jarvis/ui/pets/notices.py`):
+
+| Source | Card |
+| --- | --- |
+| `JarvisChatTurnFinished` — a turn of a typed chat with Jarvis (surface `jarvis`), published by `AgentChatService` | ✓ what was asked / the start of the answer; ✕ when the turn failed (a cancel stays quiet) |
+| `JarvisAgentBackgroundCompleted` | ✓ / ✕ the task as asked / its result |
+| `DelegationResultReady` — a coding job Jarvis delegated | ✓ / ✕ `<agent> is done` / its report |
+
+A coding agent the user runs on their own, a mission, a routine or an app
+error gets no card; neither does a spoken turn (the answer was heard).
+
+Done cards are always the column's width, so they stack edge to edge: the
+newest in front, up to two older ones peeking out behind it, each a step
+smaller and fainter and showing its paper only; at most three are kept.
+Hovering fans them into a column; leaving folds them back. A click sends the
+card under the pointer away. A card leaves on its own after 9 s (`error` 14
+s), never while the pointer rests on the stack; the same card twice within 3 s
+refreshes instead of stacking. Cards drift in and fade on springs, and the
+envelope and its badge arrive in steps. The column repaints at ~60 fps only while something
+moves and not at all at rest. Done cards are dropped while the bell is off,
+the pet is hidden, or the look is not the pet; the strip stays in sight while
+they show.
+
+## The thought bubble
+
+`ui/orb/thought_bubble.py` draws it at the pet sprite's own pixel size
+(`PetRenderer.factor`), nearest-neighbour like the sprites: a white cloud with
+the pets' dark outline (`#1B1622`), a shaded bottom row and a corner highlight,
+and two puffs whose smallest ends just above the pet's head. It pops in puff by
+puff, then the cloud, floats up and down by one art pixel, and pops out in
+reverse. The bare "Thinking …" label shows as three dots bobbing in turn; any
+other line is the cloud's text (ellipsized at 230 px). It repaints at ~16 fps
+while up and not at all otherwise.
+
+What it says mirrors Jarvis's real thinking, fed by bus events in
 `ui/orb/bus_bridge.py` and condensed by `jarvis/ui/pets/status_line.py`:
+
+The bubble shows ONE line: the detail when there is one, else the title.
 
 | Source | Title | Detail |
 |---|---|---|
 | `ReasoningSummaryUpdated` — the thinking model behind GPT-Live (`jarvis/live/session.py`, streamed as cumulative snapshots a few times per second) | the newest section heading of the summary (`**Heading**`) | the last complete sentence of that section |
 | `ActionProposed` / `ToolCallStarted` — a tool step | the current thought's heading, else the running agent task, else "Working" | the step's rationale, else the humanized tool name |
 | `ActionExecuted` while a card is up | unchanged | "Step done" / "Step failed" |
-| `JarvisAgentTaskStarted` / `JarvisAgentTaskCompleted` / `JarvisAgentBackgroundCompleted` — an agent task | the task (the user's request, condensed) | "Working …", then "Done" / "Failed" |
+| `JarvisAgentTaskStarted` / `JarvisAgentTaskCompleted` — an agent task | the task (the user's request, condensed) | "Working …", then "Done" / "Failed" |
 | `SystemStateChanged(THINKING)` with no thought after 1.5 s | "Thinking …" | empty |
 
-When it goes away (a 1.5 s linger, then the surface fades it out):
+When it goes away (a 1.5 s linger, then it fades out):
 
 - Jarvis starts talking out loud (`AudioOutFirst`), the turn ends (`IDLE`,
   `ERROR`, `PAUSED`), a fresh turn starts listening, or the session ends;
@@ -89,6 +148,11 @@ equal.
 | `success` (one-shot, 1.5 s) | `SpeechSpoken.spoken_kind` in `action_done`/`completion`, `JarvisAgentBackgroundCompleted(success=True)`, `ActionExecuted(success=True)` while no turn is running |
 | `error` (one-shot, 2 s) | `ErrorOccurred(recoverable=False)`, `SpeechSpoken.spoken_kind` in `timeout`/`unavailable`/`stt_unavailable`, `VoiceSessionEnded(hangup_reason="error")`, `ActionExecuted(success=False)` while no turn is running |
 | `sleeping` | five minutes without any Jarvis event; any event wakes it |
+| `working` | a tool step that changes, sends or runs something (`ActionProposed` / `ToolCallStarted`) while thinking; also an agent task running in the background while Jarvis is otherwise idle (`JarvisAgentTaskStarted` until `JarvisAgentTaskCompleted`) |
+| `searching` | a tool step that looks something up: its name contains a word like search, find, read, fetch, browse, query, list or wiki (`jarvis/ui/pets/actions.py`) |
+| `held` | the user drags the pet with the mouse (from the first real movement until the release) |
+
+Precedence, highest first: `held`, a one-shot, `listening` / `talking`, an action state, background work, `thinking` / `idle`, `sleeping`. An action ends with the tool's `ActionExecuted`, when Jarvis starts talking or the turn ends, and at the latest after 12 seconds without a newer tool call. A pet whose sheet has no row for a new state borrows one: `working` -> `thinking`, `searching` -> `working`, `held` -> `listening`.
 
 States come only from real bus events (`ui/orb/bus_bridge.py`); nothing is
 simulated. The classic voice pipeline does not publish `ErrorOccurred`, so on
@@ -117,7 +181,9 @@ A pet is a folder with two files:
 The sheet is a grid of square cells. `frame_size` is 32, 48 or 64 source
 pixels. Each state is one row with up to eight frames. By convention the rows
 follow the order of `PET_STATES`: `idle`, `listening`, `thinking`, `talking`,
-`success`, `error`, `sleeping`.
+`success`, `error`, `sleeping`, `working`, `searching`, `held`. The last three
+rows are optional for user-made pets (a 64 px sheet has room for only eight
+rows); the missing ones fall back as described under *States*.
 
 ```json
 {
@@ -150,6 +216,16 @@ Two row conventions make the pet feel alive:
   closed to widest. While a live output level is fresh (under 250 ms old),
   the renderer picks the frame from that level, lightly smoothed, so the mouth
   follows the real voice. Without a level the row swings back and forth.
+- **Idle acts.** A pet may ship little one-shot scenes it plays on its own
+  while nothing happens: the dragon spits fire, the cat chases a ball of
+  yarn. They live on a second sheet, declared next to the animations:
+  `"acts_sheet": "acts.png"` and `"acts": {"fire": {"row": 0, "frames": 8,
+  "fps": 9}, ...}` (1-24 character slugs, at most 12 acts, one row each,
+  always one-shot). The renderer (`ui/orb/pet_renderer.py`) starts one at
+  random 40-100 s into an idle stretch and then every 1.5-4 min, never the same
+  act twice in a row; any other state cancels it, and the overlay's frame
+  timer covers the wait, so idling costs nothing extra. A user upload is a
+  single sheet, so the store drops `acts` from an uploaded `pet.json`.
 
 Rules the loader enforces (`jarvis/ui/pets/manifest.py`):
 
@@ -180,6 +256,7 @@ committed PNGs match the script). User-created pets live in
 | `bolt` | Bolt | A battery: charges while thinking, sparks on success, runs flat asleep |
 | `mochi` | Mochi | A jelly blob that wobbles while listening |
 | `shelly` | Shelly | A snail: the shell spins while thinking, it withdraws to sleep |
+| `ember` | Ember | A baby dragon: smoke rings while thinking, a fire breath on success, a sooty cough on errors, naps in its eggshell |
 
 ## Adding a pet
 
@@ -190,7 +267,7 @@ committed PNGs match the script). User-created pets live in
   number of non-empty cells.
 - **As a developer:** add a builder to `scripts/pets/build_pets.py`, run it,
   and commit the generated folder. The parity and completeness tests require
-  every built-in pet to provide all seven states.
+  every built-in pet to provide all ten states.
 
 ## Interfaces
 
@@ -204,25 +281,31 @@ name.
 | Method | Meaning |
 |---|---|
 | `set_pet(pet_id)` | Swap the figure live; `"none"` shows the strip only |
-| `set_pet_look(scale, bubble)` | Apply size and card on/off live |
+| `set_pet_look(scale, bubble, strip_always)` | Apply size, card on/off and the always-on strip live |
 | `set_pet_outcome(kind)` | Play the one-shot `success` or `error` |
-| `show_status(title, detail="")` | Show or update the thinking card (already condensed) |
+| `set_pet_action(kind)` | `working` / `searching` for the running tool step, `None` when it ended |
+| `set_pet_busy(busy)` | An agent task is running in the background |
+| `show_status(title, detail="")` | Show or update the thought bubble (already condensed) |
 | `clear_status(linger_s=1.5)` | Take the card down after `linger_s` |
 | `wants_status_lines` (attribute) | True only for the pet: the bridge feeds the card to nothing else |
 | `set_muted(muted)` | Mirror the microphone mute on the strip |
 | `set_speaker_muted(muted)` | Mirror the speaker mute on the strip |
 | `set_visible(visible)` | Hide or show the whole pet (shortcut, settings) |
 | `toggle_visible()` | Shortcut action: hide, or show and raise |
+| `push_notice(kind, title, detail)` | One done card (`done` / `error`); rings the bell |
+| `set_notifications_enabled(enabled)` | Switch the bell without a click (a respawned host) |
+| `set_on_notifications_toggle(cb)` | `cb(enabled)` after the bell was clicked |
 
-Control-strip actions reported back through callbacks: `compose`, `mic_mute`,
-`talk`/`hangup` (the orb) and `speaker`.
+Control-strip actions: `bell` (handled in the surface, reported through
+`set_on_notifications_toggle`; the macOS host sends it up as `notify_toggle`),
+`mic_mute`, `talk`/`hangup` (the orb) and `speaker`.
 
 ### Events (`jarvis/core/events.py`)
 
 - `VoiceSpeakerMuteChanged(muted, source)`: published by
   `SpeechPipeline.set_tts_volume` when the muted-ness flips.
-- `ComposeRequested(source)`: the pen control; DesktopApp raises the window,
-  the frontend opens a new chat.
+- `ComposeRequested(source)`: a new typed chat; DesktopApp raises the
+  window, the frontend opens a new chat. (The strip's pen became the bell.)
 - `PetVisibilityToggleRequested(source)`: the `pet_toggle` shortcut; the
   bridge calls `surface.toggle_visible()`.
 - `PetChanged(pet_id, scale, bubble, visible, source)`: published by the pets
@@ -235,7 +318,8 @@ Control-strip actions reported back through callbacks: `compose`, `mic_mute`,
 | `[ui] orb_style` | `jarvis_bar` | `pet` selects the pet |
 | `[ui] pet_id` | `gigi` | Active pet (built-in id, `u…` id or `none`) |
 | `[ui] pet_scale` | `1.0` | Size multiplier, 0.5–2.0 |
-| `[ui] pet_bubble` | `true` | Show the thinking card |
+| `[ui] pet_bubble` | `true` | Show the thought bubble |
+| `[ui] pet_strip_always` | `false` | Keep the control strip up even at rest |
 | `[trigger] hotkey_pet_toggle` | `alt+win+p` | Hide / show the pet; empty disables it |
 
 ### REST (`jarvis/ui/web/pets_routes.py`)
@@ -246,7 +330,7 @@ Control-strip actions reported back through callbacks: `compose`, `mic_mute`,
 | `GET /api/pets/{id}/sheet.png` | The sprite sheet |
 | `GET /api/pets/template.png` | The empty sprite-sheet template (48 px cells, rows in state order) |
 | `PUT /api/pets/active` | `{pet_id}` → saves `[ui] pet_id`, applies live |
-| `PUT /api/pets/settings` | `{scale?, bubble?}` → saves, applies live |
+| `PUT /api/pets/settings` | `{scale?, bubble?, strip_always?}` → saves, applies live |
 | `POST /api/pets/visibility` | `{visible}` → runtime only |
 | `POST /api/pets` | multipart: `sheet` (PNG), `name`, `description`, optional `manifest` (JSON), optional `frame_size` → the new pet |
 | `DELETE /api/pets/{id}` | user-created pets only |

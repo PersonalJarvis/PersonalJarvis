@@ -69,9 +69,6 @@ export function FieldGroup({
 
       {chips.length > 0 && (
         <div data-testid={`missing-${id}`} className="px-5 py-4">
-          {known.length === 0 && !addingRef && (
-            <p className="mb-3 text-base text-muted-foreground">{t("profile_view.group_empty")}</p>
-          )}
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="mr-1 text-sm text-muted-foreground">{t("profile_view.add_label")}</span>
             {chips.map((ref) => (

@@ -8,7 +8,7 @@ import {
   useSectionNavHistory,
 } from "./useSectionHistory";
 
-function visit(section: "chats" | "agents" | "dictation" | "tasks"): void {
+function visit(section: "chats" | "agents" | "dictation" | "board"): void {
   act(() => useEventStore.getState().setActiveSection(section));
 }
 
@@ -75,7 +75,7 @@ describe("useSectionHistory", () => {
     });
     expect(result.current.canGoForward).toBe(true);
 
-    visit("tasks");
+    visit("board");
     expect(result.current.canGoForward).toBe(false);
     expect(result.current.canGoBack).toBe(true);
   });
@@ -84,7 +84,7 @@ describe("useSectionHistory", () => {
     const { result } = renderHook(() => useSectionHistory());
     visit("agents");
     visit("dictation");
-    visit("tasks");
+    visit("board");
 
     act(() => {
       result.current.goBack();

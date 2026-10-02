@@ -106,6 +106,7 @@ LOCAL_PROVIDERS: frozenset[str] = frozenset(
     {
         "local",
         "local-realtime",
+        "local-voice",
         "ollama",
         "llamacpp",
         "llama-cpp",

@@ -87,7 +87,7 @@ The ONLY way to make an agent do something on a schedule (daily briefing, weekly
 
 - **Endpoint:** `POST /api/society/agents/{agent_id}/routines`
 - **Arguments:** `agent_id` (string; required); `title` (string; required); `prompt` (string; required); `schedule` (object; required); `announce_on_success` (string; optional)
-- **Requires confirmation:** yes
+- **Requires confirmation:** no
 - **Desktop UI section:** `agents`
 - **Voice example (EN):** "give me a briefing every morning at eight"
 
@@ -146,7 +146,7 @@ Switch the speech-to-text provider. Takes effect on the next voice-pipeline star
 Switch which realtime voice engine (speech-to-speech) is active, including subscription- and API-backed providers. Experimental transports require explicit acknowledgement.
 
 - **Endpoint:** `POST /api/realtime/switch`
-- **Arguments:** `provider` (one of: gemini-live, local-realtime, openai-live, vertex-live; required); `persist` (boolean; optional); `accept_experimental` (boolean; optional)
+- **Arguments:** `provider` (one of: gemini-live, local-realtime, local-voice, openai-live, vertex-live; required); `persist` (boolean; optional); `accept_experimental` (boolean; optional)
 - **Requires confirmation:** no
 - **Desktop UI section:** `apikeys`
 - **Voice example (EN):** "switch the realtime model to gemini"
@@ -196,7 +196,7 @@ List all configured providers and which ones are active.
 Test connectivity and authentication for one provider.
 
 - **Endpoint:** `POST /api/providers/{provider_id}/test`
-- **Arguments:** `provider_id` (one of: antigravity, cartesia, claude-api, claude-cli, codex, elevenlabs, faster-whisper, gemini, gemini-api, gemini-flash-tts, gemini-live, gemini-polish, grok, grok-build, grok-voice, groq-api, groq-polish, inworld, local-openai, local-realtime, nemotron-local, nvidia, ollama, ollama-polish, openai, openai-api, openai-live, openai-polish, openrouter, openrouter-polish, openrouter-stt, openrouter-tts, piper-local, vertex, vertex-live, vertex-stt, vertex-tts; required)
+- **Arguments:** `provider_id` (one of: antigravity, cartesia, claude-api, claude-cli, codex, elevenlabs, faster-whisper, gemini, gemini-api, gemini-flash-tts, gemini-live, gemini-polish, grok, grok-build, grok-voice, groq-api, groq-polish, inworld, local-openai, local-realtime, local-voice, nemotron-local, nvidia, ollama, ollama-polish, openai, openai-api, openai-live, openai-polish, openrouter, openrouter-polish, openrouter-stt, openrouter-tts, piper-local, vertex, vertex-live, vertex-stt, vertex-tts; required)
 - **Requires confirmation:** no
 - **Desktop UI section:** `apikeys`
 - **Voice example (EN):** "test the openai provider"
@@ -373,12 +373,12 @@ Cancel a running Jarvis-Agent mission by id.
 
 ## `tasks-list` — List tasks
 
-List scheduled and running tasks.
+List scheduled and running tasks (agent routines).
 
 - **Endpoint:** `GET /api/tasks`
 - **Arguments:** none
 - **Requires confirmation:** no
-- **Desktop UI section:** `tasks`
+- **Desktop UI section:** `agents`
 - **Voice example (EN):** "show me my tasks"
 
 ## `task-cancel` — Cancel a task
@@ -388,7 +388,7 @@ Cancel a running or scheduled task by id.
 - **Endpoint:** `POST /api/tasks/{task_id}/cancel`
 - **Arguments:** `task_id` (string; required)
 - **Requires confirmation:** yes
-- **Desktop UI section:** `tasks`
+- **Desktop UI section:** `agents`
 - **Voice example (EN):** "cancel the task"
 
 ## `skills-list` — List installed skills

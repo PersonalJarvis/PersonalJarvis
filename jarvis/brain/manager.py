@@ -13126,6 +13126,13 @@ class BrainManager:
         to :attr:`_HISTORY_MAX`, keeping the most recent turns — an empty
         input therefore behaves like :meth:`clear_history`.
         """
+        self._history = self._seedable(turns)
+        # Explicit archive selection also seeds the next duplex call. Ordinary
+        # generated turns never fill this slot: unrelated calls must stay fresh.
+        self._voice_history_seed = tuple(self._history)
+
+    def _seedable(self, turns: Iterable[Any]) -> list[BrainMessage]:
+        """``turns`` reduced to seedable messages, newest :attr:`_HISTORY_MAX` kept."""
         seeded: list[BrainMessage] = []
         for item in turns:
             if isinstance(item, BrainMessage):
@@ -13151,19 +13158,45 @@ class BrainManager:
                 if isinstance(item, BrainMessage)
                 else BrainMessage(role=role, content=content)
             )
-        self._history = seeded[-self._HISTORY_MAX :]
-        # Explicit archive selection also seeds the next duplex call. Ordinary
-        # generated turns never fill this slot: unrelated calls must stay fresh.
-        self._voice_history_seed = tuple(self._history)
+        return seeded[-self._HISTORY_MAX :]
+
+    def set_voice_history_source(self, source: Callable[[], Iterable[Any]] | None) -> None:
+        """Where a call without an explicit seed gets its starting history.
+
+        The front page's chat binds the chat a call continues
+        (``AgentChatService.bind_voice_chat``); the source answers with that
+        chat's turns at call start, so a second call in the same chat still
+        knows the first one. ``None`` returns to fresh calls.
+        """
+        if source is None:
+            self.__dict__.pop("_voice_history_source", None)
+        else:
+            self._voice_history_source = source
+
+    def drop_voice_history_seed(self) -> None:
+        """Forget an explicit seed nobody consumed, so the source answers instead."""
+        self.__dict__.pop("_voice_history_seed", None)
 
     def take_voice_history_seed(self) -> tuple[BrainMessage, ...]:
         """Consume an explicit resume once, retaining the text brain's history.
 
         A single dict pop transfers ownership even when desktop session setup
         runs on a worker thread. Reconnects reuse the receiving call's copy.
+        Without an explicit seed the bound chat's history answers
+        (:meth:`set_voice_history_source`); an explicit empty seed — "new
+        voice chat" — still wins and starts the call fresh.
         """
-        history: tuple[BrainMessage, ...] = self.__dict__.pop("_voice_history_seed", ())
-        return history
+        if "_voice_history_seed" in self.__dict__:
+            history: tuple[BrainMessage, ...] = self.__dict__.pop("_voice_history_seed", ())
+            return history
+        source = self.__dict__.get("_voice_history_source")
+        if source is None:
+            return ()
+        try:
+            return tuple(self._seedable(source()))
+        except Exception:  # noqa: BLE001 — a call without history beats no call
+            log.warning("voice history source failed; the call starts fresh", exc_info=True)
+            return ()
 
     # ------------------------------------------------------------------
     # Live reload for the CLI tool registry (CLI integration, task 2)
@@ -13435,10 +13468,10 @@ class BrainManager:
         Unknown grants (e.g. a plugin that isn't connected) are silently
         skipped — the task runs with whatever of its allowlist is live.
 
-        A grant is matched by :func:`jarvis.tasks.templates.grant_matches`:
+        A grant is matched by :func:`jarvis.tasks.grants.grant_matches`:
         exact name, or the plugin prefix of a bridged MCP tool — the grant
         ``github`` covers every ``github/<tool>``. (Exact matching alone left
-        a template with a ``github`` grant running with ZERO tools.)
+        a routine with a ``github`` grant running with ZERO tools.)
 
         A grant naming one of :data:`_TASK_ONLY_TOOLS` that is NOT in the live
         (router) set is loaded from its entry point on demand: ``remember`` is
@@ -13448,7 +13481,7 @@ class BrainManager:
         dispatcher — never the router surface.
         """
         from jarvis.clis.capability_provider import equivalent_grants  # noqa: PLC0415
-        from jarvis.tasks.templates import grant_matches  # noqa: PLC0415
+        from jarvis.tasks.grants import grant_matches  # noqa: PLC0415
 
         if not allowed_tools:
             return {}

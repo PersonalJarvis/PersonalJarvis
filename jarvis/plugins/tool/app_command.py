@@ -270,6 +270,14 @@ def _remember(command_id: str, outcome: str, detail: str) -> None:
         log.warning("app-actions history unavailable", exc_info=True)
 
 
+# Dangerous commands whose argument names the one destructive form. The
+# others are what the user just ordered and run without a second spoken yes
+# (live 2026-10-01: "test-run the routine" was asked back twice).
+_ONLY_ASKS_FOR: dict[str, tuple[str, frozenset[str]]] = {
+    "society-routine-operation": ("operation", frozenset({"delete"})),
+}
+
+
 class RegistryCommandTool:
     """One registry command as a flat, schema-validated brain tool."""
 
@@ -278,8 +286,12 @@ class RegistryCommandTool:
         self._runtime = runtime
         self.name: str = command.id
         self.risk_tier: str = "ask" if command.dangerous else "monitor"
+        narrowed = _ONLY_ASKS_FOR.get(command.id)
         note = (
-            " Requires the user's spoken confirmation before it runs."
+            f" Requires the user's spoken confirmation when {narrowed[0]} is "
+            f"{' or '.join(sorted(narrowed[1]))}."
+            if command.dangerous and narrowed
+            else " Requires the user's spoken confirmation before it runs."
             if command.dangerous else ""
         )
         self.description: str = (
@@ -297,21 +309,25 @@ class RegistryCommandTool:
         from jarvis.app_actions.catalog import live_catalog
         from jarvis.app_actions.policy import effective_tier, load_policy
 
+        base = self.risk_tier
+        narrowed = _ONLY_ASKS_FOR.get(self.name)
+        if narrowed and str((args or {}).get(narrowed[0]) or "") not in narrowed[1]:
+            base = "monitor"
         policy = load_policy()
         if not policy:
-            return self.risk_tier
+            return base
         method = self._cmd.method.upper()
         for entry in live_catalog().values():
             if entry.method == method and entry.path == self._cmd.path:
                 if entry.id not in policy:
-                    return self.risk_tier
+                    return base
                 tier = effective_tier(entry, policy)
                 if tier == "block":
                     from jarvis.app_actions import history
 
                     history.record(entry.id, "blocked", "Blocked in Jarvis actions", via=self.name)
                 return tier
-        return self.risk_tier
+        return base
 
     async def execute(self, args: dict[str, Any], ctx: Any) -> ToolResult:
         cmd = self._cmd

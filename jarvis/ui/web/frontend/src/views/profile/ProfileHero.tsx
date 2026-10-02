@@ -21,7 +21,13 @@ import { useT, useUiLanguage } from "@/i18n";
 import { useEventStore } from "@/store/events";
 import { AvatarButton } from "@/views/profile/AvatarButton";
 import { clusterDataOf, useFieldEdit, type ProfileResponse } from "@/views/profile/api";
-import { TOTAL_FIELDS, countFilled, daysSince, isEmptyValue } from "@/views/profile/ledger";
+import {
+  TOTAL_FIELDS,
+  countFilled,
+  daysSince,
+  isEmptyValue,
+  languageName,
+} from "@/views/profile/ledger";
 
 /** A date stamp as a short local date; null when unparseable. */
 function shortDate(value: unknown): string | null {
@@ -29,16 +35,6 @@ function shortDate(value: unknown): string | null {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return null;
   return d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
-}
-
-/** "de" → "German" in the interface language; the code itself when unknown. */
-function languageName(code: string, ui: string): string {
-  try {
-    return new Intl.DisplayNames([ui], { type: "language" }).of(code) ?? code;
-  } catch {
-    // Intl rejects malformed tags; the raw value is the honest fallback.
-    return code;
-  }
 }
 
 function Stat({ label, value, sub }: { label: string; value: string | null; sub?: string | null }) {
@@ -167,7 +163,7 @@ export function ProfileHero({
               <NameForm onDone={name ? () => setRenaming(false) : undefined} />
             </>
           )}
-          {facts.length > 0 && !renaming && (
+          {facts.length > 0 && name && !renaming && (
             <p className="mt-1 truncate text-base text-muted-foreground">{facts.join(" · ")}</p>
           )}
         </div>

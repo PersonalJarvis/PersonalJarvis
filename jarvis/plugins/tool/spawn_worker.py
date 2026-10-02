@@ -340,7 +340,10 @@ class SpawnWorkerTool:
         "it on your own initiative during ordinary conversation: questions, "
         "remarks, news, quick lookups, single web searches, or anything you "
         "can answer inline in this turn. Without an explicit request, answer "
-        "inline yourself and at most OFFER to start a background agent. Pass "
+        "inline yourself and at most OFFER to start a background agent. "
+        "It runs in its own checkout and NEVER appears in the user's "
+        "workspaces: a new coding agent (Claude Code, Codex, ...) in a "
+        "workspace is workspace-orchestrate create, not this tool. Pass "
         "the user utterance verbatim plus optional 3-5 short brainstorm "
         "notes as ``context_hints``."
     )

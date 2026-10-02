@@ -7,6 +7,7 @@ import base64
 import json
 import logging
 import random
+import re
 import time
 from typing import Any, Literal
 from uuid import uuid4
@@ -28,6 +29,33 @@ REASONING_SNAPSHOT_INTERVAL_S = 0.3
 
 #: Reasoning items whose summary may be streaming at once (a bound, not a goal).
 _REASONING_ITEMS_MAX = 16
+
+#: Backchannel sounds that acknowledge without asking for anything new. "Ja"
+#: and "ok" are NOT here: they answer a pending approval.
+_BACKCHANNEL = frozenset(
+    {"m", "mm", "mhm", "hm", "hmm", "ah", "aha", "oh", "eh", "ehm", "uh", "um", "uhm"}
+    | {"äh", "ähm"}  # i18n-allow: spoken backchannel vocabulary
+)  # fmt: skip
+
+
+def _says_something(fragment: str) -> bool:
+    """True when a user transcript fragment holds a word, not just a backchannel."""
+    words = re.findall(r"\w+", fragment.casefold())
+    return any(word not in _BACKCHANNEL for word in words)
+
+
+def _pipeline_input_muted() -> bool:
+    """Jarvis's microphone mute. The speech pipeline is its only writer."""
+    from jarvis.core.runtime_refs import get_speech_pipeline
+
+    return bool(getattr(get_speech_pipeline(), "is_muted", False))
+
+
+def _pipeline_input_held() -> bool:
+    """Whether a dictation beside the call holds the user's audio back."""
+    from jarvis.core.runtime_refs import get_speech_pipeline
+
+    return bool(getattr(get_speech_pipeline(), "is_voice_input_held", False))
 
 
 def _pipeline_input_muted() -> bool:
@@ -769,7 +797,10 @@ class LiveVoiceSession:
             self._last_end[role] = max(self._last_end[role], fragment.end_ms)
             if role == "user" and current:
                 self._tools.user_text = self._captions[role]
-                self._tools.revision += 1
+                # "Mhm" while Jarvis works is not a new request; counting it
+                # discarded running actions as superseded (live 2026-10-01).
+                if _says_something(delta):
+                    self._tools.revision += 1
                 if not self._closing and not self._recovering:
                     self._resume_needs_input = False
                     self._tools.accept_new_input()

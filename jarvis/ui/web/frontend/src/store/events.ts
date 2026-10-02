@@ -59,7 +59,6 @@ export type SectionId =
   | "plugins"
   | "docs"
   | "mcps"
-  | "tasks"
   | "sessions"
   | "run_inspector"
   // Spend & Tokens — what every provider, model and role actually cost.
@@ -129,7 +128,6 @@ export const SECTION_IDS = [
   "plugins",
   "docs",
   "mcps",
-  "tasks",
   "sessions",
   "run_inspector",
   "costs",
@@ -183,10 +181,13 @@ export function isSectionId(value: unknown): value is SectionId {
  * - "wallpaper": the Wallpaper page was removed (2026-09-30); the app paints
  *   its flat theme colour only. A remembered link lands in Settings, where
  *   the page used to live.
+ * - "tasks": the Automations section was removed (2026-10-01); scheduled work
+ *   lives on agents now, as each agent's routines.
  */
 export const LEGACY_SECTION_ALIASES: Readonly<Record<string, SectionId>> = {
   outputs: "visualization",
   wallpaper: "settings",
+  tasks: "agents",
 };
 
 /** The section an id names today — itself, its successor, or null. */
@@ -226,7 +227,6 @@ export const SECTION_LABELS: Record<SectionId, string> = {
   plugins: "Plugins",
   docs: "Docs",
   mcps: "MCPs",
-  tasks: "Tasks",
   sessions: "Transcription",
   run_inspector: "Run Inspector",
   costs: "Spend",

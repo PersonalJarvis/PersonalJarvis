@@ -91,6 +91,15 @@ datas.append((str(PROJECT_ROOT / "jarvis/society/browser/live_runner.py"), "jarv
 datas.append((str(PROJECT_ROOT / "jarvis/society/browser/native_window.py"), "jarvis/society/browser"))
 datas.append((str(PROJECT_ROOT / "jarvis/society/browser/pointer.py"), "jarvis/society/browser"))
 
+# The local voice engine runs in its OWN Python environment, so a frozen build
+# must ship its sources as plain files: setup copies them into the engine home
+# (jarvis/realtime/local_voice_setup.py). Caches never ride along.
+_VOICE_ENGINE = PROJECT_ROOT / "jarvis" / "voice_engine"
+for entry in _VOICE_ENGINE.rglob("*"):
+    if entry.is_file() and "__pycache__" not in entry.parts and entry.suffix != ".pyc":
+        rel = entry.relative_to(_VOICE_ENGINE).parent
+        datas.append((str(entry), str(Path("jarvis/voice_engine") / rel)))
+
 # Include the frontend build when present. Preserve its package-relative layout
 # so the FastAPI static-files mount can serve it from a frozen application.
 if FRONTEND_DIST.exists():

@@ -1993,6 +1993,39 @@ async def test_end_call_tool_finishes_after_turn_complete():
 
 
 @pytest.mark.asyncio
+async def test_end_call_after_a_plain_yes_is_refused():
+    # Live 2026-10-01: the user approved an action with "Ja" and the model
+    # called end_call. A model tool call alone must never end the call.
+    provider = FakeProvider(
+        [
+            RealtimeEvent(type="input_transcript", text="Ja", is_final=True),
+            RealtimeEvent(type="tool_call", call_id="c-end", tool_name="end_call"),
+            RealtimeEvent(type="output_transcript_delta", text="Okay."),
+            RealtimeEvent(type="turn_complete"),
+        ]
+    )
+    jsons = []
+    sess = RealtimeVoiceSession(
+        session_id="no-hangup-on-yes",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda m: jsons.append(m) or asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(),
+        bus=None,
+        tool_bridge=FakeToolBridge(),
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await asyncio.sleep(0.3)
+
+    refusals = [r for r in provider.session.tool_results if r[0] == "c-end"]
+    assert refusals and refusals[0][2]["success"] is False
+    assert sess.hangup_reason != "voice_pattern"
+    assert not _hangup_jsons(jsons)
+    await sess.end(reason="client_stop")
+
+
+@pytest.mark.asyncio
 async def test_ordinary_speech_does_not_hang_up(monkeypatch):
     monkeypatch.setattr(
         runtime_refs,

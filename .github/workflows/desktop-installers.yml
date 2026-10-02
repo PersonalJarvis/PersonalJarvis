@@ -278,6 +278,17 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Use the official Ubuntu archive with bounded network waits
+        shell: bash
+        run: |
+          # The runner's Azure HTTP mirror can stall while the official HTTPS
+          # archive remains healthy. Keep Ubuntu's signed packages and keys.
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            printf '%s\n' 'https://archive.ubuntu.com/ubuntu' | sudo tee /etc/apt/apt-mirrors.txt > /dev/null
+          fi
+          printf 'Acquire::Retries "2";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' \
+            | sudo tee /etc/apt/apt.conf.d/99jarvis-release-network > /dev/null
+
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
@@ -431,4 +442,5 @@ jobs:
             installers/PersonalJarvis-macOS-arm64.dmg
             installers/PersonalJarvis-macOS-x64.dmg
             installers/PersonalJarvis-Linux-x86_64.AppImage
+            installers/personal-jarvis_*_amd64.deb
             installers/installers-SHA256SUMS.txt

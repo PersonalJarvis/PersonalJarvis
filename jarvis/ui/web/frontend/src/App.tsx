@@ -47,6 +47,9 @@ const QuickSwitcher = lazy(() =>
 );
 import { eventMatchesChord } from "@/lib/quickSwitchChord";
 import { useQuickSwitchSettings } from "@/store/quickSwitchSettings";
+import { useAppZoom } from "@/hooks/useAppZoom";
+import { ZoomIndicator } from "@/components/ZoomIndicator";
+import { useQuickSwitcher } from "@/store/quickSwitcher";
 import { JarvisDock } from "@/components/JarvisDock";
 import { CliConnectPoller } from "@/components/CliConnectPoller";
 import { OnboardingGate } from "@/components/onboarding/OnboardingGate";
@@ -124,20 +127,21 @@ export default function App() {
     chord toggles. While the Settings recorder is capturing, the chord must
     reach the recorder instead, so a recording session is skipped.
   */
-  const [switcherOpen, setSwitcherOpen] = useState(false);
+  const switcherOpen = useQuickSwitcher((s) => s.open);
   const switcherEnabled = useQuickSwitchSettings((s) => s.enabled);
   const switcherCombo = useQuickSwitchSettings((s) => s.combo);
   useEffect(() => {
-    if (!switcherEnabled || !switcherCombo) {
-      setSwitcherOpen(false);
+    if (!switcherEnabled) {
+      useQuickSwitcher.getState().hide();
       return;
     }
+    if (!switcherCombo) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.repeat || !eventMatchesChord(event, switcherCombo)) return;
       if (document.querySelector('[data-keybind-recording="true"]')) return;
       event.preventDefault();
       event.stopPropagation();
-      setSwitcherOpen((open) => !open);
+      useQuickSwitcher.getState().toggle();
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
@@ -150,6 +154,12 @@ export default function App() {
   useAssistantNameSeed();
   useCodingMode();
   useFileDropGuard();
+  /*
+   * Ctrl + `+` / `-` / `0` zoom the whole window, like a browser — real engine
+   * zoom through the desktop shell. Chords and on/off live under Settings →
+   * Keyboard shortcuts. See hooks/useAppZoom.
+   */
+  useAppZoom();
   /*
    * A reload puts the user back on the section they were on.
    *
@@ -337,6 +347,7 @@ export default function App() {
         <ToastLayer />
         <CommandActivityLayer />
         <EditContextMenu />
+        <ZoomIndicator />
         {shortcutsOpen && (
           <Suspense fallback={null}>
             <ShortcutOverlay open onOpenChange={setShortcutsOpen} />
@@ -421,9 +432,15 @@ export default function App() {
           a detached solo window IS one section, there is nowhere to switch. */}
       {switcherOpen && (
         <Suspense fallback={null}>
-          <QuickSwitcher open onOpenChange={setSwitcherOpen} />
+          <QuickSwitcher
+            open
+            onOpenChange={(next) => (next ? useQuickSwitcher.getState().show() : useQuickSwitcher.getState().hide())}
+            initialQuery={useQuickSwitcher.getState().initialQuery}
+          />
         </Suspense>
       )}
+      {/* Names the level after Ctrl + Plus / Minus, like Chrome's zoom bubble. */}
+      <ZoomIndicator />
       {/* `?` anywhere in the app opens this; the chunk loads on first use. */}
       {shortcutsOpen && (
         <Suspense fallback={null}>

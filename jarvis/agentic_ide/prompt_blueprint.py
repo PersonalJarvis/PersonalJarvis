@@ -37,6 +37,9 @@ made the receiving agent behave *worse*:
   files work. The agent opens them. A 1400-2400 character specification
   (2026-07-27) cost 10-30 s of thinking and then made the agent re-read the
   same files; the 2026-08-18 mandate is 1-5 s, cleaned speech plus key files.
+  Since 2026-10-01 the writer also sees short excerpts of the top files, and
+  may pass on up to three facts from them in ``## Context`` - the symbol or
+  value the agent would otherwise spend its first searches finding.
 * **Scope lives in the task, not in a prohibition list.** The first version
   listed what the agent must not do (no surrounding cleanup, no unrequested
   refactors, no speculative abstractions). Anthropic's own measured
@@ -82,7 +85,7 @@ from .task_kind import (
 # Set above what a lean brief plus a dropped-file description measures, not
 # at the target: a limit the writer breaches on every ordinary composition
 # teaches it that the limits in this prompt are approximate.
-MAX_BODY_CHARS = 1800
+MAX_BODY_CHARS = 2200
 
 # What a GOOD prompt weighs. The 1400-2400 target (2026-07-27) bought a
 # specification the agent then re-read from the same @files, and the writer
@@ -90,9 +93,10 @@ MAX_BODY_CHARS = 1800
 # that cleaned the spoken sentence and attached the neighbouring files landed
 # a comparable brief in about a second (maintainer, 2026-08-18). The target
 # is therefore the cleaned task plus a short Key files list — not a map of
-# the code the agent is about to open.
+# the code the agent is about to open. Raised 900 -> 1200 (2026-10-01) for
+# the optional ``## Context`` bullets the file excerpts make possible.
 TARGET_MIN_CHARS = 280
-TARGET_MAX_CHARS = 900
+TARGET_MAX_CHARS = 1200
 
 _SKELETON = """\
 ## Task
@@ -101,6 +105,9 @@ _SKELETON = """\
 ## Key files
 - `@path/to/file` - why this file is the starting point
 - `@path/to/other` - same, specifically
+
+## Context
+- <a fact the file excerpts show that the agent needs to start>
 
 ## Done when
 - <an observable outcome the user actually stated>\
@@ -174,6 +181,13 @@ determines (its test command, its lint gate). Omit it otherwise. Do not add a \
 `## Scope` or `## How it works today` section - the agent will open the @files \
 and discover the current code itself.
 
+`## Context` exists only when you were given FILE OUTLINES AND TASK-RELEVANT \
+LINES: at most three bullets, each a fact those excerpts actually show and \
+the agent needs to start - which function owns the behaviour, where a value \
+is set and what it is now, where something is wired. Name the symbol and its \
+file. Never a proposed change, never a walkthrough of the code. Omit it when \
+the excerpts show nothing the task needs.
+
 - Aim for {TARGET_MIN_CHARS}-{TARGET_MAX_CHARS} characters, never over \
 {MAX_BODY_CHARS}. Length comes from a clean task and a concrete Key files \
 list, never from restating the files' internals, hedging or dictated steps.
@@ -199,7 +213,8 @@ coming back with questions: the behaviour that must exist afterwards, how it \
 should behave when things go wrong, and any constraint it has to respect. \
 Complete means the agent lacks no context - not that you dictated the steps.
 - Point at the starting files. Do not narrate how those files work today - \
-the agent will open them. A symbol name from the outline is enough.
+the agent will open them. A symbol name or one fact from the excerpts is \
+enough.
 - A bound the user actually drew belongs in `## Task`, not in a separate \
 section. Do not fill the brief with generic don'ts - "no unrequested \
 refactors", "no speculative abstractions", "no surrounding cleanup" are \
@@ -366,8 +381,11 @@ def user_block(
             f'<file path="{path}">\n{text}\n</file>' for path, text in skeletons.items()
         )
         parts.append(
-            "FILE OUTLINES (signatures only - bodies omitted; use these to name "
-            "real symbols instead of describing code vaguely)\n" + outlines
+            "FILE OUTLINES AND TASK-RELEVANT LINES (Jarvis looked into these "
+            "files; partial - signatures plus the numbered lines that mention "
+            "the task. Use them to choose the right Key files, to name real "
+            "symbols instead of describing code vaguely, and for ## Context)\n"
+            + outlines
         )
 
     if tree:

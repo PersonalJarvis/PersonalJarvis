@@ -41,6 +41,7 @@ from jarvis.core.events import (
     ActionProposed,
     AudioOutFirst,
     ComposeRequested,
+    DelegationResultReady,
     DictationCompleted,
     DictationPromptModeChanged,
     DictationPromptModePauseToggleRequested,
@@ -52,6 +53,7 @@ from jarvis.core.events import (
     JarvisAgentBackgroundCompleted,
     JarvisAgentTaskCompleted,
     JarvisAgentTaskStarted,
+    JarvisChatTurnFinished,
     ListeningStarted,
     OrbResetRequested,
     PetVisibilityToggleRequested,
@@ -82,6 +84,8 @@ from jarvis.sessions.constants import (
     SPOKEN_KIND_TIMEOUT,
     SPOKEN_KIND_UNAVAILABLE,
 )
+from jarvis.ui.pets import notices as pet_notices
+from jarvis.ui.pets.actions import action_for_tool
 from jarvis.ui.pets.status_line import StatusFeed, condense, parse_reasoning_summary
 from ui.orb.animations import IDLE_ANIMATION_POOL
 
@@ -456,6 +460,8 @@ class OrbBusBridge:
         self._card_visible = False
         self._reasoning_title = ""
         self._agent_tasks: dict[str, tuple[str, float]] = {}
+        #: Last background-work flag sent to the pet (``set_pet_busy``).
+        self._pet_busy = False
         self._card_fallback_task: asyncio.Task | None = None
         self._card_clear_task: asyncio.Task | None = None
         # Clock for the pet's outcome throttle (replaceable in tests) and the
@@ -681,6 +687,10 @@ class OrbBusBridge:
             self._bus.subscribe(ToolCallStarted, self._on_tool_call_started)
             self._bus.subscribe(JarvisAgentTaskStarted, self._on_agent_task_started)
             self._bus.subscribe(JarvisAgentTaskCompleted, self._on_agent_task_completed)
+            # The pet's done cards (jarvis.ui.pets.notices): Jarvis answered a
+            # typed chat, or a job Jarvis started came back. Nothing else.
+            self._bus.subscribe(JarvisChatTurnFinished, self._on_chat_turn_finished)
+            self._bus.subscribe(DelegationResultReady, self._on_delegation_result)
             # Wire the orb's double-double-click gesture to a bus publish.
             # The orb requires two ``<Double-Button-1>`` events inside
             # ``MUTE_GESTURE_WINDOW_MS`` (four clicks in <600 ms) before
@@ -937,6 +947,14 @@ class OrbBusBridge:
         for key in stale:
             self._agent_tasks.pop(key, None)
 
+    def _sync_pet_busy(self) -> None:
+        """The pet works while an agent task runs; tell it when that flips."""
+        self._expire_agent_tasks()
+        busy = bool(self._agent_tasks)
+        if busy != self._pet_busy:
+            self._pet_busy = busy
+            self._call_surface("set_pet_busy", busy)
+
     def _agent_title(self) -> str:
         """Title of the newest running agent task ("" when none runs)."""
         self._expire_agent_tasks()
@@ -1151,6 +1169,7 @@ class OrbBusBridge:
         """A tool is about to run: its reason (else its name) is the detail."""
         if not self._wants_card():
             return
+        self._call_surface("set_pet_action", action_for_tool(event.tool_name))
         detail = (event.rationale or "").strip() or _humanize_tool_name(event.tool_name)
         if detail:
             self._show_card(self._card_title(), detail)
@@ -1159,6 +1178,7 @@ class OrbBusBridge:
         """A tool call some path reports without an ``ActionProposed``."""
         if not self._wants_card():
             return
+        self._call_surface("set_pet_action", action_for_tool(event.tool_name))
         detail = _humanize_tool_name(event.tool_name)
         if detail:
             self._show_card(self._card_title(), detail)
@@ -1170,6 +1190,8 @@ class OrbBusBridge:
         background or between turns). Inside a turn it is a step; a failed step
         the turn recovers from is not the user's failure.
         """
+        if self._wants_card():
+            self._call_surface("set_pet_action", None)  # the step is over
         if self._card_visible:
             self._show_card(
                 self._card_title(), self._label("step_done" if event.success else "step_failed")
@@ -1192,6 +1214,20 @@ class OrbBusBridge:
             return
         self._pet_outcome("error")
 
+    # -- the pet's bell ---------------------------------------------------
+
+    def _push_notice(self, notice: pet_notices.Notice | None) -> None:
+        """Hand one card to the surface (the pet; every other surface skips it)."""
+        if notice is None or not self._wants_card():
+            return
+        self._call_surface("push_notice", *notice)
+
+    async def _on_chat_turn_finished(self, event: JarvisChatTurnFinished) -> None:
+        self._push_notice(pet_notices.for_chat_turn(event, self._status_language()))
+
+    async def _on_delegation_result(self, event: DelegationResultReady) -> None:
+        self._push_notice(pet_notices.for_delegation_result(event, self._status_language()))
+
     async def _on_agent_task_started(self, event: JarvisAgentTaskStarted) -> None:
         """An agent took on a task: its card stays until the task is done."""
         if not self._wants_card():
@@ -1199,6 +1235,7 @@ class OrbBusBridge:
         title = condense(event.utterance or "", max_chars=PET_CARD_TITLE_CHARS)
         title = title or self._label("working")
         self._agent_tasks[str(event.trace_id)] = (title, self._clock())
+        self._sync_pet_busy()
         self._show_card(title, self._label("working_detail"), force=True)
 
     async def _on_agent_task_completed(self, event: JarvisAgentTaskCompleted) -> None:
@@ -1211,6 +1248,7 @@ class OrbBusBridge:
             # oldest running task is the best match, and it must not keep the
             # card up forever.
             entry = self._agent_tasks.pop(next(iter(self._agent_tasks)))
+        self._sync_pet_busy()
         title = entry[0] if entry is not None else self._card_title()
         self._show_card(
             title,
@@ -2317,14 +2355,9 @@ class OrbBusBridge:
         """
         if event.success:
             self._pet_outcome("success")
-        if self._wants_card() and (self._card_visible or self._agent_tasks):
-            title = condense(event.utterance or "", max_chars=PET_CARD_TITLE_CHARS)
-            self._show_card(
-                title or self._card_title(),
-                self._label("done" if event.success else "failed"),
-                force=True,
-                quiet_clear_s=PET_CARD_TASK_DONE_S,
-            )
+        self._sync_pet_busy()
+        self._push_notice(pet_notices.for_background_task(event, self._status_language()))
+        self._clear_card()
         if self._last_state not in ("IDLE", "ERROR", "PAUSED"):
             return
         self._orb.show(mode="speak")

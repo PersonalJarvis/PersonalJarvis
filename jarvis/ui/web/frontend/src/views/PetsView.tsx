@@ -270,6 +270,7 @@ export function PetsView() {
                 <CustomizePanel
                   scale={data.scale}
                   bubble={data.bubble}
+                  stripAlways={data.strip_always}
                   keybinds={keybinds}
                 />
               )}
@@ -448,10 +449,12 @@ function ActivePetCard({
 function CustomizePanel({
   scale,
   bubble,
+  stripAlways,
   keybinds,
 }: {
   scale: number;
   bubble: boolean;
+  stripAlways: boolean;
   keybinds: ReturnType<typeof useKeybinds>;
 }) {
   const t = useT();
@@ -518,6 +521,27 @@ function CustomizePanel({
           onCheckedChange={(next) =>
             save.mutate(
               { bubble: next },
+              {
+                onError: (error) =>
+                  pushToast("error", t("pets.save_error").replace("{0}", (error as Error).message)),
+              },
+            )
+          }
+        />
+      </div>
+      <div className="flex items-center justify-between gap-4 px-4 py-3">
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-foreground">{t("pets.strip_label")}</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">{t("pets.strip_hint")}</p>
+        </div>
+        <Switch
+          checked={stripAlways}
+          disabled={save.isPending}
+          aria-label={t("pets.strip_label")}
+          data-testid="pets-strip-always"
+          onCheckedChange={(next) =>
+            save.mutate(
+              { strip_always: next },
               {
                 onError: (error) =>
                   pushToast("error", t("pets.save_error").replace("{0}", (error as Error).message)),

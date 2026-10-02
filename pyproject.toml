@@ -612,6 +612,10 @@ vertex-live = "jarvis.plugins.realtime.gemini_live:VertexLiveProvider"
 # this tier lacked entirely. Keyless; only ever used when explicitly selected
 # with a server URL configured.
 local-realtime = "jarvis.plugins.realtime.openai_realtime:LocalRealtimeProvider"
+# The Jarvis-owned local voice engine (ADR-0037): a child worker in its own
+# environment, set up from the Local voice card. Keyless, never an ambient
+# fallback; replaces local-realtime at cutover (P5).
+local-voice = "jarvis.plugins.realtime.local_voice:LocalVoiceProvider"
 
 [project.entry-points."jarvis.tool"]
 live-screen-snapshot = "jarvis.plugins.tool.live_screen:LiveScreenTool"
@@ -889,6 +893,9 @@ jarvis = [
     # install.py read them via Path(__file__)).
     "realtime/local_server/patches/*.patch",
     "realtime/local_server/pins/*.txt",
+    # Pinned package set of the local voice engine's own environment
+    # (realtime/local_voice_setup.py reads it via Path(__file__)).
+    "voice_engine/requirements-engine.txt",
 ]
 
 [tool.setuptools.data-files]

@@ -202,7 +202,8 @@ def test_calendar_contract_reaches_sql_api_and_typescript():
     assert "calendar" in TRIGGER_TYPES and "calendar" in PAUSABLE_TRIGGER_TYPES
     assert "'calendar'" in SCHEMA_FILE.read_text(encoding="utf-8")
     root = Path(__file__).resolve().parents[2]
-    typescript = (root / "jarvis/ui/web/frontend/src/views/tasks/taskSpec.ts").read_text(
+    # The agent card describes a routine's calendar trigger from these fields.
+    typescript = (root / "jarvis/ui/web/frontend/src/lib/triggerDescription.ts").read_text(
         encoding="utf-8"
     )
     for field in (
@@ -212,7 +213,6 @@ def test_calendar_contract_reaches_sql_api_and_typescript():
         "weekdays",
         "month_days",
         "months",
-        "start_date",
     ):
         assert field in typescript
 

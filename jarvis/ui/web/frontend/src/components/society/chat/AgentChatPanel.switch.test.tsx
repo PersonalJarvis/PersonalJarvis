@@ -27,7 +27,7 @@ const attachmentState = vi.hoisted(() => ({
 
 vi.mock("@/i18n", () => ({ useT: () => (key: string) => key, fill: (text: string) => text }));
 vi.mock("./AgentModelPicker", () => ({ AgentModelPicker: () => null }));
-vi.mock("@/components/home/JarvisBar", () => ({ JarvisBar: () => <div data-testid="jarvis-bar" /> }));
+vi.mock("@/components/home/VoiceComposer", () => ({ VoiceComposer: () => <div data-testid="voice-composer" /> }));
 vi.mock("@/components/home/Greeting", () => ({ Greeting: () => <div>Greeting</div> }));
 vi.mock("@/components/agentic/useVoiceCall", () => ({ useVoiceCall: () => ({ connecting: false }) }));
 vi.mock("@/hooks/useVoiceReadiness", () => ({ useVoiceReadiness: () => ({ connected: true, warming: false }) }));
@@ -228,7 +228,7 @@ it("reads archived calls on the actual voice stage and returns there fresh after
   expect(await screen.findByText("Archived question")).toBeTruthy();
   expect(screen.getByText("Archived answer")).toBeTruthy();
   expect(screen.getByTestId("society-chat").getAttribute("data-mode")).toBe("voice");
-  expect(screen.getByTestId("jarvis-bar")).toBeTruthy();
+  expect(screen.getByTestId("voice-composer")).toBeTruthy();
   expect(screen.queryByTestId("voice-thread-stage")).toBeNull();
   fireEvent.click(screen.getByTestId("society-jarvis-mode-chat"));
   fireEvent.click(screen.getByTestId("society-jarvis-mode-voice"));

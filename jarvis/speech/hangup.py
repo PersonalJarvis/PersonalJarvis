@@ -147,10 +147,13 @@ _SEMANTIC_CLOSING_RE = re.compile(
     r"|i (?:have|need) to go|let's stop here|you can go now"
     r"|wir sind (?:durch|fertig)(?: für heute)?"  # i18n-allow
     r"|ich bin (?:durch|fertig)(?: für heute)?"  # i18n-allow
-    r"|das war'?s(?: für heute)?|das ist alles|mehr brauche ich nicht"  # i18n-allow
+    r"|das war'?s(?: für heute)?|das war alles(?: für heute)?"  # i18n-allow
+    r"|das ist alles|mehr brauche ich nicht"  # i18n-allow
+    r"|that'?s it(?: for (?:now|today))?"
     r"|keine weiteren fragen|ich muss (?:los|gehen)|du kannst gehen"  # i18n-allow
     r"|eso es todo(?: por (?:ahora|hoy))?|hemos terminado|ya terminamos"
     r"|no necesito nada más|no tengo más preguntas|me tengo que ir"
+    r"|cuelga|adiós|adios|hasta luego"
     r")"
     r"(?:[\s,.!]+(?:thanks|thank you|danke|gracias|jarvis))*[\s.!]*",  # i18n-allow
     re.IGNORECASE,
@@ -166,6 +169,19 @@ def supports_semantic_hangup(user_text: str | None) -> bool:
     """
     text = (user_text or "").replace("’", "'")
     return _SEMANTIC_CLOSING_RE.fullmatch(text) is not None
+
+
+def user_asked_to_hang_up(user_text: str | None) -> bool:
+    """Gate for a model's ``end_call``: the user's own words must ask for it.
+
+    A model tool call alone never ends a call. Live 2026-10-01: the user
+    answered "Ja" to an approval and the model called end_call, dropping the
+    call and the approved task. A missed hang-up costs one repeat; a false one
+    kills the session, so only an explicit command or a complete closing
+    speech act counts.
+    """
+    text = user_text or ""
+    return bool(HANGUP_RE.search(text)) or supports_semantic_hangup(text)
 
 
 def strip_end_signal(text: str | None) -> str:
@@ -211,4 +227,5 @@ __all__ = [
     "matched_hangup_pattern",
     "strip_end_signal",
     "supports_semantic_hangup",
+    "user_asked_to_hang_up",
 ]

@@ -20,7 +20,7 @@ from jarvis.brain.navigation_intent import match_navigation_intent
         ("zeig die Socials", "socials"),
         ("zeige mir die Socials", "socials"),
         ("öffne die Einstellungen", "settings"),
-        ("geh zu den Aufgaben", "tasks"),
+        ("geh zu den Aufgaben", "agents"),
         ("wechsel zu den Notizen", "memory"),
         ("show the agents", "agents"),
         ("open settings", "settings"),
@@ -100,7 +100,7 @@ def test_unbound_cue_and_section_do_not_navigate(text: str) -> None:
     [
         # An article and a filler between verb and target still binds.
         ("zeig mir doch bitte die Einstellungen", "settings"),
-        ("geh zu den offenen Aufgaben", "tasks"),
+        ("geh zu den offenen Aufgaben", "agents"),
         ("open the settings", "settings"),
     ],
 )
