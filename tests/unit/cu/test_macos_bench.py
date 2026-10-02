@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 from jarvis.cu.macos_bench import (
+    FOCUS_TYPE_LANDING,
     PHYSICAL_USER_TAKEOVER,
     SEMANTIC_TARGET_HIT,
     STALE_TARGET_REFUSAL,
+    FocusTypeLandingReceipt,
     PhysicalTakeoverReceipt,
     SemanticTargetHitReceipt,
     StaleTargetRefusalReceipt,
+    evaluate_focus_type_landing,
     evaluate_physical_takeover,
     evaluate_semantic_target_hit,
     evaluate_stale_target_refusal,
@@ -52,6 +55,21 @@ def _passing_stale_refusal_receipt(**overrides):
     }
     values.update(overrides)
     return StaleTargetRefusalReceipt(**values)
+
+
+def _passing_focus_type_receipt(**overrides):
+    values = {
+        "target_reidentified": True,
+        "focus_performed": True,
+        "foreground_identity_stable": True,
+        "requested_characters": 12,
+        "landed_characters": 12,
+        "pointer_events_posted": 0,
+        "secure_value_read": False,
+        "expected_effect_verified": True,
+    }
+    values.update(overrides)
+    return FocusTypeLandingReceipt(**values)
 
 
 def test_takeover_scenario_is_live_gated_and_bound_to_readiness() -> None:
@@ -139,7 +157,6 @@ def test_semantic_success_forbids_pointer_fallback_and_requires_effect_verificat
     assert any("expected UI effect" in failure for failure in result.failures)
 
 
-
 def test_stale_target_scenario_is_live_gated_and_bound_to_actuation() -> None:
     assert STALE_TARGET_REFUSAL in macagentbench_scenarios()
     assert STALE_TARGET_REFUSAL.live_required is True
@@ -190,3 +207,53 @@ def test_stale_target_refusal_requires_fresh_reobservation() -> None:
 
     assert result.passed is False
     assert any("fresh observation" in failure for failure in result.failures)
+
+
+
+def test_focus_type_scenario_is_live_gated_and_bound_to_semantics() -> None:
+    assert FOCUS_TYPE_LANDING in macagentbench_scenarios()
+    assert FOCUS_TYPE_LANDING.live_required is True
+    assert "semantic:ax-tree" in FOCUS_TYPE_LANDING.readiness_checks
+    assert "actuation:backend" in FOCUS_TYPE_LANDING.readiness_checks
+
+
+def test_focus_type_receipt_passes_for_guarded_non_secret_probe() -> None:
+    result = evaluate_focus_type_landing(_passing_focus_type_receipt())
+
+    assert result.passed is True
+    assert result.failures == ()
+
+
+def test_focus_type_requires_semantic_focus_and_stable_foreground() -> None:
+    result = evaluate_focus_type_landing(
+        _passing_focus_type_receipt(
+            focus_performed=False,
+            foreground_identity_stable=False,
+        )
+    )
+
+    assert result.passed is False
+    assert any("AXFocused" in failure for failure in result.failures)
+    assert any("foreground window identity changed" in failure for failure in result.failures)
+
+
+def test_focus_type_requires_full_probe_landing_without_pointer_input() -> None:
+    result = evaluate_focus_type_landing(
+        _passing_focus_type_receipt(
+            landed_characters=9,
+            pointer_events_posted=1,
+        )
+    )
+
+    assert result.passed is False
+    assert any("did not fully land" in failure for failure in result.failures)
+    assert any("pointer input" in failure for failure in result.failures)
+
+
+def test_focus_type_evidence_never_reads_secure_field_value() -> None:
+    result = evaluate_focus_type_landing(
+        _passing_focus_type_receipt(secure_value_read=True)
+    )
+
+    assert result.passed is False
+    assert any("secure text-field content" in failure for failure in result.failures)

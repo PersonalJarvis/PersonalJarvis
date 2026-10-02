@@ -167,6 +167,13 @@ native or synthetic input may occur after refusal, the refusal must be surfaced
 to Computer-Use, and the next step must request a fresh observation. This
 contract is also live-gated and does not claim native qualification from CI.
 
+`focus-type-landing` now qualifies the editable-control path without creating
+another input mechanism: fresh AX re-identification, semantic `AXFocused`,
+foreground-window stability before guarded typing, full landing of a known
+non-secret probe, zero pointer fallback, and explicit evidence that no secure
+text-field value was read. CI validates only the evaluator; a live Mac fixture
+must still capture the native receipt.
+
 Live MacAgentBench remains the release gate for observable receipts: semantic
 target hit, stale-target refusal, focus/type landing, human takeover,
 cross-window handoff, browser-to-desktop transition, cancellation, permission

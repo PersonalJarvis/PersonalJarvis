@@ -86,12 +86,35 @@ STALE_TARGET_REFUSAL = MacAgentBenchScenario(
 )
 
 
+FOCUS_TYPE_LANDING = MacAgentBenchScenario(
+    id="focus-type-landing",
+    description=(
+        "A known non-secure editable control is focused through Accessibility "
+        "and receives a guarded probe string in the intended field."
+    ),
+    live_required=True,
+    readiness_checks=(
+        "semantic:ax-tree",
+        "actuation:backend",
+    ),
+    success_criteria=(
+        "the editable target is re-identified from fresh Accessibility state",
+        "AXFocused succeeds without pointer fallback",
+        "foreground identity is stable immediately before typing",
+        "the full non-secret probe lands in the intended field",
+        "no secure text-field value is read while collecting evidence",
+        "the expected UI effect is verified after typing",
+    ),
+)
+
+
 def macagentbench_scenarios() -> tuple[MacAgentBenchScenario, ...]:
     """Return the currently specified MacAgentBench live scenarios."""
     return (
         PHYSICAL_USER_TAKEOVER,
         SEMANTIC_TARGET_HIT,
         STALE_TARGET_REFUSAL,
+        FOCUS_TYPE_LANDING,
     )
 
 
@@ -129,6 +152,20 @@ class StaleTargetRefusalReceipt:
     synthetic_events_posted: int
     refusal_reported: bool
     reobserve_requested: bool
+
+
+@dataclass(frozen=True)
+class FocusTypeLandingReceipt:
+    """Evidence captured by a live/fake focus-and-type landing run."""
+
+    target_reidentified: bool
+    focus_performed: bool
+    foreground_identity_stable: bool
+    requested_characters: int
+    landed_characters: int
+    pointer_events_posted: int
+    secure_value_read: bool
+    expected_effect_verified: bool
 
 
 @dataclass(frozen=True)
@@ -228,15 +265,54 @@ def evaluate_stale_target_refusal(
     )
 
 
+def evaluate_focus_type_landing(
+    receipt: FocusTypeLandingReceipt,
+) -> MacAgentBenchEvaluation:
+    """Evaluate focus/type evidence without posting input or reading secrets."""
+    failures: list[str] = []
+
+    if not receipt.target_reidentified:
+        failures.append("the editable target was not re-identified from fresh Accessibility state")
+    if not receipt.focus_performed:
+        failures.append("AXFocused did not focus the intended editable target")
+    if not receipt.foreground_identity_stable:
+        failures.append("foreground window identity changed before guarded typing")
+    if receipt.requested_characters <= 0:
+        failures.append("the focus/type probe did not request any characters")
+    if receipt.landed_characters != receipt.requested_characters:
+        failures.append(
+            "the typed probe did not fully land in the intended field "
+            f"({receipt.landed_characters}/{receipt.requested_characters} characters)"
+        )
+    if receipt.pointer_events_posted != 0:
+        failures.append(
+            "pointer input was posted during semantic focus/type qualification "
+            f"({receipt.pointer_events_posted} event(s))"
+        )
+    if receipt.secure_value_read:
+        failures.append("secure text-field content was read while collecting evidence")
+    if not receipt.expected_effect_verified:
+        failures.append("the expected UI effect was not verified after guarded typing")
+
+    return MacAgentBenchEvaluation(
+        scenario_id=FOCUS_TYPE_LANDING.id,
+        passed=not failures,
+        failures=tuple(failures),
+    )
+
+
 __all__ = [
     "MacAgentBenchEvaluation",
     "MacAgentBenchScenario",
+    "FOCUS_TYPE_LANDING",
     "PHYSICAL_USER_TAKEOVER",
     "SEMANTIC_TARGET_HIT",
     "STALE_TARGET_REFUSAL",
+    "FocusTypeLandingReceipt",
     "PhysicalTakeoverReceipt",
     "SemanticTargetHitReceipt",
     "StaleTargetRefusalReceipt",
+    "evaluate_focus_type_landing",
     "evaluate_physical_takeover",
     "evaluate_semantic_target_hit",
     "evaluate_stale_target_refusal",
