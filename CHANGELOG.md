@@ -9,10 +9,6 @@ versioning per [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
----
-
-## [2.6.0] — 2026-10-02
-
 ### Added
 
 - **macOS asks when a feature needs a permission.** The first time you use a feature that needs a macOS permission, Personal Jarvis asks right then and macOS shows its own dialog: the microphone at the first dictation, push-to-talk, voice conversation, wake-word switch or microphone check; Screen Recording at the first screen capture you start; Accessibility when Jarvis first has to type, click or focus a window for you; Input Monitoring when you save a global shortcut (or choose the Call shortcut in setup); Music and Spotify control when you switch on "Mute music while dictating" with a player running. Nothing is asked at launch, and Personal Jarvis draws nothing of its own around macOS's dialog. If you say no, only that feature stops, and one short toast says so with one action ("Open System Settings"). Checked against faked macOS frameworks and macOS CI runners, not yet on a Mac of your own.
@@ -27,8 +23,6 @@ versioning per [SemVer](https://semver.org/).
 - **Global shortcuts need only Input Monitoring on macOS.** The listen-only shortcut tap no longer also requires Accessibility, is not started at launch unless already allowed, and re-arms in place when you grant access. A restart is suggested only after real typing produced no events, never forced.
 - **macOS permissions are checked silently and read live.** Features check the grant without prompting and act only on a live "granted"; a native request's result is never treated as proof. Identity now decides only who may ask automatically and who may reset, so a terminal-launched run asks for nothing on its own and offers an explicit "Ask macOS now" confirmation in the toast.
 - **The macOS bundles carry one table of usage strings.** The camera, speech and system-administration keys and the camera entitlement, which nothing in Jarvis uses, are removed; Screen Recording, Apple events, Desktop, Documents, Downloads and volumes are described in one place for both the `.dmg` app and the managed app.
-- Scheduling lives on agent routines; the separate Automations section is retired.
-- Routines can be created, paused, resumed or test-run by voice without a second confirmation.
 
 ### Removed
 
@@ -41,6 +35,13 @@ versioning per [SemVer](https://semver.org/).
 - **macOS: the downloaded app is recognised as an installed app.** The `.dmg` app was never accepted as one, so (checked against faked macOS frameworks, not yet on a Mac) its microphone, shortcuts and Computer Use stayed disabled even with every permission granted, and no Allow button was offered. It is now recognised, `jarvis permissions` finds it, and `jarvis permissions reset` targets its own permission records.
 - **macOS: the downloaded app is built to be able to use its permissions.** The v2.5.0 image (read on Linux, not run on a Mac) was missing the microphone framework in its frozen archive and was marked background-only in its `Info.plist`. The build now includes the framework, clears the flag, and new checks fail the macOS job if either comes back — including one that boots the built app and asks it for its microphone permission. Built and checked on both macOS CI runners (Apple Silicon and Intel); not yet tried on a Mac of your own.
 - **macOS: the release workflow is prepared to sign and notarize the image.** `packaging/macos/build.sh` now imports the Developer ID certificate secrets the workflow already passed along (rehearsed and run against a stand-in keychain command, not yet end to end). Until the Apple secrets are added the image stays ad-hoc signed: the first launch needs Open Anyway and an update can ask for the permissions again.
+
+---
+
+## [2.6.0] — 2026-10-02
+
+### Added
+
 - A quiet, Claude-style front page: one greeting, one composer, and a voice mode that lives inside the chat with a flowing aurora glow.
 - Open any agent's chat on the front page from the sidebar; `@` in the Jarvis chat names your agents and connected plugins.
 - Reasoning traces drawn as a threaded rail, with a wider, calmer column for agent chats.
@@ -51,6 +52,14 @@ versioning per [SemVer](https://semver.org/).
 - Onboarding: the pet walks you through the app right after setup, then offers ten first steps.
 - Routines and chat channels keep running after the app window closes.
 - Jarvis can drive the Agentic IDE by voice and open coding agents in a named workspace.
+
+### Changed
+
+- Scheduling lives on agent routines; the separate Automations section is retired.
+- Routines can be created, paused, resumed or test-run by voice without a second confirmation.
+
+### Fixed
+
 - Dictation works during a live call instead of hanging it up.
 - A new agent's first prompt in the Agentic IDE is reliably submitted.
 - Light-mode terminal panes are crisp and readable.
