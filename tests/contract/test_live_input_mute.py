@@ -132,3 +132,22 @@ async def test_a_call_that_starts_during_a_dictation_adopts_the_hold(call):
     assert call.session._input_muted is True
     await call.session.handle_audio_frame(PCM)
     assert call.connection.sent == []
+
+
+@pytest.mark.asyncio
+async def test_a_held_call_leaves_the_microphone_meter_to_the_dictation(call):
+    from jarvis.audio import mic_level
+
+    mic_level.reset_for_tests()
+    seen: list[float] = []
+    mic_level.subscribe(seen.append)
+    call.session._watch_input_mute()
+    call.session._mic_feedback_owned = True
+    mic_level.claim_external(call.session.session_id)
+
+    await call.bus.publish(VoiceInputHeld(held=True, reason="dictation"))
+    # The dictation's own capture feeds the meter without an owner.
+    mic_level.publish(0.4)
+    assert seen == [0.4]
+    assert call.session._mic_feedback_owned is False
+    mic_level.reset_for_tests()

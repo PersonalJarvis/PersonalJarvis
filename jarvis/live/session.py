@@ -337,10 +337,14 @@ class LiveVoiceSession:
             callable(getattr(mic_level, name, None))
             for name in ("claim_external", "release_external", "publish")
         )
-        if microphone_ready:
+        # While a dictation holds the input, its own capture drives the meter:
+        # the page's track is silenced, and claiming the meter here would
+        # flatten the dictation's bars with the page's zeros.
+        meter_owned = microphone_ready and not self._input_held
+        if meter_owned:
             mic_level.claim_external(self.session_id)
             self._mic_feedback_owned = True
-        elif not self._mic_feedback_warning:
+        elif not microphone_ready and not self._mic_feedback_warning:
             self._mic_feedback_warning = True
             log.warning("Browser microphone meter needs an app restart; voice remains connected")
         self._media_received = True
@@ -356,7 +360,7 @@ class LiveVoiceSession:
             level_tap.note_playing(0.3)
         elif previous_playback:
             level_tap.reset_playing()
-        if microphone_ready:
+        if meter_owned:
             mic_level.publish(levels.input_level, owner=self.session_id)
         if self._media_timeout is not None:
             self._media_timeout.cancel()
@@ -672,7 +676,20 @@ class LiveVoiceSession:
             "held" if self._input_held else "released",
             getattr(event, "reason", "") or "unknown",
         )
+        if self._input_held:
+            self._release_mic_meter()
         await self._apply_input_mute()
+
+    def _release_mic_meter(self) -> None:
+        """Hand the microphone meter back so a dictation's own levels show."""
+        if not self._mic_feedback_owned:
+            return
+        from jarvis.audio import mic_level
+
+        release = getattr(mic_level, "release_external", None)
+        if callable(release):
+            release(self.session_id)
+        self._mic_feedback_owned = False
 
     async def _apply_input_mute(self) -> None:
         """Drop the user's audio from now on and let the page silence its track.
