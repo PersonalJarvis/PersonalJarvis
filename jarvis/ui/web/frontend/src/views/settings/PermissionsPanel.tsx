@@ -177,7 +177,9 @@ function PrivacyRow({
   const ready = isReadyState(row.status);
   const isKeychain = row.id === "credential_store";
   // macOS applies some grants only to a fresh process: say so and offer the restart here.
-  const needsRestart = row.restart_hint && !ready;
+  // A restart hint is a REAL failed use (a wallpaper-only capture, a deaf event tap), so it
+  // also shows on a row whose status reads granted: that is the case it is reported for.
+  const needsRestart = row.restart_hint;
   const pillKey = needsRestart ? "restart_pending" : row.status;
   const pathKey = `permissions.items.${row.id}.path`;
   const path = row.settings_path ? t(pathKey) : "";

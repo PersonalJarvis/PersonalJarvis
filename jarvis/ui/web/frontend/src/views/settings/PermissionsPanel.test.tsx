@@ -212,6 +212,17 @@ describe("Settings > Privacy (passive)", () => {
     await waitFor(() => expect(posts("/api/settings/restart-app")).toHaveLength(1));
   });
 
+  it("shows the restart hint on a granted row after a real failed use", async () => {
+    permissionRows = [row("screen_recording", { status: "granted", restart_hint: true, can_request: false })];
+    render(<PermissionsPanel />);
+    await screen.findByTestId("permission-row-screen_recording");
+
+    expect(screen.getByTestId("permission-status-screen_recording").textContent).toBe("Restart needed");
+    fireEvent.click(screen.getByRole("button", { name: "Quit and reopen" }));
+
+    await waitFor(() => expect(posts("/api/settings/restart-app")).toHaveLength(1));
+  });
+
   it("explains a run outside the installed app", async () => {
     outside = true;
     await renderPanel();
