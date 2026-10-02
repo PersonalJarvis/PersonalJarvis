@@ -77,10 +77,9 @@ inspects the freeze for PyGObject and writes
 `usr/share/personal-jarvis/browser-ui` only when there is no window backend. A
 future build that does bundle one stops opening the browser tab by itself.
 
-**One rough edge, stated plainly:** the app's own fallback message suggests
-installing `python3-gi` / `gir1.2-webkit2-4.1`. For a frozen build that advice
-does not apply (see above). It lives in `jarvis/ui/desktop_app.py`
-(`_degrade_to_browser_ui`), which is where a frozen-aware wording belongs.
+The app's fallback message now says plainly that host GTK packages cannot add a
+native window backend to this frozen build. It directs users to the browser UI
+that `AppRun` opens after confirming the backend is healthy.
 
 ## Using it as the CLI
 

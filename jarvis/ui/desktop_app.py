@@ -33,6 +33,7 @@ from filelock import FileLock, Timeout
 from jarvis.core.config import DATA_DIR, JarvisConfig, load_config
 from jarvis.core.instance import current_instance
 from jarvis.core.process_utils import ensure_standard_streams
+from jarvis.ui.window_fallback import default_window_fallback_remedy
 
 if TYPE_CHECKING:
     from jarvis.ui.desktop_background import BackgroundStatus
@@ -5888,11 +5889,8 @@ class DesktopApp:
             url,
             sys.executable,
         )
-        default_remedy = (
-            "  - Or install the system GTK 3 + WebKit2GTK packages pywebview "
-            "needs and restart\n"
-            "    (Debian/Ubuntu, for example: "
-            "'sudo apt install python3-gi gir1.2-webkit2-4.1').\n"
+        default_remedy = default_window_fallback_remedy(
+            platform=sys.platform, frozen=bool(getattr(sys, "frozen", False))
         )
         message = (
             "\n"
