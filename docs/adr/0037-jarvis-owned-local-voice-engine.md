@@ -1,6 +1,6 @@
 # ADR-0037 — A Jarvis-owned local voice engine replaces the managed speech-to-speech server
 
-**Status:** Proposed
+**Status:** Accepted (2026-10-01)
 **Date:** 2026-10-01
 **Reference:** [Local live voice rebuild plan](../local-live-voice-rebuild.md); ADR-0024, ADR-0033, ADR-0036
 
