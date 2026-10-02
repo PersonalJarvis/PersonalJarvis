@@ -5392,8 +5392,11 @@ async def _run_screenshot_loop(
                                     f"RE-PLANNED ({replan_count}): new plan has "
                                     f"{len(plan)} steps."
                                 )
-                        except Exception:  # noqa: BLE001
-                            pass
+                        except Exception:  # noqa: BLE001 — recovery re-plan is best-effort
+                            log.debug(
+                                "[cu] recovery re-plan failed (non-fatal)",
+                                exc_info=True,
+                            )
                         break
                     yield _final(
                         stderr=(
