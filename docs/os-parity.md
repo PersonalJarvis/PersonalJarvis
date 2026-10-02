@@ -1425,3 +1425,27 @@ steady input lag. Paired GPT-Live probes retained the same recognized words in
 German and English, including a quieter English sample. First response text
 arrived 0.4–1.4 seconds earlier in those three comparisons; these small
 synthetic comparisons are not a physical-device latency guarantee.
+
+
+## Plugin credential lifecycle (2026-10-02)
+
+Plugin refreshes use the existing cross-platform filelock dependency to
+coordinate across event loops, processes and desktop/development instances.
+Locks are lazy and share the per-user credential namespace; they contain no
+credentials. Non-refreshable credentials recover their MCP session after a
+transient connection failure using jittered, bounded retries and the socket
+pressure budget. Shutdown drains an active reconnect before cancelling it.
+
+Token storage reads historical plain and chunked values. New large values
+use alternating banks: the previous complete generation survives an interrupted
+write. Every participating instance must run the updated storage code; older
+versions cannot read the new bank manifest. Reconnect/disconnect wins over a
+stale refresh result through a compare-and-save transaction.
+
+Verified on Windows with synthetic storage, two event loops and independent
+processes, plus marketplace regression tests. Linux/macOS native keyrings and
+real provider reauthorization were not exercised. Those platforms use the
+same Python contract and filelock's platform backend, with no new native API
+imports or boot-time initialization. Browser light/dark inspection was blocked
+by the unavailable real-Chrome connection; React tests and production builds
+are separate evidence, not provider or visual verification.

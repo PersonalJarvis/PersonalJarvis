@@ -11,17 +11,18 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import logging
-import threading
-import weakref
+import random
 from collections.abc import Callable
 from contextlib import suppress
 from datetime import UTC, datetime
 
 from jarvis.marketplace.auth.base import AuthHandler
+from jarvis.marketplace.credential_lock import refresh_lock, storage_lock
 from jarvis.marketplace.token_store import (
     REAUTH_CLIENT_MISSING,
     REAUTH_CLIENT_REJECTED,
     REAUTH_PROVIDER_REJECTED,
+    REAUTH_REFRESH_MISSING,
     REAUTH_ROTATION_LOST,
     Tokens,
     TokenStore,
@@ -47,18 +48,19 @@ class RefreshAttempt:
     access_changed: bool = False
 
 
-_REFRESH_LOCKS: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict[str, asyncio.Lock]] = (
-    weakref.WeakKeyDictionary()
-)
-_REFRESH_LOCKS_GUARD = threading.Lock()
-
-
-def _refresh_lock(plugin_id: str) -> asyncio.Lock:
-    """Return the per-plugin lock bound to the current event loop."""
-    loop = asyncio.get_running_loop()
-    with _REFRESH_LOCKS_GUARD:
-        loop_locks = _REFRESH_LOCKS.setdefault(loop, {})
-        return loop_locks.setdefault(plugin_id, asyncio.Lock())
+def _save_if_current(store: TokenStore, plugin_id: str, expected: Tokens, updated: Tokens) -> bool:
+    compare = getattr(store, "compare_and_save", None)
+    if callable(compare):
+        return compare(plugin_id, expected, updated)
+    # Injected stores retain the same atomic contract within this process.
+    with storage_lock():
+        current = store.load(plugin_id)
+        if current == updated:
+            return True
+        if current != expected:
+            return False
+        store.save(plugin_id, updated)
+        return True
 
 
 # Ordered most-specific first: a DCR handler raises "no stored client_id —
@@ -196,8 +198,8 @@ _ROTATED_SAVE_BACKOFF_SECONDS = 0.25
 
 
 async def _save_with_retries(
-    store: TokenStore, plugin_id: str, tokens: Tokens, *, rotated: bool
-) -> None:
+    store: TokenStore, plugin_id: str, tokens: Tokens, *, rotated: bool, expected: Tokens
+) -> bool:
     """Persist a refreshed token, retrying harder when rotation made it unique.
 
     Async so the backoff yields the event loop instead of blocking it — this
@@ -209,14 +211,15 @@ async def _save_with_retries(
     last: Exception | None = None
     for attempt in range(attempts):
         try:
-            store.save(plugin_id, tokens)
+            if not _save_if_current(store, plugin_id, expected, tokens):
+                return False
             if attempt:
                 log.info(
                     "plugin %s rotated token stored on attempt %d",
                     plugin_id,
                     attempt + 1,
                 )
-            return
+            return True
         except Exception as exc:  # noqa: BLE001 - retried below, re-raised at the end
             last = exc
             if attempt + 1 < attempts:
@@ -254,7 +257,12 @@ def _handle_lost_rotation(
         exc,
     )
     try:
-        store.save(plugin_id, flag_for_reauth(current, REAUTH_ROTATION_LOST))
+        if not _save_if_current(
+            store, plugin_id, current, flag_for_reauth(current, REAUTH_ROTATION_LOST)
+        ):
+            return _reload_before_refresh_commit(plugin_id, store, current.to_json())[
+                1
+            ] or RefreshAttempt(FAILED)
     except Exception as mark_exc:  # noqa: BLE001 - the store is evidently broken
         # Nothing durable can be written at all. Say so loudly rather than
         # leave a retry loop that would keep replaying the retired token.
@@ -278,163 +286,203 @@ async def refresh_plugin_token(
     keep_alive_seconds: int | None = None,
     reauth_retry_seconds: int | None = None,
 ) -> RefreshAttempt:
-    """Refresh one plugin under a process-local single-flight lock.
-
-    The token is reloaded after acquiring the lock. If another caller already
-    replaced the access token that triggered a 401, the waiting caller reuses
-    that token instead of rotating the refresh token a second time.
-
-    ``reauth_retry_seconds`` opts into self-healing: a connection already
-    flagged for reconnect is probed once per that interval instead of being
-    skipped forever. Left ``None`` (the default) a flagged connection is never
-    touched, so a direct caller keeps the old behaviour verbatim.
-    """
-    async with _refresh_lock(plugin_id):
-        try:
-            tokens = store.load(plugin_id)
-        except Exception as exc:  # noqa: BLE001 - isolate one plugin's storage
-            log.warning("plugin %s token load failed: %s", plugin_id, exc)
-            return RefreshAttempt(FAILED)
-
-        if tokens is None:
-            return RefreshAttempt(SKIPPED)
-
-        self_heal = False
-        if tokens.needs_reauth:
-            if not _self_heal_due(tokens, reauth_retry_seconds):
-                return RefreshAttempt(SKIPPED)
-            self_heal = True
-            # Stamp the attempt BEFORE calling the provider. If that call hangs,
-            # or the process dies mid-flight, this stamp is the only thing
-            # stopping the next cycle five minutes later from probing again --
-            # a dead plugin would otherwise hammer the provider forever.
-            stamped = dataclasses.replace(tokens, reauth_retry_at=datetime.now(UTC))
-            try:
-                store.save(plugin_id, stamped)
-            except Exception as exc:  # noqa: BLE001 - isolate one plugin's storage
-                log.warning(
-                    "plugin %s self-heal stamp failed, skipping this cycle: %s",
-                    plugin_id,
-                    exc,
-                )
-                return RefreshAttempt(FAILED)
-            tokens = stamped
-            log.info("plugin %s: retrying a connection flagged for reconnect", plugin_id)
-
-        if observed_access_token is not None and tokens.access != observed_access_token:
-            return RefreshAttempt(SKIPPED, usable=True, access_changed=True)
-        if not tokens.refresh:
-            return RefreshAttempt(SKIPPED, usable=not force)
-
-        # A self-heal probe is due by definition -- its access token expired long
-        # ago, and the whole point is to test the refresh token behind it.
-        if not force and not self_heal:
-            due = tokens.is_near_expiry(threshold_seconds) or _keep_alive_due(
-                tokens, keep_alive_seconds
-            )
-            if not due:
-                return RefreshAttempt(SKIPPED, usable=True)
-
-        original_state = tokens.to_json()
-
-        try:
-            handler = build_handler(plugin_id)
-        except Exception as exc:  # noqa: BLE001 - configuration must not break the loop
-            log.warning("plugin %s refresh handler failed to build: %s", plugin_id, exc)
-            return RefreshAttempt(FAILED)
-        if handler is None:
-            return RefreshAttempt(SKIPPED)
-
-        try:
-            refreshed = await handler.refresh(tokens)
-            if not refreshed.access:
-                raise RuntimeError("refresh returned an empty access token")
-        except Exception as exc:  # noqa: BLE001 - provider failures are isolated
-            reason = reauth_reason_for(str(exc))
-            if reason is None:
-                _current, superseded = _reload_before_refresh_commit(
-                    plugin_id, store, original_state
-                )
-                if superseded is not None:
-                    return superseded
-                log.warning(
-                    "plugin %s refresh failed (transient, will retry): %s",
-                    plugin_id,
-                    exc,
-                )
-                return RefreshAttempt(FAILED)
-
-            current, superseded = _reload_before_refresh_commit(plugin_id, store, original_state)
-            if superseded is not None:
-                return superseded
-            assert current is not None
-
-            try:
-                store.save(plugin_id, flag_for_reauth(current, reason))
-            except Exception as save_exc:  # noqa: BLE001 - isolate storage failure
-                log.warning(
-                    "plugin %s needs_reauth save failed, will retry: %s",
-                    plugin_id,
-                    save_exc,
-                )
-                return RefreshAttempt(FAILED)
-            log.info(
-                "plugin %s refresh needs reauth (%s): %s",
+    """Refresh once across threads, event loops and app instances."""
+    try:
+        async with refresh_lock(
+            plugin_id, shared=bool(getattr(store, "shared_credentials", False))
+        ):
+            return await _refresh_plugin_token_locked(
                 plugin_id,
-                reason,
+                store,
+                build_handler,
+                force=force,
+                observed_access_token=observed_access_token,
+                threshold_seconds=threshold_seconds,
+                keep_alive_seconds=keep_alive_seconds,
+                reauth_retry_seconds=reauth_retry_seconds,
+            )
+    except TimeoutError:
+        log.info("plugin %s refresh deferred: credential operation busy", plugin_id)
+        return RefreshAttempt(FAILED)
+
+
+async def _refresh_plugin_token_locked(
+    plugin_id: str,
+    store: TokenStore,
+    build_handler: HandlerBuilder,
+    *,
+    force: bool = False,
+    observed_access_token: str | None = None,
+    threshold_seconds: int = 600,
+    keep_alive_seconds: int | None = None,
+    reauth_retry_seconds: int | None = None,
+) -> RefreshAttempt:
+    try:
+        tokens = store.load(plugin_id)
+    except Exception as exc:  # noqa: BLE001 - isolate one plugin's storage
+        log.warning("plugin %s token load failed: %s", plugin_id, exc)
+        return RefreshAttempt(FAILED)
+
+    if tokens is None:
+        return RefreshAttempt(SKIPPED)
+
+    self_heal = False
+    if tokens.needs_reauth:
+        if not _self_heal_due(tokens, reauth_retry_seconds):
+            return RefreshAttempt(SKIPPED)
+        self_heal = True
+        # Stamp the attempt BEFORE calling the provider. If that call hangs,
+        # or the process dies mid-flight, this stamp is the only thing
+        # stopping the next cycle five minutes later from probing again --
+        # a dead plugin would otherwise hammer the provider forever.
+        stamped = dataclasses.replace(tokens, reauth_retry_at=datetime.now(UTC))
+        try:
+            if not _save_if_current(store, plugin_id, tokens, stamped):
+                return _reload_before_refresh_commit(plugin_id, store, tokens.to_json())[
+                    1
+                ] or RefreshAttempt(FAILED)
+        except Exception as exc:  # noqa: BLE001 - isolate one plugin's storage
+            log.warning(
+                "plugin %s self-heal stamp failed, skipping this cycle: %s",
+                plugin_id,
                 exc,
             )
-            return RefreshAttempt(REVOKED)
+            return RefreshAttempt(FAILED)
+        tokens = stamped
+        log.info("plugin %s: retrying a connection flagged for reconnect", plugin_id)
+
+    if observed_access_token is not None and tokens.access != observed_access_token:
+        return RefreshAttempt(SKIPPED, usable=True, access_changed=True)
+    if not tokens.refresh:
+        if tokens.expires_at is not None and tokens.expires_at <= datetime.now(UTC):
+            marked = flag_for_reauth(tokens, REAUTH_REFRESH_MISSING)
+            if _save_if_current(store, plugin_id, tokens, marked):
+                return RefreshAttempt(REVOKED)
+            return _reload_before_refresh_commit(plugin_id, store, tokens.to_json())[
+                1
+            ] or RefreshAttempt(FAILED)
+        return RefreshAttempt(SKIPPED, usable=not force)
+
+    # A self-heal probe is due by definition -- its access token expired long
+    # ago, and the whole point is to test the refresh token behind it.
+    if not force and not self_heal:
+        due = tokens.is_near_expiry(threshold_seconds) or _keep_alive_due(
+            tokens, keep_alive_seconds
+        )
+        if not due:
+            return RefreshAttempt(SKIPPED, usable=True)
+
+    original_state = tokens.to_json()
+
+    try:
+        handler = build_handler(plugin_id)
+    except Exception as exc:  # noqa: BLE001 - configuration must not break the loop
+        log.warning("plugin %s refresh handler failed to build: %s", plugin_id, exc)
+        return RefreshAttempt(FAILED)
+    if handler is None:
+        return RefreshAttempt(SKIPPED)
+
+    try:
+        refreshed = await handler.refresh(tokens)
+        if not refreshed.access:
+            raise RuntimeError("refresh returned an empty access token")
+    except Exception as exc:  # noqa: BLE001 - provider failures are isolated
+        reason = reauth_reason_for(str(exc))
+        if reason is None:
+            _current, superseded = _reload_before_refresh_commit(plugin_id, store, original_state)
+            if superseded is not None:
+                return superseded
+            log.warning(
+                "plugin %s refresh failed (transient, will retry): %s",
+                plugin_id,
+                exc,
+            )
+            return RefreshAttempt(FAILED)
 
         current, superseded = _reload_before_refresh_commit(plugin_id, store, original_state)
         if superseded is not None:
             return superseded
         assert current is not None
 
-        merged_extra = {
-            **current.extra,
-            **refreshed.extra,
-            "last_refreshed": datetime.now(UTC).isoformat(),
-        }
-        saved = dataclasses.replace(
-            refreshed,
-            refresh=refreshed.refresh or current.refresh,
-            extra=merged_extra,
-            # A working refresh clears the whole reconnect story, not just the
-            # flag: a stale reason left behind would keep explaining a failure
-            # that no longer exists. Set explicitly rather than relying on the
-            # handler having returned a pristine Tokens.
-            needs_reauth=False,
-            reauth_reason=None,
-            reauth_at=None,
-            reauth_retry_at=None,
-        )
-        if current.needs_reauth:
-            log.info(
-                "plugin %s: self-heal succeeded, connection is live again (was flagged %s)",
-                plugin_id,
-                current.reauth_reason or "for an unrecorded reason",
-            )
-        rotated = bool(refreshed.refresh) and refreshed.refresh != current.refresh
         try:
-            await _save_with_retries(store, plugin_id, saved, rotated=rotated)
-        except Exception as exc:  # noqa: BLE001 - isolate storage failure
-            if not rotated:
-                # The provider did not rotate, so the stored refresh token is
-                # still the live one. Losing this write costs nothing but a
-                # short-lived access token; the next cycle retries safely.
-                log.warning(
-                    "plugin %s refreshed token save failed, will retry: %s",
-                    plugin_id,
-                    exc,
-                )
-                return RefreshAttempt(FAILED)
-            return _handle_lost_rotation(plugin_id, store, current, exc)
-        return RefreshAttempt(
-            REFRESHED,
-            usable=True,
-            access_changed=saved.access != current.access,
+            if not _save_if_current(store, plugin_id, current, flag_for_reauth(current, reason)):
+                return _reload_before_refresh_commit(plugin_id, store, original_state)[
+                    1
+                ] or RefreshAttempt(FAILED)
+        except Exception as save_exc:  # noqa: BLE001 - isolate storage failure
+            log.warning(
+                "plugin %s needs_reauth save failed, will retry: %s",
+                plugin_id,
+                save_exc,
+            )
+            return RefreshAttempt(FAILED)
+        log.info(
+            "plugin %s refresh needs reauth (%s): %s",
+            plugin_id,
+            reason,
+            exc,
         )
+        return RefreshAttempt(REVOKED)
+
+    current, superseded = _reload_before_refresh_commit(plugin_id, store, original_state)
+    if superseded is not None:
+        return superseded
+    assert current is not None
+
+    merged_extra = {
+        **current.extra,
+        **refreshed.extra,
+        "last_refreshed": datetime.now(UTC).isoformat(),
+    }
+    saved = dataclasses.replace(
+        refreshed,
+        refresh=refreshed.refresh or current.refresh,
+        extra=merged_extra,
+        # A working refresh clears the whole reconnect story, not just the
+        # flag: a stale reason left behind would keep explaining a failure
+        # that no longer exists. Set explicitly rather than relying on the
+        # handler having returned a pristine Tokens.
+        needs_reauth=False,
+        reauth_reason=None,
+        reauth_at=None,
+        reauth_retry_at=None,
+    )
+    rotated = bool(refreshed.refresh) and refreshed.refresh != current.refresh
+    try:
+        committed = await _save_with_retries(
+            store,
+            plugin_id,
+            saved,
+            rotated=rotated,
+            expected=current,
+        )
+        if not committed:
+            return _reload_before_refresh_commit(plugin_id, store, original_state)[
+                1
+            ] or RefreshAttempt(FAILED)
+    except Exception as exc:  # noqa: BLE001 - isolate storage failure
+        if not rotated:
+            # The provider did not rotate, so the stored refresh token is
+            # still the live one. Losing this write costs nothing but a
+            # short-lived access token; the next cycle retries safely.
+            log.warning(
+                "plugin %s refreshed token save failed, will retry: %s",
+                plugin_id,
+                exc,
+            )
+            return RefreshAttempt(FAILED)
+        return _handle_lost_rotation(plugin_id, store, current, exc)
+    if current.needs_reauth:
+        log.info(
+            "plugin %s: self-heal succeeded, connection is live again (was flagged %s)",
+            plugin_id,
+            current.reauth_reason or "for an unrecorded reason",
+        )
+    return RefreshAttempt(
+        REFRESHED,
+        usable=True,
+        access_changed=saved.access != current.access,
+    )
 
 
 async def refresh_due_tokens(
@@ -534,7 +582,7 @@ class RefreshScheduler:
 
             if self._stopping:
                 break
-            await asyncio.sleep(self._interval)
+            await asyncio.sleep(self._interval * random.uniform(0.85, 1.15))  # noqa: S311
 
     @staticmethod
     def _log_cycle(outcomes: dict[str, str]) -> None:

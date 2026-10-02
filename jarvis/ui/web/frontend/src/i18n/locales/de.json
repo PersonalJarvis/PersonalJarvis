@@ -1168,6 +1168,8 @@
     "due_now": "fällig"
   },
   "plugins_view": {
+    "grant_ends": "Die Freigabe endet am {date}. Melde dich vorher erneut an.",
+    "grant_expired": "Die Freigabe ist am {date} abgelaufen. Verbinde das Plugin erneut.",
     "title": "Plugins",
     "count": "{n} verfügbar · {connected} verbunden",
     "loading": "Katalog wird geladen…",
