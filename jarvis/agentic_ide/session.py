@@ -6646,6 +6646,7 @@ class Registry:
         expected_input: str = "",
         allow_question: bool = False,
         followup: dict[str, str] | None = None,
+        expected_location: tuple[str, str, str] | None = None,
     ) -> Terminal:
         """Serialize deliveries and pin the pane before the first await.
 
@@ -6690,6 +6691,7 @@ class Registry:
                 expected_input=expected_input,
                 allow_question=allow_question,
                 pending_result=pending,
+                expected_location=expected_location,
             )
 
     @staticmethod
@@ -6709,6 +6711,7 @@ class Registry:
         expected_input: str = "",
         allow_question: bool = False,
         pending_result: Any = None,
+        expected_location: tuple[str, str, str] | None = None,
     ) -> Terminal:
         """Type ``text`` into a terminal, press Enter, and CONFIRM it was sent.
 
@@ -6817,6 +6820,10 @@ class Registry:
             or term.status != "live"
         ):
             raise SessionError("The selected terminal changed while waiting; nothing was sent.")
+        if expected_location is not None and expected_location != (
+            term.cwd(owner.folder), term.computer_id, term.remote_folder,
+        ):
+            raise SessionError("The image destination changed while waiting; nothing was sent.")
         if expected_input and (
             self.input_token(term) != expected_input
             or term.reading().activity

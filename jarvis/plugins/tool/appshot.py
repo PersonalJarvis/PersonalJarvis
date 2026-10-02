@@ -9,6 +9,8 @@ image input for the answer.
 
 from __future__ import annotations
 
+import asyncio
+
 
 def _app_bus():
     from jarvis.core.runtime_refs import get_brain_manager, get_web_app
@@ -18,6 +20,12 @@ def _app_bus():
     if bus is not None:
         return bus
     return getattr(get_brain_manager(), "_bus", None)
+
+
+def _load_config():
+    from jarvis.core.config import load_config
+
+    return load_config()
 
 
 class AppshotTool:
@@ -46,12 +54,24 @@ class AppshotTool:
         if not result.ok or result.shot is None:
             return ToolResult(False, None, result.message or "The appshot could not be taken.")
         shot = result.shot
+        from jarvis.core.image_references import get_store, instruction, scope_for
+
+        config = await asyncio.to_thread(_load_config)
+        ref = get_store().add(
+            scope_for(getattr(ctx, "config", None), getattr(ctx, "trace_id", "")),
+            shot.image,
+            shot.mime,
+            source="appshot",
+            ttl_s=float(config.screen_context.ttl_s),
+        )
         return ToolResult(
             True,
             {
                 "description": f"Appshot of the {shot.label}, {shot.width}x{shot.height}.",
                 "app": shot.app_name,
                 "evidence": shot.note,
+                "image_ref": ref,
+                "handoff": instruction([ref]),
                 "_image": {
                     "mime": shot.mime,
                     "data": base64.b64encode(shot.image).decode("ascii"),

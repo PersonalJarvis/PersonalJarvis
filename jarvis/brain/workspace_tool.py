@@ -40,7 +40,12 @@ class WorkspaceOrchestrationTool:
         "instead of waiting or polling in a loop. "
         "After a proven pre-write refusal, resolve again for a fresh request_id "
         "before a new attempt. "
-        "Use context with the same IDs to inspect recorded results. No prompt rewriting is needed."
+        "Use context with the same IDs to inspect recorded results. No prompt rewriting is needed. "
+        "For work based on an uploaded image or appshot, pass its actual image_refs. "
+        "A description alone is insufficient. Select only images relevant to this task. "
+        "The authorized handoff copies those images into the target workspace; "
+        "missing or expired images refuse delivery. "
+        "Never claim an image was sent without a receipt."
     )
     schema = {
         "type": "object",
@@ -75,6 +80,17 @@ class WorkspaceOrchestrationTool:
                     "terminal_id",
                     "prompt",
                 )
+            },
+            "image_refs": {
+                "type": "array",
+                "maxItems": 20,
+                "uniqueItems": True,
+                "items": {"type": "string"},
+                "description": (
+                    "create/open_workspace/send: IDs of the visual references for this "
+                    "work order, from uploaded images or take_appshot. No paths or URLs. "
+                    "Omit for a task that does not use images."
+                ),
             },
             # No pattern: a schema rejection would discard the whole call over
             # one mistyped character. The orchestrator repairs the id instead.
@@ -151,13 +167,36 @@ class WorkspaceOrchestrationTool:
         }
 
     async def execute(self, args: dict, ctx: ExecutionContext) -> ToolResult:
+        from jarvis.core.image_references import get_store, scope_for
+
+        scope = scope_for(ctx.config, ctx.trace_id)
+        if args.get("action") in {"send", "create", "open_workspace"} and args.get("prompt"):
+            available = get_store().available(scope)
+            if available and "image_refs" not in args:
+                return ToolResult(
+                    False,
+                    {
+                        "status": "image_selection_required",
+                        "available_images": available,
+                        "reason": (
+                            "Select the image_refs used by this work order; use [] only if this "
+                            "task does not use any images. No task has been sent."
+                        ),
+                    },
+                )
+
         from jarvis.core.delegation import current_delegation_origin, origin_metadata
 
-        token = current_delegation_origin.set(origin_metadata(
-            language=str(ctx.config.get("output_language") or ""),
-        ))
+        token = current_delegation_origin.set(
+            origin_metadata(
+                language=str(ctx.config.get("output_language") or ""),
+            )
+        )
         try:
-            result = await self.gateway.run(args, trace_id=str(ctx.trace_id))
+            result = await self.gateway.run(
+                {**args, "_image_scope": scope},
+                trace_id=str(ctx.trace_id),
+            )
         except ValueError as exc:
             # Invalid arguments go back to the model as the tool error.
             return ToolResult(success=False, output=None, error=str(exc))

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import re
 import threading
 import time
@@ -166,6 +167,11 @@ def _is_request_id(value: str) -> bool:
     except ValueError:  # not a UUID is the answer, not a failure
         return False
     return True
+
+
+def _assignment(args: dict) -> str:
+    """The brief AND its chosen images identify a retry."""
+    return json.dumps([str(args.get("prompt") or "").strip(), args.get("image_refs", [])])
 
 
 class WorkspaceOrchestrator:
@@ -458,6 +464,8 @@ class WorkspaceOrchestrator:
                                 **target,
                                 "request_id": self._issue(target),
                                 "prompt": prompt,
+                                "image_refs": args.get("image_refs", []),
+                                "_image_scope": args.get("_image_scope", ""),
                             },
                             trace_id=trace_id,
                         )
@@ -465,6 +473,7 @@ class WorkspaceOrchestrator:
                     )
                 )
             )
+            result["success"] = all(d.get("status") == "accepted" for d in result["deliveries"])
         return result
 
     async def _announce(self, event_factory: Callable[[], Any]) -> None:
@@ -697,7 +706,10 @@ class WorkspaceOrchestrator:
                 ],
                 prompt,
                 trace_id,
+                image_refs=args.get("image_refs", []),
+                image_scope=args.get("_image_scope", ""),
             )
+            result["success"] = all(d.get("status") == "accepted" for d in result["deliveries"])
         return result
 
     @staticmethod
@@ -734,7 +746,8 @@ class WorkspaceOrchestrator:
         return groups or [(_default_cli(), 1)]
 
     async def _brief(
-        self, targets: list[dict[str, str]], prompt: str, trace_id: str
+        self, targets: list[dict[str, str]], prompt: str, trace_id: str,
+        *, image_refs: list[str] | None = None, image_scope: str = "",
     ) -> list[dict[str, Any]]:
         return list(
             await asyncio.gather(
@@ -745,6 +758,8 @@ class WorkspaceOrchestrator:
                             **target,
                             "request_id": self._issue(target),
                             "prompt": prompt,
+                            "image_refs": image_refs or [],
+                            "_image_scope": image_scope,
                         },
                         trace_id=trace_id,
                     )
@@ -813,7 +828,7 @@ class WorkspaceOrchestrator:
         """
         given = {key: str(args.get(key) or "").strip() for key in _TARGET_KEYS}
         request_id = str(args.get("request_id") or "").strip()
-        prompt = str(args.get("prompt") or "").strip()
+        prompt = _assignment(args)
         with self._issued_lock:
             issued = dict(self._issued)
         match = request_id if request_id in issued else ""
@@ -855,6 +870,16 @@ class WorkspaceOrchestrator:
 
     async def run(self, args: dict[str, Any], *, trace_id: str = "") -> dict[str, Any]:
         action = args.get("action")
+        from jarvis.core.image_references import get_store
+
+        refs = args.get("image_refs", [])
+        image_scope = str(args.get("_image_scope") or "")
+        if refs and action not in {"create", "open_workspace", "send"}:
+            raise ValueError("Image references belong to create, open_workspace or send only.")
+        if refs and not str(args.get("prompt") or "").strip():
+            raise ValueError("Image references require a specific task prompt.")
+        if action in {"create", "open_workspace"}:
+            get_store().resolve(image_scope, refs)
         if action in {"inspect", "resolve"}:
             graph = await asyncio.to_thread(self.graph)
             return graph if action == "inspect" else self.resolve(args, graph)
@@ -880,15 +905,16 @@ class WorkspaceOrchestrator:
                 # Nothing usable to key on: derive a key so an immediate retry
                 # of this same task cannot deliver twice, while the same words
                 # sent again minutes later are a new instruction.
-                seed = f"{terminal_id}\n{prompt}\n{int(time.time() // _RETRY_WINDOW_S)}"
+                seed = f"{terminal_id}\n{prompt}\n{refs}\n{int(time.time() // _RETRY_WINDOW_S)}"
                 request_id = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:32]
-            self._mark_sent(request_id, prompt)
+            self._mark_sent(request_id, _assignment(args))
             previous = await asyncio.to_thread(
                 self.ledger.claim,
                 "workspace-orchestration",
                 request_id,
                 "send",
-                {**target, "prompt": prompt},
+                {**target, "prompt": prompt, "image_refs": refs,
+                 **({"image_scope": image_scope} if refs else {})},
                 0,
             )
             if previous is not None:
@@ -918,17 +944,17 @@ class WorkspaceOrchestrator:
                         "workspace_id": workspace_id,
                         "terminal_id": terminal_id,
                         **(
-                            {"prompt": prompt}
+                            {"prompt": prompt, "image_refs": refs, "_image_scope": image_scope}
                             if action == "send"
                             else {"limit": args.get("limit", 30)}
                         ),
                     }
                 )
                 result = {
-                    "status": delivery.get("delivery", "observed"),
+                    **delivery,
+                    "status": delivery.get("delivery", delivery.get("status", "observed")),
                     "target": target,
                     "trace_id": trace_id,
-                    **delivery,
                 }
             except SessionError as exc:
                 # The coding-session adapter documents SessionError as a

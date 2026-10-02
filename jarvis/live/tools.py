@@ -490,6 +490,9 @@ class LiveTools:
         return sanitized
 
     async def close(self) -> None:
+        from jarvis.core.image_references import get_store
+
+        get_store().clear_scope("live:" + self.session_id)
         self.accepting = False
         await self._cancel_confirmations("voice_session_closed")
 

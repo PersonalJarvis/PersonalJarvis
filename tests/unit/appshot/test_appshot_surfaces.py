@@ -91,7 +91,9 @@ async def test_gpt_live_puts_the_appshot_into_the_backend_silently() -> None:
     assert kinds == ["session.thinking.append", "response.item.create"]
     assert "response.create" not in kinds, "the user's next words are the question"
     content = session._connection.sent[1]["item"]["content"]
-    assert content[0] == {"type": "input_text", "text": "APPSHOT: note"}
+    assert content[0]["type"] == "input_text"
+    assert content[0]["text"].startswith("APPSHOT: note\n")
+    assert "image_refs" in content[0]["text"]
     assert content[1]["image_url"] == "data:image/jpeg;base64," + base64.b64encode(
         b"jpeg"
     ).decode("ascii")
