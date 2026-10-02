@@ -335,6 +335,8 @@ export function DictationView({ hideHeader = false }: DictationViewProps = {}) {
             />
             {status?.hotkey && (
               <ShortcutsStatusNote
+                surface="dictation"
+                variant="compact"
                 status={keybinds?.shortcuts_status}
                 onChanged={() => void refetchKeybinds()}
                 className="mt-block"

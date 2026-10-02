@@ -38,6 +38,9 @@ export function usePermissions() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<PermissionId | null>(null);
+  // How many returns to the window were followed by a finished re-read. The page uses it to
+  // tell "the person came back from System Settings and the row was read again".
+  const [returns, setReturns] = useState(0);
   const inflight = useRef<Promise<void> | null>(null);
   const mounted = useRef(true);
 
@@ -83,7 +86,12 @@ export function usePermissions() {
 
   useEffect(() => {
     void refetch();
-    return onSharedReturnToWindow(() => void refetch({ activated: true }));
+    return onSharedReturnToWindow(
+      () =>
+        void refetch({ activated: true }).then(() => {
+          if (mounted.current) setReturns((count) => count + 1);
+        }),
+    );
   }, [refetch]);
 
   /** Run a gesture, then read the page again so the row shows what macOS now says. */
@@ -105,6 +113,7 @@ export function usePermissions() {
     loading,
     error,
     pendingId,
+    returns,
     refetch,
     request: (id: PermissionId, options?: PermissionRequestOptions): Promise<PermissionEnsurePayload> =>
       act(id, () => requestPermission(id, options)),

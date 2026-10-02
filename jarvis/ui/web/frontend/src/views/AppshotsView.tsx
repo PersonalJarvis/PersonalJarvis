@@ -386,6 +386,8 @@ export function AppshotsView() {
                 >
                   {settings.hotkey && settings.hotkey !== "alt+alt" && (
                     <ShortcutsStatusNote
+                      surface="appshots"
+                      variant="compact"
                       status={keybinds?.shortcuts_status}
                       onChanged={() => void refetchKeybinds()}
                       className="mt-3"

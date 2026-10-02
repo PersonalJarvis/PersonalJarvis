@@ -131,6 +131,19 @@ describe("usePermissions (a passive read)", () => {
     ]);
   });
 
+  it("counts a return only once the page was read again (the page uses it for 'back from Settings')", async () => {
+    const { result } = renderHook(() => usePermissions());
+    await waitFor(() => expect(result.current.snapshot).not.toBeNull());
+    expect(result.current.returns).toBe(0);
+
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+
+    await waitFor(() => expect(result.current.returns).toBe(1), { timeout: 2_000 });
+    expect(reads()).toBe(2);
+  });
+
   it("does not ask the backend anything but reads on mount and on a return (nothing is asked at launch)", async () => {
     const { result } = renderHook(() => usePermissions());
     await waitFor(() => expect(result.current.snapshot).not.toBeNull());

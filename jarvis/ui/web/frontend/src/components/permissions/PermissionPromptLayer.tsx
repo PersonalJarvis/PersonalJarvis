@@ -37,7 +37,13 @@ import {
 import { isReadyState, type PermissionId, type PermissionRow } from "@/lib/permissionSnapshot";
 import { cn } from "@/lib/utils";
 import { usePermissionsStore } from "@/store/permissions";
-import { WRAPPING_ACTION_BUTTON, promptActions, type PromptAction } from "./promptActions";
+import {
+  QUIET_ACTION_BUTTON,
+  WRAPPING_ACTION_BUTTON,
+  isSettingsReason,
+  promptActions,
+  type PromptAction,
+} from "./promptActions";
 import { SeeAllPermissionsLink } from "./SeeAllPermissionsLink";
 
 /**
@@ -437,11 +443,18 @@ function PermissionPromptCard({
     missing: unmet.length > 0 ? unmet : undefined,
     launchedAsBundle,
   });
+  // The pane path is one quiet line, and only where it adds something: a card whose way
+  // forward is a switch in System Settings (never one that asks, restarts or confirms),
+  // and never when the sentence already says it.
   const pathKey = `permissions.items.${primary}.path`;
   const path = t(pathKey);
-  const showPath =
-    path !== pathKey && (episode.reason === "denied" || episode.reason === "needs_settings");
+  const settingsCard = isSettingsReason(episode.reason) && !isOutsideAskEpisode(episode);
+  const showPath = path !== pathKey && settingsCard && !sentence.includes(path);
   const primaryAction = actions[0] !== "not_now" ? actions[0] : null;
+  // The steps list adds something only once part of the episode is done: until then the
+  // sentence already names everything that is missing, and a list would say it again.
+  const showSteps =
+    episode.permissions.length > 1 && Object.keys(rows).length > 0 && unmet.length < episode.permissions.length;
 
   return (
     <div
@@ -466,7 +479,7 @@ function PermissionPromptCard({
             {sentence}
           </p>
 
-          {episode.permissions.length > 1 && (
+          {showSteps && (
             <ol
               aria-label={t("permissions.prompt.steps_label")}
               className="mt-2 space-y-1"
@@ -500,7 +513,7 @@ function PermissionPromptCard({
 
           {showPath && (
             <p className="mt-1 break-words text-muted-foreground" data-testid="permission-prompt-path">
-              {fill(t("permissions.path_label"), { path })}
+              {path}
             </p>
           )}
           {/* The dedicated outside sentence above already names the grantee. */}
@@ -526,14 +539,14 @@ function PermissionPromptCard({
             </details>
           )}
 
-          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
             {actions.map((action) => (
               <Button
                 key={action}
                 type="button"
                 size="sm"
-                className={WRAPPING_ACTION_BUTTON}
-                variant={action === primaryAction ? "default" : action === "not_now" ? "ghost" : "outline"}
+                className={cn(WRAPPING_ACTION_BUTTON, action === "not_now" && QUIET_ACTION_BUTTON)}
+                variant={action === primaryAction ? "default" : action === "not_now" ? "link" : "outline"}
                 disabled={busy !== null && action !== "not_now"}
                 onClick={handlers[action]}
                 data-action={action}
@@ -552,8 +565,14 @@ function PermissionPromptCard({
                 {fill(t("permissions.prompt.more"), { n: more })}
               </button>
             )}
-            <SeeAllPermissionsLink />
           </div>
+          {/* A quiet text link, not a button in the row: it is the way to the whole list,
+              not a step of this card. Only where Settings is the way forward. */}
+          {settingsCard && (
+            <div className="-ml-1.5 mt-0.5">
+              <SeeAllPermissionsLink />
+            </div>
+          )}
         </div>
       </div>
     </div>

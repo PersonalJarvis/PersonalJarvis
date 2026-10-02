@@ -79,9 +79,7 @@ describe("InlinePermissionNote", () => {
     render(<InlinePermissionNote feature="wake_word" />);
 
     const sentence = screen.getByTestId("inline-permission-sentence").textContent ?? "";
-    expect(sentence).toBe(
-      "The wake word cannot work because access to “Microphone” is turned off for Personal Jarvis. Turn it on in System Settings, then come back.",
-    );
+    expect(sentence).toBe("The wake word cannot work because Personal Jarvis has no access to “Microphone”.");
     expect(screen.getByTestId("inline-permission-note").textContent).not.toContain("BACKEND DETAIL");
     expect(screen.getByTestId("inline-permission-note").getAttribute("data-phase")).toBe("blocked");
   });
@@ -117,7 +115,7 @@ describe("InlinePermissionNote", () => {
       },
     });
     render(<InlinePermissionNote feature="wake_word" />);
-    expect(screen.getByTestId("inline-permission-sentence").textContent).toContain("turned off for Acme Voice");
+    expect(screen.getByTestId("inline-permission-sentence").textContent).toContain("Acme Voice has no access to");
   });
 
   it("registers as the feature's inline surface only while it shows something (the card stays quiet)", () => {
@@ -142,19 +140,53 @@ describe("InlinePermissionNote", () => {
     expect(screen.queryAllByRole("button")).toHaveLength(0);
   });
 
-  it("offers Open System Settings and Check again, and opens the pane from the click", async () => {
+  it("offers ONE action, Open System Settings, and opens the pane from the click", async () => {
     publish("PermissionNeeded", needed());
     render(<InlinePermissionNote feature="wake_word" />);
 
     const open = screen.getByRole("button", { name: "Open System Settings" });
-    expect(screen.getByRole("button", { name: "Check again" })).toBeTruthy();
-    // An inline note is passive status: no "Not now", no "Reset".
+    // An inline note is passive status: no "Not now", no "Reset", and nothing to "check"
+    // before the person went to Settings (the watcher notices a grant by itself).
     expect(screen.queryByRole("button", { name: "Not now" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Check again" })).toBeNull();
 
     fireEvent.click(open);
     await waitFor(() =>
       expect(calls.some((call) => call.url.startsWith("/api/permissions/microphone/open-settings") && call.method === "POST")).toBe(true),
     );
+  });
+
+  it("offers Check again only after the person came back from Settings and the note is still there", async () => {
+    publish("PermissionNeeded", needed());
+    render(<InlinePermissionNote feature="wake_word" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Open System Settings" }));
+    await waitFor(() => expect(calls.some((call) => call.url.includes("/open-settings"))).toBe(true));
+    expect(screen.queryByRole("button", { name: "Check again" })).toBeNull();
+
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    const check = await screen.findByRole("button", { name: "Check again" }, { timeout: 2_000 });
+
+    fireEvent.click(check);
+    await waitFor(() => expect(calls.some((call) => call.url.startsWith("/api/permissions/microphone") && call.method === "GET")).toBe(true));
+    expect(await screen.findByTestId("inline-permission-message")).toBeTruthy();
+  });
+
+  it("carries the quiet 'See all permissions' link only where Settings is the way forward", () => {
+    publish("PermissionNeeded", needed());
+    const { unmount } = render(<InlinePermissionNote feature="wake_word" />);
+    expect(screen.getByRole("button", { name: "See all permissions" })).toBeTruthy();
+    unmount();
+
+    cleanup();
+    usePermissionsStore.setState({ ...EMPTY_PROMPTS, inline: {}, owner: true, snapshot: null, dictationNote: null });
+    publish("PermissionNeeded", needed({ reason: "not_determined", can_prompt: true, can_open_settings: false }));
+    render(<InlinePermissionNote feature="wake_word" />);
+    // Asking: a Continue button, and no list to browse.
+    expect(screen.getByRole("button", { name: "Continue" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "See all permissions" })).toBeNull();
   });
 
   it("asks macOS from the Continue click with the feature attached, never before", async () => {

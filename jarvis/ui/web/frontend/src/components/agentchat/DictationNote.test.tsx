@@ -131,7 +131,7 @@ describe("a press that did nothing, explained at the dictation button", () => {
     refuse("microphone_unavailable");
 
     expect(screen.getByTestId("dictation-permission-note").textContent).toContain(
-      "Dictation cannot work because access to “Microphone” is turned off",
+      "Dictation cannot work because Personal Jarvis has no access to “Microphone”.",
     );
     fireEvent.click(screen.getByRole("button", { name: "Open System Settings" }));
     await waitFor(() =>

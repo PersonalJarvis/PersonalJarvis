@@ -6,12 +6,14 @@ import { hasEmbeddedDesktopBridge } from "@/lib/embeddedDesktop";
 import { useInlinePermission } from "@/hooks/useInlinePermission";
 import { useRestartApp } from "@/hooks/useRestartApp";
 import { fill, useT, useUiLanguage } from "@/i18n";
+import { onSharedReturnToWindow } from "@/lib/focusRefresh";
 import type {
   PermissionNeededPhase,
   PermissionNeededReason,
 } from "@/lib/permissionEvents";
 import {
   FALLBACK_APP_NAME,
+  isOutsideAskEpisode,
   listPermissionNames,
   outsideCopyKeys,
   promptSentence,
@@ -26,7 +28,7 @@ import {
 import { isReadyState, type PermissionId } from "@/lib/permissionSnapshot";
 import { cn } from "@/lib/utils";
 import { usePermissionsStore } from "@/store/permissions";
-import { WRAPPING_ACTION_BUTTON, promptActions, type PromptAction } from "./promptActions";
+import { WRAPPING_ACTION_BUTTON, isSettingsReason, promptActions, type PromptAction } from "./promptActions";
 import { SeeAllPermissionsLink } from "./SeeAllPermissionsLink";
 
 /**
@@ -72,7 +74,9 @@ type MessageKey =
  * The buttons of an inline note: the same reason table as the floating card
  * (`promptActions`), minus "Not now" (an inline note is passive status, it has
  * no card to dismiss) and minus "Reset and ask again" (that stays on the
- * Privacy page, where a person looks for it).
+ * Privacy page, where a person looks for it). As on the card, "Check again"
+ * shows only once the person came back from System Settings and the note is
+ * still there (a grant removes it by itself).
  *
  * Only the embedded desktop window may show them: a remote browser must never
  * offer host-only actions (System Settings on another computer).
@@ -81,6 +85,8 @@ function useNoteActions(episode: PromptEpisode | null, feature: string) {
   const restartApp = useRestartApp();
   const [busy, setBusy] = useState<PromptAction | null>(null);
   const [message, setMessage] = useState<MessageKey | null>(null);
+  const [openedSettings, setOpenedSettings] = useState(false);
+  const [returned, setReturned] = useState(false);
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -88,6 +94,11 @@ function useNoteActions(episode: PromptEpisode | null, feature: string) {
       mounted.current = false;
     };
   }, []);
+  // Listen for the return only after this note sent the person to System Settings.
+  useEffect(() => {
+    if (!openedSettings) return undefined;
+    return onSharedReturnToWindow(() => setReturned(true));
+  }, [openedSettings]);
 
   const primary = (episode?.permissions[0] ?? "") as PermissionId | "";
 
@@ -124,6 +135,7 @@ function useNoteActions(episode: PromptEpisode | null, feature: string) {
     open_settings: () =>
       void run("open_settings", async () => {
         if (primary !== "") await openPermissionSettings(primary);
+        if (mounted.current) setOpenedSettings(true);
       }),
     check_again: () =>
       void run("check_again", async () => {
@@ -136,7 +148,7 @@ function useNoteActions(episode: PromptEpisode | null, feature: string) {
     restart: () => void restartApp.restart(),
   };
 
-  return { busy, message, handlers, restartApp };
+  return { busy, message, handlers, restartApp, returned };
 }
 
 export interface InlinePermissionNoteProps {
@@ -229,7 +241,7 @@ export function InlinePermissionNote({
   }, [grantedAt, holdMs]);
 
   const embedded = hasEmbeddedDesktopBridge();
-  const { busy, message, handlers, restartApp } = useNoteActions(episode, feature);
+  const { busy, message, handlers, restartApp, returned } = useNoteActions(episode, feature);
 
   if (!visible) return null;
   const name = appName || FALLBACK_APP_NAME;
@@ -245,8 +257,9 @@ export function InlinePermissionNote({
       sentence = promptSentence({ t, language, episode, appName: name, launchedAsBundle });
       actions = embedded
         ? promptActions(episode, {
-            returnedFromSettings: false,
-            stillOff: false,
+            returnedFromSettings: returned,
+            // The note is still on screen, so the permission still reads off.
+            stillOff: true,
             canReset: false,
           }).filter((action) => action !== "not_now")
         : [];
@@ -318,7 +331,10 @@ export function InlinePermissionNote({
                 {label(action)}
               </Button>
             ))}
-            <SeeAllPermissionsLink />
+            {/* Only where Settings is the way forward; a note that asks or confirms needs no list. */}
+            {episode && isSettingsReason(episode.reason) && !isOutsideAskEpisode(episode) && (
+              <SeeAllPermissionsLink />
+            )}
           </div>
         )}
       </div>

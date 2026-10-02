@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { EMPTY_PROMPTS } from "@/lib/permissionPrompts";
+import { isShortcutsNoteDismissed, shortcutsNoteKey } from "@/lib/shortcutsNoteDismissal";
 import { usePermissionsStore } from "@/store/permissions";
 import { ShortcutsStatusNote, shortcutsNoteMode } from "./ShortcutsStatusNote";
 
@@ -51,6 +52,7 @@ const NEEDS = { state: "needs_input_monitoring", detail: "English backend senten
 
 beforeEach(() => {
   calls = [];
+  window.localStorage.clear();
   requestAnswer = {
     permission: "input_monitoring",
     outcome: "pending",
@@ -73,6 +75,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   setEmbedded(false);
+  window.localStorage.clear();
   vi.unstubAllGlobals();
 });
 
@@ -122,7 +125,7 @@ describe("shortcutsNoteMode", () => {
 
 describe("ShortcutsStatusNote", () => {
   it("renders nothing and asks nothing when the shortcuts work", () => {
-    render(<ShortcutsStatusNote status={{ state: "ready", detail: "" }} />);
+    render(<ShortcutsStatusNote surface="shortcuts" status={{ state: "ready", detail: "" }} />);
     expect(screen.queryByTestId("shortcuts-status-note")).toBeNull();
     expect(calls).toEqual([]);
   });
@@ -131,12 +134,12 @@ describe("ShortcutsStatusNote", () => {
     usePermissionsStore.setState({
       snapshot: { ...usePermissionsStore.getState().snapshot!, platform: "win32" },
     });
-    render(<ShortcutsStatusNote status={NEEDS} />);
+    render(<ShortcutsStatusNote surface="shortcuts" status={NEEDS} />);
     expect(screen.queryByTestId("shortcuts-status-note")).toBeNull();
   });
 
   it("explains in a full sentence, never the backend's English, and never says 'denied'", () => {
-    render(<ShortcutsStatusNote status={NEEDS} />);
+    render(<ShortcutsStatusNote surface="shortcuts" status={NEEDS} />);
     const sentence = screen.getByTestId("shortcuts-status-sentence").textContent ?? "";
     expect(sentence).toContain("Shortcuts work in other apps once you allow Input Monitoring");
     expect(sentence).not.toContain("English backend sentence");
@@ -146,7 +149,7 @@ describe("ShortcutsStatusNote", () => {
 
   it("asks macOS only from the Enable click, with the feature, then reads the status again", async () => {
     const onChanged = vi.fn();
-    render(<ShortcutsStatusNote status={NEEDS} onChanged={onChanged} />);
+    render(<ShortcutsStatusNote surface="shortcuts" status={NEEDS} onChanged={onChanged} />);
     expect(calls).toEqual([]);
 
     fireEvent.click(screen.getByRole("button", { name: "Enable global shortcuts" }));
@@ -163,16 +166,26 @@ describe("ShortcutsStatusNote", () => {
 
   it("leads to the Settings switch when macOS needs the person to flip it", async () => {
     requestAnswer = { ...requestAnswer, outcome: "needs_settings", reason: "needs_settings" };
-    render(<ShortcutsStatusNote status={NEEDS} />);
+    render(<ShortcutsStatusNote surface="shortcuts" status={NEEDS} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Enable global shortcuts" }));
 
     await waitFor(() => expect(screen.getByTestId("shortcuts-status-note").getAttribute("data-mode")).toBe("blocked"));
-    expect(screen.getByTestId("shortcuts-status-sentence").textContent).toContain("under Input Monitoring");
+    expect(screen.getByTestId("shortcuts-status-sentence").textContent).toBe(
+      "Switch on Personal Jarvis under Input Monitoring. The buttons and your voice keep working meanwhile.",
+    );
+    // ONE primary; "Check again" waits until the person came back from System Settings.
+    expect(screen.queryByRole("button", { name: "Check again" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Open System Settings" }));
     await waitFor(() =>
       expect(calls.some((call) => call.url.startsWith("/api/permissions/input_monitoring/open-settings"))).toBe(true),
     );
+    expect(screen.queryByRole("button", { name: "Check again" })).toBeNull();
+
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    expect(await screen.findByRole("button", { name: "Check again" }, { timeout: 2_000 })).toBeTruthy();
   });
 
   it("names this copy and asks again only after the person confirms (a .app outside Applications)", async () => {
@@ -183,7 +196,7 @@ describe("ShortcutsStatusNote", () => {
       outside_installed_app: true,
       can_prompt: true,
     };
-    render(<ShortcutsStatusNote status={NEEDS} />);
+    render(<ShortcutsStatusNote surface="shortcuts" status={NEEDS} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Enable global shortcuts" }));
 
@@ -197,7 +210,7 @@ describe("ShortcutsStatusNote", () => {
   });
 
   it("offers Quit and reopen when the tap is up but hears nothing", () => {
-    render(<ShortcutsStatusNote status={{ state: "ready", detail: "English restart hint" }} />);
+    render(<ShortcutsStatusNote surface="shortcuts" status={{ state: "ready", detail: "English restart hint" }} />);
     expect(screen.getByTestId("shortcuts-status-note").getAttribute("data-mode")).toBe("restart");
     expect(screen.getByTestId("shortcuts-status-sentence").textContent).not.toContain("English restart hint");
     expect(screen.getByRole("button", { name: "Quit and reopen" })).toBeTruthy();
@@ -205,13 +218,16 @@ describe("ShortcutsStatusNote", () => {
 
   it("explains without buttons in a remote browser", () => {
     setEmbedded(false);
-    render(<ShortcutsStatusNote status={NEEDS} />);
+    render(<ShortcutsStatusNote surface="shortcuts" status={NEEDS} />);
     expect(screen.getByTestId("shortcuts-status-sentence")).toBeTruthy();
-    expect(screen.queryAllByRole("button")).toHaveLength(0);
+    // Closing the note is not a host action, so it stays; nothing else is offered.
+    expect(screen.queryAllByRole("button").map((button) => button.getAttribute("data-testid"))).toEqual([
+      "shortcuts-status-dismiss",
+    ]);
   });
 
   it("registers as the inline surface so the card does not repeat it", () => {
-    const { unmount } = render(<ShortcutsStatusNote status={NEEDS} />);
+    const { unmount } = render(<ShortcutsStatusNote surface="shortcuts" status={NEEDS} />);
     expect(usePermissionsStore.getState().inline).toEqual({ global_shortcuts: 1 });
     unmount();
     expect(usePermissionsStore.getState().inline).toEqual({});
@@ -219,7 +235,7 @@ describe("ShortcutsStatusNote", () => {
 
   it("reads the status again when the grant arrives, and confirms it", async () => {
     const onChanged = vi.fn();
-    const { rerender } = render(<ShortcutsStatusNote status={NEEDS} onChanged={onChanged} />);
+    const { rerender } = render(<ShortcutsStatusNote surface="shortcuts" status={NEEDS} onChanged={onChanged} />);
 
     act(() => {
       usePermissionsStore
@@ -228,10 +244,146 @@ describe("ShortcutsStatusNote", () => {
     });
     await waitFor(() => expect(onChanged).toHaveBeenCalled());
 
-    rerender(<ShortcutsStatusNote status={{ state: "ready", detail: "" }} onChanged={onChanged} />);
+    rerender(<ShortcutsStatusNote surface="shortcuts" status={{ state: "ready", detail: "" }} onChanged={onChanged} />);
     expect(screen.getByTestId("shortcuts-status-note").getAttribute("data-mode")).toBe("allowed");
     expect(screen.getByTestId("shortcuts-status-sentence").textContent).toBe(
       "Input Monitoring allowed. Global shortcuts are on.",
     );
+  });
+});
+
+describe("closing the note (Not now), remembered per surface", () => {
+  it("every instance has a keyboard-reachable close button, and closing hides it and remembers it", () => {
+    render(<ShortcutsStatusNote surface="shortcuts" status={NEEDS} />);
+    const close = screen.getByRole("button", { name: "Dismiss" });
+    expect(close.tagName).toBe("BUTTON");
+
+    fireEvent.click(close);
+
+    expect(screen.queryByTestId("shortcuts-status-note")).toBeNull();
+    expect(window.localStorage.getItem(shortcutsNoteKey("shortcuts"))).toBe("1");
+    expect(isShortcutsNoteDismissed("shortcuts")).toBe(true);
+  });
+
+  it("stays closed on the next visit, whatever episode the permission is in", () => {
+    window.localStorage.setItem(shortcutsNoteKey("shortcuts"), "1");
+    const { rerender } = render(<ShortcutsStatusNote surface="shortcuts" status={NEEDS} />);
+    expect(screen.queryByTestId("shortcuts-status-note")).toBeNull();
+
+    // A different state of the same unfinished permission does not bring it back either.
+    rerender(
+      <ShortcutsStatusNote surface="shortcuts" status={{ state: "ready", detail: "English restart hint" }} />,
+    );
+    expect(screen.queryByTestId("shortcuts-status-note")).toBeNull();
+  });
+
+  it("keeps a key per surface: closing it on the Dictation page leaves the Shortcuts page alone", () => {
+    const { unmount } = render(<ShortcutsStatusNote surface="dictation" variant="compact" status={NEEDS} />);
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(window.localStorage.getItem(shortcutsNoteKey("dictation"))).toBe("1");
+    expect(window.localStorage.getItem(shortcutsNoteKey("shortcuts"))).toBeNull();
+    unmount();
+
+    render(<ShortcutsStatusNote surface="shortcuts" status={NEEDS} />);
+    expect(screen.getByTestId("shortcuts-status-note")).toBeTruthy();
+  });
+
+  it("does not stand in for the floating card once it is closed", () => {
+    window.localStorage.setItem(shortcutsNoteKey("shortcuts"), "1");
+    render(<ShortcutsStatusNote surface="shortcuts" status={NEEDS} />);
+    expect(usePermissionsStore.getState().inline).toEqual({});
+  });
+
+  it("comes back after the shortcuts worked (status ready), so a later loss is explained again", () => {
+    window.localStorage.setItem(shortcutsNoteKey("shortcuts"), "1");
+    window.localStorage.setItem(shortcutsNoteKey("dictation"), "1");
+    const { rerender } = render(<ShortcutsStatusNote surface="shortcuts" status={NEEDS} />);
+    expect(screen.queryByTestId("shortcuts-status-note")).toBeNull();
+
+    rerender(<ShortcutsStatusNote surface="shortcuts" status={{ state: "ready", detail: "" }} />);
+    // Every surface's closing is forgotten, not only the one that saw the change.
+    expect(window.localStorage.getItem(shortcutsNoteKey("shortcuts"))).toBeNull();
+    expect(window.localStorage.getItem(shortcutsNoteKey("dictation"))).toBeNull();
+
+    rerender(<ShortcutsStatusNote surface="shortcuts" status={NEEDS} />);
+    expect(screen.getByTestId("shortcuts-status-note")).toBeTruthy();
+  });
+
+  it("works with no storage at all: it still closes for this visit and never throws", () => {
+    const broken = {
+      getItem: () => {
+        throw new DOMException("denied", "SecurityError");
+      },
+      setItem: () => {
+        throw new DOMException("denied", "SecurityError");
+      },
+      removeItem: () => {
+        throw new DOMException("denied", "SecurityError");
+      },
+    };
+    const original = Object.getOwnPropertyDescriptor(window, "localStorage");
+    Object.defineProperty(window, "localStorage", { configurable: true, value: broken });
+    try {
+      render(<ShortcutsStatusNote surface="shortcuts" status={NEEDS} />);
+      expect(screen.getByTestId("shortcuts-status-note")).toBeTruthy(); // unreadable store: not closed
+
+      fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+
+      expect(screen.queryByTestId("shortcuts-status-note")).toBeNull();
+    } finally {
+      if (original) Object.defineProperty(window, "localStorage", original);
+    }
+  });
+
+  it("offers no close button on the transient answers (macOS asking, the allowed confirmation)", async () => {
+    render(<ShortcutsStatusNote surface="shortcuts" status={NEEDS} />);
+    fireEvent.click(screen.getByRole("button", { name: "Enable global shortcuts" }));
+    await waitFor(() => expect(screen.getByTestId("shortcuts-status-note").getAttribute("data-mode")).toBe("asking"));
+
+    expect(screen.queryByTestId("shortcuts-status-dismiss")).toBeNull();
+  });
+});
+
+describe("the compact variant (Dictation, Appshots)", () => {
+  it("is one quiet line: a short sentence, one word of action, a close button", () => {
+    render(<ShortcutsStatusNote surface="dictation" variant="compact" status={NEEDS} />);
+
+    const note = screen.getByTestId("shortcuts-status-note");
+    expect(note.getAttribute("data-variant")).toBe("compact");
+    expect(screen.getByTestId("shortcuts-status-sentence").textContent).toBe(
+      "Shortcuts need Input Monitoring to work in other apps.",
+    );
+    // The visible word is short, the accessible name is the full action.
+    const enable = screen.getByRole("button", { name: "Enable global shortcuts" });
+    expect(enable.textContent).toBe("Enable");
+    expect(screen.getByRole("button", { name: "Dismiss" })).toBeTruthy();
+    expect(note.textContent).not.toContain("Buttons and voice work without it");
+  });
+
+  it("asks from the click like the full note", async () => {
+    render(<ShortcutsStatusNote surface="appshots" variant="compact" status={NEEDS} />);
+    fireEvent.click(screen.getByRole("button", { name: "Enable global shortcuts" }));
+
+    await waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0].body).toEqual({ feature: "global_shortcuts" });
+  });
+
+  it("keeps the full wording once it reports what the person just did", async () => {
+    requestAnswer = { ...requestAnswer, outcome: "needs_settings", reason: "needs_settings" };
+    render(<ShortcutsStatusNote surface="dictation" variant="compact" status={NEEDS} />);
+    fireEvent.click(screen.getByRole("button", { name: "Enable global shortcuts" }));
+
+    await waitFor(() => expect(screen.getByTestId("shortcuts-status-note").getAttribute("data-mode")).toBe("blocked"));
+    expect(screen.getByTestId("shortcuts-status-note").getAttribute("data-variant")).toBe("full");
+    expect(screen.getByTestId("shortcuts-status-sentence").textContent).toContain("under Input Monitoring");
+  });
+
+  it("explains without an action in a remote browser, and can still be closed", () => {
+    setEmbedded(false);
+    render(<ShortcutsStatusNote surface="dictation" variant="compact" status={NEEDS} />);
+
+    expect(screen.queryByRole("button", { name: "Enable global shortcuts" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByTestId("shortcuts-status-note")).toBeNull();
   });
 });

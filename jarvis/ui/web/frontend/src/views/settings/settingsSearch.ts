@@ -21,7 +21,7 @@ const SEARCH_GROUPS: readonly { id: string; keys: readonly string[]; rootKeys?: 
   {
     id: "permissions",
     keys: ["nav.permissions"],
-    rootKeys: ["permissions.title", "permissions.items"],
+    rootKeys: ["permissions.description", "permissions.items"],
   },
   { id: "realtime-voice", keys: ["realtime_voice"] },
   { id: "system-prompt", keys: ["system_prompt"] },

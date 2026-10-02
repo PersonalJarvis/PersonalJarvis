@@ -149,6 +149,7 @@ export function ShortcutsTab({ hideHeader = false }: ShortcutsTabProps = {}) {
           {/* What global shortcuts need from macOS, said once for the three
               keys below (one status for the whole tap, not one per row). */}
           <ShortcutsStatusNote
+            surface="voice-shortcuts"
             status={config?.shortcuts_status}
             onChanged={() => void refetch()}
             className="rounded-xl border border-border bg-card p-4"

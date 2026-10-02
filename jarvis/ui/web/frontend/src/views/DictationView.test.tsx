@@ -486,9 +486,11 @@ describe("DictationView permissions, said beside the control that needs them", (
 
   beforeEach(() => {
     useEventStore.setState({ toasts: [] });
+    window.localStorage.clear();
     onMac();
   });
   afterEach(() => {
+    window.localStorage.clear();
     delete (window as unknown as { __JARVIS_EMBEDDED_DESKTOP?: boolean }).__JARVIS_EMBEDDED_DESKTOP;
   });
 
@@ -510,7 +512,36 @@ describe("DictationView permissions, said beside the control that needs them", (
 
     const note = await screen.findByTestId("shortcuts-status-note");
     expect(note.textContent).not.toContain("English backend sentence");
+    // One quiet line on this page, not the three-line explanation of the Shortcuts page.
+    expect(note.getAttribute("data-variant")).toBe("compact");
+    expect(note.textContent).toContain("Shortcuts need Input Monitoring to work in other apps");
     expect(screen.getByRole("button", { name: "Enable global shortcuts" })).toBeTruthy();
+  });
+
+  it("lets the person close that note, and keeps it closed on the next visit", async () => {
+    installFetchMock(
+      defaultRoutes([TODAY_ENTRY], {
+        "GET /api/settings/keybinds": () => ({
+          body: {
+            keybinds: {},
+            defaults: {},
+            suggestions: [],
+            restart_required: false,
+            shortcuts_status: { state: "needs_input_monitoring", detail: "" },
+          },
+        }),
+      }),
+    );
+    const { unmount } = render(<DictationView />);
+    await screen.findByTestId("shortcuts-status-note");
+
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByTestId("shortcuts-status-note")).toBeNull();
+    unmount();
+
+    render(<DictationView />);
+    await screen.findByTestId("dictation-toggle");
+    expect(screen.queryByTestId("shortcuts-status-note")).toBeNull();
   });
 
   it("explains a refused Start through the permission note instead of an English error toast", async () => {

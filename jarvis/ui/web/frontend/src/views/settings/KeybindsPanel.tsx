@@ -44,6 +44,7 @@ export function KeybindsPanel({ bare = false }: { bare?: boolean } = {}) {
       {error && <p className="text-meta text-destructive">{error}</p>}
       {!bare && (
         <ShortcutsStatusNote
+          surface="settings-keybinds"
           status={config?.shortcuts_status}
           onChanged={() => void refetch()}
           className="mb-stack rounded-md bg-secondary p-3"

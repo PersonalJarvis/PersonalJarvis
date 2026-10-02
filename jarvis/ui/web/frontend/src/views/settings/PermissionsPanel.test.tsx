@@ -19,6 +19,7 @@ let platform = "darwin";
 let outside = false;
 let resetStatus = 200;
 let headless = false;
+let neededEpisodes: Array<Record<string, unknown>> = [];
 
 function row(id: string, overrides: Record<string, unknown> = {}) {
   return {
@@ -44,7 +45,7 @@ function snapshotBody() {
     app_identity: { app_name: "Personal Jarvis", bundle_id: "x", bundle_path: null, launched_as_bundle: true, stable: !outside },
     outside_installed_app: outside,
     permissions: permissionRows,
-    needed: [],
+    needed: neededEpisodes,
   };
 }
 
@@ -53,6 +54,7 @@ beforeEach(() => {
   platform = "darwin";
   outside = false;
   resetStatus = 200;
+  neededEpisodes = [];
   permissionRows = [
     row("microphone", { status: "granted", can_request: false, can_reset: false }),
     row("screen_recording", { status: "not_determined" }),
@@ -106,43 +108,149 @@ describe("Settings > Privacy (passive)", () => {
   it("says the app asks only when a feature needs it, with the app name from the snapshot", async () => {
     await renderPanel();
 
-    expect(screen.getByRole("heading", { name: "Privacy" })).toBeTruthy();
+    // ONE title: the Settings nav already says "Privacy", so there is no second heading under it.
+    expect(screen.getAllByRole("heading").map((heading) => heading.textContent)).toEqual(["Privacy"]);
+    expect(screen.queryByText("macOS privacy permissions")).toBeNull();
     expect(screen.getByText(/Personal Jarvis asks only when a feature needs it\./)).toBeTruthy();
   });
 
-  it("shows Granted / Off or not asked / Denied / Restricted, and never the backend's English detail", async () => {
+  it("is one list of rows: icon, title, description, a pill", async () => {
     await renderPanel();
 
-    expect(screen.getByTestId("permission-status-microphone").textContent).toBe("Granted");
-    expect(screen.getByTestId("permission-status-screen_recording").textContent).toBe("Off or not asked");
-    expect(screen.getByTestId("permission-status-accessibility").textContent).toBe("Denied");
+    const list = screen.getByRole("list");
+    expect(within(list).getAllByRole("listitem")).toHaveLength(5);
+    const mic = within(screen.getByTestId("permission-row-microphone"));
+    expect(mic.getByText("Microphone")).toBeTruthy();
+    expect(mic.getByText("Used for voice conversations, dictation and the wake word.")).toBeTruthy();
+  });
+
+  it("uses ONE pill vocabulary: Allowed / Not asked yet / Off / Restricted, and never the backend's English detail", async () => {
+    await renderPanel();
+
+    expect(screen.getByTestId("permission-status-microphone").textContent).toBe("Allowed");
+    expect(screen.getByTestId("permission-status-screen_recording").textContent).toBe("Not asked yet");
+    expect(screen.getByTestId("permission-status-accessibility").textContent).toBe("Off");
     expect(screen.getByTestId("permission-status-input_monitoring").textContent).toBe("Restricted");
     expect(screen.queryByText(/English backend text/)).toBeNull();
   });
 
-  it("puts the textual System Settings path next to 'Open System Settings'", async () => {
+  it("reads 'Not available' and 'Not required' for the rest of the vocabulary", async () => {
+    permissionRows = [
+      row("automation", { status: "unavailable", can_request: false, can_reset: false }),
+      row("credential_store", { status: "not_required", can_request: false, can_open_settings: false, can_reset: false, settings_path: null }),
+    ];
+    render(<PermissionsPanel />);
+    await screen.findByTestId("permission-row-automation");
+
+    expect(screen.getByTestId("permission-status-automation").textContent).toBe("Not available");
+    expect(screen.getByTestId("permission-status-credential_store").textContent).toBe("Not required");
+    expect(screen.queryAllByRole("button")).toHaveLength(0);
+  });
+
+  it("a fresh Mac is calm: every row not asked yet has ONE quiet 'Ask now', and no path, no reset, no hint", async () => {
+    permissionRows = [
+      row("microphone", { status: "not_determined" }),
+      row("screen_recording", { status: "not_granted" }),
+      row("accessibility", { status: "not_granted" }),
+      row("input_monitoring", { status: "not_granted" }),
+      row("automation", { status: "not_determined" }),
+    ];
+    render(<PermissionsPanel />);
+    await screen.findByTestId("permission-row-microphone");
+
+    for (const id of ["microphone", "screen_recording", "accessibility", "input_monitoring", "automation"]) {
+      const view = within(screen.getByTestId(`permission-row-${id}`));
+      expect(screen.getByTestId(`permission-status-${id}`).textContent, id).toBe("Not asked yet");
+      expect(view.getAllByRole("button").map((button) => button.textContent), id).toEqual(["Ask now"]);
+      expect(screen.queryByTestId(`permission-path-${id}`), id).toBeNull();
+    }
+    expect(screen.queryByText(/macOS will not ask for this access again/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Ask again" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Open System Settings" })).toBeNull();
+    // The old "Allow" is gone: a row is asked with "Ask now" only.
+    expect(screen.queryByRole("button", { name: "Allow" })).toBeNull();
+  });
+
+  it("an off row has ONE action, 'Open System Settings', with the textual path as its secondary line", async () => {
     await renderPanel();
     const accessibility = screen.getByTestId("permission-row-accessibility");
 
-    expect(within(accessibility).getByRole("button", { name: "Open System Settings" })).toBeTruthy();
+    expect(within(accessibility).getAllByRole("button").map((button) => button.textContent)).toEqual([
+      "Open System Settings",
+    ]);
     expect(screen.getByTestId("permission-path-accessibility").textContent).toBe(
       "System Settings > Privacy & Security > Accessibility",
     );
   });
 
-  it("offers Allow only where macOS can still be asked, and Ask again only where the backend says so", async () => {
+  it("offers nothing on a row that is allowed, restricted or not required", async () => {
     await renderPanel();
 
-    const screenRow = within(screen.getByTestId("permission-row-screen_recording"));
-    expect(screenRow.getByRole("button", { name: "Allow" })).toBeTruthy();
-    expect(screenRow.getByRole("button", { name: "Ask again" })).toBeTruthy();
+    for (const id of ["microphone", "input_monitoring", "credential_store"]) {
+      expect(within(screen.getByTestId(`permission-row-${id}`)).queryByRole("button"), id).toBeNull();
+      expect(screen.queryByTestId(`permission-path-${id}`), id).toBeNull();
+    }
+  });
 
-    const granted = within(screen.getByTestId("permission-row-microphone"));
-    expect(granted.queryByRole("button", { name: "Allow" })).toBeNull();
-    expect(granted.queryByRole("button", { name: "Ask again" })).toBeNull();
+  it("a binary permission reads 'Not asked yet' until it was asked, then 'Off' with the Settings action", async () => {
+    permissionRows = [row("screen_recording", { status: "not_granted", can_request: true, can_reset: false })];
+    render(<PermissionsPanel />);
+    await screen.findByTestId("permission-row-screen_recording");
+    expect(screen.getByTestId("permission-status-screen_recording").textContent).toBe("Not asked yet");
 
-    const restricted = within(screen.getByTestId("permission-row-input_monitoring"));
-    expect(restricted.queryByRole("button")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Ask now" }));
+
+    await waitFor(() => expect(screen.getByTestId("permission-status-screen_recording").textContent).toBe("Off"));
+    const view = within(screen.getByTestId("permission-row-screen_recording"));
+    expect(view.getAllByRole("button").map((button) => button.textContent)).toEqual(["Open System Settings"]);
+    expect(screen.getByTestId("permission-path-screen_recording")).toBeTruthy();
+  });
+
+  it("reads 'Off' at once when an open episode already says the person was asked (needs_settings)", async () => {
+    permissionRows = [row("screen_recording", { status: "not_granted", can_request: true, can_reset: false })];
+    neededEpisodes = [{ permissions: ["screen_recording"], feature: "computer_use", reason: "needs_settings", phase: "blocked", origin: "user", target: "", can_prompt: false, can_open_settings: true, outside_app: false, detail: "", trace_id: "t", opened_at_ns: 1 }];
+    render(<PermissionsPanel />);
+    await screen.findByTestId("permission-row-screen_recording");
+
+    expect(screen.getByTestId("permission-status-screen_recording").textContent).toBe("Off");
+  });
+
+  it("'Ask again' and the stale-grant hint appear only after coming back from Settings with the row still off", async () => {
+    permissionRows = [row("accessibility", { status: "denied", can_request: false, can_reset: true })];
+    render(<PermissionsPanel />);
+    await screen.findByTestId("permission-row-accessibility");
+    const rowView = () => within(screen.getByTestId("permission-row-accessibility"));
+    expect(rowView().queryByRole("button", { name: "Ask again" })).toBeNull();
+    expect(screen.queryByText(/macOS will not ask for this access again/)).toBeNull();
+
+    fireEvent.click(rowView().getByRole("button", { name: "Open System Settings" }));
+    await waitFor(() => expect(posts("/accessibility/open-settings")).toHaveLength(1));
+    // Opening Settings alone does not make it the stranded case.
+    expect(rowView().queryByRole("button", { name: "Ask again" })).toBeNull();
+
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    expect(await rowView().findByRole("button", { name: "Ask again" }, { timeout: 2_000 })).toBeTruthy();
+    expect(screen.getByText(/macOS will not ask for this access again/)).toBeTruthy();
+  });
+
+  it("does not show 'Ask again' after coming back when the row now reads allowed", async () => {
+    permissionRows = [row("accessibility", { status: "denied", can_request: false, can_reset: true })];
+    render(<PermissionsPanel />);
+    await screen.findByTestId("permission-row-accessibility");
+    fireEvent.click(screen.getByRole("button", { name: "Open System Settings" }));
+    await waitFor(() => expect(posts("/accessibility/open-settings")).toHaveLength(1));
+
+    permissionRows = [row("accessibility", { status: "granted", can_request: false, can_reset: false })];
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+
+    await waitFor(() => expect(screen.getByTestId("permission-status-accessibility").textContent).toBe("Allowed"), {
+      timeout: 2_000,
+    });
+    expect(screen.queryByRole("button", { name: "Ask again" })).toBeNull();
   });
 
   it("has no wizard, no scoring, no banner and no 'Optional' marks", async () => {
@@ -154,11 +262,11 @@ describe("Settings > Privacy (passive)", () => {
     expect(screen.queryByTestId("permissions-setup-all")).toBeNull();
   });
 
-  it("Allow asks, then reads the page again", async () => {
+  it("Ask now asks, then reads the page again", async () => {
     await renderPanel();
     const before = calls.filter((call) => call.method === "GET").length;
 
-    fireEvent.click(within(screen.getByTestId("permission-row-screen_recording")).getByRole("button", { name: "Allow" }));
+    fireEvent.click(within(screen.getByTestId("permission-row-screen_recording")).getByRole("button", { name: "Ask now" }));
 
     await waitFor(() => expect(posts("/screen_recording/request")).toHaveLength(1));
     await waitFor(() => expect(calls.filter((call) => call.method === "GET").length).toBe(before + 1));
@@ -173,15 +281,33 @@ describe("Settings > Privacy (passive)", () => {
   });
 
   it("Ask again resets, says what to do next, and a refused reset (already allowed) is a calm note", async () => {
-    await renderPanel();
-    fireEvent.click(within(screen.getByTestId("permission-row-screen_recording")).getByRole("button", { name: "Ask again" }));
+    // The stranded case: both rows were sent to Settings, the person came back, they still read off.
+    permissionRows = [
+      row("screen_recording", { status: "not_granted", can_request: false, can_reset: true }),
+      row("accessibility", { status: "denied", can_request: false, can_reset: true }),
+    ];
+    render(<PermissionsPanel />);
+    await screen.findByTestId("permission-row-screen_recording");
+    for (const id of ["screen_recording", "accessibility"]) {
+      fireEvent.click(within(screen.getByTestId(`permission-row-${id}`)).getByRole("button", { name: "Open System Settings" }));
+      await waitFor(() => expect(posts(`/${id}/open-settings`)).toHaveLength(1));
+    }
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    const again = (id: string) =>
+      within(screen.getByTestId(`permission-row-${id}`)).findByRole("button", { name: "Ask again" }, { timeout: 2_000 });
+
+    fireEvent.click(await again("screen_recording"));
     await waitFor(() => expect(posts("/screen_recording/reset")).toHaveLength(1));
     await waitFor(() =>
-      expect(useEventStore.getState().toasts.map((toast) => toast.message)).toContain("Reset. Press Allow to be asked again."),
+      expect(useEventStore.getState().toasts.map((toast) => toast.message)).toContain(
+        "Reset. Press Ask now to be asked again.",
+      ),
     );
 
     resetStatus = 409;
-    fireEvent.click(within(screen.getByTestId("permission-row-accessibility")).getByRole("button", { name: "Ask again" }));
+    fireEvent.click(await again("accessibility"));
     await waitFor(() =>
       expect(useEventStore.getState().toasts.map((toast) => toast.message)).toContain(
         "This is already allowed, so there is nothing to reset.",
@@ -189,7 +315,7 @@ describe("Settings > Privacy (passive)", () => {
     );
   });
 
-  it("a Keychain that was declined offers 'Try again', and says where the keys are for now", async () => {
+  it("a Keychain that was declined offers 'Try again' (its one action), and says where the keys are for now", async () => {
     permissionRows = [row("credential_store", { status: "not_granted", can_request: true, can_open_settings: false, can_reset: false, settings_path: null })];
     await (async () => {
       render(<PermissionsPanel />);
@@ -199,15 +325,18 @@ describe("Settings > Privacy (passive)", () => {
     const keychain = within(screen.getByTestId("permission-row-credential_store"));
     expect(keychain.getByRole("button", { name: "Try again" })).toBeTruthy();
     expect(keychain.getByText(/kept in a local file for now/)).toBeTruthy();
+    expect(screen.getByTestId("permission-status-credential_store").textContent).toBe("Off");
+    expect(keychain.getAllByRole("button")).toHaveLength(1);
     expect(screen.queryByTestId("permission-path-credential_store")).toBeNull();
   });
 
-  it("a row that only applies after a restart offers 'Quit and reopen' through the shared restart guard", async () => {
+  it("a row that only applies after a restart offers 'Quit and reopen' (its one action) through the shared restart guard", async () => {
     permissionRows = [row("screen_recording", { status: "not_granted", restart_hint: true, can_request: false })];
     render(<PermissionsPanel />);
     await screen.findByTestId("permission-row-screen_recording");
 
     expect(screen.getByTestId("permission-status-screen_recording").textContent).toBe("Restart needed");
+    expect(within(screen.getByTestId("permission-row-screen_recording")).getAllByRole("button")).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "Quit and reopen" }));
 
     await waitFor(() => expect(posts("/api/settings/restart-app")).toHaveLength(1));
@@ -231,7 +360,7 @@ describe("Settings > Privacy (passive)", () => {
     expect(screen.getByText(/running from outside your Applications folder/)).toBeTruthy();
   });
 
-  it("outside the installed app Allow is the confirmation and sends the consent flag", async () => {
+  it("outside the installed app 'Ask now' is the confirmation and sends the consent flag", async () => {
     outside = true;
     permissionRows = [row("microphone", { status: "not_determined", can_request: true })];
     await renderPanel();
@@ -242,11 +371,11 @@ describe("Settings > Privacy (passive)", () => {
     expect(posts("/api/permissions/microphone/request")[0].body).toEqual({ allow_outside_app: true });
   });
 
-  it("inside the installed app Allow asks without the consent flag", async () => {
+  it("inside the installed app 'Ask now' asks without the consent flag", async () => {
     permissionRows = [row("microphone", { status: "not_determined", can_request: true })];
     await renderPanel();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Allow" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Ask now" }));
 
     await waitFor(() => expect(posts("/api/permissions/microphone/request")).toHaveLength(1));
     expect(posts("/api/permissions/microphone/request")[0].body).toBeUndefined();
@@ -255,7 +384,7 @@ describe("Settings > Privacy (passive)", () => {
   it("shows the rows read-only, with no host action button, in a remote browser", async () => {
     delete (window as unknown as { __JARVIS_EMBEDDED_DESKTOP?: boolean }).__JARVIS_EMBEDDED_DESKTOP;
     permissionRows = [
-      row("screen_recording", { status: "not_determined" }),
+      row("screen_recording", { status: "denied", can_request: false }),
       row("accessibility", { status: "denied", can_request: false, restart_hint: true }),
     ];
     await (async () => {
@@ -264,8 +393,9 @@ describe("Settings > Privacy (passive)", () => {
     })();
 
     expect(screen.getByTestId("permission-status-screen_recording")).toBeTruthy();
+    // The textual path is information, not an action: a remote viewer still reads where to go.
     expect(screen.getByTestId("permission-path-screen_recording")).toBeTruthy();
-    for (const name of ["Allow", "Ask again", "Open System Settings", "Quit and reopen"]) {
+    for (const name of ["Ask now", "Ask again", "Open System Settings", "Quit and reopen"]) {
       expect(screen.queryByRole("button", { name })).toBeNull();
     }
   });
@@ -277,7 +407,7 @@ describe("Settings > Privacy (passive)", () => {
     await screen.findByTestId("permission-row-screen_recording");
 
     expect(screen.queryByRole("button", { name: "Open System Settings" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Allow" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Ask now" })).toBeNull();
   });
 
   it("is hidden on a non-macOS backend", async () => {

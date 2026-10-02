@@ -304,6 +304,7 @@ export function ShortcutsView() {
           {/* One sentence for the whole page when macOS has not allowed global
               shortcuts yet (the tester below still works inside this window). */}
           <ShortcutsStatusNote
+            surface="shortcuts"
             status={config?.shortcuts_status}
             onChanged={() => void refetch()}
             className="rounded-xl border border-border bg-card px-5 py-4"

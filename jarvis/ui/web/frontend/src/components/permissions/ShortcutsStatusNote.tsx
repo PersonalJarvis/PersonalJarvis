@@ -1,4 +1,4 @@
-import { CheckCircle2, Keyboard, Loader2 } from "lucide-react";
+import { CheckCircle2, Keyboard, Loader2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,12 @@ import { fill, useT, useUiLanguage } from "@/i18n";
 import { onSharedReturnToWindow } from "@/lib/focusRefresh";
 import { FALLBACK_APP_NAME, listPermissionNames, outsideCopyKeys } from "@/lib/permissionCopy";
 import { RESOLVED_HOLD_MS } from "@/lib/permissionPrompts";
+import {
+  clearShortcutsNoteDismissals,
+  dismissShortcutsNote,
+  isShortcutsNoteDismissed,
+  type ShortcutsNoteSurface,
+} from "@/lib/shortcutsNoteDismissal";
 import {
   PermissionApiError,
   openPermissionSettings,
@@ -66,6 +72,15 @@ export function shortcutsNoteMode(input: {
   return "needs_permission";
 }
 
+/** The modes a person can close: the standing explanations, not the transient answers. */
+const DISMISSABLE_MODES: ReadonlySet<ShortcutsNoteMode> = new Set([
+  "needs_permission",
+  "blocked",
+  "outside",
+  "restart",
+  "unavailable",
+]);
+
 /**
  * The ONE status of the global shortcut tap, said where shortcuts live (the
  * Shortcuts page, the voice Shortcuts tab, the Settings keybinds card, the
@@ -79,15 +94,26 @@ export function shortcutsNoteMode(input: {
  * hears about the permission before). Nothing is asked when the page merely
  * opens, and the copy never says "you denied": macOS creates the entry itself.
  *
+ * Every instance can be closed ("Dismiss"), and a closing is remembered per
+ * `surface` in localStorage (see `lib/shortcutsNoteDismissal`) until the shortcuts
+ * work. The `compact` variant is one quiet line for a page whose subject is not
+ * shortcuts (Dictation, Appshots); a note that reports what the person just did
+ * (asking, blocked, restart) keeps its full wording.
+ *
  * `onChanged` asks the host to read the status again (after an answer, on a
  * `PermissionResolved`, and when the person comes back from System Settings).
  */
 export function ShortcutsStatusNote({
   status,
+  surface,
+  variant = "full",
   onChanged,
   className,
 }: {
   status: KeybindsConfig["shortcuts_status"];
+  /** Which page shows this note; the key its closing is remembered under. */
+  surface: ShortcutsNoteSurface;
+  variant?: "full" | "compact";
   onChanged?: () => void;
   className?: string;
 }) {
@@ -109,6 +135,10 @@ export function ShortcutsStatusNote({
   const [failed, setFailed] = useState<"permissions.rate_limited" | "permissions.action_failed" | null>(
     null,
   );
+  const [dismissed, setDismissed] = useState(() => isShortcutsNoteDismissed(surface));
+  // Sent to System Settings from this note, and back again: only then is "Check again" useful.
+  const [openedSettings, setOpenedSettings] = useState(false);
+  const [returned, setReturned] = useState(false);
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -116,6 +146,14 @@ export function ShortcutsStatusNote({
       mounted.current = false;
     };
   }, []);
+
+  // The shortcuts work: forget every closing, so a later loss of the grant is explained again.
+  const working = status?.state === "ready" && !status.detail;
+  useEffect(() => {
+    if (!working) return;
+    clearShortcutsNoteDismissals();
+    setDismissed(false);
+  }, [working]);
 
   const [now, setNow] = useState(() => Date.now());
   const grantedAt = resolved?.granted ? resolved.ts : 0;
@@ -128,13 +166,15 @@ export function ShortcutsStatusNote({
     return () => window.clearTimeout(timer);
   }, [grantedAt]);
 
-  const mode = shortcutsNoteMode({
+  const answered = shortcutsNoteMode({
     status,
     mac,
     asked,
     osDialogOpen: episode?.phase === "os_dialog",
     grantedRecently: grantedAt > 0 && now - grantedAt < RESOLVED_HOLD_MS,
   });
+  // A closed note says nothing, and does not stand in for the floating card either.
+  const mode: ShortcutsNoteMode = dismissed && DISMISSABLE_MODES.has(answered) ? "hidden" : answered;
   // Registering keeps the floating card from repeating this explanation.
   useInlinePermission(SHORTCUTS_FEATURE, mode !== "hidden");
 
@@ -148,11 +188,19 @@ export function ShortcutsStatusNote({
   const waiting = mode === "blocked" || mode === "needs_permission" || mode === "asking";
   useEffect(() => {
     if (!waiting) return undefined;
-    return onSharedReturnToWindow(() => onChangedRef.current?.());
-  }, [waiting]);
+    return onSharedReturnToWindow(() => {
+      if (openedSettings) setReturned(true);
+      onChangedRef.current?.();
+    });
+  }, [waiting, openedSettings]);
 
   if (mode === "hidden") return null;
   const name = appName || FALLBACK_APP_NAME;
+
+  const close = () => {
+    dismissShortcutsNote(surface);
+    setDismissed(true);
+  };
 
   const enable = async (allowOutside = false) => {
     setBusy(allowOutside ? "allow_outside" : "enable");
@@ -183,6 +231,7 @@ export function ShortcutsStatusNote({
     setFailed(null);
     try {
       await openPermissionSettings("input_monitoring");
+      if (mounted.current) setOpenedSettings(true);
     } catch (exc) {
       if (mounted.current) {
         setFailed(
@@ -195,6 +244,9 @@ export function ShortcutsStatusNote({
       if (mounted.current) setBusy(null);
     }
   };
+
+  // One quiet line on a page that is not about shortcuts, for the standing "needs permission" hint only.
+  const compact = variant === "compact" && mode === "needs_permission";
 
   let sentence: string;
   switch (mode) {
@@ -219,11 +271,145 @@ export function ShortcutsStatusNote({
       sentence = t("permissions.shortcuts.allowed");
       break;
     default:
-      sentence = fill(t("permissions.shortcuts.needs_input_monitoring"), { app: name });
+      sentence = compact
+        ? t("permissions.shortcuts.needs_input_monitoring_short")
+        : fill(t("permissions.shortcuts.needs_input_monitoring"), { app: name });
   }
 
   const Icon = mode === "allowed" ? CheckCircle2 : mode === "asking" ? Loader2 : Keyboard;
   const anyBusy = busy !== null;
+  const showButtons =
+    embedded && (mode === "needs_permission" || mode === "blocked" || mode === "outside" || mode === "restart");
+  const spinner = (active: boolean) =>
+    active && <Loader2 className="h-3.5 w-3.5 motion-safe:animate-spin" aria-hidden />;
+
+  const buttons = showButtons && (
+    <>
+      {mode === "needs_permission" && (
+        <Button
+          type="button"
+          size="sm"
+          // Compact: the accent link style, no fill, so the one-line note stays quiet.
+          className={cn(WRAPPING_ACTION_BUTTON, compact && "min-h-0 px-0 py-0")}
+          variant={compact ? "link" : "outline"}
+          disabled={anyBusy}
+          onClick={() => void enable(false)}
+          data-action="enable"
+          // The compact label is one word; the accessible name stays the full action.
+          aria-label={compact ? t("permissions.shortcuts.enable") : undefined}
+        >
+          {spinner(busy === "enable")}
+          {compact ? t("permissions.shortcuts.enable_short") : t("permissions.shortcuts.enable")}
+        </Button>
+      )}
+      {mode === "outside" && (
+        <Button
+          type="button"
+          size="sm"
+          className={WRAPPING_ACTION_BUTTON}
+          disabled={anyBusy}
+          onClick={() => void enable(true)}
+          data-action="allow_outside"
+        >
+          {spinner(busy === "allow_outside")}
+          {fill(t(outsideCopyKeys(launchedAsBundle).action), { app: name })}
+        </Button>
+      )}
+      {mode === "blocked" && (
+        <>
+          <Button
+            type="button"
+            size="sm"
+            className={WRAPPING_ACTION_BUTTON}
+            disabled={anyBusy}
+            onClick={() => void openSettings()}
+            data-action="open_settings"
+          >
+            {t("permissions.prompt.action.open_settings")}
+          </Button>
+          {returned && (
+            <Button
+              type="button"
+              size="sm"
+              className={WRAPPING_ACTION_BUTTON}
+              variant="outline"
+              disabled={anyBusy}
+              onClick={() => onChangedRef.current?.()}
+              data-action="check_again"
+            >
+              {t("permissions.prompt.action.check_again")}
+            </Button>
+          )}
+        </>
+      )}
+      {mode === "restart" && (
+        <Button
+          type="button"
+          size="sm"
+          className={WRAPPING_ACTION_BUTTON}
+          disabled={restartApp.restarting}
+          onClick={() => void restartApp.restart()}
+          data-action="restart"
+        >
+          {restartApp.restarting || restartApp.forceArmed
+            ? restartApp.buttonLabel
+            : t("permissions.prompt.action.restart")}
+        </Button>
+      )}
+    </>
+  );
+
+  const dismiss = DISMISSABLE_MODES.has(mode) && (
+    <button
+      type="button"
+      onClick={close}
+      aria-label={t("permissions.inline.dismiss")}
+      title={t("permissions.inline.dismiss")}
+      data-testid="shortcuts-status-dismiss"
+      className="-mr-1 -mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      <X aria-hidden className="h-3.5 w-3.5" />
+    </button>
+  );
+
+  const iconNode = (
+    <Icon
+      aria-hidden
+      className={cn(
+        "mt-0.5 h-3.5 w-3.5 shrink-0",
+        mode === "allowed" ? "text-success" : "text-muted-foreground",
+        mode === "asking" && "motion-safe:animate-spin",
+      )}
+    />
+  );
+
+  if (compact) {
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        data-testid="shortcuts-status-note"
+        data-mode={mode}
+        data-variant="compact"
+        className={cn("flex items-start gap-2 text-meta text-muted-foreground", className)}
+      >
+        {iconNode}
+        {/* One line where there is room; in a narrow column the action drops below the sentence. */}
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5">
+          <p className="min-w-0 break-words text-foreground" data-testid="shortcuts-status-sentence">
+            {sentence}
+          </p>
+          {failed && (
+            <p className="break-words" data-testid="shortcuts-status-message">
+              {t(failed)}
+            </p>
+          )}
+          {buttons}
+        </div>
+        {dismiss}
+      </div>
+    );
+  }
 
   return (
     <div
@@ -231,16 +417,10 @@ export function ShortcutsStatusNote({
       aria-live="polite"
       data-testid="shortcuts-status-note"
       data-mode={mode}
+      data-variant="full"
       className={cn("flex items-start gap-2 text-meta text-muted-foreground", className)}
     >
-      <Icon
-        aria-hidden
-        className={cn(
-          "mt-0.5 h-3.5 w-3.5 shrink-0",
-          mode === "allowed" ? "text-success" : "text-muted-foreground",
-          mode === "asking" && "motion-safe:animate-spin",
-        )}
-      />
+      {iconNode}
       <div className="min-w-0 flex-1">
         <p className="break-words text-foreground" data-testid="shortcuts-status-sentence">
           {sentence}
@@ -250,82 +430,9 @@ export function ShortcutsStatusNote({
             {t(failed)}
           </p>
         )}
-        {embedded &&
-          (mode === "needs_permission" || mode === "blocked" || mode === "outside" || mode === "restart") && (
-          <div className="mt-2 flex flex-wrap items-center gap-1.5">
-            {mode === "needs_permission" && (
-              <Button
-                type="button"
-                size="sm"
-                className={WRAPPING_ACTION_BUTTON}
-                disabled={anyBusy}
-                onClick={() => void enable(false)}
-                data-action="enable"
-              >
-                {busy === "enable" && (
-                  <Loader2 className="h-3.5 w-3.5 motion-safe:animate-spin" aria-hidden />
-                )}
-                {t("permissions.shortcuts.enable")}
-              </Button>
-            )}
-            {mode === "outside" && (
-              <Button
-                type="button"
-                size="sm"
-                className={WRAPPING_ACTION_BUTTON}
-                disabled={anyBusy}
-                onClick={() => void enable(true)}
-                data-action="allow_outside"
-              >
-                {busy === "allow_outside" && (
-                  <Loader2 className="h-3.5 w-3.5 motion-safe:animate-spin" aria-hidden />
-                )}
-                {fill(t(outsideCopyKeys(launchedAsBundle).action), { app: name })}
-              </Button>
-            )}
-            {(mode === "blocked" || mode === "outside") && (
-              <>
-                <Button
-                  type="button"
-                  size="sm"
-                  className={WRAPPING_ACTION_BUTTON}
-                  variant={mode === "outside" ? "outline" : "default"}
-                  disabled={anyBusy}
-                  onClick={() => void openSettings()}
-                  data-action="open_settings"
-                >
-                  {t("permissions.prompt.action.open_settings")}
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  className={WRAPPING_ACTION_BUTTON}
-                  variant="outline"
-                  disabled={anyBusy}
-                  onClick={() => onChangedRef.current?.()}
-                  data-action="check_again"
-                >
-                  {t("permissions.prompt.action.check_again")}
-                </Button>
-              </>
-            )}
-            {mode === "restart" && (
-              <Button
-                type="button"
-                size="sm"
-                className={WRAPPING_ACTION_BUTTON}
-                disabled={restartApp.restarting}
-                onClick={() => void restartApp.restart()}
-                data-action="restart"
-              >
-                {restartApp.restarting || restartApp.forceArmed
-                  ? restartApp.buttonLabel
-                  : t("permissions.prompt.action.restart")}
-              </Button>
-            )}
-          </div>
-        )}
+        {buttons && <div className="mt-2 flex flex-wrap items-center gap-1.5">{buttons}</div>}
       </div>
+      {dismiss}
     </div>
   );
 }

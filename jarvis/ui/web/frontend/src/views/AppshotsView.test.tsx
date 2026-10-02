@@ -122,10 +122,12 @@ describe("AppshotsView permissions, said where the feature lives", () => {
 
   beforeEach(() => {
     useEventStore.setState({ events: [], toasts: [], assistantName: "Jarvis" });
+    window.localStorage.clear();
     darwin();
   });
   afterEach(() => {
     cleanup();
+    window.localStorage.clear();
     vi.unstubAllGlobals();
     delete (window as unknown as { __JARVIS_EMBEDDED_DESKTOP?: boolean }).__JARVIS_EMBEDDED_DESKTOP;
   });
@@ -141,10 +143,32 @@ describe("AppshotsView permissions, said where the feature lives", () => {
     );
     render(<AppshotsView />);
 
+    // A compact, one-line note: this page is about appshots, not about shortcuts.
     const note = await screen.findByTestId("shortcuts-status-note");
-    expect(note.textContent).toContain("Shortcuts work in other apps once you allow Input Monitoring");
+    expect(note.getAttribute("data-variant")).toBe("compact");
+    expect(note.textContent).toContain("Shortcuts need Input Monitoring to work in other apps");
+    expect(note.textContent).not.toContain("Buttons and voice work without it");
     expect(screen.getByRole("button", { name: "Enable global shortcuts" })).toBeTruthy();
     expect(document.body.textContent).not.toContain("ENGLISH tap is not running");
+  });
+
+  it("lets the person close the note, and keeps it closed on the next visit", async () => {
+    const withHotkey = {
+      ...SETTINGS,
+      hotkey: "ctrl+alt+a",
+      shortcut: { hotkey: "ctrl+alt+a", armed: false, detail: "" },
+    };
+    stub(withHotkey, "needs_input_monitoring");
+    const { unmount } = render(<AppshotsView />);
+    await screen.findByTestId("shortcuts-status-note");
+
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByTestId("shortcuts-status-note")).toBeNull();
+    unmount();
+
+    render(<AppshotsView />);
+    await screen.findByTestId("appshots-hotkey");
+    expect(screen.queryByTestId("shortcuts-status-note")).toBeNull();
   });
 
   it("does not tie the both-Option gesture to Input Monitoring (its permission need is unverified)", async () => {

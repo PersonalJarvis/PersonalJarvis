@@ -77,11 +77,37 @@ describe("every pair the card can render has a full sentence in all three locale
       expect(sentence).toMatch(/[.!?]$/);
       expect(sentence).toContain("{app}");
       expect(sentence).toContain("{permissions}");
-      // The per-feature "continue and macOS will ask you" / "switch it on in System Settings"
-      // closings are exactly what this sentence replaces: it must not repeat either promise.
-      for (const reason of ["not_determined", "needs_settings"]) {
-        const closing = (at(tree, `permissions.prompt.dictation.${reason}`) as string).split(/(?<=[.!?])\s+/).pop();
-        expect(sentence).not.toContain(closing);
+      // The per-feature "continue and macOS will ask you" closing is exactly what this
+      // sentence replaces: it must not repeat that promise.
+      const closing = (at(tree, "permissions.prompt.dictation.not_determined") as string).split(/(?<=[.!?])\s+/).pop();
+      expect(sentence).not.toContain(closing);
+    });
+
+    it(`${locale}: a card says each thing once (no sentence repeats its heading or carries its own pane path)`, () => {
+      // The pane path is its own quiet line and the button already says "System Settings":
+      // none of the per-pair sentences of a Settings card or a restart card may say it again.
+      const settingsWords = /System Settings|Systemeinstellungen|Ajustes del Sistema/;
+      const comeBack = /come back|komm dann zurück|vuelve aquí/; // i18n-allow: the retired closings this guards against, per locale
+      const repeats: string[] = [];
+      for (const feature of [...PERMISSION_FEATURES, "generic"]) {
+        for (const reason of ["denied", "needs_settings", "restart_hint"]) {
+          const sentence = at(tree, `permissions.prompt.${feature}.${reason}`) as string;
+          const heading = at(tree, `permissions.prompt.heading.${reason}`) as string;
+          if (settingsWords.test(sentence)) repeats.push(`${feature}.${reason} names System Settings`);
+          if (comeBack.test(sentence)) repeats.push(`${feature}.${reason} says "come back"`);
+          if (sentence.toLowerCase().includes(heading.toLowerCase())) repeats.push(`${feature}.${reason} repeats its heading`);
+          // One sentence: exactly one sentence end, at the end.
+          if ((sentence.match(/[.!?](\s|$)/g) ?? []).length !== 1) repeats.push(`${feature}.${reason} is not ONE sentence`);
+        }
+      }
+      expect(repeats).toEqual([]);
+    });
+
+    it(`${locale}: no heading restates the sentence of its own reason`, () => {
+      for (const reason of PERMISSION_NEEDED_REASONS) {
+        const heading = (at(tree, `permissions.prompt.heading.${reason}`) as string).toLowerCase();
+        const sentence = (at(tree, `permissions.prompt.generic.${reason}`) as string).toLowerCase();
+        expect(sentence, reason).not.toContain(heading);
       }
     });
 
@@ -175,7 +201,7 @@ describe("the outside-app copy", () => {
         expect(sentence, `${feature} ${reason}`).toMatch(/^Acme Voice was started from another app/);
         expect(sentence).toContain("“Microphone”");
         expect(sentence).toContain("for that app and for everything you run in it");
-        expect(sentence).not.toMatch(/Continue and macOS will ask you|Switch it on for/);
+        expect(sentence).not.toMatch(/Continue and macOS will ask you/);
         sentences.add(sentence);
       }
     }
@@ -205,9 +231,7 @@ describe("the outside-app copy", () => {
       episode: { feature: "dictation", reason: "denied", permissions: ["microphone"], ...outside },
       appName: "Personal Jarvis",
     });
-    expect(denied).toBe(
-      "Dictation cannot work because access to “Microphone” is turned off for Personal Jarvis. Turn it on in System Settings, then come back.",
-    );
+    expect(denied).toBe("Dictation cannot work because Personal Jarvis has no access to “Microphone”.");
     const installed = promptSentence({
       t: translate,
       language: "en",
@@ -254,9 +278,7 @@ describe("rendering a sentence", () => {
       appName: "Personal Jarvis",
     });
 
-    expect(sentence).toBe(
-      "Dictation needs access to “Microphone”. Switch it on for Personal Jarvis in System Settings, then come back.",
-    );
+    expect(sentence).toBe("Dictation needs access to “Microphone”.");
   });
 
   it("joins two permissions as a list in the UI language", () => {

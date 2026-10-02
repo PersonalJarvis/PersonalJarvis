@@ -168,9 +168,54 @@ describe("what opens the card", () => {
     const card = await screen.findByTestId("permission-prompt-card");
     expect(card.getAttribute("role")).toBe("group");
     expect(screen.getByTestId("permission-prompt-sentence").textContent).toBe(
-      "Dictation cannot work because access to “Microphone” is turned off for Personal Jarvis. Turn it on in System Settings, then come back.",
+      "Dictation cannot work because Personal Jarvis has no access to “Microphone”.",
     );
     expect(within(card).getByRole("heading", { name: "Access is turned off" })).toBeTruthy();
+  });
+
+  it("says each thing once: heading, ONE sentence, the pane path as a quiet line, one primary and Not now", async () => {
+    render(<PermissionPromptLayer />);
+    open(needed({ reason: "needs_settings", permissions: ["screen_recording"], feature: "computer_use" }));
+
+    const card = await screen.findByTestId("permission-prompt-card");
+    expect(within(card).getByRole("heading", { name: "Not allowed yet" })).toBeTruthy();
+    const sentence = screen.getByTestId("permission-prompt-sentence").textContent ?? "";
+    expect(sentence).toBe("Computer Use needs access to “Screen Recording”.");
+    // The sentence neither repeats the heading nor carries the path or the instruction.
+    expect(sentence).not.toMatch(/System Settings|come back|Not allowed/);
+    // The path appears once, as its own line, with no lead-in.
+    const path = screen.getByTestId("permission-prompt-path").textContent ?? "";
+    expect(path).toBe("System Settings > Privacy & Security > Screen & System Audio Recording");
+    expect((card.textContent ?? "").split(path).length - 1).toBe(1);
+    // One primary button and one quiet Not now; nothing to "check" before the person went to Settings.
+    const buttons = within(card)
+      .getAllByRole("button")
+      .filter((button) => button.getAttribute("data-testid") !== "permission-see-all");
+    expect(buttons.map((button) => button.textContent)).toEqual(["Open System Settings", "Not now"]);
+    expect(within(card).queryByRole("button", { name: "Check again" })).toBeNull();
+  });
+
+  it("shows the quiet 'See all permissions' link only on a card whose way forward is System Settings", async () => {
+    render(<PermissionPromptLayer />);
+    open(needed());
+    expect(await screen.findByTestId("permission-see-all")).toBeTruthy();
+
+    act(() => {
+      usePermissionsStore.getState().dismiss(usePermissionsStore.getState().episodes[0].key);
+    });
+    // Asking (Continue), restarting and merely explaining need no way to the whole list.
+    for (const overrides of [
+      { reason: "not_determined", can_prompt: true, can_open_settings: false },
+      { reason: "restart_hint", can_open_settings: false },
+      { reason: "restricted", can_open_settings: false },
+    ]) {
+      open(needed({ feature: "voice", ...overrides }), `r-${String(overrides.reason)}`, Date.now() + 1);
+      await screen.findByTestId("permission-prompt-card");
+      expect(screen.queryByTestId("permission-see-all"), String(overrides.reason)).toBeNull();
+      act(() => {
+        usePermissionsStore.getState().dismiss(usePermissionsStore.getState().episodes.at(-1)!.key);
+      });
+    }
   });
 
   it("never opens while macOS is asking by itself (phase os_dialog)", () => {
@@ -245,7 +290,7 @@ describe("the buttons per reason", () => {
 
     await waitFor(() => expect(posts("/api/permissions/microphone/open-settings")).toHaveLength(1));
     expect(screen.getByTestId("permission-prompt-path").textContent).toBe(
-      "Find it under System Settings > Privacy & Security > Microphone.",
+      "System Settings > Privacy & Security > Microphone",
     );
   });
 
@@ -334,7 +379,7 @@ describe("the buttons per reason", () => {
     open(needed({ reason: "denied", can_prompt: true, outside_app: true }));
 
     await screen.findByRole("button", { name: "Allow for the app that started Personal Jarvis" });
-    expect(screen.getByTestId("permission-prompt-sentence").textContent).toContain("is turned off for Personal Jarvis");
+    expect(screen.getByTestId("permission-prompt-sentence").textContent).toContain("Personal Jarvis has no access to");
     expect(screen.getByRole("heading", { level: 2 }).textContent).toBe("Access is turned off");
     expect(screen.getByText(/started from another app/)).toBeTruthy();
   });
@@ -361,7 +406,7 @@ describe("the buttons per reason", () => {
     expect(screen.getByTestId("permission-prompt-sentence").textContent).toBe(
       "Dictation needs access to “Microphone”. Continue and macOS will ask you.",
     );
-    expect(screen.getByRole("heading", { level: 2 }).textContent).toBe("macOS will ask you next");
+    expect(screen.getByRole("heading", { level: 2 }).textContent).toBe("Permission needed");
   });
 
   it("Not now hides the card and sends nothing", async () => {
@@ -410,7 +455,7 @@ describe("several permissions in one episode", () => {
     open(needed({ feature: "computer_use", permissions: ["screen_recording", "accessibility"], reason: "needs_settings" }));
 
     const steps = await screen.findByTestId("permission-prompt-steps");
-    await waitFor(() => expect(within(steps).getByText("Granted")).toBeTruthy());
+    await waitFor(() => expect(within(steps).getByText("Allowed")).toBeTruthy());
     // Only the missing permission is named in the sentence.
     expect(screen.getByTestId("permission-prompt-sentence").textContent).toContain("“Accessibility”");
     expect(screen.getByTestId("permission-prompt-sentence").textContent).not.toContain("Screen Recording");
@@ -504,16 +549,43 @@ describe("coming back from System Settings", () => {
     useSettingsJump.getState().take();
   });
 
-  it("Check again re-reads the row and says so when it is still off", async () => {
+  it("Check again appears only after the person came back from Settings with it still off, and then says so", async () => {
     rows = { microphone: row("microphone", { status: "denied" }) };
     render(<PermissionPromptLayer />);
     open(needed());
     await waitFor(() => expect(calls.filter((c) => c.url === "/api/permissions/microphone")).toHaveLength(1));
+    // The watcher and the focus refetch notice a grant by themselves: nothing to check yet.
+    expect(screen.queryByRole("button", { name: "Check again" })).toBeNull();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Check again" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open System Settings" }));
+    await waitFor(() => expect(posts("/open-settings")).toHaveLength(1));
+    expect(screen.queryByRole("button", { name: "Check again" })).toBeNull();
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    const check = await screen.findByRole("button", { name: "Check again" }, { timeout: 2_000 });
+    const before = calls.filter((c) => c.url === "/api/permissions/microphone").length;
+
+    fireEvent.click(check);
 
     expect((await screen.findByTestId("permission-prompt-message")).textContent).toContain("still looks off");
-    expect(calls.filter((c) => c.url === "/api/permissions/microphone").length).toBeGreaterThanOrEqual(2);
+    expect(calls.filter((c) => c.url === "/api/permissions/microphone").length).toBeGreaterThan(before);
+  });
+
+  it("does not offer Check again when the person came back and the permission now reads granted", async () => {
+    rows = { microphone: row("microphone", { status: "denied" }) };
+    render(<PermissionPromptLayer />);
+    open(needed());
+    fireEvent.click(await screen.findByRole("button", { name: "Open System Settings" }));
+    await waitFor(() => expect(posts("/open-settings")).toHaveLength(1));
+
+    rows = { microphone: row("microphone", { status: "granted" }) };
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await waitFor(() => expect(calls.some((c) => c.url.includes("activated=1"))).toBe(true), { timeout: 2_000 });
+
+    expect(screen.queryByRole("button", { name: "Check again" })).toBeNull();
   });
 });
 
@@ -687,7 +759,7 @@ describe("accessibility and layout", () => {
 
     expect(screen.getByTestId("permission-live-region")).toBe(live);
     expect(live.textContent).toContain("Access is turned off.");
-    expect(live.textContent).toContain("turned off for Personal Jarvis");
+    expect(live.textContent).toContain("Personal Jarvis has no access to");
 
     act(() => {
       usePermissionsStore
