@@ -5759,6 +5759,18 @@
       "retry": "Try again"
     },
     "agents": {
+      "search": {
+        "label": "Search terminals",
+        "placeholder": "Search terminals or describe a task…",
+        "hint": "Find names, keywords or related tasks. Runs on this device.",
+        "clear": "Clear search",
+        "loading": "Finding related tasks — downloading the local model on first use…",
+        "searching": "Finding related tasks…",
+        "error": "Related tasks are unavailable right now. Word search still works. Try again to include related tasks.",
+        "empty": "No matching terminals.",
+        "results": "{count} matching terminals · best match first",
+        "retry": "Try again"
+      },
       "aria": "Agents in this workspace",
       "count_one": "{n} agent",
       "count_other": "{n} agents",

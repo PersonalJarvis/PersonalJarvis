@@ -5759,6 +5759,18 @@
       "retry": "Erneut versuchen"
     },
     "agents": {
+      "search": {
+        "label": "Terminals suchen",
+        "placeholder": "Terminal suchen oder Aufgabe beschreiben…",
+        "hint": "Findet Namen, Stichwörter und ähnliche Aufgaben. Läuft auf diesem Gerät.",
+        "clear": "Suche löschen",
+        "loading": "Ähnliche Aufgaben werden gesucht — beim ersten Mal wird das lokale Modell heruntergeladen…",
+        "searching": "Ähnliche Aufgaben werden gesucht…",
+        "error": "Ähnliche Aufgaben lassen sich gerade nicht ermitteln. Die Wortsuche funktioniert weiterhin. Versuche es erneut, um ähnliche Aufgaben einzubeziehen.",
+        "empty": "Keine passenden Terminals.",
+        "results": "{count} passende Terminals · bester Treffer zuerst",
+        "retry": "Erneut versuchen"
+      },
       "aria": "Agents in diesem Workspace",
       "count_one": "{n} Agent",
       "count_other": "{n} Agents",
