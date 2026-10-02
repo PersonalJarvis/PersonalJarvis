@@ -1349,7 +1349,7 @@ class OrbBusBridge:
         # suppression latch (that only blocks ACTIVE-state repaints), so the
         # genuine IDLE transition, if it still arrives, is a harmless same-mode
         # repaint. The idle-animation scheduler stays owned by that transition.
-        if not self._hides_when_idle():
+        if not self._hides_when_idle() and not self._dictation_active:
             try:
                 self._orb.show(mode="idle")
             except Exception as exc:  # noqa: BLE001
@@ -1480,6 +1480,13 @@ class OrbBusBridge:
                     stop_mouth()
                 except Exception as exc:  # noqa: BLE001
                     log.debug("stop_mouth_animation failed: %s", exc)
+
+        if self._dictation_active:
+            # A dictation (also one beside a live call) owns the surface until
+            # it completes; ``_last_state`` is current, and the completion
+            # hands the surface back through ``_restore_voice_surface`` or
+            # stands it down when the call ended in the meantime.
+            return
 
         if state == "LISTENING":
             self._orb.show(mode="listen")
@@ -1627,6 +1634,9 @@ class OrbBusBridge:
             )
             if not late_final_ok:
                 return
+        if self._dictation_active:
+            # The dictation's live text owns the bubble meanwhile.
+            return
         if _is_transcript_boilerplate(event.text):
             log.info(
                 "OrbBridge suppressed STT boilerplate transcript: %r",
@@ -1652,7 +1662,7 @@ class OrbBusBridge:
         is already hidden, so we leave it alone.
         """
         self._last_response_text = (event.text or "").strip()
-        if self._last_state in ("THINKING", "SPEAKING"):
+        if self._last_state in ("THINKING", "SPEAKING") and not self._dictation_active:
             self._refresh_voice_bubble()
 
     def _refresh_voice_bubble(self) -> None:
@@ -1731,10 +1741,14 @@ class OrbBusBridge:
         released by ``VoiceBootStatus`` stores the mode and stays withdrawn,
         exactly as it does for a wake word (AP-26).
         """
-        if self._voice_session_active:
-            log.debug("OrbBridge dictation reveal skipped: a voice session owns the bar")
-            return
-        log.info("OrbBridge._on_dictation_started: target=%s", getattr(event, "target", ""))
+        # A dictation beside a live call takes the surface over too: the
+        # pipeline holds the call's input meanwhile, so the bar shows what is
+        # actually listening, and the completion hands the call's look back.
+        log.info(
+            "OrbBridge._on_dictation_started: target=%s%s",
+            getattr(event, "target", ""),
+            " (over a live voice session)" if self._voice_session_active else "",
+        )
         self._cancel_dictation_standdown()
         self._dictation_active = True
         self._dictation_transcribing = False
@@ -1771,7 +1785,7 @@ class OrbBusBridge:
         ``_last_state``) so the four dictation handlers can never disagree about
         who owns the bar.
         """
-        if self._voice_session_active:
+        if self._voice_session_active and not self._dictation_active:
             return
         if getattr(event, "is_final", False):
             # The completion handler owns the end of a dictation — it knows the
@@ -1796,7 +1810,7 @@ class OrbBusBridge:
         ``dictate_transcribing`` mode renders the orbital core instead, and
         keeps the click surface inert exactly like the recording mode does.
         """
-        if not self._dictation_active or self._voice_session_active:
+        if not self._dictation_active:
             return
         self._dictation_transcribing = True
         self._show_dictation_mode("dictate_transcribing")
@@ -1842,12 +1856,23 @@ class OrbBusBridge:
         # raised for one frame before the stand-down clears it is a flicker,
         # not a receipt.
         self._show_listening_transcript("" if quiet else (detail or (event.text or "").strip()))
-        # Whatever raised the bar must be able to lower it. This guard is
-        # deliberately the SAME one ``_on_dictation_started`` uses — an
-        # asymmetric pair (raise on any state, lower only from IDLE) would leave
-        # the bar lit whenever ``_last_state`` was stale, which is a real
-        # possibility because dictation never touches the voice state machine.
         if self._voice_session_active:
+            # The dictation ran beside a live call: hand the surface back to
+            # the call's own look instead of standing it down to idle. The
+            # notice stand-down restores ``_current_voice_mode`` after its
+            # dwell, which also clears a sentence shown here.
+            if arrived:
+                self._restore_voice_surface()
+                delay = 0.0 if quiet else DICTATION_OUTCOME_DWELL_S
+            else:
+                self._show_notice_mode()
+                delay = (
+                    DICTATION_OUTCOME_DWELL_S if detail else DICTATION_NOTHING_BACK_DWELL_S
+                )
+            try:
+                self._schedule_notice_standdown(delay)
+            except Exception as exc:  # noqa: BLE001
+                log.debug("OrbBridge dictation hand-back suppressed: %s", exc)
             return
         if arrived:
             # Nothing is in flight and nothing failed, so the bar rests NOW
@@ -1936,6 +1961,18 @@ class OrbBusBridge:
             self._orb.show(mode="idle")
         except Exception as exc:  # noqa: BLE001 — a missed repaint is cosmetic
             log.debug("OrbBridge dictation rest repaint suppressed: %s", exc)
+
+    def _restore_voice_surface(self) -> None:
+        """Give the surface back to the live voice session a dictation borrowed.
+
+        Repaints the look the voice lane would be showing now. The state edges
+        that arrived during the dictation updated ``_last_state`` but were not
+        painted (see ``_on_state``), so this is where they catch up.
+        """
+        try:
+            self._orb.show(mode=self._current_voice_mode())
+        except Exception as exc:  # noqa: BLE001 — a missed repaint is cosmetic
+            log.debug("OrbBridge voice-look restore suppressed: %s", exc)
 
     def _show_notice_mode(self) -> None:
         """Drive the current surface into its brief "that did not happen" look.
@@ -2053,7 +2090,10 @@ class OrbBusBridge:
             self._dictation_active = False
             self._dictation_transcribing = False
             if self._voice_session_active:
-                # A session took over and owns the bar — nothing to clean up.
+                # The session owns the bar again; show its look, not the
+                # dictation's.
+                self._show_listening_transcript("")
+                self._restore_voice_surface()
                 return
             # Stand down directly rather than through _schedule_dictation_
             # standdown: that path also refuses when ``_last_state`` is not
@@ -2126,7 +2166,7 @@ class OrbBusBridge:
         left as-is (already showing Jarvis's reply); no personality quip is
         popped over it.
         """
-        if self._last_state != "SPEAKING":
+        if self._last_state != "SPEAKING" or self._dictation_active:
             return
         log.info("OrbBridge._on_audio_out_first → speaking overlay + mouth")
         # Jarvis answers out loud: the thinking is over (an agent task that

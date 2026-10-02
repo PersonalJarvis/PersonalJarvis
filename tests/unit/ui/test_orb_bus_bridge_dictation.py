@@ -41,6 +41,7 @@ from jarvis.core.events import (  # noqa: E402
     DictationStarted,
     DictationTranscribing,
     DictationTranscript,
+    SystemStateChanged,
     VoiceSessionStarted,
     WakeCandidateDetected,
 )
@@ -68,6 +69,9 @@ class _FakeOrb:
 
     def play_animation(self, name: str) -> None:
         self.calls.append(("play_animation", name))
+
+    def stop_animation(self, name: str) -> None:
+        self.calls.append(("stop_animation", name))
 
     def show_listening_transcript(self, text: str = "", duration_ms: int = 0) -> None:
         self.calls.append(("transcript", text))
@@ -133,15 +137,38 @@ async def test_the_reveal_survives_a_stale_voice_state_label() -> None:
     await _quiesce(bridge)
 
 
-async def test_a_live_voice_session_outranks_a_dictation_reveal() -> None:
+async def test_a_dictation_beside_a_live_call_takes_the_bar_and_hands_it_back() -> None:
+    """Live 2026-10-02: in a call the dictation key left the bar standing still.
+
+    The pipeline holds the call's input while dictating, so the bar shows the
+    dictation, ignores the call's state edges meanwhile, and gives the call its
+    own look back once the text is delivered.
+    """
     orb = _FakeOrb()
     bridge = _bridge(orb)
     bridge._voice_session_active = True
+    bridge._last_state = "LISTENING"
 
-    await bridge._on_dictation_started(DictationStarted(target="chat"))
+    await bridge._on_dictation_started(DictationStarted(target="insert"))
+    assert orb.modes == ["dictate"]
+    assert bridge._dictation_active is True
 
-    assert orb.modes == []
+    # The call keeps publishing its phase; the dictation still owns the bar.
+    await bridge._on_state(
+        SystemStateChanged(new_state="THINKING", previous="LISTENING")
+    )
+    assert orb.modes == ["dictate"]
+    orb.calls.clear()
+    bridge._on_mic_level(0.5)
+    assert ("set_level", 0.5) in orb.calls
+
+    await bridge._on_dictation_transcribing(DictationTranscribing())
+    await bridge._on_dictation_completed(
+        DictationCompleted(text="hello", outcome="inserted")
+    )
+    assert orb.modes[-1] == "think", "the call's current look comes back"
     assert bridge._dictation_active is False
+    assert "idle" not in orb.modes
     await _quiesce(bridge)
 
 
