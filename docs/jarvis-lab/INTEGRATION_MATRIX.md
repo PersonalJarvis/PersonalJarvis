@@ -154,6 +154,13 @@ until HID idle, re-observation before the next action and cancellation with no
 later action. The scenario is explicitly marked `live_required=True`; a fake
 receipt passing in CI is not native qualification.
 
+`semantic-target-hit` is now the second deterministic receipt contract. It
+requires fresh AX re-identification, stable foreground identity through the
+native mutation boundary, a performed Accessibility action, zero pointer events
+after semantic success and post-action verification of the expected UI effect.
+Like takeover, the contract is live-gated: CI validates the evaluator, not the
+native macOS behavior.
+
 Live MacAgentBench remains the release gate for observable receipts: semantic
 target hit, stale-target refusal, focus/type landing, human takeover,
 cross-window handoff, browser-to-desktop transition, cancellation, permission
