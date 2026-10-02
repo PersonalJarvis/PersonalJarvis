@@ -5761,12 +5761,12 @@
     "agents": {
       "search": {
         "label": "Buscar terminales",
-        "placeholder": "Describe el terminal que buscas…",
-        "hint": "Busca por significado en títulos y tareas. Se ejecuta en este dispositivo.",
+        "placeholder": "Busca un terminal o describe una tarea…",
+        "hint": "Encuentra nombres, palabras clave o tareas relacionadas. Se ejecuta en este dispositivo.",
         "clear": "Borrar búsqueda",
-        "loading": "Preparando la búsqueda local: el modelo se descarga la primera vez…",
-        "searching": "Buscando terminales relacionados…",
-        "error": "No se pudo iniciar la búsqueda local. Comprueba tu conexión para la primera descarga del modelo e inténtalo de nuevo.",
+        "loading": "Buscando tareas relacionadas: el modelo local se descarga la primera vez…",
+        "searching": "Buscando tareas relacionadas…",
+        "error": "Las tareas relacionadas no están disponibles ahora. La búsqueda por palabras sigue funcionando. Reinténtalo para incluir tareas relacionadas.",
         "empty": "No hay terminales relacionados.",
         "results": "{count} terminales relacionados · mejor coincidencia primero",
         "retry": "Reintentar"

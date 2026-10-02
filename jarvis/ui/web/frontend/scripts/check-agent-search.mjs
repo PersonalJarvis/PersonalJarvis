@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createAgentEncoder } from "../src/components/agentic/sidePanel/agentSearchEncoder.ts";
 import { AGENT_SEARCH_MODEL, AGENT_SEARCH_REVISION, cosineSimilarity, relevantAgentMatches } from "../src/components/agentic/sidePanel/agentSearch.ts";
+import { lexicalAgentMatches, mergeAgentMatches, needsSemanticSearch } from "../src/components/agentic/sidePanel/agentLexicalSearch.ts";
 
 const cache = join(tmpdir(), "jarvis-search-model", AGENT_SEARCH_REVISION);
 await mkdir(cache, { recursive: true });
@@ -29,6 +30,10 @@ const tasks = [
   ["security", "Audit the codebase for security vulnerabilities."],
 ];
 const examples = [
+  ["OAuth", "auth"],
+  ["reconenct", "auth"],
+  ["T2", "voice"],
+  ["T22", null],
   ["The one fixing expired sign-ins for integrations", "auth"],
   ["Find the task about conversations ending on their own", "voice"],
   ["Reduce processor load and make the app open faster", "performance"],
@@ -48,6 +53,7 @@ const examples = [
   ["Die Anwendung startet langsam und verbraucht zu viel Rechenleistung", "performance"],
   ["Ein Rezept f\u00fcr Erdbeerkuchen", null],
 ];
+const documents = tasks.map(([id, text], index) => ({ id, name: `T${index + 1}`, texts: [text] }));
 try {
   const failures = [];
   const cache = new Map();
@@ -56,17 +62,20 @@ try {
     return cache.get(text);
   };
   for (const [query, expected] of examples) {
-    const queryVector = await embed(query);
+    const lexical = lexicalAgentMatches(query, documents);
     const scores = [];
-    for (const [id, text] of tasks) scores.push({ id, score: cosineSimilarity(queryVector, await embed(text)) });
-    const results = relevantAgentMatches(scores);
+    if (needsSemanticSearch(query, documents, lexical)) {
+      const queryVector = await embed(query);
+      for (const [id, text] of tasks) scores.push({ id, score: cosineSimilarity(queryVector, await embed(text)) });
+    }
+    const results = mergeAgentMatches(lexical, relevantAgentMatches(scores));
     console.log(JSON.stringify({ query, expected, results, best: scores.sort((a, b) => b.score - a.score)[0] }));
     if ((results[0]?.id ?? null) !== expected || results.some(({ id }) => id !== expected)) {
       failures.push({ query, expected, actual: results });
     }
   }
   assert.deepEqual(failures, []);
-  console.log("AGENT_SEMANTIC_SEARCH_OK");
+  console.log("AGENT_HYBRID_SEARCH_OK");
 } finally {
   await extractor.dispose();
 }

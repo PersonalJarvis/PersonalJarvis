@@ -5761,12 +5761,12 @@
     "agents": {
       "search": {
         "label": "Search terminals",
-        "placeholder": "Describe the terminal you are looking for…",
-        "hint": "Search by meaning in titles and tasks. Runs on this device.",
+        "placeholder": "Search terminals or describe a task…",
+        "hint": "Find names, keywords or related tasks. Runs on this device.",
         "clear": "Clear search",
-        "loading": "Preparing local search — downloading the model on first use…",
-        "searching": "Finding matching terminals…",
-        "error": "Local search could not start. Check your connection for the first model download, then try again.",
+        "loading": "Finding related tasks — downloading the local model on first use…",
+        "searching": "Finding related tasks…",
+        "error": "Related tasks are unavailable right now. Word search still works. Try again to include related tasks.",
         "empty": "No matching terminals.",
         "results": "{count} matching terminals · best match first",
         "retry": "Try again"

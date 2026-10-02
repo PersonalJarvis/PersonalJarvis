@@ -27,6 +27,43 @@ afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 const debounce = () => act(() => vi.advanceTimersByTime(300));
 
 describe("local agent search lifecycle", () => {
+  it("returns concrete words immediately without starting a model for a one-word lookup", () => {
+    const { result } = renderHook(() => useAgentSearch("hangups", documents));
+    expect(result.current.matches.map(({ id }) => id)).toEqual(["voice@w1"]);
+    expect(result.current.status).toBe("ready");
+    debounce();
+    expect(SearchWorker.instances).toHaveLength(0);
+  });
+
+  it("keeps word hits visible during loading and failure, then appends semantic results", () => {
+    const { result } = renderHook(() => useAgentSearch("unexpected hangups", documents));
+    expect(result.current.matches.map(({ id }) => id)).toEqual(["voice@w1"]);
+    expect(SearchWorker.instances).toHaveLength(0);
+    debounce();
+    const worker = SearchWorker.instances[0];
+    act(() => worker.reply({ type: "loading", id: worker.lastId }));
+    expect(result.current.matches.map(({ id }) => id)).toEqual(["voice@w1"]);
+    act(() => worker.reply({ type: "error", id: worker.lastId }));
+    expect(result.current.matches.map(({ id }) => id)).toEqual(["voice@w1"]);
+    expect(result.current.status).toBe("error");
+    act(() => result.current.retry());
+    debounce();
+    const fresh = SearchWorker.instances[1];
+    act(() => fresh.reply({ type: "result", id: fresh.lastId, matches: [{ id: "related", score: 0.99 }, { id: "voice@w1", score: 0.9 }] }));
+    expect(result.current.matches.map(({ id }) => id)).toEqual(["voice@w1", "related"]);
+  });
+
+  it("replaces old results with current word hits before the debounce", () => {
+    const docs = [...documents, { id: "auth", texts: ["OAuth login"] }];
+    const { result, rerender } = renderHook(({ query }) => useAgentSearch(query, docs), { initialProps: { query: "voice calls" } });
+    debounce();
+    const worker = SearchWorker.instances[0];
+    act(() => worker.reply({ type: "result", id: worker.lastId, matches: [{ id: "voice@w1", score: 0.9 }] }));
+    rerender({ query: "OAuth" });
+    expect(result.current.matches.map(({ id }) => id)).toEqual(["auth"]);
+    expect(worker.terminated).toBe(true);
+  });
+
   it("loads nothing for an empty search and debounces typing", () => {
     const { result, rerender } = renderHook(({ query }) => useAgentSearch(query, documents), { initialProps: { query: "" } });
     debounce();

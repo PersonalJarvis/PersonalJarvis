@@ -12,8 +12,8 @@ describe("agent relevance", () => {
     expect(scores[0].id).toBe("done");
   });
   it("uses task content without conflating the provider or folder with the task", () => {
-    const document = agentSearchDocument({ history_id: "T1@w1", recap: "Fix login", last_prompt: "Renew expired credentials", agent: "codex", folder: "/private/project" } as WorkspacePaneRow, "Fix login");
-    expect(document).toEqual({ id: "T1@w1", texts: ["Fix login", "Renew expired credentials"] });
+    const document = agentSearchDocument({ history_id: "T1@w1", name: "T1", recap: "Fix login", last_prompt: "Renew expired credentials", agent: "codex", folder: "/private/project" } as WorkspacePaneRow, "Fix login");
+    expect(document).toEqual({ id: "T1@w1", name: "T1", texts: ["Fix login", "Renew expired credentials"] });
   });
   it("handles invalid and zero vectors without accidentally matching", () => {
     expect(cosineSimilarity([], [])).toBe(0);

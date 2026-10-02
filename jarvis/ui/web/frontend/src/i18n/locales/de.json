@@ -5761,12 +5761,12 @@
     "agents": {
       "search": {
         "label": "Terminals suchen",
-        "placeholder": "Beschreibe das gesuchte Terminal…",
-        "hint": "Sucht sinngemäß in Titeln und Aufgaben. Läuft auf diesem Gerät.",
+        "placeholder": "Terminal suchen oder Aufgabe beschreiben…",
+        "hint": "Findet Namen, Stichwörter und ähnliche Aufgaben. Läuft auf diesem Gerät.",
         "clear": "Suche löschen",
-        "loading": "Lokale Suche wird vorbereitet — beim ersten Mal wird das Modell heruntergeladen…",
-        "searching": "Passende Terminals werden gesucht…",
-        "error": "Die lokale Suche konnte nicht starten. Prüfe für den ersten Modell-Download deine Verbindung und versuche es erneut.",
+        "loading": "Ähnliche Aufgaben werden gesucht — beim ersten Mal wird das lokale Modell heruntergeladen…",
+        "searching": "Ähnliche Aufgaben werden gesucht…",
+        "error": "Ähnliche Aufgaben lassen sich gerade nicht ermitteln. Die Wortsuche funktioniert weiterhin. Versuche es erneut, um ähnliche Aufgaben einzubeziehen.",
         "empty": "Keine passenden Terminals.",
         "results": "{count} passende Terminals · bester Treffer zuerst",
         "retry": "Erneut versuchen"

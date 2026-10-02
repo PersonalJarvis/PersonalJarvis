@@ -2,6 +2,8 @@ import type { WorkspacePaneRow } from "@/lib/agenticIdeApi";
 
 export interface AgentSearchDocument {
   id: string;
+  /** Only the word search uses the terminal's name, never the encoder. */
+  name?: string;
   texts: string[];
 }
 
@@ -27,6 +29,7 @@ export const AGENT_SEARCH_REVISION = "2c4055b12046f11709e9df2c122e59ffbdc2f900";
 export function agentSearchDocument(pane: WorkspacePaneRow, title: string): AgentSearchDocument {
   return {
     id: pane.history_id,
+    name: pane.name,
     // Keep the task separate from its title so a long prompt cannot drown it out.
     // Provider names, folder paths and status are not evidence of a task match.
     texts: [...new Set([title, pane.recap, pane.last_prompt].map((text) => text.trim().slice(0, 1000)))].filter(Boolean),

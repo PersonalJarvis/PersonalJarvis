@@ -213,7 +213,7 @@ describe("AgentsOverview", () => {
   });
 });
 
-describe("AgentsOverview semantic search", () => {
+describe("AgentsOverview hybrid search", () => {
   class SearchWorker {
     static latest: SearchWorker;
     messages: AgentSearchRequest[] = [];
@@ -232,6 +232,33 @@ describe("AgentsOverview semantic search", () => {
     act(() => vi.advanceTimersByTime(300));
     return SearchWorker.latest;
   };
+
+  it("shows keyword and typo hits immediately without waiting for the model", () => {
+    useWorkspacePanesStore.setState({ panes: [
+      pane("T1", "w1", { recap: "OAuth reconnect" }),
+      pane("T2", "w1", { recap: "Security audit" }),
+    ] });
+    render(<AgentsOverview />);
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "OAuth" } });
+    expect(screen.getByTestId("ide-workspace-agent-row").getAttribute("data-pane")).toBe("T1");
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "securty" } });
+    expect(screen.getByTestId("ide-workspace-agent-row").getAttribute("data-pane")).toBe("T2");
+  });
+
+  it("keeps concrete results visible when related tasks are loading or unavailable", () => {
+    useWorkspacePanesStore.setState({ panes: [pane("T1", "w1", { recap: "Renew expired logins" })] });
+    render(<AgentsOverview />);
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "expired logins" } });
+    expect(screen.getByTestId("ide-workspace-agent-row")).toBeTruthy();
+    act(() => vi.advanceTimersByTime(300));
+    act(() => SearchWorker.latest.reply({ type: "loading" }));
+    expect(screen.getByTestId("ide-workspace-agent-row")).toBeTruthy();
+    act(() => SearchWorker.latest.reply({ type: "error" }));
+    expect(screen.getByTestId("ide-workspace-agent-row")).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toContain("Word search still works");
+    fireEvent.click(screen.getByTestId("ide-workspace-agent-row"));
+    expect(useIdeChatStore.getState().paneRequest).toMatchObject({ workspaceId: "w1", pane: "T1" });
+  });
 
   it("searches task text within the chosen scope and ranks across status groups", () => {
     useWorkspacePanesStore.setState({ panes: [

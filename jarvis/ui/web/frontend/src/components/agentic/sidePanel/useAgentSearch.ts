@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { AgentSearchDocument, AgentSearchMatch, AgentSearchRequest, AgentSearchResponse } from "./agentSearch";
+import { lexicalAgentMatches, mergeAgentMatches, needsSemanticSearch } from "./agentLexicalSearch";
 
 type SearchStatus = "idle" | "loading" | "searching" | "ready" | "error";
 interface SearchState {
@@ -13,6 +14,11 @@ export function useAgentSearch(query: string, documents: AgentSearchDocument[]) 
   // Polling changes timestamps frequently, but only changed task text requires
   // new embeddings. A stable content key also invalidates old-scope results.
   const key = JSON.stringify([trimmed, documents]);
+  const lexical = useMemo(() => {
+    const [currentQuery, currentDocuments] = JSON.parse(key) as [string, AgentSearchDocument[]];
+    return lexicalAgentMatches(currentQuery, currentDocuments);
+  }, [key]);
+  const semanticEnabled = needsSemanticSearch(trimmed, documents, lexical);
   const worker = useRef<Worker | null>(null);
   const sequence = useRef(0);
   const [retry, setRetry] = useState(0);
@@ -31,7 +37,7 @@ export function useAgentSearch(query: string, documents: AgentSearchDocument[]) 
     const cancel: AgentSearchRequest = { type: "cancel", id };
     worker.current?.postMessage(cancel);
     const [searchQuery, searchDocuments] = JSON.parse(key) as [string, AgentSearchDocument[]];
-    if (!searchQuery || searchDocuments.length === 0) {
+    if (!semanticEnabled || !searchQuery || searchDocuments.length === 0) {
       // An empty search restores the original list immediately and releases RAM.
       worker.current?.terminate();
       worker.current = null;
@@ -84,12 +90,12 @@ export function useAgentSearch(query: string, documents: AgentSearchDocument[]) 
       clearTimeout(timeout);
       clearTimeout(idleTimeout);
     };
-  }, [key, retry]);
+  }, [key, retry, semanticEnabled]);
 
-  const status: SearchStatus = !trimmed ? "idle" : documents.length === 0 ? "ready" : state.key === key ? state.status : "searching";
+  const status: SearchStatus = !trimmed ? "idle" : !semanticEnabled || documents.length === 0 ? "ready" : state.key === key ? state.status : "searching";
   return {
     status,
-    matches: state.key === key && status === "ready" ? state.matches : [],
+    matches: mergeAgentMatches(lexical, semanticEnabled && state.key === key && status === "ready" ? state.matches : []),
     retry: () => setRetry((value) => value + 1),
   };
 }

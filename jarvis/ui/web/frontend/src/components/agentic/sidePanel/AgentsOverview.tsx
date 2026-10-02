@@ -328,7 +328,7 @@ export function AgentsOverview() {
               {t("ide_side_panel.agents.search.retry")}
             </button>
           )}
-          {search.status === "ready" && matches.length > 0 && <ul className="space-y-2">{matches.map(card)}</ul>}
+          {matches.length > 0 && <ul className="space-y-2">{matches.map(card)}</ul>}
         </div>
       ) : mine.length === 0 ? (
         <p className="px-4 py-3 text-sm text-muted-foreground">
