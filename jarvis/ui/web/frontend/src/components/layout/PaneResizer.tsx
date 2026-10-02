@@ -26,6 +26,10 @@ export interface PaneResizerProps {
   orientation?: PaneResizerOrientation;
   /** Begin a drag — wire to `useResizablePane`'s ``startResize``. */
   onPointerDown: (e: React.PointerEvent) => void;
+  /** Pointer travelling over the grip, for screens that preview what a drag moves. */
+  onPointerMove?: (e: React.PointerEvent) => void;
+  /** Pointer gone from the grip — the counterpart of `onPointerMove`. */
+  onPointerLeave?: (e: React.PointerEvent) => void;
   /** Restore the default size — wire to ``reset``. */
   onDoubleClick: () => void;
   /** Keyboard equivalent of a drag, in px — wire to ``nudge``. */
@@ -77,6 +81,8 @@ export const PaneResizer = forwardRef<HTMLDivElement, PaneResizerProps>(function
   {
     orientation = "vertical",
     onPointerDown,
+    onPointerMove,
+    onPointerLeave,
     onDoubleClick,
     onNudge,
     valueNow,
@@ -122,6 +128,8 @@ export const PaneResizer = forwardRef<HTMLDivElement, PaneResizerProps>(function
       tabIndex={0}
       data-testid={testId ?? `pane-resizer-${orientation}`}
       onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerLeave={onPointerLeave}
       onDoubleClick={onDoubleClick}
       onKeyDown={onKeyDown}
       style={style}
@@ -133,7 +141,9 @@ export const PaneResizer = forwardRef<HTMLDivElement, PaneResizerProps>(function
         className,
       )}
     >
-      {/* The visible line — it replaces the border it sits on top of. */}
+      {/* The visible line — it replaces the border it sits on top of. A screen
+          can set `data-linked="true"` on a seam that a drag held on ANOTHER
+          seam would move too, and it lights the way a hovered one does. */}
       <span
         aria-hidden
         className={cn(
@@ -147,7 +157,7 @@ export const PaneResizer = forwardRef<HTMLDivElement, PaneResizerProps>(function
           !showLine && "hidden",
           active
             ? "bg-primary"
-            : "bg-border group-hover:bg-border-strong group-focus-visible:bg-border-strong",
+            : "bg-border group-hover:bg-border-strong group-focus-visible:bg-border-strong group-data-[linked=true]:bg-border-strong",
         )}
       />
       {/* A short thicker stub in the middle: without it the seam reads as a
@@ -160,7 +170,7 @@ export const PaneResizer = forwardRef<HTMLDivElement, PaneResizerProps>(function
           vertical ? "h-8 w-[3px]" : "h-[3px] w-8",
           active
             ? "bg-primary"
-            : "bg-border group-hover:bg-border-strong group-focus-visible:bg-border-strong",
+            : "bg-border group-hover:bg-border-strong group-focus-visible:bg-border-strong group-data-[linked=true]:bg-border-strong",
         )}
       />
     </div>

@@ -12,6 +12,7 @@ is dangerous in both directions because releasing it resumes work.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -443,6 +444,53 @@ async def bind_agent_chat(agent_id: str, request: Request) -> dict[str, Any]:
     return {"session": session.to_dict(), "agent_id": agent.agent_id}
 
 
+@router.get("/agents/{agent_id}/conversations", openapi_extra={"x-jarvis-readonly": True})
+async def agent_conversations(agent_id: str, request: Request) -> dict[str, Any]:
+    """The agent's own chats with Jarvis and teammates, newest first.
+
+    Each is ``society:<agent>:with:<counterpart>``: where the agent works on what
+    Jarvis or a teammate sent it, kept out of the person's chat with the agent.
+    For Jarvis these are the agents' chats with Jarvis. Nothing runs or bills.
+    """
+    rt = await _runtime(request)
+    agent = await rt.roster.resolve(agent_id)
+    if agent is None:
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
+    svc = rt.chat_service()
+    if svc is None:
+        raise HTTPException(503, "agent chat service unavailable")
+    from jarvis.society.roster import LEAD_AGENT_ID, PAIR_SESSION_MARKER
+    from jarvis.society.surface import agent_id_of, counterpart_of
+
+    if agent.agent_id == LEAD_AGENT_ID:
+        sessions = await asyncio.to_thread(
+            svc.store.list_sessions_matching, "society:", PAIR_SESSION_MARKER + LEAD_AGENT_ID
+        )
+    else:
+        sessions = await asyncio.to_thread(
+            svc.store.list_sessions_matching, agent.session_id + PAIR_SESSION_MARKER
+        )
+    names = {member.agent_id: member.name for member in await rt.roster.list()}
+    rows: list[dict[str, Any]] = []
+    for session in sessions:
+        sid = session.session_id
+        owner_id = agent_id_of(sid) or ""
+        counterpart_id = counterpart_of(sid) or ""
+        other_id = owner_id if agent.agent_id == LEAD_AGENT_ID else counterpart_id
+        row = session.to_dict()
+        row["running"] = svc.is_running(sid)
+        # An approval card or a question waits for the person in this chat.
+        questions = getattr(svc, "pending_questions", None)
+        row["waiting"] = bool(
+            svc.pending_approvals(sid) or (questions(sid) if callable(questions) else [])
+        )
+        row["owner_id"] = owner_id
+        row["counterpart_id"] = other_id
+        row["counterpart_name"] = names.get(other_id, other_id)
+        rows.append(row)
+    return {"agent_id": agent.agent_id, "conversations": rows}
+
+
 @router.delete("/agents/{agent_id}")
 async def archive_agent(agent_id: str, request: Request) -> dict[str, Any]:
     rt = await _runtime(request)
@@ -786,9 +834,19 @@ async def switch_agent_model(agent_id: str, body: ModelBody, request: Request) -
         "effort": body.effort.strip(),
         "account_id": body.account_id.strip(),
     }
-    if chat is not None and hasattr(chat, "controls") and chat.store.get_session(agent.session_id):
-        await chat.controls.pause(agent.session_id, "Model settings changed")
-        await chat.controls._clear_saved_native(agent.session_id)
+    if chat is not None and hasattr(chat, "controls"):
+        from jarvis.society.roster import PAIR_SESSION_MARKER
+
+        # The person's chat and every conversation chat run on the card's seat.
+        matching = getattr(chat.store, "list_sessions_matching", None)
+        owned = [agent.session_id] + [
+            s.session_id
+            for s in (matching(agent.session_id + PAIR_SESSION_MARKER) if matching else [])
+        ]
+        for sid in owned:
+            if chat.store.get_session(sid):
+                await chat.controls.pause(sid, "Model settings changed")
+                await chat.controls._clear_saved_native(sid)
     try:
         updated = await rt.roster.update(agent.agent_id, fields)
     except RosterError as exc:

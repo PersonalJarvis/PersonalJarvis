@@ -36,7 +36,7 @@
 .office-plate[data-state="working"] .office-plate-state i { background:#4ade80; box-shadow:0 0 6px #4ade80; }
 .office-plate[data-state="waiting"] .office-plate-state i { background:#fbbf24; }
 .office-plate:focus-visible { outline:2px solid #93c5fd; outline-offset:2px; }
-/* A coding pane's plate: subject on top, result + run state below; hovered, the whole title and its last ask. */
+/* Coding plates keep the expanded title, call-sign and last ask visible without hover. */
 .office-plate[data-pane] { align-items:flex-start; gap:6px; padding:4px 10px 4px 4px; border-radius:12px; text-align:left; }
 .office-plate[data-pane] .office-plate-badge { flex:none; margin-top:1px; }
 /* The coding CLI's mark: ink marks masked in the plate's white, colour lockups on a dark tile. */
@@ -49,13 +49,13 @@
 .office-plate-line { display:inline-flex; align-items:center; gap:6px; max-width:17em; }
 .office-plate-result { min-width:0; overflow:hidden; text-overflow:ellipsis; font-size:11px; font-weight:600; color:#e2e8f0; }
 .office-plate-line .office-plate-state { flex:none; }
-.office-plate-sign { font-size:10px; font-weight:600; color:#94a3b8; }
-.office-plate-asked { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; max-width:20em; margin-top:2px; font-size:11px; font-style:italic; font-weight:500; color:#cbd5e1; white-space:normal; }
+.office-plate-sign { font-size:10px; font-weight:600; color:#94a3b8; white-space:normal; overflow-wrap:anywhere; }
+.office-plate-asked { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; max-width:20em; margin-top:2px; font-size:11px; font-style:italic; font-weight:500; color:#cbd5e1; white-space:normal; overflow-wrap:anywhere; }
 /* max-content: the Html anchor has no width, so an opened plate would otherwise wrap after every word. */
-.office-plate[data-pane][data-open] { width:max-content; max-width:22em; background:rgb(24 26 32 / .96); }
+.office-plate[data-pane][data-open] { width:max-content; max-width:min(22em, calc(100vw - 32px)); background:rgb(24 26 32 / .96); }
 .office-plate[data-pane][data-open] .office-plate-name,
-.office-plate[data-pane][data-open] .office-plate-result { max-width:20em; white-space:normal; overflow:visible; }
-.office-plate[data-pane][data-open] .office-plate-line { max-width:none; }
+.office-plate[data-pane][data-open] .office-plate-result { max-width:min(20em, 100%); white-space:normal; overflow:visible; overflow-wrap:anywhere; text-overflow:clip; }
+.office-plate[data-pane][data-open] .office-plate-line { max-width:100%; flex-wrap:wrap; }
 /* Checkpoint label pills: same dark in-world pill as .office-plate, with a gold hexagon badge. */
 .office-checkpoint { transform-origin:center center; display:inline-flex; align-items:center; gap:6px; padding:3px 11px 3px 3px; border:1px solid rgb(245 184 61 / .55); border-radius:999px; background:rgb(24 26 32 / .86); color:#fff7ec; cursor:pointer; font-family:inherit; font-size:12px; font-weight:700; white-space:nowrap; user-select:none; box-shadow:0 2px 8px rgb(0 0 0 / .35); transition:background .15s, border-color .15s, box-shadow .15s; }
 .office-checkpoint:hover { background:rgb(36 39 48 / .95); border-color:#f5b83d; }

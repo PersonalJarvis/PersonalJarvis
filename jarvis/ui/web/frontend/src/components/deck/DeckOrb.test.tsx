@@ -79,14 +79,13 @@ describe("DeckOrb", () => {
     }
   });
 
-  test("the centre is the mascot itself, drawn as vectors — no bitmap left", () => {
+  test("the centre is the user's pet — no bitmap image left", () => {
     render(<DeckOrb steps={[]} busy={false} />);
     const orb = screen.getByTestId("jarvis-orb");
     expect(orb.getAttribute("data-voice")).toBe("idle");
     // The PNG is gone from the tree, so it cannot come back in through here.
     expect(orb.querySelectorAll("img")).toHaveLength(0);
-    expect(orb.querySelector(".gigi-root")).toBeTruthy();
-    expect(orb.querySelector("svg")).toBeTruthy();
+    expect(orb.querySelector('[data-testid="pet-mark"]')).toBeTruthy();
   });
 
   test("a press on the orb fires the handler and carries its label", () => {

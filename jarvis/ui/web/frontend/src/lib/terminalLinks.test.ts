@@ -178,6 +178,7 @@ describe("terminal links", () => {
     const terminal = {
       buffer: {
         active: {
+          length: 1,
           getLine: (row: number) => (row === 0 ? line : undefined),
           getNullCell: () => cell,
         },

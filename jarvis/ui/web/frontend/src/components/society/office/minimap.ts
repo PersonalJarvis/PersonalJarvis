@@ -324,6 +324,8 @@ const FURNITURE_PAINT: Partial<Record<FurnitureKind, string>> = {
   brandWall: "#d2b286", agentTotem: "#2b2f33", lobbySofa: "#efe9de", lobbyArmchair: "#a8653a", lobbyTable: "#e7ddcc",
   sideTable: "#f1eeea", lobbyLamp: "#c7a15e", oliveTree: MAP_PAINT.plant, awardCase: "#d2b286", entranceMat: "#3b3a37", lobbyRug: "#e8dfcf",
   spawnPad: "#d8c08c", spawnTerminal: "#2b2f33",
+  retroCabinet: "#7c5cff", prizeCounter: "#d6457f", tokenMachine: "#e0b23a", clawMachine: "#ff5fa2", airHockey: "#3d8bff",
+  pinball: "#9b5cff", snackCounter: "#c47a3a",
 };
 
 export const STATE_RING: Record<MinimapAgentState, string> = {

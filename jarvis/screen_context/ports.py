@@ -256,12 +256,17 @@ class PlatformWindowProbe:
     name = "platform-window"
 
     def foreground_snapshot(self) -> WindowSnapshot | None:
-        """Sample facts, frame and native handle atomically."""
+        """Sample facts, frame and native handle atomically.
+
+        Reads the app window, not the raw foreground: a click on the Jarvis
+        bar or the mascot makes that overlay the foreground window, and an
+        appshot of it is a picture of the mascot (BUG-228).
+        """
         try:
             from jarvis.platform import window_state as ws  # noqa: PLC0415
 
             with _input_space():
-                win = ws.foreground_window()
+                win = ws.foreground_app_window()
                 if win is None:
                     return None
                 rect = ws.window_frame_rect(win) or ws.window_rect(win)

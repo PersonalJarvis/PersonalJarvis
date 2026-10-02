@@ -13,19 +13,26 @@ export interface AppshotShortcutStatus {
   detail: string;
 }
 
+export type AppshotScope = "window" | "region";
+
 export interface AppshotSettings {
   enabled: boolean;
   hotkey: string;
+  /** Shortcut for an area appshot: drag a rectangle, that part is captured. */
+  region_hotkey: string;
   target: AppshotTarget;
   sound: boolean;
   effect: boolean;
   sound_effects_master: boolean;
   shortcut: AppshotShortcutStatus;
+  region_shortcut: AppshotShortcutStatus;
   readiness: {
     capture: boolean;
     capture_detail: string;
     effect: boolean;
     effect_detail: string;
+    region: boolean;
+    region_detail: string;
   };
 }
 
@@ -41,7 +48,7 @@ export interface AppshotMeta {
 }
 
 export type AppshotSettingsPatch = Partial<
-  Pick<AppshotSettings, "enabled" | "hotkey" | "target" | "sound" | "effect">
+  Pick<AppshotSettings, "enabled" | "hotkey" | "region_hotkey" | "target" | "sound" | "effect">
 >;
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
@@ -78,13 +85,14 @@ export function latestAppshotImageUrl(id: string): string {
   return `/api/appshot/latest/image?v=${encodeURIComponent(id)}`;
 }
 
-export function takeAppshot(delaySeconds = 0): Promise<
-  { ok: true; appshot: AppshotMeta } | { ok: false; reason: string; message: string }
-> {
+export function takeAppshot(
+  delaySeconds = 0,
+  scope: AppshotScope = "window",
+): Promise<{ ok: true; appshot: AppshotMeta } | { ok: false; reason: string; message: string }> {
   return request("/api/appshot/take", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ delay_s: delaySeconds }),
+    body: JSON.stringify({ delay_s: delaySeconds, scope }),
   });
 }
 
@@ -114,7 +122,7 @@ export async function claimPendingAppshot(meta: AppshotMeta): Promise<File | nul
   return new File([blob], `appshot-${stamp}.${extension}`, { type: blob.type || "image/jpeg" });
 }
 
-/** "alt+alt" → "Alt + Alt" (⌥ on a Mac); any other combo, title-cased. */
+/** "alt+alt" → "Alt + Alt" (⌥ on a Mac), "shift+shift" → "Shift + Shift"; any other combo, title-cased. */
 export function formatAppshotHotkey(hotkey: string, isMac: boolean): string {
   if (!hotkey) return "";
   if (hotkey === "alt+alt") return isMac ? "⌥ + ⌥" : "Alt + Alt";
@@ -125,6 +133,7 @@ export function formatAppshotHotkey(hotkey: string, isMac: boolean): string {
       if (key === "ctrl") return isMac ? "⌃" : "Ctrl";
       if (key === "alt") return isMac ? "⌥" : "Alt";
       if (key === "shift") return isMac ? "⇧" : "Shift";
+      if (key === "right_alt") return isMac ? "⌥" : "AltGr";
       if (key === "win" || key === "cmd" || key === "super") return isMac ? "⌘" : "Win";
       return key.length === 1 ? key.toUpperCase() : key.charAt(0).toUpperCase() + key.slice(1);
     })

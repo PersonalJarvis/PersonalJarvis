@@ -1,7 +1,7 @@
 import { useUserName } from "@/hooks/useUserName";
 import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
-import { GigiMark } from "@/components/GigiMark";
+import { PetMark } from "@/components/pets/PetMark";
 
 /**
  * "Good morning, Ruben" — the front page's opening line, on both stages.
@@ -32,9 +32,10 @@ export function Greeting({
       )}
       data-testid="home-greeting"
     >
-      {/* The mark above, the line under it in regular weight — the Codex
-          app's opening, quieter than a bold headline beside a logo. */}
-      <GigiMark size={40} className="mb-4 rounded-xl opacity-90" />
+      {/* The user's pet above, the line under it in regular weight — the
+          Codex app's opening, quieter than a bold headline beside a logo.
+          The pet follows the voice: it listens, thinks and talks along. */}
+      <PetMark size={48} reactive className="mb-3" />
       <h1 className="text-2xl font-normal tracking-tight text-foreground [text-wrap:balance]">
         {text}
       </h1>

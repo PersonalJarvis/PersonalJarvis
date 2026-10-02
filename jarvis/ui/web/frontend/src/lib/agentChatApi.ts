@@ -90,18 +90,24 @@ export interface VoiceChatBinding {
   session_id: string | null;
   /** A blank page is open: the next call opens a new chat. */
   fresh: boolean;
+  /** An archived voice chat calls are recorded into; absent on an older backend. */
+  voice_session_id?: string | null;
 }
 
 /**
  * Make `sessionId` the chat voice calls continue — its turns are filed into
  * it and a call starts with its history. `null` = a blank page: the next
- * call opens a new chat.
+ * call opens a new chat. `voiceSessionId` (with `sessionId` null) puts an
+ * archived voice chat on stage instead: calls are recorded into it.
  */
-export async function bindVoiceChat(sessionId: string | null): Promise<VoiceChatBinding> {
+export async function bindVoiceChat(
+  sessionId: string | null,
+  voiceSessionId: string | null = null,
+): Promise<VoiceChatBinding> {
   return json(await fetch("/api/agent-chat/voice-chat", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ session_id: sessionId }),
+    body: JSON.stringify({ session_id: sessionId, voice_session_id: voiceSessionId }),
   }), "voice-chat-bind-failed");
 }
 

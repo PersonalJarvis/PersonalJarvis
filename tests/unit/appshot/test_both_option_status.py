@@ -17,7 +17,7 @@ from tests.fakes.fake_tcc import install_port, make_darwin_port
 
 
 class _Watcher:
-    def __init__(self, _on_fire, *, probe) -> None:  # noqa: ANN001
+    def __init__(self, _on_fire, *, probe, together_s=None) -> None:  # noqa: ANN001
         self.started = False
 
     def start(self) -> None:
@@ -29,10 +29,12 @@ class _Watcher:
 
 async def _arm(monkeypatch: pytest.MonkeyPatch, host: str):
     monkeypatch.setattr(platform_mod, "detect_platform", lambda: host)
-    monkeypatch.setattr(gesture_mod, "make_probe", lambda: (lambda: (False, False), ""))
-    monkeypatch.setattr(gesture_mod, "BothAltWatcher", _Watcher)
+    monkeypatch.setattr(
+        gesture_mod, "make_probe", lambda _family="alt": (lambda: (False, False), "")
+    )
+    monkeypatch.setattr(gesture_mod, "BothKeysWatcher", _Watcher)
     shortcut = AppshotShortcut(bus=object())
-    return await shortcut._arm_both_alt()
+    return await shortcut._arm_gesture("window", BOTH_ALT)
 
 
 async def test_a_mac_gets_the_hint_and_no_permission_is_requested(

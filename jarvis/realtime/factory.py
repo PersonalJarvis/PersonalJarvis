@@ -9,6 +9,7 @@ whether the feature is available (AP-21/AP-22).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -322,7 +323,12 @@ async def realtime_warm_selected_transports(cfg: Any) -> None:
         return
     for position, provider_id in enumerate(_explicit_provider_ids(cfg)):
         try:
-            provider_cls = load(_GROUP, provider_id, protocol=RealtimeProvider)
+            # Importing a provider plugin is synchronous module work (189 ms
+            # warm for openai-live, seconds on a cold boot disk); this runs as
+            # a boot task on the shared loop, so the import goes to a thread.
+            provider_cls = await asyncio.to_thread(
+                load, _GROUP, provider_id, protocol=RealtimeProvider
+            )
             if position > 0 and not bool(
                 getattr(provider_cls, "eager_warm_as_fallback", False)
             ):
@@ -366,7 +372,10 @@ async def realtime_prespawn_transports(cfg: Any) -> None:
         return
     for position, provider_id in enumerate(_explicit_provider_ids(cfg)):
         try:
-            provider_cls = load(_GROUP, provider_id, protocol=RealtimeProvider)
+            # Off the loop for the same reason as the warm above.
+            provider_cls = await asyncio.to_thread(
+                load, _GROUP, provider_id, protocol=RealtimeProvider
+            )
             if position > 0 and not bool(
                 getattr(provider_cls, "eager_warm_as_fallback", False)
             ):

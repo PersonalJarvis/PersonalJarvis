@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { groupTrace, groupActivityTrace, splitConversationTurn, WorkTrace, traceDuration } from "./WorkTrace";
+import { groupTrace, groupActivityTrace, livePetState, splitConversationTurn, WorkTrace, traceDuration } from "./WorkTrace";
 import { traceToolIdentity } from "./traceActivity";
 import type { TextBlock, ToolBlock, TurnBlock, TurnStatus } from "./reduce";
 
@@ -11,12 +11,14 @@ const tool = (id: string, over: Partial<ToolBlock> = {}): ToolBlock => ({
 const thought: TurnBlock = { kind: "reasoning", id: "reason", text: "**Check** the input.", live: false, durationMs: 8000, startedMs: 1000 };
 const reply = (id: string, text: string): TextBlock => ({ kind: "text", id, text });
 const props = { startedMs: 1000, durationMs: 12000, status: "done" as TurnStatus };
+/** Finished rows are drawn by the classic look; the rail writes a report. */
+const rows = { ...props, look: "classic" as const };
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe("work trace", () => {
   it("summarizes integrations and mutations in first-use order with original logos", () => {
     const blocks = [tool("linear", {name:"mcp__codex_apps__linear_list_issues"}), tool("edit", {name:"apply_patch"}), tool("shell", {name:"exec_command"}), tool("again", {name:"linear/get_issue"})];
-    const {container} = render(<WorkTrace {...props} blocks={blocks} />);
+    const {container} = render(<WorkTrace {...rows} blocks={blocks} />);
     const summary = screen.getByRole("button", {name:"Used Linear Edited files Ran commands"});
     expect(summary.getAttribute("aria-expanded")).toBe("false");
     expect(summary.querySelector("img, [data-logo]")).toBeTruthy();
@@ -39,9 +41,9 @@ describe("work trace", () => {
 
   it("keeps live mixed activity open, then folds it at completion", () => {
     const blocks = [tool("a",{name:"linear/get_issue"}),tool("b",{name:"exec_command"})];
-    const {rerender} = render(<WorkTrace {...props} status="running" blocks={blocks} />);
+    const {rerender} = render(<WorkTrace {...rows} status="running" blocks={blocks} />);
     expect(screen.getByRole("button",{name:"Using Linear Running commands"}).getAttribute("aria-expanded")).toBe("true");
-    rerender(<WorkTrace {...props} blocks={blocks} />);
+    rerender(<WorkTrace {...rows} blocks={blocks} />);
     expect(screen.getByRole("button",{name:"Used Linear Ran commands"}).getAttribute("aria-expanded")).toBe("false");
   });
 
@@ -57,6 +59,7 @@ describe("work trace", () => {
   it("preserves reasoning, call, next step and final answer order", () => {
     const blocks = [thought, tool("a"), { kind: "text" as const, id: "next", text: "Next, check the tests." }, tool("b"), { kind: "text" as const, id: "final", text: "Everything is ready." }];
     render(<WorkTrace {...props} blocks={blocks} />);
+    fireEvent.click(screen.getByRole("button", { name: /^Worked for 12s/ }));
     const text = screen.getByTestId("work-trace").textContent!;
     expect(text.indexOf("Check the input")).toBeLessThan(text.indexOf("a.ts"));
     expect(text.indexOf("a.ts")).toBeLessThan(text.indexOf("Next, check"));
@@ -67,7 +70,7 @@ describe("work trace", () => {
 
   it("groups fourteen successful reads and expands their full receipts", () => {
     const blocks = Array.from({length: 14}, (_, i) => tool(`file${i}`));
-    render(<WorkTrace {...props} blocks={blocks} />);
+    render(<WorkTrace {...rows} blocks={blocks} />);
     const group = screen.getByRole("button", { name: "Read 14 files" });
     expect(group.getAttribute("aria-expanded")).toBe("false");
     expect(screen.queryByText("file0.ts")).toBeNull();
@@ -85,18 +88,22 @@ describe("work trace", () => {
 
   it("automatically collapses completed groups even after live interaction", () => {
     const blocks = [tool("a"), tool("b")];
-    const { rerender } = render(<WorkTrace {...props} status="running" blocks={blocks} />);
+    const { rerender } = render(<WorkTrace {...rows} status="running" blocks={blocks} />);
     const group = screen.getByRole("button", { name: "Read 2 files" });
     fireEvent.click(group); fireEvent.click(group);
     expect(group.getAttribute("aria-expanded")).toBe("true");
-    rerender(<WorkTrace {...props} blocks={blocks} />);
-    expect(group.getAttribute("aria-expanded")).toBe("false");
+    rerender(<WorkTrace {...rows} blocks={blocks} />);
+    expect(screen.getByRole("button", { name: "Read 2 files" }).getAttribute("aria-expanded")).toBe("false");
   });
 
   it("keeps errors and pending approval visible beside folded success", () => {
     render(<WorkTrace {...props} blocks={[tool("a"),tool("b"),tool("err",{isError:true,output:"Permission denied"}),tool("approval",{output:null,approval:{approvalId:"ap",summary:"Delete generated files?",decision:null}})]} onDecide={() => undefined} />);
-    expect(screen.getByText("Permission denied")).toBeTruthy();
+    // The approval stays actionable beside the folded report; the toggle
+    // already says that a step went wrong.
     expect(screen.getByText("Delete generated files?")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Approve" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /^Worked for 12s.*1 failed/ }));
+    expect(screen.getByText("Failed: Permission denied")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Approve" })).toBeTruthy();
   });
 
@@ -116,22 +123,29 @@ describe("work trace", () => {
 
   it("shows a denied action without a running indicator", () => {
     const {container} = render(<WorkTrace {...props} status="running" blocks={[tool("a",{output:null,approval:{approvalId:"ap",summary:"Delete?",decision:"deny"}})]} />);
-    expect(container.querySelector('[data-state="denied"]')).toBeTruthy();
+    expect(screen.getByText("You declined it")).toBeTruthy();
+    expect(container.querySelector('[data-trace-tool][data-state="running"]')).toBeNull();
     expect(screen.queryByRole("button", {name:"Approve"})).toBeNull();
   });
 
   it("renders edit input, a diff and output on demand", () => {
     render(<WorkTrace {...props} blocks={[tool("edit",{name:"Edit",input:{file_path:"app.ts",old_string:"oldValue",new_string:"newValue"},output:"File updated"})]} />);
-    fireEvent.click(screen.getByRole("button",{name:/Edit/}));
+    fireEvent.click(screen.getByRole("button", { name: /^Worked for 12s/ }));
+    // Codex-style: the edit is one line with its size; the diff is one tap away.
+    const edit = screen.getByRole("button", { name: /^Edited app\.ts \+1 −1/ });
+    fireEvent.click(edit);
     expect(screen.getByLabelText("Changes").textContent).toContain("− oldValue");
     expect(screen.getByLabelText("Changes").textContent).toContain("+ newValue");
     expect(screen.getByText("File updated")).toBeTruthy();
   });
 
   it.each(["cancelled", "error"] as const)("does not leave tools spinning after %s", status => {
-    const {container} = render(<WorkTrace {...props} status={status} blocks={[tool("a",{output:null})]} />);
+    const {container, rerender} = render(<WorkTrace {...rows} status={status} blocks={[tool("a",{output:null})]} />);
     expect(container.querySelector('[data-state="interrupted"]')).toBeTruthy();
-    expect(container.querySelector('[data-state="running"]')).toBeNull();
+    expect(container.querySelector('[data-trace-tool][data-state="running"]')).toBeNull();
+    rerender(<WorkTrace {...props} status={status} blocks={[tool("a",{output:null})]} />);
+    fireEvent.click(screen.getByRole("button", { name: /^Worked for 12s/ }));
+    expect(screen.getByText("Stopped before it finished")).toBeTruthy();
   });
 
   it("updates the live clock and releases timers at completion", () => {
@@ -144,10 +158,14 @@ describe("work trace", () => {
   });
 
   it("does not interpret tool output as HTML", () => {
-    const {container} = render(<WorkTrace {...props} blocks={[tool("a",{output:'<img src=x onerror=alert(1)>'})]} />);
-    fireEvent.click(screen.getByRole("button", {name:/Read file/}));
+    const {container} = render(<WorkTrace {...props} blocks={[tool("a",{name:"run_shell",input:{command:"<b>echo</b>"},output:'<img src=x onerror=alert(1)>'})]} />);
+    fireEvent.click(screen.getByRole("button", { name: /^Worked for 12s/ }));
+    // Neither the command line nor its printed output turns into markup.
+    expect(container.querySelector('img, b')).toBeNull();
+    expect(container.querySelector("[data-trace-output]")?.textContent).toBe("<img src=x onerror=alert(1)>");
+    fireEvent.click(screen.getByRole("button", { name: /^Ran <b>echo<\/b>/ }));
     expect(container.querySelector('img')).toBeNull();
-    expect(screen.getByText('<img src=x onerror=alert(1)>')).toBeTruthy();
+    expect(screen.getAllByText('<img src=x onerror=alert(1)>').length).toBeGreaterThan(0);
   });
 
   it("formats durations without a 60-second remainder", () => {
@@ -160,9 +178,12 @@ describe("work trace", () => {
   });
 
   it.each(["RunCommand", "RunShellCommand", "run_shell"])("shows the short duration beside a readable %s label", name => {
-    render(<WorkTrace {...props} blocks={[tool("shell", { name, input: { command: "read skill instructions" }, durationMs: 49 })]} />);
+    const { rerender } = render(<WorkTrace {...rows} blocks={[tool("shell", { name, input: { command: "read skill instructions" }, durationMs: 49 })]} />);
     expect(screen.getByRole("button", { name: /Run command.*49ms/ })).toBeTruthy();
     expect(screen.queryByText("0.0s")).toBeNull();
+    rerender(<WorkTrace {...props} blocks={[tool("shell", { name, input: { command: "read skill instructions" }, durationMs: 49 })]} />);
+    fireEvent.click(screen.getByRole("button", { name: /^Worked for 12s/ }));
+    expect(screen.getByRole("button", { name: /^Ran read skill instructions 49ms/ })).toBeTruthy();
   });
 
   it("keeps the last reply visible and treats earlier text as foldable work", () => {
@@ -189,7 +210,7 @@ describe("work trace", () => {
     expect(screen.getAllByRole("status").at(-1)?.textContent).toContain("Done");
     const fold = screen.getByTestId("conversation-work-fold").querySelector("button")!;
     fireEvent.click(fold);
-    expect(screen.getAllByText("Upload failed").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Upload failed/).length).toBeGreaterThan(0);
   });
 
   it("keeps a failed question poll visible after a conversation completes", () => {
@@ -212,17 +233,17 @@ describe("work trace", () => {
 
 describe("rail look", () => {
   it("threads thoughts, tools and the state line on one rail by default", () => {
-    const { container } = render(<WorkTrace {...props} blocks={[thought, tool("a", { name: "exec_command" })]} />);
+    const { container } = render(<WorkTrace {...props} status="running" blocks={[thought, tool("a", { name: "exec_command" })]} />);
     expect(screen.getByTestId("work-trace").getAttribute("data-look")).toBe("rail");
     const rails = container.querySelectorAll(".trace-rail");
     expect(rails).toHaveLength(1);
     const steps = rails[0].querySelectorAll(":scope > .trace-step");
     expect(steps).toHaveLength(3);
-    expect(steps[2].querySelector("[role='status']")?.textContent).toContain("Done");
+    expect(steps[2].querySelector("[role='status']")?.textContent).toContain("Working");
   });
 
   it("breaks the rail around a reply so narration stands on its own", () => {
-    const { container } = render(<WorkTrace {...props} blocks={[tool("a", { name: "exec_command" }), reply("mid", "Halfway there."), tool("b", { name: "exec_command" })]} />);
+    const { container } = render(<WorkTrace {...props} status="running" blocks={[tool("a", { name: "exec_command" }), reply("mid", "Halfway there."), tool("b", { name: "exec_command", output: null })]} />);
     const rails = container.querySelectorAll(".trace-rail");
     expect(rails).toHaveLength(2);
     expect(rails[0].textContent).not.toContain("Halfway there.");
@@ -234,6 +255,25 @@ describe("rail look", () => {
     expect(running.querySelector(".trace-shimmer")?.textContent).toBe("Run command");
     expect(running.querySelector(".trace-node-live")).toBeTruthy();
     expect(screen.getByRole("status").querySelector(".trace-shimmer")?.textContent).toBe("Working");
+  });
+
+  it("puts the pet on a live Jarvis trace and the plain node everywhere else", () => {
+    const blocks = [tool("a", { name: "exec_command", output: null })];
+    const { container, rerender } = render(<WorkTrace {...props} status="running" durationMs={null} blocks={blocks} companion />);
+    expect(container.querySelector("[data-trace-pet]")?.getAttribute("data-trace-pet")).toBe("working");
+    rerender(<WorkTrace {...props} status="running" durationMs={null} blocks={blocks} />);
+    expect(container.querySelector("[data-trace-pet]")).toBeNull();
+    rerender(<WorkTrace {...props} blocks={[tool("a", { name: "exec_command" })]} companion />);
+    expect(container.querySelector("[data-trace-pet]")).toBeNull();
+  });
+
+  it("plays the pet's working row while Jarvis thinks or works, talking while it answers", () => {
+    expect(livePetState([])).toBe("working");
+    expect(livePetState([{ ...thought, live: true } as TurnBlock])).toBe("working");
+    expect(livePetState([tool("s", { name: "grep", output: null })])).toBe("working");
+    expect(livePetState([tool("x", { name: "exec_command" })])).toBe("working");
+    expect(livePetState([reply("empty", "  ")])).toBe("working");
+    expect(livePetState([reply("r", "Here it is")])).toBe("talking");
   });
 
   it("drops the shimmer once the turn is finished", () => {
@@ -252,7 +292,7 @@ describe("rail look", () => {
   it("shows the services a folded conversation turn used on its toggle", () => {
     const blocks = [tool("linear", { name: "mcp__codex_apps__linear_list_issues" }), reply("done", "Three issues are open.")];
     render(<WorkTrace {...props} conversation blocks={blocks} />);
-    const toggle = screen.getByRole("button", { name: "Thought for 12s" });
+    const toggle = screen.getByRole("button", { name: /^Worked for 12s/ });
     expect(toggle.querySelector("img, [data-logo]")).toBeTruthy();
   });
 });

@@ -29,15 +29,22 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { saveLayoutWeights } from "../../lib/agenticIdeApi";
 import {
   dragSeam,
+  dragSeams,
   evenSeam,
   evenedTree,
+  grabsSeamEnd,
   sameShape,
+  stackedSeams,
+  treeSeams,
   type LayoutNode,
   type PaneSeam,
 } from "./treeLayout";
 
 /** How far one arrow-key press moves a seam. Matches `PaneResizer`. */
 const KEY_STEP_PX = 16;
+
+/** `draggingSeams` while nothing is held — one array, so it never re-renders. */
+const NO_SEAMS: readonly string[] = [];
 
 /** How long after the last size edit the result is posted to the backend. */
 const SAVE_DEBOUNCE_MS = 600;
@@ -53,8 +60,15 @@ export interface TreeSizeControls {
   tree: LayoutNode | null;
   /** Id of the seam being dragged right now, if any. */
   dragging: string | null;
+  /** Every seam the drag moves: the held one, plus its stack when grabbed at an end. */
+  draggingSeams: readonly string[];
   /** Begin a drag — wire to a seam's `onPointerDown`. */
   startDrag: (seam: PaneSeam, event: React.PointerEvent) => void;
+  /**
+   * The seams a drag started at this pointer would move — wire to a seam's
+   * `onPointerMove` to show the stack before it is grabbed.
+   */
+  seamsAt: (seam: PaneSeam, event: React.PointerEvent) => readonly string[];
   /** Move a seam by ``deltaPx`` — the keyboard equivalent of a drag. */
   nudge: (seam: PaneSeam, deltaPx: number) => void;
   /** Give a seam's two neighbours the same size — wire to `onDoubleClick`. */
@@ -95,7 +109,8 @@ export function useTreeSizes(
       ? override
       : (serverTree ?? null);
 
-  const [dragging, setDragging] = useState<string | null>(null);
+  /** The seams in the drag, the held one first; null when nothing is held. */
+  const [dragGroup, setDragGroup] = useState<readonly string[] | null>(null);
 
   /*
    * Saves are debounced and fire-and-forget: a run of arrow-key nudges is one
@@ -133,9 +148,12 @@ export function useTreeSizes(
   // Drag anchors — refs so the move handler never reads a stale closure. The
   // drag works from the tree it STARTED with, so a slow pointer cannot
   // accumulate rounding drift over a hundred frames.
-  const active = useRef<{ seam: PaneSeam; point: number; from: LayoutNode } | null>(
-    null,
-  );
+  const active = useRef<{
+    seam: PaneSeam;
+    group: PaneSeam[];
+    point: number;
+    from: LayoutNode;
+  } | null>(null);
   const point = useRef(0);
   const live = useRef<LayoutNode | null>(null);
 
@@ -145,6 +163,32 @@ export function useTreeSizes(
   extentRef.current = extent;
   const previewRef = useRef(onPreview);
   previewRef.current = onPreview;
+
+  /**
+   * The seams a pointer at ``event`` on ``seam`` moves, resolved against
+   * ``from``: the held seam alone, or — for a vertical seam held near its top
+   * or bottom end — the whole line of panes stacked under each other (see
+   * `stackedSeams`).
+   */
+  const groupFor = useCallback(
+    (from: LayoutNode, seam: PaneSeam, event: React.PointerEvent): PaneSeam[] => {
+      if (seam.orientation !== "vertical") return [seam];
+      const target = event.currentTarget as Element | null;
+      const rect = target?.getBoundingClientRect?.();
+      if (!rect || !grabsSeamEnd(rect, event.clientY)) return [seam];
+      return stackedSeams(treeSeams(from), seam, extentRef.current().width);
+    },
+    [],
+  );
+
+  const seamsAt = useCallback(
+    (seam: PaneSeam, event: React.PointerEvent): readonly string[] => {
+      const current = treeRef.current;
+      if (!current) return [seam.id];
+      return groupFor(current, seam, event).map((member) => member.id);
+    },
+    [groupFor],
+  );
 
   /** Tears down the gesture in flight, if any; set while a drag runs. */
   const stopDrag = useRef<(() => void) | null>(null);
@@ -163,10 +207,11 @@ export function useTreeSizes(
       event.preventDefault();
       stopDrag.current?.();
       const at = seam.orientation === "vertical" ? event.clientX : event.clientY;
-      active.current = { seam, point: at, from };
+      const group = groupFor(from, seam, event);
+      active.current = { seam, group, point: at, from };
       point.current = at;
       live.current = null;
-      setDragging(seam.id);
+      setDragGroup(group.map((member) => member.id));
 
       const axisPx = () => {
         const size = extentRef.current();
@@ -180,7 +225,13 @@ export function useTreeSizes(
         frame = undefined;
         const drag = active.current;
         if (!drag) return;
-        const next = dragSeam(drag.from, drag.seam, point.current - drag.point, axisPx());
+        const next = dragSeams(
+          drag.from,
+          drag.group,
+          drag.seam,
+          point.current - drag.point,
+          axisPx(),
+        );
         live.current = next;
         if (previewRef.current) previewRef.current(next);
         else commit(next);
@@ -224,7 +275,7 @@ export function useTreeSizes(
         const settled = live.current;
         active.current = null;
         live.current = null;
-        setDragging(null);
+        setDragGroup(null);
         if (settled) commit(settled);
       }
 
@@ -233,7 +284,7 @@ export function useTreeSizes(
       window.addEventListener("pointercancel", settle);
       stopDrag.current = detach;
     },
-    [commit],
+    [commit, groupFor],
   );
 
   // A grid unmounted mid-drag must not leave listeners or a locked cursor.
@@ -265,7 +316,17 @@ export function useTreeSizes(
     commit(evenedTree(current));
   }, [commit]);
 
-  return { tree, dragging, startDrag, nudge, even, evenAll, liveTree: live };
+  return {
+    tree,
+    dragging: dragGroup?.[0] ?? null,
+    draggingSeams: dragGroup ?? NO_SEAMS,
+    startDrag,
+    seamsAt,
+    nudge,
+    even,
+    evenAll,
+    liveTree: live,
+  };
 }
 
 export { KEY_STEP_PX };

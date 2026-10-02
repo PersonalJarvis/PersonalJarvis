@@ -27,6 +27,7 @@ import { useRoutineNavigation } from "./routineNavigation";
 import { notifyRoutineChanged } from "../cardData";
 import { routineTaskId } from "./routineExecution";
 import { RoutineChatHost } from "./RoutineChatHost";
+import { AgentConversationsBar } from "./AgentConversations";
 import { MessageSquare, Mic, Paperclip, Plus, RotateCcw, Send, Square } from "lucide-react";
 import { ChatMarkdown, MediaPreview, mediaKind } from "@/components/agentchat/ChatMarkdown";
 
@@ -148,6 +149,15 @@ export function itemsForOpenSession(
   return sessionId !== null && sessionId === activeSessionId ? items : [];
 }
 
+/** Roster id → the name a person sees (the lead follows the wake word). */
+function useRosterDisplayName(roster: SocietyAgent[]): (id: string, fallback: string) => string {
+  const assistantName = useEventStore((state) => state.assistantName);
+  return useCallback((id: string, fallback: string) => {
+    const member = roster.find((a) => a.agentId === id);
+    return member ? societyDisplayName(member, assistantName) : fallback;
+  }, [roster, assistantName]);
+}
+
 export function AgentChatPanel(props: AgentChatPanelProps) {
   const disconnect = useCallback(() => {
     (props.agent.tier === "lead" ? useAgentChatStore : props.chatStore ?? useSocietyChatStore).getState().disconnect();
@@ -227,7 +237,7 @@ function SpecialistChat({ agent, roster }: AgentChatPanelProps) {
       }
     }
   }, [visibleItems, agent.agentId]);
-  const outgoing = useOutgoingMessages(sessionReady ? agent.agentId : null);
+  const outgoing = useOutgoingMessages(sessionReady ? agent.agentId : null, sessionId);
   const allItems = useMemo(() => mergeOutgoingMessages(
     visibleItems, outgoing, agent.agentId, agent.name,
     new Map(roster.map((member) => [member.agentId, member.name])),
@@ -264,6 +274,7 @@ function SpecialistChat({ agent, roster }: AgentChatPanelProps) {
     () => roster.filter((a) => a.agentId !== agent.agentId && a.tier !== "lead"),
     [roster, agent.agentId],
   );
+  const displayName = useRosterDisplayName(roster);
 
   return (
     <div
@@ -272,6 +283,7 @@ function SpecialistChat({ agent, roster }: AgentChatPanelProps) {
       data-session-id={sessionId ?? ""}
       data-session-ready={sessionReady ? "true" : "false"}
     >
+      <AgentConversationsBar agentId={agent.agentId} agentName={agent.name} displayName={displayName} />
       <Transcript key={`${sessionId ?? agent.agentId}:${view.boundaryId}`} items={view.items} agent={agent} roster={roster} onDecide={decide} />
       {sessionReady && socketState !== "open" && socketState !== "idle" ? (
         <p role="status" className="px-4 pb-1 text-xs text-muted-foreground">
@@ -360,6 +372,7 @@ function JarvisChat({ agent, roster }: AgentChatPanelProps) {
   // selection may open an older session; polling must not undo New chat.
 
   const mentionable = useMemo(() => roster.filter((a) => a.tier !== "lead"), [roster]);
+  const displayName = useRosterDisplayName(roster);
 
   // Voice or typed — Jarvis' card only. The other agents have no voice: the
   // wake word, the realtime brain and the microphone belong to the lead.
@@ -413,6 +426,7 @@ function JarvisChat({ agent, roster }: AgentChatPanelProps) {
   return (
     <div className="flex h-full min-h-0 flex-col bg-background" data-testid="society-chat" data-mode="chat">
       {header}
+      <AgentConversationsBar agentId={agent.agentId} agentName={displayName(agent.agentId, agent.name)} displayName={displayName} />
       <Transcript key={`${activeSessionId ?? ""}:${view.boundaryId}`} items={view.items} agent={agent} roster={roster} onDecide={decide} />
       {activeSessionId && socketState !== "open" && socketState !== "idle" ? (
         <p role="status" className="px-4 pb-1 text-xs text-muted-foreground">

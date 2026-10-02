@@ -61,7 +61,7 @@ function sidebarRow(id: string, name: string): HTMLElement {
 }
 
 /** Blog, as the move dialog's map draws it: one Claude pane. */
-const blog = { id: "w2", name: "Blog", layout: { pane: "t1" }, max_terminals: 16,
+const blog = { id: "w2", name: "Blog", layout: { pane: "t1" },
   terminals: [{ key: "t1", name: "T1", agent: "claude", display_name: "Claude Code", history_id: "b-T1" }] };
 
 beforeEach(() => { vi.clearAllMocks(); api.layout.mockResolvedValue(blog); });
@@ -90,7 +90,7 @@ it("offers the other workspaces on this folder and moves the pane to the place p
 });
 
 it("says why a move was refused and keeps the pane", async () => {
-  api.transfer.mockRejectedValue(new Error("Blog already has the maximum of 12 terminals."));
+  api.transfer.mockRejectedValue(new Error("Blog works in another folder."));
   const onChanged = vi.fn(), onMutationEnd = vi.fn();
   render(<WorkspaceTerminalGrid {...props} session={makeSession()} onChanged={onChanged} onMutationEnd={onMutationEnd} />);
 
@@ -98,7 +98,7 @@ it("says why a move was refused and keeps the pane", async () => {
   await screen.findByRole("button", { name: "Place T1 below T1" });
   fireEvent.click(screen.getByTestId("move-pane-confirm"));
 
-  await waitFor(() => expect(api.toast).toHaveBeenCalledWith("error", "Blog already has the maximum of 12 terminals."));
+  await waitFor(() => expect(api.toast).toHaveBeenCalledWith("error", "Blog works in another folder."));
   expect(onChanged).not.toHaveBeenCalled();
   expect(onMutationEnd).toHaveBeenCalledOnce();
   // Still open: another place can be picked.

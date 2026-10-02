@@ -454,25 +454,39 @@ function askInputMonitoringForCallShortcut(): void {
 /**
  * The wake-word group of Settings is open behind the card. Continue waits
  * for a saved wake word; without one the Call shortcut is the way in, so the
- * step can still be left for later.
+ * step can still be left for later. Saving a word does not flip the
+ * always-listen switch (that needs a local model), so a save made during this
+ * step counts on its own — otherwise Continue stayed locked after a save.
  */
 function VoiceStep({ next, later }: { next: () => void; later: () => void }) {
   const t = useT();
   const { config } = useWakeWord();
-  const on = Boolean(config?.enabled && config.phrase.trim());
+  const [savedHere, setSavedHere] = useState(false);
+  useEffect(() => {
+    const onChanged = () => setSavedHere(true);
+    window.addEventListener("jarvis:wake-word-changed", onChanged);
+    return () => window.removeEventListener("jarvis:wake-word-changed", onChanged);
+  }, []);
+  const phrase = config?.phrase.trim() ?? "";
+  const on = Boolean(config?.enabled && phrase);
+  const saved = on || (savedHere && Boolean(phrase));
   const chooseCallShortcut = () => {
     askInputMonitoringForCallShortcut();
     later();
   };
   return (
     <div className="space-y-3">
-      <Status tone={on ? "ok" : "muted"} testId="setup-voice-status">
-        {on ? fill(t("first_run.voice.on"), { phrase: config!.phrase }) : t("first_run.voice.off")}
+      <Status tone={saved ? "ok" : "muted"} testId="setup-voice-status">
+        {on
+          ? fill(t("first_run.voice.on"), { phrase })
+          : saved
+            ? fill(t("first_run.voice.saved"), { phrase })
+            : t("first_run.voice.off")}
       </Status>
-      <PrimaryAction onClick={next} disabled={!on}>
+      <PrimaryAction onClick={next} disabled={!saved}>
         {t("first_run.continue")}
       </PrimaryAction>
-      {!on && (
+      {!saved && (
         <div className="text-center">
           <QuietAction onClick={chooseCallShortcut} testId="setup-voice-later" className="text-xs">
             {t("first_run.voice.later")}

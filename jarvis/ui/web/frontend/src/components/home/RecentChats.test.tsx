@@ -106,14 +106,17 @@ describe("RecentChats", () => {
     ]);
   });
 
-  it("lists chats as plain titles and names a topicless voice chat by its kind", async () => {
+  it("marks voice and typed chats apart and names a topicless voice chat by its kind", async () => {
     useEventStore.setState({
       conversations: [...CONVERSATIONS, { ...row("voice", "v2", ""), preview: "Hallo" }],
     });
     render(<RecentChats />);
-    // No per-row glyphs: the title is the row.
+    // Every row carries exactly one kind mark: sound bars for voice, a ring for typed.
     for (const item of screen.getAllByTestId("recent-chat-row")) {
-      expect(item.querySelector("svg")).toBeNull();
+      const marks = item.querySelectorAll("[data-kind-mark]");
+      expect(marks).toHaveLength(1);
+      expect(marks[0].getAttribute("data-kind-mark")).toBe(item.getAttribute("data-kind"));
+      expect(item.querySelectorAll("svg")).toHaveLength(item.getAttribute("data-kind") === "voice" ? 1 : 0);
     }
     const voice = screen.getByRole("button", { name: "Voice: Spoken thread" });
     expect(voice.getAttribute("data-kind")).toBe("voice");

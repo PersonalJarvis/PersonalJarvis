@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -89,14 +90,27 @@ def find_pet_dir(pet_id: str, *, data_dir: Path | None = None) -> tuple[Path, bo
     if not isinstance(pet_id, str) or pet_id == NO_PET_ID:
         return None
     if BUILTIN_ID_RE.match(pet_id) and not USER_ID_RE.match(pet_id):
-        folder = builtin_root() / pet_id
-        if (folder / MANIFEST_NAME).is_file():
+        folder = _child_folder(builtin_root(), pet_id)
+        if folder is not None and (folder / MANIFEST_NAME).is_file():
             return folder, True
     if USER_ID_RE.match(pet_id):
-        folder = custom_root(data_dir) / pet_id
-        if (folder / MANIFEST_NAME).is_file():
+        folder = _child_folder(custom_root(data_dir), pet_id)
+        if folder is not None and (folder / MANIFEST_NAME).is_file():
             return folder, False
     return None
+
+
+def _child_folder(root: Path, name: str) -> Path | None:
+    """``root / name`` when it stays a direct child of ``root``, else ``None``.
+
+    The id patterns already rule out separators and dots; this second check
+    keeps the guarantee local to the one place a request value becomes a path.
+    """
+    base = os.path.normpath(os.path.abspath(root))
+    full = os.path.normpath(os.path.join(base, name))
+    if not full.startswith(base + os.sep) or os.path.dirname(full) != base:
+        return None
+    return Path(full)
 
 
 def read_manifest(pet_dir: Path, *, builtin: bool) -> PetManifest:

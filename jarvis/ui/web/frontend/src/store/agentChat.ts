@@ -155,7 +155,11 @@ export interface AgentChatStore {
   providerById: (id: string) => ProviderOption | null;
   setDraft: (patch: Partial<ComposerDraft>) => Promise<void>;
   setPlan: (on: boolean) => Promise<void>;
-  newChat: () => void;
+  /**
+   * A blank page. `voiceSessionId` = an archived voice chat goes on stage
+   * instead, and calls continue it rather than opening a new chat.
+   */
+  newChat: (opts?: { voiceSessionId?: string }) => void;
   openSession: (sessionId: string) => void;
   removeSession: (sessionId: string) => Promise<void>;
   /** Send the sentence, with whatever files the composer is holding for it. */
@@ -288,9 +292,9 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
    * `null` = a blank page: the next call opens a new chat. Only the front
    * page's chat has a voice; the other surfaces never bind.
    */
-  const bindVoice = (sessionId: string | null) => {
+  const bindVoice = (sessionId: string | null, voiceSessionId: string | null = null) => {
     if (surface !== "jarvis") return;
-    void bindVoiceChat(sessionId).catch((err: unknown) => {
+    void bindVoiceChat(sessionId, voiceSessionId).catch((err: unknown) => {
       // Not fatal: the composer's voice button binds again before a call.
       console.info("Voice chat binding failed.", err);
     });
@@ -674,7 +678,7 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
         }
       },
 
-      newChat: () => {
+      newChat: (opts) => {
         closeSocket();
         ++catalogRequest;
         set({
@@ -686,7 +690,7 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
           lastError: null,
           catalog: null,
         });
-        bindVoice(null);
+        bindVoice(null, opts?.voiceSessionId ?? null);
         void get().loadCatalog();
       },
 

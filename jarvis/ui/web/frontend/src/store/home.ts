@@ -1,7 +1,8 @@
 import { create } from "zustand";
 
 import { readHomeSurface, writeHomeSurface, type HomeSurface } from "@/lib/homeSurface";
-import { reduceTranscript, type TranscriptLine } from "@/lib/homeTranscript";
+import { detailToMessages, detailToTraces, resumeConversation } from "@/lib/chatsApi";
+import { reduceTranscript, transcriptFromMessages, type TranscriptLine } from "@/lib/homeTranscript";
 import { useEventStore } from "@/store/events";
 
 /**
@@ -28,6 +29,13 @@ interface HomeStore {
   freshVoicePending: boolean;
   voiceSelectionPending: boolean;
   voiceSwitchStopping: boolean;
+  /**
+   * The archived voice chat the front page reopened from the history. Its
+   * calls are recorded into it (jarvis/sessions/continuation.py), so a hangup
+   * keeps it on stage and reloads it instead of opening an empty lane.
+   */
+  continuedVoiceId: string | null;
+  setContinuedVoiceId: (id: string | null) => void;
   surface: HomeSurface;
   setSurface: (surface: HomeSurface) => void;
   /** What was said and answered, oldest first (lib/homeTranscript.ts). */
@@ -85,6 +93,22 @@ export function reduceLiveReply(current: string, name: string, payload: unknown)
   }
 }
 
+/** Re-read a continued voice chat after a call and put its lines back on stage. */
+async function reloadContinuedVoiceChat(id: string): Promise<void> {
+  try {
+    const detail = await resumeConversation("voice", id);
+    const events = useEventStore.getState();
+    if (events.activeKind !== "voice" || events.activeThreadId !== id) return;
+    const messages = detailToMessages(detail);
+    events.seedThinkingTraces(detailToTraces(detail));
+    events.setMessages(messages);
+    useHomeStore.getState().seedTranscript(transcriptFromMessages(messages));
+  } catch (error) {
+    // The lane keeps what the call showed; the history row has the rest.
+    console.info("Continued voice chat could not be reloaded.", error);
+  }
+}
+
 export const useHomeStore = create<HomeStore>((set, get) => ({
   jarvisCardMode: "voice",
   setJarvisCardMode: (jarvisCardMode) => set({ jarvisCardMode }),
@@ -93,6 +117,8 @@ export const useHomeStore = create<HomeStore>((set, get) => ({
   freshVoicePending: false,
   voiceSelectionPending: false,
   voiceSwitchStopping: false,
+  continuedVoiceId: null,
+  setContinuedVoiceId: (continuedVoiceId) => set({ continuedVoiceId }),
   surface: readHomeSurface(),
   setSurface: (surface) => {
     writeHomeSurface(surface);
@@ -118,6 +144,18 @@ export const useHomeStore = create<HomeStore>((set, get) => ({
       // empty lane; the completed conversation remains in the history rail.
       if (reason !== "realtime_fallback" && reason !== "desktop_fallback") {
         const events = useEventStore.getState();
+        const continued = get().continuedVoiceId;
+        if (
+          continued && events.activeKind === "voice" && events.activeThreadId === continued
+          && !get().voiceSwitchStopping
+        ) {
+          // The call was recorded into the reopened voice chat: it stays on
+          // stage, and its stored lines (now with this call) replace the lane.
+          events.setTranscription("", true);
+          set({ liveReply: "", freshVoicePending: false });
+          void reloadContinuedVoiceChat(continued);
+          return;
+        }
         if (events.activeKind === "voice" && !get().voiceSwitchStopping) {
           events.setActiveConversation("voice", null);
           events.setMessages([]);

@@ -7,6 +7,54 @@ import {
 const MODES: GigiFlightMode[] = ["idle", "work", "talk", "wave", "sleep", "follow"];
 const DT = 1 / 60;
 
+describe("a pet on the floor (ground mode)", () => {
+  it("starts grounded and clears a previous flyer's height and bank immediately", () => {
+    expect(createGigiFlight(2, -3, 0.7, true).base).toBe(0);
+    expect(createGigiPose(true).y).toBe(0);
+    const state = createGigiFlight(2, -3);
+    state.pitch = 0.2;
+    state.roll = -0.3;
+    state.vBase = 0.4;
+    const pose = stepGigiFlight(state, {
+      targetX: 2, targetZ: -3, moving: false, mode: "idle", speaking: false, t: 0, dt: DT, ground: true,
+    });
+    expect(pose.y).toBe(0);
+    expect(pose.pitch).toBe(0);
+    expect(pose.roll).toBe(0);
+    expect(state.vBase).toBe(0);
+  });
+
+  it("lands on the floor, never leans or banks, and hops only while standing happy", () => {
+    const state = createGigiFlight(0, 0);
+    const pose = createGigiPose();
+    let maxStandingY = 0;
+    for (let t = 0; t < 20; t += DT) {
+      const moving = t > 10;
+      stepGigiFlight(state, {
+        targetX: moving ? (t - 10) * 1.2 : 0, targetZ: 0, moving, mode: "follow", speaking: !moving, t, dt: DT, ground: true,
+      }, pose);
+      expect(pose.y).toBeGreaterThanOrEqual(0);
+      if (t > 4) {
+        expect(pose.pitch).toBeCloseTo(0, 6);
+        expect(pose.roll).toBeCloseTo(0, 6);
+      }
+      if (t > 6 && !moving) maxStandingY = Math.max(maxStandingY, pose.y);
+      if (t > 12) expect(pose.y).toBeLessThan(0.02);
+    }
+    expect(maxStandingY).toBeGreaterThan(0.02);
+    expect(maxStandingY).toBeLessThan(0.1);
+  });
+
+  it("falls in right behind the person instead of beside the shoulder", () => {
+    const air = followAnchor(0, 0, 0, 1);
+    const floor = followAnchor(0, 0, 0, 1, undefined, true);
+    expect(air.z).toBeCloseTo(-GIGI_FOLLOW_BACK_M);
+    expect(floor.z).toBeLessThan(air.z);
+    expect(Math.abs(floor.x)).toBeLessThan(Math.abs(air.x));
+    expect(Math.abs(air.x)).toBeCloseTo(GIGI_FOLLOW_SIDE_M);
+  });
+});
+
 describe("gigi flight", () => {
   it("stays between 0.6 and 1.5 m in every mode, speaking or not, at any frame rate", () => {
     for (const mode of MODES) {

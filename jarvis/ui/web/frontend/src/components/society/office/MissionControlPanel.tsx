@@ -18,7 +18,7 @@ import { Minus, Paperclip, Plus, X } from "lucide-react";
 import { useT } from "@/i18n";
 import {
   attachToTerminal, fetchIdeAgents, fetchIdeProjects, fetchIdeState, fetchWorkspacePanes, interruptTerminal,
-  openIdeWorkspace, openTerminal, promptTerminal,
+  openIdeWorkspace, openTerminal, promptTerminal, startTerminal,
   type AgentStatus, type DropAttachment, type IdeProject, type WorkspaceCard,
 } from "@/lib/agenticIdeApi";
 import { openProject } from "@/lib/chatLibraryApi";
@@ -135,6 +135,13 @@ export function StartAgent() {
       return;
     }
     setLine(i, { tone: "busy", text: t("society.office.mission_waiting").replace("{0}", name) });
+    try {
+      // A pane starts when a viewer first attaches, and nobody views it from here.
+      await startTerminal(name, wsId);
+    } catch (err) {
+      // The wait below decides; a viewer opening the pane still starts it.
+      console.warn("Mission Control: pane start request failed", err);
+    }
     if (!(await waitLive(wsId, name))) {
       setLine(i, { tone: "warn", text: t("society.office.mission_not_started").replace("{0}", name) });
       return;

@@ -607,6 +607,16 @@ class LocalVoiceProvider:
         return cls._shared(EngineSettings.from_config(cfg))
 
     @classmethod
+    async def verify_activation(cls, cfg: Any) -> None:
+        """Selecting the card starts the engine, so the first call finds it loaded.
+
+        Never refuses: the card must stay selectable before setup, because
+        setup runs from that card. Without an installed engine nothing starts.
+        """
+        if cls.external_login_ready(cfg):
+            cls._shared(EngineSettings.from_config(cfg)).start_soon()
+
+    @classmethod
     async def prespawn_transport(cls, cfg: Any) -> bool:
         if not cls.external_login_ready(cfg):
             return False

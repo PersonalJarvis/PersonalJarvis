@@ -64,6 +64,10 @@ class VoiceChatMirror:
             svc = self._get_service()
             if svc is None:
                 return
+            if getattr(svc, "voice_session_continued", None):
+                # An archived voice chat is on stage: the recorder files this
+                # turn into that row, and a typed copy would be a second chat.
+                return
             call_id = str(getattr(event, "session_id", "") or "")
             session = self._target_session(svc, call_id)
             if session is None:
@@ -117,29 +121,58 @@ class VoiceChatMirror:
 
     @staticmethod
     def _ensure_session(svc: Any, event: Any) -> Any | None:
-        """Create the first Jarvis chat so early voice turns are not lost.
+        """Create the Jarvis chat a call without one files into.
 
-        The provider is the voice turn's own when the chat offers it, else
-        the surface's first row. A caller that never opened the chat finds
-        the spoken history waiting instead of an empty page.
+        The chat is seated on the person's own chat pick, never on the voice
+        model: going back to typing must find the model they chose for the
+        chat, not the realtime voice (whose model id is no chat model at
+        all). In order: the last explicit chat pick, the seat of the newest
+        Jarvis chat, the voice turn's provider when the chat offers it (with
+        its default model), the surface's first row. A caller that never
+        opened the chat finds the spoken history waiting instead of an empty
+        page.
         """
         try:
             from jarvis.agent_chat.catalog import offers, rows_for
 
-            provider = str(getattr(event, "provider", "") or "").strip().lower()
-            if not offers(SURFACE, provider):
-                rows = rows_for(SURFACE)
-                provider = rows[0].id if rows else ""
-            if not provider:
-                return None
-            return svc.create_session(
-                provider=provider,
-                model=str(getattr(event, "model", "") or ""),
-                surface=SURFACE,
-            )
+            seat = VoiceChatMirror._chat_seat(svc)
+            if seat is None:
+                provider = str(getattr(event, "provider", "") or "").strip().lower()
+                if not offers(SURFACE, provider):
+                    rows = rows_for(SURFACE)
+                    provider = rows[0].id if rows else ""
+                if not provider:
+                    return None
+                seat = {"provider": provider}
+            return svc.create_session(surface=SURFACE, **seat)
         except Exception as exc:  # noqa: BLE001
             log.debug("voice chat mirror could not create a session: %s", exc)
             return None
+
+    @staticmethod
+    def _chat_seat(svc: Any) -> dict[str, str] | None:
+        """The provider / model / effort the person last picked for the chat."""
+        from jarvis.agent_chat.catalog import offers
+
+        read_selection = getattr(svc.store, "chat_selection", None)
+        selection = read_selection() if callable(read_selection) else None
+        if selection is not None and offers(SURFACE, selection.provider):
+            seat = {
+                "provider": selection.provider,
+                "model": selection.model,
+                "effort": selection.effort,
+            }
+            if getattr(selection, "account_id", ""):
+                seat["account_id"] = selection.account_id
+            return seat
+        newest = svc.store.list_sessions(limit=1, surface=SURFACE)
+        if newest and offers(SURFACE, newest[0].provider):
+            session = newest[0]
+            seat = {"provider": session.provider, "model": session.model, "effort": session.effort}
+            if getattr(session, "account_id", ""):
+                seat["account_id"] = session.account_id
+            return seat
+        return None
 
 
 __all__ = ["SURFACE", "VoiceChatMirror"]

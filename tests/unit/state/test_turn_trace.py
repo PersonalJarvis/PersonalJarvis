@@ -90,18 +90,33 @@ def test_payload_is_redacted_and_capped() -> None:
                 "long": "x" * 500,
                 **{f"k{i}": i for i in range(20)},
             },
-            rationale="r" * 1000,
+            rationale="why " * 250,
         ),
     )
     assert secret not in payload["args"]["command"]
     assert len(payload["args"]["long"]) < 200
     assert len(payload["args"]) <= 8
-    assert len(payload["rationale"]) < 300
+    # The model's own sentence is prose the trace reads out: kept longer than
+    # an argument, still capped.
+    assert 500 < len(payload["rationale"]) < 700
     # Numbers stay numbers, so the UI can format durations.
     done = trace_payload_for(
         "ActionExecuted", ActionExecuted(tool_name="x", success=False, duration_ms=42)
     )
     assert done["duration_ms"] == 42 and done["success"] is False
+
+
+def test_a_result_keeps_enough_text_for_the_narrative() -> None:
+    """A JSON result survives past its first object, still capped."""
+    result = '{"computers": [], "note": "' + "seen " * 600 + '"}'
+    payload = trace_payload_for(
+        "ActionExecuted",
+        ActionExecuted(tool_name="list", success=True, duration_ms=4, output_preview=result),
+    )
+    assert payload["output_preview"].startswith('{"computers": [], "note": "seen seen')
+    assert 1000 < len(payload["output_preview"]) < 1300
+    denied = trace_payload_for("ActionDenied", {"tool_name": "x", "reason": "no " * 300})
+    assert 300 < len(denied["reason"]) < 500
 
 
 def test_trace_from_recorded_voice_rows_matches_collector_shape() -> None:

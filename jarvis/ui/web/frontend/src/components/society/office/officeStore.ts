@@ -11,13 +11,17 @@ import type { CheckpointKind, Point } from "./officeLayout";
 /** `arcade` is a playable arcade cabinet, by furniture id. */
 export type Selection = { kind: "agent"; id: string } | { kind: "checkpoint"; id: CheckpointKind } | { kind: "arcade"; id: string };
 
-/** The two floors of the building: the Jarvis agents office and, one elevator ride up, the coding agents. */
-export type OfficeFloor = "agents" | "coding";
+/**
+ * The floors of the building, bottom to top: the Jarvis agents office, the
+ * coding agents one elevator ride up, and the arcade hall on the top floor.
+ */
+export type OfficeFloor = "agents" | "coding" | "arcade";
 
-export const OFFICE_FLOORS: readonly OfficeFloor[] = ["agents", "coding"];
+export const OFFICE_FLOORS: readonly OfficeFloor[] = ["agents", "coding", "arcade"];
 
-export function otherFloor(floor: OfficeFloor): OfficeFloor {
-  return floor === "agents" ? "coding" : "agents";
+/** The floor number shown in the elevator (0 = ground floor). */
+export function floorLevel(floor: OfficeFloor): number {
+  return OFFICE_FLOORS.indexOf(floor);
 }
 
 export interface PlayerBody { x: number; z: number; heading: number; path: Point[]; moving: boolean }

@@ -286,15 +286,20 @@ class SocietyScheduler:
                 await self._deliver(target, env)
 
     async def drain_deliveries(self) -> None:
-        """FIFO per recipient. Busy recipients never block other conversations."""
+        """FIFO per conversation. A busy chat never blocks the recipient's others.
+
+        Each sender talks to a recipient in its own chat (the person in the
+        canonical one), so ordering only matters within one sender's queue.
+        """
         if self._delivery_lock.locked():
             return
         async with self._delivery_lock:
-            busy: set[str | None] = set()
+            busy: set[tuple[str | None, str]] = set()
             for env in await self._store.pending_deliveries():
                 if await self._record_assignment_reply(env):
                     continue
-                if env.to_agent in busy:
+                conversation = (env.to_agent, env.from_agent)
+                if conversation in busy:
                     receive = getattr(self._deliver, "receive", None)
                     target = await self._resolve_target(env)
                     if receive is not None and isinstance(target, AgentRecord):
@@ -306,7 +311,7 @@ class SocietyScheduler:
                             log.warning("society: queued receipt projection failed", exc_info=True)
                     continue
                 if not await self._on_deliver(env):
-                    busy.add(env.to_agent)
+                    busy.add(conversation)
 
     async def _record_assignment_reply(self, env: SocietyEnvelope) -> bool:
         """Assignment outcomes belong to the watcher, not a second chat turn."""

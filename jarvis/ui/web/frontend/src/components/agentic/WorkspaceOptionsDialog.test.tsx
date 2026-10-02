@@ -5,7 +5,7 @@ import { WorkspaceOptionsDialog } from "./WorkspaceOptionsDialog";
 afterEach(cleanup);
 const setup = () => ({
   open: true, onOpenChange: vi.fn(), workspace: "Installer", count: 6, busy: false, canAdd: true,
-  maxPanes: 16, onAdd: vi.fn(), onBalance: vi.fn(), onRename: vi.fn(), onClose: vi.fn(), onGit: vi.fn(),
+  onAdd: vi.fn(), onBalance: vi.fn(), onRename: vi.fn(), onClose: vi.fn(), onGit: vi.fn(),
   appearance: null, onAppearance: vi.fn(),
 });
 
@@ -21,10 +21,10 @@ it("keeps arrangement and display controls accessible without a main toolbar", (
   expect(props.onBalance).toHaveBeenCalledOnce();
 });
 
-it("disables adding past the workspace limit and closes with Escape", () => {
+it("keeps adding open however many agents run, and closes with Escape", () => {
   const props = setup();
-  render(<WorkspaceOptionsDialog {...props} count={16} maxPanes={16} />);
-  expect((screen.getByRole("button", { name: "Add coding agent" }) as HTMLButtonElement).disabled).toBe(true);
+  render(<WorkspaceOptionsDialog {...props} count={40} />);
+  expect((screen.getByRole("button", { name: "Add coding agent" }) as HTMLButtonElement).disabled).toBe(false);
   fireEvent.keyDown(document, { key: "Escape" });
   expect(props.onOpenChange).toHaveBeenCalledWith(false);
 });

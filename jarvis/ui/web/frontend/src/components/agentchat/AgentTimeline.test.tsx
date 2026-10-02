@@ -14,7 +14,11 @@ afterEach(() => { cleanup(); seq = 0; });
 it("replays persisted events through the new shared trace", () => {
  draw([ev("turn_started", { turn_id: "t1" }), ev("tool_call", { turn_id: "t1", call_id: "c1", name: "list_dir", input: { path: "src" } }), ev("tool_result", { turn_id: "t1", call_id: "c1", output: "index.ts", duration_ms: 800 }), ev("turn_finished", { turn_id: "t1", status: "done" })]);
  expect(screen.getByTestId("work-trace")).toBeTruthy();
- expect(screen.getByRole("button", { name: /List files/ })).toBeTruthy();
+ // A finished turn writes its work as a report; with no answer to read,
+ // the report stands open.
+ expect(screen.getByRole("button", { name: /^Worked/ }).getAttribute("aria-expanded")).toBe("true");
+ expect(screen.getByTestId("work-trace").textContent).toContain("Worked·Listed a folder");
+ expect(screen.getByRole("button", { name: /^Explored/ }).parentElement?.textContent).toContain("Listsrc");
 });
 describe("the person's turn with files", () => {
   const SHOT = {

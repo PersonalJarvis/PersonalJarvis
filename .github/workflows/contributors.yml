@@ -56,6 +56,10 @@ jobs:
         with:
           # The job pushes, so it needs a real branch rather than a detached HEAD.
           ref: main
+          # main is protected. GITHUB_TOKEN can never push there; a maintainer
+          # token in INTEGRATION_TOKEN (the secret release-cut also reads) can
+          # when its owner may bypass the protection.
+          token: ${{ secrets.INTEGRATION_TOKEN || github.token }}
 
       - name: Set up Python 3.11
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -83,4 +87,13 @@ jobs:
           # second failure is reported rather than swallowed, so a genuinely
           # broken job is visible instead of quietly skipping every week.
           git pull --rebase --ff-only origin main
-          git push origin main
+          if ! git push origin main 2> push.err; then
+            cat push.err
+            if grep -q "GH006\|protected branch" push.err; then
+              # Branch protection, not a broken job: say so once per run
+              # instead of a red X on every merged pull request.
+              echo "::warning::contributors: main is protected and this token may not push to it; the wall was not refreshed. Set INTEGRATION_TOKEN to a token that may bypass the protection."
+              exit 0
+            fi
+            exit 1
+          fi

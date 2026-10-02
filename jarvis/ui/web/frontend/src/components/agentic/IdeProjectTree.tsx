@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { createPortal } from "react-dom";
-import { ArrowUpRight, Check, ChevronDown, ChevronRight, Copy, CopyPlus, Folder, FolderGit2, GitBranch, FolderOpen, FolderPlus, Globe, Loader2, Mic, MoreHorizontal, OctagonPause, Pencil, Pin, PinOff, Plus, Server, SquareCode, Trash2, X, type LucideIcon } from "lucide-react";
+import { ArrowUpRight, Check, Copy, CopyPlus, Folder, FolderGit2, GitBranch, FolderOpen, FolderPlus, Globe, Loader2, Mic, MoreHorizontal, OctagonPause, Pencil, Pin, PinOff, Plus, Server, SquareCode, Trash2, X, type LucideIcon } from "lucide-react";
 import { ChatLibraryError, deleteProject, openProject, patchProject, reorderProjects, revealProject, fetchProjectLaunchers, openProjectIn, type ProjectLaunchers } from "@/lib/chatLibraryApi";
 import { robustCopy } from "@/lib/clipboard";
 import { useComputerChoices } from "@/hooks/useComputers";
@@ -69,10 +69,13 @@ function soloWorkspace(project: IdeProject): ProjectWorkspace | null {
   return workspace.name.trim().toLowerCase() === project.name.trim().toLowerCase() ? workspace : null;
 }
 
-/** Running agents glow, an open but idle workspace is a solid dot, a saved (closed) one a hollow ring. */
-function statusDotClass(workspace: ProjectWorkspace): string {
-  if (workspace.status !== "open") return "border border-muted-foreground/45";
-  return workspace.live_terminals > 0 ? "bg-accent ring-[3px] ring-accent/15" : "bg-muted-foreground/40";
+/** The agent sessions behind a row: a quiet number that makes room for the row's actions on hover. */
+function SessionCount({ count, hover }: { count: number; hover: "group" | "group/space" }) {
+  const fade = hover === "group"
+    ? "group-hover:opacity-0 group-focus-within:opacity-0"
+    : "group-hover/space:opacity-0 group-focus-within/space:opacity-0";
+  return <span aria-label={`${count} agent ${count === 1 ? "session" : "sessions"}`}
+    className={`shrink-0 text-[13px] tabular-nums text-muted-foreground/70 transition-opacity [@media(hover:none)]:opacity-0 ${fade}`}>{count}</span>;
 }
 
 function readExpansion(): Record<string, boolean> {
@@ -427,12 +430,12 @@ export function IdeProjectTree() {
     const open = expansion[project.id] ?? (project.id === activeProject?.id || (!activeWorkspaceId && visible[0]?.id === project.id));
     const active = project.id === activeProject?.id;
     const working = mutatingId === project.id;
-    const count = project.workspaces.reduce((total, workspace) => total + workspace.terminals, 0);
     const projectDraggable = renamingId !== project.id && !working && !reordering;
     const isProjectDragged = draggedProjectId === project.id;
     const isProjectDropBefore = projectDropTarget?.id === project.id && projectDropTarget.before;
     const isProjectDropAfter = projectDropTarget?.id === project.id && !projectDropTarget.before;
     const solo = soloWorkspace(project);
+    const count = project.workspaces.reduce((total, workspace) => total + workspace.terminals, 0);
     const soloSelected = solo !== null && solo.id === activeWorkspaceId;
     const soloPending = solo !== null && solo.id === pendingWorkspaceId;
     const soloBlocked = solo !== null && solo.status === "closed" && !solo.restorable;
@@ -500,18 +503,17 @@ export function IdeProjectTree() {
               void moveProject(project.id, neighbour.id, event.key === "ArrowUp");
             }}
             title={soloBlocked ? "This workspace cannot be restored on this machine" : `${project.name} — drag to reorder, or press Alt plus arrow keys to move`}
-            className={`flex min-h-8 min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 text-left text-[15px] font-medium [@media(hover:none)]:pr-14 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-45 ${solo && solo.status !== "open" && !soloSelected && !soloPending ? "text-muted-foreground" : "text-foreground"}`}>
-            {/* A one-row project has nothing to fold: its status dot takes the chevron's slot. */}
-            {solo
-              ? <span aria-hidden className="flex h-3 w-3 shrink-0 items-center justify-center">
-                  {soloPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <span className={`h-1.5 w-1.5 rounded-full ${statusDotClass(solo)}`} />}
-                </span>
-              : open ? <ChevronDown aria-hidden className="h-3 w-3 shrink-0 text-muted-foreground/70" /> : <ChevronRight aria-hidden className="h-3 w-3 shrink-0 text-muted-foreground/70" />}
-            <Folder aria-hidden className="ml-0.5 h-4 w-4 shrink-0 text-muted-foreground" strokeWidth={1.75} />
-            <span className="ml-0.5 min-w-0 flex-1 truncate">{project.name}</span>
+            className={`flex min-h-8 min-w-0 flex-1 items-center gap-2.5 rounded-md px-2 text-left text-[15px] [@media(hover:none)]:pr-14 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-45 ${solo && solo.status !== "open" && !soloSelected && !soloPending ? "text-muted-foreground" : "text-foreground"}`}>
+            {/* The folder itself shows the fold: open while its rows show, closed when folded. */}
+            {soloPending
+              ? <Loader2 aria-hidden className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
+              : open && !solo
+                ? <FolderOpen aria-hidden className="h-4 w-4 shrink-0 text-muted-foreground" strokeWidth={1.75} />
+                : <Folder aria-hidden className="h-4 w-4 shrink-0 text-muted-foreground" strokeWidth={1.75} />}
+            <span className="min-w-0 flex-1 truncate">{project.name}</span>
             {soloPending && <span className="sr-only">Switching workspace</span>}
             {/* An open project's rows carry their own counts; the total only speaks for a folded one. */}
-            {count > 0 && (solo || !open) && <span className="text-[13px] tabular-nums text-muted-foreground/80 transition-opacity group-hover:opacity-0 group-focus-within:opacity-0 [@media(hover:none)]:opacity-0" aria-label={`${count} agent ${count === 1 ? "session" : "sessions"}`}>{count}</span>}
+            {count > 0 && (solo || !open) && <SessionCount count={count} hover="group" />}
           </button>
           <div className={`absolute inset-y-0 right-0 flex items-center rounded-r-md bg-gradient-to-l from-muted from-60% to-transparent pl-5 pr-1 transition-opacity ${projectMenuOpen ? "opacity-100" : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100"}`} data-project-menu={project.id}>
             <button type="button" aria-label={`Project actions for ${project.name}`} title="Project actions" aria-haspopup="menu" aria-expanded={projectMenuOpen}
@@ -529,7 +531,7 @@ export function IdeProjectTree() {
           </div>
         </>}
       </div>
-      {open && !solo && <div className="mb-1 ml-3.5 flex flex-col gap-px border-l border-border/60 pl-1.5">
+      {open && !solo && <div className="mb-1 flex flex-col gap-px">
         {project.workspaces.map((workspace: ProjectWorkspace) => {
           const pending = workspace.id === pendingWorkspaceId;
           const selected = workspace.id === activeWorkspaceId;
@@ -631,19 +633,27 @@ export function IdeProjectTree() {
               if (!neighbour) return;
               void moveWorkspace(workspace.id, neighbour.id, event.key === "ArrowUp");
             }}
-            className={`flex min-h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-left text-[15px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-45 ${selected || pending ? "text-foreground" : "text-muted-foreground"} ${draggable ? "cursor-grab active:cursor-grabbing" : ""}`}>
-            {pending ? <Loader2 aria-hidden className="h-3 w-3 shrink-0 animate-spin" />
-              : <span aria-hidden className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusDotClass(workspace)}`} />}
+            className={`flex min-h-8 min-w-0 flex-1 items-center gap-2 rounded-md py-1 pl-[34px] pr-2 text-left text-[15px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-45 ${selected || pending ? "text-foreground" : workspace.status === "open" ? "text-foreground/80" : "text-muted-foreground"} ${draggable ? "cursor-grab active:cursor-grabbing" : ""}`}>
+            {/* Text aligns under the project name, the way Codex indents threads under a folder. */}
             <span className="min-w-0 flex-1 truncate">{workspace.name}</span>
-            <span className="text-[13px] tabular-nums text-muted-foreground/80 transition-opacity group-hover/space:opacity-0 group-focus-within/space:opacity-0 [@media(hover:none)]:opacity-0">{workspace.terminals}</span>
+            {pending ? <Loader2 aria-hidden className="h-3 w-3 shrink-0 animate-spin text-muted-foreground" />
+              : workspace.terminals > 0 && <SessionCount count={workspace.terminals} hover="group/space" />}
             {pending && <span className="sr-only">Switching workspace</span>}
             </button>
             {(() => {
               const spaceMenuOpen = contextMenu?.kind === "workspace" && contextMenu.workspaceId === workspace.id;
+              // The switching spinner sits exactly where this button appears;
+              // the row is still hovered right after the click, so the two
+              // glyphs stacked into one smudge. While switching, the spinner
+              // owns that spot.
+              const reveal = pending && !spaceMenuOpen
+                ? "pointer-events-none opacity-0"
+                : `focus-visible:opacity-100 group-hover/space:opacity-100 group-focus-within/space:opacity-100 [@media(hover:none)]:opacity-100 ${spaceMenuOpen ? "bg-background/70 text-foreground opacity-100" : "opacity-0"}`;
               return <button type="button" aria-label={`Workspace actions for ${workspace.name}`} title="Workspace actions"
                 aria-haspopup="menu" aria-expanded={spaceMenuOpen} data-tree-menu-anchor
+                tabIndex={pending && !spaceMenuOpen ? -1 : undefined}
                 onClick={(event) => toggleAnchoredMenu(event, { kind: "workspace", projectId: project.id, workspaceId: workspace.id })}
-                className={`absolute right-1 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground transition-opacity hover:bg-background/70 hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover/space:opacity-100 group-focus-within/space:opacity-100 [@media(hover:none)]:opacity-100 ${spaceMenuOpen ? "bg-background/70 text-foreground opacity-100" : "opacity-0"}`}>
+                className={`absolute right-1 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground transition-opacity hover:bg-background/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${reveal}`}>
                 <MoreHorizontal className="h-3.5 w-3.5" />
               </button>;
             })()}

@@ -413,6 +413,7 @@ class WebServer:
         from .self_mod_routes import router as self_mod_router
         from .sessions_routes import router as sessions_router
         from .settings_routes import router as settings_router
+        from .soul_routes import router as soul_router
         from .setup_report_routes import router as setup_report_router
         from .setup_routes import router as setup_router
         from .skills_routes import router as skills_router
@@ -486,6 +487,7 @@ class WebServer:
         app.include_router(desktop_router)
         app.include_router(profile_router)
         app.include_router(settings_router)
+        app.include_router(soul_router)
         app.include_router(permissions_router)
         # In-app updater (GET status / POST apply). Managed-install only — see
         # jarvis/ui/web/update_routes.py; refuses to self-reset a dev checkout.

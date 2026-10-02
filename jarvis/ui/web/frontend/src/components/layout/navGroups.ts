@@ -23,8 +23,8 @@ import {
   DocsIcon,
   ExtensionsIcon,
   FeedbackIcon,
+  AssistantIcon,
   InspectorIcon,
-  InstructionsIcon,
   MarketplaceIcon,
   MicrophoneIcon,
   PermissionsIcon,
@@ -182,8 +182,8 @@ export const NAV_GROUPS: NavItem[][] = [
     {
       id: "agent-instructions",
       labelKey: "nav.agent_instructions",
-      icon: InstructionsIcon,
-      fallbackLabel: "Instructions",
+      icon: AssistantIcon,
+      fallbackLabel: "Assistant",
     },
     { id: "contacts", labelKey: "nav.contacts", icon: ContactsIcon },
     // Spend & Tokens — every token the app spent, priced per provider, model

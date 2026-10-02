@@ -20,7 +20,7 @@ from jarvis.core.protocols import CodingSessionGateway
 from jarvis.live.state import LiveLedger
 
 from .session import (
-    MAX_TERMINALS,
+    MAX_PANES_PER_REQUEST,
     Registry,
     SessionError,
     accepts_prompts,
@@ -145,6 +145,30 @@ def _best(reference: str, items: list, key: Callable[[Any], tuple]) -> list:
     scored = [(_score(reference, *key(item)), item) for item in items]
     top = max((score for score, _ in scored), default=0)
     return [item for score, item in scored if top and score == top]
+
+
+def _spoken_pane(reference: str, agents: list[dict]) -> tuple[list[dict], bool]:
+    """Panes a misheard CUSTOM name means, and whether the match is certain.
+
+    Positional call-signs ("T3") stay exact-only (see ``names.py``): "T1" and
+    "T11" are two real panes, never one garbled word.
+    """
+    from jarvis.core.spoken_names import NameCandidate, resolve_name
+
+    from .names import position_of
+
+    custom = [a for a in agents if a.get("name") and position_of(a["name"]) is None]
+    if not custom:
+        return [], False
+    resolution = resolve_name(
+        reference,
+        [NameCandidate(key=a["id"], label=a["name"], names=(a["name"],)) for a in custom],
+        surface="workspace-orchestrate",
+    )
+    if resolution.decision == "none":
+        return [], False
+    keys = [m.key for m in resolution.candidates]
+    return [a for key in keys for a in custom if a["id"] == key], resolution.decision == "act"
 
 
 def _distance(a: str, b: str) -> int:
@@ -287,7 +311,13 @@ class WorkspaceOrchestrator:
         agents = [a for a in workspace["agents"] if a["accepts_tasks"]]
         if agent_ref:
             named = _best(agent_ref, agents, lambda a: ((a["id"],), (a["name"],)))
-            agents = named or [a for a in agents if _matches(agent_ref, a["agent"])]
+            by_cli = [a for a in agents if _matches(agent_ref, a["agent"])]
+            if not named and not by_cli:
+                named, certain = _spoken_pane(agent_ref, agents)
+                if named and not certain:
+                    # Close but not certain: a question, never a guess.
+                    return self._choice("agent", named, graph)
+            agents = named or by_cli
             if len(agents) != 1:
                 return self._choice("agent", agents, graph, unmatched=agent_ref)
         else:
@@ -380,7 +410,7 @@ class WorkspaceOrchestrator:
             count = int(args.get("count") or 1)
         except (TypeError, ValueError):  # a malformed count falls back to one terminal
             count = 1
-        count = max(1, min(count, MAX_TERMINALS))
+        count = max(1, min(count, MAX_PANES_PER_REQUEST))
         name = str(args.get("name") or "").strip()
         mixed = args.get("agents")
         if isinstance(mixed, list) and mixed:
@@ -654,10 +684,10 @@ class WorkspaceOrchestrator:
         if isinstance(groups, dict):
             return groups
         requested = [{"agent": cli} for cli, count in groups for _ in range(count)]
-        if len(requested) > MAX_TERMINALS:
+        if len(requested) > MAX_PANES_PER_REQUEST:
             return {
                 "status": "not_accepted",
-                "reason": f"A workspace holds at most {MAX_TERMINALS} terminals.",
+                "reason": f"At most {MAX_PANES_PER_REQUEST} terminals open in one go.",
             }
         try:
             session = await self.registry.start(
@@ -730,7 +760,7 @@ class WorkspaceOrchestrator:
                 count = int(entry.get("count") or 1)
             except (TypeError, ValueError):  # a malformed count falls back to one terminal
                 count = 1
-            groups.append((cli, max(1, min(count, MAX_TERMINALS))))
+            groups.append((cli, max(1, min(count, MAX_PANES_PER_REQUEST))))
         return groups or [(_default_cli(), 1)]
 
     async def _brief(

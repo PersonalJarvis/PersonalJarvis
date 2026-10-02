@@ -104,7 +104,10 @@ export function useChatRows({ poll = false }: { poll?: boolean } = {}): ChatRows
         // End the agent session on stage first: the chat stage renders the
         // voice archive only while no agent chat is open, and its socket has
         // no business staying connected to a conversation nobody is looking at.
-        useAgentChatStore.getState().newChat();
+        // The voice chat goes on stage as itself: calls from here continue it
+        // (one row in the history), not a new chat beside it.
+        useAgentChatStore.getState().newChat({ voiceSessionId: row.id });
+        useHomeStore.getState().setContinuedVoiceId(row.id);
         const stayOnVoice = useHomeStore.getState().surface === "voice";
         const opened = openConversation("voice", row.id);
         if (stayOnVoice) {

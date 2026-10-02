@@ -63,6 +63,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import math
 import os
 import re
 import shlex
@@ -111,6 +112,7 @@ from .names import free_positions, normalize, position_of, resolve
 from .terminal_input import (
     THEME_COLOURS,
     TerminalQueryResponder,
+    TerminalQueryWatch,
     classify_terminal_input,
     is_pointer_noise_only,
 )
@@ -232,28 +234,37 @@ def _unavailable(agent: str) -> str:
     return f"{pretty} cannot open: this machine has no shell Jarvis can start."
 
 
-# How many coding sessions one workspace may hold. Every pane is a full CLI
-# process with its own pseudo-terminal and socket, so this is a resource
-# ceiling, not a layout rule. It matches the largest grid the workspace draws
-# (MAX_GRID_COLUMNS x MAX_GRID_ROWS); past it, a second workspace tab is the
-# better home. Voice call-signs cover it (see `names._NUMBER_WORDS`). Mirrored
-# by the frontend's `workspaceDocking.ts`, which reads the count from the state.
-MAX_GRID_COLUMNS = 4
-MAX_GRID_ROWS = 4
-MAX_TERMINALS = MAX_GRID_COLUMNS * MAX_GRID_ROWS
+# A workspace holds as many panes as the user opens, and they may be arranged
+# in any shape: there is no pane limit and no grid limit (maintainer request,
+# 2026-10-02 — a full workspace and a refused drop were both reported as the
+# product getting in the way). What remains is a guard on ONE request: a
+# misheard "open 500 terminals" must not start 500 CLI processes in one go.
+# Opening panes one request after another is never refused. Mirrored by
+# `MAX_PANES_PER_REQUEST` in the frontend's ``workspaceDocking.ts``.
+MAX_PANES_PER_REQUEST = 100
+
+# How wide the even grid prefers to be. Up to this many columns squared it
+# grows a row per this many panes; past that it stays roughly square so every
+# pane keeps both a usable width and a usable height. A preference for
+# `balanced_columns` and the anchor-less add, never a limit on the layout.
+BALANCED_GRID_COLUMNS = 4
 
 
 def balanced_columns(count: int) -> int:
     """Columns of the even grid ``count`` panes are dealt into, row by row.
 
     Two panes read best side by side; three to eight form two rows (six is
-    3 x 2); beyond that the grid grows a row per four panes, never wider than
-    MAX_GRID_COLUMNS. Mirrored by `balancedLayout` in ``workspaceDocking.ts``.
+    3 x 2); up to sixteen the grid grows a row per four panes; beyond that it
+    grows in both directions, staying about square. Mirrored by
+    `balancedColumns` in ``workspaceDocking.ts``.
     """
     if count <= 2:
         return max(1, count)
-    rows = 2 if count <= 2 * MAX_GRID_COLUMNS else -(-count // MAX_GRID_COLUMNS)
-    return min(MAX_GRID_COLUMNS, -(-count // rows))
+    wide = BALANCED_GRID_COLUMNS
+    if count > wide * wide:
+        return math.ceil(math.sqrt(count))
+    rows = 2 if count <= 2 * wide else -(-count // wide)
+    return min(wide, -(-count // rows))
 
 
 # How deep a wizard-opened column is filled before the next one is started.
@@ -1257,6 +1268,11 @@ class Terminal:
     # into a prompt the agent has long since opened, which is the corruption
     # this exists to prevent. Only live output reaches it.
     queries: TerminalQueryResponder = field(default_factory=TerminalQueryResponder)
+    # When this process's CLI asked its terminal questions (colours, version,
+    # keyboard protocol…) — seen in the output the app receives, so on every
+    # backend including the PTY host. A prompt is not typed into a CLI that is
+    # still asking (``fleet_actions.terminal_questions_settled``).
+    terminal_queries: TerminalQueryWatch = field(default_factory=TerminalQueryWatch)
     # Where this pane's output currently goes, or None while nobody is looking.
     #
     # A mutable slot rather than a closure captured at spawn time, and that is
@@ -1919,16 +1935,6 @@ class SessionError(RuntimeError):
     """A request the registry refuses, with a user-facing English message."""
 
 
-class WorkspaceFull(SessionError):
-    """The refusal is the pane cap (``MAX_TERMINALS``), not anything else.
-
-    Its own type because callers answer it differently from every other
-    refusal — the voice path says "the workspace is full" in the turn's
-    language instead of reading the English sentence out — and matching on
-    the message's wording broke the moment a message was reworded.
-    """
-
-
 class SessionNotReady(SessionError):
     """The addressed workspace is not open — not "not here", but "not yet".
 
@@ -2136,7 +2142,6 @@ class Registry:
         return {
             "active": session is not None,
             "session": session.to_dict() if session else None,
-            "max_terminals": MAX_TERMINALS,
             "max_workspaces": MAX_WORKSPACES,
             "active_id": self._active,
             "workspaces": self.workspaces(),
@@ -2149,7 +2154,6 @@ class Registry:
         return {
             "active": session is not None,
             "workspace": session.to_brief() if session else None,
-            "max_terminals": MAX_TERMINALS,
             "other_workspaces": [
                 {"name": s.name, "terminals": len(s.terminals)}
                 for s in self._sessions.values()
@@ -2507,6 +2511,24 @@ class Registry:
         self._cold_start_holds.add(task)
         task.add_done_callback(self._cold_start_holds.discard)
 
+    def start_pending(self, wanted: str, workspace_id: str | None = None) -> Terminal:
+        """Start a pane nobody has opened yet, without waiting for a viewer.
+
+        A new pane's agent is spawned by the first viewer that attaches, so a
+        pane opened from somewhere that never shows it (the office's spawn
+        point) stayed ``pending`` and its first task was given up on (live
+        2026-10-02: T2 started only when its workspace was opened a minute
+        later). Anything other than ``pending`` is left alone: a running pane
+        must not be restarted, and an exited or failed one is the user's call.
+        """
+        found = self.find_terminal(wanted, workspace_id)
+        if found is None:
+            raise self._unknown_terminal(wanted)
+        session, term = found
+        if term.status == "pending" and not term.pty_id:
+            self._start_in_background(session, term)
+        return term
+
     def _host_went_away(self) -> bool:
         """Did the PTY host this process was attached to just drop away?"""
         current = self._pty
@@ -2608,6 +2630,10 @@ class Registry:
         term.transcript.feed(result.replay)
         term.replay.clear()
         term.replay.feed(result.replay)
+        # The agent has been running all along; a question in its replay was
+        # answered back then.
+        term.terminal_queries.reset()
+        term.terminal_queries.feed(result.replay, time.time())
         if result.truncated:
             term.replay.truncated = True
         term.pty_id = info.terminal_id
@@ -2657,6 +2683,7 @@ class Registry:
             term.transcript.feed(text)
             term.replay.feed(text)
             term.last_output_at = time.time()
+            term.terminal_queries.feed(text, term.last_output_at)
             for viewer in _viewers(term):
                 await viewer(text)
 
@@ -2700,9 +2727,10 @@ class Registry:
         async with self._lock:
             if not requested:
                 raise SessionError("Pick at least one terminal.")
-            if len(requested) > MAX_TERMINALS:
+            if len(requested) > MAX_PANES_PER_REQUEST:
                 raise SessionError(
-                    f"At most {MAX_TERMINALS} terminals per session (got {len(requested)})."
+                    f"At most {MAX_PANES_PER_REQUEST} terminals open in one go "
+                    f"(got {len(requested)}). Open the rest once these are running."
                 )
 
             # expanduser() is string/env work, not a filesystem call — the real
@@ -3121,40 +3149,12 @@ class Registry:
         """Keep legacy geometry consistent with the persistent terminal order."""
         # Rebuild the legacy split tree from the new order. Old geometry
         # must never sort the terminals back into their previous positions.
-        columns = balanced_columns(len(session.terminals))
-        rows = [
-            layout_tree.normalize(
-                layout_tree.Split(
-                    direction="row",
-                    children=[
-                        layout_tree.Leaf(term.key)
-                        for term in session.terminals[start : start + columns]
-                    ],
-                    weights=[1.0] * len(session.terminals[start : start + columns]),
-                )
-            )
-            for start in range(0, len(session.terminals), columns or 1)
-        ]
-        session.layout = (
-            layout_tree.normalize(
-                layout_tree.Split(
-                    direction="column",
-                    children=rows,
-                    weights=[1.0] * len(rows),
-                )
-            )
-            if rows
-            else None
-        )
+        keys = [term.key for term in session.terminals]
+        session.layout = layout_tree.row_major(keys, balanced_columns(len(keys)))
         Registry._renumber(session)
 
     async def _restore_one_locked(self, space: resume_store.SnapshotWorkspace) -> Session | None:
         """Reopen one remembered workspace. Caller holds the lock."""
-        if len(space.terminals) > MAX_TERMINALS:
-            raise SessionError(
-                f"This saved workspace has {len(space.terminals)} terminals; "
-                f"the workspace limit is {MAX_TERMINALS}. Its saved sessions were preserved."
-            )
         root = Path(space.folder).expanduser()  # noqa: ASYNC240
         try:
             if not await asyncio.to_thread(root.is_dir):
@@ -4228,6 +4228,7 @@ class Registry:
         # in the replay buffer belongs to a terminal that no longer exists, and
         # replaying it to the next viewer would show output from a dead agent.
         term.replay.clear()
+        term.terminal_queries.reset()
         _watch(term, on_output, on_exit, cols, rows, on_geometry=on_geometry)
         term.reattached = False
         # This pane is wanted again, so the last deliberate kill is history.
@@ -4246,6 +4247,7 @@ class Registry:
             term.transcript.feed(text)
             term.replay.feed(text)
             term.last_output_at = time.time()
+            term.terminal_queries.feed(text, term.last_output_at)
             # To EVERY viewer, not only the newest one. A pane open in two
             # places has two screens and both are supposed to show the same
             # agent; sending to one of them is how a window ends up frozen
@@ -4495,7 +4497,9 @@ class Registry:
             from . import fleet_actions
 
             try:
-                ready = await fleet_actions.wait_for_prompt_ready(
+                # The input line, not full prompt readiness: the slot guards
+                # the shared store's boot, which is over once the line exists.
+                ready = await fleet_actions.wait_for_input_line(
                     session,
                     [term.name],
                     timeout_s=fleet_actions.READY_TIMEOUT_S,
@@ -5318,10 +5322,6 @@ class Registry:
             session = self.get(selected_id) if selected_id else None
             if session is None:
                 raise SessionError("No Agentic-IDE session is running.")
-            if len(session.terminals) >= MAX_TERMINALS:
-                raise WorkspaceFull(
-                    f"This workspace already has the maximum of {MAX_TERMINALS} terminals."
-                )
             if direction not in ("right", "down", "left", "up", "above", "below"):
                 raise SessionError("Direction must be 'right', 'down', 'left', or 'up'.")
 
@@ -5427,13 +5427,12 @@ class Registry:
                     direction,
                 )
             else:
-                session.layout = layout_tree.append_pane(session.layout, term.key)
-            # A split or an appended column may not leave the largest grid the
-            # workspace draws; past it the panes are dealt into the even grid
-            # instead (voice and the CLI have no preview to stop them first).
-            columns, rows = layout_tree.grid_span(session.layout)
-            if columns > MAX_GRID_COLUMNS or rows > MAX_GRID_ROWS:
-                self._row_major_grid(session)
+                session.layout = layout_tree.add_unanchored(
+                    session.layout,
+                    term.key,
+                    max_columns=BALANCED_GRID_COLUMNS,
+                    balanced_columns=balanced_columns,
+                )
             # Then every terminal back to an equal share — the same act as the
             # grid's "even out" button, run for the user on every open — EXCEPT
             # inside a container whose boundaries were dragged by hand
@@ -5987,12 +5986,6 @@ class Registry:
         session, source = found
         if not accepts_prompts(source.agent):
             raise SessionError(f"{source.name} is a plain terminal — it has no chat to fork.")
-        # Checked before a worktree is created, so a full workspace does not
-        # leave an orphaned branch behind.
-        if len(session.terminals) >= MAX_TERMINALS:
-            raise WorkspaceFull(
-                f"This workspace already has the maximum of {MAX_TERMINALS} terminals."
-            )
         folder = ""
         branch = ""
         if worktree:
@@ -6056,8 +6049,10 @@ class Registry:
         if selected is None:
             raise SessionError("No Agentic-IDE session is running.")
         wanted = max(1, int(count))
-        if len(selected.terminals) + wanted > MAX_TERMINALS:
-            raise WorkspaceFull(f"A workspace can contain at most {MAX_TERMINALS} terminals.")
+        if wanted > MAX_PANES_PER_REQUEST:
+            raise SessionError(
+                f"At most {MAX_PANES_PER_REQUEST} terminals open in one go (asked for {wanted})."
+            )
         created: list[Terminal] = []
         for _ in range(wanted):
             try:
@@ -6208,10 +6203,6 @@ class Registry:
                     f"{term.name} can only move to a workspace on the same folder; "
                     f"{target.name} works in another one."
                 )
-            if len(target.terminals) >= MAX_TERMINALS:
-                raise SessionError(
-                    f"{target.name} already has the maximum of {MAX_TERMINALS} terminals."
-                )
             if term.placing:
                 raise SessionError(
                     f"{term.name} is still being set up on its computer. "
@@ -6281,10 +6272,12 @@ class Registry:
             else:
                 # It joins the workspace edge like an anchor-less add: no
                 # pane was chosen to sit beside.
-                target.layout = layout_tree.append_pane(target.layout, term.key)
-                columns, rows = layout_tree.grid_span(target.layout)
-                if columns > MAX_GRID_COLUMNS or rows > MAX_GRID_ROWS:
-                    self._row_major_grid(target)
+                target.layout = layout_tree.add_unanchored(
+                    target.layout,
+                    term.key,
+                    max_columns=BALANCED_GRID_COLUMNS,
+                    balanced_columns=balanced_columns,
+                )
             # Every pane then gets an even share, as after any add.
             target.layout = layout_tree.evened(target.layout)
             self._renumber(target)
@@ -6304,10 +6297,9 @@ class Registry:
     ) -> layout_tree.LayoutNode | None:
         """``target``'s tree with pane ``key`` split off ``anchor`` — or None.
 
-        None means no place was asked for. A named pane that is not there, or
-        a side that would push the grid past its largest shape, is refused:
-        quietly re-dealing the grid would put the pane somewhere the user did
-        not choose.
+        None means no place was asked for. A named pane that is not there is
+        refused: quietly placing the pane elsewhere would put it somewhere the
+        user did not choose.
         """
         if anchor is None:
             return None
@@ -6318,15 +6310,7 @@ class Registry:
         tree = target.layout or layout_tree.from_grid(
             (t.key, t.column, t.slot) for t in target.terminals
         )
-        placed = layout_tree.split_pane(tree, beside.key, key, cast("Any", side))
-        columns, rows = layout_tree.grid_span(placed)
-        if columns > MAX_GRID_COLUMNS or rows > MAX_GRID_ROWS:
-            where = {"left": "left of", "right": "right of"}.get(side, side)
-            raise SessionError(
-                f"No room {where} {beside.name}: a workspace holds at most "
-                f"{MAX_GRID_COLUMNS} columns and {MAX_GRID_ROWS} rows."
-            )
-        return placed
+        return layout_tree.split_pane(tree, beside.key, key, cast("Any", side))
 
     async def refold(self, depth: int) -> Session:
         """Re-deal every pane into columns ``depth`` deep, in reading order.
@@ -7477,9 +7461,8 @@ __all__ = [
     "AGENT_BINARIES",
     "AGENT_DISPLAY",
     "MAX_PROMPT_CHARS",
-    "MAX_GRID_COLUMNS",
-    "MAX_GRID_ROWS",
-    "MAX_TERMINALS",
+    "BALANCED_GRID_COLUMNS",
+    "MAX_PANES_PER_REQUEST",
     "MAX_WORKSPACES",
     "INHERIT_PLACEMENT",
     "PLAIN_TERMINAL",
@@ -7489,7 +7472,6 @@ __all__ = [
     "SessionError",
     "SessionNotReady",
     "Terminal",
-    "WorkspaceFull",
     "accepts_prompts",
     "agent_argv",
     "agent_display",

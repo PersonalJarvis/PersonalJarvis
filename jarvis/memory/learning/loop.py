@@ -34,7 +34,6 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import date
 from typing import Any, Final
 
 from jarvis.memory.learning.notebook import JarvisNotebook
@@ -238,6 +237,9 @@ class JarvisLearningLoop:
             conversation = self._conversations[key] = _Conversation()
         conversation.last_seen = time.monotonic()
         request = requested_memory(turn.user)
+        if request is not None and "remember" in turn.tools:
+            # The conversation model already saved it through the remember tool.
+            request = None
         # A self-contained request is saved right here; only a bare "remember
         # that" still needs the model to see what "that" was.
         signal = request == "" or (request is None and has_signal(turn.user))
@@ -422,30 +424,17 @@ class JarvisLearningLoop:
         return 1 if written is not None else 0
 
     def _keep_request(self, said: str, content: str) -> int:
-        """Save an explicit remember request in the user's own words, dated."""
-        from jarvis.memory.learning.guard import MAX_ENTRY_CHARS, refusal
-        from jarvis.society.memory_books import classify
+        """Save an explicit remember request in the user's own words, dated.
 
-        prefix = f"{date.today().isoformat()} (the user's words): "
-        room = MAX_ENTRY_CHARS - len(prefix)
-        if len(content) > room:
-            content = content[: room - 1].rsplit(" ", 1)[0] + "…"
-        text = prefix + content
-        if refusal(text):
-            log.info("learning: explicit remember request refused by the guard")
+        A full notebook never refuses it (it merges later); a request the
+        remember tool already saved in this conversation is not filed twice.
+        """
+        try:
+            change = self.notebook.keep_explicit(content, evidence=said)
+        except (ValueError, OSError) as exc:  # filelock.Timeout is an OSError subclass too
+            log.info("learning: explicit remember request not saved — %s", exc)
             return 0
-        return self._write(
-            target="user" if classify(content) == "user" else "memory",
-            operation="add",
-            text=text,
-            importance=9,
-            origin="user",
-            evidence=said,
-            source="explicit remember request",
-            # The user asked for it: a full notebook merges later, it never
-            # refuses this.
-            enforce_budget=False,
-        )
+        return 1 if change is not None else 0
 
     async def _remember(self, said: str, content: str) -> None:
         if await asyncio.to_thread(self._keep_request, said, content):
@@ -491,7 +480,13 @@ class JarvisLearningLoop:
 
     async def _merge(self, target: str, rows: list[Any], used: int, budget: int) -> int:
         from jarvis.memory.learning import compact
+        from jarvis.memory.learning.notebook import EXPLICIT_ORIGIN
 
+        # What the user asked to remember is theirs: never merged, never
+        # expired (its date prefix would otherwise read as a passed deadline).
+        rows = [e for e in rows if getattr(e, "origin", "") != EXPLICIT_ORIGIN]
+        if len(rows) < 2:
+            return 0
         prompt = compact.build_prompt(rows, target=target, used=used, budget=budget)
         self.compact_calls += 1
         log.info("learning: compacting %s (%d/%d chars)", target, used, budget)
