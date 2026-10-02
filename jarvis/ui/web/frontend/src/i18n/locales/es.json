@@ -1168,6 +1168,8 @@
     "due_now": "pendiente"
   },
   "plugins_view": {
+    "grant_ends": "La autorización termina el {date}. Vuelve a iniciar sesión antes de esa fecha.",
+    "grant_expired": "La autorización caducó el {date}. Vuelve a conectar el plugin.",
     "title": "Plugins",
     "count": "{n} disponibles · {connected} conectados",
     "loading": "Cargando el catálogo…",

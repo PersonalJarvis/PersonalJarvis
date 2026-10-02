@@ -1,7 +1,7 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ReauthExplanation } from "@/views/PluginsView";
+import { GrantExpiry, ReauthExplanation } from "@/views/PluginsView";
 
 afterEach(cleanup);
 
@@ -26,7 +26,7 @@ describe("ReauthExplanation", () => {
   it("names the cause instead of a bare 'reconnect needed'", () => {
     render(<ReauthExplanation plugin={plugin({ reauthReason: "provider_rejected" })} />);
 
-    expect(screen.getByText(/withdrew the authorization/i)).toBeDefined();
+    expect(screen.getByText(/no longer accepts this authorization/i)).toBeDefined();
   });
 
   it("distinguishes a refused client from a withdrawn grant", () => {
@@ -99,5 +99,29 @@ describe("ReauthExplanation", () => {
     );
 
     expect(screen.queryByText(/NaN/)).toBeNull();
+  });
+});
+
+
+describe("GrantExpiry", () => {
+  it("shows a provider deadline before access tokens stop refreshing", () => {
+    render(<GrantExpiry plugin={plugin({ status: "connected", refreshExpiresAt: "2099-01-01T12:00:00Z" })} />);
+    expect(screen.getByText(/Authorization ends/)).toBeDefined();
+  });
+  it("distinguishes an already expired provider grant", () => {
+    render(<GrantExpiry plugin={plugin({ status: "connected", refreshExpiresAt: "2000-01-01T12:00:00Z" })} />);
+    expect(screen.getByText(/Authorization expired/)).toBeDefined();
+  });
+  it.each([undefined, "not-a-date"])("does not invent a lifetime for %s", (stamp) => {
+    const { container } = render(<GrantExpiry plugin={plugin({ status: "connected", refreshExpiresAt: stamp })} />);
+    expect(container.textContent).toBe("");
+  });
+  it("does not display a retained deadline after disconnect", () => {
+    const { container } = render(<GrantExpiry plugin={plugin({ status: "not_connected", refreshExpiresAt: "2099-01-01T12:00:00Z" })} />);
+    expect(container.textContent).toBe("");
+  });
+  it("never promises a retry when there is no refresh token", () => {
+    const { container } = render(<ReauthExplanation plugin={plugin({ reauthReason: "refresh_missing" })} />);
+    expect(container.querySelector("[title]")?.getAttribute("title")).toMatch(/cannot be retried automatically/);
   });
 });

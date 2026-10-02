@@ -1168,6 +1168,8 @@
     "due_now": "due"
   },
   "plugins_view": {
+    "grant_ends": "Authorization ends {date}. Sign in again before then.",
+    "grant_expired": "Authorization expired {date}. Reconnect to continue.",
     "title": "Plugins",
     "count": "{n} available · {connected} connected",
     "loading": "Loading catalog…",
