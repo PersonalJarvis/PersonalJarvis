@@ -29,7 +29,7 @@ reason, act, or speak a reply.
 - Wait for **Voice starting…** to become **Ready**.
 - Choose a working microphone and speaker under **Settings > Audio devices**.
 - On macOS, allow **Microphone** access. The Call shortcut can also need
-  Accessibility and Input Monitoring access. Other systems use their own audio
+  Input Monitoring access. Other systems use their own audio
   and shortcut permissions.
 - Open **API Keys & Providers** and review **Voice engine**. Realtime needs one
   compatible live voice connection. Pipeline needs usable Voice Input, Brain,

@@ -153,7 +153,7 @@ For fewer missed or accidental wakes:
 - Windows, macOS, and Linux can use local wake detection when desktop audio and
   compatible packages are available.
 - macOS requires Microphone permission; global shortcuts can also require
-  Accessibility and Input Monitoring.
+  Input Monitoring.
 - Linux global shortcuts need a supported X11 hotkey backend. Wayland normally
   blocks them, so use wake activation or an in-app control.
 - A headless host has no native wake listener, Call shortcut, Dictation target,

@@ -845,6 +845,10 @@ pages:
     summary: See when macOS asks for microphone, screen, accessibility, and input access, and how to change an answer later.
     authoritative_sources:
       - jarvis/ui/web/frontend/src/views/settings/PermissionsPanel.tsx
+      - jarvis/ui/web/frontend/src/lib/privacyRow.ts
+      - jarvis/ui/web/frontend/src/components/permissions/PermissionPromptLayer.tsx
+      - jarvis/ui/web/frontend/src/components/permissions/promptActions.ts
+      - jarvis/ui/web/frontend/src/i18n/locales/en.json
       - jarvis/ui/web/permissions_routes.py
       - jarvis/platform/permissions.py
       - jarvis/platform/permission_service.py

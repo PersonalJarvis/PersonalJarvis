@@ -184,11 +184,13 @@ questions. The operating system controls microphone, screen, accessibility,
 and input access. Jarvis then decides whether a particular action is safe,
 needs confirmation, or must be blocked.
 
-- On macOS, open **Settings > Privacy** and act on the named row. Current
-  controls include **Open System Settings**, **Check again**, and **Quit and
-  reopen**. Current states include **Granted**, **Off or not asked**,
-  **Denied**, **Restricted**, **Unavailable**, **Restart needed**, and **Not
-  required**.
+- On macOS, open **Settings > Privacy** and act on the named row. Each row has
+  one status and at most one action: **Ask now** (**Not asked yet**), **Open
+  System Settings** (**Off**), **Try again** (Keychain), or **Quit and reopen**
+  (**Restart needed**). The other statuses are **Allowed**, **Restricted**, **Not
+  available**, and **Not required**; they have no action. **Ask again** appears
+  only after you opened System Settings, came back, and the row still reads
+  **Off**. The floating card adds **Check again** the same way.
 - Windows and Linux do not show the macOS permission cards. Use the operating
   system's own microphone, display, and accessibility controls when the
   affected feature requires them.

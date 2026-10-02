@@ -24,9 +24,9 @@ at once.
 
 On a Mac, the feature you start shows Apple's own dialog at that moment. If you
 say no, only that feature stops, Jarvis says why where you are, and one click
-opens the right System Settings pane. **Settings > Privacy** lists the same
-permissions as a passive status page. Browser permissions, connected-account
-access, and Jarvis safety approvals remain separate.
+opens the right System Settings pane. **Settings > Privacy** is a calm list of
+the same permissions; it never asks on its own. Browser permissions,
+connected-account access, and Jarvis safety approvals remain separate.
 
 ## Before You Start
 
@@ -34,11 +34,11 @@ access, and Jarvis safety approvals remain separate.
   and the app from the downloaded disk image both count; each is its own app to
   macOS, with its own permissions. Do not grant access to Terminal, Python, or a
   copied app bundle. If Jarvis was started from a terminal, it does not ask on
-  its own: the card offers an explicit **Allow for the app that started
-  Personal Jarvis** button, and macOS records the answer for that terminal app.
-- Decide which features you need. Text chat does not require microphone,
-  screen, accessibility, or input access, and setup never requires a permission
-  to continue.
+  its own: the card (and **Ask now** on the Privacy page) offers an explicit
+  **Allow for the app that started Personal Jarvis** button, and macOS records the
+  answer for that terminal app. A copy running outside Applications offers **Ask
+  macOS now**, for that copy only.
+- Decide which features you need. Text chat requires none of these permissions.
 - Finish or stop active Jarvis-Agent missions before a restart that a permission
   asks for. **Quit and reopen** refuses to stop a running mission.
 - Enter credentials only in **API Keys & Providers** or the relevant connection
@@ -82,51 +82,57 @@ because it is not established whether macOS requires that permission for it.
 ## If You Say No
 
 A card appears in the app only when a feature is blocked and you started it, never
-while an Apple dialog is open. Its buttons:
+while an Apple dialog is open. It has a heading, one sentence, the System Settings
+pane path, one main button, and a quiet **Not now**, which hides it for this one
+request; nothing is remembered. The main button is:
 
 - **Continue** before a dialog, when Jarvis wants to tell you what is about to be
   asked.
-- **Open System Settings** opens the matching pane. Turn on Personal Jarvis, then
-  return to the app.
-- **Check again** re-reads the permission after you changed it.
-- **Not now** hides the card for this one request. Nothing is remembered.
-- **Quit and reopen** appears only when a permission is on but macOS applies it
-  to a fresh process, and only after a real attempt failed.
-- **Already on? Reset and ask again** appears when System Settings shows a switch
-  on but the feature still fails, which can happen after an app update changed
-  its signature. If the reset does not help, turn the switch off and on in System
-  Settings, and restart the Mac if it still fails.
+- **Open System Settings**, which opens the matching pane. Turn on Personal
+  Jarvis, then return to the app.
+- **Quit and reopen**, only when a permission is on but macOS applies it to a
+  fresh process, and only after a real attempt failed.
 
 macOS normally does not ask again after you decide, so Jarvis does not keep
 asking either. When you return from System Settings the card checks again by
-itself; on a Mac the microphone is expected to work without a restart. A change
-to Screen Recording or Input Monitoring may need **Quit and reopen**, and Jarvis
-tells you only after a real attempt failed.
+itself; on a Mac the microphone is expected to work without a restart. Only if the
+permission still reads off do more options appear: **Check again**; **Quit and
+reopen** for Screen Recording and Input Monitoring, which macOS may apply only to
+a freshly started app; and **Already on? Reset and ask again** for a switch that
+System Settings shows on while the feature still fails, which can happen after an
+app update changed its signature. If the reset does not help, turn the switch off
+and on in System Settings, and restart the Mac if it still fails.
 
-For a missing input shortcut, the Shortcuts page shows one status note: ready,
-needs Input Monitoring, or unavailable in this mode.
+The Shortcuts page shows one status note about Input Monitoring with **Enable
+global shortcuts**. You can dismiss it; it returns if shortcuts later stop working.
 
 ## Settings > Privacy
 
-Open **Settings > Privacy > macOS privacy permissions** (macOS only). The page
-never raises a dialog by itself and does not poll. It refreshes when you open it,
-when the app regains focus, and after an action. Each row shows:
+Open **Settings > Privacy** (macOS only): one list under the title **Privacy**.
+The page never raises a dialog by itself and does not poll; it refreshes when you
+open it, when the app regains focus, and after an action. Each row has a title, a
+line on what it is for, a status pill, and at most one action:
 
 | Status | Meaning | What to do |
 |---|---|---|
-| **Granted** | The native check reports access | Test the feature |
-| **Off or not asked** | No decision is recorded, or the check cannot confirm access | Use **Allow** if offered, or just use the feature and macOS will ask |
-| **Denied** | macOS reports a denied decision | Use **Open System Settings**, or **Ask again** where offered, then use the feature |
+| **Not asked yet** | macOS has not been asked | Use **Ask now**, or just use the feature and macOS will ask |
+| **Off** | macOS says no, or access is still off after a request | Use **Open System Settings** and turn on Personal Jarvis |
+| **Allowed** | The native check reports access | Test the feature |
 | **Restricted** | Device policy or a system rule prevents the grant | Ask the device administrator or review the Mac's policy |
-| **Unavailable** | Jarvis cannot use the native permission check here | Reopen the installed app, use **Check again**, and review the installation if it persists |
-| **Restart needed** | macOS applies a grant only to a fresh process | Use **Quit and reopen** after active missions finish |
+| **Not available** | Jarvis cannot use the native permission check here | Reopen the installed app and review the installation if it persists |
 | **Not required** | The macOS permission flow does not apply to this host | Check the operating system, browser, device, or desktop session directly |
+| **Restart needed** | macOS applies a grant only to a fresh process | Use **Quit and reopen** after active missions finish |
 
-Each row names its pane in words (for example System Settings > Privacy &
+**Ask again** and a hint that an enabled switch may belong to an older version of
+the app appear only after you opened System Settings from that row, came back, and
+it still reads **Off**; a fresh Mac never shows them. The buttons work only in the
+desktop app on that Mac.
+
+An **Off** row names its pane in words (for example System Settings > Privacy &
 Security > Microphone), because macOS renames panes between versions. The
 Screen Recording pane may be called **Screen & System Audio Recording**.
 **Ask again** removes only Personal Jarvis's recorded decision for that row; it
-does not grant anything.
+grants nothing, and it works only in the installed app.
 
 **Keychain (API keys)** has no **Open System Settings** or **Ask again** action. If
 Keychain access was declined, Jarvis keeps working with a permission-restricted
@@ -203,7 +209,7 @@ Use the microphone as a small, harmless check:
 
 1. On a Mac where you have not answered the microphone question, press the
    dictation button in the composer. macOS shows its microphone dialog; allow it.
-2. Open **Settings > Privacy** and confirm that **Microphone** says **Granted**.
+2. Open **Settings > Privacy** and confirm that **Microphone** says **Allowed**.
 3. Open the wake-word **Microphone check**, activate **Test your microphone**,
    and speak a short phrase. A usable level confirms that both the macOS grant and
    the selected microphone work.
@@ -213,17 +219,20 @@ platform's device or site settings if it cannot capture audio. To verify screen
 and input access, use the non-private calculator check in [Computer
 Use](computer-use).
 
+The macOS behaviour on this page is not verified on a real Mac yet; see
+[Platform Support](platform-support) for the verification record.
+
 ## Troubleshooting
 
 | What you see | What it usually means | What to do |
 |---|---|---|
 | A feature says access is off, but no dialog appeared | macOS already recorded your earlier answer and does not ask twice | Use **Open System Settings** from the card or the Privacy page and turn Personal Jarvis on |
-| System Settings shows the switch on, but the feature still fails | The record may belong to an older version of the app | Use **Already on? Reset and ask again** or **Ask again**; if that fails, turn the switch off and on, then restart the Mac |
+| System Settings shows the switch on, but the feature still fails | The record may belong to an older version of the app | After opening System Settings and coming back, use **Ask again** (Privacy row) or **Already on? Reset and ask again** (card); if that fails, turn the switch off and on, then restart the Mac |
 | The card says Jarvis is not running as an installed app | Jarvis was started from a terminal or a copy, so macOS would record access for that program | Open the installed Personal Jarvis app, or allow it explicitly for the program that started Jarvis |
 | Permissions are asked for again after an update | The new version was signed differently, so macOS treats it as a new app | Answer once more. A build signed with a stable certificate keeps its grants |
 | **Quit and reopen** refuses to restart | A Jarvis-Agent mission is still running | Finish or stop the mission, then try again |
 | The page is hidden or says **Not required** but the feature is blocked | The host is not macOS, or a browser, device, display session, Wayland, or file boundary owns the failure | Test the feature directly and review the relevant host or browser settings |
-| Every row says **Granted**, but the feature fails | A restart, device, model, connection, account scope, or target application is still unavailable | Follow the dependent feature's troubleshooting steps |
+| Every row says **Allowed**, but the feature fails | A restart, device, model, connection, account scope, or target application is still unavailable | Follow the dependent feature's troubleshooting steps |
 
 ## Next Steps
 

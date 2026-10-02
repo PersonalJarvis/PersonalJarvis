@@ -35,7 +35,7 @@ text without asking the Brain or speaking a reply.
 - Connect a microphone and speaker or headset, then check both under
   **Settings > Audio devices**.
 - On macOS, allow **Microphone** access. The Call shortcut can also require
-  Accessibility or Input Monitoring access. Review
+  Input Monitoring access. Review
   [Permissions](permissions) if the app reports that access is missing.
 - Under **API Keys & Providers**, connect only what your voice engine needs:
   one compatible live provider for Realtime, or usable Voice Input, Brain,
