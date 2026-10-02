@@ -1726,6 +1726,7 @@ class LatencyPhase(StrEnum):
     INTENT_DECISION = "intent_decision"
     ACK_FIRST_TOKEN = "ack_first_token"  # noqa: S105 — phase name, not a secret
     ACK_FIRST_AUDIO = "ack_first_audio"
+    ACK_PLAYBACK_CONFIRMED = "ack_playback_confirmed"
     BRAIN_FIRST_TOKEN = "brain_first_token"  # noqa: S105 — phase name, not a secret
     BRAIN_FIRST_AUDIO = "brain_first_audio"
     TURN_TO_FIRST_AUDIO = "turn_to_first_audio"

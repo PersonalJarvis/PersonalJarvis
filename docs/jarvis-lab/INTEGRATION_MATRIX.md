@@ -135,9 +135,28 @@ contracts. In particular, Italian UI does **not** silently add `it` to
 `SUPPORTED_REPLY_LANGUAGES`; Italian reply/wake/STT/TTS support must be
 qualified through their own backend source-of-truth lists before being exposed.
 
-Next voice work: profile wake -> route -> acknowledgement latency, inventory
-already-local command handlers, and add only deterministic fast paths that reuse
-the existing command registry/safety boundaries.
+Audited local handlers before adding another fast path:
+
+- `VoiceCommandGate` owns strict provider/sub-agent/reply-language switches,
+  cancellation and depth overrides. Its `Literal` kinds are pinned against
+  honest readback tests; normal descriptive speech falls through to the brain.
+- `BrainManager.generate()` already has deterministic handlers for local
+  actions, wiki ingest, navigation, society inventory and Agentic-IDE
+  operations. Each retains its existing capability/policy gates; skill voice
+  triggers only add instructions to the normal brain turn and do not bypass it.
+- The speech pipeline already records STT finalize, intent decision, ack token,
+  first turn audio and streaming brain/TTS milestones. The ack token was only a
+  queued announcement, so `ack_playback_confirmed` now records the existing
+  playback-confirmed `SpeechSpoken` receipt for the instant-ack line.
+- The current turn tracker starts after utterance capture. Wake detector to
+  verified wake, and wake-to-route wall time therefore remain outside its
+  measurements; wake-to-bar event budgets are separately covered by
+  `tests/unit/speech/test_wake_latency.py`. Do not report those as full
+  wake-to-ack measurements until a wake-scoped trace can carry a monotonic
+  anchor through the user utterance without conflating user speaking time.
+
+No additional fast path was justified by this audit. Future additions must
+reuse these handlers and their current safety boundaries.
 
 ### E. Evaluation / MacAgentBench — phase zero implemented
 

@@ -234,6 +234,7 @@ _DURATION_PAIRS: tuple[tuple[str, str, str], ...] = (
     ("vad_to_stt_first", "stt_first_partial", ""),
     ("stt_streaming", "stt_finalize", "stt_first_partial"),
     ("stt_to_brain_request", "brain_request_sent", "stt_finalize"),
+    ("ack_playback", "ack_playback_confirmed", "ack_first_token"),
     ("brain_ttft", "brain_first_token", "brain_request_sent"),
     ("brain_streaming", "brain_last_token", "brain_first_token"),
     ("brain_to_tts_request", "tts_request_sent", "brain_last_token"),

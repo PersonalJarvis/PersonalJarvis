@@ -38,6 +38,7 @@ _STAGE_ORDER: tuple[str, ...] = (
     "brain_request_sent",    # t3
     "ack_first_token",       # ack-brain (optional)
     "ack_first_audio",       # ack-brain (optional)
+    "ack_playback_confirmed",  # instant-ack playback receipt
     "brain_first_token",     # t4
     "brain_last_token",      # t5
     "tts_request_sent",      # t6
@@ -54,6 +55,7 @@ _DURATION_KEYS: tuple[str, ...] = (
     "vad_to_stt_first",
     "stt_streaming",
     "stt_to_brain_request",
+    "ack_playback",
     "brain_ttft",
     "brain_streaming",
     "brain_to_tts_request",

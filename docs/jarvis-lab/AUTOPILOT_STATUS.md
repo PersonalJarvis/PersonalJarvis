@@ -96,4 +96,26 @@ receipts.
   permission degradation and adversarial screen-text behavior are still
   unqualified until a real-Mac receipt pass.
 
+## Remote validation: click-element seam correction and voice audit
+
+- Latest verified remote HEAD before this follow-up: `2b258d10`; workflow run
+  `36991110862` completed successfully across all 31 jobs. This supersedes the
+  earlier failing run at `8df5ec90`, whose new click-element test had patched
+  the wrong actuator seam.
+- The next voice audit confirmed the existing deterministic gate and local
+  handler inventory. It found that instant-ack telemetry marked enqueue time
+  but had no playback-confirmed stage. This follow-up adds
+  `ack_playback_confirmed` to the turn trace and latency report, derived from
+  the existing post-playback `SpeechSpoken` receipt. It does not add a new
+  command route.
+- Wake-to-route remains unmeasured: the per-turn tracker begins after utterance
+  capture, while wake-to-bar event budgets have their own focused test. Do not
+  describe current measurements as wake-to-ack end-to-end latency until the
+  wake anchor can be carried without conflating user speaking time.
+- Focused unit execution is pending CI: the scratch venv's Python launcher was
+  missing, and relinking it to the current runtime exposed a NumPy binary bus
+  error during pytest collection. Syntax compilation and `git diff --check`
+  pass; the scratch linter executable also crashes before linting. No local
+  pytest or Ruff pass is claimed for this follow-up.
+
 The scheduled pass is intentionally limited to the platform-supported maximum cadence of once per hour; it is not a continuously resident daemon.

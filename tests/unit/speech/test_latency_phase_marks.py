@@ -143,6 +143,28 @@ async def test_brain_streaming_marks_full_phase_ladder() -> None:
     assert stages[LatencyPhase.TTS_FIRST_CHUNK] <= stages[LatencyPhase.TTS_STREAM_DONE]
 
 
+def test_instant_ack_latency_marks_only_after_playback_confirmation() -> None:
+    """The ack completion phase belongs to playback-confirmed SpeechSpoken,
+    not merely to the point where its announcement was queued."""
+    bus = EventBus()
+    pipeline = _make_streaming_pipeline(bus)
+    tracker = LatencyTracker(None, uuid4())
+    pipeline._latency_tracker = tracker  # type: ignore[assignment]
+    pipeline._instant_ack_spoken_text = "I'm checking your records."
+
+    pipeline._emit_spoken("I'm checking your records.", "en", "announcement")
+
+    assert LatencyPhase.ACK_PLAYBACK_CONFIRMED.value in tracker.stages_snapshot()
+
+    other_tracker = LatencyTracker(None, uuid4())
+    pipeline._latency_tracker = other_tracker  # type: ignore[assignment]
+    pipeline._emit_spoken("The answer is ready.", "en", "normal")
+    assert (
+        LatencyPhase.ACK_PLAYBACK_CONFIRMED.value
+        not in other_tracker.stages_snapshot()
+    )
+
+
 @pytest.mark.asyncio
 async def test_handle_utterance_publishes_latency_turn_complete() -> None:
     """A completed voice turn must flush exactly one ``LatencyTurnComplete``
