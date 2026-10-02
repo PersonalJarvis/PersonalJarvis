@@ -9,11 +9,10 @@
  *  - soft vertical CURTAINS drifting upward through the haze — the shimmer;
  *  - a hot CORE hugging the bottom edge that flares with each syllable
  *    (`pulse`, the fast envelope) while the haze follows the slower `level`;
- *  - while the assistant THINKS, two comets glide along the bottom edge in
- *    opposite directions with tails that stretch with their speed, sparks
- *    rise off them, and each time they meet in the middle a pillar of light
- *    shoots up and the haze blooms — the light keeps working while nobody
- *    speaks.
+ *  - while the assistant THINKS, thought waves: soft rings of light born
+ *    at the bottom centre spread up and out behind the composer and fade,
+ *    and each birth is a heartbeat that glows the core up — the light keeps
+ *    working while nobody speaks.
  *
  * Colour is the theme's accent: deep in the haze, lifted toward white in the
  * core. On paper (light themes) the lift is smaller and the whole light
@@ -53,8 +52,7 @@ uniform float uPower;
 uniform float uLight;
 uniform float uSpan;
 uniform float uThink;
-uniform float uSweep;
-uniform float uSweepVel;
+uniform float uRipple;
 uniform vec3 uColor;
 
 float hash(vec2 p) {
@@ -76,17 +74,6 @@ float noise(vec2 p) {
   float c = hash(mod(i + vec2(0.0, 1.0), 289.0));
   float d = hash(mod(i + vec2(1.0, 1.0), 289.0));
   return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
-}
-
-// One comet along x moving at velocity v: the same falloff on both sides
-// of the head, the side behind it stretched by its speed. Every length is a
-// continuous function of v, so at a turn the tail shrinks into a round
-// head and regrows on the other side — it never flips over in one frame
-// (a sign(v) switch did exactly that, a visible hitch at both ends).
-float comet(float x, float head, float v, float base, float stretch) {
-  float o = x - head;
-  float len = base + stretch * max(0.0, o > 0.0 ? -v : v);
-  return exp(-pow(abs(o) / len, 1.5));
 }
 
 float fbm(vec2 p) {
@@ -116,62 +103,43 @@ void main() {
   float dx = (uv.x - 0.5) / uSpan;
   float dome = exp(-dx * dx * 1.4);
 
-  // Thinking: two comets mirrored about the middle, each with a tail that
-  // stretches with its speed. Screen-blended, not summed, so where they
-  // cross the light swells instead of blowing out.
-  // The turn points stay clear of the side fade, so a head is never
-  // dimmed or cut off by the edge while it slows down and turns.
-  float reach = min(uSpan * 0.95, 0.34);
-  float width = uSpan * 0.14;
-  float h1 = 0.5 + reach * uSweep;
-  float h2 = 0.5 - reach * uSweep;
-  float b1 = comet(uv.x, h1, uSweepVel, width, uSpan * 0.55);
-  float b2 = comet(uv.x, h2, -uSweepVel, width, uSpan * 0.55);
-  float lateral = 1.0 - (1.0 - b1) * (1.0 - b2);
-  float beams = lateral * uThink;
-  float beam = beams * (exp(-y / 0.13) + 0.4 * exp(-y / 0.4));
-  float headWidth = width * 0.6;
-  float heads = (exp(-pow((uv.x - h1) / headWidth, 2.0)) + exp(-pow((uv.x - h2) / headWidth, 2.0))) * uThink;
-  float hot = heads * exp(-y / 0.06);
+  // Thinking: thought waves. Rings of light are born at the bottom centre
+  // and spread up and out behind the composer, softening as they grow and
+  // fading before they reach the edge; two are in flight at a time. The
+  // noise crest bends them a little, so they read as light, not geometry.
+  // Each birth is a heartbeat: the core glows up and the haze lifts.
+  float dist = length(vec2(x * 0.5, y + 0.08)) + (crest - 0.45) * 0.06;
+  float waves = 0.0;
+  float beat = 0.0;
+  for (int k = 0; k < 2; k++) {
+    float born = uRipple - float(k) * 0.5;
+    if (born < 0.0) continue;
+    float age = fract(born);
+    float radius = 0.08 + age;
+    float width = 0.03 + 0.07 * age;
+    float fade = smoothstep(0.0, 0.12, age) * pow(1.0 - age, 1.6);
+    waves += exp(-pow((dist - radius) / width, 2.0)) * fade;
+    // Swells in over the first tenth of a ring's life instead of popping.
+    beat = max(beat, smoothstep(0.0, 0.1, age) * exp(-age * 6.0));
+  }
+  waves *= (0.35 + 0.65 * dome) * uThink;
+  beat *= uThink;
+  float pulse = max(uPulse, 0.55 * beat);
 
-  // Where they meet: a pillar of light shoots up through the middle and a
-  // wide bloom lifts the whole haze for a moment.
-  float meet = uThink * exp(-pow(uSweep / 0.22, 2.0));
-  float pillar = exp(-pow((uv.x - 0.5) / (uSpan * 0.1), 2.0)) * exp(-y / (0.18 + 0.6 * meet)) * meet;
-  float bloom = exp(-pow((uv.x - 0.5) / (uSpan * 0.7), 2.0)) * exp(-y / 0.45) * meet;
-  float flare = pillar + 0.5 * bloom;
-
-  // Sparks: one candidate per cell of a grid that scrolls upward; about
-  // half the cells hold one, each twinkling on its own, lit only above a
-  // comet or its tail and fading as it rises.
-  vec2 sp = vec2(x * 16.0, y * 6.0 - t * 1.4);
-  vec2 cell = mod(floor(sp), 289.0);
-  vec2 f = fract(sp);
-  float r = hash(cell);
-  vec2 at = 0.2 + 0.6 * vec2(hash(cell + vec2(3.1, 1.7)), hash(cell + vec2(7.7, 5.3)));
-  vec2 d = (f - at) / vec2(16.0, 6.0);
-  float twinkle = 0.55 + 0.45 * sin(t * 7.0 + r * 40.0);
-  float spark = exp(-dot(d, d) / (0.009 * 0.009)) * step(0.55, r) * twinkle;
-  float sparks = spark * lateral * exp(-y / 0.38) * uThink;
-
-  float h = (1.0 + 0.6 * beams + 0.8 * meet) * (0.34 + 0.42 * uLevel) * (0.6 + 0.8 * crest) * (0.3 + 0.7 * dome);
+  float h = (1.0 + 0.35 * beat) * (0.34 + 0.42 * uLevel) * (0.6 + 0.8 * crest) * (0.3 + 0.7 * dome);
   float body = exp(-pow(y / max(h, 0.02), 1.35) * 1.7);
 
   float rays = smoothstep(0.2, 0.85, fbm(vec2(x * 2.6 + q.x * 2.2, y * 0.9 - t * 0.35)));
-  float shimmer = 0.75 + 0.5 * rays;
+  // The curtains flicker livelier while it thinks.
+  float shimmer = 0.75 + (0.5 + 0.35 * uThink) * rays;
 
-  float core = exp(-y / (0.05 + 0.1 * uPulse)) * dome;
+  float core = exp(-y / (0.05 + 0.1 * pulse)) * dome;
 
-  float a = body * shimmer * (0.3 + 0.7 * dome) + core * (0.2 + 0.6 * uPulse)
-    + beam * 0.8 + hot * 0.9 + flare * 0.9 + sparks * 1.4;
+  float a = body * shimmer * (0.3 + 0.7 * dome) + core * (0.2 + 0.6 * pulse) + waves * 0.9;
   a *= (0.3 + 0.7 * uPower) * (0.65 + 0.55 * uLevel);
   a *= smoothstep(0.0, 0.12, uv.x) * (1.0 - smoothstep(0.88, 1.0, uv.x)) * (1.0 - smoothstep(0.45, 1.0, y));
 
-  float lift = clamp(
-    core * 0.8 + beam * 0.5 + hot * 1.2 + flare + sparks * 2.0 + rays * body * 0.35,
-    0.0,
-    1.0
-  );
+  float lift = clamp(core * 0.8 + waves * 0.9 + rays * body * 0.35, 0.0, 1.0);
   vec3 deep = uColor * (0.75 + 0.25 * uLight);
   // Highlights go toward a cool white, so the hottest light stays blue-born.
   vec3 bright = mix(uColor, vec3(0.82, 0.93, 1.0), 0.6 - 0.4 * uLight);
@@ -191,12 +159,10 @@ export interface GlowFrame {
   level: number;
   /** Fast voice envelope 0..1: how hard the core flares. */
   pulse: number;
-  /** 0..1: how far the thinking beams have faded in. */
+  /** 0..1: how far the thinking waves have faded in. */
   think: number;
-  /** -1..1: where the thinking beams stand (mirrored about the middle). */
-  sweep: number;
-  /** -1..1: the beams' velocity (derivative of `sweep`), for tail and direction. */
-  sweepVel: number;
+  /** Thinking waves emitted so far, in ring lifetimes: a new ring every 0.5. */
+  ripple: number;
   /** 0 = resting wash, 1 = call open. */
   power: number;
   /** True on a light theme. */
@@ -290,8 +256,7 @@ export function createGlowRenderer(canvas: HTMLCanvasElement): GlowRenderer | nu
   const uSpan = u("uSpan");
   const uColor = u("uColor");
   const uThink = u("uThink");
-  const uSweep = u("uSweep");
-  const uSweepVel = u("uSweepVel");
+  const uRipple = u("uRipple");
 
   let cssWidth = 1;
   let cssHeight = 1;
@@ -321,8 +286,7 @@ export function createGlowRenderer(canvas: HTMLCanvasElement): GlowRenderer | nu
       gl.uniform1f(uPulse, frame.pulse);
       gl.uniform1f(uPower, frame.power);
       gl.uniform1f(uThink, frame.think);
-      gl.uniform1f(uSweep, frame.sweep);
-      gl.uniform1f(uSweepVel, frame.sweepVel);
+      gl.uniform1f(uRipple, frame.ripple);
       gl.uniform1f(uLight, frame.light ? 1 : 0);
       gl.uniform1f(uSpan, Math.min(0.45, SPAN_PX / cssWidth));
       gl.uniform3f(uColor, frame.color[0] / 255, frame.color[1] / 255, frame.color[2] / 255);
