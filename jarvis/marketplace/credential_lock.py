@@ -43,7 +43,7 @@ def storage_lock(*, shared: bool = False, directory: Path | None = None) -> Iter
         try:
             lock.acquire(timeout=5)
         except Timeout:
-            raise TimeoutError("Plugin credential storage is busy") from None
+            raise RuntimeError("Plugin credential storage is busy") from None
         _STORAGE_LOCAL.held = True
         try:
             yield

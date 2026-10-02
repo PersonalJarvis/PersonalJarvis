@@ -220,3 +220,22 @@ async def test_new_login_during_rotated_save_backoff_is_never_overwritten():
     outcome = await task
     assert outcome.usable
     assert store.load("synthetic") == new_login
+
+
+
+def test_busy_storage_preserves_the_existing_status_error_contract(monkeypatch, tmp_path):
+    import filelock
+
+    from jarvis.marketplace.credential_lock import storage_lock
+
+    class Busy:
+        def __init__(self, path):
+            self.path = path
+
+        def acquire(self, timeout):
+            raise filelock.Timeout(str(self.path))
+
+    monkeypatch.setattr(filelock, "FileLock", Busy)
+    with pytest.raises(RuntimeError, match="Plugin credential storage is busy"):
+        with storage_lock(shared=True, directory=tmp_path):
+            pytest.fail("A busy store must not be read")
