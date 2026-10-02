@@ -3,19 +3,19 @@ import { Check } from "lucide-react";
 import type { AgentStatus } from "@/lib/agenticIdeApi";
 import { cn } from "@/lib/utils";
 import { AgentMark } from "./AgentMark";
-import { MAX_WORKSPACE_PANES, balancedColumns } from "./workspaceDocking";
+import { MAX_PANES_PER_REQUEST, balancedColumns } from "./workspaceDocking";
 
 interface Props {
   agents: AgentStatus[];
   sessions: string[];
   onChange: (sessions: string[]) => void;
   disabled?: boolean;
-  /** The server's per-workspace pane limit (`max_terminals`). */
-  maxSessions?: number;
+  /** How many one-click counts to offer; any larger count is typed. */
+  quickCounts?: number;
 }
 
 /** One launch plan: choose an agent for everyone, then customize individual seats. */
-export function WorkspaceAgentSetup({ agents, sessions, onChange, disabled = false, maxSessions = MAX_WORKSPACE_PANES }: Props) {
+export function WorkspaceAgentSetup({ agents, sessions, onChange, disabled = false, quickCounts = 16 }: Props) {
   const [editingSeat, setEditing] = useState<number | null>(null);
   const editing = editingSeat !== null && editingSeat < sessions.length ? editingSeat : null;
   const firstAgent = agents[0]?.name ?? "";
@@ -85,15 +85,24 @@ export function WorkspaceAgentSetup({ agents, sessions, onChange, disabled = fal
     <section aria-label="Number of sessions">
       <h3 className="mb-3 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">How many sessions?</h3>
       <div className="flex flex-wrap items-center gap-2">
-        {Array.from({ length: maxSessions }, (_, index) => index + 1).map((count) => <button
+        {Array.from({ length: quickCounts }, (_, index) => index + 1).map((count) => <button
           key={count} type="button" aria-label={`${count} ${count === 1 ? "session" : "sessions"}`}
           aria-pressed={sessions.length === count} disabled={disabled || !firstAgent}
           onClick={() => chooseCount(count)}
           className={cn("flex h-11 w-11 items-center justify-center rounded-lg border text-sm font-semibold tabular-nums transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40", sessions.length === count ? selection : idle)}>
           {count}
         </button>)}
+        <label className="flex items-center gap-1.5 text-xs text-muted-foreground">More
+          <input type="number" aria-label="Number of sessions" min={1} max={MAX_PANES_PER_REQUEST} value={sessions.length || ""}
+            disabled={disabled || !firstAgent}
+            onChange={(event) => {
+              const count = Math.trunc(Number(event.target.value));
+              if (Number.isFinite(count) && count >= 1) chooseCount(Math.min(count, MAX_PANES_PER_REQUEST));
+            }}
+            className="h-11 w-16 rounded-lg border border-input bg-background/60 px-2 text-center text-sm font-semibold tabular-nums text-foreground outline-none focus:border-ring focus:ring-1 focus:ring-ring/30 disabled:opacity-40" />
+        </label>
         <span className="ml-2 text-xs text-muted-foreground">
-          Up to {maxSessions} per workspace{sessions.length > 1 && <> · opens as {balancedColumns(sessions.length)} × {Math.ceil(sessions.length / balancedColumns(sessions.length))}</>}
+          Add more anytime{sessions.length > 1 && <> · opens as {balancedColumns(sessions.length)} × {Math.ceil(sessions.length / balancedColumns(sessions.length))}</>}
         </span>
       </div>
     </section>

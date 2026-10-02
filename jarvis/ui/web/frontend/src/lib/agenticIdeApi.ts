@@ -73,7 +73,8 @@ export interface AgentStatus {
 
 export interface AgentsResponse {
   terminal_available: boolean;
-  max_terminals: number;
+  /** The most panes one launch opens at once; a workspace itself has no limit. */
+  max_panes_per_request: number;
   suggested_names: string[];
   agents: AgentStatus[];
 }
@@ -425,7 +426,6 @@ export interface IdeProjectsResponse {
   projects: IdeProject[];
   active_project_id: string | null;
   active_workspace_id: string | null;
-  max_terminals: number;
 }
 
 export function fetchIdeProjects(): Promise<IdeProjectsResponse> {
@@ -501,7 +501,6 @@ export interface IdeAccountState {
 export interface IdeState {
   active: boolean;
   session: SessionState | null;
-  max_terminals: number;
   /** Every open workspace, in tab order. */
   workspaces: WorkspaceCard[];
   /** The one on screen, or null while the wizard is showing. */
@@ -1246,7 +1245,6 @@ export async function openIdeWorkspace(
 const EMPTY_IDE_STATE: IdeState = {
   active: false,
   session: null,
-  max_terminals: 16,
   workspaces: [],
   active_id: null,
   max_workspaces: 6,
@@ -1525,7 +1523,6 @@ export interface WorkspaceLayoutView {
     /** What the pane's header shows: its goal in a few words, or empty. */
     title?: string;
   })[];
-  max_terminals: number;
 }
 
 /** The split tree and panes of an open workspace that may not be on screen. */

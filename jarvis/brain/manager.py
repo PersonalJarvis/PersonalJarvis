@@ -8118,7 +8118,6 @@ class BrainManager:
         try:
             from jarvis.agentic_ide import intent as ide_intent
             from jarvis.agentic_ide.session import (
-                MAX_TERMINALS,
                 SessionError,
                 get_registry,
                 terminals_added_event,
@@ -8243,8 +8242,6 @@ class BrainManager:
                             group.count, agent=group.agent
                         )
                     except SessionError as exc:
-                        if "maximum" in str(exc).lower():
-                            raise
                         log.info(
                             "Agentic IDE spawn: %s group refused: %s",
                             group.agent or "inherited",
@@ -8254,31 +8251,26 @@ class BrainManager:
                         continue
                     created.extend(opened)
                     if _capped:
-                        # The workspace filled up mid-fleet. Stop rather than
-                        # asking for the next group and getting the same
-                        # refusal — the readback already reports the shortfall.
+                        # A pane failed to open mid-fleet. Stop rather than
+                        # asking for the next group and hitting the same
+                        # failure — the readback already reports the shortfall.
                         break
         except SessionError as exc:
-            # A full workspace, a missing CLI, an unreadable folder: every one of
-            # these already carries a user-facing English sentence, and speaking
-            # it is more useful than a generic failure.
+            # A missing CLI, an unreadable folder: every one of these already
+            # carries a user-facing English sentence, and speaking it is more
+            # useful than a generic failure.
             log.info("Agentic IDE spawn fast-path refused: %s", exc)
-            if "maximum" in str(exc).lower():
-                return action_phrase(
-                    "ide_terminals_full", out_lang, max=MAX_TERMINALS
-                )
             return str(exc)
         except Exception:  # noqa: BLE001 - never crash the turn over a pane
             log.warning("Agentic IDE spawn fast-path failed", exc_info=True)
             return None
 
         if not created:
-            # Nothing opened. If a group said WHY, that sentence is the answer —
-            # "the workspace is full" would be a different claim, and usually a
-            # false one (an uninstalled CLI is not a full workspace).
+            # Nothing opened. If a group said WHY, that sentence is the answer;
+            # otherwise the pane failed to start and the log says why.
             if refused:
                 return " ".join(refused)
-            return action_phrase("ide_terminals_full", out_lang, max=MAX_TERMINALS)
+            return action_phrase("ide_terminals_open_failed", out_lang)
 
         session = registry.session
         if session is not None and self._bus is not None:

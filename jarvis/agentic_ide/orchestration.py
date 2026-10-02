@@ -20,7 +20,7 @@ from jarvis.core.protocols import CodingSessionGateway
 from jarvis.live.state import LiveLedger
 
 from .session import (
-    MAX_TERMINALS,
+    MAX_PANES_PER_REQUEST,
     Registry,
     SessionError,
     accepts_prompts,
@@ -410,7 +410,7 @@ class WorkspaceOrchestrator:
             count = int(args.get("count") or 1)
         except (TypeError, ValueError):
             count = 1
-        count = max(1, min(count, MAX_TERMINALS))
+        count = max(1, min(count, MAX_PANES_PER_REQUEST))
         name = str(args.get("name") or "").strip()
         mixed = args.get("agents")
         if isinstance(mixed, list) and mixed:
@@ -684,10 +684,10 @@ class WorkspaceOrchestrator:
         if isinstance(groups, dict):
             return groups
         requested = [{"agent": cli} for cli, count in groups for _ in range(count)]
-        if len(requested) > MAX_TERMINALS:
+        if len(requested) > MAX_PANES_PER_REQUEST:
             return {
                 "status": "not_accepted",
-                "reason": f"A workspace holds at most {MAX_TERMINALS} terminals.",
+                "reason": f"At most {MAX_PANES_PER_REQUEST} terminals open in one go.",
             }
         try:
             session = await self.registry.start(
@@ -760,7 +760,7 @@ class WorkspaceOrchestrator:
                 count = int(entry.get("count") or 1)
             except (TypeError, ValueError):
                 count = 1
-            groups.append((cli, max(1, min(count, MAX_TERMINALS))))
+            groups.append((cli, max(1, min(count, MAX_PANES_PER_REQUEST))))
         return groups or [(_default_cli(), 1)]
 
     async def _brief(

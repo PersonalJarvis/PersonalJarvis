@@ -16,7 +16,7 @@ import { cn } from "@/lib/utils";
 import { PaneResizer } from "@/components/layout/PaneResizer";
 import { treeLayout, treeLeaves, type LayoutNode, type PaneSeam } from "./treeLayout";
 import { useTreeSizes } from "./useTreeSizes";
-import { DOCK_LABELS, GRID_LIMIT_HINT, MAX_GRID_COLUMNS, MAX_GRID_ROWS, MAX_WORKSPACE_PANES, dockPosition, fitsWorkspace, layoutSpan, paneStyle, previewDock, workspaceLayout } from "./workspaceDocking";
+import { DOCK_LABELS, dockPosition, layoutSpan, paneStyle, previewDock, workspaceLayout } from "./workspaceDocking";
 
 const GAP = 8;
 const MIN_WIDTH = 280;
@@ -46,8 +46,6 @@ interface Props {
   onClose: (terminal: TerminalState) => void;
   onSelect: (name: string) => void;
   selected: string;
-  /** The server's per-workspace pane limit; splitting stops there. */
-  maxPanes?: number;
   fontSize: number;
   appearance: "light" | "dark" | null;
   disabled?: boolean;
@@ -63,7 +61,7 @@ interface Props {
 }
 
 interface WorkspaceChoice { id: string; name: string; folder?: string }
-interface DropTarget { id: string; position: PaneMovePosition; allowed: boolean }
+interface DropTarget { id: string; position: PaneMovePosition }
 interface DragFeedback { id: string; target: DropTarget | null; x: number; y: number; workspace?: WorkspaceChoice | null; blocked?: string | null }
 
 /** The attribute a sidebar row carries when a dragged pane may be dropped on it. */
@@ -81,7 +79,7 @@ function sameFolder(left: string | undefined, right: string | undefined): boolea
   return /^[a-z]:\//i.test(a) ? a.toLowerCase() === b.toLowerCase() : a === b;
 }
 
-export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSelect, selected, maxPanes = MAX_WORKSPACE_PANES, fontSize, appearance, disabled = false, onMutationStart, onMutationEnd, paneStyle: look = "classic", workspaces = [] }: Props) {
+export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSelect, selected, fontSize, appearance, disabled = false, onMutationStart, onMutationEnd, paneStyle: look = "classic", workspaces = [] }: Props) {
   const theme = useThemeValue();
   const pushToast = useEventStore((state) => state.pushToast);
   // The pane an agent card in the side panel pointed at, framed in blue.
@@ -182,7 +180,6 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
     const before = workspaceLayout(owner.layout, owner.terminals);
     if (!before || !source || !target) return;
     const next = previewDock(before, source.key, target.key, position);
-    if (!fitsWorkspace(next)) { setAnnouncement(GRID_LIMIT_HINT); return; }
     saveInFlight.current = true;
     latest.current.onMutationStart?.();
     setSaving(true);
@@ -267,10 +264,8 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
           const owner = latest.current.session;
           const source = owner.terminals.find((terminal) => idOf(terminal) === id);
           const target = owner.terminals.find((terminal) => idOf(terminal) === targetId);
-          const before = workspaceLayout(owner.layout, owner.terminals);
-          if (!source || !target || !before || targetId === id) return null;
-          const position = dockPosition(x, y, rect);
-          return { id: targetId!, position, allowed: fitsWorkspace(previewDock(before, source.key, target.key, position)) };
+          if (!source || !target || targetId === id) return null;
+          return { id: targetId!, position: dockPosition(x, y, rect) };
         }
       }
       return null;
@@ -322,7 +317,7 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
       const target = workspace ? null : targetAt(release.clientX, release.clientY);
       cleanup();
       if (armed && workspace) askWhere(id, workspace);
-      else if (armed && target?.allowed) void move(id, target.id, target.position);
+      else if (armed && target) void move(id, target.id, target.position);
     };
     dragCleanup.current = cleanup;
     window.addEventListener("pointermove", onMove, { capture: true, passive: false });
@@ -478,16 +473,16 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
             onClose={() => onClose(terminal)} onAttachError={(message) => pushToast("error", message)}
             onRename={(name) => rename(terminal, name)}
             restartToken={restarts[id] ?? 0} onRestart={() => setRestarts((current) => ({ ...current, [id]: (current[id] ?? 0) + 1 }))}
-            splitDisabled={tiles.length >= maxPanes} onSplit={(direction) => onAdd(terminal.name, direction)}
+            onSplit={(direction) => onAdd(terminal.name, direction)}
             branch={terminal.branch || undefined}
             computerName={computerName(terminal)} placementItems={placementItems(terminal)}
             workspaceItems={transferring || saving || disabled ? [] : movable
               .map((workspace) => ({ label: `Move to ${workspace.name}…`, run: () => askWhere(id, workspace) }))}
             onFork={terminal.accepts_prompts === false ? undefined : () => setForking({ name: terminal.name, agent: terminal.agent, displayName: terminal.display_name, workspaceId: session.id })} />
           {drag?.target?.id === id && <div aria-hidden="true" data-testid="dock-preview" data-position={drag.target.position}
-            className={cn("pointer-events-none absolute z-20 flex items-center justify-center border-2 p-2", minimal ? "rounded-none" : "rounded-xl", drag.target.allowed ? "border-ring/70 bg-accent/[0.15]" : "border-destructive bg-background/80",
+            className={cn("pointer-events-none absolute z-20 flex items-center justify-center border-2 p-2", minimal ? "rounded-none" : "rounded-xl", "border-ring/70 bg-accent/[0.15]",
               drag.target.position === "left" ? "inset-y-1 left-1 w-1/2" : drag.target.position === "right" ? "inset-y-1 right-1 w-1/2" : drag.target.position === "above" ? "inset-x-1 top-1 h-1/2" : drag.target.position === "below" ? "inset-x-1 bottom-1 h-1/2" : "inset-1")}>
-            <span className="rounded-md bg-popover px-3 py-2 text-center text-xs font-medium text-popover-foreground shadow-lg">{drag.target.allowed ? DOCK_LABELS[drag.target.position] : `Maximum ${MAX_GRID_COLUMNS} columns × ${MAX_GRID_ROWS} rows`}</span>
+            <span className="rounded-md bg-popover px-3 py-2 text-center text-xs font-medium text-popover-foreground shadow-lg">{DOCK_LABELS[drag.target.position]}</span>
           </div>}
         </div>;
       })}
