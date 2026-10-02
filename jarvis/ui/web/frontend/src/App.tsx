@@ -21,7 +21,6 @@ import { PaneResizer } from "@/components/layout/PaneResizer";
 import { useResizablePane } from "@/hooks/useResizablePane";
 import { TopBar } from "@/components/layout/TopBar";
 import { PermissionsAlertBanner } from "@/components/layout/PermissionsAlertBanner";
-import { ReadyCelebration } from "@/components/ReadyCelebration";
 import { InputIsolationBanner } from "@/components/layout/InputIsolationBanner";
 import { VoiceWarmingBanner } from "@/components/layout/VoiceWarmingBanner";
 import { MainView } from "@/components/layout/MainView";
@@ -399,9 +398,6 @@ export default function App() {
         <InputIsolationBanner />
         <TopBar navToggle={navToggle} />
         {!(["agentic-ide", "chat-workspace", "agentic-ide-classic"].includes(activeSection)) && <VoiceWarmingBanner />}
-        {/* The one-time "all lights green" note — the first time every
-            section of the active voice mode answers. Never again after. */}
-        <ReadyCelebration />
         <SectionStage visualization={visualizationActive}>
           <MainView />
         </SectionStage>
