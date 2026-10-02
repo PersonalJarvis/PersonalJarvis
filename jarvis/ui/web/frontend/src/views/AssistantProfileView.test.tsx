@@ -151,11 +151,17 @@ describe("AssistantProfileView", () => {
     expect(within(recent).getByText("You said: “merk dir das”")).toBeTruthy();
   });
 
-  it("counts files in the right number", async () => {
+  it("shows each file with its own first lines and the right count", async () => {
     installFetch({ "GET /api/soul": () => ({ body: profile() }) });
     renderWithClient(<AssistantProfileView />);
 
-    expect(within(await screen.findByTestId("assistant-file-memory")).getByText(/^1 note ·/)).toBeTruthy();
+    const soul = await screen.findByTestId("assistant-file-soul");
+    expect(within(soul).getByText("Name: Nova")).toBeTruthy();
+    expect(within(soul).queryByText(/My own persona/)).toBeNull();
+    expect(within(screen.getByTestId("assistant-file-instructions")).getByText("Call me Ruben, please.")).toBeTruthy();
+    const memory = screen.getByTestId("assistant-file-memory");
+    expect(within(memory).getByText(/^1 note ·/)).toBeTruthy();
+    expect(within(memory).getByText("The sister is called Lena.")).toBeTruthy();
     expect(within(screen.getByTestId("assistant-file-user")).getByText("Not created yet")).toBeTruthy();
   });
 
