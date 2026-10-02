@@ -20,7 +20,9 @@ import upward into ``jarvis.memory``. The two differ in intent: ``secret_guard``
 """
 from __future__ import annotations
 
+import json
 import re
+from collections.abc import Mapping
 from typing import Any
 
 # Default cap for a persisted preview. Big enough to be useful when scrolling
@@ -107,6 +109,22 @@ def redact_secrets(text: str) -> str:
     return out
 
 
+def _stringify(value: Any) -> str:
+    """Text of a preview value; structured data becomes JSON, not a Python repr.
+
+    A tool that returns a dict used to land in the trace as
+    ``{'actions': [{'action_id': ...`` — readable to nobody and unparseable
+    by the UI that turns results into sentences. JSON keeps the same content
+    in the shape every reader (the trace narrative, a person) understands;
+    a value JSON cannot encode falls back to ``str`` per item.
+    """
+    if isinstance(value, str):
+        return value
+    if isinstance(value, Mapping | list | tuple):
+        return json.dumps(value, ensure_ascii=False, default=str)
+    return str(value)
+
+
 def safe_preview(value: Any, *, max_chars: int = DEFAULT_PREVIEW_CHARS) -> str:
     """Stringify ``value`` -> mask credential shapes -> cap to ``max_chars``.
 
@@ -118,7 +136,7 @@ def safe_preview(value: Any, *, max_chars: int = DEFAULT_PREVIEW_CHARS) -> str:
     if value is None:
         return ""
     try:
-        text = value if isinstance(value, str) else str(value)
+        text = _stringify(value)
     except Exception:  # noqa: BLE001 — a preview must never crash the caller
         return f"<{type(value).__name__}>"
     text = redact_secrets(text)
