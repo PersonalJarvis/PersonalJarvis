@@ -93,5 +93,16 @@
     "build_active": "Modalità build",
     "control_turn": "Lavoro agente",
     "verifying": "Esecuzione terminata; verifica del risultato."
+  },
+  "pets": {
+    "states": {
+      "idle": "In attesa",
+      "listening": "In ascolto",
+      "thinking": "Sto pensando",
+      "talking": "Sto parlando",
+      "success": "Completato",
+      "error": "Errore",
+      "sleeping": "Sta dormendo"
+    }
   }
 }
