@@ -97,8 +97,8 @@ export interface OfficeSceneProps {
   nearby: Selection | null;
   chats: ReadonlyMap<string, DeskChat>;
   onOpenScreen: (agentId: string, screen: Point & { y: number }, facing: number) => void;
-  /** The elevator's call button: lit after a press, and the press itself. */
-  elevatorCall: { lit: boolean; onPress: () => void };
+  /** The elevator's call button: lit after a press, the floor picker open (its pill steps aside), and the press itself. */
+  elevatorCall: { lit: boolean; picking: boolean; onPress: () => void };
 }
 
 /** The checkpoints, the elevator's call button and the person: the same on every floor. */
@@ -118,7 +118,7 @@ function SharedFloorParts({ floor, layout, grid, ready, awake, reduced, player, 
       ))}
       {shaft && (
         <ElevatorCallButton shaft={shaft} floor={floor} lit={elevatorCall.lit} animate={awake && !reduced}
-          near={atLift} onPress={elevatorCall.onPress} />
+          near={atLift} hint={atLift && !elevatorCall.picking} onPress={elevatorCall.onPress} />
       )}
       <FloorArrival floor={floor} layout={layout} grid={grid} ready={ready} />
       <OfficePlayer layout={layout} grid={grid} look={player.look} name={player.name} awake={awake} reduced={reduced} />

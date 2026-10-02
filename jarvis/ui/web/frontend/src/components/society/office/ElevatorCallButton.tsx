@@ -52,11 +52,13 @@ function arrowTexture(direction: ArrowDirection) {
   });
 }
 
-export function ElevatorCallButton({ shaft, floor, near, lit, animate, onPress }: {
+export function ElevatorCallButton({ shaft, floor, near, hint, lit, animate, onPress }: {
   shaft: Furniture;
   floor: OfficeFloor;
   /** The person stands at the elevator: the button invites a press. */
   near: boolean;
+  /** Show the pill over the button (not while the floor picker it opens is on screen). */
+  hint: boolean;
   /** Pressed: glowing until the ride starts. */
   lit: boolean;
   animate: boolean;
@@ -106,7 +108,7 @@ export function ElevatorCallButton({ shaft, floor, near, lit, animate, onPress }
       <mesh position={[0, 0, 0.0231]} material={arrow} raycast={() => null}>
         <planeGeometry args={[BUTTON_RADIUS * 1.6, BUTTON_RADIUS * 1.6]} />
       </mesh>
-      {near && !lit && (
+      {hint && !lit && (
         <Html center position={[0, 0.62, 0.05]} zIndexRange={[24, 0]} pointerEvents="none">
           <span className="office-call-pill" data-office-ui>
             <b>{t("society.office.elevator_choose")}</b>

@@ -26,13 +26,13 @@ import { CAMERA_FOV } from "./officeCamera";
 import { ZOOM_SECONDS } from "./OfficeCameraRig";
 import { useDeskChats } from "./useDeskChats";
 import type { Point } from "./officeLayout";
-import { floorLevel, player, switchFloor, useOfficeStore, type OfficeFloor } from "./officeStore";
+import { player, switchFloor, useOfficeStore, type OfficeFloor } from "./officeStore";
 import { agentPositions, seatedAtDesk } from "./walkerRegistry";
 import { useCodingFloorOccupants, type PaneOccupant } from "./codingFloor";
 import { openPaneSession } from "./codingNavigate";
 import { useDprBudget } from "./useDprBudget";
 import { knownOnFloor, noteArrivals } from "./officeFloors";
-import { atElevator, CALL_PRESS_MS } from "./elevatorCall";
+import { atElevator } from "./elevatorCall";
 import { loadProfile, playerLook, saveProfile, type PlayerProfile } from "./playerProfile";
 import { AgentPanel, CheckpointPanel, type OfficeActions } from "./OfficePanels";
 import { PaneCommandPanel } from "./PaneCommandPanel";
@@ -40,6 +40,7 @@ import type { WalkerContext } from "./OfficeAgents";
 import { ownsKeyboard } from "./OfficePlayer";
 import { ArcadeCabinet } from "./ArcadeCabinet";
 import { ElevatorPanel } from "./ElevatorPanel";
+import { ElevatorRide, minRideMs, type RidePhase } from "./ElevatorRide";
 import { buildArcadeLayout } from "../arcade/arcadeFloorLayout";
 import { ARCADE_GAMES, gameForCabinet, type RetroGameId } from "../arcade/arcadeGames";
 import { useOfficeSettings, useReceptionTab } from "./officeSettings";
@@ -68,9 +69,11 @@ const REFRESH_JITTER_MS = 1500;
 
 const EMPTY_OCCUPANTS: ReadonlyMap<string, PaneOccupant> = new Map();
 
-/** Elevator doors: closing, the ride (held until the new floor has loaded, capped), opening. */
-const DOORS_MS = 520;
-const RIDE_MAX_MS = 1400;
+/** Elevator doors: closing, the ride (held until the new floor has loaded and the lantern has counted the floors, capped), opening. */
+const DOORS_MS = 620;
+const RIDE_MAX_MS = 2200;
+/** After a key on the floor picker lit up, the call button outside glows this long before the doors move. */
+const PICKED_CALL_MS = 320;
 
 class RenderBoundary extends Component<{ children: ReactNode; fallbackText: string }, { failed: boolean }> {
   state = { failed: false };
@@ -233,7 +236,7 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
 
   // The elevator: doors close, the floor switches behind them, doors open once
   // the new floor has loaded (capped). Reduced motion switches at once.
-  const [ride, setRide] = useState<{ to: OfficeFloor; up: boolean; phase: "closing" | "riding" | "opening" } | null>(null);
+  const [ride, setRide] = useState<{ from: OfficeFloor; to: OfficeFloor; phase: RidePhase; startedMs: number } | null>(null);
   const rideTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(rideTimer.current), []);
   const takeElevator = useCallback((to: OfficeFloor) => {
@@ -241,11 +244,10 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
     if (ride || to === from) return;
     if (reduced) { switchFloor(to, true); return; }
     useOfficeStore.getState().select(null);
-    const up = floorLevel(to) > floorLevel(from);
-    setRide({ to, up, phase: "closing" });
+    setRide({ from, to, phase: "closing", startedMs: 0 });
     rideTimer.current = setTimeout(() => {
       switchFloor(to, true);
-      setRide({ to, up, phase: "riding" });
+      setRide({ from, to, phase: "riding", startedMs: performance.now() });
       rideTimer.current = setTimeout(() => setRide((r) => (r?.phase === "riding" ? { ...r, phase: "opening" } : r)), RIDE_MAX_MS);
     }, DOORS_MS);
   }, [reduced, ride]);
@@ -271,7 +273,7 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
     setPicking(false);
     if (ride || callLit || to === useOfficeStore.getState().floor) return;
     setCallLit(true);
-    callTimer.current = setTimeout(() => { setCallLit(false); takeElevator(to); }, CALL_PRESS_MS);
+    callTimer.current = setTimeout(() => { setCallLit(false); takeElevator(to); }, PICKED_CALL_MS);
   }, [ride, callLit, takeElevator]);
   const closePicker = useCallback(() => setPicking(false), []);
   // The picker belongs to the floor it was opened on.
@@ -284,8 +286,10 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
   }, [selection, select, pressCall]);
   useEffect(() => {
     if (ride?.phase === "riding" && floor === ride.to && ready) {
+      // Open once the floor has loaded and the lantern has counted every floor passed.
+      const left = minRideMs(ride.from, ride.to) - (performance.now() - ride.startedMs);
       clearTimeout(rideTimer.current);
-      rideTimer.current = setTimeout(() => setRide({ ...ride, phase: "opening" }), 160);
+      rideTimer.current = setTimeout(() => setRide({ ...ride, phase: "opening" }), Math.max(160, left));
     }
     if (ride?.phase === "opening") {
       clearTimeout(rideTimer.current);
@@ -404,7 +408,7 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
                 <OfficeScene floor={floor} occupants={occupants} ready={ready} layout={layout} grid={grid} walkers={walkers} agents={agents} newcomers={newcomers}
                   awake={awake} reduced={reduced} overview={overview} player={{ look: playerLook(profile), name: playerName }}
                   selection={selection} nearby={nearby} chats={chats} onOpenScreen={openScreen}
-                  elevatorCall={{ lit: callLit, onPress: pressCall }} />
+                  elevatorCall={{ lit: callLit, picking, onPress: pressCall }} />
               </Canvas>
             </Suspense>
           </RenderBoundary>
@@ -473,15 +477,7 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
       )}
       {!compact && <OfficeCompass layout={layout} agents={agents} selectedId={selection?.kind === "agent" ? selection.id : null} />}
       {diving && <div className="office-dive-fade" aria-hidden />}
-      {ride && (
-        <div className="office-elevator" data-phase={ride.phase} role="status" aria-live="polite">
-          <i className="office-elevator-door" data-side="left" aria-hidden />
-          <i className="office-elevator-door" data-side="right" aria-hidden />
-          <span className="office-elevator-sign">
-            {t(ride.up ? "society.office.riding_up_to" : "society.office.riding_down_to").replace("{0}", t(`society.office.floor_name_${ride.to}`))}
-          </span>
-        </div>
-      )}
+      {ride && <ElevatorRide from={ride.from} to={ride.to} phase={ride.phase} reduced={reduced} />}
       {!compact && <OfficeMinimap layout={layout} agents={agents} selectedId={selection?.kind === "agent" ? selection.id : null}
         onOpenMap={() => setMapOpen(true)} />}
       <OfficeFullMap open={mapOpen} onOpen={() => setMapOpen(true)} onClose={() => setMapOpen(false)}

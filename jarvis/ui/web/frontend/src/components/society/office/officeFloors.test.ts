@@ -5,6 +5,7 @@ import { arrivalPose, knownOnFloor, noteArrivals } from "./officeFloors";
 import { floorLevel, OFFICE_FLOORS, officeSession, player, switchFloor, useOfficeStore } from "./officeStore";
 import { floorForKey, PANEL_FLOORS } from "./ElevatorPanel";
 import { callDirection } from "./ElevatorCallButton";
+import { minRideMs, RIDE_STEP_MS, rideLevels } from "./ElevatorRide";
 import { buildArcadeLayout } from "../arcade/arcadeFloorLayout";
 
 const AGENTS: OfficeAgentInput[] = [
@@ -30,6 +31,16 @@ describe("floors", () => {
     expect(callDirection("agents")).toBe("up");
     expect(callDirection("coding")).toBe("both");
     expect(callDirection("arcade")).toBe("down");
+  });
+
+  it("counts every floor a ride passes, in the direction of travel", () => {
+    expect(rideLevels("agents", "arcade")).toEqual([0, 1, 2]);
+    expect(rideLevels("arcade", "agents")).toEqual([2, 1, 0]);
+    expect(rideLevels("coding", "arcade")).toEqual([1, 2]);
+    expect(rideLevels("coding", "coding")).toEqual([1]);
+    // The car stays under way long enough to show each passed floor once.
+    expect(minRideMs("agents", "arcade")).toBe(2 * RIDE_STEP_MS);
+    expect(minRideMs("coding", "agents")).toBe(RIDE_STEP_MS);
   });
 
   it("picks a floor by its number key", () => {
