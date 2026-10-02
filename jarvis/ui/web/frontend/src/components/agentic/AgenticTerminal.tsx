@@ -155,6 +155,7 @@ import { PromptHistoryButton } from "./PromptHistoryButton";
 import { PaneConversationDialog } from "./PaneConversationDialog";
 import { WorkspaceTerminalHeader } from "./WorkspaceTerminalHeader";
 import { usePaneContextMenu } from "./usePaneContextMenu";
+import { SessionGitHubBadge } from "./SessionGitHubBadge";
 import { useT } from "@/i18n";
 
 /**
@@ -3489,6 +3490,7 @@ function PaneHeader({
         )}
       </div>
 
+      <SessionGitHubBadge workspaceId={workspaceId} name={name} appearance={appearance} />
       {/* Pane actions appear where the eye already is: on the pane under the
           pointer, on the focused pane, and while one of their menus is open.
           Five buttons on every header of a twelve-pane wall were sixty

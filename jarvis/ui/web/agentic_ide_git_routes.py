@@ -28,7 +28,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from jarvis.agentic_ide import git_ops, git_overview, github_link
+from jarvis.agentic_ide import git_ops, git_overview, github_link, github_status
 from jarvis.agentic_ide.git_ops import GitError, PrepareMode
 from jarvis.agentic_ide.session import get_registry
 
@@ -92,6 +92,20 @@ def workspace_overview(
     if session is None:
         raise HTTPException(status_code=404, detail="Workspace not found.")
     return git_overview.overview(session.folder, refresh=refresh).to_dict()
+
+
+@router.get("/session-status", summary="Current GitHub branch, pull request and CI status per pane")
+def session_github_status(workspace_id: str = Query(..., min_length=1)) -> dict:
+    """Read the actual checkout of each local pane, including fork worktrees."""
+    session = get_registry().get(workspace_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    folders = {
+        pane.name: pane.cwd(session.folder)
+        for pane in session.terminals
+        if not pane.computer_id
+    }
+    return {"panes": github_status.statuses(folders)}
 
 
 class BindingRequest(BaseModel):

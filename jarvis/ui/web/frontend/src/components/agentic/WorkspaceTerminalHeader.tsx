@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { Check, FolderInput, GitBranch, Maximize2, Minimize2, MoreHorizontal, Plus, Server, X } from "lucide-react";
 import { AgentMark } from "./AgentMark";
 import { BranchIcon } from "./branchIcon";
+import { SessionGitHubBadge } from "./SessionGitHubBadge";
 import { usePaneTitle } from "@/store/paneRecaps";
 import { PromptHistoryButton } from "./PromptHistoryButton";
 import { SplitAboveIcon, SplitBelowIcon, SplitLeftIcon, SplitRightIcon } from "./splitIcons";
@@ -271,6 +272,7 @@ export function WorkspaceTerminalHeader({
       </button> : renameForm}
       <span id={dragHintId} className="sr-only">Drag to reorder, or focus this title and press Alt with an arrow key.</span>
       <div data-header-control="true" className="flex shrink-0 items-center gap-0.5">
+        <SessionGitHubBadge workspaceId={workspaceId} name={name} appearance={appearance} />
         {moreButton}
         {maximizeButton}
         {onFork && <button type="button" data-testid={`pane-fork-${name}`} aria-label={`Fork ${name}`} title={`Fork ${name}`}
