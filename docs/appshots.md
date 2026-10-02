@@ -33,8 +33,8 @@ capture:
   drag takes exactly that window;
 - a drag cuts the area out of the dim layer with a marching-ants border and
   its size in real pixels;
-- a plain square magnifier beside the pointer shows the pixels around it with
-  the centre pixel outlined, and a strip underneath with the position (or the
+- a round magnifier beside the pointer shows the pixels around it with the
+  centre pixel outlined, and a small pill underneath with the position (or the
   selection size while dragging) and the zoom; the mouse wheel zooms it from
   2x to 24x, and the last zoom is remembered for the next pick.
 

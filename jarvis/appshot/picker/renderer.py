@@ -12,8 +12,8 @@ imports this module (AP-26). One frameless, always-on-top window per screen:
   selects exactly that window.
 - **Drag to select.** The selection is cut out of the dim layer with a
   marching-ants border and its size in real pixels.
-- **Magnifier.** A plain square of zoomed pixels beside the pointer with
-  the centre pixel outlined and a strip underneath: the position (or the
+- **Magnifier.** A round lens of zoomed pixels beside the pointer with the
+  centre pixel outlined and a small pill underneath: the position (or the
   selection size) and the zoom. The mouse wheel zooms it; the last zoom is
   kept for the next pick (``QSettings``).
 
@@ -326,21 +326,35 @@ class _SelectWindow(QWidget):
         source = QRect(cx - half, cy - half, count, count)
         side = MAG_BOX_PX
 
+        sel = self._selection()
+        if sel is not None:
+            info = f"{round(sel.width() * scale)} × {round(sel.height() * scale)}"
+        else:
+            px, py = self._capture_point(point)
+            info = f"{px}, {py}"
+        info = f"{info}   {zoom}×"
+        font = _font(8.0)
+        metrics = QFontMetricsF(font)
+        pill_w = metrics.horizontalAdvance(info) + 16.0
+        pill_h = _MAG_STRIP_H
+        total_h = side + 6.0 + pill_h
+
         x = point.x() + _MAG_OFFSET
         y = point.y() + _MAG_OFFSET
         if x + side > self.width() - 2:
             x = point.x() - _MAG_OFFSET - side
-        if y + side + _MAG_STRIP_H > self.height() - 2:
-            y = point.y() - _MAG_OFFSET - side - _MAG_STRIP_H
+        if y + total_h > self.height() - 2:
+            y = point.y() - _MAG_OFFSET - total_h
         box = QRectF(round(x), round(y), side, side)
-        strip = QRectF(box.x(), box.bottom(), side, _MAG_STRIP_H)
 
         painter.save()
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
-        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
+        circle = QPainterPath()
+        circle.addEllipse(box)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setClipPath(circle)
         painter.fillRect(box, QColor(0, 0, 0))
-        painter.setClipRect(box)
-        # The pixel grid is centred on the box; its outer pixels are clipped.
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
+        # The pixel grid is centred on the circle; its outer pixels are clipped.
         ox = box.x() + (side - count * cell) / 2.0
         oy = box.y() + (side - count * cell) / 2.0
         visible = source.intersected(frozen.rect())
@@ -352,6 +366,7 @@ class _SelectWindow(QWidget):
                 visible.height() * cell,
             )
             painter.drawPixmap(target, frozen, QRectF(visible))
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
         if cell >= _MAG_GRID_MIN_CELL:
             painter.setPen(QPen(QColor(0, 0, 0, 38), 0))
             for i in range(1, count):
@@ -364,33 +379,24 @@ class _SelectWindow(QWidget):
         painter.drawRect(centre.adjusted(-1, -1, 0, 0))
         painter.setPen(QPen(QColor(255, 255, 255), 0))
         painter.drawRect(centre.adjusted(0, 0, -1, -1))
-
         painter.setClipping(False)
 
-        # Info strip, inside the same frame.
-        painter.fillRect(strip, QColor(12, 12, 12))
-        sel = self._selection()
-        if sel is not None:
-            left = f"{round(sel.width() * scale)} × {round(sel.height() * scale)}"
-        else:
-            px, py = self._capture_point(point)
-            left = f"{px}, {py}"
-        font = _font(8.0)
-        painter.setFont(font)
-        inner = strip.adjusted(7, 0, -7, 0)
-        painter.setPen(_LABEL_FG)
-        middle = Qt.AlignmentFlag.AlignVCenter
-        painter.drawText(inner, middle | Qt.AlignmentFlag.AlignLeft, left)
-        painter.setPen(_LABEL_MUTED)
-        painter.drawText(inner, middle | Qt.AlignmentFlag.AlignRight, f"{zoom}×")
+        # One crisp two-tone ring: white inside, a thin dark edge outside.
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(QColor(0, 0, 0, 170), 1.0))
+        painter.drawEllipse(box.adjusted(-1.0, -1.0, 1.0, 1.0))
+        painter.setPen(QPen(QColor(255, 255, 255, 240), 1.5))
+        painter.drawEllipse(box.adjusted(0.75, 0.75, -0.75, -0.75))
 
-        # One crisp two-tone frame around pixels and strip: white inside, black outside.
-        frame = QRectF(box.x(), box.y(), side, side + _MAG_STRIP_H)
-        painter.setPen(QPen(QColor(255, 255, 255, 235), 0))
-        painter.drawRect(frame.adjusted(0, 0, -1, -1))
-        painter.setPen(QPen(QColor(0, 0, 0, 200), 0))
-        painter.drawRect(frame.adjusted(-1, -1, 0, 0))
-        painter.drawLine(QPointF(box.x(), box.bottom()), QPointF(box.right() - 1, box.bottom()))
+        # Position (or size) and zoom in a small flat pill under the circle.
+        pill = QRectF(box.center().x() - pill_w / 2.0, box.bottom() + 6.0, pill_w, pill_h)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(_LABEL_BG)
+        painter.drawRoundedRect(pill, pill_h / 2.0, pill_h / 2.0)
+        painter.setFont(font)
+        painter.setPen(_LABEL_FG)
+        painter.drawText(pill, Qt.AlignmentFlag.AlignCenter, info)
         painter.restore()
 
     def _paint_hint(self, painter: QPainter, hint: str) -> None:
