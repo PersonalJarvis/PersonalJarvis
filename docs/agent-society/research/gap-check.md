@@ -2,9 +2,20 @@
 
 # Gap Check — Completeness Critic over Both Branch Reports
 
-## Verdict
+## Resolution status — 2026-10-02
 
-NOT READY FOR PLANNING — one reconciliation pass required first. The reports are individually strong and complementary (A: product surfaces, 3D stack, reuse map; B: substrate, cost, safety), and their repo anchors check out on disk (budget.py $5/$50 defaults, ROUTER_TOOLS at brain/factory.py:61, three ^0.185.1 / R3F ^8.18 / drei ^9.122 pins, useWebglSurface.ts, turn_language.py, agent_chat/, agents/registry.py, subagent_fanout.py all verified). But they contradict each other on the society's spine — prose chat vs typed blackboard, agent-as-persistent-session vs roster-row-plus-ephemeral-workers, config-directory vs society.db identity, flat vs three-tier delegation rights, which store feeds the world, and whether idle is LLM-free — and both are silent on constraints this repo treats as hard: the 5-second voice tool budget, turn-language/i18n, headless/no-GPU degradation (T3 by the repo's own tiering), VRAM coexistence with the voice stack, a single cost ledger, boot budget, and AP-4 five-layer parity. Recommended: write a short decision memo resolving the nine contradictions (the natural synthesis is B's typed envelope and durable roster as the substrate with A's surfaces and bounded group rooms as projections on top), fold the voice/i18n/headless/VRAM/cost-ledger gaps into the master plan as first-class sections, and carry the remaining gaps as named workstreams with owners. Planning can start immediately after that memo; starting before it will bake in two incompatible architectures.
+The verdict below records the state of the two reports on 2026-09-01. It was
+superseded by [`MASTERPLAN.md`](../MASTERPLAN.md): section 2 resolves the nine
+design contradictions, while sections 7–8 carry the missed repository
+constraints into the architecture and implementation milestones. Planning is
+therefore unblocked. This is design-level closure, not a claim that every
+milestone or runtime safeguard has shipped; use the master plan's progress and
+open-work list for implementation status. The original findings remain below
+as the historical audit trail.
+
+## Original verdict (2026-09-01; superseded)
+
+At generation time, planning was blocked pending a reconciliation pass. The reports were individually strong and complementary (A: product surfaces, 3D stack, reuse map; B: substrate, cost, safety), and their repo anchors checked out on disk (budget.py $5/$50 defaults, ROUTER_TOOLS at brain/factory.py:61, three ^0.185.1 / R3F ^8.18 / drei ^9.122 pins, useWebglSurface.ts, turn_language.py, agent_chat/, agents/registry.py, subagent_fanout.py). But they contradicted each other on the society's spine — prose chat vs typed blackboard, agent-as-persistent-session vs roster-row-plus-ephemeral-workers, config-directory vs society.db identity, flat vs three-tier delegation rights, which store feeds the world, and whether idle is LLM-free — and both were silent on constraints this repo treats as hard: the 5-second voice tool budget, turn-language/i18n, headless/no-GPU degradation (T3 by the repo's own tiering), VRAM coexistence with the voice stack, a single cost ledger, boot budget, and AP-4 five-layer parity. The recommendation was to resolve those contradictions in a decision memo, fold the missed constraints into the master plan, and carry remaining gaps as named workstreams. The master plan now records that reconciliation.
 
 ## Contradictions between the branches (9)
 
@@ -103,4 +114,3 @@ How the user learns an agent finished or is blocked while they are in another se
 ### Accessibility and reduced motion
 
 A constantly-animating pixel world needs a prefers-reduced-motion mode, photosensitivity care, and a keyboard/screen-reader path; the honest answer is probably 'the Ledger tab is the accessible equivalent', but no report declares it, and canvas-only UI with no fallback is an exclusion bug.
-
