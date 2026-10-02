@@ -65,11 +65,33 @@ SEMANTIC_TARGET_HIT = MacAgentBenchScenario(
 )
 
 
+STALE_TARGET_REFUSAL = MacAgentBenchScenario(
+    id="stale-target-refusal",
+    description=(
+        "A previously observed macOS target changes identity before actuation; "
+        "Jarvis must refuse stale semantic and pointer mutations."
+    ),
+    live_required=True,
+    readiness_checks=(
+        "semantic:ax-tree",
+        "actuation:backend",
+    ),
+    success_criteria=(
+        "the target begins from a valid fresh observation",
+        "identity drift is detected before native or pointer mutation",
+        "no native semantic action is performed on the stale target",
+        "no pointer or other synthetic event is posted after refusal",
+        "Computer-Use requests a fresh desktop observation before continuing",
+    ),
+)
+
+
 def macagentbench_scenarios() -> tuple[MacAgentBenchScenario, ...]:
     """Return the currently specified MacAgentBench live scenarios."""
     return (
         PHYSICAL_USER_TAKEOVER,
         SEMANTIC_TARGET_HIT,
+        STALE_TARGET_REFUSAL,
     )
 
 
@@ -95,6 +117,18 @@ class SemanticTargetHitReceipt:
     native_action_performed: bool
     pointer_events_posted: int
     expected_effect_verified: bool
+
+
+@dataclass(frozen=True)
+class StaleTargetRefusalReceipt:
+    """Evidence captured by a live/fake stale-target refusal run."""
+
+    target_was_freshly_observed: bool
+    identity_drift_detected: bool
+    native_action_performed: bool
+    synthetic_events_posted: int
+    refusal_reported: bool
+    reobserve_requested: bool
 
 
 @dataclass(frozen=True)
@@ -165,14 +199,46 @@ def evaluate_semantic_target_hit(
     )
 
 
+def evaluate_stale_target_refusal(
+    receipt: StaleTargetRefusalReceipt,
+) -> MacAgentBenchEvaluation:
+    """Evaluate fail-closed stale-target evidence without touching the desktop."""
+    failures: list[str] = []
+
+    if not receipt.target_was_freshly_observed:
+        failures.append("the stale-target scenario did not begin from a fresh observation")
+    if not receipt.identity_drift_detected:
+        failures.append("target identity drift was not detected before actuation")
+    if receipt.native_action_performed:
+        failures.append("a native semantic action was performed on the stale target")
+    if receipt.synthetic_events_posted != 0:
+        failures.append(
+            "synthetic input was posted after stale-target refusal "
+            f"({receipt.synthetic_events_posted} event(s))"
+        )
+    if not receipt.refusal_reported:
+        failures.append("the stale-target refusal was not surfaced to Computer-Use")
+    if not receipt.reobserve_requested:
+        failures.append("Computer-Use did not request a fresh observation after refusal")
+
+    return MacAgentBenchEvaluation(
+        scenario_id=STALE_TARGET_REFUSAL.id,
+        passed=not failures,
+        failures=tuple(failures),
+    )
+
+
 __all__ = [
     "MacAgentBenchEvaluation",
     "MacAgentBenchScenario",
     "PHYSICAL_USER_TAKEOVER",
     "SEMANTIC_TARGET_HIT",
+    "STALE_TARGET_REFUSAL",
     "PhysicalTakeoverReceipt",
     "SemanticTargetHitReceipt",
+    "StaleTargetRefusalReceipt",
     "evaluate_physical_takeover",
     "evaluate_semantic_target_hit",
+    "evaluate_stale_target_refusal",
     "macagentbench_scenarios",
 ]

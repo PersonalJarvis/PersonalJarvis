@@ -18,13 +18,13 @@ Safety constraints remain unchanged:
 
 Current workstream priority:
 
-1. MacAgentBench stale-target-refusal coverage after the takeover and semantic-target contracts;
+1. MacAgentBench focus/type-landing coverage after takeover and semantic fail-closed contracts;
 2. upstream alignment and regression checks;
 3. next highest-priority architecture gap that is not blocked on physical macOS testing.
 
-Completed remotely in the current benchmark phase: physical-user-takeover and
-semantic-target-hit receipt contracts. Native qualification remains deferred
-until an explicit real-Mac pass can grant the required permissions and capture
-live receipts.
+Completed remotely in the current benchmark phase: physical-user-takeover,
+semantic-target-hit and stale-target-refusal receipt contracts. Native
+qualification remains deferred until an explicit real-Mac pass can grant the
+required permissions and capture live receipts.
 
 The scheduled pass is intentionally limited to the platform-supported maximum cadence of once per hour; it is not a continuously resident daemon.

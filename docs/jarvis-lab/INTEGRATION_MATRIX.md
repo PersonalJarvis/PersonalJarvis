@@ -161,6 +161,12 @@ after semantic success and post-action verification of the expected UI effect.
 Like takeover, the contract is live-gated: CI validates the evaluator, not the
 native macOS behavior.
 
+`stale-target-refusal` adds the fail-closed counterpart: the target must come
+from a fresh observation, identity drift must be detected before mutation, no
+native or synthetic input may occur after refusal, the refusal must be surfaced
+to Computer-Use, and the next step must request a fresh observation. This
+contract is also live-gated and does not claim native qualification from CI.
+
 Live MacAgentBench remains the release gate for observable receipts: semantic
 target hit, stale-target refusal, focus/type landing, human takeover,
 cross-window handoff, browser-to-desktop transition, cancellation, permission

@@ -1,13 +1,16 @@
-"""MacAgentBench physical-user-takeover receipt tests."""
+"""Deterministic MacAgentBench receipt evaluator tests."""
 from __future__ import annotations
 
 from jarvis.cu.macos_bench import (
     PHYSICAL_USER_TAKEOVER,
     SEMANTIC_TARGET_HIT,
+    STALE_TARGET_REFUSAL,
     PhysicalTakeoverReceipt,
     SemanticTargetHitReceipt,
+    StaleTargetRefusalReceipt,
     evaluate_physical_takeover,
     evaluate_semantic_target_hit,
+    evaluate_stale_target_refusal,
     macagentbench_scenarios,
 )
 
@@ -36,6 +39,19 @@ def _passing_semantic_receipt(**overrides):
     }
     values.update(overrides)
     return SemanticTargetHitReceipt(**values)
+
+
+def _passing_stale_refusal_receipt(**overrides):
+    values = {
+        "target_was_freshly_observed": True,
+        "identity_drift_detected": True,
+        "native_action_performed": False,
+        "synthetic_events_posted": 0,
+        "refusal_reported": True,
+        "reobserve_requested": True,
+    }
+    values.update(overrides)
+    return StaleTargetRefusalReceipt(**values)
 
 
 def test_takeover_scenario_is_live_gated_and_bound_to_readiness() -> None:
@@ -121,3 +137,56 @@ def test_semantic_success_forbids_pointer_fallback_and_requires_effect_verificat
     assert result.passed is False
     assert any("pointer fallback" in failure for failure in result.failures)
     assert any("expected UI effect" in failure for failure in result.failures)
+
+
+
+def test_stale_target_scenario_is_live_gated_and_bound_to_actuation() -> None:
+    assert STALE_TARGET_REFUSAL in macagentbench_scenarios()
+    assert STALE_TARGET_REFUSAL.live_required is True
+    assert "semantic:ax-tree" in STALE_TARGET_REFUSAL.readiness_checks
+    assert "actuation:backend" in STALE_TARGET_REFUSAL.readiness_checks
+
+
+def test_stale_target_refusal_receipt_passes_when_no_mutation_occurs() -> None:
+    result = evaluate_stale_target_refusal(_passing_stale_refusal_receipt())
+
+    assert result.passed is True
+    assert result.failures == ()
+
+
+def test_stale_target_refusal_requires_drift_detection_and_report() -> None:
+    result = evaluate_stale_target_refusal(
+        _passing_stale_refusal_receipt(
+            identity_drift_detected=False,
+            refusal_reported=False,
+        )
+    )
+
+    assert result.passed is False
+    assert any("identity drift" in failure for failure in result.failures)
+    assert any("not surfaced" in failure for failure in result.failures)
+
+
+def test_stale_target_refusal_forbids_native_and_synthetic_mutation() -> None:
+    result = evaluate_stale_target_refusal(
+        _passing_stale_refusal_receipt(
+            native_action_performed=True,
+            synthetic_events_posted=1,
+        )
+    )
+
+    assert result.passed is False
+    assert any("native semantic action" in failure for failure in result.failures)
+    assert any("synthetic input" in failure for failure in result.failures)
+
+
+def test_stale_target_refusal_requires_fresh_reobservation() -> None:
+    result = evaluate_stale_target_refusal(
+        _passing_stale_refusal_receipt(
+            target_was_freshly_observed=False,
+            reobserve_requested=False,
+        )
+    )
+
+    assert result.passed is False
+    assert any("fresh observation" in failure for failure in result.failures)
