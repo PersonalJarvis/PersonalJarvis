@@ -506,8 +506,25 @@ def test_drain_is_bounded() -> None:
     asyncio.run(scenario())
 
 
+class _FakeMenuItem:
+    def __init__(self, text, action, **_kwargs) -> None:
+        self.text = text
+        self._action = action
+
+
+class _FakeMenu:
+    SEPARATOR = object()
+
+    def __init__(self, *items) -> None:
+        self.items = [i for i in items if isinstance(i, _FakeMenuItem)]
+
+
 def test_tray_quit_all_skips_the_hand_off(monkeypatch) -> None:
-    pytest.importorskip("pystray")
+    # A fake pystray: the real one opens an X display on import, which a
+    # headless Linux runner does not have.
+    monkeypatch.setitem(
+        sys.modules, "pystray", SimpleNamespace(Menu=_FakeMenu, MenuItem=_FakeMenuItem)
+    )
     from jarvis.ui.tray import JarvisTray, TrayCommand
 
     seen: list[str] = []
