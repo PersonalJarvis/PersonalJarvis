@@ -1,11 +1,23 @@
-"""PySide6 area picker for region appshots.
+"""PySide6 area picker for region appshots, modelled on ShareX's region capture.
 
 Runs ONLY inside ``python -m jarvis.appshot.picker``; the main process never
-imports this module (AP-26). One dimmed, frameless, always-on-top window per
-screen with a crosshair: drag a rectangle (live size readout in real pixels),
-release to confirm, Esc or right-click to cancel. The selection is reported as
-fractions of its screen, so mixed-DPI layouts map back to capture pixels
-exactly (see :mod:`jarvis.appshot.region`).
+imports this module (AP-26). One frameless, always-on-top window per screen:
+
+- **Frozen screen.** Each screen is grabbed once before the overlay appears
+  and shown dimmed, so nothing moves under the selection. Where the grab
+  fails (no permission, odd platform) the overlay falls back to a translucent
+  dim layer over the live desktop and simply has no magnifier.
+- **Window snapping.** Hovering highlights the window under the pointer
+  (rectangles from the main process, top-most first); a click without a drag
+  selects exactly that window.
+- **Drag to select.** The selection is cut out of the dim layer with a
+  marching-ants border and its size in real pixels.
+- **Magnifier.** A zoomed pixel grid beside the pointer with the centre pixel
+  marked and the position (or the selection size) underneath.
+
+Esc or a right-click cancels. The result is reported as fractions of its
+screen, so mixed-DPI layouts map back to capture pixels exactly (see
+:mod:`jarvis.appshot.region`).
 """
 
 from __future__ import annotations
@@ -14,7 +26,7 @@ import sys
 import threading
 from contextlib import suppress
 
-from PySide6.QtCore import QObject, QPointF, QRectF, Qt, Signal, Slot
+from PySide6.QtCore import QObject, QPointF, QRect, QRectF, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import (
     QColor,
     QCursor,
@@ -24,16 +36,35 @@ from PySide6.QtGui import (
     QPainter,
     QPainterPath,
     QPen,
+    QPixmap,
 )
 from PySide6.QtWidgets import QApplication, QWidget
 
 from jarvis.appshot import picker as wire
-from jarvis.appshot.region import selection_fractions
+from jarvis.appshot.region import (
+    match_monitor,
+    selection_fractions,
+    snap_rects_on_screen,
+)
 
-# Jarvis gold, the same edge colour as the capture border and the shutter.
-_GOLD = (255, 229, 0)
-_SOFT_GOLD = (231, 196, 110)
-_DIM_ALPHA = 105
+_DIM = QColor(0, 0, 0, 115)
+_LABEL_BG = QColor(18, 18, 20, 225)
+_LABEL_FG = QColor(255, 255, 255, 240)
+_LABEL_MUTED = QColor(255, 255, 255, 150)
+
+#: Magnifier: this many source pixels per side, each drawn this many px wide.
+_MAG_PIXELS = 15
+_MAG_CELL = 10
+_MAG_SIZE = _MAG_PIXELS * _MAG_CELL
+_MAG_OFFSET = 22
+_MAG_RADIUS = 6.0
+
+#: Marching ants: dash length and the tick that moves them.
+_DASH = 4.0
+_ANTS_MS = 90
+
+#: Windows smaller than this (logical px, either side) are not snap targets.
+_MIN_SNAP_PX = 24
 
 
 def _screen_info(screen) -> dict[str, float]:
@@ -54,10 +85,26 @@ def _emit(payload: dict) -> None:
         sys.stdout.flush()
 
 
-class _SelectWindow(QWidget):
-    """One screen's dimmed selection canvas."""
+def _font(size: float, *, bold: bool = False) -> QFont:
+    font = QFont()
+    font.setPointSizeF(size)
+    font.setWeight(QFont.Weight.DemiBold if bold else QFont.Weight.Normal)
+    return font
 
-    def __init__(self, screen, owner: Picker) -> None:
+
+def _draw_label(painter: QPainter, box: QRectF, text: str, font: QFont) -> None:
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(_LABEL_BG)
+    painter.drawRoundedRect(box, 4.0, 4.0)
+    painter.setFont(font)
+    painter.setPen(_LABEL_FG)
+    painter.drawText(box, Qt.AlignmentFlag.AlignCenter, text)
+
+
+class _SelectWindow(QWidget):
+    """One screen's selection canvas."""
+
+    def __init__(self, screen, frozen: QPixmap | None, owner: Picker) -> None:
         super().__init__(None)
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
@@ -65,7 +112,8 @@ class _SelectWindow(QWidget):
             | Qt.WindowType.Tool
             | Qt.WindowType.NoDropShadowWindowHint
         )
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        if frozen is None:
+            self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         if sys.platform == "darwin":
             # Qt::Tool is an NSPanel on macOS; without this it stays invisible
             # while this never-activated process is in the background.
@@ -78,11 +126,27 @@ class _SelectWindow(QWidget):
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.screen_ref = screen
+        self._frozen = frozen
         self._owner = owner
         self._start: QPointF | None = None
         self._end: QPointF | None = None
         self._pointer: QPointF | None = None
+        #: Snap targets in this window's logical coordinates, top-most first.
+        self._snaps: list[QRectF] = []
+        self._monitor: dict | None = None
 
+    # -- data from the main process ------------------------------------------
+    def set_layout(self, monitors: list[dict], windows: list[list[int]]) -> None:
+        """Map capture-space window rects onto this screen's logical pixels."""
+        info = _screen_info(self.screen_ref)
+        self._monitor = match_monitor(info, monitors)
+        rects = snap_rects_on_screen(
+            info, (self.width(), self.height()), monitors, windows, min_px=_MIN_SNAP_PX
+        )
+        self._snaps = [QRectF(*rect) for rect in rects]
+        self.update()
+
+    # -- input ---------------------------------------------------------------
     def keyPressEvent(self, event) -> None:  # noqa: N802 (Qt override)
         if event.key() == Qt.Key.Key_Escape:
             self._owner.finish(None, None)
@@ -114,8 +178,18 @@ class _SelectWindow(QWidget):
             self._start.x(), self._start.y(), end.x(), end.y(), self.width(), self.height()
         )
         self._start = None
+        self._end = None
         if frac is None:
-            # A click without a drag: keep the overlay up for a real selection.
+            # A click, not a drag: take the window under the pointer, if any.
+            snap = self._snap_at(end)
+            if snap is not None:
+                frac = (
+                    snap.x() / self.width(),
+                    snap.y() / self.height(),
+                    snap.width() / self.width(),
+                    snap.height() / self.height(),
+                )
+        if frac is None:
             self.update()
             return
         self._owner.finish(self, frac)
@@ -124,79 +198,187 @@ class _SelectWindow(QWidget):
         if self._pointer is not None or self._start is not None:
             self._pointer = None
             self._start = None
+            self._end = None
             self.update()
 
+    def has_hole(self) -> bool:
+        return self._hole() is not None
+
+    # -- geometry ------------------------------------------------------------
     def _selection(self) -> QRectF | None:
         if self._start is None or self._end is None:
             return None
         return QRectF(self._start, self._end).normalized()
 
+    def _snap_at(self, point: QPointF) -> QRectF | None:
+        for rect in self._snaps:
+            if rect.contains(point):
+                return rect
+        return None
+
+    def _hole(self) -> QRectF | None:
+        sel = self._selection()
+        if sel is not None:
+            return sel
+        if self._pointer is not None:
+            return self._snap_at(self._pointer)
+        return None
+
+    def _scale(self) -> float:
+        """Device pixels per logical pixel — from the frozen frame when present."""
+        if self._frozen is not None and self.width() > 0:
+            return self._frozen.width() / self.width()
+        return float(self.screen_ref.devicePixelRatio() or 1.0)
+
+    def _capture_point(self, point: QPointF) -> tuple[int, int]:
+        """``point`` in capture coordinates (what the screenshot will use)."""
+        mon = self._monitor
+        if mon is None:
+            scale = self._scale()
+            return round(point.x() * scale), round(point.y() * scale)
+        fx = point.x() / max(1.0, self.width())
+        fy = point.y() / max(1.0, self.height())
+        return (
+            round(float(mon.get("left", 0)) + fx * float(mon.get("width", 0))),
+            round(float(mon.get("top", 0)) + fy * float(mon.get("height", 0))),
+        )
+
+    # -- painting ------------------------------------------------------------
     def paintEvent(self, event) -> None:  # noqa: N802
         del event
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         full = QRectF(0, 0, self.width(), self.height())
-        sel = self._selection()
+        if self._frozen is not None:
+            painter.drawPixmap(full, self._frozen, QRectF(self._frozen.rect()))
+        hole = self._hole()
         dim = QPainterPath()
         dim.addRect(full)
-        if sel is not None:
-            hole = QPainterPath()
-            hole.addRect(sel)
-            dim = dim.subtracted(hole)
-        painter.fillPath(dim, QColor(0, 0, 0, _DIM_ALPHA))
-        if sel is not None:
-            pen = QPen(QColor(*_GOLD, 235))
-            pen.setWidthF(1.5)
-            painter.setPen(pen)
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawRect(sel)
-            self._paint_size(painter, sel)
-        elif self._pointer is not None:
-            pen = QPen(QColor(255, 255, 255, 120))
-            pen.setWidthF(1.0)
-            painter.setPen(pen)
-            p = self._pointer
-            painter.drawLine(QPointF(0, p.y()), QPointF(self.width(), p.y()))
-            painter.drawLine(QPointF(p.x(), 0), QPointF(p.x(), self.height()))
+        if hole is not None:
+            cut = QPainterPath()
+            cut.addRect(hole)
+            dim = dim.subtracted(cut)
+        painter.fillPath(dim, _DIM)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if hole is not None:
+            self._paint_border(painter, hole)
+            self._paint_size(painter, hole)
+        if self._pointer is not None and self._frozen is not None:
+            self._paint_magnifier(painter, self._pointer)
         if self._owner.hint and self._owner.hint_window is self:
             self._paint_hint(painter, self._owner.hint)
         painter.end()
 
-    def _paint_size(self, painter: QPainter, sel: QRectF) -> None:
-        dpr = float(self.screen_ref.devicePixelRatio() or 1.0)
-        text = f"{round(sel.width() * dpr)} × {round(sel.height() * dpr)}"
-        font = QFont()
-        font.setPointSizeF(9.5)
-        font.setWeight(QFont.Weight.DemiBold)
-        painter.setFont(font)
+    def _paint_border(self, painter: QPainter, rect: QRectF) -> None:
+        r = rect.adjusted(0.5, 0.5, -0.5, -0.5)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(QColor(0, 0, 0, 220), 1.0))
+        painter.drawRect(r)
+        ants = QPen(QColor(255, 255, 255, 250), 1.0)
+        ants.setDashPattern([_DASH, _DASH])
+        ants.setDashOffset(self._owner.ants_offset)
+        painter.setPen(ants)
+        painter.drawRect(r)
+
+    def _paint_size(self, painter: QPainter, rect: QRectF) -> None:
+        scale = self._scale()
+        text = f"{round(rect.width() * scale)} × {round(rect.height() * scale)}"
+        font = _font(9.0, bold=True)
         metrics = QFontMetricsF(font)
-        w = metrics.horizontalAdvance(text) + 16.0
-        h = metrics.height() + 8.0
-        x = sel.right() - w
-        y = sel.bottom() + 6.0
-        if y + h > self.height():
-            y = sel.bottom() - h - 6.0
+        w = metrics.horizontalAdvance(text) + 14.0
+        h = metrics.height() + 6.0
+        x = rect.left()
+        y = rect.top() - h - 5.0
+        if y < 4.0:
+            x, y = rect.left() + 5.0, rect.top() + 5.0
         x = max(4.0, min(x, self.width() - w - 4.0))
-        box = QRectF(x, y, w, h)
+        _draw_label(painter, QRectF(x, y, w, h), text, font)
+
+    def _paint_magnifier(self, painter: QPainter, point: QPointF) -> None:
+        frozen = self._frozen
+        assert frozen is not None
+        scale = self._scale()
+        cx, cy = int(point.x() * scale), int(point.y() * scale)
+        half = _MAG_PIXELS // 2
+        source = QRect(cx - half, cy - half, _MAG_PIXELS, _MAG_PIXELS)
+
+        sel = self._selection()
+        if sel is not None:
+            info = f"{round(sel.width() * scale)} × {round(sel.height() * scale)}"
+        else:
+            px, py = self._capture_point(point)
+            info = f"X: {px}   Y: {py}"
+        font = _font(8.5)
+        metrics = QFontMetricsF(font)
+        info_h = metrics.height() + 8.0
+        total_h = _MAG_SIZE + 4.0 + info_h
+
+        x = point.x() + _MAG_OFFSET
+        y = point.y() + _MAG_OFFSET
+        if x + _MAG_SIZE > self.width() - 4:
+            x = point.x() - _MAG_OFFSET - _MAG_SIZE
+        if y + total_h > self.height() - 4:
+            y = point.y() - _MAG_OFFSET - total_h
+        box = QRectF(x, y, _MAG_SIZE, _MAG_SIZE)
+
+        # Soft shadow, then the zoomed pixels clipped to a rounded square.
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(18, 18, 18, 210))
-        painter.drawRoundedRect(box, h / 2.0, h / 2.0)
-        painter.setPen(QColor(255, 244, 205, 240))
-        painter.drawText(box, Qt.AlignmentFlag.AlignCenter, text)
+        for spread, alpha in ((6.0, 20), (3.0, 35), (1.0, 60)):
+            painter.setBrush(QColor(0, 0, 0, alpha))
+            painter.drawRoundedRect(
+                box.adjusted(-spread, -spread + 2, spread, spread + 2),
+                _MAG_RADIUS + spread,
+                _MAG_RADIUS + spread,
+            )
+        clip = QPainterPath()
+        clip.addRoundedRect(box, _MAG_RADIUS, _MAG_RADIUS)
+        painter.save()
+        painter.setClipPath(clip)
+        painter.fillRect(box, QColor(0, 0, 0))
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        visible = source.intersected(frozen.rect())
+        if not visible.isEmpty():
+            target = QRectF(
+                box.x() + (visible.x() - source.x()) * _MAG_CELL,
+                box.y() + (visible.y() - source.y()) * _MAG_CELL,
+                visible.width() * _MAG_CELL,
+                visible.height() * _MAG_CELL,
+            )
+            painter.drawPixmap(target, frozen, QRectF(visible))
+        # Pixel grid and a tinted crosshair row/column through the centre.
+        painter.setPen(QPen(QColor(0, 0, 0, 45), 1.0))
+        for i in range(1, _MAG_PIXELS):
+            off = i * _MAG_CELL
+            painter.drawLine(QPointF(box.x() + off, box.y()), QPointF(box.x() + off, box.bottom()))
+            painter.drawLine(QPointF(box.x(), box.y() + off), QPointF(box.right(), box.y() + off))
+        offset = half * _MAG_CELL
+        centre = QRectF(box.x() + offset, box.y() + offset, _MAG_CELL, _MAG_CELL)
+        tint = QColor(90, 160, 255, 55)
+        painter.fillRect(QRectF(box.x(), centre.y(), box.width(), _MAG_CELL), tint)
+        painter.fillRect(QRectF(centre.x(), box.y(), _MAG_CELL, box.height()), tint)
+        painter.setPen(QPen(QColor(0, 0, 0, 230), 1.0))
+        painter.drawRect(centre.adjusted(-1, -1, 0, 0))
+        painter.setPen(QPen(QColor(255, 255, 255, 240), 1.0))
+        painter.drawRect(centre)
+        painter.restore()
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(QColor(255, 255, 255, 200), 1.0))
+        painter.drawRoundedRect(box.adjusted(0.5, 0.5, -0.5, -0.5), _MAG_RADIUS, _MAG_RADIUS)
+
+        info_box = QRectF(box.x(), box.bottom() + 4.0, _MAG_SIZE, info_h)
+        _draw_label(painter, info_box, info, font)
 
     def _paint_hint(self, painter: QPainter, hint: str) -> None:
-        font = QFont()
-        font.setPointSizeF(10.5)
-        font.setWeight(QFont.Weight.Medium)
-        painter.setFont(font)
+        font = _font(9.0)
         metrics = QFontMetricsF(font)
-        w = metrics.horizontalAdvance(hint) + 32.0
-        h = metrics.height() + 14.0
-        box = QRectF((self.width() - w) / 2.0, 24.0, w, h)
-        painter.setPen(QPen(QColor(*_SOFT_GOLD, 200), 1.0))
-        painter.setBrush(QColor(18, 18, 18, 190))
-        painter.drawRoundedRect(box, h / 2.0, h / 2.0)
-        painter.setPen(QColor(255, 240, 200, 240))
+        w = metrics.horizontalAdvance(hint) + 24.0
+        h = metrics.height() + 10.0
+        box = QRectF((self.width() - w) / 2.0, 16.0, w, h)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(_LABEL_BG)
+        painter.drawRoundedRect(box, 5.0, 5.0)
+        painter.setFont(font)
+        painter.setPen(_LABEL_MUTED)
         painter.drawText(box, Qt.AlignmentFlag.AlignCenter, hint)
 
 
@@ -210,9 +392,16 @@ class Picker(QObject):
         self._windows: list[_SelectWindow] = []
         self.hint_window: _SelectWindow | None = None
         self._done = False
+        self.ants_offset = 0.0
+        self._ants = QTimer(self)
+        self._ants.setInterval(_ANTS_MS)
+        self._ants.timeout.connect(self._march)
 
     def start(self) -> None:
-        self._windows = [_SelectWindow(s, self) for s in QGuiApplication.screens()]
+        screens = QGuiApplication.screens()
+        # Freeze every screen BEFORE any overlay window exists.
+        frozen = {id(s): self._grab(s) for s in screens}
+        self._windows = [_SelectWindow(s, frozen[id(s)], self) for s in screens]
         cursor_screen = QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
         self.hint_window = next(
             (w for w in self._windows if w.screen_ref is cursor_screen),
@@ -224,8 +413,28 @@ class Picker(QObject):
             self.hint_window.raise_()
             self.hint_window.activateWindow()
             self.hint_window.setFocus()
+        self._ants.start()
         self._app.processEvents()
         _emit({"event": wire.EVENT_READY})
+
+    @staticmethod
+    def _grab(screen) -> QPixmap | None:
+        try:
+            pixmap = screen.grabWindow(0)
+        except Exception:  # noqa: BLE001 - no frozen frame: fall back to a live dim layer
+            sys.stderr.write("appshot-picker: screen grab failed; using a live overlay\n")
+            return None
+        return None if pixmap.isNull() or pixmap.width() <= 0 else pixmap
+
+    def _march(self) -> None:
+        self.ants_offset = (self.ants_offset + 1.0) % (2 * _DASH)
+        for win in self._windows:
+            if win.has_hole():
+                win.update()
+
+    def set_layout(self, monitors: list[dict], windows: list[list[int]]) -> None:
+        for win in self._windows:
+            win.set_layout(monitors, windows)
 
     def focus_on(self, window: _SelectWindow) -> None:
         """The pointer moved onto ``window``: only that screen shows a guide."""
@@ -241,10 +450,11 @@ class Picker(QObject):
         if self._done:
             return
         self._done = True
+        self._ants.stop()
         info = _screen_info(window.screen_ref) if window is not None else None
         for win in self._windows:
             win.hide()
-        # The dimmed overlay must be off the glass before the parent grabs.
+        # The overlay must be off the glass before the parent grabs.
         self._app.processEvents()
         if info is None or frac is None:
             _emit({"event": wire.EVENT_SELECTION, "cancelled": True})
@@ -255,8 +465,16 @@ class Picker(QObject):
     @Slot(str)
     def on_line(self, raw: str) -> None:
         payload = wire.decode(raw)
-        if payload is not None and payload.get("cmd") == wire.CMD_CANCEL:
+        if payload is None:
+            return
+        cmd = payload.get("cmd")
+        if cmd == wire.CMD_CANCEL:
             self.finish(None, None)
+        elif cmd == wire.CMD_LAYOUT:
+            monitors = payload.get("monitors")
+            windows = payload.get("windows")
+            if isinstance(monitors, list) and isinstance(windows, list):
+                self.set_layout([m for m in monitors if isinstance(m, dict)], windows)
 
     @Slot()
     def on_eof(self) -> None:
@@ -295,8 +513,8 @@ def run(*, hint: str = "") -> int:
     pump = _StdinPump()
     pump.line.connect(picker.on_line, Qt.ConnectionType.QueuedConnection)
     pump.eof.connect(picker.on_eof, Qt.ConnectionType.QueuedConnection)
-    pump.start()
     picker.start()
+    pump.start()
     return app.exec()
 
 

@@ -480,3 +480,25 @@ async def test_overlapping_reloads_leave_exactly_one_listener(monkeypatch) -> No
     await shortcut.stop()
     await asyncio.sleep(0)
     assert running == []
+
+
+# ------------------------------------------------------------ window snapping
+
+
+def test_window_rects_land_on_the_picker_screen_in_logical_pixels() -> None:
+    laptop = {"x": -3840.0, "y": 0.0, "w": 2560.0, "h": 1440.0, "dpr": 1.5}
+    windows = [
+        [-3840, 0, 1920, 1080],  # top-left quarter of the 4K laptop
+        [-300, 100, 900, 600],  # straddles both screens: clipped to the laptop
+        [100, 100, 800, 600],  # entirely on the other monitor
+        [-3840, 0, 20, 20],  # a sliver
+    ]
+
+    rects = region.snap_rects_on_screen(laptop, (2560, 1440), MONITORS, windows, min_px=24)
+
+    assert rects == [(0.0, 0.0, 1280.0, 720.0), (2360.0, 66.66666666666666, 200.0, 400.0)]
+
+
+def test_no_monitors_means_no_snap_targets() -> None:
+    screen = {"x": 0, "y": 0, "w": 100, "h": 100, "dpr": 1}
+    assert region.snap_rects_on_screen(screen, (100, 100), [], [[0, 0, 50, 50]], min_px=1) == []

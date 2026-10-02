@@ -23,12 +23,26 @@ window there, it takes the whole screen instead.
 
 The area picker is a short-lived PySide6 process (`python -m
 jarvis.appshot.picker`) that starts on the shortcut and exits after one
-selection, so nothing stays resident. It covers every screen with a dimmed
-layer and a crosshair, shows the size in real pixels while you drag, and
-reports the rectangle as fractions of the screen it was drawn on; the app maps
-that back to capture pixels (`jarvis/appshot/region.py`), so mixed-DPI setups
-capture exactly what was outlined. A selection stays on one screen. The picker
-gives up after two minutes without a selection.
+selection, so nothing stays resident. Its look follows ShareX's region
+capture:
+
+- every screen is frozen and dimmed the moment the picker opens, so nothing
+  moves under the selection (where a frozen frame cannot be grabbed, a dim
+  layer over the live desktop is used instead, without the magnifier);
+- hovering highlights the window under the pointer, and a click without a
+  drag takes exactly that window;
+- a drag cuts the area out of the dim layer with a marching-ants border and
+  its size in real pixels;
+- a magnifier beside the pointer shows a zoomed pixel grid with the centre
+  pixel marked, plus the position (or the selection size while dragging).
+
+The picker reports the rectangle as fractions of the screen it was drawn on;
+the app maps that back to capture pixels (`jarvis/appshot/region.py`), so
+mixed-DPI setups capture exactly what was outlined. A selection stays on one
+screen. The window list for snapping is read before the overlay appears and
+skips minimized and (on Windows) cloaked windows; where no list is available
+(Wayland) only dragging works. The picker gives up after two minutes without
+a selection.
 
 A selected area is about pixels, not about the window in front: unlike a window
 appshot it is not voided when focus moves while the picker closes. Its privacy

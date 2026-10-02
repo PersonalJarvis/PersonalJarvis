@@ -16,6 +16,8 @@ stdout::
 
 stdin::
 
+    {"cmd": "layout", "monitors": [...],                # mss monitors and the
+     "windows": [[l, t, w, h], ...]}                    # snap targets, top first
     {"cmd": "cancel"}                                   # e.g. a global Esc
 
 Stdin EOF (the parent died) cancels as well.
@@ -32,6 +34,7 @@ EXIT_NO_GUI = 3
 EVENT_READY = "ready"
 EVENT_SELECTION = "selection"
 CMD_CANCEL = "cancel"
+CMD_LAYOUT = "layout"
 
 
 def encode(payload: dict[str, Any]) -> str:
@@ -47,4 +50,12 @@ def decode(line: str) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
-__all__ = ["CMD_CANCEL", "EVENT_READY", "EVENT_SELECTION", "EXIT_NO_GUI", "decode", "encode"]
+__all__ = [
+    "CMD_CANCEL",
+    "CMD_LAYOUT",
+    "EVENT_READY",
+    "EVENT_SELECTION",
+    "EXIT_NO_GUI",
+    "decode",
+    "encode",
+]

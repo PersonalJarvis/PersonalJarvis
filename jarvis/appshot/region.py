@@ -50,12 +50,12 @@ _SETTLE_S = 0.08
 Rect = tuple[int, int, int, int]
 FRect = tuple[float, float, float, float]
 
-# Hint pill over the screens — ALL supported output locales, resolved through
-# the one turn-language resolver (a phrase table always carries every locale).
+# Hint pill over the screens — app chrome, so it follows the app's display
+# language ([ui].language); a phrase table always carries every locale.
 _HINTS: dict[str, str] = {
-    "de": "Ziehe über den Bereich, den du zeigen willst · Esc bricht ab",  # i18n-allow
-    "en": "Drag over the area you want to show · Esc to cancel",
-    "es": "Arrastra sobre la zona que quieres mostrar · Esc para cancelar",  # i18n-allow
+    "de": "Bereich ziehen · Fenster anklicken · Esc bricht ab",  # i18n-allow
+    "en": "Drag to select an area · Click a window · Esc to cancel",
+    "es": "Arrastra para elegir una zona · Clic en una ventana · Esc cancela",  # i18n-allow
 }
 
 
@@ -155,6 +155,41 @@ def selection_to_bbox(selection: Selection, monitors: list[dict]) -> Rect | None
     return fraction_to_bbox(monitor, selection.rect)
 
 
+def snap_rects_on_screen(
+    screen: dict,
+    size: tuple[float, float],
+    monitors: list[dict],
+    windows: list[list[int]],
+    *,
+    min_px: float,
+) -> list[FRect]:
+    """Capture-space window rects → the picker screen's logical pixels.
+
+    ``size`` is the picker window's logical size. Rects are clipped to the
+    screen; slivers under ``min_px`` and rects on other screens are dropped.
+    Order (top-most first) is kept, so the first hit is the visible window.
+    """
+    monitor = match_monitor(screen, monitors)
+    if monitor is None:
+        return []
+    ml, mt = float(monitor.get("left", 0)), float(monitor.get("top", 0))
+    mw = max(1.0, float(monitor.get("width", 1)))
+    mh = max(1.0, float(monitor.get("height", 1)))
+    width, height = float(size[0]), float(size[1])
+    sx, sy = width / mw, height / mh
+    out: list[FRect] = []
+    for rect in windows:
+        if not isinstance(rect, (list, tuple)) or len(rect) != 4:
+            continue
+        left, top, w, h = (float(v) for v in rect)
+        x0, y0 = max(0.0, (left - ml) * sx), max(0.0, (top - mt) * sy)
+        x1 = min(width, (left + w - ml) * sx)
+        y1 = min(height, (top + h - mt) * sy)
+        if x1 - x0 >= min_px and y1 - y0 >= min_px:
+            out.append((x0, y0, x1 - x0, y1 - y0))
+    return out
+
+
 def parse_selection(payload: dict[str, Any]) -> Selection | None:
     """A picker ``selection`` event → :class:`Selection` (``None`` = cancelled)."""
     if payload.get("cancelled"):
@@ -196,17 +231,57 @@ def picker_capability() -> tuple[bool, str]:
 def _hint() -> str:
     try:
         from jarvis.core.config import load_config  # noqa: PLC0415
-        from jarvis.core.turn_language import (  # noqa: PLC0415
-            DEFAULT_LOCALE,
-            resolve_output_language,
-        )
 
-        pin = str(getattr(load_config().brain, "reply_language", "") or "")
-        language = resolve_output_language(pin, "", "", default=DEFAULT_LOCALE)
+        language = str(getattr(load_config().ui, "language", "") or "").lower()[:2]
         return _HINTS.get(language, _HINTS["en"])
     except Exception:  # noqa: BLE001 - the hint is decoration; English is honest
         log.debug("appshot: picker hint language unresolved", exc_info=True)
         return _HINTS["en"]
+
+
+def _is_cloaked(handle: int | None) -> bool:
+    """Windows only: a DWM-cloaked window (hidden UWP shells) is no target."""
+    if os.name != "nt" or not handle:
+        return False
+    try:
+        import ctypes  # noqa: PLC0415
+        from ctypes import wintypes  # noqa: PLC0415
+
+        dwmapi = ctypes.WinDLL("dwmapi")
+        cloaked = wintypes.DWORD(0)
+        result = dwmapi.DwmGetWindowAttribute(
+            wintypes.HWND(handle), 14, ctypes.byref(cloaked), ctypes.sizeof(cloaked)
+        )
+        return result == 0 and bool(cloaked.value)
+    except Exception:  # noqa: BLE001 - unknown cloak state keeps the window
+        return False
+
+
+def snap_layout() -> dict[str, Any]:
+    """Monitors and window rectangles for the picker's window snapping.
+
+    Read BEFORE the picker exists, so its own overlay never becomes a target.
+    Rects are in capture coordinates, top-most window first; an empty window
+    list (Wayland, an unreadable desktop) only switches snapping off.
+    """
+    from jarvis.screen_context.ports import make_display_enumerator  # noqa: PLC0415
+
+    monitors = make_display_enumerator().monitors()
+    windows: list[list[int]] = []
+    try:
+        from jarvis.platform import window_state as ws  # noqa: PLC0415
+        from jarvis.screen_context.ports import _input_space  # noqa: PLC0415
+
+        with _input_space():
+            for win in ws.list_windows():
+                if getattr(win, "minimized", False) or _is_cloaked(getattr(win, "handle", None)):
+                    continue
+                rect = ws.window_frame_rect(win) or ws.window_rect(win)
+                if rect and rect[2] > 0 and rect[3] > 0:
+                    windows.append([int(v) for v in rect])
+    except Exception:  # noqa: BLE001 - snapping is a convenience; dragging still works
+        log.debug("appshot: window list for snapping unavailable", exc_info=True)
+    return {"monitors": [dict(m) for m in monitors], "windows": windows}
 
 
 def _spawn(hint: str) -> subprocess.Popen[str]:
@@ -234,6 +309,15 @@ def _read_result(proc: subprocess.Popen[str]) -> dict[str, Any] | None:
         if payload is not None and payload.get("event") == wire.EVENT_SELECTION:
             return payload
     return None
+
+
+def _send_layout(proc: subprocess.Popen[str], layout: dict[str, Any]) -> None:
+    from jarvis.appshot import picker as wire  # noqa: PLC0415
+
+    with contextlib.suppress(Exception):  # a closed pipe means it already ended
+        if proc.stdin is not None and proc.poll() is None:
+            proc.stdin.write(wire.encode({"cmd": wire.CMD_LAYOUT, **layout}))
+            proc.stdin.flush()
 
 
 def _cancel(proc: subprocess.Popen[str]) -> None:
@@ -323,6 +407,11 @@ def _exit_message(code: int) -> str:
 async def _run_picker(timeout_s: float) -> tuple[dict[str, Any] | None, int | None, bool]:
     """Spawn, wait for one selection, always reap. ``(payload, exit code, timed out)``."""
     hint = await asyncio.to_thread(_hint)
+    try:
+        layout = await asyncio.to_thread(snap_layout)
+    except Exception:  # noqa: BLE001 - no snapping; dragging still works
+        log.debug("appshot: snap layout unavailable", exc_info=True)
+        layout = None
     # Shielded: a caller cancelled mid-spawn must still get the process reaped,
     # or its overlay would cover the screens until the stdin timeout.
     spawn = asyncio.ensure_future(asyncio.to_thread(_spawn, hint))
@@ -337,6 +426,8 @@ async def _run_picker(timeout_s: float) -> tuple[dict[str, Any] | None, int | No
     except Exception as exc:  # noqa: BLE001 - surfaced to the user as unavailable
         log.warning("appshot: area picker could not be started", exc_info=True)
         raise RegionUnavailable("The selection overlay could not be started.") from exc
+    if layout is not None:
+        await asyncio.to_thread(_send_layout, proc, layout)
     escape = asyncio.get_running_loop().create_task(
         _escape_cancels(proc), name="appshot-region-esc"
     )
@@ -373,4 +464,6 @@ __all__ = [
     "screen_monitor_score",
     "selection_fractions",
     "selection_to_bbox",
+    "snap_layout",
+    "snap_rects_on_screen",
 ]
