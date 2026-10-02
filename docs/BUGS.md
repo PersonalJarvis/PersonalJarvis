@@ -15590,3 +15590,23 @@ swept at once with an `error_detail` naming the exited process. An alive or
 unknown owner keeps the old freshness guard, so a second instance still never
 sweeps a mission a live first instance is running. The restart that killed
 the worker is outside this fix. Guard: `tests/missions/test_recovery_owner.py`.
+
+## BUG-230: the mascot and the bar showed up inside appshots and screenshots (MEDIUM, FIXED 2026-10-02)
+
+**Symptom.** An appshot of the Personal Jarvis window, and a full-screen
+capture, both contained the floating mascot on top of the content, although
+the overlays are meant to stay out of every capture.
+
+**Cause.** The overlays call `exclude_tk_window_from_capture` before their
+first show. Tk creates a toplevel's outer window only when it is first mapped,
+so `GetParent(winfo_id())` was 0, the display affinity landed on the inner
+child window, and the real outer window kept affinity 0 (measured on the live
+`JarvisOrb`: `GetWindowDisplayAffinity` = 0x0).
+
+**Fix.** `jarvis/platform/capture_exclusion.py` no longer targets the inner
+child and additionally re-applies `WDA_EXCLUDEFROMCAPTURE` on every `<Map>` of
+the toplevel (bound with `add="+"`, child-widget maps ignored). Checked with a
+real Tk root and Toplevel: 0x11 after the first map and after withdraw/show.
+Side effect: the overlays also vanish from other capture tools (ShareX, OBS),
+which is the documented intent of the module. Guard:
+`tests/unit/platform/test_capture_exclusion.py`.
