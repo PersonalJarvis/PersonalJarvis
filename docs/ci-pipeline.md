@@ -29,7 +29,7 @@ agent branch ──► pull request ──► CI (lanes) ──► CI gate ─�
 | `CI gate` | Aggregates every job. **The only required check.** Skipped lanes pass; the nightly run is strict and fails on any skip. | `scripts/ci/required_results.py` |
 
 The realtime lane runs the subscription authentication, direct reasoning,
-voice transport, session orchestration and Live catalog contracts on Windows,
+voice transport, session orchestration, native login provisioning and Live catalog contracts on Windows,
 macOS and Linux, including the slim container without system audio. These
 focused tests are strict: they do not use the broad-suite failure baseline.
 Their fake credentials and transports also prove that a selected subscription

@@ -13,6 +13,52 @@ from jarvis.live.config import LiveConfig
 router = APIRouter(prefix="/api/live", tags=["live"])
 
 
+@router.get("/login-helper", summary="Check local ChatGPT login helper availability")
+async def get_live_login_helper() -> dict:
+    """Verify an existing private helper without installing or signing in."""
+    from jarvis.live.login_helper import login_helper_status
+
+    return await asyncio.to_thread(login_helper_status)
+
+
+@router.post("/login-helper", summary="Install the verified native ChatGPT login helper")
+async def install_live_login_helper(request: Request) -> dict:
+    """Provision Codex without Node after an explicit install action."""
+    import threading
+
+    from jarvis.live.login_helper import LoginHelperError, install_login_helper
+
+    cancel = threading.Event()
+    worker = asyncio.create_task(
+        asyncio.to_thread(install_login_helper, cancel), name="live-login-helper-install"
+    )
+
+    async def watch_disconnect() -> None:
+        while True:
+            if (await request.receive())["type"] == "http.disconnect":
+                cancel.set()
+                return
+
+    watcher = asyncio.create_task(watch_disconnect(), name="live-login-helper-disconnect")
+    try:
+        completed, _ = await asyncio.wait((worker, watcher), return_when=asyncio.FIRST_COMPLETED)
+        if watcher in completed:
+            cancel.set()
+        return await asyncio.shield(worker)
+    except LoginHelperError as exc:
+        raise HTTPException(exc.status, detail={"code": exc.code, "message": str(exc)}) from None
+    except asyncio.CancelledError:
+        cancel.set()
+        # Cancelling to_thread does not stop its thread. Join its cooperative
+        # cleanup before releasing the request, without orphaning an installer.
+        await asyncio.shield(asyncio.gather(worker, return_exceptions=True))
+        raise
+    finally:
+        cancel.set()
+        watcher.cancel()
+        await asyncio.gather(watcher, return_exceptions=True)
+
+
 @router.get("/options", summary="List available thinking models and Live voices")
 async def get_live_options(
     auth_mode: Literal["api_key", "chatgpt_subscription"] = "api_key",
@@ -41,8 +87,10 @@ async def get_live_options(
             await reasoning.aclose()
             await auth.aclose()
         return {
-            "models": models, "source": "chatgpt_subscription",
-            "efforts": ["", *effort_levels("openai")], "voices": list(SUBSCRIPTION_VOICES),
+            "models": models,
+            "source": "chatgpt_subscription",
+            "efforts": ["", *effort_levels("openai")],
+            "voices": list(SUBSCRIPTION_VOICES),
         }
     catalog = await shared_catalog().list_models("openai")
     return {
@@ -104,7 +152,8 @@ async def get_live_profile(request: Request) -> dict:
         "active": getattr(cfg.brain.realtime, "provider", "") == profile.provider_id,
         "agent_configured": cfg.brain.worker is not None,
         "subscription": {
-            "account_id": status["account_id"], "account_connected": status["connected"],
+            "account_id": status["account_id"],
+            "account_connected": status["connected"],
             "voice_status": "unverified" if status["connected"] else "unavailable",
             "reason": status["reason"],
         },

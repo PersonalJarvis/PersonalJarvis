@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ExternalLink, Loader2, LogIn } from "lucide-react";
+import { Download, ExternalLink, Loader2, LogIn } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { BrandedSelect } from "@/components/ui/select";
 import { useT } from "@/i18n";
@@ -13,6 +13,8 @@ import {
 } from "@/lib/agentAccountsApi";
 import { requestConnect, spreadDelay } from "@/lib/connectBudget";
 import { openExternalUrl } from "@/lib/openExternal";
+import { recheckAgent } from "@/lib/agenticIdeApi";
+import { useRestartApp } from "@/hooks/useRestartApp";
 
 export function LiveSubscriptionAccount({
   group,
@@ -32,6 +34,7 @@ export function LiveSubscriptionAccount({
   onConnected: () => void;
 }) {
   const t = useT();
+  const restart = useRestartApp();
   const selectedId = accountId || group?.active_account || "";
   const account = group?.accounts.find((entry) => entry.id === selectedId);
   const connected = account?.connected && account.mode === "subscription";
@@ -39,6 +42,10 @@ export function LiveSubscriptionAccount({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [code, setCode] = useState("");
+  const [cliMissing, setCliMissing] = useState(false);
+  const [installing, setInstalling] = useState(false);
+  const [installNeedsRestart, setInstallNeedsRestart] = useState(false);
+  const installController = useRef<AbortController | null>(null);
   const flowRef = useRef<LoginFlowState | null>(null);
   const onConnectedRef = useRef(onConnected);
   onConnectedRef.current = onConnected;
@@ -52,8 +59,13 @@ export function LiveSubscriptionAccount({
     setError("");
     setCode("");
     setBusy(false);
+    setCliMissing(false);
+    setInstalling(false);
+    setInstallNeedsRestart(false);
     return () => {
       generation.current += 1;
+      installController.current?.abort();
+      installController.current = null;
       const current = flowRef.current;
       flowRef.current = null;
       if (current && !current.finished) {
@@ -90,23 +102,96 @@ export function LiveSubscriptionAccount({
     return () => { disposed = true; cancel(); };
   }, [flow, t]);
 
-  async function signIn() {
+  async function signIn(afterInstall = false, signal?: AbortSignal) {
     if (!selectedId || busy) return;
     const current = generation.current;
     setBusy(true);
     setError("");
     try {
+      // This read verifies the private login-only helper without advertising it
+      // as a complete coding CLI. It never installs or starts an OAuth flow.
+      const response = await fetch("/api/live/login-helper", { cache: "no-store", signal });
+      if (generation.current !== current || signal?.aborted) return;
+      if (response.status === 404) {
+        // Older backends can still sign in through a full existing Codex CLI.
+        const existing = await recheckAgent("codex");
+        if (generation.current !== current || signal?.aborted) return;
+        if (existing.installed === false) {
+          setCliMissing(true);
+          setInstallNeedsRestart(true);
+          return;
+        }
+        if (existing.installed !== true) throw new Error("Invalid local CLI status");
+      } else {
+        if (!response.ok) throw new Error("Sign-in helper status unavailable");
+        const status = await response.json();
+        if (generation.current !== current || signal?.aborted) return;
+        if (status.status === "missing" && status.installed === false) {
+          setCliMissing(true);
+          setInstallNeedsRestart(false);
+          if (afterInstall) setError(t("live.subscription_install_failed"));
+          return;
+        }
+        if (status.status !== "ready" || status.installed !== true) {
+          throw new Error("Invalid sign-in helper status");
+        }
+      }
+      setCliMissing(false);
       const next = await startLoginFlow(selectedId);
-      if (generation.current !== current) {
+      if (generation.current !== current || signal?.aborted) {
         if (!next.finished) await cancelLoginFlow(next.flow_id);
         return;
       }
       accept(next);
     } catch {
-      if (generation.current === current) setError(t("live.subscription_login_failed"));
+      if (generation.current === current) setError(t(afterInstall && signal?.aborted
+        ? "live.subscription_install_failed" : "live.subscription_login_failed"));
     } finally {
       if (generation.current === current) setBusy(false);
     }
+  }
+
+  async function install() {
+    if (busy || !selectedId || installController.current) return;
+    const current = generation.current;
+    const controller = new AbortController();
+    installController.current = controller;
+    setInstalling(true);
+    setInstallNeedsRestart(false);
+    setError("");
+    // The backend bounds download/verification to 180 seconds and cooperatively
+    // cancels its worker on disconnect. Keep a slightly longer UI safety bound.
+    const timeout = window.setTimeout(() => controller.abort(), 190_000);
+    try {
+      const response = await fetch("/api/live/login-helper", { method: "POST", signal: controller.signal });
+      if (generation.current !== current || controller.signal.aborted) return;
+      if (response.status === 404) {
+        setInstallNeedsRestart(true);
+        return;
+      }
+      if (!response.ok) throw new Error("Sign-in helper installation failed");
+      const result = await response.json();
+      if (result.status !== "ready") throw new Error("Sign-in helper is not ready");
+      if (generation.current !== current || controller.signal.aborted) return;
+      // Native provisioning needs no Node/npm. Reverify the private helper
+      // before starting the selected account's existing OAuth flow.
+      await signIn(true, controller.signal);
+    } catch {
+      if (generation.current === current) setError(t("live.subscription_install_failed"));
+    } finally {
+      window.clearTimeout(timeout);
+      if (installController.current === controller) installController.current = null;
+      if (generation.current === current) setInstalling(false);
+    }
+  }
+
+  function cancelInstall() {
+    generation.current += 1;
+    installController.current?.abort();
+    installController.current = null;
+    setInstalling(false);
+    setBusy(false);
+    setError("");
   }
 
   async function submit() {
@@ -145,7 +230,7 @@ export function LiveSubscriptionAccount({
         <span>{t("live.subscription_account")}</span>
         <BrandedSelect
           value={accountId}
-          disabled={disabled || loading || busy}
+          disabled={disabled || loading || busy || installing}
           ariaLabel={t("live.subscription_account")}
           onValueChange={onAccountChange}
           options={[
@@ -166,7 +251,26 @@ export function LiveSubscriptionAccount({
         </p>
       ) : null}
       {(!flow || flow.finished) && !connected ? (
-        <Button type="button" variant="outline" size="sm" disabled={disabled || busy || !selectedId} onClick={() => void signIn()}>
+        cliMissing ? <div className="space-y-2">
+          <p role="status" className="text-xs leading-relaxed text-muted-foreground">
+            {t("live.subscription_install_required")}
+          </p>
+          {installing ? <div className="flex flex-wrap items-center gap-2">
+            <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />{t("live.subscription_installing")}
+            </p>
+            <Button type="button" variant="ghost" size="sm" onClick={cancelInstall}>{t("common.cancel")}</Button>
+          </div> : installNeedsRestart ? <div className="space-y-2">
+            <p role="status" className="text-xs text-muted-foreground">{t("settings_view.wake_word.restart_required")}</p>
+            <Button type="button" variant="outline" size="sm" disabled={restart.restarting}
+              onClick={() => void restart.restart()}>{restart.buttonLabel}</Button>
+          </div> : <Button type="button" variant="outline" size="sm"
+            disabled={disabled || busy || !selectedId} onClick={() => void install()}>
+              <Download />{t("live.subscription_install")}
+            </Button>}
+          {!installing ? <Button type="button" variant="ghost" size="sm" disabled={disabled || busy}
+            onClick={() => void signIn()}>{t("common.retry")}</Button> : null}
+        </div> : <Button type="button" variant="outline" size="sm" disabled={disabled || busy || !selectedId} onClick={() => void signIn()}>
           {busy ? <Loader2 className="animate-spin" /> : <LogIn />}
           {t("live.subscription_sign_in")}
         </Button>

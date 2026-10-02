@@ -1135,6 +1135,10 @@ def login_command(account: AgentAccount) -> tuple[list[str], str]:
         service_codex = CodexAuthService()
         binary = service_codex._resolve_binary()  # noqa: SLF001 — the module's own seam
         if binary is None:
+            from jarvis.live.login_helper import find_installed_helper
+
+            binary = find_installed_helper()
+        if binary is None:
             raise FileNotFoundError("Codex CLI is not installed (run: npm i -g @openai/codex).")
         argv = [binary, "login"]
         title = f"Codex sign-in — {account.label}"

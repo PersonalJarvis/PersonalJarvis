@@ -23,6 +23,10 @@
     "test_hint": "Schickt eine kurze Anfrage, um zu prüfen, ob der Key funktioniert."
   },
   "live": {
+    "subscription_install": "ChatGPT-Anmeldung einrichten",
+    "subscription_installing": "ChatGPT-Anmeldung wird vorbereitet…",
+    "subscription_install_required": "Richte die ChatGPT-Anmeldung auf diesem Gerät ein, um dein Abo zu verbinden.",
+    "subscription_install_failed": "Die Einrichtung der ChatGPT-Anmeldung wurde nicht abgeschlossen. Versuche es erneut und melde dich danach an.",
     "subscription_model_required": "Verbunden. Denkmodell auswählen",
     "billing_method": "Zugang für Sprache und Denken",
     "billing_pending": "Abrechnung noch nicht gespeichert",

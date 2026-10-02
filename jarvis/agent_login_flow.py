@@ -150,14 +150,16 @@ def _visible_tail(cleaned: str) -> str:
 
 
 def _scan_for_url(cleaned: str) -> str | None:
-    candidates = _URL_RE.findall(cleaned)
+    # A PTY read can stop anywhere inside an OAuth URL. Do not expose it to
+    # the browser/copy button until the CLI prints a terminating delimiter.
+    matches = list(_URL_RE.finditer(cleaned))
+    for match in matches:
+        if _AUTH_URL_HINT.search(match.group()):
+            return match.group().rstrip(".,;:)]}\"'") if match.end() < len(cleaned) else None
+    candidates = [match.group() for match in matches if match.end() < len(cleaned)]
     if not candidates:
         return None
-    trimmed = [c.rstrip(".,;:)]}\"'") for c in candidates]
-    for candidate in trimmed:
-        if _AUTH_URL_HINT.search(candidate):
-            return candidate
-    return trimmed[0]
+    return candidates[0].rstrip(".,;:)]}\"'")
 
 
 def _connected(account: AgentAccount) -> bool:
@@ -245,13 +247,12 @@ def _ingest(flow: _Flow, data: str) -> None:
     with flow.lock:
         flow._raw = (flow._raw + data)[-_SCAN_CHARS:]
         cleaned = _strip(flow._raw)
-        # A URL can arrive torn across two reads: the first half is already a
-        # well-formed https URL, so "first match wins" would freeze a truncated
-        # link into the copy button. Adopt a candidate that EXTENDS the current
-        # one; an unrelated later URL never replaces the sign-in link.
+        # Only complete links are published. A sign-in link can replace an
+        # earlier documentation fallback, but never another sign-in link.
         candidate = _scan_for_url(cleaned)
         if candidate is not None and (
             flow.url is None or (candidate.startswith(flow.url) and len(candidate) > len(flow.url))
+            or (_AUTH_URL_HINT.search(candidate) and not _AUTH_URL_HINT.search(flow.url))
         ):
             flow.url = candidate
         if not flow.code_expected and _CODE_PROMPT_RE.search(cleaned):

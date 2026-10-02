@@ -23,6 +23,10 @@
     "test_hint": "Sends one short request to check that the key works."
   },
   "live": {
+    "subscription_install": "Set up ChatGPT sign-in",
+    "subscription_installing": "Preparing ChatGPT sign-in…",
+    "subscription_install_required": "Set up ChatGPT sign-in on this device to connect your subscription.",
+    "subscription_install_failed": "ChatGPT sign-in setup did not complete. Retry setup, then sign in.",
     "subscription_model_required": "Connected. Choose a thinking model",
     "billing_method": "Voice and thinking access",
     "billing_pending": "Unsaved billing choice",

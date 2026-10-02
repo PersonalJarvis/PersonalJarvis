@@ -23,6 +23,10 @@
     "test_hint": "Envía una solicitud corta para comprobar que la clave funciona."
   },
   "live": {
+    "subscription_install": "Configurar el inicio de sesión de ChatGPT",
+    "subscription_installing": "Preparando el inicio de sesión de ChatGPT…",
+    "subscription_install_required": "Configura el inicio de sesión de ChatGPT en este dispositivo para conectar tu suscripción.",
+    "subscription_install_failed": "No se completó la configuración del inicio de sesión de ChatGPT. Reinténtalo y luego inicia sesión.",
     "subscription_model_required": "Conectado. Elige un modelo de razonamiento",
     "billing_method": "Acceso a voz y razonamiento",
     "billing_pending": "Opción de facturación sin guardar",
