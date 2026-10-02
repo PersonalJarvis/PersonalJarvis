@@ -848,6 +848,9 @@ class SocietyRuntime:
                     if payload.get("turn_id") not in (None, turn_id):
                         continue
                     if kind == "assistant_text":
+                        if payload.get("media_only"):
+                            # A picture row after the answer is not the answer.
+                            continue
                         final_text = str(payload.get("text") or final_text)
                         if quest_trace:
                             await self.quests.note_progress(env.trace_id, "", live=final_text)
@@ -861,6 +864,16 @@ class SocietyRuntime:
                         if name == "society_browser":
                             used_browser = True
                     elif kind == "error":
+                        if payload.get("display_only"):
+                            # A picture that could not be shown does not undo
+                            # the work (live 2026-10-02: Scout's finished
+                            # research was reported as blocked over two
+                            # missing screenshots).
+                            log.info(
+                                "society: %s turn had a display-only error: %s",
+                                target.name, str(payload.get("message") or "")[:200],
+                            )
+                            continue
                         status, error = "blocked", str(payload.get("message") or "error")
                     elif kind == "turn_finished":
                         if payload.get("status") not in (None, "ok", "done", "completed"):
