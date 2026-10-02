@@ -171,10 +171,12 @@ jarvis permissions open-settings microphone --yes  # open the matching System Se
 showing its dialog, `needs_settings`, `denied`, `unavailable`); the person's answer
 arrives afterwards, so run `status` again. A denial is final from macOS's side: it
 does not ask a second time, and `request` does not pretend otherwise. When Jarvis
-is not running as the installed app, `request` asks nothing and says so; confirm
-with `--allow-outside-app` only if the grant may go to the app that started Jarvis
-(a terminal, an IDE). An AI agent driving the CLI must never answer a macOS
-dialog on the user's behalf. Both `request` and `open-settings` are rate limited by
+is not running as the installed app, `request` asks nothing and says so. The CLI
+only ever asks for the installed app: without the installed bundle `request`
+refuses before anything is sent, and a grant for the app that started Jarvis (a
+terminal, an IDE) can only be confirmed in the Jarvis window, never from the
+CLI. An AI agent driving the CLI must never answer a macOS dialog on the user's
+behalf. Both `request` and `open-settings` are rate limited by
 the server (HTTP 429). Off macOS every permission reads `not_required` and
 `request` does nothing.
 

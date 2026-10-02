@@ -54,7 +54,9 @@ def test_status_reads_the_automation_row_only_on_request(capture_api):
     assert second["query"] == {"include": "automation"}
 
 
-def test_request_sends_no_body_unless_the_outside_app_flag_is_given(monkeypatch, capture_api):
+def test_request_sends_no_body_because_the_installed_app_is_the_only_grantee(
+    monkeypatch, capture_api
+):
     monkeypatch.setattr(
         "jarvis.cli_ctl.commands.permissions._activate_macos_app_for_tcc", lambda: None
     )
@@ -62,40 +64,37 @@ def test_request_sends_no_body_unless_the_outside_app_flag_is_given(monkeypatch,
     result = runner.invoke(app, ["permissions", "request", "microphone", "--yes"])
 
     assert result.exit_code == 0
-    assert capture_api["calls"][-1]["body"] is None  # the app is the grantee unless told otherwise
+    assert capture_api["calls"][-1]["body"] is None
 
 
-def test_request_outside_app_confirmation_is_sent_and_skips_the_installed_app_activation(
-    monkeypatch, capture_api
-):
-    activations: list[str] = []
-    monkeypatch.setattr(
-        "jarvis.cli_ctl.commands.permissions._activate_macos_app_for_tcc",
-        lambda: activations.append("activate"),
-    )
-
+def test_request_has_no_outside_app_option(capture_api):
+    # The route answers 403 confirmation_requires_ui to a Bearer-only caller, so the
+    # flag could only fail and would invite an agent to try: it does not exist.
     result = runner.invoke(
         app, ["permissions", "request", "microphone", "--allow-outside-app", "--yes"]
     )
 
-    assert result.exit_code == 0
-    call = capture_api["calls"][-1]
-    assert call["path"] == "/api/permissions/microphone/request"
-    assert call["body"] == {"allow_outside_app": True}
-    # The grant goes to the app that started Jarvis: foregrounding the installed
-    # bundle would be pointless, and without one it would abort the command.
-    assert activations == []
-
-
-def test_request_outside_app_dry_run_shows_the_consent_flag_and_sends_nothing(capture_api):
-    result = runner.invoke(
-        app,
-        ["--json", "permissions", "request", "microphone", "--allow-outside-app", "--dry-run"],
-    )
-
-    assert result.exit_code == 0
+    assert result.exit_code == 2
     assert capture_api["calls"] == []
-    assert "allow_outside_app" in result.stdout
+    help_text = runner.invoke(app, ["permissions", "request", "--help"]).output
+    assert "allow-outside-app" not in help_text
+
+
+def test_request_refuses_clearly_without_the_installed_app_and_sends_nothing(
+    monkeypatch, tmp_path, capture_api
+):
+    from jarvis.cli_ctl.commands import permissions as module
+
+    monkeypatch.setattr(module, "detect_platform", lambda: "darwin")
+    monkeypatch.setattr(module, "_installed_macos_app", lambda: tmp_path / "Missing.app")
+
+    result = runner.invoke(app, ["permissions", "request", "microphone", "--yes"])
+
+    assert result.exit_code == 1
+    assert capture_api["calls"] == []
+    message = " ".join(result.output.split())
+    assert "installed Personal Jarvis app was not found" in message
+    assert "nothing was requested" in message
 
 
 def test_request_activates_app_after_confirmation(monkeypatch, capture_api):

@@ -8,6 +8,9 @@ from __future__ import annotations
 
 import subprocess
 
+import pytest
+
+from jarvis.audio.ducking import macos
 from jarvis.audio.ducking.macos import _MASTER_TOKEN, MacOSScriptDucker
 from jarvis.platform.permissions import PermissionId
 from tests.fakes.fake_permission_service import FakePermissionService
@@ -381,7 +384,10 @@ def test_prewarm_asks_through_the_gate_for_running_players_only():
     gate = FakePermissionService({PermissionId.AUTOMATION: "granted"})
     report = _ducker(run, access_gate=gate).prewarm()
     calls = gate.ensure_calls(PermissionId.AUTOMATION)
-    assert [(c.target, c.interactive, c.wait_s) for c in calls] == [(_MUSIC, True, 0.0)]
+    # The ask runs on a worker thread, so it waits for the dialog (budget minus a margin).
+    (call,) = calls
+    assert (call.target, call.interactive) == (_MUSIC, True)
+    assert call.wait_s == pytest.approx(macos._ASK_BUDGET_S - macos._ASK_WAIT_MARGIN_S)
     assert [p.player for p in report.players] == ["Music"]
     assert report.not_running == ("Spotify",)
     assert all("is running" in s and "tell application" not in s for s in run.scripts)

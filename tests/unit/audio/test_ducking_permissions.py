@@ -145,7 +145,9 @@ def test_every_player_ask_gets_the_full_budget_not_the_leftover(monkeypatch):
     ]
 
 
-def test_an_ask_that_outlasts_its_budget_is_unavailable_and_never_granted(monkeypatch):
+def test_a_dialog_still_open_at_the_end_of_the_wait_is_pending_and_never_granted(monkeypatch):
+    """The consent runner blocks until the person answers: the service answers PENDING at
+    the end of the wait (budget minus a margin) instead of the ducker blocking forever."""
     import time
 
     tcc = FakeTCC(installed_players=[_MUSIC], running_players=[_MUSIC])
@@ -156,14 +158,54 @@ def test_an_ask_that_outlasts_its_budget_is_unavailable_and_never_granted(monkey
         return tcc.automation_consent_runner(script)
 
     install_port(monkeypatch, tcc.port("darwin", automation_consent_runner=stuck_consent_runner))
-    monkeypatch.setattr(macos, "_ASK_BUDGET_S", 0.1)
+    monkeypatch.setattr(macos, "_ASK_BUDGET_S", 0.5)
     started = time.monotonic()
     try:
         (music,) = MacOSScriptDucker(run=TccAppleScript(tcc)).prewarm().players
     finally:
         release.set()
     assert time.monotonic() - started < 2.0
+    assert music.outcome == "pending" and music.asked  # asked once, no answer yet
+    assert music.outcome != "granted"
+
+
+def test_an_ask_that_hangs_inside_the_gate_is_unavailable_and_never_granted(monkeypatch):
+    """The budget stays the backstop for a native call that never returns."""
+    import time
+
+    release = threading.Event()
+
+    class HungGate(FakePermissionService):
+        def ensure(self, permission, **kwargs):
+            release.wait(5)
+            return super().ensure(permission, **kwargs)
+
+    tcc = FakeTCC(installed_players=[_MUSIC], running_players=[_MUSIC])
+    monkeypatch.setattr(macos, "_ASK_BUDGET_S", 0.1)
+    ducker = MacOSScriptDucker(run=TccAppleScript(tcc), access_gate=HungGate())
+    started = time.monotonic()
+    try:
+        (music,) = ducker.prewarm().players
+    finally:
+        release.set()
+    assert time.monotonic() - started < 2.0
     assert music.outcome == "unavailable" and not music.asked
+
+
+def test_the_ask_waits_on_the_request_thread_for_the_budget_minus_a_margin(monkeypatch):
+    """prewarm() is a worker-thread caller: it must pass wait_s, never rely on wait_s=0."""
+    seen: list[float] = []
+
+    class RecordingGate(FakePermissionService):
+        def ensure(self, permission, **kwargs):
+            seen.append(kwargs["wait_s"])
+            return super().ensure(permission, **kwargs)
+
+    tcc = FakeTCC(installed_players=[_MUSIC], running_players=[_MUSIC])
+    ducker = MacOSScriptDucker(run=TccAppleScript(tcc), access_gate=RecordingGate())
+    ducker.prewarm()
+    assert seen == [pytest.approx(macos._ASK_BUDGET_S - macos._ASK_WAIT_MARGIN_S)]
+    assert 0 < seen[0] < macos._ASK_BUDGET_S
 
 
 def test_switching_on_again_does_not_ask_a_second_time(monkeypatch):

@@ -182,6 +182,12 @@ def _refuse_if_confirmation_pending(reason: str = "pending_confirmation") -> Non
     ``pending_confirmation`` (a request is still in flight, macOS may be asking)
     is reported as pending, never as a denial, and a plain ``timeout`` that the
     state does not explain reports the state itself. Silent: nothing is asked here.
+
+    The live-grant branch stays a log line on purpose and is NOT reported through
+    ``report_failed_use``: nothing failed for good (the rect grab that follows may
+    well work, and ``verify_frame_is_real`` reports it when that frame is wallpaper),
+    and ``report_failed_use`` only produces a user-origin ``restart_hint`` episode,
+    which would nag a user whose capture works.
     """
     from jarvis.platform import screen_access  # noqa: PLC0415
 

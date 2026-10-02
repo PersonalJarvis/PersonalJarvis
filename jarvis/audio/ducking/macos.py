@@ -69,6 +69,19 @@ _PROBE_TIMEOUT_S = 2.5
 # per prewarm: a shared deadline let the second ask start with only the leftover (a
 # few seconds), time out, report "unavailable" and still leave its dialog on screen.
 _ASK_BUDGET_S = 130.0
+# The Automation request runs on the service's own daemon thread and ensure(wait_s=0)
+# answers PENDING at once, so prewarm() (a WORKER thread, never the loop or a lock)
+# passes wait_s and waits on the request thread's event. The wait ends a margin
+# BEFORE the budget above, so the service can answer "pending" itself and the budget
+# stays the backstop for a native call that hangs. The margin also covers reading the
+# answer after the consent runner is killed (120 s).
+_ASK_WAIT_MARGIN_S = 5.0
+
+
+def _ask_wait_s() -> float:
+    """How long ensure() may wait for one player's dialog: the budget minus a margin."""
+    budget = _ASK_BUDGET_S
+    return max(0.0, budget - min(_ASK_WAIT_MARGIN_S, budget * 0.1))
 
 
 def _run_osascript(
@@ -466,13 +479,17 @@ class MacOSScriptDucker:
 
         Every ask gets the full :data:`_ASK_BUDGET_S`, so a consent run (killed by
         the port after 120 s) is never cut off by the time an earlier player used.
+        The service runs the consent on its own thread and answers PENDING at once
+        for ``wait_s=0``, so this worker thread passes :func:`_ask_wait_s` and waits
+        for the answer there; a dialog still open at the end of the wait is reported
+        as ``pending`` (the answer then arrives through ``PermissionResolved``).
         """
         finished, result = self._ask_slot.run(
             lambda: self._gate().ensure(
                 PermissionId.AUTOMATION,
                 feature=_FEATURE,
                 interactive=True,
-                wait_s=0.0,
+                wait_s=_ask_wait_s(),
                 target=bundle_id,
             ),
             _ASK_BUDGET_S,

@@ -39,8 +39,10 @@ def _activate_macos_app_for_tcc() -> None:
     bundle = _installed_macos_app()
     if not bundle.is_dir():
         _activation_error(
-            "The installed Personal Jarvis app was not found. Run the standard "
-            "installer before requesting macOS permissions."
+            "The installed Personal Jarvis app was not found, so nothing was "
+            "requested: macOS permissions are only requested for the installed app, "
+            "never for the terminal that runs this command. Run the standard "
+            "installer, or allow the permission in System Settings yourself."
         )
     try:
         completed = subprocess.run(
@@ -101,29 +103,23 @@ def request(
         PermissionId,
         typer.Argument(help="Permission to request from macOS."),
     ],
-    allow_outside_app: Annotated[
-        bool,
-        typer.Option(
-            "--allow-outside-app",
-            help=(
-                "Jarvis is not the installed app: macOS records the grant for the app "
-                "that started it (a terminal, an IDE). Pass this only to confirm that."
-            ),
-        ),
-    ] = False,
     yes: bool = options.yes_opt(),
     dry_run: bool = options.dry_opt(),
 ) -> None:
-    """Ask macOS for one permission through the same service the app uses."""
+    """Ask macOS for one permission through the same service the app uses.
+
+    Only the installed app is asked for: confirming a grant for the app that
+    started Jarvis (a terminal, an IDE) needs the Jarvis window, so there is no
+    flag for it here and nothing is requested without the installed bundle.
+    """
     invoke.run(
         "POST",
         f"/api/permissions/{permission_id.value}/request",
-        body={"allow_outside_app": True} if allow_outside_app else None,
         assume_yes=yes,
         dry_run=dry_run,
         dangerous=True,
-        # The installed app is the grantee unless the caller said otherwise.
-        before_request=None if allow_outside_app else _activate_macos_app_for_tcc,
+        # The installed app is the only grantee this command asks for.
+        before_request=_activate_macos_app_for_tcc,
     )
 
 

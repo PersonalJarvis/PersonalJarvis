@@ -384,6 +384,132 @@ def test_a_restarted_tap_starts_a_fresh_count(monkeypatch: pytest.MonkeyPatch) -
         backend.stop()
 
 
+def _make_deaf(backend: QuartzHotkeyBackend) -> None:
+    """The user typed after the tap came up and the tap heard nothing."""
+    backend._armed_at = quartz_mod.time.monotonic() - 30.0
+    backend._seconds_since_last_key = lambda: 5.0
+
+
+def test_a_deaf_tap_is_reported_once_as_a_restart_hint_and_never_restarted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend, fake = _listening_backend(monkeypatch)
+    service = service_mod.get_permission_service()
+    reports: list[tuple[str, str]] = []
+    real_report = service.report_failed_use
+
+    def spy(permission, *, feature, **kwargs):  # noqa: ANN001, ANN003
+        reports.append((str(permission), feature))
+        return real_report(permission, feature=feature, **kwargs)
+
+    monkeypatch.setattr(service, "report_failed_use", spy)
+    try:
+        _make_deaf(backend)
+        thread = backend._thread
+        for _ in range(3):
+            assert backend.report_if_deaf() is True  # still worth watching
+        assert reports == [("input_monitoring", "global_shortcuts")], "once per tap"
+        (episode,) = service.outstanding()
+        assert (episode.permissions, episode.feature, episode.reason, episode.origin) == (
+            ("input_monitoring",),
+            "global_shortcuts",
+            "restart_hint",
+            "user",
+        )
+        # A hint: nothing was asked, nothing restarted.
+        assert backend.is_listening() is True and backend._thread is thread
+        assert fake.tap.attempts == ["live"]
+        assert fake.tcc.requests() == []
+    finally:
+        backend.stop()
+
+
+def test_a_tap_that_has_heard_events_is_never_reported_and_stops_the_watch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend, fake = _listening_backend(monkeypatch)
+    try:
+        _make_deaf(backend)
+        fake.deliver_key(0x00)
+        assert backend.report_if_deaf() is False  # healthy: nothing left to watch
+        assert service_mod.get_permission_service().outstanding() == []
+    finally:
+        backend.stop()
+
+
+@pytest.mark.parametrize(
+    "secure_input, idle",
+    [(True, 5.0), (None, 5.0), (False, 600.0), (False, None)],
+    ids=["secure_input", "flag_unreadable", "nobody_typed", "idle_unreadable"],
+)
+def test_the_deaf_rules_gate_the_report(
+    monkeypatch: pytest.MonkeyPatch, secure_input: bool | None, idle: float | None
+) -> None:
+    backend, _fake = _listening_backend(monkeypatch)
+    try:
+        _make_deaf(backend)
+        backend._secure_input_enabled = lambda: secure_input
+        backend._seconds_since_last_key = lambda: idle
+        assert backend.report_if_deaf() is True
+        assert service_mod.get_permission_service().outstanding() == []
+    finally:
+        backend.stop()
+
+
+def test_a_tap_that_is_not_listening_reads_nothing_and_reports_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tcc, _fake = _darwin(monkeypatch)
+    backend = _backend()
+    backend.start()  # nothing granted: no tap
+    before = len(tcc.calls)
+    assert backend.report_if_deaf() is True
+    assert len(tcc.calls) == before, "no tap, so the liveness pass reads nothing"
+    assert tcc.requests() == []
+    assert service_mod.get_permission_service().outstanding() == []
+
+
+def test_a_tap_that_starts_hearing_after_the_report_ends_the_episode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend, fake = _listening_backend(monkeypatch)
+    service = service_mod.get_permission_service()
+    try:
+        _make_deaf(backend)
+        backend.report_if_deaf()
+        assert [e.reason for e in service.outstanding()] == ["restart_hint"]
+
+        fake.deliver_key(0x00)  # the tap hears the keyboard after all
+        assert backend.report_if_deaf() is False
+        service.refresh_episodes()
+        assert service.outstanding() == []
+    finally:
+        backend.stop()
+
+
+def test_a_restarted_tap_is_a_new_episode(monkeypatch: pytest.MonkeyPatch) -> None:
+    backend, fake = _listening_backend(monkeypatch)
+    service = service_mod.get_permission_service()
+    try:
+        _make_deaf(backend)
+        backend.report_if_deaf()
+        assert backend._deaf_reported is True
+        assert [e.reason for e in service.outstanding()] == ["restart_hint"]
+        backend.stop()
+        backend.start()
+        assert backend._deaf_reported is False
+        # The episode the old tap opened is still open until a tap hears something.
+        assert [e.reason for e in service.outstanding()] == ["restart_hint"]
+
+        backend._secure_input_enabled = lambda: False
+        fake.deliver_key(0x00)  # the NEW tap hears the keyboard
+        assert backend.report_if_deaf() is False
+        service.refresh_episodes()
+        assert service.outstanding() == [], "a healthy new tap must end the old card"
+    finally:
+        backend.stop()
+
+
 # --------------------------------------------------------------------------
 # HotkeyTrigger: the grant re-arms the backend in process.
 # --------------------------------------------------------------------------
@@ -619,6 +745,63 @@ async def test_no_backend_and_the_noop_backend_report_that_nothing_listens(
     async with HotkeyTrigger({"cu_cancel": ["esc"]}) as failed:
         assert failed._backend is None
         assert failed.listening() is False
+
+
+async def test_the_trigger_watches_a_listening_tap_and_reports_it_when_it_is_deaf(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import jarvis.trigger.hotkey as hotkey_mod
+
+    monkeypatch.setattr(hotkey_mod, "_LIVENESS_POLL_S", 0.01)
+    tcc, fake = _darwin(monkeypatch)
+    tcc.grant(TccService.INPUT_MONITORING)
+    trigger = await _enter_trigger(monkeypatch)
+    backend = trigger._backend
+    assert backend is not None and trigger._liveness_task is not None
+    try:
+        backend._secure_input_enabled = lambda: False
+        _make_deaf(backend)
+        for _ in range(200):
+            if service_mod.get_permission_service().outstanding():
+                break
+            await asyncio.sleep(0.01)
+        (episode,) = service_mod.get_permission_service().outstanding()
+        assert (episode.feature, episode.reason) == ("global_shortcuts", "restart_hint")
+        assert fake.tap.attempts == ["live"], "the hint never recreates the tap"
+        assert tcc.requests() == []
+    finally:
+        await trigger.__aexit__(None, None, None)
+    assert trigger._liveness_task is None
+
+
+async def test_boot_with_nothing_granted_runs_the_watch_without_touching_the_os(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import jarvis.trigger.hotkey as hotkey_mod
+
+    monkeypatch.setattr(hotkey_mod, "_LIVENESS_POLL_S", 0.01)
+    tcc, fake = _darwin(monkeypatch)
+    trigger = await _enter_trigger(monkeypatch)
+    try:
+        calls_before = len(tcc.calls)
+        await asyncio.sleep(0.1)  # several liveness passes
+        assert len(tcc.calls) == calls_before, "no tap, so nothing to read"
+        assert fake.tap.attempts == [] and tcc.requests() == []
+    finally:
+        await trigger.__aexit__(None, None, None)
+
+
+async def test_a_backend_without_the_liveness_probe_gets_no_watch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import jarvis.trigger.hotkey as hotkey_mod
+
+    port, tcc = make_non_darwin_port("win32")
+    install_port(monkeypatch, port)
+    monkeypatch.setattr(hotkey_mod, "make_hotkey_backend", lambda: _PlainBackend())
+    async with HotkeyTrigger({"call": ["f3+f4"]}) as trigger:
+        assert trigger._liveness_task is None
+    tcc.assert_silent()
 
 
 # --------------------------------------------------------------------------

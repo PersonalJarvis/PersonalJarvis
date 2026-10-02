@@ -243,6 +243,11 @@ async def require_screen_recording_async(
 # Pixel sanity check (the silent-failure trap)
 # ----------------------------------------------------------------------
 
+# The features that told the permission service about an unusable grant and have
+# not seen a verified-real frame since: the success path only touches the service
+# for these, so a healthy per-frame path costs one set lookup.
+_failed_use_reported: set[str] = set()
+
 
 def frame_is_blank(size: tuple[int, int], pixels: Any, *, bytes_per_pixel: int = 3) -> bool:
     """``True`` when a frame is one flat colour (or has no pixels at all).
@@ -328,6 +333,7 @@ _evidence_cache: dict[str, tuple[Callable[[], tuple[int, int] | None], float, ob
 def reset_window_evidence_cache() -> None:
     """Forget the cached window-list verdict (tests, and a deliberate re-check)."""
     _evidence_cache.clear()
+    _failed_use_reported.clear()
 
 
 def _grant_unusable(max_age_s: float) -> bool:
@@ -356,6 +362,63 @@ def _grant_unusable(max_age_s: float) -> bool:
     if unusable:
         _evidence_cache.pop("verdict", None)
     return unusable
+
+
+def _grant_proven() -> bool:
+    """``True`` when the last window-list verdict READ a title of another app's window.
+
+    That is positive proof the grant works right now (a missing grant hides those
+    titles); "no windows" or "no evidence" proves nothing. Reads the cached verdict
+    :func:`_grant_unusable` just produced, so it costs no second window-list read.
+    """
+    cached = _evidence_cache.get("verdict")
+    if cached is None or cached[0] is not _window_evidence:
+        return False
+    evidence = cached[2]
+    return isinstance(evidence, tuple) and len(evidence) == 2 and evidence[1] > 0
+
+
+def _unusable_grant_refusal(feature: str, gate: Any, *, interactive: bool) -> ScreenCaptureRefused:
+    """Report a REAL failed use to the service and build the honest refusal.
+
+    The state reads GRANTED yet the window list says the grant is not honoured: the
+    one case where "quit and reopen" is honest advice (the grant may only apply to
+    a new process, community-observed and UNVERIFIED). A user-started capture tells
+    the service, which opens a ``restart_hint`` episode (the card names the restart
+    and nothing restarts by itself); a background consumer stays quiet, the service
+    only opens episodes with the user origin for this call. The frame is refused
+    either way. A gate without the call (a scripted stub) gets the plain refusal.
+    """
+    report = getattr(gate, "report_failed_use", None)
+    if interactive and callable(report):
+        result = report(PermissionId.SCREEN_RECORDING, feature=feature)
+        _failed_use_reported.add(feature)
+        if not getattr(result, "granted", True) and getattr(result, "reason", ""):
+            return _refusal_from_result(result)
+    return refusal_for_state(PermissionState.NOT_GRANTED)
+
+
+def _clear_failed_use(gate: Any) -> None:
+    """A verified-real frame ends the ``restart_hint`` episode a failed use opened.
+
+    The grant is process-wide, so ANY feature's verified-real frame proves it works
+    again, whichever feature reported the failure (the episode is per permission, not
+    per feature). The service has no hook that says "the attempt that failed works
+    now"; the one call that drops a slot's restart hint is ``note_reset`` (it also
+    forgets the per-process ask cooldown, harmless while the grant is live). The next
+    watcher pass then closes the episode as granted, so the card does not nag a user
+    whose capture works again. Does nothing unless some feature reported a failure.
+    """
+    if not _failed_use_reported:
+        return
+    _failed_use_reported.clear()
+    reset = getattr(gate, "note_reset", None)
+    if not callable(reset):
+        return
+    try:
+        reset(PermissionId.SCREEN_RECORDING)
+    except Exception:  # noqa: BLE001 - tidying a card never turns a real frame into a failure
+        log.debug("Ending the screen-recording restart hint failed.", exc_info=True)
 
 
 def verify_frame_is_real(
@@ -418,7 +481,9 @@ def verify_frame_is_real(
             "on screen and none has a readable title. The grant is probably not usable "
             "(unverified); refusing the frame."
         )
-        raise refusal_for_state(PermissionState.NOT_GRANTED)
+        raise _unusable_grant_refusal(feature, gate, interactive=interactive)
+    if _grant_proven():
+        _clear_failed_use(gate)
     if blank:
         log.debug("A blank capture is accepted: the grant works and the screen is blank.")
 

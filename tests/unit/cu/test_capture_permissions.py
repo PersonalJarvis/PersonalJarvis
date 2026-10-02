@@ -310,6 +310,57 @@ def test_wallpaper_with_an_unusable_grant_refuses_and_names_the_permission(monke
     assert all(item.wallpaper_only for item in screen.frames)
 
 
+def test_an_unusable_grant_opens_one_restart_hint_episode_and_a_real_frame_ends_it(monkeypatch):
+    # A REAL failed attempt while the state reads granted: the honest advice is "quit
+    # and reopen", offered through a user-origin episode. Nothing restarts, nothing is
+    # asked, and the capture itself is still refused.
+    tcc = _darwin(monkeypatch, preflight_frozen=(), screen_grant_needs_relaunch=True)
+    tcc.grant(TccService.SCREEN_RECORDING)
+    screen = FakeScreenGrab(tcc)
+    evidence = {"value": (2, 0)}
+    monkeypatch.setattr(screen_access, "_window_evidence", lambda: evidence["value"])
+
+    with pytest.raises(ScreenCaptureRefused) as refused:
+        _capture(pixels_grabber(screen))
+    with pytest.raises(ScreenCaptureRefused):
+        _capture(pixels_grabber(screen))  # the same failure again: still one episode
+
+    assert refused.value.reason == "restart_hint"
+    assert "quit and reopened" in refused.value.user_detail
+    assert refused.value.agent_detail.startswith("[permission_needed:screen_recording] ")
+    (episode,) = get_permission_service().outstanding()
+    assert (episode.permissions, episode.feature, episode.reason, episode.origin) == (
+        ("screen_recording",),
+        "computer_use",
+        "restart_hint",
+        "user",
+    )
+    assert tcc.requests() == [] and tcc.dialogs_shown() == []  # a hint never asks
+
+    # The grant works now (the user restarted, or the entry caught up): a frame that
+    # shows readable titles of other apps' windows ends the episode, no more nagging.
+    evidence["value"] = (3, 2)
+    _capture(lambda _b: textured_pixels(_SIZE))
+    get_permission_service().refresh_episodes()
+    assert get_permission_service().outstanding() == []
+
+
+def test_a_background_capture_with_an_unusable_grant_opens_no_user_card(monkeypatch):
+    tcc = _darwin(monkeypatch, preflight_frozen=(), screen_grant_needs_relaunch=True)
+    tcc.grant(TccService.SCREEN_RECORDING)
+    monkeypatch.setattr(screen_access, "_window_evidence", lambda: (2, 0))
+    size, pixels = wallpaper_pixels(_SIZE)
+
+    with pytest.raises(ScreenCaptureRefused) as refused:
+        screen_access.verify_frame_is_real(
+            size, pixels, feature="screen_context", interactive=False
+        )
+
+    assert refused.value.reason == "needs_settings"
+    assert get_permission_service().outstanding() == []
+    assert tcc.requests() == []
+
+
 def test_the_window_list_is_not_read_again_for_every_frame(monkeypatch):
     _darwin(monkeypatch, granted=[TccService.SCREEN_RECORDING], preflight_frozen=())
     reads: list[int] = []

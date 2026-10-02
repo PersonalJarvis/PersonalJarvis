@@ -25,7 +25,10 @@ either: the explicit request (``CGRequestListenEventAccess``) belongs to the
 permission service at a user gesture, and the service's grant listener re-runs
 ``start()`` (see ``HotkeyTrigger``). A tap that is created but receives no
 event at all is detected through a raw-callback counter, never by waiting for a
-bound chord (:meth:`QuartzHotkeyBackend.deaf_tap_suspected`).
+bound chord (:meth:`QuartzHotkeyBackend.deaf_tap_suspected`); the owner's watch
+task reports such a tap once to the permission service
+(:meth:`QuartzHotkeyBackend.report_if_deaf`, a "quit and reopen" hint, never an
+automatic restart).
 
 Known trade-offs (documented, honest):
 
@@ -210,6 +213,13 @@ class QuartzHotkeyBackend:
         # only by the tap thread, read lock-free by status readers.
         self._raw_events = 0
         self._armed_at: float | None = None
+        # True once THIS tap was reported to the permission service as deaf
+        # (:meth:`report_if_deaf`); a new tap is a new episode.
+        self._deaf_reported = False
+        # True while a ``restart_hint`` episode this backend opened is still open.
+        # Unlike the flag above it survives ``start`` (a rearm): the card ends when
+        # a tap actually hears an event, not when a new tap is built.
+        self._deaf_episode_open = False
         self._seconds_since_last_key = _seconds_since_last_key_event
         self._secure_input_enabled = _secure_event_input_enabled
         # ``start`` and ``stop`` never overlap: a grant-driven ``start`` runs in a
@@ -544,6 +554,7 @@ class QuartzHotkeyBackend:
         self._tap = tap
         self._source = source
         self._raw_events = 0
+        self._deaf_reported = False
         self._armed_at = None
         ready = threading.Event()
         startup_failed = threading.Event()
@@ -731,6 +742,55 @@ class QuartzHotkeyBackend:
             return False
         idle = self._seconds_since_last_key()
         return idle is not None and idle < age
+
+    def report_if_deaf(self) -> bool:
+        """One liveness pass for the owner's watch task: report a deaf tap, once.
+
+        When :meth:`deaf_tap_suspected` turns true (tap running, grant visible, zero
+        raw callbacks, Secure Event Input off, key activity seen) the permission
+        service is told ONCE per tap through ``report_failed_use``: that opens a
+        ``restart_hint`` episode, "quit and reopen" offered as a card, and nothing
+        else. It never restarts the tap, never asks for anything and never reads
+        the OS while no tap runs (a boot with Input Monitoring missing costs a flag
+        check). If the tap hears an event after the report, the episode is ended
+        again. Blocking (native reads): run it in a worker thread, never on the
+        loop. Returns ``True`` while the tap is still worth watching, ``False`` once
+        it has proven healthy.
+        """
+        if not self.is_listening():
+            return True  # not up yet (waiting for the grant): nothing to judge
+        if self._raw_events > 0:
+            if self._deaf_episode_open:
+                # Also true for an episode the PREVIOUS tap opened (a rearm builds a
+                # new tap): the first event a healthy tap hears ends the card.
+                self._deaf_episode_open = False
+                self._call_service("note_reset")
+            self._deaf_reported = False
+            return False
+        if not self._deaf_reported and self.deaf_tap_suspected():
+            self._deaf_reported = True
+            self._deaf_episode_open = True
+            self._call_service("report_failed_use")
+        return True
+
+    def _call_service(self, name: str) -> None:
+        """Run one permission-service call about Input Monitoring; never raises."""
+        try:
+            from jarvis.platform.permission_service import (  # noqa: PLC0415 - lazy (AP-26)
+                get_permission_service,
+            )
+            from jarvis.platform.permissions import PermissionId  # noqa: PLC0415
+
+            service = get_permission_service()
+            if name == "report_failed_use":
+                service.report_failed_use(PermissionId.INPUT_MONITORING, feature="global_shortcuts")
+            else:
+                service.note_reset(PermissionId.INPUT_MONITORING)
+        except Exception:  # noqa: BLE001 - reporting a liveness hint never harms the tap
+            log.debug(
+                "Reporting the tap to the permission service failed (%s).", name,
+                exc_info=True,
+            )
 
 
 __all__ = ["QuartzHotkeyBackend"]

@@ -317,6 +317,130 @@ def test_a_frame_is_accepted_when_the_window_list_does_not_contradict_the_grant(
     assert gate.log == ["invalidate", "check"]
 
 
+def _restart_hint_result():
+    """What the service answers a failed-use report with: NEEDS_SETTINGS / restart_hint."""
+    from jarvis.platform.permission_service import (
+        EnsureResult,
+        PermissionOutcome,
+        agent_detail_for,
+        user_detail_for,
+    )
+
+    return EnsureResult(
+        permission=_SR,
+        outcome=PermissionOutcome.NEEDS_SETTINGS,
+        state=PermissionState.GRANTED,
+        asked=False,
+        outside_installed_app=False,
+        agent_detail=agent_detail_for(_SR, "restart_hint"),
+        user_detail=user_detail_for(_SR, "restart_hint"),
+        reason="restart_hint",
+        can_open_settings=True,
+    )
+
+
+class _ReportingGate(_StubGate):
+    """A gate that also has the service's failed-use report and its episode reset."""
+
+    def __init__(self, *args, outcome=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.outcome = outcome
+        self.reports: list[tuple[PermissionId, str]] = []
+        self.resets: list[PermissionId] = []
+
+    def report_failed_use(self, permission, *, feature, target=None, trace_id=None):
+        self.reports.append((permission, feature))
+        return self.outcome
+
+    def note_reset(self, permission, *, target=None):
+        self.resets.append(permission)
+
+
+def test_an_unusable_grant_reports_the_failed_use_and_refuses_with_the_restart_text(monkeypatch):
+    gate = _ReportingGate(
+        [PermissionState.GRANTED],
+        deep=[PermissionState.GRANTED],
+        outcome=_restart_hint_result(),
+    )
+    monkeypatch.setattr(screen_access, "_window_evidence", lambda: (4, 0))
+
+    with pytest.raises(ScreenCaptureRefused) as refused:
+        verify_frame_is_real(_SIZE, textured_pixels(_SIZE)[1], feature="appshot", gate=gate)
+
+    assert gate.reports == [(_SR, "appshot")]  # the CALLER's feature, once
+    assert refused.value.reason == "restart_hint"
+    assert str(refused.value).startswith("[permission_needed:screen_recording] ")
+    assert gate.log == ["invalidate", "check"]  # no ensure: reporting is not asking
+
+
+def test_a_background_frame_with_an_unusable_grant_reports_nothing(monkeypatch):
+    gate = _ReportingGate([PermissionState.GRANTED], deep=[PermissionState.GRANTED])
+    monkeypatch.setattr(screen_access, "_window_evidence", lambda: (4, 0))
+
+    with pytest.raises(ScreenCaptureRefused) as refused:
+        verify_frame_is_real(
+            _SIZE, textured_pixels(_SIZE)[1], feature="appshot", interactive=False, gate=gate
+        )
+
+    assert gate.reports == []
+    assert refused.value.reason == "needs_settings"
+
+
+def test_a_verified_frame_from_any_feature_ends_the_reported_episode_once(monkeypatch):
+    gate = _ReportingGate(
+        [PermissionState.GRANTED],
+        deep=[PermissionState.GRANTED],
+        outcome=_restart_hint_result(),
+    )
+    answers = iter([(4, 0), (4, 2), (4, 2)])
+    monkeypatch.setattr(screen_access, "_window_evidence", lambda: next(answers))
+    frame = textured_pixels(_SIZE)[1]
+
+    with pytest.raises(ScreenCaptureRefused):
+        verify_frame_is_real(_SIZE, frame, feature="appshot", gate=gate)
+    # The grant is process-wide: a healthy frame of ANOTHER feature proves it works,
+    # so the episode appshot opened is cleaned up (once, not per frame).
+    verify_frame_is_real(_SIZE, frame, feature="screen_context", gate=gate)
+    verify_frame_is_real(_SIZE, frame, feature="appshot", gate=gate)
+    assert gate.resets == [_SR]
+
+
+def test_a_failing_episode_cleanup_never_fails_a_verified_frame(monkeypatch):
+    class _BrokenReset(_ReportingGate):
+        def note_reset(self, permission):  # noqa: ANN001
+            raise RuntimeError("service down")
+
+    gate = _BrokenReset([PermissionState.GRANTED], deep=[PermissionState.GRANTED])
+    screen_access._failed_use_reported.add("appshot")
+    monkeypatch.setattr(screen_access, "_window_evidence", lambda: (4, 2))
+
+    verify_frame_is_real(_SIZE, textured_pixels(_SIZE)[1], feature="appshot", gate=gate)
+
+    assert screen_access._failed_use_reported == set()
+
+
+@pytest.mark.parametrize("evidence", [(0, 0), None], ids=["no_windows", "unknown"])
+def test_a_frame_without_proof_does_not_end_the_reported_episode(monkeypatch, evidence):
+    # "No windows" or "no evidence" proves nothing about the grant: the hint stays.
+    gate = _ReportingGate([PermissionState.GRANTED], deep=[PermissionState.GRANTED])
+    screen_access._failed_use_reported.add("appshot")
+    monkeypatch.setattr(screen_access, "_window_evidence", lambda: evidence)
+
+    verify_frame_is_real(_SIZE, textured_pixels(_SIZE)[1], feature="appshot", gate=gate)
+
+    assert gate.resets == []
+
+
+def test_a_gate_without_the_failed_use_call_gets_the_plain_refusal(monkeypatch):
+    gate = _StubGate([PermissionState.GRANTED], deep=[PermissionState.GRANTED])
+    monkeypatch.setattr(screen_access, "_window_evidence", lambda: (4, 0))
+
+    with pytest.raises(ScreenCaptureRefused) as refused:
+        verify_frame_is_real(_SIZE, textured_pixels(_SIZE)[1], feature="appshot", gate=gate)
+
+    assert refused.value.reason == "needs_settings"
+
+
 def test_the_window_list_is_read_once_per_few_seconds_not_once_per_frame(monkeypatch):
     gate = _StubGate([PermissionState.GRANTED], deep=[PermissionState.GRANTED])
     reads: list[int] = []

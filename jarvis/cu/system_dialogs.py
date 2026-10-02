@@ -130,6 +130,8 @@ def _is_own_window(entry: Mapping[str, Any], own_pid: int) -> bool:
     try:
         return int(entry.get("kCGWindowOwnerPID", -1)) == own_pid
     except (TypeError, ValueError):
+        # Not provably ours, so it stays in the scan: a dialog must not be skipped.
+        log.debug("A window entry has an unreadable owner pid.", exc_info=True)
         return False
 
 
@@ -138,6 +140,7 @@ def _is_normal_window(entry: Mapping[str, Any]) -> bool:
     try:
         return int(entry.get("kCGWindowLayer", 0) or 0) == 0
     except (TypeError, ValueError):
+        log.debug("A window entry has an unreadable layer; treated as normal.", exc_info=True)
         return True
 
 

@@ -788,3 +788,97 @@ def test_reset_is_refused_while_any_player_is_still_allowed(
     assert response.status_code == 409
     assert "allowed right now" in response.json()["message"]
     assert env.tcc.tccutil_calls == []  # the working Music grant was not thrown away
+
+
+# ----------------------------------------------------------------------
+# ?activated=1: the first refetch after the window regained focus
+# ----------------------------------------------------------------------
+
+
+class _RecordingService:
+    """A real service whose ``note_app_activated`` / ``refresh_episodes`` order is logged."""
+
+    def __init__(self) -> None:
+        from jarvis.platform.permission_service import PermissionService
+
+        self.inner = PermissionService()
+        self.log: list[str] = []
+
+    def __getattr__(self, name: str):
+        return getattr(self.inner, name)
+
+    def note_app_activated(self) -> None:
+        self.log.append("activated")
+        self.inner.note_app_activated()
+
+    def refresh_episodes(self) -> None:
+        self.log.append("refresh")
+        self.inner.refresh_episodes()
+
+
+@pytest.mark.parametrize("path", ["status", "screen_recording"])
+def test_the_activated_flag_notes_the_refocus_before_the_episodes_are_refreshed(
+    make_env, path: str
+) -> None:
+    service = _RecordingService()
+    env = make_env(service=service, default_policy=DialogPolicy.NEVER_ANSWERED)
+    try:
+        # An open Screen Recording episode, so the refresh has something to do.
+        service.inner.ensure(PermissionId.SCREEN_RECORDING, feature="computer_use")
+
+        assert env.client.get(f"/api/permissions/{path}").status_code == 200
+        assert "activated" not in service.log, "no flag, no hint"
+
+        service.log.clear()
+        assert env.client.get(f"/api/permissions/{path}?activated=1").status_code == 200
+        assert service.log[0] == "activated"
+        assert service.log.count("activated") == 1
+        assert "refresh" in service.log
+    finally:
+        service.inner._shutdown()
+
+
+def test_the_activated_flag_promotes_a_dialog_the_user_left_to_blocked(make_env) -> None:
+    # Screen Recording's dialog only offers "Open System Settings": once the user is
+    # back in the app the card may show, without waiting for the 15 s of silence.
+    service = _RecordingService()
+    env = make_env(service=service, default_policy=DialogPolicy.NEVER_ANSWERED)
+    try:
+        service.inner.ensure(PermissionId.SCREEN_RECORDING, feature="computer_use")
+
+        before = env.client.get("/api/permissions/status").json()["needed"]
+        assert [e["phase"] for e in before] == ["os_dialog"]
+
+        after = env.client.get("/api/permissions/status?activated=1").json()["needed"]
+        assert [(e["feature"], e["phase"], e["reason"]) for e in after] == [
+            ("computer_use", "blocked", "needs_settings")
+        ]
+        # A hint about what the user did, never a prompt: still one native request.
+        assert len(env.tcc.requests("screen_recording")) == 1
+    finally:
+        service.inner._shutdown()
+
+
+def test_a_failing_activation_hint_never_turns_a_read_into_a_500(make_env) -> None:
+    class _Broken(_RecordingService):
+        def note_app_activated(self) -> None:
+            raise RuntimeError("boom")
+
+    service = _Broken()
+    env = make_env(service=service)
+    try:
+        assert env.client.get("/api/permissions/status?activated=1").status_code == 200
+        assert env.client.get("/api/permissions/microphone?activated=1").status_code == 200
+    finally:
+        service.inner._shutdown()
+
+
+def test_the_activated_flag_is_documented_on_both_get_routes() -> None:
+    from fastapi import FastAPI
+
+    app = FastAPI()
+    app.include_router(router)
+    paths = app.openapi()["paths"]
+    for read in ("/api/permissions/status", "/api/permissions/{permission_id}"):
+        names = {parameter["name"] for parameter in paths[read]["get"]["parameters"]}
+        assert "activated" in names, read

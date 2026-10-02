@@ -80,6 +80,10 @@ log = logging.getLogger(__name__)
 # re-arm the shortcuts. Renewing well inside that window keeps the episode open
 # for as long as the backend waits (a cheap silent read, never a request).
 _EPISODE_RENEW_S = 240.0
+# How often the liveness watch asks a tap that exposes ``report_if_deaf`` whether
+# it looks deaf (a cheap flag check until a tap runs and the user types). Never
+# restarts anything: a deaf tap only produces a "quit and reopen" hint.
+_LIVENESS_POLL_S = 15.0
 # How long ``__aexit__`` waits for a grant-driven ``backend.start`` that is
 # already running in a worker thread (the tap handshake takes up to 5 s).
 _GRANT_TASK_JOIN_S = 6.0
@@ -716,6 +720,8 @@ class HotkeyTrigger:
         self._grant_task: asyncio.Task[None] | None = None
         # Keeps the service's background episode open while the backend waits.
         self._keepalive_task: asyncio.Task[None] | None = None
+        # Reports a tap that hears nothing although the grant is visible.
+        self._liveness_task: asyncio.Task[None] | None = None
         # Set once ``__aexit__`` begins: no new grant re-arm may start after that.
         self._closing = False
         # Event names that should fire on BOTH key edges (push-to-talk): such
@@ -993,6 +999,7 @@ class HotkeyTrigger:
         """
         if not hasattr(backend, "waiting_for_permission"):
             return
+        self._start_liveness_watch(backend)
         try:
             from jarvis.platform.permission_service import (  # noqa: PLC0415
                 get_permission_service,
@@ -1013,6 +1020,41 @@ class HotkeyTrigger:
                 self._start_episode_keepalive()
         except Exception:  # noqa: BLE001 — shortcuts must never take voice down
             log.debug("Watching for the Input Monitoring grant failed.", exc_info=True)
+
+    def _start_liveness_watch(self, backend: HotkeyBackend) -> None:
+        """Watch a backend that can report a deaf tap (one task at most)."""
+        task = self._liveness_task
+        loop = self._loop
+        if (
+            not callable(getattr(backend, "report_if_deaf", None))
+            or (task is not None and not task.done())
+            or loop is None
+            or loop.is_closed()
+        ):
+            return
+        self._liveness_task = loop.create_task(
+            self._watch_liveness(backend), name="hotkey-liveness-watch"
+        )
+
+    async def _watch_liveness(self, backend: HotkeyBackend) -> None:
+        """Ask the backend every ``_LIVENESS_POLL_S`` whether its tap is deaf.
+
+        The backend tells the permission service ONCE per tap (a ``restart_hint``
+        episode) and ends the episode again if the tap starts hearing events; this
+        loop only gives it a worker thread and a clock. It ends when the backend
+        says the tap has proven healthy, or with the trigger. AP-18: nothing escapes.
+        """
+        try:
+            while True:
+                await asyncio.sleep(_LIVENESS_POLL_S)
+                if self._closing or self._backend is not backend:
+                    return
+                if not await asyncio.to_thread(backend.report_if_deaf):
+                    return
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — a lost liveness pass only delays a hint, never voice
+            log.debug("The hotkey liveness watch failed.", exc_info=True)
 
     def _start_episode_keepalive(self) -> None:
         """Renew the background episode while the backend waits (one task at most)."""
@@ -1106,6 +1148,9 @@ class HotkeyTrigger:
         keepalive, self._keepalive_task = self._keepalive_task, None
         if keepalive is not None and not keepalive.done():
             keepalive.cancel()
+        liveness, self._liveness_task = self._liveness_task, None
+        if liveness is not None and not liveness.done():
+            liveness.cancel()
         task, self._grant_task = self._grant_task, None
         if task is not None and not task.done():
             # Cancelling the task would NOT stop the worker thread already inside

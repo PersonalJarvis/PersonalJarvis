@@ -163,6 +163,77 @@ _PHRASES: dict[str, dict[str, str]] = {
         "en": "I waited for the administrator confirmation, but none came, so I stopped.",
         "es": "Esperé la confirmación de administrador, pero no llegó, así que me detuve.",
     },
+    # exit 8 + "[cu] blocked_permission": the mission stopped because a macOS
+    # permission or a system dialog needs the person. ``cu_blocked_permission``
+    # forwards the engine's own English sentence (en only; the other languages
+    # name the permission from the table below); the others are fixed, localized.
+    "cu_blocked_permission": {
+        "de": "Ich musste anhalten: Personal Jarvis braucht "  # i18n-allow
+              "die Berechtigung {permission}. "  # i18n-allow
+              "Erlaube sie unter {pane}. Versuche es danach noch einmal.",  # i18n-allow
+        "en": "I had to stop. {sentence}",
+        "es": "Tuve que parar: Personal Jarvis necesita el permiso de {permission}. "
+              "Actívalo en {pane}. Después, vuelve a intentarlo.",
+    },
+    # The grant is on but unusable, a permission this session cannot ask for, and a
+    # macOS dialog that is still open: each one has its own remedy, none is "allow it
+    # in Settings". de/es name the permission; en forwards the engine's sentence and
+    # only needs these as the fixed fallback.
+    "cu_blocked_restart_hint": {
+        "de": "Ich musste anhalten: Die Berechtigung {permission} wirkt "  # i18n-allow
+              "womöglich erst, nachdem Personal Jarvis beendet "  # i18n-allow
+              "und neu geöffnet wurde. "  # i18n-allow
+              "Starte die App neu und versuche es dann noch einmal.",  # i18n-allow
+        "en": "I had to stop: the {permission} permission may only take effect after "
+              "Personal Jarvis is quit and reopened. Reopen the app, then try again.",
+        "es": "Tuve que parar: el permiso de {permission} puede que solo surta efecto "
+              "cuando Personal Jarvis se cierre y se vuelva a abrir. "
+              "Reinicia la app y vuelve a intentarlo.",
+    },
+    "cu_blocked_unavailable": {
+        "de": "Ich musste anhalten: Personal Jarvis kann in dieser Sitzung "  # i18n-allow
+              "nicht nach der Berechtigung {permission} fragen.",  # i18n-allow
+        "en": "I had to stop: Personal Jarvis cannot ask for the {permission} permission "
+              "in this session.",
+        "es": "Tuve que parar: Personal Jarvis no puede pedir el permiso de {permission} "
+              "en esta sesión.",
+    },
+    "cu_blocked_waiting": {
+        "de": "Ich musste anhalten, weil macOS gerade nach der Berechtigung "  # i18n-allow
+              "{permission} fragt. Beantworte den Dialog und versuche es dann noch "  # i18n-allow
+              "einmal.",  # i18n-allow
+        "en": "I had to stop because macOS is asking about the {permission} permission. "
+              "Answer the dialog, then try again.",
+        "es": "Tuve que parar porque macOS está preguntando por el permiso de "
+              "{permission}. Responde al diálogo y vuelve a intentarlo.",
+    },
+    "cu_blocked_dialog": {
+        "de": "Ich musste anhalten, weil auf dem Mac ein Systemdialog offen ist. "  # i18n-allow
+              "Beantworte ihn selbst und versuche es dann noch einmal.",  # i18n-allow
+        "en": "I had to stop because a macOS system dialog is open. "
+              "Answer it yourself, then try again.",
+        "es": "Tuve que parar porque hay un diálogo del sistema abierto en el Mac. "
+              "Respóndelo tú y vuelve a intentarlo.",
+    },
+    "cu_blocked_restricted": {
+        "de": "Ich musste anhalten: Eine nötige Berechtigung ist auf diesem "  # i18n-allow
+              "Mac durch "  # i18n-allow
+              "ein Profil oder eine Kindersicherung gesperrt. Das lässt sich in der "  # i18n-allow
+              "App nicht ändern.",  # i18n-allow
+        "en": "I had to stop: a permission this needs is restricted on this Mac by a "
+              "profile or a parental control. That cannot be changed from the app.",
+        "es": "Tuve que parar: un permiso necesario está restringido en este Mac por un "
+              "perfil o un control parental. No se puede cambiar desde la app.",
+    },
+    "cu_blocked_generic": {
+        "de": "Ich musste anhalten, weil macOS eine Berechtigung für Personal Jarvis "  # i18n-allow
+              "braucht. Erlaube sie in den Systemeinstellungen unter Datenschutz & "  # i18n-allow
+              "Sicherheit und versuche es dann noch einmal.",  # i18n-allow
+        "en": "I had to stop because macOS needs a permission for Personal Jarvis. "
+              "Allow it in System Settings under Privacy & Security, then try again.",
+        "es": "Tuve que parar porque macOS necesita un permiso para Personal Jarvis. "
+              "Actívalo en Ajustes del Sistema, en Privacidad y seguridad, y vuelve a intentarlo.",
+    },
     "cu_timeout": {
         "de": "Das am Bildschirm hat zu lange gedauert "  # i18n-allow
               "(ueber {secs} Sekunden) und wurde abgebrochen.",  # i18n-allow
@@ -1099,6 +1170,162 @@ def extract_speakable_reason(error: str | None, output: object = None) -> str | 
     return None
 
 
+#: The engine's own line for a mission stopped by a macOS permission or a system
+#: dialog: ``"[cu] blocked_permission at step-N: <sentence>"``. It is NOT the
+#: ``[cu] fail`` family: the sentence is a fixed user-facing template, and the
+#: engine always appends a ``[cu] mission profile`` line after it, which is what
+#: used to trip :data:`_CU_DIAGNOSTIC_RE` and degrade the readback to the generic
+#: "an action failed" phrase.
+_CU_BLOCKED_PERMISSION_RE = re.compile(
+    r"^[ \t]*\[cu\][ \t]+blocked_permission\b[^:\n]*:[ \t]*(?P<sentence>[^\n]*)$",
+    re.IGNORECASE | re.MULTILINE,
+)
+#: The engine's exit code for a tool/action failure; ``blocked_permission`` rides it.
+_CU_TOOL_EXIT_CODE = 8
+
+#: How the localized (de/es) phrase names a permission, found by keyword in the
+#: engine's English sentence: ``(keyword, {lang: (permission name, settings pane)})``.
+#: The pane names are the macOS UI labels (UNVERIFIED on a real Mac: they move
+#: between macOS versions).
+_BLOCKED_PERMISSION_NAMES: tuple[tuple[str, dict[str, tuple[str, str]]], ...] = (
+    (
+        "accessibility",
+        {
+            "de": (
+                "Bedienungshilfen",  # i18n-allow
+                "Systemeinstellungen > Datenschutz & Sicherheit > Bedienungshilfen",  # i18n-allow
+            ),
+            "es": (
+                "Accesibilidad",
+                "Ajustes del Sistema > Privacidad y seguridad > Accesibilidad",
+            ),
+        },
+    ),
+    (
+        "screen recording",
+        {
+            "de": (
+                "Bildschirm- und Systemaudioaufnahme",  # i18n-allow
+                "Systemeinstellungen > Datenschutz & Sicherheit > "  # i18n-allow
+                "Bildschirm- & Systemaudioaufnahme",  # i18n-allow
+            ),
+            "es": (
+                "Grabación de pantalla y audio del sistema",
+                "Ajustes del Sistema > Privacidad y seguridad > "
+                "Grabación de pantalla y audio del sistema",
+            ),
+        },
+    ),
+    (
+        "input monitoring",
+        {
+            "de": (
+                "Eingabeüberwachung",  # i18n-allow
+                "Systemeinstellungen > Datenschutz & Sicherheit > Eingabeüberwachung",  # i18n-allow
+            ),
+            "es": (
+                "Supervisión de entradas",
+                "Ajustes del Sistema > Privacidad y seguridad > Supervisión de entradas",
+            ),
+        },
+    ),
+    (
+        "microphone",
+        {
+            "de": (
+                "Mikrofon",  # i18n-allow
+                "Systemeinstellungen > Datenschutz & Sicherheit > Mikrofon",  # i18n-allow
+            ),
+            "es": (
+                "Micrófono",
+                "Ajustes del Sistema > Privacidad y seguridad > Micrófono",
+            ),
+        },
+    ),
+    (
+        "automation",
+        {
+            "de": (
+                "Automation",
+                "Systemeinstellungen > Datenschutz & Sicherheit > Automation",  # i18n-allow
+            ),
+            "es": (
+                "Automatización",
+                "Ajustes del Sistema > Privacidad y seguridad > Automatización",
+            ),
+        },
+    ),
+)
+
+
+def cu_blocked_permission_sentence(stderr: str | None) -> str | None:
+    """The engine's user sentence of a ``blocked_permission`` mission, else ``None``.
+
+    Reads the ``"[cu] blocked_permission at step-N: <sentence>"`` line out of the
+    mission's ``stderr`` wherever it sits (the engine appends a ``[cu] mission
+    profile`` line after it). The sentence is a fixed template with no exception
+    text, path or window title; one that nevertheless looks like machine noise
+    (diagnostic marker, telemetry, a path) is dropped, so the caller falls back to
+    a fixed phrase. Pure regex (AP-11).
+    """
+    match = _CU_BLOCKED_PERMISSION_RE.search(stderr or "")
+    if match is None:
+        return None
+    sentence = match.group("sentence").strip()
+    return sentence if _is_speakable_reason(sentence) else ""
+
+
+def _spoken_en(sentence: str) -> str:
+    """The engine's English sentence, made speakable and addressed to the listener.
+
+    The engine writes it about "the user" and with a Settings path joined by ``>``;
+    spoken, that reads as "greater than" and talks about somebody else. Pure regex
+    (AP-11).
+    """
+    spoken = re.sub(r"\bThe user has to\b", "You have to", sentence)
+    spoken = re.sub(r"\bthe user\b", "you", spoken, flags=re.IGNORECASE)
+    return _spoken_pane(spoken, "en")
+
+
+def _spoken_pane(text: str, lang: str) -> str:
+    """Replace the written Settings-path separators with speakable words."""
+    and_word = {"de": "und", "es": "y"}.get(lang, "and")
+    then_word = {"de": "dann", "es": "luego"}.get(lang, "then")
+    return text.replace(" > ", f", {then_word} ").replace(" & ", f" {and_word} ")
+
+
+def _blocked_permission_readback(lang: str, sentence: str) -> str:
+    """The localized readback of a ``blocked_permission`` mission (no LLM, AP-11).
+
+    English forwards the engine's own sentence (second person, speakable). de/es
+    cannot (it is English), so they name the permission by keyword and pick the
+    remedy by REASON: a dialog still open, a restart, an unaskable permission or a
+    restriction each get their own phrase, and only a switch that is off says "allow
+    it in Settings". A sentence they cannot place falls back to the fixed generic
+    phrase.
+    """
+    low = sentence.lower()
+    if lang == "en" and sentence:
+        return action_phrase("cu_blocked_permission", lang, sentence=_spoken_en(sentence))
+    if "system dialog" in low:
+        return action_phrase("cu_blocked_dialog", lang)
+    if "restricted" in low:
+        return action_phrase("cu_blocked_restricted", lang)
+    names = next((n for keyword, n in _BLOCKED_PERMISSION_NAMES if keyword in low), None)
+    if names is None or lang not in names:
+        return action_phrase("cu_blocked_generic", lang)
+    permission, pane = names[lang]
+    if "quit and reopened" in low:
+        return action_phrase("cu_blocked_restart_hint", lang, permission=permission)
+    if "cannot ask" in low:
+        return action_phrase("cu_blocked_unavailable", lang, permission=permission)
+    if "macos dialog" in low or "showing a dialog" in low:
+        return action_phrase("cu_blocked_waiting", lang, permission=permission)
+    return action_phrase(
+        "cu_blocked_permission", lang, permission=permission, pane=_spoken_pane(pane, lang)
+    )
+
+
 def cu_failure_readback(
     lang: str,
     *,
@@ -1122,6 +1349,15 @@ def cu_failure_readback(
        ``exit_code`` (``cu_exit_*``), falling back to the plain
        "didn't work on screen" sentence when the code is unknown.
     """
+    # 0) A mission stopped by a macOS permission or a system dialog says what is
+    # missing and where to allow it. Checked first: the engine always appends a
+    # "[cu] mission profile" line, and the diagnostic gate below would turn the
+    # whole detail into the generic "an action failed" phrase.
+    if exit_code == _CU_TOOL_EXIT_CODE:
+        blocked = cu_blocked_permission_sentence(detail)
+        if blocked is not None:
+            return _blocked_permission_readback(lang, blocked)
+
     # 1) The harness detail string may carry the model's verified reason.
     if detail:
         candidate = _CU_REASON_PREFIX_RE.sub("", detail).strip()
@@ -1190,6 +1426,7 @@ __all__ = [
     "CU_TOOL_OUTCOME_LAYER",
     "OUTPUT_LANGUAGE_ENV_KEY",
     "action_phrase",
+    "cu_blocked_permission_sentence",
     "cu_failure_readback",
     "cu_success_readback",
     "extract_speakable_reason",

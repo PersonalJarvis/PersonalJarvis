@@ -14,6 +14,13 @@ Snapshot v2 (``GET /status``)::
                     can_reset, restart_hint, detail, settings_path}],
      needed: [open episodes]}
 
+Both GET routes accept ``?activated=1``, which the frontend sends on the FIRST refetch
+after the window regained focus: the route then calls ``note_app_activated()`` on
+the service before it refreshes the episodes, so a Screen Recording / Accessibility /
+Input Monitoring dialog the person left to flip a switch in System Settings is
+promoted to "blocked" at once and the next watcher pass reads the grant (the window-
+title oracle included). It is a hint about what the user just did, never a prompt.
+
 The Automation row is computed only while ``[ducking].enabled`` is on or the caller
 passes ``?include=automation``: reading it asks a running player, which a user who
 never switched the feature on should never meet. Screen Recording is the SHALLOW
@@ -541,6 +548,16 @@ def _refresh_edges(service: PermissionService, runtime: _Runtime) -> None:
         log.debug("The episode refresh did not finish in time; the watcher keeps going.")
 
 
+def _note_activated(service: PermissionService, activated: bool) -> None:
+    """The caller says the window just regained focus: tell the service (never raises)."""
+    if not activated:
+        return
+    try:
+        service.note_app_activated()
+    except Exception:  # noqa: BLE001 - a focus hint must never turn a GET into a 500
+        log.debug("note_app_activated() failed.", exc_info=True)
+
+
 def _restart_hints(needed: list[NeededEpisode]) -> frozenset[str]:
     return frozenset(
         permission
@@ -600,23 +617,41 @@ def get_permissions_status(
         default=None,
         description="Comma-separated extras; 'automation' adds the Automation row.",
     ),
+    activated: bool = Query(
+        default=False,
+        description="1 on the first refetch after the window regained focus.",
+    ),
 ) -> PermissionsSnapshot:
-    """Return the passive permission snapshot. It never prompts and never blocks."""
+    """Return the passive permission snapshot. It never prompts and never blocks.
+
+    ``activated=1`` (the first refetch after the window regained focus) first tells
+    the service the app was refocused, see the module docstring.
+    """
     wanted = {part.strip() for part in (include or "").split(",")}
     include_automation = "automation" in wanted or _ducking_enabled(request)
-    return _build_snapshot(
-        _service(request), _runtime(request), include_automation=include_automation
-    )
+    service = _service(request)
+    _note_activated(service, activated)
+    return _build_snapshot(service, _runtime(request), include_automation=include_automation)
 
 
 @router.get("/{permission_id}", summary="Read one privacy permission row", response_model=None)
-def get_permission(permission_id: PermissionId, request: Request) -> PermissionRow:
+def get_permission(
+    permission_id: PermissionId,
+    request: Request,
+    activated: bool = Query(
+        default=False,
+        description="1 on the first refetch after the window regained focus.",
+    ),
+) -> PermissionRow:
     """One cheap row; also re-reads open episodes so a resolve edge is published here.
 
     ``event_posting`` is an alias of ``accessibility`` and answers with that row.
+    ``activated=1`` (the first refetch after the window regained focus) first tells
+    the service the app was refocused, see the module docstring.
     """
     service = _service(request)
     runtime = _runtime(request)
+    _note_activated(service, activated)
     _refresh_edges(service, runtime)
     return _single_row(service, runtime, permission_id)
 

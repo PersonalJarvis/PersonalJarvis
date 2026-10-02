@@ -684,6 +684,8 @@ class ScreenContextService:
                 trace_id=trace_id,
             )
         except screen_access.ScreenCaptureRefused as refused:
+            # The caller turns this into the refused outcome the person sees.
+            log.debug("screen_context: permission refused (%s)", refused.reason or "permission")
             return refused
         return None
 
