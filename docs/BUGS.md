@@ -15544,3 +15544,25 @@ custom pane names the same way (positions stay exact) and, when a name is no
 pane but a Jarvis agent, says so in `jarvis_agent`. Guards:
 `tests/unit/core/test_spoken_names.py`, `tests/unit/society/test_agent_names.py`,
 `tests/unit/plugins/tool/test_delegate_to_agent.py`.
+
+## BUG-228: an appshot photographed only the mascot or the Jarvis bar, not the app window (MEDIUM, FIXED 2026-10-02)
+
+**Symptom.** "Take an appshot" during a voice call sometimes sent the model a
+small square of the mascot instead of the window the person was working in.
+The log showed `appshot: active window 288x288 via tool -> turn` right after
+a normal 1280x696 one.
+
+**Cause.** An appshot captures the foreground window. A click on the mascot or
+the bar (to talk, mute or hang up) gives that small topmost `JarvisOrb` Tk
+overlay the Windows focus, so `GetForegroundWindow` returned the overlay and
+the capture targeted its 288x288 rectangle.
+
+**Fix.** `window_state.foreground_app_window()` looks past this process's own
+overlays (tool, non-activating or capture-excluded windows) and walks down
+the Z-order to the first real app window under them — the window the person
+used last. It steps over the taskbar, which sits between the overlays and the
+apps, and returns `None` at the wallpaper so the capture falls back to the
+monitor. The Screen Context window probe reads this instead of the raw
+foreground window. macOS and X11 need no walk: their probes never report the
+floating overlays. Guards: `tests/unit/platform/test_foreground_app_window.py`,
+`tests/unit/screen_context/test_ports.py`.
