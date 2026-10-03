@@ -13,6 +13,10 @@
       "cost": "Costo",
       "total_cost": "Costo modelli registrato",
       "board": "Bacheca"
+    },
+    "office": {
+      "reduced_motion": "Riduci movimento è attivo. Il piano 3D animato è in pausa; il Registro mantiene disponibile la stessa attività degli agenti senza movimento.",
+      "ledger": "Apri registro"
     }
   }
 }

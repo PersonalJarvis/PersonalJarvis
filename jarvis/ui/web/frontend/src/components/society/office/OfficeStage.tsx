@@ -46,7 +46,7 @@ import { OfficeMinimap } from "./OfficeMinimap";
 import { OfficeCompass } from "./OfficeCompass";
 import { OfficeFullMap } from "./OfficeFullMap";
 import { OfficeFrameDriver } from "./OfficeFrameDriver";
-import { OfficeFallback } from "./OfficeFallback";
+import { OfficeFallback, officeFallbackReason } from "./OfficeFallback";
 
 // Only loaded when a host without its own create dialog (the IDE's side panel) spawns an agent.
 const CreateAgentDialog = lazy(() => import("../create/CreateAgentDialog").then((m) => ({ default: m.CreateAgentDialog })));
@@ -66,12 +66,12 @@ const EMPTY_OCCUPANTS: ReadonlyMap<string, PaneOccupant> = new Map();
 const DOORS_MS = 520;
 const RIDE_MAX_MS = 1400;
 
-class RenderBoundary extends Component<{ children: ReactNode; fallbackText: string }, { failed: boolean }> {
+class RenderBoundary extends Component<{ children: ReactNode; fallback: ReactNode }, { failed: boolean }> {
   state = { failed: false };
   static getDerivedStateFromError() { return { failed: true }; }
   componentDidCatch(error: Error) { console.warn("Office renderer unavailable", error); }
   render() {
-    return this.state.failed ? <div className="office-fallback" role="status">{this.props.fallbackText}</div> : this.props.children;
+    return this.state.failed ? this.props.fallback : this.props.children;
   }
 }
 
@@ -127,10 +127,17 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
   const reduced = useReducedMotion() ?? false;
   const { generation } = useWebglSurface(hostRef);
   const webgl = useWebglSupported();
+
   // A mount that names a floor opens there (e.g. the IDE tab on the coding floor).
   useState(() => { if (initialFloor) switchFloor(initialFloor, false); return null; });
   const floor = useOfficeStore((s) => s.floor);
   const coding = floor === "coding";
+  const effectiveFallbackReason = officeFallbackReason({
+    webgl,
+    reduced,
+    coding,
+    hasLedger: Boolean(onOpenLedger),
+  });
   const roster = useSocietyRoster();
   useRosterRefresh(awake && !coding);
   const [overview, setOverview] = useState(0);
@@ -358,8 +365,18 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
     <section className={compact ? "office-stage office-stage-compact" : "office-stage"} aria-label={t(titleKey)}
       data-office-agents={active.length} data-office-floor={floor}>
       <div ref={hostRef} className="office-viewport" tabIndex={0} role="application" aria-label={t("society.office.viewport")}>
-        {webgl ? (
-          <RenderBoundary key={generation} fallbackText={t("society.office.no_graphics")}>
+        {effectiveFallbackReason ? (
+          <OfficeFallback
+            message={t(effectiveFallbackReason === "reduced-motion" ? "society.office.reduced_motion" : "society.office.no_graphics")}
+            actionLabel={t(coding ? (compact ? "society.office.ledger_coding" : "society.office.open_ide") : "society.office.ledger")}
+            onAction={openList}
+          />
+        ) : (
+          <RenderBoundary key={generation} fallback={<OfficeFallback
+            message={t(effectiveFallbackReason === "reduced-motion" ? "society.office.reduced_motion" : "society.office.no_graphics")}
+            actionLabel={t(coding ? (compact ? "society.office.ledger_coding" : "society.office.open_ide") : "society.office.ledger")}
+            onAction={openList}
+          />}>
             <Suspense fallback={<div className="office-fallback" role="status">{t("society.office.loading")}</div>}>
               <Canvas shadows="percentage" camera={{ fov: CAMERA_FOV, near: 0.2, far: 800, position: [30, 30, 30] }} dpr={dpr}
                 gl={{ antialias: true, alpha: true, preserveDrawingBuffer: import.meta.env.DEV }}
@@ -374,11 +391,7 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
               </Canvas>
             </Suspense>
           </RenderBoundary>
-        ) : <OfficeFallback
-          message={t("society.office.no_graphics")}
-          actionLabel={t(coding ? (compact ? "society.office.ledger_coding" : "society.office.open_ide") : "society.office.ledger")}
-          onAction={openList}
-        />}
+        )}
       </div>
 
       <div className="office-hud office-hud-left" data-office-ui>
