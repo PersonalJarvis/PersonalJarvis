@@ -1,5 +1,6 @@
 """Validated visual companion settings inside the existing avatar JSON envelope."""
 
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -72,8 +73,6 @@ class FigureAppearance(BaseModel):
     def _parts_are_bounded_ids(cls, value: dict[str, str]) -> dict[str, str]:
         if len(value) > 16:
             raise ValueError("too many figure parts")
-        import re
-
         pattern = re.compile(_FIGURE_ID_PATTERN)
         for slot, part_id in value.items():
             if not pattern.fullmatch(slot) or not pattern.fullmatch(part_id):
@@ -85,8 +84,6 @@ class FigureAppearance(BaseModel):
     def _palette_is_known_hex(cls, value: dict[str, str] | None) -> dict[str, str] | None:
         if value is None:
             return None
-        import re
-
         if set(value) - _PALETTE_CELLS:
             raise ValueError("unknown palette cell")
         if any(re.fullmatch(r"#[0-9a-fA-F]{6}", color) is None for color in value.values()):
