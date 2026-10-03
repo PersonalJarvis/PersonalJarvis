@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && node scripts/build.mjs",
+    "build": "tsc -b && vite build --outDir ../dist --emptyOutDir",
     "preview": "vite preview",
     "test": "vitest run"
   },
