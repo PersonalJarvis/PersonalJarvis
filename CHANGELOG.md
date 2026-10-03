@@ -11,6 +11,98 @@ versioning per [SemVer](https://semver.org/).
 
 ---
 
+## [2.8.0] — 2026-10-03
+
+### Added
+
+- An editor for appshots, opened from the corner card
+- Draw traces the way the Codex app does
+- Change floors with the elevator doors and a real button panel
+- A clickable, draggable appshot card in the screen corner
+- Make the area picker's magnifier a round lens
+- Ride the elevator from inside the car
+- Put the assistant's files up front as pages with their content
+- Plain magnifier the mouse wheel zooms
+- Add isolated ChatGPT subscription access and in-app sign-in (#322)
+- Elevator panel and ride that feel like a real elevator
+- The assistant's profile section is named after the assistant
+- Bring back the quiet session counts in the project tree
+- Drop the workspace pane limit and the 4x4 grid bound
+- Drop the running marks from the project tree
+- Restyle the project tree as a quiet Codex-style folder list
+- Arcade floor with ten playable retro cabinets
+- The SOUL.md section shows the assistant's whole profile
+- Drag a stack of side-by-side seams as one line from a seam's ends
+- Record the appshot shortcuts and default the area to both Shift keys
+- Give the area picker ShareX's region-capture look
+- Draw turns as a Claude/Codex-style timeline
+- Select an area of the screen on its own shortcut
+- Tell a finished turn's work as a written report
+- Jarvis follows the person as their chosen pet, in 3D
+- Log the JavaScript a hung window is stuck in before recovering it
+- Save "remember this" to MEMORY.md during the conversation
+- The live call keeps SOUL.md current with update_soul
+- Draw the user's pet everywhere the static Gigi image was
+- Replace the thinking comets with thought waves
+- SOUL.md gives the assistant one self-maintained identity
+- Mark voice and typed chats apart in the history
+- Start the local engine when its card is selected
+- Right-click menu with delete on gallery cards
+
+### Changed
+
+- Share one TLS context across every httpx client
+- Import transport plugins off the loop during boot warm
+- Run worktree git work off the event loop
+- Probe openai stream_options lazily, not at import
+
+### Fixed
+
+- Strip preview comments with a plain scan instead of a regex
+- Keep pet lookups inside their folders and strip HTML comments fully
+- Hold every automatic reload during a call or a streaming reply
+- Verify local speech readiness and contain failed workers
+- Keep the async-route and public-docs gates green after the local landing
+- Explain the quiet exception handlers the local commits added
+- Centre the cat torso above its stable floor anchor
+- Keep coding floor agent labels expanded
+- Keep lead pet centred on its floor marker
+- Hold every agent's first prompt until its terminal questions stop
+- Rebuild the arcade floor as clear rooms without lag
+- Keep mission heartbeats out of calls that did not start them
+- Make each shortcut one tidy field like the select beside it
+- Keep the workspace menu off the switching spinner
+- Let Continue through once a wake word is saved
+- Keep the settings labels readable in the Settings dialog
+- Link stacked seams up to 24 px apart and cover the grab zones
+- Continue a reopened voice chat in its own history row
+- Wait for Codex's colour question before typing a prompt
+- Keep the mascot and bar out of captures from their first show
+- Report a crashed area picker and serialize shortcut reloads
+- Sweep a mission at once when its owner process died
+- Stop terminal link detection walking past the buffer end
+- Hide the area controls until the backend knows about them
+- Seat a chat opened by a call on the person's chat model
+- Let take_appshot capture the whole screen on an explicit request
+- Make the size slider glide and resize the pet live
+- Capture the app window, not the mascot or bar overlay
+- Play the shutter flash and sound when the live model looks
+- Show one pet while the answer streams under a live trace
+- Keep tool results readable and long enough to narrate
+- Start spawn-point agents without waiting for a viewer
+- The pet plays its working row while Jarvis thinks or works
+- Read the install dir from sys.path when the prefix is lost
+- Find the worker interpreter when the branded exe stands alone
+- Resolve misheard agent names and route Jarvis agents vs coding panes
+- Give Jarvis and agents their own conversation chats
+- Brief spawned agents to do the work, not a read-only audit
+- Keep shared Google grants alive and flag dead OAuth clients
+- Offer only tool-calling models on the Local voice card
+- Retry the engine copy while Windows holds the new folder
+- Never reload the window under a live voice call
+
+---
+
 ## [2.7.1] — 2026-10-02
 
 ### Fixed
