@@ -28,7 +28,7 @@ import {
   usePublishIdentity,
 } from "@/components/marketplace/PublishIdentity";
 import { PublishStudio } from "@/components/marketplace/PublishStudio";
-import { fill, useLocaleChunk, useT } from "@/i18n";
+import { fill, useI18nStore, useLocaleChunk, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { openExternalUrl } from "@/lib/openExternal";
 import { bundledPluginLogo } from "@/lib/pluginLogos";
@@ -422,11 +422,23 @@ export function MarketplaceView() {
             onChange={setKindFilter}
             counts={counts}
             showInstalled={localeReady && entries.some((e) => e.installed)}
-            showMine={login !== null}
+            showMine={localeReady && login !== null}
             t={t}
           />
         </div>
       </div>
+
+      {refresh.error && (
+        <div className="shrink-0 border-b border-destructive/20 bg-destructive/[0.08] px-8 py-2">
+          <p
+            role="alert"
+            className="flex w-full max-w-6xl items-center gap-2 text-xs text-destructive"
+          >
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            {(refresh.error as Error).message}
+          </p>
+        </div>
+      )}
 
       {offline && (
         <div className="shrink-0 border-b border-warning/20 bg-warning/[0.08] px-8 py-2">
@@ -480,7 +492,23 @@ export function MarketplaceView() {
             />
           )}
 
-          {ready && visible.length === 0 && (
+          {ready && entries.length === 0 && (status === "disabled" || status === "unavailable") && (
+            <EmptyState
+              icon={status === "disabled" ? <Store /> : <AlertTriangle />}
+              title={
+                status === "disabled"
+                  ? t("marketplace.status_disabled")
+                  : t("marketplace.error_title")
+              }
+              description={
+                status === "unavailable" ? t("marketplace.status_unavailable") : undefined
+              }
+            />
+          )}
+
+          {ready &&
+            visible.length === 0 &&
+            !(entries.length === 0 && (status === "disabled" || status === "unavailable")) && (
             <NoResults
               query={query.trim()}
               filter={kindFilter}
@@ -564,10 +592,11 @@ function subtitleFor(
   return parts.join(" · ");
 }
 
+/** A date in the app's UI language — not the operating system's. */
 function formatDate(iso: string): string {
   const parsed = new Date(iso);
   if (Number.isNaN(parsed.getTime())) return iso;
-  return parsed.toLocaleDateString(undefined, {
+  return parsed.toLocaleDateString(useI18nStore.getState().ui, {
     year: "numeric",
     month: "short",
     day: "numeric",
@@ -1299,6 +1328,9 @@ function EntrySheet({
                   {contents.data.files.map((file) => (
                     <details
                       key={file.path}
+                      // Open by default: this is the trust boundary, and a
+                      // fold would put the content one click away again.
+                      open
                       className="group/file border-b border-border bg-background last:border-b-0"
                     >
                       <summary className="flex cursor-pointer select-none list-none items-center gap-2 px-3 py-2 text-sm font-medium text-foreground hover:bg-secondary [&::-webkit-details-marker]:hidden">
@@ -1514,6 +1546,9 @@ function LandingToast({
   const setActiveSection = useEventStore((s) => s.setActiveSection);
   const target = HOME_SECTION[result.kind] ?? "skills";
   const ready = result.ready !== false;
+  // A plugin always lands unconnected — that is its next step, not a fault.
+  // Only a named problem (or a skill that is not usable) earns the warning.
+  const warn = Boolean(result.problem) || (!ready && result.kind !== "plugin");
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-0 z-50 flex justify-center p-5">
       <div
@@ -1523,10 +1558,10 @@ function LandingToast({
         <div
           className={cn(
             "grid h-8 w-8 shrink-0 place-items-center rounded-lg",
-            ready ? "bg-success/[0.12] text-success" : "bg-warning/[0.12] text-warning",
+            warn ? "bg-warning/[0.12] text-warning" : "bg-success/[0.12] text-success",
           )}
         >
-          {ready ? <Check className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
+          {warn ? <AlertTriangle className="h-4 w-4" /> : <Check className="h-4 w-4" />}
         </div>
         <div className="min-w-0 flex-1">
           <p className="text-base font-medium text-foreground-strong">
@@ -1535,7 +1570,7 @@ function LandingToast({
           <p className="text-sm text-muted-foreground">
             {result.problem
               ? result.problem
-              : ready
+              : ready || result.kind === "plugin"
                 ? t(`marketplace.landed_${result.kind}`)
                 : t("marketplace.landed_needs_connect")}
           </p>

@@ -415,6 +415,14 @@ describe("MarketplaceView", () => {
     expect(screen.queryByTestId("hero-publish")).toBeNull();
   });
 
+  it("says the index is switched off instead of calling the shelves empty", async () => {
+    installFetchMock({ status: "disabled", plugins: [], skills: [] });
+    renderView();
+
+    expect(await screen.findAllByText(/switched off in this install/i)).toBeTruthy();
+    expect(screen.queryByText(/Nothing is published in this category/i)).toBeNull();
+  });
+
   it("filters to the signed-in account's own publications", async () => {
     identity = {
       enabled: true,
