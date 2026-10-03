@@ -326,7 +326,7 @@ class CUIndicatorController:
         monitor: list[int], rect: list[float], screen_name: str,
         duration_s: float, rest_ms: int, labels: dict[str, str],
     ) -> bool:
-        """Fly a finalized video into its bottom-left card, without changing screenshot state."""
+        """Fly a finalized video into its bottom-right card, without changing screenshot state."""
         ok, reason = self._border_capability()
         if not ok:
             log.debug("[appshot-effect] recording preview unavailable: %s", reason)

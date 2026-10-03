@@ -5,7 +5,7 @@
 The selected recording area keeps a click-through border until recording stops.
 Elapsed time and a stop button sit below it; the toolbar moves above the area or
 inside the work area when the selection reaches the screen edges. A finalized
-video uses the existing screenshot flight animation to enter a bottom-left
+video uses the existing screenshot flight animation to enter a bottom-right
 preview card. Its poster shows the first video frame with a prominent play button
 and a video/duration label. The card can play the local file, save a separate copy
 to Downloads, or drag the MP4 to another application. Screenshot and video previews share the
@@ -13,7 +13,7 @@ indicator process and its shutdown/capture-suppression lifecycle.
 
 Windows area and 4K full-screen recordings were verified with the desktop Python
 runtime: persistent frame, elapsed time, stop-button completion, playable MP4,
-and a visible bottom-left card. Both the frame and toolbar successfully enabled
+and a visible corner card. Both the frame and toolbar successfully enabled
 native capture exclusion. A separate explicitly capturable visual pass verified
 their geometry and appearance without confusing that pass with clean video output.
 

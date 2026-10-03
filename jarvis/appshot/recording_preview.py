@@ -188,7 +188,7 @@ class RecordingCard(QWidget):
 
 
 class RecordingPreviews(QObject):
-    """A bounded bottom-left stack, using the screenshot flight animation unchanged."""
+    """A bounded bottom-right stack, using the screenshot flight animation unchanged."""
 
     def __init__(self, emit, activity) -> None:
         super().__init__()
@@ -236,7 +236,7 @@ class RecordingPreviews(QObject):
             thumb,
             landed,
             self.flight_done,
-            corner="left",
+            corner="right",
         )
         self.flights.append(flight)
         self.activity()
@@ -272,7 +272,8 @@ class RecordingPreviews(QObject):
                 if bottom - height < available.top() + _SNAP_MARGIN:
                     card.close()  # remove() lays out the remaining bounded stack again.
                     return
-                card.move(QPoint(available.left() + _SNAP_MARGIN - 12, bottom - height - 12))
+                right = available.right() + 1 - _SNAP_MARGIN
+                card.move(QPoint(right - card.width() + 12, bottom - height - 12))
                 bottom -= height + 12
 
     def set_status(self, recording_id: str, text: str) -> bool:
