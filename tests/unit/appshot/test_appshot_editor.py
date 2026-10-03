@@ -196,3 +196,50 @@ def test_clipboard_image_picks_the_linux_tool(
 
     assert ok is (expected is not None)
     assert [command[0] for command in ran] == ([f"/usr/bin/{expected}"] if expected else [])
+
+
+# -- drag out: a file for the native drag bridge -------------------------------
+
+
+def test_drag_file_is_written_once_and_old_ones_are_swept(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    import os
+
+    from jarvis.appshot import dragfile
+
+    monkeypatch.setattr(dragfile.tempfile, "gettempdir", lambda: str(tmp_path))
+    folder = dragfile.drag_folder()
+    folder.mkdir()
+    stale = folder / "appshot-old.png"
+    stale.write_bytes(b"x")
+    os.utime(stale, (1_000.0, 1_000.0))
+
+    first = dragfile.write_drag_file(_png(), now=1_000.0 + dragfile.MAX_AGE_S + 5)
+    second = dragfile.write_drag_file(_png(), now=1_000.0 + dragfile.MAX_AGE_S + 5)
+
+    assert first is not None and second is not None and first != second
+    assert first.read_bytes() == _png()
+    assert not stale.exists()
+
+
+def test_drag_route_returns_a_path_on_the_desktop_only(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    from jarvis.appshot import dragfile
+    from jarvis.ui.web.appshot_routes import router
+
+    monkeypatch.setattr(dragfile.tempfile, "gettempdir", lambda: str(tmp_path))
+    app = FastAPI()
+    app.include_router(router)
+    app.state.native_file_actions = True
+    client = TestClient(app)
+
+    response = client.post("/api/appshot/drag-file", content=_png())
+    assert response.status_code == 200, response.text
+    path = response.json()["path"]
+    assert path.startswith(str(tmp_path)) and path.endswith(".png")
+    assert client.post("/api/appshot/drag-file", content=b"nope").status_code == 400
+
+    app.state.native_file_actions = False
+    assert client.post("/api/appshot/drag-file", content=_png()).status_code == 404

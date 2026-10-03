@@ -9,13 +9,15 @@ Endpoints (mounted by the WebServer in ``_build_app()``):
     GET    /api/appshot/latest/image     → its picture (never cached).
     PUT    /api/appshot/latest/image     → replace it with the editor's version.
     POST   /api/appshot/clipboard        → copy the editor's PNG natively (desktop only).
+    POST   /api/appshot/drag-file        → write it for a native drag out (desktop only).
     GET    /api/appshot/pending          → the appshot waiting for the next message.
     POST   /api/appshot/pending/claim    → hand that one to the chat composer.
     DELETE /api/appshot                  → forget every held appshot now.
 
 Under the CLI-first contract every action here is also a
 ``jarvis api appshot <op>`` command. Pixels stay in memory
-(``jarvis.appshot.store``); nothing here writes an image to disk.
+(``jarvis.appshot.store``); the only image written to disk is the one a
+user drags out of the editor (``/drag-file``, see ``jarvis.appshot.dragfile``).
 """
 
 from __future__ import annotations
@@ -267,6 +269,30 @@ async def copy_to_clipboard(request: Request) -> dict[str, Any]:
     if not await asyncio.to_thread(write_png, body):
         raise HTTPException(status_code=503, detail="native-clipboard-unavailable")
     return {"copied": True}
+
+
+@router.post("/drag-file")
+async def drag_file(request: Request) -> dict[str, Any]:
+    """Write the editor's PNG for a native drag and return its path.
+
+    Called the moment the user presses the editor's "Drag me" handle — the
+    only time an edited appshot touches disk (``jarvis.appshot.dragfile``).
+    Desktop only: the path must be on the machine the drag starts from.
+    """
+    if not bool(getattr(request.app.state, "native_file_actions", False)):
+        raise HTTPException(status_code=404, detail="native-drag-disabled")
+    body = await request.body()
+    if not body or len(body) > _MAX_EDIT_BYTES:
+        raise HTTPException(status_code=413, detail="The picture is empty or too large.")
+    from jarvis.appshot.dragfile import write_drag_file  # noqa: PLC0415
+    from jarvis.platform.clipboard_image import is_png  # noqa: PLC0415
+
+    if not is_png(body):
+        raise HTTPException(status_code=400, detail="The picture is not a PNG.")
+    path = await asyncio.to_thread(write_drag_file, body)
+    if path is None:
+        raise HTTPException(status_code=503, detail="The drag file could not be written.")
+    return {"path": str(path)}
 
 
 @router.get("/pending")

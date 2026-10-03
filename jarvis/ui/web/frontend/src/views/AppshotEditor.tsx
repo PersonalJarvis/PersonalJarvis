@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
-  Check,
+  ChevronDown,
   Circle,
   Copy,
   Crop,
   Download,
   Focus,
-  Image as ImageIcon,
+  GripVertical,
   Grid3x3,
   Highlighter,
+  Image as ImageIcon,
   Loader2,
   Minus,
   MousePointer2,
@@ -34,6 +35,7 @@ import {
   COLORS,
   CROP_RATIOS,
   DEFAULT_BACKGROUND,
+  STROKE_LEVELS,
   TOOL_KEYS,
   bounds,
   canvasMeasure,
@@ -69,6 +71,7 @@ import {
   type Tool,
 } from "@/lib/appshotEditorModel";
 import { saveOrDownload } from "@/lib/clipboard";
+import { canNativeDrag, startNativeFileDrag } from "@/lib/nativeDrag";
 import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
 
@@ -84,7 +87,34 @@ import { useEventStore } from "@/store/events";
  * because the WebView cannot be trusted with images; Save writes into
  * Downloads through the backend because the desktop WebView drops browser
  * downloads. In a plain browser both fall back to the browser's own paths.
+ *
+ * The layout follows CleanShot X's editor window: a floating rounded window
+ * over a dimmed app, the tools as pills along the top with colour and size
+ * beside them, "Save" and "Done" at the top right, and a bottom bar with the
+ * zoom, a "Drag me" handle (a real file drag into any app, where the desktop
+ * shell has the native drag bridge) and the copy action.
  */
+
+/** Toolbar order, as in CleanShot X: selection, shapes, text, effects, ink. */
+const TOOL_ORDER: readonly Tool[] = [
+  "move",
+  "rect",
+  "filled",
+  "ellipse",
+  "line",
+  "arrow",
+  "text",
+  "redact",
+  "spotlight",
+  "counter",
+  "pen",
+  "highlight",
+];
+
+const KEY_OF: Record<Tool, string> = Object.fromEntries(TOOL_KEYS.map(({ tool, key }) => [tool, key])) as Record<Tool, string>;
+
+/** Zoom steps after "fit". */
+const ZOOMS = [0.5, 1, 2] as const;
 
 const TOOL_ICONS: Record<Tool, typeof Square | null> = {
   move: MousePointer2,
@@ -103,8 +133,6 @@ const TOOL_ICONS: Record<Tool, typeof Square | null> = {
   background: ImageIcon,
 };
 
-/** Tools whose colour and stroke size matter. */
-const INKED: ReadonlySet<Tool> = new Set(["arrow", "line", "rect", "filled", "ellipse", "pen", "highlight", "text", "counter"]);
 
 const COLOR_KEY = "jarvis.appshotEditor.color";
 const BACKGROUND_KEY = "jarvis.appshotEditor.background";
@@ -171,7 +199,11 @@ export function AppshotEditor({ appshotId, onClose, onApplied }: AppshotEditorPr
   const ops = history.present;
   const [tool, setTool] = useState<Tool>("arrow");
   const [color, setColorState] = useState(() => readStored(COLOR_KEY, COLORS[0], isColor));
-  const [widthIndex, setWidthIndex] = useState(1);
+  const [widthIndex, setWidthIndex] = useState(2);
+  const [zoom, setZoom] = useState<"fit" | number>("fit");
+  const [menu, setMenu] = useState<"" | "style" | "zoom">("");
+  const [dragging, setDragging] = useState(false);
+  const holdingRef = useRef(false);
   const [textStyle, setTextStyle] = useState<TextStyle>("plain");
   const [redactMode, setRedactMode] = useState<RedactMode>("pixelate");
   const [cropRatio, setCropRatio] = useState<string>("free");
@@ -262,10 +294,11 @@ export function AppshotEditor({ appshotId, onClose, onApplied }: AppshotEditorPr
   const shown = tool === "crop" ? { x: 0, y: 0, w: iw, h: ih } : view;
   const framing = tool === "crop" ? { ...background, enabled: false } : background;
   const layout = frameLayout(shown.w || 1, shown.h || 1, framing);
-  const scale =
+  const fitScale =
     shown.w > 0 && stage.w > 0
       ? Math.min((stage.w - 48) / layout.width, (stage.h - 48) / layout.height, 1)
       : 1;
+  const scale = zoom === "fit" ? fitScale : zoom;
   const cw = Math.max(1, Math.round(shown.w * scale));
   const ch = Math.max(1, Math.round(shown.h * scale));
   const ratio = CROP_RATIOS.find((entry) => entry.id === cropRatio)?.ratio ?? null;
@@ -565,7 +598,8 @@ export function AppshotEditor({ appshotId, onClose, onApplied }: AppshotEditorPr
       const key = event.key.toLowerCase();
       if (event.key === "Escape") {
         event.preventDefault();
-        if (confirmDiscard) setConfirmDiscard(false);
+        if (menu) setMenu("");
+        else if (confirmDiscard) setConfirmDiscard(false);
         else if (gestureRef.current) setGesture(null);
         else if (selectedId !== null) setSelectedId(null);
         else requestClose();
@@ -596,7 +630,7 @@ export function AppshotEditor({ appshotId, onClose, onApplied }: AppshotEditorPr
         const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
         const dy = event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
         nudgeSelected(dx, dy);
-      } else if (!mod && !event.altKey && ["1", "2", "3"].includes(event.key)) {
+      } else if (!mod && !event.altKey && /^[1-5]$/.test(event.key)) {
         setWidthIndex(Number(event.key) - 1);
       } else if (!mod && !event.altKey) {
         const next = toolForKey(event.key);
@@ -605,7 +639,56 @@ export function AppshotEditor({ appshotId, onClose, onApplied }: AppshotEditorPr
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [chooseTool, confirmDiscard, copy, nudgeSelected, redo, removeSelected, requestClose, save, scale, selectedId, setGesture, typing, undo, use]);
+  }, [chooseTool, confirmDiscard, copy, menu, nudgeSelected, redo, removeSelected, requestClose, save, scale, selectedId, setGesture, typing, undo, use]);
+
+  // -- drag out --------------------------------------------------------------
+  // The handle writes the finished picture to a file only when pressed, then
+  // hands it to the native drag bridge if the button is still held.
+  const canDragOut = native && canNativeDrag();
+  useEffect(() => {
+    const release = () => {
+      holdingRef.current = false;
+    };
+    window.addEventListener("pointerup", release);
+    window.addEventListener("blur", release);
+    return () => {
+      window.removeEventListener("pointerup", release);
+      window.removeEventListener("blur", release);
+    };
+  }, []);
+
+  const dragOut = async (event: React.PointerEvent) => {
+    if (event.button !== 0 || !image || dragging) return;
+    event.preventDefault();
+    holdingRef.current = true;
+    setDragging(true);
+    try {
+      const blob = await render();
+      const response = await fetch("/api/appshot/drag-file", {
+        method: "POST",
+        headers: { "content-type": "image/png" },
+        body: blob,
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const { path } = (await response.json()) as { path: string };
+      if (holdingRef.current) startNativeFileDrag(path);
+      else pushToast("info", t("appshot_editor.drag_release"));
+    } catch (error) {
+      pushToast("error", fill(t("appshot_editor.drag_failed"), { 0: (error as Error).message }));
+    } finally {
+      setDragging(false);
+    }
+  };
+
+  // Close an open menu on a press anywhere else.
+  useEffect(() => {
+    if (!menu) return;
+    const close = (event: PointerEvent) => {
+      if (!(event.target as Element | null)?.closest?.("[data-editor-menu]")) setMenu("");
+    };
+    window.addEventListener("pointerdown", close, true);
+    return () => window.removeEventListener("pointerdown", close, true);
+  }, [menu]);
 
   const label = (key: string) => (ready ? t(`appshot_editor.${key}`) : "");
   const toolLabel = (name: Tool) => label(`tool_${name}`);
@@ -616,321 +699,434 @@ export function AppshotEditor({ appshotId, onClose, onApplied }: AppshotEditorPr
     tool === "text" ? "text" : tool === "move" ? (gesture?.kind === "move" ? "grabbing" : "default") : tool === "background" ? "default" : "crosshair";
   const frameOn = framing.enabled;
   const preset = presetById(background.preset);
+  const zoomLabel = zoom === "fit" ? label("zoom_fit") : `${Math.round(zoom * 100)}%`;
 
   const hint =
     tool === "move"
       ? label("hint_move")
-      : tool === "crop"
-        ? label("hint_crop")
-        : tool === "counter"
-          ? label("hint_counter")
-          : tool === "spotlight"
-            ? label("hint_spotlight")
-            : tool === "background"
-              ? label("hint_background")
-              : "";
+      : tool === "counter"
+        ? label("hint_counter")
+        : tool === "spotlight"
+          ? label("hint_spotlight")
+          : "";
+  const showCapsule = tool === "text" || tool === "redact" || tool === "crop" || tool === "background" || hint !== "";
+
+  const toolButton = (name: Tool) => {
+    const Icon = TOOL_ICONS[name];
+    return (
+      <QuickTooltip key={name} content={`${toolLabel(name)} (${KEY_OF[name].toUpperCase()})`} side="bottom">
+        <button
+          type="button"
+          aria-label={toolLabel(name)}
+          aria-pressed={tool === name}
+          onClick={() => chooseTool(name)}
+          data-testid={`appshot-editor-tool-${name}`}
+          className={cn(
+            "flex h-7 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors",
+            "hover:bg-foreground/10 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-border-strong",
+            (name === "crop" || name === "background") && "bg-foreground/10",
+            tool === name && "bg-foreground/20 text-foreground",
+          )}
+        >
+          {name === "filled" ? (
+            <Square className="h-[15px] w-[15px]" fill="currentColor" aria-hidden />
+          ) : name === "counter" ? (
+            <span className="flex h-[15px] w-[15px] items-center justify-center rounded-full bg-current text-[9px] font-bold leading-none">
+              <span className="text-popover">1</span>
+            </span>
+          ) : Icon ? (
+            <Icon className="h-[15px] w-[15px]" aria-hidden />
+          ) : null}
+        </button>
+      </QuickTooltip>
+    );
+  };
 
   return (
-    <div className="flex h-full w-full flex-col bg-background text-foreground" data-testid="appshot-editor">
-      {/* Top bar: close + title · tools · history and results. */}
-      <div className="flex shrink-0 items-center gap-3 border-b border-border px-3 py-2">
-        <div className="flex min-w-0 items-center gap-2">
+    <div className="flex h-full w-full items-center justify-center bg-black/45 p-2 backdrop-blur-[2px] sm:p-5">
+      <div
+        className="relative flex h-full w-full max-w-[1800px] flex-col overflow-hidden rounded-2xl border border-border bg-popover text-popover-foreground shadow-2xl"
+        data-testid="appshot-editor"
+      >
+        {/* Top bar: close · crop and background · tools · colour and size · Save, Done. */}
+        <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3">
           <QuickTooltip content={`${label("close")} (Esc)`} side="bottom">
-            <Button type="button" variant="ghost" size="sm" onClick={requestClose} aria-label={label("close")} data-testid="appshot-editor-close">
-              <X aria-hidden />
-            </Button>
-          </QuickTooltip>
-          <p className="hidden truncate text-sm font-medium text-foreground xl:block">{label("title")}</p>
-        </div>
-
-        <div className="flex min-w-0 flex-1 justify-center overflow-x-auto">
-          <div className="flex items-center gap-0.5 rounded-xl bg-secondary/70 p-1" role="toolbar" aria-label={label("tools")}>
-            {TOOL_KEYS.map(({ tool: name, key }) => {
-              const Icon = TOOL_ICONS[name];
-              return (
-                <QuickTooltip key={name} content={`${toolLabel(name)} (${key.toUpperCase()})`} side="bottom">
-                  <button
-                    type="button"
-                    aria-label={toolLabel(name)}
-                    aria-pressed={tool === name}
-                    onClick={() => chooseTool(name)}
-                    data-testid={`appshot-editor-tool-${name}`}
-                    className={cn(
-                      "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors",
-                      "hover:bg-popover hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-border-strong",
-                      tool === name && "bg-popover text-foreground shadow-sm",
-                      (name === "redact" || name === "move" || name === "background") && "ml-1",
-                    )}
-                  >
-                    {name === "filled" ? (
-                      <Square className="h-4 w-4" fill="currentColor" aria-hidden />
-                    ) : name === "counter" ? (
-                      <span className="flex h-4 w-4 items-center justify-center rounded-full bg-current text-[10px] font-bold leading-none">
-                        <span className="text-popover">1</span>
-                      </span>
-                    ) : Icon ? (
-                      <Icon className="h-4 w-4" aria-hidden />
-                    ) : null}
-                  </button>
-                </QuickTooltip>
-              );
-            })}
-          </div>
-        </div>
-
-        <div className="flex shrink-0 items-center gap-1.5">
-          <QuickTooltip content={`${label("undo")} (Ctrl+Z)`} side="bottom">
-            <Button type="button" variant="ghost" size="sm" onClick={undo} disabled={history.past.length === 0} aria-label={label("undo")} data-testid="appshot-editor-undo">
-              <Undo2 aria-hidden />
-            </Button>
-          </QuickTooltip>
-          <QuickTooltip content={`${label("redo")} (Ctrl+Shift+Z)`} side="bottom">
-            <Button type="button" variant="ghost" size="sm" onClick={redo} disabled={history.future.length === 0} aria-label={label("redo")} data-testid="appshot-editor-redo">
-              <Redo2 aria-hidden />
-            </Button>
-          </QuickTooltip>
-          <div className="mx-1 h-5 w-px bg-border" aria-hidden />
-          <QuickTooltip content={`${label("copy")} (Ctrl+C)`} side="bottom">
-            <Button type="button" variant="secondary" size="sm" onClick={() => void copy()} disabled={!image || busy !== ""} data-testid="appshot-editor-copy">
-              {busy === "copy" ? <Loader2 className="animate-spin" aria-hidden /> : <Copy aria-hidden />}
-              <span className="hidden lg:inline">{label("copy")}</span>
-            </Button>
-          </QuickTooltip>
-          <QuickTooltip content={`${label("save")} (Ctrl+S)`} side="bottom">
-            <Button type="button" variant="secondary" size="sm" onClick={() => void save()} disabled={!image || busy !== ""} data-testid="appshot-editor-save">
-              {busy === "save" ? <Loader2 className="animate-spin" aria-hidden /> : <Download aria-hidden />}
-              <span className="hidden lg:inline">{label("save")}</span>
-            </Button>
-          </QuickTooltip>
-          <QuickTooltip content={`${fill(label("apply_hint"), { name: assistantName })} (Ctrl+Enter)`} side="bottom">
-            <Button type="button" size="sm" onClick={() => void use()} disabled={!image || busy !== ""} data-testid="appshot-editor-apply">
-              {busy === "apply" ? <Loader2 className="animate-spin" aria-hidden /> : <Check aria-hidden />}
-              <span className="hidden md:inline">{label("apply")}</span>
-            </Button>
-          </QuickTooltip>
-        </div>
-      </div>
-
-      {/* Options for the active tool. */}
-      <div className="flex min-h-11 shrink-0 flex-wrap items-center justify-center gap-x-4 gap-y-1.5 border-b border-border px-3 py-1.5 text-sm" data-testid="appshot-editor-options">
-        {INKED.has(tool) && (
-          <>
-            <div className="flex items-center gap-1.5" role="group" aria-label={label("color")}>
-              {COLORS.map((swatch) => (
-                <button
-                  key={swatch}
-                  type="button"
-                  aria-label={swatch}
-                  aria-pressed={color === swatch}
-                  onClick={() => setColor(swatch)}
-                  className={cn(
-                    "h-5 w-5 rounded-full border border-border-strong transition-transform focus:outline-none focus-visible:ring-2 focus-visible:ring-border-strong",
-                    color === swatch && "scale-110 ring-2 ring-foreground/70 ring-offset-2 ring-offset-background",
-                  )}
-                  style={{ backgroundColor: swatch }}
-                />
-              ))}
-              <QuickTooltip content={label("custom_color")} side="bottom">
-                <label
-                  className={cn(
-                    "relative h-5 w-5 cursor-pointer overflow-hidden rounded-full border border-border-strong",
-                    !COLORS.includes(color) && "ring-2 ring-foreground/70 ring-offset-2 ring-offset-background",
-                  )}
-                  style={{ background: "conic-gradient(#ff3b30, #ffcc00, #34c759, #0a84ff, #af52de, #ff3b30)" }}
-                >
-                  <input
-                    type="color"
-                    value={color}
-                    onChange={(event) => setColor(event.target.value)}
-                    aria-label={label("custom_color")}
-                    className="absolute inset-0 cursor-pointer opacity-0"
-                    data-testid="appshot-editor-custom-color"
-                  />
-                </label>
-              </QuickTooltip>
-            </div>
-            <div className="flex items-center gap-0.5 rounded-lg bg-secondary/70 p-0.5" role="group" aria-label={label("size")}>
-              {(["size_small", "size_medium", "size_large"] as const).map((name, index) => (
-                <QuickTooltip key={name} content={`${label(name)} (${index + 1})`} side="bottom">
-                  <button
-                    type="button"
-                    aria-label={label(name)}
-                    aria-pressed={widthIndex === index}
-                    onClick={() => setWidthIndex(index)}
-                    className={cn(
-                      "flex h-7 w-7 items-center justify-center rounded-md transition-colors hover:bg-popover",
-                      widthIndex === index && "bg-popover shadow-sm",
-                    )}
-                  >
-                    <span className="rounded-full bg-foreground" style={{ width: 3 + index * 3, height: 3 + index * 3 }} />
-                  </button>
-                </QuickTooltip>
-              ))}
-            </div>
-          </>
-        )}
-
-        {tool === "text" && (
-          <Segmented
-            label={label("text_style")}
-            value={textStyle}
-            onChange={(value) => setTextStyle(value as TextStyle)}
-            options={[
-              { value: "plain", label: label("text_plain") },
-              { value: "label", label: label("text_label") },
-              { value: "outline", label: label("text_outline") },
-            ]}
-            testId="appshot-editor-text-style"
-          />
-        )}
-
-        {tool === "redact" && (
-          <Segmented
-            label={label("redact_mode")}
-            value={redactMode}
-            onChange={(value) => setRedactMode(value as RedactMode)}
-            options={[
-              { value: "pixelate", label: label("redact_pixelate") },
-              { value: "blur", label: label("redact_blur") },
-            ]}
-            testId="appshot-editor-redact-mode"
-          />
-        )}
-
-        {tool === "crop" && (
-          <Segmented
-            label={label("crop_ratio")}
-            value={cropRatio}
-            onChange={setCropRatio}
-            options={CROP_RATIOS.map((entry) => ({ value: entry.id, label: entry.id === "free" ? label("crop_free") : entry.id }))}
-            testId="appshot-editor-crop-ratio"
-          />
-        )}
-
-        {tool === "background" && (
-          <>
-            <label className="flex items-center gap-2 text-muted-foreground">
-              <Switch
-                checked={background.enabled}
-                onCheckedChange={(enabled) => setBackground({ enabled })}
-                aria-label={label("background_enabled")}
-                data-testid="appshot-editor-background-enabled"
-              />
-              {label("background_enabled")}
-            </label>
-            <div className="flex items-center gap-1.5" role="group" aria-label={label("background_preset")}>
-              {BACKGROUND_PRESETS.map((entry) => (
-                <button
-                  key={entry.id}
-                  type="button"
-                  aria-label={entry.id}
-                  aria-pressed={background.preset === entry.id}
-                  onClick={() => setBackground({ preset: entry.id, enabled: true })}
-                  className={cn(
-                    "h-6 w-6 rounded-md border border-border-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-border-strong",
-                    background.preset === entry.id && background.enabled && "ring-2 ring-foreground/70 ring-offset-2 ring-offset-background",
-                  )}
-                  style={{ background: presetCss(entry) }}
-                />
-              ))}
-            </div>
-            <Slider label={label("background_padding")} min={0} max={0.2} step={0.01} value={background.padding} onChange={(padding) => setBackground({ padding, enabled: true })} />
-            <Slider label={label("background_radius")} min={0} max={40} step={1} value={background.radius} onChange={(radius) => setBackground({ radius, enabled: true })} />
-            <label className="flex items-center gap-2 text-muted-foreground">
-              <Switch checked={background.shadow} onCheckedChange={(shadow) => setBackground({ shadow })} aria-label={label("background_shadow")} />
-              {label("background_shadow")}
-            </label>
-          </>
-        )}
-
-        {tool === "move" && selected && (
-          <Button type="button" variant="ghost" size="sm" onClick={removeSelected} data-testid="appshot-editor-delete">
-            <Trash2 aria-hidden />
-            {label("delete")}
-          </Button>
-        )}
-
-        {hint && <p className="text-muted-foreground">{hint}</p>}
-      </div>
-
-      {/* The picture. */}
-      <div ref={stageRef} className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-muted/40">
-        {load === "failed" ? (
-          <div className="flex max-w-sm flex-col items-center gap-3 text-center" data-testid="appshot-editor-failed">
-            <p className="text-base text-muted-foreground">{label("gone")}</p>
-            <Button type="button" variant="secondary" size="sm" onClick={onClose}>
-              {label("close")}
-            </Button>
-          </div>
-        ) : !image ? (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-            {label("loading")}
-          </div>
-        ) : (
-          <div
-            className={cn(frameOn ? "" : "shadow-2xl ring-1 ring-border")}
-            style={
-              frameOn
-                ? { padding: layout.image.x * scale, background: presetCss(preset), borderRadius: 4 }
-                : undefined
-            }
-            data-testid="appshot-editor-frame"
-          >
-            <div
-              className="relative overflow-hidden"
-              style={{
-                width: cw,
-                height: ch,
-                borderRadius: frameOn ? layout.radius * scale : 0,
-                boxShadow: frameOn && background.shadow ? "0 12px 40px rgba(0,0,0,0.35)" : undefined,
-              }}
+            <button
+              type="button"
+              onClick={requestClose}
+              aria-label={label("close")}
+              data-testid="appshot-editor-close"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-foreground/10 text-muted-foreground transition-colors hover:bg-destructive hover:text-destructive-foreground"
             >
-              <canvas
-                ref={canvasRef}
-                style={{ width: cw, height: ch, cursor, touchAction: "none", display: "block" }}
-                onPointerDown={onPointerDown}
-                onPointerMove={onPointerMove}
-                onPointerUp={onPointerUp}
-                onPointerCancel={() => setGesture(null)}
-                onDoubleClick={onDoubleClick}
-                data-testid="appshot-editor-canvas"
+              <X className="h-3.5 w-3.5" aria-hidden />
+            </button>
+          </QuickTooltip>
+          <div className="flex shrink-0 items-center gap-1">
+            {toolButton("crop")}
+            {toolButton("background")}
+          </div>
+          <div className="h-5 w-px shrink-0 bg-border" aria-hidden />
+          <div className="flex min-w-0 items-center gap-0.5 overflow-x-auto" role="toolbar" aria-label={label("tools")}>
+            {TOOL_ORDER.map(toolButton)}
+          </div>
+          <div className="h-5 w-px shrink-0 bg-border" aria-hidden />
+
+          {/* Colour (a menu) and size (a slider), like CleanShot's style controls. */}
+          <div className="relative shrink-0" data-editor-menu>
+            <QuickTooltip content={label("color")} side="bottom">
+              <button
+                type="button"
+                aria-label={label("color")}
+                aria-expanded={menu === "style"}
+                onClick={() => setMenu(menu === "style" ? "" : "style")}
+                data-testid="appshot-editor-style"
+                className="flex h-7 items-center gap-1 rounded-full bg-foreground/10 pl-1.5 pr-1 transition-colors hover:bg-foreground/15"
+              >
+                <span className="h-4 w-4 rounded-full border border-border-strong" style={{ backgroundColor: color }} />
+                <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+              </button>
+            </QuickTooltip>
+            {menu === "style" && (
+              <div
+                className="absolute left-0 top-full z-10 mt-2 w-[208px] rounded-xl border border-border bg-popover p-2.5 shadow-2xl"
+                role="group"
+                aria-label={label("color")}
+                data-testid="appshot-editor-style-menu"
+              >
+                <div className="grid grid-cols-5 gap-2">
+                  {COLORS.map((swatch) => (
+                    <button
+                      key={swatch}
+                      type="button"
+                      aria-label={swatch}
+                      aria-pressed={color === swatch}
+                      onClick={() => {
+                        setColor(swatch);
+                        setMenu("");
+                      }}
+                      className={cn(
+                        "h-7 w-7 rounded-full border border-border-strong transition-transform hover:scale-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-border-strong",
+                        color === swatch && "ring-2 ring-foreground/70 ring-offset-2 ring-offset-popover",
+                      )}
+                      style={{ backgroundColor: swatch }}
+                    />
+                  ))}
+                  <label
+                    className={cn(
+                      "relative h-7 w-7 cursor-pointer overflow-hidden rounded-full border border-border-strong",
+                      !COLORS.includes(color) && "ring-2 ring-foreground/70 ring-offset-2 ring-offset-popover",
+                    )}
+                    style={{ background: "conic-gradient(#ff3b30, #ffcc00, #34c759, #0a84ff, #af52de, #ff3b30)" }}
+                    title={label("custom_color")}
+                  >
+                    <input
+                      type="color"
+                      value={color}
+                      onChange={(event) => setColor(event.target.value)}
+                      aria-label={label("custom_color")}
+                      className="absolute inset-0 cursor-pointer opacity-0"
+                      data-testid="appshot-editor-custom-color"
+                    />
+                  </label>
+                </div>
+              </div>
+            )}
+          </div>
+          <QuickTooltip content={`${label("size")} (1–5)`} side="bottom">
+            <label className="flex shrink-0 items-center">
+              <span className="sr-only">{label("size")}</span>
+              <input
+                type="range"
+                min={0}
+                max={STROKE_LEVELS.length - 1}
+                step={1}
+                value={widthIndex}
+                onChange={(event) => setWidthIndex(Number(event.currentTarget.value))}
+                aria-label={label("size")}
+                data-testid="appshot-editor-size"
+                className="h-1 w-24 cursor-pointer accent-primary"
               />
-              {typing && textScreen && (
-                <textarea
-                  autoFocus
-                  value={typing.text}
-                  placeholder={label("text_placeholder")}
-                  onChange={(event) => setTyping({ ...typing, text: event.target.value })}
-                  onBlur={commitText}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" && !event.shiftKey) {
-                      event.preventDefault();
-                      commitText();
-                    } else if (event.key === "Escape") {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      setTyping(null);
-                    }
-                  }}
-                  rows={Math.max(1, typing.text.split("\n").length)}
-                  data-testid="appshot-editor-text-input"
-                  className="absolute resize-none border border-dashed border-white/70 bg-black/25 p-0 font-semibold leading-tight outline-none placeholder:text-white/60"
+            </label>
+          </QuickTooltip>
+
+          <div className="ml-auto flex shrink-0 items-center gap-1.5">
+            <QuickTooltip content={`${label("save_hint")} (Ctrl+S)`} side="bottom">
+              <button
+                type="button"
+                onClick={() => void save()}
+                disabled={!image || busy !== ""}
+                data-testid="appshot-editor-save"
+                className="flex h-7 items-center gap-1.5 rounded-full bg-foreground/10 px-3 text-[13px] font-medium text-foreground transition-colors hover:bg-foreground/15 disabled:opacity-50"
+              >
+                {busy === "save" && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}
+                {label("save")}
+              </button>
+            </QuickTooltip>
+            <QuickTooltip content={`${fill(label("done_hint"), { name: assistantName })} (Ctrl+Enter)`} side="bottom">
+              <button
+                type="button"
+                onClick={() => void use()}
+                disabled={!image || busy !== ""}
+                data-testid="appshot-editor-apply"
+                className="flex h-7 items-center gap-1.5 rounded-full bg-primary px-3.5 text-[13px] font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+              >
+                {busy === "apply" && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}
+                {label("done")}
+              </button>
+            </QuickTooltip>
+          </div>
+        </div>
+
+        {/* The picture. */}
+        <div className="relative min-h-0 flex-1 bg-background/70">
+          {/* Floats over the picture, so it never changes the space the picture fits into. */}
+          {showCapsule && (
+            <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex justify-center px-3 pt-3">
+              <div
+                className="pointer-events-auto flex max-w-full flex-wrap items-center justify-center gap-x-3 gap-y-1.5 rounded-2xl border border-border bg-popover/95 px-3 py-1.5 text-[13px] shadow-lg backdrop-blur"
+                data-testid="appshot-editor-options"
+              >
+                {tool === "text" && (
+                  <Segmented
+                    label={label("text_style")}
+                    value={textStyle}
+                    onChange={(value) => setTextStyle(value as TextStyle)}
+                    options={[
+                      { value: "plain", label: label("text_plain") },
+                      { value: "label", label: label("text_label") },
+                      { value: "outline", label: label("text_outline") },
+                    ]}
+                    testId="appshot-editor-text-style"
+                  />
+                )}
+                {tool === "redact" && (
+                  <Segmented
+                    label={label("redact_mode")}
+                    value={redactMode}
+                    onChange={(value) => setRedactMode(value as RedactMode)}
+                    options={[
+                      { value: "pixelate", label: label("redact_pixelate") },
+                      { value: "blur", label: label("redact_blur") },
+                    ]}
+                    testId="appshot-editor-redact-mode"
+                  />
+                )}
+                {tool === "crop" && (
+                  <Segmented
+                    label={label("crop_ratio")}
+                    value={cropRatio}
+                    onChange={setCropRatio}
+                    options={CROP_RATIOS.map((entry) => ({ value: entry.id, label: entry.id === "free" ? label("crop_free") : entry.id }))}
+                    testId="appshot-editor-crop-ratio"
+                  />
+                )}
+                {tool === "background" && (
+                  <>
+                    <label className="flex items-center gap-2 text-muted-foreground">
+                      <Switch
+                        checked={background.enabled}
+                        onCheckedChange={(enabled) => setBackground({ enabled })}
+                        aria-label={label("background_enabled")}
+                        data-testid="appshot-editor-background-enabled"
+                      />
+                      {label("background_enabled")}
+                    </label>
+                    <div className="flex items-center gap-1.5" role="group" aria-label={label("background_preset")}>
+                      {BACKGROUND_PRESETS.map((entry) => (
+                        <button
+                          key={entry.id}
+                          type="button"
+                          aria-label={entry.id}
+                          aria-pressed={background.preset === entry.id}
+                          onClick={() => setBackground({ preset: entry.id, enabled: true })}
+                          className={cn(
+                            "h-6 w-6 rounded-md border border-border-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-border-strong",
+                            background.preset === entry.id && background.enabled && "ring-2 ring-foreground/70 ring-offset-2 ring-offset-popover",
+                          )}
+                          style={{ background: presetCss(entry) }}
+                        />
+                      ))}
+                    </div>
+                    <Slider label={label("background_padding")} min={0} max={0.2} step={0.01} value={background.padding} onChange={(padding) => setBackground({ padding, enabled: true })} />
+                    <Slider label={label("background_radius")} min={0} max={40} step={1} value={background.radius} onChange={(radius) => setBackground({ radius, enabled: true })} />
+                    <label className="flex items-center gap-2 text-muted-foreground">
+                      <Switch checked={background.shadow} onCheckedChange={(shadow) => setBackground({ shadow })} aria-label={label("background_shadow")} />
+                      {label("background_shadow")}
+                    </label>
+                  </>
+                )}
+                {hint && <p className="text-muted-foreground">{hint}</p>}
+              </div>
+            </div>
+          )}
+
+          <div ref={stageRef} className="h-full w-full overflow-auto" data-testid="appshot-editor-stage">
+          <div className="flex min-h-full min-w-full items-center justify-center p-6" style={{ width: "max-content" }}>
+            {load === "failed" ? (
+              <div className="flex max-w-sm flex-col items-center gap-3 text-center" data-testid="appshot-editor-failed">
+                <p className="text-base text-muted-foreground">{label("gone")}</p>
+                <Button type="button" variant="secondary" size="sm" onClick={onClose}>
+                  {label("close")}
+                </Button>
+              </div>
+            ) : !image ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                {label("loading")}
+              </div>
+            ) : (
+              <div
+                className={cn(frameOn ? "" : "shadow-2xl ring-1 ring-border")}
+                style={frameOn ? { padding: layout.image.x * scale, background: presetCss(preset), borderRadius: 6 } : undefined}
+                data-testid="appshot-editor-frame"
+              >
+                <div
+                  className="relative overflow-hidden"
                   style={{
-                    left: textScreen.left,
-                    top: textScreen.top,
-                    color,
-                    fontSize: textSize(width) * scale,
-                    minWidth: 140,
+                    width: cw,
+                    height: ch,
+                    borderRadius: frameOn ? layout.radius * scale : 0,
+                    boxShadow: frameOn && background.shadow ? "0 12px 40px rgba(0,0,0,0.35)" : undefined,
                   }}
-                />
+                >
+                  <canvas
+                    ref={canvasRef}
+                    style={{ width: cw, height: ch, cursor, touchAction: "none", display: "block" }}
+                    onPointerDown={onPointerDown}
+                    onPointerMove={onPointerMove}
+                    onPointerUp={onPointerUp}
+                    onPointerCancel={() => setGesture(null)}
+                    onDoubleClick={onDoubleClick}
+                    data-testid="appshot-editor-canvas"
+                  />
+                  {typing && textScreen && (
+                    <textarea
+                      autoFocus
+                      value={typing.text}
+                      placeholder={label("text_placeholder")}
+                      onChange={(event) => setTyping({ ...typing, text: event.target.value })}
+                      onBlur={commitText}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" && !event.shiftKey) {
+                          event.preventDefault();
+                          commitText();
+                        } else if (event.key === "Escape") {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          setTyping(null);
+                        }
+                      }}
+                      rows={Math.max(1, typing.text.split("\n").length)}
+                      data-testid="appshot-editor-text-input"
+                      className="absolute resize-none border border-dashed border-white/70 bg-black/25 p-0 font-semibold leading-tight outline-none placeholder:text-white/60"
+                      style={{
+                        left: textScreen.left,
+                        top: textScreen.top,
+                        color,
+                        fontSize: textSize(width) * scale,
+                        minWidth: 140,
+                      }}
+                    />
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+          </div>
+        </div>
+
+        {/* Bottom bar: zoom and history · drag handle · selection, save and copy. */}
+        <div className="grid h-12 shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-2 border-t border-border px-3">
+          <div className="flex items-center gap-1">
+            <div className="relative" data-editor-menu>
+              <button
+                type="button"
+                aria-label={label("zoom")}
+                aria-expanded={menu === "zoom"}
+                onClick={() => setMenu(menu === "zoom" ? "" : "zoom")}
+                data-testid="appshot-editor-zoom"
+                className="flex h-7 items-center gap-1 rounded-full bg-foreground/10 px-2.5 text-[13px] font-medium tabular-nums transition-colors hover:bg-foreground/15"
+              >
+                {zoomLabel}
+                <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+              </button>
+              {menu === "zoom" && (
+                <div className="absolute bottom-full left-0 z-10 mb-2 min-w-[96px] rounded-xl border border-border bg-popover p-1 shadow-2xl" role="menu">
+                  {(["fit", ...ZOOMS] as const).map((entry) => (
+                    <button
+                      key={String(entry)}
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={zoom === entry}
+                      onClick={() => {
+                        setZoom(entry);
+                        setMenu("");
+                      }}
+                      className={cn(
+                        "flex w-full rounded-lg px-2.5 py-1.5 text-left text-[13px] tabular-nums hover:bg-foreground/10",
+                        zoom === entry && "bg-foreground/10 font-medium",
+                      )}
+                    >
+                      {entry === "fit" ? label("zoom_fit") : `${Math.round(entry * 100)}%`}
+                    </button>
+                  ))}
+                </div>
               )}
             </div>
+            <QuickTooltip content={`${label("undo")} (Ctrl+Z)`} side="top">
+              <button type="button" onClick={undo} disabled={history.past.length === 0} aria-label={label("undo")} data-testid="appshot-editor-undo" className={ROUND_ICON}>
+                <Undo2 className="h-[15px] w-[15px]" aria-hidden />
+              </button>
+            </QuickTooltip>
+            <QuickTooltip content={`${label("redo")} (Ctrl+Shift+Z)`} side="top">
+              <button type="button" onClick={redo} disabled={history.future.length === 0} aria-label={label("redo")} data-testid="appshot-editor-redo" className={ROUND_ICON}>
+                <Redo2 className="h-[15px] w-[15px]" aria-hidden />
+              </button>
+            </QuickTooltip>
           </div>
-        )}
+
+          <div className="flex justify-center">
+            {canDragOut && (
+              <QuickTooltip content={label("drag_hint")} side="top">
+                <button
+                  type="button"
+                  onPointerDown={(event) => void dragOut(event)}
+                  onDragStart={(event) => event.preventDefault()}
+                  disabled={!image}
+                  data-testid="appshot-editor-drag"
+                  className="flex h-7 cursor-grab select-none items-center gap-1.5 rounded-full bg-foreground/10 px-3 text-[13px] font-medium text-foreground transition-colors hover:bg-foreground/15 active:cursor-grabbing disabled:opacity-50"
+                >
+                  {dragging ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <GripVertical className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />}
+                  {label("drag_me")}
+                  <GripVertical className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+                </button>
+              </QuickTooltip>
+            )}
+          </div>
+
+          <div className="flex items-center justify-end gap-1">
+            {selected && (
+              <QuickTooltip content={`${label("delete")} (Del)`} side="top">
+                <button type="button" onClick={removeSelected} aria-label={label("delete")} data-testid="appshot-editor-delete" className={ROUND_ICON}>
+                  <Trash2 className="h-[15px] w-[15px]" aria-hidden />
+                </button>
+              </QuickTooltip>
+            )}
+            <QuickTooltip content={`${label("save_hint")} (Ctrl+S)`} side="top">
+              <button type="button" onClick={() => void save()} disabled={!image || busy !== ""} aria-label={label("save")} className={ROUND_ICON}>
+                <Download className="h-[15px] w-[15px]" aria-hidden />
+              </button>
+            </QuickTooltip>
+            <QuickTooltip content={`${label("copy")} (Ctrl+C)`} side="top">
+              <button type="button" onClick={() => void copy()} disabled={!image || busy !== ""} aria-label={label("copy")} data-testid="appshot-editor-copy" className={ROUND_ICON}>
+                {busy === "copy" ? <Loader2 className="h-[15px] w-[15px] animate-spin" aria-hidden /> : <Copy className="h-[15px] w-[15px]" aria-hidden />}
+              </button>
+            </QuickTooltip>
+          </div>
+        </div>
 
         {confirmDiscard && (
-          <div className="absolute inset-0 flex items-center justify-center bg-background/60 backdrop-blur-[2px]" data-testid="appshot-editor-discard">
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/60 backdrop-blur-[2px]" data-testid="appshot-editor-discard">
             <div className="w-[min(360px,calc(100%-2rem))] rounded-2xl border border-border bg-popover p-5 text-popover-foreground shadow-2xl" role="alertdialog" aria-label={label("discard_title")}>
               <p className="text-base font-semibold">{label("discard_title")}</p>
               <p className="mt-1.5 text-sm text-muted-foreground">{label("discard_body")}</p>
@@ -950,6 +1146,9 @@ export function AppshotEditor({ appshotId, onClose, onApplied }: AppshotEditorPr
   );
 }
 
+const ROUND_ICON =
+  "flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground disabled:pointer-events-none disabled:opacity-40";
+
 function Segmented({
   label,
   value,
@@ -966,7 +1165,7 @@ function Segmented({
   return (
     <div className="flex items-center gap-2" data-testid={testId}>
       <span className="text-muted-foreground">{label}</span>
-      <div className="flex items-center gap-0.5 rounded-lg bg-secondary/70 p-0.5" role="group" aria-label={label}>
+      <div className="flex items-center gap-0.5 rounded-lg bg-foreground/10 p-0.5" role="group" aria-label={label}>
         {options.map((option) => (
           <button
             key={option.value}

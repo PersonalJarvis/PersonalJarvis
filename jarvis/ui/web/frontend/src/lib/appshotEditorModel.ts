@@ -101,10 +101,13 @@ export function withId<T extends Draft>(shape: T): T & { id: number } {
   return { ...shape, id: nextId };
 }
 
-/** Stroke widths (S / M / L) for a picture of this size, in its own pixels. */
-export function strokeWidths(width: number, height: number): [number, number, number] {
+/** The five stroke sizes (keys 1–5, the size slider), for a 1400 px picture. */
+export const STROKE_LEVELS = [2, 4, 6, 9, 13] as const;
+
+/** The stroke sizes for a picture of this size, in its own pixels. */
+export function strokeWidths(width: number, height: number): number[] {
   const unit = Math.max(1, Math.max(width, height) / 1400);
-  return [Math.round(3 * unit), Math.round(6 * unit), Math.round(11 * unit)];
+  return STROKE_LEVELS.map((level) => Math.round(level * unit));
 }
 
 export function textSize(stroke: number): number {

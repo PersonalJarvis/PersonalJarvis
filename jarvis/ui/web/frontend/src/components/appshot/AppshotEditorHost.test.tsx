@@ -154,6 +154,26 @@ describe("AppshotEditorHost", () => {
     );
   });
 
+  it("opens the colour menu and zooms from the bottom bar", async () => {
+    render(<AppshotEditorHost />);
+    act(() => useAppshotEditor.getState().open("shot-1"));
+    await screen.findByTestId("appshot-editor-canvas");
+
+    fireEvent.click(screen.getByTestId("appshot-editor-style"));
+    expect(screen.getByTestId("appshot-editor-style-menu")).toBeDefined();
+    // Escape closes the menu first, not the editor.
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByTestId("appshot-editor-style-menu")).toBeNull());
+    expect(screen.getByTestId("appshot-editor")).toBeDefined();
+
+    fireEvent.click(screen.getByTestId("appshot-editor-zoom"));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "100%" }));
+    expect(screen.getByTestId("appshot-editor-zoom").textContent).toContain("100%");
+
+    fireEvent.keyDown(window, { key: "5" });
+    expect((screen.getByTestId("appshot-editor-size") as HTMLInputElement).value).toBe("4");
+  });
+
   it("says when the appshot is gone instead of showing an empty editor", async () => {
     vi.stubGlobal("Image", BrokenImage);
     render(<AppshotEditorHost />);

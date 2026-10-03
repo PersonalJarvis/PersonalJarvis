@@ -46,10 +46,9 @@ describe("appshot editor model", () => {
   });
 
   it("scales stroke and text sizes with the picture", () => {
-    const [small, , large] = strokeWidths(1400, 800);
-    expect(small).toBe(3);
-    expect(large).toBe(11);
-    expect(strokeWidths(2800, 1600)[0]).toBe(6);
+    expect(strokeWidths(1400, 800)).toEqual([2, 4, 6, 9, 13]);
+    expect(strokeWidths(2800, 1600)[0]).toBe(4);
+    expect(strokeWidths(300, 200)[0]).toBe(2);
     expect(textSize(6)).toBe(30);
   });
 });

@@ -77,9 +77,17 @@ the card only opens the editor and shares nothing.
 ## The editor
 
 The editor follows CleanShot X's annotate tool — same tools, same one-letter
-keys — in this app's own look. It opens from the corner card or from
-**Edit** on the last appshot (Settings → Appshots), as a full-window layer
-over the current view.
+keys, the same window shape — in this app's own look. It opens from the
+corner card or from **Edit** on the last appshot (Settings → Appshots), as a
+floating rounded window over the dimmed app; nothing navigates away.
+
+- **Top bar:** close, crop and background, the tools as pills, the colour
+  menu (presets + any colour) and the size slider, then **Save** and
+  **Done**.
+- **Options capsule:** under the top bar, only for tools that have options
+  (text style, pixelate or blur, crop ratio, background) or a hint.
+- **Bottom bar:** zoom (Fit, 50 %, 100 %, 200 %), undo and redo; a **Drag me**
+  handle in the middle; delete (with a selection), save and copy on the right.
 
 | Key | Tool | What it does |
 |---|---|---|
@@ -96,17 +104,21 @@ over the current view.
 | B | Background | Frames the picture on a backdrop (eight presets, padding, corner radius, shadow); applied on copy, save and use. |
 
 Colours: eight presets plus any colour from the system picker; the last one
-is remembered. Sizes: 1 / 2 / 3. History: Ctrl+Z, Ctrl+Shift+Z or Ctrl+Y
-(⌘ on macOS).
+is remembered. Sizes: the slider or keys 1–5. History: Ctrl+Z, Ctrl+Shift+Z
+or Ctrl+Y (⌘ on macOS).
 
 Results: **Copy** (Ctrl+C) puts the PNG on the clipboard — natively through
 `POST /api/appshot/clipboard` on the desktop, the browser clipboard
 elsewhere. **Save** (Ctrl+S) writes it to Downloads through the backend
 (the desktop WebView drops browser downloads) and the toast offers "Show in
-folder". **Use this version** (Ctrl+Enter) replaces the held appshot so the
-next message carries the edit (a picture already sent into a voice call stays
-as it was). Escape cancels a stroke, then a selection, then closes; with
-unsaved edits it asks first.
+folder". **Done** (Ctrl+Enter) replaces the held appshot so the next
+message carries the edit (a picture already sent into a voice call stays
+as it was). **Drag me** writes the finished picture to
+`<temp>/jarvis-appshots/` the moment it is pressed and hands it to the native
+drag bridge while the button is held, so it drops into any app as a real
+file (Windows and macOS; Linux has no drag bridge yet, the handle is hidden
+there and Save + "Show in folder" stand in). Escape closes a menu, cancels a
+stroke, clears a selection, then closes; with unsaved edits it asks first.
 
 ### Compared with CleanShot X
 
@@ -127,6 +139,7 @@ reason.
 | Combine images, editable project file | Not done |
 | Capture area / window / fullscreen, freeze, magnifier, crosshair | Elsewhere: the area picker and the window shortcut ([Selecting an area](#selecting-an-area)); no fullscreen mode |
 | Quick Access Overlay (copy / save / annotate / drag after capture) | Elsewhere: the corner card (click = editor, drag = file) |
+| Editor window: drag handle, zoom, Save / Done | Done: "Drag me" (Windows, macOS), zoom Fit/50/100/200 %, Save to Downloads, Done = use in the next message |
 | Scrolling capture, self-timer | Not done (the page's "in 3 s" button is the only timer) |
 | Screen recording, video editor, GIF | Not done |
 | Cloud upload and sharing | Not done — appshots stay on this machine by design |
