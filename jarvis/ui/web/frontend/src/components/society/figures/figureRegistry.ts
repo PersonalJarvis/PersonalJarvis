@@ -213,7 +213,7 @@ const RESERVED_STYLES = new Set(["spirit"]);
  * own GLB is in.
  */
 export function stylesWithBases(): string[] {
-  const live = new Set(CATALOG.bases.flatMap((b) => b.styles));
+  const live = new Set(publicCatalogBases().flatMap((b) => b.styles));
   return Object.keys(CATALOG.styles).filter((s) => live.has(s) && !RESERVED_STYLES.has(s));
 }
 
@@ -223,12 +223,45 @@ export function isReservedStyle(style: string): boolean {
 }
 
 /**
+ * Licenses that may enter the built-in/public avatar catalog without another
+ * legal review. This list is deliberately closed: a newly generated catalog
+ * row with an unknown license stays renderable for an existing recipe, but
+ * never becomes a new choice just because it exists on disk.
+ */
+export const PUBLIC_CATALOG_LICENSES = ["first-party", "CC0-1.0"] as const;
+const PUBLIC_CATALOG_LICENSE_SET = new Set<string>(PUBLIC_CATALOG_LICENSES);
+
+export function isPublicCatalogLicense(license: string): boolean {
+  return PUBLIC_CATALOG_LICENSE_SET.has(license.trim());
+}
+
+function hasCatalogProvenance(entry: Pick<CatalogBase | CatalogPart, "source" | "license">): boolean {
+  return Boolean(entry.source.trim()) && isPublicCatalogLicense(entry.license);
+}
+
+/**
+ * Built-in bases safe to show as new avatar choices. Reserved lead-only
+ * figures (currently Gigi/spirit) remain resolvable by catalogBaseFor(), but
+ * are never offered as public/avatar-marketplace inventory.
+ */
+export function publicCatalogBases(): CatalogBase[] {
+  return CATALOG.bases.filter(
+    (base) => hasCatalogProvenance(base) && base.styles.some((style) => !isReservedStyle(style)),
+  );
+}
+
+/** Built-in wearable inventory subject to the same fail-closed license gate. */
+export function publicCatalogParts(): CatalogPart[] {
+  return CATALOG.parts.filter(hasCatalogProvenance);
+}
+
+/**
  * The bases a style offers. A style is NOT tied to one archetype — `animal`
  * is quadruped, `spirit` is spirit, `cartoon` may be either — so the
  * archetype narrows the list only when the caller asks for one.
  */
 export function basesForStyle(style: string | null, archetype: FigureArchetype | null = null): CatalogBase[] {
-  return CATALOG.bases.filter(
+  return publicCatalogBases().filter(
     (b) => (!archetype || b.archetype === archetype) && (!style || b.styles.includes(style)),
   );
 }
@@ -240,7 +273,7 @@ export function partsForSlot(
   family: string | null = null,
   size: string | null = null,
 ): CatalogPart[] {
-  return CATALOG.parts.filter(
+  return publicCatalogParts().filter(
     (p) =>
       p.archetype === archetype &&
       p.slot === slot &&
@@ -280,7 +313,7 @@ export function slotsWithParts(
   size: string | null = null,
 ): string[] {
   const seen: string[] = [];
-  for (const p of CATALOG.parts) {
+  for (const p of publicCatalogParts()) {
     if (p.archetype !== archetype) continue;
     if (style && !p.styles.includes(style)) continue;
     if (!fitsBody(p, family, size)) continue;
@@ -303,13 +336,13 @@ export function keepablePartsFor(
 ): Record<string, string> {
   const kept: Record<string, string> = {};
   for (const [slot, id] of Object.entries(parts ?? {})) {
-    const part = CATALOG.parts.find((p) => p.id === id);
+    const part = publicCatalogParts().find((p) => p.id === id);
     if (!part || part.archetype !== archetype || part.slot !== slot) continue;
     if (style && !part.styles.includes(style)) continue;
     if (!fitsBody(part, family, size)) {
       // A vest is a vest whichever girth it was cut for: when the new body
       // takes the other cut, swap to it rather than silently undressing.
-      const swap = CATALOG.parts.find(
+      const swap = publicCatalogParts().find(
         (p) =>
           p.slot === part.slot &&
           p.label === part.label &&
