@@ -1318,12 +1318,29 @@ and the last board events without a model call.
   registered at brain build time and answer an honest "not ready" until the
   server has built the society.
 
+### M4 collaboration extension (2026-10-03)
+
+The same router tool also accepts `agents=[...]` with 2–6 explicit roster names. It does not
+spawn a second coordinator and it does not add another router tool. The call opens one
+`live=True` bounded room (`ROOM_OPEN → SAY* → ROOM_SETTLE`) and returns its acknowledgement
+inside the voice turn. The one `SocietyScheduler` remains the only driver: it applies the
+kill switch, global/daily budgets, concurrency and trace caps before each canonical-chat turn.
+
+Room ownership is durable in `society_rooms`; each model turn is correlated through the
+existing agent-chat delivery receipt. Restart recovery consumes an already terminal chat turn,
+continues an actually running owned turn, and fails an orphan rather than replaying it blindly.
+A terminal room re-enters the same Jarvis result-announcement path used by single-agent
+delegation. `society_status(room_id=...)` reads the exact room and its board transcript without
+an LLM call. Manual REST/MCP rooms remain non-live unless `live=true` is explicit.
+
 ### Regression guards
 
 - `tests/unit/brain/test_routing.py` (both names in `ROUTER_TOOLS`)
-- `tests/unit/plugins/tool/test_delegate_to_agent.py` (ack, unknown agent,
-  veto read-back, status answers, not-ready path)
-- `tests/unit/society/test_scheduler.py` (the wall the tool relies on)
+- `tests/unit/plugins/tool/test_delegate_to_agent.py` (single-agent ack/veto/status plus
+  multi-agent live-room ack, tracking, member validation and kill-switch refusal)
+- `tests/unit/society/test_scheduler.py` (the scheduler wall the tool relies on)
+- `tests/unit/society/test_chat_binding.py` (live room serialization, restart recovery and
+  completion through the existing voice announcement path)
 
 
 ## Amendment 2026-09-07 — Internal agent messages (RUB-14)

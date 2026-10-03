@@ -80,6 +80,89 @@ async def test_delegate_acks_and_assigns(runtime):
     assert events[-2].from_agent == "jarvis"
 
 
+async def test_delegate_group_opens_bounded_live_room_and_acks(runtime):
+    rt, chat = runtime
+    tool = DelegateToAgentTool(runtime_resolver=lambda: rt)
+    res = await tool.execute(
+        {
+            "agents": ["Scout", "Archivist"],
+            "task": "Agree on the best VPS.",
+            "context": "Europe only.",
+            "completion_criteria": "Return the chosen provider and reason.",
+            "refs": ["wiki:requirements"],
+            "reply_policy": "always",
+            "turn_language": "en",
+        },
+        _ctx("let Scout and Archivist work this out together"),
+    )
+    assert res.success, res.error
+    assert res.output["state"] == "running"
+    assert res.output["agent_ids"] == ["scout", "archivist"]
+    assert res.output["max_rounds"] == 3
+    assert res.output["max_messages"] == 10
+    assert res.output["acknowledgement"] == (
+        "Scout, Archivist are working through it together; I will let you know."
+    )
+    room = await rt.rooms.get(res.output["room_id"])
+    assert room is not None and room.live
+    assert room.members == ["scout", "archivist"]
+    assert room.inflight_member == "scout"
+    assert room.inflight_claim_id
+    assert chat.sent and chat.sent[0][0] == "society:scout"
+    assert "Europe only." in room.topic
+    assert "chosen provider" in room.topic
+    assert "wiki:requirements" in room.topic
+    assert f"room:{room.room_id}" in res.artifacts
+
+    status = await SocietyStatusTool(runtime_resolver=lambda: rt).execute(
+        {"room_id": room.room_id},
+        _ctx("how is that discussion going"),
+    )
+    assert status.success
+    assert status.output["room_id"] == room.room_id
+    assert status.output["state"] == "running"
+    assert status.output["events"][0]["msg_type"] == "ROOM_OPEN"
+
+
+async def test_delegate_group_rejects_ambiguous_or_unknown_members(runtime):
+    rt, chat = runtime
+    tool = DelegateToAgentTool(runtime_resolver=lambda: rt)
+    ambiguous = await tool.execute(
+        {"agent": "Scout", "agents": ["Scout", "Archivist"], "task": "Compare."},
+        _ctx(),
+    )
+    assert not ambiguous.success and ambiguous.error == "choose agent or agents"
+    duplicate = await tool.execute(
+        {"agents": ["Scout", "Scout"], "task": "Compare."},
+        _ctx(),
+    )
+    assert not duplicate.success and duplicate.error == "a room requires 2-6 distinct agents"
+    unknown = await tool.execute(
+        {"agents": ["Scout", "Ghost"], "task": "Compare."},
+        _ctx(),
+    )
+    assert not unknown.success and unknown.error == "target_unknown"
+    assert chat.sent == []
+
+
+async def test_delegate_group_reads_kill_switch_refusal_back(runtime):
+    rt, chat = runtime
+    await rt.store.set_kill_switch(True)
+    res = await DelegateToAgentTool(runtime_resolver=lambda: rt).execute(
+        {
+            "agents": ["Scout", "Archivist"],
+            "task": "Compare.",
+            "turn_language": "en",
+        },
+        _ctx(),
+    )
+    assert not res.success
+    assert res.error == "kill_switch"
+    assert res.output["state"] == "refused"
+    assert "cannot start the discussion" in res.output["acknowledgement"]
+    assert chat.sent == []
+
+
 async def test_delegate_speaks_english_when_the_turn_is_english(runtime):
     rt, _ = runtime
     tool = DelegateToAgentTool(runtime_resolver=lambda: rt)

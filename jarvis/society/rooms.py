@@ -149,6 +149,7 @@ class Rooms:
         topic: str = "",
         room_id: str | None = None,
         live: bool = False,
+        metadata: dict[str, str] | None = None,
     ) -> Room:
         unique = list(dict.fromkeys(m.strip() for m in members if m and m.strip()))
         if not MIN_MEMBERS <= len(unique) <= MAX_MEMBERS:
@@ -175,19 +176,24 @@ class Rooms:
             spoke_this_round=False,
             live=live,
         )
+        event_payload: dict[str, Any] = {
+            "room_id": rid,
+            "members": unique,
+            "text": room.topic,
+            "max_rounds": MAX_ROUNDS,
+            "max_messages": MAX_MESSAGES,
+            "live": live,
+        }
+        for key in ("reply_policy", "reply_surface", "reply_session_id", "lang"):
+            value = str((metadata or {}).get(key) or "").strip()
+            if value:
+                event_payload[key] = value
         event = SocietyEnvelope(
             msg_type=MsgType.ROOM_OPEN,
             from_agent=opened_by,
             to_agent=None,
             trace_id=trace_id,
-            payload={
-                "room_id": rid,
-                "members": unique,
-                "text": room.topic,
-                "max_rounds": MAX_ROUNDS,
-                "max_messages": MAX_MESSAGES,
-                "live": live,
-            },
+            payload=event_payload,
         )
         await self._store.insert_room_with_events(
             {

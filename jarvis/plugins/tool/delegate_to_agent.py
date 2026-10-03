@@ -51,6 +51,31 @@ _QUEUED: Final[dict[str, str]] = {
     "en": "The task for {name} is recorded; its start is not confirmed yet.",
     "es": "La tarea para {name} está registrada; su inicio aún no está confirmado.",
 }
+_GROUP_ACK: Final[dict[str, str]] = {
+    "de": "{names} klären das zusammen, ich sage Bescheid.",  # i18n-allow: spoken ack
+    "en": "{names} are working through it together; I will let you know.",
+    "es": "{names} lo están resolviendo juntos; te aviso.",
+}
+_GROUP_QUIET_ACK: Final[dict[str, str]] = {
+    "de": "{names} klären das zusammen.",  # i18n-allow: spoken ack
+    "en": "{names} are working through it together.",
+    "es": "{names} lo están resolviendo juntos.",
+}
+_GROUP_ERROR_ACK: Final[dict[str, str]] = {
+    "de": "{names} klären das zusammen; ich melde Hindernisse.",  # i18n-allow: spoken ack
+    "en": "{names} are working through it together; I will report blockers.",
+    "es": "{names} lo están resolviendo juntos; avisaré de los bloqueos.",
+}
+_GROUP_QUEUED: Final[dict[str, str]] = {
+    "de": "Runde mit {names} erfasst; Start noch nicht bestätigt.",  # i18n-allow
+    "en": "The discussion with {names} is recorded; its start is not confirmed yet.",
+    "es": "La conversación con {names} está registrada; el inicio aún no está confirmado.",
+}
+_GROUP_REFUSED: Final[dict[str, str]] = {
+    "de": "{names} können die Runde gerade nicht starten: {reason}.",  # i18n-allow
+    "en": "{names} cannot start the discussion right now: {reason}.",
+    "es": "{names} no pueden iniciar la conversación ahora: {reason}.",
+}
 _NO_AGENT: Final[dict[str, str]] = {
     "de": "Ich kenne keinen Agenten namens {target}.",  # i18n-allow: spoken reply
     "en": "I do not know an agent called {target}.",
@@ -129,10 +154,11 @@ class DelegateToAgentTool:
     name: str = "delegate_to_agent"
     risk_tier: str = "monitor"
     description: str = (
-        "Hand a task to one of the user's named agents (their agent society, listed on your "
-        "team card): 'let Scout research X', 'Mailbox, answer the invoice mail', 'give that "
-        "to the team'. Use when a background task fits the persistent team; leave `agent` "
-        "empty to let the lead pick the agent whose hands fit the task. The agent works in "
+        "Hand a task to one or several of the user's named agents (their agent society, listed "
+        "on your team card): 'let Scout research X', 'Scout and Archivist work this out', "
+        "'Mailbox, answer the invoice mail', 'give that to the team'. Use `agents` with 2-6 "
+        "explicit names when the user asks them to collaborate; that opens one bounded live room. "
+        "Otherwise use `agent`, or leave it empty to let the lead pick the best fit. Agents work in "
         "the background; you acknowledge now and its result follows reply_policy. "
         "Stay available for conversation while it runs; completion is delivered asynchronously. "
         "Never for inventory/status questions or tasks the user wants done right here. "
@@ -141,8 +167,8 @@ class DelegateToAgentTool:
         "invent facts. Include context and completion_criteria so the agent can act independently. "
         "Select reply_policy=always for requested findings, on_error for work without a "
         "requested success report, none only for explicit silence. Report the acknowledgement "
-        "and state exactly. Keep the "
-        "returned assignment_id and trace_id for society_status; never speak those ids."
+        "and state exactly. Keep the returned assignment_id for one agent or room_id for "
+        "a collaboration, plus trace_id, for society_status; never speak those ids."
     )
     schema: dict[str, Any] = {
         "type": "object",
@@ -152,6 +178,16 @@ class DelegateToAgentTool:
                 "description": (
                     "The agent's name as the user said it; empty when the user did not "
                     "name one (the best-fitting agent is picked from the task)."
+                ),
+            },
+            "agents": {
+                "type": "array",
+                "items": {"type": "string"},
+                "minItems": 2,
+                "maxItems": 6,
+                "description": (
+                    "Two to six explicitly named agents that should collaborate in one bounded "
+                    "live room. Do not combine with agent."
                 ),
             },
             "task": {
@@ -186,28 +222,19 @@ class DelegateToAgentTool:
     async def execute(self, args: dict[str, Any], ctx: ExecutionContext) -> ToolResult:
         lang = _lang(args, ctx)
         target_key = str(args.get("agent") or "").strip()
+        raw_group = args.get("agents")
         task = str(args.get("task") or "").strip()
         if not task:
             return ToolResult(success=False, output=_NOT_READY[lang], error="task required")
         runtime = await self._runtime()
         if runtime is None:
             return ToolResult(success=False, output=_NOT_READY[lang], error="society unavailable")
-        target = await runtime.roster.resolve(target_key) if target_key else None
-        if not target_key:
-            target = runtime.pick_agent(task)
-        if target is None:
-            if target_key:
-                return ToolResult(
-                    success=False,
-                    output=_NO_AGENT[lang].format(target=target_key),
-                    error="target_unknown",
-                )
-            return ToolResult(success=False, output=_NO_FIT[lang], error="no_agent_fits")
-        from jarvis.society.events import MsgType
+
+        from jarvis.society.events import MsgType, RoomState
 
         try:
             policy = select_reply_policy(args.get("reply_policy"), MsgType.ASSIGN)
-        except (TypeError, ValueError) as exc:  # Invalid policy returns a failed tool result.
+        except (TypeError, ValueError) as exc:
             return ToolResult(success=False, output=None, error=str(exc))
         context = str(args.get("context") or "").strip()
         criteria = str(args.get("completion_criteria") or "").strip()
@@ -221,6 +248,110 @@ class DelegateToAgentTool:
             return ToolResult(success=False, output=None, error="refs must be a list of strings")
         if len(brief) > 20_000 or len(refs) > 20:
             return ToolResult(success=False, output=None, error="assignment context exceeds limit")
+
+        if raw_group is not None:
+            if target_key:
+                return ToolResult(success=False, output=None, error="choose agent or agents")
+            if (
+                not isinstance(raw_group, list)
+                or not 2 <= len(raw_group) <= 6
+                or any(not isinstance(name, str) or not name.strip() for name in raw_group)
+            ):
+                return ToolResult(success=False, output=None, error="agents must contain 2-6 names")
+            targets = []
+            seen: set[str] = set()
+            for key in raw_group:
+                target = await runtime.roster.resolve(key.strip())
+                if target is None:
+                    return ToolResult(
+                        success=False,
+                        output=_NO_AGENT[lang].format(target=key.strip()),
+                        error="target_unknown",
+                    )
+                if target.agent_id in seen:
+                    continue
+                seen.add(target.agent_id)
+                targets.append(target)
+            if not 2 <= len(targets) <= 6:
+                return ToolResult(
+                    success=False,
+                    output=None,
+                    error="a room requires 2-6 distinct agents",
+                )
+            room_topic = brief
+            if refs:
+                room_topic += "\n\nReferences:\n" + "\n".join(f"- {ref}" for ref in refs)
+            room = await runtime.rooms.open(
+                opened_by=runtime.lead_id,
+                members=[target.agent_id for target in targets],
+                topic=room_topic,
+                live=True,
+                metadata={
+                    "reply_policy": policy,
+                    **origin_metadata(language=lang),
+                },
+            )
+            current = await runtime.rooms.get(room.room_id)
+            if current is None:
+                return ToolResult(success=False, output=None, error="room unavailable")
+            names = ", ".join(target.name for target in targets)
+            tracking = {
+                "agent_ids": [target.agent_id for target in targets],
+                "agent_names": [target.name for target in targets],
+                "room_id": current.room_id,
+                "trace_id": current.trace_id,
+                "reply_policy": policy,
+                "max_rounds": 3,
+                "max_messages": 10,
+            }
+            if current.state is not RoomState.RUNNING:
+                reason = current.settle_reason or str(current.state)
+                return ToolResult(
+                    success=False,
+                    output={
+                        **tracking,
+                        "state": "refused",
+                        "acknowledgement": _GROUP_REFUSED[lang].format(
+                            names=names,
+                            reason=reason,
+                        ),
+                    },
+                    error=reason,
+                )
+            running = bool(current.inflight_claim_id)
+            ack = (
+                _GROUP_ACK
+                if policy == "always"
+                else _GROUP_ERROR_ACK
+                if policy == "on_error"
+                else _GROUP_QUIET_ACK
+            )
+            return ToolResult(
+                success=True,
+                output={
+                    **tracking,
+                    "state": "running" if running else "recorded",
+                    "acknowledgement": (
+                        ack if running else _GROUP_QUEUED
+                    )[lang].format(names=names),
+                },
+                artifacts=tuple(
+                    [f"agent:{target.agent_id}" for target in targets]
+                    + [f"room:{current.room_id}", f"trace:{current.trace_id}"]
+                ),
+            )
+
+        target = await runtime.roster.resolve(target_key) if target_key else None
+        if not target_key:
+            target = runtime.pick_agent(task)
+        if target is None:
+            if target_key:
+                return ToolResult(
+                    success=False,
+                    output=_NO_AGENT[lang].format(target=target_key),
+                    error="target_unknown",
+                )
+            return ToolResult(success=False, output=_NO_FIT[lang], error="no_agent_fits")
         env = await runtime.say(
             from_agent=runtime.lead_id,
             to_agent=target.agent_id,
@@ -232,8 +363,6 @@ class DelegateToAgentTool:
                 **origin_metadata(language=lang),
             },
         )
-        # The scheduler answered synchronously on the same trace: a CLAIM
-        # means the agent took it, a VETO says why not — say so, no waiting.
         outcome = None
         for event in await runtime.store.events_for_trace(env.trace_id):
             if event.parent_event_id == env.event_id and event.msg_type in (
@@ -302,8 +431,9 @@ class SocietyStatusTool:
         "Answer 'what is <agent> doing?', 'is Scout done?', 'who is on the team?' from the "
         "agent society's board. Read-only. Pass the agent's name, or nothing for the team. "
         "Set details=true for responsibilities, capabilities, state and recorded activity/cost "
-        "statistics (these are observations, not quality scores). Pass assignment_id "
-        "to inspect that exact assignment; trace_id is optional. If prior tool ids are "
+        "statistics (these are observations, not quality scores). Pass room_id to inspect "
+        "one bounded group discussion, or assignment_id to inspect one assignment; trace_id "
+        "is optional for assignments. If prior tool ids are "
         "no longer in context, use agent + latest_assignment=true to retrieve the newest "
         "assignment Jarvis sent that agent from the stored board, including its task and "
         "result. This means newest assignment, not an arbitrary recent event. If 'that task' "
@@ -315,6 +445,7 @@ class SocietyStatusTool:
             "agent": {"type": "string", "description": "An agent's name; omit for the team."},
             "details": {"type": "boolean", "description": "Include actual roster and evidence."},
             "assignment_id": {"type": "string", "description": "Assignment event id."},
+            "room_id": {"type": "string", "description": "Bounded room id returned by delegation."},
             "trace_id": {"type": "string", "description": "Optional expected assignment trace."},
             "latest_assignment": {
                 "type": "boolean",
@@ -348,9 +479,29 @@ class SocietyStatusTool:
         if runtime is None:
             return ToolResult(success=False, output=_NOT_READY[lang], error="society unavailable")
         assignment_id = str(args.get("assignment_id") or "").strip()
+        room_id = str(args.get("room_id") or "").strip()
         trace_id = str(args.get("trace_id") or "").strip()
         target_key = str(args.get("agent") or "").strip()
         latest_assignment = args.get("latest_assignment") is True
+        if room_id:
+            if assignment_id or trace_id or latest_assignment:
+                return ToolResult(
+                    success=False, output=None, error="choose room_id or assignment tracking"
+                )
+            room = await runtime.rooms.get(room_id)
+            if room is None:
+                return ToolResult(success=False, output=None, error="room_unknown")
+            events = await runtime.store.events_for_trace(room.trace_id)
+            return ToolResult(
+                success=True,
+                output={
+                    "room_id": room.room_id,
+                    "trace_id": room.trace_id,
+                    "state": str(room.state),
+                    "room": room.to_dict(),
+                    "events": [event.model_dump(mode="json") for event in events],
+                },
+            )
         if assignment_id or trace_id or latest_assignment:
             if latest_assignment and assignment_id:
                 return ToolResult(

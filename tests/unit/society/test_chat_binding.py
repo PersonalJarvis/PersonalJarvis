@@ -820,6 +820,87 @@ async def test_room_live_scheduler_serializes_turns_and_silence_settles(tmp_path
         svc.store.close()
 
 
+async def test_live_room_completion_reenters_voice_announcement_path(tmp_path: Path):
+    import asyncio
+
+    from jarvis.society.events import RoomState
+
+    published = []
+
+    def publish(event):
+        published.append(event)
+
+    svc = FakeTurnService(AgentChatStore(tmp_path / "agent_chat.db"))
+    cfg = SimpleNamespace(memory=SimpleNamespace(data_dir=str(tmp_path / "data")))
+    rt = SocietyRuntime(
+        tmp_path,
+        seed_starter_team=False,
+        chat_service=lambda: svc,
+        cfg=lambda: cfg,
+        event_publish=publish,
+    )
+    await rt.ensure_started()
+    try:
+        await rt.roster.create(name="Scout", provider="openai")
+        await rt.roster.create(name="Archivist", provider="openai")
+        room = await rt.rooms.open(
+            opened_by="jarvis",
+            members=["scout", "archivist"],
+            topic="Choose a deployment provider.",
+            live=True,
+            metadata={
+                "reply_policy": "always",
+                "reply_surface": "voice",
+                "lang": "en",
+            },
+        )
+
+        sessions = ["society:scout", "society:archivist"] * 3
+        for turn_number, session_id in enumerate(sessions, start=1):
+            for _ in range(200):
+                if len(svc.sent) >= turn_number:
+                    break
+                await asyncio.sleep(0.01)
+            else:
+                pytest.fail(f"room turn {turn_number} was not scheduled")
+            await svc.finish(
+                session_id,
+                f"finding {turn_number}",
+                turn_id=f"turn-{turn_number}",
+            )
+
+        for _ in range(200):
+            settled = await rt.rooms.get(room.room_id)
+            announcements = [
+                event
+                for event in published
+                if getattr(event, "source_layer", "") == "society.lead"
+                and getattr(event, "kind", "") == "completion"
+            ]
+            if (
+                settled is not None
+                and settled.state is RoomState.SETTLED
+                and announcements
+            ):
+                break
+            await asyncio.sleep(0.01)
+        else:
+            pytest.fail("room completion did not reach the announcement path")
+
+        assert settled.settle_reason == "round_cap"
+        events = await rt.store.events_for_trace(room.trace_id)
+        assert [event.msg_type for event in events].count(MsgType.SAY) == 6
+        assert events[-1].msg_type is MsgType.ROOM_SETTLE
+        announcement = announcements[-1]
+        assert "Discussion with Scout, Archivist" in announcement.text
+        assert "finding 1" in announcement.report
+        assert "finding 6" in announcement.report
+        assert rt.scheduler.running == {}
+    finally:
+        await rt.close()
+        svc.store.close()
+
+
 async def test_room_recovery_consumes_terminal_without_replaying_owner(tmp_path: Path):
     import asyncio
 

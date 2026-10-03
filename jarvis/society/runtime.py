@@ -175,6 +175,7 @@ class SocietyRuntime:
             deliver=deliver,
             rooms=self.rooms,
             room_turn=self._dispatch_room_turn,
+            room_settled=self._room_settled,
             curate=self._curate_result,
             budget_tracker_getter=self._get_budget,
         )
@@ -741,6 +742,93 @@ class SocietyRuntime:
 
     async def _curate_result(self, env: SocietyEnvelope) -> None:
         await self.curator.on_result(env)
+
+    async def _room_settled(self, env: SocietyEnvelope) -> None:
+        """Project a terminal live room back to the requesting Jarvis turn."""
+        events = await self.store.events_for_trace(env.trace_id)
+        opening = next((item for item in events if item.msg_type is MsgType.ROOM_OPEN), None)
+        if opening is None or not opening.payload.get("live"):
+            return
+        says = [item for item in events if item.msg_type is MsgType.SAY and item.text.strip()]
+        failed = bool(env.payload.get("failed"))
+        reason = str(env.payload.get("reason") or "")
+        status = "blocked" if failed or reason == "kill_switch" or not says else "done"
+        if not should_report(opening, status):
+            return
+
+        member_ids = [
+            str(item)
+            for item in opening.payload.get("members", [])
+            if isinstance(item, str) and item
+        ]
+        names: dict[str, str] = {}
+        for agent_id in member_ids:
+            agent = await self.roster.get(agent_id)
+            names[agent_id] = agent.name if agent is not None else agent_id
+        language = str(opening.payload.get("lang") or "")
+        joined_names = ", ".join(names.get(agent_id, agent_id) for agent_id in member_ids)
+        group_label = {
+            "de": f"Runde mit {joined_names}",
+            "es": f"Conversación con {joined_names}",
+        }.get(language, f"Discussion with {joined_names}")
+        if says:
+            report = "\n".join(
+                f"{names.get(item.from_agent, item.from_agent)}: {item.text.strip()}"
+                for item in says
+            )[:4000]
+        else:
+            report = {
+                "de": "Die Runde endete ohne einen Beitrag.",
+                "es": "La conversación terminó sin una aportación.",
+            }.get(language, "The discussion ended without a contribution.")
+
+        from jarvis.core.delegation import result_announcement
+
+        announcement = result_announcement(
+            source="society.lead",
+            request_id=opening.event_id,
+            name=group_label,
+            request=opening.text,
+            status=status,
+            report=report,
+            language=language,
+            evidence="room_transcript",
+        )
+        svc = self._get_chat()
+        post = getattr(svc, "post_notice", None)
+        if post is not None:
+            try:
+                session_id = str(opening.payload.get("reply_session_id") or "")
+                if not session_id:
+                    sessions = svc.store.list_sessions(limit=1, surface="jarvis")
+                    session_id = sessions[0].session_id if sessions else ""
+                session = svc.store.get_session(session_id) if session_id else None
+                if session is not None and session.surface == "jarvis":
+                    await post(
+                        session_id,
+                        {
+                            "kind": "society_room_result",
+                            "agent_ids": member_ids,
+                            "agent_names": [names.get(item, item) for item in member_ids],
+                            "status": status,
+                            "text": report[:1000],
+                            "room_id": str(opening.payload.get("room_id") or ""),
+                            "trace_id": opening.trace_id,
+                            "room_open_id": opening.event_id,
+                            "report": announcement.report,
+                        },
+                    )
+            except Exception:  # A chat notice failure must not suppress the voice result.
+                log.warning("society: room result notice delivery failed", exc_info=True)
+        surface = opening.payload.get("reply_surface")
+        if surface == "voice" or (surface is None and opening.trace_id.startswith("voice:")):
+            if self._publish_event is not None:
+                try:
+                    value = self._publish_event(announcement)
+                    if inspect.isawaitable(value):
+                        await value
+                except Exception:  # The board retains the terminal room state.
+                    log.warning("society: room result announcement failed", exc_info=True)
 
     # ------------------------------------------------------------ dispatch
 

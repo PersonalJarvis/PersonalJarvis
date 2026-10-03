@@ -49,6 +49,7 @@ __all__ = [
     "CurateHook",
     "DispatchHook",
     "DeliverHook",
+    "RoomSettledHook",
     "RoomTurnHook",
     "SocietyScheduler",
     "validate_result",
@@ -60,6 +61,7 @@ DispatchHook = Callable[[AgentRecord, SocietyEnvelope], Awaitable[str]]
 #: ``deliver(target, envelope)`` — wakes the target's canonical chat.
 DeliverHook = Callable[[AgentRecord, SocietyEnvelope], Awaitable[None]]
 RoomTurnHook = Callable[[AgentRecord, Room, str], Awaitable[str]]
+RoomSettledHook = Callable[[SocietyEnvelope], Awaitable[None]]
 # Curating a RESULT stages knowledge behind the existing human review gate.
 # This callback never dispatches work and is not a second orchestrator.
 CurateHook = Callable[[SocietyEnvelope], Awaitable[None]]
@@ -98,6 +100,7 @@ class SocietyScheduler:
         deliver: DeliverHook | None = None,
         rooms: Rooms | None = None,
         room_turn: RoomTurnHook | None = None,
+        room_settled: RoomSettledHook | None = None,
         curate: CurateHook | None = None,
         budget_tracker: Any | None = None,
         budget_tracker_getter: Callable[[], Any | None] | None = None,
@@ -109,6 +112,7 @@ class SocietyScheduler:
         self._deliver = deliver
         self._rooms = rooms
         self._room_turn = room_turn
+        self._room_settled = room_settled
         self._curate = curate
         self._budget = budget_tracker
         self._budget_getter = budget_tracker_getter
@@ -232,7 +236,7 @@ class SocietyScheduler:
     # ------------------------------------------------------------ handler
 
     async def on_envelope(self, env: SocietyEnvelope) -> None:
-        if env.from_agent == _SCHEDULER:
+        if env.from_agent == _SCHEDULER and env.msg_type is not MsgType.ROOM_SETTLE:
             return
         if env.msg_type is MsgType.ASSIGN:
             await self._on_assign(env)
@@ -241,6 +245,16 @@ class SocietyScheduler:
             and isinstance(env.payload.get("room_id"), str)
         ):
             await self.drive_room(str(env.payload["room_id"]))
+        elif env.msg_type is MsgType.ROOM_SETTLE:
+            if self._room_settled is not None:
+                try:
+                    await self._room_settled(env)
+                except Exception:  # noqa: BLE001 — notification cannot invalidate terminal room state
+                    log.warning(
+                        "society scheduler: room notification failed for %s",
+                        env.trace_id,
+                        exc_info=True,
+                    )
         elif env.msg_type is MsgType.RESULT:
             await self._on_result(env)
         elif env.msg_type in _DELIVERED and env.to_agent and env.to_agent != _USER:
