@@ -3710,7 +3710,9 @@
     "prompt_not_submitted": "el prompt está en su campo de entrada, no se envió",
     "prompt_unconfirmed": "el prompt se escribió, pero el panel no mostró que llegara: revisa ese panel",
     "dictation_nowhere": "Ningún campo de texto tenía el foco, así que el dictado no se insertó. Está en el historial de dictados.",
-    "realtime_provider_issue": "El proveedor Realtime informó de un problema."
+    "realtime_provider_issue": "El proveedor Realtime informó de un problema.",
+    "society_approval_attention_one": "Una aprobación de agente necesita tu atención.",
+    "society_approval_attention_many": "{0} aprobaciones de agente necesitan tu atención."
   },
   "chat_thread": {
     "message_to": "Mensaje a",

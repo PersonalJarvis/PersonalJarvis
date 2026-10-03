@@ -3710,7 +3710,9 @@
     "prompt_not_submitted": "the prompt is in its input box, not sent",
     "prompt_unconfirmed": "the prompt was typed in, but the pane never showed it arriving — check that pane",
     "dictation_nowhere": "No text field had focus, so the dictation was not inserted. It is in the dictation history.",
-    "realtime_provider_issue": "The realtime provider reported a problem."
+    "realtime_provider_issue": "The realtime provider reported a problem.",
+    "society_approval_attention_one": "One agent approval needs your attention.",
+    "society_approval_attention_many": "{0} agent approvals need your attention."
   },
   "chat_thread": {
     "message_to": "Message to",

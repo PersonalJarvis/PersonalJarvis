@@ -2319,7 +2319,7 @@ class SocietyRoomChanged(Event):
     max_rounds: int = 0
     max_messages: int = 0
     society_trace: str = ""
-
+\n\n@dataclass(frozen=True, slots=True)\nclass SocietyAttentionChanged(Event):\n    """A user-facing Society item became worth attention.\n\n    This is deliberately not an AnnouncementRequested: the WebSocket uses\n    it for app-wide toasts and the Agents badge, while TTS remains owned by\n    the explicit voice reply path. Chat notices stay durable in agent-chat;\n    this event is the live cross-window receipt.\n    """\n\n    kind: str = ""  # "result" | "room" | "approval"\n    status: str = ""\n    count: int = 1\n    agent_ids: tuple[str, ...] = ()\n    text: str = ""\n    society_trace: str = ""\n    request_id: str = ""\n
 
 # ----------------------------------------------------------------------
 # Visible-Feedback Contract (ADR-0016)

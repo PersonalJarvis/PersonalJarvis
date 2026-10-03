@@ -1371,6 +1371,15 @@ async def resurface_approvals(request: Request) -> dict[str, Any]:
     """App focus / voice turn: parked items are asked again."""
     rt = await _runtime(request)
     revived = await rt.approvals.resurface()
+    if revived:
+        await rt.publish_attention(
+            kind="approval",
+            status="needs_input",
+            count=len(revived),
+            agent_ids=tuple(dict.fromkeys(item.agent_id for item in revived)),
+            society_trace=revived[0].trace_id,
+            request_id=revived[0].id,
+        )
     return {"approvals": [a.to_dict() for a in revived], "total": len(revived)}
 
 

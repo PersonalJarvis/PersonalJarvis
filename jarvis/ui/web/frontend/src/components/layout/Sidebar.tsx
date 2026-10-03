@@ -290,9 +290,7 @@ export function Sidebar({
   const pluginWarnTitle = pluginAttention.names.length
     ? `${t("sidebar.plugins_reconnect_alert")}: ${pluginAttention.names.join(", ")}`
     : t("sidebar.plugins_reconnect_alert");
-  const agentsCount = useEventStore((s) =>
-    s.events.filter((e) => e.name === "AgentStateChange").length > 0 ? undefined : 0,
-  );
+  const agentsCount = useEventStore((s) => s.societyAttentionCount);
 
   // Read for the status line's connecting phase. Same resolver as the
   // mission-deck header and orb (`useVoiceMode`): a negotiating realtime

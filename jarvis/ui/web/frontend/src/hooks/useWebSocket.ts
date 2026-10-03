@@ -305,6 +305,38 @@ export function useWebSocket(): void {
           }
         }
 
+        // Society completions, blocked work and resurfaced approvals use one
+        // app-wide signal. Chat notices remain the durable copy; this live
+        // receipt drives the global toast plus the unread Agents badge.
+        if (env.event_name === "SocietyAttentionChanged") {
+          const p = env.payload as {
+            kind?: unknown;
+            status?: unknown;
+            count?: unknown;
+            text?: unknown;
+          };
+          const count =
+            typeof p.count === "number" && Number.isFinite(p.count)
+              ? Math.max(1, Math.floor(p.count))
+              : 1;
+          const store = useEventStore.getState();
+          if (store.activeSection !== "agents") store.noteSocietyAttention(count);
+          if (p.kind === "approval") {
+            const key =
+              count === 1
+                ? "use_web_socket.society_approval_attention_one"
+                : "use_web_socket.society_approval_attention_many";
+            pushToast("warning", translate(key).replace("{0}", String(count)));
+          } else if (typeof p.text === "string" && p.text.trim()) {
+            const status = typeof p.status === "string" ? p.status : "";
+            pushToast(
+              ["blocked", "failed", "needs_input"].includes(status) ? "warning" : "success",
+              p.text.trim(),
+            );
+          }
+          void queryClient.invalidateQueries({ queryKey: ["society", "roster"] });
+        }
+
         // A society agent's derived place changed (trusted rules in the
         // backend): the island re-reads its roster so the figure walks now,
         // not on the next 30 s poll.

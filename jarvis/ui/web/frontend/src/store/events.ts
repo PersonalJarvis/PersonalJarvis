@@ -456,6 +456,8 @@ interface EventStore {
   transcription: string;
   transcriptionFinal: boolean;
   toasts: Toast[];
+  /** Unread Society completions / approvals for the Agents nav badge. */
+  societyAttentionCount: number;
   messages: ChatMessage[];
   // Chats conversation manager: unified history list + which conversation is
   // currently open in the right pane. activeThreadId is null for an unsaved
@@ -551,6 +553,8 @@ interface EventStore {
     opts?: { filePath?: string; filename?: string },
   ) => void;
   dismissToast: (id: string) => void;
+  noteSocietyAttention: (count?: number) => void;
+  clearSocietyAttention: () => void;
   pushMessage: (m: ChatMessage) => void;
   setMessages: (m: ChatMessage[]) => void;
   setConversations: (c: ConversationSummary[]) => void;
@@ -630,6 +634,7 @@ export const useEventStore = create<EventStore>((set, get) => ({
   transcription: "",
   transcriptionFinal: true,
   toasts: [],
+  societyAttentionCount: 0,
   messages: [],
   conversations: [],
   activeThreadId: null,
@@ -667,7 +672,11 @@ export const useEventStore = create<EventStore>((set, get) => ({
   setConnected: (c) => set({ connected: c }),
   setWarming: (warming) => set({ wsWarming: warming }),
   clearEvents: () => set({ events: [] }),
-  setActiveSection: (s) => set({ activeSection: s }),
+  setActiveSection: (s) =>
+    set((state) => ({
+      activeSection: s,
+      societyAttentionCount: s === "agents" ? 0 : state.societyAttentionCount,
+    })),
   setDetachedViews: (views) => set({ detachedViews: views }),
 
   requestVisual: (target = "latest") =>
@@ -748,6 +757,14 @@ export const useEventStore = create<EventStore>((set, get) => ({
   dismissToast: (id) =>
     set((state) => ({ toasts: state.toasts.filter((t) => t.id !== id) })),
 
+  noteSocietyAttention: (count = 1) =>
+    set((state) => ({
+      societyAttentionCount: Math.min(
+        99,
+        state.societyAttentionCount + Math.max(1, Math.floor(count)),
+      ),
+    })),
+  clearSocietyAttention: () => set({ societyAttentionCount: 0 }),
   pushMessage: (m) =>
     set((state) => {
       // WebSocket delivery is at-least-once: reconnect replays, connection-churn

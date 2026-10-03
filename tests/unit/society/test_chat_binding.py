@@ -735,8 +735,13 @@ async def test_assign_runs_in_the_canonical_chat_and_ends_as_a_result(tmp_path: 
 
     svc = FakeTurnService(AgentChatStore(tmp_path / "agent_chat.db"))
     cfg = SimpleNamespace(memory=SimpleNamespace(data_dir=str(tmp_path / "data")))
+    published = []
     rt = SocietyRuntime(
-        tmp_path, seed_starter_team=False, chat_service=lambda: svc, cfg=lambda: cfg
+        tmp_path,
+        seed_starter_team=False,
+        chat_service=lambda: svc,
+        cfg=lambda: cfg,
+        event_publish=published.append,
     )
     await rt.ensure_started()
     try:
@@ -764,6 +769,14 @@ async def test_assign_runs_in_the_canonical_chat_and_ends_as_a_result(tmp_path: 
         assert result.from_agent == "scout" and result.payload["status"] == "done"
         assert result.payload["done"] == "Hetzner CX22 wins. Done."
         assert result.payload["output"] == ["chat:society:scout"]
+        attention = [
+            event for event in published
+            if type(event).__name__ == "SocietyAttentionChanged"
+        ]
+        assert len(attention) == 1
+        assert attention[0].kind == "result"
+        assert attention[0].status == "done"
+        assert attention[0].agent_ids == ("scout",)
     finally:
         await rt.close()
 
@@ -892,6 +905,13 @@ async def test_live_room_completion_reenters_voice_announcement_path(tmp_path: P
         assert [event.msg_type for event in events].count(MsgType.SAY) == 6
         assert events[-1].msg_type is MsgType.ROOM_SETTLE
         announcement = announcements[-1]
+        attention = [
+            event for event in published
+            if type(event).__name__ == "SocietyAttentionChanged"
+        ]
+        assert len(attention) == 1
+        assert attention[0].kind == "room"
+        assert attention[0].agent_ids == ("scout", "archivist")
         assert "Discussion with Scout, Archivist" in announcement.text
         assert "finding 1" in announcement.report
         assert "finding 6" in announcement.report

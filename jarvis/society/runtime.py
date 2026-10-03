@@ -388,6 +388,40 @@ class SocietyRuntime:
             kind="society_message", message_type=str(env.msg_type).lower(),
         )
 
+    async def publish_attention(
+        self,
+        *,
+        kind: str,
+        status: str,
+        text: str = "",
+        count: int = 1,
+        agent_ids: tuple[str, ...] = (),
+        society_trace: str = "",
+        request_id: str = "",
+    ) -> None:
+        """Publish live UI attention without entering the TTS announcement path."""
+        if self._publish_event is None:
+            return
+        from jarvis.core.events import SocietyAttentionChanged
+
+        try:
+            value = self._publish_event(
+                SocietyAttentionChanged(
+                    source_layer="society.notifications",
+                    kind=kind,
+                    status=status,
+                    count=max(1, int(count)),
+                    agent_ids=agent_ids,
+                    text=text[:1000],
+                    society_trace=society_trace,
+                    request_id=request_id,
+                )
+            )
+            if inspect.isawaitable(value):
+                await value
+        except Exception:  # noqa: BLE001 — durable board/chat state remains authoritative
+            log.warning("society: attention notification failed", exc_info=True)
+
     async def _deliver_lead_result(
         self, target: AgentRecord, request: SocietyEnvelope, *, status: str,
         summary: str, kind: str, message_type: str = "",
@@ -418,6 +452,15 @@ class SocietyRuntime:
                     })
             except Exception:  # A chat failure must not suppress the voice result.
                 log.warning("society: result notice delivery failed", exc_info=True)
+        if kind == "society_result":
+            await self.publish_attention(
+                kind="result",
+                status=status,
+                text=event.text,
+                agent_ids=(target.agent_id,),
+                society_trace=request.trace_id,
+                request_id=request.event_id,
+            )
         surface = request.payload.get("reply_surface")
         if surface == "voice" or (surface is None and request.trace_id.startswith("voice:")):
             if self._publish_event is not None:
@@ -820,6 +863,14 @@ class SocietyRuntime:
                     )
             except Exception:  # A chat notice failure must not suppress the voice result.
                 log.warning("society: room result notice delivery failed", exc_info=True)
+        await self.publish_attention(
+            kind="room",
+            status=status,
+            text=announcement.text,
+            agent_ids=tuple(member_ids),
+            society_trace=opening.trace_id,
+            request_id=opening.event_id,
+        )
         surface = opening.payload.get("reply_surface")
         if surface == "voice" or (surface is None and opening.trace_id.startswith("voice:")):
             if self._publish_event is not None:

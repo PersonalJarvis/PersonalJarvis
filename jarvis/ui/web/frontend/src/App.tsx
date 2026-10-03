@@ -145,6 +145,35 @@ export default function App() {
   }, [switcherEnabled, switcherCombo]);
 
   useWebSocket();
+
+  // Parked Society approvals are deliberately not dropped when their first
+  // prompt expires. Returning to the app re-arms them; the backend publishes a
+  // SocietyAttentionChanged event only when something was actually revived.
+  useEffect(() => {
+    let inFlight = false;
+    const resurface = () => {
+      if (document.visibilityState === "hidden" || inFlight) return;
+      inFlight = true;
+      void fetch("/api/society/approvals/resurface", { method: "POST" })
+        .catch(() => {
+          // Startup/offline: the next focus retries; no local state is invented.
+        })
+        .finally(() => {
+          inFlight = false;
+        });
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") resurface();
+    };
+    resurface();
+    window.addEventListener("focus", resurface);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("focus", resurface);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, []);
+
   useBrainStatus();
   useVoiceStatus();
   useVoiceStateResync();

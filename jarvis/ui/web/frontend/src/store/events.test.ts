@@ -244,3 +244,25 @@ describe("useEventStore.pushToast repeat collapsing", () => {
     expect(refreshed).toBeGreaterThanOrEqual(first);
   });
 });
+
+
+describe("society attention badge", () => {
+  beforeEach(() => {
+    useEventStore.setState({ societyAttentionCount: 0, activeSection: "chats" });
+  });
+
+  it("counts unread attention and caps the badge", () => {
+    const store = useEventStore.getState();
+    store.noteSocietyAttention();
+    store.noteSocietyAttention(3);
+    expect(useEventStore.getState().societyAttentionCount).toBe(4);
+    store.noteSocietyAttention(200);
+    expect(useEventStore.getState().societyAttentionCount).toBe(99);
+  });
+
+  it("clears whenever navigation enters Agents", () => {
+    useEventStore.getState().noteSocietyAttention(3);
+    useEventStore.getState().setActiveSection("agents");
+    expect(useEventStore.getState().societyAttentionCount).toBe(0);
+  });
+});

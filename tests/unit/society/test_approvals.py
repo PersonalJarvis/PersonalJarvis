@@ -192,3 +192,40 @@ async def test_an_always_allow_pattern_runs_an_ask_tier_call(world):
         assert decide(agent, "plugin:gmail", "monitor", verb="send") is Verdict.RUN
         assert decide(agent, "plugin:gmail", "block", verb="send") is Verdict.BLOCK
         assert decide(agent, "plugin:gmail", "ask", verb="read") is Verdict.QUEUE
+
+
+async def test_resurface_route_publishes_app_attention(tmp_path: Path):
+    from types import SimpleNamespace
+
+    from jarvis.society.runtime import SocietyRuntime
+    from jarvis.ui.web.society_routes import resurface_approvals
+
+    published = []
+    rt = SocietyRuntime(tmp_path, seed_starter_team=False, event_publish=published.append)
+    await rt.ensure_started()
+    try:
+        agent, _ = await rt.roster.create(name="Scout")
+        item = await rt.approvals.enqueue(
+            agent_id=agent.agent_id,
+            trace_id="approval:focus",
+            capability="core:test",
+            action={"verb": "write"},
+            summary="Approve the test action",
+        )
+        assert await rt.approvals.expire_due(now=item.expires_ms + 1) == 1
+        request = SimpleNamespace(
+            app=SimpleNamespace(state=SimpleNamespace(society=rt))
+        )
+        body = await resurface_approvals(request)
+        assert body["total"] == 1
+        attention = [
+            event for event in published
+            if type(event).__name__ == "SocietyAttentionChanged"
+        ]
+        assert len(attention) == 1
+        assert attention[0].kind == "approval"
+        assert attention[0].status == "needs_input"
+        assert attention[0].count == 1
+        assert attention[0].agent_ids == (agent.agent_id,)
+    finally:
+        await rt.close()
