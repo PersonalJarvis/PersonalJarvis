@@ -170,7 +170,7 @@ async def test_writes_a_brain_authored_draft_skill(registry, skills_root) -> Non
     assert any("youtube_music" in step for step in out["steps_preview"])
     assert provider.calls == 1
 
-    skill = registry.get("Morgenroutine")
+    skill = registry.get("morgenroutine")  # canonical registry key is the slug
     assert skill.state == SkillLifecycleState.DRAFT  # AP-15: never auto-active
     on_disk = (skills_root / "morgenroutine" / "SKILL.md").read_text(encoding="utf-8")
     assert "state: draft" in on_disk
