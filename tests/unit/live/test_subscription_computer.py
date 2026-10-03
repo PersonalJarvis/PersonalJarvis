@@ -1,4 +1,4 @@
-"""The subscription thinking model operates the screen itself (ADR-0038)."""
+"""The subscription thinking model operates the screen itself (ADR-0039)."""
 
 from __future__ import annotations
 

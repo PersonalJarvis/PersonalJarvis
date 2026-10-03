@@ -172,7 +172,7 @@ class LiveTools:
                 ["approval_id"],
             ),
         ]
-        # The screen is operated in many short rounds (ADR-0038): declare the
+        # The screen is operated in many short rounds (ADR-0039): declare the
         # computer tool under its own name instead of behind discover/call_tool.
         computer = next((d for d in self.catalog() if d.name == _DIRECT_TOOL), None)
         if computer is not None:

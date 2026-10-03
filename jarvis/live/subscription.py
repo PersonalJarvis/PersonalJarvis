@@ -27,7 +27,7 @@ _DELEGATION_TIMEOUT_S = 240.0
 REPORT_START_TIMEOUT_S = 20.0
 REPORT_FINISH_TIMEOUT_S = 90.0
 REPORT_REASONING_TIMEOUT_S = 240.0
-# Operating the screen takes one reasoning round per look (ADR-0038). Once the
+# Operating the screen takes one reasoning round per look (ADR-0039). Once the
 # model uses the computer tool, the request may run this many extra rounds and
 # up to ``[computer_use].mission_timeout_s``.
 _MIN_COMPUTER_ROUNDS = 40

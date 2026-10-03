@@ -48,6 +48,10 @@ COVERED: Final[dict[str, str]] = {
 
 #: REST route -> why an MCP client does not get it. Each line is a decision.
 WITHHELD: Final[dict[str, str]] = {
+    "POST /api/society/agents/{agent_id}/browser/restart": (
+        "native browser recovery is initiated by the owner in the browser panel; "
+        "remote clients must not interrupt the person's manual browser session"
+    ),
     "GET /api/society/agents/{agent_id}/template": (
         "the share draft is read in the owner's Share sheet; a remote client has "
         "ecosystem_export for the design of the whole team"

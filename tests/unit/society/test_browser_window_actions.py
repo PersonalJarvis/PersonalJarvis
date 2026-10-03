@@ -87,6 +87,10 @@ def test_native_navigation_cannot_escape_domain_restrictions_but_manual_login_ca
     assert not navigation_allowed("https://x.com.evil.example/", ["x.com"], manual=False)
     assert not navigation_allowed("https://other.example/", ["x.com"], manual=False)
     assert navigation_allowed("https://accounts.google.com/", ["x.com"], manual=True)
+    assert navigation_allowed("http://127.0.0.1:8000/download", ["http*://127.0.0.1"], manual=False)
+    assert navigation_allowed("https://example.com/upload", ["http*://example.com"], manual=False)
+    assert not navigation_allowed("https://example.com.evil.test/", ["http*://example.com"], manual=False)
+    assert not navigation_allowed("http://example.com/", ["https://example.com"], manual=False)
 
 
 async def test_domain_restricted_agent_never_receives_full_window_or_uses_old_observation():

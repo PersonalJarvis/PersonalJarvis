@@ -642,6 +642,8 @@ async def test_login_profile_survives_restart_and_stays_with_its_agent(live, sit
     other = SimpleNamespace(
         agent_id="isolated", model="", browser_allowed_domains=["http*://127.0.0.1"]
     )
+    live.profiles.assign(first.agent_id, "own", None)
+    live.profiles.assign(other.agent_id, "own", None)
 
     async def visit(agent, path):
         session, _ = await live.subscribe(agent)
@@ -653,6 +655,7 @@ async def test_login_profile_survives_restart_and_stays_with_its_agent(live, sit
     try:
         await visit(first, "/login")
         await live.close()
+        live = LiveSessions(live.data_dir)
         restored = await visit(first, "/account?restored")
         isolated = await visit(other, "/account?other")
         assert restored is not isolated
@@ -667,6 +670,8 @@ async def test_crashed_worker_recovers_without_touching_the_other_agent(live):
 
     one = SimpleNamespace(agent_id="crash", model="", browser_allowed_domains=[])
     two = SimpleNamespace(agent_id="survivor", model="", browser_allowed_domains=[])
+    live.profiles.assign(one.agent_id, "own", None)
+    live.profiles.assign(two.agent_id, "own", None)
     try:
         old, _ = await live.subscribe(one)
         survivor, _ = await live.subscribe(two)

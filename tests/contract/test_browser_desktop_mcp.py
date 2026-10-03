@@ -26,10 +26,14 @@ async def test_desktop_bootstrap_publishes_the_mcp_endpoint(monkeypatch):
     def finish():
         raise ProbeFinished()
 
+    async def prepare():
+        pass  # The probe stops before serving; no application mounting is needed.
+
     probe = SimpleNamespace(
         bus=EventBus(),
         cfg=SimpleNamespace(ui=SimpleNamespace(admin_api_port=48123)),
         _voice_ready=True,
+        prepare_app=prepare,
         _schedule_anyio_pool_warm=finish,
     )
     with pytest.raises(ProbeFinished):

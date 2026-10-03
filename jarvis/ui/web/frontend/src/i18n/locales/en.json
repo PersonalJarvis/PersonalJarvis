@@ -2626,8 +2626,7 @@
       "music": "Music",
       "keybinds": "Keyboard shortcuts",
       "more": "More",
-      "overlay_taskbar": "Overlay & taskbar",
-      "permissions": null
+      "overlay_taskbar": "Overlay & taskbar"
     },
     "languages_group_title": "Languages",
     "music_group_title": "Music",

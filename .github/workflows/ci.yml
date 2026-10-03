@@ -325,7 +325,7 @@ jobs:
           cache-dependency-path: pyproject.toml
       - name: Install
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq libportaudio2
+          sudo apt-get update -qq && sudo apt-get install -y -qq libportaudio2 libegl1 libopengl0
           python -m pip install -e ".[dev,telephony]"
       - name: Download the shared duration snapshot
         uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8

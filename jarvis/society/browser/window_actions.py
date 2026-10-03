@@ -67,8 +67,10 @@ def navigation_allowed(url: str, domains: list[str], *, manual: bool) -> bool:
         return True
     parsed = urlsplit(url)
     for pattern in domains:
-        target = urlsplit(pattern if "://" in pattern else "https://" + pattern)
-        if "://" in pattern and target.scheme != parsed.scheme:
+        scheme, separator, address = pattern.partition("://")
+        # urlsplit cannot parse wildcard schemes such as the supported http*.
+        target = urlsplit("https://" + (address if separator else pattern))
+        if separator and not fnmatchcase(parsed.scheme, scheme.lower()):
             continue
         host = (target.hostname or "").lower()
         candidate = (parsed.hostname or "").lower()

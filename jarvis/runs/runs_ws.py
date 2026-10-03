@@ -91,7 +91,11 @@ async def runs_live(ws: WebSocket) -> None:
         await ws.close()
         return
 
+    closed = False
+    close_code = 1000
+
     async def _forward(event) -> None:
+        nonlocal closed, close_code
         kind = type(event).__name__
         if kind not in _LIVE_KINDS:
             return
@@ -113,9 +117,11 @@ async def runs_live(ws: WebSocket) -> None:
             # tab again. The receive loop's finally still closes the socket.
             log.warning("runs_ws: send stalled >%ss — detaching the live view", _SEND_TIMEOUT_S)
             bus.unsubscribe_all(_forward)
+            close_code = 1013
             # Close rather than go silently stale; 1013 = try again later.
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(ws.close(code=1013), timeout=1.0)
+                closed = True
         except Exception:  # noqa: BLE001,S110 — socket gone; recv loop will terminate
             pass
 
@@ -139,7 +145,8 @@ async def runs_live(ws: WebSocket) -> None:
         except Exception as exc:  # noqa: BLE001 — detach best-effort
             log.debug("runs_ws: unsubscribe_all raised (%s) — ignoring", exc)
         try:
-            await ws.close()
+            if not closed:
+                await ws.close(code=close_code)
         except Exception:  # noqa: BLE001,S110
             pass
 

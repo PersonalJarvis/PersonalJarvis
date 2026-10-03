@@ -8,7 +8,7 @@ POAV Computer-Use and Jarvis-Agents for the work that actually needs them.
 
 ## Live voice: the session's own model operates the screen (2026-10-03)
 
-ADR: [0038](adr/0038-live-reasoning-model-owns-computer-control.md). In a
+ADR: [0039](adr/0039-live-reasoning-model-owns-computer-control.md). In a
 continuous voice session (GPT-Live with an API key or a ChatGPT subscription,
 Gemini Live, the local engine) the session's thinking model operates the
 computer itself through the `computer` tool. No Computer-Use mission and no

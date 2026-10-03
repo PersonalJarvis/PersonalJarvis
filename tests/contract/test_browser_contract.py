@@ -591,7 +591,7 @@ async def test_viewer_disconnect_cancels_pending_takeover(monkeypatch, burst):
 
     class Live:
         async def subscribe(self, agent):
-            return object(), asyncio.Queue()
+            return SimpleNamespace(state={}, generation="test-generation", control_owner=None), asyncio.Queue()
 
         async def control(self, *args):
             started.set()

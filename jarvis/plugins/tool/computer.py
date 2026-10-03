@@ -1,7 +1,7 @@
 """The ``computer`` tool: a live session's reasoning model operates the screen itself.
 
 Voice-only, like ``screen_snapshot``: the supervisor gateway adds it to the
-live catalog (ADR-0038). The router stays a pure dispatcher (ADR-0011) and the
+live catalog (ADR-0039). The router stays a pure dispatcher (ADR-0011) and the
 classic Computer-Use mission keeps serving text chat and scheduled tasks.
 """
 

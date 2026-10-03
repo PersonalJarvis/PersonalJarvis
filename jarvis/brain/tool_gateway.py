@@ -22,7 +22,7 @@ from jarvis.core.protocols import (
 )
 
 _VALID_RISK_TIERS = frozenset({"safe", "monitor", "ask", "block"})
-# Live sessions operate the screen with ``computer`` (ADR-0038). These would
+# Live sessions operate the screen with ``computer`` (ADR-0039). These would
 # start a second model's mission, or move/click/type in screen units the live
 # model never sees, so they are not part of the voice catalog.
 _VOICE_SUPERSEDED_TOOLS = frozenset(
@@ -131,7 +131,7 @@ class BrainSupervisorToolGateway:
         tools = self._live_tools()
         context = peek_computer_use_context()
         computer_use = getattr(getattr(self._manager, "_config", None), "computer_use", None)
-        # ADR-0038: the live session's own reasoning model operates the screen
+        # ADR-0039: the live session's own reasoning model operates the screen
         # through ``computer``. The mission vehicles (a second model running
         # its own loop) and the raw coordinate primitives (screen units the
         # model never sees) are not offered next to it.

@@ -1,4 +1,4 @@
-# ADR-0038 — The live reasoning model operates the computer itself
+# ADR-0039 — The live reasoning model operates the computer itself
 
 **Status:** Accepted · **Date:** 2026-10-03 · **Supersedes:** the computer-use
 part of [ADR-0035](0035-realtime-native-tools-except-computer-use.md) for the

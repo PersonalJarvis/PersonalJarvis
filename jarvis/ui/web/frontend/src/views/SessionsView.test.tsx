@@ -92,7 +92,7 @@ describe("Transcription workspace", () => {
     fireEvent.click(await screen.findByRole("option", { name: "JSON" }));
     expect(screen.getByRole("link", { name: "Open file" }).getAttribute("href")).toBe("/api/sessions/voice%2Fone/export?format=json");
     exportStatus = 500;
-    const panel = screen.getByRole("combobox").closest(".transcript-export")!;
+    const panel = screen.getByRole("combobox").closest<HTMLElement>(".transcript-export")!;
     fireEvent.click(within(panel).getByRole("button", { name: "Copy" }));
     await waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/clipboard/i));
   });
