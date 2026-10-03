@@ -6614,6 +6614,11 @@ class Registry:
             self._renumber(session)
             if resolved:
                 await self._persist()
+                if not session.terminals:
+                    # Save the empty pane list before closing so the previous
+                    # terminals cannot return through the workspace restore offer.
+                    await self._close_locked(session.id)
+                    await self._persist()
                 logger.info(
                     "Agentic IDE: closed terminals {}",
                     ", ".join(term.name for term in resolved),
