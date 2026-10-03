@@ -283,14 +283,19 @@ to the assistant; they are the screenshot-tool half.
 
 ## The gallery
 
-Below the settings, **Your appshots** shows every appshot taken with the
+Below the settings, **Your captures** shows every appshot taken with the
 shortcuts, the page's buttons or the assistant's `take_appshot` tool, and every
 edit saved in the editor, newest first. An edit sits right before its original
 and wears an **Edited** badge; the **Edited** filter shows only those. A look
-a conversation turn took on its own is never kept.
+a conversation turn took on its own is never kept. Finished screen recordings
+appear in the same grid, with a video badge and duration. The **Recordings**
+filter shows only videos. Existing recordings appear automatically, including
+ones created before this gallery supported video.
 
 - **Click** a picture to open it in the editor again. Saving there keeps the
   new edit beside the original and hands it to the assistant like any edit.
+- **Click** a video to play it with playback and seeking controls. The player
+  also offers an MP4 download. Closing it returns to the same gallery.
 - **Drag** a picture into a chat composer or a terminal pane to attach it.
   The drag carries the picture's real path the way a row from the workspace
   explorer does, so both drop targets take it unchanged. In a browser the
@@ -298,7 +303,9 @@ a conversation turn took on its own is never kept.
   Inside the desktop shell the grip on a tile starts a native file drag that
   reaches any other app (mail, Explorer/Finder, a browser upload).
 - **Delete** on an edited tile removes only that edit; on an original it
-  removes the appshot and its edit. **Delete all** asks once more first.
+  removes the appshot and its edit. On a video it removes that recording.
+  **Delete all** confirms that both pictures and videos will be removed;
+  a recording still in progress is never included.
 
 The pictures live in `<data dir>/appshots/<id>/` (`original.<ext>`,
 `edited.png`, `meta.json`, small thumbnails made on first view). Only the
@@ -306,6 +313,13 @@ finished, privacy-filtered appshot is written — never the raw frame or the
 on-screen text. The library keeps the newest 500 appshots and removes the
 oldest first. **Keep appshot history** (`[appshot].library`) turns it off;
 what is already kept stays until it is deleted.
+
+Screen recordings are finalized as MP4 files under the app's user-data
+directory (`appshot-recordings/`) and remain there across navigation and app
+restarts, independently of the screenshot-history switch. The gallery indexes
+these existing files rather than duplicating them. It loads only small video
+posters for tiles and streams the full file when playback is opened. The image
+editor's Add Picture panel continues to offer images only.
 
 ## Where a shortcut appshot goes
 

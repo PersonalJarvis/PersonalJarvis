@@ -30,6 +30,11 @@ const EDITED: AppshotLibraryItem = {
   has_edit: false,
 };
 const OTHER: AppshotLibraryItem = { ...ORIGINAL, id: "b2", has_edit: false, app_name: "Browser" };
+const RECORDING: AppshotLibraryItem = {
+  ...ORIGINAL, id: `recording_${"a".repeat(32)}`, mime: "video/mp4", has_edit: false,
+  path: `C:\\Jarvis\\appshot-recordings\\${"a".repeat(32)}.mp4`,
+  app_name: "", label: "Screen recording", duration_s: 61,
+};
 
 function json(body: unknown, status = 200): Response {
   return { ok: status < 400, status, json: async () => body } as Response;
@@ -73,6 +78,10 @@ describe("AppshotLibrary", () => {
         return json({ ok: true });
       }
       if (url === "/api/appshot/library/b2/open") return json({ id: "b2", window: false });
+      if (url === `/api/appshot/library/${RECORDING.id}?variant=original` && init?.method === "DELETE") {
+        items = items.filter((item) => item !== RECORDING);
+        return json({ ok: true });
+      }
       return json({}, 404);
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -147,5 +156,39 @@ describe("AppshotLibrary", () => {
     items = [];
     render(<AppshotLibrary enabled={false} refreshKey="" />);
     await screen.findByText(/History is off/);
+  });
+
+  it("filters recordings, shows duration and plays a video without sending it to the image editor", async () => {
+    items = [RECORDING, ...items];
+    render(<AppshotLibrary enabled refreshKey="" />);
+    await waitFor(() => expect(screen.getAllByTestId("appshot-library-tile")).toHaveLength(4));
+    expect(screen.getByText("1:01")).toBeDefined();
+    fireEvent.click(screen.getByTestId("appshot-library-filter-recordings"));
+    const tiles = screen.getAllByTestId("appshot-library-tile");
+    expect(tiles).toHaveLength(1);
+    expect(tiles[0].getAttribute("data-media")).toBe("video");
+    fireEvent.click(tiles[0].querySelector("button")!);
+    const player = await screen.findByTestId("appshot-library-player");
+    expect(player.getAttribute("src")).toContain(`/library/${RECORDING.id}/image`);
+    expect(player.hasAttribute("controls")).toBe(true);
+    expect(screen.getByRole("link", { name: "Download video" }).getAttribute("download")).toMatch(/\.mp4$/);
+    expect(useAppshotEditor.getState().openId).toBeNull();
+    expect(fetchMock.mock.calls.some(([url]) => url.endsWith("/open"))).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.queryByTestId("appshot-library-player")).toBeNull());
+  });
+
+  it("drags a recording as an MP4 and deletes only that video", async () => {
+    items = [RECORDING, ORIGINAL];
+    render(<AppshotLibrary enabled refreshKey="" />);
+    const [tile] = await screen.findAllByTestId("appshot-library-tile");
+    const transfer = new FakeDataTransfer();
+    fireEvent.dragStart(tile, { dataTransfer: transfer });
+    expect(transfer.getData("DownloadURL")).toMatch(/^video\/mp4:.*\.mp4:http/);
+    expect(transfer.getData(WORKSPACE_PATH_TYPE)).toBe(RECORDING.path);
+    fireEvent.dragEnd(tile);
+    fireEvent.click(screen.getAllByTestId("appshot-library-delete")[0]);
+    await waitFor(() => expect(screen.getAllByTestId("appshot-library-tile")).toHaveLength(1));
+    expect(screen.getAllByTestId("appshot-library-tile")[0].getAttribute("data-media")).toBe("image");
   });
 });

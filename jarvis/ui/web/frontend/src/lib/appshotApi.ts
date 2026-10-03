@@ -194,6 +194,8 @@ export interface AppshotLibraryItem {
   edited_at: number;
   /** An original that also has an edited version. */
   has_edit: boolean;
+  /** Finalized recording duration; absent for screenshots and older backends. */
+  duration_s?: number;
 }
 
 export function fetchAppshotLibrary(): Promise<{ items: AppshotLibraryItem[]; max_entries: number }> {

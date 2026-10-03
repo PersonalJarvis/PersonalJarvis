@@ -8,10 +8,11 @@ import {
 } from "@/lib/appshotApi";
 import { AppshotShortcutField } from "@/views/AppshotShortcutField";
 
-export function AppshotRecordingPanel({ settings, saving, onShortcut }: {
+export function AppshotRecordingPanel({ settings, saving, onShortcut, onSaved }: {
   settings: AppshotSettings;
   saving: boolean;
   onShortcut: (shortcut: string) => Promise<void>;
+  onSaved?: (id: string) => void;
 }) {
   const t = useT();
   const [recording, setRecording] = useState<AppshotRecording | null>(null);
@@ -19,6 +20,10 @@ export function AppshotRecordingPanel({ settings, saving, onShortcut }: {
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState("");
   const [revision, setRevision] = useState(0);
+
+  useEffect(() => {
+    if (recording?.phase === "saved" && recording.id) onSaved?.(recording.id);
+  }, [recording?.phase, recording?.id, onSaved]);
 
   useEffect(() => {
     const controller = new AbortController();

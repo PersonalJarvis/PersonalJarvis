@@ -190,7 +190,9 @@ async def put_settings(request: Request, patch: SettingsPatch) -> dict[str, Any]
 
         reset_service()
     shortcut = get_shortcut()
-    if shortcut is not None and any(key in changes for key in ("hotkey", "region_hotkey", "recording_hotkey")):
+    if shortcut is not None and any(
+        key in changes for key in ("hotkey", "region_hotkey", "recording_hotkey")
+    ):
         await shortcut.reload()
     return await asyncio.to_thread(_settings_payload)
 
@@ -488,8 +490,8 @@ def _library_id(shot_id: str) -> str:
 
 @router.get("/library")
 async def library_list() -> dict[str, Any]:
-    """Every kept appshot and edit, newest first — no pixels."""
-    from jarvis.appshot import library  # noqa: PLC0415
+    """Every kept screenshot, edit and recording, newest first — no pixels."""
+    from jarvis.appshot import media_library as library  # noqa: PLC0415
 
     items = await asyncio.to_thread(library.list_items)
     return {
@@ -502,12 +504,20 @@ async def library_list() -> dict[str, Any]:
 async def library_image(
     shot_id: str, variant: LibraryVariant = "original", thumb: bool = False
 ) -> Response:
-    """One kept picture; ``thumb=1`` sends the gallery's small JPEG."""
-    from jarvis.appshot import library  # noqa: PLC0415
+    """One kept image or video; ``thumb=1`` sends a small preview."""
+    from fastapi.responses import FileResponse
+
+    from jarvis.appshot import media_library as library  # noqa: PLC0415
 
     item = await asyncio.to_thread(library.get_item, _library_id(shot_id), variant)
     if item is None:
         raise HTTPException(status_code=404, detail="That appshot is no longer kept.")
+    if item.mime == "video/mp4" and not thumb:
+        # Stream with byte-range support for seeking; never read an entire
+        # recording into the web server's memory.
+        return FileResponse(
+            item.path, media_type=item.mime, headers={"Cache-Control": "no-store"},
+        )
     if thumb:
         data, mime = await asyncio.to_thread(library.thumbnail, item)
     else:
@@ -537,8 +547,8 @@ async def library_open(shot_id: str, body: LibraryOpenRequest | None = None) -> 
 
 @router.delete("/library/{shot_id}", openapi_extra={"x-jarvis-dangerous": True})
 async def library_delete(shot_id: str, variant: LibraryVariant = "original") -> dict[str, Any]:
-    """Delete an edit only, or — for the original — the whole appshot."""
-    from jarvis.appshot import library  # noqa: PLC0415
+    """Delete an edit, an original screenshot with its edit, or one recording."""
+    from jarvis.appshot import media_library as library  # noqa: PLC0415
 
     removed = await asyncio.to_thread(library.delete, _library_id(shot_id), variant)
     if not removed:
@@ -548,7 +558,7 @@ async def library_delete(shot_id: str, variant: LibraryVariant = "original") -> 
 
 @router.delete("/library", openapi_extra={"x-jarvis-dangerous": True})
 async def library_clear() -> dict[str, Any]:
-    """Delete every kept appshot and edit."""
-    from jarvis.appshot import library  # noqa: PLC0415
+    """Delete all kept screenshots, edits and finalized recordings."""
+    from jarvis.appshot import media_library as library  # noqa: PLC0415
 
     return {"ok": True, "removed": await asyncio.to_thread(library.clear)}

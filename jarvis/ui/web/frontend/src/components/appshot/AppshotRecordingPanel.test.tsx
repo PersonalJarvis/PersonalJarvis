@@ -12,6 +12,7 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("AppShot recording controls", () => {
   it("starts selection, keeps a stop control after the master is disabled, and offers the saved video", async () => {
+    const onSaved = vi.fn();
     let phase = "idle";
     const calls: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
@@ -20,16 +21,17 @@ describe("AppShot recording controls", () => {
       if (url.endsWith("/stop")) phase = "saved";
       return response({ phase, id: "abc", message: "", capability: ready });
     }));
-    const { rerender } = render(<AppshotRecordingPanel settings={settings} saving={false} onShortcut={async () => {}} />);
+    const { rerender } = render(<AppshotRecordingPanel settings={settings} saving={false} onShortcut={async () => {}} onSaved={onSaved} />);
     const button = await screen.findByTestId("appshots-recording-control");
     await waitFor(() => expect(button.hasAttribute("disabled")).toBe(false));
     fireEvent.click(button);
     await screen.findByRole("button", { name: "Stop and save" });
-    rerender(<AppshotRecordingPanel settings={{ ...settings, enabled: false }} saving={false} onShortcut={async () => {}} />);
+    rerender(<AppshotRecordingPanel settings={{ ...settings, enabled: false }} saving={false} onShortcut={async () => {}} onSaved={onSaved} />);
     expect(button.hasAttribute("disabled")).toBe(false);
     fireEvent.click(button);
     const link = await screen.findByRole("link", { name: "Download video" });
     expect(link.getAttribute("href")).toBe("/api/appshot/recording/abc/video");
+    await waitFor(() => expect(onSaved).toHaveBeenCalledExactlyOnceWith("abc"));
     expect(calls.filter((call) => call.startsWith("POST"))).toEqual([
       "POST /api/appshot/recording/start", "POST /api/appshot/recording/stop",
     ]);

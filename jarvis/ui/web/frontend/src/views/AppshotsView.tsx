@@ -219,6 +219,7 @@ export function AppshotsView() {
   const [saving, setSaving] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
   const [picking, setPicking] = useState(false);
+  const [savedRecording, setSavedRecording] = useState("");
   const openEditor = useAppshotEditor((s) => s.open);
   // Bumped by AppshotEditorHost when an edit replaced the held picture.
   const revision = useAppshotEditor((s) => s.revision);
@@ -629,11 +630,12 @@ export function AppshotsView() {
 
         <AppshotLibrary
           enabled={settings?.library}
-          refreshKey={`${lastAppshotEvent}:${revision}`}
+          refreshKey={`${lastAppshotEvent}:${revision}:${savedRecording}`}
         />
 
         {settings && typeof settings.recording_hotkey === "string" && (
           <AppshotRecordingPanel settings={settings} saving={saving}
+            onSaved={setSavedRecording}
             onShortcut={(recording_hotkey) => save({ recording_hotkey })} />
         )}
         <p className="mt-5 text-sm text-muted-foreground">{t("appshots.voice_hint")}</p>
