@@ -698,6 +698,14 @@ class FakeTurnService(FakeService):
 
     async def send(self, session_id: str, text: str, attachments=None, *, incoming=None) -> str:
         self.sent.append((session_id, text))
+        if incoming is not None:
+            await self.receive_message(session_id, incoming)
+            await self.message_status(
+                session_id,
+                incoming.message_id,
+                "delivered",
+                turn_id="turn-1",
+            )
         return "turn-1"
 
     async def finish(self, session_id: str, text: str, *, status: str = "ok") -> None:
@@ -726,6 +734,12 @@ async def test_assign_runs_in_the_canonical_chat_and_ends_as_a_result(tmp_path: 
         assert svc.sent[0][0] == "society:scout"
         assert svc.sent[0][1].startswith("[assignment from the user]\nFind the best VPS.")
         assert "handoff" in svc.sent[0][1]
+        receipt = svc.store.incoming_message("society:scout", env.event_id)
+        assert receipt is not None
+        assert receipt["sender_id"] == "user"
+        assert receipt["sender_kind"] == "user"
+        assert receipt["status"] == "delivered"
+        assert receipt["turn_id"] == "turn-1"
         assert rt.scheduler.running == {"turn:turn-1": "scout"}
         await svc.finish("society:scout", "Hetzner CX22 wins. Done.")
         await asyncio.sleep(0.05)

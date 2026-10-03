@@ -745,22 +745,29 @@ class SocietyRuntime:
         if svc.is_running(session.session_id):
             raise RuntimeError(f"target busy: {target.name} is running a turn")
         queue = svc.subscribe(session.session_id)
-        # Both API and CLI turns inherit the same trusted request provenance.
-        token = incoming_context.set(
-            IncomingMessage(
-                message_id=env.event_id,
-                sender_id=env.from_agent,
-                sender_name=env.from_agent,
-                sender_kind="jarvis" if env.from_agent == LEAD_AGENT_ID else "agent",
-                text=env.text,
-                prompt=frame_assignment(env),
-                trace_id=env.trace_id,
-            )
+        # Persist the same trusted provenance the turn inherits. The receipt is
+        # the crash-safe link from the board event to the canonical chat turn.
+        incoming = IncomingMessage(
+            message_id=env.event_id,
+            sender_id=env.from_agent,
+            sender_name=env.from_agent,
+            sender_kind=(
+                "jarvis"
+                if env.from_agent == LEAD_AGENT_ID
+                else "user"
+                if env.from_agent == "user"
+                else "agent"
+            ),
+            text=env.text,
+            prompt=frame_assignment(env),
+            trace_id=env.trace_id,
         )
+        token = incoming_context.set(incoming)
         try:
             turn_id = await svc.send(
                 session.session_id,
-                frame_assignment(env),
+                incoming.prompt,
+                incoming=incoming,
                 **({"read_only": True} if env.payload.get("read_only") is True else {}),
                 **(
                     {"direct_user": False}
