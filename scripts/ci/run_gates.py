@@ -70,6 +70,7 @@ def _gates(base: str) -> list[Gate]:
         ),
         Gate("docs-privacy", ((PY, ci + "docs_privacy_scan.py"),)),
         Gate("public-docs", ((PY, ci + "check_public_docs.py"),)),
+        Gate("design-references", ((PY, ci + "check_design_references.py"),)),
         Gate("shell-bash32", ((PY, ci + "check_shell_bash32.py", "--require"),), needs_docker=True),
         Gate("privacy", ((PY, ci + "privacy_scan_ci.py", "--base", base),), needs_base=True),
         Gate("no-new-german", ((PY, ci + "check_no_new_german.py", base),), pr_only=True),
