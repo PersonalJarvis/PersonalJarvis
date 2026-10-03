@@ -7,7 +7,10 @@ Endpoints (mounted by the WebServer in ``_build_app()``):
     POST   /api/appshot/take             → take one appshot now (window or area).
     GET    /api/appshot/latest           → metadata of the last appshot.
     GET    /api/appshot/latest/image     → its picture (never cached).
-    PUT    /api/appshot/latest/image     → replace it with the editor's version.
+    PUT    /api/appshot/latest/image     → replace it with the editor's version and
+                                           hand that to the assistant (deliver_edit).
+    POST   /api/appshot/latest/card      → slide it back into the corner card.
+    POST   /api/appshot/open-editor      → open the editor in its own window.
     POST   /api/appshot/clipboard        → copy the editor's PNG natively (desktop only).
     POST   /api/appshot/drag-file        → write it for a native drag out (desktop only).
     GET    /api/appshot/pending          → the appshot waiting for the next message.
@@ -45,6 +48,7 @@ class SettingsPatch(BaseModel):
     target: Literal["auto", "message", "voice"] | None = None
     sound: bool | None = None
     effect: bool | None = None
+    card_seconds: int | None = Field(default=None, ge=0, le=600)
 
 
 class TakeRequest(BaseModel):
@@ -104,6 +108,7 @@ def _settings_payload() -> dict[str, Any]:
         "target": block.target,
         "sound": bool(block.sound),
         "effect": bool(block.effect),
+        "card_seconds": int(getattr(block, "card_seconds", 6)),
         "sound_effects_master": bool(getattr(config.ui, "sound_effects", True)),
         "shortcut": _status("window"),
         "region_shortcut": _status("region"),
@@ -231,7 +236,38 @@ async def replace_latest_image(request: Request, id: str) -> dict[str, Any]:  # 
     shot = await asyncio.to_thread(get_store().replace_image, id, body, "image/png", *size)
     if shot is None:
         raise HTTPException(status_code=404, detail="That appshot is no longer kept.")
-    return {"ok": True, "appshot": shot.meta()}
+    from jarvis.appshot.service import deliver_edit  # noqa: PLC0415
+
+    delivered_to = await deliver_edit(shot)
+    return {"ok": True, "appshot": {**shot.meta(), "delivered_to": delivered_to}}
+
+
+class OpenEditorRequest(BaseModel):
+    id: str = Field(min_length=1, max_length=64)
+
+
+@router.post("/open-editor")
+async def open_editor(body: OpenEditorRequest) -> dict[str, Any]:
+    """Open the editor in its own window. ``window: false`` = edit in the page.
+
+    The desktop shell opens a detached window (``jarvis.appshot.editor_window``);
+    a headless or browser-only run cannot, and the page shows its own editor.
+    """
+    from jarvis.appshot.editor_window import open_editor_window  # noqa: PLC0415
+
+    return {"window": await open_editor_window(body.id)}
+
+
+@router.post("/latest/card")
+async def return_card() -> dict[str, Any]:
+    """Slide the held (edited) appshot back into the corner card.
+
+    The editor window calls this when it closes, so the picture stays at
+    hand like after the shutter. ``shown: false`` where no overlay can run.
+    """
+    from jarvis.appshot.card_actions import return_to_corner  # noqa: PLC0415
+
+    return {"shown": await return_to_corner()}
 
 
 def _png_size(data: bytes) -> tuple[int, int] | None:

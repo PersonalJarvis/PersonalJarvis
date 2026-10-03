@@ -57,12 +57,21 @@ the shutter and shows up as the last appshot.
 ## The card in the corner, and the editor
 
 After the shutter the picture flies into the bottom-right corner of its
-screen and rests there as a card for about six seconds (longer while the
-pointer is on it):
+screen and rests there as a card — CleanShot X's Quick Access Overlay. How
+long is `[appshot].card_seconds` (Settings → Appshots → *Corner card*: 3, 6,
+10 or 30 seconds, or until you close it); the pointer on it keeps it.
 
-- **Click** brings the app to the front with the **appshot editor** open
-  over whatever was on screen (nothing navigates away). See
-  [The editor](#the-editor).
+- **Hover** dims the picture and shows **Close** (top left), **Edit** (top
+  right) and **Copy** / **Save** in the middle. Copy puts the picture on the
+  clipboard and Save writes it to Downloads — both done by the main process
+  (`jarvis/appshot/card_actions.py`), so the clipboard survives the overlay
+  quitting on Linux; the card shows the result for a moment.
+- **Click** (or Edit) opens the **appshot editor in a window of its own** in
+  front of you; the app behind keeps its size and what it shows. Without a
+  desktop shell (a browser, a headless host) the editor opens over the app's
+  page instead. See [The editor](#the-editor).
+- **Done** or **Close** in the editor window slides the picture back into
+  the corner — the edited one after Done — so it stays at hand.
 - **Drag** the card into any app that accepts files or images (chat, mail,
   Explorer/Finder) to drop the picture there.
 - **Right-click** dismisses it.
@@ -78,8 +87,10 @@ the card only opens the editor and shares nothing.
 
 The editor follows CleanShot X's annotate tool — same tools, same one-letter
 keys, the same window shape — in this app's own look. It opens from the
-corner card or from **Edit** on the last appshot (Settings → Appshots), as a
-floating rounded window over the dimmed app; nothing navigates away.
+corner card or from **Edit** on the last appshot (Settings → Appshots) — in
+its own desktop window (`?view=appshot-editor`, `views/AppshotEditorWindow.tsx`),
+or, without a desktop shell, as a floating rounded window over the dimmed
+app. Nothing navigates away.
 
 - **Top bar:** close, crop and background, the tools as pills, the colour
   menu (presets + any colour) and the size slider, then **Save** and
@@ -153,6 +164,24 @@ same on Windows, macOS and Linux. The two native paths are the clipboard
 without either, Copy falls back to the browser clipboard and says so if that
 fails too) and Save (`~/Downloads` on every OS).
 
+## What the assistant gets after an edit
+
+An appshot is two things at once: a screenshot the user keeps, and context
+for the assistant. **Done** decides the second: the edited picture becomes
+the appshot (`PUT /api/appshot/latest/image`), and `deliver_edit` in
+`jarvis/appshot/service.py` hands it over with a note that the markings are
+the user's — arrows, boxes, numbers and text point at what they mean, hidden
+parts were hidden on purpose:
+
+| Situation | Where the edit goes |
+|---|---|
+| A voice call runs and `target` is `auto` or `voice` | Into the call at once — even when the call already saw the original. A waiting original is withdrawn, so it does not follow later. |
+| No call (or `target = message`) | Onto the next message — even when the original was sent already. |
+| `target = voice` and no call | Nowhere; the edit is kept as the last appshot. |
+
+The editor says which one happened. Copy, Save and Drag never send anything
+to the assistant; they are the screenshot-tool half.
+
 ## Where a shortcut appshot goes
 
 | Destination | Running voice call | No voice call |
@@ -208,6 +237,7 @@ original any-order behaviour.
 | `target` | `"auto"` | `auto` · `message` · `voice` (table above) |
 | `sound` | `true` | Shutter sound; also needs `[ui].sound_effects` |
 | `effect` | `true` | Flash and corner thumbnail |
+| `card_seconds` | `6` | How long the corner card rests, 0–600 seconds; `0` = until closed |
 
 ## Operating systems
 

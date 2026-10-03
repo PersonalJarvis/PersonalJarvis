@@ -1000,12 +1000,12 @@ def set_screen_context_settings(
 #: Keys ``[appshot]`` accepts — same allowlist reasoning as Screen Context.
 #: The master switch is ``[screen_context].enabled``, written by the setter above.
 APPSHOT_SETTING_KEYS: frozenset[str] = frozenset(
-    {"hotkey", "region_hotkey", "target", "sound", "effect"}
+    {"hotkey", "region_hotkey", "target", "sound", "effect", "card_seconds"}
 )
 
 
 def set_appshot_settings(
-    values: dict[str, str | bool],
+    values: dict[str, str | bool | int],
     *,
     path: Path = DEFAULT_CONFIG_FILE,
 ) -> None:

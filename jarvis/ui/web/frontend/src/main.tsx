@@ -129,6 +129,13 @@ const queryClient = new QueryClient({
   },
 });
 
+// The appshot editor's own desktop window (a click on the corner card) loads
+// just the editor, not the app around it. Lazy, so the app never carries it.
+const AppshotEditorWindow = React.lazy(() =>
+  import("./views/AppshotEditorWindow").then((m) => ({ default: m.AppshotEditorWindow })),
+);
+const isEditorWindow = new URLSearchParams(window.location.search).get("view") === "appshot-editor";
+
 function renderApp(): void {
   ReactDOM.createRoot(document.getElementById("root")!).render(
     <React.StrictMode>
@@ -140,7 +147,13 @@ function renderApp(): void {
             onRecover={() => window.location.reload()}
           >
             <AuthGate>
-              <App />
+              {isEditorWindow ? (
+                <React.Suspense fallback={null}>
+                  <AppshotEditorWindow />
+                </React.Suspense>
+              ) : (
+                <App />
+              )}
             </AuthGate>
           </ViewErrorBoundary>
         </ThemeProvider>

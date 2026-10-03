@@ -41,14 +41,30 @@ CMD_UNBLANK = "unblank"
 CMD_QUIT = "quit"
 CMD_SNAP = "snap"
 CMD_SNAP_IMAGE = "snap_image"
+#: Put a picture straight into the corner card (the editor closed).
+CMD_CARD = "card"
+#: A short status line on the card ("Copied", "Saved to Downloads").
+CMD_CARD_STATUS = "card_status"
 
 ALL_COMMANDS = frozenset(
-    {CMD_SHOW, CMD_HIDE, CMD_BLANK, CMD_UNBLANK, CMD_QUIT, CMD_SNAP, CMD_SNAP_IMAGE}
+    {
+        CMD_SHOW,
+        CMD_HIDE,
+        CMD_BLANK,
+        CMD_UNBLANK,
+        CMD_QUIT,
+        CMD_SNAP,
+        CMD_SNAP_IMAGE,
+        CMD_CARD,
+        CMD_CARD_STATUS,
+    }
 )
 
 EVENT_CARD = "card"
 EVENT_SNAP_OPEN = "snap_open"
-ALL_EVENTS = frozenset({EVENT_CARD, EVENT_SNAP_OPEN})
+#: A hover button on the card was pressed (``action``: ``copy`` | ``save``).
+EVENT_CARD_ACTION = "card_action"
+ALL_EVENTS = frozenset({EVENT_CARD, EVENT_SNAP_OPEN, EVENT_CARD_ACTION})
 
 #: Sidecar exit code when no usable GUI stack exists (PySide6 missing or
 #: no display). The controller logs it as an expected degradation.
@@ -111,12 +127,15 @@ def decode_ack(line: str) -> str | None:
 __all__ = [
     "ALL_COMMANDS",
     "CMD_BLANK",
+    "CMD_CARD",
+    "CMD_CARD_STATUS",
     "CMD_HIDE",
     "CMD_QUIT",
     "CMD_SHOW",
     "CMD_SNAP",
     "CMD_SNAP_IMAGE",
     "EVENT_CARD",
+    "EVENT_CARD_ACTION",
     "EVENT_SNAP_OPEN",
     "CMD_UNBLANK",
     "EXIT_NO_GUI",

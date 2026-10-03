@@ -33,7 +33,6 @@
     "copy_timeout": "the clipboard did not answer",
     "saved_to": "Saved to {0}",
     "save_failed": "Saving did not work: {0}",
-    "applied": "The edited picture replaces the appshot.",
     "apply_failed": "The edit could not be used: {0}",
     "text_placeholder": "Type, then Enter",
     "text_style": "Text style",
@@ -65,6 +64,13 @@
     "drag_release": "Keep the handle pressed while you drag.",
     "drag_failed": "Dragging did not work: {0}",
     "zoom": "Zoom",
-    "zoom_fit": "Fit"
+    "zoom_fit": "Fit",
+    "applied_voice": "{name} sees the edited picture in your call now.",
+    "applied_message": "The edited picture goes with your next message to {name}.",
+    "applied_none": "Edit kept. It goes to {name} only during a voice call.",
+    "card_seconds": "Corner card",
+    "card_seconds_hint": "How long the picture rests in the screen corner after an appshot.",
+    "card_seconds_option": "{0} seconds",
+    "card_until_closed": "Until I close it"
   }
 }

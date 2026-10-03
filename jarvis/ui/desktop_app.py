@@ -113,6 +113,10 @@ DETACHABLE_VIEWS: dict[str, str] = {
     # picture is something you keep looking at WHILE you carry on working, and
     # on a second monitor it stops competing with the section that produced it.
     "visualization": "Visualization",
+    # The appshot editor, CleanShot X style: a click on the corner card opens
+    # it in front of the user without raising or resizing the main window.
+    # Always on one appshot (``&appshot=<id>``); ONE window is reused.
+    "appshot-editor": "Appshot Editor",
 }
 META_FILE_PATH = DATA_DIR / ".jarvis-running"
 #: Timeout for the initial lock acquire, in seconds. 0 = non-blocking,
@@ -2668,6 +2672,19 @@ class DesktopApp:
         # handler runs on the asyncio loop and immediately thread-hops, because
         # pywebview calls block their calling thread (see _on_show_window_requested).
         server.bus.subscribe(ShowWindowRequested, self._on_show_window_requested)
+        # The appshot card and the Appshots page open the editor in a window
+        # of its own (jarvis.appshot.editor_window holds the opener; it is
+        # always called from a worker thread, as open_detached_window needs).
+        try:
+            from jarvis.appshot.editor_window import EDITOR_VIEW, register_window_opener
+
+            register_window_opener(
+                lambda query: self.open_detached_window(EDITOR_VIEW, query=query)
+            )
+        except Exception as exc:  # noqa: BLE001 - the page editor stays the fallback
+            from loguru import logger as _alog
+
+            _alog.opt(exception=exc).debug("appshot editor window wiring skipped")
         # The pet's pen asks for a fresh chat: the window comes up through the
         # very same off-loop path; the frontend opens the new chat itself.
         server.bus.subscribe(ComposeRequested, self._on_show_window_requested)

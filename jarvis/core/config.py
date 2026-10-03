@@ -2714,6 +2714,11 @@ class AppshotConfig(BaseModel):
     #: Flash and thumbnail animation on the captured window.
     effect: bool = True
 
+    #: Seconds the appshot card rests in the screen corner before it slides
+    #: away (read by ``jarvis.appshot.card_actions``); ``0`` keeps it there
+    #: until the user closes it.
+    card_seconds: int = Field(default=6, ge=0, le=600)
+
 
 class ComputerUseConfig(BaseModel):
     """Top-level ``[computer_use]`` config for the Computer-Use harness.

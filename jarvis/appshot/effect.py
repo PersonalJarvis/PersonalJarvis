@@ -7,7 +7,10 @@ frame in memory and piped to the local indicator sidecar; it is never stored
 and never published on the event bus.
 
 The thumbnail then rests in the corner as a card: a click opens the appshot
-editor in the app, a drag hands the picture to another app. For that drag the
+editor (in its own window where the desktop shell allows), a drag hands the
+picture to another app, and on hover it offers Copy, Save, Edit and Close
+(:mod:`jarvis.appshot.card_actions`). How long it rests is
+``[appshot].card_seconds`` (``0`` = until closed). For that drag the
 finished, privacy-filtered appshot follows (:func:`attach_card_image`) — the
 raw-frame thumbnail itself never leaves the sidecar.
 """
@@ -72,6 +75,8 @@ async def _play(
         config = await asyncio.to_thread(load_config)
         if not bool(getattr(getattr(config, "appshot", None), "effect", True)):
             return
+        from jarvis.appshot.card_actions import card_labels, card_rest_ms  # noqa: PLC0415
+
         thumb = await asyncio.to_thread(thumbnail_jpeg, size, rgb)
         monitor, rect = placement(bbox, monitors)
         shown = await controller.snap(
@@ -79,6 +84,8 @@ async def _play(
             rect=rect,
             thumb_b64=base64.b64encode(thumb).decode("ascii"),
             hint=card_hint(config),
+            rest_ms=card_rest_ms(config),
+            labels=card_labels(config),
         )
         if not shown:
             log.info("appshot: shutter effect could not be shown on this desktop")
@@ -107,6 +114,18 @@ def thumbnail_jpeg(size: tuple[int, int], rgb: bytes) -> bytes:
     image.thumbnail((_THUMB_EDGE, _THUMB_EDGE), Image.Resampling.BILINEAR)
     buffer = io.BytesIO()
     image.save(buffer, format="JPEG", quality=82)
+    return buffer.getvalue()
+
+
+def thumbnail_from_image(image: bytes) -> bytes:
+    """A small JPEG of a finished (edited) appshot, for the card coming back."""
+    from PIL import Image  # noqa: PLC0415
+
+    with Image.open(io.BytesIO(image)) as picture:
+        small = picture.convert("RGB")
+        small.thumbnail((_THUMB_EDGE, _THUMB_EDGE), Image.Resampling.BILINEAR)
+        buffer = io.BytesIO()
+        small.save(buffer, format="JPEG", quality=82)
     return buffer.getvalue()
 
 

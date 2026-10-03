@@ -5,7 +5,7 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
 import { BrandedSelect, type BrandedSelectOption } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { useT } from "@/i18n";
+import { useLocaleChunk, useT } from "@/i18n";
 import {
   fetchAppshotSettings,
   fetchLatestAppshot,
@@ -17,6 +17,8 @@ import {
   type AppshotMeta,
   type AppshotSettings,
   type AppshotSettingsPatch,
+  CARD_SECONDS_CHOICES,
+  openAppshotEditorWindow,
 } from "@/lib/appshotApi";
 import { gestureFamily } from "@/lib/appshotChord";
 import { cn } from "@/lib/utils";
@@ -331,6 +333,20 @@ export function AppshotsView() {
   }, [pushToast]);
 
 
+  // The card and editor strings live in the editor's own locale chunk.
+  const editorReady = useLocaleChunk("appshot_editor");
+  const cardOptions = useMemo<BrandedSelectOption[]>(
+    () =>
+      CARD_SECONDS_CHOICES.map((seconds) => ({
+        value: String(seconds),
+        label:
+          seconds === 0
+            ? t("appshot_editor.card_until_closed")
+            : t("appshot_editor.card_seconds_option").replace("{0}", String(seconds)),
+      })),
+    // `editorReady` re-labels the options once the chunk has arrived.
+    [t, editorReady],
+  );
   const targetOptions = useMemo<BrandedSelectOption[]>(
     () => [
       { value: "auto", label: t("appshots.target_auto") },
@@ -514,6 +530,20 @@ export function AppshotsView() {
                   }
                 />
                 <Row
+                  label={editorReady ? t("appshot_editor.card_seconds") : ""}
+                  hint={editorReady ? t("appshot_editor.card_seconds_hint") : ""}
+                  control={
+                    <BrandedSelect
+                      value={String(settings.card_seconds ?? 6)}
+                      options={cardOptions}
+                      ariaLabel={editorReady ? t("appshot_editor.card_seconds") : ""}
+                      disabled={disabled || saving || !settings.effect}
+                      testId="appshots-card-seconds"
+                      onValueChange={(value) => void save({ card_seconds: Number(value) })}
+                    />
+                  }
+                />
+                <Row
                   label={t("appshots.try_label")}
                   hint={
                     countdown !== null
@@ -564,7 +594,12 @@ export function AppshotsView() {
                 shot={latest}
                 revision={revision}
                 onForget={() => void forget()}
-                onEdit={() => openEditor(latest.id)}
+                onEdit={() => {
+                  // Its own window where the desktop shell can; else over this page.
+                  void openAppshotEditorWindow(latest.id).then((inWindow) => {
+                    if (!inWindow) openEditor(latest.id);
+                  });
+                }}
               />
             ) : (
               <PreviewDemo />

@@ -252,15 +252,31 @@ describe("AppshotsView editor", () => {
     vi.unstubAllGlobals();
   });
 
-  it("opens the editor on the last appshot without leaving the page", async () => {
+  it("edits in the page when no editor window can open", async () => {
     useEventStore.setState({ activeSection: "appshots" });
     render(<AppshotsView />);
     fireEvent.click(await screen.findByTestId("appshots-preview-edit"));
 
-    // AppshotEditorHost (mounted by App) draws it; the page only asks.
-    expect(useAppshotEditor.getState().openId).toBe("shot-1");
+    // The window route answers 404 here (a browser); AppshotEditorHost
+    // (mounted by App) then draws the editor — the page only asks.
+    await waitFor(() => expect(useAppshotEditor.getState().openId).toBe("shot-1"));
     expect(useEventStore.getState().activeSection).toBe("appshots");
     expect(screen.queryByTestId("appshot-editor")).toBeNull();
+  });
+
+  it("edits in its own window where the desktop shell opens one", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    const base = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
+      url === "/api/appshot/open-editor" ? json({ window: true }) : base(url, init),
+    );
+    render(<AppshotsView />);
+    fireEvent.click(await screen.findByTestId("appshots-preview-edit"));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some(([url]) => url === "/api/appshot/open-editor")).toBe(true),
+    );
+    expect(useAppshotEditor.getState().openId).toBeNull();
   });
 
   it("shows the edited picture once an edit replaced the appshot", async () => {

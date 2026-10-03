@@ -245,14 +245,57 @@ async def _publish(bus: Any | None, shot: Appshot, delivered_to: str) -> None:
         log.warning("appshot: receipt publication failed", exc_info=True)
 
 
+#: Rides with an edited appshot, after its original evidence note.
+EDIT_NOTE = (
+    "EDITED BY THE USER: this is the same appshot with the user's own markings. "
+    "Arrows, boxes, circles, numbers, highlights and text are theirs and point "
+    "at what they mean; blurred or pixelated parts were hidden on purpose. Read "
+    "the markings first."
+)
+
+
+async def deliver_edit(shot: Appshot) -> str:
+    """Hand the user's edited appshot to the assistant; where it went.
+
+    The edit replaces the picture wherever the original still waits (the
+    store already swapped it). Then: a running voice call gets the edited
+    picture at once when ``[appshot].target`` allows it — including a call
+    that already saw the original — and otherwise the next message carries
+    it, even when the original has been sent already. ``none`` only when the
+    target is voice-only and no call runs.
+    """
+    config = await asyncio.to_thread(_load_config)
+    target = str(config.appshot.target)
+    note = shot.note
+    if EDIT_NOTE not in note:
+        note = "\n\n".join(part for part in (note, EDIT_NOTE) if part)
+    edited = replace(shot, note=note)
+    store = get_store()
+    from jarvis.appshot.delivery import deliver_to_live  # noqa: PLC0415
+
+    delivered_to = "none"
+    if target in ("auto", "voice") and await deliver_to_live(edited.image, edited.mime, note):
+        # The call has it now; the waiting original must not follow later.
+        store.take_pending(shot.id)
+        delivered_to = "voice"
+    elif target != "voice":
+        store.park(edited, ttl_s=float(config.screen_context.ttl_s))
+        delivered_to = "message"
+    store.mark_delivered(shot.id, delivered_to)
+    log.info("appshot: edited %s -> %s", shot.label, delivered_to)
+    return delivered_to
+
+
 def take_pending_for_turn() -> Appshot | None:
     """The appshot waiting for the next message, removed on the way out."""
     return get_store().take_pending()
 
 
 __all__ = [
+    "EDIT_NOTE",
     "AppshotResult",
     "Scope",
+    "deliver_edit",
     "record_turn_capture",
     "shot_from_context",
     "take_appshot",

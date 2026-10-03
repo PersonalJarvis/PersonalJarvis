@@ -33,7 +33,6 @@
     "copy_timeout": "die Zwischenablage hat nicht geantwortet",
     "saved_to": "Gespeichert unter {0}",
     "save_failed": "Speichern hat nicht geklappt: {0}",
-    "applied": "Das bearbeitete Bild ersetzt den Appshot.",
     "apply_failed": "Die Bearbeitung konnte nicht übernommen werden: {0}",
     "text_placeholder": "Tippen, dann Enter",
     "text_style": "Textstil",
@@ -65,6 +64,13 @@
     "drag_release": "Halte den Griff gedrückt, während du ziehst.",
     "drag_failed": "Ziehen hat nicht geklappt: {0}",
     "zoom": "Zoom",
-    "zoom_fit": "Einpassen"
+    "zoom_fit": "Einpassen",
+    "applied_voice": "{name} sieht das bearbeitete Bild jetzt im Anruf.",
+    "applied_message": "Das bearbeitete Bild geht mit deiner nächsten Nachricht an {name}.",
+    "applied_none": "Bearbeitung gespeichert. Sie geht nur während eines Anrufs an {name}.",
+    "card_seconds": "Karte in der Ecke",
+    "card_seconds_hint": "Wie lange das Bild nach einem Appshot in der Bildschirmecke bleibt.",
+    "card_seconds_option": "{0} Sekunden",
+    "card_until_closed": "Bis ich sie schließe"
   }
 }

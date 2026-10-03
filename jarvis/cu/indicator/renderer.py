@@ -221,6 +221,11 @@ _CARD_AFTER_HOVER_MS = 2500
 _CARD_OUT_MS = 240
 #: A press that moves further than this (logical px) is a drag, not a click.
 _CARD_DRAG_SLOP = 6
+#: How long a status line ("Copied") stays on the card.
+_CARD_STATUS_MS = 1600
+#: Hover buttons: the Copy / Save pills and the round Close / Edit chips.
+_CARD_BUTTON_H = 28.0
+_CARD_ROUND = 26.0
 #: Drag files older than this are removed the next time one is written.
 _DRAG_FILE_MAX_AGE_S = 3600
 
@@ -397,12 +402,55 @@ class _SnapWindow(QWidget):
         painter.end()
 
 
+def _card_rect(screen, thumb: QImage) -> QRectF:
+    """Where the resting card sits: the bottom-right of ``screen``'s work area.
+
+    Absolute (virtual-desktop) logical coordinates. Shared by the shutter
+    flight's landing spot and a card that comes back after the editor.
+    """
+    aspect = thumb.height() / max(1, thumb.width()) if not thumb.isNull() else 0.6
+    tw = float(_SNAP_THUMB_W)
+    th = tw * aspect
+    if th > _SNAP_THUMB_MAX_H:
+        th = float(_SNAP_THUMB_MAX_H)
+        tw = th / max(aspect, 1e-6)
+    # Inside the work area, so the card never sits under the taskbar.
+    avail = screen.availableGeometry()
+    right = float(avail.right() + 1)
+    bottom = float(avail.bottom() + 1)
+    return QRectF(right - tw - _SNAP_MARGIN, bottom - th - _SNAP_MARGIN, tw, th)
+
+
+#: Default card wording; the main process sends the user's language.
+_CARD_LABELS = {
+    "edit": "Edit",
+    "copy": "Copy",
+    "save": "Save",
+    "close": "Close",
+}
+
+
 class _CardWindow(QWidget):
-    """The resting thumbnail: hover keeps it, click edits, drag shares."""
+    """The resting thumbnail, CleanShot X's Quick Access Overlay in small.
+
+    Hover shows Close (top-left), Edit (top-right) and Copy / Save in the
+    middle; a click anywhere else edits, a drag shares the picture, a
+    right-click dismisses it. ``rest_ms`` is how long it stays untouched —
+    ``0`` keeps it until the user closes it.
+    """
 
     _PAD = 12  # transparent margin that holds the soft shadow
 
-    def __init__(self, rect: QRectF, thumb: QImage, hint: str, owner: Renderer) -> None:
+    def __init__(
+        self,
+        rect: QRectF,
+        thumb: QImage,
+        hint: str,
+        owner: Renderer,
+        *,
+        rest_ms: int = _CARD_REST_MS,
+        labels: dict[str, str] | None = None,
+    ) -> None:
         super().__init__(None)
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
@@ -424,9 +472,17 @@ class _CardWindow(QWidget):
         self._thumb = thumb
         self._hint = hint
         self._owner = owner
+        self._rest_ms = max(0, int(rest_ms))
+        self._labels = {**_CARD_LABELS, **(labels or {})}
         self._hover = False
+        self._hot = ""  # the hover button under the pointer
         self._press: QPointF | None = None
+        self._press_button = ""
         self._leaving = False
+        self._status = ""
+        self._status_timer = QTimer(self)
+        self._status_timer.setSingleShot(True)
+        self._status_timer.timeout.connect(self._clear_status)
         self._dismiss = QTimer(self)
         self._dismiss.setSingleShot(True)
         self._dismiss.timeout.connect(self.leave)
@@ -436,11 +492,27 @@ class _CardWindow(QWidget):
         self._out.setDuration(_CARD_OUT_MS)
         self._out.valueChanged.connect(self._on_out)
         self._out.finished.connect(self._gone)
+        self._in = QVariantAnimation(self)
+        self._in.setStartValue(1.0)
+        self._in.setEndValue(0.0)
+        self._in.setDuration(_CARD_OUT_MS)
+        self._in.valueChanged.connect(self._on_out)
         self._origin = self.pos()
 
-    def start(self) -> None:
-        self.show()
-        self._dismiss.start(_CARD_REST_MS)
+    def start(self, *, slide_in: bool = False) -> None:
+        if slide_in:
+            # Back from the editor: slide in from the edge it leaves through.
+            self._origin = self.pos()
+            self._on_out(1.0)
+            self.show()
+            self._in.start()
+        else:
+            self.show()
+        self._arm_dismiss(self._rest_ms)
+
+    def _arm_dismiss(self, ms: int) -> None:
+        if self._rest_ms > 0 and not self._leaving:
+            self._dismiss.start(ms)
 
     # -- lifecycle -----------------------------------------------------------
     def leave(self) -> None:
@@ -449,12 +521,14 @@ class _CardWindow(QWidget):
             return
         self._leaving = True
         self._dismiss.stop()
+        self._in.stop()
         self._origin = self.pos()
         self._out.start()
 
     def finish_now(self) -> None:
         self._leaving = True
         self._dismiss.stop()
+        self._in.stop()
         self._out.stop()
         self._gone()
 
@@ -469,6 +543,16 @@ class _CardWindow(QWidget):
         if owner is not None:
             owner.card_gone(self)
         self.deleteLater()
+
+    def show_status(self, text: str) -> None:
+        """A short line over the card ("Copied", "Saved to Downloads")."""
+        self._status = text
+        self._status_timer.start(_CARD_STATUS_MS)
+        self.update()
+
+    def _clear_status(self) -> None:
+        self._status = ""
+        self.update()
 
     # -- input ---------------------------------------------------------------
     def showEvent(self, event) -> None:  # noqa: N802 (Qt override)
@@ -490,8 +574,8 @@ class _CardWindow(QWidget):
     def leaveEvent(self, event) -> None:  # noqa: N802
         del event
         self._hover = False
-        if not self._leaving:
-            self._dismiss.start(_CARD_AFTER_HOVER_MS)
+        self._hot = ""
+        self._arm_dismiss(_CARD_AFTER_HOVER_MS)
         self.update()
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
@@ -499,9 +583,14 @@ class _CardWindow(QWidget):
             self.leave()
         elif event.button() == Qt.MouseButton.LeftButton:
             self._press = event.position()
+            self._press_button = self._button_at(event.position())
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
-        if self._press is None or self._leaving:
+        hot = self._button_at(event.position()) if self._hover else ""
+        if hot != self._hot:
+            self._hot = hot
+            self.update()
+        if self._press is None or self._leaving or self._press_button:
             return
         moved = event.position() - self._press
         if abs(moved.x()) + abs(moved.y()) > _CARD_DRAG_SLOP:
@@ -512,7 +601,18 @@ class _CardWindow(QWidget):
         if event.button() != Qt.MouseButton.LeftButton or self._press is None:
             return
         self._press = None
-        if self._owner is not None and not self._leaving:
+        pressed, self._press_button = self._press_button, ""
+        if self._owner is None or self._leaving:
+            return
+        released = self._button_at(event.position())
+        if pressed and pressed != released:
+            return  # pressed a button, let go elsewhere: nothing
+        if pressed == "close":
+            self.leave()
+        elif pressed in ("copy", "save"):
+            if self._owner.card_image is not None:
+                self._owner.card_action(pressed)
+        else:  # "edit" or the picture itself
             self._owner.card_clicked(self)
 
     def _start_drag(self) -> None:
@@ -541,40 +641,129 @@ class _CardWindow(QWidget):
         self.setWindowOpacity(1.0)
         self.leave()
 
+    # -- hover buttons -------------------------------------------------------
+    def _card_area(self) -> QRectF:
+        pad = float(self._PAD)
+        return QRectF(pad, pad, self.width() - 2 * pad, self.height() - 2 * pad)
+
+    def _buttons(self) -> dict[str, QRectF]:
+        """Hit areas of the hover buttons, in widget coordinates."""
+        rect = self._card_area()
+        font = _card_font()
+        metrics = QFontMetricsF(font)
+        h = _CARD_BUTTON_H
+        buttons: dict[str, QRectF] = {
+            "close": QRectF(rect.left() + 8, rect.top() + 8, _CARD_ROUND, _CARD_ROUND),
+        }
+        edit_w = metrics.horizontalAdvance(self._labels["edit"]) + 22.0
+        buttons["edit"] = QRectF(rect.right() - 8 - edit_w, rect.top() + 8, edit_w, _CARD_ROUND)
+        if self._owner is not None and self._owner.card_image is not None:
+            widths = [metrics.horizontalAdvance(self._labels[k]) + 28.0 for k in ("copy", "save")]
+            width = max(widths + [86.0])
+            gap = 8.0
+            if width * 2 + gap <= rect.width() - 24:
+                y = rect.center().y() - h / 2
+                left = rect.center().x() - width - gap / 2
+                buttons["copy"] = QRectF(left, y, width, h)
+                buttons["save"] = QRectF(left + width + gap, y, width, h)
+            else:
+                top = rect.center().y() - h - gap / 2
+                left = rect.center().x() - width / 2
+                buttons["copy"] = QRectF(left, top, width, h)
+                buttons["save"] = QRectF(left, top + h + gap, width, h)
+        return buttons
+
+    def _button_at(self, pos: QPointF) -> str:
+        if not self._hover:
+            return ""
+        for name, area in self._buttons().items():
+            if area.adjusted(-2, -2, 2, 2).contains(pos):
+                return name
+        return ""
+
     # -- painting ------------------------------------------------------------
     def paintEvent(self, event) -> None:  # noqa: N802 (Qt override)
         del event
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        pad = float(self._PAD)
-        rect = QRectF(pad, pad, self.width() - 2 * pad, self.height() - 2 * pad)
+        rect = self._card_area()
         painter.setPen(Qt.PenStyle.NoPen)
         for spread, alpha in ((8.0, 18), (4.0, 30), (1.5, 46)):
             painter.setBrush(QColor(0, 0, 0, alpha))
             shadow = rect.adjusted(-spread, -spread + 3, spread, spread + 3)
             painter.drawRoundedRect(shadow, _SNAP_RADIUS + spread, _SNAP_RADIUS + spread)
         _paint_card(painter, rect, self._thumb, _SNAP_RADIUS, 1.0)
-        if self._hover and self._hint:
-            self._paint_hint(painter, rect)
+        if self._status:
+            self._paint_scrim(painter, rect, 150)
+            self._paint_centered(painter, rect, self._status)
+        elif self._hover:
+            self._paint_scrim(painter, rect, 105)
+            self._paint_buttons(painter)
+            if self._hint:
+                self._paint_hint(painter, rect)
         painter.end()
 
-    def _paint_hint(self, painter: QPainter, rect: QRectF) -> None:
-        font = QFont()
-        font.setPointSizeF(9.0)
-        font.setWeight(QFont.Weight.Medium)
-        metrics = QFontMetricsF(font)
-        h = metrics.height() + 12.0
-        band = QRectF(rect.x(), rect.bottom() - h, rect.width(), h)
+    def _paint_scrim(self, painter: QPainter, rect: QRectF, alpha: int) -> None:
         clip = QPainterPath()
         clip.addRoundedRect(rect, _SNAP_RADIUS, _SNAP_RADIUS)
         painter.save()
         painter.setClipPath(clip)
-        painter.fillRect(band, QColor(10, 10, 12, 200))
+        painter.fillRect(rect, QColor(0, 0, 0, alpha))
         painter.restore()
+
+    def _paint_buttons(self, painter: QPainter) -> None:
+        font = _card_font()
         painter.setFont(font)
-        painter.setPen(QColor(255, 255, 255, 235))
+        for name, area in self._buttons().items():
+            hot = name == self._hot
+            painter.setPen(Qt.PenStyle.NoPen)
+            if name in ("copy", "save"):
+                # Light pills on the dimmed picture, like CleanShot's overlay.
+                painter.setBrush(QColor(255, 255, 255, 255 if hot else 228))
+                painter.drawRoundedRect(area, area.height() / 2, area.height() / 2)
+                painter.setPen(QColor(20, 20, 22))
+                painter.drawText(area, Qt.AlignmentFlag.AlignCenter, self._labels[name])
+                continue
+            painter.setBrush(QColor(28, 28, 30, 240 if hot else 200))
+            painter.drawRoundedRect(area, area.height() / 2, area.height() / 2)
+            if name == "close":
+                pen = QPen(QColor(255, 255, 255, 235))
+                pen.setWidthF(1.6)
+                pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+                painter.setPen(pen)
+                c = area.center()
+                d = area.width() * 0.2
+                painter.drawLine(QPointF(c.x() - d, c.y() - d), QPointF(c.x() + d, c.y() + d))
+                painter.drawLine(QPointF(c.x() - d, c.y() + d), QPointF(c.x() + d, c.y() - d))
+            else:
+                painter.setPen(QColor(255, 255, 255, 240))
+                painter.drawText(area, Qt.AlignmentFlag.AlignCenter, self._labels[name])
+
+    def _paint_centered(self, painter: QPainter, rect: QRectF, text: str) -> None:
+        font = _card_font()
+        font.setPointSizeF(10.0)
+        painter.setFont(font)
+        painter.setPen(QColor(255, 255, 255, 245))
+        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, text)
+
+    def _paint_hint(self, painter: QPainter, rect: QRectF) -> None:
+        font = QFont()
+        font.setPointSizeF(8.5)
+        font.setWeight(QFont.Weight.Medium)
+        metrics = QFontMetricsF(font)
+        h = metrics.height() + 10.0
+        band = QRectF(rect.x(), rect.bottom() - h, rect.width(), h)
+        painter.setFont(font)
+        painter.setPen(QColor(255, 255, 255, 200))
         painter.drawText(band, Qt.AlignmentFlag.AlignCenter, self._hint)
+
+
+def _card_font() -> QFont:
+    font = QFont()
+    font.setPointSizeF(9.0)
+    font.setWeight(QFont.Weight.DemiBold)
+    return font
 
 
 class Renderer(QObject):
@@ -587,6 +776,8 @@ class Renderer(QObject):
         self._snaps: list[_SnapWindow] = []
         self._card: _CardWindow | None = None
         self._card_hint = ""
+        self._card_rest_ms = _CARD_REST_MS
+        self._card_labels: dict[str, str] = {}
         #: The finished (redacted) picture a drag from the card hands out.
         self.card_image: QImage | None = None
         self._hint = ""
@@ -650,6 +841,11 @@ class Renderer(QObject):
                     self._snap(payload)
                 elif cmd == protocol.CMD_SNAP_IMAGE:
                     self._snap_image(payload)
+                elif cmd == protocol.CMD_CARD:
+                    self._card_cmd(payload)
+                elif cmd == protocol.CMD_CARD_STATUS:
+                    if self._card is not None:
+                        self._card.show_status(str(payload.get("text", "")))
                 elif cmd == protocol.CMD_QUIT:
                     _ack(cmd)
                     self._app.quit()
@@ -701,6 +897,7 @@ class Renderer(QObject):
             self._card.finish_now()
         self.card_image = None
         self._card_hint = str(payload.get("hint", "") or "")
+        self._take_card_options(payload)
         win = _SnapWindow(screen, rect, thumb, self._snap_landed, self._snap_done)
         self._snaps.append(win)
         win.start()
@@ -709,11 +906,56 @@ class Renderer(QObject):
         with suppress(ValueError):
             self._snaps.remove(win)
 
-    def _snap_landed(self, rect: QRectF, thumb: QImage) -> None:
-        card = _CardWindow(rect, thumb, self._card_hint, self)
+    def _take_card_options(self, payload: dict) -> None:
+        try:
+            self._card_rest_ms = max(0, int(payload.get("rest_ms", _CARD_REST_MS)))
+        except (TypeError, ValueError):
+            self._card_rest_ms = _CARD_REST_MS
+        labels = payload.get("labels")
+        self._card_labels = (
+            {str(k): str(v) for k, v in labels.items()} if isinstance(labels, dict) else {}
+        )
+
+    def _new_card(self, rect: QRectF, thumb: QImage) -> _CardWindow:
+        card = _CardWindow(
+            rect,
+            thumb,
+            self._card_hint,
+            self,
+            rest_ms=self._card_rest_ms,
+            labels=self._card_labels,
+        )
         self._card = card
         _emit(protocol.EVENT_CARD, open=True)
-        card.start()
+        return card
+
+    def _snap_landed(self, rect: QRectF, thumb: QImage) -> None:
+        self._new_card(rect, thumb).start()
+
+    def _card_cmd(self, payload: dict) -> None:
+        """The editor closed: slide the (edited) picture back into the corner."""
+        thumb = QImage()
+        raw = payload.get("thumb")
+        if isinstance(raw, str) and raw:
+            thumb.loadFromData(QByteArray.fromBase64(raw.encode("ascii")))
+        if thumb.isNull():
+            return
+        monitor = payload.get("monitor")
+        screen = _match_screen(monitor if isinstance(monitor, list) else [])
+        if screen is None:
+            return
+        for old in list(self._snaps):
+            old.finish_now()
+        if self._card is not None:
+            self._card.finish_now()
+        self.card_image = None
+        self._card_hint = str(payload.get("hint", "") or "")
+        self._take_card_options(payload)
+        self._new_card(_card_rect(screen, thumb), thumb).start(slide_in=True)
+
+    def card_action(self, action: str) -> None:
+        """A hover button: the main process copies or saves the held appshot."""
+        _emit(protocol.EVENT_CARD_ACTION, action=action)
 
     def _snap_image(self, payload: dict) -> None:
         raw = payload.get("image")

@@ -23,6 +23,8 @@ export interface AppshotSettings {
   target: AppshotTarget;
   sound: boolean;
   effect: boolean;
+  /** Seconds the corner card rests; 0 = until the user closes it. */
+  card_seconds: number;
   sound_effects_master: boolean;
   shortcut: AppshotShortcutStatus;
   region_shortcut: AppshotShortcutStatus;
@@ -48,7 +50,7 @@ export interface AppshotMeta {
 }
 
 export type AppshotSettingsPatch = Partial<
-  Pick<AppshotSettings, "enabled" | "hotkey" | "region_hotkey" | "target" | "sound" | "effect">
+  Pick<AppshotSettings, "enabled" | "hotkey" | "region_hotkey" | "target" | "sound" | "effect" | "card_seconds">
 >;
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
@@ -140,3 +142,25 @@ export function formatAppshotHotkey(hotkey: string, isMac: boolean): string {
     })
     .join(" + ");
 }
+
+/**
+ * Open the editor on an appshot in its own desktop window. `false` where the
+ * shell cannot (a browser, a headless host): then the page shows its editor.
+ */
+export async function openAppshotEditorWindow(id: string): Promise<boolean> {
+  try {
+    const response = await fetch("/api/appshot/open-editor", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    if (!response.ok) return false;
+    const body = (await response.json().catch(() => null)) as { window?: unknown } | null;
+    return body?.window === true;
+  } catch {
+    return false;
+  }
+}
+
+/** How long the corner card may rest, in seconds; 0 = until closed. */
+export const CARD_SECONDS_CHOICES = [3, 6, 10, 30, 0] as const;

@@ -33,7 +33,6 @@
     "copy_timeout": "el portapapeles no respondió",
     "saved_to": "Guardado en {0}",
     "save_failed": "No se pudo guardar: {0}",
-    "applied": "La imagen editada sustituye al appshot.",
     "apply_failed": "No se pudo usar la edición: {0}",
     "text_placeholder": "Escribe y pulsa Intro",
     "text_style": "Estilo de texto",
@@ -65,6 +64,13 @@
     "drag_release": "Mantén pulsada el asa mientras arrastras.",
     "drag_failed": "No se pudo arrastrar: {0}",
     "zoom": "Zoom",
-    "zoom_fit": "Ajustar"
+    "zoom_fit": "Ajustar",
+    "applied_voice": "{name} ya ve la imagen editada en la llamada.",
+    "applied_message": "La imagen editada va con tu próximo mensaje a {name}.",
+    "applied_none": "Edición guardada. Solo llega a {name} durante una llamada.",
+    "card_seconds": "Tarjeta en la esquina",
+    "card_seconds_hint": "Cuánto tiempo queda la imagen en la esquina de la pantalla tras un appshot.",
+    "card_seconds_option": "{0} segundos",
+    "card_until_closed": "Hasta que la cierre"
   }
 }

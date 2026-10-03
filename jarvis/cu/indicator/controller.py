@@ -123,6 +123,8 @@ class CUIndicatorController:
         # The finished picture for the current card. It can be ready before the
         # effect reached the sidecar, so ``snap`` re-sends it after the card.
         self._card_image_b64: str | None = None
+        #: The monitor the last shutter played on — where a card comes back.
+        self._card_monitor: list[int] | None = None
 
     # ------------------------------------------------------------------ wiring
     def wire(self) -> None:
@@ -275,9 +277,20 @@ class CUIndicatorController:
         self._card_image_b64 = None  # a new capture: the old picture is not its picture
 
     async def snap(
-        self, *, monitor: list[int], rect: list[float], thumb_b64: str, hint: str = ""
+        self,
+        *,
+        monitor: list[int],
+        rect: list[float],
+        thumb_b64: str,
+        hint: str = "",
+        rest_ms: int = 6000,
+        labels: dict[str, str] | None = None,
     ) -> bool:
-        """Play the appshot shutter effect. ``False`` when it cannot run here."""
+        """Play the appshot shutter effect. ``False`` when it cannot run here.
+
+        ``rest_ms`` is how long the corner card stays untouched; ``0`` keeps it
+        until the user closes it (``[appshot].card_seconds``).
+        """
         ok, reason = self._border_capability()
         if not ok:
             log.debug("[appshot-effect] unavailable: %s", reason)
@@ -291,6 +304,7 @@ class CUIndicatorController:
             # Without a border there was no guard yet: a later capture must
             # blank the resting thumbnail before its grab on every OS.
             capture_guard.register_hook(self._suppress_for_grab)
+            self._card_monitor = list(monitor)
             shown = await asyncio.to_thread(
                 self._send_and_wait,
                 protocol.CMD_SNAP,
@@ -299,11 +313,59 @@ class CUIndicatorController:
                 rect=list(rect),
                 thumb=thumb_b64,
                 hint=hint,
+                rest_ms=int(rest_ms),
+                labels=dict(labels or {}),
             )
             image = self._card_image_b64
             if shown and image:
                 await asyncio.to_thread(
                     self._send_and_wait, protocol.CMD_SNAP_IMAGE, _SHOW_ACK_TIMEOUT_S, image=image
+                )
+            self._schedule_idle_quit()
+            return shown
+
+    async def show_card(
+        self,
+        *,
+        thumb_b64: str,
+        image_b64: str,
+        hint: str = "",
+        rest_ms: int = 6000,
+        labels: dict[str, str] | None = None,
+    ) -> bool:
+        """Put a picture straight back into the corner card — no flash, no flight.
+
+        Used when the editor closes: the (edited) appshot slides back into the
+        corner of the screen its shutter played on, so it stays at hand.
+        """
+        ok, reason = self._border_capability()
+        if not ok:
+            log.debug("[appshot-effect] card unavailable: %s", reason)
+            return False
+        self._loop = asyncio.get_running_loop()
+        async with self._lock:
+            self.hold_for_snap()
+            self._card_image_b64 = image_b64 or None
+            await asyncio.to_thread(self._spawn_sidecar)
+            if self._proc is None:
+                return False
+            capture_guard.register_hook(self._suppress_for_grab)
+            shown = await asyncio.to_thread(
+                self._send_and_wait,
+                protocol.CMD_CARD,
+                _SHOW_ACK_TIMEOUT_S,
+                monitor=list(self._card_monitor or []),
+                thumb=thumb_b64,
+                hint=hint,
+                rest_ms=int(rest_ms),
+                labels=dict(labels or {}),
+            )
+            if shown and image_b64:
+                await asyncio.to_thread(
+                    self._send_and_wait,
+                    protocol.CMD_SNAP_IMAGE,
+                    _SHOW_ACK_TIMEOUT_S,
+                    image=image_b64,
                 )
             self._schedule_idle_quit()
             return shown
@@ -339,10 +401,33 @@ class CUIndicatorController:
         elif event == protocol.EVENT_SNAP_OPEN:
             # _open_editor logs its own failures; nothing awaits this task.
             asyncio.get_running_loop().create_task(self._open_editor(), name="appshot-card-open")
+        elif event == protocol.EVENT_CARD_ACTION:
+            action = str(payload.get("action", ""))
+            if action in ("copy", "save"):
+                asyncio.get_running_loop().create_task(
+                    self._card_action(action), name="appshot-card-action"
+                )
+
+    async def _card_action(self, action: str) -> None:
+        """Copy or save from the card's hover buttons, then tell the card how it went."""
+        from jarvis.appshot.card_actions import run_card_action  # noqa: PLC0415
+
+        status = await run_card_action(action)
+        if self._proc is None or self._proc.poll() is not None:
+            return
+        await asyncio.to_thread(
+            self._send_and_wait, protocol.CMD_CARD_STATUS, _SHOW_ACK_TIMEOUT_S, text=status
+        )
 
     async def _open_editor(self) -> None:
-        """The card was clicked: show the app with the appshot editor."""
+        """The card was clicked: open the appshot editor in front of the user.
+
+        In its own window where the desktop shell can open one, so the app
+        behind keeps its size and what it shows; otherwise the app comes to
+        the front with the editor over its page.
+        """
         try:
+            from jarvis.appshot.editor_window import open_editor_window  # noqa: PLC0415
             from jarvis.appshot.store import get_store  # noqa: PLC0415
             from jarvis.core.events import (  # noqa: PLC0415
                 AppshotEditRequested,
@@ -350,6 +435,8 @@ class CUIndicatorController:
             )
 
             shot = get_store().latest()
+            if shot is not None and await open_editor_window(shot.id):
+                return
             await self._bus.publish(
                 AppshotEditRequested(
                     source_layer="appshot", appshot_id=shot.id if shot is not None else ""

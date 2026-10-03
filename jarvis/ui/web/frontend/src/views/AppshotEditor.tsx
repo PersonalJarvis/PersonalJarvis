@@ -181,11 +181,17 @@ interface Typing {
 export interface AppshotEditorProps {
   appshotId: string;
   onClose: () => void;
-  /** The edited picture replaced the held appshot. */
+  /** The edited picture replaced the held appshot (and went to the assistant). */
   onApplied?: () => void;
+  /**
+   * ``overlay``: a floating window over the app (the page editor).
+   * ``window``: the editor IS its own desktop window, edge to edge, and its
+   * top bar moves the window.
+   */
+  variant?: "overlay" | "window";
 }
 
-export function AppshotEditor({ appshotId, onClose, onApplied }: AppshotEditorProps) {
+export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overlay" }: AppshotEditorProps) {
   const t = useT();
   const ready = useLocaleChunk("appshot_editor");
   const caps = useCapabilities();
@@ -573,7 +579,17 @@ export function AppshotEditor({ appshotId, onClose, onApplied }: AppshotEditorPr
         const body = (await response.json().catch(() => null)) as { detail?: string } | null;
         throw new Error(body?.detail || `HTTP ${response.status}`);
       }
-      pushToast("success", t("appshot_editor.applied"));
+      const body = (await response.json().catch(() => null)) as { appshot?: { delivered_to?: string } } | null;
+      const where = body?.appshot?.delivered_to;
+      // Done means "this is what I meant": say where the edited picture went.
+      pushToast(
+        "success",
+        fill(
+          t(where === "voice" ? "appshot_editor.applied_voice" : where === "none" ? "appshot_editor.applied_none" : "appshot_editor.applied_message"),
+          { name: assistantName },
+        ),
+      );
+      setDirty(false);
       onApplied?.();
       onClose();
     } catch (error) {
@@ -581,7 +597,7 @@ export function AppshotEditor({ appshotId, onClose, onApplied }: AppshotEditorPr
     } finally {
       setBusy("");
     }
-  }, [appshotId, onApplied, onClose, pushToast, render, t]);
+  }, [appshotId, assistantName, onApplied, onClose, pushToast, render, t]);
 
   const requestClose = useCallback(() => {
     if (dirty && ops.length > 0) setConfirmDiscard(true);
@@ -743,10 +759,19 @@ export function AppshotEditor({ appshotId, onClose, onApplied }: AppshotEditorPr
   };
 
   return (
-    <div className="flex h-full w-full items-center justify-center bg-black/45 p-2 backdrop-blur-[2px] sm:p-5">
+    <div
+      className={cn(
+        "flex h-full w-full items-center justify-center",
+        variant === "overlay" && "bg-black/45 p-2 backdrop-blur-[2px] sm:p-5",
+      )}
+    >
       <div
-        className="relative flex h-full w-full max-w-[1800px] flex-col overflow-hidden rounded-2xl border border-border bg-popover text-popover-foreground shadow-2xl"
+        className={cn(
+          "relative flex h-full w-full flex-col overflow-hidden bg-popover text-popover-foreground",
+          variant === "overlay" && "max-w-[1800px] rounded-2xl border border-border shadow-2xl",
+        )}
         data-testid="appshot-editor"
+        data-variant={variant}
       >
         {/* Top bar: close · crop and background · tools · colour and size · Save, Done. */}
         <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3">
@@ -849,7 +874,9 @@ export function AppshotEditor({ appshotId, onClose, onApplied }: AppshotEditorPr
             </label>
           </QuickTooltip>
 
-          <div className="ml-auto flex shrink-0 items-center gap-1.5">
+          {/* Free space: in its own window this is where the window is moved from. */}
+          <div className={cn("h-full min-w-4 flex-1", variant === "window" && "pywebview-drag-region")} aria-hidden />
+          <div className="flex shrink-0 items-center gap-1.5">
             <QuickTooltip content={`${label("save_hint")} (Ctrl+S)`} side="bottom">
               <button
                 type="button"
