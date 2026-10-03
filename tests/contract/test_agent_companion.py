@@ -34,6 +34,7 @@ def test_legacy_and_imported_characters_survive_companion_validation():
         "parts": {"head": "hat"},
     }
     assert validate_avatar_companion(old) == old
+    assert validate_avatar(old) == old
     updated = validate_avatar_companion({**old, "companion": CASES["valid"][0]})
     assert {k: v for k, v in updated.items() if k != "companion"} == old
 
