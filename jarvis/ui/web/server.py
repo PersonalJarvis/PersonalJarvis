@@ -370,6 +370,7 @@ class WebServer:
         from .costs_routes import router as costs_router
         from .deck_routes import router as deck_router
         from .desktop_routes import router as desktop_router
+        from .system_browser_routes import router as system_browser_router
         from .diagnostics_routes import router as diagnostics_router
         from .dictation_routes import router as dictation_router
         from .dictionary_routes import router as dictionary_router
@@ -484,6 +485,7 @@ class WebServer:
         # Detachable views: the desktop shell (when attached) spawns/closes
         # solo windows; headless hosts answer honestly with a fallback URL.
         app.include_router(desktop_router)
+        app.include_router(system_browser_router)
         app.include_router(profile_router)
         app.include_router(settings_router)
         app.include_router(soul_router)

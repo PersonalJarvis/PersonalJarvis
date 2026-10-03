@@ -9,7 +9,7 @@
  * A second hand-written list anywhere would be the classic drift trap (AP-4):
  * a section added here would silently never appear on the deck.
  */
-import { KeyRound, type LucideIcon } from "lucide-react";
+import { Globe, KeyRound, type LucideIcon } from "lucide-react";
 import { OllamaIcon } from "@/components/icons/OllamaIcon";
 import {
   AgentsIcon,
@@ -126,6 +126,7 @@ export const NAV_GROUPS: NavItem[][] = [
   // 1) Workspace — what the user builds with and reads back.
   [
     { id: "agents", labelKey: "nav.agents", icon: AgentsIcon },
+    { id: "browser", labelKey: "system_browser.title", icon: Globe, fallbackLabel: "Browser", beta: true },
     // The compact catalog opens on Plugins; direct section navigation selects
     // its corresponding tab and keeps this shared row highlighted.
     {
