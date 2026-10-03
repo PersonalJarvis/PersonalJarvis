@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 // Five decorative glyphs left this file — one per card heading, plus two on
 // the sub-rows. Every one of them was --primary, which is a FILL: they
 // rendered brighter than the headings they were decorating and inverted the
@@ -15,6 +15,7 @@ import {
   testDictationPolish,
   useDictation,
   type DictationPolishTest,
+  type DictationSettings,
 } from "@/hooks/useDictation";
 import { Combobox } from "@/components/ui/combobox";
 import { LanguageSelect } from "@/components/ui/language-select";
@@ -77,7 +78,7 @@ export interface LanguageTabProps {
  */
 export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
   const t = useT();
-  const { settings, choices, wordingProvider, loading, error, saveSettings } =
+  const { settings, choices, wordingProvider, loading, error, saveSettings: persistSettings, refetch } =
     useDictation();
   // Only for the credential half of the translate card: the dashboard link and
   // the "which key is this" line live on the provider catalog, and copying
@@ -86,6 +87,29 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
   const pushToast = useEventStore((s) => s.pushToast);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<DictationPolishTest | null>(null);
+  const [saving, setSaving] = useState(false);
+  const writing = useRef(false);
+  const testVersion = useRef(0);
+  const controlsBusy = loading || saving || testing;
+
+  useEffect(() => {
+    testVersion.current += 1;
+    setTestResult(null);
+  }, [settings]);
+
+  async function saveSettings(patch: Partial<DictationSettings>) {
+    if (writing.current) return;
+    writing.current = true;
+    testVersion.current += 1;
+    setTestResult(null);
+    setSaving(true);
+    try {
+      await persistSettings(patch);
+    } finally {
+      writing.current = false;
+      setSaving(false);
+    }
+  }
 
   async function onPick(language: string) {
     try {
@@ -111,7 +135,7 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
   async function onPickPolishProvider(provider: string) {
     setTestResult(null);
     try {
-      await saveSettings({ polish_provider: provider });
+      await saveSettings({ polish_provider: provider, polish_model: "" });
       pushToast("success", t("dictation.saved"));
     } catch (e) {
       pushToast("error", (e as Error).message);
@@ -173,10 +197,13 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
   }
 
   async function runPolishTest() {
+    if (controlsBusy) return;
+    const version = ++testVersion.current;
     setTesting(true);
     setTestResult(null);
     try {
-      setTestResult(await testDictationPolish());
+      const result = await testDictationPolish();
+      if (version === testVersion.current) setTestResult(result);
     } catch (e) {
       pushToast("error", (e as Error).message);
     } finally {
@@ -211,6 +238,8 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
   // dictation into a brief for a coding agent, so WHAT the text says changes
   // by design. Chosen, never inherited.
   const promptModeOn = settings?.prompt_mode ?? false;
+  const wordingOn = polishOn || precisionOn;
+  const processingOn = wordingOn || promptModeOn || translateOn;
   const translateTarget = settings?.translate_target ?? "en";
   // No "auto" in this list, and none is added here — there is nothing to detect
   // on the output side, so an auto entry would be a choice that does nothing.
@@ -245,7 +274,6 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
   // The formatter block already renders this dropdown when it is open. A second
   // identical one a few rows below would read as two settings, so this one
   // appears only where there is otherwise nowhere to choose.
-  const showTranslateProvider = !polishOn;
 
   return (
     <div className="flex h-full flex-col">
@@ -340,7 +368,7 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
               </div>
               <Switch
                 checked={polishOn}
-                disabled={loading}
+                disabled={controlsBusy}
                 onCheckedChange={(next) => void onTogglePolish(next)}
                 aria-label={t("voice.polish.title")}
                 data-testid="dictation-polish-toggle"
@@ -381,21 +409,21 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
               </div>
               <Switch
                 checked={precisionOn}
-                disabled={loading}
+                disabled={controlsBusy}
                 onCheckedChange={(next) => void onTogglePrecision(next)}
                 aria-label={t("voice.polish.precision_title")}
                 data-testid="dictation-precision-toggle"
               />
             </div>
 
-            {polishOn && (
+            {processingOn && (
               <>
                 {/* INSIDE the block, unlike the precision row above: this one
                     genuinely needs the formatter, because it switches the same
                     pass on for a second source rather than being a pass of its
                     own. Showing it while the formatter is off would be a switch
                     that saves, reads as on, and does nothing (AP-31). */}
-                <div
+                {wordingOn && <div
                   className="mt-block flex items-start justify-between gap-4 border-t border-border pt-block"
                   data-testid="dictation-conversation-row"
                 >
@@ -421,12 +449,12 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
                   </div>
                   <Switch
                     checked={conversationOn}
-                    disabled={loading}
+                    disabled={controlsBusy}
                     onCheckedChange={(next) => void onToggleConversation(next)}
                     aria-label={t("voice.polish.conversation_title")}
                     data-testid="dictation-conversation-toggle"
                   />
-                </div>
+                </div>}
 
                 {/* The same themed control as the language picker above it —
                     a native <select> sitting right beside one would put the
@@ -445,6 +473,7 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
                     ariaLabel={t("voice.polish.provider_label")}
                     onChange={(id) => void onPickPolishProvider(id)}
                     testId="dictation-polish-provider"
+                    disabled={controlsBusy}
                     groups={[
                       {
                         id: "providers",
@@ -463,12 +492,33 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
                   {t("voice.polish.provider_hint")}
                 </p>
 
+                  {wordingNeedsKey && wordingProvider && (
+                    <div className="mt-block" data-testid="dictation-wording-key">
+                      <ApiKeyForm
+                        secretKey={wordingProvider.secret_key}
+                        dashboardUrl={wordingCard?.dashboard_url ?? null}
+                        configured={Boolean(
+                          wordingCard?.secrets_set?.[wordingProvider.secret_key],
+                        )}
+                        credentialHelp={wordingCard?.credential_help ?? null}
+                        sharedWith={
+                          wordingCard?.secret_shared_with?.[
+                            wordingProvider.secret_key
+                          ]
+                        }
+                        onChanged={() => { void refetchProviders(); void refetch(); }}
+                      />
+                      <p className="mt-2 text-meta text-muted-foreground">
+                        {t("voice.translate.key_saved_hint")}
+                      </p>
+                    </div>
+                  )}
                 <div className="mt-block flex flex-wrap items-center gap-2 border-t border-border pt-block">
                   <Button
                     size="sm"
                     variant="outline"
                     onClick={() => void runPolishTest()}
-                    disabled={testing}
+                    disabled={controlsBusy}
                     data-testid="dictation-polish-test"
                     className="gap-2"
                   >
@@ -538,8 +588,7 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
 
           {/* Prompt Mode sits between the wording pass and the translation
               because it outranks both: while it is on, the dictation is
-              rewritten into an English brief for a coding agent by the
-              Agentic IDE's own writer, and neither pass has anything left to
+              rewritten in the spoken language by the selected provider, and neither pass has anything left to
               do. The card says so, and says where the words go. */}
           <Card className="p-5" data-testid="dictation-prompt-mode-card">
             <div className="flex items-start justify-between gap-4">
@@ -562,7 +611,7 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
               </div>
               <Switch
                 checked={promptModeOn}
-                disabled={loading}
+                disabled={controlsBusy}
                 onCheckedChange={(next) => void onTogglePromptMode(next)}
                 aria-label={t("voice.prompt_mode.title")}
                 data-testid="dictation-prompt-mode-toggle"
@@ -627,7 +676,7 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
               </div>
               <Switch
                 checked={translateOn}
-                disabled={loading}
+                disabled={controlsBusy}
                 onCheckedChange={(next) => void onToggleTranslate(next)}
                 aria-label={t("voice.translate.title")}
                 data-testid="dictation-translate-toggle"
@@ -668,53 +717,7 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
                     </p>
                   )}
 
-                  {showTranslateProvider && (
-                    <div className="mt-block flex max-w-xs flex-col gap-2">
-                      <span className="text-meta text-muted-foreground">
-                        {t("voice.polish.provider_label")}
-                      </span>
-                      <Combobox
-                        value={polishProvider}
-                        ariaLabel={t("voice.polish.provider_label")}
-                        onChange={(id) => void onPickPolishProvider(id)}
-                        testId="dictation-translate-polish-provider"
-                        groups={[
-                          {
-                            id: "providers",
-                            options: polishProviders.map((id) => ({
-                              value: id,
-                              label:
-                                id === "auto"
-                                  ? t("voice.polish.provider_auto")
-                                  : (POLISH_PROVIDER_LABELS[id] ?? id),
-                            })),
-                          },
-                        ]}
-                      />
-                    </div>
-                  )}
 
-                  {wordingNeedsKey && wordingProvider && (
-                    <div className="mt-block" data-testid="dictation-translate-key">
-                      <ApiKeyForm
-                        secretKey={wordingProvider.secret_key}
-                        dashboardUrl={wordingCard?.dashboard_url ?? null}
-                        configured={Boolean(
-                          wordingCard?.secrets_set?.[wordingProvider.secret_key],
-                        )}
-                        credentialHelp={wordingCard?.credential_help ?? null}
-                        sharedWith={
-                          wordingCard?.secret_shared_with?.[
-                            wordingProvider.secret_key
-                          ]
-                        }
-                        onChanged={() => void refetchProviders()}
-                      />
-                      <p className="mt-2 text-meta text-muted-foreground">
-                        {t("voice.translate.key_saved_hint")}
-                      </p>
-                    </div>
-                  )}
                 </div>
 
                 <div className="mt-block flex max-w-xs flex-col gap-2">
@@ -727,7 +730,7 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
                     onChange={(code) => void onPickTranslateTarget(code)}
                     autoLabel={t("voice.language.auto")}
                     ariaLabel={t("voice.translate.target_label")}
-                    disabled={loading}
+                    disabled={controlsBusy}
                     testId="dictation-translate-target"
                   />
                 </div>

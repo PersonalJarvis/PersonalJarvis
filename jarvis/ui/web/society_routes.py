@@ -971,13 +971,12 @@ async def agent_browser_status(agent_id: str, request: Request) -> dict[str, Any
     agent = await rt.roster.resolve(agent_id)
     if agent is None:
         raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
-    return rt.browser.status_for(agent)
+    return await asyncio.to_thread(rt.browser.status_for, agent)
 
 
 @router.post("/agents/{agent_id}/browser/login", openapi_extra={"x-jarvis-dangerous": True})
 async def agent_browser_login(agent_id: str, body: LoginBody, request: Request) -> dict[str, Any]:
-    """Open the agent's browser profile headed so the person can sign in once.
-    Returns when the window is closed, /login/done is called, or 15 minutes pass."""
+    """Take manual control of the same live browser for website sign-in."""
     from jarvis.society.browser.session import BrowserUnavailable
 
     rt = await _runtime(request)

@@ -92,7 +92,7 @@ it("opens map selections in Agents and keeps creation available", async () => {
   expect(screen.queryByTestId("map")).toBeNull();
   expect(screen.getByText("Specialist")).toBeTruthy();
   fireEvent.click(screen.getByText("Create agent"));
-  fireEvent.click(screen.getByText("Close creator"));
+  fireEvent.click(await screen.findByText("Close creator"));
   expect(screen.queryByText("Close creator")).toBeNull();
 });
 

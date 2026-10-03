@@ -12,7 +12,9 @@ export type AgentStateKey =
   | "error"
   | "exited"
   | "done"
-  | "idle";
+  | "idle"
+  | "stopped"
+  | "unknown";
 
 export function dotKindFor(pane: WorkspacePaneRow): AgentDotKind {
   if (pane.status === "error" || pane.activity === "failed") return "error";
@@ -27,6 +29,7 @@ export function dotKindFor(pane: WorkspacePaneRow): AgentDotKind {
 }
 
 export function stateKeyFor(pane: WorkspacePaneRow, kind: AgentDotKind = dotKindFor(pane)): AgentStateKey {
+  if (pane.activity === "stopped" || pane.activity === "unknown") return pane.activity;
   if (kind === "working") return pane.activity === "starting" || pane.status === "pending" ? "starting" : "working";
   if (kind === "waiting") return "needs_input";
   if (kind === "error") return pane.activity === "failed" ? "failed" : "error";

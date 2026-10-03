@@ -1320,6 +1320,10 @@ class _ClaudeState:
     thinking_announced: set[str] = field(default_factory=set)
     #: Per-message usage as the CLI reports it — summed into the live counter.
     usage_by_message: dict[str, dict[str, int]] = field(default_factory=dict)
+    #: Characters streamed per message so far; a live floor for its output.
+    stream_chars: dict[str, int] = field(default_factory=dict)
+    #: The usage totals last sent, so an unchanged count sends nothing.
+    usage_sent: dict[str, int] = field(default_factory=dict)
     emitted_tool_ids: set[str] = field(default_factory=set)
     emitted_text: bool = False
     status: str = "done"
@@ -1332,6 +1336,62 @@ class _ClaudeState:
     #: Last tool_result that came back as an error — used when the CLI then
     #: aborts the turn instead of thinking again (Grok print-mode cancel).
     last_tool_error: str | None = None
+
+
+#: Streamed characters per estimated output token (English and code average).
+_CHARS_PER_TOKEN: Final = 4
+#: A streamed estimate is sent once it has grown by this many output tokens,
+#: so a long answer does not send one counter update per text fragment.
+_LIVE_OUTPUT_STEP: Final = 20
+
+
+def _claude_merge_usage(st: _ClaudeState, mid: str, usage: dict[str, Any]) -> bool:
+    """Fold one usage report of message ``mid`` in; True when it changed.
+
+    A message's first report is the ``message_start`` snapshot: the input side
+    is final, ``output_tokens`` a placeholder that only becomes true at the
+    message's end (``message_delta``). Keep the largest value seen so a
+    placeholder can never walk a real count back down (BUG-173).
+    """
+    counted = {
+        k: int(usage[k]) for k in _CLAUDE_USAGE_KEYS if isinstance(usage.get(k), int | float)
+    }
+    previous = st.usage_by_message.get(mid)
+    if previous:
+        counted = {k: max(counted.get(k, 0), previous.get(k, 0)) for k in (*counted, *previous)}
+    if not counted or counted == previous:
+        return False
+    st.usage_by_message[mid] = counted
+    return True
+
+
+def _claude_usage_totals(st: _ClaudeState) -> dict[str, int]:
+    """The turn so far: reported usage, with streamed text as a floor for output."""
+    totals: dict[str, int] = {}
+    streamed_only = (m for m in st.stream_chars if m not in st.usage_by_message)
+    for mid in (*st.usage_by_message, *streamed_only):
+        per_message = dict(st.usage_by_message.get(mid, {}))
+        estimate = st.stream_chars.get(mid, 0) // _CHARS_PER_TOKEN
+        if estimate > per_message.get("output_tokens", 0):
+            per_message["output_tokens"] = estimate
+        for k, v in per_message.items():
+            totals[k] = totals.get(k, 0) + v
+    return totals
+
+
+def _claude_usage_event(st: _ClaudeState, *, min_output_step: int = 0) -> dict[str, Any] | None:
+    """A ``usage_delta`` when the totals moved (by ``min_output_step`` output tokens)."""
+    totals = _claude_usage_totals(st)
+    if not totals or totals == st.usage_sent:
+        return None
+    grown = totals.get("output_tokens", 0) - st.usage_sent.get("output_tokens", 0)
+    only_output_moved = {k: v for k, v in totals.items() if k != "output_tokens"} == {
+        k: v for k, v in st.usage_sent.items() if k != "output_tokens"
+    }
+    if min_output_step and only_output_moved and grown < min_output_step:
+        return None
+    st.usage_sent = totals
+    return make_event("usage_delta", {"turn_id": st.turn_id, "usage": totals})
 
 
 def _claude_request_summary(tool_name: str, tool_input: dict[str, Any]) -> str:
@@ -1449,6 +1509,26 @@ def translate_claude_line(obj: dict[str, Any], st: _ClaudeState) -> list[dict[st
                         {"turn_id": st.turn_id, "message_id": mid, "text": delta["thinking"]},
                     )
                 )
+            # Count what streams as it streams: text, a tool call's input and
+            # readable thinking are all output. The CLI reports a message's
+            # true output count only once the message ends, so between those
+            # reports the counter would otherwise sit on the start-of-message
+            # placeholder ("Working 28s · 39 tokens" on a turn that ended at
+            # 11k). The estimate never overrides a real report.
+            streamed = delta.get("text") or delta.get("partial_json") or delta.get("thinking")
+            if isinstance(streamed, str) and streamed:
+                st.stream_chars[mid] = st.stream_chars.get(mid, 0) + len(streamed)
+                event = _claude_usage_event(st, min_output_step=_LIVE_OUTPUT_STEP)
+                if event is not None:
+                    out.append(event)
+        elif et == "message_delta":
+            # The end of a message: its usage carries the true output count.
+            usage_end = ev.get("usage")
+            mid = st.current_message_id
+            if mid and isinstance(usage_end, dict) and _claude_merge_usage(st, mid, usage_end):
+                event = _claude_usage_event(st)
+                if event is not None:
+                    out.append(event)
         return out
 
     if kind == "assistant":
@@ -1456,33 +1536,10 @@ def translate_claude_line(obj: dict[str, Any], st: _ClaudeState) -> list[dict[st
         mid = str(message.get("id") or st.current_message_id or uuid.uuid4().hex)
         st.current_message_id = mid
         usage_now = message.get("usage")
-        if isinstance(usage_now, dict):
-            counted = {
-                k: int(usage_now[k])
-                for k in _CLAUDE_USAGE_KEYS
-                if isinstance(usage_now.get(k), int | float)
-            }
-            # A message's first usage report is the ``message_start`` snapshot:
-            # the input side is already final, ``output_tokens`` is a placeholder
-            # that only becomes true later. Keep the largest value seen so a
-            # placeholder can never walk a real count back down (BUG-173).
-            previous = st.usage_by_message.get(mid)
-            if previous:
-                counted = {
-                    k: max(counted.get(k, 0), previous.get(k, 0)) for k in (*counted, *previous)
-                }
-            if counted and counted != previous:
-                st.usage_by_message[mid] = counted
-                totals: dict[str, int] = {}
-                for per_message in st.usage_by_message.values():
-                    for k, v in per_message.items():
-                        totals[k] = totals.get(k, 0) + v
-                out.append(
-                    make_event(
-                        "usage_delta",
-                        {"turn_id": st.turn_id, "usage": totals},
-                    )
-                )
+        if isinstance(usage_now, dict) and _claude_merge_usage(st, mid, usage_now):
+            event = _claude_usage_event(st)
+            if event is not None:
+                out.append(event)
         content = message.get("content") or []
         if not isinstance(content, list):
             content = [{"type": "text", "text": str(content)}]

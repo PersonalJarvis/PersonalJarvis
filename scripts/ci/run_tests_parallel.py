@@ -30,6 +30,7 @@ build is ``test_ratchet.py``'s decision (known failures are baselined).
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shlex
@@ -398,6 +399,9 @@ def main(argv: list[str] | None = None) -> int:
     elapsed = time.monotonic() - started
     report = {
         "shard": f"{index}/{total}",
+        "file_paths": mine,
+        "suite_files": len(files),
+        "suite_digest": hashlib.sha256("\n".join(files).encode("utf-8")).hexdigest(),
         "platform": sys.platform,
         "files": len(mine),
         "counts": counts,

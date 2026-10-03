@@ -22,6 +22,24 @@ from jarvis.core.protocols import (
 )
 
 _VALID_RISK_TIERS = frozenset({"safe", "monitor", "ask", "block"})
+# Live sessions operate the screen with ``computer`` (ADR-0038). These would
+# start a second model's mission, or move/click/type in screen units the live
+# model never sees, so they are not part of the voice catalog.
+_VOICE_SUPERSEDED_TOOLS = frozenset(
+    {
+        "computer_use",
+        "computer-use",
+        "dispatch_to_harness",
+        "dispatch-to-harness",
+        "click",
+        "move_mouse",
+        "drag",
+        "scroll",
+        "type_text",
+        "hotkey",
+        "screenshot",
+    }
+)
 
 
 class BrainSupervisorToolGateway:
@@ -113,8 +131,24 @@ class BrainSupervisorToolGateway:
         tools = self._live_tools()
         context = peek_computer_use_context()
         computer_use = getattr(getattr(self._manager, "_config", None), "computer_use", None)
-        if context is not None and getattr(computer_use, "enabled", True):
-            tools.update(context.tools or {})
+        # ADR-0038: the live session's own reasoning model operates the screen
+        # through ``computer``. The mission vehicles (a second model running
+        # its own loop) and the raw coordinate primitives (screen units the
+        # model never sees) are not offered next to it.
+        for name in _VOICE_SUPERSEDED_TOOLS:
+            tools.pop(name, None)
+        if getattr(computer_use, "enabled", True):
+            if context is not None:
+                tools.update(
+                    {
+                        name: tool
+                        for name, tool in (context.tools or {}).items()
+                        if name not in _VOICE_SUPERSEDED_TOOLS
+                    }
+                )
+            from jarvis.plugins.tool.computer import ComputerTool
+
+            tools[ComputerTool.name] = ComputerTool()
         tools["screen_snapshot"] = LiveScreenTool()
         # "Take an appshot" said in a live call: the shortcut's capture, with
         # its effect and sound. Voice-only — a brain turn gets the same

@@ -19,6 +19,7 @@ builder returns nothing and the turn runs as a plain Jarvis chat.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 from collections.abc import Callable
@@ -715,7 +716,11 @@ async def society_system_extra(cfg: Any, brain: Any, session: Any) -> str:
     rt.checkpoints.note_turn_started(agent.agent_id, str(getattr(session, "session_id", "")))
     catalog = rt.catalog()
     roster = await rt.roster.list()
-    browser = rt.browser.status_for(agent)
+    browser = await asyncio.to_thread(rt.browser.status_for, agent)
+    # The live runner provisions on demand, including in unattended routine chats.
+    browser["auto_start"] = (
+        browser.get("mode") == "own" and rt.browser.live.model_resolver is not None
+    )
     learned = rt.skills_for(agent.agent_id).summaries()
     try:
         memory = rt.memory.head(agent, root=_vault_root(cfg))
@@ -847,24 +852,27 @@ def build_briefing(
 
 def _browser_line(browser: dict[str, Any] | None) -> str:
     """One byte-stable line about the agent's browser (agent-definition §3)."""
-    if not browser or not browser.get("installed"):
+    if not browser or not (browser.get("installed") or browser.get("auto_start")):
         return (
             "## Your browser\nNot set up on this machine yet — the user can install it from your "
             "card. Until then use plugins, CLIs and search-web for the web."
         )
-    if browser.get("mode") == "attach":
+    if browser.get("error"):
+        return "## Your browser\n" + str(browser["error"]) + ". Ask the user to choose a profile."
+    if browser.get("mode") in {"attach", "chrome"}:
         return (
-            "## Your browser\nsociety_browser drives the user's own running Chrome (attached), "
-            "with their logins. One task per call, capped steps."
+            "## Your browser\nsociety_browser uses your assigned Chrome profile. "
+            "Website authentication must be checked on the actual page. "
+            "If disconnected, ask the user to connect that profile in the Jarvis extension. "
+            "Never switch to another browser or account. One task per call, capped steps."
         )
-    logged = (
-        "signed-in profile present"
-        if browser.get("logged_in_profile")
-        else ("no logins yet — ask the user for a login session when a site needs one")
-    )
+    logged = "website authentication unverified; ask for manual login when a site requires it"
     return (
         "## Your browser\nsociety_browser runs in your own persistent browser profile "
-        f"({logged}). One task per call, capped steps; sending, buying, deleting or "
+        f"({logged}). Call society_browser whenever a task or routine needs it, even when "
+        "the browser or its panel is closed. It prepares and starts the browser automatically; "
+        "do not ask the user to open or install it first. "
+        "One task per call, capped steps; sending, buying, deleting or "
         "publishing asks the user first."
     )
 

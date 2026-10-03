@@ -20,12 +20,12 @@ import {
 import { PaneResizer } from "@/components/layout/PaneResizer";
 import { useResizablePane } from "@/hooks/useResizablePane";
 import { TopBar } from "@/components/layout/TopBar";
-import { ReadyCelebration } from "@/components/ReadyCelebration";
 import { InputIsolationBanner } from "@/components/layout/InputIsolationBanner";
 import { VoiceWarmingBanner } from "@/components/layout/VoiceWarmingBanner";
 import { MainView } from "@/components/layout/MainView";
 import { ToastLayer } from "@/components/ToastLayer";
 import { CommandActivityLayer } from "@/components/CommandActivityLayer";
+import { AppshotEditorHost } from "@/components/appshot/AppshotEditorHost";
 import { EditContextMenu } from "@/components/EditContextMenu";
 /*
   Lazy on purpose. The overlay pulls in the dialog primitives, the keyboard
@@ -346,6 +346,9 @@ export default function App() {
         </main>
         <ToastLayer />
         <CommandActivityLayer />
+        {/* Only this window's own "Edit" opens it here; the card's request
+            goes to the main window (handleAppshotEditRequest). */}
+        <AppshotEditorHost />
         <EditContextMenu />
         <ZoomIndicator />
         {shortcutsOpen && (
@@ -405,9 +408,6 @@ export default function App() {
         <InputIsolationBanner />
         <TopBar navToggle={navToggle} />
         {!(["agentic-ide", "chat-workspace", "agentic-ide-classic"].includes(activeSection)) && <VoiceWarmingBanner />}
-        {/* The one-time "all lights green" note — the first time every
-            section of the active voice mode answers. Never again after. */}
-        <ReadyCelebration />
         <SectionStage visualization={visualizationActive}>
           <MainView />
         </SectionStage>
@@ -416,6 +416,9 @@ export default function App() {
 
       <ToastLayer />
       <CommandActivityLayer />
+      {/* The appshot editor, over whatever is open (a click on the appshot
+          card in the screen corner opens it). */}
+      <AppshotEditorHost />
       {/* Right-click Cut/Copy/Paste. The desktop WebView ships with its own
           context menu disabled, so without this there is no mouse-driven paste
           anywhere in the app — including the IDE terminals. */}

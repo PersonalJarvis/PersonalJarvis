@@ -69,6 +69,8 @@ export function bundleFingerprint(html: string): string {
 }
 
 export interface BundleWatchDeps {
+  /** Identity of the loaded document, never of a later server response. */
+  baseline?: string;
   /** Fetch the SPA entry document the server would hand a fresh window. */
   fetchIndex: () => Promise<string>;
   /** Reload this window. */
@@ -118,12 +120,14 @@ export function shouldReload({
 /**
  * Start watching. Returns a function that stops the watch.
  *
- * The first successful fetch establishes what this window is running, so a
- * window that starts up during a rebuild adopts whatever it actually loaded
- * rather than reloading into it.
+ * Production supplies the loaded document's fingerprint. The first response
+ * is only a fallback for callers without a document, never a newer build's
+ * claim about what an already open window is running.
  */
 export function installBundleWatch(deps: BundleWatchDeps): () => void {
-  let baseline = "";
+  let baseline = deps.baseline ?? "";
+  let stopped = false;
+  let reloading = false;
   let confirmed: string | null = null;
   // Ticks the current check has been waiting for its answer; 0 = none open.
   let inflightTicks = 0;
@@ -133,6 +137,7 @@ export function installBundleWatch(deps: BundleWatchDeps): () => void {
   let hiddenTicks = 0;
 
   const check = () => {
+    if (stopped || reloading) return;
     if (inflightTicks > 0 && inflightTicks < STALE_INFLIGHT_TICKS) {
       // One check at a time — a slow answer is not a reason to stack another.
       inflightTicks += 1;
@@ -152,7 +157,7 @@ export function installBundleWatch(deps: BundleWatchDeps): () => void {
     void deps
       .fetchIndex()
       .then((html) => {
-        if (mine !== generation) return;
+        if (stopped || mine !== generation) return;
         const seen = bundleFingerprint(html);
         if (!seen) return;
         if (!baseline) {
@@ -168,6 +173,7 @@ export function installBundleWatch(deps: BundleWatchDeps): () => void {
             held: deps.held?.() ?? false,
           })
         ) {
+          reloading = true;
           deps.reload();
           return;
         }
@@ -184,5 +190,9 @@ export function installBundleWatch(deps: BundleWatchDeps): () => void {
 
   check();
   const handle = deps.every(check, POLL_MS);
-  return () => deps.stop(handle);
+  return () => {
+    stopped = true;
+    generation += 1;
+    deps.stop(handle);
+  };
 }

@@ -86,9 +86,23 @@ async def publish_result(
     """Return an observed stop/question, never convert silence into success."""
     if publish is None or not current(term, pending):
         return False
+    from .activity import shows_question
+    from .task_state import probe
+
+    proof = await probe(term)
+    expected = {"completed": "completed", "stopped": "stopped"}
+    if kind in {"completed", "stopped"} and (proof is None or proof.state != expected[kind]):
+        return False
+    if kind == "needs_input" and proof.state != "asking" and not shows_question(term):
+        return False
     try:
         turns = await asyncio.to_thread(_snapshot, term)
         if not current(term, pending):
+            return False
+        proof = await probe(term)
+        if kind in {"completed", "stopped"} and (proof is None or proof.state != expected[kind]):
+            return False
+        if kind == "needs_input" and proof.state != "asking" and not shows_question(term):
             return False
         last_user = next((t.text for t in reversed(turns) if t.role == "user"), "")
         matches = " ".join(last_user.split()) == " ".join(pending.prompt.split())
@@ -101,6 +115,9 @@ async def publish_result(
         elif kind == "needs_input":
             report = "\n".join(term.transcript.tail(20))[-3000:]
             evidence = "current terminal question; not a completed task"
+        elif kind == "stopped":
+            report = "The CLI recorded an interrupted task; no completion is claimed."
+            evidence = "explicit interruption in the current CLI session"
         elif kind in {"failed", "exited"}:
             report = f"Process state: {kind}; exit code: {getattr(term, 'exit_code', None)}"
         if require_report and not report:
@@ -150,6 +167,12 @@ async def poll_ready(registry: Any, publish: Any, *, now: float | None = None) -
                 continue
             if moment - getattr(term, "delegation_probe_at", 0.0) < 10.0:
                 continue
-            if term.reading().activity == "waiting":
+            kind = {
+                "waiting": "completed", "stopped": "stopped",
+                "failed": "failed", "exited": "exited",
+            }.get(term.reading().activity)
+            if kind is not None:
                 term.delegation_probe_at = moment
-                await publish_result("completed", term, pending, publish, require_report=True)
+                await publish_result(
+                    kind, term, pending, publish, require_report=kind == "completed",
+                )

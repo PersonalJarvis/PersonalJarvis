@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Archive, Pin, PinOff, Trash2 } from "lucide-react";
 
 import { useAgentChatStore } from "@/store/agentChat";
@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 import { AllChatsDialog } from "@/components/home/AllChatsDialog";
 import { ChatKindMark } from "@/components/home/ChatKindMark";
 import { chatRowLabel, useChatRows, type ChatRow } from "@/components/home/chatRows";
-import { CONVERSATIONS_REFRESH_MS } from "@/hooks/useConversations";
+import { useHistoryPolling } from "@/hooks/useHistoryPolling";
 
 
 /** Flat sidebar history: pinned conversations first, then the latest chats. */
@@ -38,11 +38,7 @@ export function RecentChats() {
   const recentRows = rows.filter((row) => !pins.includes(rowKey(row)));
   const [archiveOpen, setArchiveOpen] = useState(false);
 
-  useEffect(() => {
-    void loadSessions();
-    const id = window.setInterval(() => void loadSessions(), CONVERSATIONS_REFRESH_MS);
-    return () => window.clearInterval(id);
-  }, [loadSessions]);
+  useHistoryPolling(loadSessions);
 
   // Every chat is listed, the way the Claude app's column lists them: the
   // sidebar scrolls instead of hiding the history behind "Show all"

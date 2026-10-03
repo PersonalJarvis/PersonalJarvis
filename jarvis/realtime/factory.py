@@ -293,6 +293,30 @@ def _realtime_is_the_configured_voice_mode(cfg: Any) -> bool:
     return getattr(getattr(cfg, "voice", None), "mode", "pipeline") == "realtime"
 
 
+def _warm_session_imports(provider: Any) -> None:
+    """Import the selected host adapter without constructing a session.
+
+    Cold orchestration imports can exceed a second. They belong in the gated
+    warm worker, not on the audio WebSocket loop after the user says the wake
+    word. Credentials, ledgers, tool catalogs and connections stay call-owned.
+    """
+    import importlib
+    import time
+
+    if getattr(provider, "client_managed_delegation", False):
+        module = "jarvis.live.subscription"
+    elif getattr(provider, "native_tool_orchestration", False):
+        module = "jarvis.live.native"
+    elif getattr(provider, "continuous_conversation", False):
+        module = "jarvis.live.session"
+    else:
+        return
+    started = time.monotonic()
+    importlib.import_module(module)
+    log.info("Realtime local session imports ready in %.1f ms.",
+             (time.monotonic() - started) * 1000)
+
+
 async def realtime_warm_selected_transports(cfg: Any) -> None:
     """Pre-open the primary transport and only explicitly safe fallbacks.
 
@@ -321,7 +345,10 @@ async def realtime_warm_selected_transports(cfg: Any) -> None:
             "voice mode."
         )
         return
-    for position, provider_id in enumerate(_explicit_provider_ids(cfg)):
+    # Selection itself loads the primary's capability class and may scan entry
+    # points. Keep that first import off the shared WebSocket loop as well.
+    selected = await asyncio.to_thread(_explicit_provider_ids, cfg)
+    for position, provider_id in enumerate(selected):
         try:
             # Importing a provider plugin is synchronous module work (189 ms
             # warm for openai-live, seconds on a cold boot disk); this runs as
@@ -338,6 +365,8 @@ async def realtime_warm_selected_transports(cfg: Any) -> None:
                     provider_id,
                 )
                 continue
+            if position == 0:
+                await asyncio.to_thread(_warm_session_imports, provider_cls)
             warm = getattr(provider_cls, "warm_transport", None)
             if callable(warm):
                 await warm(cfg)

@@ -42,6 +42,7 @@ class Gate:
 def _gates(base: str) -> list[Gate]:
     ci = "scripts/ci/"
     return [
+        Gate("workflow-policy", ((PY, ci + "check_workflow_policy.py"),)),
         Gate("private-keys", ((PY, ci + "check_no_private_keys.py"),)),
         Gate("dist-consistency", ((PY, ci + "check_dist_consistency.py"),)),
         Gate("brand-logos", ((PY, ci + "check_brand_logos.py"),)),

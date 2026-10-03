@@ -5,6 +5,8 @@ Usage:
                                     #   Orb overlay (first-run setup happens in
                                     #   the app's onboarding)
     python -m jarvis serve          # Headless: API + WebSocket + browser UI
+    python -m jarvis update         # Update to the newest published version
+                                    #   (``--check`` only reports)
     python -m jarvis --tray         # Tray icon only, no backend, no window
     python -m jarvis --wizard       # Terminal setup wizard (explicit opt-in,
                                     #   e.g. SSH-only hosts)
@@ -59,8 +61,17 @@ if sys.platform == "win32":
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
-    except (AttributeError, OSError):
+    except (AttributeError, OSError):  # Non-console streams may not expose encoding controls; retain their defaults.
         pass
+
+# ``jarvis update`` replaces the installed packages, and Windows cannot replace
+# a native module a live process has loaded. Dispatch before the config and
+# hardware imports below pull pydantic & co. into this process; the update
+# module keeps every heavy step in short-lived child processes.
+if len(sys.argv) >= 2 and sys.argv[1] == "update":
+    from jarvis.cli.app_update import main as _update_main
+
+    raise SystemExit(_update_main(sys.argv[2:]))
 
 from jarvis import __version__
 from jarvis.core import config as cfg
@@ -170,11 +181,20 @@ def _build_parser() -> argparse.ArgumentParser:
              "leftover — the product entry point is bare `jarvis`.",
     )
     parser.add_argument(
+        "--foreground",
+        action="store_true",
+        help="Keep the desktop app attached to this terminal (logs here, closes "
+             "with it). By default `jarvis` typed in a terminal starts the app "
+             "in the background and returns the prompt.",
+    )
+    parser.add_argument(
         "command",
         nargs="?",
-        choices=["serve"],
+        choices=["serve", "update"],
         help="serve: start the headless web UI (browser/server, no desktop) — "
-             "the cloud-first path for a VPS, Mac or Linux. Open the printed URL.",
+             "the cloud-first path for a VPS, Mac or Linux. Open the printed URL. "
+             "update: install the newest published version "
+             "(`jarvis update --check` only reports).",
     )
     return parser
 
@@ -564,6 +584,10 @@ def main(argv: list[str] | None = None) -> int:
     ensure_cli_paths()
 
     raw = list(sys.argv[1:] if argv is None else argv)
+    if raw[:1] == ["update"]:
+        from jarvis.cli.app_update import main as update_main
+
+        return update_main(raw[1:])
     # Unified entry point: `jarvis <group> ...` (or a control-global option like
     # `--json`) drives the control CLI; bare `jarvis`, `jarvis serve`, and every
     # launcher flag (`--wizard`, `--check`, …) keep their existing behavior.
@@ -611,6 +635,10 @@ def main(argv: list[str] | None = None) -> int:
         for line in format_report(items):
             print(line)
         return 0 if report_complete(items) else 3
+    if args.command == "update":
+        from jarvis.cli.app_update import main as update_main
+
+        return update_main([])
     if args.command == "serve":
         # Headless web UI — the cloud-first path (no desktop/tray). Delegates to
         # the web launcher so `jarvis serve` == `python -m jarvis.ui.web.launcher --headless`.
@@ -621,10 +649,10 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_wizard()
     if args.tray:
         return asyncio.run(_run_tray_app(debug=args.debug))
-    return _run_desktop(debug=args.debug)
+    return _run_desktop(debug=args.debug, foreground=args.foreground)
 
 
-def _run_desktop(*, debug: bool) -> int:
+def _run_desktop(*, debug: bool, foreground: bool = False) -> int:
     """Start the full desktop app — window + voice + Orb overlay.
 
     This is what bare ``jarvis`` promises (README: "jarvis → full desktop"), and
@@ -645,9 +673,66 @@ def _run_desktop(*, debug: bool) -> int:
     if missing is not None:
         print(missing, file=sys.stderr)
         return 4
+    if not debug and not foreground and _should_detach_from_terminal():
+        return _launch_detached()
     from jarvis.ui.web import launcher
 
     return launcher.main([])
+
+
+def _should_detach_from_terminal(
+    *,
+    platform_name: str | None = None,
+    environ: dict[str, str] | None = None,
+    stdin_tty: bool | None = None,
+    stdout_tty: bool | None = None,
+) -> bool:
+    """True when bare ``jarvis`` was typed into an interactive terminal.
+
+    Then the user wants the app, not a terminal held hostage by its log —
+    and on macOS/Linux closing that terminal would otherwise hang up the app.
+    Every non-interactive caller (a shortcut, an autostart entry, a service
+    manager, a pipe) keeps the in-process launch it always had. On Linux the
+    detached path also needs a screen; without one the foreground launch keeps
+    its own, visible handling of the missing display.
+    """
+    platform_name = platform_name or sys.platform
+    environ = dict(os.environ) if environ is None else environ
+
+    def _isatty(stream: object) -> bool:
+        try:
+            return bool(stream is not None and stream.isatty())  # type: ignore[attr-defined]
+        except (AttributeError, OSError, ValueError):
+            return False
+
+    if stdin_tty is None:
+        stdin_tty = _isatty(sys.stdin)
+    if stdout_tty is None:
+        stdout_tty = _isatty(sys.stdout)
+    if not (stdin_tty and stdout_tty):
+        return False
+    if platform_name.startswith("linux"):
+        return bool(environ.get("DISPLAY") or environ.get("WAYLAND_DISPLAY"))
+    return True
+
+
+def _launch_detached() -> int:
+    """Start the desktop app in the background and hand the prompt back."""
+    from jarvis.cli_ctl.discovery import discover
+    from jarvis.ui.relauncher import launch_desktop_detached
+
+    running = discover() is not None
+    try:
+        launch_desktop_detached()
+    except OSError as exc:
+        print(f"Could not start Personal Jarvis: {exc}", file=sys.stderr)
+        print("Try `jarvis --foreground` to see what goes wrong.", file=sys.stderr)
+        return 1
+    if running:
+        print("Personal Jarvis is already running - bringing its window to the front.")
+    else:
+        print("Starting Personal Jarvis... the window opens in a few seconds.")
+    return 0
 
 
 def _missing_desktop_dependency() -> str | None:

@@ -4,7 +4,7 @@ import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { useResizablePane } from "@/hooks/useResizablePane";
 import { PaneResizer } from "@/components/layout/PaneResizer";
-import { MAX_TERMINAL_TABS, SIDE_PANEL_ID, useIdeSidePanelStore } from "@/store/ideSidePanel";
+import { MAX_TERMINAL_TABS, useIdeSidePanelStore } from "@/store/ideSidePanel";
 import { useIdeChatStore } from "@/store/ideChat";
 import { WorkspaceTerminal } from "@/components/workspace/WorkspaceTerminal";
 import type { TerminalAppearance } from "../terminalThemes";
@@ -14,6 +14,7 @@ import { useIdeProjectsStore } from "@/store/ideProjects";
 import { useWorkspacePanes } from "@/store/workspacePanes";
 import { dotKindFor, workspaceAgents } from "./agentStatus";
 import { SIDE_PANEL_TABS, sidePanelTab } from "./sidePanelTabs";
+import { SIDE_PANEL_ID } from "./sidePanelIds";
 
 const WIDTH_KEY = "jarvis.agenticIde.sidePanelWidth.v1";
 const DEFAULT_PX = 340;
@@ -23,6 +24,9 @@ const MAX_PX = 720;
 const OFFICE_MIN_PX = 520;
 /** Terminal canvas kept visible while the panel is open. */
 const GRID_RESERVED_PX = 320;
+
+// Preserve the existing public export without coupling caption chrome to the panel.
+export { SIDE_PANEL_ID } from "./sidePanelIds";
 
 const HEADER_BTN =
   "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors " +

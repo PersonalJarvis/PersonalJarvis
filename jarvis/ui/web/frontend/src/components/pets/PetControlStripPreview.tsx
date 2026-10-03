@@ -1,4 +1,4 @@
-import { Mic, Phone, SquarePen, Volume2 } from "lucide-react";
+import { Bell, Mic, Phone, SquarePen, Volume2 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
@@ -8,9 +8,9 @@ import { cn } from "@/lib/utils";
  * desktop object that is always dark, whatever the app's theme — on a light
  * page it looks exactly as the real strip does on a light wallpaper.
  */
-const STRIP_FILL = "#171b26";
+const STRIP_FILL = "#0d1117";
 const STRIP_ICON = "#e8e9ee";
-const STRIP_DIVIDER = "#303748";
+const STRIP_DIVIDER = "#181c25";
 /** The glossy talk orb: lit from the top left, deep blue at the rim. */
 const ORB_GRADIENT =
   "radial-gradient(circle at 32% 30%, #e6f1ff 0 7%, #a9d0ff 15%, #4a7cf5 55%, #2747c8 100%)";
@@ -30,9 +30,11 @@ const ORB_GRADIENT =
 export function PetControlStripPreview({
   size = "md",
   className,
+  companion = false,
 }: {
   size?: "sm" | "md";
   className?: string;
+  companion?: boolean;
 }) {
   const small = size === "sm";
   const height = small ? "h-7" : "h-10";
@@ -51,7 +53,7 @@ export function PetControlStripPreview({
         className={cn("grid place-items-center rounded-full", height, disc)}
         style={{ backgroundColor: STRIP_FILL, color: STRIP_ICON }}
       >
-        <SquarePen className={icon} strokeWidth={2} />
+        {companion ? <Bell className={icon} strokeWidth={2} /> : <SquarePen className={icon} strokeWidth={2} />}
       </span>
       <span
         className={cn("flex items-center rounded-full", height, small ? "px-1" : "px-1.5")}
@@ -62,11 +64,13 @@ export function PetControlStripPreview({
         </span>
         <span className={cn("w-px", divider)} style={{ backgroundColor: STRIP_DIVIDER }} />
         <span className={cn("grid place-items-center", small ? "w-8" : "w-11")}>
-          <span
+          {companion ? <span className="flex items-center gap-1" data-testid="pet-strip-indicator">
+            {[0, 1, 2].map((i) => <span key={i} className="h-2 w-1 rounded-full bg-[#7ebaff]" />)}
+          </span> : <span
             data-testid="pet-strip-orb"
             className={cn("rounded-full", orb)}
             style={{ backgroundImage: ORB_GRADIENT }}
-          />
+          />}
         </span>
         <span className={cn("w-px", divider)} style={{ backgroundColor: STRIP_DIVIDER }} />
         <span className={cn("grid place-items-center", slot)}>

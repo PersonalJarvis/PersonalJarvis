@@ -15,6 +15,7 @@ import { useSectionHealth } from "@/hooks/useProviders";
 import { useT, useUiLanguage } from "@/i18n";
 import { isComboboxPanelEvent } from "@/components/ui/combobox";
 import { searchSettingsOptions, searchSettingsPages } from "@/views/settings/settingsSearch";
+import { apiKeysHealthError } from "@/lib/apiKeysTab";
 import { cn } from "@/lib/utils";
 
 /**
@@ -267,10 +268,7 @@ export function SettingsHubView({ onClose }: { onClose: () => void }) {
   // The same two health signals the sidebar rows used to carry, now on the
   // hub's own nav: a hard provider error on API Keys, a failing or
   // half-configured local setup on Local models. Badge only, never a toast.
-  const apikeysHasError = useMemo(
-    () => Object.entries(sectionHealth).some(([section, health]) => section !== "computer-use" && health?.status === "error"),
-    [sectionHealth],
-  );
+  const apikeysHasError = useMemo(() => apiKeysHealthError(sectionHealth), [sectionHealth]);
   const localModelsHealth = sectionHealth.local_models;
   const localModelsNeedAttention =
     localModelsHealth?.status === "error" || localModelsHealth?.status === "needs_setup";

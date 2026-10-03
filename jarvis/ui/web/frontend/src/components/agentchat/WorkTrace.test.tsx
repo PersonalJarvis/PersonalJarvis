@@ -15,6 +15,11 @@ const props = { startedMs: 1000, durationMs: 12000, status: "done" as TurnStatus
 const rows = { ...props, look: "classic" as const };
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
+/** A finished, answered turn folds its work behind "Thought for …"; open every fold. */
+const openWork = () => {
+  for (const toggle of Array.from(document.querySelectorAll<HTMLElement>("[data-testid='conversation-work-fold'][data-open='false'] > button"))) fireEvent.click(toggle);
+};
+
 describe("work trace", () => {
   it("summarizes integrations and mutations in first-use order with original logos", () => {
     const blocks = [tool("linear", {name:"mcp__codex_apps__linear_list_issues"}), tool("edit", {name:"apply_patch"}), tool("shell", {name:"exec_command"}), tool("again", {name:"linear/get_issue"})];
@@ -59,7 +64,7 @@ describe("work trace", () => {
   it("preserves reasoning, call, next step and final answer order", () => {
     const blocks = [thought, tool("a"), { kind: "text" as const, id: "next", text: "Next, check the tests." }, tool("b"), { kind: "text" as const, id: "final", text: "Everything is ready." }];
     render(<WorkTrace {...props} blocks={blocks} />);
-    fireEvent.click(screen.getByRole("button", { name: /^Worked for 12s/ }));
+    openWork();
     const text = screen.getByTestId("work-trace").textContent!;
     expect(text.indexOf("Check the input")).toBeLessThan(text.indexOf("a.ts"));
     expect(text.indexOf("a.ts")).toBeLessThan(text.indexOf("Next, check"));
@@ -98,15 +103,13 @@ describe("work trace", () => {
 
   it("keeps errors and pending approval visible beside folded success", () => {
     render(<WorkTrace {...props} blocks={[tool("a"),tool("b"),tool("err",{isError:true,output:"Permission denied"}),tool("approval",{output:null,approval:{approvalId:"ap",summary:"Delete generated files?",decision:null}})]} onDecide={() => undefined} />);
-    // The approval stays actionable beside the folded report; the toggle
-    // already says that a step went wrong.
+    // Nothing folds: the approval stays actionable in place.
     expect(screen.getByText("Delete generated files?")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Approve" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /^Worked for 12s.*1 failed/ }));
     // One quiet line for the stretch; the failure opens with it.
-    fireEvent.click(screen.getByRole("button", { name: /^Read files.*1 failed/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Read files/ }));
     fireEvent.click(screen.getByRole("button", { name: /^Read err\.ts.*Failed/ }));
-    expect(screen.getByText("Failed: Permission denied")).toBeTruthy();
+    expect(screen.getAllByText("Failed: Permission denied").length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "Approve" })).toBeTruthy();
   });
 
@@ -133,7 +136,6 @@ describe("work trace", () => {
 
   it("renders edit input, a diff and output on demand", () => {
     render(<WorkTrace {...props} blocks={[tool("edit",{name:"Edit",input:{file_path:"app.ts",old_string:"oldValue",new_string:"newValue"},output:"File updated"})]} />);
-    fireEvent.click(screen.getByRole("button", { name: /^Worked for 12s/ }));
     // Codex-style: the edit is one line with its size; the diff is one tap away.
     const edit = screen.getByRole("button", { name: /^Edited app\.ts \+1 −1/ });
     fireEvent.click(edit);
@@ -147,7 +149,6 @@ describe("work trace", () => {
     expect(container.querySelector('[data-state="interrupted"]')).toBeTruthy();
     expect(container.querySelector('[data-trace-tool][data-state="running"]')).toBeNull();
     rerender(<WorkTrace {...props} status={status} blocks={[tool("a",{output:null})]} />);
-    fireEvent.click(screen.getByRole("button", { name: /^Worked for 12s/ }));
     expect(screen.getByRole("button", { name: /^Read a\.ts.*Stopped/ })).toBeTruthy();
   });
 
@@ -162,7 +163,6 @@ describe("work trace", () => {
 
   it("does not interpret tool output as HTML", () => {
     const {container} = render(<WorkTrace {...props} blocks={[tool("a",{name:"run_shell",input:{command:"<b>echo</b>"},output:'<img src=x onerror=alert(1)>'})]} />);
-    fireEvent.click(screen.getByRole("button", { name: /^Worked for 12s/ }));
     // Neither the command line nor its printed output turns into markup.
     expect(container.querySelector('img, b')).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /^<b>echo<\/b>/ }));
@@ -184,7 +184,6 @@ describe("work trace", () => {
     expect(screen.getByRole("button", { name: /Run command.*49ms/ })).toBeTruthy();
     expect(screen.queryByText("0.0s")).toBeNull();
     rerender(<WorkTrace {...props} blocks={[tool("shell", { name, input: { command: "read skill instructions" }, durationMs: 49 })]} />);
-    fireEvent.click(screen.getByRole("button", { name: /^Worked for 12s/ }));
     // Codex keeps the line clean; the measured time is in the call's details.
     fireEvent.click(screen.getByRole("button", { name: /^read skill instructions/ }));
     expect(screen.getByText("Took 49ms")).toBeTruthy();
@@ -295,10 +294,12 @@ describe("rail look", () => {
     expect(screen.getByRole("status").className).toMatch(/border-t/);
   });
 
-  it("shows the services a folded conversation turn used on its toggle", () => {
+  it("shows a plugin call by its own logo once the folded work opens", () => {
     const blocks = [tool("linear", { name: "mcp__codex_apps__linear_list_issues" }), reply("done", "Three issues are open.")];
     render(<WorkTrace {...props} conversation blocks={blocks} />);
-    const toggle = screen.getByRole("button", { name: /^Worked for 12s/ });
-    expect(toggle.querySelector("img, [data-logo]")).toBeTruthy();
+    openWork();
+    const line = screen.getByRole("button", { name: /^Linear/ });
+    expect(line.querySelector("img, [data-logo]")).toBeTruthy();
+    expect(screen.getByText("Three issues are open.")).toBeTruthy();
   });
 });

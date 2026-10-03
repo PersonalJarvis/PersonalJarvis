@@ -8,9 +8,9 @@
     "state_backup": "On the backup voice path",
     "state_off": "Realtime is off",
     "state_none": "No voice provider yet",
-    "none_hint": "Connect an account or API key below.",
-    "off_hint": "Your voice currently uses the classic pipeline. Turn Realtime on to use the provider below.",
-    "off_hint_unavailable": "Your voice currently uses the classic pipeline. Set up a provider below, then turn Realtime on.",
+    "none_hint": "Pick a provider below and add its key.",
+    "off_hint": "Your voice still runs on the retired classic engine. Turn Realtime on to talk through the provider below.",
+    "off_hint_unavailable": "Your voice still runs on the retired classic engine. Set up a provider below, then turn Realtime on.",
     "turn_on": "Turn on Realtime",
     "providers_title": "Provider",
     "providers_desc": "Who powers the live conversation. A provider with a saved key takes over with one click.",
@@ -47,7 +47,7 @@
     "subscription_billing": "Voice and thinking use your ChatGPT subscription, subject to its access and usage limits. If unavailable, the call stops without switching to an API key. Subscription voice access is experimental.",
     "options_failed": "The model and voice list could not be loaded. Reopen setup to try again.",
     "active": "Active",
-    "pipeline_fallback": "This conversation fell back to Pipeline. New settings apply to your next call.",
+    "pipeline_fallback": "Realtime could not start for this call, so it runs on the backup voice path. New settings apply to your next call.",
     "open_browser": "Open voice in your browser",
     "loading": "Loading voice setup…",
     "description": "Natural conversation, your chosen thinking model, and Jarvis tools. Choose an OpenAI key or a ChatGPT subscription.",
@@ -320,8 +320,8 @@
     "restart_now": "Restart now",
     "restarting": "Restarting {name}…",
     "bar_persistent": {
-      "title": "Show bar at all times",
-      "description": "Keep the bar on screen even when idle. Off: no standby — it only appears when you say your wake word.",
+      "title": "Keep Jarvis Bar visible",
+      "description": "Keep the Jarvis Bar available while idle. When off, it appears during voice activity or dictation and hides again afterward.",
       "saved": "Bar visibility updated."
     },
     "follow_cursor": {
@@ -585,39 +585,39 @@
     },
     "polish": {
       "title": "Clean up my wording",
-      "description": "A fast model rewrites the structure — punctuation, capitalization, filler words and sentence breaks. Your exact words and their meaning are kept, and the raw text is always saved in your history.",
-      "sends_text": "While this is on, your finished transcript is sent to the model you pick below; if your speech recognition already runs on this computer, the wording pass stays here too unless you choose a cloud model yourself. Your raw text is always kept in your history, exactly as it was recognized.",
+      "description": "Cleans up punctuation, capitalization, filler words and sentence breaks while preserving your meaning. The original stays in your history when history is enabled.",
+      "sends_text": "Your transcript is sent to the selected text model. With local speech recognition, processing stays on this computer unless you explicitly choose a cloud provider.",
       "precision_title": "Sharpen my word choice",
-      "precision_description": "Goes one step further and also changes WHICH words are used: a vague placeholder becomes the word you actually meant, and padding collapses into the plain verb — \"make a decision\" becomes \"decide\". Simple and exact. It will never swap a normal word for a longer one just to sound impressive.",
-      "precision_tradeoff": "In exchange, one safety check is relaxed: replacing an unusual word is now allowed, so a word the model misheard can be replaced rather than flagged. Your names, your numbers and your dictionary terms stay protected, and the original transcript is always kept. Applies to translated dictation too.",
+      "precision_description": "Uses clearer, more direct words: \"make a decision\" becomes \"decide\". Works on its own and with translation.",
+      "precision_tradeoff": "Allows word substitutions. Numbers and dictionary terms are checked, but review names and meaning before using the result.",
       "conversation_title": "Also tidy up conversations",
       "conversation_description": "Applies the same clean-up to what you say in an ordinary conversation, not just to dictation — so the transcript view and your session history read as written sentences instead of raw speech.",
       "conversation_latency": "It never slows a reply down: the assistant answers your raw words straight away, and the tidied version arrives a moment later. What was actually said is always kept alongside it.",
-      "provider_label": "Model",
-      "provider_auto": "Automatic — use whichever key I have",
-      "provider_hint": "Automatic takes a key you already have and moves to a different provider when one is rate-limited or out of credit. Pin one only if you want a specific account billed.",
+      "provider_label": "Text model provider",
+      "provider_auto": "Automatic",
+      "provider_hint": "Shared by all four features. Automatic keeps local speech recognition local; otherwise it uses configured providers. A selected cloud provider may fall back to another configured cloud provider.",
       "test": "Test",
       "testing": "Testing…",
-      "test_hint": "Runs one fixed sample through your setup. Nothing is saved.",
+      "test_hint": "Tests the active mode with a sample. Uses the selected provider; nothing is saved.",
       "sample_before": "Before",
       "sample_after": "After"
     },
     "prompt_mode": {
       "title": "Prompt Mode",
-      "description": "Say what you want done, in your own words and in any language. What lands in the field is the finished prompt: your goal, the context and limits you stated and every task you mentioned, written up the way a good prompt is written — a role, the task, the guardrails, the output format. Nothing made up, nothing dropped, and in the language you spoke.",
-      "sends_text": "Your transcript goes to the same fast model as the wording clean-up above and comes back as the written-out prompt, usually within a few seconds. Your raw text is always kept in your history.",
-      "outranks": "While this is on, the wording clean-up and the translation step back: the prompt is already restructured. If no model answers in time, this dictation is delivered as it would be with Prompt Mode off.",
-      "writer_hint": "Which model writes it: the provider picked under \"Clean up my wording\" above."
+      "description": "Turns your spoken task into a structured prompt in the language you spoke, keeping your goal, context and constraints. Review the result before sending it.",
+      "sends_text": "Uses the text provider above and may take several seconds. The original stays in your history when history is enabled.",
+      "outranks": "Prompt Mode takes priority over cleanup, word choice and translation. If it fails, your other enabled settings apply. Test reports the prompt failure directly.",
+      "writer_hint": "Choose the shared text provider above, even when cleanup is off."
     },
     "translate": {
       "title": "Always write in one language",
-      "description": "Speak whichever language you think in and have the text arrive in the one you write in. Say it in German, get English in the field. What you actually said is always saved in your history.",
-      "sends_text": "Translating happens in the same step as the wording clean-up, so it costs no extra wait, and it runs at the provider you picked above — on that provider's strongest fast model rather than its quickest, because rewriting a sentence in another language asks more than punctuating it. If no model answers in time, your words arrive in the language you spoke them.",
+      "description": "Delivers dictation in your chosen language. Works with cleanup switched off.",
+      "sends_text": "Translation and cleanup share one model call. If the provider fails or the result is rejected, the original language is kept. Prompt Mode takes priority when enabled.",
       "target_label": "Write my dictation in",
-      "target_hint": "Everything you dictate comes out in this language, whichever one you speak. Dictations you already speak in it are simply tidied up.",
-      "same_language_notice": "This is the language you have pinned for dictation, so nothing will be translated. Pick a different one, or set the dictation language above back to automatic.",
-      "answers_label": "Answers right now",
-      "no_provider": "No provider can answer yet, so nothing is translated — your words arrive as you spoke them. Paste a key below and it starts working.",
+      "target_hint": "Text already in the target language is tidied up. Check the result after each dictation.",
+      "same_language_notice": "Recognition and output use the same language. Use automatic recognition if you also dictate in other languages.",
+      "answers_label": "Configured text provider",
+      "no_provider": "No text provider is configured. Choose one and add its key above, then use Test.",
       "key_saved_hint": "Stored on this computer only, in your system keychain."
     },
     "api_keys": {
@@ -1314,7 +1314,9 @@
     "oauth_client_own": "Your own {family} client",
     "oauth_client_placeholder": "Placeholder {family} client — add your own when connecting",
     "fact_publisher": "Publisher",
-    "fact_source": "Source"
+    "fact_source": "Source",
+    "grant_ends": "Authorization ends {date}. Sign in again before then.",
+    "grant_expired": "Authorization expired {date}. Reconnect to continue."
   },
   "skills_view": {
     "count": "{n} skills",
@@ -1964,7 +1966,7 @@
   },
   "apikeys_view": {
     "title": "API Keys & Providers",
-    "subtitle": "Connect providers and choose what powers each part of Jarvis.",
+    "subtitle": "Set up the realtime voice, your agents and access to {name}.",
     "shared_key_covered": "Already covered by your shared key from this provider family — a dedicated key is optional.",
     "add_dedicated_key": "Add dedicated key",
     "local_install_cta": "Install on this machine",
@@ -2380,7 +2382,36 @@
         "ask_now": "Ask macOS now",
         "restart": "Quit and reopen"
       }
-    }
+    },
+    "group_title": null,
+    "title": null,
+    "description": null,
+    "loading": null,
+    "load_failed": null,
+    "refresh": null,
+    "not_required": null,
+    "identity_warning": null,
+    "restart_required": null,
+    "restart_now": null,
+    "restarting": null,
+    "request": null,
+    "open_settings": null,
+    "status": null,
+    "items": null,
+    "banner": null,
+    "features": null,
+    "restart_deferred": null,
+    "setup_all": null,
+    "setup_all_hint": null,
+    "setup_running": null,
+    "setup_wait_prompt": null,
+    "setup_wait_settings": null,
+    "setup_cancel": null,
+    "setup_restarting": null,
+    "setup_timeout": null,
+    "ask_again": null,
+    "stale_grant_hint": null,
+    "identity_reset": null
   },
   "settings_hub": {
     "subtitle": "Everything about you, your keys and this app — in one place.",
@@ -2423,8 +2454,8 @@
       "restart_caption": "Saved — applies on next start."
     },
     "bar_size": {
-      "title": "Bar size",
-      "description": "How big the on-screen bar is. It scales proportionally — width and height together — so the bar keeps its shape and only its size changes, and it adapts to each monitor's physical size so it looks the same on every screen. Drag to resize it live on screen.",
+      "title": "Jarvis Bar size",
+      "description": "Resize the whole Jarvis Bar, including its orb and controls. Width and height scale together. Drag the slider to see the change on screen; your saved position is retained.",
       "reset": "Reset to default (135%)",
       "saved_toast": "Bar size set to {0}.",
       "restart_caption": "Saved — applies when the bar restarts."
@@ -2458,7 +2489,8 @@
       "music": "Music",
       "keybinds": "Keyboard shortcuts",
       "more": "More",
-      "overlay_taskbar": "Overlay & taskbar"
+      "overlay_taskbar": "Overlay & taskbar",
+      "permissions": null
     },
     "languages_group_title": "Languages",
     "music_group_title": "Music",
@@ -2635,13 +2667,13 @@
     },
     "overlay_style": {
       "title": "Display style",
-      "description": "Choose how {name} appears on screen during voice activity. The bar is the slim default; the mascot is the classic companion; the voice orb is a glowing sphere; the pet is a pixel companion that stays on screen; or hide it entirely. Every floating style can be dragged to any monitor.",
+      "description": "The Jarvis Bar has a blue talk orb and controls for a new text chat, microphone mute, assistant audio and calls. Choose Mascot, Voice orb or Pet for another display style, or None to hide the overlay. Drag any floating style to place it on a monitor.",
       "label": "Style",
       "save": "Save",
       "saved": "Display style switched.",
       "restart_required": "Saved — restart {name} to apply.",
       "options": {
-        "jarvis_bar": "Bar (default)",
+        "jarvis_bar": "Jarvis Bar (default)",
         "mascot": "Mascot",
         "voice_orb": "Voice orb",
         "pet": "Pet",
@@ -4435,7 +4467,9 @@
         "live": "Connected",
         "exited": "Exited",
         "failed": "Failed",
-        "error": "Unreachable"
+        "error": "Unreachable",
+        "stopped": "Stopped",
+        "unknown": "Status unknown"
       }
     },
     "selection": {
@@ -4478,7 +4512,8 @@
       "kind_needs_input": "NEEDS INPUT",
       "kind_exited": "STOPPED",
       "kind_failed": "FAILED",
-      "gone": "{0} is not in this workspace any more — that terminal was closed since the notification arrived."
+      "gone": "{0} is not in this workspace any more — that terminal was closed since the notification arrived.",
+      "kind_stopped": "STOPPED"
     },
     "voice_bubble": {
       "assistant_fallback": "Assistant",
@@ -6007,7 +6042,21 @@
         "error": "Error",
         "exited": "Exited",
         "done": "Done",
-        "idle": "Idle"
+        "idle": "Idle",
+        "stopped": "Stopped",
+        "unknown": "Status unknown"
+      },
+      "search": {
+        "label": "Search terminals",
+        "placeholder": "Search terminals or describe a task…",
+        "hint": "Find names, keywords or related tasks. Runs on this device.",
+        "clear": "Clear search",
+        "loading": "Finding related tasks — downloading the local model on first use…",
+        "searching": "Finding related tasks…",
+        "error": "Related tasks are unavailable right now. Word search still works. Try again to include related tasks.",
+        "empty": "No matching terminals.",
+        "results": "{count} matching terminals · best match first",
+        "retry": "Try again"
       }
     },
     "add_terminal": "Plain Terminal",
@@ -6042,7 +6091,7 @@
     "title": "Appshots",
     "subtitle": "Show {name} the window you are working in.",
     "hero_title": "Take an appshot to show {name} your front window",
-    "hero_body": "An appshot captures the window in front, picture and on-screen text, and hands it to the conversation. Your privacy rules still apply, and nothing is saved to disk.",
+    "hero_body": "An appshot captures the window in front, picture and on-screen text, and hands it to the conversation. Your privacy rules still apply. Only the history below stays on this computer, and you can delete it anytime.",
     "enabled_label": "Allow appshots",
     "enabled_hint": "Also covers questions like \"what do you see?\". Off means {name} never looks at your screen.",
     "shortcut_label": "Keyboard shortcut",
@@ -6120,7 +6169,20 @@
       "close": "Close",
       "gone": "This appshot is no longer kept, so it cannot be edited.",
       "text_placeholder": "Type…"
-    }
+    },
+    "recording_title": "Screen recording",
+    "recording_hint": "Select an area or the entire screen. Records video without audio and saves it locally; nothing is sent to the assistant. Use the same shortcut to stop.",
+    "recording_start": "Select recording area",
+    "recording_stop": "Stop and save",
+    "recording_cancel": "Cancel",
+    "recording_shortcut": "Start / stop recording",
+    "recording_permission": "Allow screen recording",
+    "recording_selecting": "Choose an area or the entire screen in the selection window.",
+    "recording_recording": "Recording",
+    "recording_stopping": "Saving recording…",
+    "recording_saved": "Saved locally",
+    "recording_cancelled": "Recording cancelled",
+    "recording_download": "Download video"
   },
   "jarvisx": {
     "title": "Jarvis X",
@@ -6359,5 +6421,65 @@
       "create": "Create pet",
       "creating": "Creating…"
     }
+  },
+  "transcription": {
+    "archive": "Voice archive",
+    "intro": "A place for every conversation. Find the words you want to return to.",
+    "search_sessions": "Search conversation previews",
+    "clear_search": "Clear search",
+    "refresh": "Refresh",
+    "recorder_off": "Transcription is unavailable",
+    "recorder_help": "The conversation recorder is currently turned off. Try again when recording is available.",
+    "list_error": "Your conversations could not be loaded",
+    "retry_help": "Your saved conversations have not been changed. Check the connection and try again.",
+    "retry": "Try again",
+    "loading_library": "Loading your conversations…",
+    "results": "{count} results",
+    "recent_count": "{count} recent conversations · latest 100",
+    "untitled": "Untitled conversation",
+    "in_progress": "In progress",
+    "exchanges": "{count} exchanges",
+    "no_matches": "No matching words",
+    "search_help": "Try another phrase from the beginning of a conversation.",
+    "empty_title": "Your conversations belong here",
+    "empty_body": "After a voice conversation, come back to read what was said, find a detail, or keep a copy.",
+    "open_chat": "Go to chat",
+    "all_conversations": "All conversations",
+    "saved_conversation": "Saved conversation",
+    "live_help": "This conversation is still in progress. Refresh to see the latest saved words.",
+    "find": "Find in this transcript",
+    "original_wording": "Original wording",
+    "transcript": "Conversation transcript",
+    "end": "End of conversation",
+    "latest": "Latest saved words",
+    "no_speech": "No speech recorded",
+    "no_speech_help": "This conversation does not have any saved speech yet.",
+    "find_help": "Try a different phrase, or clear the search to read the whole conversation.",
+    "exchange": "Exchange {number}",
+    "spoken_output": "Spoken output",
+    "pending": "Awaiting confirmation",
+    "copy": "Copy transcript",
+    "format": "File format",
+    "plain_text": "Plain text",
+    "download": "Download",
+    "open_with": "Open with…",
+    "open_file": "Open file",
+    "preparing": "Preparing transcript…",
+    "copied": "Copied to clipboard",
+    "saved": "Transcript saved",
+    "spoken_clarify": "Clarifying question",
+    "spoken_timeout": "Timeout notice",
+    "spoken_unavailable": "Assistant unavailable",
+    "spoken_stt_unavailable": "Speech not recognized",
+    "spoken_privacy": "Privacy notice",
+    "spoken_completion": "Background result",
+    "spoken_subagent": "Agent response",
+    "spoken_action_done": "Action confirmed",
+    "spoken_backchannel": "Acknowledgement",
+    "spoken_announcement": "Announcement",
+    "spoken_preamble": "Introduction",
+    "spoken_progress": "Progress update",
+    "spoken_withheld": "Answer withheld",
+    "spoken_other": "Spoken output"
   }
 }

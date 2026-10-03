@@ -26,6 +26,8 @@ import { cn } from "@/lib/utils";
  */
 export function OverlayTaskbarGroup() {
   const t = useT();
+  const overlay = useOverlayStyle();
+  const isBar = (overlay.config?.style ?? "jarvis_bar") === "jarvis_bar";
 
   return (
     <div className="mt-8 space-y-4">
@@ -37,8 +39,8 @@ export function OverlayTaskbarGroup() {
         <h4 className="mb-2 text-base font-medium text-foreground-strong">
           {t("taskbar_view.appearance_title")}
         </h4>
-        <OverlayStylePanel />
-        <BarSizeGroup />
+        <OverlayStylePanel overlay={overlay} />
+        {isBar && <BarSizeGroup />}
       </section>
 
       <section>
@@ -46,10 +48,12 @@ export function OverlayTaskbarGroup() {
           {t("taskbar_view.behavior_title")}
         </h4>
         <div className="overflow-hidden rounded-lg border border-border bg-card">
-          <BarPersistentRow />
-          <div className="mx-4 border-t border-border" />
-          <FollowCursorRow />
-          <div className="mx-4 border-t border-border" />
+          {isBar && <>
+            <BarPersistentRow />
+            <div className="mx-4 border-t border-border" />
+            <FollowCursorRow />
+            <div className="mx-4 border-t border-border" />
+          </>}
           <MuteMusicRow />
           <div className="mx-4 border-t border-border" />
           <SoundEffectsRow />
@@ -238,9 +242,9 @@ function SoundEffectsRow() {
  * an orb-window style cannot apply live (BUG-031: Tcl cross-thread abort), so
  * the app self-restarts to deliver it (`useRestartApp`).
  */
-function OverlayStylePanel() {
+function OverlayStylePanel({ overlay }: { overlay: ReturnType<typeof useOverlayStyle> }) {
   const t = useT();
-  const { config, loading, error, saveStyle } = useOverlayStyle();
+  const { config, loading, error, saveStyle } = overlay;
   const pushToast = useEventStore((s) => s.pushToast);
   const setActiveSection = useEventStore((s) => s.setActiveSection);
   const [style, setStyle] = useState<OverlayStyle>("jarvis_bar");
@@ -268,6 +272,7 @@ function OverlayStylePanel() {
         pushToast("warning", t("settings_view.overlay_style.restart_required"));
       }
     } catch (e) {
+      setStyle(config?.style ?? "jarvis_bar");
       pushToast("error", (e as Error).message);
     } finally {
       setSaving(false);
@@ -289,7 +294,7 @@ function OverlayStylePanel() {
           {/* Visual preview cards — click to apply (no dropdown). Two columns
               on a narrow window so a fifth style never squeezes the previews
               into unreadable slivers. */}
-          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+          <div className="mt-4 grid grid-cols-[repeat(auto-fit,minmax(110px,1fr))] gap-3">
             {options.map((opt) => (
               <button
                 key={opt}

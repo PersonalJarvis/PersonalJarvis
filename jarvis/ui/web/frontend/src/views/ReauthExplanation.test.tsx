@@ -26,7 +26,7 @@ describe("ReauthExplanation", () => {
   it("names the cause instead of a bare 'reconnect needed'", () => {
     render(<ReauthExplanation plugin={plugin({ reauthReason: "provider_rejected" })} />);
 
-    expect(screen.getByText(/withdrew the authorization/i)).toBeDefined();
+    expect(screen.getByText(/no longer accepts this authorization/i)).toBeDefined();
   });
 
   it("distinguishes a refused client from a withdrawn grant", () => {

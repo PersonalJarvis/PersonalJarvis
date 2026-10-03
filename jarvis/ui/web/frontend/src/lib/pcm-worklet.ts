@@ -59,6 +59,7 @@ class StartupCapture extends AudioWorkletProcessor {
       try {
         if (event.data.type === "start") this.queue.start();
         else if (event.data.type === "suspend") this.queue.suspend();
+        else if (event.data.type === "resume") this.queue.resume();
         else if (event.data.type === "prefix") this.queue.prepend(event.data.samples);
       } catch (error) { this.fail(error); }
     };
@@ -86,13 +87,20 @@ class PcmPlayback extends AudioWorkletProcessor {
   private readonly queue = new JitterBufferedPcm16Queue(sampleRate);
   private levelSum = 0;
   private levelCount = 0;
+  private muted = true;
+  private volume = 1;
 
   constructor() {
     super();
     this.port.onmessage = (e: MessageEvent) => {
-      const msg = e.data as { type: string; data?: ArrayBuffer };
-      if (msg.type === "flush") this.queue.clear();
-      else if (msg.type === "pcm" && msg.data) {
+      const msg = e.data as { type: string; data?: ArrayBuffer; muted?: boolean; volume?: number };
+      if (msg.type === "output_state") {
+        const muted = msg.muted === true;
+        if (muted !== this.muted) this.queue.clear();
+        this.muted = muted;
+        this.volume = msg.volume ?? 1;
+      } else if (msg.type === "flush") this.queue.clear();
+      else if (msg.type === "pcm" && msg.data && !this.muted) {
         // The bounded ring keeps the newest audio if a provider outruns
         // playback for more than ten seconds. enqueue() drops the oldest
         // samples on overrun, preventing stale latency and unbounded memory.
@@ -108,6 +116,7 @@ class PcmPlayback extends AudioWorkletProcessor {
     // streams at wall clock. Zero-filling a starved quantum instead is what
     // chopped the voice on this surface.
     this.queue.render(out);
+    for (let i = 0; i < out.length; i++) out[i] *= this.muted ? 0 : this.volume;
     // Throttled (~30 Hz) OUTPUT-level messages, the mirror of PcmCapture's.
     // Measured on the samples this processor just wrote, so the number is the
     // audio actually leaving for the speaker at that instant — the only

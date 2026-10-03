@@ -177,8 +177,10 @@ def _contains_secret(text: str) -> bool:
 
         return bool(contains_secret(text))
     except Exception:  # noqa: BLE001 — a missing guard never opens the door
-        log.debug("society memory: secret guard unavailable, refusing nothing", exc_info=True)
-        return False
+        # Shared memory is read by every agent: when the detector cannot run,
+        # treat the text as secret and refuse it, like the learning guard does.
+        log.warning("society memory: secret guard unavailable, refusing the write", exc_info=True)
+        return True
 
 
 @dataclass(frozen=True, slots=True)
@@ -278,7 +280,9 @@ class SocietyMemory:
         """Write one notebook under its lock and return the actual before/after receipt."""
         from filelock import Timeout
 
-        from .memory_books import PROMPT_BUDGETS, edit_book
+        from jarvis.memory.write_feedback import announce_write
+
+        from .memory_books import FILES, PROMPT_BUDGETS, classify, edit_book
         from .notebook import readable_document
 
         text = str(text or "").strip()
@@ -287,18 +291,22 @@ class SocietyMemory:
         if _contains_secret(text):
             raise MemoryRefused("memory never holds a secret")
         vault = self.root(root).resolve()
+        # The file is known up front unless an edit must first find its entry.
+        expected = FILES.get(target or (classify(text) if operation == "add" else ""), "")
         try:
-            result = edit_book(
-                vault,
-                agent,
-                text,
-                target=target,
-                operation=operation,
-                entry_id=entry_id,
-                old_text=old_text,
-                importance=max(0, min(10, int(importance))),
-                origin=self._origin(origin),
-            )
+            with announce_write(agent.agent_id, expected, operation=operation) as written:
+                result = edit_book(
+                    vault,
+                    agent,
+                    text,
+                    target=target,
+                    operation=operation,
+                    entry_id=entry_id,
+                    old_text=old_text,
+                    importance=max(0, min(10, int(importance))),
+                    origin=self._origin(origin),
+                )
+                written.file, written.changed = result.path.name, result.changed
         except (ValueError, KeyError, TypeError, Timeout) as exc:
             raise MemoryRefused(str(exc)) from exc
         rel = result.path.relative_to(vault).as_posix()

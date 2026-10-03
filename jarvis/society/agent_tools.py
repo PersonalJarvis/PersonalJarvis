@@ -248,6 +248,10 @@ class MessageAgentTool:
             # Which of the caller's chats wrote it: the person's chat with the
             # agent shows only its own outgoing messages, never a conversation's.
             payload["from_session"] = turn.session_id
+        if caller.agent_id == rt.lead_id and parent is None:
+            from jarvis.core.delegation import origin_metadata
+            config = getattr(ctx, "config", None) or {}
+            payload.update(origin_metadata(language=str(config.get("output_language") or "")))
         env = await rt.say(
             from_agent=caller.agent_id,
             to_agent=target.agent_id,

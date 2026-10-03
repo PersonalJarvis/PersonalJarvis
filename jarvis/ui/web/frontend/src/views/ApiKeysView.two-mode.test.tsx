@@ -1,14 +1,4 @@
-/**
- * Component tests for the Pipeline|Realtime segmented switch on the
- * API-Keys screen.
- *
- * Feature A (supersedes D1): the segment is a real mode control. Clicking a
- * segment still switches the local VIEW, but now ALSO persists
- * `[voice].mode` via `useVoiceMode().setMode` — Pipeline always, Realtime
- * only when `realtimeAvailable` is true (a key is actually configured for
- * some realtime family). These tests pin (1) the mode-derived tab sets and
- * (2) the setMode call pattern for both availability states.
- */
+/** Existing voice configurations remain readable without silently switching engines. */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
@@ -76,157 +66,29 @@ afterEach(() => {
   mockTransitioning = false;
 });
 
-describe("ApiKeysView two-mode", () => {
-  it("keeps mode controls in the header and voice setup in the scrolling content", () => {
+describe("ApiKeysView existing voice configurations", () => {
+  it.each(["pipeline", "realtime"])("opens Realtime settings without changing a %s installation", (mode) => {
+    mockVoiceMode = mode;
     renderKeys();
-    fireEvent.click(screen.getByRole("button", { name: /^realtime/i }));
-
-    const headerControl = screen.getByTestId("voice-engine-header-control");
-    const providerScroll = screen.getByTestId("api-keys-provider-scroll");
-    const context = screen.getByRole("tabpanel", { name: "Voice & thinking" });
-    const categoryTabs = screen.getByTestId("api-keys-category-tabs");
-
-    expect(headerControl.closest("header")).not.toBeNull();
-    expect(providerScroll.contains(context)).toBe(true);
-    expect(providerScroll.className).toContain("min-h-0");
-    expect(categoryTabs.className).toContain("overflow-x-auto");
-    expect(screen.getByRole("tablist").className).toContain("min-w-max");
-    expect(screen.queryByTestId("voice-engine-context")).toBeNull();
+    expect(screen.getByRole("tab", { name: /^realtime$/i }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.queryByTestId("voice-engine-header-control")).toBeNull();
+    expect(screen.queryByRole("tab", { name: /^brain$|voice output|voice input/i })).toBeNull();
+    expect(putVoiceMode).not.toHaveBeenCalled();
   });
-
-  it("never offers a separate Tool Model in either voice mode", () => {
+  it.each([true, false])("keeps setup reachable with realtime availability %s", (available) => {
+    mockRealtimeAvailable = available;
     renderKeys();
-    expect(screen.queryByRole("tab", { name: /tool model/i })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: /^realtime/i }));
-    expect(screen.queryByRole("tab", { name: /tool model/i })).toBeNull();
-    expect(screen.getByText(/Chat, memory and background work use the provider you choose under Agents/)).toBeTruthy();
+    expect(screen.getByRole("tab", { name: /^realtime$/i })).toBeTruthy();
+    expect(screen.getByTestId("api-keys-provider-scroll")).toBeTruthy();
+    expect(putVoiceMode).not.toHaveBeenCalled();
   });
-
-  it("defaults to Pipeline mode showing Brain/Voice/Subagents tabs, no Realtime tab", () => {
-    renderKeys();
-    expect(screen.getByRole("tab", { name: /brain/i })).toBeTruthy();
-    expect(screen.getByRole("tab", { name: /voice output/i })).toBeTruthy();
-    expect(screen.getByRole("tab", { name: /voice input/i })).toBeTruthy();
-    expect(screen.getByRole("tab", { name: /-agents$/i })).toBeTruthy();
-    // The dedicated key tab is named after the assistant ({name} token; the
-    // uncached test default resolves to "Assistant").
-    expect(screen.getByRole("tab", { name: /assistant key/i })).toBeTruthy();
-    expect(screen.getByRole("tab", { name: /advanced/i })).toBeTruthy();
-    expect(screen.queryByRole("tab", { name: /realtime/i })).toBeNull();
-  });
-
-  it("shows the segmented Pipeline|Realtime switch with an Active badge on the live mode", () => {
-    renderKeys();
-    const pipelineSegment = screen.getByRole("button", { name: /pipeline/i });
-    const realtimeSegment = screen.getByRole("button", { name: /^realtime/i });
-    expect(pipelineSegment).toBeTruthy();
-    expect(realtimeSegment).toBeTruthy();
-    // The live [voice].mode from the mocked useVoiceMode is "pipeline", so
-    // only the Pipeline segment carries the "Active" badge.
-    expect(pipelineSegment.textContent).toMatch(/active/i);
-    expect(realtimeSegment.textContent).not.toMatch(/active/i);
-  });
-
-  it("marks Realtime as recommended and Pipeline as not recommended", () => {
-    renderKeys();
-    const pipelineSegment = screen.getByRole("button", { name: /pipeline/i });
-    const realtimeSegment = screen.getByRole("button", { name: /^realtime/i });
-    expect(pipelineSegment.textContent).toMatch(/not recommended/i);
-    expect(realtimeSegment.textContent).toMatch(/recommended/i);
-    expect(realtimeSegment.textContent).not.toMatch(/not recommended/i);
-  });
-
-  it("keeps the highlighted header segment aligned with the selected provider view", () => {
-    renderKeys();
-    const thumb = screen.getByTestId("voice-engine-selection-thumb");
-
-    expect(thumb.style.transform).toBe("translateX(100%)");
-    fireEvent.click(screen.getByRole("button", { name: /^realtime/i }));
-
-    expect(screen.getByRole("button", { name: /^realtime/i }).getAttribute("aria-pressed"))
-      .toBe("true");
-    expect(thumb.style.transform).toBe("translateX(0%)");
-  });
-
-  it("offers one provider setup instead of the legacy recommendation block", () => {
-    renderKeys();
-    fireEvent.click(screen.getByRole("button", { name: /^realtime/i }));
-    expect(screen.getByRole("region", { name: "Provider" })).toBeTruthy();
-    expect(screen.queryByText(/personal recommendation/i)).toBeNull();
-  });
-
-  it("shows when the selected Realtime mode is still served by Pipeline", () => {
+  it("shows an active fallback separately from the selected setup page", () => {
     mockVoiceMode = "realtime";
     mockSessionActive = true;
     mockActiveSessionMode = "pipeline";
-
     renderKeys();
-
-    expect(screen.getByTestId("voice-engine-runtime-status").textContent).toMatch(
-      /fell back to Pipeline/i,
-    );
-  });
-
-  it("switching to Realtime mode shows only Realtime/Subagents/Advanced and persists voice-mode (available)", () => {
-    renderKeys();
-    fireEvent.click(screen.getByRole("button", { name: /^realtime/i })); // the segment
-
-    expect(screen.getByRole("tab", { name: /realtime/i })).toBeTruthy();
-    expect(screen.getByRole("tab", { name: /-agents$/i })).toBeTruthy();
-    expect(screen.getByRole("tab", { name: /assistant key/i })).toBeTruthy();
-    expect(screen.getByRole("tab", { name: /advanced/i })).toBeTruthy();
-    expect(screen.queryByRole("tab", { name: /^brain$/i })).toBeNull();
-    expect(screen.queryByRole("tab", { name: /voice output/i })).toBeNull();
-    expect(screen.queryByRole("tab", { name: /voice input/i })).toBeNull();
-
-    // Feature A (supersedes D1): with a realtime provider actually reachable
-    // (mocked realtimeAvailable=true), the segment now persists the mode.
-    expect(putVoiceMode).toHaveBeenCalledWith("realtime");
-  });
-
-  it("switching back to Pipeline restores the five pipeline tabs and always persists voice-mode", () => {
-    renderKeys();
-    fireEvent.click(screen.getByRole("button", { name: /^realtime/i }));
-    putVoiceMode.mockClear();
-    fireEvent.click(screen.getByRole("button", { name: /pipeline/i }));
-
-    expect(screen.getByRole("tab", { name: /brain/i })).toBeTruthy();
-    expect(screen.queryByRole("tab", { name: /realtime/i })).toBeNull();
-    // Pipeline always persists — it is always reachable (no key gate needed).
-    expect(putVoiceMode).toHaveBeenCalledWith("pipeline");
-  });
-});
-
-describe("ApiKeysView two-mode — realtime unavailable (no key in any family)", () => {
-  it("does not label unavailable configured Realtime as live", () => {
-    mockVoiceMode = "realtime";
-    mockRealtimeAvailable = false;
-    renderKeys();
-
-    const realtimeSegment = screen.getByRole("button", { name: /^realtime/i });
-    expect(realtimeSegment.textContent).not.toMatch(/active/i);
-    expect(realtimeSegment.getAttribute("data-live")).toBe("false");
-    expect(screen.getByTestId("voice-engine-selection-thumb")).toBeTruthy();
-  });
-
-  it("switching to Realtime still switches the view, but does NOT persist voice-mode", () => {
-    mockRealtimeAvailable = false;
-    renderKeys();
-    fireEvent.click(screen.getByRole("button", { name: /^realtime/i }));
-
-    // The view still switches, so the user can add a key from the Realtime tab.
-    expect(screen.getByRole("tab", { name: /realtime/i })).toBeTruthy();
-    // But nothing is reachable yet — never pin [voice].mode to a dead engine.
+    expect(screen.getByTestId("voice-now-note-backup")).toBeTruthy();
+    expect(screen.getByRole("tab", { name: /^realtime$/i }).getAttribute("aria-selected")).toBe("true");
     expect(putVoiceMode).not.toHaveBeenCalled();
-  });
-
-  it("switching back to Pipeline still persists voice-mode even when realtime is unavailable", () => {
-    mockRealtimeAvailable = false;
-    renderKeys();
-    fireEvent.click(screen.getByRole("button", { name: /^realtime/i }));
-    putVoiceMode.mockClear();
-    fireEvent.click(screen.getByRole("button", { name: /pipeline/i }));
-
-    expect(putVoiceMode).toHaveBeenCalledWith("pipeline");
   });
 });

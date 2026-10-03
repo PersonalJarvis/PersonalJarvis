@@ -23,6 +23,10 @@ _MAX_CATALOG_BYTES = 4 * 1024 * 1024
 _SAFE_CODE = re.compile(r"^[a-zA-Z0-9_.-]{1,96}$")
 _SAFE_EFFORT = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 _KNOWN_EFFORTS = frozenset({"none", "minimal", "low", "medium", "high", "xhigh", "max"})
+# "No thinking" requests (small structured calls) map to the model's lightest
+# advertised level: a Codex model without "none" answers 400 to it (live
+# 2026-10-03, gpt-6.1-sol: every computer-use step failed before acting).
+_LIGHTEST_FIRST = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 
 
 class SubscriptionReasoningError(RuntimeError):
@@ -174,6 +178,8 @@ class SubscriptionReasoning:
             )
         if reasoning_effort and not _SAFE_EFFORT.fullmatch(reasoning_effort):
             raise SubscriptionReasoningError("The subscription thinking effort is invalid.")
+        if reasoning_effort in {"none", "minimal"}:
+            reasoning_effort = await self._lightest_effort(model, reasoning_effort)
         if reasoning_effort and reasoning_effort not in _KNOWN_EFFORTS:
             # New efforts are capability-driven. A model catalog request is free
             # of inference and happens only when an unknown effort needs checking.
@@ -223,6 +229,20 @@ class SubscriptionReasoning:
                 # Once a stream has started, never replay the request automatically.
                 raise _failure() from exc
         raise _failure(401)
+
+    async def _lightest_effort(self, model: str, requested: str) -> str:
+        """``requested`` when the model offers it, else its lightest level ("" = default)."""
+        if model not in self._model_efforts:
+            try:
+                await self.list_models()
+            except SubscriptionReasoningError:
+                # Unknown capabilities: the model's own default is always valid.
+                return ""
+        supported = self._model_efforts.get(model, ())
+        if requested in supported:
+            return requested
+        start = _LIGHTEST_FIRST.index(requested)
+        return next((e for e in _LIGHTEST_FIRST[start:] if e in supported), "")
 
     async def _events(self, response: Any) -> AsyncIterator[dict[str, Any]]:
         parts: list[str] = []

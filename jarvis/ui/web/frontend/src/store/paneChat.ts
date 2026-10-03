@@ -296,6 +296,7 @@ export function createPaneChatStore(options: PaneChatStoreOptions) {
     return {
       catalog: src.catalog,
       connections: src.connections,
+      catalogStale: src.catalogStale,
       catalogError: src.catalogError,
       backendOutdated: src.backendOutdated,
       liveModels: src.liveModels,

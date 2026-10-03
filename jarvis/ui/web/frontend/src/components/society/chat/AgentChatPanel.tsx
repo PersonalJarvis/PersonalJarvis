@@ -1,6 +1,7 @@
 import { PairConversationBoundary } from "@/components/agentchat/PairConversation";
 import { AgentMessageActivity, ChatActivity, RoutineActivity, routineTask } from "./ChatActivity";
 import { MemoryUpdateNotice } from "./MemoryUpdateNotice";
+import { foldMemoryNotices } from "./memoryNotices";
 import { mergeOutgoingMessages, useOutgoingMessages } from "@/components/agentchat/useOutgoingMessages";
 /**
  * The model card's chat column, kept deliberately plain (maintainer,
@@ -665,7 +666,7 @@ function EffortPicker() {
 // ---------------------------------------------------------------------------
 
 export function Transcript({
-  items,
+  items: rawItems,
   agent,
   roster,
   onDecide,
@@ -677,6 +678,8 @@ export function Transcript({
 }) {
   const t = useT();
   const sessionId = useAgentChat((state) => state.activeSessionId);
+  // Memory receipts are drawn inside the turn they follow, above its reply.
+  const { items, memoryByTurn } = useMemo(() => foldMemoryNotices(rawItems), [rawItems]);
   // Follow the newest while the view sits at the end — the rule every
   // conversation surface shares (hooks/useStickToBottom). This used to scroll
   // a bottom sentinel into view on `[items.length, busy]` only, so a
@@ -718,7 +721,7 @@ export function Transcript({
               ) : item.type === "user" ? (
                 <UserBubble item={item} agentId={agent.agentId} sessionId={sessionId ?? agent.chatSessionId ?? undefined} />
               ) : item.type === "turn" ? (
-                <TurnBubble item={item} onDecide={onDecide} />
+                <TurnBubble item={item} memory={memoryByTurn.get(item.id)} onDecide={onDecide} />
               ) : item.type === "notice" ? (
                 item.kind === "proposal" ? (
                   <ProposalCard item={item} />
@@ -976,12 +979,18 @@ export function UserBubble({ item, agentId, sessionId }: { item: UserItem; agent
 
 function TurnBubble({
   item,
+  memory,
   onDecide,
 }: {
   item: TurnItem;
+  memory?: NoticeItem[];
   onDecide: (approvalId: string, decision: ApprovalDecision) => Promise<void>;
 }) {
-  return <TurnTrace turn={item} conversation onDecide={onDecide} renderText={(text) => <Prose text={text} />} />;
+  const extras = useMemo(
+    () => memory?.map((notice) => ({ key: notice.id, node: <MemoryUpdateNotice item={notice} inTrace /> })),
+    [memory],
+  );
+  return <TurnTrace turn={item} conversation extras={extras} onDecide={onDecide} renderText={(text) => <Prose text={text} />} />;
 }
 
 /**

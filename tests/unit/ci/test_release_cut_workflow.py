@@ -31,6 +31,7 @@ gh() {
   case "$1 $2" in
     'pr create') printf 'https://github.com/example/project/pull/1\n' ;;
     'pr merge') return "$LAND_EXIT" ;;
+    'pr view') printf '%s\n' "$FAKE_SHA" ;;
     'workflow run') return 0 ;;
     'run list') printf '123\n' ;;
     'run view') printf '\n' ;;
@@ -170,7 +171,7 @@ def test_resume_requires_merged_current_version_and_admission(tmp_path, override
         assert not any(command.startswith("git checkout ") for command in commands)
     if success:
         assert commands[-1] == "git push origin v1.2.3"
-        assert (tmp_path / "outputs.txt").read_text("utf-8") == "version=1.2.3\n"
+        assert (tmp_path / "outputs.txt").read_text("utf-8") == "version=1.2.3\npushed=true\n"
     else:
         assert not any(command.startswith("git tag ") for command in commands)
         assert "git push origin v1.2.3" not in commands

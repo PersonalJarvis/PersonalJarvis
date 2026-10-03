@@ -27,22 +27,27 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import importlib.util
 import logging
 import os
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
+
+from jarvis.appshot.markup import Markup, parse_markup
 
 log = logging.getLogger(__name__)
 
 #: A drag smaller than this (logical px, either side) is a click, not a pick.
 MIN_SELECTION_PX = 4
 
-#: The picker gives up on its own after this long without a selection.
-PICK_TIMEOUT_S = 120.0
+#: The picker gives up on its own after this long without a result. Long
+#: enough to mark an area up in peace; Esc still ends it at once.
+PICK_TIMEOUT_S = 900.0
 #: Grace for the picker to exit (and its overlay to leave the glass).
 _EXIT_GRACE_S = 2.0
 #: Extra settle time so the compositor has repainted without the dim layer.
@@ -51,26 +56,30 @@ _SETTLE_S = 0.08
 Rect = tuple[int, int, int, int]
 FRect = tuple[float, float, float, float]
 
-# Hint pill over the screens — app chrome, so it follows the app's display
-# language ([ui].language); a phrase table always carries every locale.
-_HINTS: dict[str, str] = {
-    "de": "Bereich ziehen · Fenster anklicken · Mausrad zoomt · Esc bricht ab",  # i18n-allow
-    "en": "Drag to select an area · Click a window · Scroll to zoom · Esc to cancel",
-    "es": "Arrastra una zona · Clic en una ventana · Rueda para zoom · Esc cancela",  # i18n-allow
-}
-
 
 @dataclass(frozen=True, slots=True)
 class Selection:
-    """A finished selection: which Qt screen, which part of it."""
+    """A finished selection: which Qt screen, which part of it, and how it ended.
+
+    ``action`` is the button the user finished with (``done``, ``copy``,
+    ``save`` or ``edit``); ``markup`` holds what they drew on the area, if
+    anything (:mod:`jarvis.appshot.markup`).
+    """
 
     screen: dict[str, float]
     rect: FRect
+    action: str = "done"
+    markup: Markup | None = None
 
 
 class RegionUnavailable(RuntimeError):
     """No area can be selected on this host; the message says why."""
 
+
+#: The toolbar's tooltip language for the picker being started.
+_language: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "appshot_picker_language", default="en"
+)
 
 #: One picker at a time: a second shortcut press, the page button and the
 #: voice tool must not stack overlays (one Esc would cancel all of them).
@@ -238,7 +247,15 @@ def parse_selection(payload: dict[str, Any]) -> Selection | None:
         return None
     if frac[2] <= 0.0 or frac[3] <= 0.0:
         return None
-    return Selection(screen=info, rect=frac)  # type: ignore[arg-type]
+    from jarvis.appshot.picker import ACTION_DONE, ACTIONS  # noqa: PLC0415
+
+    action = payload.get("action")
+    return Selection(
+        screen=info,
+        rect=frac,  # type: ignore[arg-type]
+        action=action if action in ACTIONS else ACTION_DONE,
+        markup=parse_markup(payload.get("markup")),
+    )
 
 
 # --------------------------------------------------------------------------
@@ -260,17 +277,6 @@ def picker_capability() -> tuple[bool, str]:
     if importlib.util.find_spec("PySide6") is None:
         return False, "the selection overlay needs PySide6 (the [desktop] extra)"
     return True, ""
-
-
-def _hint() -> str:
-    try:
-        from jarvis.core.config import load_config  # noqa: PLC0415
-
-        language = str(getattr(load_config().ui, "language", "") or "").lower()[:2]
-        return _HINTS.get(language, _HINTS["en"])
-    except Exception:  # noqa: BLE001 - the hint is decoration; English is honest
-        log.debug("appshot: picker hint language unresolved", exc_info=True)
-        return _HINTS["en"]
 
 
 def _is_cloaked(handle: int | None) -> bool:
@@ -318,11 +324,11 @@ def snap_layout() -> dict[str, Any]:
     return {"monitors": [dict(m) for m in monitors], "windows": windows}
 
 
-def _spawn(hint: str) -> subprocess.Popen[str]:
+def _spawn(language: str = "en") -> subprocess.Popen[str]:
     from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS  # noqa: PLC0415
 
     return subprocess.Popen(
-        [sys.executable, "-m", "jarvis.appshot.picker", "--hint", hint],
+        [sys.executable, "-m", "jarvis.appshot.picker", "--lang", language or "en"],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
@@ -333,15 +339,27 @@ def _spawn(hint: str) -> subprocess.Popen[str]:
     )
 
 
-def _read_result(proc: subprocess.Popen[str]) -> dict[str, Any] | None:
-    """Block until the picker reports its selection; ``None`` on EOF."""
+def _read_result(
+    proc: subprocess.Popen[str], on_marking: Callable[[], None] | None = None
+) -> dict[str, Any] | None:
+    """Block until the picker reports its selection; ``None`` on EOF.
+
+    ``on_marking`` runs (on this reader thread) once the user has chosen an
+    area and the marking toolbar is up.
+    """
     from jarvis.appshot import picker as wire  # noqa: PLC0415
 
     assert proc.stdout is not None
     for line in proc.stdout:
         payload = wire.decode(line)
-        if payload is not None and payload.get("event") == wire.EVENT_SELECTION:
+        if payload is None:
+            continue
+        event = payload.get("event")
+        if event == wire.EVENT_SELECTION:
             return payload
+        if event == wire.EVENT_MARKING and on_marking is not None:
+            with contextlib.suppress(Exception):  # a lost hint only keeps the global Esc
+                on_marking()
     return None
 
 
@@ -425,10 +443,11 @@ def grab_preview(screen: Any) -> Any | None:
 
 
 async def pick_region(
-    *, timeout_s: float = PICK_TIMEOUT_S, trace_id: UUID | None = None,
+    *, timeout_s: float = PICK_TIMEOUT_S, language: str = "en", trace_id: UUID | None = None,
 ) -> Selection | None:
     """Let the user drag a rectangle. ``None`` = cancelled or timed out.
 
+    ``language`` is the toolbar's tooltip language (``[ui].language``).
     Raises :class:`RegionUnavailable` when no picker can run on this host.
     """
     global _picking
@@ -444,7 +463,11 @@ async def pick_region(
         from jarvis.platform.screen_access import require_screen_recording_async
 
         await require_screen_recording_async("appshot", trace_id=trace_id)
-        payload, code, timed_out = await _run_picker(timeout_s)
+        token = _language.set(language or "en")
+        try:
+            payload, code, timed_out = await _run_picker(timeout_s)
+        finally:
+            _language.reset(token)
     finally:
         _picking = False
     if payload is None and not timed_out and code not in (0, None):
@@ -466,7 +489,6 @@ def _exit_message(code: int) -> str:
 
 async def _run_picker(timeout_s: float) -> tuple[dict[str, Any] | None, int | None, bool]:
     """Spawn, wait for one selection, always reap. ``(payload, exit code, timed out)``."""
-    hint = await asyncio.to_thread(_hint)
     try:
         layout = await asyncio.to_thread(snap_layout)
     except Exception:  # noqa: BLE001 - no snapping; dragging still works
@@ -474,7 +496,7 @@ async def _run_picker(timeout_s: float) -> tuple[dict[str, Any] | None, int | No
         layout = None
     # Shielded: a caller cancelled mid-spawn must still get the process reaped,
     # or its overlay would cover the screens until the stdin timeout.
-    spawn = asyncio.ensure_future(asyncio.to_thread(_spawn, hint))
+    spawn = asyncio.ensure_future(asyncio.to_thread(_spawn, _language.get()))
     try:
         proc = await asyncio.shield(spawn)
     except asyncio.CancelledError:
@@ -488,10 +510,15 @@ async def _run_picker(timeout_s: float) -> tuple[dict[str, Any] | None, int | No
         raise RegionUnavailable("The selection overlay could not be started.") from exc
     if layout is not None:
         await asyncio.to_thread(_send_layout, proc, layout)
-    escape = asyncio.get_running_loop().create_task(
-        _escape_cancels(proc), name="appshot-region-esc"
-    )
-    reader = asyncio.ensure_future(asyncio.to_thread(_read_result, proc))
+    loop = asyncio.get_running_loop()
+    escape = loop.create_task(_escape_cancels(proc), name="appshot-region-esc")
+
+    def marking() -> None:
+        # The picker has keyboard focus now, and Esc there may only end a
+        # text box: the global Esc must stop cancelling the whole picker.
+        loop.call_soon_threadsafe(escape.cancel)
+
+    reader = asyncio.ensure_future(asyncio.to_thread(_read_result, proc, marking))
     timed_out = False
     payload: dict[str, Any] | None = None
     try:
@@ -513,13 +540,10 @@ async def _run_picker(timeout_s: float) -> tuple[dict[str, Any] | None, int | No
 
 
 __all__ = [
-    "MAG_DEFAULT_ZOOM",
-    "MAG_ZOOMS",
     "MIN_SELECTION_PX",
     "RegionUnavailable",
     "Selection",
     "fraction_to_bbox",
-    "magnifier_layout",
     "match_monitor",
     "parse_selection",
     "pick_region",
@@ -529,5 +553,4 @@ __all__ = [
     "selection_to_bbox",
     "snap_layout",
     "snap_rects_on_screen",
-    "step_zoom",
 ]

@@ -33,7 +33,13 @@
  */
 
 /** Marks the server's holding page. Mirrors `HOLDING_MARKER` in spa_build.py. */
+import { requestConnect } from "./connectBudget";
+
 export const HOLDING_MARKER = "jarvis-build-holding";
+
+export const REQUEST_TIMEOUT_MS = 5_000;
+const recovering = new WeakSet<SafeReloadDeps>();
+const browserDeps = new Map<(() => boolean) | undefined, SafeReloadDeps>();
 
 /**
  * How the holding page carries its marker — and the ONLY form a document is
@@ -103,11 +109,11 @@ export function looksBootable(html: string): boolean {
 /**
  * Reload as soon as — and not before — the server can hand out a whole build.
  *
- * Returns immediately; the work continues on the deps' timer. Calling it twice
- * simply runs two checks, so callers that can fire repeatedly should guard
- * themselves (the bundle watch and the preload recovery both already do).
+ * Returns immediately. Repeated callers share one recovery per dependency set.
  */
 export function reloadWhenServable(deps: SafeReloadDeps): void {
+  if (recovering.has(deps)) return;
+  recovering.add(deps);
   let tries = 0;
 
   const again = () => {
@@ -158,16 +164,22 @@ export function reloadWhenServable(deps: SafeReloadDeps): void {
 export function browserSafeReloadDeps(
   options: { held?: () => boolean } = {},
 ): SafeReloadDeps {
-  return {
+  const existing = browserDeps.get(options.held);
+  if (existing) return existing;
+  const deps: SafeReloadDeps = {
     held: options.held,
     fetchIndex: () =>
-      fetch("/", { cache: "no-store", headers: { Accept: "text/html" } })
-        .then((response) => (response.ok ? response.text() : ""))
-        .catch(() => ""),
+      boundedRequest(async (signal) => {
+        const response = await fetch("/", {
+          cache: "no-store", headers: { Accept: "text/html" }, signal,
+        });
+        return response.ok ? response.text() : "";
+      }, ""),
     assetOk: (url) =>
-      fetch(url, { method: "HEAD", cache: "no-store" })
-        .then((response) => response.ok)
-        .catch(() => false),
+      boundedRequest(async (signal) => {
+        const response = await fetch(url, { method: "HEAD", cache: "no-store", signal });
+        return response.ok;
+      }, false),
     reload: () => {
       // A rebuilt frontend reloads the document, not the assistant process.
       // Tell the dependency-free splash which transition brought it back.
@@ -179,7 +191,26 @@ export function browserSafeReloadDeps(
       window.location.reload();
     },
     defer: (fn, ms) => {
-      window.setTimeout(fn, ms);
+      window.setTimeout(fn, ms + Math.random() * ms * 0.25);
     },
   };
+  browserDeps.set(options.held, deps);
+  return deps;
+}
+
+/** Bound the entire request, including body reads and engines that ignore abort. */
+function boundedRequest<T>(request: (signal: AbortSignal) => Promise<T>, fallback: T): Promise<T> {
+  return new Promise((resolve) => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      cancel();
+      controller.abort();
+      resolve(fallback);
+    }, REQUEST_TIMEOUT_MS);
+    const cancel = requestConnect(() => {
+      void request(controller.signal)
+        .then(resolve, () => resolve(fallback))
+        .finally(() => window.clearTimeout(timer));
+    });
+  });
 }

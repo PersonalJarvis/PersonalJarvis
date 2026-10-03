@@ -25,9 +25,6 @@ export function AgentsView() {
             {t("agents_view.empty_body_a")} {assistantName}{" "}
             {t("agents_view.empty_body_b")}
           </p>
-          <p className="mt-4 text-xs italic text-muted-foreground">
-            {t("agents_view.phase4_notice")}
-          </p>
         </div>
       </div>
     </div>

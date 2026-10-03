@@ -8,9 +8,9 @@
     "state_backup": "En la vía de voz de respaldo",
     "state_off": "Realtime está desactivado",
     "state_none": "Todavía no hay proveedor de voz",
-    "none_hint": "Conecta una cuenta o una clave API abajo.",
-    "off_hint": "Tu voz utiliza actualmente el modo clásico. Activa Realtime para usar el proveedor de abajo.",
-    "off_hint_unavailable": "Tu voz utiliza actualmente el modo clásico. Configura un proveedor abajo y luego activa Realtime.",
+    "none_hint": "Elige un proveedor abajo y añade su clave.",
+    "off_hint": "Tu voz todavía usa el antiguo motor clásico. Activa Realtime para hablar con el proveedor de abajo.",
+    "off_hint_unavailable": "Tu voz todavía usa el antiguo motor clásico. Configura un proveedor abajo y luego activa Realtime.",
     "turn_on": "Activar Realtime",
     "providers_title": "Proveedor",
     "providers_desc": "Quién impulsa la conversación en vivo. Un proveedor con clave guardada toma el control con un clic.",
@@ -47,7 +47,7 @@
     "subscription_billing": "La voz y el razonamiento usan tu suscripción de ChatGPT según sus límites de acceso y uso. Si no está disponible, la conversación se detiene sin recurrir a una clave API. El acceso de voz por suscripción es experimental.",
     "options_failed": "No se pudo cargar la lista de modelos y voces. Vuelve a abrir la configuración.",
     "active": "Activo",
-    "pipeline_fallback": "Esta conversación usa Pipeline como alternativa. Los cambios se aplican a la próxima conversación.",
+    "pipeline_fallback": "Realtime no pudo iniciarse en esta llamada, así que usa la vía de voz de respaldo. Los cambios se aplican a la próxima llamada.",
     "open_browser": "Abrir voz en el navegador",
     "loading": "Cargando ajustes de voz…",
     "description": "Conversación natural, tu modelo de razonamiento y las herramientas de Jarvis. Elige una clave de OpenAI o una suscripción de ChatGPT.",
@@ -320,8 +320,8 @@
     "restart_now": "Reiniciar ahora",
     "restarting": "Reiniciando {name}…",
     "bar_persistent": {
-      "title": "Mostrar la barra siempre",
-      "description": "Mantén la barra en pantalla incluso inactiva. Desactivado: sin standby — solo aparece cuando dices tu palabra de activación.",
+      "title": "Mostrar Jarvis Bar siempre",
+      "description": "Mantiene Jarvis Bar disponible en reposo. Si se desactiva, aparece durante la actividad de voz o el dictado y después vuelve a ocultarse.",
       "saved": "Visibilidad de la barra actualizada."
     },
     "follow_cursor": {
@@ -1314,7 +1314,9 @@
     "oauth_client_own": "Tu propio cliente de {family}",
     "oauth_client_placeholder": "Cliente de {family} provisional — añade el tuyo al conectar",
     "fact_publisher": "Editor",
-    "fact_source": "Origen"
+    "fact_source": "Origen",
+    "grant_ends": "La autorización termina el {date}. Vuelve a iniciar sesión antes de esa fecha.",
+    "grant_expired": "La autorización caducó el {date}. Vuelve a conectar el plugin."
   },
   "skills_view": {
     "count": "{n} skills",
@@ -1964,7 +1966,7 @@
   },
   "apikeys_view": {
     "title": "Claves API y Proveedores",
-    "subtitle": "Conecta proveedores y elige qué impulsa cada parte de Jarvis.",
+    "subtitle": "Configura la voz en tiempo real, tus agentes y el acceso a {name}.",
     "shared_key_covered": "Ya está cubierto por tu clave compartida de esta familia de proveedores — una clave dedicada es opcional.",
     "add_dedicated_key": "Añadir clave dedicada",
     "local_install_cta": "Instalar en este equipo",
@@ -2380,7 +2382,36 @@
         "ask_now": "Preguntar a macOS ahora",
         "restart": "Salir y volver a abrir"
       }
-    }
+    },
+    "group_title": null,
+    "title": null,
+    "description": null,
+    "loading": null,
+    "load_failed": null,
+    "refresh": null,
+    "not_required": null,
+    "identity_warning": null,
+    "restart_required": null,
+    "restart_now": null,
+    "restarting": null,
+    "request": null,
+    "open_settings": null,
+    "status": null,
+    "items": null,
+    "banner": null,
+    "features": null,
+    "restart_deferred": null,
+    "setup_all": null,
+    "setup_all_hint": null,
+    "setup_running": null,
+    "setup_wait_prompt": null,
+    "setup_wait_settings": null,
+    "setup_cancel": null,
+    "setup_restarting": null,
+    "setup_timeout": null,
+    "ask_again": null,
+    "stale_grant_hint": null,
+    "identity_reset": null
   },
   "settings_hub": {
     "subtitle": "Todo sobre ti, tus claves y esta aplicación, en un lugar.",
@@ -2423,8 +2454,8 @@
       "restart_caption": "Guardado — se aplica en el próximo inicio."
     },
     "bar_size": {
-      "title": "Tamaño de la barra",
-      "description": "Qué tan grande es la barra en pantalla. Escala de forma proporcional — ancho y alto juntos — así que la barra mantiene su forma y solo cambia su tamaño, y se adapta al tamaño físico de cada monitor para que se vea igual en cada pantalla. Arrastra para redimensionarla en vivo en pantalla.",
+      "title": "Tamaño de Jarvis Bar",
+      "description": "Cambia el tamaño de toda la Jarvis Bar, incluidos el orbe y los controles. El ancho y el alto cambian juntos. Arrastra el control para ver el cambio en pantalla; se conserva la posición guardada.",
       "reset": "Restablecer al valor predeterminado (135%)",
       "saved_toast": "Tamaño de la barra fijado en {0}.",
       "restart_caption": "Guardado — se aplica al reiniciar la barra."
@@ -2458,7 +2489,8 @@
       "music": "Música",
       "keybinds": "Atajos de teclado",
       "more": "Más",
-      "overlay_taskbar": "Overlay y barra de tareas"
+      "overlay_taskbar": "Overlay y barra de tareas",
+      "permissions": null
     },
     "languages_group_title": "Idiomas",
     "music_group_title": "Música",
@@ -2635,13 +2667,13 @@
     },
     "overlay_style": {
       "title": "Estilo de visualización",
-      "description": "Elige cómo aparece {name} en pantalla durante la actividad de voz. La barra es el valor predeterminado; la mascota es el acompañante clásico; el orbe de voz es una esfera luminosa; la mascota es un compañero de píxeles que permanece en pantalla; o ocúltalo por completo. Cualquier estilo flotante se puede arrastrar a cualquier monitor.",
+      "description": "Jarvis Bar tiene un orbe azul y controles para un nuevo chat de texto, silenciar el micrófono, audio del asistente y llamadas. Elige Mascota, Orbe de voz o Pet para otro estilo, o Ninguno para ocultarlo. Puedes arrastrar cada vista flotante a un monitor.",
       "label": "Estilo",
       "save": "Guardar",
       "saved": "Estilo de visualización cambiado.",
       "restart_required": "Guardado: reinicia {name} para aplicar.",
       "options": {
-        "jarvis_bar": "Barra (predeterminado)",
+        "jarvis_bar": "Jarvis Bar (predeterminada)",
         "mascot": "Mascota",
         "voice_orb": "Orbe de voz",
         "pet": "Mascota",
@@ -4435,7 +4467,9 @@
         "live": "Conectado",
         "exited": "Terminado",
         "failed": "Falló",
-        "error": "Inalcanzable"
+        "error": "Inalcanzable",
+        "stopped": "Interrumpido",
+        "unknown": "Estado desconocido"
       }
     },
     "selection": {
@@ -4478,7 +4512,8 @@
       "kind_needs_input": "NECESITA RESPUESTA",
       "kind_exited": "DETENIDO",
       "kind_failed": "FALLIDO",
-      "gone": "{0} ya no está en este espacio de trabajo: ese terminal se cerró después de llegar la notificación."
+      "gone": "{0} ya no está en este espacio de trabajo: ese terminal se cerró después de llegar la notificación.",
+      "kind_stopped": "INTERRUMPIDO"
     },
     "voice_bubble": {
       "assistant_fallback": "Asistente",
@@ -6007,7 +6042,21 @@
         "error": "Error",
         "exited": "Terminado",
         "done": "Listo",
-        "idle": "Inactivo"
+        "idle": "Inactivo",
+        "stopped": "Interrumpido",
+        "unknown": "Estado desconocido"
+      },
+      "search": {
+        "label": "Buscar terminales",
+        "placeholder": "Busca un terminal o describe una tarea…",
+        "hint": "Encuentra nombres, palabras clave o tareas relacionadas. Se ejecuta en este dispositivo.",
+        "clear": "Borrar búsqueda",
+        "loading": "Buscando tareas relacionadas: el modelo local se descarga la primera vez…",
+        "searching": "Buscando tareas relacionadas…",
+        "error": "Las tareas relacionadas no están disponibles ahora. La búsqueda por palabras sigue funcionando. Reinténtalo para incluir tareas relacionadas.",
+        "empty": "No hay terminales relacionados.",
+        "results": "{count} terminales relacionados · mejor coincidencia primero",
+        "retry": "Reintentar"
       }
     },
     "add_terminal": "Plain Terminal",
@@ -6042,7 +6091,7 @@
     "title": "Appshots",
     "subtitle": "Muestra a {name} la ventana en la que trabajas.",
     "hero_title": "Haz un appshot para mostrar a {name} tu ventana principal",
-    "hero_body": "Un appshot captura la ventana en primer plano, imagen y texto visible, y la pasa a la conversación. Tus reglas de privacidad siguen aplicándose y no se guarda nada en el disco.",
+    "hero_body": "Un appshot captura la ventana en primer plano, imagen y texto visible, y la pasa a la conversación. Tus reglas de privacidad siguen aplicándose. Solo el historial de abajo se queda en este equipo y puedes borrarlo cuando quieras.",
     "enabled_label": "Permitir appshots",
     "enabled_hint": "También cubre preguntas como \"¿qué ves?\". Desactivado significa que {name} nunca mira tu pantalla.",
     "shortcut_label": "Atajo de teclado",
@@ -6120,7 +6169,20 @@
       "close": "Cerrar",
       "gone": "Este appshot ya no se conserva, así que no se puede editar.",
       "text_placeholder": "Escribe…"
-    }
+    },
+    "recording_title": "Grabación de pantalla",
+    "recording_hint": "Selecciona un área o la pantalla completa. El vídeo se guarda localmente sin audio y no se envía al asistente. El mismo atajo detiene la grabación.",
+    "recording_start": "Seleccionar área",
+    "recording_stop": "Detener y guardar",
+    "recording_cancel": "Cancelar",
+    "recording_shortcut": "Iniciar / detener grabación",
+    "recording_permission": "Permitir grabación de pantalla",
+    "recording_selecting": "Selecciona un área o la pantalla completa en la ventana de selección.",
+    "recording_recording": "Grabando",
+    "recording_stopping": "Guardando grabación…",
+    "recording_saved": "Guardado localmente",
+    "recording_cancelled": "Grabación cancelada",
+    "recording_download": "Descargar vídeo"
   },
   "jarvisx": {
     "title": "Jarvis X",
@@ -6359,5 +6421,65 @@
       "create": "Crear mascota",
       "creating": "Creando…"
     }
+  },
+  "transcription": {
+    "archive": "Archivo de voz",
+    "intro": "Un lugar para tus conversaciones. Encuentra las palabras que quieres volver a leer.",
+    "search_sessions": "Buscar en el inicio de las conversaciones",
+    "clear_search": "Borrar búsqueda",
+    "refresh": "Actualizar",
+    "recorder_off": "Transcripción no disponible",
+    "recorder_help": "La grabación de conversaciones está desactivada. Vuelve a intentarlo cuando está disponible.",
+    "list_error": "No se pudieron cargar tus conversaciones",
+    "retry_help": "Tus conversaciones guardadas no han cambiado. Comprueba la conexión e inténtalo de nuevo.",
+    "retry": "Reintentar",
+    "loading_library": "Cargando tus conversaciones…",
+    "results": "{count} resultados",
+    "recent_count": "{count} conversaciones recientes · últimas 100",
+    "untitled": "Conversación sin título",
+    "in_progress": "En curso",
+    "exchanges": "{count} intercambios",
+    "no_matches": "No hay palabras coincidentes",
+    "search_help": "Prueba otra frase del inicio de una conversación.",
+    "empty_title": "Aquí tienen lugar tus conversaciones",
+    "empty_body": "Después de una conversación de voz, vuelve para leer lo que se dijo, encontrar un detalle o guardar una copia.",
+    "open_chat": "Ir al chat",
+    "all_conversations": "Todas las conversaciones",
+    "saved_conversation": "Conversación guardada",
+    "live_help": "Esta conversación sigue en curso. Actualiza para ver las últimas palabras guardadas.",
+    "find": "Buscar en esta transcripción",
+    "original_wording": "Texto original",
+    "transcript": "Transcripción de la conversación",
+    "end": "Fin de la conversación",
+    "latest": "Últimas palabras guardadas",
+    "no_speech": "No hay voz registrada",
+    "no_speech_help": "Esta conversación aún no tiene voz guardada.",
+    "find_help": "Prueba otra frase o borra la búsqueda para leer toda la conversación.",
+    "exchange": "Intercambio {number}",
+    "spoken_output": "Salida de voz",
+    "pending": "Confirmación pendiente",
+    "copy": "Copiar transcripción",
+    "format": "Formato de archivo",
+    "plain_text": "Texto sin formato",
+    "download": "Descargar",
+    "open_with": "Abrir con…",
+    "open_file": "Abrir archivo",
+    "preparing": "Preparando transcripción…",
+    "copied": "Copiado al portapapeles",
+    "saved": "Transcripción guardada",
+    "spoken_clarify": "Pregunta de aclaración",
+    "spoken_timeout": "Tiempo de espera agotado",
+    "spoken_unavailable": "Asistente no disponible",
+    "spoken_stt_unavailable": "Voz no reconocida",
+    "spoken_privacy": "Aviso de privacidad",
+    "spoken_completion": "Resultado en segundo plano",
+    "spoken_subagent": "Respuesta del agente",
+    "spoken_action_done": "Acción confirmada",
+    "spoken_backchannel": "Confirmación",
+    "spoken_announcement": "Anuncio",
+    "spoken_preamble": "Introducción",
+    "spoken_progress": "Actualización de progreso",
+    "spoken_withheld": "Respuesta retenida",
+    "spoken_other": "Salida de voz"
   }
 }

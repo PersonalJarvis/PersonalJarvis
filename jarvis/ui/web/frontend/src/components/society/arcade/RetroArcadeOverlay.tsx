@@ -245,10 +245,9 @@ export function RetroArcadeOverlay({ gameId, onClose, loadGame = loadRetroGame }
         swallow(event);
       }
     };
+    // Releases are noted but never swallowed: everyone listening (the office's own walking keys too) must hear them.
     const up = (event: KeyboardEvent) => {
-      const code = event.code;
-      // Released keys always count, even with a modifier down, or they would stick.
-      if (releaseKey(tracker.current, code) || code === "Enter" || code === "NumpadEnter" || code === "KeyP") swallow(event);
+      releaseKey(tracker.current, event.code);
     };
     // Leaving the window (or hiding it) pauses and forgets held keys: their keyup never arrives.
     const visibility = () => { if (document.hidden) pause(); };

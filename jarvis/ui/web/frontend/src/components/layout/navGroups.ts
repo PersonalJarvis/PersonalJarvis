@@ -24,7 +24,6 @@ import {
   ExtensionsIcon,
   FeedbackIcon,
   AssistantIcon,
-  InspectorIcon,
   MarketplaceIcon,
   MicrophoneIcon,
   PermissionsIcon,
@@ -160,7 +159,6 @@ export const NAV_GROUPS: NavItem[][] = [
   // so its row says "Beta" up front).
   [
     { id: "sessions", labelKey: "nav.sessions", icon: MicrophoneIcon },
-    { id: "run_inspector", labelKey: "nav.run_inspector", icon: InspectorIcon },
     // CLIs — the CLIs list + the CLI Test Hub behind one tab switch (CLIs first).
     { id: "clis", labelKey: "nav.clis_hub", icon: TerminalIcon, matchIds: ["clis", "cli-test-hub"] },
     {

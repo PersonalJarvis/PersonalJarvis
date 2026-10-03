@@ -111,6 +111,15 @@ receive the content required for their requests. See [privacy and local data](ht
 
 ## Jarvis Agents
 
+<p align="center">
+  <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/assets/demo/readme-2026-09/jarvis-agents-v4.mp4">
+    <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/demo/readme-2026-09/jarvis-agents-v4.gif" alt="Illustrative agent conversation from brief to draft" width="1000" />
+  </a>
+</p>
+
+An illustrative interface recreation, not a recording of a completed live task.
+
+
 Build a team you can return to. Each agent has an identity, a direct conversation,
 standing instructions, and access to the tools you grant it. Pick a connected
 model or supported agent account for the work, and keep the conversations in

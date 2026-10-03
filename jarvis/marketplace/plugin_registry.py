@@ -15,6 +15,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
+import threading
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -65,6 +68,22 @@ def _deregister_plugin_capability(cap_registry, plugin_id) -> None:
 # the last unrelated tool refresh (the intermittent "tool not available" bug).
 _CONNECT_TIMEOUT_S_DEFAULT = 15.0
 _CLIENT_STOP_TIMEOUT_S = 5.0
+_RETRY_CONNECT_GUARD = threading.Lock()
+_NEXT_RETRY_CONNECT = 0.0
+
+
+async def _retry_connection_permit() -> None:
+    """Pace background handshakes across loops and respect socket pressure."""
+    from jarvis.core.socket_budget import should_defer_optional_io
+
+    while should_defer_optional_io():  # noqa: ASYNC110 - pressure is a shared polling probe
+        await asyncio.sleep(random.uniform(3, 6))  # noqa: S311
+    global _NEXT_RETRY_CONNECT
+    with _RETRY_CONNECT_GUARD:
+        now = time.monotonic()
+        slot = max(now, _NEXT_RETRY_CONNECT)
+        _NEXT_RETRY_CONNECT = slot + 0.25
+    await asyncio.sleep(max(0, slot - now))
 
 
 def _connect_reauth_reason(message: str) -> str | None:
@@ -118,6 +137,8 @@ class PluginToolRegistry:
         default_risk_tier: RiskTier = "monitor",
         connect_timeout_s: float = _CONNECT_TIMEOUT_S_DEFAULT,
         refresh_handler_builder: Callable[[str], Any | None] | None = None,
+        retry_initial_s: float = 5.0,
+        retry_max_s: float = 300.0,
     ) -> None:
         self._catalog = catalog or load_catalog()
         self._store = token_store or TokenStore()
@@ -133,6 +154,11 @@ class PluginToolRegistry:
         # subsequent successful connect.
         self._last_errors: dict[str, str] = {}
         self._bootstrapped = False
+        self._stopping = False
+        self._retry_initial_s = max(0.01, retry_initial_s)
+        self._retry_max_s = max(self._retry_initial_s, retry_max_s)
+        self._retry_tasks: dict[str, asyncio.Task[None]] = {}
+        self._retry_inflight: set[str] = set()
         # Serialises bootstrap()/refresh_plugin()/stop(): all three mutate
         # self._clients/_tools across await points and are fired as independent
         # asyncio tasks (server start fires bootstrap; a REST connect/disconnect
@@ -163,7 +189,7 @@ class PluginToolRegistry:
         # (_connect_plugin additionally skips already-connected ids, so a rare
         # concurrent second bootstrap degrades to no-ops, never double-registers.)
         async with self._lock:
-            if self._bootstrapped:
+            if self._bootstrapped or self._stopping:
                 return
             plugins = list(self._catalog.plugins)
         # Per-plugin lock + per-plugin publish: an early plugin's tools reach
@@ -186,6 +212,9 @@ class PluginToolRegistry:
     async def refresh_plugin(self, plugin_id: str) -> None:
         """Re-evaluate a single plugin after connect/disconnect."""
         async with self._lock:
+            if self._stopping:
+                return
+            self._last_errors.pop(plugin_id, None)
             plugin = self._catalog.by_id(plugin_id)
             had_tools = any(t.name.startswith(f"{plugin_id}/") for t in self._tools.values())
             await self._disconnect_plugin(plugin_id)
@@ -197,9 +226,65 @@ class PluginToolRegistry:
             await self._publish_brain_tools_changed(plugin_id, connected=now_has_tools)
 
     async def stop(self) -> None:
+        self._stopping = True
+        retries = list(self._retry_tasks.values())
+        for plugin_id, task in self._retry_tasks.items():
+            if plugin_id not in self._retry_inflight:
+                task.cancel()
+        if retries:
+            # A reconnect can be rotating a refresh token. Drain that operation
+            # before cancellation so its provider response can still be saved.
+            drained = asyncio.gather(*retries, return_exceptions=True)
+            try:
+                await asyncio.wait_for(asyncio.shield(drained), timeout=30)
+            except TimeoutError:
+                log.warning("plugin-registry: reconnects did not drain before shutdown")
+                for task in retries:
+                    task.cancel()
+                await drained
+        self._retry_tasks.clear()
         async with self._lock:
             for pid in list(self._clients):
                 await self._disconnect_plugin(pid)
+
+    def _schedule_retry(self, plugin_id: str) -> None:
+        if self._stopping or plugin_id in self._retry_tasks:
+            return
+        task = asyncio.create_task(
+            self._retry_connection(plugin_id), name=f"plugin-retry:{plugin_id}"
+        )
+        self._retry_tasks[plugin_id] = task
+
+        def finished(done: asyncio.Task[None]) -> None:
+            if self._retry_tasks.get(plugin_id) is done:
+                self._retry_tasks.pop(plugin_id, None)
+            if not done.cancelled() and done.exception() is not None:
+                log.warning("plugin-registry: %s background reconnect stopped", plugin_id)
+
+        task.add_done_callback(finished)
+
+    async def _retry_connection(self, plugin_id: str) -> None:
+        delay = self._retry_initial_s
+        while not self._stopping:
+            await asyncio.sleep(delay * random.uniform(0.8, 1.2))  # noqa: S311
+            if plugin_id in self._clients or plugin_id not in self._last_errors:
+                return
+            try:
+                tokens = self._store.load(plugin_id)
+                if tokens is None or tokens.needs_reauth:
+                    return
+                await _retry_connection_permit()
+                self._retry_inflight.add(plugin_id)
+                try:
+                    await self.refresh_plugin(plugin_id)
+                finally:
+                    self._retry_inflight.discard(plugin_id)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # Keep errors secret-free; a locked store can recover next cycle.
+                log.warning("plugin-registry: %s background reconnect deferred", plugin_id)
+            delay = min(self._retry_max_s, delay * 2)
 
     async def _open_client(
         self, server_spec: Any, env_overrides: dict[str, str]
@@ -264,6 +349,8 @@ class PluginToolRegistry:
         return str(exc) or type(exc).__name__
 
     async def _connect_plugin(self, plugin: PluginSpec) -> None:
+        if self._stopping:
+            return
         if plugin.id in self._clients:
             # Already connected (e.g. a refresh_plugin ran before bootstrap
             # reached this plugin in its loop). Skip to avoid overwriting and
@@ -294,6 +381,7 @@ class PluginToolRegistry:
             if not _connect_needs_reauth(message):
                 log.warning("plugin-registry: %s connect failed: %s", plugin.id, message)
                 self._last_errors[plugin.id] = message
+                self._schedule_retry(plugin.id)
                 return
 
             from jarvis.marketplace.refresh_scheduler import SKIPPED, refresh_plugin_token
@@ -315,6 +403,8 @@ class PluginToolRegistry:
                 self._last_errors[plugin.id] = message
                 if attempt.outcome == SKIPPED:
                     self._maybe_mark_needs_reauth(plugin.id, message)
+                else:
+                    self._schedule_retry(plugin.id)
                 return
 
             fresh_tokens: Any | None = None
@@ -344,6 +434,8 @@ class PluginToolRegistry:
                         retry_message,
                         expected_tokens=fresh_tokens,
                     )
+                else:
+                    self._schedule_retry(plugin.id)
                 return
         self._clients[plugin.id] = client
         self._last_errors.pop(plugin.id, None)

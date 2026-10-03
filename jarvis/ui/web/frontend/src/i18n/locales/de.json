@@ -8,9 +8,9 @@
     "state_backup": "Auf dem Ersatz-Sprachweg",
     "state_off": "Realtime ist aus",
     "state_none": "Noch kein Sprach-Provider",
-    "none_hint": "Verbinde unten ein Konto oder einen API-Key.",
-    "off_hint": "Deine Stimme nutzt aktuell die klassische Pipeline. Aktiviere Realtime, um den Anbieter unten zu verwenden.",
-    "off_hint_unavailable": "Deine Stimme nutzt aktuell die klassische Pipeline. Richte unten einen Anbieter ein und aktiviere dann Realtime.",
+    "none_hint": "Wähle unten einen Provider und hinterlege seinen Key.",
+    "off_hint": "Deine Stimme läuft noch über die alte klassische Engine. Schalte Realtime ein, um über den Provider unten zu sprechen.",
+    "off_hint_unavailable": "Deine Stimme läuft noch über die alte klassische Engine. Richte unten einen Provider ein und schalte dann Realtime ein.",
     "turn_on": "Realtime einschalten",
     "providers_title": "Provider",
     "providers_desc": "Wer das Live-Gespräch führt. Ein Provider mit gespeichertem Key übernimmt mit einem Klick.",
@@ -47,7 +47,7 @@
     "subscription_billing": "Sprache und Denken nutzen dein ChatGPT-Abo innerhalb seiner Zugangs- und Nutzungslimits. Ist es nicht verfügbar, stoppt das Gespräch ohne Wechsel auf einen API-Key. Der Abo-Sprachzugang ist experimentell.",
     "options_failed": "Die Modell- und Stimmenliste konnte nicht geladen werden. Öffne die Einrichtung erneut.",
     "active": "Aktiv",
-    "pipeline_fallback": "Dieses Gespräch nutzt ersatzweise die Pipeline. Neue Einstellungen gelten ab dem nächsten Gespräch.",
+    "pipeline_fallback": "Realtime konnte für dieses Gespräch nicht starten, deshalb läuft es über den Ersatz-Sprachweg. Neue Einstellungen gelten ab dem nächsten Gespräch.",
     "open_browser": "Sprache im Browser öffnen",
     "loading": "Spracheinstellungen werden geladen…",
     "description": "Natürlich sprechen, Denkmodell selbst wählen und Jarvis-Tools nutzen. Wähle einen OpenAI-Key oder ein ChatGPT-Abo.",
@@ -320,8 +320,8 @@
     "restart_now": "Jetzt neu starten",
     "restarting": "{name} startet neu…",
     "bar_persistent": {
-      "title": "Bar immer anzeigen",
-      "description": "Die Bar bleibt auch im Leerlauf sichtbar. Aus: kein Standby — sie erscheint nur, wenn du dein Wake-Word sagst.",
+      "title": "Jarvis Bar immer anzeigen",
+      "description": "Hält die Jarvis Bar auch im Leerlauf verfügbar. Ausgeschaltet erscheint sie bei Sprachaktivität oder Diktaten und wird anschließend wieder ausgeblendet.",
       "saved": "Bar-Sichtbarkeit aktualisiert."
     },
     "follow_cursor": {
@@ -585,39 +585,39 @@
     },
     "polish": {
       "title": "Formulierung aufräumen",
-      "description": "Ein schnelles Modell schreibt die Struktur um — Satzzeichen, Groß- und Kleinschreibung, Füllwörter und Satzgrenzen. Deine genauen Worte und ihr Sinn bleiben erhalten, und der Rohtext steht immer in deinem Verlauf.",
-      "sends_text": "Solange das an ist, geht dein fertiger Text an das Modell, das du unten auswählst; wenn deine Spracherkennung ohnehin auf diesem Rechner läuft, bleibt auch das Aufräumen hier, außer du wählst selbst ein Cloud-Modell. Dein Rohtext bleibt immer in deinem Verlauf, genau so, wie er erkannt wurde.",
+      "description": "Bereinigt Satzzeichen, Großschreibung, Füllwörter und Satzumbrüche, ohne die Bedeutung zu ändern. Das Original bleibt bei aktiviertem Verlauf gespeichert.",
+      "sends_text": "Dein Transkript geht an das ausgewählte Textmodell. Bei lokaler Spracherkennung bleibt die Verarbeitung auf diesem Computer, solange du keinen Cloud-Anbieter auswählst.",
       "precision_title": "Wortwahl schärfen",
-      "precision_description": "Geht einen Schritt weiter und ändert auch, WELCHE Wörter benutzt werden: Ein vager Platzhalter wird zu dem Wort, das du wirklich gemeint hast, und Füllkonstruktionen werden zum einfachen Verb — aus „eine Entscheidung treffen“ wird „entscheiden“. Einfach und genau. Nie ein längeres Wort, nur damit es klüger klingt.",
-      "precision_tradeoff": "Dafür wird eine Sicherheitsprüfung gelockert: Ungewöhnliche Wörter dürfen jetzt ersetzt werden, ein falsch verstandenes Wort wird also eher ausgetauscht als angezeigt. Deine Namen, deine Zahlen und deine Wörterbuch-Einträge bleiben geschützt, und der Originaltext bleibt immer erhalten. Gilt auch für übersetzte Diktate.",
+      "precision_description": "Formuliert klarer und direkter: Aus „eine Entscheidung treffen“ wird „entscheiden“. Funktioniert eigenständig und mit Übersetzung.",
+      "precision_tradeoff": "Erlaubt den Austausch von Wörtern. Zahlen und Wörterbucheinträge werden geprüft. Kontrolliere Namen und Bedeutung vor der Verwendung.",
       "conversation_title": "Auch Gespräche aufräumen",
       "conversation_description": "Wendet dieselbe Aufbereitung auf das an, was du im normalen Gespräch sagst — nicht nur aufs Diktat. Die Transkript-Ansicht und dein Gesprächsverlauf lesen sich dann wie geschriebene Sätze statt wie roher Sprechtext.",
       "conversation_latency": "Die Antwort wird dadurch nie langsamer: Der Assistent antwortet sofort auf deine Rohworte, die aufgeräumte Fassung kommt einen Moment später. Was du wirklich gesagt hast, bleibt immer daneben erhalten.",
-      "provider_label": "Modell",
-      "provider_auto": "Automatisch — nimm den Schlüssel, den ich habe",
-      "provider_hint": "Automatisch nimmt einen Schlüssel, den du ohnehin hast, und wechselt zu einem anderen Anbieter, wenn einer am Limit oder ohne Guthaben ist. Feste Wahl nur, wenn ein bestimmtes Konto abgerechnet werden soll.",
+      "provider_label": "Anbieter des Textmodells",
+      "provider_auto": "Automatisch",
+      "provider_hint": "Gilt für alle vier Funktionen. Automatisch bleibt bei lokaler Spracherkennung lokal, sonst werden eingerichtete Anbieter verwendet. Bei einem gewählten Cloud-Anbieter kann ein anderer eingerichteter Cloud-Anbieter einspringen.",
       "test": "Testen",
       "testing": "Test läuft…",
-      "test_hint": "Schickt eine feste Beispielzeile durch deine Einstellung. Es wird nichts gespeichert.",
+      "test_hint": "Testet den aktiven Modus mit einem Beispiel beim gewählten Anbieter. Speichert nichts.",
       "sample_before": "Vorher",
       "sample_after": "Nachher"
     },
     "prompt_mode": {
       "title": "Prompt-Modus",
-      "description": "Sag in deinen Worten und in jeder Sprache, was erledigt werden soll. Im Feld landet der fertige Prompt: dein Ziel, der Kontext und die Grenzen, die du genannt hast, und jede Aufgabe, die du erwähnt hast — ausformuliert, wie ein guter Prompt aufgebaut ist: eine Rolle, die Aufgabe, die Leitplanken, das Ausgabeformat. Nichts erfunden, nichts weggelassen, und in der Sprache, in der du gesprochen hast.",
-      "sends_text": "Dein Transkript geht an dasselbe schnelle Modell wie das Aufräumen der Formulierung oben und kommt als ausformulierter Prompt zurück — meist innerhalb weniger Sekunden. Dein Rohtext bleibt immer in deinem Verlauf.",
-      "outranks": "Solange das an ist, treten das Aufräumen der Formulierung und die Übersetzung zurück: Der Prompt ist bereits neu strukturiert. Antwortet kein Modell rechtzeitig, kommt dieses Diktat so an, als wäre der Prompt-Modus aus.",
-      "writer_hint": "Welches Modell schreibt: der Anbieter, der oben unter „Formulierung aufräumen“ gewählt ist."
+      "description": "Macht aus deiner gesprochenen Aufgabe einen strukturierten Prompt in deiner Sprache. Ziel, Kontext und Vorgaben bleiben erhalten. Prüfe das Ergebnis vor dem Senden.",
+      "sends_text": "Nutzt den Textanbieter oben und kann einige Sekunden dauern. Das Original bleibt bei aktiviertem Verlauf gespeichert.",
+      "outranks": "Der Prompt-Modus hat Vorrang vor Bereinigung, Wortwahl und Übersetzung. Scheitert er, gelten die anderen aktivierten Einstellungen. Der Test zeigt den Prompt-Fehler direkt an.",
+      "writer_hint": "Wähle den gemeinsamen Textanbieter oben, auch bei ausgeschalteter Bereinigung."
     },
     "translate": {
       "title": "Immer in einer Sprache schreiben",
-      "description": "Sprich in der Sprache, in der du denkst, und lass den Text in der ankommen, in der du schreibst. Sag es auf Deutsch, im Feld steht Englisch. Was du wirklich gesagt hast, bleibt immer in deinem Verlauf.",
-      "sends_text": "Das Übersetzen passiert im selben Schritt wie das Aufräumen der Formulierung — keine zusätzliche Wartezeit, und es läuft bei dem Anbieter, den du oben gewählt hast. Dort nimmt es dessen stärkstes schnelles Modell, denn übersetzen verlangt mehr als Kommas setzen. Antwortet kein Modell rechtzeitig, kommt dein Text in der Sprache an, in der du ihn gesprochen hast.",
+      "description": "Gibt dein Diktat in der gewählten Sprache aus. Funktioniert auch bei ausgeschalteter Bereinigung.",
+      "sends_text": "Übersetzung und Bereinigung erfolgen in einem Modellaufruf. Bei einem Fehler oder verworfenen Ergebnis bleibt die ursprüngliche Sprache erhalten. Ein aktiver Prompt-Modus hat Vorrang.",
       "target_label": "Diktat schreiben in",
-      "target_hint": "Alles, was du diktierst, kommt in dieser Sprache heraus — egal, welche du sprichst. Diktate, die schon in dieser Sprache sind, werden einfach nur aufgeräumt.",
-      "same_language_notice": "Das ist die Sprache, auf die du dein Diktat festgelegt hast — es wird also nichts übersetzt. Wähle eine andere, oder stell die Diktatsprache oben wieder auf automatisch.",
-      "answers_label": "Antwortet gerade",
-      "no_provider": "Es kann noch kein Anbieter antworten, also wird nichts übersetzt — dein Text kommt so an, wie du ihn gesprochen hast. Trag unten einen Schlüssel ein, dann läuft es.",
+      "target_hint": "Text in der Zielsprache wird bereinigt. Prüfe das Ergebnis nach jedem Diktat.",
+      "same_language_notice": "Erkennung und Ausgabe nutzen dieselbe Sprache. Wähle automatische Erkennung, wenn du auch in anderen Sprachen diktierst.",
+      "answers_label": "Eingerichteter Textanbieter",
+      "no_provider": "Kein Textanbieter eingerichtet. Wähle oben einen Anbieter, hinterlege seinen Schlüssel und nutze den Test.",
       "key_saved_hint": "Wird nur auf diesem Rechner gespeichert, im Schlüsselbund des Systems."
     },
     "api_keys": {
@@ -1314,7 +1314,9 @@
     "oauth_client_own": "Dein eigener {family}-Client",
     "oauth_client_placeholder": "Platzhalter-{family}-Client — beim Verbinden eigenen hinterlegen",
     "fact_publisher": "Herausgeber",
-    "fact_source": "Quelle"
+    "fact_source": "Quelle",
+    "grant_ends": "Die Freigabe endet am {date}. Melde dich vorher erneut an.",
+    "grant_expired": "Die Freigabe ist am {date} abgelaufen. Verbinde das Plugin erneut."
   },
   "skills_view": {
     "count": "{n} Skills",
@@ -1964,7 +1966,7 @@
   },
   "apikeys_view": {
     "title": "API-Keys & Provider",
-    "subtitle": "Verbinde Provider und lege fest, was die einzelnen Teile von Jarvis antreibt.",
+    "subtitle": "Richte die Realtime-Stimme, deine Agents und den Zugang zu {name} ein.",
     "shared_key_covered": "Bereits über deinen geteilten Schlüssel dieser Provider-Familie abgedeckt — ein eigener Schlüssel ist optional.",
     "add_dedicated_key": "Eigenen Schlüssel hinterlegen",
     "local_install_cta": "Auf diesem Gerät installieren",
@@ -2380,7 +2382,36 @@
         "ask_now": "macOS jetzt fragen",
         "restart": "Beenden und neu öffnen"
       }
-    }
+    },
+    "group_title": null,
+    "title": null,
+    "description": null,
+    "loading": null,
+    "load_failed": null,
+    "refresh": null,
+    "not_required": null,
+    "identity_warning": null,
+    "restart_required": null,
+    "restart_now": null,
+    "restarting": null,
+    "request": null,
+    "open_settings": null,
+    "status": null,
+    "items": null,
+    "banner": null,
+    "features": null,
+    "restart_deferred": null,
+    "setup_all": null,
+    "setup_all_hint": null,
+    "setup_running": null,
+    "setup_wait_prompt": null,
+    "setup_wait_settings": null,
+    "setup_cancel": null,
+    "setup_restarting": null,
+    "setup_timeout": null,
+    "ask_again": null,
+    "stale_grant_hint": null,
+    "identity_reset": null
   },
   "settings_hub": {
     "subtitle": "Alles über dich, deine Schlüssel und diese App — an einem Ort.",
@@ -2423,8 +2454,8 @@
       "restart_caption": "Gespeichert — wird beim nächsten Start aktiv."
     },
     "bar_size": {
-      "title": "Bar-Größe",
-      "description": "Wie groß die Bar auf dem Bildschirm ist. Sie skaliert proportional — Breite und Höhe zusammen — sodass die Bar ihre Form behält und sich nur die Größe ändert, und sie passt sich an die physische Größe jedes Monitors an, damit sie auf jedem Bildschirm gleich groß aussieht. Zum Ändern live am Bildschirm ziehen.",
+      "title": "Größe der Jarvis Bar",
+      "description": "Skaliert die gesamte Jarvis Bar samt Orb und Tasten. Breite und Höhe ändern sich gemeinsam. Ziehe den Regler für eine direkte Vorschau auf dem Bildschirm; die gespeicherte Position bleibt erhalten.",
       "reset": "Auf Standard zurücksetzen (135%)",
       "saved_toast": "Bar-Größe auf {0} gesetzt.",
       "restart_caption": "Gespeichert — wird beim Neustart der Bar aktiv."
@@ -2458,7 +2489,8 @@
       "music": "Musik",
       "keybinds": "Tastenkürzel",
       "more": "Weiteres",
-      "overlay_taskbar": "Overlay & Taskleiste"
+      "overlay_taskbar": "Overlay & Taskleiste",
+      "permissions": null
     },
     "languages_group_title": "Sprachen",
     "music_group_title": "Musik",
@@ -2635,13 +2667,13 @@
     },
     "overlay_style": {
       "title": "Anzeige-Stil",
-      "description": "Wähle, wie {name} bei Sprachaktivität auf dem Bildschirm erscheint. Die Bar ist der schlanke Standard; das Maskottchen ist der klassische Begleiter; der Voice-Orb ist eine leuchtende Kugel; das Pet ist ein Pixel-Begleiter, der sichtbar bleibt; oder ganz ausblenden. Jeder schwebende Stil lässt sich auf jeden Monitor ziehen.",
+      "description": "Die Jarvis Bar hat einen blauen Sprach-Orb und Tasten für einen neuen Textchat, Mikrofon-Stummschaltung, Assistenten-Audio und Anrufe. Wähle alternativ Maskottchen, Sprach-Orb oder Pet, oder Keine zum Ausblenden. Jede schwebende Anzeige lässt sich auf einen Monitor ziehen.",
       "label": "Stil",
       "save": "Speichern",
       "saved": "Anzeige-Stil gewechselt.",
       "restart_required": "Gespeichert — {name} neu starten zum Übernehmen.",
       "options": {
-        "jarvis_bar": "Bar (Standard)",
+        "jarvis_bar": "Jarvis Bar (Standard)",
         "mascot": "Maskottchen",
         "voice_orb": "Voice-Orb",
         "pet": "Pet",
@@ -4435,7 +4467,9 @@
         "live": "Verbunden",
         "exited": "Beendet",
         "failed": "Fehlgeschlagen",
-        "error": "Nicht erreichbar"
+        "error": "Nicht erreichbar",
+        "stopped": "Gestoppt",
+        "unknown": "Status unklar"
       }
     },
     "selection": {
@@ -4478,7 +4512,8 @@
       "kind_needs_input": "BRAUCHT EINGABE",
       "kind_exited": "GESTOPPT",
       "kind_failed": "FEHLGESCHLAGEN",
-      "gone": "{0} gibt es in diesem Workspace nicht mehr — das Terminal wurde geschlossen, seit die Benachrichtigung kam."
+      "gone": "{0} gibt es in diesem Workspace nicht mehr — das Terminal wurde geschlossen, seit die Benachrichtigung kam.",
+      "kind_stopped": "GESTOPPT"
     },
     "voice_bubble": {
       "assistant_fallback": "Assistent",
@@ -5725,8 +5760,8 @@
     "failed_count_one": "{count} fehlgeschlagen",
     "failed_count_other": "{count} fehlgeschlagen",
     "act": {
-      "command_one": "einen Befehl ausgeführt",
-      "command_other": "Befehle ausgeführt",
+      "command_one": "hat einen Befehl ausgeführt",
+      "command_other": "hat Befehle ausgeführt",
       "read_one": "eine Datei gelesen",
       "read_other": "Dateien gelesen",
       "list_one": "einen Ordner aufgelistet",
@@ -6007,7 +6042,21 @@
         "error": "Fehler",
         "exited": "Beendet",
         "done": "Fertig",
-        "idle": "Im Leerlauf"
+        "idle": "Im Leerlauf",
+        "stopped": "Gestoppt",
+        "unknown": "Status unklar"
+      },
+      "search": {
+        "label": "Terminals suchen",
+        "placeholder": "Terminal suchen oder Aufgabe beschreiben…",
+        "hint": "Findet Namen, Stichwörter und ähnliche Aufgaben. Läuft auf diesem Gerät.",
+        "clear": "Suche löschen",
+        "loading": "Ähnliche Aufgaben werden gesucht — beim ersten Mal wird das lokale Modell heruntergeladen…",
+        "searching": "Ähnliche Aufgaben werden gesucht…",
+        "error": "Ähnliche Aufgaben lassen sich gerade nicht ermitteln. Die Wortsuche funktioniert weiterhin. Versuche es erneut, um ähnliche Aufgaben einzubeziehen.",
+        "empty": "Keine passenden Terminals.",
+        "results": "{count} passende Terminals · bester Treffer zuerst",
+        "retry": "Erneut versuchen"
       }
     },
     "add_terminal": "Plain Terminal",
@@ -6042,7 +6091,7 @@
     "title": "Appshots",
     "subtitle": "Zeig {name} das Fenster, in dem du gerade arbeitest.",
     "hero_title": "Mach einen Appshot, um {name} dein vorderstes Fenster zu zeigen",
-    "hero_body": "Ein Appshot nimmt das Fenster im Vordergrund auf, Bild und sichtbaren Text, und gibt es ins Gespräch. Deine Datenschutz-Regeln gelten weiter, und nichts wird auf der Festplatte gespeichert.",
+    "hero_body": "Ein Appshot nimmt das Fenster im Vordergrund auf, Bild und sichtbaren Text, und gibt es ins Gespräch. Deine Datenschutz-Regeln gelten weiter. Nur der Verlauf unten bleibt auf diesem Computer, und du kannst ihn jederzeit löschen.",
     "enabled_label": "Appshots erlauben",
     "enabled_hint": "Gilt auch für Fragen wie \"Was siehst du?\". Aus heißt: {name} schaut nie auf deinen Bildschirm.",
     "shortcut_label": "Tastenkürzel",
@@ -6120,7 +6169,20 @@
       "close": "Schließen",
       "gone": "Dieser Appshot wird nicht mehr aufbewahrt und kann nicht bearbeitet werden.",
       "text_placeholder": "Text…"
-    }
+    },
+    "recording_title": "Bildschirmaufnahme",
+    "recording_hint": "Wähle einen Bereich oder den gesamten Bildschirm. Das Video wird ohne Ton lokal gespeichert und nicht an den Assistenten gesendet. Dasselbe Tastenkürzel stoppt die Aufnahme.",
+    "recording_start": "Aufnahmebereich wählen",
+    "recording_stop": "Stoppen und speichern",
+    "recording_cancel": "Abbrechen",
+    "recording_shortcut": "Aufnahme starten / stoppen",
+    "recording_permission": "Bildschirmaufnahme erlauben",
+    "recording_selecting": "Wähle im Auswahlfenster einen Bereich oder den gesamten Bildschirm.",
+    "recording_recording": "Aufnahme läuft",
+    "recording_stopping": "Aufnahme wird gespeichert…",
+    "recording_saved": "Lokal gespeichert",
+    "recording_cancelled": "Aufnahme abgebrochen",
+    "recording_download": "Video herunterladen"
   },
   "jarvisx": {
     "title": "Jarvis X",
@@ -6359,5 +6421,65 @@
       "create": "Pet erstellen",
       "creating": "Wird erstellt…"
     }
+  },
+  "transcription": {
+    "archive": "Spracharchiv",
+    "intro": "Ein Ort für deine Gespräche. Finde die Worte, zu denen du zurückkehren möchtest.",
+    "search_sessions": "Gesprächsanfänge durchsuchen",
+    "clear_search": "Suche löschen",
+    "refresh": "Aktualisieren",
+    "recorder_off": "Transkription nicht verfügbar",
+    "recorder_help": "Die Gesprächsaufzeichnung ist derzeit ausgeschaltet. Versuche es erneut, sobald sie verfügbar ist.",
+    "list_error": "Deine Gespräche konnten nicht geladen werden",
+    "retry_help": "Deine gespeicherten Gespräche bleiben unverändert. Prüfe die Verbindung und versuche es erneut.",
+    "retry": "Erneut versuchen",
+    "loading_library": "Deine Gespräche werden geladen…",
+    "results": "{count} Ergebnisse",
+    "recent_count": "{count} Gespräche · die letzten 100",
+    "untitled": "Unbenanntes Gespräch",
+    "in_progress": "Läuft gerade",
+    "exchanges": "{count} Wortwechsel",
+    "no_matches": "Keine passenden Worte gefunden",
+    "search_help": "Versuche einen anderen Ausdruck vom Anfang eines Gesprächs.",
+    "empty_title": "Hier finden deine Gespräche ihren Platz",
+    "empty_body": "Lies nach einem Sprachgespräch nach, was gesagt wurde, finde ein Detail oder speichere eine Kopie.",
+    "open_chat": "Zum Chat",
+    "all_conversations": "Alle Gespräche",
+    "saved_conversation": "Gespeichertes Gespräch",
+    "live_help": "Dieses Gespräch läuft noch. Aktualisiere die Ansicht für die zuletzt gespeicherten Worte.",
+    "find": "In diesem Transkript suchen",
+    "original_wording": "Originalwortlaut",
+    "transcript": "Gesprächstranskript",
+    "end": "Ende des Gesprächs",
+    "latest": "Zuletzt gespeicherte Worte",
+    "no_speech": "Keine Sprache aufgezeichnet",
+    "no_speech_help": "Für dieses Gespräch wurde noch keine Sprache gespeichert.",
+    "find_help": "Versuche einen anderen Ausdruck oder lösche die Suche, um das ganze Gespräch zu lesen.",
+    "exchange": "Wortwechsel {number}",
+    "spoken_output": "Gesprochene Ausgabe",
+    "pending": "Bestätigung ausstehend",
+    "copy": "Transkript kopieren",
+    "format": "Dateiformat",
+    "plain_text": "Klartext",
+    "download": "Herunterladen",
+    "open_with": "Öffnen mit…",
+    "open_file": "Datei öffnen",
+    "preparing": "Transkript wird vorbereitet…",
+    "copied": "In die Zwischenablage kopiert",
+    "saved": "Transkript gespeichert",
+    "spoken_clarify": "Rückfrage",
+    "spoken_timeout": "Zeitüberschreitung",
+    "spoken_unavailable": "Assistent nicht verfügbar",
+    "spoken_stt_unavailable": "Sprache nicht erkannt",
+    "spoken_privacy": "Datenschutzhinweis",
+    "spoken_completion": "Hintergrundergebnis",
+    "spoken_subagent": "Agentenantwort",
+    "spoken_action_done": "Aktion bestätigt",
+    "spoken_backchannel": "Rückmeldung",
+    "spoken_announcement": "Ankündigung",
+    "spoken_preamble": "Einleitung",
+    "spoken_progress": "Fortschritt",
+    "spoken_withheld": "Antwort zurückgehalten",
+    "spoken_other": "Gesprochene Ausgabe"
   }
 }

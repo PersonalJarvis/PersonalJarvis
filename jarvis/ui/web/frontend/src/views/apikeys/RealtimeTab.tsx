@@ -466,7 +466,7 @@ function VoiceNow({
         <p
           key={note.key}
           role={note.alert ? "alert" : "status"}
-          data-testid={note.key === "backup" ? "voice-engine-runtime-status" : `voice-now-note-${note.key}`}
+          data-testid={`voice-now-note-${note.key}`}
           className={cn(
             "px-5 py-3 text-sm",
             note.alert ? "text-destructive" : "text-warning",

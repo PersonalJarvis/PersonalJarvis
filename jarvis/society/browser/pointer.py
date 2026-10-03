@@ -56,3 +56,24 @@ class PointerTracker:
         self.click_id = 0
         self.click = (0.0, 0.0)
         self.emit("pointer", visible=False, generation=self.generation)
+
+    def window(self, x: float, y: float, width: int, height: int, *, clicked: bool) -> None:
+        """Visualize an approved native input only after its dispatch succeeds."""
+        if not self.enabled():
+            return
+        if clicked:
+            self.click_id += 1
+            self.click = (x, y)
+        self.emit(
+            "pointer",
+            visible=True,
+            native_window=True,
+            generation=self.generation,
+            x=x,
+            y=y,
+            width=width,
+            height=height,
+            click_id=self.click_id,
+            click_x=self.click[0],
+            click_y=self.click[1],
+        )

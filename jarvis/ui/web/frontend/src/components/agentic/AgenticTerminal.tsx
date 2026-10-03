@@ -156,6 +156,7 @@ import { PromptHistoryButton } from "./PromptHistoryButton";
 import { PaneConversationDialog } from "./PaneConversationDialog";
 import { WorkspaceTerminalHeader } from "./WorkspaceTerminalHeader";
 import { usePaneContextMenu } from "./usePaneContextMenu";
+import { SessionGitHubBadge } from "./SessionGitHubBadge";
 import { useT } from "@/i18n";
 
 /**
@@ -233,6 +234,22 @@ export const REBUILD_QUIET_MS = 140;
  * an agent is talking.
  */
 export const REBUILD_SETTLE_MAX_MS = 450;
+
+/**
+ * How long a pane coming back on screen holds its agent one row short before
+ * giving the height back — the same window the server's own repaint nudge uses
+ * (`REPAINT_NUDGE_S` in jarvis/agentic_ide/session.py).
+ *
+ * A pane in a workspace the IDE keeps warm (./RetainedWorkspaceGrid) is never
+ * rebuilt when the user switches back to it, so it never gets the replay and
+ * repaint a freshly mounted pane gets. Whatever went wrong while it was hidden
+ * stayed on screen: the agent drawing for fewer rows than the tile, its prompt
+ * and status line halfway up the pane with empty rows below (reported
+ * 2026-10-03), or a band of blank rows through the middle of its output. The
+ * nudge asks the agent for one whole new screen at the size the pane really
+ * has, behind the same curtain a stage switch already raises.
+ */
+export const RETURN_REPAINT_NUDGE_MS = 80;
 
 /**
  * How long a rebuild may wait for a repaint the server has promised.
@@ -716,6 +733,10 @@ export function AgenticTerminal({
   // process together) without reaching into the connect effect's socket.
   const resizeRef = useRef<(() => void) | null>(null);
   const claimResizeRef = useRef<(() => void) | null>(null);
+  /** Asks the agent to paint its whole screen again — see RETURN_REPAINT_NUDGE_MS. */
+  const repaintOnReturnRef = useRef<(() => void) | null>(null);
+  /** Was this pane parked off the stage since it last took it? */
+  const parkedRef = useRef(false);
   /** The claim a gesture inside the pane makes — see `takeOwnership`. */
   const takeOwnershipRef = useRef<(() => void) | null>(null);
   /**
@@ -1878,6 +1899,36 @@ export function AgenticTerminal({
     const claimResize = () => sendResize(viewerMayOwn());
     claimResizeRef.current = claimResize;
     /**
+     * Make the agent paint its whole screen again at the size this pane holds:
+     * one row short, then back, like the server's repaint nudge. An agent
+     * answers a new size with a full redraw, and a size equal to the one it
+     * has is no new size at all — hence the detour.
+     *
+     * For a pane returning to the stage (see RETURN_REPAINT_NUDGE_MS). It also
+     * puts the agent back on this pane's size when it drifted away while the
+     * pane was hidden, which a plain refit cannot do: a refit to an unchanged
+     * tile is deliberately silent (see `applyResize`).
+     */
+    const repaintOnReturn = () => {
+      const size = sentSize;
+      if (disposed || !size || !socket) return;
+      const claimOwner = viewerMayOwn();
+      const kind = claimOwner ? "claim" : "r";
+      const shorter = Math.max(MIN_REAL_ROWS, size.rows - 1);
+      if (shorter === size.rows) return;
+      if (!socket.send({ t: kind, cols: size.cols, rows: shorter })) return;
+      window.setTimeout(() => {
+        if (disposed) return;
+        // A refit may have landed during the wait; give back the newest size.
+        const back = sentSize ?? size;
+        if (socket?.send({ t: kind, cols: back.cols, rows: back.rows }) && claimOwner) {
+          owned = true;
+          displaced = false;
+        }
+      }, RETURN_REPAINT_NUDGE_MS);
+    };
+    repaintOnReturnRef.current = repaintOnReturn;
+    /**
      * The same, on the strength of a gesture INSIDE this pane.
      *
      * A pointer pressed on the pane is proof enough that this is the window in
@@ -2040,13 +2091,26 @@ export function AgenticTerminal({
           // ask for — refused, or chosen by another window. The next gesture
           // here claims instead of repeating a request that was turned down.
           owned = false;
-          if (term.cols === cols && term.rows === rows) return;
-          displaced = true;
-          try {
-            term.resize(cols, rows);
-          } catch {
-            /* the terminal is being torn down — nothing left to reconcile */
-          }
+          const applyGeometry = () => {
+            if (disposed || (term.cols === cols && term.rows === rows)) return;
+            displaced = true;
+            try {
+              term.resize(cols, rows);
+            } catch {
+              /* the terminal is being torn down — nothing left to reconcile */
+            }
+          };
+          // A size frame belongs BETWEEN the output before and after it.
+          // xterm parses writes asynchronously, and a hidden workspace can
+          // still hold older output outside xterm. Resizing immediately made
+          // those bytes wrap at the new width, moving status rows and leaving
+          // gaps above a bottom-anchored prompt. Drain the old bytes first,
+          // then insert a parser barrier before any new-geometry output.
+          // Do not coalesce size frames or skip equal sizes here: an earlier
+          // queued geometry may still change the grid before this one runs.
+          flushHeld();
+          if (parsing > 0) writeToTerminal("", applyGeometry);
+          else applyGeometry();
         },
         /**
          * A prompt just landed in this pane — make that impossible to miss.
@@ -2333,6 +2397,7 @@ export function AgenticTerminal({
       fitRef.current = null;
       resizeRef.current = null;
       claimResizeRef.current = null;
+      repaintOnReturnRef.current = null;
       takeOwnershipRef.current = null;
       if (visibilityRef.current === visibility) visibilityRef.current = null;
     };
@@ -2370,8 +2435,13 @@ export function AgenticTerminal({
       containerRef.current?.style.setProperty("visibility", "hidden");
       setTailReady(false);
       visibilityRef.current?.park();
+      if (termRef.current) parkedRef.current = true;
       return;
     }
+    // Back from a spell off the stage, as opposed to the first time on it: the
+    // agent is asked for a whole new screen (see RETURN_REPAINT_NUDGE_MS).
+    const returning = parkedRef.current;
+    parkedRef.current = false;
     containerRef.current?.style.setProperty("visibility", "hidden");
     setTailReady(false);
     armCurtainWatchdog();
@@ -2399,6 +2469,12 @@ export function AgenticTerminal({
         if (replayCurtainRef.current) return;
         const reveal = () => {
           restoreViewport();
+          if (returning) {
+            // Draw every row from the buffer, not only the rows that changed:
+            // a surface hidden for a while may have dropped what it showed.
+            const term = termRef.current;
+            term?.refresh?.(0, Math.max(0, term.rows - 1));
+          }
           setTailReady(true);
           containerRef.current?.style.removeProperty("visibility");
           if (preservedViewportRef.current === returningViewport) {
@@ -2421,6 +2497,11 @@ export function AgenticTerminal({
       // hidden — may still be mid-parse, and settling now would lift the
       // curtain onto its tail printing. An empty write is a queue barrier:
       // its callback fires only after everything already queued has parsed.
+      //
+      // A returning pane asks for its new screen first: the redraw that answers
+      // is output, and output keeps pushing the settle's quiet window back, so
+      // it lands behind the curtain.
+      if (returning) repaintOnReturnRef.current?.();
       const term = termRef.current;
       if (term) term.write("", settle);
       else settle();
@@ -2449,13 +2530,21 @@ export function AgenticTerminal({
     const term = termRef.current;
     if (!term) return;
     const theme = themeFor(appearance);
-    if (term.options.theme === theme) return;
+    const weights = terminalFontWeights(appearance);
+    const transparent = appearance !== "light";
+    if (
+      term.options.theme === theme &&
+      term.options.fontWeight === weights.body &&
+      term.options.fontWeightBold === weights.bold &&
+      term.options.allowTransparency === transparent
+    ) {
+      return;
+    }
     term.options.theme = theme;
     // Opaque on paper for subpixel-smoothed glyphs — see the constructor.
-    term.options.allowTransparency = appearance !== "light";
+    term.options.allowTransparency = transparent;
     // A light pane draws one cut heavier (TERMINAL_FONT_WEIGHT_LIGHT). Every
     // cut has the same advance, so the grid stays put and only glyphs change.
-    const weights = terminalFontWeights(appearance);
     term.options.fontWeight = weights.body;
     term.options.fontWeightBold = weights.bold;
     clearTerminalTextureAtlas(term);
@@ -2504,8 +2593,13 @@ export function AgenticTerminal({
    * the pane filled the window and its agent kept drawing into the top-left
    * corner of it (2026-08-25).
    */
-  useEffect(() => {
+  useLayoutEffect(() => {
     const refit = () => (claimResizeRef.current ?? resizeRef.current)?.();
+    // The office preview may still lead this same PTY. Maximizing explicitly
+    // hands its size to the grid, before paint, without moving keyboard focus.
+    // Later settling passes only refit: they must not undo a newer pane click.
+    if (maximized && document.hasFocus()) takeOwnershipRef.current?.();
+    else refit();
     const frame = requestAnimationFrame(refit);
     const timers = [
       window.setTimeout(refit, 120),
@@ -2669,6 +2763,7 @@ export function AgenticTerminal({
   const minimal = headerMode === "minimal";
   const tile = PANE_TILE[appearance];
   const headerProps = {
+    githubStatusEnabled: active,
     contextMenuRequest: paneMenu.request,
     sendRightClicks: paneMenu.sendRightClicks,
     onToggleSendRightClicks: paneMenu.toggleSendRightClicks,
@@ -2781,6 +2876,7 @@ export function AgenticTerminal({
       : minimal ? <WorkspaceTerminalHeader {...headerProps} variant="tile" focused={focused && markFocus} />
       : headerMode === "none" ? null : <PaneHeader
         workspaceId={workspaceId}
+        githubStatusEnabled={active}
         status={visibleStatus}
         statusDetail={statusDetail}
         onArrangeStart={onArrangeStart}
@@ -2956,6 +3052,7 @@ export function AgenticTerminal({
 
 function PaneHeader({
   workspaceId,
+  githubStatusEnabled,
   name,
   displayName,
   recap,
@@ -2983,6 +3080,7 @@ function PaneHeader({
   onOpenChat,
 }: {
   workspaceId?: string;
+  githubStatusEnabled: boolean;
   name: string;
   displayName: string;
   recap?: string;
@@ -3492,6 +3590,7 @@ function PaneHeader({
         )}
       </div>
 
+      <SessionGitHubBadge workspaceId={githubStatusEnabled ? workspaceId : undefined} name={name} appearance={appearance} />
       {/* Pane actions appear where the eye already is: on the pane under the
           pointer, on the focused pane, and while one of their menus is open.
           Five buttons on every header of a twelve-pane wall were sixty

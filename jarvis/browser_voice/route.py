@@ -464,13 +464,24 @@ async def browser_voice_ws(ws: WebSocket) -> None:
             ws.send_json(msg), timeout=_TRANSPORT_SEND_TIMEOUT_S
         )
 
+    from jarvis.browser_voice.output_control import BrowserOutputControl
+
+    pipeline = getattr(state, "speech_pipeline", None)
+    if pipeline is None:
+        from jarvis.core.runtime_refs import get_speech_pipeline
+
+        pipeline = get_speech_pipeline()
+    output = BrowserOutputControl(
+        bus=bus, pipeline=pipeline, send_json=_send_json, send_binary=_send_binary,
+        volume=float(getattr(getattr(cfg, "tts", None), "volume", 1.0)),
+    )
     session = _build_browser_session(
         state=state,
         cfg=cfg,
         bus=bus,
         session_id=session_id,
-        send_binary=_send_binary,
-        send_json=_send_json,
+        send_binary=output.send_binary,
+        send_json=output.send_json,
     )
     if session is None:
         reason = (
@@ -544,8 +555,8 @@ async def browser_voice_ws(ws: WebSocket) -> None:
             cfg=cfg,
             bus=bus,
             session_id=session_id,
-            send_binary=_send_binary,
-            send_json=_send_json,
+            send_binary=output.send_binary,
+            send_json=output.send_json,
         )
         if fallback is None:
             await ws.close(code=1011, reason="speech stack unavailable")
@@ -600,6 +611,7 @@ async def browser_voice_ws(ws: WebSocket) -> None:
     )
 
     try:
+        await output.start()
         while True:
             try:
                 msg = await ws.receive()
@@ -658,6 +670,7 @@ async def browser_voice_ws(ws: WebSocket) -> None:
                         if not await _switch_to_classic(str(exc)):
                             break
     finally:
+        output.close()
         try:
             await asyncio.wait_for(
                 audio_queue.join(), timeout=_AUDIO_DRAIN_TIMEOUT_S

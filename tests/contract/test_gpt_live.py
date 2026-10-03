@@ -1,6 +1,7 @@
 """The Live contract must behave identically on every OS, without a microphone."""
 
 import asyncio
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -333,6 +334,12 @@ async def test_a_schema_violation_tells_the_model_what_to_fix(ledger):
 async def test_yes_to_a_pending_approval_does_not_hang_up(ledger):
     gateway = _ApprovalGateway()
     runtime = LiveTools(gateway, ledger, "s", language="en", backend_model="")
+    questions = []
+
+    async def ask(question):
+        questions.append(question)
+
+    runtime.ask_hangup = ask
     approval = await _pending_approval(runtime)
     runtime.user_text = "Ja"
     refused = await runtime.execute("bye", "end_call", {}, 1)
@@ -341,7 +348,12 @@ async def test_yes_to_a_pending_approval_does_not_hang_up(ledger):
     assert not runtime.end_requested
     runtime.user_text = "Leg auf"  # i18n-allow: spoken hang-up request
     runtime.revision = 2
-    assert (await runtime.execute("bye2", "end_call", {}, 2))["success"]
+    assert not (await runtime.execute("bye2", "end_call", {}, 2))["success"]
+    assert questions == ["Do you really want to hang up?"]
+    assert not runtime.end_requested
+    runtime.user_text = "Yes"
+    runtime.revision = 3
+    assert (await runtime.execute("bye3", "end_call", {}, 3))["success"]
     assert runtime.end_requested
 
 
@@ -532,9 +544,13 @@ def test_disabled_computer_use_does_not_expose_its_primitives(monkeypatch):
     setting = SimpleNamespace(enabled=False)
     manager = SimpleNamespace(_tools={}, _config=SimpleNamespace(computer_use=setting))
     gateway = BrainSupervisorToolGateway(manager)
-    assert "click" not in {d.name for d in gateway.voice_catalog()}
+    assert not {"click", "computer"} & {d.name for d in gateway.voice_catalog()}
     setting.enabled = True
-    assert "click" in {d.name for d in gateway.voice_catalog()}
+    names = {d.name for d in gateway.voice_catalog()}
+    # ADR-0038: the live model operates the screen with ``computer``; raw
+    # screen-unit primitives are not offered beside it.
+    assert "computer" in names
+    assert "click" not in names
 
 
 def test_recovery_history_is_bounded_and_keeps_user_text_as_data():
@@ -595,7 +611,10 @@ async def test_recovery_preserves_context_and_waits_for_new_input(ledger, monkey
     ledger.append(TranscriptFragment("s", "a", "user", "Remember the blue folder", 0, 10))
     session._last_end["user"] = 10
     assert await session._recover()
-    assert opened[0].session["input"][0]["content"][0]["text"] == "Remember the blue folder"
+    history = opened[0].session["input"]
+    assert all(message["role"] == "assistant" for message in history)
+    restored = json.loads(history[0]["content"][0]["text"].split("\n", 1)[1])
+    assert restored == [{"role": "user", "text": "Remember the blue folder"}]
     assert not session._tools.accepting
     assert not session._tools.gateway.calls
     await session._event(
@@ -652,6 +671,7 @@ async def test_recovery_usage_accumulates_but_unconfirmed_segments_stay_unconfir
     session._past_voice_seconds = 12
     session._had_unconfirmed_wire = True
     await session._event({"type": "session.usage.updated", "usage": {"seconds": 5}})
+    session._closing = True
     await session._event(
         {"type": "session.closed", "reason": "close_requested", "usage": {"seconds": 6}}
     )

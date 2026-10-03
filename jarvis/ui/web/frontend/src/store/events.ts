@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { browserPlaybackIsActive } from "@/lib/voiceOutputLevel";
 import type { MessageRole } from "@/types/messages";
 import { readCachedAssistantName } from "@/lib/assistantNameCache";
+import { reuseHistoryRows } from "@/lib/historyRequests";
 import {
   finalizeThinkingSteps,
   reduceThinkingSteps,
@@ -60,7 +61,6 @@ export type SectionId =
   | "docs"
   | "mcps"
   | "sessions"
-  | "run_inspector"
   // Spend & Tokens — what every provider, model and role actually cost.
   | "costs"
   | "clis"
@@ -129,7 +129,6 @@ export const SECTION_IDS = [
   "docs",
   "mcps",
   "sessions",
-  "run_inspector",
   "costs",
   "clis",
   "cli-test-hub",
@@ -185,6 +184,7 @@ export function isSectionId(value: unknown): value is SectionId {
  *   lives on agents now, as each agent's routines.
  */
 export const LEGACY_SECTION_ALIASES: Readonly<Record<string, SectionId>> = {
+  run_inspector: "sessions",
   outputs: "visualization",
   wallpaper: "settings",
   tasks: "agents",
@@ -228,7 +228,6 @@ export const SECTION_LABELS: Record<SectionId, string> = {
   docs: "Docs",
   mcps: "MCPs",
   sessions: "Transcription",
-  run_inspector: "Run Inspector",
   costs: "Spend",
   clis: "CLIs",
   "cli-test-hub": "CLI Test Hub",
@@ -792,7 +791,10 @@ export const useEventStore = create<EventStore>((set, get) => ({
   setMessages: (m) =>
     set({ messages: m.length > MAX_MESSAGES ? m.slice(m.length - MAX_MESSAGES) : m }),
 
-  setConversations: (c) => set({ conversations: c }),
+  setConversations: (c) => set((state) => {
+    const conversations = reuseHistoryRows(state.conversations, c, (row) => `${row.kind}:${row.id}`);
+    return conversations === state.conversations ? state : { conversations };
+  }),
 
   setActiveConversation: (kind, id) => set({ activeKind: kind, activeThreadId: id }),
 

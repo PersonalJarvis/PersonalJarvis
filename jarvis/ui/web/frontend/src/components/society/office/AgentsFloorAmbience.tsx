@@ -79,7 +79,8 @@ function Olives({ items }: { items: readonly AgentsAmbienceItem[] }) {
       const rand = lcg(seedOf(item.id));
       pot.push({ position: [x, 0.3, z], scale: [r - 0.03, 0.6, r - 0.03] });
       lip.push({ position: [x, 0.61, z], scale: [r, 0.04, r] });
-      gravel.push({ position: [x, 0.625, z], scale: [r - 0.07, 0.01, r - 0.07] });
+      // The gravel tops out 5 mm above the lip (0.63): flush tops fought in flickering bands up close.
+      gravel.push({ position: [x, 0.63, z], scale: [r - 0.07, 0.01, r - 0.07] });
       // Two leaning stems that fork from a short trunk.
       const lean = (rand() - 0.5) * 0.3;
       trunk.push({ position: [x, 0.85, z], scale: [0.055, 0.5, 0.055], rotation: [lean * 0.5, 0, 0.06] });

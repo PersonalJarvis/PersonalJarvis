@@ -91,6 +91,7 @@ HARD_BLACKLIST: frozenset[str] = frozenset(
         "ErrorOccurred",
         # Memory mutations
         "MemoryUpdated",
+        "MemoryFileWrite",
     }
 )
 

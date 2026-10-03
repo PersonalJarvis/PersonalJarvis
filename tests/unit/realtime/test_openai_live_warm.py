@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import socket
-import sys
 import time
 from types import SimpleNamespace
 
@@ -18,14 +18,22 @@ async def test_warm_transport_preimports_without_network(monkeypatch) -> None:
     """First wake must not pay cold imports or DNS on the handshake path."""
     from jarvis.plugins.realtime.openai_live import OpenAILiveProvider
 
-    for module in ("httpx", "websockets.asyncio.client"):
-        sys.modules.pop(module, None)
+    # Removing only a package root corrupts imports in later SDK tests: its
+    # cached submodules no longer belong to the reimported root object.
+    imported = []
+    real_import = importlib.import_module
+
+    def import_module(name, *args):
+        imported.append(name)
+        return real_import(name, *args)
+
+    monkeypatch.setattr(importlib, "import_module", import_module)
     monkeypatch.setattr(
         socket, "getaddrinfo", lambda *args, **kwargs: [("warm",)]
     )
     await OpenAILiveProvider.warm_transport(None)
-    assert "httpx" in sys.modules
-    assert "websockets.asyncio.client" in sys.modules
+    assert "httpx" in imported
+    assert "websockets.asyncio.client" in imported
 
 
 @pytest.mark.asyncio

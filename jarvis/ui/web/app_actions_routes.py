@@ -11,6 +11,11 @@ from pydantic import BaseModel, ConfigDict
 
 router = APIRouter(prefix="/api/app-actions", tags=["app-actions"])
 
+# Plain ``def`` handlers on purpose: each reads or writes the policy/history
+# files, and the first catalog read generates the app's whole OpenAPI schema.
+# FastAPI runs them in the threadpool, off the shared event loop; the policy
+# and history modules guard their files with a threading lock.
+
 
 class ModeBody(BaseModel):
     model_config = ConfigDict(extra="forbid")

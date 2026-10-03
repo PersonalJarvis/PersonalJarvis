@@ -106,11 +106,6 @@ const DocsView = lazyView(["docs"], () =>
 const BoardView = lazyView(["board"], () =>
   import("@/views/BoardView").then((m) => ({ default: m.BoardView })),
 );
-const RunInspectorView = lazyView(["run_inspector"], () =>
-  import("@/views/RunInspectorView").then((m) => ({
-    default: m.RunInspectorView,
-  })),
-);
 // Dictation + Dictionary + Shortcuts + Language + Voice API keys are merged
 // behind the one "{name} Voice" sidebar entry. Only the hub is split out here —
 // it statically imports its five tabs, so they travel in its chunk instead of
@@ -365,8 +360,6 @@ function SwitchOnActiveSection({ active }: { active: string }) {
       return <DocsView />;
     case "sessions":
       return <SessionsView />;
-    case "run_inspector":
-      return <RunInspectorView />;
     case "board":
       return <BoardView />;
     case "memory":

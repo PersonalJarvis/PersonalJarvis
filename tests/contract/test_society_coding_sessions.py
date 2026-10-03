@@ -171,7 +171,7 @@ async def test_closing_during_readiness_prevents_write(rig, tmp_path, monkeypatc
 
 
 @pytest.mark.parametrize(
-    "submitted,delivery", [(True, "accepted"), (False, "not_accepted"), (None, "uncertain")]
+    "submitted,delivery", [(True, "accepted"), (False, "uncertain"), (None, "uncertain")]
 )
 async def test_send_receipt_prevents_duplicate_delivery(
     rig, tmp_path, monkeypatch, submitted, delivery
