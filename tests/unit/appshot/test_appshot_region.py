@@ -657,22 +657,3 @@ def test_a_gesture_passes_the_settings_route(client, monkeypatch) -> None:
     assert response.status_code == 200, response.text
     assert writes == [{"region_hotkey": "shift+shift"}]
 
-
-# ---------------------------------------------------------------- magnifier
-
-
-def test_the_wheel_walks_the_zoom_steps_and_stops_at_the_ends() -> None:
-    assert region.step_zoom(8, 1) == 12
-    assert region.step_zoom(8, -1) == 6
-    assert region.step_zoom(24, 1) == 24
-    assert region.step_zoom(2, -1) == 2
-    assert region.step_zoom(7, 1) == 12, "an unknown saved zoom restarts from the default"
-
-
-@pytest.mark.parametrize("zoom", region.MAG_ZOOMS)
-@pytest.mark.parametrize("scale", [1.0, 1.5, 2.0])
-def test_the_magnifier_always_fills_its_box_with_a_centred_pixel(zoom, scale) -> None:
-    count, cell = region.magnifier_layout(zoom, scale)
-    assert count % 2 == 1, "an odd count puts one pixel exactly under the pointer"
-    assert count * cell >= region.MAG_BOX_PX, "the box never shows an empty border"
-    assert cell * scale == pytest.approx(zoom), "one real pixel is drawn zoom device pixels wide"

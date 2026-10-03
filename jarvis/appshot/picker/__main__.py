@@ -14,8 +14,10 @@ from jarvis.appshot.picker import EXIT_NO_GUI
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="jarvis.appshot.picker")
+    # Accepted and ignored: a main process started before the picker lost its
+    # banner still passes it until the app restarts.
     parser.add_argument("--hint", default="")
-    args = parser.parse_args(argv)
+    parser.parse_args(argv)
     try:
         from jarvis.appshot.picker.renderer import run  # noqa: PLC0415
     except ImportError as exc:
@@ -24,7 +26,7 @@ def main(argv: list[str] | None = None) -> int:
             "extra to select an area for an appshot.\n"
         )
         return EXIT_NO_GUI
-    return run(hint=args.hint)
+    return run()
 
 
 if __name__ == "__main__":

@@ -23,20 +23,18 @@ window there, it takes the whole screen instead.
 
 The area picker is a short-lived PySide6 process (`python -m
 jarvis.appshot.picker`) that starts on the shortcut and exits after one
-selection, so nothing stays resident. Its look follows ShareX's region
-capture:
+selection, so nothing stays resident. It looks like macOS's area capture
+(Cmd+Shift+4):
 
-- every screen is frozen and dimmed the moment the picker opens, so nothing
-  moves under the selection (where a frozen frame cannot be grabbed, a dim
-  layer over the live desktop is used instead, without the magnifier);
-- hovering highlights the window under the pointer, and a click without a
-  drag takes exactly that window;
-- a drag cuts the area out of the dim layer with a marching-ants border and
-  its size in real pixels;
-- a round magnifier beside the pointer shows the pixels around it with the
-  centre pixel outlined, and a small pill underneath with the position (or the
-  selection size while dragging) and the zoom; the mouse wheel zooms it from
-  2x to 24x, and the last zoom is remembered for the next pick.
+- every screen is frozen under a light dim the moment the picker opens, so
+  nothing moves under the selection (where a frozen frame cannot be grabbed,
+  a dim layer over the live desktop is used instead);
+- the pointer is a thin crosshair with a small ring, and two small numbers
+  beside it show the position — while dragging, the width and height in real
+  pixels. No lens, no boxed labels, no banner;
+- hovering lifts the window under the pointer out of the dim, and a click
+  without a drag takes exactly that window;
+- a drag cuts the area out of a deeper dim with one thin border.
 
 The picker reports the rectangle as fractions of the screen it was drawn on;
 the app maps that back to capture pixels (`jarvis/appshot/region.py`), so
@@ -148,7 +146,7 @@ reason.
 | Move/select annotations | Done |
 | Rotate, flip, resize image | Not done |
 | Combine images, editable project file | Not done |
-| Capture area / window / fullscreen, freeze, magnifier, crosshair | Elsewhere: the area picker and the window shortcut ([Selecting an area](#selecting-an-area)); no fullscreen mode |
+| Capture area / window / fullscreen, freeze, crosshair with coordinates | Elsewhere: the area picker and the window shortcut ([Selecting an area](#selecting-an-area)); no fullscreen mode |
 | Quick Access Overlay (copy / save / annotate / drag after capture) | Elsewhere: the corner card (click = editor, drag = file) |
 | Editor window: drag handle, zoom, Save / Done | Done: "Drag me" (Windows, macOS), zoom Fit/50/100/200 %, Save to Downloads, Done = use in the next message |
 | Scrolling capture, self-timer | Not done (the page's "in 3 s" button is the only timer) |

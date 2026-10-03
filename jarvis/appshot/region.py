@@ -50,15 +50,6 @@ _SETTLE_S = 0.08
 Rect = tuple[int, int, int, int]
 FRect = tuple[float, float, float, float]
 
-# Hint pill over the screens — app chrome, so it follows the app's display
-# language ([ui].language); a phrase table always carries every locale.
-_HINTS: dict[str, str] = {
-    "de": "Bereich ziehen · Fenster anklicken · Mausrad zoomt · Esc bricht ab",  # i18n-allow
-    "en": "Drag to select an area · Click a window · Scroll to zoom · Esc to cancel",
-    "es": "Arrastra una zona · Clic en una ventana · Rueda para zoom · Esc cancela",  # i18n-allow
-}
-
-
 @dataclass(frozen=True, slots=True)
 class Selection:
     """A finished selection: which Qt screen, which part of it."""
@@ -190,39 +181,6 @@ def snap_rects_on_screen(
     return out
 
 
-#: Magnifier zoom steps (screen pixels drawn per real pixel) for the wheel.
-MAG_ZOOMS: tuple[int, ...] = (2, 3, 4, 6, 8, 12, 16, 24)
-MAG_DEFAULT_ZOOM = 8
-#: The magnifier's side, in logical pixels, before rounding to whole pixels.
-MAG_BOX_PX = 128.0
-
-
-def step_zoom(current: int, steps: int) -> int:
-    """Move ``steps`` notches along :data:`MAG_ZOOMS` (positive = closer)."""
-    try:
-        index = MAG_ZOOMS.index(current)
-    except ValueError:
-        index = MAG_ZOOMS.index(MAG_DEFAULT_ZOOM)
-    return MAG_ZOOMS[max(0, min(len(MAG_ZOOMS) - 1, index + steps))]
-
-
-def magnifier_layout(zoom: int, scale: float, box_px: float = MAG_BOX_PX) -> tuple[int, float]:
-    """``(source pixels per side, logical px per source pixel)`` for a zoom.
-
-    ``scale`` is device pixels per logical pixel, so one source pixel is drawn
-    ``zoom`` device pixels wide whatever the display scaling. The count covers
-    the whole box (the edge pixels are clipped, so the box keeps one size at
-    every zoom) and is odd, so one pixel sits exactly under the pointer.
-    """
-    import math  # noqa: PLC0415
-
-    cell = max(1.0, float(zoom)) / max(0.1, float(scale))
-    count = max(3, math.ceil(box_px / cell))
-    if count % 2 == 0:
-        count += 1
-    return count, cell
-
-
 def parse_selection(payload: dict[str, Any]) -> Selection | None:
     """A picker ``selection`` event → :class:`Selection` (``None`` = cancelled)."""
     if payload.get("cancelled"):
@@ -259,17 +217,6 @@ def picker_capability() -> tuple[bool, str]:
     if importlib.util.find_spec("PySide6") is None:
         return False, "the selection overlay needs PySide6 (the [desktop] extra)"
     return True, ""
-
-
-def _hint() -> str:
-    try:
-        from jarvis.core.config import load_config  # noqa: PLC0415
-
-        language = str(getattr(load_config().ui, "language", "") or "").lower()[:2]
-        return _HINTS.get(language, _HINTS["en"])
-    except Exception:  # noqa: BLE001 - the hint is decoration; English is honest
-        log.debug("appshot: picker hint language unresolved", exc_info=True)
-        return _HINTS["en"]
 
 
 def _is_cloaked(handle: int | None) -> bool:
@@ -317,11 +264,11 @@ def snap_layout() -> dict[str, Any]:
     return {"monitors": [dict(m) for m in monitors], "windows": windows}
 
 
-def _spawn(hint: str) -> subprocess.Popen[str]:
+def _spawn() -> subprocess.Popen[str]:
     from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS  # noqa: PLC0415
 
     return subprocess.Popen(
-        [sys.executable, "-m", "jarvis.appshot.picker", "--hint", hint],
+        [sys.executable, "-m", "jarvis.appshot.picker"],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
@@ -439,7 +386,6 @@ def _exit_message(code: int) -> str:
 
 async def _run_picker(timeout_s: float) -> tuple[dict[str, Any] | None, int | None, bool]:
     """Spawn, wait for one selection, always reap. ``(payload, exit code, timed out)``."""
-    hint = await asyncio.to_thread(_hint)
     try:
         layout = await asyncio.to_thread(snap_layout)
     except Exception:  # noqa: BLE001 - no snapping; dragging still works
@@ -447,7 +393,7 @@ async def _run_picker(timeout_s: float) -> tuple[dict[str, Any] | None, int | No
         layout = None
     # Shielded: a caller cancelled mid-spawn must still get the process reaped,
     # or its overlay would cover the screens until the stdin timeout.
-    spawn = asyncio.ensure_future(asyncio.to_thread(_spawn, hint))
+    spawn = asyncio.ensure_future(asyncio.to_thread(_spawn))
     try:
         proc = await asyncio.shield(spawn)
     except asyncio.CancelledError:
@@ -486,13 +432,10 @@ async def _run_picker(timeout_s: float) -> tuple[dict[str, Any] | None, int | No
 
 
 __all__ = [
-    "MAG_DEFAULT_ZOOM",
-    "MAG_ZOOMS",
     "MIN_SELECTION_PX",
     "RegionUnavailable",
     "Selection",
     "fraction_to_bbox",
-    "magnifier_layout",
     "match_monitor",
     "parse_selection",
     "pick_region",
@@ -502,5 +445,4 @@ __all__ = [
     "selection_to_bbox",
     "snap_layout",
     "snap_rects_on_screen",
-    "step_zoom",
 ]
