@@ -25,9 +25,12 @@ from uuid import uuid4
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from fastapi.routing import APIRoute
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
+from starlette.routing import Match
+from starlette.types import Scope
 
 from jarvis import __version__
 from jarvis.core.branding import CONFIG_FILE_NAME
@@ -90,6 +93,39 @@ REALTIME_WARM_BOOT_DELAY_S = 5.0
 # Both surfaces schedule onto ONE event loop in a desktop boot, so the task
 # name is what keeps that boot from warming the same transports twice.
 REALTIME_WARM_TASK_NAME = "realtime-transport-warm"
+
+
+def _is_backend_path(path: str) -> bool:
+    """Paths the SPA catch-all must never claim: the API and the sockets."""
+    return path == "/api" or path.startswith(("/api/", "/ws"))
+
+
+class _SpaFallbackRoute(APIRoute):
+    """The SPA catch-all, invisible to API and socket paths.
+
+    A plain ``GET /{full_path:path}`` partially matches EVERY path, so the
+    router answered an unknown ``POST /api/...`` with 405 and ``Allow: GET`` —
+    pointing a client at a GET that does not exist — and a bare ``GET /api``
+    with the SPA's HTML. Declining backend paths lets the router answer
+    honestly: 404 for a route that does not exist, 405 only for a real route
+    asked with the wrong method.
+    """
+
+    def matches(self, scope: Scope) -> tuple[Match, Scope]:
+        if scope.get("type") == "http" and _is_backend_path(scope.get("path", "")):
+            return Match.NONE, {}
+        return super().matches(scope)
+
+
+class MemoryFactBody(BaseModel):
+    """Body of ``POST``/``DELETE /api/memory/facts``.
+
+    Typed so a non-string ``fact`` is a 422 at the boundary instead of an
+    ``AttributeError`` (500) inside the handler.
+    """
+
+    fact: str
+    category: str = "general"
 
 
 class WebServer:
@@ -333,6 +369,8 @@ class WebServer:
         from .agentic_ide_git_routes import router as agentic_ide_git_router
         from .agentic_ide_routes import router as agentic_ide_router
         from .antigravity_routes import router as antigravity_router
+        from .app_actions_routes import router as app_actions_router
+        from .appshot_routes import router as appshot_router
         from .board_routes import (
             board_router as board_meta_router,
         )
@@ -364,11 +402,11 @@ class WebServer:
         from .frontier_routes import router as frontier_router
         from .grok_build_routes import router as grok_build_router
         from .live_routes import router as live_router
-        from .local_voice_routes import router as local_voice_router
         from .local_models_assistant_routes import (
             router as local_models_assistant_router,
         )
         from .local_models_routes import router as local_models_router
+        from .local_voice_routes import router as local_voice_router
         from .marketplace_publish_routes import router as marketplace_publish_router
         from .marketplace_routes import router as marketplace_router
         from .mcp_routes import router as mcp_router
@@ -390,20 +428,18 @@ class WebServer:
         from .provider_routes import router as provider_router
         from .review_routes import router as review_router
         from .routine_hooks_routes import router as routine_hooks_router
-        from .app_actions_routes import router as app_actions_router
-        from .appshot_routes import router as appshot_router
         from .screen_context_routes import router as screen_context_router
         from .self_mod_routes import router as self_mod_router
         from .sessions_routes import router as sessions_router
         from .settings_routes import router as settings_router
-        from .soul_routes import router as soul_router
         from .setup_report_routes import router as setup_report_router
         from .setup_routes import router as setup_router
         from .skills_routes import router as skills_router
         from .socials_routes import router as socials_router
-        from .society_routes import router as society_router
         from .society_browser_routes import router as society_browser_router
         from .society_figure_routes import router as society_figure_router
+        from .society_routes import router as society_router
+        from .soul_routes import router as soul_router
         from .starter_plan_routes import router as starter_plan_router
         from .sub_agents_routes import router as sub_agents_router
         from .tasks_routes import router as tasks_router
@@ -1547,15 +1583,15 @@ class WebServer:
                 return {"ok": False, "error": "memory read failed. " + LOG_HINT, "data": {}}
 
         @app.post("/api/memory/facts")
-        async def add_memory_fact(payload: dict[str, Any]) -> dict[str, Any]:
+        async def add_memory_fact(payload: MemoryFactBody) -> dict[str, Any]:
             """User-driven add from the UI."""
             from jarvis.core.config import DATA_DIR
             from jarvis.memory import CORE_MEMORY_FILENAME, CoreMemory
 
             from .error_text import LOG_HINT
 
-            fact = (payload.get("fact") or "").strip()
-            category = (payload.get("category") or "general").strip()
+            fact = payload.fact.strip()
+            category = payload.category.strip() or "general"
             if not fact:
                 return {"ok": False, "error": "fact is missing"}
             try:
@@ -1567,15 +1603,15 @@ class WebServer:
                 return {"ok": False, "error": "memory write failed. " + LOG_HINT}
 
         @app.delete("/api/memory/facts")
-        async def delete_memory_fact(payload: dict[str, Any]) -> dict[str, Any]:
+        async def delete_memory_fact(payload: MemoryFactBody) -> dict[str, Any]:
             """User-driven remove from the UI."""
             from jarvis.core.config import DATA_DIR
             from jarvis.memory import CORE_MEMORY_FILENAME, CoreMemory
 
             from .error_text import LOG_HINT
 
-            fact = (payload.get("fact") or "").strip()
-            category = (payload.get("category") or "general").strip()
+            fact = payload.fact.strip()
+            category = payload.category.strip() or "general"
             if not fact:
                 return {"ok": False, "error": "fact is missing"}
             try:
@@ -1920,6 +1956,27 @@ class WebServer:
                     source_layer="ui.web.ws",
                 )
             )
+        except WebSocketDisconnect:
+            # A reply frame (pong, terminal.spawned) hit a closed socket — that
+            # is the receive loop's business, not a failed command.
+            raise
+        except Exception as exc:  # noqa: BLE001 — one bad frame must not end the session
+            # A handler failing on one frame (a malformed terminal.resize, a
+            # PTY write error) used to escape into _handle_ws, which closed the
+            # whole UI event socket. Report it and keep the connection.
+            action = raw.get("action") if frame_type == "command" else None
+            logger.opt(exception=exc).warning(
+                "WS frame handler failed", frame_type=frame_type, action=action
+            )
+            await self.bus.publish(
+                ErrorOccurred(
+                    layer="ui.web.ws",
+                    error_type="CommandFailed" if frame_type == "command" else "FrameFailed",
+                    message=f"{action or frame_type} failed: {type(exc).__name__}",
+                    recoverable=True,
+                    source_layer="ui.web.ws",
+                )
+            )
 
     async def _handle_command(
         self,
@@ -2198,12 +2255,11 @@ class WebServer:
             # up in a loop-stall stack (2026-08-26, BUG-189).
             return await asyncio.to_thread(self._spa_index_response)
 
-        @app.get("/{full_path:path}", include_in_schema=False, response_model=None)
         async def _spa_fallback(
             full_path: str,
         ) -> FileResponse | HTMLResponse | JSONResponse:
-            if full_path.startswith("api/") or full_path.startswith("ws"):
-                return JSONResponse({"detail": "Not Found"}, status_code=404)
+            # API and socket paths never reach this handler: _SpaFallbackRoute
+            # declines them, so the router answers 404 / 405 itself.
             try:
                 target = (DIST_DIR / full_path).resolve()
                 dist_root = DIST_DIR.resolve()
@@ -2218,6 +2274,15 @@ class WebServer:
             if PurePosixPath(full_path).suffix.lower() in ASSET_SUFFIXES:
                 return JSONResponse({"detail": "Not Found"}, status_code=404)
             return await asyncio.to_thread(self._spa_index_response)
+
+        app.router.add_api_route(
+            "/{full_path:path}",
+            _spa_fallback,
+            methods=["GET"],
+            include_in_schema=False,
+            response_model=None,
+            route_class_override=_SpaFallbackRoute,
+        )
 
     def _spa_index_response(self) -> FileResponse | HTMLResponse:
         # An index.html whose own entry bundle is not on disk is worse than no
