@@ -23,8 +23,7 @@ window there, it takes the whole screen instead.
 
 The area picker is a short-lived PySide6 process (`python -m
 jarvis.appshot.picker`) that starts on the shortcut and exits after one
-selection, so nothing stays resident. Its look follows ShareX's region
-capture:
+selection, so nothing stays resident. The picker provides:
 
 - every screen is frozen and dimmed the moment the picker opens, so nothing
   moves under the selection (where a frozen frame cannot be grabbed, a dim

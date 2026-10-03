@@ -38,8 +38,8 @@ import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
 
 /**
- * The appshot editor — annotate the last appshot the way ShareX's image
- * editor does: arrow, rectangle, ellipse, pen, highlighter, text, pixelate and
+ * The appshot editor — annotate the last appshot with arrow, rectangle,
+ * ellipse, pen, highlighter, text, pixelate and
  * crop, with undo/redo. The result can be copied, saved, or put back in place
  * of the appshot so the next message carries the edited picture.
  *
