@@ -13,6 +13,23 @@ log = logging.getLogger(__name__)
 FPS = 30
 
 
+class FirstFramePoster:
+    """Keep a small immutable copy of the first submitted frame for the video card."""
+
+    def __init__(self) -> None:
+        self.image: Any = None
+
+    def observe(self, image: Any) -> None:
+        if self.image is not None:
+            return
+        from PySide6.QtCore import Qt
+
+        self.image = image.scaled(
+            560, 560, Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+
+
 class VideoEncoder:
     """Native encoder calls stay off the UI thread and in a disposable process."""
 

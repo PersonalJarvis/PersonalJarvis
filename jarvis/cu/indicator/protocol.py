@@ -41,14 +41,29 @@ CMD_UNBLANK = "unblank"
 CMD_QUIT = "quit"
 CMD_SNAP = "snap"
 CMD_SNAP_IMAGE = "snap_image"
+CMD_RECORDING = "recording"
+CMD_RECORDING_STATUS = "recording_status"
 
 ALL_COMMANDS = frozenset(
-    {CMD_SHOW, CMD_HIDE, CMD_BLANK, CMD_UNBLANK, CMD_QUIT, CMD_SNAP, CMD_SNAP_IMAGE}
+    {
+        CMD_SHOW,
+        CMD_HIDE,
+        CMD_BLANK,
+        CMD_UNBLANK,
+        CMD_QUIT,
+        CMD_SNAP,
+        CMD_SNAP_IMAGE,
+        CMD_RECORDING,
+        CMD_RECORDING_STATUS,
+    }
 )
 
 EVENT_CARD = "card"
 EVENT_SNAP_OPEN = "snap_open"
-ALL_EVENTS = frozenset({EVENT_CARD, EVENT_SNAP_OPEN})
+EVENT_RECORDING_OPEN = "recording_open"
+EVENT_RECORDING_SAVE = "recording_save"
+MAX_CARDS = 5
+ALL_EVENTS = frozenset({EVENT_CARD, EVENT_SNAP_OPEN, EVENT_RECORDING_OPEN, EVENT_RECORDING_SAVE})
 
 #: Sidecar exit code when no usable GUI stack exists (PySide6 missing or
 #: no display). The controller logs it as an expected degradation.
@@ -116,6 +131,11 @@ __all__ = [
     "CMD_SHOW",
     "CMD_SNAP",
     "CMD_SNAP_IMAGE",
+    "CMD_RECORDING",
+    "CMD_RECORDING_STATUS",
+    "EVENT_RECORDING_OPEN",
+    "EVENT_RECORDING_SAVE",
+    "MAX_CARDS",
     "EVENT_CARD",
     "EVENT_SNAP_OPEN",
     "CMD_UNBLANK",

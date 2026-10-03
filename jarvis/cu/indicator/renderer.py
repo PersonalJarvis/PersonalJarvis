@@ -281,7 +281,10 @@ def _paint_card(painter: QPainter, rect: QRectF, thumb: QImage, radius: float, r
 class _SnapWindow(QWidget):
     """One monitor-sized, click-through canvas for the flash and the flight."""
 
-    def __init__(self, screen, rect_frac: list[float], thumb: QImage, on_landed, on_done) -> None:
+    def __init__(
+        self, screen, rect_frac: list[float], thumb: QImage, on_landed, on_done,
+        *, corner: str = "right",
+    ) -> None:
         super().__init__(None)
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
@@ -323,6 +326,8 @@ class _SnapWindow(QWidget):
         right = float(avail.right() + 1 - geo.x())
         bottom = float(avail.bottom() + 1 - geo.y())
         self._dst = QRectF(right - tw - _SNAP_MARGIN, bottom - th - _SNAP_MARGIN, tw, th)
+        if corner == "left":
+            self._dst.moveLeft(float(avail.left() - geo.x()) + _SNAP_MARGIN)
         self._t = 0.0
         self._anim = QVariantAnimation(self)
         self._anim.setStartValue(0.0)
@@ -586,6 +591,10 @@ class Renderer(QObject):
         self._windows: list[_GlowWindow] = []
         self._snaps: list[_SnapWindow] = []
         self._card: _CardWindow | None = None
+        from jarvis.appshot.recording_preview import RecordingPreviews
+
+        self._recordings = RecordingPreviews(_emit, self._recording_activity)
+        app.aboutToQuit.connect(self._recordings.close)
         self._card_hint = ""
         #: The finished (redacted) picture a drag from the card hands out.
         self.card_image: QImage | None = None
@@ -650,6 +659,12 @@ class Renderer(QObject):
                     self._snap(payload)
                 elif cmd == protocol.CMD_SNAP_IMAGE:
                     self._snap_image(payload)
+                elif cmd == protocol.CMD_RECORDING:
+                    self._recordings.show(payload)
+                elif cmd == protocol.CMD_RECORDING_STATUS:
+                    self._recordings.set_status(
+                        str(payload.get("id", "")), str(payload.get("text", ""))
+                    )
                 elif cmd == protocol.CMD_QUIT:
                     _ack(cmd)
                     self._app.quit()
@@ -723,11 +738,14 @@ class Renderer(QObject):
         if image.loadFromData(QByteArray.fromBase64(raw.encode("ascii"))):
             self.card_image = image
 
+    def _recording_activity(self) -> None:
+        _emit(protocol.EVENT_CARD, open=self._card is not None or self._recordings.active)
+
     def card_gone(self, card: _CardWindow) -> None:
         if self._card is card:
             self._card = None
             self.card_image = None
-            _emit(protocol.EVENT_CARD, open=False)
+            self._recording_activity()
 
     def card_clicked(self, card: _CardWindow) -> None:
         _emit(protocol.EVENT_SNAP_OPEN)
@@ -757,6 +775,7 @@ class Renderer(QObject):
             return None
 
     def _blank(self) -> None:
+        self._recordings.suspend(True)
         # A resting thumbnail must never end up inside the next capture.
         for snap in list(self._snaps):
             snap.finish_now()
@@ -769,6 +788,7 @@ class Renderer(QObject):
             win.hide()
 
     def _unblank(self) -> None:
+        self._recordings.suspend(False)
         if self._card is not None and not self._card.isVisible():
             self._card.show()
         if not self._active or not self._blanked:

@@ -321,6 +321,32 @@ class CUIndicatorController:
             self._schedule_idle_quit()
             return shown
 
+    async def show_recording(
+        self, *, recording_id: str, video_path: str, thumb_b64: str,
+        monitor: list[int], rect: list[float], screen_name: str,
+        duration_s: float, rest_ms: int, labels: dict[str, str],
+    ) -> bool:
+        """Fly a finalized video into its bottom-left card, without changing screenshot state."""
+        ok, reason = self._border_capability()
+        if not ok:
+            log.debug("[appshot-effect] recording preview unavailable: %s", reason)
+            return False
+        self._loop = asyncio.get_running_loop()
+        async with self._lock:
+            self._snap_until = max(self._snap_until, time.monotonic() + _SNAP_LIFETIME_S)
+            await asyncio.to_thread(self._spawn_sidecar)
+            if self._proc is None:
+                return False
+            capture_guard.register_hook(self._suppress_for_grab)
+            shown = await asyncio.to_thread(
+                self._send_and_wait, protocol.CMD_RECORDING, _SHOW_ACK_TIMEOUT_S,
+                id=f"recording:{recording_id}", video_path=video_path, thumb=thumb_b64,
+                monitor=list(monitor), rect=list(rect), screen_name=screen_name,
+                duration_s=duration_s, rest_ms=rest_ms, labels=labels,
+            )
+            self._schedule_idle_quit()
+            return shown
+
     async def snap_image(self, image_b64: str) -> bool:
         """Hand the finished picture to the resting card, for a drag out.
 
@@ -345,6 +371,13 @@ class CUIndicatorController:
 
     def _handle_sidecar_event(self, payload: dict[str, Any]) -> None:
         event = payload.get("event")
+        if event in (protocol.EVENT_RECORDING_OPEN, protocol.EVENT_RECORDING_SAVE):
+            action = "open" if event == protocol.EVENT_RECORDING_OPEN else "save"
+            asyncio.get_running_loop().create_task(
+                self._recording_action(action, str(payload.get("id", ""))),
+                name="appshot-recording-card",
+            )
+            return
         if event == protocol.EVENT_CARD:
             self._card_open = bool(payload.get("open"))
             if not self._card_open:
@@ -373,6 +406,19 @@ class CUIndicatorController:
             )
         except Exception:  # noqa: BLE001 - a lost click must not break the sidecar
             log.warning("[appshot-effect] opening the editor failed", exc_info=True)
+
+    async def _recording_action(self, action: str, card_id: str) -> None:
+        from jarvis.appshot.recording_cards import RECORDING_PREFIX, run_recording_card_action
+
+        try:
+            status = await run_recording_card_action(action, card_id.removeprefix(RECORDING_PREFIX))
+            if status and self._proc is not None and self._proc.poll() is None:
+                await asyncio.to_thread(
+                    self._send_and_wait, protocol.CMD_RECORDING_STATUS, _SHOW_ACK_TIMEOUT_S,
+                    text=status, id=card_id,
+                )
+        except Exception:
+            log.exception("[appshot-effect] recording card action failed")
 
     def _schedule_idle_quit(self) -> None:
         task = self._idle_quit_task

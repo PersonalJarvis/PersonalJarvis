@@ -39,9 +39,10 @@ def run(output: Path, language: str = "en") -> int:
     )
 
     from jarvis.appshot.picker.renderer import Picker, _SelectWindow
+    from jarvis.appshot.recording_hud import RecordingHud
     from jarvis.appshot.recording_labels import LABELS
     from jarvis.appshot.region import selection_fractions
-    from jarvis.appshot.video_encoder import FPS, VideoEncoder
+    from jarvis.appshot.video_encoder import FPS, FirstFramePoster, VideoEncoder
     from jarvis.platform.probes import is_wayland
 
     app = QApplication(["Personal Jarvis — Screen recording"])
@@ -187,6 +188,8 @@ def run(output: Path, language: str = "en") -> int:
             self.completed = False
             self.error = ""
             self.last_image = None
+            self.poster = FirstFramePoster()
+            self.hud = None
             self.preview = None
             self.capture = None
             self.capture_session = None
@@ -255,8 +258,14 @@ def run(output: Path, language: str = "en") -> int:
                 self.full_button.hide()
             self.label.setText(labels["starting"])
             self.stop_button.setText(labels["stop"])
-            self.resize(290, 90)
-            self.show()
+            if screen is not None:
+                self.hud = RecordingHud(screen, frac, labels, self.stop)
+                self.hide()
+                self.hud.show()
+            else:
+                # The portal does not expose the source's global screen position.
+                self.resize(290, 90)
+                self.show()
             # Let the selection overlays disappear before capturing pixels.
             QTimer.singleShot(250, self.start_encoder)
 
@@ -324,12 +333,15 @@ def run(output: Path, language: str = "en") -> int:
                 QImage.Format.Format_RGBA8888
             )
             self.encoder.submit(crop, elapsed)
+            self.poster.observe(crop)
             if self.encoder.ready.is_set() and not self.reported:
                 self.reported = True
                 emit("recording", width=self.encoder.size[0], height=self.encoder.size[1])
             if self.reported:
                 seconds = int(elapsed)
                 self.label.setText(f"Recording · {seconds // 60:02d}:{seconds % 60:02d}")
+                if self.hud is not None:
+                    self.hud.update_elapsed(elapsed)
 
         def fail(self, message: str) -> None:
             self.error = message
@@ -339,6 +351,8 @@ def run(output: Path, language: str = "en") -> int:
             if self.finishing:
                 return
             self.finishing = True
+            if self.hud is not None:
+                self.hud.hide()
             if self.picker:
                 self.picker.finish(None, None)
             if self.capture:
@@ -369,10 +383,43 @@ def run(output: Path, language: str = "en") -> int:
                     duration_s=round(self.encoder.duration, 1),
                     width=self.encoder.size[0],
                     height=self.encoder.size[1],
+                    **self.save_preview(),
                 )
             else:
                 emit("cancelled")
+            if self.hud is not None:
+                self.hud.close()
             app.quit()
+
+        def save_preview(self) -> dict:
+            try:
+                return self._save_preview()
+            except Exception:
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    "appshot: saved video preview is unavailable", exc_info=True
+                )
+                return {}
+
+        def _save_preview(self) -> dict:
+            if self.poster.image is None:
+                return {}
+            thumbnail = self.poster.image.scaled(
+                560, 560, Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            poster = output.with_suffix(".jpg")
+            if not thumbnail.save(str(poster), "JPG", 82):
+                return {}  # An optional poster failure does not invalidate the video.
+            screen = self.screen or app.primaryScreen()
+            if screen is None:
+                return {}
+            return {
+                "preview": True, "screen_name": screen.name(),
+                "monitor": list(screen.geometry().getRect()),
+                "rect": list(self.frac or (0, 0, 1, 1)),
+            }
 
         def closeEvent(self, event) -> None:  # noqa: N802
             if self.completed:

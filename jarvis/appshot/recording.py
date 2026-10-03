@@ -145,6 +145,7 @@ class RecordingService:
 
     async def _read(self, process: asyncio.subprocess.Process) -> None:
         assert process.stdout is not None
+        preview = None
         try:
             async for raw in process.stdout:
                 try:
@@ -166,12 +167,18 @@ class RecordingService:
                 )
                 if phase == "recording" and self._started is None:
                     self._started = time.monotonic()
+                if phase == "saved" and event.get("preview"):
+                    preview = event
             code = await process.wait()
             if self._state["phase"] in ACTIVE_PHASES or (
                 code != 0 and self._state["phase"] != "error"
             ):
                 self._state.update(phase="error", message="The recorder stopped unexpectedly.")
                 log.warning("appshot: recorder exited with code %s", code)
+            elif preview is not None and self._state["phase"] == "saved":
+                from jarvis.appshot.recording_cards import show_recording_preview
+
+                await show_recording_preview(self._state["id"], preview)
         except Exception:
             log.exception("appshot: recorder monitor failed")
             self._state.update(phase="error", message="The recorder connection was lost.")

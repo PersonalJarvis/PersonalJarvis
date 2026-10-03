@@ -1,5 +1,29 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
+## AppShot recording frame and completion card (2026-10-03, T2)
+
+The selected recording area keeps a click-through border until recording stops.
+Elapsed time and a stop button sit below it; the toolbar moves above the area or
+inside the work area when the selection reaches the screen edges. A finalized
+video uses the existing screenshot flight animation to enter a bottom-left
+preview card. The card can play the local file, save a separate copy to Downloads,
+and shows the first video frame with a prominent play button and a video/duration label.
+or drag the MP4 to another application. Screenshot and video previews share the
+indicator process and its shutdown/capture-suppression lifecycle.
+
+Windows area and 4K full-screen recordings were verified with the desktop Python
+runtime: persistent frame, elapsed time, stop-button completion, playable MP4,
+and a visible bottom-left card. Both the frame and toolbar successfully enabled
+native capture exclusion. A separate explicitly capturable visual pass verified
+their geometry and appearance without confusing that pass with clean video output.
+
+macOS and X11 use the same Qt positioning code but remain unverified on real
+desktops. Native capture exclusion is Windows-specific; controls are placed outside
+the recorded area when space permits. Wayland portals do not expose global source
+coordinates: the normal stop window remains available there, while a desktop-wide
+boundary and corner flight retain the indicator's existing Wayland limitation.
+
+
 ## AppShot screen recordings (2026-10-03, T2)
 
 AppShots has one configurable recording shortcut (`Ctrl+Shift+9` by default).
