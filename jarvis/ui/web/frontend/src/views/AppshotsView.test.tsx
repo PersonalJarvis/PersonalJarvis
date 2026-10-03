@@ -228,6 +228,31 @@ describe("AppshotsView shortcut recorder", () => {
     await waitFor(() => expect(puts()).toEqual([{ hotkey: "ctrl+shift+s" }]));
   });
 
+  it.each([
+    ["AltLeft", "ControlLeft", "AltRight"],
+    ["ControlLeft", "AltRight", "AltLeft"],
+  ])("records both Alt keys from Off with Windows AltGr events (%s first)", async (...codes) => {
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === "/api/appshot/settings" && init?.method === "PUT") {
+        return json({ ...SETTINGS, ...JSON.parse(String(init.body)) });
+      }
+      if (url === "/api/appshot/settings") return json({ ...SETTINGS, hotkey: "" });
+      return json({ appshot: null });
+    });
+    render(<AppshotsView />);
+    const change = await screen.findByTestId("appshots-hotkey-change");
+    expect(change.textContent).toBe("Off");
+    fireEvent.click(change);
+    const keys: Record<string, string> = {
+      AltLeft: "Alt", ControlLeft: "Control", AltRight: "AltGraph",
+    };
+    for (const code of codes) fireEvent.keyDown(window, { code, key: keys[code] });
+    for (const code of [...codes].reverse()) fireEvent.keyUp(window, { code, key: keys[code] });
+    await waitFor(() => expect(puts()).toEqual([{ hotkey: "alt+alt" }]));
+    expect(change.textContent).toBe("Alt+Alt");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("Esc cancels without saving, and a lone modifier explains itself", async () => {
     render(<AppshotsView />);
     const change = await screen.findByTestId("appshots-hotkey-change");
