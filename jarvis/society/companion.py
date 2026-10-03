@@ -61,7 +61,7 @@ class FigureAppearance(BaseModel):
     model_config = ConfigDict(extra="allow", strict=True)
 
     contract: Literal[1]
-    archetype: Literal["biped", "quadruped", "spirit"]
+    archetype: Literal["biped", "quadruped", "spirit"] | None = None
     base: str = Field(min_length=1, max_length=80, pattern=_FIGURE_ID_PATTERN)
     parts: dict[str, str] = Field(default_factory=dict)
     palette: dict[str, str] | None = None
