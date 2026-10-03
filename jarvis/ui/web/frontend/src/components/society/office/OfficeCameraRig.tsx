@@ -151,9 +151,12 @@ export function OfficeCameraRig({ layout, overview }: { layout: OfficeLayout; ov
   // turns Shift+left into a pan, which slid the view off a running character
   // while the follow kept dragging it back. Flipping the left button to "pan"
   // for that press makes the controls' own Shift inversion land on "rotate".
-  // (Capture phase: this runs before the controls read the button.)
+  // (Capture phase: this runs before the controls read the button.) It listens
+  // where the controls listen, not on the canvas: a press that started on a
+  // floating label skipped it and kept the last Shift press's "pan", so a
+  // plain drag slid the view while the follow dragged it back.
   useEffect(() => {
-    const el = gl.domElement;
+    const el = connected ?? gl.domElement;
     const down = (event: PointerEvent) => {
       const c = controls.current;
       const sprintDrag = event.shiftKey && !event.ctrlKey && !event.metaKey;
@@ -162,7 +165,7 @@ export function OfficeCameraRig({ layout, overview }: { layout: OfficeLayout; ov
     };
     el.addEventListener("pointerdown", down, true);
     return () => el.removeEventListener("pointerdown", down, true);
-  }, [gl]);
+  }, [connected, gl]);
 
   // A drag turns the camera and nothing else. R3F still delivers a click when
   // the press ends on the object it started on, so a small turn over the
