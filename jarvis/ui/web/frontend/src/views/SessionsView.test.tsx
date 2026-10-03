@@ -88,10 +88,11 @@ describe("Transcription workspace", () => {
     await waitFor(() => expect(copy).toHaveBeenCalledWith("Exported conversation"));
     expect(requests).toContain("/api/sessions/voice%2Fone/export?format=plain");
     fireEvent.click(screen.getByRole("button", { name: "Export" }));
-    fireEvent.change(screen.getByRole("combobox", { name: "File format" }), { target: { value: "json" } });
+    fireEvent.click(screen.getByRole("combobox", { name: "File format" }));
+    fireEvent.click(await screen.findByRole("option", { name: "JSON" }));
     expect(screen.getByRole("link", { name: "Open file" }).getAttribute("href")).toBe("/api/sessions/voice%2Fone/export?format=json");
     exportStatus = 500;
-    const panel = screen.getByRole("combobox").parentElement!;
+    const panel = screen.getByRole("combobox").closest(".transcript-export")!;
     fireEvent.click(within(panel).getByRole("button", { name: "Copy" }));
     await waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/clipboard/i));
   });
