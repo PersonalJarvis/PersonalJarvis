@@ -2,7 +2,8 @@
 
 The card (a PySide6 window in the indicator sidecar) shows Copy, Save and
 Copy text on hover. The sidecar only reports the press; the work happens here
-in the main process, on the held appshot itself:
+in the main process, on the card's own appshot (every card in the corner
+stack names its appshot id; the last appshot when none is named):
 
 * **Copy** goes through :mod:`jarvis.platform.clipboard_image`, which owns the
   clipboard natively on every OS. A Qt clipboard in the sidecar would lose the
@@ -12,9 +13,10 @@ in the main process, on the held appshot itself:
   the clipboard — CleanShot's upload chip, swapped for what an assistant app
   reads off the screen anyway.
 
-And when the editor closes, :func:`return_to_corner` slides the (edited)
-appshot back into the corner, so it stays at hand — CleanShot X's Quick Access
-Overlay. Every function here returns a result and never raises.
+And when the editor closes, :func:`return_to_corner` brings the (edited)
+appshot back to the bottom of the corner stack, so it stays at hand —
+CleanShot X's Quick Access Overlay. Every function here returns a result and
+never raises.
 """
 
 from __future__ import annotations
@@ -121,14 +123,21 @@ def save_to_downloads(png: bytes, *, folder: Path | None = None, now: float | No
     return path
 
 
-async def run_card_action(action: str) -> str:
-    """Do ``copy``, ``save`` or ``copy_text`` on the held appshot; the card's status line."""
+def _held(shot_id: str):
+    """The card's appshot: by id when the card names one, else the last one."""
     from jarvis.appshot.store import get_store  # noqa: PLC0415
+
+    store = get_store()
+    return store.get(shot_id) if shot_id else store.latest()
+
+
+async def run_card_action(action: str, shot_id: str = "") -> str:
+    """Do ``copy``, ``save`` or ``copy_text`` on a card's appshot; the card's status line."""
     from jarvis.core.config import load_config  # noqa: PLC0415
 
     config = await asyncio.to_thread(load_config)
     labels = card_labels(config)
-    shot = get_store().latest()
+    shot = _held(shot_id)
     if shot is None:
         return labels["gone"]
     try:
@@ -156,21 +165,21 @@ async def run_card_action(action: str) -> str:
     return labels["failed"]
 
 
-async def return_to_corner(fly_from: list[float] | None = None) -> bool:
-    """Bring the held appshot back into the corner card. ``False`` = not shown.
+async def return_to_corner(fly_from: list[float] | None = None, *, shot_id: str = "") -> bool:
+    """Bring an appshot back into the corner card stack. ``False`` = not shown.
 
+    ``shot_id`` is the appshot the editor had open (the last one when empty).
     ``fly_from`` (``[x, y, w, h]``, global logical pixels) is where the
-    editor showed the picture: it then flies from there into the corner,
-    like after the shutter. Without it the card slides in from the edge.
+    editor showed the picture: it then flies from there to the bottom of the
+    stack, like after the shutter. Without it the card slides in from the edge.
     """
     try:
         from jarvis.appshot.effect import card_hint, thumbnail_from_image  # noqa: PLC0415
-        from jarvis.appshot.store import get_store  # noqa: PLC0415
         from jarvis.core.config import load_config  # noqa: PLC0415
         from jarvis.cu.indicator.controller import get_indicator_controller  # noqa: PLC0415
 
         controller = get_indicator_controller()
-        shot = get_store().latest()
+        shot = _held(shot_id)
         if controller is None or shot is None:
             return False
         config = await asyncio.to_thread(load_config)
@@ -186,6 +195,7 @@ async def return_to_corner(fly_from: list[float] | None = None) -> bool:
                 rest_ms=card_rest_ms(config),
                 labels=card_labels(config),
                 fly_from=fly_from,
+                shot_id=shot.id,
             )
         )
     except Exception:  # noqa: BLE001 - the card is a convenience, never a failure

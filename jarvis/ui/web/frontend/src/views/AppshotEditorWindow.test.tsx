@@ -88,11 +88,13 @@ describe("the appshot editor window", () => {
       }),
     );
     const flights: unknown[] = [];
+    const ids: string[] = [];
     const closeWindow = vi.fn(async () => undefined);
     render(
       <AppshotEditorWindow
         deps={{
-          returnCard: async (flyFrom) => {
+          returnCard: async (id, flyFrom) => {
+            ids.push(id);
             flights.push(flyFrom);
           },
           closeWindow,
@@ -106,6 +108,7 @@ describe("the appshot editor window", () => {
     await waitFor(() => expect(closeWindow).toHaveBeenCalledTimes(1));
     expect(calls).toContain("PUT /api/appshot/latest/image?id=a1b2c3d4");
     expect(flights).toHaveLength(1);
+    expect(ids).toEqual(["a1b2c3d4"]);
     const from = flights[0] as number[];
     expect(Array.isArray(from) && from.length === 4).toBe(true);
     vi.restoreAllMocks();

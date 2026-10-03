@@ -117,12 +117,14 @@ class CUIndicatorController:
         # Monotonic deadline until which an appshot effect owns the sidecar.
         self._snap_until = 0.0
         self._idle_quit_task: asyncio.Task | None = None
-        # The appshot card in the corner is up (hover / click / drag).
+        # At least one appshot card in the corner stack is up.
         self._card_open = False
         self._loop: asyncio.AbstractEventLoop | None = None
         # The finished picture for the current card. It can be ready before the
         # effect reached the sidecar, so ``snap`` re-sends it after the card.
         self._card_image_b64: str | None = None
+        #: The appshot that picture belongs to — the card's id in the stack.
+        self._card_image_id = ""
         #: The monitor the last shutter played on — where a card comes back.
         self._card_monitor: list[int] | None = None
 
@@ -275,6 +277,7 @@ class CUIndicatorController:
         """
         self._snap_until = max(self._snap_until, time.monotonic() + _SNAP_LIFETIME_S)
         self._card_image_b64 = None  # a new capture: the old picture is not its picture
+        self._card_image_id = ""
 
     async def snap(
         self,
@@ -319,7 +322,11 @@ class CUIndicatorController:
             image = self._card_image_b64
             if shown and image:
                 await asyncio.to_thread(
-                    self._send_and_wait, protocol.CMD_SNAP_IMAGE, _SHOW_ACK_TIMEOUT_S, image=image
+                    self._send_and_wait,
+                    protocol.CMD_SNAP_IMAGE,
+                    _SHOW_ACK_TIMEOUT_S,
+                    image=image,
+                    id=self._card_image_id,
                 )
             self._schedule_idle_quit()
             return shown
@@ -333,11 +340,14 @@ class CUIndicatorController:
         rest_ms: int = 6000,
         labels: dict[str, str] | None = None,
         fly_from: list[float] | None = None,
+        shot_id: str = "",
     ) -> bool:
-        """Put a picture straight back into the corner card — no flash, no flight.
+        """Put a picture back at the bottom of the corner card stack — no flash.
 
-        Used when the editor closes: the (edited) appshot slides back into the
-        corner of the screen its shutter played on, so it stays at hand.
+        Used when the editor closes: the (edited) appshot comes back into the
+        corner of the screen its shutter played on, so it stays at hand. With
+        ``fly_from`` it flies there from the editor, otherwise it slides in.
+        ``shot_id`` names the card, replacing a card of the same appshot.
         """
         ok, reason = self._border_capability()
         if not ok:
@@ -347,6 +357,7 @@ class CUIndicatorController:
         async with self._lock:
             self.hold_for_snap()
             self._card_image_b64 = image_b64 or None
+            self._card_image_id = shot_id
             await asyncio.to_thread(self._spawn_sidecar)
             if self._proc is None:
                 return False
@@ -360,6 +371,7 @@ class CUIndicatorController:
                 hint=hint,
                 rest_ms=int(rest_ms),
                 labels=dict(labels or {}),
+                id=shot_id,
                 **({"from": list(fly_from)} if fly_from else {}),
             )
             if shown and image_b64:
@@ -368,22 +380,29 @@ class CUIndicatorController:
                     protocol.CMD_SNAP_IMAGE,
                     _SHOW_ACK_TIMEOUT_S,
                     image=image_b64,
+                    id=shot_id,
                 )
             self._schedule_idle_quit()
             return shown
 
-    async def snap_image(self, image_b64: str) -> bool:
-        """Hand the finished picture to the resting card, for a drag out.
+    async def snap_image(self, image_b64: str, shot_id: str = "") -> bool:
+        """Hand the finished picture to the newest card, for a drag out.
 
-        Kept for the effect still on its way (``snap`` sends it after the card);
-        sent at once when the sidecar already runs. The picture never starts a
-        process of its own.
+        ``shot_id`` becomes that card's id, so its buttons reach its own
+        appshot once newer cards stack below it. Kept for the effect still on
+        its way (``snap`` sends it after the card); sent at once when the
+        sidecar already runs. The picture never starts a process of its own.
         """
         self._card_image_b64 = image_b64
+        self._card_image_id = shot_id
         if self._proc is None or self._proc.poll() is not None:
             return False
         return await asyncio.to_thread(
-            self._send_and_wait, protocol.CMD_SNAP_IMAGE, _SHOW_ACK_TIMEOUT_S, image=image_b64
+            self._send_and_wait,
+            protocol.CMD_SNAP_IMAGE,
+            _SHOW_ACK_TIMEOUT_S,
+            image=image_b64,
+            id=shot_id,
         )
 
     def _on_sidecar_event(self, payload: dict[str, Any]) -> None:
@@ -402,26 +421,33 @@ class CUIndicatorController:
                 self._schedule_idle_quit()
         elif event == protocol.EVENT_SNAP_OPEN:
             # _open_editor logs its own failures; nothing awaits this task.
-            asyncio.get_running_loop().create_task(self._open_editor(), name="appshot-card-open")
+            asyncio.get_running_loop().create_task(
+                self._open_editor(str(payload.get("id", ""))), name="appshot-card-open"
+            )
         elif event == protocol.EVENT_CARD_ACTION:
             action = str(payload.get("action", ""))
             if action in protocol.CARD_ACTIONS:
                 asyncio.get_running_loop().create_task(
-                    self._card_action(action), name="appshot-card-action"
+                    self._card_action(action, str(payload.get("id", ""))),
+                    name="appshot-card-action",
                 )
 
-    async def _card_action(self, action: str) -> None:
-        """Copy, save or copy text from the card, then tell the card how it went."""
+    async def _card_action(self, action: str, shot_id: str = "") -> None:
+        """Copy, save or copy text from a card, then tell that card how it went."""
         from jarvis.appshot.card_actions import run_card_action  # noqa: PLC0415
 
-        status = await run_card_action(action)
+        status = await run_card_action(action, shot_id)
         if self._proc is None or self._proc.poll() is not None:
             return
         await asyncio.to_thread(
-            self._send_and_wait, protocol.CMD_CARD_STATUS, _SHOW_ACK_TIMEOUT_S, text=status
+            self._send_and_wait,
+            protocol.CMD_CARD_STATUS,
+            _SHOW_ACK_TIMEOUT_S,
+            text=status,
+            id=shot_id,
         )
 
-    async def _open_editor(self) -> None:
+    async def _open_editor(self, shot_id: str = "") -> None:
         """The card was clicked: open the appshot editor in front of the user.
 
         In its own window where the desktop shell can open one, so the app
@@ -436,7 +462,9 @@ class CUIndicatorController:
                 ShowWindowRequested,
             )
 
-            shot = get_store().latest()
+            store = get_store()
+            # The clicked card's own appshot; the last one for a card without an id.
+            shot = store.get(shot_id) if shot_id else store.latest()
             if shot is not None and await open_editor_window(shot.id):
                 return
             await self._bus.publish(

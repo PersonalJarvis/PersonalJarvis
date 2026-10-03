@@ -12,8 +12,17 @@ One JSON object per line on the sidecar's stdin::
      "rect": [fx, fy, fw, fh],                 # flash the captured rect and
      "thumb": "<base64 jpeg>",                 # fly its thumbnail to a corner,
      "hint": "Click to edit · Drag to share"}  # where it rests as a card
-    {"cmd": "snap_image", "image": "<b64>"}    # the finished (redacted) picture
-                                               # a drag from the card hands out
+    {"cmd": "snap_image", "image": "<b64>",    # the finished (redacted) picture
+     "id": "<appshot id>"}                     # a drag from the card hands out;
+                                               # the newest card without an id
+                                               # (or the card with it) takes it
+    {"cmd": "card", "thumb": "<b64>",          # the editor closed: the picture
+     "id": "<appshot id>", "from": [x,y,w,h]}  # comes back (flies from "from")
+    {"cmd": "card_status", "text": "Copied",   # a short line on that card
+     "id": "<appshot id>"}
+
+Cards stack in the corner: a new one lands at the bottom and the older ones
+move up; at most ``MAX_CARDS`` stay, the oldest leaves first.
 
 The sidecar answers each command with one JSON line on stdout::
 
@@ -21,8 +30,10 @@ The sidecar answers each command with one JSON line on stdout::
 
 and reports what the user does with the resting card::
 
-    {"event": "card", "open": true|false}      # keep the sidecar alive meanwhile
-    {"event": "snap_open"}                     # the card was clicked: edit it
+    {"event": "card", "open": true|false}      # any card up? keep the sidecar alive
+    {"event": "snap_open", "id": "<appshot>"}  # a card was clicked: edit it
+    {"event": "card_action", "action": "copy", # a card's hover button
+     "id": "<appshot>"}
 
 and exits on stdin EOF (parent death) even without a ``quit``. Everything
 is best-effort: the controller treats a missing/late ack as "sidecar gone"
@@ -66,6 +77,9 @@ EVENT_SNAP_OPEN = "snap_open"
 EVENT_CARD_ACTION = "card_action"
 #: What the main process does for the card; pin and close stay in the sidecar.
 CARD_ACTIONS = frozenset({"copy", "save", "copy_text"})
+#: How many cards the corner stack holds — as many appshots as the store keeps
+#: (``jarvis.appshot.store.MAX_RECENT``), so every card's buttons still work.
+MAX_CARDS = 5
 ALL_EVENTS = frozenset({EVENT_CARD, EVENT_SNAP_OPEN, EVENT_CARD_ACTION})
 
 #: Sidecar exit code when no usable GUI stack exists (PySide6 missing or
@@ -141,6 +155,7 @@ __all__ = [
     "EVENT_SNAP_OPEN",
     "CMD_UNBLANK",
     "EXIT_NO_GUI",
+    "MAX_CARDS",
     "decode_ack",
     "decode_command",
     "encode_ack",

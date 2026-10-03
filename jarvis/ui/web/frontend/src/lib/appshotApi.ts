@@ -83,9 +83,10 @@ export function fetchLatestAppshot(): Promise<{ appshot: AppshotMeta | null }> {
 }
 
 export function latestAppshotImageUrl(id: string, revision = 0): string {
-  // The id (and the edit revision) only bust the <img> cache; the server keeps one.
+  // The id picks that kept appshot (an older card in the corner stack); with
+  // the edit revision it also busts the <img> cache.
   const v = revision ? `${id}-${revision}` : id;
-  return `/api/appshot/latest/image?v=${encodeURIComponent(v)}`;
+  return `/api/appshot/latest/image?id=${encodeURIComponent(id)}&v=${encodeURIComponent(v)}`;
 }
 
 export function takeAppshot(

@@ -9,7 +9,7 @@ Endpoints (mounted by the WebServer in ``_build_app()``):
     GET    /api/appshot/latest/image     → its picture (never cached).
     PUT    /api/appshot/latest/image     → replace it with the editor's version and
                                            hand that to the assistant (deliver_edit).
-    POST   /api/appshot/latest/card      → slide it back into the corner card.
+    POST   /api/appshot/latest/card      → bring it back into the corner card stack.
     POST   /api/appshot/open-editor      → open the editor in its own window.
     POST   /api/appshot/clipboard        → copy the editor's PNG natively (desktop only).
     POST   /api/appshot/drag-file        → write it for a native drag out (desktop only).
@@ -205,10 +205,18 @@ async def latest() -> dict[str, Any]:
 
 
 @router.get("/latest/image")
-async def latest_image() -> Response:
+async def latest_image(id: str = "") -> Response:  # noqa: A002
+    """The last appshot's picture — or, with ``id``, that kept appshot's.
+
+    An older card in the corner stack opens the editor on its own picture;
+    an unknown id falls back to the last appshot, as before ids were sent.
+    """
     from jarvis.appshot.store import get_store  # noqa: PLC0415
 
-    shot = await asyncio.to_thread(get_store().latest)
+    store = get_store()
+    shot = (await asyncio.to_thread(store.get, id) if id else None) or await asyncio.to_thread(
+        store.latest
+    )
     if shot is None:
         raise HTTPException(status_code=404, detail="No appshot is being kept right now.")
     return Response(content=shot.image, media_type=shot.mime, headers=_NO_STORE)
@@ -262,6 +270,8 @@ class ReturnCardRequest(BaseModel):
     #: Where the editor showed the picture, ``[x, y, w, h]`` in global
     #: logical pixels: the saved picture flies from there into the corner.
     fly_from: list[float] | None = Field(default=None, min_length=4, max_length=4)
+    #: The appshot the editor had open; empty = the last one.
+    id: str = Field(default="", max_length=64)
 
 
 @router.post("/latest/card")
@@ -269,13 +279,15 @@ async def return_card(body: ReturnCardRequest | None = None) -> dict[str, Any]:
     """Bring the held (edited) appshot back into the corner card.
 
     The editor calls this when it closes, so the picture stays at hand
-    like after the shutter; after a save it flies there from the editor.
-    ``shown: false`` where no overlay can run.
+    like after the shutter; after a save it flies there from the editor and
+    lands at the bottom of the corner stack. ``shown: false`` where no
+    overlay can run.
     """
     from jarvis.appshot.card_actions import return_to_corner  # noqa: PLC0415
 
-    fly_from = body.fly_from if body is not None else None
-    return {"shown": await return_to_corner(fly_from)}
+    if body is None:
+        return {"shown": await return_to_corner(None)}
+    return {"shown": await return_to_corner(body.fly_from, shot_id=body.id)}
 
 
 def _png_size(data: bytes) -> tuple[int, int] | None:

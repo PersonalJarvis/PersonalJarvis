@@ -100,15 +100,19 @@ async def _play(
         log.warning("appshot: shutter effect failed", exc_info=True)
 
 
-async def attach_card_image(image: bytes) -> None:
-    """Give the resting card the finished picture, so a drag can share it."""
+async def attach_card_image(image: bytes, shot_id: str = "") -> None:
+    """Give the resting card the finished picture, so a drag can share it.
+
+    ``shot_id`` ties the card to its appshot, so Copy, Save and Edit on an
+    older card in the corner stack reach that card's own picture.
+    """
     try:
         from jarvis.cu.indicator.controller import get_indicator_controller  # noqa: PLC0415
 
         controller = get_indicator_controller()
         if controller is None:
             return
-        await controller.snap_image(base64.b64encode(image).decode("ascii"))
+        await controller.snap_image(base64.b64encode(image).decode("ascii"), shot_id=shot_id)
     except Exception:  # noqa: BLE001 - without it the card still opens the editor
         log.warning("appshot: could not hand the picture to the card", exc_info=True)
 

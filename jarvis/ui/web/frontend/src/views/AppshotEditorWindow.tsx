@@ -11,8 +11,9 @@ import { AppshotEditor, type EditorExit } from "@/views/AppshotEditor";
  *
  * When it closes the appshot goes back into the screen corner
  * (`POST /api/appshot/latest/card`), so it stays at hand — after Save or Done
- * it flies there from where the editor showed it, after Close it slides in —
- * and then the window closes itself through the shell
+ * it flies there from where the editor showed it, after Close it slides in;
+ * either way it lands at the bottom of the card stack — and then the window
+ * closes itself through the shell
  * (`POST /api/window/reattach`), which only hides it: the window stays loaded
  * so the next click opens the editor at once.
  */
@@ -31,16 +32,16 @@ export function isAppshotEditorWindow(search: string): boolean {
 }
 
 export interface EditorWindowDeps {
-  returnCard: (flyFrom?: EditorExit["flyFrom"]) => Promise<unknown>;
+  returnCard: (id: string, flyFrom?: EditorExit["flyFrom"]) => Promise<unknown>;
   closeWindow: () => Promise<unknown>;
 }
 
 const browserDeps: EditorWindowDeps = {
-  returnCard: (flyFrom) =>
+  returnCard: (id, flyFrom) =>
     fetch("/api/appshot/latest/card", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(flyFrom ? { fly_from: flyFrom } : {}),
+      body: JSON.stringify(flyFrom ? { id, fly_from: flyFrom } : { id }),
     }),
   closeWindow: () =>
     fetch("/api/window/reattach", {
@@ -88,13 +89,13 @@ export function AppshotEditorWindow({ deps = browserDeps }: { deps?: EditorWindo
     // request down with it. Then forget the picture, so the hidden window
     // never flashes the previous appshot when it is shown again.
     void deps
-      .returnCard(exit?.flyFrom)
+      .returnCard(appshotId, exit?.flyFrom)
       .catch(() => undefined)
       .finally(() => {
         setAppshotId("");
         void deps.closeWindow().catch(() => undefined);
       });
-  }, [deps]);
+  }, [appshotId, deps]);
 
   return (
     <div className="h-screen w-screen overflow-hidden bg-popover" data-testid="appshot-editor-window">

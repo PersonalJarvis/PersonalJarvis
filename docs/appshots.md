@@ -59,6 +59,14 @@ screen and rests there as a card — CleanShot X's Quick Access Overlay. How
 long is `[appshot].card_seconds` (Settings → Appshots → *Corner card*: 3, 6,
 10 or 30 seconds, or until you close it); the pointer on it keeps it.
 
+Several appshots **stack**, as in CleanShot X: the newest always lands at the
+bottom and the cards already there glide up to make room; when a card goes,
+the ones above it glide down. Up to five cards stay (the oldest leaves first,
+or earlier when the screen has no room). Every card belongs to its own
+appshot, so Copy, Save, Copy text, Edit and a drag on an older card reach
+that card's picture (`AppshotStore` keeps the last five, each for
+`[screen_context].deck_preview_s`).
+
 - **Hover** frosts the picture and shows **Copy** and **Save** stacked in
   the middle, plus four round chips in the corners: **Pin** (top left),
   **Close** (top right), **Edit** (bottom left) and **Copy text** (bottom
@@ -73,8 +81,10 @@ long is `[appshot].card_seconds` (Settings → Appshots → *Corner card*: 3, 6,
   front of you; the app behind keeps its size and what it shows. Without a
   desktop shell (a browser, a headless host) the editor opens over the app's
   page instead. See [The editor](#the-editor).
-- **Done** or **Close** in the editor window slides the picture back into
-  the corner — the edited one after Done — so it stays at hand.
+- **Save** or **Done** in the editor flies the edited picture from the
+  editor back to the bottom of the stack (the shutter's flight, without the
+  flash or a sound); **Close** slides the unchanged picture in from the edge.
+  Either way it stays at hand.
 - **Drag** the card into any app that accepts files or images (chat, mail,
   Explorer/Finder) to drop the picture there. As in CleanShot X, a smaller
   rounded copy lifts off and stays where you grabbed it, and a green "+"

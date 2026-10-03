@@ -205,6 +205,10 @@ class _GlowWindow(QWidget):
 # card (``_CardWindow``): hovering keeps it, a click asks the app to open the
 # editor, a drag hands the finished picture to any app that takes a file, a
 # right-click dismisses it. The flight canvas itself stays click-through.
+#
+# Cards stack like CleanShot X's: the newest always lands at the bottom and
+# the older ones glide up to make room; when one goes, the ones above it
+# glide down. At most ``protocol.MAX_CARDS`` stay, the oldest leaves first.
 # ---------------------------------------------------------------------------
 
 _SNAP_FLASH_MS = 200
@@ -228,6 +232,9 @@ _CARD_STATUS_MS = 1600
 _CARD_BUTTON_H = 30.0
 _CARD_ROUND = 28.0
 _CARD_INSET = 8.0
+#: The corner stack: the gap between two cards and how long a card glides.
+_CARD_STACK_GAP = 12.0
+_CARD_MOVE_MS = 220
 #: Drag files older than this are removed the next time one is written.
 _DRAG_FILE_MAX_AGE_S = 3600
 
@@ -292,6 +299,14 @@ def _match_screen(monitor: list[float]):
     return best
 
 
+def _screen_named(name: str):
+    """The screen a card sits on, by name; primary when it went away."""
+    for screen in QGuiApplication.screens():
+        if screen.name() == name:
+            return screen
+    return QGuiApplication.primaryScreen()
+
+
 def _paint_card(painter: QPainter, rect: QRectF, thumb: QImage, radius: float, ring: float) -> None:
     """The thumbnail with rounded corners and a white ring — flight and card."""
     clip = QPainterPath()
@@ -343,6 +358,10 @@ class _SnapWindow(QWidget):
         self._thumb = thumb
         self._on_landed = on_landed
         self._on_done = on_done
+        #: Which appshot is flying and its finished picture (``snap_image``),
+        #: handed to the card it becomes.
+        self.appshot_id = ""
+        self.image: QImage | None = None
         # No flash when the picture is not a fresh capture (back from the
         # editor): only the flight into the corner.
         self._flash = flash
@@ -383,6 +402,20 @@ class _SnapWindow(QWidget):
         self._anim.stop()
         self._finish()
 
+    def land_now(self) -> None:
+        """Skip the rest of the flight: the card appears in the corner at once."""
+        self._anim.stop()
+        self._landed()
+
+    @property
+    def landing_height(self) -> float:
+        """How tall the card it becomes is — the slot the stack keeps free."""
+        return float(self._dst.height())
+
+    @property
+    def screen_name(self) -> str:
+        return self.screen().name() if self.screen() is not None else ""
+
     def _on_tick(self, value) -> None:
         self._t = float(value)
         self.update()
@@ -391,7 +424,7 @@ class _SnapWindow(QWidget):
         landed, self._on_landed = self._on_landed, None
         if landed is not None and not self._thumb.isNull():
             top_left = self._screen_geo.topLeft()
-            landed(self._dst.translated(top_left.x(), top_left.y()), self._thumb)
+            landed(self._dst.translated(top_left.x(), top_left.y()), self._thumb, self)
         self._finish()
 
     def _finish(self) -> None:
@@ -557,6 +590,30 @@ def _card_rect(screen, thumb: QImage) -> QRectF:
     return QRectF(right - tw - _SNAP_MARGIN, bottom - th - _SNAP_MARGIN, tw, th)
 
 
+def _stack_tops(
+    bottom: float, top_limit: float, heights: list[float], *, gap: float, reserve: float = 0.0
+) -> list[float | None]:
+    """The top edge of every card in a corner stack; ``None`` = no room left.
+
+    ``heights`` are newest first: the newest card sits on ``bottom`` and each
+    older one ``gap`` above the card below it. ``reserve`` keeps that much
+    space free at the bottom for a picture still flying in. Once one card no
+    longer fits under ``top_limit``, no older card does either.
+    """
+    tops: list[float | None] = []
+    cursor = bottom - reserve
+    full = False
+    for height in heights:
+        top = cursor - height
+        if full or top < top_limit:
+            full = True
+            tops.append(None)
+            continue
+        tops.append(top)
+        cursor = top - gap
+    return tops
+
+
 #: Default card wording; the main process sends the user's language.
 _CARD_LABELS = {
     "edit": "Edit",
@@ -578,6 +635,10 @@ class _CardWindow(QWidget):
     the on-screen text the appshot read). A click anywhere else edits, a drag
     shares the picture, a right-click dismisses it. ``rest_ms`` is how long it
     stays untouched — ``0`` keeps it until the user closes it.
+
+    Each card belongs to one appshot (``appshot_id``) and holds its own
+    finished picture (``image``), so in a stack every card copies, saves,
+    drags and edits its own appshot. :meth:`move_to` glides it to its place.
     """
 
     _PAD = 12  # transparent margin that holds the soft shadow
@@ -591,6 +652,9 @@ class _CardWindow(QWidget):
         *,
         rest_ms: int = _CARD_REST_MS,
         labels: dict[str, str] | None = None,
+        appshot_id: str = "",
+        image: QImage | None = None,
+        screen_name: str = "",
     ) -> None:
         super().__init__(None)
         self.setWindowFlags(
@@ -600,6 +664,13 @@ class _CardWindow(QWidget):
             | Qt.WindowType.Tool
             | Qt.WindowType.NoDropShadowWindowHint
         )
+        self.appshot_id = appshot_id
+        #: The finished (redacted) picture a drag and Copy text need; ``None``
+        #: until ``snap_image`` arrived, and for good when none may be kept.
+        self.image = image
+        self.screen_name = screen_name
+        #: The picture's size; the window is larger by ``_PAD`` on every side.
+        self.card_size = (float(rect.width()), float(rect.height()))
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         if sys.platform == "darwin":
@@ -640,18 +711,50 @@ class _CardWindow(QWidget):
         self._in.setEndValue(0.0)
         self._in.setDuration(_CARD_OUT_MS)
         self._in.valueChanged.connect(self._on_out)
+        # Position = place in the stack (``_origin``) + the sideways slide of
+        # coming in / going out (``_slide``), so both can run at once.
         self._origin = self.pos()
+        self._slide = 0.0
+        self._target = self.pos()
+        self._move_from = self.pos()
+        self._move = QVariantAnimation(self)
+        self._move.setStartValue(0.0)
+        self._move.setEndValue(1.0)
+        self._move.setDuration(_CARD_MOVE_MS)
+        self._move.valueChanged.connect(self._on_move)
+
+    @property
+    def leaving(self) -> bool:
+        return self._leaving
 
     def start(self, *, slide_in: bool = False) -> None:
         if slide_in:
             # Back from the editor: slide in from the edge it leaves through.
-            self._origin = self.pos()
             self._on_out(1.0)
             self.show()
             self._in.start()
         else:
             self.show()
         self._arm_dismiss(self._rest_ms)
+
+    def move_to(self, top_left: QPoint) -> None:
+        """Glide to a new place in the stack (``top_left`` of the window)."""
+        if top_left == self._target:
+            return
+        self._target = QPoint(top_left)
+        self._move.stop()
+        if not self.isVisible():
+            self._origin = QPoint(top_left)
+            self._apply_position()
+            return
+        self._move_from = QPoint(self._origin)
+        self._move.start()
+
+    def _on_move(self, value) -> None:
+        t = _ease_out_cubic(float(value))
+        a, b = self._move_from, self._target
+        self._origin = QPoint(round(_lerp(a.x(), b.x(), t)), round(_lerp(a.y(), b.y(), t)))
+        self._apply_position()
 
     def _arm_dismiss(self, ms: int) -> None:
         if self._rest_ms > 0 and not self._leaving and not self._pinned:
@@ -665,7 +768,6 @@ class _CardWindow(QWidget):
         self._leaving = True
         self._dismiss.stop()
         self._in.stop()
-        self._origin = self.pos()
         self._out.start()
 
     def finish_now(self) -> None:
@@ -673,12 +775,16 @@ class _CardWindow(QWidget):
         self._dismiss.stop()
         self._in.stop()
         self._out.stop()
+        self._move.stop()
         self._gone()
 
     def _on_out(self, value) -> None:
-        t = _ease_out_cubic(float(value))
-        self.move(self._origin + QPoint(int(48 * t), 0))
-        self.setWindowOpacity(1.0 - t)
+        self._slide = _ease_out_cubic(float(value))
+        self._apply_position()
+
+    def _apply_position(self) -> None:
+        self.move(self._origin + QPoint(int(48 * self._slide), 0))
+        self.setWindowOpacity(1.0 - self._slide)
 
     def _gone(self) -> None:
         self.hide()
@@ -757,14 +863,14 @@ class _CardWindow(QWidget):
             self._dismiss.stop()  # the pointer is on the card; leaving re-arms it
             self.update()
         elif pressed in ("copy", "save", "copy_text"):
-            if self._owner.card_image is not None:
-                self._owner.card_action(pressed)
+            if self.image is not None:
+                self._owner.card_action(self, pressed)
         else:  # "edit" or the picture itself
             self._owner.card_clicked(self)
 
     def _start_drag(self, grab: QPointF) -> None:
         owner = self._owner
-        image = owner.card_image if owner is not None else None
+        image = self.image
         if owner is None or image is None or image.isNull():
             # Only the finished, privacy-filtered picture may leave this
             # process; the thumbnail is cut from the raw frame.
@@ -814,7 +920,7 @@ class _CardWindow(QWidget):
             "close": QRectF(right, top, d, d),
             "edit": QRectF(left, bottom, d, d),
         }
-        if self._owner is not None and self._owner.card_image is not None:
+        if self._owner is not None and self.image is not None:
             # Only with a kept, finished appshot — the same rule as the drag.
             buttons["copy_text"] = QRectF(right, bottom, d, d)
             metrics = QFontMetricsF(_pill_font())
@@ -1082,12 +1188,11 @@ class Renderer(QObject):
         self._app = app
         self._windows: list[_GlowWindow] = []
         self._snaps: list[_SnapWindow] = []
-        self._card: _CardWindow | None = None
+        #: The corner stack, oldest first; the newest sits at the bottom.
+        self._cards: list[_CardWindow] = []
         self._card_hint = ""
         self._card_rest_ms = _CARD_REST_MS
         self._card_labels: dict[str, str] = {}
-        #: The finished (redacted) picture a drag from the card hands out.
-        self.card_image: QImage | None = None
         self._hint = ""
         self._active = False  # "show" was requested and not yet "hide"
         self._blanked = False  # capture guard currently hiding the border
@@ -1152,8 +1257,9 @@ class Renderer(QObject):
                 elif cmd == protocol.CMD_CARD:
                     self._card_cmd(payload)
                 elif cmd == protocol.CMD_CARD_STATUS:
-                    if self._card is not None:
-                        self._card.show_status(str(payload.get("text", "")))
+                    card = self._card_for(str(payload.get("id", "") or ""))
+                    if card is not None:
+                        card.show_status(str(payload.get("text", "")))
                 elif cmd == protocol.CMD_QUIT:
                     _ack(cmd)
                     self._app.quit()
@@ -1198,16 +1304,15 @@ class Renderer(QObject):
         screen = _match_screen(monitor if isinstance(monitor, list) else [])
         if screen is None:
             return
-        # One effect at a time: a second appshot replaces the resting card.
+        # A flight still under way lands at once and joins the stack; the
+        # cards already there glide up to keep the bottom slot for this one.
         for old in list(self._snaps):
-            old.finish_now()
-        if self._card is not None:
-            self._card.finish_now()
-        self.card_image = None
+            old.land_now()
         self._card_hint = str(payload.get("hint", "") or "")
         self._take_card_options(payload)
         win = _SnapWindow(screen, rect, thumb, self._snap_landed, self._snap_done)
         self._snaps.append(win)
+        self._relayout()
         win.start()
 
     def _snap_done(self, win) -> None:
@@ -1224,7 +1329,16 @@ class Renderer(QObject):
             {str(k): str(v) for k, v in labels.items()} if isinstance(labels, dict) else {}
         )
 
-    def _new_card(self, rect: QRectF, thumb: QImage) -> _CardWindow:
+    def _new_card(
+        self,
+        rect: QRectF,
+        thumb: QImage,
+        *,
+        screen_name: str,
+        appshot_id: str = "",
+        image: QImage | None = None,
+    ) -> _CardWindow:
+        """A new card at the bottom of the stack; the older ones move up."""
         card = _CardWindow(
             rect,
             thumb,
@@ -1232,13 +1346,72 @@ class Renderer(QObject):
             self,
             rest_ms=self._card_rest_ms,
             labels=self._card_labels,
+            appshot_id=appshot_id,
+            image=image,
+            screen_name=screen_name,
         )
-        self._card = card
+        self._cards.append(card)
         _emit(protocol.EVENT_CARD, open=True)
+        self._relayout()
         return card
 
-    def _snap_landed(self, rect: QRectF, thumb: QImage) -> None:
-        self._new_card(rect, thumb).start()
+    def _snap_landed(self, rect: QRectF, thumb: QImage, flight: _SnapWindow) -> None:
+        # The flight no longer holds the bottom slot: its card takes it.
+        self._snap_done(flight)
+        self._new_card(
+            rect,
+            thumb,
+            screen_name=flight.screen_name,
+            appshot_id=flight.appshot_id,
+            image=flight.image,
+        ).start()
+
+    def _relayout(self) -> None:
+        """Put every card in its place: newest at the bottom, older ones above.
+
+        Per screen; a flight still on its way keeps the bottom slot free.
+        Cards beyond ``MAX_CARDS``, or without room on the screen, leave.
+        """
+        staying = [card for card in self._cards if not card.leaving]
+        for card in staying[: max(0, len(staying) - protocol.MAX_CARDS)]:
+            card.leave()
+        staying = staying[-protocol.MAX_CARDS :]
+        by_screen: dict[str, list[_CardWindow]] = {}
+        for card in reversed(staying):  # newest first
+            by_screen.setdefault(card.screen_name, []).append(card)
+        for name, cards in by_screen.items():
+            screen = _screen_named(name)
+            if screen is None:
+                continue
+            avail = screen.availableGeometry()
+            reserve = sum(
+                snap.landing_height + _CARD_STACK_GAP
+                for snap in self._snaps
+                if snap.screen_name == name
+            )
+            tops = _stack_tops(
+                float(avail.bottom() + 1) - _SNAP_MARGIN,
+                float(avail.top()) + _SNAP_MARGIN,
+                [card.card_size[1] for card in cards],
+                gap=_CARD_STACK_GAP,
+                reserve=reserve,
+            )
+            right = float(avail.right() + 1) - _SNAP_MARGIN
+            pad = float(_CardWindow._PAD)
+            for card, top in zip(cards, tops, strict=True):
+                if top is None:
+                    card.leave()
+                    continue
+                width, height = card.card_size
+                place = QRectF(right - width, top, width, height).adjusted(-pad, -pad, pad, pad)
+                card.move_to(place.toAlignedRect().topLeft())
+
+    def _card_for(self, appshot_id: str) -> _CardWindow | None:
+        """The card of that appshot; the newest card when no id is named."""
+        live = [card for card in self._cards if not card.leaving] or self._cards
+        if not appshot_id:
+            return live[-1] if live else None
+        return next((card for card in reversed(live) if card.appshot_id == appshot_id), None)
 
     def _card_cmd(self, payload: dict) -> None:
         """The editor closed: slide the (edited) picture back into the corner."""
@@ -1252,46 +1425,72 @@ class Renderer(QObject):
         screen = _match_screen(monitor if isinstance(monitor, list) else [])
         if screen is None:
             return
+        appshot_id = str(payload.get("id", "") or "")
         for old in list(self._snaps):
+            old.land_now()
+        # The same appshot never shows twice: its old card makes way.
+        for old in [c for c in self._cards if appshot_id and c.appshot_id == appshot_id]:
             old.finish_now()
-        if self._card is not None:
-            self._card.finish_now()
-        self.card_image = None
         self._card_hint = str(payload.get("hint", "") or "")
         self._take_card_options(payload)
         origin = _flight_origin(payload.get("from"))
         if origin is not None:
-            # Saved in the editor: the picture flies from the editor into
-            # the corner, the same flight as after the shutter.
+            # Saved in the editor: the picture flies from the editor to the
+            # bottom of the stack, the same flight as after the shutter.
             fly_screen, frac = origin
             win = _SnapWindow(
                 fly_screen, frac, thumb, self._snap_landed, self._snap_done, flash=False
             )
+            win.appshot_id = appshot_id
             self._snaps.append(win)
+            self._relayout()
             win.start()
             return
-        self._new_card(_card_rect(screen, thumb), thumb).start(slide_in=True)
+        self._new_card(
+            _card_rect(screen, thumb), thumb, screen_name=screen.name(), appshot_id=appshot_id
+        ).start(slide_in=True)
 
-    def card_action(self, action: str) -> None:
-        """A hover button: the main process copies or saves the held appshot."""
-        _emit(protocol.EVENT_CARD_ACTION, action=action)
+    def card_action(self, card: _CardWindow, action: str) -> None:
+        """A hover button: the main process copies or saves that card's appshot."""
+        _emit(protocol.EVENT_CARD_ACTION, action=action, id=card.appshot_id)
 
     def _snap_image(self, payload: dict) -> None:
+        """The finished picture: to the card (or flight) of its appshot.
+
+        Without a card of that id, the newest one that has no appshot yet
+        takes it — the shutter's card, whose id is only known after the
+        capture. A picture nobody waits for is dropped; the controller sends
+        it again after the next ``snap``.
+        """
         raw = payload.get("image")
         if not isinstance(raw, str) or not raw:
             return
         image = QImage()
-        if image.loadFromData(QByteArray.fromBase64(raw.encode("ascii"))):
-            self.card_image = image
+        if not image.loadFromData(QByteArray.fromBase64(raw.encode("ascii"))):
+            return
+        appshot_id = str(payload.get("id", "") or "")
+        holders = [*reversed(self._snaps), *(c for c in reversed(self._cards) if not c.leaving)]
+        holder = next(
+            (h for h in holders if appshot_id and h.appshot_id == appshot_id),
+            None,
+        ) or next((h for h in holders if not h.appshot_id and h.image is None), None)
+        if holder is None:
+            return
+        holder.appshot_id = holder.appshot_id or appshot_id
+        holder.image = image
+        if isinstance(holder, _CardWindow):
+            holder.update()
 
     def card_gone(self, card: _CardWindow) -> None:
-        if self._card is card:
-            self._card = None
-            self.card_image = None
+        with suppress(ValueError):
+            self._cards.remove(card)
+        if not self._cards:
             _emit(protocol.EVENT_CARD, open=False)
+            return
+        self._relayout()  # the cards above it glide down
 
     def card_clicked(self, card: _CardWindow) -> None:
-        _emit(protocol.EVENT_SNAP_OPEN)
+        _emit(protocol.EVENT_SNAP_OPEN, id=card.appshot_id)
         card.leave()
 
     @staticmethod
@@ -1319,10 +1518,12 @@ class Renderer(QObject):
 
     def _blank(self) -> None:
         # A resting thumbnail must never end up inside the next capture.
+        # A flight still on its way lands now, so a quick next appshot only
+        # stacks it instead of losing it; then every card hides.
         for snap in list(self._snaps):
-            snap.finish_now()
-        if self._card is not None:
-            self._card.hide()
+            snap.land_now()
+        for card in self._cards:
+            card.hide()
         if not self._active:
             return
         self._blanked = True
@@ -1330,8 +1531,9 @@ class Renderer(QObject):
             win.hide()
 
     def _unblank(self) -> None:
-        if self._card is not None and not self._card.isVisible():
-            self._card.show()
+        for card in self._cards:
+            if not card.isVisible():
+                card.show()
         if not self._active or not self._blanked:
             return
         self._blanked = False

@@ -55,6 +55,46 @@ def test_an_edit_for_a_gone_or_other_appshot_changes_nothing() -> None:
     assert AppshotStore().replace_image("s1", b"png", "image/png", 1, 1) is None
 
 
+# -- several appshots at hand: the corner card stack ---------------------------
+
+
+def test_the_store_keeps_the_last_few_newest_first() -> None:
+    from jarvis.appshot.store import MAX_RECENT
+
+    store = AppshotStore()
+    for n in range(MAX_RECENT + 1):
+        store.remember(_shot(f"s{n}"), keep_s=60)
+
+    assert store.latest().id == f"s{MAX_RECENT}"
+    assert store.get("s1") is not None and store.get("s1").id == "s1"
+    assert store.get("s0") is None, "the oldest beyond the stack is dropped"
+
+
+def test_an_older_appshot_can_be_edited_and_marked() -> None:
+    store = AppshotStore()
+    store.remember(_shot("old"), keep_s=60)
+    store.remember(_shot("new"), keep_s=60)
+
+    assert store.replace_image("old", b"png", "image/png", 4, 3) is not None
+    store.mark_delivered("old", "voice")
+
+    assert store.get("old").image == b"png" and store.get("old").delivered_to == "voice"
+    assert store.latest().id == "new" and store.latest().image == b"jpeg"
+
+
+def test_each_kept_appshot_expires_on_its_own() -> None:
+    now = [0.0]
+    store = AppshotStore(clock=lambda: now[0])
+    store.remember(_shot("old"), keep_s=10)
+    now[0] = 5.0
+    store.remember(_shot("new"), keep_s=10)
+    now[0] = 11.0
+
+    assert store.get("old") is None and store.get("new") is not None
+    store.remember(_shot("x"), keep_s=0)
+    assert store.latest() is None, "keeping nothing forgets every picture"
+
+
 @pytest.fixture
 def client():
     from jarvis.ui.web.appshot_routes import router
@@ -77,6 +117,15 @@ def test_the_route_takes_a_png_and_serves_it_back(client) -> None:
     assert response.json()["appshot"]["width"] == 40
     served = client.get("/api/appshot/latest/image")
     assert served.content == png and served.headers["content-type"] == "image/png"
+
+
+def test_the_route_serves_an_older_card_its_own_picture(client) -> None:
+    get_store().remember(_shot("s2"), keep_s=60)
+    assert client.put("/api/appshot/latest/image?id=s1", content=_png()).status_code == 200
+
+    assert client.get("/api/appshot/latest/image?id=s1").content == _png()
+    assert client.get("/api/appshot/latest/image").content == b"jpeg", "the last one by default"
+    assert client.get("/api/appshot/latest/image?id=gone").content == b"jpeg"
 
 
 @pytest.mark.parametrize(
@@ -254,8 +303,8 @@ def test_the_card_route_hands_the_flight_start_through(monkeypatch: pytest.Monke
 
     seen: list = []
 
-    async def fake_return(fly_from=None):
-        seen.append(fly_from)
+    async def fake_return(fly_from=None, *, shot_id=""):
+        seen.append((fly_from, shot_id))
         return True
 
     monkeypatch.setattr(card_actions, "return_to_corner", fake_return)
@@ -263,11 +312,13 @@ def test_the_card_route_hands_the_flight_start_through(monkeypatch: pytest.Monke
     app.include_router(router)
     client = TestClient(app)
 
-    saved = client.post("/api/appshot/latest/card", json={"fly_from": [100, 80, 640, 400]})
+    saved = client.post(
+        "/api/appshot/latest/card", json={"id": "a1b2c3d4", "fly_from": [100, 80, 640, 400]}
+    )
     closed = client.post("/api/appshot/latest/card")
 
     assert saved.json() == {"shown": True} and closed.json() == {"shown": True}
-    assert seen == [[100.0, 80.0, 640.0, 400.0], None]
+    assert seen == [([100.0, 80.0, 640.0, 400.0], "a1b2c3d4"), (None, "")]
     assert client.post("/api/appshot/latest/card", json={"fly_from": [1, 2]}).status_code == 422
 
 

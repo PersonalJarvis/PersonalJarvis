@@ -19,11 +19,11 @@ const AppshotEditor = lazy(() =>
  * the editor. Escape and outside presses are left to the editor itself, which
  * cancels a stroke or asks before discarding edits.
  */
-function returnToCorner(flyFrom: [number, number, number, number]) {
+function returnToCorner(id: string, flyFrom: [number, number, number, number]) {
   void fetch("/api/appshot/latest/card", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ fly_from: flyFrom }),
+    body: JSON.stringify({ id, fly_from: flyFrom }),
   }).catch(() => undefined);
 }
 
@@ -50,8 +50,8 @@ export function AppshotEditorHost() {
                 key={openId}
                 appshotId={openId}
                 onClose={(exit) => {
-                  // Saved or used: the picture flies back into the corner card.
-                  if (exit?.flyFrom) returnToCorner(exit.flyFrom);
+                  // Saved or used: the picture flies back to the bottom of the card stack.
+                  if (exit?.flyFrom) returnToCorner(openId, exit.flyFrom);
                   close();
                 }}
                 onApplied={applied}

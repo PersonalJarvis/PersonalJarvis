@@ -210,7 +210,7 @@ async def _attach_to_card(shot: Appshot, config: Any) -> None:
         return
     from jarvis.appshot.effect import attach_card_image  # noqa: PLC0415
 
-    await attach_card_image(shot.image)
+    await attach_card_image(shot.image, shot.id)
 
 
 async def _deliver(shot: Appshot, *, target: str, ttl_s: float) -> str:
