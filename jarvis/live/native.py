@@ -40,7 +40,7 @@ _DUPLEX_REFUSAL_FALLBACK = "The selected voice engine cannot take a call right n
 _TOOL_DEADLINE_S = VOICE_TOOL_BUDGET_S
 # Session built-ins of ``LiveTools``: always declared, whatever the budget.
 _SESSION_TOOLS = frozenset(
-    {"end_call", "discover_tools", "call_tool", "confirm_action", "computer"}
+    {"end_call", "discover_tools", "call_tool", "confirm_action", "computer", "take_appshot"}
 )
 # Under a declaration budget (a provider's ``tool_declaration_budget_tokens``
 # or ``[voice].realtime_tool_declaration_budget_tokens``, the smaller wins), at

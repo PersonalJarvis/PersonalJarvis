@@ -51,7 +51,7 @@ _REQUEST_TEXT_CHARS = 1200
 # Declared before every other tool so the size budget never drops them.
 _PRIORITY_TOOLS = frozenset({"workspace-orchestrate", "find-app-action", "run-app-action"})
 # Declared under its canonical name in every mode (see ``declarations``).
-_DIRECT_TOOL = "computer"
+_DIRECT_TOOLS = frozenset({"computer", "take_appshot"})
 _APPROVAL_NEXT_STEP = (
     "Ask the user to approve this action. After an explicit yes, call confirm_action "
     "directly (not through call_tool) with this approval_id. A yes is never a hang-up."
@@ -172,16 +172,18 @@ class LiveTools:
                 ["approval_id"],
             ),
         ]
-        # The screen is operated in many short rounds (ADR-0038): declare the
-        # computer tool under its own name instead of behind discover/call_tool.
-        computer = next((d for d in self.catalog() if d.name == _DIRECT_TOOL), None)
-        if computer is not None:
+        # Keep capture available even with a deferred catalog. Otherwise a live
+        # model may reuse an old image or choose computer instead of the appshot
+        # path that owns privacy filtering, the shutter effect and the receipt.
+        for descriptor in self.catalog():
+            if descriptor.name not in _DIRECT_TOOLS:
+                continue
             definitions.append(
                 {
                     "type": "function",
-                    "name": computer.name,
-                    "description": computer.description,
-                    "parameters": computer.input_schema,
+                    "name": descriptor.name,
+                    "description": descriptor.description,
+                    "parameters": descriptor.input_schema,
                 }
             )
         if defer_catalog:
@@ -205,7 +207,7 @@ class LiveTools:
         # or brief a coding agent (live 2026-10-01).
         ordered = sorted(self.catalog(), key=lambda d: (d.name not in _PRIORITY_TOOLS, d.name))
         for descriptor in ordered:
-            if descriptor.name == _DIRECT_TOOL:
+            if descriptor.name in _DIRECT_TOOLS:
                 continue
             alias = "jarvis_" + hashlib.sha256(descriptor.name.encode()).hexdigest()[:20]
             definition = {
