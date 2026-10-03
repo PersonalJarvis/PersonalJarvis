@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  ARROW_STYLES,
   BACKGROUND_PRESETS,
   DEFAULT_BACKGROUND,
   TOOL_KEYS,
@@ -18,6 +19,7 @@ import {
   rectFrom,
   redo,
   strokeWidths,
+  taperedArrowOutline,
   textSize,
   toolForKey,
   translate,
@@ -208,5 +210,39 @@ describe("contrast", () => {
     expect(contrastOn("#ffffff")).toBe("#111111");
     expect(contrastOn("#0a84ff")).toBe("#ffffff");
     expect(contrastOn("#1c1c1e")).toBe("#ffffff");
+  });
+});
+
+describe("tapered arrow", () => {
+  const width = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y);
+
+  it("starts as a fine point, swells to the neck and ends in a wider swept-back head", () => {
+    const outline = taperedArrowOutline({ x: 0, y: 0 }, { x: 200, y: 0 }, 6);
+    const [tailTop, neckTop, barbTop, tip, barbBottom, neckBottom, tailBottom] = outline;
+    expect(outline).toHaveLength(7);
+    expect(tip).toEqual({ x: 200, y: 0 });
+    const tail = width(tailTop, tailBottom);
+    const neck = width(neckTop, neckBottom);
+    const head = width(barbTop, barbBottom);
+    expect(tail).toBeLessThan(neck);
+    expect(neck).toBeLessThan(head);
+    // The barbs sit behind the neck: the head's base is concave.
+    expect(barbTop.x).toBeLessThan(neckTop.x);
+  });
+
+  it("keeps a short arrow's head in proportion and draws nothing for a dot", () => {
+    const short = taperedArrowOutline({ x: 0, y: 0 }, { x: 20, y: 0 }, 13);
+    expect(short[2].x).toBeGreaterThanOrEqual(0);
+    expect(taperedArrowOutline({ x: 5, y: 5 }, { x: 5.5, y: 5 }, 6)).toEqual([]);
+  });
+
+  it("grows with the stroke size", () => {
+    const thin = taperedArrowOutline({ x: 0, y: 0 }, { x: 300, y: 0 }, 2);
+    const thick = taperedArrowOutline({ x: 0, y: 0 }, { x: 300, y: 0 }, 13);
+    expect(width(thick[2], thick[4])).toBeGreaterThan(width(thin[2], thin[4]));
+  });
+
+  it("offers three arrow looks", () => {
+    expect(ARROW_STYLES).toEqual(["tapered", "classic", "double"]);
   });
 });

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import inspect
 import threading
+from types import SimpleNamespace
 
 import pytest
 
@@ -324,3 +325,48 @@ def test_the_shipped_index_satisfies_the_probe() -> None:
     index = Path(desktop_app.__file__).parent / "web" / "frontend" / "index.html"
     assert "root" in desktop_app._SPA_DOCUMENT_PROBE  # noqa: SLF001
     assert 'id="root"' in index.read_text(encoding="utf-8")
+
+
+def test_the_appshot_editor_window_opens_in_cleanshot_proportions() -> None:
+    """Live 2026-10-03: the editor should sit in front of the app like
+    CleanShot X's — about 2/5 of the screen wide, a bit under half its height
+    — never so small that toolbar buttons drop off, never as big as the app."""
+    from jarvis.ui.desktop_app import detached_window_size
+
+    assert detached_window_size("visualization", (2560, 1440)) == (1100, 750)
+    assert detached_window_size("appshot-editor", (2560, 1440)) == (1024, 662)
+    assert detached_window_size("appshot-editor", None) == (1100, 750)
+    # A small screen: the toolbar's minimum, but never past the screen.
+    assert detached_window_size("appshot-editor", (1280, 720)) == (900, 600)
+    assert detached_window_size("appshot-editor", (800, 500)) == (800, 500)
+
+
+def test_an_open_editor_window_is_pointed_at_the_new_appshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The appshot card opens the editor through ``open_detached_window`` with
+    a query; an editor already open is re-pointed, never duplicated."""
+    app = DesktopApp.__new__(DesktopApp)
+    loaded: list[str] = []
+    scripts: list[str] = []
+    shown: list[bool] = []
+    existing = SimpleNamespace(
+        load_url=loaded.append,
+        # The warm page answers: it switched to the new appshot in place.
+        evaluate_js=lambda js: scripts.append(js) or True,
+        show=lambda: shown.append(True),
+    )
+    app._detached_windows = {"appshot-editor": existing}  # noqa: SLF001
+    app._url = lambda: "http://127.0.0.1:47821"  # type: ignore[method-assign]  # noqa: SLF001
+    raised: list[str] = []
+    monkeypatch.setattr(
+        "jarvis.ui.desktop_app._bring_window_to_front_by_title", lambda title: raised.append(title)
+    )
+
+    result = app.open_detached_window("appshot-editor", query="appshot=a1b2c3d4")
+
+    assert result == {"ok": True, "already_open": True, "view": "appshot-editor"}
+    assert loaded == [], "a warm editor is re-pointed, not reloaded"
+    assert scripts and '"a1b2c3d4"' in scripts[0]
+    assert shown == [True]
+    assert len(raised) == 1

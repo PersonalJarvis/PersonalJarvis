@@ -71,6 +71,10 @@
     "card_seconds": "Tarjeta en la esquina",
     "card_seconds_hint": "Cuánto tiempo queda la imagen en la esquina de la pantalla tras un appshot.",
     "card_seconds_option": "{0} segundos",
-    "card_until_closed": "Hasta que la cierre"
+    "card_until_closed": "Hasta que la cierre",
+    "arrow_style": "Estilo de flecha",
+    "arrow_tapered": "Afilada",
+    "arrow_classic": "Clásica",
+    "arrow_double": "Dos puntas"
   }
 }

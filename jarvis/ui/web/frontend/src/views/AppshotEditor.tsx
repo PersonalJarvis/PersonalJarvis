@@ -31,6 +31,7 @@ import { fill, useLocaleChunk, useT } from "@/i18n";
 import { copyAppshotPng } from "@/lib/appshotClipboard";
 import { latestAppshotImageUrl } from "@/lib/appshotApi";
 import {
+  ARROW_STYLES,
   BACKGROUND_PRESETS,
   COLORS,
   CROP_RATIOS,
@@ -61,6 +62,7 @@ import {
   undo as undoHistory,
   viewport,
   withId,
+  type ArrowStyle,
   type Background,
   type Draft,
   type History,
@@ -135,6 +137,7 @@ const TOOL_ICONS: Record<Tool, typeof Square | null> = {
 
 
 const COLOR_KEY = "jarvis.appshotEditor.color";
+const ARROW_KEY = "jarvis.appshotEditor.arrowStyle";
 const BACKGROUND_KEY = "jarvis.appshotEditor.background";
 
 function readStored<T>(key: string, fallback: T, valid: (value: unknown) => value is T): T {
@@ -157,6 +160,8 @@ function writeStored(key: string, value: unknown) {
   }
 }
 
+const isArrowStyle = (value: unknown): value is ArrowStyle =>
+  typeof value === "string" && (ARROW_STYLES as readonly string[]).includes(value);
 const isColor = (value: unknown): value is string => typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value);
 const isBackground = (value: unknown): value is Background =>
   typeof value === "object" && value !== null && "preset" in value && "padding" in value;
@@ -216,6 +221,13 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
   const [tool, setTool] = useState<Tool>("arrow");
   const [color, setColorState] = useState(() => readStored(COLOR_KEY, COLORS[0], isColor));
   const [widthIndex, setWidthIndex] = useState(2);
+  const [arrowStyle, setArrowStyleState] = useState<ArrowStyle>(() =>
+    readStored(ARROW_KEY, "tapered" as ArrowStyle, isArrowStyle),
+  );
+  const setArrowStyle = (next: ArrowStyle) => {
+    setArrowStyleState(next);
+    writeStored(ARROW_KEY, next);
+  };
   const [zoom, setZoom] = useState<"fit" | number>("fit");
   const [menu, setMenu] = useState<"" | "style" | "zoom">("");
   const [dragging, setDragging] = useState(false);
@@ -474,8 +486,10 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
     let shape: Draft;
     switch (tool) {
       case "arrow":
+        shape = { kind: "arrow", from: p, to: p, color, width, style: arrowStyle };
+        break;
       case "line":
-        shape = { kind: tool, from: p, to: p, color, width };
+        shape = { kind: "line", from: p, to: p, color, width };
         break;
       case "rect":
       case "filled":
@@ -905,6 +919,26 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
               />
             </label>
           </QuickTooltip>
+          {tool === "arrow" && (
+            <div className="flex shrink-0 items-center gap-0.5" role="group" aria-label={label("arrow_style")} data-testid="appshot-editor-arrow-style">
+              {ARROW_STYLES.map((style) => (
+                <QuickTooltip key={style} content={label(`arrow_${style}`)} side="bottom">
+                  <button
+                    type="button"
+                    aria-label={label(`arrow_${style}`)}
+                    aria-pressed={arrowStyle === style}
+                    onClick={() => setArrowStyle(style)}
+                    className={cn(
+                      "flex h-7 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground",
+                      arrowStyle === style && "bg-foreground/20 text-foreground",
+                    )}
+                  >
+                    <ArrowStyleIcon style={style} />
+                  </button>
+                </QuickTooltip>
+              ))}
+            </div>
+          )}
 
           {/* Free space: in its own window this is where the window is moved from. */}
           <div className={cn("h-full min-w-4 flex-1", variant === "window" && "pywebview-drag-region")} aria-hidden />
@@ -1202,6 +1236,23 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
         )}
       </div>
     </div>
+  );
+}
+
+/** The three arrow looks, drawn small. */
+function ArrowStyleIcon({ style }: { style: ArrowStyle }) {
+  return (
+    <svg viewBox="0 0 20 20" className="h-[15px] w-[15px]" aria-hidden>
+      {style === "tapered" ? (
+        <path d="M3 17 L13.6 8.6 L11.6 6.4 L17 3 L14.4 9.3 L12.6 7.6 L3.6 17.6 Z" fill="currentColor" />
+      ) : (
+        <>
+          <path d="M4 16 L15 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          <path d="M16.5 3.5 L10.8 5.2 L14.8 9.2 Z" fill="currentColor" />
+          {style === "double" && <path d="M2.5 17.5 L4.2 11.8 L8.2 15.8 Z" fill="currentColor" />}
+        </>
+      )}
+    </svg>
   );
 }
 

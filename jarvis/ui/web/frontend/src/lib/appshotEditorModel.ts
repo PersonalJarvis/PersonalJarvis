@@ -43,9 +43,18 @@ export interface Rect {
 
 export type TextStyle = "plain" | "label" | "outline";
 export type RedactMode = "pixelate" | "blur";
+/**
+ * ``tapered``: CleanShot X's arrow — a filled shape that starts as a fine
+ * point and swells towards a swept-back head. ``classic``: line plus head.
+ * ``double``: a head at both ends.
+ */
+export type ArrowStyle = "tapered" | "classic" | "double";
+
+export const ARROW_STYLES: readonly ArrowStyle[] = ["tapered", "classic", "double"];
 
 type Shape =
-  | { kind: "arrow" | "line"; from: Point; to: Point; color: string; width: number }
+  | { kind: "arrow"; from: Point; to: Point; color: string; width: number; style?: ArrowStyle }
+  | { kind: "line"; from: Point; to: Point; color: string; width: number }
   | { kind: "rect" | "filled" | "ellipse"; rect: Rect; color: string; width: number }
   | { kind: "pen" | "highlight"; points: Point[]; color: string; width: number }
   | { kind: "text"; at: Point; text: string; color: string; size: number; style: TextStyle }
@@ -439,6 +448,63 @@ export function contrastOn(hex: string): string {
   return luminance > 0.6 ? "#111111" : "#ffffff";
 }
 
+/**
+ * The outline of a tapered arrow, tail to tip and back, in picture space.
+ *
+ * Measured along the arrow: a fine tail point, a shaft that widens to the
+ * neck, and a head whose barbs sweep back past the neck — the concave base
+ * that makes CleanShot X's arrow read as one confident stroke. Everything
+ * scales with the stroke width; a short arrow keeps its head in proportion.
+ * Empty for an arrow too short to draw.
+ */
+export function taperedArrowOutline(from: Point, to: Point, width: number): Point[] {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const length = Math.hypot(dx, dy);
+  if (length < 2) return [];
+  const ux = dx / length;
+  const uy = dy / length;
+  const nx = -uy;
+  const ny = ux;
+  const head = Math.min(Math.max(12, width * 4.6 + 6), length * 0.62);
+  const barb = head * 0.56;
+  const neckAt = length - head * 0.7;
+  const tail = Math.max(0.6, width * 0.14);
+  const neck = Math.max(1.4, width * 0.78);
+  const at = (along: number, across: number): Point => ({
+    x: from.x + ux * along + nx * across,
+    y: from.y + uy * along + ny * across,
+  });
+  return [
+    at(0, tail),
+    at(neckAt, neck),
+    at(length - head, barb),
+    at(length, 0),
+    at(length - head, -barb),
+    at(neckAt, -neck),
+    at(0, -tail),
+  ];
+}
+
+function taperedArrow(ctx: CanvasRenderingContext2D, from: Point, to: Point, width: number) {
+  const outline = taperedArrowOutline(from, to, width);
+  if (outline.length === 0) return;
+  ctx.beginPath();
+  ctx.moveTo(outline[0].x, outline[0].y);
+  for (const point of outline.slice(1)) ctx.lineTo(point.x, point.y);
+  ctx.closePath();
+  // A soft lift off the picture, and a hairline of the same colour to round
+  // the corners — the arrow should look drawn, not cut out.
+  ctx.shadowColor = "rgba(0,0,0,0.32)";
+  ctx.shadowBlur = Math.max(3, width * 1.1);
+  ctx.shadowOffsetY = Math.max(1, width * 0.3);
+  ctx.fill();
+  ctx.shadowColor = "transparent";
+  ctx.lineWidth = Math.max(1, width * 0.22);
+  ctx.lineJoin = "round";
+  ctx.stroke();
+}
+
 function arrow(ctx: CanvasRenderingContext2D, from: Point, to: Point, width: number) {
   const angle = Math.atan2(to.y - from.y, to.x - from.x);
   const head = Math.max(10, width * 4);
@@ -586,7 +652,15 @@ export function paintShape(ctx: CanvasRenderingContext2D, base: CanvasImageSourc
       ctx.strokeStyle = op.color;
       ctx.fillStyle = op.color;
       ctx.lineWidth = op.width;
-      arrow(ctx, op.from, op.to, op.width);
+      if (op.style === "classic") {
+        arrow(ctx, op.from, op.to, op.width);
+      } else if (op.style === "double") {
+        arrow(ctx, op.from, op.to, op.width);
+        arrow(ctx, op.to, op.from, op.width);
+      } else {
+        // Tapered is the default, also for arrows drawn before styles existed.
+        taperedArrow(ctx, op.from, op.to, op.width);
+      }
       break;
     case "line":
       ctx.strokeStyle = op.color;

@@ -856,6 +856,36 @@ def window_restores_maximized(title: str) -> bool:
         return False
 
 
+def detached_window_size(view: str, screen: tuple[int, int] | None) -> tuple[int, int]:
+    """Opening size of a detached window.
+
+    The appshot editor opens in CleanShot X's proportions: about two fifths of
+    the screen's width and a little under half its height, centred — a tool
+    window in front of the app, never one that looks like the app shrunk. It
+    never goes below the size its whole toolbar needs. Every other view keeps
+    the compact default.
+    """
+    if view != "appshot-editor" or not screen:
+        return 1100, 750
+    screen_w, screen_h = screen
+    width = min(screen_w, max(_EDITOR_MIN_SIZE[0], int(screen_w * 0.4)))
+    height = min(screen_h, max(_EDITOR_MIN_SIZE[1], int(screen_h * 0.46)))
+    return width, height
+
+
+#: The smallest appshot editor window that still shows every toolbar button.
+_EDITOR_MIN_SIZE = (900, 600)
+
+
+def _primary_screen_size(webview_module: Any) -> tuple[int, int] | None:
+    """The first screen's size in pywebview's units, or None when unknown."""
+    try:
+        screen = webview_module.screens[0]
+        return int(screen.width), int(screen.height)
+    except Exception:  # noqa: BLE001 - unknown screen: the default size
+        return None
+
+
 def _bring_window_to_front_by_title(title: str) -> bool:
     """Win32 fallback for hidden/minimized pywebview windows.
 
@@ -5204,11 +5234,12 @@ class DesktopApp:
             import webview  # noqa: PLC0415 — [desktop] extra, never module-level
 
             title = self._detached_title(view)
+            width, height = detached_window_size(view, _primary_screen_size(webview))
             window = webview.create_window(
                 title,
-                f"{self._url()}/?view={view}&solo=1",
-                width=1100,
-                height=750,
+                f"{self._url()}{fallback}",
+                width=width,
+                height=height,
                 min_size=(800, 520),
                 resizable=True,
                 frameless=True,
@@ -5278,12 +5309,13 @@ class DesktopApp:
         try:
             import webview  # noqa: PLC0415 — [desktop] extra, never module-level
 
+            width, height = detached_window_size(view, _primary_screen_size(webview))
             window = webview.create_window(
                 self._detached_title(view),
                 f"{self._url()}/?view={view}&solo=1",
-                width=1100,
-                height=750,
-                min_size=(800, 520),
+                width=width,
+                height=height,
+                min_size=_EDITOR_MIN_SIZE,
                 resizable=True,
                 frameless=True,
                 easy_drag=False,

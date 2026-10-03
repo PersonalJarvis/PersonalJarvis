@@ -71,6 +71,10 @@
     "card_seconds": "Karte in der Ecke",
     "card_seconds_hint": "Wie lange das Bild nach einem Appshot in der Bildschirmecke bleibt.",
     "card_seconds_option": "{0} Sekunden",
-    "card_until_closed": "Bis ich sie schließe"
+    "card_until_closed": "Bis ich sie schließe",
+    "arrow_style": "Pfeilstil",
+    "arrow_tapered": "Spitz zulaufend",
+    "arrow_classic": "Klassisch",
+    "arrow_double": "Zwei Spitzen"
   }
 }

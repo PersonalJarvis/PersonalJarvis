@@ -71,6 +71,10 @@
     "card_seconds": "Corner card",
     "card_seconds_hint": "How long the picture rests in the screen corner after an appshot.",
     "card_seconds_option": "{0} seconds",
-    "card_until_closed": "Until I close it"
+    "card_until_closed": "Until I close it",
+    "arrow_style": "Arrow style",
+    "arrow_tapered": "Tapered",
+    "arrow_classic": "Classic",
+    "arrow_double": "Two heads"
   }
 }
