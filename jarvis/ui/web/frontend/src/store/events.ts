@@ -60,7 +60,6 @@ export type SectionId =
   | "docs"
   | "mcps"
   | "sessions"
-  | "run_inspector"
   // Spend & Tokens — what every provider, model and role actually cost.
   | "costs"
   | "clis"
@@ -129,7 +128,6 @@ export const SECTION_IDS = [
   "docs",
   "mcps",
   "sessions",
-  "run_inspector",
   "costs",
   "clis",
   "cli-test-hub",
@@ -185,6 +183,7 @@ export function isSectionId(value: unknown): value is SectionId {
  *   lives on agents now, as each agent's routines.
  */
 export const LEGACY_SECTION_ALIASES: Readonly<Record<string, SectionId>> = {
+  run_inspector: "sessions",
   outputs: "visualization",
   wallpaper: "settings",
   tasks: "agents",
@@ -228,7 +227,6 @@ export const SECTION_LABELS: Record<SectionId, string> = {
   docs: "Docs",
   mcps: "MCPs",
   sessions: "Transcription",
-  run_inspector: "Run Inspector",
   costs: "Spend",
   clis: "CLIs",
   "cli-test-hub": "CLI Test Hub",
