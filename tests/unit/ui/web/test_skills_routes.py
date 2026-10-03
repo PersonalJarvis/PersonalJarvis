@@ -417,7 +417,7 @@ def test_creator_author_writes_a_draft_skill_with_a_brain(skills_root: Path) -> 
     assert res.status_code == 200, res.text
     body = res.json()
     assert body["brain_used"] is True
-    assert body["skill"]["name"] == "Mail Morgen"
+    assert body["skill"]["name"] == "mail-morgen"  # canonical persisted slug
     assert body["skill"]["state"] == "draft"  # AP-15
     crons = [t["cron"] for t in body["draft"]["triggers"] if t["type"] == "schedule"]
     assert crons == ["0 6 * * *"]
