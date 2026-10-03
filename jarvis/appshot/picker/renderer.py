@@ -1,4 +1,4 @@
-"""PySide6 area picker for region appshots, as quiet as macOS's Cmd+Shift+4.
+"""PySide6 area picker for region appshots.
 
 Runs ONLY inside ``python -m jarvis.appshot.picker``; the main process never
 imports this module (AP-26). One frameless, always-on-top window per screen:
@@ -13,9 +13,16 @@ imports this module (AP-26). One frameless, always-on-top window per screen:
 - **Window snapping.** Hovering lifts the window under the pointer out of the
   dim (rectangles from the main process, top-most first); a click without a
   drag takes exactly that window.
-- **Drag to select.** Like CleanShot X, the screen around the selection
+- **Drag to select.** The screen around the selection
   clears and the selected area itself turns a translucent grey, with one thin
   border.
+
+- **Mark up in place.** Releasing the drag does not take the
+  shot yet: the selection keeps resize handles and a toolbar docks under it
+  (:mod:`jarvis.appshot.picker.annotate`). The user draws boxes, arrows, text,
+  steps, blur and so on right on the frozen frame; Enter or the check button
+  takes the appshot with the markings, Ctrl+C / Ctrl+S / Ctrl+E also copy,
+  save or open it in the full editor.
 
 Only the parts that change are repainted, so the numbers follow the pointer
 without dragging a full 4K repaint behind them. Esc or a right-click cancels.
@@ -44,6 +51,8 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import QApplication, QWidget
 
 from jarvis.appshot import picker as wire
+from jarvis.appshot.picker import annotate
+from jarvis.appshot.picker import markup_model as mm
 from jarvis.appshot.region import match_monitor, selection_fractions, snap_rects_on_screen
 
 #: A light veil before the drag (the picker is armed). While dragging the
@@ -56,7 +65,7 @@ _SELECTION_TINT = QColor(128, 128, 132, 105)
 _BORDER = QColor(255, 255, 255, 235)
 _BORDER_EDGE = QColor(0, 0, 0, 70)
 
-#: The numbers beside the crosshair: dark ink with a white halo, like macOS.
+#: The numbers beside the crosshair: dark ink with a white halo.
 _INK = QColor(20, 20, 22)
 _HALO = QColor(255, 255, 255, 235)
 _NUMBER_PT = 8.5
@@ -70,6 +79,24 @@ _CROSS_RING = 3.5
 
 #: Windows smaller than this (logical px, either side) are not snap targets.
 _MIN_SNAP_PX = 24
+
+#: Cursor per selection resize handle.
+_HANDLE_CURSORS = {
+    "nw": Qt.CursorShape.SizeFDiagCursor,
+    "se": Qt.CursorShape.SizeFDiagCursor,
+    "ne": Qt.CursorShape.SizeBDiagCursor,
+    "sw": Qt.CursorShape.SizeBDiagCursor,
+    "n": Qt.CursorShape.SizeVerCursor,
+    "s": Qt.CursorShape.SizeVerCursor,
+    "e": Qt.CursorShape.SizeHorCursor,
+    "w": Qt.CursorShape.SizeHorCursor,
+}
+#: Keyboard shortcuts for the toolbar's actions (with Ctrl / Cmd).
+_ACTION_KEYS = {
+    Qt.Key.Key_C: wire.ACTION_COPY,
+    Qt.Key.Key_S: wire.ACTION_SAVE,
+    Qt.Key.Key_E: wire.ACTION_EDIT,
+}
 
 
 def _screen_info(screen) -> dict[str, float]:
@@ -99,7 +126,7 @@ def _number_font() -> QFont:
 
 
 def crosshair_cursor(dpr: float) -> QCursor:
-    """The macOS-style crosshair: two thin arms with a ring at the centre.
+    """The crosshair: two thin arms with a ring at the centre.
 
     Drawn by the OS as the real cursor (no lag behind the mouse), at the
     screen's pixel density, black on a white halo so it reads everywhere.
@@ -131,6 +158,38 @@ def crosshair_cursor(dpr: float) -> QCursor:
     painter.end()
     hot = round(c)
     return QCursor(pixmap, hot, hot)
+
+
+class _MarkupState:
+    """Everything the annotation mode of one screen window holds."""
+
+    def __init__(self) -> None:
+        #: The chosen area (logical px); ``None`` while still choosing.
+        self.sel: QRectF | None = None
+        self.shapes: list[mm.Shape] = []
+        self.history = mm.History()
+        self.tool = mm.ARROW
+        self.color = mm.PALETTE[0]
+        self.width_index = mm.DEFAULT_WIDTH_INDEX
+        #: The marking being dragged out right now.
+        self.drawing: mm.Shape | None = None
+        #: The text marking being typed (not yet in ``shapes``).
+        self.typing: mm.Shape | None = None
+        #: Index into ``shapes`` the move tool holds.
+        self.picked: int | None = None
+        #: ``("resize", handle)`` / ``("move", None)`` while a drag runs.
+        self.drag: tuple[str, str | None] | None = None
+        self.last: QPointF | None = None
+        self.moved = False
+
+    @property
+    def width(self) -> float:
+        return mm.WIDTHS[self.width_index]
+
+    def box(self) -> mm.Box:
+        sel = self.sel
+        assert sel is not None
+        return (sel.x(), sel.y(), sel.width(), sel.height())
 
 
 class _SelectWindow(QWidget):
@@ -171,6 +230,10 @@ class _SelectWindow(QWidget):
         #: What was painted last, so the next move repaints only what changed.
         self._painted_numbers: QRectF | None = None
         self._painted_hole: QRectF | None = None
+        self._cross = crosshair_cursor(screen.devicePixelRatio() or 1.0)
+        self._markup = _MarkupState()
+        self._patches = annotate.HidePatches(frozen, self._scale)
+        self._toolbar: annotate.Toolbar | None = None
 
     # -- data from the main process ------------------------------------------
     def set_layout(self, monitors: list[dict], windows: list[list[int]]) -> None:
@@ -185,12 +248,24 @@ class _SelectWindow(QWidget):
 
     # -- input ---------------------------------------------------------------
     def keyPressEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        marking = self._owner.marking
+        if marking is not None and marking is not self:
+            marking.keyPressEvent(event)
+            return
+        if self._markup.sel is not None:
+            self._markup_key(event)
+            return
         if event.key() == Qt.Key.Key_Escape:
             self._owner.finish(None, None)
             return
         super().keyPressEvent(event)
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
+        if self._owner.marking is not None and self._owner.marking is not self:
+            return
+        if self._markup.sel is not None:
+            self._markup_press(event)
+            return
         if event.button() == Qt.MouseButton.RightButton:
             self._owner.finish(None, None)
             return
@@ -202,6 +277,10 @@ class _SelectWindow(QWidget):
             self.update()
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
+        if self._owner.marking is not None:
+            if self._owner.marking is self:
+                self._markup_move(event)
+            return
         self._pointer = event.position()
         if self._start is not None:
             self._end = event.position()
@@ -209,6 +288,10 @@ class _SelectWindow(QWidget):
         self._repaint_changes()
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        if self._owner.marking is not None:
+            if self._owner.marking is self:
+                self._markup_release(event)
+            return
         if event.button() != Qt.MouseButton.LeftButton or self._start is None:
             return
         end = event.position()
@@ -230,7 +313,10 @@ class _SelectWindow(QWidget):
         if frac is None:
             self.update()
             return
-        self._owner.finish(self, frac)
+        fx, fy, fw, fh = frac
+        self._begin_markup(
+            QRectF(fx * self.width(), fy * self.height(), fw * self.width(), fh * self.height())
+        )
 
     def clear_pointer(self) -> None:
         if self._pointer is not None or self._start is not None:
@@ -330,6 +416,10 @@ class _SelectWindow(QWidget):
         full = QRectF(0, 0, self.width(), self.height())
         if self._frozen is not None:
             painter.drawPixmap(full, self._frozen, QRectF(self._frozen.rect()))
+        if self._markup.sel is not None:
+            self._paint_markup(painter, full)
+            painter.end()
+            return
         hole = self._hole()
         if self._selection() is not None and hole is not None:
             # Dragging: the surroundings stay clear, the selection turns grey.
@@ -365,9 +455,387 @@ class _SelectWindow(QWidget):
         ascent = self._metrics.ascent()
         path = QPainterPath()
         for i, text in enumerate(numbers):
-            # Right-aligned in their column, the way macOS stacks them.
+            # Right-aligned in their column.
             x = box.right() - 2.0 - self._metrics.horizontalAdvance(text)
             path.addText(QPointF(x, box.top() + 1.0 + ascent + i * line), self._font, text)
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        halo = QPen(_HALO, 2.6)
+        halo.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.strokePath(path, halo)
+        painter.fillPath(path, _INK)
+        painter.restore()
+
+    # -- marking up the chosen area ------------------------------------------
+    def _begin_markup(self, sel: QRectF) -> None:
+        """The area is chosen: keep the overlay and dock the toolbar under it."""
+        m = self._markup
+        m.sel = sel
+        self._pointer = None
+        self._painted_numbers = None
+        self._painted_hole = None
+        if self._toolbar is None:
+            bar = annotate.Toolbar(
+                self, language=self._owner.language, dpr=self.screen_ref.devicePixelRatio() or 1.0
+            )
+            bar.tool_chosen.connect(self._set_tool)
+            bar.color_chosen.connect(self._set_color)
+            bar.width_cycled.connect(lambda: self._step_width(1, wrap=True))
+            bar.action.connect(self._toolbar_action)
+            self._toolbar = bar
+        self._toolbar.set_tool(m.tool)
+        self._toolbar.set_color(m.color)
+        self._toolbar.set_width(m.width)
+        self._sync_history()
+        self._place_toolbar()
+        self._toolbar.show()
+        self._toolbar.raise_()
+        self._owner.begin_markup(self)
+        self._update_cursor(None)
+        self.update()
+
+    def _end_markup(self) -> None:
+        """Back to choosing an area (right-click on an unmarked selection)."""
+        self._markup = _MarkupState()
+        if self._toolbar is not None:
+            self._toolbar.hide()
+        self._owner.end_markup(self)
+        self.setCursor(self._cross)
+        self.update()
+
+    def _place_toolbar(self) -> None:
+        bar = self._toolbar
+        if bar is None or self._markup.sel is None:
+            return
+        bar.adjustSize()
+        x, y = mm.toolbar_origin(
+            self._markup.box(), (bar.width(), bar.height()), (self.width(), self.height())
+        )
+        bar.move(round(x), round(y))
+
+    def _sync_history(self) -> None:
+        if self._toolbar is not None:
+            h = self._markup.history
+            self._toolbar.set_history(h.can_undo, h.can_redo)
+
+    def _commit(self) -> None:
+        self._markup.history.push(self._markup.shapes)
+        self._sync_history()
+
+    def _set_tool(self, kind: str) -> None:
+        self._commit_typing()
+        self._markup.tool = kind
+        self._markup.picked = None
+        if self._toolbar is not None:
+            self._toolbar.set_tool(kind)
+        self._update_cursor(None)
+        self.update()
+
+    def _set_color(self, colour: str) -> None:
+        m = self._markup
+        m.color = colour
+        target = m.typing or (m.shapes[m.picked] if m.picked is not None else None)
+        if target is not None:
+            target.color = colour
+            if target is not m.typing:
+                self._commit()
+        if self._toolbar is not None:
+            self._toolbar.set_color(colour)
+        self.update()
+
+    def _step_width(self, step: int, *, wrap: bool = False) -> None:
+        m = self._markup
+        count = len(mm.WIDTHS)
+        index = m.width_index + step
+        m.width_index = index % count if wrap else max(0, min(count - 1, index))
+        target = m.typing or (m.shapes[m.picked] if m.picked is not None else None)
+        if target is not None:
+            target.width = m.width
+            if target is not m.typing:
+                self._commit()
+        if self._toolbar is not None:
+            self._toolbar.set_width(m.width)
+        self.update()
+
+    def _toolbar_action(self, name: str) -> None:
+        if name == "undo":
+            self._undo(redo=False)
+        elif name == "redo":
+            self._undo(redo=True)
+        elif name == "cancel":
+            self._owner.finish(None, None)
+        elif name in wire.ACTIONS:
+            self._deliver(name)
+
+    def _undo(self, *, redo: bool) -> None:
+        m = self._markup
+        m.typing = None
+        state = m.history.redo() if redo else m.history.undo()
+        if state is not None:
+            m.shapes = state
+            m.picked = None
+        self._sync_history()
+        self.update()
+
+    def _deliver(self, action: str) -> None:
+        """Take the appshot: the area plus the markings, then close."""
+        self._commit_typing()
+        m = self._markup
+        sel = m.sel
+        if sel is None:
+            return
+        frac = (
+            sel.x() / self.width(),
+            sel.y() / self.height(),
+            sel.width() / self.width(),
+            sel.height() / self.height(),
+        )
+        markup = None
+        if m.shapes:
+            markup = {
+                "overlay": annotate.render_overlay(m.shapes, sel, self._scale()),
+                "hides": mm.hide_fractions(m.shapes, m.box()),
+            }
+        self._owner.finish(self, frac, action=action, markup=markup)
+
+    def _commit_typing(self) -> None:
+        m = self._markup
+        shape = m.typing
+        if shape is None:
+            return
+        m.typing = None
+        if mm.is_meaningful(shape):
+            m.shapes.append(shape)
+            self._commit()
+        self.update()
+
+    def _markup_key(self, event) -> None:  # noqa: C901 - one key table
+        m = self._markup
+        key = event.key()
+        mods = event.modifiers()
+        ctrl = bool(mods & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier))
+        if m.typing is not None:
+            self._typing_key(event, key, mods, ctrl)
+            return
+        if key == Qt.Key.Key_Escape:
+            if m.picked is not None:
+                m.picked = None
+                self.update()
+            else:
+                self._owner.finish(None, None)
+        elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self._deliver(wire.ACTION_DONE)
+        elif ctrl and key == Qt.Key.Key_Z:
+            self._undo(redo=bool(mods & Qt.KeyboardModifier.ShiftModifier))
+        elif ctrl and key == Qt.Key.Key_Y:
+            self._undo(redo=True)
+        elif ctrl and key in _ACTION_KEYS:
+            self._deliver(_ACTION_KEYS[key])
+        elif key in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace) and m.picked is not None:
+            del m.shapes[m.picked]
+            m.picked = None
+            self._commit()
+            self.update()
+        elif not ctrl and Qt.Key.Key_1 <= key <= Qt.Key.Key_9:
+            index = int(key) - int(Qt.Key.Key_1)
+            if index < len(mm.PALETTE):
+                self._set_color(mm.PALETTE[index])
+        elif not ctrl and event.text():
+            letter = event.text().upper()
+            for kind, shortcut in mm.TOOL_KEYS.items():
+                if shortcut == letter:
+                    self._set_tool(kind)
+                    break
+
+    def _typing_key(self, event, key, mods, ctrl: bool) -> None:
+        shape = self._markup.typing
+        assert shape is not None
+        if key == Qt.Key.Key_Escape:
+            self._markup.typing = None
+        elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            if mods & Qt.KeyboardModifier.ShiftModifier:
+                shape.text += "\n"
+            else:
+                self._commit_typing()
+        elif key == Qt.Key.Key_Backspace:
+            shape.text = shape.text[:-1]
+        elif ctrl and key == Qt.Key.Key_V:
+            shape.text += QGuiApplication.clipboard().text()
+        elif not ctrl and event.text() and event.text().isprintable():
+            shape.text += event.text()
+        self.update()
+
+    def _markup_press(self, event) -> None:  # noqa: C901 - one press table
+        m = self._markup
+        p = event.position()
+        point = (p.x(), p.y())
+        if event.button() == Qt.MouseButton.RightButton:
+            if m.drawing is not None:
+                m.drawing = None
+            elif m.typing is not None:
+                m.typing = None
+            elif not m.shapes:
+                self._end_markup()
+                return
+            self.update()
+            return
+        if event.button() != Qt.MouseButton.LeftButton:
+            return
+        self._commit_typing()
+        handle = mm.handle_at(m.box(), point)
+        if handle is not None:
+            m.drag = ("resize", handle)
+            return
+        inside = m.sel is not None and m.sel.contains(p)
+        if m.tool == mm.MOVE:
+            m.picked = mm.shape_at(m.shapes, point)
+            if m.picked is not None:
+                m.drag, m.last, m.moved = ("move", None), p, False
+            self.update()
+            return
+        if not inside:
+            if not m.shapes:
+                # A press outside an unmarked area starts choosing again.
+                self._end_markup()
+                self.mousePressEvent(event)
+            return
+        m.picked = None
+        if m.tool == mm.TEXT:
+            m.typing = mm.Shape(
+                mm.TEXT,
+                color=m.color,
+                width=m.width,
+                points=[(point[0], point[1] - mm.text_size(m.width) / 2.0)],
+            )
+        elif m.tool == mm.COUNTER:
+            m.shapes.append(
+                mm.Shape(
+                    mm.COUNTER,
+                    color=m.color,
+                    width=m.width,
+                    points=[point],
+                    number=mm.next_counter(m.shapes),
+                )
+            )
+            self._commit()
+        elif m.tool in mm.STROKE_KINDS:
+            m.drawing = mm.Shape(m.tool, color=m.color, width=m.width, points=[point])
+        else:
+            m.drawing = mm.Shape(m.tool, color=m.color, width=m.width, points=[point, point])
+        self._update_markup_area()
+
+    def _markup_move(self, event) -> None:
+        m = self._markup
+        p = event.position()
+        point = (p.x(), p.y())
+        if m.drag is not None and m.drag[0] == "resize":
+            sel = mm.resize(m.box(), m.drag[1] or "se", point, (self.width(), self.height()))
+            m.sel = QRectF(*sel)
+            self._place_toolbar()
+            self.update()
+            return
+        if m.drag is not None and m.drag[0] == "move" and m.picked is not None and m.last:
+            delta = p - m.last
+            m.shapes[m.picked] = mm.translated(m.shapes[m.picked], delta.x(), delta.y())
+            m.last, m.moved = p, True
+            self._update_markup_area()
+            return
+        shape = m.drawing
+        if shape is not None:
+            if shape.kind in mm.STROKE_KINDS:
+                lx, ly = shape.points[-1]
+                if abs(point[0] - lx) + abs(point[1] - ly) >= 1.5:
+                    shape.points.append(point)
+            else:
+                end = point
+                if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                    end = mm.constrain(shape.kind, shape.points[0], point)
+                shape.points[-1] = end
+            self._update_markup_area()
+            return
+        self._update_cursor(point)
+
+    def _markup_release(self, event) -> None:
+        if event.button() != Qt.MouseButton.LeftButton:
+            return
+        m = self._markup
+        drag, m.drag = m.drag, None
+        if drag is not None and drag[0] == "move" and m.moved:
+            self._commit()
+        shape, m.drawing = m.drawing, None
+        if shape is not None and mm.is_meaningful(shape):
+            m.shapes.append(shape)
+            self._commit()
+        self._update_markup_area()
+
+    def wheelEvent(self, event) -> None:  # noqa: N802
+        if self._markup.sel is None:
+            return
+        steps = event.angleDelta().y()
+        if steps:
+            self._step_width(1 if steps > 0 else -1)
+
+    def _update_cursor(self, point: mm.Point | None) -> None:
+        m = self._markup
+        if point is not None:
+            handle = mm.handle_at(m.box(), point)
+            if handle is not None:
+                self.setCursor(_HANDLE_CURSORS[handle])
+                return
+            if m.tool == mm.MOVE:
+                over = mm.shape_at(m.shapes, point) is not None
+                self.setCursor(Qt.CursorShape.SizeAllCursor if over else Qt.CursorShape.ArrowCursor)
+                return
+        if m.tool == mm.TEXT:
+            self.setCursor(Qt.CursorShape.IBeamCursor)
+        elif m.tool == mm.MOVE:
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+        else:
+            self.setCursor(self._cross)
+
+    def _update_markup_area(self) -> None:
+        """Repaint the selection (markings are clipped to it) and its frame."""
+        if self._markup.sel is None:
+            self.update()
+            return
+        self.update(self._markup.sel.adjusted(-40, -40, 40, 40).toAlignedRect())
+
+    def _paint_markup(self, painter: QPainter, full: QRectF) -> None:
+        m = self._markup
+        sel = m.sel
+        assert sel is not None
+        dim = QPainterPath()
+        dim.addRect(full)
+        cut = QPainterPath()
+        cut.addRect(sel)
+        painter.fillPath(dim.subtracted(cut), annotate.DIM_OUTSIDE)
+        if self._frozen is None:
+            # Live overlay: a fully clear pixel lets clicks fall through to the
+            # window below, so the area keeps an invisible film to draw on.
+            painter.fillRect(sel, QColor(0, 0, 0, 1))
+        live =[*m.shapes, *(s for s in (m.drawing, m.typing) if s is not None)]
+        painter.save()
+        painter.setClipRect(sel, Qt.ClipOperation.IntersectClip)
+        for shape in (s for s in live if s.kind in mm.HIDE_KINDS):
+            annotate.paint_shape(painter, shape, hide_source=self._patches)
+        for shape in (s for s in live if s.kind not in mm.HIDE_KINDS):
+            annotate.paint_shape(painter, shape, caret=shape is m.typing)
+        painter.restore()
+        if m.picked is not None and m.picked < len(m.shapes):
+            annotate.paint_picked(painter, m.shapes[m.picked])
+        annotate.paint_selection_frame(painter, sel)
+        self._paint_size(painter, sel)
+
+    def _paint_size(self, painter: QPainter, sel: QRectF) -> None:
+        """``W x H`` in capture pixels, just above the area's top-left corner."""
+        scale = self._scale()
+        text = f"{round(sel.width() * scale)} × {round(sel.height() * scale)}"
+        ascent = self._metrics.ascent()
+        y = sel.top() - 6.0
+        if y - ascent < _EDGE_GAP:
+            y = sel.top() + ascent + 6.0
+        path = QPainterPath()
+        path.addText(QPointF(sel.left() + 1.0, y), self._font, text)
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         halo = QPen(_HALO, 2.6)
@@ -380,11 +848,14 @@ class _SelectWindow(QWidget):
 class Picker(QObject):
     """Owns the per-screen windows and reports exactly one result."""
 
-    def __init__(self, app: QApplication) -> None:
+    def __init__(self, app: QApplication, *, language: str = "en") -> None:
         super().__init__()
         self._app = app
+        self.language = language
         self._windows: list[_SelectWindow] = []
         self._focused: _SelectWindow | None = None
+        #: The window whose area is being marked up; the others stay inert.
+        self.marking: _SelectWindow | None = None
         self._done = False
 
     def start(self) -> None:
@@ -421,14 +892,38 @@ class Picker(QObject):
 
     def focus_on(self, window: _SelectWindow) -> None:
         """The pointer moved onto ``window``: only that screen shows the numbers."""
-        if self._focused is window:
+        if self._focused is window or self.marking is not None:
             return
         for other in self._windows:
             if other is not window:
                 other.clear_pointer()
         self._focused = window
 
-    def finish(self, window: _SelectWindow | None, frac) -> None:
+    def begin_markup(self, window: _SelectWindow) -> None:
+        """An area is chosen on ``window``: the toolbar is up, keys go there."""
+        self.marking = window
+        self._focused = window
+        for other in self._windows:
+            if other is not window:
+                other.clear_pointer()
+        window.raise_()
+        window.activateWindow()
+        window.setFocus()
+        # The parent drops its global Esc now: Esc may end a text box here.
+        _emit({"event": wire.EVENT_MARKING})
+
+    def end_markup(self, window: _SelectWindow) -> None:
+        if self.marking is window:
+            self.marking = None
+
+    def finish(
+        self,
+        window: _SelectWindow | None,
+        frac,
+        *,
+        action: str = "done",
+        markup: dict | None = None,
+    ) -> None:
         if self._done:
             return
         self._done = True
@@ -440,7 +935,15 @@ class Picker(QObject):
         if info is None or frac is None:
             _emit({"event": wire.EVENT_SELECTION, "cancelled": True})
         else:
-            _emit({"event": wire.EVENT_SELECTION, "screen": info, "rect": list(frac)})
+            payload: dict = {
+                "event": wire.EVENT_SELECTION,
+                "screen": info,
+                "rect": list(frac),
+                "action": action,
+            }
+            if markup is not None:
+                payload["markup"] = markup
+            _emit(payload)
         self._app.quit()
 
     @Slot(str)
@@ -479,7 +982,7 @@ class _StdinPump(QObject):
         self.eof.emit()
 
 
-def run() -> int:
+def run(language: str = "en") -> int:
     """Picker main loop. Returns the process exit code."""
     QGuiApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
@@ -490,7 +993,7 @@ def run() -> int:
         sys.stderr.write(f"appshot-picker: no usable display ({exc!r}).\n")
         return wire.EXIT_NO_GUI
     app.setQuitOnLastWindowClosed(False)
-    picker = Picker(app)
+    picker = Picker(app, language=language)
     pump = _StdinPump()
     pump.line.connect(picker.on_line, Qt.ConnectionType.QueuedConnection)
     pump.eof.connect(picker.on_eof, Qt.ConnectionType.QueuedConnection)

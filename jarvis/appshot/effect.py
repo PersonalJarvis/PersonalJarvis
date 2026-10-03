@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextvars
 import io
 import logging
 from typing import Any
@@ -30,6 +31,12 @@ log = logging.getLogger(__name__)
 _THUMB_EDGE = 560
 
 _tasks: set[asyncio.Task[None]] = set()
+
+#: Markings the user drew in the area picker for the capture now running
+#: (:mod:`jarvis.appshot.markup`); the thumbnail shows them like the appshot.
+shutter_markup: contextvars.ContextVar[Any] = contextvars.ContextVar(
+    "appshot_shutter_markup", default=None
+)
 
 # The card's hover line — app chrome, so it follows [ui].language; a phrase
 # table always carries every supported locale.
@@ -56,7 +63,7 @@ def on_shutter(target: Any, size: tuple[int, int], rgb: bytes, monitors: list[di
     controller.hold_for_snap()
     loop = asyncio.get_running_loop()
     task = loop.create_task(
-        _play(controller, tuple(target.bbox), size, rgb, monitors),
+        _play(controller, tuple(target.bbox), size, rgb, monitors, shutter_markup.get()),
         name="appshot-effect",
     )
     _tasks.add(task)
@@ -75,6 +82,7 @@ async def _play(
     size: tuple[int, int],
     rgb: bytes,
     monitors: list[dict],
+    markup: Any = None,
 ) -> None:
     try:
         from jarvis.core.config import load_config  # noqa: PLC0415
@@ -84,6 +92,10 @@ async def _play(
             return
         from jarvis.appshot.card_actions import card_labels, card_rest_ms  # noqa: PLC0415
 
+        if markup is not None:
+            from jarvis.appshot.markup import apply_to_rgb  # noqa: PLC0415
+
+            size, rgb = await asyncio.to_thread(apply_to_rgb, size, rgb, markup)
         thumb = await asyncio.to_thread(thumbnail_jpeg, size, rgb)
         monitor, rect = placement(bbox, monitors)
         shown = await controller.snap(
@@ -179,4 +191,11 @@ def placement(
     ]
 
 
-__all__ = ["attach_card_image", "card_hint", "on_shutter", "placement", "thumbnail_jpeg"]
+__all__ = [
+    "attach_card_image",
+    "card_hint",
+    "on_shutter",
+    "placement",
+    "shutter_markup",
+    "thumbnail_jpeg",
+]

@@ -88,14 +88,18 @@ async def take_appshot(
     """Capture once and deliver it per ``[appshot].target``.
 
     ``scope="window"`` takes the front window; ``scope="region"`` first lets
-    the user drag out an area (:mod:`jarvis.appshot.region`) and takes exactly
-    that — a cancelled selection is a refusal with ``reason_code="cancelled"``.
+    the user drag out an area and mark it up in place
+    (:mod:`jarvis.appshot.region`) and takes exactly that, with the markings
+    burnt in — a cancelled selection is a refusal with
+    ``reason_code="cancelled"``. Finishing the area with Copy, Save or Edit
+    also copies, saves or opens the finished appshot.
     ``deliver=False`` is for a caller that consumes the picture itself (the
     live model's tool). Never raises; a refusal carries the user-facing reason.
     """
     from jarvis.screen_context.models import IntentVerdict, VisualIntent  # noqa: PLC0415
     from jarvis.screen_context.turn import get_service  # noqa: PLC0415
 
+    selection = None
     try:
         config = await asyncio.to_thread(_load_config)
         if not config.screen_context.enabled:
@@ -106,14 +110,23 @@ async def take_appshot(
             )
         service = get_service(bus=bus)
         if scope == "region":
-            picked = await _pick_area(service)
+            picked = await _pick_area(service, _language(config))
             if isinstance(picked, AppshotResult):
                 return picked
-            outcome = await service.capture(
-                verdict=IntentVerdict(intent=VisualIntent.SCREEN, evidence=("appshot-region",)),
-                trace_id=trace_id or uuid.uuid4(),
-                region=picked,
-            )
+            bbox, selection = picked
+            from jarvis.appshot.effect import shutter_markup  # noqa: PLC0415
+
+            # The corner card's thumbnail is cut at the shutter: give it the
+            # markings too, so it shows what the assistant gets.
+            token = shutter_markup.set(selection.markup)
+            try:
+                outcome = await service.capture(
+                    verdict=IntentVerdict(intent=VisualIntent.SCREEN, evidence=("appshot-region",)),
+                    trace_id=trace_id or uuid.uuid4(),
+                    region=bbox,
+                )
+            finally:
+                shutter_markup.reset(token)
         else:
             outcome = await service.capture(
                 verdict=IntentVerdict(intent=VisualIntent.WINDOW, evidence=("appshot",)),
@@ -128,6 +141,8 @@ async def take_appshot(
         if outcome.handle_id:
             service.consume(outcome.handle_id)
         shot = shot_from_context(outcome.context, trigger=trigger)
+        if selection is not None and selection.markup is not None:
+            shot = await _with_markup(shot, selection.markup)
     except Exception:  # noqa: BLE001 - a shortcut press must never crash the app
         log.error("appshot: capture failed", exc_info=True)
         return AppshotResult(
@@ -157,11 +172,60 @@ async def take_appshot(
         trigger,
         delivered_to,
     )
+    if selection is not None and selection.action != "done":
+        await _finish_action(selection.action, shot, bus)
     return AppshotResult(status="captured", shot=replace(shot, delivered_to=delivered_to))
 
 
-async def _pick_area(service: Any) -> tuple[int, int, int, int] | AppshotResult:
-    """Run the area picker; the chosen rectangle, or the refusal to return."""
+def _language(config: Any) -> str:
+    return str(getattr(getattr(config, "ui", None), "language", "") or "en").lower()[:2]
+
+
+async def _with_markup(shot: Appshot, markup: Any) -> Appshot:
+    """Burn the markings the user drew in the picker into the finished appshot."""
+    from jarvis.appshot.markup import apply_to_bytes  # noqa: PLC0415
+
+    try:
+        image = await asyncio.to_thread(apply_to_bytes, shot.image, shot.mime, markup)
+    except Exception:  # noqa: BLE001 - the plain appshot is still worth sending
+        log.warning("appshot: markings could not be applied; sent unmarked", exc_info=True)
+        return shot
+    return replace(shot, image=image, note=f"{shot.note}\n\n{EDIT_NOTE}")
+
+
+async def _finish_action(action: str, shot: Appshot, bus: Any | None) -> None:
+    """Copy, save or open the appshot, as the picker's toolbar asked."""
+    try:
+        if action in ("copy", "save"):
+            from jarvis.appshot.card_actions import as_png, save_to_downloads  # noqa: PLC0415
+
+            png = await asyncio.to_thread(as_png, shot.image)
+            if action == "copy":
+                from jarvis.platform.clipboard_image import write_png  # noqa: PLC0415
+
+                if not await asyncio.to_thread(write_png, png):
+                    log.warning("appshot: the area could not be copied to the clipboard")
+            else:
+                path = await asyncio.to_thread(save_to_downloads, png)
+                log.info("appshot: area saved as %s", path.name)
+        elif action == "edit":
+            from jarvis.appshot.editor_window import open_editor_window  # noqa: PLC0415
+
+            if await open_editor_window(shot.id) or bus is None:
+                return
+            from jarvis.core.events import (  # noqa: PLC0415
+                AppshotEditRequested,
+                ShowWindowRequested,
+            )
+
+            await bus.publish(AppshotEditRequested(source_layer="appshot", appshot_id=shot.id))
+            await bus.publish(ShowWindowRequested(source_layer="appshot", source="appshot_picker"))
+    except Exception:  # noqa: BLE001 - the appshot itself is taken and delivered
+        log.warning("appshot: the picker's %r action failed", action, exc_info=True)
+
+
+async def _pick_area(service: Any, language: str = "en") -> tuple[Any, Any] | AppshotResult:
+    """Run the area picker; ``(rectangle, selection)``, or the refusal to return."""
     from jarvis.appshot.region import (  # noqa: PLC0415
         RegionUnavailable,
         pick_region,
@@ -169,7 +233,7 @@ async def _pick_area(service: Any) -> tuple[int, int, int, int] | AppshotResult:
     )
 
     try:
-        selection = await pick_region()
+        selection = await pick_region(language=language)
     except RegionUnavailable as exc:
         return AppshotResult(status="refused", reason_code="region_unavailable", message=str(exc))
     if selection is None:
@@ -184,7 +248,7 @@ async def _pick_area(service: Any) -> tuple[int, int, int, int] | AppshotResult:
             reason_code="no_display",
             message="No screen could be found for the selected area.",
         )
-    return bbox
+    return bbox, selection
 
 
 async def record_turn_capture(context: Any, *, bus: Any | None, trigger: Trigger) -> None:
