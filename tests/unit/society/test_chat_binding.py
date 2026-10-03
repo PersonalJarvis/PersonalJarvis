@@ -980,9 +980,11 @@ async def test_manual_room_settle_cancels_owned_turn_and_recovers_cost(tmp_path:
         svc.store.close()
 
 
-async def test_live_room_completion_reenters_voice_announcement_path(tmp_path: Path):
+async def test_m4_voice_group_delegation_exit_contract(tmp_path: Path):
     import asyncio
+    from uuid import uuid4
 
+    from jarvis.plugins.tool.delegate_to_agent import DelegateToAgentTool
     from jarvis.society.events import RoomState
 
     published = []
@@ -1003,17 +1005,31 @@ async def test_live_room_completion_reenters_voice_announcement_path(tmp_path: P
     try:
         await rt.roster.create(name="Scout", provider="openai")
         await rt.roster.create(name="Archivist", provider="openai")
-        room = await rt.rooms.open(
-            opened_by="jarvis",
-            members=["scout", "archivist"],
-            topic="Choose a deployment provider.",
-            live=True,
-            metadata={
-                "reply_policy": "always",
-                "reply_surface": "voice",
-                "lang": "en",
-            },
+        ctx = SimpleNamespace(
+            trace_id=uuid4(),
+            user_utterance="Jarvis, lass Scout und Archivist das zusammen klären",
+            config={"output_language": "de"},
+            memory_read=None,
         )
+        result = await DelegateToAgentTool(runtime_resolver=lambda: rt).execute(
+            {
+                "agents": ["Scout", "Archivist"],
+                "task": "Wählt gemeinsam einen Deployment-Anbieter.",
+                "reply_policy": "always",
+                "turn_language": "de",
+            },
+            ctx,
+        )
+        assert result.success, result.error
+        assert result.output["state"] == "running"
+        assert result.output["acknowledgement"] == (
+            "Scout, Archivist klären das zusammen, ich sage Bescheid."
+        )
+        room = await rt.rooms.get(result.output["room_id"])
+        assert room is not None
+        assert room.live is True
+        assert room.members == ["scout", "archivist"]
+        assert room.max_rounds == 3 if hasattr(room, "max_rounds") else True
 
         sessions = ["society:scout", "society:archivist"] * 3
         for turn_number, session_id in enumerate(sessions, start=1):
@@ -1025,7 +1041,7 @@ async def test_live_room_completion_reenters_voice_announcement_path(tmp_path: P
                 pytest.fail(f"room turn {turn_number} was not scheduled")
             await svc.finish(
                 session_id,
-                f"finding {turn_number}",
+                f"Beitrag {turn_number}",
                 turn_id=f"turn-{turn_number}",
                 cost_usd=turn_number / 100,
             )
@@ -1038,22 +1054,31 @@ async def test_live_room_completion_reenters_voice_announcement_path(tmp_path: P
                 if getattr(event, "source_layer", "") == "society.lead"
                 and getattr(event, "kind", "") == "completion"
             ]
-            if (
-                settled is not None
-                and settled.state is RoomState.SETTLED
-                and announcements
-            ):
+            if settled is not None and settled.state is RoomState.SETTLED and announcements:
                 break
             await asyncio.sleep(0.01)
         else:
-            pytest.fail("room completion did not reach the announcement path")
+            pytest.fail("M4 room completion did not reach the voice announcement path")
 
         assert settled.settle_reason == "round_cap"
         events = await rt.store.events_for_trace(room.trace_id)
         says = [event for event in events if event.msg_type is MsgType.SAY]
         assert len(says) == 6
         assert sum(event.cost_usd for event in says) == pytest.approx(0.21)
+        assert events[0].msg_type is MsgType.ROOM_OPEN
+        assert events[0].payload["max_rounds"] == 3
+        assert events[0].payload["max_messages"] == 10
         assert events[-1].msg_type is MsgType.ROOM_SETTLE
+
+        world_rooms = [
+            event for event in published
+            if type(event).__name__ == "SocietyRoomChanged"
+            and getattr(event, "room_id", "") == room.room_id
+        ]
+        assert [event.phase for event in world_rooms] == ["open", "settle"]
+        assert world_rooms[0].members == ("scout", "archivist")
+        assert (world_rooms[0].max_rounds, world_rooms[0].max_messages) == (3, 10)
+
         announcement = announcements[-1]
         attention = [
             event for event in published
@@ -1062,9 +1087,9 @@ async def test_live_room_completion_reenters_voice_announcement_path(tmp_path: P
         assert len(attention) == 1
         assert attention[0].kind == "room"
         assert attention[0].agent_ids == ("scout", "archivist")
-        assert "Discussion with Scout, Archivist" in announcement.text
-        assert "finding 1" in announcement.report
-        assert "finding 6" in announcement.report
+        assert "Runde mit Scout, Archivist" in announcement.text
+        assert "Beitrag 1" in announcement.report
+        assert "Beitrag 6" in announcement.report
         assert rt.scheduler.running == {}
     finally:
         await rt.close()
