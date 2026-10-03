@@ -11,6 +11,7 @@ zero so migration can never consume a present-day Society budget.
 
 from __future__ import annotations
 
+import logging
 import math
 from typing import Any, Final
 
@@ -19,6 +20,8 @@ from jarvis.missions.stream_evidence import clean_request_body
 from .events import MsgType, SocietyEnvelope
 from .roster import LEAD_AGENT_ID
 from .store import SocietyStore
+
+log = logging.getLogger(__name__)
 
 __all__ = ["migrate_legacy_missions"]
 
@@ -37,7 +40,8 @@ def _prompt_preview(value: Any) -> str:
 def _historic_cost(value: Any) -> float:
     try:
         cost = float(value or 0.0)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
+        log.debug("society history migration: invalid historic cost %r (%s)", value, exc)
         return 0.0
     return cost if cost > 0 and math.isfinite(cost) else 0.0
 
@@ -46,7 +50,13 @@ def _timestamp(row: dict[str, Any]) -> int:
     for key in ("updated_ms", "created_ms"):
         try:
             value = int(row.get(key) or 0)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as exc:
+            log.debug(
+                "society history migration: invalid %s timestamp %r (%s)",
+                key,
+                row.get(key),
+                exc,
+            )
             value = 0
         if value > 0:
             return value
