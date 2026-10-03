@@ -1,4 +1,4 @@
-"""PySide6 area picker for region appshots, modelled on ShareX's region capture.
+"""PySide6 area picker for region appshots, as quiet as macOS's / CleanShot X's.
 
 Runs ONLY inside ``python -m jarvis.appshot.picker``; the main process never
 imports this module (AP-26). One frameless, always-on-top window per screen:
@@ -10,12 +10,13 @@ imports this module (AP-26). One frameless, always-on-top window per screen:
 - **Window snapping.** Hovering highlights the window under the pointer
   (rectangles from the main process, top-most first); a click without a drag
   selects exactly that window.
-- **Drag to select.** The selection is cut out of the dim layer with a
-  marching-ants border and its size in real pixels.
-- **Magnifier.** A round lens of zoomed pixels beside the pointer with the
-  centre pixel outlined and a small pill underneath: the position (or the
-  selection size) and the zoom. The mouse wheel zooms it; the last zoom is
-  kept for the next pick (``QSettings``).
+- **Drag to select.** The selection is cut out of the dim layer with one thin
+  solid border; its size in real pixels rides in a small pill beside the
+  pointer. Nothing else is drawn while dragging.
+- **Magnifier.** Before the drag starts, a round lens of zoomed pixels beside
+  the pointer with the centre pixel outlined and the position underneath, for
+  placing the first corner exactly. The mouse wheel zooms it; the last zoom
+  is kept for the next pick (``QSettings``).
 
 Esc or a right-click cancels. The result is reported as fractions of its
 screen, so mixed-DPI layouts map back to capture pixels exactly (see
@@ -35,7 +36,6 @@ from PySide6.QtCore import (
     QRectF,
     QSettings,
     Qt,
-    QTimer,
     Signal,
     Slot,
 )
@@ -64,10 +64,14 @@ from jarvis.appshot.region import (
     step_zoom,
 )
 
-_DIM = QColor(0, 0, 0, 115)
-_LABEL_BG = QColor(18, 18, 20, 225)
-_LABEL_FG = QColor(255, 255, 255, 240)
-_LABEL_MUTED = QColor(255, 255, 255, 150)
+_DIM = QColor(0, 0, 0, 120)
+_LABEL_BG = QColor(28, 28, 30, 215)
+_LABEL_FG = QColor(255, 255, 255, 235)
+_LABEL_MUTED = QColor(255, 255, 255, 165)
+#: The selection border: a white hairline with a faint dark edge outside it,
+#: so it reads on light and dark content alike.
+_BORDER = QColor(255, 255, 255, 235)
+_BORDER_EDGE = QColor(0, 0, 0, 70)
 
 #: Magnifier placement and its info strip.
 _MAG_OFFSET = 20.0
@@ -75,9 +79,9 @@ _MAG_STRIP_H = 20.0
 #: Pixel-grid lines only once a source pixel is at least this wide (logical px).
 _MAG_GRID_MIN_CELL = 6.0
 
-#: Marching ants: dash length and the tick that moves them.
-_DASH = 4.0
-_ANTS_MS = 90
+#: Distance of the size pill from the pointer, and from the screen edge.
+_PILL_OFFSET = 14.0
+_EDGE_GAP = 6.0
 
 #: Windows smaller than this (logical px, either side) are not snap targets.
 _MIN_SNAP_PX = 24
@@ -104,14 +108,14 @@ def _emit(payload: dict) -> None:
 def _font(size: float, *, bold: bool = False) -> QFont:
     font = QFont()
     font.setPointSizeF(size)
-    font.setWeight(QFont.Weight.DemiBold if bold else QFont.Weight.Normal)
+    font.setWeight(QFont.Weight.Medium if bold else QFont.Weight.Normal)
     return font
 
 
-def _draw_label(painter: QPainter, box: QRectF, text: str, font: QFont) -> None:
+def _draw_pill(painter: QPainter, box: QRectF, text: str, font: QFont) -> None:
     painter.setPen(Qt.PenStyle.NoPen)
     painter.setBrush(_LABEL_BG)
-    painter.drawRoundedRect(box, 4.0, 4.0)
+    painter.drawRoundedRect(box, box.height() / 2.0, box.height() / 2.0)
     painter.setFont(font)
     painter.setPen(_LABEL_FG)
     painter.drawText(box, Qt.AlignmentFlag.AlignCenter, text)
@@ -280,40 +284,45 @@ class _SelectWindow(QWidget):
             cut.addRect(hole)
             dim = dim.subtracted(cut)
         painter.fillPath(dim, _DIM)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         if hole is not None:
             self._paint_border(painter, hole)
-            self._paint_size(painter, hole)
-        if self._pointer is not None and self._frozen is not None:
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        sel = self._selection()
+        if sel is not None and self._end is not None:
+            # Dragging: the size beside the pointer and nothing else.
+            self._paint_size(painter, sel, self._end)
+        elif self._pointer is not None and self._frozen is not None:
             self._paint_magnifier(painter, self._pointer)
         if self._owner.hint and self._owner.hint_window is self:
             self._paint_hint(painter, self._owner.hint)
         painter.end()
 
     def _paint_border(self, painter: QPainter, rect: QRectF) -> None:
+        # Drawn without antialiasing so both hairlines land on whole pixels.
         r = rect.adjusted(0.5, 0.5, -0.5, -0.5)
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.setPen(QPen(QColor(0, 0, 0, 220), 1.0))
-        painter.drawRect(r)
-        ants = QPen(QColor(255, 255, 255, 250), 1.0)
-        ants.setDashPattern([_DASH, _DASH])
-        ants.setDashOffset(self._owner.ants_offset)
-        painter.setPen(ants)
+        painter.setPen(QPen(_BORDER_EDGE, 1.0))
+        painter.drawRect(r.adjusted(-1.0, -1.0, 1.0, 1.0))
+        painter.setPen(QPen(_BORDER, 1.0))
         painter.drawRect(r)
 
-    def _paint_size(self, painter: QPainter, rect: QRectF) -> None:
+    def _paint_size(self, painter: QPainter, rect: QRectF, point: QPointF) -> None:
         scale = self._scale()
         text = f"{round(rect.width() * scale)} × {round(rect.height() * scale)}"
         font = _font(9.0, bold=True)
         metrics = QFontMetricsF(font)
-        w = metrics.horizontalAdvance(text) + 14.0
-        h = metrics.height() + 6.0
-        x = rect.left()
-        y = rect.top() - h - 5.0
-        if y < 4.0:
-            x, y = rect.left() + 5.0, rect.top() + 5.0
-        x = max(4.0, min(x, self.width() - w - 4.0))
-        _draw_label(painter, QRectF(x, y, w, h), text, font)
+        w = metrics.horizontalAdvance(text) + 18.0
+        h = metrics.height() + 8.0
+        # Below-right of the pointer; flipped to the other side at an edge.
+        x = point.x() + _PILL_OFFSET
+        y = point.y() + _PILL_OFFSET
+        if x + w > self.width() - _EDGE_GAP:
+            x = point.x() - _PILL_OFFSET - w
+        if y + h > self.height() - _EDGE_GAP:
+            y = point.y() - _PILL_OFFSET - h
+        x = max(_EDGE_GAP, x)
+        y = max(_EDGE_GAP, y)
+        _draw_pill(painter, QRectF(round(x), round(y), round(w), round(h)), text, font)
 
     def _paint_magnifier(self, painter: QPainter, point: QPointF) -> None:
         frozen = self._frozen
@@ -326,13 +335,10 @@ class _SelectWindow(QWidget):
         source = QRect(cx - half, cy - half, count, count)
         side = MAG_BOX_PX
 
-        sel = self._selection()
-        if sel is not None:
-            info = f"{round(sel.width() * scale)} × {round(sel.height() * scale)}"
-        else:
-            px, py = self._capture_point(point)
-            info = f"{px}, {py}"
-        info = f"{info}   {zoom}×"
+        # Only shown before a drag, so the pill names the position; the lens
+        # itself shows the zoom.
+        px, py = self._capture_point(point)
+        info = f"{px}, {py}"
         font = _font(8.0)
         metrics = QFontMetricsF(font)
         pill_w = metrics.horizontalAdvance(info) + 16.0
@@ -389,14 +395,9 @@ class _SelectWindow(QWidget):
         painter.setPen(QPen(QColor(255, 255, 255, 240), 1.5))
         painter.drawEllipse(box.adjusted(0.75, 0.75, -0.75, -0.75))
 
-        # Position (or size) and zoom in a small flat pill under the circle.
+        # The position in a small flat pill under the circle.
         pill = QRectF(box.center().x() - pill_w / 2.0, box.bottom() + 6.0, pill_w, pill_h)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(_LABEL_BG)
-        painter.drawRoundedRect(pill, pill_h / 2.0, pill_h / 2.0)
-        painter.setFont(font)
-        painter.setPen(_LABEL_FG)
-        painter.drawText(pill, Qt.AlignmentFlag.AlignCenter, info)
+        _draw_pill(painter, pill, info, font)
         painter.restore()
 
     def _paint_hint(self, painter: QPainter, hint: str) -> None:
@@ -404,10 +405,10 @@ class _SelectWindow(QWidget):
         metrics = QFontMetricsF(font)
         w = metrics.horizontalAdvance(hint) + 24.0
         h = metrics.height() + 10.0
-        box = QRectF((self.width() - w) / 2.0, 16.0, w, h)
+        box = QRectF(round((self.width() - w) / 2.0), 16.0, round(w), round(h))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(_LABEL_BG)
-        painter.drawRoundedRect(box, 5.0, 5.0)
+        painter.drawRoundedRect(box, h / 2.0, h / 2.0)
         painter.setFont(font)
         painter.setPen(_LABEL_MUTED)
         painter.drawText(box, Qt.AlignmentFlag.AlignCenter, hint)
@@ -423,16 +424,12 @@ class Picker(QObject):
         self._windows: list[_SelectWindow] = []
         self.hint_window: _SelectWindow | None = None
         self._done = False
-        self.ants_offset = 0.0
         self._settings = QSettings("PersonalJarvis", "AppshotPicker")
         try:
             saved = int(self._settings.value("zoom", MAG_DEFAULT_ZOOM))
         except (TypeError, ValueError):
             saved = MAG_DEFAULT_ZOOM
         self.zoom = saved if saved in MAG_ZOOMS else MAG_DEFAULT_ZOOM
-        self._ants = QTimer(self)
-        self._ants.setInterval(_ANTS_MS)
-        self._ants.timeout.connect(self._march)
 
     def start(self) -> None:
         screens = QGuiApplication.screens()
@@ -450,7 +447,6 @@ class Picker(QObject):
             self.hint_window.raise_()
             self.hint_window.activateWindow()
             self.hint_window.setFocus()
-        self._ants.start()
         self._app.processEvents()
         _emit({"event": wire.EVENT_READY})
 
@@ -462,12 +458,6 @@ class Picker(QObject):
             sys.stderr.write("appshot-picker: screen grab failed; using a live overlay\n")
             return None
         return None if pixmap.isNull() or pixmap.width() <= 0 else pixmap
-
-    def _march(self) -> None:
-        self.ants_offset = (self.ants_offset + 1.0) % (2 * _DASH)
-        for win in self._windows:
-            if win.has_hole():
-                win.update()
 
     def zoom_by(self, steps: int) -> None:
         zoom = step_zoom(self.zoom, steps)
@@ -496,7 +486,6 @@ class Picker(QObject):
         if self._done:
             return
         self._done = True
-        self._ants.stop()
         info = _screen_info(window.screen_ref) if window is not None else None
         for win in self._windows:
             win.hide()
