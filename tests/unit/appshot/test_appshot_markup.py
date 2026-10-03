@@ -386,3 +386,77 @@ async def test_copy_save_and_edit_run_after_delivery(flow, monkeypatch, tmp_path
     assert len(copied) == 1 and copied[0].startswith(b"\x89PNG")
     assert (tmp_path / "shot.png").read_bytes().startswith(b"\x89PNG")
     assert opened == [edit.shot.id]
+
+
+async def test_the_corner_card_shows_the_markings(flow, monkeypatch) -> None:
+    """The card in the corner is cut at the shutter: it must show the box too."""
+    import asyncio
+
+    import jarvis.core.config as core_config
+    from jarvis.appshot import effect
+    from jarvis.cu.indicator import controller as indicator
+
+    capture, picks, _asked = flow
+
+    class CardConfig(Config):
+        class appshot:  # noqa: N801
+            target = "message"
+            effect = True
+            card_seconds = 6
+
+    class Controller:
+        thumbs: list[bytes] = []
+
+        def hold_for_snap(self) -> None:
+            pass
+
+        async def snap(self, *, thumb_b64: str, **_kwargs) -> bool:
+            self.thumbs.append(base64.b64decode(thumb_b64))
+            return True
+
+        async def snap_image(self, image_b64: str, shot_id: str = "") -> bool:
+            return True
+
+    card = Controller()
+    monkeypatch.setattr(indicator, "_controller", card)
+    monkeypatch.setattr(core_config, "load_config", lambda: CardConfig())
+    monkeypatch.setattr(appshot_service, "_load_config", lambda: CardConfig())
+    real_capture = capture.capture
+
+    async def capture_with_shutter(**kwargs):
+        # What the real Screen Context service does at the shutter boundary.
+        x, y, w, h = kwargs["region"]
+        effect.on_shutter(
+            CaptureTarget(
+                kind=TargetKind.REGION, bbox=(x, y, w, h), reason=TargetReason.USER_REGION
+            ),
+            (w, h),
+            bytes([0, 0, 255]) * (w * h),
+            Displays().monitors(),
+        )
+        return await real_capture(**kwargs)
+
+    capture.capture = capture_with_shutter
+    red = Image.new("RGBA", (960, 540), (0, 0, 0, 0))
+    red.paste((255, 0, 0, 255), (0, 0, 480, 540))
+    buffer = io.BytesIO()
+    red.save(buffer, format="PNG")
+    picks.append(
+        region.Selection(
+            screen=SCREEN, rect=(0.25, 0.25, 0.5, 0.5), markup=Markup(overlay_png=buffer.getvalue())
+        )
+    )
+
+    result = await appshot_service.take_appshot(trigger="hotkey", scope="region")
+    for _ in range(50):
+        if card.thumbs:
+            break
+        await asyncio.sleep(0.02)
+
+    assert result.ok and card.thumbs
+    with Image.open(io.BytesIO(card.thumbs[0])) as thumb:
+        width, height = thumb.size
+        left = thumb.getpixel((width // 4, height // 2))
+        right = thumb.getpixel((width * 3 // 4, height // 2))
+    assert left[0] > 200 and left[2] < 60, left
+    assert right[2] > 200 and right[0] < 60, right
