@@ -387,10 +387,6 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
             "AI Studio and Vertex are SEPARATE accounts."
         ),
         alt_credential=_GEMINI_VERTEX,
-        # Maintainer-recommended brain (2026-06-22): best real-world experience.
-        # Badge on the brain card; the model picker highlights gemini-3.5-flash.
-        recommended=True,
-        recommended_model="gemini-3.5-flash",
     ),
     # ── Brain: the SAME Gemini models on Google Cloud Vertex AI ──
     # Its own card, not a checkbox on the Gemini one, for a reason the 2026-06-22
@@ -530,6 +526,11 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
             "OpenAI API key (starts with sk-). Billed per token. Shared by the "
             "GPT brain, Whisper STT and OpenAI TTS."
         ),
+        # Maintainer-recommended brain (2026-10-03, was Gemini): the same pick
+        # as the recommended starter plan (OpenAI GPT-Live), so the API Keys
+        # page and the first-run guide recommend one provider. Badge only — no
+        # recommended model, the live catalog decides which GPT is current.
+        recommended=True,
     ),
     ProviderSpec(
         id="codex",
