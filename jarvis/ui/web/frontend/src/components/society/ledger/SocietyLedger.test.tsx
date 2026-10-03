@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 
 import { SocietyLedger, ledgerCost, ledgerEventCost, ledgerTotalCost } from "./SocietyLedger";
@@ -73,6 +73,9 @@ it("renders the durable society event history newest first with cost", async () 
   expect(rows[1].textContent).toContain("$0.0042");
   expect(rows[2].textContent).toContain("ROOM_OPEN");
   expect(screen.getByTestId("society-ledger-total-cost").textContent).toContain("$0.31");
+  const table = screen.getByRole("table", { name: "society.ledger.title" });
+  expect(table).toBeTruthy();
+  expect(within(table).getAllByRole("columnheader")).toHaveLength(6);
   expect(fetchMock).toHaveBeenCalledWith("/api/society/events?limit=200", { cache: "no-store" });
   expect(fetchMock).toHaveBeenCalledWith("/api/costs/summary?days=0&surface=society", {
     cache: "no-store",
