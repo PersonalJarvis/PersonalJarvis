@@ -1,24 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronDown,
-  Circle,
   Copy,
-  Crop,
   Download,
-  Focus,
   GripVertical,
-  Grid3x3,
-  Highlighter,
-  Image as ImageIcon,
   Loader2,
-  Minus,
-  MousePointer2,
-  MoveUpRight,
-  Pencil,
   Redo2,
-  Square,
   Trash2,
-  Type,
   Undo2,
   X,
 } from "lucide-react";
@@ -57,6 +45,7 @@ import {
   rectFrom,
   redo as redoHistory,
   strokeWidths,
+  taperedArrowOutline,
   textSize,
   toolForKey,
   handleAt,
@@ -127,22 +116,6 @@ const KEY_OF: Record<Tool, string> = Object.fromEntries(TOOL_KEYS.map(({ tool, k
 /** Zoom steps after "fit". */
 const ZOOMS = [0.5, 1, 2] as const;
 
-const TOOL_ICONS: Record<Tool, typeof Square | null> = {
-  move: MousePointer2,
-  arrow: MoveUpRight,
-  line: Minus,
-  rect: Square,
-  filled: null,
-  ellipse: Circle,
-  pen: Pencil,
-  highlight: Highlighter,
-  text: Type,
-  counter: null,
-  spotlight: Focus,
-  redact: Grid3x3,
-  crop: Crop,
-  background: ImageIcon,
-};
 
 
 const COLOR_KEY = "jarvis.appshotEditor.color";
@@ -883,7 +856,6 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
   const showCapsule = tool === "text" || tool === "redact" || tool === "crop" || tool === "background" || hint !== "";
 
   const toolButton = (name: Tool) => {
-    const Icon = TOOL_ICONS[name];
     return (
       <QuickTooltip key={name} content={`${toolLabel(name)} (${KEY_OF[name].toUpperCase()})`} side="bottom">
         <button
@@ -895,18 +867,10 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
           className={cn(
             "flex h-7 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors",
             "hover:bg-foreground/10 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-border-strong",
-            tool === name && "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground",
+            tool === name && "bg-accent text-accent-foreground hover:bg-accent hover:text-accent-foreground",
           )}
         >
-          {name === "filled" ? (
-            <Square className="h-[15px] w-[15px]" fill="currentColor" aria-hidden />
-          ) : name === "counter" ? (
-            <span className="flex h-[15px] w-[15px] items-center justify-center rounded-full bg-current text-[9px] font-bold leading-none">
-              <span className="text-popover">1</span>
-            </span>
-          ) : Icon ? (
-            <Icon className="h-[15px] w-[15px]" aria-hidden />
-          ) : null}
+          <ToolGlyph name={name} />
         </button>
       </QuickTooltip>
     );
@@ -1028,7 +992,7 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
                     onClick={() => setArrowStyle(style)}
                     className={cn(
                       "flex h-7 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground",
-                      arrowStyle === style && "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground",
+                      arrowStyle === style && "bg-accent text-accent-foreground hover:bg-accent hover:text-accent-foreground",
                     )}
                   >
                     <ArrowStyleIcon style={style} />
@@ -1059,7 +1023,7 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
                 onClick={() => void use()}
                 disabled={!image || busy !== ""}
                 data-testid="appshot-editor-apply"
-                className="flex h-7 items-center gap-1.5 rounded-lg bg-primary px-3.5 text-[13px] font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+                className="flex h-7 items-center gap-1.5 rounded-lg bg-accent px-3.5 text-[13px] font-medium text-accent-foreground transition-colors hover:bg-accent/90 disabled:opacity-50"
               >
                 {busy === "apply" && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}
                 {label("done")}
@@ -1357,12 +1321,111 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
   );
 }
 
+/** The arrow glyph: the editor's own tapered arrow, drawn small. */
+const ARROW_GLYPH = taperedArrowOutline({ x: 3.5, y: 14.5 }, { x: 15, y: 3 }, 2.2)
+  .map((p) => `${p.x.toFixed(2)},${p.y.toFixed(2)}`)
+  .join(" ");
+
+/**
+ * The tool glyphs — the same drawings as the area picker's toolbar
+ * (``jarvis/appshot/picker/annotate.py``), so both editors read alike.
+ */
+function ToolGlyph({ name }: { name: Tool }) {
+  const line = { fill: "none", stroke: "currentColor", strokeWidth: 1.6, strokeLinecap: "round", strokeLinejoin: "round" } as const;
+  let body: React.ReactNode;
+  switch (name) {
+    case "move":
+      body = <path d="M4 3 L4 15 L7.5 11.5 L10 16.5 L12 15.5 L9.6 10.6 L14.5 10.6 Z" {...line} />;
+      break;
+    case "rect":
+      body = <rect x={3} y={4.5} width={12} height={9} rx={2} {...line} />;
+      break;
+    case "filled":
+      body = <rect x={3} y={4.5} width={12} height={9} rx={2} {...line} fill="currentColor" />;
+      break;
+    case "ellipse":
+      body = <ellipse cx={9} cy={9} rx={6.5} ry={5} {...line} />;
+      break;
+    case "line":
+      body = <path d="M4 14 L14 4" {...line} />;
+      break;
+    case "arrow":
+      body = <polygon points={ARROW_GLYPH} fill="currentColor" />;
+      break;
+    case "text":
+      body = (
+        <>
+          <rect x={1.5} y={1.5} width={15} height={15} rx={3} {...line} strokeWidth={1.1} strokeDasharray="2.2 1.8" opacity={0.6} />
+          <path d="M5.5 5.5 L12.5 5.5 M9 5.5 L9 13" {...line} strokeWidth={2.3} />
+        </>
+      );
+      break;
+    case "redact":
+      body = (
+        <>
+          {[0, 1, 2].flatMap((i) =>
+            [0, 1, 2].map((j) => (
+              <rect key={`${i}${j}`} x={3 + i * 4.2} y={3 + j * 4.2} width={3.6} height={3.6} fill="currentColor" opacity={(i + j) % 2 === 0 ? 1 : 0.43} />
+            )),
+          )}
+        </>
+      );
+      break;
+    case "spotlight":
+      body = (
+        <>
+          <circle cx={9} cy={9} r={4.5} {...line} />
+          <path d="M9 1.5 L9 3 M9 15 L9 16.5 M1.5 9 L3 9 M15 9 L16.5 9" {...line} />
+        </>
+      );
+      break;
+    case "counter":
+      body = (
+        <>
+          <circle cx={9} cy={9} r={6.5} {...line} />
+          <text x={9} y={12.2} textAnchor="middle" fontSize={9} fontWeight={700} fill="currentColor">
+            1
+          </text>
+        </>
+      );
+      break;
+    case "pen":
+      body = <path d="M3 15 L4 11.5 L12 3.5 L14.5 6 L6.5 14 Z" {...line} />;
+      break;
+    case "highlight":
+      body = (
+        <>
+          <rect x={5} y={3} width={8} height={8} rx={1.5} {...line} />
+          <path d="M7 11 L7 13.5 M11 11 L11 13.5 M3 15.5 L15 15.5" {...line} />
+        </>
+      );
+      break;
+    case "crop":
+      body = <path d="M5 1.5 L5 13 L16.5 13 M1.5 5 L13 5 L13 16.5" {...line} />;
+      break;
+    case "background":
+      body = (
+        <>
+          <rect x={2} y={3} width={14} height={12} rx={2.5} {...line} />
+          <circle cx={6.5} cy={7} r={1.4} {...line} />
+          <path d="M2.5 13.5 L7 9.5 L10 12 L12.5 10 L15.5 13" {...line} />
+        </>
+      );
+      break;
+  }
+  return (
+    <svg viewBox="0 0 18 18" className="h-[17px] w-[17px]" aria-hidden>
+      {body}
+    </svg>
+  );
+}
+
 /** The three arrow looks, drawn small. */
 function ArrowStyleIcon({ style }: { style: ArrowStyle }) {
   return (
     <svg viewBox="0 0 20 20" className="h-[15px] w-[15px]" aria-hidden>
       {style === "tapered" ? (
-        <path d="M3 17 L13.6 8.6 L11.6 6.4 L17 3 L14.4 9.3 L12.6 7.6 L3.6 17.6 Z" fill="currentColor" />
+        <polygon points={ARROW_GLYPH} transform="translate(1 1)" fill="currentColor" />
       ) : (
         <>
           <path d="M4 16 L15 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
