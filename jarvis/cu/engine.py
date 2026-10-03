@@ -371,9 +371,12 @@ def _window_state_signature(
     return window_signature(window, rect)
 
 
-async def _live_window_state_signature() -> tuple[Any, ...]:
-    """Read foreground identity and geometry as one fail-closed check."""
-    return (await asyncio.to_thread(read_foreground_target)).signature
+async def _live_window_state_signature(
+    screen_port: Any | None = None,
+) -> tuple[Any, ...]:
+    """Read foreground identity from the selected screen as one fail-closed check."""
+    reader = read_foreground_target if screen_port is None else screen_port.read_foreground_target
+    return (await asyncio.to_thread(reader)).signature
 
 
 def _signature_still_valid(
@@ -396,19 +399,26 @@ async def _dispatch_tool(
     trace_id: Any,
 ) -> tuple[bool, str]:
     """Run one action through the ToolExecutor (AP-3 choke point)."""
-    # A macOS Screen Recording grant can be revoked after perception but
-    # before actuation. Re-probe at the final dispatcher choke point so no CU
-    # action can run against a screen Jarvis is no longer allowed to observe.
-    try:
-        from jarvis.cu.capture import (  # noqa: PLC0415
-            _require_macos_screen_recording_permission,
-        )
+    screen_port = getattr(ctx, "screen_port", None)
+    remote_screen = screen_port is not None and not bool(screen_port.is_real)
+    # The host's macOS Screen Recording grant protects the physical desktop.
+    # An isolated session has its own framebuffer and must never consult or
+    # inherit host-screen permission state.
+    if not remote_screen:
+        try:
+            from jarvis.cu.capture import (  # noqa: PLC0415
+                _require_macos_screen_recording_permission,
+            )
 
-        _require_macos_screen_recording_permission()
-    except RuntimeError as exc:
-        return False, str(exc)
+            _require_macos_screen_recording_permission()
+        except RuntimeError as exc:
+            return False, str(exc)
 
-    tools = ctx.tools or {}
+    tools = (
+        getattr(ctx, "screen_tools", None)
+        if remote_screen
+        else getattr(ctx, "tools", None)
+    ) or {}
     tool = tools.get(tool_name)
     if tool is None:
         return False, f"{tool_name} tool not wired"
@@ -441,6 +451,7 @@ async def _wait_for_visual_effect(
     *,
     timeout_s: float,
     point: tuple[int, int] | None = None,
+    screen_port: Any | None = None,
 ) -> tuple[
     VisualProbe | None,
     bool | None,
@@ -464,6 +475,9 @@ async def _wait_for_visual_effect(
     unavailable captures; ``effect_confirmed`` is ``None`` when capture itself
     is unavailable.
     """
+    probe_reader = (
+        grab_visual_probe if screen_port is None else screen_port.grab_visual_probe
+    )
     deadline = time.monotonic() + max(0.0, timeout_s)
     rect = monitor.bbox
     latest: VisualProbe | None = None
@@ -473,7 +487,7 @@ async def _wait_for_visual_effect(
     capture_seen = False
     while True:
         latest = await asyncio.to_thread(
-            grab_visual_probe,
+            probe_reader,
             rect,
             point=point,
             radius=_EFFECT_CROP_RADIUS,
@@ -497,7 +511,7 @@ async def _wait_for_visual_effect(
             if not effect_now:
                 if latest.global_thumb is None:
                     full_latest = await asyncio.to_thread(
-                        grab_visual_probe,
+                        probe_reader,
                         rect,
                         point=point,
                         radius=_EFFECT_CROP_RADIUS,
@@ -539,6 +553,7 @@ async def _wait_for_foreground_transition(
     original: tuple[Any, ...],
     *,
     timeout_s: float,
+    screen_port: Any | None = None,
 ) -> bool:
     """Wait until a fire-and-forget launch changes the foreground identity.
 
@@ -549,7 +564,12 @@ async def _wait_for_foreground_transition(
     """
     deadline = time.monotonic() + max(0.0, timeout_s)
     while True:
-        if await _live_window_state_signature() != original:
+        live = (
+            await _live_window_state_signature()
+            if screen_port is None
+            else await _live_window_state_signature(screen_port)
+        )
+        if live != original:
             return True
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -631,6 +651,7 @@ async def _zoom_refine_point(
     goal: str,
     target: str,
     expected_window_signature: tuple[Any, ...],
+    screen_port: Any | None = None,
 ) -> tuple[int, int] | None:
     """One coarse-to-fine grounding round after a VERIFIED miss.
 
@@ -644,15 +665,22 @@ async def _zoom_refine_point(
     import json as _json  # noqa: PLC0415
     import re as _re  # noqa: PLC0415
 
+    async def live_signature() -> tuple[Any, ...]:
+        if screen_port is None:
+            return await _live_window_state_signature()
+        return await _live_window_state_signature(screen_port)
+
+    region_reader = grab_region if screen_port is None else screen_port.grab_region
+
     if not _signature_still_valid(
-        await _live_window_state_signature(),
+        await live_signature(),
         expected_window_signature,
     ):
         return None
     bbox = frame.mapper.region_around(int(x), int(y), _REFINE_RADIUS)
-    raw = await asyncio.to_thread(grab_region, bbox)
+    raw = await asyncio.to_thread(region_reader, bbox)
     if raw is None or not _signature_still_valid(
-        await _live_window_state_signature(),
+        await live_signature(),
         expected_window_signature,
     ):
         return None
@@ -688,7 +716,7 @@ async def _zoom_refine_point(
         log.debug("[cu] zoom refine call failed", exc_info=True)
         return None
     if not _signature_still_valid(
-        await _live_window_state_signature(),
+        await live_signature(),
         expected_window_signature,
     ):
         return None
@@ -721,6 +749,7 @@ async def _judge_done(
     output_language: str | None,
     *,
     frame: Frame | None = None,
+    screen_port: Any | None = None,
 ) -> tuple[bool, str]:
     """Strict completion judge.
 
@@ -734,10 +763,15 @@ async def _judge_done(
     nothing for too long").
     """
     if frame is None:
+        capture_reader = (
+            capture_stable_frame
+            if screen_port is None
+            else screen_port.capture_stable_frame
+        )
         try:
             frame = await asyncio.wait_for(
                 asyncio.to_thread(
-                    capture_stable_frame,
+                    capture_reader,
                     monitor,
                     max_dimension=image_cfg.max_dimension,
                     blob_dir=image_cfg.blob_dir,
@@ -787,6 +821,84 @@ async def run_cu_loop(
 
     trace_id = uuid4()  # correlates every tool dispatch of this mission
     bus = getattr(ctx, "bus", None)
+    screen_port = None
+    if getattr(ctx, "screen_port", None) is not None:
+        from jarvis.agent_screen.port import resolve_port  # noqa: PLC0415
+
+        screen_port = resolve_port(ctx)
+
+    # Keep the physical-screen path exactly where it was: these aliases resolve
+    # engine globals at mission start, so existing monkeypatches/tests and the
+    # current desktop behavior remain authoritative unless a port is explicit.
+    _screen_list_monitors = (
+        list_monitors if screen_port is None else screen_port.list_monitors
+    )
+    _screen_select_capture_target = (
+        select_capture_target
+        if screen_port is None
+        else screen_port.select_capture_target
+    )
+    _screen_capture_stable_frame = (
+        capture_stable_frame
+        if screen_port is None
+        else screen_port.capture_stable_frame
+    )
+    _screen_read_foreground_target = (
+        read_foreground_target
+        if screen_port is None
+        else screen_port.read_foreground_target
+    )
+    _screen_foreground_matches_or_same_app = (
+        foreground_matches_or_same_app
+        if screen_port is None
+        else screen_port.foreground_matches_or_same_app
+    )
+    _screen_ui_snapshot = (
+        foreground_ui_snapshot if screen_port is None else screen_port.ui_snapshot
+    )
+    _screen_grab_visual_probe = (
+        grab_visual_probe if screen_port is None else screen_port.grab_visual_probe
+    )
+    _screen_verify_typed_text = (
+        verify_typed_text if screen_port is None else screen_port.verify_typed_text
+    )
+    _screen_verify_click_focus_point = (
+        verify_click_focus_point
+        if screen_port is None
+        else screen_port.verify_click_focus_point
+    )
+    _screen_foreground_title = (
+        _foreground_title if screen_port is None else screen_port.foreground_title
+    )
+    _screen_select_all_keys = (
+        _select_all_keys if screen_port is None else screen_port.select_all_keys
+    )
+
+    async def _screen_live_window_state_signature() -> tuple[Any, ...]:
+        if screen_port is None:
+            return await _live_window_state_signature()
+        return await _live_window_state_signature(screen_port)
+
+    async def _screen_wait_for_visual_effect(*args: Any, **kwargs: Any) -> Any:
+        if screen_port is not None:
+            kwargs["screen_port"] = screen_port
+        return await _wait_for_visual_effect(*args, **kwargs)
+
+    async def _screen_wait_for_foreground_transition(*args: Any, **kwargs: Any) -> Any:
+        if screen_port is not None:
+            kwargs["screen_port"] = screen_port
+        return await _wait_for_foreground_transition(*args, **kwargs)
+
+    async def _screen_zoom_refine_point(*args: Any, **kwargs: Any) -> Any:
+        if screen_port is not None:
+            kwargs["screen_port"] = screen_port
+        return await _zoom_refine_point(*args, **kwargs)
+
+    async def _screen_judge_done(*args: Any, **kwargs: Any) -> Any:
+        if screen_port is not None:
+            kwargs["screen_port"] = screen_port
+        return await _judge_done(*args, **kwargs)
+
     profiler = _Profiler(bus)
     ledger = ActionLedger()
     history: list[str] = []
@@ -824,7 +936,31 @@ async def run_cu_loop(
 
     yield _progress(f"[cu] Start (v2): {goal[:80]}")
 
-    wl = _wayland_refusal()
+    if screen_port is not None and not bool(screen_port.is_real):
+        required = {
+            "click",
+            "type_text",
+            "hotkey",
+            "scroll",
+            "drag",
+            "click_element",
+            "open_app",
+            "switch_window",
+        }
+        screen_tools = getattr(ctx, "screen_tools", None) or {}
+        missing = sorted(required - set(screen_tools))
+        if missing:
+            yield _final(
+                stderr=(
+                    "[cu] isolated screen tools are not wired: "
+                    + ", ".join(missing)
+                    + "\n"
+                ),
+                exit_code=_EXIT_TOOL,
+            )
+            return
+
+    wl = _wayland_refusal() if screen_port is None else screen_port.wayland_refusal()
     if wl is not None:
         yield _final(stderr=f"[cu] {wl}\n", exit_code=_EXIT_OBSERVE)
         return
@@ -833,12 +969,13 @@ async def run_cu_loop(
     # is read (idempotent no-op elsewhere / on later calls). The thread pin
     # in input_space() remains the per-call enforcement; the declaration
     # keeps window rects and monitor metrics un-virtualized process-wide.
-    try:
-        from jarvis.core.win32_dpi import ensure_dpi_awareness  # noqa: PLC0415
+    if screen_port is None or bool(screen_port.is_real):
+        try:
+            from jarvis.core.win32_dpi import ensure_dpi_awareness  # noqa: PLC0415
 
-        ensure_dpi_awareness()
-    except Exception:  # noqa: BLE001 — declaration is best-effort
-        log.debug("[cu] DPI awareness declaration failed", exc_info=True)
+            ensure_dpi_awareness()
+        except Exception:  # noqa: BLE001 — declaration is best-effort
+            log.debug("[cu] DPI awareness declaration failed", exc_info=True)
 
     max_steps = max(25, int(getattr(ctx, "step_budget", 100)))
     monitor_policy = str(getattr(ctx, "monitor", "primary") or "primary")
@@ -891,23 +1028,25 @@ async def run_cu_loop(
         if need_normalize:
             need_normalize = False
             try:
-                from jarvis.platform import window_state  # noqa: PLC0415
+                if screen_port is None:
+                    from jarvis.platform import window_state  # noqa: PLC0415
 
-                normalized, norm_msg = await asyncio.to_thread(
-                    window_state.normalize_foreground_window,
-                )
+                    normalizer = window_state.normalize_foreground_window
+                else:
+                    normalizer = screen_port.normalize_foreground_window
+                normalized, norm_msg = await asyncio.to_thread(normalizer)
                 if normalized:
                     log.info("[cu] normalized target window: %s", norm_msg)
             except Exception:  # noqa: BLE001 — normalize is best-effort
                 log.debug("[cu] window normalize failed", exc_info=True)
         try:
-            captured_displays = await asyncio.to_thread(list_monitors)
+            captured_displays = await asyncio.to_thread(_screen_list_monitors)
             if not captured_displays:
                 raise RuntimeError(
                     "no physical displays are available for Computer-Use",
                 )
             captured_topology = monitor_topology_signature(captured_displays)
-            pre_capture_target = await asyncio.to_thread(read_foreground_target)
+            pre_capture_target = await asyncio.to_thread(_screen_read_foreground_target)
             pre_capture_window_signature = pre_capture_target.signature
 
             def capture_identity_guard(
@@ -918,22 +1057,22 @@ async def run_cu_loop(
                 # capture — the stability loop delivers the settled frame and
                 # the ACTION baseline is re-read after capture anyway. Only a
                 # cross-app takeover aborts the observation.
-                return foreground_matches_or_same_app(expected)
+                return _screen_foreground_matches_or_same_app(expected)
 
             monitor = await asyncio.to_thread(
-                select_capture_target,
+                _screen_select_capture_target,
                 monitor_policy,
                 main_monitor=main_monitor,
                 scope=capture_scope,
             )
             frame_coro = asyncio.to_thread(
-                capture_stable_frame,
+                _screen_capture_stable_frame,
                 monitor,
                 max_dimension=image_cfg.max_dimension,
                 blob_dir=image_cfg.blob_dir,
                 capture_guard=capture_identity_guard,
             )
-            snapshot_coro = foreground_ui_snapshot(
+            snapshot_coro = _screen_ui_snapshot(
                 observation_guard=capture_identity_guard,
             )
             frame, (labels, field_hint, handoff, clickables) = await asyncio.wait_for(
@@ -942,13 +1081,13 @@ async def run_cu_loop(
             )
             if captured_topology:
                 live_topology = monitor_topology_signature(
-                    await asyncio.to_thread(list_monitors),
+                    await asyncio.to_thread(_screen_list_monitors),
                 )
                 if live_topology != captured_topology:
                     raise RuntimeError(
                         "display topology changed during capture; retrying with fresh geometry"
                     )
-            captured_target = await asyncio.to_thread(read_foreground_target)
+            captured_target = await asyncio.to_thread(_screen_read_foreground_target)
             captured_window = captured_target.window
             captured_window_rect = captured_target.rect
             captured_window_signature = captured_target.signature
@@ -995,7 +1134,7 @@ async def run_cu_loop(
             await asyncio.sleep(_OBSERVE_RETRY_BACKOFF_S * settle_scale)
             continue
         observe_failures = 0
-        window_title = _foreground_title()
+        window_title = _screen_foreground_title()
         await _publish_observation(bus, frame, window_title)
         profiler.add("observe", t0, step_idx)
 
@@ -1037,7 +1176,7 @@ async def run_cu_loop(
         last_step_had_success = False
         last_step_waited = False
         if fruitless_steps >= _STUCK_FRAMES or stalled_waits >= _MAX_STALLED_WAITS:
-            done, proof = await _judge_done(
+            done, proof = await _screen_judge_done(
                 ctx,
                 goal,
                 monitor,
@@ -1206,7 +1345,7 @@ async def run_cu_loop(
             kind = action["action"]
 
             if kind == "done":
-                done, proof = await _judge_done(
+                done, proof = await _screen_judge_done(
                     ctx,
                     goal,
                     monitor,
@@ -1331,7 +1470,7 @@ async def run_cu_loop(
             # -- idempotency ledger -----------------------------------------
             if kind in {"click", "click_element", "drag", "scroll"} and captured_topology:
                 live_topology = monitor_topology_signature(
-                    await asyncio.to_thread(list_monitors),
+                    await asyncio.to_thread(_screen_list_monitors),
                 )
                 if live_topology != captured_topology:
                     msg = (
@@ -1366,7 +1505,7 @@ async def run_cu_loop(
                 break  # re-perceive
 
             if kind in {"click", "click_element", "drag", "scroll", "type", "key"}:
-                live_signature = await _live_window_state_signature()
+                live_signature = await _screen_live_window_state_signature()
                 if live_signature != captured_window_signature:
                     if acted_since_capture and signatures_same_app(
                         captured_window_signature,
@@ -1405,7 +1544,7 @@ async def run_cu_loop(
                 assert resolved_xy is not None
                 pointer_used = True
                 pre = await asyncio.to_thread(
-                    grab_visual_probe,
+                    _screen_grab_visual_probe,
                     monitor.bbox,
                     point=resolved_xy,
                     radius=_EFFECT_CROP_RADIUS,
@@ -1431,7 +1570,7 @@ async def run_cu_loop(
                         local_same,
                         global_changed,
                         effect_confirmed,
-                    ) = await _wait_for_visual_effect(
+                    ) = await _screen_wait_for_visual_effect(
                         pre,
                         monitor,
                         timeout_s=_EFFECT_SETTLE_S * settle_scale,
@@ -1439,7 +1578,7 @@ async def run_cu_loop(
                     )
                     if effect_confirmed is False:
                         if (
-                            await verify_click_focus_point(
+                            await _screen_verify_click_focus_point(
                                 *resolved_xy,
                                 capture_area=monitor.width * monitor.height,
                             )
@@ -1471,7 +1610,7 @@ async def run_cu_loop(
                             # and retry ONCE at the refined point. This is the
                             # step behind the ScreenSpot-Pro zoom gains; the
                             # happy path never pays for it.
-                            refined = await _zoom_refine_point(
+                            refined = await _screen_zoom_refine_point(
                                 ctx,
                                 frame,
                                 *resolved_xy,
@@ -1491,18 +1630,18 @@ async def run_cu_loop(
                                     *resolved_xy,
                                 )
                                 pre2 = await asyncio.to_thread(
-                                    grab_visual_probe,
+                                    _screen_grab_visual_probe,
                                     monitor.bbox,
                                     point=refined,
                                     radius=_EFFECT_CROP_RADIUS,
                                 )
                                 if (
                                     not _signature_still_valid(
-                                        await _live_window_state_signature(),
+                                        await _screen_live_window_state_signature(),
                                         captured_window_signature,
                                     )
                                     or monitor_topology_signature(
-                                        await asyncio.to_thread(list_monitors),
+                                        await asyncio.to_thread(_screen_list_monitors),
                                     )
                                     != captured_topology
                                 ):
@@ -1535,7 +1674,7 @@ async def run_cu_loop(
                                         local_same2,
                                         _global_changed2,
                                         effect_confirmed2,
-                                    ) = await _wait_for_visual_effect(
+                                    ) = await _screen_wait_for_visual_effect(
                                         pre2,
                                         monitor,
                                         timeout_s=(_EFFECT_SETTLE_S * settle_scale),
@@ -1554,7 +1693,7 @@ async def run_cu_loop(
                         ctx,
                         "hotkey",
                         {
-                            "keys": _select_all_keys(),
+                            "keys": _screen_select_all_keys(),
                             "_expected_window_signature": captured_window_signature,
                         },
                         trace_id,
@@ -1590,7 +1729,7 @@ async def run_cu_loop(
                 if ok:
                     ledger.record(action, frame.thumb)
                     if strict_verify:
-                        landed = await verify_typed_text(action["text"])
+                        landed = await _screen_verify_typed_text(action["text"])
                         if landed is False:
                             # One settle + re-check before failing: async UI
                             # surfaces (UWP flyouts, start menu) commit the
@@ -1598,7 +1737,7 @@ async def run_cu_loop(
                             # immediate read-back sees stale state (live
                             # incident 2026-07-02 18:00).
                             await asyncio.sleep(0.3 * settle_scale)
-                            landed = await verify_typed_text(action["text"])
+                            landed = await _screen_verify_typed_text(action["text"])
                         if landed is False:
                             ok = False
                             detail = (
@@ -1635,7 +1774,7 @@ async def run_cu_loop(
                 }
                 pointer_used = True
                 pre = await asyncio.to_thread(
-                    grab_visual_probe,
+                    _screen_grab_visual_probe,
                     monitor.bbox,
                 )
                 ok, detail = await _dispatch_tool(ctx, "scroll", args, trace_id)
@@ -1654,7 +1793,7 @@ async def run_cu_loop(
                         _local_same,
                         global_changed,
                         effect_confirmed,
-                    ) = await _wait_for_visual_effect(
+                    ) = await _screen_wait_for_visual_effect(
                         pre,
                         monitor,
                         timeout_s=_EFFECT_SETTLE_S * settle_scale,
@@ -1707,7 +1846,7 @@ async def run_cu_loop(
                     # The freshly focused window gets normalized before the
                     # next perception (maximize on its own monitor).
                     need_normalize = normalize_window
-                    await _wait_for_foreground_transition(
+                    await _screen_wait_for_foreground_transition(
                         captured_window_signature,
                         timeout_s=1.0 * settle_scale,
                     )
