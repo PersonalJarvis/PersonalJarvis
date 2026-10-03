@@ -46,6 +46,7 @@ import { OfficeMinimap } from "./OfficeMinimap";
 import { OfficeCompass } from "./OfficeCompass";
 import { OfficeFullMap } from "./OfficeFullMap";
 import { OfficeFrameDriver } from "./OfficeFrameDriver";
+import { OfficeFallback } from "./OfficeFallback";
 
 // Only loaded when a host without its own create dialog (the IDE's side panel) spawns an agent.
 const CreateAgentDialog = lazy(() => import("../create/CreateAgentDialog").then((m) => ({ default: m.CreateAgentDialog })));
@@ -373,7 +374,11 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
               </Canvas>
             </Suspense>
           </RenderBoundary>
-        ) : <div className="office-fallback" role="status">{t("society.office.no_graphics")}</div>}
+        ) : <OfficeFallback
+          message={t("society.office.no_graphics")}
+          actionLabel={t(coding ? (compact ? "society.office.ledger_coding" : "society.office.open_ide") : "society.office.ledger")}
+          onAction={openList}
+        />}
       </div>
 
       <div className="office-hud office-hud-left" data-office-ui>
