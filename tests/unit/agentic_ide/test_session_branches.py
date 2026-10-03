@@ -80,9 +80,7 @@ def test_code_mode_literal_arguments_and_windows_paths(tmp_path):
     cwd = str(tmp_path / "a folder")
     source = (
         'text(await tools.exec_command({cmd: "git worktree add -b codex/fix ../fork HEAD", '
-        'workdir: '
-        + json.dumps(cwd)
-        + "}));"
+        "workdir: " + json.dumps(cwd) + "}));"
     )
     found = branches.created_branches(
         [
@@ -116,6 +114,21 @@ def test_workspace_branch_alone_never_gives_ownership(monkeypatch, tmp_path):
     assert branches.owned_branch(record) is None
     explicit = replace(record, created_branch="fork/owned")
     assert branches.owned_branch(explicit).branch == "fork/owned"
+
+
+def test_native_fork_does_not_inherit_the_parent_branch(tmp_path):
+    event = call({"cmd": "git switch -c parent"})
+    event["ts_ms"] = 1000
+    events = [event, result("Switched to a new branch 'parent'")]
+    assert branches.created_branches(events, str(tmp_path), not_before=6) == []
+    own = call({"cmd": "git switch -c child"}, identity="child")
+    own["ts_ms"] = 7000
+    outcome = result("Switched to a new branch 'child'", identity="child")
+    outcome["ts_ms"] = 8000
+    assert [
+        item.branch
+        for item in branches.created_branches([*events, own, outcome], str(tmp_path), not_before=6)
+    ] == ["child"]
 
 
 def test_other_sessions_and_unrelated_repositories_are_isolated(monkeypatch, tmp_path):

@@ -97,7 +97,7 @@ def workspace_overview(
 
 @router.get("/session-status", summary="Current GitHub branch, pull request and CI status per pane")
 def session_github_status(workspace_id: str = Query(..., min_length=1)) -> dict:
-    """Read the actual checkout of each local pane, including fork worktrees."""
+    """Read GitHub state only for a branch this pane demonstrably created."""
     session = get_registry().get(workspace_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Workspace not found.")
@@ -110,6 +110,7 @@ def session_github_status(workspace_id: str = Query(..., min_length=1)) -> dict:
             session_id=pane.resume.id if pane.resume else "",
             home=account_home(pane.agent, pane.account),
             created_branch=pane.branch,
+            started_at=pane.resume.captured_at if pane.resume else 0,
         )
         for pane in session.terminals
         if not pane.computer_id

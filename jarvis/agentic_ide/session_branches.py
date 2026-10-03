@@ -32,6 +32,7 @@ class PaneBranchRecord:
     home: Path | None = None
     # Set by Jarvis only when it creates a fork's new branch/worktree.
     created_branch: str = ""
+    started_at: float = 0
 
 
 @dataclass(frozen=True)
@@ -128,10 +129,16 @@ def created_by_command(command: str, folder: str) -> list[CreatedBranch]:
     return found
 
 
-def created_branches(events: Iterable[dict[str, Any]], folder: str) -> list[CreatedBranch]:
+def created_branches(
+    events: Iterable[dict[str, Any]], folder: str, *, not_before: float = 0
+) -> list[CreatedBranch]:
     calls: dict[str, list[CreatedBranch]] = {}
     found: list[CreatedBranch] = []
     for event in events:
+        # A native conversation fork copies earlier tool records. Those belong
+        # to the parent session, not to the newly spawned pane.
+        if not_before and (event.get("ts_ms") or 0) < not_before * 1000:
+            continue
         payload = event.get("payload") or {}
         identity = str(payload.get("call_id") or "")
         if event.get("kind") == "tool_call":
@@ -177,7 +184,7 @@ def created_branches(events: Iterable[dict[str, Any]], folder: str) -> list[Crea
     return found
 
 
-_cache: dict[tuple[str, str, str], tuple[float, list[CreatedBranch]]] = {}
+_cache: dict[tuple[str, str, str, float], tuple[float, list[CreatedBranch]]] = {}
 _cache_lock = threading.Lock()
 
 
@@ -192,7 +199,7 @@ def owned_branch(record: PaneBranchRecord) -> CreatedBranch | None:
         return CreatedBranch(record.created_branch, record.folder)
     if not record.session_id or not agent_transcript.can_read(record.agent):
         return None
-    key = (record.history_id, record.session_id, record.folder)
+    key = (record.history_id, record.session_id, record.folder, record.started_at)
     now = time.monotonic()
     with _cache_lock:
         cached = _cache.get(key)
@@ -200,7 +207,7 @@ def owned_branch(record: PaneBranchRecord) -> CreatedBranch | None:
         events = (
             agent_transcript.read_events(record.agent, record.session_id, home=record.home) or []
         )
-        candidates = created_branches(events, record.folder)
+        candidates = created_branches(events, record.folder, not_before=record.started_at)
         with _cache_lock:
             _cache[key] = (now, candidates)
             for expired in [key for key, (at, _) in _cache.items() if now - at > 300]:

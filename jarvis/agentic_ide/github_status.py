@@ -1,4 +1,4 @@
-"""Read-only GitHub status for the checkout each terminal actually runs in.
+"""Read-only GitHub status for branches actually created by each coding session.
 
 Unlike the repository overview, this queries the exact remote branch, including
 its historical PR when GitHub has deleted the branch after merging. No local
@@ -269,7 +269,7 @@ def parse_status(target: Checkout, payload: dict[str, Any], fetched_at: float) -
 
 
 def statuses(records: list[PaneBranchRecord] | dict[str, str]) -> dict[str, dict[str, Any] | None]:
-    """One result per pane; share local reads and GitHub requests across panes."""
+    """One result per pane with ownership evidence; shared GitHub reads."""
     result: dict[str, dict[str, Any] | None] = {}
     # Old route versions supplied only folders: those carry no ownership proof.
     if isinstance(records, dict):
