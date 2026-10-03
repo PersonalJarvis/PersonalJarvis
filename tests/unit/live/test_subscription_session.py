@@ -85,6 +85,33 @@ async def wait_for_jobs(session):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("current", ["What's up?", "Continue with the agent I mentioned."])
+async def test_archived_request_is_context_for_the_current_delegation(make_session, current):
+    session, reasoning, gateway, _, _, _ = make_session(
+        [completed_response("reply", [spoken_result("I am here.")])]
+    )
+    previous = "Prompt the Codex agent in the Computer Use workspace."
+    session._initial_seed = [{"role": "user", "delta": previous}]
+    session._tools.user_text = current
+    await session._event({
+        "type": "session.delegation.created",
+        "delegation": {"id": "current-request"},
+        "prompt": current,
+    })
+    await wait_for_jobs(session)
+    items = reasoning.requests[0]["input"]
+    assert items[0]["role"] == "assistant"
+    assert previous in items[0]["content"][0]["text"]
+    user_texts = [
+        part["text"] for item in items if item.get("role") == "user"
+        for part in item["content"] if part.get("type") == "input_text"
+    ]
+    assert user_texts[-1] == current
+    assert previous not in user_texts
+    assert gateway.calls == []
+
+
+@pytest.mark.asyncio
 async def test_same_delegation_runs_one_jarvis_action_and_keeps_subscription(make_session):
     tool = {
         "id": "item-1",

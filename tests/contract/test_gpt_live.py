@@ -1,6 +1,7 @@
 """The Live contract must behave identically on every OS, without a microphone."""
 
 import asyncio
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -595,7 +596,10 @@ async def test_recovery_preserves_context_and_waits_for_new_input(ledger, monkey
     ledger.append(TranscriptFragment("s", "a", "user", "Remember the blue folder", 0, 10))
     session._last_end["user"] = 10
     assert await session._recover()
-    assert opened[0].session["input"][0]["content"][0]["text"] == "Remember the blue folder"
+    history = opened[0].session["input"]
+    assert all(message["role"] == "assistant" for message in history)
+    restored = json.loads(history[0]["content"][0]["text"].split("\n", 1)[1])
+    assert restored == [{"role": "user", "text": "Remember the blue folder"}]
     assert not session._tools.accepting
     assert not session._tools.gateway.calls
     await session._event(
