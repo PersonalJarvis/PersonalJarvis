@@ -2,7 +2,7 @@
 schema_version: "1"
 name: plugin-linkedin
 description: Read your profile and publish posts; broader access requires partner approval
-when_to_use: Use for explicit operations on the connected LinkedIn account.
+when_to_use: Use when the user requests operations on the connected LinkedIn account.
 category: integrations
 plugin_id: linkedin
 intent_verbs: [read, list, search, find, show, get, create, send, reply, update, upload, publish, sync, inspect, zeig, lies, suche, sende, antworte, actualiza, busca, muestra] # i18n-allow: speech input

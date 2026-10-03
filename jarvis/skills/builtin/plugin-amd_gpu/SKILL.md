@@ -2,7 +2,7 @@
 schema_version: "1"
 name: plugin-amd_gpu
 description: Read AMD GPU utilization, temperature and driver status.
-when_to_use: Use for explicit AMD hardware status requests.
+when_to_use: Use when the user requests AMD hardware status.
 category: hardware
 plugin_id: amd_gpu
 intent_verbs: [read, show, inspect, check, zeig, lies, muestra] # i18n-allow

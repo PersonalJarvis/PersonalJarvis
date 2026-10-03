@@ -565,7 +565,8 @@ class _TrackedInputBuffer:
         self._chunks = chunks
         self.closed = asyncio.Event()
 
-    async def stream(self) -> AsyncIterator[AudioChunk]:
+    async def stream(self, *, discard_before_ns=None) -> AsyncIterator[AudioChunk]:
+        assert discard_before_ns is None, "PTT must retain all held audio"
         for pcm in self._chunks:
             yield AudioChunk(pcm=pcm, sample_rate=16_000, timestamp_ns=0, channels=1)
             await asyncio.sleep(0)

@@ -33,6 +33,8 @@ from jarvis.core.bus import EventBus
 from jarvis.core.config import DictationConfig
 from jarvis.speech.pipeline import PipelineState, SpeechPipeline
 
+pytestmark = pytest.mark.usefixtures("granted_microphone")
+
 BYTES_PER_SECOND = 16_000 * 2
 
 
