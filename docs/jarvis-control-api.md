@@ -99,6 +99,22 @@ subscriber calls `BrainManager.set_reply_language`) with **no restart**.
 `needs_confirmation=true` + a `pending_id`; confirm to apply. `requires_restart`
 is reported honestly (e.g. STT re-init).
 
+### Status codes for config writes
+
+| Status | When |
+|---|---|
+| 200 | Applied (SAFE), parked for confirmation (ASK, with `pending_id`), or confirmed and applied |
+| 400 | Path is not in the allowlist, or `pending_id` is not a valid id |
+| 403 | Protected path (secrets, safety lists) |
+| 410 | `pending_id` expired (5 minutes) or was already confirmed or rejected |
+| 422 | The value fails schema validation. An ASK-tier value is validated when it is proposed, so `PUT /config` refuses it before any `pending_id` exists |
+| 500 | Backup, write, reload or rollback failed. The detail is a fixed sentence; the cause is in the Jarvis log |
+
+`POST /config/confirm` answers 200 only when the change landed. A failed
+apply is an error status, never `200` with `ok: false`. A confirmed or failed
+entry is consumed either way, so propose the change again to retry.
+`POST /config/reject` is idempotent and answers 200 for an unknown id.
+
 ## Voice path
 
 "Jarvis, switch your language to English" works end-to-end without this HTTP

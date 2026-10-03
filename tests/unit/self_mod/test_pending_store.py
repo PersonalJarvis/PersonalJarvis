@@ -7,9 +7,8 @@ REST/CLI keep the SAFE-auto / ASK-confirm split. The store carries the policy:
 """
 from __future__ import annotations
 
-from pathlib import Path
-
 import tomllib
+from pathlib import Path
 
 import pytest
 
@@ -17,6 +16,7 @@ from jarvis.core.config import JarvisConfig
 from jarvis.core.self_mod import (
     AtomicConfigWriter,
     PendingMutationStore,
+    PreValidateError,
     SecretAccessError,
     SelfModAudit,
 )
@@ -77,3 +77,15 @@ class TestDefaultSafeOnly:
         pending = store.create(_req("tts.speed", 1.25))
         assert pending.applied is True
         assert pending.needs_confirmation is False
+
+    def test_refuses_an_invalid_ask_value_before_parking_it(
+        self, writer: AtomicConfigWriter
+    ) -> None:
+        # A parked change is confirmed later; a value the schema rejects must
+        # fail now, not after the user said yes.
+        store = PendingMutationStore(writer=writer)
+        before = writer.config_path.read_text(encoding="utf-8")
+        with pytest.raises(PreValidateError):
+            store.create(_req("trigger.session_idle_timeout_s", "not-a-number"))
+        assert len(store) == 0
+        assert writer.config_path.read_text(encoding="utf-8") == before
