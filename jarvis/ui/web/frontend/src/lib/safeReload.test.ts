@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
+import { resetConnectBudgetForTests } from "./connectBudget";
 import {
   entryAssets,
   HOLDING_ATTRIBUTE,
@@ -8,6 +9,8 @@ import {
   looksBootable,
   reloadWhenServable,
   type SafeReloadDeps,
+  browserSafeReloadDeps,
+  REQUEST_TIMEOUT_MS,
 } from "./safeReload";
 
 /** The real entry document this app ships — the one every reload fetches. */
@@ -112,6 +115,13 @@ describe("looksBootable", () => {
 });
 
 describe("reloadWhenServable", () => {
+  test("coalesces repeated recovery requests while the server is unavailable", async () => {
+    const h = harness(["", INDEX], () => true);
+    for (let i = 0; i < 10; i += 1) reloadWhenServable(h.deps);
+    await settle();
+    expect(h.waits()).toBe(1);
+    expect(h.reloads()).toBe(1);
+  });
   test("a whole build on disk is reloaded into", async () => {
     const h = harness([INDEX], () => true);
     reloadWhenServable(h.deps);
@@ -205,5 +215,34 @@ describe("reloadWhenServable", () => {
     await settle();
     expect(reloads).toBe(0);
     expect(waits).toBe(1);
+  });
+});
+
+describe("browser recovery requests", () => {
+  afterEach(() => {
+    resetConnectBudgetForTests();
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  test.each(["headers", "body", "asset"])("bounds a stalled %s request even when abort is ignored", async (phase) => {
+    vi.useFakeTimers();
+    const pending = new Promise<Response>(() => undefined);
+    const fetcher = vi.fn(() => phase === "body"
+      ? Promise.resolve({ ok: true, text: () => new Promise<string>(() => undefined) })
+      : pending);
+    vi.stubGlobal("fetch", fetcher);
+    const deps = browserSafeReloadDeps();
+    const result = phase === "asset" ? deps.assetOk("/assets/index-12345678.js") : deps.fetchIndex();
+    await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS);
+    expect(await result).toBe(phase === "asset" ? false : "");
+    expect(fetcher.mock.calls.length).toBe(1);
+  });
+
+  test("shares automatic recovery dependencies without overriding call holds", () => {
+    const held = () => true;
+    expect(browserSafeReloadDeps({ held })).toBe(browserSafeReloadDeps({ held }));
+    expect(browserSafeReloadDeps({ held })).not.toBe(browserSafeReloadDeps());
+    expect(browserSafeReloadDeps({ held }).held?.()).toBe(true);
   });
 });
