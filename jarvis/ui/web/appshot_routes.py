@@ -39,6 +39,7 @@ class SettingsPatch(BaseModel):
     enabled: bool | None = None
     hotkey: str | None = Field(default=None, max_length=64)
     region_hotkey: str | None = Field(default=None, max_length=64)
+    recording_hotkey: str | None = Field(default=None, max_length=64)
     target: Literal["auto", "message", "voice"] | None = None
     sound: bool | None = None
     effect: bool | None = None
@@ -98,12 +99,14 @@ def _settings_payload() -> dict[str, Any]:
         "enabled": bool(config.screen_context.enabled),
         "hotkey": hotkeys["window"],
         "region_hotkey": hotkeys["region"],
+        "recording_hotkey": hotkeys["recording"],
         "target": block.target,
         "sound": bool(block.sound),
         "effect": bool(block.effect),
         "sound_effects_master": bool(getattr(config.ui, "sound_effects", True)),
         "shortcut": _status("window"),
         "region_shortcut": _status("region"),
+        "recording_shortcut": _status("recording"),
         "readiness": _capability(),
     }
 
@@ -132,7 +135,7 @@ async def put_settings(request: Request, patch: SettingsPatch) -> dict[str, Any]
     if not changes:
         raise HTTPException(status_code=400, detail="No settings were provided.")
     enabled = changes.pop("enabled", None)
-    for key in ("hotkey", "region_hotkey"):
+    for key in ("hotkey", "region_hotkey", "recording_hotkey"):
         if key not in changes:
             continue
         changes[key] = normalize_hotkey(changes[key])
@@ -142,14 +145,16 @@ async def put_settings(request: Request, patch: SettingsPatch) -> dict[str, Any]
             verdict = validate_hotkey(changes[key])
             if not verdict.ok:
                 raise HTTPException(status_code=400, detail=verdict.reason or "Invalid shortcut.")
-    if "hotkey" in changes or "region_hotkey" in changes:
+    if any(key in changes for key in ("hotkey", "region_hotkey", "recording_hotkey")):
         current = configured_hotkeys((await asyncio.to_thread(load_config)).appshot)
         window = changes.get("hotkey", current["window"])
         region = changes.get("region_hotkey", current["region"])
-        if window and window == region:
+        recording = changes.get("recording_hotkey", current["recording"])
+        assigned = [key for key in (window, region, recording) if key]
+        if len(assigned) != len(set(assigned)):
             raise HTTPException(
                 status_code=400,
-                detail="The window and the area appshot need two different shortcuts.",
+                detail="Each AppShot action needs a different shortcut.",
             )
 
     def _write() -> None:
@@ -169,9 +174,55 @@ async def put_settings(request: Request, patch: SettingsPatch) -> dict[str, Any]
 
         reset_service()
     shortcut = get_shortcut()
-    if shortcut is not None and ("hotkey" in changes or "region_hotkey" in changes):
+    if shortcut is not None and any(
+        key in changes for key in ("hotkey", "region_hotkey", "recording_hotkey")
+    ):
         await shortcut.reload()
     return await asyncio.to_thread(_settings_payload)
+
+
+@router.get("/recording")
+async def get_recording() -> dict[str, Any]:
+    """Read local screen recording state and capture availability."""
+    from jarvis.appshot.recording import capability, get_recording_service, recent_recordings
+
+    ready, recent = await asyncio.gather(
+        asyncio.to_thread(capability), asyncio.to_thread(recent_recordings)
+    )
+    return {**get_recording_service().status(), "capability": ready, "recent": recent}
+
+
+@router.post("/recording/start")
+async def start_recording() -> dict[str, Any]:
+    """Select an area or an entire screen and record a local video."""
+    from jarvis.appshot.recording import get_recording_service
+
+    try:
+        return await get_recording_service().start()
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/recording/stop")
+async def stop_recording() -> dict[str, Any]:
+    """Stop the current recording and finish writing its local video."""
+    from jarvis.appshot.recording import get_recording_service
+
+    return await get_recording_service().stop()
+
+
+@router.get("/recording/{recording_id}/video")
+async def recording_video(recording_id: str):
+    """Download a finalized screen recording by its opaque identifier."""
+    from fastapi.responses import FileResponse
+
+    from jarvis.appshot.recording import recording_file
+
+    path = await asyncio.to_thread(recording_file, recording_id)
+    if path is None:
+        raise HTTPException(status_code=404, detail="The recording is not available.")
+    return FileResponse(path, media_type="video/mp4", filename=f"appshot-{recording_id}.mp4",
+                        headers=_NO_STORE)
 
 
 @router.post("/take")
