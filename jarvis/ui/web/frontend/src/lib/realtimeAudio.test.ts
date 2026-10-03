@@ -138,7 +138,8 @@ function installVoiceBrowserFakes() {
 
 describe("realtime audio client", () => {
   it.each([
-    { sound_effects: false }, { input_muted: true }, { output_muted: true }, { output_volume: 0 },
+    { sound_effects: false }, { sound_effects: undefined },
+    { input_muted: true }, { output_muted: true }, { output_volume: 0 },
   ])("respects readiness cue mute %j", async (state) => {
     installVoiceBrowserFakes();
     const client = new RealtimeAudioClient();
@@ -146,7 +147,7 @@ describe("realtime audio client", () => {
     await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
     const socket = FakeWebSocket.instances[0];
     socket.open();
-    socket.receive({ type: "audio_ready", ...state });
+    socket.receive({ type: "audio_ready", sound_effects: true, ...state });
     await connecting;
     expect(FakeAudioContext.voices).toHaveLength(0);
     await client.disconnect();
@@ -159,14 +160,14 @@ describe("realtime audio client", () => {
     await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
     const socket = FakeWebSocket.instances[0];
     socket.open();
-    socket.receive({ type: "audio_ready" });
+    socket.receive({ type: "audio_ready", sound_effects: true });
     await connecting;
     expect(FakeAudioContext.voices).toHaveLength(2);
     socket.receive({ type: "output_state", muted: true, revision: 1 });
     expect(FakeAudioContext.voices.every(voice => voice.disconnect.mock.calls.length === 1)).toBe(true);
     expect(track.stop).not.toHaveBeenCalled();
     socket.receive({ type: "reconnecting" });
-    socket.receive({ type: "audio_ready", output_muted: false, output_revision: 2 });
+    socket.receive({ type: "audio_ready", sound_effects: true, output_muted: false, output_revision: 2 });
     await Promise.resolve();
     await Promise.resolve();
     expect(FakeAudioContext.voices).toHaveLength(2);
@@ -203,7 +204,7 @@ describe("realtime audio client", () => {
     expect(peer.addTrack.mock.calls[0][0]).toBe("buffered-track");
     peer.setRemoteDescription = vi.fn(async () => undefined);
     socket.open();
-    socket.receive({ type: "audio_ready", requires_webrtc_answer: true, webrtc_answer_sdp: "answer" });
+    socket.receive({ type: "audio_ready", sound_effects: true, requires_webrtc_answer: true, webrtc_answer_sdp: "answer" });
     await Promise.resolve();
     expect(gate.port.postMessage.mock.calls.some(([message]) => message.type === "start")).toBe(false);
     expect(FakeAudioContext.voices).toHaveLength(0);

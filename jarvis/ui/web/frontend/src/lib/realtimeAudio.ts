@@ -937,7 +937,8 @@ export class RealtimeAudioClient {
               this.flushStartupPreroll();
               if (!this.listeningCueConsumed) {
                 this.listeningCueConsumed = true;
-                if (this.ctx && message.sound_effects !== false && !this.inputMuted &&
+                // An older backend cannot confirm the sound preference yet.
+                if (this.ctx && message.sound_effects === true && !this.inputMuted &&
                     !this.inputStopped && !this.outputMuted) {
                   this.stopListeningCue = playListeningCue(this.ctx, this.outputVolume);
                 }
