@@ -21,8 +21,8 @@ import argparse
 import json
 import sys
 from collections import Counter
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -142,7 +142,15 @@ def _face_contrast(
     region: tuple[int, int, int, int],
 ) -> float:
     x, y, width, height = region
-    if width <= 0 or height <= 0 or x < 0 or y < CELL_HEIGHT or x + width > SIZE or y + height > SIZE:
+    outside = (
+        width <= 0
+        or height <= 0
+        or x < 0
+        or y < CELL_HEIGHT
+        or x + width > SIZE
+        or y + height > SIZE
+    )
+    if outside:
         raise ValueError("face region must be inside the detail area")
     levels: list[float] = []
     for py in range(y, y + height):
