@@ -143,21 +143,21 @@ it("supports roving keyboard navigation across Map, Agents, and Ledger tabs", ()
   agents.focus();
   fireEvent.keyDown(agents, { key: "ArrowRight" });
   expect(document.activeElement).toBe(ledger);
-  expect(ledger).toHaveAttribute("aria-selected", "true");
+  expect(ledger.getAttribute("aria-selected")).toBe("true");
   expect(ledger.tabIndex).toBe(0);
   expect(agents.tabIndex).toBe(-1);
 
   fireEvent.keyDown(ledger, { key: "Home" });
   expect(document.activeElement).toBe(map);
-  expect(map).toHaveAttribute("aria-selected", "true");
+  expect(map.getAttribute("aria-selected")).toBe("true");
 
   fireEvent.keyDown(map, { key: "ArrowLeft" });
   expect(document.activeElement).toBe(ledger);
-  expect(ledger).toHaveAttribute("aria-selected", "true");
+  expect(ledger.getAttribute("aria-selected")).toBe("true");
 
   fireEvent.keyDown(ledger, { key: "End" });
   expect(document.activeElement).toBe(ledger);
-  expect(ledger).toHaveAttribute("aria-selected", "true");
+  expect(ledger.getAttribute("aria-selected")).toBe("true");
 });
 
 it("navigates back through the window caption instead of a sections toggle", () => {
