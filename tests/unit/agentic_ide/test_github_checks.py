@@ -15,14 +15,16 @@ def test_backend_states_and_payload_match_the_frontend_contract():
 
     root = Path(__file__).resolve().parents[3]
     frontend = root / "jarvis/ui/web/frontend/src/components/agentic"
-    marks = (frontend / "SessionGitHubBadge.tsx").read_text(encoding="utf-8")
-    marks = marks.split("export const CI_MARKS", 1)[1].split("\n};", 1)[0]
-    assert set(re.findall(r"^  (\w+):", marks, re.MULTILINE)) == {
+    schema = (frontend / "useSessionGitHub.ts").read_text(encoding="utf-8")
+    extra_states = schema.split("export type SessionCiState =", 1)[1].split(";", 1)[0]
+    extra_states = extra_states.replace('CiStatus["state"]', "")
+    shared = (frontend / "sidePanel/git/gitOverviewApi.ts").read_text(encoding="utf-8")
+    shared = shared.split("export type CiState =", 1)[1].split(";", 1)[0]
+    assert set(re.findall(r'"(\w+)"', shared + extra_states)) == {
         "none",
         *CHECK_STATES.values(),
         *CONTEXT_STATES.values(),
     }
-    schema = (frontend / "useSessionGitHub.ts").read_text(encoding="utf-8")
     schema = schema.split("export interface SessionGitHubStatus", 1)[1].split("\n}", 1)[0]
     assert set(re.findall(r"^  (\w+)\??:", schema, re.MULTILINE)) == {
         item.name for item in fields(BranchStatus)

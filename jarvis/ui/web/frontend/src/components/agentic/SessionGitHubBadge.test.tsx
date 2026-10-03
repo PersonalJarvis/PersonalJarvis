@@ -1,10 +1,12 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CI_MARKS, GitHubStatusBadge } from "./SessionGitHubBadge";
+import { openExternalUrl } from "@/lib/openExternal";
+import { GitHubStatusBadge } from "./SessionGitHubBadge";
 import type { SessionGitHubStatus } from "./useSessionGitHub";
-import { themeFor } from "./terminalThemes";
+import { PANE_BRAND } from "./terminalThemes";
 
-afterEach(cleanup);
+vi.mock("@/lib/openExternal", () => ({ openExternalUrl: vi.fn().mockResolvedValue(true) }));
+afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
 function status(extra: Partial<SessionGitHubStatus> = {}): SessionGitHubStatus {
   return {
@@ -17,101 +19,61 @@ function status(extra: Partial<SessionGitHubStatus> = {}): SessionGitHubStatus {
   };
 }
 
-describe("session GitHub badge", () => {
-  it("adds nothing for local-only, detached or non-GitHub folders", () => {
-    const { rerender, container } = render(<GitHubStatusBadge status={null} appearance="dark" />);
-    expect(container.innerHTML).toBe("");
-    rerender(<GitHubStatusBadge status={status({ published: false })} appearance="dark" />);
-    expect(container.innerHTML).toBe("");
-    rerender(<GitHubStatusBadge status={status({ owned: false, branch: "main" })} appearance="dark" />);
-    expect(container.innerHTML).toBe("");
-    const legacy = status();
-    delete (legacy as Partial<SessionGitHubStatus>).owned;
-    rerender(<GitHubStatusBadge status={legacy} appearance="dark" />);
+describe("session GitHub branch link", () => {
+  it.each([null, status({ published: false }), status({ owned: false }),
+    status({ owned: undefined as unknown as boolean })])("hides unconfirmed session branches", (value) => {
+    const { container } = render(<GitHubStatusBadge status={value} appearance="dark" />);
     expect(container.innerHTML).toBe("");
   });
 
-  it.each([
-    ["open", "Open pull request"], ["draft", "Draft pull request"],
-    ["queued", "In the merge queue"], ["merged", "Pull request merged"],
-    ["closed", "Closed without merging"], ["branch", "Published branch"],
-  ] as const)("describes %s separately from CI", (state, label) => {
-    render(<GitHubStatusBadge status={status({ state })} appearance="dark" />);
-    expect(screen.getByRole("link", { name: new RegExp(label) }).getAttribute("href")).toContain("/pull/7");
-    expect(screen.getByRole("link", { name: /CI running/ }).getAttribute("href")).toContain("/actions/runs/1");
+  it("renders just one quiet icon even with running CI and merge warnings", () => {
+    render(<GitHubStatusBadge status={status({ merge_status: "dirty", review: "changes_requested" })} appearance="dark" />);
+    const link = screen.getByRole("link");
+    expect(link.textContent).toBe("");
+    expect(link.querySelectorAll("svg")).toHaveLength(1);
+    expect(link.querySelector("svg")?.getAttribute("width")).toBe("16");
+    expect(link.style.background).toBe("");
+    expect(link.style.border).toBe("");
+    expect(link.className).not.toMatch(/(?:^|\s)(?:bg-|border(?:\s|-))/);
+    expect(screen.queryByText(/Running|#7/)).toBeNull();
   });
 
-  it.each(["light", "dark"] as const)("uses the pane's own %s palette", (appearance) => {
-    render(<GitHubStatusBadge status={status({ state: "merged" })} appearance={appearance} />);
-    const link = screen.getByRole("link", { name: /Pull request merged/ });
-    const reference = document.createElement("a");
-    reference.style.color = themeFor(appearance).magenta!;
-    expect(link.style.color).toBe(reference.style.color);
-  });
-
-  it("shows GitHub CI colours even when local HEAD differs, without an ambiguous star", () => {
-    const value = status({ ci_stale: true });
-    value.ci.state = "success";
-    render(<GitHubStatusBadge status={value} appearance="light" />);
-    const link = screen.getByRole("link", { name: /CI passed/ });
-    expect(link.title).toContain("GitHub commit 1234567");
-    expect(screen.queryByText("*")).toBeNull();
-    const reference = document.createElement("a");
-    reference.style.color = themeFor("light").green!;
-    expect(link.style.color).toBe(reference.style.color);
-  });
-
-  it.each(Object.entries(CI_MARKS).filter(([state]) => state !== "none"))("labels CI state %s and preserves full icon geometry", (state, mark) => {
-    const value = status();
-    value.ci.state = state as SessionGitHubStatus["ci"]["state"];
-    render(<GitHubStatusBadge status={value} appearance="dark" />);
-    const link = screen.getByRole("link", { name: new RegExp(`CI ${mark.label.toLowerCase()}:`) });
-    const svg = link.querySelector("svg")!;
-    expect(svg.getAttribute("viewBox")).toBe("0 0 16 16");
-    expect(svg.getAttribute("width")).toBe("18");
-    expect(svg.style.flex).toBe("0 0 auto");
-    expect(svg.querySelector("path")).toBeTruthy();
-    expect(link.textContent).toBe(mark.label);
-  });
-
-  it.each([
-    [{ merge_status: "dirty" }, "Merge conflicts"],
-    [{ merge_status: "behind" }, "Branch is behind its target"],
-    [{ merge_status: "blocked" }, "Merge is blocked"],
-    [{ review: "review_required" }, "Review required"],
-    [{ review: "changes_requested" }, "Changes requested"],
-    [{ review: "approved" }, "Review approved"],
-  ])("exposes merge and review conditions", (extra, label) => {
-    render(<GitHubStatusBadge status={status(extra as Partial<SessionGitHubStatus>)} appearance="dark" />);
-    expect(screen.getByRole("link", { name: new RegExp(String(label)) })).toBeTruthy();
-  });
-
-  it("explains discussion locks without declaring the PR closed", () => {
-    render(<GitHubStatusBadge status={status({ locked: true })} appearance="light" />);
-    expect(screen.getByRole("link", { name: /Open pull request · discussion locked/ })).toBeTruthy();
-  });
-
-  it("does not invent a check symbol when no checks exist", () => {
-    const value = status({ state: "branch", number: null });
-    value.ci.state = "none";
-    render(<GitHubStatusBadge status={value} appearance="dark" />);
-    expect(screen.getAllByRole("link")).toHaveLength(1);
-    expect(screen.getByText("feature/test")).toBeTruthy();
-  });
-
-  it.each([{ available: false }, { fetched_at: 1 }])("suppresses stale merge and CI verdicts", (extra) => {
-    render(<GitHubStatusBadge status={status({ state: "merged", ...extra })} appearance="dark" />);
-    expect(screen.getByRole("link", { name: /GitHub status unavailable/ })).toBeTruthy();
-    expect(screen.queryByRole("link", { name: /CI running/ })).toBeNull();
-    expect(screen.queryByRole("link", { name: /Pull request merged/ })).toBeNull();
-  });
-
-  it("blocks unsafe links and does not trigger pane dragging", () => {
+  it("opens the actual branch through the desktop browser bridge", () => {
     const drag = vi.fn();
-    render(<div onPointerDown={drag}><GitHubStatusBadge status={status({ url: "javascript:alert(1)" })} appearance="dark" /></div>);
-    const badge = screen.getByTestId("session-github-status");
-    fireEvent.pointerDown(badge);
+    render(<div onPointerDown={drag}><GitHubStatusBadge status={status()} appearance="dark" /></div>);
+    const link = screen.getByRole("link", { name: /Open GitHub branch/ });
+    expect(link.getAttribute("href")).toBe("https://github.com/owner/repo/tree/feature%2Ftest");
+    fireEvent.pointerDown(link);
+    fireEvent.click(link);
     expect(drag).not.toHaveBeenCalled();
-    expect(badge.querySelector("a")?.hasAttribute("href")).toBe(false);
+    expect(openExternalUrl).toHaveBeenCalledExactlyOnceWith("https://github.com/owner/repo/tree/feature%2Ftest");
+  });
+
+  it.each(["light", "dark"] as const)("uses normal %s terminal chrome", (appearance) => {
+    render(<GitHubStatusBadge status={status({ state: "merged" })} appearance={appearance} />);
+    const reference = document.createElement("a");
+    reference.style.color = PANE_BRAND[appearance].inkMuted;
+    expect(screen.getByRole("link").style.color).toBe(reference.style.color);
+  });
+
+  it.each(["branch", "draft", "open", "queued", "merged", "closed"] as const)("keeps %s status in the single icon's tooltip", (state) => {
+    render(<GitHubStatusBadge status={status({ state })} appearance="dark" />);
+    const link = screen.getByRole("link");
+    expect(link.title).toContain("owner/repo · feature/test\n");
+    expect(link.querySelectorAll("svg")).toHaveLength(1);
+    expect(link.textContent).toBe("");
+  });
+
+  it("keeps the branch link when refresh fails without claiming a fresh merge", () => {
+    render(<GitHubStatusBadge status={status({ state: "merged", available: false })} appearance="dark" />);
+    const link = screen.getByRole("link");
+    expect(link.title).toContain("GitHub status unavailable");
+    expect(link.title).not.toContain("merged");
+    expect(link.getAttribute("href")).toContain("/tree/feature%2Ftest");
+  });
+
+  it("rejects invalid repository link metadata", () => {
+    const { container } = render(<GitHubStatusBadge status={status({ repo: "evil.invalid/a/b" })} appearance="dark" />);
+    expect(container.innerHTML).toBe("");
   });
 });
