@@ -173,7 +173,8 @@ app. Nothing navigates away.
   menu (presets + any colour) and the size slider, then **Save** and
   **Done**.
 - **Options capsule:** under the top bar, only for tools that have options
-  (text style, pixelate or blur, crop ratio, background) or a hint.
+  (text style, pixelate or blur, crop ratio with size, Reset and Crop,
+  background) or a hint. **Add picture** opens a side panel instead.
 - **Bottom bar:** zoom (Fit, 50 %, 100 %, 200 %), undo and redo; a **Drag me**
   handle in the middle; delete (with a selection), save and copy on the right.
 
@@ -188,8 +189,17 @@ app. Nothing navigates away.
 | C | Counter | Numbered badges; each click adds the next number. |
 | H | Spotlight | Dims everything outside the dragged areas. |
 | P | Pixelate or blur | Hides a region; the options bar switches between pixelate and blur. |
-| K | Crop | Free, 1:1, 4:3 or 16:9; undo brings the rest back. |
+| K | Crop | A frame over the whole document with corner grips (and edge grips for a free crop), a thirds grid and its size in pixels. Drag a grip or the frame itself, or drag outside it for a new one; Free, 1:1, 4:3 or 16:9 (a ratio reshapes the frame at once). Enter or **Crop** finishes, **Reset** shows everything again, undo brings the rest back. |
 | B | Background | Frames the picture on a backdrop (eight presets, padding, corner radius, shadow); applied on copy, save and use. |
+| I | Add picture | Puts another picture into the document: an earlier appshot from the gallery, a file, a pasted picture (Ctrl+V) or one dropped onto the editor. It goes **beside** (same height), **below** (same width) or **on top** (small, in the middle) of what is visible; the choice is remembered. |
+
+**Several pictures in one.** An added picture is a layer of the document,
+painted under every annotation, so an arrow or a highlight can run from one
+picture into the next. The select tool (V) moves it and its corner grips
+resize it without distorting it; Delete removes it. The document grows with
+its pictures, a crop that is in place grows to take a new picture in, and
+Copy, Save, Drag me and Done hand on the combined picture. Pixelate and blur
+hide whatever picture lies under them.
 
 Taking hold of annotations: the **select tool** picks up any annotation —
 the pointer turns into a move cursor over it, a drag moves it, a click
@@ -235,7 +245,8 @@ it outside the editor; **not done** = not built, with the reason.
 | Text styles (7) | Partly: 3 styles |
 | Move/select annotations | Done |
 | Rotate, flip, resize image | Not done |
-| Combine images, editable project file | Not done |
+| Combine images | Done: add pictures beside, below or on top (gallery, file, paste, drop) |
+| Editable project file | Not done |
 | Capture area / window / fullscreen, freeze, crosshair with coordinates | Elsewhere: the area picker and the window shortcut ([Selecting an area](#selecting-an-area)); no fullscreen mode |
 | Corner card (copy / save / annotate / drag after capture) | Elsewhere: the corner card (click = editor, drag = file) |
 | Editor window: drag handle, zoom, Save / Done | Done: "Drag me" (Windows, macOS), zoom Fit/50/100/200 %, Save to Downloads, Done = use in the next message |

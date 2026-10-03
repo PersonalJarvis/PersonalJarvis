@@ -247,6 +247,74 @@ describe("AppshotEditorHost", () => {
 
     expect(await screen.findByTestId("appshot-editor-failed")).toBeDefined();
   });
+
+  it("crops with a frame whose grips stay adjustable until Enter", async () => {
+    render(<AppshotEditorHost />);
+    act(() => useAppshotEditor.getState().open("shot-1"));
+    const canvas = await screen.findByTestId("appshot-editor-canvas");
+    const size = () => screen.getByTestId("appshot-editor-crop-size").textContent;
+    const drag = (id: number, from: [number, number], to: [number, number]) => {
+      fireEvent.pointerDown(canvas, { button: 0, clientX: from[0], clientY: from[1], pointerId: id });
+      fireEvent.pointerMove(canvas, { clientX: to[0], clientY: to[1], pointerId: id });
+      fireEvent.pointerUp(canvas, { clientX: to[0], clientY: to[1], pointerId: id });
+    };
+
+    fireEvent.keyDown(window, { key: "k" });
+    expect(size()).toBe("400 × 300");
+    drag(1, [50, 50], [250, 200]);
+    await waitFor(() => expect(size()).toBe("200 × 150"));
+    // Still cropping: the right edge's grip widens the frame.
+    drag(2, [250, 125], [300, 125]);
+    await waitFor(() => expect(size()).toBe("250 × 150"));
+
+    fireEvent.keyDown(window, { key: "Enter" });
+    expect(screen.getByTestId("appshot-editor-tool-move").getAttribute("aria-pressed")).toBe("true");
+    expect(screen.queryByTestId("appshot-editor")).not.toBeNull();
+
+    fireEvent.keyDown(window, { key: "k" });
+    fireEvent.click(screen.getByTestId("appshot-editor-crop-reset"));
+    await waitFor(() => expect(size()).toBe("400 × 300"));
+  });
+
+  it("adds an earlier appshot beside the picture", async () => {
+    const item = {
+      id: "abc123",
+      variant: "original",
+      path: "/kept/appshot.png",
+      mime: "image/png",
+      width: 400,
+      height: 300,
+      label: "",
+      app_name: "Code",
+      trigger: "hotkey",
+      taken_at: 1,
+      edited_at: 0,
+      has_edit: false,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        String(url).startsWith("/api/appshot/library")
+          ? json({ items: [item], max_entries: 500 })
+          : json({ native_file_actions: false, platform: "linux" }),
+      ),
+    );
+    render(<AppshotEditorHost />);
+    act(() => useAppshotEditor.getState().open("shot-1"));
+    await screen.findByTestId("appshot-editor-canvas");
+
+    fireEvent.keyDown(window, { key: "i" });
+    expect(screen.getByTestId("appshot-editor-place-beside").getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click((await screen.findAllByTestId("appshot-editor-import-item"))[0]);
+
+    // The picture joins at the same height and is selected to be moved or sized.
+    await waitFor(() => expect(screen.queryByTestId("appshot-editor-import-panel")).toBeNull());
+    expect(screen.getByTestId("appshot-editor-tool-move").getAttribute("aria-pressed")).toBe("true");
+    expect((screen.getByTestId("appshot-editor-undo") as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.keyDown(window, { key: "Escape" });
+    fireEvent.keyDown(window, { key: "k" });
+    expect(screen.getByTestId("appshot-editor-crop-size").textContent).toBe("800 × 300");
+  });
 });
 
 describe("handleAppshotEditRequest", () => {
