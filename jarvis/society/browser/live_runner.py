@@ -174,11 +174,11 @@ class Worker:
                 service_workers="block",
                 # Playwright's extra blank startup tab would take focus from
                 # the session Chrome restores after explicit handback.
-                ignore_default_args=["about:blank"] if self.login_mode else None,
+                ignore_default_args=None,
                 args=[
                     "--remote-debugging-port=0", "--remote-debugging-address=127.0.0.1",
                     # Explicit handback resumes the tabs the person just used.
-                    *(["--restore-last-session"] if self.login_mode else []),
+                    # Diagnostic control: retain ordinary browser startup.
                 ],
             )
         private_hosts = {
