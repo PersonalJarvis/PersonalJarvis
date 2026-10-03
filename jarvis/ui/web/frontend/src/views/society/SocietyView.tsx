@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useMemo, useState, useEffect } from "react";
+import { lazy, Suspense, useCallback, useMemo, useState, useEffect, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -25,6 +25,8 @@ const JarvisAgentsBoard = lazy(() =>
   import("@/views/JarvisAgentsView").then((m) => ({ default: m.JarvisAgentsView })),
 );
 
+const SOCIETY_MODES = ["world", "agents", "ledger"] as const;
+type SocietyMode = (typeof SOCIETY_MODES)[number];
 
 function isProtectedMarsInteraction(target: EventTarget | null): boolean {
   return target instanceof Element && Boolean(target.closest("[data-mars-ui], [data-mars-mode=\'player\'], [data-mars-mode=\'follow\']"));
@@ -35,7 +37,7 @@ export function SocietyView() {
   useModelMenuData();
   const t = useT();
   useLocaleChunk("society");
-  const [mode, setMode] = useState<"agents" | "world" | "ledger">("agents");
+  const [mode, setMode] = useState<SocietyMode>("agents");
   const roster = useSocietyRoster();
   const agents = useMemo(() => roster.data?.agents ?? [], [roster.data]);
   const sample = roster.data?.sample ?? true;
@@ -109,11 +111,27 @@ export function SocietyView() {
   }, [selectAgent]);
 
   const [fullscreenError, setFullscreenError] = useState(false);
-  const switchMode = useCallback((next: "agents" | "world" | "ledger") => {
+  const switchMode = useCallback((next: SocietyMode) => {
     setMode(next);
     setFullscreenError(false);
     if (inDesktopShell()) void setMapFullscreen(next === "world").catch(() => setFullscreenError(true));
   }, []);
+
+  const onModeKeyDown = useCallback((event: ReactKeyboardEvent<HTMLButtonElement>, value: SocietyMode) => {
+    let nextIndex: number | null = null;
+    const currentIndex = SOCIETY_MODES.indexOf(value);
+    if (event.key === "ArrowRight") nextIndex = (currentIndex + 1) % SOCIETY_MODES.length;
+    else if (event.key === "ArrowLeft") nextIndex = (currentIndex - 1 + SOCIETY_MODES.length) % SOCIETY_MODES.length;
+    else if (event.key === "Home") nextIndex = 0;
+    else if (event.key === "End") nextIndex = SOCIETY_MODES.length - 1;
+    if (nextIndex === null) return;
+
+    event.preventDefault();
+    const next = SOCIETY_MODES[nextIndex];
+    const tabs = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]');
+    tabs?.[nextIndex]?.focus();
+    switchMode(next);
+  }, [switchMode]);
 
   useEffect(() => {
     const reset = useSocietyShell.getState().reset;
@@ -156,14 +174,16 @@ export function SocietyView() {
 
   const modeSwitch = (
     <div role="tablist" aria-label={t("society.world.mode_label")} className="flex items-center gap-0.5 rounded-md border border-border/60 bg-background/80 p-0.5 backdrop-blur-sm">
-      {(["world", "agents", "ledger"] as const).map((value) => {
+      {SOCIETY_MODES.map((value) => {
         const label = value === "world"
           ? "society.world.mode_map"
           : value === "ledger"
             ? "society.world.mode_ledger"
             : "society.roster.title";
         return <button key={value} type="button" role="tab" aria-selected={mode === value}
+          tabIndex={mode === value ? 0 : -1}
           onClick={() => switchMode(value)}
+          onKeyDown={(event) => onModeKeyDown(event, value)}
           className={`inline-flex h-5 items-center justify-center rounded px-2 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${mode === value ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
           {t(label)}
         </button>;

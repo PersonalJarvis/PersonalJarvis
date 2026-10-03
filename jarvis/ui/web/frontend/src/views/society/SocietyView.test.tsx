@@ -129,6 +129,37 @@ it("keeps the Map/Agents switch in the caption in both modes", async () => {
   expect(screen.queryByRole("button", { name: "settings_hub.back_to_app" })).toBeNull();
 });
 
+it("supports roving keyboard navigation across Map, Agents, and Ledger tabs", () => {
+  render(<SocietyView />);
+  const switcher = screen.getByTestId("mode-switch");
+  const map = within(switcher).getByRole("tab", { name: "society.world.mode_map" });
+  const agents = within(switcher).getByRole("tab", { name: "society.roster.title" });
+  const ledger = within(switcher).getByRole("tab", { name: "society.world.mode_ledger" });
+
+  expect(agents.tabIndex).toBe(0);
+  expect(map.tabIndex).toBe(-1);
+  expect(ledger.tabIndex).toBe(-1);
+
+  agents.focus();
+  fireEvent.keyDown(agents, { key: "ArrowRight" });
+  expect(ledger).toHaveFocus();
+  expect(ledger).toHaveAttribute("aria-selected", "true");
+  expect(ledger.tabIndex).toBe(0);
+  expect(agents.tabIndex).toBe(-1);
+
+  fireEvent.keyDown(ledger, { key: "Home" });
+  expect(map).toHaveFocus();
+  expect(map).toHaveAttribute("aria-selected", "true");
+
+  fireEvent.keyDown(map, { key: "ArrowLeft" });
+  expect(ledger).toHaveFocus();
+  expect(ledger).toHaveAttribute("aria-selected", "true");
+
+  fireEvent.keyDown(ledger, { key: "End" });
+  expect(ledger).toHaveFocus();
+  expect(ledger).toHaveAttribute("aria-selected", "true");
+});
+
 it("navigates back through the window caption instead of a sections toggle", () => {
   render(<SocietyView />);
   expect(screen.queryByRole("button", { name: "society.world.toggle_sections" })).toBeNull();
