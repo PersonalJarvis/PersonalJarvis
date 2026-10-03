@@ -39,14 +39,14 @@ def test_wake_jarvis_gets_identity_directive_without_contradiction() -> None:
     # The persona is now name-neutral, so even a user-chosen "Jarvis" wake word
     # gets a clean identity directive — never the old "Du heisst Jarvis — nicht  # i18n-allow: quotes the literal old system-prompt string
     # Jarvis" self-contradiction.  # i18n-allow: quotes the literal old system-prompt string
-    assert "DEIN NAME IST JARVIS" in prompt
+    assert "YOUR NAME IS JARVIS" in prompt
     assert "nicht Jarvis" not in prompt  # i18n-allow: literal system-prompt string matched in logic
 
 
 def test_wake_phrase_micron_makes_assistant_micron() -> None:
     prompt = _manager_with_name(wake_phrase="Micron")._build_system_prompt()
     assert "Du bist Micron" in prompt
-    assert "DEIN NAME IST MICRON" in prompt
+    assert "YOUR NAME IS MICRON" in prompt
     assert "nicht Jarvis" not in prompt  # i18n-allow: literal system-prompt string matched in logic
 
 
@@ -54,5 +54,5 @@ def test_wake_phrase_is_the_only_name_source() -> None:
     # "Hey Computer" wake → the assistant is "Computer".
     prompt = _manager_with_name(wake_phrase="Hey Computer")._build_system_prompt()
     assert "Du bist Computer" in prompt
-    assert "DEIN NAME IST COMPUTER" in prompt
+    assert "YOUR NAME IS COMPUTER" in prompt
     assert "nicht Jarvis" not in prompt  # i18n-allow: literal system-prompt string matched in logic

@@ -2203,9 +2203,26 @@ def _learned_block(*, compact: bool = False) -> str:
         return ""
 
 
+def _identity_block(config: Any, *, compact: bool = False) -> str:
+    """Name directive and SOUL.md character (``jarvis.brain.identity``).
+
+    Without it a live call answered "I'm Personal Jarvis" instead of the
+    wake-word name (2026-10-02). Cached on SOUL.md's mtime, so it costs one
+    ``stat`` at most; degrades to ``""`` so it never blocks the handshake.
+    """
+    try:
+        from jarvis.brain.identity import identity_block
+
+        return identity_block(config, compact=compact)
+    except Exception:  # noqa: BLE001 — never break the voice session on an identity fault
+        log.warning("realtime: identity block unavailable", exc_info=True)
+        return ""
+
+
 def _session_instructions(
     language: str,
     *,
+    identity: str = "",
     input_language: str = "auto",
     provider: str = "",
     model: str = "",
@@ -2356,6 +2373,7 @@ def _session_instructions(
         # re-reading it; only the tail (workspace roster, skill, clock,
         # language) changes between per-turn session updates.
         parts = [
+            identity,
             persona,
             preferences,
             learned,
@@ -2377,6 +2395,8 @@ def _session_instructions(
         ]
         return "\n\n".join(part for part in parts if part)
     parts = [
+        # Who the assistant is (wake-word name + SOUL.md) frames everything.
+        identity,
         persona,
         # The user's own standing instructions come right after the persona and
         # before every operational directive: they refine who the assistant is
@@ -3845,6 +3865,12 @@ class RealtimeVoiceSession:
             session_config = RealtimeSessionConfig(
                 instructions=_session_instructions(
                     self._language,
+                    identity=_identity_block(
+                        self._config,
+                        compact=bool(
+                            getattr(provider, "prefers_compact_instructions", False)
+                        ),
+                    ),
                     input_language=self._input_language,
                     provider=str(getattr(provider, "name", "") or ""),
                     model=model,
@@ -5445,6 +5471,12 @@ class RealtimeVoiceSession:
                         update_kwargs: dict[str, Any] = {
                             "instructions": _session_instructions(
                                 new_language,
+                                identity=_identity_block(
+                                    self._config,
+                                    compact=getattr(
+                                        self, "_compact_instructions", False
+                                    ),
+                                ),
                                 input_language=self._input_language,
                                 provider=self.active_provider,
                                 model=self._active_model,
@@ -7340,6 +7372,10 @@ class RealtimeVoiceSession:
             await self._session.update_session(
                 instructions=_session_instructions(
                     self._language,
+                    identity=_identity_block(
+                        self._config,
+                        compact=getattr(self, "_compact_instructions", False),
+                    ),
                     input_language=self._input_language,
                     provider=self.active_provider,
                     model=self._active_model,

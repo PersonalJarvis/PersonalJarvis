@@ -7,6 +7,8 @@ import { ViewErrorBoundary } from "./components/ViewErrorBoundary";
 import { AuthGate } from "./components/AuthGate";
 import { installPreloadRecovery } from "./lib/preloadRecovery";
 import { POLL_MS, installBundleWatch } from "./lib/bundleWatch";
+import { reloadHeld, setReloadHold } from "./lib/reloadHold";
+import { useEventStore } from "./store/events";
 import { browserSafeReloadDeps, reloadWhenServable } from "./lib/safeReload";
 import { loadUiLocale, useI18nStore } from "./i18n";
 import "./index.css";
@@ -23,8 +25,9 @@ installPreloadRecovery({
   // Never a bare location.reload(). The chunk went missing because a rebuild
   // is running, which is precisely when the entry document is also briefly
   // unservable — reloading into that leaves the window with no JavaScript and
-  // nothing left to recover with. See lib/safeReload.
-  reload: () => reloadWhenServable(browserSafeReloadDeps()),
+  // nothing left to recover with. See lib/safeReload. It also waits out a live
+  // call or a streaming reply, like every automatic reload (lib/reloadHold).
+  reload: () => reloadWhenServable(browserSafeReloadDeps({ held: reloadHeld })),
   defer: (fn, ms) => {
     window.setTimeout(fn, ms);
   },
@@ -36,6 +39,13 @@ installPreloadRecovery({
 // fresh window would load, and reload when the answer has changed — a rebuild
 // is then something the user watches happen instead of something they operate.
 // See lib/bundleWatch for the two guards that keep this quiet.
+//
+// A typed reply streams into this document the way a call does, so it holds
+// reloads too. `chatThinking` always ends: the reply, an error, or the turn's
+// timeout clears it (lib/chat).
+useEventStore.subscribe((state) =>
+  setReloadHold("typed-chat-reply", state.chatThinking),
+);
 {
   let lastInput: number | null = null;
   const noteInput = () => {
@@ -56,8 +66,9 @@ installPreloadRecovery({
             ? AbortSignal.timeout(POLL_MS - 500)
             : undefined,
       }).then((response) => (response.ok ? response.text() : "")),
-    reload: () => reloadWhenServable(browserSafeReloadDeps()),
+    reload: () => reloadWhenServable(browserSafeReloadDeps({ held: reloadHeld })),
     idleFor: () => (lastInput === null ? null : Date.now() - lastInput),
+    held: reloadHeld,
     visible: () => document.visibilityState !== "hidden",
     every: (fn, ms) => window.setInterval(fn, ms),
     stop: (handle) => window.clearInterval(handle),

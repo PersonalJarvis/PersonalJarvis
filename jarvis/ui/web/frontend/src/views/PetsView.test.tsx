@@ -274,7 +274,7 @@ describe("PetsView", () => {
     );
   });
 
-  it("saves the size when the slider is released", async () => {
+  it("resizes the pet live while dragging and saves once on release", async () => {
     const { calls } = stubServer();
     renderView();
 
@@ -282,11 +282,23 @@ describe("PetsView", () => {
     await waitFor(() => expect((customize as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(customize);
     const slider = await screen.findByTestId("pets-size");
-    fireEvent.change(slider, { target: { value: "1.5" } });
-    fireEvent.mouseUp(slider);
+    fireEvent.pointerDown(slider);
+    fireEvent.change(slider, { target: { value: "1.37" } });
 
     await waitFor(() =>
-      expect(calls).toContainEqual({ method: "PUT", url: "/api/pets/settings", body: { scale: 1.5 } }),
+      expect(calls).toContainEqual({
+        method: "PUT",
+        url: "/api/pets/settings",
+        body: { scale: 1.37, preview: true },
+      }),
+    );
+    expect((slider as HTMLInputElement).disabled).toBe(false);
+    expect(calls.filter((c) => c.method === "PUT" && !(c.body as { preview?: boolean }).preview)).toEqual([]);
+
+    // Released away from the track: the window still sees it.
+    fireEvent.pointerUp(window);
+    await waitFor(() =>
+      expect(calls).toContainEqual({ method: "PUT", url: "/api/pets/settings", body: { scale: 1.37 } }),
     );
   });
 

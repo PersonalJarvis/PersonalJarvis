@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from jarvis.agentic_ide import session as session_mod
-from jarvis.agentic_ide.session import MAX_TERMINALS, Registry, SessionError
+from jarvis.agentic_ide.session import Registry, SessionError
 from tests.fakes.fake_pty_manager import FakePtyManager
 
 
@@ -175,10 +175,13 @@ async def test_the_new_pane_starts_pending_and_addressable(
 
 
 # --------------------------------------------------------------------- limits
-async def test_adding_past_the_limit_is_refused(registry: Registry, tmp_path: Path) -> None:
-    await _open(registry, tmp_path, MAX_TERMINALS)
-    with pytest.raises(SessionError, match="maximum"):
-        await registry.add_terminal(direction="right")
+async def test_adding_past_sixteen_is_never_refused(registry: Registry, tmp_path: Path) -> None:
+    """There is no pane limit: the seventeenth pane splits off like any other."""
+    await _open(registry, tmp_path, 16)
+    term = await registry.add_terminal(anchor="T1", direction="right")
+    assert registry.session is not None
+    assert len(registry.session.terminals) == 17
+    assert registry.session.find(term.name) is term
 
 
 async def test_an_unknown_anchor_is_refused(registry: Registry, tmp_path: Path) -> None:

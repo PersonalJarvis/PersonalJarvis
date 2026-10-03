@@ -5,6 +5,7 @@ import { useAgentChatStore } from "@/store/agentChat";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { AllChatsDialog } from "@/components/home/AllChatsDialog";
+import { ChatKindMark } from "@/components/home/ChatKindMark";
 import { chatRowLabel, useChatRows, type ChatRow } from "@/components/home/chatRows";
 import { CONVERSATIONS_REFRESH_MS } from "@/hooks/useConversations";
 
@@ -133,16 +134,18 @@ function ChatRowItem({
         data-testid="recent-chat-row"
         data-kind={row.kind}
         className={cn(
-          "flex h-8 w-full items-center rounded-lg px-3 text-left transition-colors group-hover:pr-16 group-focus-within:pr-16",
+          "flex h-8 w-full items-center gap-2.5 rounded-lg px-3 text-left transition-colors group-hover:pr-16 group-focus-within:pr-16",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           // The open one wears the same accent edge as the active nav row, so
           // "where am I" is said in one voice all the way down the column.
           active ? "jarvis-nav-active bg-secondary text-foreground-strong" : "text-foreground hover:bg-secondary",
         )}
       >
-        {/* Text only, the way the Claude and ChatGPT columns list chats: one
-            glyph repeated on every row is noise, not information. A chat with
-            no topic says what it was ("Voice chat · 09:42"), in a quieter tone. */}
+        {/* One small mark says which kind of chat this is — a ring for typed,
+            sound bars for voice — in one box and one muted tone, the way the
+            Claude app tells its chat and code sessions apart. A chat with no
+            topic says what it was ("Voice chat · 09:42"), in a quieter tone. */}
+        <ChatKindMark kind={row.kind} active={active} />
         <span
           className={cn(
             "min-w-0 flex-1 truncate text-base leading-5",

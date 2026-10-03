@@ -4,6 +4,7 @@ import { VoiceStage } from "@/components/home/VoiceStage";
 import { transcriptFromTimeline, useVoiceModeSwitch } from "@/components/home/assistantStatus";
 import { useT } from "@/i18n";
 import { useAgentChatStore } from "@/store/agentChat";
+import { useEventStore } from "@/store/events";
 import { useHomeStore } from "@/store/home";
 
 const ChatStage = lazy(() =>
@@ -31,13 +32,15 @@ export function AssistantChat() {
   const chatItems = useAgentChatStore((s) => s.timeline.items);
   const seedTranscript = useHomeStore((s) => s.seedTranscript);
   const inVoice = surface === "voice" && !agentChatId;
+  // An archived voice chat on stage owns the lane (store/home.ts reloads it).
+  const voiceThreadOpen = useEventStore((s) => s.activeKind === "voice" && Boolean(s.activeThreadId));
   // Between calls the voice lane IS the chat on stage. A hangup clears the
   // lane (store/home.ts); the turns just spoken arrive in the chat a moment
   // later (the backend files them there), so the lane follows the chat.
   useEffect(() => {
-    if (!inVoice || voice.live) return;
+    if (!inVoice || voice.live || voiceThreadOpen) return;
     seedTranscript(transcriptFromTimeline(chatItems));
-  }, [chatItems, inVoice, seedTranscript, voice.live]);
+  }, [chatItems, inVoice, seedTranscript, voice.live, voiceThreadOpen]);
   const loading = (
     <div role="status" className="flex min-h-0 flex-1 items-center justify-center text-sm text-muted-foreground">
       {t("common.loading")}

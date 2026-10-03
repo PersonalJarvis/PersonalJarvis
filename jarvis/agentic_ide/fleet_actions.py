@@ -9,6 +9,23 @@ from typing import Any
 
 READY_TIMEOUT_S = 45.0
 READY_POLL_S = 0.25
+#: How long after its colour question was answered such a CLI gets to read the
+#: answer. The reply is written before the app even sees the question, so this
+#: only covers the CLI's own parsing.
+COLOUR_PROBE_SETTLE_S = 0.3
+#: How long a pane that declares the colour question may go without asking it
+#: before readiness stops waiting — a CLI version that dropped the question, or
+#: an adopted agent whose question was cut out of the replay.
+COLOUR_PROBE_WAIT_S = 10.0
+#: How long a starting CLI must have stopped asking its terminal questions —
+#: and have shown its input line — before a prompt is typed. Covers the
+#: questions answered by the viewer one round trip later, and Claude Code's
+#: version question about a second after its composer appears.
+STARTUP_QUIET_S = 1.5
+#: How long after its input line appeared (or, without one, after it
+#: started) a pane is still "starting". Past it questions no longer hold a
+#: prompt back, so a CLI that keeps asking cannot block typing for good.
+STARTUP_WINDOW_S = 15.0
 _INPUT_MARKERS = ("›", "❯", ">")
 log = logging.getLogger(__name__)
 
@@ -33,9 +50,74 @@ def ready_for_prompt(term: Any) -> bool:
     from jarvis.workspace import agents as workspace_agents
 
     spec = workspace_agents.get_agent(getattr(term, "agent", ""))
+    line_visible = input_line_visible(term, spec)
+    if line_visible:
+        _note_input_line(term)
     if spec is not None and not spec.needs_input_line_wait:
+        # Typing before the composer is safe for this CLI; typing into its
+        # startup questions is not.
+        return terminal_questions_settled(term)
+    if not line_visible or not terminal_questions_settled(term):
+        return False
+    if spec is not None and spec.asks_colours_after_input_line:
+        return colour_probe_settled(term)
+    return True
+
+
+def _note_input_line(term: Any) -> None:
+    watch = getattr(term, "terminal_queries", None)
+    if watch is not None:
+        watch.note_input_line(time.time())
+
+
+def terminal_questions_settled(term: Any, now: float | None = None) -> bool:
+    """Has this starting CLI finished asking its terminal questions?
+
+    Coding CLIs ask their terminal for colours, version, keyboard protocol
+    and the like while they start, and read the answers from their keyboard
+    input — some of them right up to, or just after, the moment their input
+    line appears. A prompt typed into that window is read where an answer was
+    expected, and the answer is then typed into the composer as text such as
+    ``]10;rgb:…\\]11;rgb:…\\`` (maintainer report 2026-10-02, every coding
+    agent). So a prompt waits until the input line has been up, and no
+    question has come, for ``STARTUP_QUIET_S``. Only while the pane is
+    starting (``STARTUP_WINDOW_S``): a pane without a watch, or one long past
+    its start, is never held back.
+    """
+    watch = getattr(term, "terminal_queries", None)
+    if watch is None:
         return True
-    return input_line_visible(term, spec)
+    moment = time.time() if now is None else now
+    line_at = getattr(watch, "input_line_at", None)
+    began = line_at if line_at is not None else getattr(term, "started_at", None)
+    if not began or moment - began >= STARTUP_WINDOW_S:
+        return True
+    for at in (getattr(watch, "asked_at", None), line_at):
+        if at is not None and moment - at < STARTUP_QUIET_S:
+            return False
+    return True
+
+
+def colour_probe_settled(term: Any, now: float | None = None) -> bool:
+    """Has this pane's CLI asked for its colours and had time to read the reply?
+
+    Codex paints its composer, then asks the terminal for its colours one to
+    several seconds later — no quiet window can be sure to cover that — and
+    reads the answer from its keyboard input. A prompt typed in between is
+    read where the answer was expected, and the answer is then typed into the
+    composer as ``]10;rgb:…\\]11;rgb:…\\`` (maintainer report 2026-10-02).
+    A pane without a watch, or one that never asks within
+    ``COLOUR_PROBE_WAIT_S`` of starting, is not held back.
+    """
+    watch = getattr(term, "terminal_queries", None)
+    if watch is None:
+        return True
+    moment = time.time() if now is None else now
+    asked_at = getattr(watch, "colour_asked_at", None)
+    if asked_at is not None:
+        return moment - asked_at >= COLOUR_PROBE_SETTLE_S
+    started_at = getattr(term, "started_at", None)
+    return not started_at or moment - started_at >= COLOUR_PROBE_WAIT_S
 
 
 def input_line_visible(term: Any, spec: Any | None = None) -> bool:

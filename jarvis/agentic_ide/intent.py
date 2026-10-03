@@ -1558,7 +1558,7 @@ def _spoken_count(text: str) -> int:
     First hit wins. A count is optional — "open another terminal" is a perfectly
     clear request for one — so this never fails, it defaults.
     """
-    from .session import MAX_TERMINALS
+    from .session import MAX_PANES_PER_REQUEST
 
     # Read the FIRST number in speech order. Searching all digits before number
     # words contradicted this function's contract and turned "five terminals;
@@ -1571,7 +1571,7 @@ def _spoken_count(text: str) -> int:
     for match in re.finditer(r"\b(?:\d{1,3}|[^\W\d_]+)\b", text, re.UNICODE):
         value = _count_at(text, match)
         if value is not None:
-            return max(1, min(value, MAX_TERMINALS))
+            return max(1, min(value, MAX_PANES_PER_REQUEST))
     return 1
 
 
@@ -1840,12 +1840,11 @@ def _merge_groups(found: list[SpawnGroup]) -> tuple[SpawnGroup, ...]:
     fleet can now be described across SEVERAL clauses (see ``_spawn_regions``)
     and two merge rules would be free to disagree about the same sentence.
 
-    The clamp takes the TOTAL, not each group: the workspace maximum is a
-    property of the workspace. Trimming from the back keeps the groups the
-    user named first intact rather than shrinking all of them into
-    uselessness.
+    The clamp takes the TOTAL, not each group: the guard is on how many panes
+    ONE request may start. Trimming from the back keeps the groups the user
+    named first intact rather than shrinking all of them into uselessness.
     """
-    from .session import MAX_TERMINALS
+    from .session import MAX_PANES_PER_REQUEST
 
     merged: dict[str, int] = {}
     for group in found:
@@ -1853,7 +1852,7 @@ def _merge_groups(found: list[SpawnGroup]) -> tuple[SpawnGroup, ...]:
         merged[key] = merged.get(key, 0) + group.count
 
     out: list[SpawnGroup] = []
-    remaining = MAX_TERMINALS
+    remaining = MAX_PANES_PER_REQUEST
     for agent, count in merged.items():
         if remaining <= 0:
             break

@@ -289,6 +289,15 @@ export const InstructionsIcon = defineIcon(
   </>,
 );
 
+/** A head in profile with a spark at its brow: the assistant itself. */
+export const AssistantIcon = defineIcon(
+  "AssistantIcon",
+  <>
+    <path d="M9.5 20.5v-2.6a6.5 6.5 0 1 1 8.4-6.2l1.6 2.8h-1.9v2.2a1.8 1.8 0 0 1-1.8 1.8h-1.3v2" />
+    <path d="M12.5 6.6l.55 1.35 1.35.55-1.35.55-.55 1.35-.55-1.35-1.35-.55 1.35-.55Z" />
+  </>,
+);
+
 /** An address book with index tabs. */
 export const ContactsIcon = defineIcon(
   "ContactsIcon",

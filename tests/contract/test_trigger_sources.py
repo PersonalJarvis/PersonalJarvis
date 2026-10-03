@@ -94,7 +94,7 @@ async def test_chat_invocation_requires_owner_user_turn_and_is_absent_in_plan_mo
 
     class Roster:
         async def get(self, agent_id):
-            return SimpleNamespace(state="active", session_id="owner-chat")
+            return SimpleNamespace(state="active", session_id="society:owner")
 
     class State:
         async def kill_switch(self):
@@ -107,9 +107,11 @@ async def test_chat_invocation_requires_owner_user_turn_and_is_absent_in_plan_mo
     listing = RoutineListTool(runtime, "owner")
     assert plan_filter({invoke.name: invoke, listing.name: listing}) == {listing.name: listing}
     for session_id, direct_user, allowed in (
-        ("owner-chat", False, False),
-        ("other-chat", True, False),
-        ("owner-chat", True, True),
+        ("society:owner", False, False),
+        ("society:other", True, False),
+        ("society:owner", True, True),
+        # The person stepped into the owner's conversation chat with Jarvis.
+        ("society:owner:with:jarvis", True, True),
     ):
         context = current_chat_turn.set(
             ChatTurn(session_id, "turn", "Run it", direct_user, "trace")
@@ -119,7 +121,7 @@ async def test_chat_invocation_requires_owner_user_turn_and_is_absent_in_plan_mo
             assert result.success is allowed
         finally:
             current_chat_turn.reset(context)
-    assert (await store.hooks.counts(task_id))[1] == 1
+    assert (await store.hooks.counts(task_id))[1] == 2
 
 
 def test_seven_groups_have_real_source_definitions():

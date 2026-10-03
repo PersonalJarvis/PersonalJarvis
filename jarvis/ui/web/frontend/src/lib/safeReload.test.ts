@@ -163,6 +163,31 @@ describe("reloadWhenServable", () => {
     expect(h.reloads()).toBe(1);
   });
 
+  test("a held window waits with a whole build ready, then reloads", async () => {
+    // A live call or a streaming reply owns the document; the reload must wait
+    // until it is over instead of hanging it up.
+    let held = true;
+    const h = harness([INDEX], () => true);
+    h.deps.held = () => {
+      const now = held;
+      held = false;
+      return now;
+    };
+    reloadWhenServable(h.deps);
+    await settle();
+    expect(h.waits()).toBe(1);
+    expect(h.reloads()).toBe(1);
+  });
+
+  test("a hold that never lifts never reloads", async () => {
+    const h = harness([INDEX], () => true);
+    h.deps.held = () => true;
+    reloadWhenServable(h.deps);
+    await settle();
+    expect(h.reloads()).toBe(0);
+    expect(h.waits()).toBeGreaterThan(1);
+  });
+
   test("a fetch that throws is a retry, never a reload", async () => {
     let reloads = 0;
     let waits = 0;

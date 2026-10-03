@@ -69,8 +69,8 @@ vi.mock("@/views/SettingsView", () => ({
   ),
 }));
 vi.mock("@/views/ProfileView", () => ({ ProfileView: stub("TAB_PROFILE") }));
-vi.mock("@/views/AgentInstructionsView", () => ({
-  AgentInstructionsView: stub("TAB_INSTRUCTIONS"),
+vi.mock("@/views/AssistantProfileView", () => ({
+  AssistantProfileView: stub("TAB_INSTRUCTIONS"),
 }));
 vi.mock("@/views/contacts/ContactsView", () => ({
   ContactsView: stub("TAB_CONTACTS"),

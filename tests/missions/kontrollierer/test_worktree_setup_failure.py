@@ -211,3 +211,47 @@ async def test_source_checkout_capability_failure_is_distinct(
         k._setup_failure_reason["m-source-unavailable"]
         == "source_checkout_unavailable"
     )
+
+
+class _ThreadRecordingWorktrees:
+    """Records which thread ran ``create``, then fails like the path cap."""
+
+    def __init__(self) -> None:
+        self.create_thread: int | None = None
+
+    def create(
+        self, *, mission_slug: str, task_id: str, needs_repo: bool = True
+    ):  # noqa: ANN201
+        import threading
+
+        self.create_thread = threading.get_ident()
+        raise ValueError("Worktree path is too long (250 > 200): ...")
+
+
+@pytest.mark.asyncio
+async def test_worktree_create_runs_off_the_event_loop(tmp_path: Path) -> None:
+    """``git worktree add`` must not block the loop every route shares.
+
+    A full worktree is several git subprocesses and thousands of file writes;
+    run inline it froze the desktop app for 15 s+ (loop watchdog, 2026-10-02).
+    """
+    import threading
+
+    worktrees = _ThreadRecordingWorktrees()
+    k = object.__new__(Kontrollierer)
+    k._budget = _NoopBudget()
+    k._setup_failure_reason = {}
+    k._worktrees = worktrees
+
+    outcome = await k._run_task_with_critic_loop(
+        mission_id="m-off-loop",
+        mission_prompt="build a thing",
+        step=Step(slug="w", prompt="do w"),
+        mission_dir=tmp_path,
+        reflections=object(),
+        sem=asyncio.Semaphore(1),
+    )
+
+    assert outcome == TaskOutcome.SETUP_FAILED
+    assert worktrees.create_thread is not None
+    assert worktrees.create_thread != threading.get_ident()

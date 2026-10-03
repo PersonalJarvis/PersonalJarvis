@@ -161,6 +161,10 @@ WITHHELD: Final[dict[str, str]] = {
         "pausing, deleting or running a routine now changes recurring spend; "
         "the owner does it on the routine card, not via a remote client"
     ),
+    "GET /api/society/agents/{agent_id}/conversations": (
+        "lists the agent's chats with Jarvis and teammates for the owner's "
+        "history rail in the app; a remote client messages agents directly"
+    ),
     "GET /api/society/chat-groups": (
         "group chats are the owner's own chat layout in the app; a remote "
         "client addresses agents directly"

@@ -66,8 +66,15 @@ def exclude_tk_window_from_capture(root: Any) -> bool:
     """Exclude a Tk toplevel. Targets the outer ``TkTopLevel`` HWND on Windows.
 
     Tk's ``winfo_id()`` is the inner ``TkChild``; capture affinity has to
-    land on the parent or the overlay still photographs. Best-effort: a
-    missing handle or a test double without ``winfo_id`` returns False.
+    land on the parent or the overlay still photographs. Tk creates that
+    parent only when the toplevel is first mapped, and the overlays call this
+    before their first show — so the exclusion is also re-applied on every
+    ``<Map>`` of the toplevel (a re-created wrapper starts without it). Before
+    that fix the mascot sat in every appshot of the window under it.
+
+    Returns True when the outer window is excluded now or will be on its first
+    map. Best-effort: a missing handle or a test double without ``winfo_id``
+    returns False.
     """
     if root is None:
         return False
@@ -75,6 +82,11 @@ def exclude_tk_window_from_capture(root: Any) -> bool:
         return exclude_macos_app_windows()
     if sys.platform != "win32":
         return False
+    scheduled = _reapply_on_map(root)
+    return _exclude_outer_tk_window(root) or scheduled
+
+
+def _exclude_outer_tk_window(root: Any) -> bool:
     try:
         inner = int(root.winfo_id())
     except Exception:  # noqa: BLE001 — FakeRoot / torn-down interpreter
@@ -83,10 +95,39 @@ def exclude_tk_window_from_capture(root: Any) -> bool:
     if user32 is None or not inner:
         return False
     try:
-        outer = int(user32.GetParent(inner) or inner)
+        outer = int(user32.GetParent(inner) or 0)
     except Exception:  # noqa: BLE001
-        outer = inner
+        outer = 0
+    if not outer:
+        # Not mapped yet: there is no outer window to exclude. The inner child
+        # cannot carry a display affinity, so the <Map> hook does the work.
+        return False
     return exclude_hwnd_from_capture(outer)
+
+
+_MAP_HOOK_ATTR = "_jarvis_capture_exclusion_on_map"
+
+
+def _reapply_on_map(root: Any) -> bool:
+    """Bind one ``<Map>`` hook that re-excludes the toplevel's outer window."""
+    if getattr(root, _MAP_HOOK_ATTR, False):
+        return True
+    bind = getattr(root, "bind", None)
+    if not callable(bind):
+        return False
+
+    def _on_map(event: Any) -> None:
+        # The toplevel's bind tag also fires for every child widget's map.
+        if getattr(event, "widget", root) is root:
+            _exclude_outer_tk_window(root)
+
+    try:
+        bind("<Map>", _on_map, "+")
+        setattr(root, _MAP_HOOK_ATTR, True)
+    except Exception:  # noqa: BLE001 — overlay must degrade, never crash
+        log.debug("capture exclusion: could not hook <Map>", exc_info=True)
+        return False
+    return True
 
 
 def exclude_macos_app_windows() -> bool:

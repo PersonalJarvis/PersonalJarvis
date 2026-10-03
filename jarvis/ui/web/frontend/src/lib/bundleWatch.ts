@@ -21,7 +21,9 @@
  *   publishes an `index.html` whose chunks are not all written yet, and
  *   reloading into that is the flicker loop preloadRecovery was written for;
  * * the user must be idle for a moment, because a reload in the middle of a
- *   sentence loses the sentence.
+ *   sentence loses the sentence — and nothing may hold reloads off: a live
+ *   voice call is owned by this document, and "no keystroke for two seconds"
+ *   is exactly what a user who is talking looks like (see ./reloadHold).
  *
  * And two rules keep it from quietly dying, which is the failure that was
  * actually reported (2026-08-23: the desktop window ran a morning-old build
@@ -73,6 +75,8 @@ export interface BundleWatchDeps {
   reload: () => void;
   /** Milliseconds since the last keystroke or pointer press, or null if none. */
   idleFor: () => number | null;
+  /** Is something in this window (a live voice call) holding reloads off? */
+  held?: () => boolean;
   /** Is this window on screen? A hidden window polls {@link HIDDEN_EVERY_N_TICKS}× slower. */
   visible: () => boolean;
   /** Schedule the repeating check. Returns a handle for {@link stop}. */
@@ -92,16 +96,21 @@ export function shouldReload({
   seen,
   confirmed,
   idleMs,
+  held = false,
 }: {
   baseline: string;
   seen: string;
   confirmed: string | null;
   idleMs: number | null;
+  held?: boolean;
 }): boolean {
   if (!baseline || !seen || seen === baseline) return false;
   // A build in flight can serve a half-written index; the same fingerprint
   // twice means the build finished and this is what it produced.
   if (confirmed !== seen) return false;
+  // A reload would hang up a call this document owns; the next poll after the
+  // hold is released picks the build up.
+  if (held) return false;
   // No input at all means nothing to interrupt.
   return idleMs === null || idleMs >= IDLE_MS;
 }
@@ -151,7 +160,13 @@ export function installBundleWatch(deps: BundleWatchDeps): () => void {
           return;
         }
         if (
-          shouldReload({ baseline, seen, confirmed, idleMs: deps.idleFor() })
+          shouldReload({
+            baseline,
+            seen,
+            confirmed,
+            idleMs: deps.idleFor(),
+            held: deps.held?.() ?? false,
+          })
         ) {
           deps.reload();
           return;

@@ -15922,3 +15922,100 @@ permission need. The rows to close these are in `docs/macos-permissions.md` sect
 **Related.** BUG-058, BUG-083, BUG-159, BUG-161, BUG-217, BUG-222, BUG-223, BUG-224
 (each carries a "superseded" note), ADR-0038, `docs/os-parity.md`,
 `docs/product/privacy-safety-and-support/permissions.md`.
+
+## BUG-227: "send Jarvis Scout a message" found no agent when speech misheard the name (HIGH, FIXED 2026-10-02)
+
+**Symptom.** On a voice call the user asked Jarvis to message their agent
+Jarvis-Scout. Speech recognition delivered "the Java Scout and Quick Meshes";
+Jarvis answered "I couldn't find agents with those names in the open
+workspaces" and did nothing. The user's own later retelling was transcribed as
+"Jarvis Code" — the same name garbled a third way.
+
+**Cause.** Two gaps. (1) Every agent lookup compared strings exactly:
+`Roster.resolve` (id, case-insensitive name, slug) and the coding-pane
+resolver in `agentic_ide/orchestration.py` (exact or same word set), so any
+misheard spelling was "unknown". (2) The live backend's instructions only
+described `workspace-orchestrate`, so a request naming a Jarvis agent went to
+the coding-pane tool, which knows nothing about the team and answered "nothing
+open matches" — with no pointer to `delegate_to_agent` / `message_agent`.
+
+**Fix.** `jarvis/core/spoken_names.py` resolves a spoken name with
+normalization, aliases, Jaro-Winkler and Cologne phonetics, plus a small
+coding-context bonus, and returns act / ask / none; every resolution is logged
+(`name resolution [surface]: heard=... -> ... score=... method=...`).
+`jarvis/society/agent_names.py` applies it to the roster (exact matches first,
+so ids and REST paths are unchanged; title, role and user aliases stored as
+`agent_aliases:<id>` in `society_meta`). `delegate_to_agent`, `society_status`
+and the message tools use it: a close name returns `needs_clarification` with a
+"did you mean" question, an unknown one lists the available agents and says
+when it names a coding pane instead. `workspace-orchestrate` resolves misheard
+custom pane names the same way (positions stay exact) and, when a name is no
+pane but a Jarvis agent, says so in `jarvis_agent`. Guards:
+`tests/unit/core/test_spoken_names.py`, `tests/unit/society/test_agent_names.py`,
+`tests/unit/plugins/tool/test_delegate_to_agent.py`.
+
+## BUG-228: an appshot photographed only the mascot or the Jarvis bar, not the app window (MEDIUM, FIXED 2026-10-02)
+
+**Symptom.** "Take an appshot" during a voice call sometimes sent the model a
+small square of the mascot instead of the window the person was working in.
+The log showed `appshot: active window 288x288 via tool -> turn` right after
+a normal 1280x696 one.
+
+**Cause.** An appshot captures the foreground window. A click on the mascot or
+the bar (to talk, mute or hang up) gives that small topmost `JarvisOrb` Tk
+overlay the Windows focus, so `GetForegroundWindow` returned the overlay and
+the capture targeted its 288x288 rectangle.
+
+**Fix.** `window_state.foreground_app_window()` looks past this process's own
+overlays (tool, non-activating or capture-excluded windows) and walks down
+the Z-order to the first real app window under them — the window the person
+used last. It steps over the taskbar, which sits between the overlays and the
+apps, and returns `None` at the wallpaper so the capture falls back to the
+monitor. The Screen Context window probe reads this instead of the raw
+foreground window. macOS and X11 need no walk: their probes never report the
+floating overlays. Guards: `tests/unit/platform/test_foreground_app_window.py`,
+`tests/unit/screen_context/test_ports.py`.
+
+## BUG-229: a mission killed by an app restart stayed "running" for 37 minutes, then failed without an artifact (MEDIUM, FIXED 2026-10-02)
+
+**Symptom.** An artifact build (a GitHub-stars history dashboard, mission
+`01a0fcc3`) showed as running, then ended as `crash_recovery` /
+Failed 38 minutes later with no artifact and no partial output.
+
+**Cause.** The desktop app process was ended without a shutdown 85 s after
+the worker started (15:19:40; no crash record, the next launcher started at
+15:19:44). The Claude worker died with it before writing any file. The new
+instance's recovery sweep then judged the mission only by its timestamps: its
+last heartbeat was younger than `RECOVERY_STALE_AFTER_MS` (30 min), so it was
+"presumed owned by a live instance" and skipped on every sweep — although no
+process was running it any more. The re-sweep finally failed it at 15:56:42.
+
+**Fix.** The orchestrator stamps its process identity (pid + process start
+time) next to every mission heartbeat, starting the moment `run_mission`
+begins (`missions.owner_pid` / `owner_start_ms`, migrated in place).
+`startup_recover` asks `jarvis/missions/ownership.py` whether that owner is
+alive: a provably dead owner (or a pid now reused by another process) is
+swept at once with an `error_detail` naming the exited process. An alive or
+unknown owner keeps the old freshness guard, so a second instance still never
+sweeps a mission a live first instance is running. The restart that killed
+the worker is outside this fix. Guard: `tests/missions/test_recovery_owner.py`.
+
+## BUG-230: the mascot and the bar showed up inside appshots and screenshots (MEDIUM, FIXED 2026-10-02)
+
+**Symptom.** An appshot of the Personal Jarvis window, and a full-screen
+capture, both contained the floating mascot on top of the content, although
+the overlays are meant to stay out of every capture.
+
+**Cause.** The overlays call `exclude_tk_window_from_capture` before their
+first show. Tk creates a toplevel's outer window only when it is first mapped,
+so `GetParent(winfo_id())` was 0, the display affinity landed on the inner
+child window, and the real outer window kept affinity 0 (measured on the live
+`JarvisOrb`: `GetWindowDisplayAffinity` = 0x0).
+
+**Fix.** `jarvis/platform/capture_exclusion.py` no longer targets the inner
+child and additionally re-applies `WDA_EXCLUDEFROMCAPTURE` on every `<Map>` of
+the toplevel (bound with `add="+"`, child-widget maps ignored). Checked with a
+real Tk root and Toplevel: 0x11 after the first map and after withdraw/show.
+Side effect: the overlays also vanish from other capture tools (ShareX, OBS),
+which is the documented intent of the module. Guard:
+`tests/unit/platform/test_capture_exclusion.py`.

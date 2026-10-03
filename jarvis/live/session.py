@@ -23,6 +23,64 @@ from jarvis.realtime.audio import StreamingPcm16Resampler
 
 log = logging.getLogger(__name__)
 
+
+def _identity(config: Any) -> str:
+    """Who the assistant is (wake-word name + SOUL.md) and what it remembers.
+
+    ``""`` on an identity fault makes the session config fall back to the
+    nameless directive, so an identity fault never blocks a call.
+    """
+    try:
+        from jarvis.brain.identity import identity_block
+
+        # maintain: the live tool set holds update_soul, so the call itself
+        # keeps SOUL.md current (no separate review call for the character).
+        identity = identity_block(config, maintain=True)
+    except Exception:  # noqa: BLE001 — never block a call on the identity block
+        log.warning("live voice: identity block unavailable", exc_info=True)
+        return ""
+    return identity + _instructions(config) + _memory()
+
+
+#: Same cap as the realtime engines' preferences block: a pathological file
+#: must never bloat the session instructions.
+_INSTRUCTIONS_MAX_CHARS = 64_000
+
+
+def _instructions(config: Any) -> str:
+    """The user's standing instructions (``<Name>.md``); ``""`` on a fault.
+
+    The typed brain and the realtime engines already honour this file; a
+    GPT-Live call did not, so the model could neither follow it nor say what
+    was in it when asked (2026-10-02).
+    """
+    try:
+        from jarvis.brain.agent_instructions import render_for_prompt
+
+        block = render_for_prompt(config, max_chars=_INSTRUCTIONS_MAX_CHARS)
+    except Exception:  # noqa: BLE001 — never block a call on the instructions file
+        log.warning("live voice: standing instructions unavailable", exc_info=True)
+        return ""
+    return "\n\n" + block if block else ""
+
+
+def _memory() -> str:
+    """The remember directive and Jarvis' notebooks; ``""`` on a fault.
+
+    A GPT-Live call sees what earlier calls and chats saved to MEMORY.md and
+    USER.md, and saves a new "remember this" while the call runs (through
+    the remember tool) instead of only after it ends.
+    """
+    try:
+        from jarvis.memory.learning.notebook import memory_block
+
+        block = memory_block()
+    except Exception:  # noqa: BLE001 — never block a call on the notebooks
+        log.warning("live voice: memory notebooks unavailable", exc_info=True)
+        return ""
+    return "\n\n" + block if block else ""
+
+
 #: Smallest gap between two live snapshots of one streaming reasoning summary.
 #: The summary arrives token by token; the bus sees a few snapshots a second.
 REASONING_SNAPSHOT_INTERVAL_S = 0.3
@@ -482,7 +540,9 @@ class LiveVoiceSession:
         )
         prompt_language = getattr(self._config.brain, "reply_language", "auto")
         config = profile.session_config(
-            language=prompt_language, tools=self._tools.declarations(defer_catalog=True)
+            language=prompt_language,
+            tools=self._tools.declarations(defer_catalog=True),
+            identity=_identity(self._config),
         )
         self._base_session_config = config
         offer = str(message.get("webrtc_offer_sdp", ""))

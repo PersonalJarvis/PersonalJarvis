@@ -32,6 +32,7 @@ import re
 import shutil
 import subprocess
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
@@ -1158,6 +1159,182 @@ def _foreground_window_windows() -> WindowInfo | None:
         user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
         return WindowInfo(
             title=buf.value or "", handle=int(hwnd), pid=int(pid.value) or None
+        )
+
+
+# Win32 constants for telling Jarvis's own floating overlays (the bar, the
+# mascot, the transcription bubble) apart from the app window under them.
+_GWL_EXSTYLE = -20
+_GW_HWNDNEXT = 2
+_WS_EX_TOOLWINDOW = 0x00000080
+_WS_EX_NOACTIVATE = 0x08000000
+_DWMWA_CLOAKED = 14
+#: A window smaller than this in either direction is no app window a person
+#: works in (helper and message windows are often 0x0 or 1x1).
+_MIN_APP_WINDOW_PX = 64
+#: Hard stop for the Z-order walk; a real desktop has far fewer top-level windows.
+_MAX_Z_ORDER_STEPS = 512
+#: The wallpaper windows sit at the bottom of the Z-order: reaching one means no
+#: app window is open under the overlay. The taskbar is NOT here — it is a
+#: topmost tool window that sits between the overlays and the apps, and the
+#: walk steps over it like any other non-app window.
+_DESKTOP_WINDOW_CLASSES = frozenset({"Progman", "WorkerW"})
+
+
+def foreground_app_window() -> WindowInfo | None:
+    """The app window the person is working in, looking past Jarvis's overlays.
+
+    Clicking the Jarvis bar or the mascot gives that small topmost overlay the
+    Windows focus, so the plain foreground window is the overlay itself — and a
+    "front window" capture photographs a square of mascot instead of the app.
+    When the foreground window is one of this process's overlays, this walks
+    down the Z-order to the first real app window under it. That is the window
+    the person used last, because activating a window raises it to the top of
+    the normal band.
+
+    Other platforms return :func:`foreground_window` unchanged: the macOS probe
+    already skips windows above the normal layer, where the overlays float, and
+    X11 never hands focus to the override-redirect overlay windows. Returns
+    ``None`` when no app window sits under the overlay (only the desktop), so
+    callers degrade to monitor scope. Best-effort; never raises.
+    """
+    try:
+        if detect_platform() == "win32":
+            return _foreground_app_window_windows()
+        return foreground_window()
+    except Exception:  # noqa: BLE001
+        log.debug("foreground_app_window failed", exc_info=True)
+        return None
+
+
+def _pick_app_window(
+    foreground: int,
+    *,
+    next_below: Callable[[int], int],
+    is_own_overlay: Callable[[int], bool],
+    is_app_window: Callable[[int], bool],
+    is_desktop: Callable[[int], bool],
+) -> int | None:
+    """Pure Z-order walk behind :func:`foreground_app_window`.
+
+    The foreground window wins unless it is one of our overlays. Otherwise the
+    first app window below it wins; reaching the wallpaper (or the end of the
+    list) means there is no app window, which is ``None``.
+    """
+    if not is_own_overlay(foreground):
+        return foreground
+    below = next_below(foreground)
+    for _ in range(_MAX_Z_ORDER_STEPS):
+        if not below:
+            return None
+        if is_desktop(below):
+            return None
+        if not is_own_overlay(below) and is_app_window(below):
+            return below
+        below = next_below(below)
+    return None
+
+
+def _foreground_app_window_windows() -> WindowInfo | None:
+    if os.name != "nt":
+        return None
+    import ctypes  # noqa: PLC0415
+    from ctypes import wintypes  # noqa: PLC0415
+
+    user32 = _win32_user32()
+    _configure_window_query_api(user32, ctypes, wintypes)
+    user32.GetWindow.argtypes = [wintypes.HWND, wintypes.UINT]
+    user32.GetWindow.restype = wintypes.HWND
+    user32.GetWindowDisplayAffinity.argtypes = [
+        wintypes.HWND,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    user32.GetWindowDisplayAffinity.restype = wintypes.BOOL
+    own_pid = os.getpid()
+
+    def _pid_of(hwnd: int) -> int:
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        return int(pid.value)
+
+    def _is_own_process(pid: int) -> bool:
+        if pid == own_pid:
+            return True
+        # The bar can run in a child process (subprocess overlay host).
+        try:
+            import psutil  # noqa: PLC0415
+
+            return int(psutil.Process(pid).ppid()) == own_pid
+        except Exception:  # noqa: BLE001 - no psutil / dead pid: not ours
+            return False
+
+    def _ex_style(hwnd: int) -> int:
+        return int(user32.GetWindowLongW(hwnd, _GWL_EXSTYLE)) & 0xFFFFFFFF
+
+    def _is_own_overlay(hwnd: int) -> bool:
+        ex_style = _ex_style(hwnd)
+        floating = bool(ex_style & (_WS_EX_TOOLWINDOW | _WS_EX_NOACTIVATE))
+        if not floating:
+            affinity = wintypes.DWORD()
+            floating = bool(
+                user32.GetWindowDisplayAffinity(hwnd, ctypes.byref(affinity))
+                and affinity.value
+            )
+        return floating and _is_own_process(_pid_of(hwnd))
+
+    def _is_cloaked(hwnd: int) -> bool:
+        cloaked = wintypes.DWORD()
+        try:
+            get_attribute = ctypes.windll.dwmapi.DwmGetWindowAttribute
+            get_attribute.argtypes = [
+                wintypes.HWND,
+                wintypes.DWORD,
+                ctypes.c_void_p,
+                wintypes.DWORD,
+            ]
+            get_attribute.restype = ctypes.c_long
+            res = get_attribute(
+                wintypes.HWND(hwnd),
+                wintypes.DWORD(_DWMWA_CLOAKED),
+                ctypes.byref(cloaked),
+                ctypes.sizeof(cloaked),
+            )
+        except (OSError, AttributeError):
+            return False  # no DWM: nothing can be cloaked
+        return res == 0 and bool(cloaked.value)
+
+    def _is_app_window(hwnd: int) -> bool:
+        if not user32.IsWindowVisible(hwnd) or user32.IsIconic(hwnd):
+            return False
+        if _ex_style(hwnd) & _WS_EX_TOOLWINDOW or _is_cloaked(hwnd):
+            return False
+        rect = wintypes.RECT()
+        if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+            return False
+        return (
+            rect.right - rect.left >= _MIN_APP_WINDOW_PX
+            and rect.bottom - rect.top >= _MIN_APP_WINDOW_PX
+        )
+
+    with per_monitor_dpi_context():
+        foreground = user32.GetForegroundWindow()
+        if not foreground:
+            return None
+        chosen = _pick_app_window(
+            int(foreground),
+            next_below=lambda hwnd: int(user32.GetWindow(hwnd, _GW_HWNDNEXT) or 0),
+            is_own_overlay=_is_own_overlay,
+            is_app_window=_is_app_window,
+            is_desktop=lambda hwnd: _window_class_windows(hwnd) in _DESKTOP_WINDOW_CLASSES,
+        )
+        if chosen is None:
+            log.info("foreground is a Jarvis overlay with no app window under it")
+            return None
+        length = int(user32.GetWindowTextLengthW(chosen))
+        buf = ctypes.create_unicode_buffer(length + 1)
+        user32.GetWindowTextW(chosen, buf, length + 1)
+        return WindowInfo(
+            title=buf.value or "", handle=int(chosen), pid=_pid_of(chosen) or None
         )
 
 

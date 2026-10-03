@@ -23,7 +23,7 @@ import { cn } from "@/lib/utils";
  * (General · System · Activity) and the selected section on the right:
  *
  *   General: Settings, Keyboard shortcuts, Appshots, My Pets, Profile,
- *            {name}.md, Contacts, Socials
+ *            {name} (the assistant), Contacts, Socials
  *   System: Computers, API Keys, Local models, Jarvis actions
  *   Activity: Spend, Feedback
  *
@@ -35,8 +35,7 @@ import { cn } from "@/lib/utils";
  * exactly like MainView used to map them to standalone views.
  *
  * Labels, icons and grouping resolve from `NAV_GROUPS` (via `resolveNavLabel`,
- * so the `{name}.md` token and all three locales behave exactly like the
- * sidebar rows did) — no second hand-written list to drift (AP-4).
+ * so all three locales behave exactly like the sidebar rows did) — no second hand-written list to drift (AP-4).
  *
  * Tab contents stay code-split one `lazy` boundary per view, so opening the
  * hub still only pays for the shell plus the visible tab.
@@ -48,10 +47,8 @@ const SettingsTab = lazy(() =>
 const ProfileTab = lazy(() =>
   import("@/views/ProfileView").then((m) => ({ default: m.ProfileView })),
 );
-const InstructionsTab = lazy(() =>
-  import("@/views/AgentInstructionsView").then((m) => ({
-    default: m.AgentInstructionsView,
-  })),
+const AssistantTab = lazy(() =>
+  import("@/views/AssistantProfileView").then((m) => ({ default: m.AssistantProfileView })),
 );
 const ContactsTab = lazy(() =>
   import("@/views/contacts/ContactsView").then((m) => ({
@@ -144,7 +141,7 @@ const HUB_NAV_GROUPS: readonly { labelKey: string; ids: readonly HubNavId[] }[] 
 const TAB_CONTENT: Record<HubNavId | "telephony-setup", LazyExoticComponent<ComponentType>> = {
   settings: SettingsTab,
   profile: ProfileTab,
-  "agent-instructions": InstructionsTab,
+  "agent-instructions": AssistantTab,
   contacts: ContactsTab,
   socials: SocialsTab,
   apikeys: ApiKeysTab,

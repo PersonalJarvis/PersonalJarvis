@@ -20,6 +20,7 @@ export function AgentTimeline({
   agentsById,
   bubbles = false,
   traceLook = "rail",
+  traceCompanion = false,
 }: {
   items: TimelineItem[];
   assistantName: string;
@@ -39,6 +40,8 @@ export function AgentTimeline({
   bubbles?: boolean;
   /** How turns draw their work; the Agentic IDE keeps the classic rows. */
   traceLook?: TraceLook;
+  /** Jarvis's own chat: live traces show the user's pet at work. */
+  traceCompanion?: boolean;
 }) {
   const t = useT();
   const stamps = bubbles ? timeStamps(items) : null;
@@ -196,6 +199,7 @@ export function AgentTimeline({
         onDecide={onDecide}
         bubbles={bubbles}
         traceLook={traceLook}
+        traceCompanion={traceCompanion}
       />
     );
   }
@@ -236,8 +240,8 @@ function stampLabel(at: Date, now: Date): string {
   return `${date}, ${time}`;
 }
 
-const Turn = memo(function Turn({ turn, assistantName, providerLabel, onDecide, bubbles = false, traceLook }: {
-  turn: TurnItem; assistantName: string; providerLabel: string; onDecide: Decide; bubbles?: boolean; traceLook: TraceLook;
+const Turn = memo(function Turn({ turn, assistantName, providerLabel, onDecide, bubbles = false, traceLook, traceCompanion = false }: {
+  turn: TurnItem; assistantName: string; providerLabel: string; onDecide: Decide; bubbles?: boolean; traceLook: TraceLook; traceCompanion?: boolean;
 }) {
   const t = useT();
   return <div className="flex min-w-0 flex-col gap-3" data-testid="agent-turn" data-message-id={turn.id} data-status={turn.status}>
@@ -249,7 +253,7 @@ const Turn = memo(function Turn({ turn, assistantName, providerLabel, onDecide, 
         {turn.effort ? <span>{effortLabel(turn.effort, t)}</span> : null}
       </div>
     )}
-    <TurnTrace turn={turn} look={traceLook} onDecide={onDecide} renderText={(text, id) => <Prose block={{ kind: "text", text, id }} />} />
+    <TurnTrace turn={turn} look={traceLook} companion={traceCompanion} onDecide={onDecide} renderText={(text, id) => <Prose block={{ kind: "text", text, id }} />} />
   </div>;
 });
 

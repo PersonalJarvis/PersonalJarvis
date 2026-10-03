@@ -2,7 +2,7 @@
 
 The IDE is organized as **Project > Workspace > Coding Agent session**. A
 project is a connected folder in the existing project library. A workspace is
-an independently named group of up to sixteen coding sessions in that project.
+an independently named group of any number of coding sessions in that project.
 Multiple workspaces may use the same folder; independent sessions do not imply
 isolated source checkouts. Users who need separate files connect a worktree as
 another project.
@@ -15,12 +15,18 @@ shows open and saved workspaces, their session counts, and active selection.
 Selecting an open workspace changes the visible group and active runtime ID;
 it does not stop background agents. Restoring a closed workspace is explicit.
 
-The grid uses at most four columns and four rows. The automatic even grid
-keeps one or two rows for up to eight sessions and adds a row per four sessions
-beyond that (nine is 3 x 3, sixteen is 4 x 4). Screens too small for every pane's
-minimum size scroll rather than shrinking the user's terminal font. The limit is
-`MAX_TERMINALS` in `jarvis/agentic_ide/session.py`; the frontend reads it from
-the state's `max_terminals`. Dragging a card header or using
+A workspace has no pane limit and no grid limit: panes can be docked on any
+side of any other pane, so the grid may grow past four columns or rows. The
+automatic even grid keeps one or two rows for up to eight sessions, adds a row
+per four sessions up to sixteen (nine is 3 x 3, sixteen is 4 x 4), and stays
+about square beyond that. A pane opened without a place joins the right edge
+while the workspace is under four columns wide; past that, a shape nobody
+arranged is dealt into the even grid again, while a hand-built arrangement is
+kept and the new pane splits its largest pane. The only guard is on one request:
+`MAX_PANES_PER_REQUEST` in `jarvis/agentic_ide/session.py` (mirrored in
+`workspaceDocking.ts`) bounds how many panes a single launch or batch opens.
+Screens too small for every pane's minimum size scroll rather than shrinking
+the user's terminal font. Dragging a card header or using
 Alt+Arrow reorders stable session IDs. Reordering does not recreate the CLI
 process. Each tile uses the existing
 PTY adapter, output replay, reconnect budget, and terminal appearance tokens.

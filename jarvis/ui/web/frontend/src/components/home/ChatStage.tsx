@@ -244,6 +244,7 @@ function ChatStageContent() {
             // The Agentic IDE mirrors Claude Code and Codex, whose own traces
             // the maintainer kept; every other surface draws the rail.
             traceLook={isJarvis ? "rail" : "classic"}
+            traceCompanion={isJarvis}
           />
           <div ref={spacerRef} aria-hidden data-testid="chat-bottom-spacer" className="shrink-0" />
         </div>

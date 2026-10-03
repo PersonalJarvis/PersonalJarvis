@@ -382,8 +382,18 @@ def _copy_engine(source: Path, home: Path) -> None:
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     # A bare namespace marker: the worker must never import the app's package.
     (staging / "jarvis" / "__init__.py").write_text("", encoding="utf-8")
-    shutil.rmtree(target, ignore_errors=True)
-    os.replace(staging, target)
+    # Windows briefly locks freshly written folders (virus scanner, indexer):
+    # the rename failed with "access denied" in about 1 of 60 test runs.
+    for delay in (0.05, 0.1, 0.2, 0.4, 0.8, 1.6, 0.0):
+        shutil.rmtree(target, ignore_errors=True)
+        try:
+            os.replace(staging, target)
+            return
+        except PermissionError:
+            if not delay:
+                raise
+            log.info("engine folder is locked; retrying the copy in %.2f s", delay)
+            time.sleep(delay)
 
 
 def _run_setup(deps: SetupDeps) -> None:
@@ -477,13 +487,16 @@ def _run_setup(deps: SetupDeps) -> None:
 # ---------------------------------------------------------------- self-test
 
 
-def selftest_fingerprint(settings: Any) -> dict[str, str]:
+def selftest_fingerprint(settings: Any) -> dict[str, Any]:
     """What a self-test result is bound to; any change makes it stale (plan 4.10)."""
     return {
         "engine_version": engine_version(),
         "requirements_sha256": requirements_sha256(),
         "llm_model": str(getattr(settings, "llm_model", "")),
         "tts": str(getattr(settings, "tts", "")),
+        "languages": list(getattr(settings, "languages", [])),
+        "tts_options": dict(getattr(settings, "tts_options", {})),
+        "llm_base_url": str(getattr(settings, "llm_base_url", "")),
     }
 
 
@@ -569,6 +582,8 @@ def _live_state(engine: Any) -> tuple[str, str, float, str]:
     if engine._client is None:  # noqa: SLF001 - the adapter's own state, read-only
         if engine.phase == "failed":
             return "failed", "", 0.0, engine.reason
+        if engine.phase == "starting":
+            return "starting", engine.stage or "process", engine.progress, ""
         return "stopped", "", 0.0, ""
     if engine.phase == "ready":
         return "ready", "", 1.0, ""
@@ -586,11 +601,38 @@ def _visible_models(names: Iterable[str]) -> list[str]:
     return sorted(n for n in names if not is_hidden_alias(n))
 
 
+async def _without_toolless(names: set[str]) -> set[str]:
+    """Drop models that declare capabilities but not ``tools`` (embedding, OCR).
+
+    Live voice needs tool calls; an embedding model on the picker can never
+    answer. A model whose capabilities are unknown stays (empty = unknown,
+    never "can do nothing"), and so does every name when Ollama's inventory
+    cannot be read.
+    """
+    try:
+        from jarvis.brain.ollama_inventory import (  # noqa: PLC0415
+            OllamaServerError,
+            cached_snapshot,
+            same_model,
+        )
+        from jarvis.brain.ollama_pull import server_root  # noqa: PLC0415
+    except ImportError:  # optional local-model helpers: keep the list
+        return names
+    try:
+        snapshot = await cached_snapshot(server_root())
+    except OllamaServerError as exc:
+        log.info("Ollama inventory unreadable; offering every installed model: %s", exc)
+        return names
+    toolless = [m.name for m in snapshot.models if m.capabilities and "tools" not in m.capabilities]
+    return {n for n in names if not any(same_model(n, t) for t in toolless)}
+
+
 async def card_status(
     cfg: Any,
     *,
     installed_llms: Callable[[], Awaitable[tuple[set[str], str | None]]] | None = None,
     machine: str | None = None,
+    tool_capable: Callable[[set[str]], Awaitable[set[str]]] | None = None,
 ) -> dict[str, Any]:
     """Everything the Local voice card renders, in one payload.
 
@@ -617,6 +659,9 @@ async def card_status(
 
         installed_llms = installed_models
     names, llm_error = await installed_llms()
+    choices = set(names)
+    if choices and not llm_error:
+        choices = await (tool_capable or _without_toolless)(choices)
 
     section = getattr(cfg, "voice_engine", None)
     configured = str(getattr(section, "llm_model", "") or "")
@@ -626,7 +671,7 @@ async def card_status(
     elif recorded.get("llm_model"):
         llm_model, llm_source = str(recorded["llm_model"]), "setup"
     else:
-        llm_model, _present = choose_llm(machine, names)
+        llm_model, _present = choose_llm(machine, choices)
         llm_source = "default"
     llm_installed = None if llm_error else any(_same_tag(llm_model, n) for n in names)
 
@@ -656,7 +701,7 @@ async def card_status(
         "llm_source": llm_source,
         "llm_installed": llm_installed,
         "llm_error": llm_error or "",
-        "llm_choices": _visible_models(names),
+        "llm_choices": _visible_models(choices),
         "voice": settings.tts,
         "voices": list(VOICE_ENGINE_VOICES),
         "machine_class": machine,

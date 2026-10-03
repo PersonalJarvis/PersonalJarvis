@@ -59,7 +59,7 @@ Every function returns a tree in canonical form:
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -175,7 +175,8 @@ def grid_span(node: LayoutNode | None) -> tuple[int, int]:
 
     Siblings in a row add their columns and share the tallest row count;
     siblings in a column the other way round. Mirrored by `layoutSpan` in the
-    frontend's ``workspaceDocking.ts``, which enforces the same grid bounds.
+    frontend's ``workspaceDocking.ts``. A measurement, never a limit: a
+    workspace may take any shape.
     """
     if node is None:
         return (0, 0)
@@ -368,6 +369,104 @@ def append_pane(root: LayoutNode | None, added: str) -> LayoutNode:
         root.weights.append(_clean_weight(share))
         return _rows_outermost(normalize(root))
     return Split(direction="row", children=[root, Leaf(pane=added)], weights=[1.0, 1.0])
+
+
+#: The window shape the anchor-less add assumes when it decides whether the
+#: pane it splits is wider than tall. A desktop window is landscape; the exact
+#: ratio only breaks ties between "beside" and "beneath".
+_ASSUMED_ASPECT = 16 / 9
+
+
+def pane_boxes(root: LayoutNode | None) -> dict[str, tuple[float, float, float, float]]:
+    """Every pane's ``(x, y, w, h)`` as fractions of the workspace, by weight."""
+    boxes: dict[str, tuple[float, float, float, float]] = {}
+
+    def walk(node: LayoutNode, x: float, y: float, w: float, h: float) -> None:
+        if isinstance(node, Leaf):
+            boxes[node.pane] = (x, y, w, h)
+            return
+        weights = [_clean_weight(value) for value in node.weights[: len(node.children)]]
+        weights += [1.0] * (len(node.children) - len(weights))
+        total = sum(weights) or 1.0
+        offset = 0.0
+        for child, weight in zip(node.children, weights, strict=True):
+            share = weight / total
+            if node.direction == "row":
+                walk(child, x + offset * w, y, share * w, h)
+            else:
+                walk(child, x, y + offset * h, w, share * h)
+            offset += share
+
+    if root is not None:
+        walk(root, 0.0, 0.0, 1.0, 1.0)
+    return boxes
+
+
+def row_major(panes: list[str], columns: int) -> LayoutNode | None:
+    """``panes`` dealt row by row into an even grid ``columns`` wide."""
+    width = max(1, columns)
+    rows = [
+        normalize(
+            Split(
+                direction="row",
+                children=[Leaf(pane=key) for key in panes[start : start + width]],
+                weights=[1.0] * len(panes[start : start + width]),
+            )
+        )
+        for start in range(0, len(panes), width)
+    ]
+    if not rows:
+        return None
+    return normalize(Split(direction="column", children=rows, weights=[1.0] * len(rows)))
+
+
+def _is_automatic(root: LayoutNode, balanced_columns: Callable[[int], int]) -> bool:
+    """Is ``root`` a shape nobody arranged: one plain row, or the even grid?"""
+    if isinstance(root, Leaf):
+        return True
+    if root.direction == "row" and all(isinstance(child, Leaf) for child in root.children):
+        return True
+    panes = leaves(root)
+    return same_shape(root, row_major(panes, balanced_columns(len(panes))))
+
+
+def add_unanchored(
+    root: LayoutNode | None,
+    added: str,
+    *,
+    max_columns: int,
+    balanced_columns: Callable[[int], int],
+) -> LayoutNode:
+    """Where a pane goes when nobody said where: never by re-dealing a hand-built layout.
+
+    While the workspace is narrower than ``max_columns`` the pane joins the
+    right edge as a new full-height column (:func:`append_pane`), the shape
+    "open one more terminal" has always produced. Past that width a further
+    column would only make every pane thinner, so:
+
+    * a shape nobody arranged — one plain row, or the even grid — is dealt
+      into the even grid for one more pane, in the same reading order;
+    * an arrangement the user built by hand is kept: the pane splits the
+      LARGEST pane — beside it when that pane is wider than tall, beneath it
+      otherwise; on a tie the last in reading order, so it lands at the end.
+      Every other pane keeps its place (maintainer request, 2026-10-02).
+    """
+    if root is None:
+        return Leaf(pane=added)
+    columns, _ = grid_span(root)
+    if columns < max_columns:
+        return append_pane(root, added)
+    if _is_automatic(root, balanced_columns):
+        panes = [*leaves(root), added]
+        dealt = row_major(panes, balanced_columns(len(panes)))
+        assert dealt is not None  # never empty: it holds at least ``added``
+        return dealt
+    boxes = pane_boxes(root)
+    order = leaves(root)
+    anchor = max(order, key=lambda key: (boxes[key][2] * boxes[key][3], order.index(key)))
+    _, _, width, height = boxes[anchor]
+    side: Literal["right", "down"] = "right" if width * _ASSUMED_ASPECT > height else "down"
+    return split_pane(root, anchor, added, side)
 
 
 def axis_span(node: LayoutNode, direction: Direction) -> int:

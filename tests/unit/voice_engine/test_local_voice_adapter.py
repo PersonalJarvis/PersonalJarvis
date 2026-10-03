@@ -31,6 +31,7 @@ class FakeClient:
     audio: list[tuple[int, int, bytes]] = field(default_factory=list)
     messages: asyncio.Queue[dict[str, Any]] = field(default_factory=asyncio.Queue)
     audio_frames: asyncio.Queue[AudioFrame] = field(default_factory=asyncio.Queue)
+    closed: bool = False
 
     async def send(self, message: dict[str, Any]) -> None:
         self.sent.append(message)
@@ -39,6 +40,7 @@ class FakeClient:
         self.audio.append((slot, seq, pcm))
 
     async def close(self) -> int:
+        self.closed = True
         return 0
 
 
@@ -150,7 +152,8 @@ async def test_a_loading_engine_refuses_fast_with_its_progress() -> None:
     try:
         assert await provider.can_open_duplex_session() is False
         assert "20 %" in provider.duplex_unavailable_reason
-        assert "about 12 seconds" in provider.duplex_unavailable_reason
+        assert "progress" in provider.duplex_unavailable_reason
+        assert "seconds" not in provider.duplex_unavailable_reason
     finally:
         LocalVoiceProvider._engine = None
 
@@ -214,9 +217,35 @@ async def test_an_installed_engine_starts_in_the_background_and_answers_at_once(
         assert await provider.can_open_duplex_session() is False
         assert starts == [1]  # joined, not started twice
         assert "40 %" in provider.duplex_unavailable_reason
-        assert "about 9 seconds" in provider.duplex_unavailable_reason
+        assert "progress" in provider.duplex_unavailable_reason
+        assert "seconds" not in provider.duplex_unavailable_reason
     finally:
         gate.set()
+        LocalVoiceProvider._engine = None
+
+
+@pytest.mark.asyncio
+async def test_selecting_the_card_starts_an_installed_engine_and_never_refuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("JARVIS_VOICE_ENGINE_HOME", str(tmp_path / "missing"))
+    try:
+        await LocalVoiceProvider.verify_activation(JarvisConfig())
+        assert LocalVoiceProvider._engine is None  # nothing set up: nothing starts
+
+        _installed_home(tmp_path)
+        monkeypatch.setenv("JARVIS_VOICE_ENGINE_HOME", str(tmp_path))
+        engine = LocalVoiceProvider.shared_engine(JarvisConfig())
+        starts: list[int] = []
+
+        async def fake_start() -> None:
+            starts.append(1)
+
+        engine.ensure_started = fake_start
+        await LocalVoiceProvider.verify_activation(JarvisConfig())
+        await asyncio.sleep(0)
+        assert starts == [1]
+    finally:
         LocalVoiceProvider._engine = None
 
 
@@ -301,3 +330,97 @@ def test_the_model_comes_from_the_card_then_setup_then_the_default(tmp_path: Pat
     assert EngineSettings.from_config(cfg).llm_model == "qwen3.5:2b"
     typed = JarvisConfig(voice_engine=VoiceEngineConfig(tts="nonsense", languages=[]))
     assert (typed.voice_engine.tts, typed.voice_engine.languages) == ("pocket", ["de", "en"])
+
+
+@pytest.mark.asyncio
+async def test_ordered_audio_reaches_the_session_before_turn_complete() -> None:
+    engine, client = await _running_engine()
+    session = await engine.open(LocalVoiceProvider(_settings()), SimpleNamespace(language="en"))
+    client.messages.put_nowait(AudioFrame(session.slot, 1, b"\x01\x00"))
+    client.messages.put_nowait({"type": "response.done", "session": session.session_id})
+    try:
+        events = session.receive()
+        assert (await asyncio.wait_for(anext(events), 1)).type == "audio_delta"
+        assert (await asyncio.wait_for(anext(events), 1)).type == "turn_complete"
+    finally:
+        await session.close()
+        await engine.stop()
+
+
+@pytest.mark.asyncio
+async def test_stalled_loading_is_failed_and_releases_the_worker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jarvis.plugins.realtime import local_voice
+
+    monkeypatch.setattr(local_voice, "_READY_TIMEOUT_S", 0.01)
+    engine = _Engine(_settings())
+    client = FakeClient()
+    engine._client = client
+    engine.phase, engine.stage = "loading", "tts:en"
+    engine._load_watchdog = asyncio.create_task(engine._watch_loading(client))
+    await asyncio.wait_for(engine._load_watchdog, 1)
+    assert engine.phase == "failed" and "tts:en" in engine.reason
+    assert engine._client is None and client.closed
+    assert not await engine.wait_ready(0.01)
+    engine.reset_failures()
+    assert engine.phase == "stopped"
+
+
+@pytest.mark.asyncio
+async def test_failed_readiness_releases_worker_so_retry_can_start_fresh() -> None:
+    engine = _Engine(_settings())
+    client = FakeClient()
+    engine._client = client
+    router = asyncio.create_task(engine._route_messages(client))
+    client.messages.put_nowait({"type": "state", "phase": "failed", "reason": "No speech"})
+    await asyncio.wait_for(router, 1)
+    assert engine.phase == "failed" and engine.reason == "No speech"
+    assert client.closed and engine._client is None
+    engine.reset_failures()
+    assert engine.phase == "stopped"
+
+
+@pytest.mark.asyncio
+async def test_stop_cancels_start_before_it_can_leave_a_worker_behind() -> None:
+    engine = _Engine(_settings())
+    entered = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def start():
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    engine.ensure_started = start
+    engine.start_soon()
+    await entered.wait()
+    await engine.stop()
+    assert cancelled.is_set() and engine._starting.done()
+    assert engine.phase == "stopped"
+
+
+@pytest.mark.asyncio
+async def test_stop_also_cancels_a_direct_prespawn_handshake(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jarvis.voice_engine import client as client_module
+
+    entered = asyncio.Event()
+    client = FakeClient()
+
+    async def start():
+        entered.set()
+        await asyncio.Event().wait()
+
+    client.start = start
+    monkeypatch.setattr(client_module, "EngineClient", lambda *args, **kwargs: client)
+    settings = EngineSettings(python="fake", home=str(tmp_path), package_root=None)
+    engine = _Engine(settings)
+    launch = asyncio.create_task(engine.ensure_started())
+    await entered.wait()
+    await engine.stop()
+    assert launch.cancelled() and client.closed
+    assert engine._client is None and engine.phase == "stopped"

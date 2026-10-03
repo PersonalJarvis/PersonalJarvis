@@ -161,6 +161,25 @@ def test_set_pet_updates_the_config_and_the_live_window() -> None:
     assert app.cfg.ui.pet_id == "none"
 
 
+def test_a_burst_of_look_changes_queues_one_rescale_with_the_newest_size() -> None:
+    pet = OrbOverlay(style="pet")
+    pet._root = object()  # a window exists; the caller is not the Tk thread
+
+    def queued_looks() -> list:
+        items = []
+        while not pet._ui_queue.empty():
+            items.append(pet._ui_queue.get_nowait())
+        return [fn for fn in items if fn == pet._apply_pet_look]
+
+    for scale in (1.1, 1.2, 1.3):
+        pet.set_pet_look(scale=scale)
+    (apply,) = queued_looks()
+    assert pet._pet_scale == 1.3
+    apply()
+    pet.set_pet_look(scale=1.4)
+    assert len(queued_looks()) == 1  # the next change queues again
+
+
 def test_set_pet_look_clamps_and_applies() -> None:
     surface = _PetSurface()
     app = _app(orb=surface)

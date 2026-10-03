@@ -76,6 +76,8 @@ class IntentVerdict:
 class TargetKind(StrEnum):
     MONITOR = "monitor"
     WINDOW = "window"
+    #: A rectangle the user dragged out themselves (appshot area selection).
+    REGION = "region"
 
 
 class TargetReason(StrEnum):
@@ -95,6 +97,8 @@ class TargetReason(StrEnum):
     FOCUSED_WINDOW = "focused_window"
     #: Window scope was asked for but the window rect was unusable.
     WINDOW_FALLBACK_MONITOR = "window_fallback_monitor"
+    #: The user selected this rectangle by hand.
+    USER_REGION = "user_region"
 
 
 @dataclass(frozen=True, slots=True)
@@ -280,6 +284,8 @@ class ScreenContext:
         """
         if self.target.kind is TargetKind.WINDOW:
             where = "active window"
+        elif self.target.kind is TargetKind.REGION:
+            where = "selected area"
         else:
             where = f"monitor {self.target.monitor_name or '?'}"
         bits = [f"captured {where}", f"{self.size[0]}x{self.size[1]}"]

@@ -4,7 +4,7 @@ import { getWSClient } from "@/hooks/useWebSocket";
 import { useOverlayStyle } from "@/hooks/useOverlayStyle";
 import { useEventStore } from "@/store/events";
 import { useMissionDrag } from "@/store/missionDrag";
-import { MascotGigi } from "@/components/MascotGigi";
+import { PetMark } from "@/components/pets/PetMark";
 import { playDropConfirm } from "@/lib/sound";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
@@ -260,7 +260,7 @@ export function JarvisDock() {
               <span className="h-4 w-1 rounded-sm bg-primary/80" />
             </span>
           ) : (
-            <MascotGigi size={28} reactToVoice enableComments={false} />
+            <PetMark size={28} reactive />
           )}
         </span>
 

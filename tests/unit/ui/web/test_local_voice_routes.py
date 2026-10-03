@@ -31,7 +31,12 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     async def installed() -> tuple[set[str], str | None]:
         return {"qwen3.5:2b"}, None
 
+    async def every_model_calls_tools(names: set[str]) -> set[str]:
+        return names
+
     monkeypatch.setattr(ollama_pull, "installed_models", installed)
+    # Never read the machine's real Ollama inventory from a test.
+    monkeypatch.setattr(setup, "_without_toolless", every_model_calls_tools)
     setup._reset_for_tests()
     LocalVoiceProvider._engine = None
     yield engine_home

@@ -33,6 +33,12 @@ COOLDOWN_S: Final[float] = 12 * 3_600.0
 #: Share of a merged entry's content words that must come from its sources.
 _MIN_OWN_WORDS: Final[float] = 0.6
 COMPACT_MAX_TOKENS: Final[int] = 1_200
+#: The file each notebook target lives in, as the merging model is told.
+_NOTEBOOK_FILES: Final[dict[str, str]] = {
+    "user": "USER.md",
+    "memory": "MEMORY.md",
+    "soul": "SOUL.md",
+}
 
 _WORD: Final = re.compile(r"[^\W\d_]{4,}")
 _ANCHOR: Final = re.compile(r"https?://\S+|www\.\S+|[\w.+-]+@[\w-]+\.[\w.]+|\d[\d .,/:-]*\d|\d")
@@ -59,7 +65,7 @@ def system_prompt(today: date | None = None) -> str:
 def build_prompt(entries: list[Any], *, target: str, used: int, budget: int) -> str:
     return json.dumps(
         {
-            "notebook": "USER.md" if target == "user" else "MEMORY.md",
+            "notebook": _NOTEBOOK_FILES.get(target, "MEMORY.md"),
             "fill": f"{used}/{budget} chars",
             "entries": [{"entry_id": e.id, "text": e.text} for e in entries],
         },

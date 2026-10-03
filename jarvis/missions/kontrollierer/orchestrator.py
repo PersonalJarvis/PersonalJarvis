@@ -28,6 +28,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 from collections.abc import Callable
 from contextlib import suppress
@@ -748,6 +749,13 @@ class TaskOutcome:
 class Kontrollierer:
     """Orchestrator class that drives a mission end-to-end."""
 
+    #: Worktree create/remove run git in a worker thread (off the shared event
+    #: loop) but stay serialized, as they were while they blocked the loop:
+    #: parallel ``git worktree add`` on one repo races for its admin files.
+    #: Class-wide because every instance works on the same checkout; a thread
+    #: lock because only worker threads ever take it.
+    _worktree_lock: Final[threading.Lock] = threading.Lock()
+
     def __init__(
         self,
         *,
@@ -980,6 +988,12 @@ class Kontrollierer:
 
         # PENDING -> RUNNING
         await self._safe_transition(mission_id, MissionState.RUNNING, "kontrollierer-start")
+        # Claim ownership before planning so recovery can tell, from the very
+        # first second, whether the process running this mission still exists.
+        try:
+            await self._manager.store.touch_heartbeat(mission_id, now_ms())
+        except Exception as hb_exc:  # noqa: BLE001 - ownership stamp is advisory; freshness guard still applies
+            logger.debug("Initial mission heartbeat failed (non-fatal): %s", hb_exc)
 
         # Decomposer: determine the plan.
         try:
@@ -1167,7 +1181,14 @@ class Kontrollierer:
                 # the whole codebase first. The AGENTS.md contract is
                 # materialised into BOTH shapes identically (below), and
                 # `_capture_diff` works against both because each has a HEAD.
-                worktree = self._worktrees.create(
+                #
+                # Off the loop: a full worktree of this repo is several git
+                # subprocesses and thousands of file writes. Run inline it
+                # froze every route and WebSocket of the desktop app for 15 s+
+                # (loop-watchdog stack 2026-10-02: worktree.create ->
+                # _write_base_sha -> CreateProcess).
+                worktree = await asyncio.to_thread(
+                    self._create_worktree,
                     mission_slug=_short_slug(mission_prompt),
                     task_id=step.task_id,
                     needs_repo=step.needs_repo,
@@ -1217,30 +1238,49 @@ class Kontrollierer:
                     reflections=reflections,
                 )
             finally:
-                # Persist worker artifacts BEFORE the worktree teardown.
-                # Without this step the worktree (and everything the agent
-                # wrote into it) is gone the moment the task finishes,
-                # leaving the "outputs folder" the user expects in the
-                # sub-agents-outputs sidebar permanently empty even on a
-                # successful mission.
-                try:
-                    self._archive_task_artifacts(
+                # Archive + teardown run in a worker thread (git and file
+                # copies would otherwise stall the loop) and are shielded: a
+                # second cancellation interrupts only this wait, never the
+                # cleanup, which the thread always finishes.
+                await asyncio.shield(
+                    asyncio.to_thread(
+                        self._finish_task_workspace,
                         worktree=worktree,
                         mission_dir=mission_dir,
                         task_id=step.task_id,
                     )
-                except Exception:  # noqa: BLE001
-                    logger.warning(
-                        "artifact archive failed for %s", worktree, exc_info=True
-                    )
-                # Worktree cleanup MUST run for every return path so we don't
-                # leak per-task git worktrees on disk (Phase-6 hard rule #4).
-                try:
-                    self._worktrees.remove(worktree, force=True)
-                except Exception:  # noqa: BLE001
-                    logger.warning(
-                        "worktree cleanup failed for %s", worktree, exc_info=True
-                    )
+                )
+
+    def _create_worktree(self, **kwargs: Any) -> Path:
+        """``WorktreeManager.create``, one at a time. Worker thread only."""
+        with self._worktree_lock:
+            return self._worktrees.create(**kwargs)
+
+    def _finish_task_workspace(
+        self, *, worktree: Path, mission_dir: Path, task_id: str
+    ) -> None:
+        """Archive a task's artifacts, then remove its worktree. Worker thread only."""
+        # Persist worker artifacts BEFORE the worktree teardown.
+        # Without this step the worktree (and everything the agent
+        # wrote into it) is gone the moment the task finishes,
+        # leaving the "outputs folder" the user expects in the
+        # sub-agents-outputs sidebar permanently empty even on a
+        # successful mission.
+        try:
+            self._archive_task_artifacts(
+                worktree=worktree,
+                mission_dir=mission_dir,
+                task_id=task_id,
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning("artifact archive failed for %s", worktree, exc_info=True)
+        # Worktree cleanup MUST run for every return path so we don't
+        # leak per-task git worktrees on disk (Phase-6 hard rule #4).
+        try:
+            with self._worktree_lock:
+                self._worktrees.remove(worktree, force=True)
+        except Exception:  # noqa: BLE001
+            logger.warning("worktree cleanup failed for %s", worktree, exc_info=True)
 
     async def _run_iterations(
         self,
@@ -1368,7 +1408,8 @@ class Kontrollierer:
                     return TaskOutcome.ERROR
                 continue
 
-            diff_text = self._capture_diff(worktree)
+            # git add/diff/ls-files over the whole worktree: off the loop.
+            diff_text = await asyncio.to_thread(self._capture_diff, worktree)
             log_text = self._read_stream_log(log_dir)
             # Out-of-worktree deliverables (live mission_019e7abd, 2026-05-30):
             # a task may legitimately target an absolute path outside the

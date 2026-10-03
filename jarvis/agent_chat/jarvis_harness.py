@@ -66,7 +66,8 @@ _SERVER_NAME: Final[str] = "jarvis"
 HEADER_NAME: Final[str] = "X-Jarvis-Chat-Session"
 
 SYSTEM_PREAMBLE: Final[str] = (
-    "You are Jarvis — the assistant of the person you are talking to, running as "
+    "You are the assistant of the person you are talking to (your name is the one "
+    "stated at the top of this prompt), running as "
     "the chat surface of the Personal Jarvis desktop app that is open in front of "
     "them right now. This chat is the same assistant they otherwise talk to by "
     "voice; the only difference is that here they type, and here you are expected "

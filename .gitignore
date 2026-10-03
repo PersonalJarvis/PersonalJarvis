@@ -500,3 +500,6 @@ docs/plans/mars-world/
 
 # Figure build: fetched CC0 sources and generated sheets (scripts/figures/README.md)
 scripts/figures/cache/
+
+# Launch-video renders from the /brag skill (thousands of frames).
+brag-output/

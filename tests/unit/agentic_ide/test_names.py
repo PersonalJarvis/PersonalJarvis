@@ -32,12 +32,12 @@ class TestPositionsAreAssignedByPlace:
         assert default_names(0) == []
         assert default_names(-1) == []
 
-    def test_a_full_workspace_needs_no_fallback_shape(self) -> None:
-        """Every pane of the biggest allowed workspace has a speakable name."""
-        from jarvis.agentic_ide.session import MAX_TERMINALS
+    def test_a_large_workspace_needs_no_fallback_shape(self) -> None:
+        """Every pane of a large workspace has a speakable name."""
+        from jarvis.agentic_ide.session import MAX_PANES_PER_REQUEST
 
-        names = default_names(MAX_TERMINALS)
-        assert len(set(names)) == MAX_TERMINALS
+        names = default_names(MAX_PANES_PER_REQUEST)
+        assert len(set(names)) == MAX_PANES_PER_REQUEST
         assert all(position_of(name) is not None for name in names)
 
     def test_free_positions_fills_the_lowest_gap(self) -> None:

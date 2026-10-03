@@ -119,7 +119,7 @@ def build_models(config: RuntimeConfig, progress: Progress) -> tuple[EngineModel
     models = EngineModels(
         vad_factory=lambda: SileroVad(vad_path), turn=turn, stt=stt, tts_for=tts_for, llm=llm
     )
-    progress("ready", 1.0)
+    progress("loaded", 0.9)
     return models, {"load_s": timings, "voices": voice_kind, "llm": config.llm_model,
                     "errors": errors}
 
