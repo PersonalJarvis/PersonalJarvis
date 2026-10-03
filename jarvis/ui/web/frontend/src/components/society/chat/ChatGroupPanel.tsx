@@ -10,6 +10,7 @@ import { AgentSwatch } from "../AgentSwatch";
 import { RosterRail } from "../roster/RosterRail";
 import { AgentChatPanel } from "./AgentChatPanel";
 import { ChatGroupDialog } from "./ChatGroupDialog";
+import { MeetingChat } from "./MeetingChat";
 
 interface Props {
   group: SocietyChatGroup;
@@ -32,6 +33,7 @@ export function ChatGroupPanel({
   const [leftId, setLeftId] = useState(group.members[0] ?? "");
   const [rightId, setRightId] = useState(group.members[1] ?? "");
   const [editing, setEditing] = useState(false);
+  const [shared, setShared] = useState(true);
   const [confirmUngroup, setConfirmUngroup] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [error, setError] = useState("");
@@ -134,10 +136,18 @@ export function ChatGroupPanel({
       onGroupAgents={onGroupAgents} onAddAgentToGroup={onAddAgentToGroup}
       loading={false} sample={false} side="left" className="w-full border-0 jarvis-nav-surface"
       footer={teamFooter} />
-    <div className="grid min-h-0 min-w-0 grid-cols-2 divide-x-2 divide-border-strong overflow-hidden border-l border-border bg-background"
+    <div className="flex min-h-0 min-w-0 flex-col border-l border-border">
+      <div className="flex shrink-0 gap-2 border-b border-border p-2">
+        <button type="button" aria-pressed={shared} onClick={() => setShared(true)}
+          className="rounded-md px-3 py-2 text-sm text-foreground hover:bg-secondary">{t("society.meeting.title")}</button>
+        <button type="button" aria-pressed={!shared} onClick={() => setShared(false)}
+          className="rounded-md px-3 py-2 text-sm text-foreground hover:bg-secondary">{t("society.meeting.individual")}</button>
+      </div>
+      {shared ? <MeetingChat key={group.group_id} group={group} roster={roster} /> : <div className="grid min-h-0 min-w-0 flex-1 grid-cols-2 divide-x-2 divide-border-strong overflow-hidden bg-background"
       data-testid="society-group-split">
       {pane("left", left)}
       {pane("right", right)}
+    </div>}
     </div>
     {editing && <ChatGroupDialog group={group} agents={roster} onClose={() => setEditing(false)} onSaved={onOpenGroup} />}
   </div>;

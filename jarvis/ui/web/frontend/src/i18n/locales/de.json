@@ -5592,6 +5592,19 @@
       "submit": "Agent erstellen",
       "name_required": "Gib dem Agenten zuerst einen Namen.",
       "error": "Der Agent konnte nicht erstellt werden."
+    },
+    "meeting": {
+      "title": "Gemeinsame Besprechung",
+      "individual": "Einzelchats",
+      "you": "Du",
+      "description": "Jede Nachricht bittet jedes Mitglied der Reihe nach um eine Antwort. Sie können auf frühere Antworten reagieren. Danach endet die Runde automatisch.",
+      "empty": "Sende ein Thema, um die Diskussion zu starten. Über Gruppe bearbeiten kannst du Jarvis hinzufügen.",
+      "answering": "{0} antwortet…",
+      "failed": "Die Runde konnte nicht beendet werden. Details findest du im Einzelchat des Agenten. Frühere Beiträge bleiben gespeichert.",
+      "limit": "Besprechungen unterstützen zwei bis sechs Agenten. Verkleinere die Gruppe über Bearbeiten.",
+      "message": "Deine Nachricht an die Gruppe",
+      "stop": "Runde stoppen",
+      "send": "Gruppe fragen"
     }
   },
   "chat_tools": {

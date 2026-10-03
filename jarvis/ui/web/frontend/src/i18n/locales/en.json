@@ -5592,6 +5592,19 @@
       "submit": "Create agent",
       "name_required": "Give the agent a name first.",
       "error": "The agent could not be created."
+    },
+    "meeting": {
+      "title": "Shared meeting",
+      "individual": "Individual chats",
+      "you": "You",
+      "description": "Each message asks every member for one reply, in order. They can react to earlier replies. No automatic discussion continues after that round.",
+      "empty": "Send a topic to start the discussion. Add Jarvis through Edit group if you want him to participate.",
+      "answering": "{0} is contributing…",
+      "failed": "The round could not finish. Open the agent’s individual chat for details. Earlier contributions are saved.",
+      "limit": "Meetings support two to six agents. Edit this group to reduce its members.",
+      "message": "Your message to the group",
+      "stop": "Stop round",
+      "send": "Ask the group"
     }
   },
   "chat_tools": {

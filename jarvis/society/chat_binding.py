@@ -40,6 +40,7 @@ log = logging.getLogger(__name__)
 
 __all__ = [
     "SURFACE",
+    "agent_busy",
     "bind_society_session",
     "ensure_session",
     "frame_assignment",
@@ -251,7 +252,7 @@ async def bind_society_session(svc: Any, session_id: str, *, routine_run: bool =
     return ensure_session(svc, runtime.config(), agent, counterpart=counterpart)
 
 
-def _agent_busy(svc: Any, agent: AgentRecord) -> bool:
+def agent_busy(svc: Any, agent: AgentRecord) -> bool:
     """Whether the person's chat or a conversation chat of ``agent`` runs a turn.
 
     Messages wait until the agent is free, as they did when it had one chat:
@@ -366,7 +367,7 @@ def make_deliver_hook(
         receipt = svc.store.incoming_message(session.session_id, env.event_id)
         if receipt is not None and receipt["status"] == "delivered":
             return
-        if svc.is_running(session.session_id) or _agent_busy(svc, target):
+        if svc.is_running(session.session_id) or agent_busy(svc, target):
             raise DeliveryBusy(f"target busy: {target.name} is running a turn")
         token = incoming_context.set(incoming)
         try:

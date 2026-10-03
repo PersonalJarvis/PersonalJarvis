@@ -21,7 +21,7 @@ export function ChatGroupDialog({ group, agents, onClose, onSaved }: Props) {
     agents.some((agent) => agent.agentId === id && agent.lifecycle !== "archived")) ?? []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const choices = agents.filter((agent) => agent.tier !== "lead" && agent.lifecycle !== "archived");
+  const choices = agents.filter((agent) => agent.lifecycle !== "archived");
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();

@@ -106,6 +106,56 @@ def test_group_membership_keeps_individual_agent_sessions(client):
     assert after == before
 
 
+def test_shared_meeting_routes_allow_jarvis_and_read_without_spend(client):
+    c, _ = client
+    c.post("/api/society/agents", json={"name": "Scout"})
+    group = c.post("/api/society/chat-groups", json={
+        "name": "With Jarvis", "members": ["jarvis", "scout"],
+    }).json()["group"]
+    url = f"/api/society/chat-groups/{group['group_id']}/meeting"
+    assert c.get(url).json() == {"messages": [], "running": False, "room": None}
+    assert c.post(url, json={"text": "Hello"}).status_code == 409  # No chat service.
+    assert c.get(url).json()["messages"] == []
+
+
+def test_deleting_active_meeting_stops_owned_turn_and_edits_are_refused(client, tmp_path):
+    import asyncio
+
+    from jarvis.agent_chat.store import AgentChatStore
+    from tests.fakes.meeting_chat import MeetingChatFake
+
+    c, _ = client
+    for name in ("Scout", "Writer"):
+        c.post("/api/society/agents", json={"name": name, "provider": "ollama", "model": "fake"})
+    group = c.post("/api/society/chat-groups", json={
+        "name": "Team", "members": ["scout", "writer"],
+    }).json()["group"]
+    rt = c.app.state.society
+    svc = MeetingChatFake(AgentChatStore(tmp_path / "meeting-chat.db"))
+    rt._get_chat = lambda: svc
+    rt._get_cfg = lambda: SimpleNamespace(memory=SimpleNamespace(data_dir=str(tmp_path)))
+    svc.hold = True
+    path = f"/api/society/chat-groups/{group['group_id']}"
+    try:
+        assert c.post(f"{path}/meeting", json={"text": "Discuss"}).status_code == 200
+        c.portal.call(svc.started.wait)
+        edited = c.patch(path, json={"name": "Changed", "members": group["members"]})
+        assert edited.status_code == 409
+
+        async def release_soon():
+            asyncio.get_running_loop().call_later(0.05, svc.release.set)
+
+        c.portal.call(release_soon)
+        assert c.delete(path).status_code == 200
+        assert svc.cancelled == [("society:scout", "turn-0")]
+        assert len(svc.sent) == 1
+        assert c.get(f"{path}/meeting").status_code == 404
+    finally:
+        svc.release.set()
+        c.portal.call(rt.meetings.stop, group["group_id"])
+        svc.store.close()
+
+
 def test_create_derives_focus_and_rules(client):
     c, _ = client
     res = c.post(
