@@ -52,7 +52,7 @@ describe("RecentChats", () => {
       voiceState: "idle",
     });
     useHomeStore.setState({ surface: "voice", transcript: [], liveReply: "", liveSessionId: null,
-      continuedVoiceId: null, voiceSelectionPending: false, voiceSwitchStopping: false });
+      continuedVoiceId: null, liveConversationId: null, voiceSelectionPending: false, voiceSwitchStopping: false });
     useAgentChatStore.setState({
       sessions: [
         {
@@ -130,8 +130,10 @@ describe("RecentChats", () => {
   );
 
   it("recognizes a running call recorded into a continued voice chat", async () => {
-    useEventStore.setState({ voiceState: "speaking" });
-    useHomeStore.setState({ liveSessionId: "current-call", continuedVoiceId: "v1", liveReply: "Still speaking" });
+    useEventStore.setState({ voiceState: "speaking", activeKind: "voice", activeThreadId: "v1" });
+    useHomeStore.setState({ continuedVoiceId: "v1", liveReply: "Still speaking" });
+    useHomeStore.getState().ingest("VoiceSessionStarted", { session_id: "current-call" }, 3);
+    useEventStore.setState({ activeKind: "text", activeThreadId: null });
     render(<RecentChats />);
     fireEvent.click(screen.getByTitle("Spoken thread"));
     await flush();
@@ -150,9 +152,10 @@ describe("RecentChats", () => {
     expect(useHomeStore.getState().transcript.map((line) => line.text)).toEqual(["hello", "Hi there."]);
   });
 
-  it("does not mistake another archive for the running call when selecting its row", async () => {
+  it.each(["other-archive", "v1"])("does not mistake archive selection %s for a fresh running call", async (continuedVoiceId) => {
     useEventStore.setState({ voiceState: "listening" });
-    useHomeStore.setState({ liveSessionId: "other-call", continuedVoiceId: "other-archive" });
+    useHomeStore.setState({ continuedVoiceId });
+    useHomeStore.getState().ingest("VoiceSessionStarted", { session_id: "other-call" }, 2);
     render(<RecentChats />);
     fireEvent.click(screen.getByTitle("Spoken thread"));
     await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/voice/hangup", { method: "POST", cache: "no-store" }));

@@ -84,10 +84,10 @@ export function useConversations({ poll = false }: { poll?: boolean } = {}) {
     const voiceState = useEventStore.getState().voiceState;
     if (
       !home.liveSessionId
+      || home.voiceSwitchStopping
       || !["listening", "thinking", "speaking", "paused", "connecting"].includes(voiceState)
-      || (id !== home.liveSessionId && id !== home.continuedVoiceId)
+      || (id !== home.liveSessionId && id !== home.liveConversationId)
     ) return false;
-    // Check before callers replace continuedVoiceId with the selected row.
     // A previous archive read must not overwrite the call after this click.
     ++selectionGeneration;
     setActiveConversation("voice", id);

@@ -4,7 +4,25 @@ import { reduceLiveReply, useHomeStore } from "@/store/home";
 import { useEventStore } from "@/store/events";
 
 describe("voice conversation boundaries", () => {
-  beforeEach(() => useHomeStore.getState().resetTranscript());
+  beforeEach(() => {
+    useHomeStore.getState().resetTranscript();
+    useHomeStore.setState({ continuedVoiceId: null });
+  });
+
+  it("keeps the running call's history row independent of later selections", () => {
+    useHomeStore.setState({ continuedVoiceId: "archive" });
+    useEventStore.setState({ activeKind: "voice", activeThreadId: "archive" });
+    useHomeStore.getState().ingest("VoiceSessionStarted", { session_id: "call" }, 1);
+    useHomeStore.getState().setContinuedVoiceId("another-archive");
+    expect(useHomeStore.getState().liveConversationId).toBe("archive");
+  });
+
+  it("does not attach a fresh call to a stale archive selection", () => {
+    useHomeStore.setState({ continuedVoiceId: "old-archive" });
+    useEventStore.setState({ activeKind: "voice", activeThreadId: null });
+    useHomeStore.getState().ingest("VoiceSessionStarted", { session_id: "fresh-call" }, 1);
+    expect(useHomeStore.getState().liveConversationId).toBe("fresh-call");
+  });
 
   it.each(["hotkey", "voice_pattern", "client_stop", "idle_timeout"])("starts a fresh lane after %s", (hangup_reason) => {
     const home = useHomeStore.getState();
