@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   ArrowRight,
   Check,
   ExternalLink,
+  FileInput,
   FileText,
   Loader2,
   Package,
@@ -29,8 +30,12 @@ import { fill, useLocaleChunk, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { openExternalUrl } from "@/lib/openExternal";
 import { useEventStore, type SectionId } from "@/store/events";
+import { installAgentTemplate, readFileText, type AgentTemplateWire } from "@/lib/agentShare";
+import { AgentSymbol } from "@/components/society/AgentSymbol";
+import { resolveCompanion } from "@/components/society/companion/appearance";
 import {
   MARKETPLACE_SUBMIT_URL,
+  type CommunityAgentWire,
   type CommunityPluginWire,
   type CommunityResponse,
   type CommunitySkillWire,
@@ -59,7 +64,7 @@ import {
 /** The public storefront — the same catalogue, on the web. */
 const MARKETPLACE_WEB_URL = "https://github.com/PersonalJarvis/marketplace";
 
-type Kind = "plugin" | "skill";
+type Kind = "plugin" | "skill" | "agent";
 type KindFilter = "all" | Kind | "mine";
 
 /** One entry of any kind, flattened into what the storefront draws. */
@@ -95,12 +100,15 @@ interface Entry {
   seedConflict?: boolean;
   /** Skills only: a portable Agent Skill states the agents it also runs in. */
   portableAgents?: string[] | null;
+  /** Agents only: the template the install turns into a new teammate. */
+  agent?: AgentTemplateWire | null;
 }
 
 /** Where an installed entry of this kind now lives in the app. */
 const HOME_SECTION: Record<Kind, SectionId> = {
   plugin: "plugins",
   skill: "skills",
+  agent: "agents",
 };
 
 function pluginEntry(p: CommunityPluginWire): Entry {
@@ -140,6 +148,33 @@ function skillEntry(s: CommunitySkillWire): Entry {
     installed: Boolean(s.installed),
     portableAgents: s.flavor === "portable" ? (s.compatible_agents ?? []) : null,
   };
+}
+
+function agentEntry(a: CommunityAgentWire): Entry {
+  return {
+    kind: "agent",
+    name: a.name,
+    title: a.title || a.name,
+    description: a.description ?? "",
+    publisher: a.publisher,
+    version: a.version,
+    categories: a.categories ?? [],
+    sourceUrl: a.source_url,
+    installed: Boolean(a.installed),
+    broken: !a.valid,
+    problem: a.error ?? null,
+    agent: a.agent,
+  };
+}
+
+/** The agent's own symbol, from the look its template carries. */
+function AgentTile({ entry }: { entry: Entry }) {
+  const appearance = resolveCompanion(entry.agent?.name || entry.name, entry.agent?.avatar?.companion);
+  return (
+    <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-secondary">
+      <AgentSymbol {...appearance} size={30} />
+    </div>
+  );
 }
 
 function matches(entry: Entry, needle: string): boolean {
@@ -235,6 +270,36 @@ export function MarketplaceView() {
       queryClient.invalidateQueries({ queryKey: ["marketplace-community"] });
       queryClient.invalidateQueries({ queryKey: ["marketplace-plugins"] });
       queryClient.invalidateQueries({ queryKey: ["skills"] });
+      queryClient.invalidateQueries({ queryKey: ["society", "roster"] });
+    },
+  });
+
+  // An exported template from somebody else: installed straight from the file.
+  const importAgent = useMutation({
+    mutationFn: async (file: File): Promise<InstallResultWire> => {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(await readFileText(file));
+      } catch {
+        throw new Error(fill(t("marketplace.import_failed"), { error: file.name }));
+      }
+      try {
+        const done = await installAgentTemplate(parsed as Record<string, unknown>);
+        return {
+          ok: true,
+          kind: "agent",
+          id: done.agent.agent_id,
+          title: done.agent.name,
+          ready: true,
+        };
+      } catch (err) {
+        throw new Error(fill(t("marketplace.import_failed"), { error: (err as Error).message }));
+      }
+    },
+    onSuccess: (result) => {
+      setLanding(result);
+      queryClient.invalidateQueries({ queryKey: ["society", "roster"] });
+      queryClient.invalidateQueries({ queryKey: ["marketplace-community"] });
     },
   });
 
@@ -243,6 +308,7 @@ export function MarketplaceView() {
     return [
       ...(data.plugins ?? []).map(pluginEntry),
       ...(data.skills ?? []).map(skillEntry),
+      ...(data.agents ?? []).map(agentEntry),
     ];
   }, [data]);
 
@@ -264,6 +330,7 @@ export function MarketplaceView() {
 
   const plugins = visible.filter((e) => e.kind === "plugin");
   const skills = visible.filter((e) => e.kind === "skill");
+  const agents = visible.filter((e) => e.kind === "agent");
 
   const status = data?.status;
   const offline = status === "stale" || status === "unavailable";
@@ -335,6 +402,7 @@ export function MarketplaceView() {
             all: entries.length,
             plugin: entries.filter((e) => e.kind === "plugin").length,
             skill: entries.filter((e) => e.kind === "skill").length,
+            agent: entries.filter((e) => e.kind === "agent").length,
             mine: mineCount,
           }}
           showMine={login !== null}
@@ -425,10 +493,28 @@ export function MarketplaceView() {
             </Shelf>
           )}
 
+          {agents.length > 0 && (
+            <Shelf
+              title={t("marketplace.shelf_agents")}
+              hint={t("marketplace.shelf_agents_hint")}
+              count={agents.length}
+            >
+              <EntryList
+                entries={agents}
+                onOpen={setOpenEntry}
+                icon={(entry) => <AgentTile entry={entry} />}
+                t={t}
+              />
+            </Shelf>
+          )}
+
           {!isLoading && !error && (
             <PublishFooter
               enabled={publishEnabled}
               onPublish={() => setStudioOpen(true)}
+              onImport={(file) => importAgent.mutate(file)}
+              importing={importAgent.isPending}
+              importError={importAgent.error ? (importAgent.error as Error).message : null}
               t={t}
             />
           )}
@@ -465,7 +551,8 @@ function subtitleFor(
   if (loading) return t("marketplace.loading");
   if (!data) return "";
   if (data.status === "disabled") return t("marketplace.status_disabled");
-  const total = (data.plugins?.length ?? 0) + (data.skills?.length ?? 0);
+  const total =
+    (data.plugins?.length ?? 0) + (data.skills?.length ?? 0) + (data.agents?.length ?? 0);
   const parts = [fill(t("marketplace.subtitle_count"), { count: total })];
   if (data.revision != null) {
     parts.push(fill(t("marketplace.subtitle_revision"), { revision: data.revision }));
@@ -501,6 +588,7 @@ function FilterChips({
     { id: "all", label: t("marketplace.filter_all") },
     { id: "plugin", label: t("marketplace.filter_plugins") },
     { id: "skill", label: t("marketplace.filter_skills") },
+    { id: "agent", label: t("marketplace.filter_agents") },
   ];
   if (showMine) chips.push({ id: "mine", label: t("marketplace.filter_mine") });
   return (
@@ -705,6 +793,7 @@ function Hero({
   const counts = {
     plugins: data?.plugins?.length ?? 0,
     skills: data?.skills?.length ?? 0,
+    agents: data?.agents?.length ?? 0,
   };
   return (
     <section
@@ -744,9 +833,10 @@ function Hero({
             )}
           </div>
         </div>
-        <dl className="grid grid-cols-2 gap-3 sm:gap-4">
+        <dl className="grid grid-cols-3 gap-3 sm:gap-4">
           <Stat value={counts.plugins} label={t("marketplace.filter_plugins")} />
           <Stat value={counts.skills} label={t("marketplace.filter_skills")} />
+          <Stat value={counts.agents} label={t("marketplace.filter_agents")} />
         </dl>
       </div>
     </section>
@@ -767,16 +857,57 @@ function Stat({ value, label }: { value: number; label: string }) {
 function PublishFooter({
   enabled,
   onPublish,
+  onImport,
+  importing,
+  importError,
   t,
 }: {
   enabled: boolean;
   onPublish: () => void;
+  onImport: (file: File) => void;
+  importing: boolean;
+  importError: string | null;
   t: Translate;
 }) {
+  const fileInput = useRef<HTMLInputElement | null>(null);
   return (
     <div className="mt-10 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed border-border bg-card px-4 py-3 backdrop-blur-sm">
-      <p className="text-xs text-muted-foreground">{t("marketplace.publish_hint")}</p>
+      <div className="min-w-0 flex-1">
+        <p className="text-xs text-muted-foreground">{t("marketplace.publish_hint")}</p>
+        {importError && (
+          <p role="alert" className="mt-1 flex items-start gap-1.5 text-xs text-destructive">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            {importError}
+          </p>
+        )}
+      </div>
       <div className="flex items-center gap-2">
+        <input
+          ref={fileInput}
+          type="file"
+          accept=".json,application/json"
+          className="hidden"
+          data-testid="marketplace-import-agent-input"
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            event.target.value = "";
+            if (file) onImport(file);
+          }}
+        />
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => fileInput.current?.click()}
+          disabled={importing}
+          data-testid="marketplace-import-agent"
+        >
+          {importing ? (
+            <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <FileInput className="mr-1.5 h-3.5 w-3.5" />
+          )}
+          {t("marketplace.import_agent")}
+        </Button>
         <Button
           variant="ghost"
           size="sm"
@@ -998,7 +1129,7 @@ function EntryDrawer({
  * not tell anybody where their data ends up.
  */
 function Destination({ entry, t }: { entry: Entry; t: Translate }) {
-  const rows: { label: string; value?: string; code?: string }[] = [];
+  const rows: { label: string; value?: string; code?: string; text?: string }[] = [];
 
   if (entry.kind === "plugin") {
     const mcp = entry.mcp;
@@ -1014,6 +1145,21 @@ function Destination({ entry, t }: { entry: Entry; t: Translate }) {
     }
     const auth = entry.authMode ? AUTH_MODE_LABEL[entry.authMode] : undefined;
     if (auth) rows.push({ label: t("marketplace.sign_in_method"), value: auth });
+  }
+
+  if (entry.kind === "agent" && entry.agent) {
+    rows.push({ label: t("marketplace.agent_model") });
+    if (entry.agent.focus.length > 0) {
+      rows.push({ label: t("marketplace.agent_focus"), value: entry.agent.focus.join(", ") });
+    }
+    rows.push({
+      label: t("marketplace.agent_asks"),
+      value:
+        entry.agent.require_approval.length > 0
+          ? entry.agent.require_approval.join(", ")
+          : t("marketplace.agent_asks_default"),
+    });
+    rows.push({ label: t("marketplace.agent_instructions"), text: entry.agent.instructions });
   }
 
   if (entry.portableAgents) {
@@ -1045,6 +1191,11 @@ function Destination({ entry, t }: { entry: Entry; t: Translate }) {
             </code>
           )}
           {row.value && <p className="text-xs text-muted-foreground">{row.value}</p>}
+          {row.text && (
+            <p className="max-h-56 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-background px-3 py-2 text-xs leading-relaxed text-foreground">
+              {row.text}
+            </p>
+          )}
         </div>
       ))}
     </div>

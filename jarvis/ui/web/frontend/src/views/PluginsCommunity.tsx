@@ -18,6 +18,7 @@ import { installBlock } from "@/lib/installStandard";
 import { openExternalUrl } from "@/lib/openExternal";
 import { PRODUCT_NAME } from "@/lib/branding";
 import { useEventStore } from "@/store/events";
+import type { AgentTemplateWire } from "@/lib/agentShare";
 
 // ---------------------------------------------------------------------------
 // Community marketplace tab.
@@ -91,12 +92,31 @@ function portableNote(skill: CommunitySkillWire): string | null {
     : "Portable skill · also runs in other agents";
 }
 
+/** A published agent template (see jarvis/society/agent_template.py). */
+export interface CommunityAgentWire {
+  name: string;
+  title: string;
+  description: string;
+  publisher?: string | null;
+  version?: string | null;
+  published_at?: string | null;
+  categories: string[];
+  source_url?: string | null;
+  agent: AgentTemplateWire;
+  /** The install would accept it (the same rule the install applies). */
+  valid: boolean;
+  error?: string | null;
+  installed: boolean;
+}
+
 export interface CommunityResponse {
   status: "fresh" | "fetched" | "stale" | "unavailable" | "disabled";
   revision?: number | null;
   generated_at?: string | null;
   plugins: CommunityPluginWire[];
   skills: CommunitySkillWire[];
+  /** Absent from a backend older than agent templates. */
+  agents?: CommunityAgentWire[];
 }
 
 /** One readable file of a published entry — mirrors ``_text_file`` server-side. */
