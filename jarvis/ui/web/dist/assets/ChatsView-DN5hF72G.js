@@ -1,7 +1,0 @@
-<<<<<<<< HEAD:jarvis/ui/web/dist/assets/ChatsView-DN5hF72G.js
-import{j as s}from"./index-Cbrqs4bB.js";import{P as n}from"./PageHeader-CShcycUu.js";import"./WorkTrace-BnTS2WCI.js";function c({icon:i,title:a,titleBadge:r,subtitle:o,right:e}){return s.jsx("div",{className:"shrink-0 px-8",children:s.jsx(n,{icon:i,title:a,description:o,className:"pb-4",actions:r||e?s.jsxs(s.Fragment,{children:[r,e]}):void 0})})}export{c as V};
-|||||||| parent of f4d6bee1f (chore(ui): rebuild the bundle for agent sharing):jarvis/ui/web/dist/assets/ChatsView-CWbHE0lZ.js
-import{j as s}from"./index-NnEnsunp.js";import{P as n}from"./PageHeader-AexMkrMr.js";import"./WorkTrace-LAMT3T20.js";function c({icon:i,title:a,titleBadge:r,subtitle:o,right:e}){return s.jsx("div",{className:"shrink-0 px-8",children:s.jsx(n,{icon:i,title:a,description:o,className:"pb-4",actions:r||e?s.jsxs(s.Fragment,{children:[r,e]}):void 0})})}export{c as V};
-========
-import{j as s}from"./index-D0bznGCO.js";import{P as n}from"./PageHeader-De6ncXHE.js";import"./WorkTrace-Bq9hyo12.js";function c({icon:i,title:a,titleBadge:r,subtitle:o,right:e}){return s.jsx("div",{className:"shrink-0 px-8",children:s.jsx(n,{icon:i,title:a,description:o,className:"pb-4",actions:r||e?s.jsxs(s.Fragment,{children:[r,e]}):void 0})})}export{c as V};
->>>>>>>> f4d6bee1f (chore(ui): rebuild the bundle for agent sharing):jarvis/ui/web/dist/assets/ChatsView-CxbHdron.js
