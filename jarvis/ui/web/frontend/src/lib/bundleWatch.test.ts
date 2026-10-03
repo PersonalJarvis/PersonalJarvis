@@ -83,6 +83,26 @@ function harness(initial: string): Harness {
 }
 
 describe("bundleFingerprint", () => {
+  it("recovers when the first poll is already newer than the loaded document", async () => {
+    const h = harness(indexHtml("NEW"));
+    h.deps.baseline = bundleFingerprint(indexHtml("LOADED"));
+    installBundleWatch(h.deps);
+    await h.tick();
+    await h.tick();
+    expect(h.reload).toHaveBeenCalledTimes(1);
+    for (let i = 0; i < 10; i += 1) await h.tick();
+    expect(h.reload).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not reload from an answer received after disposal", async () => {
+    const h = harness(indexHtml("NEW"));
+    h.deps.baseline = bundleFingerprint(indexHtml("OLD"));
+    const stop = installBundleWatch(h.deps);
+    await h.tick();
+    stop();
+    await h.tick();
+    expect(h.reload).not.toHaveBeenCalled();
+  });
   it("identifies a build by its hashed assets and ignores their order", () => {
     expect(bundleFingerprint(indexHtml("AAA"))).toBe(
       "/assets/index-AAA.css /assets/index-AAA.js",
