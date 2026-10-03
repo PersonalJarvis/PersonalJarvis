@@ -114,6 +114,14 @@ export interface AgentChatStore {
   readonly surface: AgentChatSurface;
   catalog: AgentChatCatalog | null;
   connections: AgentConnectionRow[];
+  /**
+   * The catalog on hand is a copy from before (the last start, or the chat
+   * left behind), painted at once while a fresh read is on its way. The
+   * composer used to show "Provider" for seconds on every start and every new
+   * chat because the catalog route waits on CLI model lists; the picks now
+   * read from this copy and settle when the fresh one lands.
+   */
+  catalogStale: boolean;
   catalogError: string | null;
   /**
    * The catalog answered without the fields this bundle reads (no permission
@@ -197,6 +205,39 @@ function writeDraft(key: string, draft: ComposerDraft): void {
     window.localStorage.setItem(key, JSON.stringify(draft));
   } catch {
     /* storage blocked — the draft just does not survive a reload */
+  }
+}
+
+/** Where the last catalog a surface read is kept between starts. */
+function catalogCacheKey(surface: AgentChatSurface): string {
+  return `jarvis.agentChat.catalog.${surface}.v1`;
+}
+
+interface CatalogSnapshot {
+  catalog: AgentChatCatalog;
+  connections: AgentConnectionRow[];
+}
+
+function readCatalogSnapshot(surface: AgentChatSurface): CatalogSnapshot | null {
+  try {
+    const raw = window.localStorage.getItem(catalogCacheKey(surface));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<CatalogSnapshot>;
+    if (!parsed.catalog || !Array.isArray(parsed.catalog.providers)) return null;
+    return {
+      catalog: parsed.catalog,
+      connections: Array.isArray(parsed.connections) ? parsed.connections : [],
+    };
+  } catch {
+    return null; // storage blocked or a damaged copy — wait for the route
+  }
+}
+
+function writeCatalogSnapshot(surface: AgentChatSurface, snapshot: CatalogSnapshot): void {
+  try {
+    window.localStorage.setItem(catalogCacheKey(surface), JSON.stringify(snapshot));
+  } catch {
+    /* storage blocked or full — the next start just waits for the route */
   }
 }
 
@@ -411,10 +452,12 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
       };
     }
 
+    const snapshot = readCatalogSnapshot(surface);
     return {
       surface,
-      catalog: null,
-      connections: [],
+      catalog: snapshot?.catalog ?? null,
+      connections: snapshot?.connections ?? [],
+      catalogStale: snapshot !== null,
       catalogError: null,
       backendOutdated: false,
       liveModels: {},
@@ -457,7 +500,8 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
               default_model: p.default_model ?? "",
             })),
           };
-          set({ catalog, connections, catalogError: null, backendOutdated });
+          set({ catalog, connections, catalogStale: false, catalogError: null, backendOutdated });
+          if (!backendOutdated) writeCatalogSnapshot(surface, { catalog, connections });
           // Deliberately not awaited: the sweep reads CLI logins and can take
           // a moment. It never sends a request to a provider — the dots show
           // the outcome of each seat's last real call. The composer paints
@@ -510,7 +554,9 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
           }
           if (draft.provider) void get().loadModels(draft.provider);
         } catch (err) {
-          if (requestId === catalogRequest && sessionId === get().activeSessionId) set({ catalogError: errorText(err) });
+          if (requestId === catalogRequest && sessionId === get().activeSessionId) {
+            set({ catalogError: errorText(err), catalogStale: false });
+          }
         }
       },
 
@@ -627,7 +673,10 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
           timeline: EMPTY_TIMELINE,
           socketState: "idle",
           lastError: null,
-          catalog: null,
+          // The chat left behind keeps the picks painted while this one's
+          // fresh read runs; blanking the catalog showed "Provider" for
+          // seconds on every new chat.
+          catalogStale: get().catalog !== null,
         });
         bindVoice(null, opts?.voiceSessionId ?? null);
         void get().loadCatalog();

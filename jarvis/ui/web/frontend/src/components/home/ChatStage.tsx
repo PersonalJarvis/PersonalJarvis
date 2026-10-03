@@ -69,16 +69,18 @@ function ChatStageContent() {
   const view = useTranscriptView(surface === "jarvis" ? activeSessionId : null, allItems);
   const items = view.items;
   const catalog = useAgentChat((s) => s.catalog);
+  const catalogStale = useAgentChat((s) => s.catalogStale);
   const decide = useAgentChat((s) => s.decide);
   const loadCatalog = useAgentChat((s) => s.loadCatalog);
   const loadSessions = useAgentChat((s) => s.loadSessions);
   const voiceThreadId = useEventStore((s) => (s.activeKind === "voice" ? s.activeThreadId : null));
   const hasContent = items.length > 0;
 
+  // A copy from before paints the picks at once; the fresh read still runs.
   useEffect(() => {
-    if (!catalog) void loadCatalog();
+    if (!catalog || catalogStale) void loadCatalog();
     void loadSessions();
-  }, [catalog, loadCatalog, loadSessions]);
+  }, [catalog, catalogStale, loadCatalog, loadSessions]);
 
   const providerLabel = useCallback(
     (id: string) => catalog?.providers.find((p) => p.id === id)?.label ?? id,
