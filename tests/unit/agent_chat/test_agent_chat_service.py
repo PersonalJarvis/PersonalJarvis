@@ -17,6 +17,7 @@ from jarvis.agent_chat.catalog import rows_for
 from jarvis.agent_chat.service import AgentChatService, SessionBusy
 from jarvis.agent_chat.store import AgentChatStore
 from jarvis.core.protocols import BrainDelta, BrainRequest
+from jarvis.core.response_style import CONVERSATIONAL_RESPONSE_STYLE
 from jarvis.ui.web.agent_chat_routes import router
 
 
@@ -53,6 +54,57 @@ def scripted(monkeypatch: pytest.MonkeyPatch):
     )
     # Catalog has no row for fakeprov; supports_api_runner() still says yes.
     return ScriptedBrain
+
+
+@pytest.mark.parametrize(
+    ("user_text", "reply"),
+    [
+        ("What is two plus two?", "Four."),
+        (
+            "Explain all the steps in detail and include the code.",
+            "## Steps\n" + "Explain the next step completely.\n" * 100
+            + "\n```python\nprint('complete')\n```",
+        ),
+        (
+            "What happened to the upload?",
+            "The draft is saved, but the upload failed because the connection expired. "
+            "Reconnect the account to finish uploading.",
+        ),
+    ],
+    ids=["brief-answer", "requested-detail", "partial-failure"],
+)
+async def test_api_stream_preserves_complete_replies_under_the_short_default(
+    tmp_path: Path, scripted, user_text: str, reply: str,
+) -> None:
+    scripted.script = [[BrainDelta(content=reply[:12]), BrainDelta(content=reply[12:])]]
+    events = []
+
+    async def emit(event):
+        events.append(event)
+
+    async def no_approval(*args):
+        pytest.fail("A text-only turn must not request approval")
+
+    store = AgentChatStore(":memory:")
+    try:
+        session = store.create_session(
+            provider="fakeprov", model="m", effort="high", cwd=str(tmp_path)
+        )
+        handle = runner_api.TurnHandle(
+            session=session, turn_id="style-test", emit=emit, request_approval=no_approval,
+            cancel=asyncio.Event(), output_language="es",
+        )
+        await runner_api.run_api_turn(handle, user_text)
+        sent = scripted.seen[0]
+        assert CONVERSATIONAL_RESPONSE_STYLE in sent.system
+        assert "Respond in this language: es" in sent.system
+        assert sent.messages[-1].content == user_text
+        assert sent.max_tokens == runner_api.MAX_TOKENS
+        assert "".join(e["payload"]["text"] for e in events if e["kind"] == "text_delta") == reply
+        assert [e["payload"]["text"] for e in events if e["kind"] == "assistant_text"] == [reply]
+        assert events[-1]["payload"]["status"] == "done"
+    finally:
+        store.close()
 
 
 async def _drain(q: asyncio.Queue, until_kind: str, timeout: float = 5.0) -> list[dict[str, Any]]:
