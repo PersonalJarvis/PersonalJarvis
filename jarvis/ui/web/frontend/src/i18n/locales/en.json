@@ -1743,6 +1743,122 @@
     "group_workspaces": "Workspaces",
     "untitled_chat": "Untitled chat"
   },
+  "board_insights": {
+    "description": "How you work with {name}, counted on this computer.",
+    "tabs": {
+      "usage": "Usage",
+      "agents": "Agents",
+      "rhythm": "Rhythm"
+    },
+    "speed": {
+      "label": "Words per minute",
+      "hint": "Your dictation speed. The ring marks typing at {0} words per minute.",
+      "vs_typing": "typing speed",
+      "typing_mark": "Typing at {0} words per minute",
+      "empty": "Dictate once and your speaking speed shows up here."
+    },
+    "saved": {
+      "label": "Hours saved by speaking",
+      "hint": "The time typing your dictated words at {0} words per minute would take, minus the time you spent dictating them.",
+      "dictations": "Dictations",
+      "spoken": "Time spent dictating",
+      "typing_would_take": "Typing would have taken"
+    },
+    "words": {
+      "label": "Words you gave {name}",
+      "novel_hint": "Dictated words plus the words you said in voice sessions. An average novel has about {0} words.",
+      "trend": "{0}% vs last 30 days",
+      "trend_hint": "Words in the last 30 days compared with the 30 days before.",
+      "novels": "That's {0} novels' worth of words.",
+      "novel_share": "That's {0}% of a novel so far.",
+      "empty": "Dictate or start a voice session and your words add up here.",
+      "dictated": "Dictation",
+      "spoken": "Voice"
+    },
+    "mix": {
+      "title": "How you use {name}",
+      "active_days": "Active days | {0}",
+      "empty": "Nothing recorded yet. Dictate, chat or start an agent to fill this in.",
+      "dictations": "{0} dictations",
+      "dictations_one": "{0} dictation",
+      "agent_sessions": "{0} agent sessions",
+      "agent_sessions_one": "{0} agent session",
+      "chat_messages": "{0} chat messages",
+      "chat_messages_one": "{0} chat message",
+      "voice_sessions": "{0} voice sessions",
+      "voice_sessions_one": "{0} voice session"
+    },
+    "streak": {
+      "title": "{0}-day streak",
+      "title_one": "{0}-day streak",
+      "none": "No streak yet",
+      "longest": "Longest streak | {0} days",
+      "longest_one": "Longest streak | {0} day"
+    },
+    "calendar": {
+      "less": "Less",
+      "more": "More",
+      "older": "Earlier weeks",
+      "newer": "Later weeks",
+      "nothing": "nothing",
+      "started": "{0} started",
+      "words": "{0} words"
+    },
+    "agents": {
+      "title": "Coding agents",
+      "subtitle": "Sessions of the coding CLIs on this computer, read from their own transcripts.",
+      "used": "{0} agents used",
+      "used_one": "{0} agent used",
+      "range_30d": "Last 30 days",
+      "range_all": "All time",
+      "col_agent": "Agent",
+      "col_share": "Share",
+      "col_sessions": "Sessions",
+      "col_turns": "Turns",
+      "col_last": "Last used",
+      "empty": "No coding-agent sessions found on this computer yet.",
+      "stat_sessions": "Agent sessions",
+      "stat_sessions_30d": "Sessions, last 30 days",
+      "stat_tokens": "Tokens processed",
+      "stat_busiest": "Most sessions in a day"
+    },
+    "chats": {
+      "title": "Chats",
+      "messages": "{0} messages",
+      "messages_one": "{0} message",
+      "empty": "No chat messages yet."
+    },
+    "categories": {
+      "title": "What {name} did for you",
+      "subtitle": "Tools used during voice turns, by kind.",
+      "empty": "No tools used in voice turns yet."
+    },
+    "rhythm": {
+      "title": "When you work",
+      "subtitle": "Voice turns, chat messages and agent turns, by weekday and hour.",
+      "peak": "Busiest | {0}, {1}",
+      "empty": "Not enough activity yet to show a rhythm."
+    },
+    "weekly": {
+      "title": "Words per week",
+      "subtitle": "Dictated and spoken words, last 26 weeks.",
+      "best": "Best week | {0}",
+      "tooltip": "{0} words · {1} agent sessions"
+    },
+    "records": {
+      "title": "Records",
+      "best_words": "Most words in a day",
+      "best_agents": "Most agent sessions in a day",
+      "longest_streak": "Longest streak",
+      "active_days": "Active days",
+      "since": "since {0}",
+      "days": "{0} days",
+      "days_one": "{0} day",
+      "next_milestone": "Next: {0} words",
+      "to_go": "{0} to go",
+      "today": "{0} words today."
+    }
+  },
   "board_view": {
     "title": "Board",
     "subtitle": "Everything you and {name} have done together — fully local.",

@@ -1710,6 +1710,122 @@
     "group_workspaces": "Arbeitsbereiche",
     "untitled_chat": "Chat ohne Titel"
   },
+  "board_insights": {
+    "description": "Wie du mit {name} arbeitest, gezählt auf diesem Computer.",
+    "tabs": {
+      "usage": "Nutzung",
+      "agents": "Agenten",
+      "rhythm": "Rhythmus"
+    },
+    "speed": {
+      "label": "Wörter pro Minute",
+      "hint": "Deine Diktiergeschwindigkeit. Der Strich markiert Tippen mit {0} Wörtern pro Minute.",
+      "vs_typing": "Tippgeschwindigkeit",
+      "typing_mark": "Tippen mit {0} Wörtern pro Minute",
+      "empty": "Diktiere einmal, dann erscheint hier deine Sprechgeschwindigkeit."
+    },
+    "saved": {
+      "label": "Stunden gespart durch Sprechen",
+      "hint": "Die Zeit, die das Tippen deiner diktierten Wörter mit {0} Wörtern pro Minute dauern würde, abzüglich der Zeit, die du diktiert hast.",
+      "dictations": "Diktate",
+      "spoken": "Zeit beim Diktieren",
+      "typing_would_take": "Tippen hätte gedauert"
+    },
+    "words": {
+      "label": "Wörter an {name}",
+      "novel_hint": "Diktierte Wörter plus die Wörter aus Sprachsitzungen. Ein durchschnittlicher Roman hat etwa {0} Wörter.",
+      "trend": "{0} % ggü. letzten 30 Tagen",
+      "trend_hint": "Wörter der letzten 30 Tage im Vergleich zu den 30 Tagen davor.",
+      "novels": "Das reicht für {0} Romane.",
+      "novel_share": "Das sind bisher {0} % eines Romans.",
+      "empty": "Diktiere oder starte eine Sprachsitzung, dann summieren sich hier deine Wörter.",
+      "dictated": "Diktat",
+      "spoken": "Sprache"
+    },
+    "mix": {
+      "title": "So nutzt du {name}",
+      "active_days": "Aktive Tage | {0}",
+      "empty": "Noch nichts erfasst. Diktiere, chatte oder starte einen Agenten.",
+      "dictations": "{0} Diktate",
+      "dictations_one": "{0} Diktat",
+      "agent_sessions": "{0} Agenten-Sitzungen",
+      "agent_sessions_one": "{0} Agenten-Sitzung",
+      "chat_messages": "{0} Chat-Nachrichten",
+      "chat_messages_one": "{0} Chat-Nachricht",
+      "voice_sessions": "{0} Sprachsitzungen",
+      "voice_sessions_one": "{0} Sprachsitzung"
+    },
+    "streak": {
+      "title": "{0} Tage in Folge",
+      "title_one": "{0} Tag in Folge",
+      "none": "Noch keine Serie",
+      "longest": "Längste Serie | {0} Tage",
+      "longest_one": "Längste Serie | {0} Tag"
+    },
+    "calendar": {
+      "less": "Weniger",
+      "more": "Mehr",
+      "older": "Frühere Wochen",
+      "newer": "Spätere Wochen",
+      "nothing": "nichts",
+      "started": "{0} gestartet",
+      "words": "{0} Wörter"
+    },
+    "agents": {
+      "title": "Coding-Agenten",
+      "subtitle": "Sitzungen der Coding-CLIs auf diesem Computer, aus ihren eigenen Protokollen gelesen.",
+      "used": "{0} Agenten genutzt",
+      "used_one": "{0} Agent genutzt",
+      "range_30d": "Letzte 30 Tage",
+      "range_all": "Gesamt",
+      "col_agent": "Agent",
+      "col_share": "Anteil",
+      "col_sessions": "Sitzungen",
+      "col_turns": "Züge",
+      "col_last": "Zuletzt",
+      "empty": "Auf diesem Computer wurden noch keine Coding-Agenten-Sitzungen gefunden.",
+      "stat_sessions": "Agenten-Sitzungen",
+      "stat_sessions_30d": "Sitzungen, letzte 30 Tage",
+      "stat_tokens": "Verarbeitete Tokens",
+      "stat_busiest": "Meiste Sitzungen an einem Tag"
+    },
+    "chats": {
+      "title": "Chats",
+      "messages": "{0} Nachrichten",
+      "messages_one": "{0} Nachricht",
+      "empty": "Noch keine Chat-Nachrichten."
+    },
+    "categories": {
+      "title": "Was {name} für dich erledigt hat",
+      "subtitle": "Werkzeuge aus Sprachzügen, nach Art.",
+      "empty": "In Sprachzügen wurden noch keine Werkzeuge genutzt."
+    },
+    "rhythm": {
+      "title": "Wann du arbeitest",
+      "subtitle": "Sprachzüge, Chat-Nachrichten und Agenten-Züge nach Wochentag und Stunde.",
+      "peak": "Am meisten | {0}, {1}",
+      "empty": "Noch zu wenig Aktivität für einen Rhythmus."
+    },
+    "weekly": {
+      "title": "Wörter pro Woche",
+      "subtitle": "Diktierte und gesprochene Wörter, letzte 26 Wochen.",
+      "best": "Beste Woche | {0}",
+      "tooltip": "{0} Wörter · {1} Agenten-Sitzungen"
+    },
+    "records": {
+      "title": "Rekorde",
+      "best_words": "Meiste Wörter an einem Tag",
+      "best_agents": "Meiste Agenten-Sitzungen an einem Tag",
+      "longest_streak": "Längste Serie",
+      "active_days": "Aktive Tage",
+      "since": "seit {0}",
+      "days": "{0} Tage",
+      "days_one": "{0} Tag",
+      "next_milestone": "Nächstes Ziel: {0} Wörter",
+      "to_go": "noch {0}",
+      "today": "Heute {0} Wörter."
+    }
+  },
   "board_view": {
     "title": "Board",
     "subtitle": "Alles, was du und {name} zusammen gemacht habt — komplett lokal.",

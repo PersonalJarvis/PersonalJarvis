@@ -1710,6 +1710,122 @@
     "group_workspaces": "Espacios de trabajo",
     "untitled_chat": "Chat sin título"
   },
+  "board_insights": {
+    "description": "Cómo trabajas con {name}, contado en este ordenador.",
+    "tabs": {
+      "usage": "Uso",
+      "agents": "Agentes",
+      "rhythm": "Ritmo"
+    },
+    "speed": {
+      "label": "Palabras por minuto",
+      "hint": "Tu velocidad de dictado. La marca indica escribir a {0} palabras por minuto.",
+      "vs_typing": "velocidad de escritura",
+      "typing_mark": "Escribir a {0} palabras por minuto",
+      "empty": "Dicta una vez y aquí aparecerá tu velocidad al hablar."
+    },
+    "saved": {
+      "label": "Horas ahorradas hablando",
+      "hint": "El tiempo que tardarías en escribir tus palabras dictadas a {0} palabras por minuto, menos el tiempo que pasaste dictando.",
+      "dictations": "Dictados",
+      "spoken": "Tiempo dictando",
+      "typing_would_take": "Escribir habría llevado"
+    },
+    "words": {
+      "label": "Palabras para {name}",
+      "novel_hint": "Palabras dictadas más las dichas en sesiones de voz. Una novela media tiene unas {0} palabras.",
+      "trend": "{0} % vs. últimos 30 días",
+      "trend_hint": "Palabras de los últimos 30 días frente a los 30 días anteriores.",
+      "novels": "Equivale a {0} novelas.",
+      "novel_share": "Llevas el {0} % de una novela.",
+      "empty": "Dicta o inicia una sesión de voz y tus palabras se sumarán aquí.",
+      "dictated": "Dictado",
+      "spoken": "Voz"
+    },
+    "mix": {
+      "title": "Cómo usas {name}",
+      "active_days": "Días activos | {0}",
+      "empty": "Aún no hay nada registrado. Dicta, chatea o inicia un agente.",
+      "dictations": "{0} dictados",
+      "dictations_one": "{0} dictado",
+      "agent_sessions": "{0} sesiones de agente",
+      "agent_sessions_one": "{0} sesión de agente",
+      "chat_messages": "{0} mensajes de chat",
+      "chat_messages_one": "{0} mensaje de chat",
+      "voice_sessions": "{0} sesiones de voz",
+      "voice_sessions_one": "{0} sesión de voz"
+    },
+    "streak": {
+      "title": "Racha de {0} días",
+      "title_one": "Racha de {0} día",
+      "none": "Aún sin racha",
+      "longest": "Racha más larga | {0} días",
+      "longest_one": "Racha más larga | {0} día"
+    },
+    "calendar": {
+      "less": "Menos",
+      "more": "Más",
+      "older": "Semanas anteriores",
+      "newer": "Semanas posteriores",
+      "nothing": "nada",
+      "started": "{0} iniciados",
+      "words": "{0} palabras"
+    },
+    "agents": {
+      "title": "Agentes de código",
+      "subtitle": "Sesiones de las CLI de código en este ordenador, leídas de sus propios registros.",
+      "used": "{0} agentes usados",
+      "used_one": "{0} agente usado",
+      "range_30d": "Últimos 30 días",
+      "range_all": "Todo",
+      "col_agent": "Agente",
+      "col_share": "Cuota",
+      "col_sessions": "Sesiones",
+      "col_turns": "Turnos",
+      "col_last": "Último uso",
+      "empty": "Aún no hay sesiones de agentes de código en este ordenador.",
+      "stat_sessions": "Sesiones de agente",
+      "stat_sessions_30d": "Sesiones, últimos 30 días",
+      "stat_tokens": "Tokens procesados",
+      "stat_busiest": "Más sesiones en un día"
+    },
+    "chats": {
+      "title": "Chats",
+      "messages": "{0} mensajes",
+      "messages_one": "{0} mensaje",
+      "empty": "Aún no hay mensajes de chat."
+    },
+    "categories": {
+      "title": "Lo que {name} hizo por ti",
+      "subtitle": "Herramientas usadas en turnos de voz, por tipo.",
+      "empty": "Aún no se usaron herramientas en turnos de voz."
+    },
+    "rhythm": {
+      "title": "Cuándo trabajas",
+      "subtitle": "Turnos de voz, mensajes de chat y turnos de agente por día y hora.",
+      "peak": "Más activo | {0}, {1}",
+      "empty": "Aún no hay actividad suficiente para mostrar un ritmo."
+    },
+    "weekly": {
+      "title": "Palabras por semana",
+      "subtitle": "Palabras dictadas y habladas, últimas 26 semanas.",
+      "best": "Mejor semana | {0}",
+      "tooltip": "{0} palabras · {1} sesiones de agente"
+    },
+    "records": {
+      "title": "Récords",
+      "best_words": "Más palabras en un día",
+      "best_agents": "Más sesiones de agente en un día",
+      "longest_streak": "Racha más larga",
+      "active_days": "Días activos",
+      "since": "desde {0}",
+      "days": "{0} días",
+      "days_one": "{0} día",
+      "next_milestone": "Siguiente: {0} palabras",
+      "to_go": "faltan {0}",
+      "today": "{0} palabras hoy."
+    }
+  },
   "board_view": {
     "title": "Tablero",
     "subtitle": "Todo lo que tú y {name} habéis hecho juntos — totalmente local.",
