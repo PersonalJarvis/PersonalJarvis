@@ -11,6 +11,7 @@ import {
   recipeKey,
   resolvePalette,
   shufflePalette,
+  type FigureArchetype,
   type FigureRecipe,
 } from "../figures/figureRecipe";
 import {
@@ -19,7 +20,6 @@ import {
   keepablePartsFor,
   stylesWithBases,
 } from "../figures/figureRegistry";
-import type { FigureArchetype } from "../figures/figureRecipe";
 
 function currentStyle(recipe: FigureRecipe): string {
   if (recipe.model) return "custom";
