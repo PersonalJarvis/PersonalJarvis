@@ -7,6 +7,7 @@ import { balancedLayout } from "@/components/agentic/workspaceDocking";
 
 const api = vi.hoisted(() => ({
   fetchIdeState: vi.fn(), fetchIdeProjects: vi.fn(), fetchIdeAgents: vi.fn(),
+  fetchFolders: vi.fn(async () => ({ path: "/code/app", parent: "/code", entries: [], error: null })),
   startIdeSession: vi.fn(), activateWorkspace: vi.fn(), restoreIdeWorkspace: vi.fn(),
   addTerminal: vi.fn(), closeTerminal: vi.fn(), closeWorkspace: vi.fn(), renameWorkspace: vi.fn(), reorderIdeTerminals: vi.fn(), pushToast: vi.fn(),
   syncAgenticIdeSurface: vi.fn(() => Promise.resolve()),
@@ -58,7 +59,10 @@ describe("Agentic IDE project flow", () => {
     render(<AgenticIdeView />);
     fireEvent.click(await screen.findByRole("button", { name: "Connect folder" }));
     expect(api.fetchIdeAgents).toHaveBeenCalledWith(true);
+    fireEvent.click(screen.getByRole("button", { name: "Choose folder" }));
     fireEvent.click(screen.getByRole("button", { name: "Pick folder" }));
+    fireEvent.click(screen.getByRole("button", { name: "Use this folder" }));
+    await screen.findByRole("button", { name: "Change" });
     fireEvent.click(screen.getByRole("button", { name: "Connect project" }));
     await waitFor(() => expect(openProject).toHaveBeenCalledWith("/code/app", undefined));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Connect project" })).toBeNull());
