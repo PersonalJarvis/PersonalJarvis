@@ -47,6 +47,7 @@ import { isWalkable, nearestWalkable, type NavGrid } from "./officeNav";
 import { CODING_SCENE, OFFICE } from "./officePalette";
 import { officeSession, player as playerBody, useOfficeStore, type OfficeFloor, type Selection } from "./officeStore";
 import { arrivalPose } from "./officeFloors";
+import { ProgressionLayer } from "../progression/ProgressionLayer";
 
 /** The person's character as a mover for Gigi to follow (the body object itself, mutated every frame). */
 const PLAYER_OWNER = { current: playerBody };
@@ -157,6 +158,8 @@ export function OfficeScene(props: OfficeSceneProps) {
       )}
       {/* Upstairs the person's pet comes along: to the coding floor and to play in the arcade. */}
       {floor !== "agents" && <GigiCompanion grid={grid} awake={awake} reduced={reduced} />}
+      {/* Levels: what everyone wears, level-up bursts and "+XP"; after the walkers, so it reads this frame's positions. */}
+      <ProgressionLayer agents={agents} awake={awake} reduced={reduced} />
       <OfficeCameraRig layout={layout} overview={overview} />
     </>
   );

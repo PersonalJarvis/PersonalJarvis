@@ -24,6 +24,7 @@ import { PetModel, VoxelPet, type PetDrive } from "../companion/PetModel";
 import type { PetMood } from "../companion/petRig";
 import { createGigiFlight, createGigiPose, followAnchor, stepGigiFlight, type GigiFlightMode } from "./gigiFlight";
 import { cameraView } from "./officeStore";
+import { petBody } from "./walkerRegistry";
 
 /** Gigi's on-screen height in the office. */
 export const GIGI_OFFICE_SIZE_M = 0.5;
@@ -179,6 +180,8 @@ export function GigiFlyer({ owner, mode, speaking, paused, reduced, clear, child
     return { geometry, shadowGeometry, positions, colours, age: new Float32Array(TRAIL_SIZE).fill(TRAIL_LIFE_S), rise: new Float32Array(TRAIL_SIZE), next: 0 };
   }, []);
   useEffect(() => () => { particles.geometry.dispose(); particles.shadowGeometry.dispose(); }, [particles]);
+  // The level system's cosmetics follow the pet; nobody draws them once it is gone.
+  useEffect(() => () => { petBody.active = false; }, []);
 
   useFrame((_, rawDt) => {
     if (paused) return;
@@ -209,6 +212,10 @@ export function GigiFlyer({ owner, mode, speaking, paused, reduced, clear, child
     // One horizontal transform for the model, shadow and floor annotations.
     // The navigation target can lead this spring-smoothed position by a metre.
     if (groundRoot.current) groundRoot.current.position.set(pose.x, 0, pose.z);
+    petBody.x = pose.x; petBody.z = pose.z; petBody.y = onFloor ? pet.heightM / 2 : pose.y;
+    petBody.top = onFloor ? pet.heightM : pose.y + GIGI_OFFICE_SIZE_M * 0.55;
+    petBody.sizeM = onFloor ? pet.heightM : GIGI_OFFICE_SIZE_M;
+    petBody.active = !hidden;
     if (root.current) root.current.position.y = pose.y;
     if (body.current) {
       body.current.rotation.set(pose.pitch, pose.yaw, pose.roll, "YXZ");

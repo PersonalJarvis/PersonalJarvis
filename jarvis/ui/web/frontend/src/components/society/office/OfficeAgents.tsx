@@ -38,6 +38,9 @@ import { officeTalkChat, useOfficeTalk } from "./officeTalk";
 import { deliverySpot, ERRAND_SPEED, useErrandFeed, useGigiErrands } from "./gigiErrands";
 import { isPaneAgentId, plateTitle } from "./codingFloor";
 import { agentLogoAsset } from "@/components/agentic/AgentMark";
+import { LevelChip } from "../progression/LevelHud";
+import { agentSubject, petSubject } from "../progression/progressionApi";
+import { useProgression } from "../progression/progressionStore";
 
 /** The agent's symbol walks behind it as a little pet, about a fifth of its height. */
 export const PET_SIZE_M = 0.26;
@@ -123,6 +126,7 @@ function Nameplate({ agent, activity, selected, onSelect, height = OFFICE_FIGURE
           {pane ? <PanePlateText agent={agent} state={state} /> : (
             <>
               <span className="office-plate-name" title={agent.name}>{agent.name}</span>
+              <PlateLevel agent={agent} />
               {state}
             </>
           )}
@@ -130,6 +134,16 @@ function Nameplate({ agent, activity, selected, onSelect, height = OFFICE_FIGURE
       </Html>
     </group>
   );
+}
+
+/** An agent's level on its plate; the lead shows its pet's level, since the lead IS the pet. */
+function PlateLevel({ agent }: { agent: SocietyAgent }) {
+  const lead = agent.tier === "lead";
+  const level = useProgression((s) => {
+    if (!s.snapshot) return null;
+    return s.subjects[lead ? petSubject(s.petId) : agentSubject(agent.agentId)]?.level ?? 1;
+  });
+  return level === null ? null : <LevelChip kind={lead ? "pet" : "agent"} level={level} />;
 }
 
 /**
