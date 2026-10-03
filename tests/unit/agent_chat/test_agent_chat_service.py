@@ -186,6 +186,63 @@ def test_cancel_ends_the_turn(tmp_path: Path, scripted):
     asyncio.run(scenario())
 
 
+@pytest.mark.asyncio
+async def test_failed_turn_setup_releases_pending_reservation(
+    tmp_path: Path, scripted, monkeypatch: pytest.MonkeyPatch,
+):
+    svc = AgentChatService(AgentChatStore(":memory:"))
+    session = svc.create_session(provider="fakeprov", cwd=str(tmp_path))
+    original_emit = svc._emit
+    fail_once = True
+
+    async def failing_emit(session_id, event):
+        nonlocal fail_once
+        await original_emit(session_id, event)
+        if fail_once and event["kind"] == "turn_started":
+            fail_once = False
+            raise RuntimeError("start recorder failed")
+
+    monkeypatch.setattr(svc, "_emit", failing_emit)
+
+    async def fake_runner(_handle, _text):
+        return None
+
+    with pytest.raises(RuntimeError, match="start recorder failed"):
+        await svc.send(session.session_id, "First task", control_runner=fake_runner)
+    assert not svc.is_running(session.session_id)
+    assert svc.running_session_ids() == []
+    assert svc.store.list_events(session.session_id)[-1]["payload"]["status"] == "error"
+
+    await svc.send(session.session_id, "Next task", control_runner=fake_runner)
+    await svc.wait_turn(session.session_id)
+    assert not svc.is_running(session.session_id)
+
+
+async def test_delivered_incoming_receipt_releases_pre_admission_reservation(
+    tmp_path: Path, scripted,
+):
+    from jarvis.society.delivery import IncomingMessage
+
+    svc = AgentChatService(AgentChatStore(":memory:"))
+    session = svc.create_session(provider="fakeprov", cwd=str(tmp_path))
+    incoming = IncomingMessage(
+        message_id="message-1", sender_id="scout", sender_name="Scout",
+        sender_kind="agent", text="Already delivered", prompt="Already delivered",
+        trace_id="trace-1", status="delivered", turn_id="prior-turn",
+    )
+
+    assert await svc.send(session.session_id, "Duplicate", incoming=incoming) == "prior-turn"
+    assert not svc.is_running(session.session_id)
+    assert svc.running_session_ids() == []
+
+    async def fake_runner(_handle, _text):
+        return None
+
+    await svc.send(session.session_id, "New task", control_runner=fake_runner)
+    await svc.wait_turn(session.session_id)
+    assert not svc.is_running(session.session_id)
+
+
 def test_provider_error_is_reported_not_raised(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     class Boom:
         def __init__(self, model=None):
