@@ -3,6 +3,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   describeTrigger,
   displayRoutineTitle,
+  fetchTaskEventCatalog,
   promoteAgentSkillForReview,
   routineScheduleLine,
 } from "@/components/society/cardData";
@@ -74,6 +75,27 @@ test("calendar display preserves the saved zone instead of converting to the vie
     .toBe("Every day at 08:00 · America/Los_Angeles");
 });
 
+
+describe("fetchTaskEventCatalog", () => {
+  test("reads the backend event catalogue used by on-event routines", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      events: [
+        { name: "PullRequestMerged", fields: ["repository", "number"] },
+        { name: "AnnouncementRequested", fields: ["text"] },
+      ],
+    }), { status: 200 })));
+
+    await expect(fetchTaskEventCatalog()).resolves.toEqual([
+      { name: "PullRequestMerged", fields: ["repository", "number"] },
+      { name: "AnnouncementRequested", fields: ["text"] },
+    ]);
+  });
+
+  test("rejects an unavailable catalogue so the builder can fall back", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 503 })));
+    await expect(fetchTaskEventCatalog()).rejects.toThrow("HTTP 503");
+  });
+});
 
 describe("promoteAgentSkillForReview", () => {
   test("copies the learned skill through the governed draft endpoint", async () => {

@@ -3,6 +3,7 @@
 Endpoints:
 - ``GET    /api/tasks/templates``            → the pre-built automations catalogue.
 - ``POST   /api/tasks/templates/{key}/add``  → instantiate a template as a task.
+- ``GET    /api/tasks/events``                 → loaded internal event trigger catalogue.
 - ``POST   /api/tasks``              → create + schedule a TaskSpec.
 - ``GET    /api/tasks``              → task list, optionally ``?state=...``.
 - ``GET    /api/tasks/{id}``         → full task with steps timeline.
@@ -210,6 +211,19 @@ def report_client_timezone(body: ClientTimezoneBody) -> dict[str, Any]:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     remember_ui_timezone(body.timezone)
     return {"ok": True, "timezone": body.timezone}
+
+
+@router.get("/events")
+def list_event_catalog() -> dict[str, Any]:
+    """Loaded typed events available to on_event automation triggers."""
+    from jarvis.tasks.event_catalog import event_catalog
+
+    return {
+        "events": [
+            {"name": name, "fields": fields}
+            for name, fields in event_catalog().items()
+        ]
+    }
 
 
 # ----------------------------------------------------------------------

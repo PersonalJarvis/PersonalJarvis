@@ -122,6 +122,26 @@ async def test_templates_route_is_not_captured_as_task_id(harness: Harness) -> N
     assert res.status_code == 200
     assert "templates" in res.json()
 
+async def test_events_catalog_uses_authoritative_event_schema(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import jarvis.tasks.event_catalog as event_catalog_module
+
+    monkeypatch.setattr(
+        event_catalog_module,
+        "event_catalog",
+        lambda: {"AlphaEvent": ["item_id"], "BetaEvent": ["status", "owner"]},
+    )
+    async with harness.client() as c:
+        res = await c.get("/api/tasks/events")
+    assert res.status_code == 200
+    assert res.json() == {
+        "events": [
+            {"name": "AlphaEvent", "fields": ["item_id"]},
+            {"name": "BetaEvent", "fields": ["status", "owner"]},
+        ]
+    }
+
 
 async def test_add_template_schedules_tagged_task(harness: Harness) -> None:
     key = next(iter(tpl.all_templates()))

@@ -42,6 +42,12 @@ export interface LearnedSkill {
   whenToUse: string;
 }
 
+/** One typed in-process event that can back an on_event routine trigger. */
+export interface TaskEventCatalogEntry {
+  name: string;
+  fields: string[];
+}
+
 /** A scheduled task tagged for this agent, as the Automations store holds it. */
 export interface LiveRoutine {
   id: string;
@@ -110,6 +116,21 @@ async function getJson<T>(url: string): Promise<T | null> {
   } catch {
     return null; // the card says nothing rather than an error nobody can act on
   }
+}
+
+/** The backend authoritative event names for on_event triggers. */
+export async function fetchTaskEventCatalog(): Promise<TaskEventCatalogEntry[]> {
+  const response = await fetch("/api/tasks/events");
+  if (!response.ok) throw new Error("HTTP " + response.status);
+  const body = await response.json() as {
+    events?: { name?: unknown; fields?: unknown }[];
+  };
+  return (body.events ?? [])
+    .map((row) => ({
+      name: String(row.name ?? ""),
+      fields: Array.isArray(row.fields) ? row.fields.map((field) => String(field)) : [],
+    }))
+    .filter((row) => row.name.length > 0);
 }
 
 /** The line the routines list shows: live trigger, else the sample's own phrase. */

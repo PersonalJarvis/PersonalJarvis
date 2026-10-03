@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { BrandedSelect } from "@/components/ui/select";
 import { useLocaleChunk, useT } from "@/i18n";
+import { fetchTaskEventCatalog } from "../cardData";
 
 export const TRIGGER_GROUPS = {
   human: ["manual", "chat", "form"],
@@ -39,7 +40,7 @@ export function TriggerBuilder({ onChange, initialValue, timeOnly = false }: {
   const [path, setPath] = useState("");
   const [pattern, setPattern] = useState("*");
   const [recursive, setRecursive] = useState(false);
-  const [eventName, setEventName] = useState("");
+  const [eventName, setEventName] = useState(String(initialValue?.event_name ?? ""));
   const [filters, setFilters] = useState("{}");
   const [fields, setFields] = useState('{"message":{"label":"Message","kind":"text","required":true}}');
   const [upstreamKind, setUpstreamKind] = useState("task");
@@ -54,6 +55,19 @@ export function TriggerBuilder({ onChange, initialValue, timeOnly = false }: {
       return (body.tasks ?? body.workflows ?? []) as { id: string; title?: string; name?: string }[];
     },
   });
+  const eventCatalog = useQuery({
+    queryKey: ["tasks", "event-catalog"],
+    enabled: kind === "on_event",
+    retry: false,
+    staleTime: 60_000,
+    queryFn: fetchTaskEventCatalog,
+  });
+  const eventOptions = useMemo(() => {
+    const options = (eventCatalog.data ?? []).map((row) => ({ value: row.name, label: row.name }));
+    return eventName && !options.some((row) => row.value === eventName)
+      ? [{ value: eventName, label: eventName }, ...options]
+      : options;
+  }, [eventCatalog.data, eventName]);
   const value = useMemo(() => {
     try {
       const conditions = JSON.parse(filters);
@@ -101,7 +115,10 @@ export function TriggerBuilder({ onChange, initialValue, timeOnly = false }: {
     {kind === "at_time" && input("date", date, setDate, "datetime-local")}
     {group === "stream" && <>{input("endpoint", endpoint, setEndpoint)}{kind !== "sse" && <>{input("topic", topic, setTopic)}{input("consumer_group", consumerGroup, setConsumerGroup)}</>}<p className="text-[11px] text-muted-foreground">{label("credentials_hint")}</p></>}
     {kind === "file" && <>{input("path", path, setPath)}{input("pattern", pattern, setPattern)}<label className="text-[11px]"><input type="checkbox" checked={recursive} onChange={(e) => setRecursive(e.target.checked)} /> {label("recursive")}</label></>}
-    {(kind === "on_event" || kind === "event_hook") && input("event_name", eventName, setEventName)}
+    {kind === "on_event" && (eventOptions.length > 0
+      ? <BrandedSelect value={eventName} onValueChange={setEventName} options={eventOptions} ariaLabel={label("event_name")} testId="routine-event-name" />
+      : input("event_name", eventName, setEventName))}
+    {kind === "event_hook" && input("event_name", eventName, setEventName)}
     {kind === "form" && <label className="block text-[11px]">{label("form_fields")}<textarea className={field} aria-label={label("form_fields")} value={fields} onChange={(e) => setFields(e.target.value)} rows={4} /></label>}
     {(kind === "workflow" || kind.startsWith("workflow_")) && <><BrandedSelect ariaLabel={label("workflow")} value={upstreamKind} onValueChange={(next) => { setUpstreamKind(next); setUpstreamId(""); }} options={[{ value: "task", label: label("routine") }, { value: "workflow", label: label("workflow") }]} /><BrandedSelect value={upstreamId} onValueChange={setUpstreamId} options={(upstream.data ?? []).map((row) => ({ value: row.id, label: row.title ?? row.name ?? row.id }))} ariaLabel={label("upstream")} />{kind === "workflow" && <BrandedSelect ariaLabel={label("when.succeeded")} value={when} onValueChange={setWhen} options={["succeeded", "failed", "activated"].map((key) => ({ value: key, label: label(`when.${key}`) }))} />}{upstream.error ? <p role="alert">{label("upstream_unavailable")}</p> : null}</>}
     {!['every', 'calendar', 'cron', 'after_delay', 'at_time', 'on_event'].includes(kind) && <label className="block text-[11px]">{label("filters")}<textarea className={field} value={filters} onChange={(e) => setFilters(e.target.value)} aria-label={label("filters")} rows={2} /></label>}
