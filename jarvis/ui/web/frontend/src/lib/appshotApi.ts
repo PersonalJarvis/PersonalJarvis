@@ -164,4 +164,4 @@ export async function openAppshotEditorWindow(id: string): Promise<boolean> {
 }
 
 /** How long the corner card may rest, in seconds; 0 = until closed. */
-export const CARD_SECONDS_CHOICES = [3, 6, 10, 30, 0] as const;
+export const CARD_SECONDS_CHOICES = [3, 6, 10, 30, 60, 300, 0] as const;

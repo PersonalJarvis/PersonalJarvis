@@ -342,7 +342,9 @@ export function AppshotsView() {
         label:
           seconds === 0
             ? t("appshot_editor.card_until_closed")
-            : t("appshot_editor.card_seconds_option").replace("{0}", String(seconds)),
+            : seconds >= 60
+              ? t("appshot_editor.card_minutes_option").replace("{0}", String(seconds / 60))
+              : t("appshot_editor.card_seconds_option").replace("{0}", String(seconds)),
       })),
     // `editorReady` re-labels the options once the chunk has arrived.
     [t, editorReady],
