@@ -199,13 +199,22 @@ def _expires_ms(timeout_s: float) -> int:
     return int(time.time() * 1000 + timeout_s * 1000)
 
 
+def _current_task() -> asyncio.Task[Any] | None:
+    try:
+        return asyncio.current_task()
+    except RuntimeError:  # Synchronous routes may inspect status off the event loop.
+        return None
+
+
 class _Running:
-    __slots__ = ("asks", "task", "cancel", "turn_id")
+    __slots__ = ("asks", "task", "cancel", "turn_id", "setup_task", "ready")
 
     def __init__(self, turn_id: str, cancel: asyncio.Event) -> None:
         self.turn_id = turn_id
         self.cancel = cancel
         self.task: asyncio.Task[None] | None = None
+        self.setup_task: asyncio.Task[Any] | None = _current_task()
+        self.ready = asyncio.Event()
         #: Question cards this turn has shown (MAX_ASKS_PER_TURN).
         self.asks = 0
 
@@ -236,6 +245,9 @@ class AgentChatService:
         # is NOT held by this lock.
         self._brain_lock = asyncio.Lock()
         self._running: dict[str, _Running] = {}
+        # Reserved before control state is marked running. The runner has not
+        # started yet, but a competing send and Stop must both see this owner.
+        self._preparing: dict[str, _Running] = {}
         self._subscribers: dict[str, set[Subscriber]] = {}
         self._approvals: dict[str, asyncio.Future[str]] = {}
         self._approval_session: dict[str, str] = {}
@@ -376,12 +388,18 @@ class AgentChatService:
         )
 
     def is_running(self, session_id: str) -> bool:
+        preparing = self._preparing.get(session_id)
+        if preparing is not None and preparing.setup_task is not _current_task():
+            return True
         run = self._running.get(session_id)
-        return bool(run and run.task and not run.task.done())
+        return bool(run and (run.task is None or not run.task.done()))
 
     def running_session_ids(self) -> list[str]:
-        """Every session with a live turn right now."""
-        return [sid for sid in list(self._running) if self.is_running(sid)]
+        """Sessions occupying a chat seat, including pre-admission setup."""
+        return [
+            *[sid for sid in list(self._running) if self.is_running(sid)],
+            *list(self._preparing),
+        ]
 
     async def seal_stopped_turn(self, session_id: str) -> bool:
         """Close a turn the stop button can still see after its runner is gone.
@@ -639,156 +657,311 @@ class AgentChatService:
             command = re.match(r"^/([a-z]+)(?:\s|$)", text.strip())
             if command and command[1] in {row["name"] for row in COMMANDS}:
                 raise ValueError("Use the chat command endpoint for slash commands")
-            if hasattr(self, "_controls"):
-                await self._controls.user_message(session_id, text)
-        if read_only:
-            session = replace(session, permission_mode="plan")
-        if session.permission_mode in ("plan", "read-only") and session.surface in (
-            "jarvis",
-            "society",
-        ):
-            from .control import supports_restricted_turn
-
-            if not supports_restricted_turn(session):
-                raise ValueError("This runner cannot enforce read-only mode; choose an API model")
-        if incoming is not None:
-            receipt = await self.receive_message(session_id, incoming)
-            if receipt["status"] == "delivered":
-                return str(receipt.get("turn_id") or "")
-            if receipt["status"] == "failed":
-                raise ValueError("This internal message already failed")
-        if self.is_running(session_id):
+        if session_id in self._preparing:
             raise SessionBusy(session_id)
-        kit = kit_for(session.surface)
-        text = text.strip()
-        attached = chat_attachments.to_analysis(attachments)
-        if not text and not attached:
-            raise ValueError("empty message")
-        # What the turn receives; ``text`` stays what the person typed so the
-        # timeline shows their sentence rather than a page of extracted PDF.
-        prompt = chat_attachments.compose(text, attached)
-        # Agent cards serialize Add selections as capability pins. Translate the
-        # browser pin to the same validated receipt used by the root composer.
-        if session.surface == "jarvis" and any(
-            "core:browser" in {item.strip() for item in match.split(",")}
-            for match in re.findall(r"(?m)^\[tools:\s*([^\]\r\n]+)\]\s*$", text)
-        ):
-            tool_choices = list(dict.fromkeys([*(tool_choices or []), "tool:society_browser"]))
-        selected = []
-        if tool_choices:
-            if session.surface != "jarvis":
-                raise ValueError("Tool selections are supported by the Jarvis chat")
-            from jarvis.agent_chat.runner_brain import brain_manager
-            from jarvis.agent_chat.tool_catalog import live_catalog, resolve_choices
-
-            inventory = await asyncio.to_thread(
-                live_catalog, brain_manager(), cwd=session.cwd, stance=session.permission_mode
+        if self.is_running(session_id):
+            # A person may steer an active Jarvis goal: user_message pauses
+            # its old turn before this preparation can become a new runner.
+            goal = (
+                self._controls.state(session_id).goal
+                if session.surface == "jarvis"
+                and direct_user
+                and incoming is None
+                and not control_owned
+                and hasattr(self, "_controls")
+                else None
             )
-            selected = resolve_choices(tool_choices, inventory)
-            # Discovery yields; another send may have acquired this session.
-            if self.is_running(session_id):
+            if goal is None or goal.status != "active":
                 raise SessionBusy(session_id)
+        if session.surface == "society":
+            from jarvis.society.chat_binding import direct_chat_owner
 
+            owner = direct_chat_owner(session_id)
+            if owner is not None and any(
+                direct_chat_owner(sid) == owner for sid in self.running_session_ids()
+            ):
+                raise SessionBusy(session_id)
         turn_id = uuid.uuid4().hex
         cancel = asyncio.Event()
         run = _Running(turn_id, cancel)
-        self._running[session_id] = run
-        if session.surface == "jarvis" and direct_user and incoming is None and not control_owned:
-            from .store import ChatSelection
+        self._preparing[session_id] = run
+        control_revision: int | None = None
+        control_text = text
+        if (
+            session.surface in ("jarvis", "society")
+            and direct_user
+            and incoming is None
+            and not control_owned
+        ):
+            if hasattr(self, "_controls"):
+                try:
+                    control_revision = await self._controls.user_message(session_id, text)
+                except (asyncio.CancelledError, Exception):
+                    if self._preparing.get(session_id) is run:
+                        self._preparing.pop(session_id, None)
+                    run.ready.set()
+                    raise
+        try:
+            if read_only:
+                session = replace(session, permission_mode="plan")
+            if session.permission_mode in ("plan", "read-only") and session.surface in (
+                "jarvis",
+                "society",
+            ):
+                from .control import supports_restricted_turn
 
-            self.store.save_chat_selection(
-                ChatSelection(session.provider, session.model, session.effort, session.account_id)
-            )
-        from jarvis.core.tool_read_only import set_chat_read_only
+                if not supports_restricted_turn(session):
+                    raise ValueError(
+                        "This runner cannot enforce read-only mode; choose an API model"
+                    )
+            if incoming is not None:
+                receipt = await self.receive_message(session_id, incoming)
+                if receipt["status"] == "delivered":
+                    if self._preparing.get(session_id) is run:
+                        self._preparing.pop(session_id, None)
+                    run.ready.set()
+                    return str(receipt.get("turn_id") or "")
+                if receipt["status"] == "failed":
+                    raise ValueError("This internal message already failed")
+            if self.is_running(session_id):
+                raise SessionBusy(session_id)
+            kit = kit_for(session.surface)
+            text = text.strip()
+            attached = chat_attachments.to_analysis(attachments)
+            if not text and not attached:
+                raise ValueError("empty message")
+            # What the turn receives; ``text`` stays what the person typed so the
+            # timeline shows their sentence rather than a page of extracted PDF.
+            prompt = chat_attachments.compose(text, attached)
+            # Agent cards serialize Add selections as capability pins. Translate the
+            # browser pin to the same validated receipt used by the root composer.
+            if session.surface == "jarvis" and any(
+                "core:browser" in {item.strip() for item in match.split(",")}
+                for match in re.findall(r"(?m)^\[tools:\s*([^\]\r\n]+)\]\s*$", text)
+            ):
+                tool_choices = list(dict.fromkeys([*(tool_choices or []), "tool:society_browser"]))
+            selected = []
+            if tool_choices:
+                if session.surface != "jarvis":
+                    raise ValueError("Tool selections are supported by the Jarvis chat")
+                from jarvis.agent_chat.runner_brain import brain_manager
+                from jarvis.agent_chat.tool_catalog import live_catalog, resolve_choices
 
-        set_chat_read_only(session_id, session.permission_mode in ("plan", "read-only"))
+                inventory = await asyncio.to_thread(
+                    live_catalog, brain_manager(), cwd=session.cwd, stance=session.permission_mode
+                )
+                selected = resolve_choices(tool_choices, inventory)
+                # Discovery yields; another send may have acquired this session.
+                if self.is_running(session_id):
+                    raise SessionBusy(session_id)
 
-        history_start = kit.history_start(session) if kit.history_start is not None else 0
-        history = self.store.list_events(session_id, after_seq=history_start)
-        if incoming is not None:
-            await self.message_status(session_id, incoming.message_id, "delivered", turn_id=turn_id)
-        else:
+            # Roster state can change while a control message or an internal
+            # delivery is being recorded. Rebind after those awaits, then reserve
+            # the seat without yielding again. Keep the caller's read-only choice.
+            if session.surface == "society":
+                session = await self.bind_society_session(session_id, routine_run=routine_run)
+                if read_only:
+                    session = replace(session, permission_mode="plan")
+                if session.permission_mode in ("plan", "read-only"):
+                    from .control import supports_restricted_turn
+
+                    if not supports_restricted_turn(session):
+                        raise ValueError(
+                            "This runner cannot enforce read-only mode; choose an API model"
+                        )
+
+            # Revalidate after the last await, then transfer the reservation
+            # to the runner without yielding. Scheduled runs stay independent.
+            if cancel.is_set():
+                raise asyncio.CancelledError
+            if self._preparing.get(session_id) is not run or self.is_running(session_id):
+                raise SessionBusy(session_id)
+            if session.surface == "society":
+                from jarvis.society.chat_binding import direct_chat_owner
+
+                owner = direct_chat_owner(session_id)
+                if owner is not None and any(
+                    direct_chat_owner(sid) == owner and self.is_running(sid)
+                    for sid in self._running if sid != session_id
+                ):
+                    raise SessionBusy(session_id)
+
+            self._preparing.pop(session_id, None)
+            self._running[session_id] = run
+        except (asyncio.CancelledError, Exception):
+            if self._preparing.get(session_id) is run:
+                self._preparing.pop(session_id, None)
+            try:
+                if control_revision is not None:
+                    await self._controls.message_rejected(
+                        session_id, control_text, control_revision
+                    )
+            except Exception:
+                log.exception(
+                    "chat control status could not close rejected message in %s", session_id
+                )
+            finally:
+                run.ready.set()
+            raise
+        turn_started_emitted = False
+        try:
+            if (
+                session.surface == "jarvis"
+                and direct_user
+                and incoming is None
+                and not control_owned
+            ):
+                from .store import ChatSelection
+
+                self.store.save_chat_selection(
+                    ChatSelection(
+                        session.provider, session.model, session.effort, session.account_id
+                    )
+                )
+            from jarvis.core.tool_read_only import set_chat_read_only
+
+            set_chat_read_only(session_id, session.permission_mode in ("plan", "read-only"))
+
+            history_start = kit.history_start(session) if kit.history_start is not None else 0
+            history = self.store.list_events(session_id, after_seq=history_start)
+            if incoming is not None:
+                await self.message_status(
+                    session_id, incoming.message_id, "delivered", turn_id=turn_id
+                )
+            else:
+                await self._emit(
+                    session_id,
+                    make_event(
+                        "user_message",
+                        {
+                            # The full prompt: this is what was actually sent, and the
+                            # API runner rebuilds the conversation from these events —
+                            # storing only the sentence would lose the picture on the
+                            # NEXT turn (runner_api.messages_from_events).
+                            "text": prompt,
+                            **({"origin": "control"} if control_owned and not direct_user else {}),
+                            **(
+                                {"tool_choices": [row.model_dump(mode="json") for row in selected]}
+                                if selected
+                                else {}
+                            ),
+                            # What the person typed, when it differs from the prompt.
+                            # Absent on an ordinary message, so nothing changes there.
+                            **(
+                                {"typed": display_text if display_text is not None else text}
+                                if attached or display_text is not None
+                                else {}
+                            ),
+                            **(
+                                {
+                                    "attachments": [
+                                        {
+                                            "name": item.name,
+                                            "reference": item.reference,
+                                            "kind": item.kind,
+                                            "described_by": item.described_by,
+                                            "note": item.note,
+                                        }
+                                        for item in attached
+                                    ]
+                                }
+                                if attached
+                                else {}
+                            ),
+                        },
+                    ),
+                )
+            runner = selected_runner or resolve_runner(session.provider, surface=session.surface)
+            turn_started_emitted = True
             await self._emit(
                 session_id,
                 make_event(
-                    "user_message",
+                    "turn_started",
                     {
-                        # The full prompt: this is what was actually sent, and the
-                        # API runner rebuilds the conversation from these events —
-                        # storing only the sentence would lose the picture on the
-                        # NEXT turn (runner_api.messages_from_events).
-                        "text": prompt,
-                        **({"origin": "control"} if control_owned and not direct_user else {}),
-                        **(
-                            {"tool_choices": [row.model_dump(mode="json") for row in selected]}
-                            if selected
-                            else {}
-                        ),
-                        # What the person typed, when it differs from the prompt.
-                        # Absent on an ordinary message, so nothing changes there.
-                        **(
-                            {"typed": display_text if display_text is not None else text}
-                            if attached or display_text is not None
-                            else {}
-                        ),
-                        **(
-                            {
-                                "attachments": [
-                                    {
-                                        "name": item.name,
-                                        "reference": item.reference,
-                                        "kind": item.kind,
-                                        "described_by": item.described_by,
-                                        "note": item.note,
-                                    }
-                                    for item in attached
-                                ]
-                            }
-                            if attached
-                            else {}
-                        ),
+                        "turn_id": turn_id,
+                        "provider": session.provider,
+                        "model": session.model,
+                        # The effort the turn RUNS with. It is the session's own
+                        # pick: no surface overrides it any more (the kit's
+                        # `effort` went with the setup helper), so reading one off
+                        # the kit would only be a way to raise an AttributeError
+                        # on every turn.
+                        "effort": normalize_effort(session.provider, session.effort),
+                        "runner": runner,
+                        "surface": session.surface,
                     },
                 ),
             )
-        runner = selected_runner or resolve_runner(session.provider, surface=session.surface)
-        await self._emit(
-            session_id,
-            make_event(
-                "turn_started",
-                {
-                    "turn_id": turn_id,
-                    "provider": session.provider,
-                    "model": session.model,
-                    # The effort the turn RUNS with. It is the session's own
-                    # pick: no surface overrides it any more (the kit's
-                    # `effort` went with the setup helper), so reading one off
-                    # the kit would only be a way to raise an AttributeError
-                    # on every turn.
-                    "effort": normalize_effort(session.provider, session.effort),
-                    "runner": runner,
-                    "surface": session.surface,
-                },
-            ),
-        )
 
-        bus = self._bus()
-        handle = TurnHandle(
-            session=session,
-            turn_id=turn_id,
-            emit=lambda ev: self._emit(session_id, ev),
-            request_approval=lambda call_id, name, args, summary: self._ask(
-                session_id, turn_id, call_id, name, args, summary
-            ),
-            cancel=cancel,
-            history=history,
-            assistant_name=self._assistant_name(),
-            bus=bus,
-            surface=session.surface,
-            stance=session.permission_mode if kit.uses_stance else "",
-            output_language=output_language,
-            goal_turn=native_goal,
-            control_service=self,
-        )
+            bus = self._bus()
+            handle = TurnHandle(
+                session=session,
+                turn_id=turn_id,
+                emit=lambda ev: self._emit(session_id, ev),
+                request_approval=lambda call_id, name, args, summary: self._ask(
+                    session_id, turn_id, call_id, name, args, summary
+                ),
+                cancel=cancel,
+                history=history,
+                assistant_name=self._assistant_name(),
+                bus=bus,
+                surface=session.surface,
+                stance=session.permission_mode if kit.uses_stance else "",
+                output_language=output_language,
+                goal_turn=native_goal,
+                control_service=self,
+            )
+        except BaseException as exc:
+            try:
+                if turn_started_emitted:
+                    await self._emit(
+                        session_id,
+                        make_event(
+                            "turn_finished",
+                            {
+                                "turn_id": turn_id,
+                                "status": (
+                                    "cancelled" if isinstance(exc, asyncio.CancelledError)
+                                    else "error"
+                                ),
+                                "duration_ms": 0,
+                                "usage": {},
+                                "error": (
+                                    None if isinstance(exc, asyncio.CancelledError) else str(exc)
+                                ),
+                            },
+                        ),
+                    )
+            except asyncio.CancelledError:
+                pass  # A second stop still releases the pending reservation.
+            except Exception:
+                log.exception("agent chat could not close the failed start for %s", turn_id)
+            finally:
+                if self._running.get(session_id) is run:
+                    self._running.pop(session_id, None)
+                run.ready.set()
+                from jarvis.core.tool_read_only import set_chat_read_only
+
+                stored_session = self.store.get_session(session_id)
+                set_chat_read_only(
+                    session_id,
+                    bool(
+                        stored_session
+                        and stored_session.permission_mode in ("plan", "read-only")
+                    ),
+                )
+            if hasattr(self, "_controls"):
+                try:
+                    await self._controls.turn_completed(
+                        session_id,
+                        turn_id,
+                        display_text if display_text is not None else text,
+                        direct_user and incoming is None,
+                        read_only,
+                    )
+                except Exception:
+                    log.exception("chat completion hook failed for aborted start %s", turn_id)
+            raise
 
         async def _body() -> None:
             started = time.monotonic()
@@ -944,7 +1117,8 @@ class AgentChatService:
                     from jarvis.society.browser.tool import stop_chat_browser
 
                     await stop_chat_browser(session_id)
-                self._running.pop(session_id, None)
+                if self._running.get(session_id) is run:
+                    self._running.pop(session_id, None)
                 stored_session = self.store.get_session(session_id)
                 set_chat_read_only(
                     session_id,
@@ -975,7 +1149,14 @@ class AgentChatService:
                         session_id, turn_id, origin.user_text, origin.direct_user, read_only
                     )
 
-        run.task = asyncio.create_task(_body(), name=f"agent-chat-{turn_id[:8]}")
+        try:
+            run.task = asyncio.create_task(_body(), name=f"agent-chat-{turn_id[:8]}")
+        except BaseException:
+            if self._running.get(session_id) is run:
+                self._running.pop(session_id, None)
+            run.ready.set()
+            raise
+        run.ready.set()
         return turn_id
 
     # ------------------------------------------------------------ voice chat
@@ -1154,13 +1335,19 @@ class AgentChatService:
 
     def signal_cancel(self, session_id: str, *, expected_turn_id: str | None = None) -> bool:
         """Stop planning synchronously before releasing an in-flight tool reply."""
-        run = self._running.get(session_id)
-        if run is None or run.task is None or run.task.done():
+        run = self._running.get(session_id) or getattr(self, "_preparing", {}).get(session_id)
+        if run is None or (run.task is not None and run.task.done()):
+            return False
+        if run.task is None and run.setup_task is _current_task():
+            # A goal's user_message pauses its old work while preparing this
+            # very send. That pause must not cancel the new send itself.
             return False
         # A resumed station must never cancel a newer unrelated conversation turn.
         if expected_turn_id is not None and run.turn_id != expected_turn_id:
             return False
         run.cancel.set()
+        if run.task is None and run.setup_task is not None:
+            run.setup_task.cancel()
         for aid in self.pending_approvals(session_id):
             fut = self._approvals.get(aid)
             if fut is not None and not fut.done():
@@ -1169,10 +1356,20 @@ class AgentChatService:
         return True
 
     async def cancel(self, session_id: str, *, expected_turn_id: str | None = None) -> bool:
-        run = self._running.get(session_id)
+        run = self._running.get(session_id) or self._preparing.get(session_id)
         if not self.signal_cancel(session_id, expected_turn_id=expected_turn_id):
             return False
-        assert run is not None and run.task is not None
+        assert run is not None
+        if run.task is None:
+            try:
+                await asyncio.wait_for(run.ready.wait(), timeout=15.0)
+            except TimeoutError:
+                # Keep the seat reserved until the cancelled setup actually
+                # unwinds; releasing it here could admit a second runner.
+                log.warning("agent chat setup did not stop within 15 seconds: %s", session_id)
+                return True
+            if run.task is None:
+                return True
         try:
             await asyncio.wait_for(asyncio.shield(run.task), timeout=15.0)
         except TimeoutError:  # Stop escalates to task cancellation after the bounded wait.
@@ -1189,7 +1386,7 @@ class AgentChatService:
     async def cancel_all(self) -> None:
         if hasattr(self, "_controls"):
             await self._controls.close()
-        for sid in list(self._running):
+        for sid in list(dict.fromkeys([*self._running, *self._preparing])):
             await self.cancel(sid)
 
     @property
@@ -1201,7 +1398,9 @@ class AgentChatService:
         return self._controls
 
     async def wait_turn(self, session_id: str) -> None:
-        run = self._running.get(session_id)
+        run = self._running.get(session_id) or self._preparing.get(session_id)
+        if run is not None and run.task is None:
+            await run.ready.wait()
         if run is not None and run.task is not None:
             await asyncio.shield(run.task)
 

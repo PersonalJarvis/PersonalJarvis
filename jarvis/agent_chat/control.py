@@ -486,14 +486,14 @@ class ChatControls:
             raise ValueError(completed[-1].error if completed else "Command was interrupted")
         return {"result": completed[-1].output}
 
-    async def user_message(self, sid: str, text: str) -> None:
+    async def user_message(self, sid: str, text: str) -> int | None:
         state = self.state(sid)
         if state.goal and state.goal.native_pending and state.goal.status != "active":
             await self._clear_saved_native(sid)
             state = self.state(sid)
         active = state.goal is not None and state.goal.status == "active"
         if self.service.is_running(sid) and not active:
-            return
+            return None
         if active:
             await self.pause(sid, "User is steering the task")
             state = self.state(sid)
@@ -502,6 +502,31 @@ class ChatControls:
         state.last_request = text
         state.last_status = "running"
         self.store.save(state)
+        return state.revision
+
+    async def message_rejected(self, sid: str, text: str, revision: int) -> None:
+        """Close a control status when validation rejects a message before its turn.
+
+        A later control write owns a newer revision and must not be rolled back.
+        Keep an active goal for a later explicit continuation, but pause it
+        because no runner was admitted for this message.
+        """
+        state = self.state(sid)
+        if (
+            state.revision != revision
+            or state.last_request != text
+            or state.last_status != "running"
+            or self.service.is_running(sid)
+        ):
+            return
+        if state.goal and state.goal.status == "active":
+            state.goal.status = "paused"
+            state.goal.reason = "Message was not started"
+            state.goal.updated_ms = int(time.time() * 1000)
+            state.last_status = "interrupted"
+        else:
+            state.last_status = "failed"
+        await self.publish(state)
 
     async def turn_completed(
         self, sid: str, turn_id: str, text: str, direct_user: bool, read_only: bool

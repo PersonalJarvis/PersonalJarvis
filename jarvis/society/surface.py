@@ -250,35 +250,39 @@ async def _scoped_tool_for_session(session_id: str, capability: str) -> Tool | N
         rt = getattr(state, "society", None) or factory()
         state.society = rt
         await rt.ensure_started()
+    try:
+        service = rt.chat_service()
+        store = getattr(service, "store", None)
+        session = store.get_session(session_id) if store is not None else None
+    except Exception:  # noqa: BLE001 — a missing chat provenance must not offer a tool
+        log.warning("society: scoped chat lookup failed for %s", session_id, exc_info=True)
+        return None
+    if session is None:
+        return None
     agent_id = agent_id_of(session_id)
     if agent_id is None:
-        service = rt.chat_service()
-        session = service.store.get_session(session_id) if service is not None else None
-        if session is None or str(session.surface) != "jarvis":
+        if str(session.surface) != "jarvis":
             return None
         from .roster import LEAD_AGENT_ID
 
         agent_id = LEAD_AGENT_ID
+    elif str(session.surface) != SURFACE:
+        return None
     agent = await rt.roster.get(agent_id)
     if agent is None or str(agent.state) != "active":
         return None
-    read_only = str(agent.permission_ceiling) == "safe"
-    service = rt.chat_service()
-    session = None
-    if service is not None:
-        session = service.store.get_session(session_id)
-        if session is None:
-            return None
-        read_only = session.permission_mode in ("plan", "read-only")
-        if read_only and capability != "core:browser":
-            return None
+    read_only = str(agent.permission_ceiling) == "safe" or session.permission_mode in (
+        "plan", "read-only"
+    )
+    if read_only and capability != "core:browser":
+        return None
     tool: Tool
     if capability == "core:browser":
         from .browser.tool import BrowserTool
 
         pick = (
             (session.provider, session.model)
-            if service is not None and getattr(session, "surface", "") == "jarvis"
+            if getattr(session, "surface", "") == "jarvis"
             else None
         )
         tool = cast(
@@ -303,6 +307,8 @@ async def _scoped_tool_for_session(session_id: str, capability: str) -> Tool | N
             capability,
             _effective_approval_mode(agent, session, _permission_override(rt, session)),
             rt,
+            session=session,
+            requires_grant=True,
         ),
     )
 
@@ -434,12 +440,34 @@ class _GatedTool:
         capability_id: str,
         approval_mode: str | None,
         runtime: Any,
+        *,
+        session: Any = None,
+        requires_grant: bool = False,
     ) -> None:
         self._inner = inner
         self._agent = agent
         self._capability_id = capability_id
         self._approval_mode = approval_mode
         self._runtime = runtime
+        self._session = session
+        self._session_id = str(getattr(session, "session_id", "") or "")
+        self._session_surface = str(getattr(session, "surface", "") or "")
+        self._session_mode = str(getattr(session, "permission_mode", "") or "")
+        try:
+            service = runtime.chat_service()
+            store = getattr(service, "store", None)
+            persisted = store.get_session(self._session_id) if store is not None else None
+        except Exception:  # noqa: BLE001 — a missing persisted policy must fail closed at execution
+            log.warning("society gate: stored chat lookup failed for %s", inner.name, exc_info=True)
+            persisted = None
+        self._persisted_session_mode = (
+            str(getattr(persisted, "permission_mode", "") or "") if persisted is not None else None
+        )
+        self._permission_override = _permission_override(runtime, session)
+        self._permission_ceiling = str(agent.permission_ceiling)
+        self._require_approval = frozenset(agent.approval_rules.get("require_approval", []))
+        self._always_allow = frozenset(agent.approval_rules.get("always_allow", []))
+        self._requires_grant = requires_grant
         self.name = inner.name
         self.description = inner.description
         self.schema = inner.schema
@@ -448,9 +476,7 @@ class _GatedTool:
     def __getattr__(self, item: str) -> Any:
         return getattr(self._inner, item)
 
-    def risk_tier_for_args(self, args: dict[str, Any]) -> str | None:
-        from .approvals import Verdict, decide
-
+    def _base_tier_for_args(self, args: dict[str, Any]) -> str:
         base = str(self.risk_tier or "monitor")
         hook = getattr(self._inner, "risk_tier_for_args", None)
         if callable(hook):
@@ -461,6 +487,12 @@ class _GatedTool:
                 own = None
             if isinstance(own, str) and own:
                 base = own
+        return base
+
+    def risk_tier_for_args(self, args: dict[str, Any]) -> str | None:
+        from .approvals import Verdict, decide
+
+        base = self._base_tier_for_args(args)
         try:
             verdict = decide(
                 self._agent,
@@ -483,13 +515,85 @@ class _GatedTool:
     async def execute(self, args: dict[str, Any], ctx: Any) -> Any:
         # The catalog was selected at turn start. A pause or kill switch that
         # arrives while the model is thinking must still stop its next call.
-        if await self._runtime.store.kill_switch():
+        if self._requires_grant and (
+            self._session is None
+            or not self._session_id
+            or self._session_surface not in (SURFACE, "jarvis")
+            or self._persisted_session_mode is None
+        ):
+            return ToolResult(False, {"reason": "blocked_by_policy"}, "chat provenance unavailable")
+        try:
+            halted = await self._runtime.store.kill_switch()
+            live = await self._runtime.roster.get(self._agent.agent_id)
+            service = self._runtime.chat_service()
+            store = getattr(service, "store", None)
+            session = store.get_session(self._session_id) if store is not None else None
+        except Exception:  # noqa: BLE001 — unavailable policy data must not authorize a call
+            log.warning("society gate: live policy lookup failed for %s", self.name, exc_info=True)
+            return ToolResult(
+                False, {"reason": "blocked_by_policy"}, "live permissions unavailable"
+            )
+        if halted:
             return ToolResult(False, {"reason": "kill_switch"}, "the society is halted")
-        live = await self._runtime.roster.get(self._agent.agent_id)
         if live is None or str(live.state) != "active":
             return ToolResult(
                 False, {"reason": "blocked_by_policy"}, "caller is not an active agent"
             )
+        if self._session_id and (
+            session is None
+            or str(getattr(session, "session_id", "")) != self._session_id
+            or str(getattr(session, "surface", "") or "") != self._session_surface
+            or str(getattr(session, "permission_mode", "") or "")
+            != self._persisted_session_mode
+            or str(getattr(self._session, "permission_mode", "") or "") != self._session_mode
+            or _permission_override(self._runtime, session) != self._permission_override
+        ):
+            return ToolResult(False, {"reason": "blocked_by_policy"}, "chat permissions changed")
+        if self._session_mode in ("plan", "read-only"):
+            from jarvis.core.tool_read_only import allows_read
+
+            if not allows_read(self._inner, args):
+                return ToolResult(False, {"reason": "blocked_by_policy"}, "read-only turn")
+        if self._requires_grant and self.name not in select_tools(
+            {self.name: self._inner},
+            grant_mode=str(live.grant_mode),
+            grants=live.grants,
+            focus=live.focus,
+            denies=live.denies,
+        ):
+            return ToolResult(False, {"reason": "blocked_by_policy"}, "tool grant was revoked")
+        # A standing "always allow" may be added by the card that approved
+        # this same call. Other permission edits require a fresh executor pass.
+        rules = live.approval_rules
+        if (
+            str(live.permission_ceiling) != self._permission_ceiling
+            or frozenset(rules.get("require_approval", [])) != self._require_approval
+            or not self._always_allow.issubset(rules.get("always_allow", []))
+            or _effective_approval_mode(live, self._session, self._permission_override)
+            != self._approval_mode
+        ):
+            return ToolResult(False, {"reason": "blocked_by_policy"}, "agent permissions changed")
+        from .approvals import Verdict, decide
+
+        try:
+            verdict = decide(
+                live,
+                self._capability_id,
+                self._base_tier_for_args(args),
+                verb=_verb_of(args),
+                approval_mode=_effective_approval_mode(
+                    live, self._session, self._permission_override
+                ),
+            )
+        except Exception:  # noqa: BLE001 — a broken live policy may not authorize execution
+            log.warning("society gate: live decision failed for %s", self.name, exc_info=True)
+            return ToolResult(
+                False, {"reason": "blocked_by_policy"}, "live permissions unavailable"
+            )
+        if verdict is Verdict.BLOCK:
+            return ToolResult(False, {"reason": "blocked_by_policy"}, "tool class is blocked")
+        if verdict is Verdict.QUEUE and getattr(ctx, "approved_by", None) != "user":
+            return ToolResult(False, {"reason": "blocked_by_policy"}, "fresh approval required")
         return await self._inner.execute(args, ctx)
 
 
@@ -646,34 +750,38 @@ def society_tool_filter(session: Any) -> Callable[[dict[str, Tool]], dict[str, T
         # The gate rides on the executor's per-call tier hook, so the chat
         # card and the queue stay the one approval path.
         picked = {
-            name: cast(Tool, _GatedTool(tool, agent, cap_id, approval_mode, rt))
+            name: cast(
+                Tool,
+                _GatedTool(
+                    tool, agent, cap_id, approval_mode, rt,
+                    session=session, requires_grant=True,
+                ),
+            )
             for name, tool in picked.items()
             if (cap_id := capability_id_for_tool(name)) is not None
         }
         ordered: dict[str, Tool] = {}
-        if approval_mode is not None:
-            ordered.update(
-                {
-                    name: cast(
-                        Tool,
-                        _GatedTool(
-                            tool,
-                            agent,
-                            capability_id_for_tool(name) or "core:society",
-                            approval_mode,
-                            rt,
-                        ),
-                    )
-                    for name, tool in own.items()
-                    # Asking the user IS the person's decision; gating it
-                    # behind an approval card would ask twice.
-                    if name != ASK_USER_TOOL_NAME
-                }
-            )
-            if ASK_USER_TOOL_NAME in own:
-                ordered[ASK_USER_TOOL_NAME] = own[ASK_USER_TOOL_NAME]
-        else:
-            ordered.update(own)
+        ordered.update(
+            {
+                name: cast(
+                    Tool,
+                    _GatedTool(
+                        tool,
+                        agent,
+                        capability_id_for_tool(name) or "core:society",
+                        approval_mode,
+                        rt,
+                        session=session,
+                    ),
+                )
+                for name, tool in own.items()
+                # A legacy row still needs a live gate if its permissions change
+                # mid-turn. Asking the user is never gated behind its own card.
+                if name != ASK_USER_TOOL_NAME
+            }
+        )
+        if ASK_USER_TOOL_NAME in own:
+            ordered[ASK_USER_TOOL_NAME] = own[ASK_USER_TOOL_NAME]
         ordered.update(picked)
         return ordered
 

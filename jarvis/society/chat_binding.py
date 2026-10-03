@@ -41,6 +41,7 @@ log = logging.getLogger(__name__)
 __all__ = [
     "SURFACE",
     "bind_society_session",
+    "direct_chat_owner",
     "ensure_session",
     "frame_assignment",
     "frame_incoming",
@@ -258,13 +259,22 @@ def _agent_busy(svc: Any, agent: AgentRecord) -> bool:
     two message turns never share its seat, workspace and browser at once.
     Routine runs are background work and do not hold messages up.
     """
-    if svc.is_running(agent.session_id):
-        return True
     running = getattr(svc, "running_session_ids", None)
     if not callable(running):
-        return False
-    prefix = agent.session_id + PAIR_SESSION_MARKER
-    return any(sid.startswith(prefix) for sid in running())
+        return svc.is_running(agent.session_id)
+    return any(direct_chat_owner(sid) == agent.session_id for sid in running())
+
+
+def direct_chat_owner(session_id: str) -> str | None:
+    """Return the shared seat owner for a canonical or conversation chat.
+
+    Scheduled runs intentionally have independent admission and never reserve
+    the direct-chat seat.
+    """
+    if not session_id.startswith("society:") or ":routine:" in session_id:
+        return None
+    return session_id.split(PAIR_SESSION_MARKER, 1)[0]
+
 
 def frame_incoming(env: SocietyEnvelope, sender_name: str) -> str:
     """How a board envelope reads inside the receiving agent's chat."""
