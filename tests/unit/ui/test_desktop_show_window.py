@@ -189,3 +189,70 @@ def test_launcher_focus_does_not_fall_back_to_a_quitting_window(
 
     assert desktop_app.focus_existing_instance_robust() is False
     assert raised == []
+
+
+class _ProbedWindow:
+    """pywebview stand-in whose staleness probe answers with ``probe``."""
+
+    def __init__(self, probe: object) -> None:
+        self.probe = probe
+        self.scripts: list[str] = []
+        self.loaded: list[str] = []
+
+    def evaluate_js(self, script: str) -> object:
+        self.scripts.append(script)
+        if isinstance(self.probe, Exception):
+            raise self.probe
+        return self.probe
+
+    def load_url(self, url: str) -> None:
+        self.loaded.append(url)
+
+
+def _probed_app(window: _ProbedWindow) -> DesktopApp:
+    app = DesktopApp.__new__(DesktopApp)
+    app._window = window  # noqa: SLF001
+    app._url = lambda: "http://127.0.0.1:47821/"  # type: ignore[method-assign]  # noqa: SLF001
+    return app
+
+
+def test_showing_a_healthy_window_never_reloads_it() -> None:
+    """Regression 2026-10-03: a click on the appshot card reloaded the app.
+
+    The probe used to require "Jarvis" in ``document.title``; the title has
+    been "Assistant" since July, so every show — tray, orb, appshot card —
+    reloaded the window, wiping the editor the card had just opened and
+    hanging up a running voice call.
+    """
+    window = _ProbedWindow(probe=True)
+    _probed_app(window)._reload_window_if_stale()  # noqa: SLF001
+
+    assert window.loaded == []
+    assert "title" not in window.scripts[0], "the title is not the app's identity"
+
+
+def test_a_stale_error_page_is_still_reloaded() -> None:
+    window = _ProbedWindow(probe=False)
+    _probed_app(window)._reload_window_if_stale()  # noqa: SLF001
+
+    assert window.loaded == ["http://127.0.0.1:47821/"]
+
+
+def test_a_failing_probe_leaves_the_window_alone() -> None:
+    """A probe that throws knows nothing about the page; reloading on it
+    reloaded a healthy window on every show."""
+    window = _ProbedWindow(probe=RuntimeError("bridge not ready"))
+    _probed_app(window)._reload_window_if_stale()  # noqa: SLF001
+
+    assert window.loaded == []
+
+
+def test_the_shipped_index_satisfies_the_probe() -> None:
+    """The probe's marker must exist in the document the app actually serves."""
+    from pathlib import Path
+
+    from jarvis.ui import desktop_app
+
+    index = Path(desktop_app.__file__).parent / "web" / "frontend" / "index.html"
+    assert "root" in desktop_app._SPA_DOCUMENT_PROBE  # noqa: SLF001
+    assert 'id="root"' in index.read_text(encoding="utf-8")

@@ -43,6 +43,10 @@ if TYPE_CHECKING:
 # is "Personal Jarvis Dev", so neither instance ever raises the other's window.
 WINDOW_TITLE = current_instance().display_name
 
+# True while the WebView shows the app's own document — booted or still
+# booting. A stale error body has no ``#root``. See ``_reload_window_if_stale``.
+_SPA_DOCUMENT_PROBE = "document.getElementById('root') !== null"
+
 # Direct ``python -m jarvis.ui.desktop_app`` entry points bypass the launcher,
 # so they need the same pythonw/PyInstaller stream repair here as well.
 ensure_standard_streams()
@@ -6205,25 +6209,31 @@ class DesktopApp:
         rendered last. When the user hides the window for a while and
         the FastAPI server later recovers, ``show()`` only un-hides the
         cached frame — including stale 4xx/5xx pages such as the bare
-        ``Internal Server Error`` body. Probing ``document.title`` lets
-        us recognise that the React app never booted and forces a fresh
-        navigation to the SPA root.
+        ``Internal Server Error`` body. The SPA document always carries
+        ``#root`` (from ``index.html``, before React even mounts); an error
+        body never does, so its absence is what forces a fresh navigation.
+
+        The probe used to look for "Jarvis" in ``document.title``, but the
+        title has been the neutral "Assistant" since 2026-07-01, so EVERY
+        show — a tray click, the orb, a click on the appshot card — reloaded
+        a perfectly healthy window: the editor the card had just opened was
+        wiped and a running voice call hung up.
         """
         if self._window is None:
             return
         from loguru import logger
 
         try:
-            title = self._window.evaluate_js("document.title")
+            booted = self._window.evaluate_js(_SPA_DOCUMENT_PROBE)
         except Exception as exc:  # noqa: BLE001
-            # A probe that ALWAYS fails looks identical to "the SPA never
-            # booted", so every show() reloads the window — the reload loop
-            # that reads as a flickering window at startup. Distinguishing a
-            # broken probe from a genuinely stale frame needs this line.
-            logger.debug("Staleness probe failed, assuming a stale frame: {}", exc)
-            title = None
-        if title and isinstance(title, str) and "Jarvis" in title:
+            # A probe that fails says nothing about the page; reloading on it
+            # would reload a healthy window on every show (the old loop that
+            # read as a flickering window at startup), so keep what is there.
+            logger.debug("Staleness probe failed; leaving the window as it is: {}", exc)
             return
+        if booted is True:
+            return
+        logger.info("The window shows no app (stale error page); reloading it.")
         try:
             self._window.load_url(self._url())
         except Exception as exc:  # noqa: BLE001
