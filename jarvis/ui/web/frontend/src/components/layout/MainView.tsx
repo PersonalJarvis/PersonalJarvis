@@ -1,22 +1,14 @@
 import {
   lazy,
   Suspense,
-  useContext,
   useEffect,
   useState,
   type ComponentType,
   type LazyExoticComponent,
 } from "react";
-import { QueryClientContext } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
-import {
-  costDailyQueryOptions,
-  costSummaryQueryOptions,
-  EMPTY_FILTERS,
-} from "@/hooks/useCosts";
-import { overviewQueryOptions } from "@/hooks/useLocalModels";
-import { readLocalModelsSeed } from "@/lib/localModelsSeed";
-import { useEventStore } from "@/store/events";
+import { useEventStore, type SectionId } from "@/store/events";
+import { sectionPrefetch } from "@/lib/sectionPrefetch";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { ViewErrorBoundary } from "@/components/ViewErrorBoundary";
@@ -32,33 +24,18 @@ import type { AgenticIdeViewProps } from "@/views/AgenticIdeView";
 import { ChatsSurface } from "@/views/ChatsSurface";
 
 /**
- * Section views are CODE-SPLIT, then prefetched while the app is idle.
- *
- * Why (measured 2026-07-26): importing all 21 views statically linked every
- * section — plus the terminal emulator and the charting library — into a single
- * 2.83 MB entry chunk. A WebView must download, parse AND execute all of it
- * before React paints, which is the "the app feels sluggish on start" report.
- * The boot splash in index.html only hid that wait.
- *
- * Splitting alone would move the cost rather than remove it: the first visit to
- * a section would then pay for its chunk. `useIdleViewPrefetch` closes that gap
- * by pulling the remaining chunks in during idle time after the first paint, so
- * switching sections stays instant while startup only pays for what it shows.
+ * Keep unused views out of every window's startup work. Navigation loads its
+ * view through React.lazy; a deliberate sidebar hover/focus warms only that
+ * destination. Blanket idle imports used to execute all 14 views per window.
  */
 type ViewModule = { default: ComponentType };
 type ViewLoader = () => Promise<ViewModule>;
 
-/**
- * Loaders for every split view, in the order the idle prefetch warms them.
- *
- * Typed as returning `unknown` because warming a chunk only cares that the
- * import RAN — the module's shape is the caller's business, and pinning the
- * props-free shape here would keep `lazyPropView` out of the warm-up.
- */
-const prefetchQueue: (() => Promise<unknown>)[] = [];
-
-function lazyView(loader: ViewLoader): LazyExoticComponent<ComponentType> {
-  prefetchQueue.push(loader);
+function lazyView(
+  sections: readonly SectionId[],
+  loader: ViewLoader,
+): LazyExoticComponent<ComponentType> {
+  sectionPrefetch.register(sections, loader);
   return lazy(loader);
 }
 
@@ -72,32 +49,31 @@ function lazyView(loader: ViewLoader): LazyExoticComponent<ComponentType> {
  * answer for it (see `MainView`).
  */
 function lazyPropView<P>(
+  sections: readonly SectionId[],
   loader: () => Promise<{ default: ComponentType<P> }>,
 ): LazyExoticComponent<ComponentType<P>> {
-  prefetchQueue.push(loader);
+  sectionPrefetch.register(sections, loader);
   return lazy(loader);
 }
 
-// Ordered roughly by how likely a section is to be opened, so the warm-up
-// front-loads what the user reaches for first. Views are named exports, hence
-// the explicit unwrap into the { default } shape React.lazy expects.
+// Views are named exports, hence the explicit React.lazy default unwrap.
 // The Settings hub — Profile, {name}.md, Contacts, Socials, API Keys, Local
 // models, Spend and Feedback behind one left-nav dialog. The hub
 // statically owns only its shell; every tab stays its own lazy chunk (see
 // SettingsHubView), so this one import replaces the eleven per-view imports
 // below without merging their chunks back together.
-const SettingsHubDialog = lazyPropView<{ onClose: () => void }>(() =>
+const SettingsHubDialog = lazyPropView<{ onClose: () => void }>(SETTINGS_HUB_IDS, () =>
   import("@/views/SettingsHubView").then((m) => ({ default: m.SettingsHubDialog })),
 );
 // The Agents section is the society (MASTERPLAN §4.1): stage + agents rail +
 // model cards. The board it replaced is the society's stage until the island
 // lands, loaded by SocietyView itself.
-const SocietyView = lazyView(() =>
+const SocietyView = lazyView(["agents"], () =>
   import("@/views/society/SocietyView").then((m) => ({
     default: m.SocietyView,
   })),
 );
-const WikiView = lazyView(() =>
+const WikiView = lazyView(["memory"], () =>
   import("@/views/WikiView").then((m) => ({ default: m.WikiView })),
 );
 type PluginArea = "plugins" | "mcps" | "skills";
@@ -109,147 +85,44 @@ const isSettingsHub = (section: string) =>
 // replacing it.
 const isOverlaySection = (section: string) => isPluginArea(section) || isSettingsHub(section);
 
-const PluginsDialog = lazyPropView<{ onClose: () => void; area: PluginArea; onAreaChange: (area: PluginArea) => void }>(() =>
+const PluginsDialog = lazyPropView<{ onClose: () => void; area: PluginArea; onAreaChange: (area: PluginArea) => void }>(["plugins", "mcps", "skills"], () =>
   import("@/views/PluginsDialog").then((m) => ({ default: m.PluginsDialog })),
 );
 // The prop type is named rather than inferred: inferring it from the loader's
 // return value is circular (the loader's contextual type is what depends on it),
 // and TypeScript resolves that by falling back to `never`.
-const AgenticIdeView = lazyPropView<AgenticIdeViewProps>(() =>
+const AgenticIdeView = lazyPropView<AgenticIdeViewProps>(["agentic-ide", "agentic-ide-classic", "chat-workspace"], () =>
   import("@/views/AgenticIdeView").then((m) => ({ default: m.AgenticIdeView })),
 );
-const SessionsView = lazyView(() =>
+const SessionsView = lazyView(["sessions"], () =>
   import("@/views/SessionsView").then((m) => ({ default: m.SessionsView })),
 );
-const ClisHubView = lazyView(() =>
+const ClisHubView = lazyView(["clis", "cli-test-hub"], () =>
   import("@/views/ClisHubView").then((m) => ({ default: m.ClisHubView })),
 );
-const DocsView = lazyView(() =>
+const DocsView = lazyView(["docs"], () =>
   import("@/views/DocsView").then((m) => ({ default: m.DocsView })),
 );
-const BoardView = lazyView(() =>
+const BoardView = lazyView(["board"], () =>
   import("@/views/BoardView").then((m) => ({ default: m.BoardView })),
 );
 // Dictation + Dictionary + Shortcuts + Language + Voice API keys are merged
 // behind the one "{name} Voice" sidebar entry. Only the hub is split out here —
 // it statically imports its five tabs, so they travel in its chunk instead of
 // being prefetched as separate ones.
-const VoiceHubView = lazyView(() =>
+const VoiceHubView = lazyView(["dictation", "dictionary", "voice-shortcuts", "voice-language", "voice-api-keys"], () =>
   import("@/views/VoiceHubView").then((m) => ({ default: m.VoiceHubView })),
 );
-const VisualizationView = lazyView(() =>
+const VisualizationView = lazyView(["visualization"], () =>
   import("@/views/VisualizationView").then((m) => ({
     default: m.VisualizationView,
   })),
 );
-const MarketplaceView = lazyView(() =>
+const MarketplaceView = lazyView(["marketplace"], () =>
   import("@/views/MarketplaceView").then((m) => ({
     default: m.MarketplaceView,
   })),
 );
-
-type IdleWindow = Window & {
-  requestIdleCallback?: (
-    cb: () => void,
-    opts?: { timeout: number },
-  ) => number;
-  cancelIdleCallback?: (handle: number) => void;
-};
-
-/**
- * Run `task` when the browser is idle, falling back to a timer.
- *
- * `requestIdleCallback` is absent on older Safari/WebKit, which is exactly the
- * macOS WebView this app also ships in, so the timer fallback is load-bearing
- * rather than cosmetic. The returned function cancels a pending slot.
- */
-function scheduleIdle(task: () => void): () => void {
-  const w = window as IdleWindow;
-  if (typeof w.requestIdleCallback === "function") {
-    // The timeout caps how long a busy main thread may starve the warm-up.
-    const handle = w.requestIdleCallback(task, { timeout: 2_000 });
-    return () => w.cancelIdleCallback?.(handle);
-  }
-  const handle = window.setTimeout(task, 300);
-  return () => window.clearTimeout(handle);
-}
-
-/**
- * Warm the split view chunks one at a time, each in its own idle slot.
- *
- * Sequential rather than parallel on purpose: firing 20 imports at once would
- * compete with the requests the visible section is making, which is the very
- * stall this is meant to remove. A failed prefetch is ignored — the chunk is
- * simply fetched again on navigation, where Suspense handles it.
- */
-/**
- * How long after mount the Spend warm-up runs. Past the boot burst — this app
- * makes about thirty API calls before it settles — and well inside the time it
- * takes anyone to read the home screen and reach for the sidebar.
- */
-const SPEND_WARM_DELAY_MS = 2_500;
-
-function useIdleViewPrefetch(): void {
-  // Optional on purpose: the shell renders without a QueryClient in some
-  // tests, and the data warm-up is a bonus, never a requirement.
-  const queryClient = useContext(QueryClientContext);
-  useEffect(() => {
-    let cancelled = false;
-    let cancelSlot: (() => void) | null = null;
-    let index = 0;
-    const queue = [...prefetchQueue];
-    if (queryClient) {
-      // After the chunks: the Local models overview, when a previous open
-      // left a seed — so the section paints with server truth, not just the
-      // on-disk snapshot, the moment it is opened.
-      queue.push(() => {
-        const seed = readLocalModelsSeed();
-        return seed
-          ? queryClient.prefetchQuery(overviewQueryOptions(seed))
-          : Promise.resolve();
-      });
-    }
-
-    const pump = () => {
-      if (cancelled || index >= queue.length) return;
-      const loader = queue[index++];
-      void loader()
-        .catch(() => undefined)
-        .then(() => {
-          if (cancelled) return;
-          cancelSlot = scheduleIdle(pump);
-        });
-    };
-
-    cancelSlot = scheduleIdle(pump);
-
-    // Spend, on its own clock rather than at the end of that queue.
-    //
-    // It is the one section whose first read is measured in a second rather
-    // than milliseconds — it aggregates every store the app writes plus the
-    // coding-CLI transcripts — so it is the one where arriving to a finished
-    // page instead of a loading one is the whole difference. Queued behind
-    // twenty module imports, each waiting for its own idle slot, it had not
-    // run twenty-five seconds into a fresh bundle. A plain timer is late
-    // enough to stay out of the boot burst and early enough to beat a click.
-    // The section opens on `EMPTY_FILTERS`, so these are the keys it asks for.
-    const warmSpend = window.setTimeout(() => {
-      if (cancelled || !queryClient) return;
-      void queryClient
-        .prefetchQuery(costSummaryQueryOptions(EMPTY_FILTERS))
-        .catch(() => undefined);
-      void queryClient
-        .prefetchQuery(costDailyQueryOptions(EMPTY_FILTERS))
-        .catch(() => undefined);
-    }, SPEND_WARM_DELAY_MS);
-
-    return () => {
-      cancelled = true;
-      cancelSlot?.();
-      window.clearTimeout(warmSpend);
-    };
-  }, [queryClient]);
-}
 
 /** Quiet time before a loading section admits it is loading. */
 export const LOADING_HINT_MS = 400;
@@ -382,8 +255,6 @@ export function MainView() {
   );
   if (!isOverlaySection(active) && backgroundSection !== active) setBackgroundSection(active);
   const displayed = isOverlaySection(active) ? backgroundSection : active;
-
-  useIdleViewPrefetch();
 
   /*
    * While a coding view lives in a detached solo window, THIS (non-solo)

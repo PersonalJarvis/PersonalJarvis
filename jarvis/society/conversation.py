@@ -6,6 +6,7 @@ reads and a parameterized text-search fallback on every supported OS.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -30,11 +31,40 @@ def event_text(event: dict[str, Any]) -> str:
 
 
 class ConversationArchive:
-    def __init__(self, path: Path) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self._db = sqlite3.connect(path, check_same_thread=False)
-        self._db.row_factory = sqlite3.Row
+    def __init__(self, path: Path, *, defer_open: bool = False) -> None:
+        self._path = path
         self._lock = threading.RLock()
+        self._connection: sqlite3.Connection | None = None
+        self._closed = False
+        self.fts_available = False
+        if not defer_open:
+            self.open()
+
+    @property
+    def _db(self) -> sqlite3.Connection:
+        self.open()
+        assert self._connection is not None
+        return self._connection
+
+    def open(self) -> None:
+        """Initialize storage once. Async owners must call this off their loop."""
+        with self._lock:
+            if self._closed:
+                raise sqlite3.ProgrammingError("The conversation archive is closed")
+            if self._connection is not None:
+                return
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            self._connection = sqlite3.connect(self._path, check_same_thread=False)
+            self._connection.row_factory = sqlite3.Row
+            try:
+                self._initialize_schema()
+            except BaseException:
+                self._connection.close()
+                self._connection = None
+                self.fts_available = False
+                raise
+
+    def _initialize_schema(self) -> None:
         self._db.executescript("""
             PRAGMA journal_mode=WAL;
             CREATE TABLE IF NOT EXISTS messages (
@@ -80,7 +110,10 @@ class ConversationArchive:
 
     def close(self) -> None:
         with self._lock:
-            self._db.close()
+            self._closed = True
+            if self._connection is not None:
+                self._connection.close()
+                self._connection = None
 
     def ingest(self, session: str, events: list[dict[str, Any]]) -> None:
         with self._lock, self._db:
@@ -116,6 +149,7 @@ class ConversationArchive:
             (session, len(prefix), prefix) if include_owned else (session,)
         )
         with self._lock:
+            self.open()
             if self.fts_available:
                 expression = " OR ".join('"' + w + '"' for w in words[:32])
                 sql = (
@@ -283,11 +317,11 @@ async def prepare_history(
 
     archive = runtime.conversations
     sid = session.session_id
-    archive.ingest(sid, events)
+    await asyncio.to_thread(archive.ingest, sid, events)
     window = max(1024, int(getattr(provider, "context_window", 0) or 32768))
     # Reserve room for the system/tool surface, current request and generated output.
     budget = max(1024, window * 3 - prompt_chars - len(query))
-    through, summary = archive.checkpoint(sid)
+    through, summary = await asyncio.to_thread(archive.checkpoint, sid)
     remaining = [e for e in events if int(e.get("seq") or 0) > through]
     size = sum(len(event_text(e)) + 32 for e in remaining)
     if size + len(summary) > budget or len(summary) > budget // 3:
@@ -363,7 +397,7 @@ async def prepare_history(
                 raise ValueError("An empty summary cannot replace conversation context")
             if boundary is not None:
                 through = boundary
-                archive.save_checkpoint(sid, through, summary)
+                await asyncio.to_thread(archive.save_checkpoint, sid, through, summary)
         remaining = [e for e in events if int(e.get("seq") or 0) > through]
         if retained_request is not None and int(retained_request.get("seq") or 0) <= through:
             # Keep the last human request verbatim even if its unusually long
@@ -371,7 +405,7 @@ async def prepare_history(
             remaining.insert(0, retained_request)
     history = brain_history_from_events(remaining, max_messages=None)
     if summary:
-        recalled = archive.search(sid, query, limit=4)
+        recalled = await asyncio.to_thread(archive.search, sid, query, limit=4)
         excerpts = "\n".join(
             f"{h['source']}: {h['text'][:1500]}" for h in recalled if h["seq"] <= through
         )

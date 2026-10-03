@@ -794,6 +794,9 @@ class OrbBusBridge:
         if pipeline is None:
             return
         self._call_surface("set_muted", bool(getattr(pipeline, "is_muted", False)))
+        if hasattr(pipeline, "is_speaker_muted"):
+            self._call_surface("set_speaker_muted", bool(pipeline.is_speaker_muted))
+            return
         getter = getattr(pipeline, "get_tts_volume", None)
         if not callable(getter):
             return
@@ -1045,7 +1048,7 @@ class OrbBusBridge:
         return self._last_state not in ("IDLE", "ERROR", "PAUSED")
 
     async def _on_speaker_mute_changed(self, event: VoiceSpeakerMuteChanged) -> None:
-        """Mirror the pipeline's speaker mute (TTS volume 0) on the surface."""
+        """Mirror the pipeline's authoritative output mute on the surface."""
         self._remember_loop()
         self._call_surface("set_speaker_muted", bool(event.muted))
 

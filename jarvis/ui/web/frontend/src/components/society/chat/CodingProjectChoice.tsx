@@ -41,13 +41,13 @@ export function CodingProjectChoice({ agents, folder, onFolder }: {
       <Dialog.Root open={open} onOpenChange={setOpen}>
         <Dialog.Portal>
           <Dialog.Overlay className="fixed inset-0 z-[90] bg-[rgb(var(--scrim-rgb)/0.4)]" />
-          <Dialog.Content className="fixed left-1/2 top-1/2 z-[91] flex max-h-[85vh] w-[min(680px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col rounded-xl border border-border bg-popover p-4 text-foreground shadow-float">
+          <Dialog.Content onEscapeKeyDown={(e) => { if (e.target instanceof Element && e.target.closest("[data-escape-local]")) e.preventDefault(); }} className="fixed left-1/2 top-1/2 z-[91] flex max-h-[85vh] w-[min(680px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col rounded-xl border border-border bg-popover p-4 text-foreground shadow-float">
             <Dialog.Title className="pr-8 text-sm font-semibold">{t("society.chat.coding_choose_folder")}</Dialog.Title>
             <Dialog.Description className="mt-1 text-xs text-muted-foreground">{t("society.chat.coding_project_optional")}</Dialog.Description>
             <Dialog.Close aria-label={t("society.chat.coding_close")} className="absolute right-3 top-3 rounded p-1 hover:bg-secondary"><X className="h-4 w-4" /></Dialog.Close>
             <div className="my-3 min-h-0 overflow-auto">
               <Suspense fallback={<p className="text-xs text-muted-foreground">{t("society.chat.mention_loading")}</p>}>
-                {open && <FolderPicker selected={candidate} onSelect={setCandidate} />}
+                {open && <FolderPicker selected={candidate} onSelect={setCandidate} className="p-0" />}
               </Suspense>
             </div>
             <button type="button" disabled={!candidate} onClick={() => { if (candidate) onFolder(candidate); setOpen(false); }}

@@ -1,10 +1,25 @@
 # Managed agent browser
 
+Named profiles can be shared with all agents or selected agents. The optional
+Chrome extension connects an existing user's Chrome profile. See
+[browser profiles and shared logins](browser-profiles.md) for setup, assignment
+semantics and the connector's current verification limits.
+
 Jarvis provisions an isolated Browser-Use Python environment and a managed
 browser automatically during installation and after the server becomes ready.
 Opening an agent subscribes to that agent's actual rendered tab in the right
 Options rail. The browser remains open between tasks. Expand the view and take
 control to navigate or sign in, then return control to the agent.
+
+On Windows the complete window preview includes Chrome-owned profile menus,
+context menus and native dialogs. Manual right clicks, double clicks, hover,
+scrolling and typing are forwarded to the displayed owned widget, so website
+sign-in can stay in that window. The frame geometry accompanies pointer input
+to reject clicks from an outdated popup layout. Native OS dialogs remain
+manual-only for agents; direct keyboard/clipboard shortcuts cannot bypass the
+agent workspace boundary. Vision-capable, unrestricted agents receive the
+same complete window image and gated native click/hover/scroll/navigation-key
+tools. Domain-restricted or page-only sessions retain DOM controls.
 
 The Jarvis root chat uses the lead agent's same browser profile and its selected
 chat model. Its Add picker includes the browser tool. Stopping the browser task

@@ -10,7 +10,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiKeysView } from "@/views/ApiKeysView";
+
+function renderView() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={client}>
+      <ApiKeysView />
+    </QueryClientProvider>,
+  );
+}
 import { useEventStore } from "@/store/events";
 
 // ApiKeysView now reads the live `[voice].mode` (for the Pipeline|Realtime
@@ -137,7 +147,7 @@ afterEach(() => {
 describe("ApiKeysView — embedded Telephony tier", () => {
   it("renders the Telephony tier header inside the API-Keys view", async () => {
     installFetchMock(routes());
-    render(<ApiKeysView />);
+    renderView();
     // Telephony now lives in the de-emphasized "Advanced" tab; open it first.
     fireEvent.click(screen.getByRole("tab", { name: /advanced/i }));
 
@@ -147,7 +157,7 @@ describe("ApiKeysView — embedded Telephony tier", () => {
 
   it("loads live telephony status (Charon voice) from /api/telephony", async () => {
     installFetchMock(routes());
-    render(<ApiKeysView />);
+    renderView();
     // Telephony now lives in the de-emphasized "Advanced" tab; open it first.
     fireEvent.click(screen.getByRole("tab", { name: /advanced/i }));
 
@@ -161,7 +171,7 @@ describe("ApiKeysView — embedded Telephony tier", () => {
 
   it("offers a 'Setup script' button that navigates to the telephony-setup page", async () => {
     installFetchMock(routes());
-    render(<ApiKeysView />);
+    renderView();
     // Telephony now lives in the de-emphasized "Advanced" tab; open it first.
     fireEvent.click(screen.getByRole("tab", { name: /advanced/i }));
 

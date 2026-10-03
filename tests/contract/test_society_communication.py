@@ -151,7 +151,7 @@ async def test_question_returns_once_and_answer_ends_exchange(world):
     assert reply_policy(answers[0]) == "none"
     assert "No reply is requested" in frame_incoming(answers[0], "Scout")
     assert len(chat.notices) == 1
-    assert published == [], "a reply to the lead is shown, never spoken"
+    assert len(published) == 1
     refused = await MessageAgentTool(rt, "jarvis").execute(
         {
             "target": "scout",
@@ -212,7 +212,7 @@ async def test_message_reporting_matrix(world, policy, status, expected):
     request = await send(rt, reply_policy=policy)
     await finish_message(rt, chat, request, status=status)
     assert len(chat.notices) == expected
-    assert published == [], "a reply to the lead is shown, never spoken"
+    assert len(published) == expected
     if expected and status == "error":
         replies = await rt.store.events_for_trace(request.trace_id)
         assert replies[-1].payload["reply_status"] == "blocked"
@@ -294,7 +294,7 @@ async def test_assignment_reporting_preserves_result_and_releases_slot(
     assert len(results) == 1 and results[0].payload["status"] == status
     assert rt.scheduler.active_runs("scout") == 0
     assert len(chat.notices) == expected
-    assert published == [], "a reply to the lead is shown, never spoken"
+    assert len(published) == expected
 
 
 @pytest.mark.parametrize(

@@ -11,6 +11,7 @@ import {
   fetchProviderHealth,
   fetchProviderModels,
   isApiRunner,
+  invalidateAgentChatSessions,
   patchAgentChatSession,
   resolveAgentChatApproval,
   answerAgentChatQuestion,
@@ -18,6 +19,7 @@ import {
   skipAgentChatQuestion,
   type QuestionAnswerInput,
   sendAgentChatMessage,
+  saveChatSelection,
   type AgentChatCatalog,
   type AgentChatEvent,
   type AgentChatProvider,
@@ -32,6 +34,7 @@ import {
 } from "@/lib/agentChatApi";
 import { EMPTY_TIMELINE, reduceEvent, reduceEvents, type Timeline } from "@/components/agentchat/reduce";
 import { jitteredDelay, requestConnect } from "../lib/connectBudget";
+import { reuseHistoryRows } from "@/lib/historyRequests";
 
 /**
  * The agent chat's store — one per SURFACE (`createAgentChatStore`).
@@ -80,6 +83,7 @@ const SESSION_LIST_LIMIT = 500;
 
 export interface ComposerDraft {
   provider: string;
+  accountId?: string;
   model: string;
   effort: string;
   permissionMode: string;
@@ -298,6 +302,7 @@ function draftFromSession(session: AgentChatSession, prev: ComposerDraft): Compo
   const plan = session.permission_mode === "plan";
   return {
     provider: session.provider,
+    accountId: session.account_id ?? "",
     model: session.model,
     effort: session.effort,
     permissionMode: session.permission_mode,
@@ -339,6 +344,8 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
   };
 
   let catalogRequest = 0;
+  let selectionRevision = 0;
+  let selectionWrite: Promise<unknown> = Promise.resolve();
   let socket: WebSocket | null = null;
   let socketSession: string | null = null;
   /** Cancels the reconnect waiting in the shared connect budget. */
@@ -418,7 +425,7 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
             timeline: { ...tl, sessionPatch: null },
             draft: draftFromSession(frame.session, prev.draft),
           });
-          writeDraft(DRAFT_KEY, get().draft);
+          if (surface !== "jarvis") writeDraft(DRAFT_KEY, get().draft);
           if (prev.activeSession?.account_id !== frame.session.account_id) void get().loadCatalog();
           return;
         }
@@ -473,8 +480,10 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
 
       loadCatalog: async () => {
         const requestId = ++catalogRequest;
+        const revision = selectionRevision;
         const sessionId = get().activeSessionId;
         try {
+          if (surface === "jarvis" && !sessionId) await selectionWrite;
           const [raw, connections] = await Promise.all([
             fetchAgentChatCatalog(surface, { sessionId: sessionId ?? undefined, cwd: get().draft.cwd || undefined }),
             fetchAgentConnections().catch(() => [] as AgentConnectionRow[]),
@@ -514,6 +523,9 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
           const st = get();
           const options = st.providerOptions();
           let draft = st.draft;
+          if (surface === "jarvis" && !sessionId && revision === selectionRevision && catalog.selection) {
+            draft = { ...draft, provider: catalog.selection.provider, model: catalog.selection.model, effort: catalog.selection.effort, accountId: catalog.selection.account_id ?? "" };
+          }
           const known = options.find((o) => o.id === draft.provider);
           if (!known) {
             const pick = options.find((o) => o.active && o.connected) ?? options.find((o) => o.connected) ?? options[0];
@@ -550,7 +562,18 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
           }
           if (draft !== st.draft) {
             set({ draft });
-            writeDraft(DRAFT_KEY, draft);
+            if (surface !== "jarvis" || !sessionId) writeDraft(DRAFT_KEY, draft);
+          }
+          // Upgrade an existing local pick once, so voice can use it before
+          // the person sends another chat message.
+          if (surface === "jarvis" && !sessionId && !catalog.selection && known && revision === selectionRevision) {
+            const selection = { provider: draft.provider, model: draft.model, effort: draft.effort, ...(draft.accountId ? { account_id: draft.accountId } : {}) };
+            selectionWrite = selectionWrite.catch(() => undefined).then(() => saveChatSelection(selection));
+            try {
+              await selectionWrite;
+            } catch (err) {
+              set({ lastError: errorText(err) });
+            }
           }
           if (draft.provider) void get().loadModels(draft.provider);
         } catch (err) {
@@ -568,7 +591,10 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
           // from a backend older than the split — those are kept, so an
           // update never makes a person's chats vanish until the restart.
           const sessions = rows.filter((row) => row.surface === undefined || row.surface === surface);
-          set({ sessions });
+          set((state) => {
+            const shared = reuseHistoryRows(state.sessions, sessions, (row) => row.session_id);
+            return shared === state.sessions ? state : { sessions: shared };
+          });
         } catch {
           /* offline / headless — keep the list as-is */
         }
@@ -610,6 +636,8 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
 
       setDraft: async (patch) => {
         const st = get();
+        const changesSelection = patch.provider !== undefined || patch.model !== undefined || patch.effort !== undefined;
+        if (changesSelection) ++selectionRevision;
         let draft: ComposerDraft = { ...st.draft, ...patch };
         // A provider change re-seats model / effort / permission on the new
         // provider's defaults unless the caller set them explicitly.
@@ -619,6 +647,7 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
             draft = {
               ...draft,
               model: patch.model ?? p.default_model,
+              accountId: patch.accountId ?? "",
               effort: patch.effort ?? p.default_effort,
               permissionMode: patch.permissionMode ?? p.default_permission_mode,
               buildMode: patch.permissionMode ?? p.default_permission_mode,
@@ -632,6 +661,15 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
         writeDraft(DRAFT_KEY, draft);
         // With a session open, the pick applies to it right away.
         const sid = st.activeSessionId;
+        if (surface === "jarvis" && changesSelection && !sid && draft.provider) {
+          const selection = { provider: draft.provider, model: draft.model, effort: draft.effort, ...(draft.accountId ? { account_id: draft.accountId } : {}) };
+          selectionWrite = selectionWrite.catch(() => undefined).then(() => saveChatSelection(selection));
+          try {
+            await selectionWrite;
+          } catch (err) {
+            set({ lastError: errorText(err) });
+          }
+        }
         if (sid) {
           const body: PatchSessionInput = {};
           if (patch.provider !== undefined) body.provider = draft.provider;
@@ -642,7 +680,11 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
           }
           if (patch.cwd !== undefined) body.cwd = draft.cwd;
           try {
-            const session = await patchAgentChatSession(sid, body);
+            const update = surface === "jarvis"
+              ? selectionWrite.catch(() => undefined).then(() => patchAgentChatSession(sid, body))
+              : patchAgentChatSession(sid, body);
+            if (surface === "jarvis") selectionWrite = update;
+            const session = await update;
             set((s) => ({
               activeSession: s.activeSessionId === sid ? session : s.activeSession,
               sessions: s.sessions.map((x) => (x.session_id === sid ? { ...x, ...session } : x)),
@@ -668,6 +710,7 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
         closeSocket();
         ++catalogRequest;
         set({
+          ...(surface === "jarvis" ? { draft: readDraft(DRAFT_KEY) } : {}),
           activeSessionId: null,
           activeSession: null,
           timeline: EMPTY_TIMELINE,
@@ -721,10 +764,12 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
         set({ busy: true, lastError: null });
         let sid = st.activeSessionId;
         try {
+          await selectionWrite;
           if (!sid) {
             const d = st.draft;
             const session = await createAgentChatSession({
               provider: d.provider,
+              ...(d.accountId ? { account_id: d.accountId } : {}),
               model: d.model,
               effort: d.effort,
               cwd: d.cwd || null,
@@ -742,6 +787,7 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
             connect(sid, 0);
           }
           await sendAgentChatMessage(sid, content, attachments, toolChoices);
+          if (surface === "jarvis") writeDraft(DRAFT_KEY, st.draft);
           if (get().activeSessionId === sid) void get().loadSessions();
         } catch (err) {
           if (get().activeSessionId === sid) set({ lastError: errorText(err) });
@@ -793,10 +839,13 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
           const session = { ...st.activeSession, ...tl.sessionPatch } as AgentChatSession;
           patch.activeSession = session;
           patch.draft = draftFromSession(session, st.draft);
-          writeDraft(DRAFT_KEY, patch.draft);
+          if (surface !== "jarvis") writeDraft(DRAFT_KEY, patch.draft);
         }
         set(patch);
-        if (event.kind === "turn_finished" || event.kind === "user_message") void st.loadSessions();
+        if (event.kind === "turn_finished" || event.kind === "user_message") {
+          invalidateAgentChatSessions();
+          void st.loadSessions();
+        }
       },
 
       disconnect: () => {

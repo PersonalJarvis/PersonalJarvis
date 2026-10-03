@@ -106,7 +106,9 @@ class BrowserTool:
         "Give one clear task (what to achieve, where, what to return) and optionally the "
         "URL to start at. The run is capped (max_steps); it returns the final result, the "
         "pages visited and any errors. Tasks that send, buy, delete or publish ask the user "
-        "first. This is the live browser shown in your Options rail. Use this tool "
+        "first. This is the live browser shown in your Options rail. Call it even when "
+        "the browser or its panel is closed: the managed browser prepares and starts "
+        "automatically on demand, including for scheduled routines. Use this tool "
         "when the user selects Browser or asks to operate the visible browser, and "
         "for web tasks without a suitable connected API. Otherwise prefer a connected "
         "plugin or CLI when one exists for the service. If your own earlier call is "
@@ -176,6 +178,10 @@ class BrowserTool:
             caller = replace(caller, provider=self._model_pick[0], model=self._model_pick[1])
         if await rt.store.kill_switch():
             return _failure(FailureReason.KILL_SWITCH, "the society is halted")
+        if CAPABILITY_ID in caller.denies or (
+            str(caller.grant_mode) == "allowlist" and CAPABILITY_ID not in caller.grants
+        ):
+            return _failure(FailureReason.BLOCKED_BY_POLICY, "browser access is not granted")
         task = str(args.get("task") or "").strip()
         if not task:
             return _failure(FailureReason.BLOCKED_BY_POLICY, "task is required")

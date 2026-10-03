@@ -7,7 +7,7 @@
 #   2. bumps pyproject.toml + jarvis/__init__.py and writes the CHANGELOG
 #      section (scripts/ci/cut_release.py: [Unreleased] notes, or the
 #      Conventional Commits since the last tag),
-#   3. commits "chore(release): publish vX.Y.Z" to main, dispatches CI for it,
+#   3. checks the version commit through a candidate PR, then merges it normally,
 #   4. pushes the annotated tag and dispatches the three publishing workflows
 #      on it (PyPI, desktop installers, signed installer). Each of them starts
 #      with release-gate.yml, which waits for CI on the release commit.
@@ -33,41 +33,62 @@ on:
         description: "Exact version instead of a bump (optional, X.Y.Z)"
         required: false
         default: ""
+      resume_sha:
+        description: "Already merged and CI-qualified version commit to finish (optional full SHA)"
+        required: false
+        default: ""
 
 concurrency:
   group: release-cut
   cancel-in-progress: false
 
 permissions:
-  contents: write
-  actions: write
-  checks: read
+  contents: read
 
 jobs:
   cut:
     name: cut release
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 360
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+      checks: read
     outputs:
-      version: ${{ steps.bump.outputs.version }}
+      version: ${{ steps.bump.outputs.version || steps.resume.outputs.version }}
     env:
-      GH_TOKEN: ${{ github.token }}
+      GH_TOKEN: ${{ secrets.INTEGRATION_TOKEN || github.token }}
+      TOKEN_IS_BOT: ${{ secrets.INTEGRATION_TOKEN == '' }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
+          token: ${{ secrets.INTEGRATION_TOKEN || github.token }}
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
       - name: main must be green
+        if: inputs.resume_sha == ''
+        run: python scripts/ci/release_admit.py --ci-only --sha "$GITHUB_SHA" --repo "$GITHUB_REPOSITORY" --wait-minutes 0
+      - name: Select an already merged version commit
+        id: resume
+        if: inputs.resume_sha != ''
+        env:
+          RESUME_SHA: ${{ inputs.resume_sha }}
         run: |
-          state="$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?check_name=CI%20gate" \
-            --jq '[.check_runs[] | select(.status=="completed")][0].conclusion // "missing"')"
-          echo "CI gate on $GITHUB_SHA: $state"
-          [ "$state" = "success" ] || { echo "::error::main is not green ($state) - no release."; exit 1; }
+          [[ "$RESUME_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Resume requires a full commit SHA."; exit 1; }
+          expected="$(python -c 'from scripts.ci.release_admit import versions; print(versions()[0])')"
+          # Validate ancestry before executing anything from the selected ref.
+          git merge-base --is-ancestor "$RESUME_SHA" HEAD
+          git checkout --detach "$RESUME_SHA"
+          actual="$(python -c 'from scripts.ci.release_admit import versions; print(versions()[0])')"
+          [ "$actual" = "$expected" ] || { echo "::error::Resume cannot select an older version."; exit 1; }
+          echo "version=$actual" >> "$GITHUB_OUTPUT"
       - name: Bump version + CHANGELOG
         id: bump
+        if: inputs.resume_sha == ''
         env:
           BUMP: ${{ inputs.bump }}
           VERSION: ${{ inputs.version }}
@@ -76,31 +97,89 @@ jobs:
           new="$(python scripts/ci/cut_release.py "${arg[@]}" --notes-out "$RUNNER_TEMP/notes.md" | tail -1)"
           echo "version=$new" >> "$GITHUB_OUTPUT"
           git diff --stat
-      - name: Commit, dispatch CI, tag
+      - name: Check the version commit before landing and tagging
+        if: inputs.resume_sha == ''
         env:
           V: ${{ steps.bump.outputs.version }}
         run: |
           git config user.name "jarvis-release[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add pyproject.toml jarvis/__init__.py CHANGELOG.md
+          git add pyproject.toml jarvis/__init__.py uv.lock CHANGELOG.md
           git commit -m "chore(release): publish v$V"
-          git push origin HEAD:main
-          gh workflow run ci.yml --ref main -f full=true -f include_macos=false
-          git tag -a "v$V" -m "v$V"
-          git push origin "v$V"
+          sha="$(git rev-parse HEAD)"
+          candidate="release-cut/v${V}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          git push origin "HEAD:refs/heads/$candidate"
+          # Only eligible events (here pull_request) satisfy branch protection.
+          # A workflow_dispatch CI success is not accepted by GitHub for landing.
+          if ! gh pr create --base main --head "$candidate" --title "chore(release): publish v$V" \
+            --body-file "$RUNNER_TEMP/notes.md"; then
+            echo "::notice::Repository policy may require a maintainer to open the candidate PR."
+            echo "Open https://github.com/$GITHUB_REPOSITORY/compare/main...$candidate?expand=1" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          ci_run=""
+          for attempt in {1..60}; do
+            ci_run="$(gh run list --workflow ci.yml --branch "$candidate" --commit "$sha" \
+              --event pull_request --json databaseId --jq '.[0].databaseId // empty')"
+            [ -n "$ci_run" ] && break
+            sleep 5
+          done
+          [ -n "$ci_run" ] || { echo "::error::Candidate CI did not start."; exit 1; }
+          if [ "$(gh run view "$ci_run" --json conclusion --jq '.conclusion')" = "action_required" ]; then
+            gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$ci_run/approve"
+          fi
+          gh run watch "$ci_run" --exit-status --interval 30
+          state="$(gh api "repos/$GITHUB_REPOSITORY/commits/$sha/check-runs?check_name=CI%20gate" \
+            --jq '(.check_runs | max_by(.id)) | if .status == "completed" then .conclusion else (.status // "missing") end')"
+          [ "$state" = "success" ] || { echo "::error::Candidate CI gate is $state."; exit 1; }
+          gh pr merge "$candidate" --merge --match-head-commit "$sha"
+          merged="$(gh pr view "$candidate" --json mergeCommit --jq '.mergeCommit.oid')"
+          [[ "$merged" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Missing merge commit."; exit 1; }
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          git checkout --detach "$merged"
+      - name: Tag the admitted release
+        id: tag
+        env:
+          V: ${{ steps.bump.outputs.version || steps.resume.outputs.version }}
+        run: |
+          sha="$(git rev-parse HEAD)"
+          git merge-base --is-ancestor "$sha" origin/main
+          actual="$(python -c 'from scripts.ci.release_admit import versions; print(versions()[0])')"
+          [ "$actual" = "$V" ] || { echo "::error::Merged package version changed."; exit 1; }
+          git config user.name "jarvis-release[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git show-ref --verify --quiet "refs/tags/v$V"; then
+            [ "$(git rev-parse "v$V^{}")" = "$sha" ] || { echo "::error::The tag already names another commit."; exit 1; }
+            echo 'pushed=false' >> "$GITHUB_OUTPUT"
+          else
+            git tag -a "v$V" -m "v$V"
+            git push origin "v$V"
+            echo 'pushed=true' >> "$GITHUB_OUTPUT"
+          fi
       - name: Dispatch the publishing workflows on the tag
         env:
-          V: ${{ steps.bump.outputs.version }}
+          V: ${{ steps.bump.outputs.version || steps.resume.outputs.version }}
+          TAG_PUSHED: ${{ steps.tag.outputs.pushed }}
         run: |
-          for wf in release.yml desktop-installers.yml sign-installer.yml; do
-            gh workflow run "$wf" --ref "v$V"
-          done
+          # GITHUB_TOKEN tag pushes do not start CI; dispatch the immutable tag.
+          gh workflow run ci.yml --ref "v$V" -f full=true -f include_macos=true
+          python scripts/ci/release_assets.py prepare --repo "$GITHUB_REPOSITORY" --tag "v$V"
+          # An integration token's new tag already triggered the publishers.
+          # Dispatching twice races an immutable PyPI upload against itself.
+          if [ "$TOKEN_IS_BOT" = "true" ] || [ "$TAG_PUSHED" != "true" ]; then
+            python scripts/ci/release_assets.py dispatch --repo "$GITHUB_REPOSITORY" --tag "v$V"
+          fi
 
   publish:
     name: publish GitHub Release
     needs: cut
+    concurrency:
+      group: release-finalize-v${{ needs.cut.outputs.version }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 360
+    permissions:
+      contents: write
+      actions: read
     env:
       GH_TOKEN: ${{ github.token }}
       V: ${{ needs.cut.outputs.version }}
@@ -109,6 +188,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: v${{ needs.cut.outputs.version }}
+          persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
@@ -116,13 +196,8 @@ jobs:
       # same admission the publishing workflows wait for.
       - name: Wait for CI on the release commit
         run: python scripts/ci/release_admit.py --tag "v$V" --sha "$(git rev-parse HEAD)" --repo "$GITHUB_REPOSITORY"
-      - name: Publish the Release + resumable source asset
-        run: |
-          python scripts/ci/cut_release.py --print-notes "$V" > "$RUNNER_TEMP/notes.md"
-          git archive --format=tar.gz --prefix=personal-jarvis/ -o personal-jarvis-src.tar.gz "v$V"
-          if gh release view "v$V" >/dev/null 2>&1; then
-            gh release edit "v$V" --notes-file "$RUNNER_TEMP/notes.md" --draft=false
-            gh release upload "v$V" personal-jarvis-src.tar.gz --clobber
-          else
-            gh release create "v$V" --title "v$V" --notes-file "$RUNNER_TEMP/notes.md" --verify-tag personal-jarvis-src.tar.gz
-          fi
+      - name: Wait for publishers and finalize the complete release
+        run: >-
+          python scripts/ci/release_assets.py finalize
+          --repo "$GITHUB_REPOSITORY" --tag "v$V"
+          --sha "$(git rev-parse HEAD)" --wait-minutes 150

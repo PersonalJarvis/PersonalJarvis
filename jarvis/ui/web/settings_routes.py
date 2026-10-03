@@ -77,6 +77,12 @@ def _realtime_requires_webrtc_offer(cfg: object) -> bool:
     return realtime_requires_webrtc_offer(cfg)
 
 
+def _webrtc_start_event_required(cfg: object) -> bool:
+    from jarvis.realtime.factory import realtime_webrtc_start_event_required
+
+    return realtime_webrtc_start_event_required(cfg)
+
+
 #: Surface floor for the realtime start budget. Only ever RAISED by a
 #: provider's declared need — never lowered — so a browser that cannot reach
 #: the capability probe still behaves exactly as it always did.
@@ -358,6 +364,7 @@ async def get_voice_mode(request: Request) -> dict[str, object]:
         "realtime_available": realtime_available,
         "realtime_availability_pending": realtime_availability_pending,
         "requires_webrtc_offer": requires_webrtc_offer,
+        "webrtc_start_event_required": _webrtc_start_event_required(cfg),
         "browser_audio": browser_audio,
         "handshake_budget_s": handshake_budget_s,
         "transport_offer_ready": transport_offer_ready,
@@ -3430,6 +3437,31 @@ def put_silence_window(body: SilenceWindowBody, request: Request) -> dict[str, o
 # ---------------------------------------------------------------------------
 
 _TTS_VOLUME_DEFAULT = 1.0
+
+
+def _speaker_pipeline(request: Request):
+    pipeline = getattr(request.app.state, "speech_pipeline", None)
+    if pipeline is None:
+        from jarvis.core.runtime_refs import get_speech_pipeline
+
+        pipeline = get_speech_pipeline()
+    if not callable(getattr(pipeline, "speaker_output_state", None)):
+        raise HTTPException(status_code=503, detail="Voice output is not ready.")
+    return pipeline
+
+
+@router.get("/speaker-mute", summary="Read the assistant speaker mute and volume")
+def get_speaker_mute(request: Request) -> dict[str, object]:
+    return _speaker_pipeline(request).speaker_output_state()
+
+
+@router.post(
+    "/speaker-mute", summary="Toggle assistant output; keep microphone and volume unchanged",
+)
+def toggle_speaker_mute(request: Request) -> dict[str, object]:
+    pipeline = _speaker_pipeline(request)
+    pipeline.toggle_speaker_mute(source="web")
+    return pipeline.speaker_output_state()
 
 
 class TtsVolumeBody(BaseModel):

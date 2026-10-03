@@ -1,10 +1,9 @@
 """Open the appshot editor in a window of its own.
 
 A click on the corner card (or "Edit" on the Appshots page) should put the
-editor in front of the user, CleanShot X style — not raise the whole app and
-not change what the app shows. The desktop shell can open a detached window
-for that; a headless or browser-only run cannot, and then the caller falls
-back to the editor inside the app's page.
+editor in front of the user while preserving the main app's window and view.
+The desktop shell can open a detached window for that; a headless or
+browser-only run falls back to the editor inside the app's page.
 
 The shell registers its opener at start-up (``register_window_opener``); this
 module never imports the shell, so it stays importable on a bare server.

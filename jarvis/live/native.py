@@ -120,6 +120,7 @@ class NativeLiveVoiceSession(LiveVoiceSession):
         self._tools = LiveTools(
             gateway, self._ledger, self.session_id, language=self._language, backend_model=""
         )
+        self._tools.ask_hangup = self._ask_voice_hangup
         try:
             claim(self.session_id)
             self._initial_seed = self._take_initial_context()
@@ -220,6 +221,9 @@ class NativeLiveVoiceSession(LiveVoiceSession):
                     "input_muted": self._input_muted,
                 }
             )
+            # Audio flows over this socket: results that finished before the
+            # call may be offered at the first pause, which is now.
+            self._notify_pause()
         except BaseException:
             await self.end(reason="error")
             raise
@@ -398,9 +402,9 @@ class NativeLiveVoiceSession(LiveVoiceSession):
                     except Exception:
                         if self._closing:
                             return
-                        if await self._recover():
+                        if await self._wait_for_connection():
                             break
-                        raise
+                        return
                     await self._native_event(event)
         except asyncio.CancelledError:
             raise
@@ -415,11 +419,13 @@ class NativeLiveVoiceSession(LiveVoiceSession):
             )
         finally:
             unregister(self.session_id)
+            self._notify_ended()
             self._closed.set()
 
     async def _native_event(self, event: Any) -> None:
         assert self._tools is not None and self._ledger is not None
         if event.type == "audio_delta" and event.audio is not None:
+            self._report_started()
             await self._note_speaking()
             await self._send_binary(event.audio.pcm)
         elif event.type in {"input_transcript", "output_transcript_delta"}:
@@ -454,6 +460,8 @@ class NativeLiveVoiceSession(LiveVoiceSession):
                         task = asyncio.create_task(self._request_native_response(self._language))
                         self._control_tasks.add(task)
                         task.add_done_callback(self._control_tasks.discard)
+            if role == "assistant":
+                self._report_started()
             if role == "assistant" or event.is_final:
                 stamp = time.monotonic_ns() // 1_000_000
                 await asyncio.to_thread(
@@ -486,11 +494,15 @@ class NativeLiveVoiceSession(LiveVoiceSession):
             if role == "user" and event.is_final:
                 self._transcript.finish("user")
         elif event.type == "tool_call":
+            # The model is answering the report, starting with a tool.
+            self._report_started()
             await self._note_thinking()
             task = asyncio.create_task(self._call(event, self._tools.revision))
-            self._jobs.add(task)
-            task.add_done_callback(self._jobs.discard)
+            self._track_job(task)
         elif event.type in {"interrupted", "speech_started"}:
+            # A barge-in into a report: the user heard its start and chose to
+            # talk. The report is in the model's context for follow-ups.
+            self._report_finished(delivered=True)
             barge_in = event.type == "speech_started" and (self._speaking or self.playback_active)
             self._speaking = False
             self._thinking = False
@@ -498,6 +510,7 @@ class NativeLiveVoiceSession(LiveVoiceSession):
                 await self._interrupt_reply()
             await self._emit_indicator({"type": "tts_cancel"})
         elif event.type == "turn_complete":
+            self._report_finished(delivered=True)
             self._transcript.finish("assistant")
             await self._note_turn_end()
         elif event.type == "usage":
@@ -639,8 +652,8 @@ class NativeLiveVoiceSession(LiveVoiceSession):
         if str(report or "").strip():
             # The model reasons over the agent's full report before speaking
             # (``report_prompt``); refused mid-turn so the caller retries at
-            # the next boundary instead of talking over anyone.
-            if self._thinking or self._speaking or self.playback_active or self._input_active:
+            # the next pause instead of talking over anyone.
+            if not self.ready_for_report:
                 return False
             from jarvis.realtime.report_prompt import report_update_prompt
 
@@ -650,6 +663,14 @@ class NativeLiveVoiceSession(LiveVoiceSession):
                 language=str(kwargs.get("language") or self._language),
                 kind=str(kwargs.get("spoken_kind") or "completion"),
             )
+            self._report_sent()
+            try:
+                await self._connection.send_text(text)
+            except BaseException:
+                self._cancel_report_timeout()
+                self._report_state = ""
+                raise
+            return True
         await self._connection.send_text(text)
         return True
 
@@ -660,11 +681,15 @@ class NativeLiveVoiceSession(LiveVoiceSession):
         what it looks at when the user asks. Servers without image input
         decline, and the caller parks the appshot for the next message.
         """
-        del note
         send_image = getattr(self._connection, "send_image", None)
         if not self.is_active or not callable(send_image):
             return False
         await send_image(image, mime)
+        # Native transports have no silent text-input contract. The workspace
+        # tool asks the model to select this scoped ID before it can hand off work.
+        from jarvis.core.image_references import appshot_context
+
+        appshot_context(self.session_id, image, mime, self._config)
         return True
 
     async def end(self, *, reason: str = "client_stop") -> None:
@@ -677,6 +702,7 @@ class NativeLiveVoiceSession(LiveVoiceSession):
         await self._publish_phase("idle")
         self._hangup_reason = reason
         unregister(self.session_id)
+        self._notify_ended()
         if self._tools is not None:
             await self._tools.close()
         for task in list(self._control_tasks):

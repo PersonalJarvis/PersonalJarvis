@@ -20,15 +20,15 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import re
-import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.ci.release_admit import versions  # noqa: E402
+from scripts.ci.release_admit import run_command, versions  # noqa: E402
 
 _SECTIONS = {"feat": "Added", "fix": "Fixed", "perf": "Changed", "refactor": "Changed"}
 _SUBJECT = re.compile(r"^(?P<type>[a-z]+)(?:\([^)]*\))?(?P<bang>!)?: (?P<text>.+)$")
@@ -89,6 +89,18 @@ def section_notes(changelog: str, version: str) -> str:
 def apply(version: str, notes: str, today: str, root: Path = REPO_ROOT) -> None:
     pyproject = root / "pyproject.toml"
     text = pyproject.read_text(encoding="utf-8")
+    lock = root / "uv.lock"
+    lock_text = None
+    if lock.is_file():
+        project = tomllib.loads(text)["project"]
+        lock_text = lock.read_text(encoding="utf-8")
+        pattern = (
+            rf'(?m)(^name = "{re.escape(project["name"])}"\nversion = ")[^"]+'
+            r'("\nsource = \{ editable = "\." \})'
+        )
+        lock_text, count = re.subn(pattern, rf"\g<1>{version}\g<2>", lock_text)
+        if count != 1:
+            raise ValueError("uv.lock must contain exactly one editable project version")
     text = re.sub(r'(?m)^version = "[^"]+"', f'version = "{version}"', text, count=1)
     pyproject.write_bytes(text.encode("utf-8"))
     init = root / "jarvis" / "__init__.py"
@@ -99,6 +111,8 @@ def apply(version: str, notes: str, today: str, root: Path = REPO_ROOT) -> None:
     head, _body, rest = split_unreleased(changelog.read_text(encoding="utf-8"))
     section = f"## [{version}] — {today}\n\n{notes.strip()}\n\n---\n\n"
     changelog.write_bytes((head + "\n---\n\n" + section + rest).encode("utf-8"))
+    if lock_text is not None:
+        lock.write_bytes(lock_text.encode("utf-8"))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -123,25 +137,23 @@ def main(argv: list[str] | None = None) -> int:
     new = args.version or bump(current, args.bump)
     if not re.fullmatch(r"\d+\.\d+\.\d+", new):
         raise SystemExit(f"not a SemVer version: {new}")
+    if any(str(int(part)) != part for part in new.split(".")):
+        raise SystemExit("SemVer components must not have leading zeroes")
+    if tuple(map(int, new.split("."))) <= tuple(map(int, current.split("."))):
+        raise SystemExit("release version must be greater than the current version")
     changelog = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    if re.search(rf"^## \[{re.escape(new)}\]", changelog, re.MULTILINE):
+        raise SystemExit("the requested version already has a CHANGELOG section")
     _head, body, _rest = split_unreleased(changelog)
     unreleased = body.strip().strip("-").strip()
     if not unreleased:
-        last = subprocess.run(  # noqa: S603
-            ["git", "describe", "--tags", "--abbrev=0", "--match", "v*"],  # noqa: S607
-            cwd=REPO_ROOT,
-            capture_output=True,
-            text=True,
+        last = run_command(
+            ["git", "describe", "--tags", "--abbrev=0", "--match", "v*"],
             check=False,
         ).stdout.strip()
         span = f"{last}..HEAD" if last else "HEAD"
-        subjects = subprocess.run(  # noqa: S603
-            ["git", "log", "--no-merges", "--format=%s", span],  # noqa: S607
-            cwd=REPO_ROOT,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            check=True,
+        subjects = run_command(
+            ["git", "log", "--no-merges", "--format=%s", span]
         ).stdout.splitlines()
         unreleased = notes_from_commits(subjects)
     apply(new, unreleased, dt.date.today().isoformat())

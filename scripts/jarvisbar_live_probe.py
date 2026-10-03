@@ -41,10 +41,8 @@ def main() -> None:
     bar.show(mode="think")
     time.sleep(1.0)
 
-    st = bar._renderer._st
     print(
-        f"mode={bar._mode} pill={st.pw:.0f}x{st.ph:.0f} "
-        f"target_active={renderer.ACTIVE_W}x{renderer.ACTIVE_H} "
+        f"mode={bar._mode} strip={renderer.WIN_W}x{renderer.WIN_H} "
         f"pos=({bar._x},{bar._y})",
         flush=True,
     )
@@ -66,9 +64,8 @@ def main() -> None:
         crop.save(OUT / f"bar-probe-crop-{i}.png")
         print("saved", i, flush=True)
 
-    st = bar._renderer._st
-    print(f"final mode={bar._mode} pill={st.pw:.0f}x{st.ph:.0f}", flush=True)
-    bar.hide()
+    print(f"final mode={bar._mode} strip={renderer.WIN_W}x{renderer.WIN_H}", flush=True)
+    bar.stop()
     time.sleep(0.5)
     print("done", flush=True)
 

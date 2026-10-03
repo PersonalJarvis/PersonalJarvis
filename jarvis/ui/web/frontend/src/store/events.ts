@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { browserPlaybackIsActive } from "@/lib/voiceOutputLevel";
 import type { MessageRole } from "@/types/messages";
 import { readCachedAssistantName } from "@/lib/assistantNameCache";
+import { reuseHistoryRows } from "@/lib/historyRequests";
 import {
   finalizeThinkingSteps,
   reduceThinkingSteps,
@@ -765,7 +766,10 @@ export const useEventStore = create<EventStore>((set, get) => ({
   setMessages: (m) =>
     set({ messages: m.length > MAX_MESSAGES ? m.slice(m.length - MAX_MESSAGES) : m }),
 
-  setConversations: (c) => set({ conversations: c }),
+  setConversations: (c) => set((state) => {
+    const conversations = reuseHistoryRows(state.conversations, c, (row) => `${row.kind}:${row.id}`);
+    return conversations === state.conversations ? state : { conversations };
+  }),
 
   setActiveConversation: (kind, id) => set({ activeKind: kind, activeThreadId: id }),
 

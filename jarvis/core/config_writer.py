@@ -1000,7 +1000,7 @@ def set_screen_context_settings(
 #: Keys ``[appshot]`` accepts — same allowlist reasoning as Screen Context.
 #: The master switch is ``[screen_context].enabled``, written by the setter above.
 APPSHOT_SETTING_KEYS: frozenset[str] = frozenset(
-    {"hotkey", "region_hotkey", "target", "sound", "effect", "card_seconds", "library"}
+    {"hotkey", "region_hotkey", "recording_hotkey", "target", "sound", "effect", "card_seconds", "library"}
 )
 
 
@@ -1026,6 +1026,58 @@ def set_appshot_settings(
         if section is None:
             section = tomlkit.table()
             doc["appshot"] = section
+        for key, value in values.items():
+            section[key] = value
+        out = tomlkit.dumps(doc)
+        if had_bom:
+            out = _BOM + out
+        _atomic_write(path, out)
+
+
+#: Keys ``[jarvisx]`` accepts (``jarvis.core.config.JarvisXConfig``). The
+#: route validates types and hotkeys first; this allowlist keeps a typo from
+#: ever landing in the file.
+JARVISX_SETTING_KEYS: frozenset[str] = frozenset(
+    {
+        "enabled",
+        "hotkey_region",
+        "hotkey_window",
+        "hotkey_fullscreen",
+        "hotkey_record_region",
+        "hotkey_record_fullscreen",
+        "hotkey_stop_recording",
+        "thumbnail_persist",
+        "thumbnail_dismiss_s",
+        "save_dir",
+        "copy_to_clipboard",
+        "sound",
+        "effect",
+    }
+)
+
+
+def set_jarvisx_settings(
+    values: dict[str, str | bool | int],
+    *,
+    path: Path = DEFAULT_CONFIG_FILE,
+) -> None:
+    """Persist a validated ``[jarvisx]`` patch in one atomic replacement."""
+    unknown = set(values).difference(JARVISX_SETTING_KEYS)
+    if unknown:
+        raise ValueError(f"unknown jarvisx setting(s): {sorted(unknown)!r}")
+    if not values:
+        return
+    path = _ensure_writable_config_path(path)
+    with _WRITE_LOCK:
+        raw = path.read_text(encoding="utf-8")
+        had_bom = raw.startswith(_BOM)
+        if had_bom:
+            raw = raw[len(_BOM) :]
+        doc: TOMLDocument = tomlkit.parse(raw)
+        section = doc.get("jarvisx")
+        if section is None:
+            section = tomlkit.table()
+            doc["jarvisx"] = section
         for key, value in values.items():
             section[key] = value
         out = tomlkit.dumps(doc)
@@ -2372,7 +2424,8 @@ def set_live_profile(values: dict, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     from jarvis.live.config import LiveConfig
 
     profile = LiveConfig.model_validate(values)
-    if not profile.configured or not profile.backend_model.strip():
+    effective = profile.for_session()
+    if not profile.configured or not effective.backend_model.strip():
         raise ValueError("Select a thinking model before enabling GPT-Live.")
     path = _ensure_writable_config_path(path)
     with _WRITE_LOCK:
@@ -2383,7 +2436,7 @@ def set_live_profile(values: dict, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
         doc["live"] = profile.model_dump()
         if "brain" not in doc:
             doc["brain"] = tomlkit.table()
-        doc["brain"]["realtime"] = {"provider": "openai-live", "model": profile.model}
+        doc["brain"]["realtime"] = {"provider": profile.provider_id, "model": effective.model}
         if "voice" not in doc:
             doc["voice"] = tomlkit.table()
         doc["voice"]["mode"] = "realtime"
@@ -2391,7 +2444,7 @@ def set_live_profile(values: dict, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     clear_config_cache()
     _update_config_soll_section("live", profile.model_dump())  # i18n-allow
     _update_config_soll_section(  # i18n-allow
-        "brain.realtime", {"provider": "openai-live", "model": profile.model}
+        "brain.realtime", {"provider": profile.provider_id, "model": effective.model}
     )
     _update_config_soll_section("voice", {"mode": "realtime"})  # i18n-allow
 

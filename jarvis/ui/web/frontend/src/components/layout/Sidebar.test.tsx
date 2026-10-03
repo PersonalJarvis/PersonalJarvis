@@ -15,6 +15,34 @@ import { useQuickSwitchSettings } from "@/store/quickSwitchSettings";
 import { useHomeStore } from "@/store/home";
 import { useIdeChatStore } from "@/store/ideChat";
 import { useIdeProjectsStore } from "@/store/ideProjects";
+import { sectionPrefetch } from "@/lib/sectionPrefetch";
+import { SECTION_PREFETCH_DELAY_MS } from "@/hooks/useSectionPrefetch";
+
+test.each([SIDEBAR_DEFAULT_WIDTH, SIDEBAR_RAIL_WIDTH])(
+  "sidebar intent warms a destination without navigating (width=%s)",
+  (width) => {
+    vi.useFakeTimers();
+    const warm = vi.spyOn(sectionPrefetch, "prefetch").mockResolvedValue();
+    try {
+      useEventStore.setState({ activeSection: "chats" });
+      renderSidebar(width);
+      expect(warm).not.toHaveBeenCalled();
+      fireEvent.mouseEnter(screen.getByTestId("nav-row-agents"));
+      act(() => { vi.advanceTimersByTime(SECTION_PREFETCH_DELAY_MS); });
+      expect(warm).toHaveBeenCalledExactlyOnceWith("agents");
+      expect(useEventStore.getState().activeSection).toBe("chats");
+      fireEvent.focus(screen.getByTestId("sidebar-profile-toggle"));
+      act(() => { vi.advanceTimersByTime(SECTION_PREFETCH_DELAY_MS); });
+      expect(warm).toHaveBeenLastCalledWith("profile");
+      fireEvent.click(screen.getByTestId("nav-row-agents"));
+      expect(useEventStore.getState().activeSection).toBe("agents");
+    } finally {
+      cleanup();
+      warm.mockRestore();
+      vi.useRealTimers();
+    }
+  },
+);
 
 test("IDE rail keeps workspace options and Jarvis Live reachable", () => {
   act(() => {
@@ -36,10 +64,10 @@ test("IDE rail keeps workspace options and Jarvis Live reachable", () => {
   cleanup();
 });
 
-test("IDE sidebar puts Projects first and returns to the normal chat navigation", () => {
+test("IDE sidebar puts Projects first and returns to the normal chat navigation", async () => {
   act(() => useEventStore.setState({ activeSection: "agentic-ide" }));
   renderSidebar();
-  expect(screen.getByTestId("ide-project-tree")).toBeDefined();
+  expect(await screen.findByTestId("ide-project-tree")).toBeDefined();
   // The agents list lives in the IDE's right-hand side panel now.
   expect(screen.queryByTestId("ide-workspace-agents")).toBeNull();
   expect(screen.queryByTestId("sidebar-new-chat")).toBeNull();

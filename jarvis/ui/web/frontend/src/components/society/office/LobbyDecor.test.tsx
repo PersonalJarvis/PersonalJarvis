@@ -38,7 +38,7 @@ const realGetContext = HTMLCanvasElement.prototype.getContext;
 beforeAll(() => {
   HTMLCanvasElement.prototype.getContext = function getContext() {
     return recordingContext();
-  } as typeof HTMLCanvasElement.prototype.getContext;
+  } as unknown as typeof HTMLCanvasElement.prototype.getContext;
 });
 
 afterAll(() => {

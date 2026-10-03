@@ -14,6 +14,7 @@ import { VoiceThreadStage } from "@/components/home/VoiceThreadStage";
 import type { ApprovalDecision } from "@/lib/agentChatApi";
 import { fill, useT } from "@/i18n";
 import { folderLeaf } from "@/lib/folderPath";
+import { useHistoryPolling } from "@/hooks/useHistoryPolling";
 import { FolderCode } from "lucide-react";
 
 /**
@@ -79,8 +80,8 @@ function ChatStageContent() {
   // A copy from before paints the picks at once; the fresh read still runs.
   useEffect(() => {
     if (!catalog || catalogStale) void loadCatalog();
-    void loadSessions();
-  }, [catalog, catalogStale, loadCatalog, loadSessions]);
+  }, [catalog, catalogStale, loadCatalog]);
+  useHistoryPolling(loadSessions);
 
   const providerLabel = useCallback(
     (id: string) => catalog?.providers.find((p) => p.id === id)?.label ?? id,

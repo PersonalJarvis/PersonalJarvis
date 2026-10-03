@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { Check, Radio } from "lucide-react";
-import { LiveProfile } from "./LiveProfile";
+import { LiveProfile, type LiveAuthMode } from "./LiveProfile";
 import { ProviderCard } from "./ProviderTierSection";
 import { ProviderLogo } from "./ProviderLogo";
 import { Button } from "@/components/ui/button";
@@ -36,6 +36,12 @@ export function VoiceProviderSettings({
   const t = useT();
   const runtime = useVoiceMode();
   const [inspectedId, setInspectedId] = useState<string | null>(null);
+  const [liveAuthMode, setLiveAuthMode] = useState<LiveAuthMode | null>(null);
+  const [liveBillingPending, setLiveBillingPending] = useState(false);
+  const setLiveBilling = useCallback((mode: LiveAuthMode, pending: boolean) => {
+    setLiveAuthMode(mode);
+    setLiveBillingPending(pending);
+  }, []);
   const choices = providers.filter(
     (provider) =>
       provider.tier === "realtime" &&
@@ -143,6 +149,10 @@ export function VoiceProviderSettings({
             onChanged={onChanged}
             onActivateOptimistic={onActivateOptimistic}
             autoActivateOnSave={false}
+            hideCredentialControls={selected.configuration_surface === "live" && liveAuthMode !== "api_key"}
+            billingOverride={selected.configuration_surface === "live" && liveAuthMode
+              ? liveAuthMode === "chatgpt_subscription" ? "subscription" : "api" : undefined}
+            billingPending={selected.configuration_surface === "live" && liveBillingPending}
             health={
               selected.active
                 ? sectionHealthForSubject(health, selected.id)
@@ -150,7 +160,7 @@ export function VoiceProviderSettings({
             }
             configuration={
               selected.configuration_surface === "live" ? (
-                <LiveProfile onSaved={onChanged} />
+                <LiveProfile onSaved={onChanged} onAuthModeChange={setLiveBilling} />
               ) : undefined
             }
           />

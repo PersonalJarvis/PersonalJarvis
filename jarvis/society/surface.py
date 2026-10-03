@@ -19,6 +19,7 @@ builder returns nothing and the turn runs as a plain Jarvis chat.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 from collections.abc import Callable
@@ -26,7 +27,12 @@ from pathlib import Path
 from typing import Any, Final, cast
 
 from jarvis.core.protocols import Tool
-from jarvis.core.response_style import CONVERSATIONAL_RESPONSE_STYLE, KEEP_GOING_ON_TOOL_FAILURE
+from jarvis.core.response_style import (
+    AGENT_QUESTION_GUIDANCE,
+    CONVERSATIONAL_RESPONSE_STYLE,
+    KEEP_GOING_ON_TOOL_FAILURE,
+    TASK_EXECUTION_GUIDANCE,
+)
 
 from .agent_tools import (
     MemoryRecallTool,
@@ -69,8 +75,14 @@ _OWN_PREFIX: Final[str] = "society_"
 #: through its own contained shell (never the free-cwd shell tools).
 _SOCIETY_DENIED: Final[frozenset[str]] = frozenset(
     {
-        "wiki-ingest", "run-shell", "run_shell", "RunCommand",
-        "remember", "update_profile", "profile-update", "update-profile",
+        "wiki-ingest",
+        "run-shell",
+        "run_shell",
+        "RunCommand",
+        "remember",
+        "update_profile",
+        "profile-update",
+        "update-profile",
     }
 )
 
@@ -569,20 +581,57 @@ def society_tool_filter(session: Any) -> Callable[[dict[str, Tool]], dict[str, T
             focus=agent.focus,
             denies=agent.denies,
         )
-        # Every granted hand obeys the agent's own approval rules and ceiling
-        # (agent-definition §3.4): the gate rides on the executor's per-call
-        # tier hook, so the chat card and the queue stay the one approval path.
+        # Every granted hand obeys the agent's own approval rules and mode.
+        # The gate rides on the executor's per-call tier hook, so the chat
+        # card and the queue stay the one approval path.
         picked = {
             name: cast(Tool, _GatedTool(tool, agent, cap_id))
             for name, tool in picked.items()
             if (cap_id := capability_id_for_tool(name)) is not None
         }
         ordered: dict[str, Tool] = {}
-        ordered.update(own)
+        if agent.approval_mode is not None:
+            ordered.update(
+                {
+                    name: cast(
+                        Tool,
+                        _GatedTool(tool, agent, capability_id_for_tool(name) or "core:society"),
+                    )
+                    for name, tool in own.items()
+                    # Asking the user IS the person's decision; gating it
+                    # behind an approval card would ask twice.
+                    if name != ASK_USER_TOOL_NAME
+                }
+            )
+            if ASK_USER_TOOL_NAME in own:
+                ordered[ASK_USER_TOOL_NAME] = own[ASK_USER_TOOL_NAME]
+        else:
+            ordered.update(own)
         ordered.update(picked)
         return ordered
 
     return _apply
+
+
+def requires_explicit_approval(session_id: str, tool_name: str, args: dict[str, Any]) -> bool:
+    """Keep an agent's explicit ask rules effective even in Bypass mode."""
+    from .approvals import matches
+
+    rt = current_runtime()
+    agent_id = agent_id_of(session_id)
+    if rt is None or agent_id is None:
+        return True
+    agent = rt.cached_agent(agent_id)
+    if agent is None:
+        return True
+    bare = tool_name.split("__", 2)[-1] if tool_name.startswith("mcp__") else tool_name
+    capability = capability_id_for_tool(bare)
+    if capability is None:
+        return True
+    return any(
+        matches(pattern, capability, _verb_of(args))
+        for pattern in agent.approval_rules.get("require_approval", [])
+    )
 
 
 async def society_system_extra(cfg: Any, brain: Any, session: Any) -> str:
@@ -599,7 +648,11 @@ async def society_system_extra(cfg: Any, brain: Any, session: Any) -> str:
     rt.checkpoints.note_turn_started(agent.agent_id, str(getattr(session, "session_id", "")))
     catalog = rt.catalog()
     roster = await rt.roster.list()
-    browser = rt.browser.status_for(agent)
+    browser = await asyncio.to_thread(rt.browser.status_for, agent)
+    # The live runner provisions on demand, including in unattended routine chats.
+    browser["auto_start"] = (
+        browser.get("mode") == "own" and rt.browser.live.model_resolver is not None
+    )
     learned = rt.skills_for(agent.agent_id).summaries()
     try:
         memory = rt.memory.head(agent, root=_vault_root(cfg))
@@ -670,6 +723,8 @@ def build_briefing(
     # API and CLI seats both consume this briefing. Put reply guidance and the
     # keep-going rule before potentially long standing instructions so compact
     # CLI identities retain them (a cancelled tool must not end the task).
+    parts.append("## Completing the user's task\n" + TASK_EXECUTION_GUIDANCE)
+    parts.append("## Acting and asking\n" + AGENT_QUESTION_GUIDANCE)
     parts.append("## How to reply to the person\n" + CONVERSATIONAL_RESPONSE_STYLE)
     parts.append("## When a tool fails\n" + KEEP_GOING_ON_TOOL_FAILURE)
     if agent.description.strip():
@@ -729,24 +784,27 @@ def build_briefing(
 
 def _browser_line(browser: dict[str, Any] | None) -> str:
     """One byte-stable line about the agent's browser (agent-definition §3)."""
-    if not browser or not browser.get("installed"):
+    if not browser or not (browser.get("installed") or browser.get("auto_start")):
         return (
             "## Your browser\nNot set up on this machine yet — the user can install it from your "
             "card. Until then use plugins, CLIs and search-web for the web."
         )
-    if browser.get("mode") == "attach":
+    if browser.get("error"):
+        return "## Your browser\n" + str(browser["error"]) + ". Ask the user to choose a profile."
+    if browser.get("mode") in {"attach", "chrome"}:
         return (
-            "## Your browser\nsociety_browser drives the user's own running Chrome (attached), "
-            "with their logins. One task per call, capped steps."
+            "## Your browser\nsociety_browser uses your assigned Chrome profile. "
+            "Website authentication must be checked on the actual page. "
+            "If disconnected, ask the user to connect that profile in the Jarvis extension. "
+            "Never switch to another browser or account. One task per call, capped steps."
         )
-    logged = (
-        "signed-in profile present"
-        if browser.get("logged_in_profile")
-        else ("no logins yet — ask the user for a login session when a site needs one")
-    )
+    logged = "website authentication unverified; ask for manual login when a site requires it"
     return (
         "## Your browser\nsociety_browser runs in your own persistent browser profile "
-        f"({logged}). One task per call, capped steps; sending, buying, deleting or "
+        f"({logged}). Call society_browser whenever a task or routine needs it, even when "
+        "the browser or its panel is closed. It prepares and starts the browser automatically; "
+        "do not ask the user to open or install it first. "
+        "One task per call, capped steps; sending, buying, deleting or "
         "publishing asks the user first."
     )
 

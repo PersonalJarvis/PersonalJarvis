@@ -6,8 +6,8 @@ import { AppshotEditor, type EditorExit } from "@/views/AppshotEditor";
 
 /**
  * The appshot editor as its own desktop window (`?view=appshot-editor&solo=1
- * &appshot=<id>`), opened by a click on the corner card — CleanShot X's
- * editor window. Nothing of the app is loaded around it.
+ * &appshot=<id>`), opened by a click on the corner card.
+ * Nothing of the app is loaded around it.
  *
  * When it closes the appshot goes back into the screen corner
  * (`POST /api/appshot/latest/card`), so it stays at hand — after Save or Done

@@ -417,6 +417,8 @@ def normalize_media_event(
                     **event,
                     "kind": "error",
                     "payload": {
+                        # The turn itself succeeded; only a picture is missing.
+                        "display_only": True,
                         "message": "Attached media could not be displayed: "
                         + "; ".join(dict.fromkeys(normalizer.errors))
                     },
@@ -471,6 +473,7 @@ def normalize_media_event(
                     "turn_id": payload.get("turn_id"),
                     "message_id": f"media-{key}",
                     "text": markdown,
+                    "media_only": True,
                 },
             }
         )
@@ -481,6 +484,8 @@ def normalize_media_event(
                 "kind": "error",
                 "payload": {
                     "turn_id": payload.get("turn_id"),
+                    # The turn itself succeeded; only a picture is missing.
+                    "display_only": True,
                     "message": "Media could not be displayed: "
                     + "; ".join(dict.fromkeys(normalizer.errors)),
                 },

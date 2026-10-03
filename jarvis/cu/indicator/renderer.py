@@ -150,7 +150,7 @@ class _GlowWindow(QWidget):
 # editor, a drag hands the finished picture to any app that takes a file, a
 # right-click dismisses it. The flight canvas itself stays click-through.
 #
-# Cards stack like CleanShot X's: the newest always lands at the bottom and
+# Cards stack vertically: the newest always lands at the bottom and
 # the older ones glide up to make room; when one goes, the ones above it
 # glide down. At most ``protocol.MAX_CARDS`` stay, the oldest leaves first.
 # ---------------------------------------------------------------------------
@@ -417,7 +417,7 @@ class _SnapWindow(QWidget):
 
 
 #: The lifted picture under the pointer while the card is dragged: smaller
-#: than the card so the drop target stays visible (CleanShot X's drag).
+#: than the card so the drop target stays visible.
 _DRAG_PREVIEW_W = 220.0
 _DRAG_PREVIEW_H = 165.0
 _DRAG_PREVIEW_RADIUS = 10.0
@@ -571,7 +571,7 @@ _CARD_LABELS = {
 
 
 class _CardWindow(QWidget):
-    """The resting thumbnail, CleanShot X's Quick Access Overlay in small.
+    """The resting thumbnail with quick-access capture actions.
 
     Hover frosts the picture and shows Copy / Save stacked in the middle and
     four white chips in the corners: Pin (top-left, keeps the card until it is
@@ -827,7 +827,7 @@ class _CardWindow(QWidget):
         mime.setImageData(image)
         drag = QDrag(self)
         drag.setMimeData(mime)
-        # CleanShot X's drag: the card lifts off as a smaller, rounded copy
+        # The card lifts off as a smaller, rounded copy
         # held where it was grabbed, and a green "+" beside the pointer says
         # the field or window under it takes the picture.
         dpr = float(self.devicePixelRatioF() or 1.0)
@@ -840,7 +840,7 @@ class _CardWindow(QWidget):
         result = drag.exec(Qt.DropAction.CopyAction)
         self.setWindowOpacity(1.0)
         if result == Qt.DropAction.IgnoreAction:
-            # Dropped nowhere (or Esc): the card stays, like CleanShot's.
+            # Dropped nowhere (or Esc): the card stays.
             self._hover = False
             self._hot = ""
             self._arm_dismiss(_CARD_AFTER_HOVER_MS)
@@ -872,7 +872,7 @@ class _CardWindow(QWidget):
             widths = [metrics.horizontalAdvance(self._labels[k]) + 36.0 for k in ("copy", "save")]
             width = max(widths + [88.0])
             if rect.height() >= 2 * h + gap + 2 * inset:
-                # Stacked in the middle, like CleanShot's overlay.
+                # Stacked in the middle of the overlay.
                 x = rect.center().x() - width / 2
                 y = rect.center().y() - h - gap / 2
                 buttons["copy"] = QRectF(x, y, width, h)
@@ -977,7 +977,7 @@ class _CardWindow(QWidget):
                 self._paint_chip(painter, name, area)
                 continue
             hot = name == self._hot
-            # Light pills on the frosted picture, like CleanShot's overlay.
+            # Light pills on the frosted picture.
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor(0, 0, 0, 34))
             radius = area.height() / 2

@@ -21,6 +21,8 @@ export interface AppshotSettings {
   hotkey: string;
   /** Shortcut for an area appshot: drag a rectangle, that part is captured. */
   region_hotkey: string;
+  recording_hotkey?: string;
+  recording_shortcut?: AppshotShortcutStatus;
   target: AppshotTarget;
   sound: boolean;
   effect: boolean;
@@ -55,7 +57,7 @@ export interface AppshotMeta {
 export type AppshotSettingsPatch = Partial<
   Pick<
     AppshotSettings,
-    "enabled" | "hotkey" | "region_hotkey" | "target" | "sound" | "effect" | "card_seconds" | "library"
+    "enabled" | "hotkey" | "region_hotkey" | "recording_hotkey" | "target" | "sound" | "effect" | "card_seconds" | "library"
   >
 >;
 
@@ -237,4 +239,34 @@ export function deleteAppshotLibraryItem(item: AppshotLibraryItem): Promise<{ ok
 
 export function clearAppshotLibrary(): Promise<{ ok: boolean; removed: number }> {
   return request("/api/appshot/library", { method: "DELETE" });
+}
+
+export interface AppshotRecording {
+  phase: "idle" | "selecting" | "recording" | "stopping" | "saved" | "cancelled" | "error";
+  id: string;
+  message: string;
+  duration_s?: number;
+  width?: number;
+  height?: number;
+  capability?: { available: boolean; detail: string; permission_required: boolean };
+  recent?: { id: string; created_at: number }[];
+}
+
+export function fetchAppshotRecording(signal?: AbortSignal): Promise<AppshotRecording> {
+  return request("/api/appshot/recording", { signal, cache: "no-store" });
+}
+
+export function controlAppshotRecording(action: "start" | "stop"): Promise<AppshotRecording> {
+  return request(`/api/appshot/recording/${action}`, { method: "POST" });
+}
+
+export function appshotRecordingUrl(id: string): string {
+  return `/api/appshot/recording/${encodeURIComponent(id)}/video`;
+}
+
+export function requestRecordingPermission(): Promise<unknown> {
+  return request("/api/permissions/screen_recording/request?dry_run=false", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ feature: "appshot" }),
+  });
 }

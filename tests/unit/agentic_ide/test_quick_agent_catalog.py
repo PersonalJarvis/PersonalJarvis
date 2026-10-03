@@ -25,9 +25,12 @@ async def test_quick_catalog_resolves_off_loop_without_expensive_probes(
             accepts_typed_prompts=False,
         ),
         agents.WorkspaceAgent(name="missing", display_name="Missing Agent"),
+        agents.WorkspaceAgent(
+            name="shell", display_name="Plain Terminal", kind="shell", needs_trust=False
+        ),
     ]
     by_name = {spec.name: spec for spec in specs}
-    monkeypatch.setattr(agents, "coding_agents", lambda: specs)
+    monkeypatch.setattr(agents, "list_agents", lambda: specs)
     monkeypatch.setattr(agents, "get_agent", by_name.get)
     monkeypatch.setattr(agents, "pty_available", lambda: pty_available)
 
@@ -42,15 +45,19 @@ async def test_quick_catalog_resolves_off_loop_without_expensive_probes(
     def resolve_agent(name):
         assert threading.get_ident() != event_loop_thread
         resolved.append(name)
-        return ("example",) if name == "example" else None
+        return (name,) if name in {"example", "shell"} else None
 
     monkeypatch.setattr(routes, "agent_argv", resolve_agent)
     result = await routes.get_agents(quick=True)
-    assert resolved == ["example", "missing"]
+    assert resolved == ["example", "missing", "shell"]
     assert result.terminal_available is pty_available
     assert result.max_panes_per_request == routes.MAX_PANES_PER_REQUEST
     assert len(result.suggested_names) == routes.MAX_PANES_PER_REQUEST
-    example, missing = result.agents
+    example, missing, shell = result.agents
+    assert shell.installed is True
+    assert shell.kind == "shell"
+    assert shell.accepts_prompts is False
+    assert shell.display_name == "Plain Terminal"
     assert example.installed is True
     assert missing.installed is False
     assert example.version is None

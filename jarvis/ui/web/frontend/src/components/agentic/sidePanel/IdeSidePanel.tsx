@@ -1,16 +1,20 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Check, Maximize2, Minimize2, MoveHorizontal, PanelRightClose, Plus, X } from "lucide-react";
+import { Check, Maximize2, Minimize2, MoveHorizontal, PanelRightClose, Plus, SquareTerminal, X } from "lucide-react";
 import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { useResizablePane } from "@/hooks/useResizablePane";
 import { PaneResizer } from "@/components/layout/PaneResizer";
-import { useIdeSidePanelStore } from "@/store/ideSidePanel";
+import { MAX_TERMINAL_TABS, useIdeSidePanelStore } from "@/store/ideSidePanel";
+import { useIdeChatStore } from "@/store/ideChat";
+import { WorkspaceTerminal } from "@/components/workspace/WorkspaceTerminal";
+import type { TerminalAppearance } from "../terminalThemes";
 import { useExplorerPathRouting } from "@/store/ideExplorer";
 import { usePaneReviewTracking } from "@/store/paneReviews";
 import { useIdeProjectsStore } from "@/store/ideProjects";
 import { useWorkspacePanes } from "@/store/workspacePanes";
 import { dotKindFor, workspaceAgents } from "./agentStatus";
 import { SIDE_PANEL_TABS, sidePanelTab } from "./sidePanelTabs";
+import { SIDE_PANEL_ID } from "./sidePanelIds";
 
 const WIDTH_KEY = "jarvis.agenticIde.sidePanelWidth.v1";
 const DEFAULT_PX = 340;
@@ -21,7 +25,8 @@ const OFFICE_MIN_PX = 520;
 /** Terminal canvas kept visible while the panel is open. */
 const GRID_RESERVED_PX = 320;
 
-export const SIDE_PANEL_ID = "ide-side-panel";
+// Preserve the existing public export without coupling caption chrome to the panel.
+export { SIDE_PANEL_ID } from "./sidePanelIds";
 
 const HEADER_BTN =
   "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors " +
@@ -40,13 +45,16 @@ const HEADER_BTN =
  * `markInUse`: frame the panel in the signal blue while the reader works in it,
  * the way a focused terminal tile is framed (the minimal pane style).
  */
-export function IdeSidePanelFrame({ children, markInUse = false }: { children: ReactNode; markInUse?: boolean }) {
+export function IdeSidePanelFrame({ children, markInUse = false, appearance, onScreen = true }: {
+  children: ReactNode; markInUse?: boolean; appearance?: TerminalAppearance; onScreen?: boolean;
+}) {
   const t = useT();
   const open = useIdeSidePanelStore((state) => state.open);
   const inUse = useIdeSidePanelStore((state) => state.inUse);
   const setInUse = useIdeSidePanelStore((state) => state.setInUse);
   const active = useIdeSidePanelStore((state) => state.active);
   const maximized = useIdeSidePanelStore((state) => state.maximized);
+  const hasTerminals = useIdeSidePanelStore((state) => state.terminals.length > 0);
   // Ctrl+click on a path in any terminal opens it in the Explorer tab.
   useExplorerPathRouting();
   // A click on a pane in the grid counts as reviewing that agent.
@@ -102,9 +110,9 @@ export function IdeSidePanelFrame({ children, markInUse = false }: { children: R
         style={{ width: open ? width : 0 }}
         aria-hidden={!open}
       >
-        {open && (
+        {(open || hasTerminals) && (
           <>
-            {!maximized && (
+            {open && !maximized && (
               <div className="group absolute inset-y-0 left-0 z-20 flex -translate-x-1/2">
                 <PaneResizer
                   testId="ide-side-panel-resizer"
@@ -134,9 +142,9 @@ export function IdeSidePanelFrame({ children, markInUse = false }: { children: R
             {/* Same element either way, so the live office scene is never remounted.
                 A press anywhere in it (capture phase: the office canvas and the
                 terminals in it stop their own events) makes it the area in use. */}
-            <div data-testid="ide-side-panel-body" className={maximized ? "absolute inset-0 z-30" : "relative h-full"}
+            <div hidden={!open} data-testid="ide-side-panel-body" className={maximized ? "absolute inset-0 z-30" : "relative h-full"}
               onPointerDownCapture={() => setInUse(true)}>
-              <IdeSidePanel />
+              <IdeSidePanel appearance={appearance} onScreen={onScreen} />
               {/* The "you are here" frame, drawn over everything in the panel so
                   no tab header or scene can cover part of it. */}
               {markInUse && inUse && (
@@ -202,10 +210,17 @@ function IdeSidePanelRail() {
 }
 
 /** The panel itself: tab header ("+" and collapse) over the active tab's content. */
-export function IdeSidePanel() {
+export function IdeSidePanel({ appearance, onScreen = true }: { appearance?: TerminalAppearance; onScreen?: boolean }) {
   const t = useT();
-  const tabs = useIdeSidePanelStore((state) => state.tabs);
-  const active = useIdeSidePanelStore((state) => state.active);
+  const allTabs = useIdeSidePanelStore((state) => state.tabs);
+  const storedActive = useIdeSidePanelStore((state) => state.active);
+  const open = useIdeSidePanelStore((state) => state.open);
+  const terminals = useIdeSidePanelStore((state) => state.terminals);
+  const addTerminalTab = useIdeSidePanelStore((state) => state.addTerminalTab);
+  const workspace = useIdeChatStore((state) => state.workspace);
+  const tabs = allTabs.filter((id) => !id.startsWith("terminal:") || terminals.some((terminal) => terminal.id === id && terminal.workspaceId === workspace?.id));
+  const active = tabs.includes(storedActive) ? storedActive : tabs[0];
+  const terminalCount = terminals.filter((terminal) => terminal.workspaceId === workspace?.id).length;
   const select = useIdeSidePanelStore((state) => state.select);
   const openTab = useIdeSidePanelStore((state) => state.openTab);
   const closeTab = useIdeSidePanelStore((state) => state.closeTab);
@@ -241,8 +256,10 @@ export function IdeSidePanel() {
         <div role="tablist" aria-label={t("ide_side_panel.tabs_aria")} className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
           {tabs.map((id) => {
             const tab = sidePanelTab(id);
-            if (!tab) return null;
-            const label = t(tab.labelKey);
+            const terminal = terminals.find((entry) => entry.id === id);
+            if (!tab && !terminal) return null;
+            const label = terminal ? `${t("ide_side_panel.terminal_label")} ${terminal.number}` : t(tab!.labelKey);
+            const Icon = tab?.icon ?? SquareTerminal;
             const selected = id === active;
             return (
               <div
@@ -261,7 +278,7 @@ export function IdeSidePanel() {
                   onClick={() => select(id)}
                   className="flex min-w-0 items-center gap-1.5 focus-visible:outline-none"
                 >
-                  <tab.icon className="h-4 w-4 shrink-0" aria-hidden />
+                  <Icon className="h-4 w-4 shrink-0" aria-hidden />
                   <span className="truncate font-medium">{label}</span>
                 </button>
                 <button
@@ -313,6 +330,14 @@ export function IdeSidePanel() {
                   </button>
                 );
               })}
+              <button type="button" role="menuitem" data-testid="ide-side-panel-add-terminal"
+                disabled={!workspace || terminalCount >= MAX_TERMINAL_TABS}
+                title={!workspace ? t("ide_side_panel.terminal_workspace_required") : undefined}
+                onClick={() => { if (workspace) addTerminalTab(workspace.id, workspace.name); setMenuOpen(false); }}
+                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-foreground hover:bg-secondary disabled:cursor-default disabled:opacity-40">
+                <SquareTerminal className="h-4 w-4 text-muted-foreground" aria-hidden />
+                <span>{t("ide_side_panel.add_terminal")}</span>
+              </button>
             </div>
           )}
         </div>
@@ -341,8 +366,14 @@ export function IdeSidePanel() {
         </button>
       </div>
       {/* Keyed by tab: Changes and Folder share one component and must not share its state. */}
-      <div key={active} id={`${SIDE_PANEL_ID}-content`} role="tabpanel" className="min-h-0 flex-1">
-        {current?.render()}
+      <div id={`${SIDE_PANEL_ID}-content`} role="tabpanel" className="relative min-h-0 flex-1">
+        {open && <div key={active} className="h-full min-h-0">{current?.render()}</div>}
+        {terminals.map((terminal) => <div key={terminal.id} hidden={!open || terminal.id !== active}
+          className="absolute inset-0" data-testid={`ide-side-panel-terminal-${terminal.id}`}>
+          <WorkspaceTerminal paneKey={terminal.id} agentName="shell" workspaceId={terminal.workspaceId}
+            title={`${t("ide_side_panel.terminal_label")} ${terminal.number} · ${terminal.workspaceName}`}
+            active={onScreen && open && terminal.id === active} appearance={appearance} />
+        </div>)}
       </div>
     </aside>
   );

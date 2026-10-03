@@ -53,6 +53,46 @@ def client(app: FastAPI) -> TestClient:
     return TestClient(app)
 
 
+def test_prompt_probe_reports_failure_instead_of_a_successful_cleanup(app, monkeypatch):
+    from jarvis.dictation import polish, prompt_mode
+    from jarvis.ui.web.dictation_routes import _PROMPT_MODE_SAMPLE
+
+    app.state.config.dictation.prompt_mode = True
+    app.state.config.dictation.polish = True
+    prompt_mode.set_prompt_mode_paused(False)
+
+    async def fail(raw, **kwargs):
+        return PolishOutcome(raw, "timeout", reason="deadline")
+
+    async def unwanted_fallback(raw, **kwargs):
+        pytest.fail("The probe must show the selected feature's failure")
+
+    monkeypatch.setattr(prompt_mode, "compose_prompt", fail)
+    monkeypatch.setattr(polish, "polish_transcript", unwanted_fallback)
+    body = TestClient(app).post("/api/dictation/polish/test").json()
+    assert body["status"] == "timeout"
+    assert body["sample_in"] == body["sample_out"] == _PROMPT_MODE_SAMPLE
+
+
+def test_english_translation_probe_actually_changes_language(app, monkeypatch):
+    from jarvis.dictation import polish
+
+    app.state.config.dictation.translate = True
+    app.state.config.dictation.translate_target = "en"
+    seen = []
+
+    async def translate(raw, **kwargs):
+        seen.append((raw, kwargs))
+        return PolishOutcome("Please send the report to the team tomorrow at 10.", "translated")
+
+    monkeypatch.setattr(polish, "polish_transcript", translate)
+    body = TestClient(app).post("/api/dictation/polish/test").json()
+    assert body["status"] == "translated"
+    assert seen[0][1]["language"] == "de"
+    assert seen[0][1]["translate_to"] == "en"
+    assert body["sample_in"] != body["sample_out"]
+
+
 @dataclass
 class _Transcript:
     text: str

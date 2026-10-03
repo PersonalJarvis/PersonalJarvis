@@ -64,6 +64,22 @@ export interface TtsVolumeState {
   volume: number;
 }
 
+export interface SpeakerOutputState {
+  muted: boolean;
+  volume: number;
+  revision: number;
+}
+
+export async function fetchSpeakerMute(): Promise<SpeakerOutputState> {
+  const res = await fetch("/api/settings/speaker-mute", { cache: "no-store" });
+  if (!res.ok) throw new Error(`Speaker state request failed (${res.status}).`);
+  return (await res.json()) as SpeakerOutputState;
+}
+
+export function toggleSpeakerMute(): Promise<SpeakerOutputState> {
+  return post<SpeakerOutputState>("/api/settings/speaker-mute");
+}
+
 /** The master TTS volume — 0.0–1.0, the same value the settings slider shows. */
 export async function fetchTtsVolume(): Promise<TtsVolumeState> {
   const res = await fetch("/api/settings/tts-volume", { cache: "no-store" });

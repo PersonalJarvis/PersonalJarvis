@@ -161,7 +161,14 @@ def test_runner_reports_failures_and_passes(tmp_path):
 
 def _report(path: Path, failed: list[str], passed: int = 10) -> Path:
     path.write_text(
-        json.dumps({"failed_ids": failed, "counts": {"passed": passed}, "elapsed_seconds": 1}),
+        json.dumps(
+            {
+                "failed_ids": failed,
+                "files": 1,
+                "counts": {"passed": passed, "tests": passed + len(failed)},
+                "elapsed_seconds": 1,
+            }
+        ),
         encoding="utf-8",
     )
     return path
@@ -185,9 +192,9 @@ def test_ratchet_matches_timeouts_regardless_of_budget(tmp_path):
     assert ratchet_tests.main(["check", "--baseline", str(baseline), str(report)]) == 0
 
 
-def test_missing_baseline_is_report_only(tmp_path):
+def test_missing_baseline_rejects_unapproved_failures(tmp_path):
     report = _report(tmp_path / "r.json", ["t::new"])
-    assert ratchet_tests.main(["check", "--baseline", str(tmp_path / "no.json"), str(report)]) == 0
+    assert ratchet_tests.main(["check", "--baseline", str(tmp_path / "no.json"), str(report)]) == 1
 
 
 def test_update_writes_a_baseline_the_check_accepts(tmp_path):
@@ -388,7 +395,7 @@ def test_apply_moves_notes_under_a_dated_section(tmp_path):
     assert release_admit.check_identity("v1.2.0", tmp_path)
 
 
-def test_any_failure_inside_a_flaky_file_is_known(tmp_path):
+def test_flaky_file_metadata_cannot_waive_new_failures(tmp_path):
     baseline = tmp_path / "b.json"
     baseline.write_text(
         json.dumps({"flaky_files": ["tests/unit/x/test_timing.py"], "known_failures": []}),
@@ -397,8 +404,8 @@ def test_any_failure_inside_a_flaky_file_is_known(tmp_path):
     flip = _report(tmp_path / "r1.json", ["tests.unit.x.test_timing::test_ramp"])
     crash = _report(tmp_path / "r2.json", ["tests/unit/x/test_timing.py::<timeout 300s>"])
     other = _report(tmp_path / "r3.json", ["tests.unit.x.test_timing_other::test_a"])
-    assert ratchet_tests.main(["check", "--baseline", str(baseline), str(flip)]) == 0
-    assert ratchet_tests.main(["check", "--baseline", str(baseline), str(crash)]) == 0
+    assert ratchet_tests.main(["check", "--baseline", str(baseline), str(flip)]) == 1
+    assert ratchet_tests.main(["check", "--baseline", str(baseline), str(crash)]) == 1
     assert ratchet_tests.main(["check", "--baseline", str(baseline), str(other)]) == 1
     out = tmp_path / "b.json"
     assert ratchet_tests.main(["update", "--out", str(out), str(other)]) == 0

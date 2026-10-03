@@ -2,10 +2,9 @@
 
 Jarvis does not paste. It asks whatever application is in front to paste, by
 sending a synthetic chord — and an application that does not bind that chord
-ignores it silently. That is fine for the curated chords (they mean "paste"
-somewhere real), and it is the whole problem for a chord the user recorded:
-there is no error and nothing to read back, so reporting ``inserted`` would be
-a lie in the one module whose entire docstring is about not lying.
+ignores it silently. A recorded chord without delivery evidence is therefore
+reported as ``paste_sent``. On Windows, this also applies to curated chords
+when the native clipboard observation mechanism is unavailable.
 
 So the vocabulary widened in two directions at once and both are pinned here:
 the config field accepts a combo, and the delivery report gains ``paste_sent``
@@ -13,6 +12,8 @@ for the case where the keystroke went out and the result is unknown.
 """
 
 from __future__ import annotations
+
+from types import SimpleNamespace
 
 import pytest
 
@@ -43,7 +44,14 @@ def _install_fake_clipboard(monkeypatch: pytest.MonkeyPatch, fake: object) -> No
     would be ignored and the test would drive the REAL system clipboard of
     whoever ran the suite. Patch the attribute the code reads.
     """
+    from jarvis.dictation import insert as insert_mod
+
     monkeypatch.setattr(jarvis.platform, "clipboard", fake)
+    # The delayed-rendering offer bypasses the clipboard facade. Without this
+    # seam, a fake clipboard can coexist with a REAL native clipboard owner.
+    monkeypatch.setattr(insert_mod, "_clipboard_offer_factory", lambda: None)
+    monkeypatch.setattr(insert_mod, "_foreground_target", lambda: None)
+    monkeypatch.setattr(insert_mod, "_input_block_reason", lambda target: "")
 
 
 # ----------------------------------------------------------------------
@@ -135,10 +143,18 @@ def test_paste_sent_is_part_of_the_outcome_vocabulary() -> None:
     assert "paste_sent" in DICTATION_OUTCOMES
 
 
+@pytest.mark.parametrize(
+    ("os_name", "platform"), [("nt", "win32"), ("posix", "darwin"), ("posix", "linux")],
+)
 def test_a_custom_chord_reports_paste_sent_and_keeps_the_clipboard(
     monkeypatch: pytest.MonkeyPatch,
+    os_name: str,
+    platform: str,
 ) -> None:
     from jarvis.dictation import insert as insert_mod
+
+    monkeypatch.setattr(insert_mod, "os", SimpleNamespace(name=os_name))
+    monkeypatch.setattr(insert_mod, "sys", SimpleNamespace(platform=platform))
 
     class _Clipboard:
         def __init__(self) -> None:
@@ -187,11 +203,19 @@ def test_a_custom_chord_reports_paste_sent_and_keeps_the_clipboard(
     assert result.detail
 
 
-def test_a_curated_chord_still_reports_inserted_and_restores(
+@pytest.mark.parametrize(
+    ("os_name", "platform"), [("nt", "win32"), ("posix", "darwin"), ("posix", "linux")],
+)
+def test_a_curated_chord_without_native_evidence_preserves_platform_contract(
     monkeypatch: pytest.MonkeyPatch,
+    os_name: str,
+    platform: str,
 ) -> None:
-    """The honesty change must not cost the normal path its clean report."""
+    """Windows retains unconfirmed text; existing POSIX delivery is unchanged."""
     from jarvis.dictation import insert as insert_mod
+
+    monkeypatch.setattr(insert_mod, "os", SimpleNamespace(name=os_name))
+    monkeypatch.setattr(insert_mod, "sys", SimpleNamespace(platform=platform))
 
     class _Clipboard:
         def __init__(self) -> None:
@@ -226,7 +250,14 @@ def test_a_curated_chord_still_reports_inserted_and_restores(
         "dictated text", paste_chord="ctrl_v", delay_ms=0, delay_after_ms=0
     )
 
-    assert result.status == "inserted"
-    assert result.clipboard_restored is True
-    assert clipboard.writes == ["dictated text", "previous"]
-    assert clipboard.content == "previous"
+    if platform == "win32":
+        assert result.status == "paste_sent"
+        assert result.clipboard_restored is False
+        assert result.clipboard_holds_text is True
+        assert clipboard.writes == ["dictated text"]
+        assert clipboard.content == "dictated text"
+    else:
+        assert result.status == "inserted"
+        assert result.clipboard_restored is True
+        assert clipboard.writes == ["dictated text", "previous"]
+        assert clipboard.content == "previous"

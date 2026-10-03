@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import re
 import threading
 import time
@@ -190,6 +191,11 @@ def _is_request_id(value: str) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _assignment(args: dict) -> str:
+    """The brief AND its chosen images identify a retry."""
+    return json.dumps([str(args.get("prompt") or "").strip(), args.get("image_refs", [])])
 
 
 class WorkspaceOrchestrator:
@@ -374,6 +380,27 @@ class WorkspaceOrchestrator:
         return request_id
 
     async def create(self, args: dict[str, Any], *, trace_id: str = "") -> dict[str, Any]:
+        """Claim creation before allocating panes; a retry only reads its receipt."""
+        request_id = str(
+            args.get("_dispatch_scope") or args.get("request_id") or trace_id or uuid4().hex
+        )
+        arguments = {k: v for k, v in args.items() if not k.startswith("_") and k != "request_id"}
+        # Scope is part of image authorization, even though it is host-owned.
+        if args.get("image_refs"):
+            arguments["image_scope"] = args.get("_image_scope", "")
+        previous = await asyncio.to_thread(
+            self.ledger.claim, "workspace-create", request_id, "create", arguments, 0,
+        )
+        if previous is not None:
+            return previous
+        result = await self._create(args, trace_id=trace_id, creation_id=request_id)
+        result["request_id"] = request_id
+        await asyncio.to_thread(self.ledger.finish, "workspace-create", request_id, result)
+        return result
+
+    async def _create(
+        self, args: dict[str, Any], *, trace_id: str, creation_id: str,
+    ) -> dict[str, Any]:
         """Open new coding agents in one workspace, then optionally brief them.
 
         A request for a NEW agent must never land on an existing pane, nor on a
@@ -393,6 +420,13 @@ class WorkspaceOrchestrator:
         if isinstance(picked, dict):
             return picked
         project, workspace = picked
+        if any(args.get(key) and args[key] != value for key, value in (
+            ("project_id", project["id"]), ("workspace_id", workspace["id"]),
+        )):
+            return {
+                "status": "stale_target", "success": False,
+                "reason": "The explicit workspace/project IDs do not match. Nothing was created.",
+            }
         spoken_cli = str(args.get("cli") or "").strip()
         cli = _coding_cli(spoken_cli) if spoken_cli else None
         if spoken_cli and cli is None:
@@ -412,6 +446,9 @@ class WorkspaceOrchestrator:
             count = 1
         count = max(1, min(count, MAX_PANES_PER_REQUEST))
         name = str(args.get("name") or "").strip()
+        created = []
+        capped = False
+        creation_error = ""
         mixed = args.get("agents")
         if isinstance(mixed, list) and mixed:
             # "Five Claude Code and three Codex" in one call.
@@ -440,22 +477,16 @@ class WorkspaceOrchestrator:
                     count, agent=cli, workspace_id=workspace["id"]
                 )
         except SessionError as exc:
-            return {
-                "status": "not_accepted",
-                "reason": str(exc),
-                "project_id": project["id"],
-                "workspace_id": workspace["id"],
-            }
-        owner = self.registry.get(workspace["id"])
-        if self.publish is not None and owner is not None and created:
-            try:
-                await self.publish(
-                    terminals_added_event(owner, created, source_layer="agentic_ide.orchestration")
-                )
-            except Exception as exc:  # noqa: BLE001 - the panes exist either way
-                from loguru import logger
-
-                logger.warning("New coding agents were not announced to the UI: {}", exc)
+            if not created:
+                return {
+                    "status": "not_accepted",
+                    "reason": str(exc),
+                    "project_id": project["id"],
+                    "workspace_id": workspace["id"],
+                }
+            # Earlier groups already exist. Keep their IDs and never recreate
+            # the successful groups merely because a later group failed.
+            creation_error = str(exc)
         targets = [
             {
                 "project_id": project["id"],
@@ -464,6 +495,7 @@ class WorkspaceOrchestrator:
             }
             for term in created
         ]
+        delivery_ids = [self._issue(target) for target in targets]
         result: dict[str, Any] = {
             "status": "created",
             "project": project["name"],
@@ -471,12 +503,29 @@ class WorkspaceOrchestrator:
             "project_id": project["id"],
             "workspace_id": workspace["id"],
             "agents": [
-                {"terminal_id": target["terminal_id"], "name": term.name, "cli": term.agent}
-                for target, term in zip(targets, created, strict=True)
+                {"terminal_id": target["terminal_id"], "name": term.name, "cli": term.agent,
+                 "request_id": request_id}
+                for target, term, request_id in zip(targets, created, delivery_ids, strict=True)
             ],
             "requested": count,
             "capped": capped,
+            **({"creation_error": creation_error, "success": False} if creation_error else {}),
         }
+        # Persist identity before slow CLI startup. Cancellation or a late result
+        # must never turn "pane allocated" into permission to allocate another.
+        await asyncio.to_thread(
+            self.ledger.finish, "workspace-create", creation_id,
+            {**result, "status": "uncertain", "success": False, "request_id": creation_id,
+             "reason": "New panes exist; startup/delivery is pending. Observe only these IDs. "
+                       "Do not recreate, reassign or send correction prompts."},
+        )
+        owner = self.registry.get(workspace["id"])
+        if self.publish is not None and owner is not None and created:
+            await self._announce(
+                lambda: terminals_added_event(
+                    owner, created, source_layer="agentic_ide.orchestration",
+                )
+            )
         prompt = str(args.get("prompt") or "").strip()
         if prompt:
             result["deliveries"] = list(
@@ -486,14 +535,19 @@ class WorkspaceOrchestrator:
                             {
                                 "action": "send",
                                 **target,
-                                "request_id": self._issue(target),
+                                "request_id": request_id,
                                 "prompt": prompt,
+                                "image_refs": args.get("image_refs", []),
+                                "_image_scope": args.get("_image_scope", ""),
                             },
                             trace_id=trace_id,
                         )
-                        for target in targets
+                        for target, request_id in zip(targets, delivery_ids, strict=True)
                     )
                 )
+            )
+            result["success"] = not creation_error and all(
+                d.get("status") == "accepted" for d in result["deliveries"]
             )
         return result
 
@@ -727,7 +781,10 @@ class WorkspaceOrchestrator:
                 ],
                 prompt,
                 trace_id,
+                image_refs=args.get("image_refs", []),
+                image_scope=args.get("_image_scope", ""),
             )
+            result["success"] = all(d.get("status") == "accepted" for d in result["deliveries"])
         return result
 
     @staticmethod
@@ -764,7 +821,8 @@ class WorkspaceOrchestrator:
         return groups or [(_default_cli(), 1)]
 
     async def _brief(
-        self, targets: list[dict[str, str]], prompt: str, trace_id: str
+        self, targets: list[dict[str, str]], prompt: str, trace_id: str,
+        *, image_refs: list[str] | None = None, image_scope: str = "",
     ) -> list[dict[str, Any]]:
         return list(
             await asyncio.gather(
@@ -775,6 +833,8 @@ class WorkspaceOrchestrator:
                             **target,
                             "request_id": self._issue(target),
                             "prompt": prompt,
+                            "image_refs": image_refs or [],
+                            "_image_scope": image_scope,
                         },
                         trace_id=trace_id,
                     )
@@ -835,15 +895,14 @@ class WorkspaceOrchestrator:
 
         A voice model retypes long hex IDs and drops characters. The resolve
         that minted them is the authority: an exact or near-miss request_id,
-        else a resolve for (nearly) the same terminal — the one this prompt
+        else a resolve for the exact same terminal — the one this prompt
         already went out under (a retry), or the newest unused one — supplies
-        the target. Only IDs nothing here issued are taken as given. An empty
-        request_id comes back when the call needs a fresh key: a resolve
-        already spent on a different prompt must not swallow a new task.
+        the target. Conflicting real IDs are refused. A request already spent
+        on a different prompt is a ledger collision, never a fresh delivery.
         """
         given = {key: str(args.get(key) or "").strip() for key in _TARGET_KEYS}
         request_id = str(args.get("request_id") or "").strip()
-        prompt = str(args.get("prompt") or "").strip()
+        prompt = _assignment(args)
         with self._issued_lock:
             issued = dict(self._issued)
         match = request_id if request_id in issued else ""
@@ -854,7 +913,8 @@ class WorkspaceOrchestrator:
             same_pane = [
                 (at, rid, sent)
                 for rid, (target, at, sent) in issued.items()
-                if _distance(given["terminal_id"], target["terminal_id"]) <= _NEAR_MISS
+                if given["terminal_id"] == target["terminal_id"]
+                and all(not given[k] or given[k] == target[k] for k in _TARGET_KEYS)
             ]
             now = time.monotonic()
             retry = [
@@ -868,12 +928,20 @@ class WorkspaceOrchestrator:
         if not match:
             return given, request_id
         target, at, sent = issued[match]
-        if (
-            action == "send"
-            and sent
-            and (sent != prompt or time.monotonic() - at > _RETRY_WINDOW_S)
-        ):
-            return dict(target), ""
+        for key, value in given.items():
+            if not value or value == target[key]:
+                continue
+            known = (
+                self.registry.find_terminal(value) is not None if key == "terminal_id"
+                else self.registry.get(value) is not None if key == "workspace_id"
+                else any(owner.project_id == value for owner in self.registry.sessions)
+            )
+            if known or _distance(value, target[key]) > _NEAR_MISS:
+                raise ValueError(
+                    "Request ID and target IDs conflict; nothing was sent. Resolve again."
+                )
+        # A spent request ID owns its original assignment forever. Changing the
+        # prompt must collide with its ledger claim, never mint a new delivery.
         return dict(target), match
 
     def _mark_sent(self, request_id: str, prompt: str) -> None:
@@ -885,6 +953,49 @@ class WorkspaceOrchestrator:
 
     async def run(self, args: dict[str, Any], *, trace_id: str = "") -> dict[str, Any]:
         action = args.get("action")
+        from jarvis.core.image_references import get_store
+
+        refs = args.get("image_refs", [])
+        image_scope = str(args.get("_image_scope") or "")
+        dispatch_scope = str(args.get("_dispatch_scope") or "")
+        creation = (
+            await asyncio.to_thread(self.ledger.operation, "workspace-create", dispatch_scope)
+            if dispatch_scope else None
+        )
+        if (args.get("_requires_new") or creation) and action not in {
+            "inspect", "create", "context", "observe",
+        }:
+            allowed = {
+                a["terminal_id"] for a in (creation or {}).get("agents", [])
+            }
+            # A NEW request cannot borrow an idle pane or repair existing tasks.
+            # Only an exact ID from this request's creation may be addressed.
+            if action != "send" or str(args.get("terminal_id") or "") not in allowed:
+                return {
+                    "status": "new_agent_required", "success": False,
+                    "reason": "This request requires NEW panes. Use create; do not resolve, "
+                              "reuse or send correction prompts to existing agents.",
+                    "creation": creation,
+                }
+            # create(prompt=...) already owns delivery, including uncertainty.
+            if creation and (creation.get("deliveries") or creation.get("status") == "uncertain"):
+                return {
+                    "status": "delivery_already_owned", "success": False,
+                    "reason": "Creation already owns this delivery. Observe its returned IDs; "
+                              "do not resend, rewrite the brief, or reassign.",
+                    "creation": creation,
+                }
+            issued = next(a["request_id"] for a in creation["agents"]
+                          if a["terminal_id"] == args["terminal_id"])
+            if args.get("request_id") and args["request_id"] != issued:
+                raise ValueError("Use the request ID returned for this new pane; nothing was sent.")
+            args = {**args, "request_id": issued}
+        if refs and action not in {"create", "open_workspace", "send"}:
+            raise ValueError("Image references belong to create, open_workspace or send only.")
+        if refs and not str(args.get("prompt") or "").strip():
+            raise ValueError("Image references require a specific task prompt.")
+        if action in {"create", "open_workspace"}:
+            get_store().resolve(image_scope, refs)
         if action in {"inspect", "resolve"}:
             graph = await asyncio.to_thread(self.graph)
             return graph if action == "inspect" else self.resolve(args, graph)
@@ -910,19 +1021,21 @@ class WorkspaceOrchestrator:
                 # Nothing usable to key on: derive a key so an immediate retry
                 # of this same task cannot deliver twice, while the same words
                 # sent again minutes later are a new instruction.
-                seed = f"{terminal_id}\n{prompt}\n{int(time.time() // _RETRY_WINDOW_S)}"
+                seed = f"{terminal_id}\n{prompt}\n{refs}\n{int(time.time() // _RETRY_WINDOW_S)}"
                 request_id = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:32]
-            self._mark_sent(request_id, prompt)
+            self._mark_sent(request_id, _assignment(args))
             previous = await asyncio.to_thread(
                 self.ledger.claim,
                 "workspace-orchestration",
                 request_id,
                 "send",
-                {**target, "prompt": prompt},
+                {**target, "prompt": prompt, "image_refs": refs,
+                 **({"image_scope": image_scope} if refs else {})},
                 0,
+                deduplicate_unconfirmed=True,
             )
             if previous is not None:
-                return previous
+                return {"target": target, "request_id": request_id, **previous}
         owner = self.registry.get(workspace_id)
         found = self.registry.find_terminal(terminal_id, workspace_id) if owner else None
         result: dict[str, Any]
@@ -948,17 +1061,18 @@ class WorkspaceOrchestrator:
                         "workspace_id": workspace_id,
                         "terminal_id": terminal_id,
                         **(
-                            {"prompt": prompt}
+                            {"prompt": prompt, "image_refs": refs, "_image_scope": image_scope}
                             if action == "send"
                             else {"limit": args.get("limit", 30)}
                         ),
                     }
                 )
                 result = {
-                    "status": delivery.get("delivery", "observed"),
+                    **delivery,
+                    "status": delivery.get("delivery", delivery.get("status", "observed")),
                     "target": target,
                     "trace_id": trace_id,
-                    **delivery,
+                    "request_id": request_id,
                 }
             except SessionError as exc:
                 # The coding-session adapter documents SessionError as a
@@ -976,16 +1090,19 @@ class WorkspaceOrchestrator:
 
                 logger.warning("Workspace action {} failed: {}", action, type(exc).__name__)
                 if action == "send":
-                    return {
+                    result = {
                         "status": "uncertain",
                         "target": target,
+                        "request_id": request_id,
                         "reason": (
                             "Delivery could not be confirmed. Inspect the session; "
                             "do not resend automatically."
                         ),
                     }
-                raise
+                else:
+                    raise
         if action == "send":
+            result["request_id"] = request_id
             await asyncio.to_thread(
                 self.ledger.finish, "workspace-orchestration", request_id, result
             )

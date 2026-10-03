@@ -14,10 +14,13 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 import { Terminal as TerminalIcon, AlertCircle } from "lucide-react";
 import { installNewlineBridge } from "../agentic/terminalNewline";
+import { requestConnect } from "@/lib/connectBudget";
+import { FONT_DEFAULT } from "../agentic/paneFont";
 import {
   MINIMUM_CONTRAST_RATIO,
   PANE_CHROME,
   themeFor,
+  type TerminalAppearance,
 } from "../agentic/terminalThemes";
 import { useThemeValue } from "@/hooks/useTheme";
 import { TERMINAL_FONT_STACK, syncTerminalFont } from "@/lib/terminalFont";
@@ -35,6 +38,10 @@ interface WorkspaceTerminalProps {
   agentName?: string;
   /** Run an agent's installer by name; mutually exclusive with agentName. */
   installName?: string;
+  /** Plain terminals are pinned to the workspace chosen when the tab opens. */
+  workspaceId?: string;
+  active?: boolean;
+  appearance?: TerminalAppearance;
   /**
    * A line to print before anything the process says.
    *
@@ -63,12 +70,19 @@ export function WorkspaceTerminal({
   installName,
   title,
   banner,
+  workspaceId,
+  active = true,
+  appearance: requestedAppearance,
 }: WorkspaceTerminalProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const [status, setStatus] = useState<Status>("connecting");
   const [error, setError] = useState<string | null>(null);
-  const appearance = useThemeValue();
+  const appAppearance = useThemeValue();
+  const appearance = requestedAppearance ?? appAppearance;
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  const resizeRef = useRef<() => void>(() => {});
   // Read through a ref inside the setup effect: the theme must NOT be a
   // dependency there, or switching it would tear down the PTY WebSocket and
   // restart the agent. Recolouring happens in its own effect below.
@@ -87,7 +101,7 @@ export function WorkspaceTerminal({
     const term = new Terminal({
       convertEol: false,
       fontFamily: TERMINAL_FONT_STACK,
-      fontSize: 12,
+      fontSize: FONT_DEFAULT,
       lineHeight: 1.15,
       cursorBlink: true,
       scrollback: 5000,
@@ -126,6 +140,7 @@ export function WorkspaceTerminal({
     let everLive = false;
 
     const sendResize = () => {
+      if (disposed || !activeRef.current || container.clientWidth === 0 || container.clientHeight === 0) return;
       try {
         fit.fit();
       } catch {
@@ -135,6 +150,7 @@ export function WorkspaceTerminal({
         ws.send(JSON.stringify({ t: "r", cols: term.cols, rows: term.rows }));
       }
     };
+    resizeRef.current = sendResize;
 
     // The fit above measured whatever font had loaded by then. If the display
     // font lands afterwards, the grid keeps the fallback's cell width while the
@@ -146,13 +162,15 @@ export function WorkspaceTerminal({
       sendResize();
     });
 
-    {
+    const cancelConnect = requestConnect(() => {
+      if (disposed) return;
       const params: Record<string, string> = {
         cols: String(term.cols || 80),
         rows: String(term.rows || 24),
       };
       if (agentName) params.agent = agentName;
       else if (installName) params.install = installName;
+      if (workspaceId) params.workspace_id = workspaceId;
 
       ws = new WebSocket(buildUrl(paneKey, params));
       ws.onopen = () => {
@@ -177,7 +195,7 @@ export function WorkspaceTerminal({
         else if (msg.t === "ready") {
           everLive = true;
           setStatus("live");
-          term.focus();
+          if (activeRef.current) term.focus();
         } else if (msg.t === "exit") {
           setStatus("exited");
           term.write(`\r\n\x1b[33m[process exited: ${msg.code ?? "?"}]\x1b[0m\r\n`);
@@ -211,7 +229,7 @@ export function WorkspaceTerminal({
           ws.send(JSON.stringify({ t: "i", d: data }));
         }
       });
-    }
+    });
 
     window.addEventListener("resize", sendResize);
     const ro = new ResizeObserver(() => sendResize());
@@ -219,6 +237,8 @@ export function WorkspaceTerminal({
 
     return () => {
       disposed = true;
+      cancelConnect();
+      resizeRef.current = () => {};
       window.removeEventListener("resize", sendResize);
       ro.disconnect();
       disposeFontSync();
@@ -226,12 +246,21 @@ export function WorkspaceTerminal({
       try {
         ws?.close();
       } catch {
-        /* ignore */
+        /* The socket is already closed; terminal cleanup still must run. */
       }
       term.dispose();
       termRef.current = null;
     };
-  }, [paneKey, agentName, installName]);
+  }, [paneKey, agentName, installName, workspaceId]);
+
+  useEffect(() => {
+    if (!active) return;
+    const frame = requestAnimationFrame(() => {
+      resizeRef.current();
+      termRef.current?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [active]);
 
   // Recolour in place on a theme switch. xterm repaints from the new palette
   // without touching the buffer, so scrollback and the live PTY both survive.

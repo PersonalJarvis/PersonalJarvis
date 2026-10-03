@@ -81,7 +81,7 @@ describe("AppshotEditorHost", () => {
     expect(useAppshotEditor.getState().openId).toBeNull();
   });
 
-  it("switches tools with CleanShot's keys", async () => {
+  it("switches tools with their one-letter shortcuts", async () => {
     render(<AppshotEditorHost />);
     act(() => useAppshotEditor.getState().open("shot-1"));
     await screen.findByTestId("appshot-editor-canvas");

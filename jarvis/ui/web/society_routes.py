@@ -91,6 +91,7 @@ class CreateAgentBody(BaseModel):
     denies: list[str] | None = None
     skills: list[str] | None = None
     permission_ceiling: str | None = None
+    approval_mode: str | None = None
     approval_rules: dict[str, list[str]] | None = None
     daily_budget_usd: float | None = None
     max_concurrent_runs: int | None = None
@@ -126,6 +127,7 @@ class PatchAgentBody(BaseModel):
     skills: list[str] | None = None
     knowledge_scope: str | None = None
     permission_ceiling: str | None = None
+    approval_mode: str | None = None
     approval_rules: dict[str, list[str]] | None = None
     daily_budget_usd: float | None = None
     max_concurrent_runs: int | None = None
@@ -259,10 +261,33 @@ async def create_agent(body: CreateAgentBody, request: Request) -> dict[str, Any
     )
     description = compose_description(body.description, body.model_dump(include=set(BRIEF_FIELDS)))
     creator = await _creator_from_request(request, rt)
+    # Voice has no Society session. Its new agents still inherit the last
+    # explicit chat seat, never the realtime credential or the Tool Model.
+    if not fields.get("provider") and (creator is None or creator.agent_id == rt.lead_id):
+        from .agent_chat_routes import _service_from_state
+
+        svc = _service_from_state(request.app.state)
+        if svc is None and getattr(request.app.state, "agent_chat_factory", None) is not None:
+            raise HTTPException(503, "The saved Jarvis chat model is temporarily unavailable")
+        selection = svc.store.chat_selection() if svc is not None else None
+        if selection is not None:
+            for key, value in selection.to_dict().items():
+                if not fields.get(key):
+                    fields[key] = value
     if creator is not None:
         from jarvis.society.inherit import inherit_creator_fields
 
         fields = inherit_creator_fields(fields, creator)
+    requested_mode = str(fields.get("approval_mode") or "bypass")
+    provider = str(fields.get("provider") or body.provider)
+    if provider:
+        from jarvis.agent_chat.permissions import society_mode_supported
+        from jarvis.agent_chat.service import resolve_runner
+
+        if not society_mode_supported(resolve_runner(provider, surface="society"), requested_mode):
+            raise HTTPException(
+                422, "This runner cannot provide an actionable approval for that mode."
+            )
     derived_focus, derived_rules = rt.derive(body.title, description)
     if body.focus is None and derived_focus:
         fields["focus"] = derived_focus
@@ -316,6 +341,18 @@ async def patch_agent(agent_id: str, body: PatchAgentBody, request: Request) -> 
     if has_brief(brief):
         # A brief rewrites the standing instructions as a whole.
         fields["description"] = compose_description(body.description or "", brief)
+    requested_mode = body.approval_mode or (
+        str(agent.approval_mode) if body.provider and agent.approval_mode else ""
+    )
+    if requested_mode:
+        from jarvis.agent_chat.permissions import society_mode_supported
+        from jarvis.agent_chat.service import resolve_runner
+
+        provider = body.provider or agent.provider
+        if not society_mode_supported(resolve_runner(provider, surface="society"), requested_mode):
+            raise HTTPException(
+                422, "This runner cannot provide an actionable approval for that mode."
+            )
     if ("title" in fields or "description" in fields) and "focus" not in fields:
         # A prose edit must not wipe what the agent earned in its chat: the
         # derived focus is APPENDED to the existing order (existing first,
@@ -337,6 +374,10 @@ async def patch_agent(agent_id: str, body: PatchAgentBody, request: Request) -> 
         updated = await rt.roster.update(agent.agent_id, fields)
     except RosterError as exc:
         raise _typed_error(exc) from exc
+    if "approval_mode" in fields:
+        svc = rt.chat_service()
+        if svc is not None and svc.store.get_session(updated.session_id) is not None:
+            svc.store.update_session(updated.session_id, permission_mode=str(updated.approval_mode))
     if "state" in fields:
         await rt.checkpoints.refresh(agent.agent_id)
         updated = await rt.roster.get(agent.agent_id) or updated
@@ -357,7 +398,10 @@ async def bind_agent_chat(agent_id: str, request: Request) -> dict[str, Any]:
         raise HTTPException(503, "agent chat service unavailable")
     from jarvis.society.chat_binding import ensure_session
 
-    session = ensure_session(svc, rt.config(), agent)
+    try:
+        session = ensure_session(svc, rt.config(), agent)
+    except PermissionError as exc:
+        raise HTTPException(422, str(exc)) from exc
     return {"session": session.to_dict(), "agent_id": agent.agent_id}
 
 
@@ -733,6 +777,7 @@ async def switch_agent_model(agent_id: str, body: ModelBody, request: Request) -
     """Move the agent onto another provider / model / effort / subscription seat.
     Its canonical chat is re-seated at once (transcript kept)."""
     from jarvis.agent_chat.catalog import offers
+    from jarvis.agent_chat.permissions import society_mode_supported
     from jarvis.agent_chat.service import resolve_runner
 
     rt = await _runtime(request)
@@ -744,6 +789,10 @@ async def switch_agent_model(agent_id: str, body: ModelBody, request: Request) -
             422,
             {"reason": str(FailureReason.BLOCKED_BY_POLICY), "detail": "provider not offered"},
         )
+    if agent.approval_mode and not society_mode_supported(
+        resolve_runner(body.provider, surface="society"), str(agent.approval_mode)
+    ):
+        raise HTTPException(422, "This runner cannot provide an actionable approval for that mode.")
     fields = {
         "provider": body.provider.strip().lower(),
         "model": body.model.strip(),
@@ -888,13 +937,12 @@ async def agent_browser_status(agent_id: str, request: Request) -> dict[str, Any
     agent = await rt.roster.resolve(agent_id)
     if agent is None:
         raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
-    return rt.browser.status_for(agent)
+    return await asyncio.to_thread(rt.browser.status_for, agent)
 
 
 @router.post("/agents/{agent_id}/browser/login", openapi_extra={"x-jarvis-dangerous": True})
 async def agent_browser_login(agent_id: str, body: LoginBody, request: Request) -> dict[str, Any]:
-    """Open the agent's browser profile headed so the person can sign in once.
-    Returns when the window is closed, /login/done is called, or 15 minutes pass."""
+    """Take manual control of the same live browser for website sign-in."""
     from jarvis.society.browser.session import BrowserUnavailable
 
     rt = await _runtime(request)

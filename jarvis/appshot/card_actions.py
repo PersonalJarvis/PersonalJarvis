@@ -10,13 +10,11 @@ stack names its appshot id; the last appshot when none is named):
   picture on Linux the moment the sidecar quits.
 * **Save** writes a PNG into ``~/Downloads``, like every other save in the app.
 * **Copy text** puts the appshot's scrubbed on-screen text (``ui_text``) on
-  the clipboard — CleanShot's upload chip, swapped for what an assistant app
-  reads off the screen anyway.
+  the clipboard for reuse in other apps.
 
 And when the editor closes, :func:`return_to_corner` brings the (edited)
-appshot back to the bottom of the corner stack, so it stays at hand —
-CleanShot X's Quick Access Overlay. Every function here returns a result and
-never raises.
+appshot back to the bottom of the corner stack, so it stays at hand.
+Every function here returns a result and never raises.
 """
 
 from __future__ import annotations

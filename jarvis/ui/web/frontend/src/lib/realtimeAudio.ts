@@ -36,6 +36,8 @@ export type RealtimeAudioOptions = {
   browserAudio?: boolean;
   /** The active provider needs a WebRTC offer to open its subscription transport. */
   requiresWebRtcOffer?: boolean;
+  /** False for audio-only peers that acknowledge startup by connecting. */
+  webRtcStartEventRequired?: boolean;
   /**
    * How long one start attempt may take before the surface calls it dead.
    *
@@ -72,12 +74,12 @@ const REMOTE_SILENCE_HANGOVER_FRAMES = 21;
  * generates its responses from its own turn detection, nothing ever asked for
  * a repeat. Retaining the opening in order and replaying it once the socket
  * accepts audio gives the browser the same contract the desktop already has.
- * The cap is per-connection and drops the OLDEST frames, so a forgotten open
- * tab cannot grow memory without bound.
+ * The per-connection cap fails explicitly if exceeded; it never silently
+ * removes the beginning of a command.
  */
-const MAX_STARTUP_PREROLL_BYTES = 48_000 * 2 * 30; // 30 s of mono PCM16 @48 kHz
+const STARTUP_PREROLL_SECONDS = 30;
 
-export type BrowserSpeechOutcome = "ended" | "error" | "unavailable";
+export type BrowserSpeechOutcome = "ended" | "error" | "unavailable" | "cancelled";
 
 export type BrowserRealtimeSupportIssue =
   | "secure_context"
@@ -86,13 +88,9 @@ export type BrowserRealtimeSupportIssue =
 
 const ICE_GATHER_TIMEOUT_MS = 1_500;
 
-/** One offer-only WebRTC transport for Codex subscription signalling.
- *
- * Audio capture and playback stay on Jarvis's PCM WebSocket. The peer exists
- * only to establish the provider transport: it receives no microphone track,
- * and its remote RTP track is deliberately not attached to an output element.
- * Codex mirrors output through `thread/realtime/outputAudio/delta`, allowing the
- * existing transcript scrub gate to approve PCM before it reaches speakers.
+/** Direct browser media for GPT-Live, or signalling-only for legacy PCM peers.
+ * API Live uses a session.started datachannel acknowledgement. Subscription
+ * Live accepts audio-only SDP and becomes ready when its peer connects.
  */
 export class RealtimeWebRtcTransport {
   private peer: RTCPeerConnection | null = null;
@@ -100,9 +98,13 @@ export class RealtimeWebRtcTransport {
   private dataChannel: RTCDataChannel | null = null;
   private started: Promise<void> | null = null;
   private startupTimer: ReturnType<typeof setTimeout> | null = null;
+  private armStartupTimeout: (() => void) | null = null;
+  private finishStartup: ((error?: Error) => void) | null = null;
+  private outputMuted = true;
+  private outputVolume = 1;
   constructor(private onRemoteStream?: (stream: MediaStream) => void) {}
 
-  async createOffer(stream?: MediaStream): Promise<string | null> {
+  async createOffer(stream?: MediaStream, startEventRequired = true, startBudgetMs = 25_000): Promise<string | null> {
     this.close();
     if (typeof RTCPeerConnection !== "function") return null;
 
@@ -111,6 +113,8 @@ export class RealtimeWebRtcTransport {
     if (stream) {
       for (const track of stream.getAudioTracks()) peer.addTrack(track, stream);
       this.player = new Audio();
+      this.player.muted = this.outputMuted;
+      this.player.volume = this.outputVolume;
       this.player.autoplay = true;
       peer.ontrack = (event) => {
         if (this.player) {
@@ -122,19 +126,41 @@ export class RealtimeWebRtcTransport {
     } else {
       peer.addTransceiver("audio", { direction: "recvonly" });
     }
-    this.dataChannel = peer.createDataChannel("oai-events");
-    if (stream) {
+    this.dataChannel = startEventRequired ? peer.createDataChannel("oai-events") : null;
+    if (stream || !startEventRequired) {
       const channel = this.dataChannel;
       this.started = new Promise<void>((resolve, reject) => {
-        this.startupTimer = setTimeout(() => reject(new Error("GPT-Live did not start")), 25_000);
-        channel.addEventListener("message", event => {
+        let settled = false;
+        const finish = (error?: Error) => {
+          if (settled) return;
+          settled = true;
+          if (this.startupTimer) clearTimeout(this.startupTimer);
+          this.startupTimer = null;
+          this.armStartupTimeout = null;
+          this.finishStartup = null;
+          channel?.removeEventListener("message", onMessage);
+          peer.removeEventListener("connectionstatechange", onConnectionChange);
+          if (error) reject(error); else resolve();
+        };
+        const onMessage = (event: MessageEvent) => {
           try {
-            if (JSON.parse(event.data).type === "session.started") {
-              if (this.startupTimer) clearTimeout(this.startupTimer);
-              resolve();
-            }
+            if (JSON.parse(event.data).type === "session.started") finish();
           } catch { /* Non-JSON data cannot acknowledge startup. */ }
-        });
+        };
+        const onConnectionChange = () => {
+          if (peer.connectionState === "failed" || peer.connectionState === "closed") {
+            finish(new Error("GPT-Live media connection failed"));
+          } else if (!startEventRequired && peer.connectionState === "connected") {
+            finish();
+          }
+        };
+        this.finishStartup = finish;
+        this.armStartupTimeout = () => {
+          this.startupTimer = setTimeout(() => finish(new Error("GPT-Live did not start")), startBudgetMs);
+        };
+        channel?.addEventListener("message", onMessage);
+        peer.addEventListener("connectionstatechange", onConnectionChange);
+        onConnectionChange();
       });
       void this.started.catch(() => undefined);
     }
@@ -149,22 +175,42 @@ export class RealtimeWebRtcTransport {
   }
 
   async applyAnswer(sdp: string): Promise<void> {
-    if (!this.peer) throw new Error("WebRTC answer arrived without an active offer");
-    await this.peer.setRemoteDescription({ type: "answer", sdp });
-    if (this.started) await this.started;
+    const peer = this.peer;
+    const started = this.started;
+    if (!peer) throw new Error("WebRTC answer arrived without an active offer");
+    // A permission prompt can outlive the media budget. Count media setup
+    // only once an answer exists; no paid call opens during that prompt.
+    this.armStartupTimeout?.();
+    this.armStartupTimeout = null;
+    await peer.setRemoteDescription({ type: "answer", sdp });
+    if (this.peer !== peer) throw new Error("WebRTC connection closed during startup");
+    if (started) await started;
   }
 
   muteOutput(): void {
     if (this.player) this.player.muted = true;
   }
 
+  setOutputState(muted: boolean, volume: number): void {
+    this.outputMuted = muted;
+    this.outputVolume = volume;
+    if (this.player) {
+      // Keep the live RTP timeline running while silent; pause() would retain
+      // old speech that could be heard after unmuting.
+      this.player.muted = muted;
+      this.player.volume = volume;
+    }
+  }
+
   close(): void {
     const peer = this.peer;
     this.peer = null;
+    this.finishStartup?.(new Error("GPT-Live media connection closed"));
     this.dataChannel?.close();
     this.dataChannel = null;
     this.started = null;
     if (this.startupTimer) clearTimeout(this.startupTimer);
+    this.startupTimer = null;
     this.player?.pause();
     if (this.player) this.player.srcObject = null;
     this.player = null;
@@ -231,6 +277,7 @@ type SpeechSynthesisSurface = Pick<SpeechSynthesis, "cancel" | "speak">;
 export class BrowserSpeechFallback {
   private generation = 0;
   private active = false;
+  private finishCancelled: (() => void) | null = null;
 
   constructor(
     private readonly synthesis: SpeechSynthesisSurface | null =
@@ -269,8 +316,10 @@ export class BrowserSpeechFallback {
       if (settled || generation !== this.generation) return;
       settled = true;
       this.active = false;
+      this.finishCancelled = null;
       handlers.onFinish(outcome);
     };
+    this.finishCancelled = () => finish("cancelled");
     if (language) utterance.lang = language;
     utterance.volume = Math.max(0, Math.min(1, Number.isFinite(volume) ? volume : 1));
     utterance.onstart = () => {
@@ -288,9 +337,12 @@ export class BrowserSpeechFallback {
     }
   }
 
-  cancel(): void {
+  cancel(notify = false): void {
+    const wasActive = this.active;
+    if (notify) this.finishCancelled?.();
+    this.finishCancelled = null;
     this.generation += 1;
-    if (!this.active) return;
+    if (!wasActive) return;
     this.active = false;
     try {
       this.synthesis?.cancel();
@@ -396,6 +448,9 @@ export class RealtimeAudioClient {
   private browserSpeech = new BrowserSpeechFallback();
   private webRtcTransport: RealtimeWebRtcTransport;
   private webRtcOfferSdp: string | null = null;
+  private earlyAnswer: { sdp: string; ready: Promise<void> } | null = null;
+  private startupAt = 0;
+  private startupMarks: Record<string, number> = {};
   private startupPreroll: ArrayBuffer[] = [];
   private startupPrerollBytes = 0;
   private finalized: (() => void) | null = null;
@@ -406,6 +461,30 @@ export class RealtimeAudioClient {
   // the backend cannot drop its audio; a disabled track sends silence.
   private inputMuted = false;
   private inputStopped = false;
+  private outputMuted = true;
+  private outputVolume = 1;
+  private outputRevision = -1;
+
+  private applyOutputState(muted: unknown, volume: unknown, revision: unknown): void {
+    if (typeof muted !== "boolean") return;
+    const effectiveMuted = muted || this.intentionalClose || this.inputStopped;
+    if (typeof revision === "number" && revision < this.outputRevision) return;
+    if (typeof revision === "number") this.outputRevision = revision;
+    const changed = this.outputMuted !== effectiveMuted;
+    this.outputMuted = effectiveMuted;
+    if (typeof volume === "number" && Number.isFinite(volume)) {
+      this.outputVolume = Math.max(0, Math.min(1, volume));
+    }
+    this.webRtcTransport.setOutputState(effectiveMuted, this.outputVolume);
+    this.playbackNode?.port.postMessage({ type: "output_state", muted: effectiveMuted, volume: this.outputVolume });
+    if (changed) {
+      this.browserSpeech.cancel(true);
+      this.playbackResampler?.reset();
+      this.outputActivity.reset();
+      this.outputLevel = 0;
+      this.cb.onPlaybackState?.(false);
+    }
+  }
 
   constructor(
     private cb: RealtimeCallbacks = {},
@@ -421,6 +500,15 @@ export class RealtimeAudioClient {
   private inputLevel = 0;
   private outputLevel = 0;
   private lastMediaSendAt = Number.NEGATIVE_INFINITY;
+
+  private markStartup(phase: string): void {
+    if (phase in this.startupMarks || this.reconnecting || this.intentionalClose) return;
+    this.startupMarks[phase] = Math.round(performance.now() - this.startupAt);
+    console.info(`Voice startup phase=${phase} elapsed_ms=${this.startupMarks[phase]}`);
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ type: "startup_timing", marks_ms: this.startupMarks }));
+    }
+  }
 
   private sendMediaLevels(force = false): void {
     if (!this.options.browserAudio || !this.controlReady || this.intentionalClose || this.ws?.readyState !== WebSocket.OPEN) return;
@@ -441,6 +529,8 @@ export class RealtimeAudioClient {
   }
 
   private observeOutputLevel(rms: number): void {
+    if (this.outputMuted) rms = 0;
+    if (rms > 0) this.markStartup("first_output_audio");
     this.outputLevel = this.outputMeter.push(rms);
     this.cb.onOutputLevel?.(this.outputLevel);
     const changed = this.outputActivity.update(rms);
@@ -489,8 +579,16 @@ export class RealtimeAudioClient {
 
   private applyInputMute(muted: unknown): void {
     if (typeof muted !== "boolean") return;
+    const changed = this.inputMuted !== muted;
     this.inputMuted = muted;
     this.syncInputTracks();
+    if (muted) {
+      this.startupNode?.port.postMessage({ type: "suspend" });
+      this.startupPreroll = [];
+      this.startupPrerollBytes = 0;
+    } else if (changed && !this.inputStopped) {
+      this.startupNode?.port.postMessage({ type: this.ready ? "start" : "resume" });
+    }
   }
 
   private stopInput(): void {
@@ -508,40 +606,52 @@ export class RealtimeAudioClient {
   }
 
   private async open(): Promise<void> {
+    this.startupAt = performance.now();
+    this.startupMarks = {};
     this.intentionalClose = false;
     this.serverClosed = false;
     this.reconnecting = false;
     this.inputMuted = false;
     this.inputStopped = false;
+    this.outputRevision = -1;
+    this.applyOutputState(true, this.outputVolume, undefined);
     try {
       const supportIssue = browserRealtimeSupportIssue();
       if (supportIssue) throw new RealtimeAudioSupportError(supportIssue);
-      // Start ICE gathering before microphone/worklet setup. This hides nearly
-      // all subscription signalling latency behind work the call already has
-      // to do, including when subscription voice is an explicit fallback for
-      // an API-first provider chain. Capture and scrubbed playback remain PCM.
-      const webRtcOffer: Promise<{
-        sdp: string | null;
-        error: unknown | null;
-      }> | null = this.options.requiresWebRtcOffer && !this.options.browserAudio
-        ? this.webRtcTransport.createOffer().then(
-            (sdp) => ({ sdp, error: null }),
-            (error: unknown) => ({ sdp: null, error }),
-          )
-        : null;
       this.ctx = new AudioContext({ latencyHint: "interactive" });
       if (!this.ctx.audioWorklet) {
         throw new RealtimeAudioSupportError("audio_worklet_unavailable");
       }
+      if (this.options.browserAudio && this.options.requiresWebRtcOffer) {
+        // This destination has no source yet: negotiate a silent track while
+        // the microphone opens. The startup worklet later owns its only input.
+        this.rtcInput = this.ctx.createMediaStreamDestination();
+        this.rtcInput.channelCount = 1;
+      }
+      // Start ICE on a silent destination while microphone/worklet setup runs.
+      // No raw microphone track enters the peer: pcm-startup is the sole
+      // source and stays silent until both media and control are ready.
+      const webRtcOffer: Promise<{
+        sdp: string | null;
+        error: unknown | null;
+      }> | null = this.options.requiresWebRtcOffer
+        ? this.webRtcTransport.createOffer(this.rtcInput?.stream, this.options.webRtcStartEventRequired, this.options.startBudgetMs).then(
+            (sdp) => ({ sdp, error: null }),
+            (error: unknown) => ({ sdp: null, error }),
+          )
+        : null;
       // The worklet load, the microphone open, the one-time WS ticket and
       // the shared connect-budget turn are independent: acquiring them
       // concurrently keeps three disk/network waits off the wake path
-      // instead of stacked end to end. The WebRTC offer still needs the
-      // microphone stream, so it is built once the mic resolves below.
+      // instead of stacked end to end. The silent WebRTC destination also
+      // allows offer generation to overlap permission and device setup.
       const setupStartedAt = performance.now();
       const workletReady = this.ctx.audioWorklet
         .addModule(pcmWorkletUrl)
         .then(() => this.ctx?.resume());
+      // Observed again below, but a rejected worklet must not become an
+      // unhandled rejection while a permission prompt holds getUserMedia.
+      void workletReady.catch(() => undefined);
       const micReady = navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: { ideal: 1 },
@@ -586,25 +696,22 @@ export class RealtimeAudioClient {
       this.playbackNode.connect(this.ctx.destination);
       if (this.options.browserAudio && this.options.requiresWebRtcOffer) {
         this.startupNode = new AudioWorkletNode(this.ctx, "pcm-startup");
-        this.rtcInput = this.ctx.createMediaStreamDestination();
-        this.rtcInput.channelCount = 1;
         source.connect(this.startupNode);
-        this.startupNode.connect(this.rtcInput);
+        this.startupNode.connect(this.rtcInput!);
         this.startupNode.port.onmessage = (event: MessageEvent) => {
           if (event.data?.type !== "error" || this.intentionalClose) return;
           this.cb.onStatus?.("provider_error", { error: "Voice startup audio could not be retained. Please start again." });
           void this.disconnect();
         };
       }
+      this.markStartup("capture_ready");
 
       // Required transport bootstrap for subscription-backed Realtime. API
       // providers do not set this option and continue to use the PCM socket
       // alone. A subscription session cannot be opened or billed correctly
       // without its WebRTC peer, so this path fails closed.
       if (this.options.requiresWebRtcOffer) {
-        const result = this.options.browserAudio
-          ? { sdp: await this.webRtcTransport.createOffer(this.rtcInput?.stream ?? this.stream), error: null }
-          : await webRtcOffer;
+        const result = await webRtcOffer;
         if (result?.error) {
           this.webRtcTransport.close();
           this.webRtcOfferSdp = null;
@@ -617,6 +724,7 @@ export class RealtimeAudioClient {
           this.webRtcTransport.close();
           throw new Error("Subscription Realtime requires WebRTC support");
         }
+        this.markStartup("offer_ready");
       }
 
       // Proactive one-time ticket: WebKit engines do not attach the HttpOnly
@@ -643,6 +751,8 @@ export class RealtimeAudioClient {
     if (this.intentionalClose) return;
     const data = event.data as ArrayBuffer | { type?: string; rms?: number };
     if (data instanceof ArrayBuffer) {
+      this.markStartup("first_capture_frame");
+      if (this.inputMuted || this.inputStopped) return;
       if (this.options.browserAudio && this.options.requiresWebRtcOffer) return;
       if (this.ready && this.ws?.readyState === WebSocket.OPEN) {
         this.ws.send(data);
@@ -696,10 +806,15 @@ export class RealtimeAudioClient {
               : {}),
           }),
         );
+        this.markStartup("socket_open");
       };
       socket.onerror = () => fail(new Error("Realtime voice socket failed"));
       socket.onclose = (event) => {
         this.ready = false;
+        this.startupNode?.port.postMessage({ type: "suspend" });
+        this.stopInput();
+        this.webRtcTransport.close();
+        fail(new Error(event.reason || "Voice connection closed"));
         if (!this.intentionalClose) {
           this.cb.onStatus?.("disconnected", { code: event.code, reason: event.reason });
           fail(new Error(event.reason || `Realtime voice socket closed (${event.code})`));
@@ -724,6 +839,7 @@ export class RealtimeAudioClient {
             typeof message.role === "string" ? message.role : "user",
           );
         } else if (type === "reconnecting") {
+          this.earlyAnswer = null;
           this.reconnecting = true;
           this.ready = false;
           this.controlReady = false;
@@ -735,7 +851,7 @@ export class RealtimeAudioClient {
           this.startupPrerollBytes = 0;
           this.playbackNode?.port.postMessage({ type: "flush" });
         } else if (type === "reconnect_offer") {
-          void this.webRtcTransport.createOffer(this.rtcInput?.stream ?? this.stream ?? undefined).then(sdp => {
+          void this.webRtcTransport.createOffer(this.rtcInput?.stream ?? this.stream ?? undefined, this.options.webRtcStartEventRequired, this.options.startBudgetMs).then(sdp => {
             if (sdp && socket.readyState === WebSocket.OPEN && !this.intentionalClose) {
               socket.send(JSON.stringify({ type: "reconnect_offer", request_id: message.request_id, sdp }));
             }
@@ -747,6 +863,9 @@ export class RealtimeAudioClient {
           this.startupNode?.port.postMessage({ type: "suspend" });
           this.webRtcTransport.muteOutput();
           this.stopInput();
+          this.applyOutputState(true, this.outputVolume, undefined);
+        } else if (type === "output_state") {
+          this.applyOutputState(message.muted, message.volume, message.revision);
         } else if (type === "input_mute") {
           this.applyInputMute(message.muted);
         } else if (type === "audio_closed") {
@@ -769,18 +888,43 @@ export class RealtimeAudioClient {
             socket.close();
           }
           return;
+        } else if (type === "audio_transport") {
+          this.applyOutputState(message.output_muted, message.output_volume, message.output_revision);
+          // SDP alone is not readiness. ICE/DTLS may overlap the server's
+          // sideband attach, while pcm-startup continues to output silence.
+          const sdp = message.webrtc_answer_sdp;
+          if (!this.options.browserAudio || this.earlyAnswer || typeof sdp !== "string" || !sdp.trim()) {
+            fail(new Error("Unexpected voice transport answer"));
+            socket.close();
+            return;
+          }
+          this.markStartup("answer_received");
+          const ready = this.webRtcTransport.applyAnswer(sdp).then(() => this.markStartup("media_connected"));
+          this.earlyAnswer = { sdp, ready };
+          void ready.catch(error => {
+            fail(error instanceof Error ? error : new Error(String(error)));
+            socket.close();
+          });
+          return;
         } else if (type === "audio_ready") {
           // The local control channel can already relay levels while RTP
           // finishes its handshake. Native and browser bars share this input.
           this.controlReady = true;
           // Before the retained opening is released below.
           this.applyInputMute(message.input_muted);
+          this.applyOutputState(message.output_muted ?? false, message.output_volume, message.output_revision);
           this.sendMediaLevels(true);
           this.setOutputRate(message.output_sample_rate);
           void this.finishAudioReady(message)
             .then(() => {
+              if (this.intentionalClose || this.ws !== socket || socket.readyState !== WebSocket.OPEN) {
+                throw new Error("Voice start cancelled");
+              }
               this.ready = true;
-              this.startupNode?.port.postMessage({ type: "start" });
+              if (!this.inputMuted && !this.inputStopped) {
+                this.startupNode?.port.postMessage({ type: "start" });
+                this.markStartup("input_released");
+              }
               this.reconnecting = false;
               this.sendMediaLevels(true);
               this.flushStartupPreroll();
@@ -826,12 +970,9 @@ export class RealtimeAudioClient {
   private retainStartupFrame(frame: ArrayBuffer): void {
     this.startupPreroll.push(frame);
     this.startupPrerollBytes += frame.byteLength;
-    while (
-      this.startupPreroll.length > 1 &&
-      this.startupPrerollBytes > MAX_STARTUP_PREROLL_BYTES
-    ) {
-      const dropped = this.startupPreroll.shift();
-      this.startupPrerollBytes -= dropped?.byteLength ?? 0;
+    if (this.startupPrerollBytes > (this.ctx?.sampleRate ?? 48000) * 2 * STARTUP_PREROLL_SECONDS) {
+      this.cb.onStatus?.("provider_error", { error: "Voice startup audio could not be retained. Please start again." });
+      void this.disconnect();
     }
   }
 
@@ -851,6 +992,7 @@ export class RealtimeAudioClient {
     const resampler = new StreamingPcm16Resampler(rate, this.ctx.sampleRate);
     const pcm = resampler.process(bytes.buffer);
     this.receivedPrefix = true;
+    if (this.inputMuted || this.inputStopped) return;
     if (this.startupNode) {
       const samples = Float32Array.from(new Int16Array(pcm), value => value / 32768);
       this.startupNode.port.postMessage({ type: "prefix", samples }, [samples.buffer]);
@@ -859,6 +1001,7 @@ export class RealtimeAudioClient {
       // prefix ahead of the browser's already retained opening.
       this.startupPreroll.unshift(pcm);
       this.startupPrerollBytes += pcm.byteLength;
+      if (this.startupPrerollBytes > this.ctx.sampleRate * 2 * STARTUP_PREROLL_SECONDS) throw new Error("Voice startup buffer exceeded");
     }
   }
 
@@ -867,13 +1010,15 @@ export class RealtimeAudioClient {
     const retained = this.startupPreroll;
     this.startupPreroll = [];
     this.startupPrerollBytes = 0;
-    if (this.ws?.readyState !== WebSocket.OPEN) return;
+    if (this.ws?.readyState !== WebSocket.OPEN || this.inputMuted || this.inputStopped) return;
     for (const frame of retained) {
       this.ws.send(frame);
     }
   }
 
   private async finishAudioReady(message: RealtimeStatusPayload): Promise<void> {
+    // Reattaching the control socket keeps the established media peer and SDP.
+    if (message.reuse_webrtc === true) return;
     const answer = message.webrtc_answer_sdp;
     const answerRequired =
       message.requires_webrtc_answer === true ||
@@ -887,7 +1032,14 @@ export class RealtimeAudioClient {
       return;
     }
     try {
-      await this.webRtcTransport.applyAnswer(answer);
+      if (this.earlyAnswer) {
+        if (this.earlyAnswer.sdp !== answer) throw new Error("Voice transport answer changed during startup");
+        await this.earlyAnswer.ready;
+      } else {
+        this.markStartup("answer_received");
+        await this.webRtcTransport.applyAnswer(answer);
+        this.markStartup("media_connected");
+      }
     } catch (error) {
       this.webRtcTransport.close();
       if (answerRequired) {
@@ -911,6 +1063,7 @@ export class RealtimeAudioClient {
   }
 
   private handleAudio(pcm: ArrayBuffer): void {
+    if (this.outputMuted) return;
     // This is authoritative for both API and subscription providers. The
     // subscription WebRTC peer intentionally does not play remote RTP; Codex's
     // documented sideband PCM therefore keeps Jarvis's scrub gate in the path.
@@ -927,6 +1080,10 @@ export class RealtimeAudioClient {
     const id = typeof message.id === "string" ? message.id : "";
     const text = typeof message.text === "string" ? message.text : "";
     if (!id || !text.trim()) return;
+    if (this.outputMuted) {
+      this.ws?.send(JSON.stringify({ type: "tts_browser_done", id, outcome: "cancelled" }));
+      return;
+    }
 
     this.playbackResampler?.reset();
     this.playbackNode?.port.postMessage({ type: "flush" });
@@ -934,7 +1091,7 @@ export class RealtimeAudioClient {
     // resolver. No default is substituted here: inventing one would be a
     // second language decision in a layer that has no business making it.
     const language = typeof message.language === "string" ? message.language : "";
-    const volume = typeof message.volume === "number" ? message.volume : 1;
+    const volume = this.outputVolume;
     this.browserSpeech.speak(text, language, volume, {
       onStart: () => this.cb.onAudio?.(),
       onFinish: (outcome) => {
@@ -950,6 +1107,7 @@ export class RealtimeAudioClient {
 
   async disconnect(): Promise<void> {
     this.intentionalClose = true;
+    this.applyOutputState(true, this.outputVolume, undefined);
     if (this.options.browserAudio && this.ready && !this.serverClosed && this.ws?.readyState === WebSocket.OPEN) {
       this.ready = false;
       this.webRtcTransport.muteOutput();
@@ -1016,6 +1174,7 @@ export class RealtimeAudioClient {
     this.playbackResampler = null;
     this.webRtcTransport.close();
     this.webRtcOfferSdp = null;
+    this.earlyAnswer = null;
     this.stream = null;
     this.ctx = null;
     this.inputMeter.reset();

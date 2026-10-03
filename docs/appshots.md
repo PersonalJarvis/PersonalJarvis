@@ -23,8 +23,7 @@ window there, it takes the whole screen instead.
 
 The area picker is a short-lived PySide6 process (`python -m
 jarvis.appshot.picker`) that starts on the shortcut and exits after one
-selection, so nothing stays resident. It looks like macOS's area capture
-(Cmd+Shift+4):
+selection, so nothing stays resident. The picker provides:
 
 - every screen is frozen under a light dim the moment the picker opens, so
   nothing moves under the selection (where a frozen frame cannot be grabbed,
@@ -35,7 +34,7 @@ selection, so nothing stays resident. It looks like macOS's area capture
 - hovering lifts the window under the pointer out of the dim, and a click
   without a drag takes exactly that window;
 - a drag clears the dim and tints the selected area a translucent grey
-  (like CleanShot X), with one thin border.
+  with one thin border.
 
 ### Marking up before the shot
 
@@ -116,12 +115,12 @@ the shutter and shows up as the last appshot.
 ## The card in the corner, and the editor
 
 After the shutter the picture flies into the bottom-right corner of its
-screen and rests there as a card — CleanShot X's Quick Access Overlay. How
-long is `[appshot].card_seconds` (Settings → Appshots → *Corner card*: 3, 6,
+screen and rests there as a quick-access card. Its lifetime is set by
+`[appshot].card_seconds` (Settings → Appshots → *Corner card*: 3, 6,
 10 or 30 seconds, or until you close it); the pointer on it keeps it.
 
-Several appshots **stack**, as in CleanShot X: the newest always lands at the
-bottom and the cards already there glide up to make room; when a card goes,
+Several appshots **stack**: the newest always lands at the bottom and the
+cards already there glide up to make room; when a card goes,
 the ones above it glide down. Up to five cards stay (the oldest leaves first,
 or earlier when the screen has no room). Every card belongs to its own
 appshot, so Copy, Save, Copy text, Edit and a drag on an older card reach
@@ -147,7 +146,7 @@ that card's picture (`AppshotStore` keeps the last five, each for
   flash or a sound); **Close** slides the unchanged picture in from the edge.
   Either way it stays at hand.
 - **Drag** the card into any app that accepts files or images (chat, mail,
-  Explorer/Finder) to drop the picture there. As in CleanShot X, a smaller
+  Explorer/Finder) to drop the picture there. A smaller
   rounded copy lifts off and stays where you grabbed it, and a green "+"
   beside the pointer shows that the text field or window under it takes the
   picture (macOS shows its own green badge). Dropped nowhere, or cancelled
@@ -163,9 +162,9 @@ the card only opens the editor and shares nothing.
 
 ## The editor
 
-The editor follows CleanShot X's annotate tool — same tools, same one-letter
-keys, the same window shape — in this app's own look. It opens from the
-corner card or from **Edit** on the last appshot (Settings → Appshots) — in
+The editor provides annotation tools, one-letter shortcuts and a compact
+window for editing a capture. It opens from the corner card or from **Edit**
+on the last appshot (Settings → Appshots) — in
 its own desktop window (`?view=appshot-editor`, `views/AppshotEditorWindow.tsx`),
 or, without a desktop shell, as a floating rounded window over the dimmed
 app. Nothing navigates away.
@@ -222,14 +221,12 @@ file (Windows and macOS; Linux has no drag bridge yet, the handle is hidden
 there and Save + "Show in folder" stand in). Escape closes a menu, cancels a
 stroke, clears a selection, then closes; with unsaved edits it asks first.
 
-### Compared with CleanShot X
+### Feature coverage
 
-Reference: [cleanshot.com/features](https://cleanshot.com/features) (checked
-2026-10-03). Status here: **done** = in the editor; **elsewhere** = Personal
-Jarvis covers it outside the editor; **not done** = not built, with the
-reason.
+Status here: **done** = in the editor; **elsewhere** = Personal Jarvis covers
+it outside the editor; **not done** = not built, with the reason.
 
-| CleanShot X | Status |
+| Feature | Status |
 |---|---|
 | Arrow, line, rectangle, filled rectangle, ellipse, pencil, highlighter, text, counter, spotlight, pixelate, blur, crop with aspect ratio | Done |
 | Background tool (presets, padding, aspect/position) | Done: presets, padding, corners, shadow. Custom uploads, saved presets, auto-balance and aspect ratio of the frame are not done. |
@@ -240,7 +237,7 @@ reason.
 | Rotate, flip, resize image | Not done |
 | Combine images, editable project file | Not done |
 | Capture area / window / fullscreen, freeze, crosshair with coordinates | Elsewhere: the area picker and the window shortcut ([Selecting an area](#selecting-an-area)); no fullscreen mode |
-| Quick Access Overlay (copy / save / annotate / drag after capture) | Elsewhere: the corner card (click = editor, drag = file) |
+| Corner card (copy / save / annotate / drag after capture) | Elsewhere: the corner card (click = editor, drag = file) |
 | Editor window: drag handle, zoom, Save / Done | Done: "Drag me" (Windows, macOS), zoom Fit/50/100/200 %, Save to Downloads, Done = use in the next message |
 | Scrolling capture, self-timer | Not done (the page's "in 3 s" button is the only timer) |
 | Screen recording, video editor, GIF | Not done |

@@ -1,0 +1,11 @@
+:root { color-scheme: light dark; font: 14px/1.5 system-ui,sans-serif; }
+body { width: 330px; margin: 0; padding: 20px; background: Canvas; color: CanvasText; }
+h1 { font-size: 20px; line-height: 1.25; margin: 0 0 12px; }
+p { margin: 10px 0; }
+label { display: block; font-weight: 600; margin-top: 12px; }
+input,button { box-sizing: border-box; width: 100%; padding: 9px; border: 1px solid ButtonBorder; border-radius: 6px; font: inherit; }
+input { background: Field; color: FieldText; }
+button { margin-top: 12px; background: ButtonFace; color: ButtonText; cursor: pointer; }
+button:disabled { opacity: .6; }
+:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
+#status { padding: 8px; border-inline-start: 3px solid Highlight; }

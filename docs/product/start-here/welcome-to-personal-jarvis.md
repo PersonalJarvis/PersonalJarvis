@@ -1,7 +1,7 @@
 ---
 title: "Welcome to Personal Jarvis"
 slug: welcome-to-personal-jarvis
-summary: "Understand what Personal Jarvis can do, what stays under your control, and where to begin."
+summary: "See how Jarvis turns your computer into an AI agent, what stays under your control, and where to begin."
 section: "Start here"
 section_order: 1
 order: 1
@@ -15,13 +15,13 @@ tags: [overview, getting-started, privacy, safety]
 related: [install-personal-jarvis, desktop-app-tour, start-your-first-chat]
 ---
 
-Personal Jarvis is an open-source assistant you can use in its desktop window
-or through its browser interface. You choose how it reasons, which services it
-can reach, and which device permissions it receives.
+Personal Jarvis turns your computer into an AI agent. Give it a task in chat or
+by voice. It can use the desktop and browser on its host, call connected tools,
+delegate longer work to specialized agents, and return results in one workspace.
+You choose the models, services, and device permissions it can use.
 
-You can begin with one working chat provider or a local model. Voice, connected
-services, long-running Agents, knowledge, and computer control are optional
-capabilities you can add when you need them.
+Start with one working chat provider or local model. Add computer control,
+voice, connected services, agents, and recurring work as you need them.
 
 Several visible labels follow the assistant name you chose, including the
 Agents area and Voice hub. This guide uses the neutral words **assistant**,

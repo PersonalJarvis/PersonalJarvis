@@ -33,12 +33,9 @@ export interface VoiceApiKeysTabProps {
  * `useProviders` / `useSectionHealth` already listen to, so whichever screen is
  * opened next reads the current truth.
  *
- * The Realtime|Pipeline engine switch deliberately does NOT ride along
- * (maintainer feedback 2026-07-29). This section is about turning speech into
- * text; picking the voice ENGINE is a different decision, and it already has
- * one home with the full explanatory context next to it — the API-Keys view's
- * `EngineModeSwitch` + `VoiceEngineContext`. A second switch here read as a
- * stray control in a section that never asked the question. Do not add it back.
+ * No voice-engine control rides along (maintainer feedback 2026-07-29): this
+ * section is about turning speech into text. Realtime is the only engine the
+ * settings offer, and the API Keys page's realtime tab is where it is set up.
  */
 export function VoiceApiKeysTab({ hideHeader = false }: VoiceApiKeysTabProps = {}) {
   const t = useT();

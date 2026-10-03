@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, PenLine, Trash2 } from "lucide-react";
 
 import { PageHeader } from "@/components/layout/PageHeader";
+import { AppshotRecordingPanel } from "@/components/appshot/AppshotRecordingPanel";
 import { Button } from "@/components/ui/button";
 import { BrandedSelect, type BrandedSelectOption } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
@@ -631,6 +632,10 @@ export function AppshotsView() {
           refreshKey={`${lastAppshotEvent}:${revision}`}
         />
 
+        {settings && typeof settings.recording_hotkey === "string" && (
+          <AppshotRecordingPanel settings={settings} saving={saving}
+            onShortcut={(recording_hotkey) => save({ recording_hotkey })} />
+        )}
         <p className="mt-5 text-sm text-muted-foreground">{t("appshots.voice_hint")}</p>
       </div>
     </div>

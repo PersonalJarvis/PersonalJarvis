@@ -113,10 +113,15 @@ DETACHABLE_VIEWS: dict[str, str] = {
     # picture is something you keep looking at WHILE you carry on working, and
     # on a second monitor it stops competing with the section that produced it.
     "visualization": "Visualization",
-    # The appshot editor, CleanShot X style: a click on the corner card opens
+    # The appshot editor: a click on the corner card opens
     # it in front of the user without raising or resizing the main window.
     # Always on one appshot (``&appshot=<id>``); ONE window is reused.
     "appshot-editor": "Appshot Editor",
+    # The Jarvis X annotation editor. Never a section of the main window: it
+    # opens from a capture's thumbnail card or the library, always on one
+    # item (``&item=<id>``), and ONE editor window is reused — opening another
+    # capture navigates it instead of stacking windows (open_jarvisx_editor).
+    "jarvisx-editor": "Jarvis X Editor",
 }
 META_FILE_PATH = DATA_DIR / ".jarvis-running"
 #: Timeout for the initial lock acquire, in seconds. 0 = non-blocking,
@@ -146,6 +151,10 @@ _REALTIME_WARM_MIN_INTERVAL_S = 20.0
 #: and relaunch again, so the app stays down and says why instead. Comfortably
 #: above a full cold boot, including model prefetch on a cold disk.
 _BACKEND_MIN_UPTIME_FOR_RECOVERY_S = 120.0
+
+# The force-exit backstop must outwait the server's bounded profile cleanup.
+# The asynchronous backend drain below continues to own orderly loop shutdown.
+_SHUTDOWN_FORCE_EXIT_MIN_S = 45.0
 
 
 def _clamp_pet_scale(value: object) -> float:
@@ -859,7 +868,7 @@ def window_restores_maximized(title: str) -> bool:
 def detached_window_size(view: str, screen: tuple[int, int] | None) -> tuple[int, int]:
     """Opening size of a detached window.
 
-    The appshot editor opens in CleanShot X's proportions: about two fifths of
+    The appshot editor opens in compact proportions: about two fifths of
     the screen's width and a little under half its height, centred — a tool
     window in front of the app, never one that looks like the app shrunk. It
     never goes below the size its whole toolbar needs. Every other view keeps
@@ -2100,7 +2109,6 @@ class DesktopApp:
         # The wake-critical Phase-A warm-up gates VoiceBootStatus(ready=True) on
         # this import; prefetching still overlaps all subsequent backend work.
         from jarvis.speech.warmup_prefetch import (
-            start_anthropic_import_prefetch,
             start_tts_import_prefetch,
             start_wake_import_prefetch,
         )
@@ -2110,12 +2118,9 @@ class DesktopApp:
         # from the wake import and remains a logged no-op for another provider
         # or a headless host without the optional dependency.
         start_tts_import_prefetch()
-        # Anthropic SDK import is the GIL stall that froze the desktop
-        # window on 2026-08-28 (worker thread in ``from anthropic import
-        # AsyncAnthropic``; Tk bar stopped pumping; health timed out).
-        # Prefetch here so the first recap/wiki/claude-api turn is a cache
-        # hit. Not voice-gated: those callers run with voice off too.
-        start_anthropic_import_prefetch()
+        # Background providers import their SDK when their actual consumer
+        # needs it. Warming every installed SDK here competes with voice and
+        # the route graph even when the selected providers never use it.
 
         # Start the audio-device settle after the shell paint too. Phase A then
         # reuses the result instead of re-paying the blocking stability poll.
@@ -2160,7 +2165,9 @@ class DesktopApp:
         # /api/health while it builds — that is what lets the window appear at
         # bind time rather than after the ~1 s ctor. WebServer.__init__ is
         # loop-agnostic (pure construction + route mounting), so off-loop is safe.
-        server = loop.run_until_complete(asyncio.to_thread(WebServer, self.cfg))
+        server = loop.run_until_complete(
+            asyncio.to_thread(WebServer, self.cfg, defer_feature_routes=True)
+        )
         self._server = server
         _db_mark("webserver_ctor")
 
@@ -3039,7 +3046,9 @@ class DesktopApp:
                 if exc is not None:
                     from loguru import logger as _slog
 
-                    _slog.opt(exception=exc).error("Voice/orb startup task crashed.")
+                    _slog.opt(exception=exc).error(
+                        "Startup task {} crashed.", task.get_name()
+                    )
 
             # Wake-model GIL-priority gate: set by ``_start_speech_and_orb`` once
             # the (light base/cpu) wake model has finished loading. The heavy
@@ -3110,6 +3119,15 @@ class DesktopApp:
                         "Heavy backend: wake-model gate timed out (12 s) — "
                         "starting the backend anyway."
                     )
+                if self._shutdown_done:
+                    return
+                # Route imports/mounting and the board used to run before the
+                # speech task even existed. Complete them off-loop only after
+                # wake warmup, and never expose a partially installed API.
+                await server.prepare_app()
+                if self._shutdown_done:
+                    return
+                _db_mark("feature_routes")
                 # Hand the REAL app to the bootstrap BEFORE the heavy _init_*
                 # chain runs. Every route whose subsystem is still warming
                 # answers its documented 503/None placeholder (the WebServer
@@ -3214,7 +3232,10 @@ class DesktopApp:
 
                 loop.create_task(_provision_wake_model(), name="wake-model-provision")
 
-            loop.create_task(_heavy_backend_bg(), name="heavy-backend")
+            self._heavy_backend_task = loop.create_task(
+                _heavy_backend_bg(), name="heavy-backend"
+            )
+            self._heavy_backend_task.add_done_callback(_log_speech_and_orb_done)
             loop.call_soon(self._start_virtual_cursor)
             # Watch this loop from OFF it, for the rest of the process's life.
             # Everything the user touches — every WebSocket frame, every route,
@@ -5267,6 +5288,16 @@ class DesktopApp:
         self._publish_detached_event_threadsafe(view, opened=True)
         return {"ok": True, "already_open": False, "view": view}
 
+    def open_jarvisx_editor(self, item_id: str) -> dict[str, Any]:
+        """Open (or re-point) the Jarvis X editor window on one capture.
+
+        Worker-thread only, like :meth:`open_detached_window`: the card click
+        and ``POST /api/jarvisx/items/<id>/open-editor`` both reach it through
+        ``asyncio.to_thread``. ``item_id`` is the library's hex id, validated
+        by the caller, so it is safe to put into the URL as is.
+        """
+        return self.open_detached_window("jarvisx-editor", query=f"item={item_id}")
+
     def _show_warm_editor(self, window: Any, query: str, fallback: str) -> dict[str, Any]:
         """Show the kept-warm appshot editor on the appshot named in ``query``."""
         shot_id = query.partition("appshot=")[2].split("&", 1)[0]
@@ -5499,6 +5530,9 @@ class DesktopApp:
 
     def _hook_main_window_lifecycle(self) -> None:
         """Attach the closing/closed contract to the current main window."""
+        from jarvis.ui.winforms_errors import register_winforms_error_logging
+
+        register_winforms_error_logging(self._window)
         self._window.events.closing += self._on_window_closing
         self._window.events.closed += self._on_main_window_closed
         # Real paths for dropped files/folders (see jarvis/ui/native_drop.py).
@@ -6143,11 +6177,7 @@ class DesktopApp:
             self._hand_off_to_background_service()
         code = self.shutdown()
         if self._user_requested_quit:
-            with suppress(Exception):
-                sys.stdout.flush()
-            with suppress(Exception):
-                sys.stderr.flush()
-            os._exit(code)
+            self._exit_after_backend_shutdown(code)
         return code
 
     def _degrade_to_browser_ui(self, exc: BaseException, *, remedy: str | None = None) -> int:
@@ -6693,11 +6723,75 @@ class DesktopApp:
         bounded worst case, so it only fires on a genuine infinite hang.
         """
 
+        after_s = max(after_s, _SHUTDOWN_FORCE_EXIT_MIN_S)
+
         def _kill() -> None:
             time.sleep(after_s)
             os._exit(0)
 
         threading.Thread(target=_kill, name="jarvis-force-exit", daemon=True).start()
+
+    _BACKEND_SHUTDOWN_WAIT_S = 3.0
+
+    async def _drain_backend_shutdown(self, server: Any, bootstrap: Any) -> None:
+        """Keep the backend loop alive until its owned construction is drained."""
+        loop = asyncio.get_running_loop()
+
+        async def cleanup() -> None:
+            try:
+                if bootstrap is not None:
+                    await bootstrap.stop()
+            finally:
+                await server.stop()
+
+        owned = asyncio.create_task(cleanup(), name="desktop-backend-cleanup")
+        try:
+            try:
+                await asyncio.shield(owned)
+            except asyncio.CancelledError:
+                # Cancellation of a waiting caller cannot abandon construction
+                # or close its loop early. Propagate only after owned cleanup.
+                await asyncio.shield(owned)
+                raise
+        finally:
+            loop.call_soon(loop.stop)
+
+    def _exit_after_backend_shutdown(self, code: int) -> None:
+        """Exit after orderly cleanup without blocking the GUI thread.
+
+        The existing force-exit watchdog remains the emergency deadline for a
+        genuinely wedged native call. A normal slow route build gets to finish
+        and release its stores before the process exits.
+        """
+        future = getattr(self, "_backend_shutdown_future", None)
+        backend = getattr(self, "_backend_thread", None)
+
+        def finish() -> None:
+            try:
+                if future is not None:
+                    future.result()
+            except Exception:
+                logging.getLogger(__name__).exception("Backend cleanup failed before exit")
+            finally:
+                if backend is not None and backend is not threading.current_thread():
+                    backend.join()
+                with suppress(Exception):
+                    sys.stdout.flush()
+                with suppress(Exception):
+                    sys.stderr.flush()
+                os._exit(code)
+
+        if (future is not None and not future.done()) or (
+            backend is not None and backend.is_alive()
+        ):
+            # Non-daemon: returning from the launcher must not let interpreter
+            # shutdown kill the backend before its cleanup coroutine resumes.
+            self._shutdown_exit_thread = threading.Thread(
+                target=finish, name="desktop-cleanup-exit", daemon=False
+            )
+            self._shutdown_exit_thread.start()
+        else:
+            finish()
 
     def shutdown(self) -> int:
         """Idempotent. Stops the server + backend loop, cleans the meta file."""
@@ -6825,6 +6919,9 @@ class DesktopApp:
                     from loguru import logger as _logger
 
                     _logger.warning("Wake-upgrade task cancel did not dispatch: {}", exc)
+            _heavy = getattr(self, "_heavy_backend_task", None)
+            if _heavy is not None and not _heavy.done():
+                loop.call_soon_threadsafe(_heavy.cancel)
             _wml = getattr(self, "_wake_model_loaded", None)
             if _wml is not None:
                 try:
@@ -6906,35 +7003,31 @@ class DesktopApp:
                 # _pty_cleanup already logs its own failure; this only bounds
                 # how long the quit waits for it.
                 pass
-            # Stop the serve-first bootstrap (it owns the listening socket).
-            if self._bootstrap is not None:
+            # The GUI only waits briefly. The backend owns the full drain and
+            # stops its loop AFTER server cleanup, including any deferred route
+            # worker. A GUI timeout must not close a loop that still owns work.
+            shutdown_coro = self._drain_backend_shutdown(server, self._bootstrap)
+            try:
+                self._backend_shutdown_future = asyncio.run_coroutine_threadsafe(
+                    shutdown_coro, loop
+                )
+            except RuntimeError as exc:
+                shutdown_coro.close()
+                logging.getLogger(__name__).warning(
+                    "Backend shutdown could not be scheduled: %s", exc
+                )
+            else:
                 try:
-                    asyncio.run_coroutine_threadsafe(self._bootstrap.stop(), loop).result(
-                        timeout=3.0
+                    self._backend_shutdown_future.result(timeout=self._BACKEND_SHUTDOWN_WAIT_S)
+                except TimeoutError:
+                    logging.getLogger(__name__).info(
+                        "Backend cleanup continues after the bounded desktop wait"
                     )
-                except Exception:  # noqa: BLE001, S110
-                    # Timed out or already down; the loop stop below is the
-                    # backstop that frees the socket either way.
-                    pass
-            try:
-                fut = asyncio.run_coroutine_threadsafe(server.stop(), loop)
-                try:
-                    fut.result(timeout=3.0)
-                except Exception:  # noqa: BLE001, S110
-                    # Server shutdown may hang; the event loop still stops forcibly.
-                    pass
-            except Exception:  # noqa: BLE001, S110
-                # Could not even schedule the stop (loop already closing); the
-                # forced loop.stop below covers it.
-                pass
-            try:
-                loop.call_soon_threadsafe(loop.stop)
-            except Exception:  # noqa: BLE001, S110
-                # The loop is already stopped or closed — the desired end state.
-                pass
+                except Exception:
+                    logging.getLogger(__name__).exception("Backend shutdown failed")
 
         if self._backend_thread is not None:
-            self._backend_thread.join(timeout=3.0)
+            self._backend_thread.join(timeout=self._BACKEND_SHUTDOWN_WAIT_S)
 
         # Tray last — pystray.stop() prevents the tray icon from lingering
         # in the taskbar after the process ends.

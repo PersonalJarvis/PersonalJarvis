@@ -327,9 +327,9 @@ def test_the_shipped_index_satisfies_the_probe() -> None:
     assert 'id="root"' in index.read_text(encoding="utf-8")
 
 
-def test_the_appshot_editor_window_opens_in_cleanshot_proportions() -> None:
-    """Live 2026-10-03: the editor should sit in front of the app like
-    CleanShot X's — about 2/5 of the screen wide, a bit under half its height
+def test_the_appshot_editor_window_opens_in_compact_proportions() -> None:
+    """Live 2026-10-03: the editor should sit in front of the app,
+    about 2/5 of the screen wide, a bit under half its height
     — never so small that toolbar buttons drop off, never as big as the app."""
     from jarvis.ui.desktop_app import detached_window_size
 

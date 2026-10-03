@@ -209,14 +209,30 @@ async def test_open_probe_reports_a_running_browser_without_launching_one(monkey
     async def runtime(_):
         return SimpleNamespace(
             roster=SimpleNamespace(resolve=resolve),
-            browser=SimpleNamespace(live=SimpleNamespace(sessions=sessions, ensure=ensure)),
+            browser=SimpleNamespace(
+                live=SimpleNamespace(sessions=sessions, ensure=ensure),
+                status_for=lambda agent: {"mode": "chrome", "profile_name": "Work"},
+            ),
         )
 
     monkeypatch.setattr(routes, "_runtime", runtime)
     request = SimpleNamespace()
-    assert await routes.agent_browser_open("busy", request) == {"open": True, "running": True}
-    assert await routes.agent_browser_open("done", request) == {"open": False, "running": False}
-    assert await routes.agent_browser_open("idle", request) == {"open": False, "running": False}
+    metadata = {"mode": "chrome", "profile_name": "Work"}
+    assert await routes.agent_browser_open("busy", request) == {
+        **metadata,
+        "open": True,
+        "running": True,
+    }
+    assert await routes.agent_browser_open("done", request) == {
+        **metadata,
+        "open": False,
+        "running": False,
+    }
+    assert await routes.agent_browser_open("idle", request) == {
+        **metadata,
+        "open": False,
+        "running": False,
+    }
     assert ensured == []
 
 

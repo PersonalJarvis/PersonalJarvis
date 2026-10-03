@@ -913,6 +913,20 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         ),
     ),
     ProviderSpec(
+        id="openai-live-subscription",
+        label="OpenAI GPT-Live (ChatGPT subscription)",
+        tier="realtime",
+        configuration_surface="live",
+        auth_mode="codex",
+        secret_keys=(),
+        dashboard_url=None,
+        experimental=True,
+        hidden=True,
+        credential_help=(
+            "Uses the selected ChatGPT account for voice and reasoning without API-key fallback."
+        ),
+    ),
+    ProviderSpec(
         id="gemini-live",
         label="Gemini Live",
         tier="realtime",
@@ -976,7 +990,7 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
     # and bundles no server.
     ProviderSpec(
         id="local-realtime",
-        label="Self-hosted realtime (OpenAI-compatible)",
+        label="Local voice",
         tier="realtime",
         auth_mode="none",
         secret_keys=(),

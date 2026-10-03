@@ -177,8 +177,10 @@ def _contains_secret(text: str) -> bool:
 
         return bool(contains_secret(text))
     except Exception:  # noqa: BLE001 — a missing guard never opens the door
-        log.debug("society memory: secret guard unavailable, refusing nothing", exc_info=True)
-        return False
+        # Shared memory is read by every agent: when the detector cannot run,
+        # treat the text as secret and refuse it, like the learning guard does.
+        log.warning("society memory: secret guard unavailable, refusing the write", exc_info=True)
+        return True
 
 
 @dataclass(frozen=True, slots=True)

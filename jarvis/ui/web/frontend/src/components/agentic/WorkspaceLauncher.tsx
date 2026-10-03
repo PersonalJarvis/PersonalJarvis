@@ -328,6 +328,7 @@ export function WorkspaceLauncher({
                     selected={folder}
                     onSelect={onSelectFolder}
                     onSelectRecent={onSelectRecent}
+                    showSelection={false}
                   />
                 </div>
               )}

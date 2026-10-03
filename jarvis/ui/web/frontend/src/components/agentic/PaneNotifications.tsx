@@ -96,6 +96,11 @@ const KINDS: Record<
   PaneNotificationKind,
   { key: string; icon: typeof CheckCircle2; tone: string }
 > = {
+  stopped: {
+    key: "agentic_grid.notifications.kind_stopped",
+    icon: PowerOff,
+    tone: "text-muted-foreground",
+  },
   completed: {
     key: "agentic_grid.notifications.kind_completed",
     icon: CheckCircle2,

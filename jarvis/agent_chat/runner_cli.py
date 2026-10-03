@@ -65,7 +65,7 @@ import uuid
 from collections.abc import Callable
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Final
 
@@ -78,7 +78,11 @@ from jarvis.agent_chat.permissions import normalize_permission
 from jarvis.agent_chat.runner_api import TurnHandle
 from jarvis.agent_chat.tool_context import register_turn, unregister_turn
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
-from jarvis.core.response_style import KEEP_GOING_ON_TOOL_FAILURE
+from jarvis.core.response_style import (
+    AGENT_QUESTION_GUIDANCE,
+    KEEP_GOING_ON_TOOL_FAILURE,
+    TASK_EXECUTION_GUIDANCE,
+)
 
 log = logging.getLogger(__name__)
 
@@ -964,7 +968,24 @@ def plan_codex(
     # stdin; the sandbox decides what may happen. Plan is the read-only
     # sandbox plus an instruction to plan instead of act. The sandbox goes
     # through ``-c sandbox_mode`` because ``exec resume`` has no ``-s``.
-    if mode == "full-access":
+    society_seat = identity is not None and identity.session_id.startswith("society:")
+    if society_seat:
+        # The headless CLI cannot relay native approval prompts into Jarvis.
+        # Give it only the app-owned MCP hands; all actions then pass through
+        # the session grant, ToolExecutor and the visible chat approval card.
+        argv += ["-c", 'sandbox_mode="read-only"', "-c", 'approval_policy="never"']
+        for feature in (
+            "shell_tool",
+            "apps",
+            "hooks",
+            "multi_agent",
+            "browser_use",
+            "computer_use",
+            "plugins",
+            "web_search_request",
+        ):
+            argv += ["--disable", feature]
+    elif mode == "full-access":
         argv += ["--dangerously-bypass-approvals-and-sandbox"]
     elif mode == "approve-for-me":
         argv += [
@@ -1237,6 +1258,8 @@ def _with_identity(
                 "a plan, memory note, shell command or workspace file for scheduling. "
                 "Use existing connected-account information; ask only for essential "
                 "missing information. "
+                + TASK_EXECUTION_GUIDANCE + "\n"
+                + AGENT_QUESTION_GUIDANCE + "\n"
                 + KEEP_GOING_ON_TOOL_FAILURE
                 + " Existing permission rules still apply.\n"
                 + CONVERSATIONAL_TURN_REMINDER
@@ -1699,6 +1722,7 @@ class _CodexState:
     started_at: dict[str, float] = field(default_factory=dict)
     #: The last top-level ``error`` notification (retryable until turn.failed).
     last_error: str | None = None
+    failed_tools: set[str] = field(default_factory=set)
 
 
 def translate_codex_line(obj: dict[str, Any], st: _CodexState) -> list[dict[str, Any]]:
@@ -1830,10 +1854,18 @@ def translate_codex_line(obj: dict[str, Any], st: _CodexState) -> list[dict[str,
                 )
                 is_error = str(item.get("status") or "") == "failed"
             elif itype == "mcp_tool_call":
-                output = json.dumps(
-                    item.get("result") or item.get("error") or {}, ensure_ascii=False
+                result = item.get("result")
+                output = json.dumps(result or item.get("error") or {}, ensure_ascii=False)
+                is_error = (
+                    bool(item.get("error"))
+                    or str(item.get("status") or "") == "failed"
+                    or (isinstance(result, dict) and bool(result.get("isError")))
                 )
-                is_error = bool(item.get("error"))
+                if is_error:
+                    st.failed_tools.add(name)
+                    st.last_error = f"{name} failed: {output[:300]}"
+                else:
+                    st.failed_tools.discard(name)
             else:
                 output = "done"
                 is_error = False
@@ -2604,12 +2636,16 @@ def _tool_abort_is_recoverable(error: str | None) -> bool:
     return any(m in low for m in _TOOL_ABORT_MARKERS)
 
 
-def _keep_going_prompt(user_text: str, error: str | None) -> str:
+def _keep_going_prompt(
+    user_text: str, error: str | None, *, receipt_hint: str | None = None,
+) -> str:
     err = (error or "the last tool call failed").strip()[:500]
+    review = f"{receipt_hint}\n\n" if receipt_hint else ""
     return (
         "The last tool call was cancelled or failed:\n"
         f"{err}\n\n"
         f"{KEEP_GOING_ON_TOOL_FAILURE}\n\n"
+        f"{review}"
         "Original request:\n"
         f"{user_text}"
     )
@@ -2675,12 +2711,29 @@ async def run_cli_turn(
     t0 = time.perf_counter()
     session = handle.session
     resume = session.vendor_session
-    if session.surface == "society":
+    from jarvis.agent_chat.task_recovery import ToolRecovery, blocks_automatic_recovery
+
+    recovery = ToolRecovery()
+    original_emit = handle.emit
+    original_ask = handle.request_approval
+
+    async def observe(event: dict[str, Any]) -> None:
+        recovery.observe(event)
+        await original_emit(event)
+
+    async def ask(call_id: str, name: str, args: dict[str, Any], summary: str) -> str:
+        answer = await original_ask(call_id, name, args, summary)
+        if answer in {"deny", "cancel"}:
+            recovery.declined = True
+        return answer
+
+    if session.surface == "society" and not handle.continuation:
         from jarvis.society.reply_preference import resolve_agent_reply_language
 
         handle.output_language = await resolve_agent_reply_language(
             session.session_id, user_text, getattr(handle, "output_language", "")
         )
+    handle = replace(handle, emit=observe, request_approval=ask)
     if getattr(handle, "output_language", "") and not user_text.startswith("/goal"):
         user_text += "\nRespond in this language: " + handle.output_language
     ident: jarvis_harness.Identity | None = None
@@ -2705,6 +2758,7 @@ async def run_cli_turn(
         )
         if bridge is not None:
             from jarvis.agent_chat.approval_bridge import ChatGrant
+            from jarvis.society.surface import requires_explicit_approval
 
             bridge.arm(
                 ref,
@@ -2714,6 +2768,13 @@ async def run_cli_turn(
                     stance=handle.stance or "ask",
                     always_allowed=always_allowed if always_allowed is not None else set(),
                     ask=handle.request_approval,
+                    force_ask=(
+                        lambda name, args: requires_explicit_approval(
+                            session.session_id, name, args
+                        )
+                    )
+                    if session.surface == "society"
+                    else lambda _name, _args: False,
                 ),
             )
     tool_context = register_turn(session.session_id) if identity else None
@@ -2726,6 +2787,7 @@ async def run_cli_turn(
         if (
             outcome.status == "error"
             and resume
+            and not recovery.had_tool_calls
             and _resume_was_lost(outcome.error)
             and not handle.cancel.is_set()
         ):
@@ -2747,9 +2809,16 @@ async def run_cli_turn(
             outcome = await _run_cli_once(
                 handle, user_text, runner, None, identity=ident, bridge=bridge
             )
+        receipt_hint = recovery.hint() if identity else None
         if (
-            outcome.status == "error"
-            and _tool_abort_is_recoverable(outcome.error)
+            (
+                (outcome.status == "error" and _tool_abort_is_recoverable(outcome.error))
+                or (outcome.status in {"done", "error"} and receipt_hint is not None)
+            )
+            and not recovery.declined
+            and not recovery.blocked
+            and not blocks_automatic_recovery(outcome.error)
+            and not handle.tools_disabled
             and not handle.cancel.is_set()
         ):
             # Print-mode Grok/agy abort the process after a cancelled tool
@@ -2762,7 +2831,7 @@ async def run_cli_turn(
             )
             recovered = await _run_cli_once(
                 handle,
-                _keep_going_prompt(user_text, outcome.error),
+                _keep_going_prompt(user_text, outcome.error, receipt_hint=receipt_hint),
                 runner,
                 outcome.vendor_session or resume,
                 identity=ident,
@@ -2816,6 +2885,18 @@ async def _run_cli_once(
     # A society agent placed on another computer runs its CLI there over SSH.
     placement = await placement_for_session(session)
     remote_token = _REMOTE_PLANNING.set(placement is not None)
+    planned_prompt = user_text
+    if placement is not None and not getattr(handle, "tools_disabled", False):
+        # Also refresh resumed conversations which remember the old missing bridge.
+        planned_prompt = (
+            "<jarvis_remote_context>\n"
+            "You run on the connected computer. Jarvis MCP tools are connected for this turn "
+            "under your own identity and permissions, including persistent routines, memory "
+            "and the visible Jarvis browser on the main computer. Inspect the real tools; "
+            "earlier messages saying they were unavailable are outdated. Native file tools "
+            "and society_shell run on the connected computer; Jarvis file tools access "
+            "your workspace on the main computer.\n</jarvis_remote_context>\n\n" + user_text
+        )
 
     try:
         with cli_catalog_scope(
@@ -2843,7 +2924,7 @@ async def _run_cli_once(
                 # newly available models keep the required model/effort pairing.
                 await asyncio.to_thread(read_agy_models, required_model=session.model)
             plan: CliPlan = planner(
-                prompt=user_text,
+                prompt=planned_prompt,
                 cwd=cwd,
                 model=session.model,
                 effort=effort,
@@ -2923,6 +3004,8 @@ async def _run_cli_once(
                 local_cwd=str(cwd),
                 env=plan.env,
                 system_prompt_files=prompt_files,
+                session_id=session.session_id,
+                tools_enabled=not getattr(handle, "tools_disabled", False),
             )
         except RemoteCliUnavailable as exc:
             return _Outcome("error", str(exc), {}, None, None)
@@ -3156,6 +3239,9 @@ async def _run_cli_once(
                 or "\n".join(stderr_tail[-8:]).strip()
                 or f"{runner} exited with code {proc.returncode}."
             )
+        elif plan.shape == "codex" and state.failed_tools:
+            status = "error"
+            error_text = "Unresolved tool failure: " + ", ".join(sorted(state.failed_tools))
 
     usage = dict(state.usage)
     cost_usd = getattr(state, "cost_usd", None)

@@ -2703,6 +2703,9 @@ class AppshotConfig(BaseModel):
     #: collides with no app or OS shortcut.
     region_hotkey: str = "shift+shift"
 
+    #: One shortcut selects a recording area; pressing it again stops and saves.
+    recording_hotkey: str = "ctrl+shift+9"
+
     #: Where a shortcut appshot goes. ``auto``: into the running voice call,
     #: otherwise onto the next message. ``message``: always onto the next
     #: message. ``voice``: only into a running voice call.
@@ -2723,6 +2726,56 @@ class AppshotConfig(BaseModel):
     #: page, under ``<data dir>/appshots/`` (read by ``jarvis.appshot.service``
     #: and ``jarvis.appshot.library``). Off: nothing new is written there.
     library: bool = True
+
+
+class JarvisXConfig(BaseModel):
+    """Top-level ``[jarvisx]`` config — the built-in screenshot and screen recorder.
+
+    Jarvis X is a plain capture tool (``jarvis/jarvisx/``): region, window and
+    full-screen screenshots plus region / full-screen recordings, each on its
+    own global shortcut, saved to a folder and kept in a local library. It
+    never involves the assistant: no Screen Context privacy pipeline, no
+    delivery into a conversation. Every key below is read by
+    ``jarvis.jarvisx`` (AP-31).
+    """
+
+    model_config = {"extra": "allow"}
+
+    #: Master switch: off disarms every shortcut and refuses new captures.
+    #: The library of earlier captures stays browsable.
+    enabled: bool = True
+
+    #: Global shortcuts in the shared hotkey syntax; an empty string turns
+    #: that one shortcut off. The Ctrl+Shift+digit row stays clear of the OS
+    #: screenshot keys (Win+Shift+S, Cmd+Shift+3/4/5) and every other
+    #: Jarvis default.
+    hotkey_region: str = "ctrl+shift+2"
+    hotkey_window: str = "ctrl+shift+3"
+    hotkey_fullscreen: str = "ctrl+shift+1"
+    hotkey_record_region: str = "ctrl+shift+5"
+    hotkey_record_fullscreen: str = "ctrl+shift+6"
+    #: Stops a running recording (pressing its record shortcut again does too).
+    hotkey_stop_recording: str = "ctrl+shift+4"
+
+    #: ``true``: the corner thumbnail stays until it is dismissed. ``false``:
+    #: it fades after ``thumbnail_dismiss_s`` seconds.
+    thumbnail_persist: bool = False
+    #: Clamped to 1..3600 where it is read, so a hand-edited value can never
+    #: make the config unloadable.
+    thumbnail_dismiss_s: int = 30
+
+    #: Folder new captures are saved to. Empty = the user's Pictures folder
+    #: (``Pictures/Jarvis X``), or the Jarvis data folder where there is none.
+    save_dir: str = ""
+
+    #: Also put each new screenshot on the system clipboard.
+    copy_to_clipboard: bool = True
+
+    #: Shutter sound on every capture (also gated by ``[ui].sound_effects``).
+    sound: bool = True
+
+    #: Flash plus the corner thumbnail card after every capture.
+    effect: bool = True
 
 
 class ComputerUseConfig(BaseModel):
@@ -4571,6 +4624,9 @@ class JarvisConfig(BaseModel):
     # Appshots: the front window as conversation context, on a shortcut or on
     # request (jarvis/appshot/). Captures through Screen Context above.
     appshot: AppshotConfig = Field(default_factory=AppshotConfig)
+    # Jarvis X: the built-in screenshot / screen-recording tool
+    # (jarvis/jarvisx/). Independent of Screen Context and the assistant.
+    jarvisx: JarvisXConfig = Field(default_factory=JarvisXConfig)
     # Phase 5/6 — Computer-Use-POAV-Harness (ADR-0008).
     computer_use: ComputerUseConfig = Field(default_factory=ComputerUseConfig)
     # Low-latency local-action gate. Hidden tools only; never exposed in the
@@ -5383,7 +5439,11 @@ def _install_file_cred_backend(reason: str, *, retain_platform_backend: bool = T
 
         keyring.set_keyring(_FileKeyringBackend())
         if not _FILE_BACKEND_ACTIVE:
-            logging.getLogger(__name__).warning(
+            # A headless host normally has no platform vault. Keep that
+            # expected fallback out of every short CLI invocation, while a
+            # previously usable vault failing still deserves a warning.
+            logging.getLogger(__name__).log(
+                logging.WARNING if retain_platform_backend else logging.INFO,
                 "OS credential store unusable (%s) — API keys are stored in a local "
                 "0600 file under %s. Configure a Secret Service / Keychain for "
                 "OS-encrypted storage.",

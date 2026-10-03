@@ -13,10 +13,10 @@ Commands marked **requires confirmation** never run on a bare voice request — 
 
 ## `society-create-agent` — Create a persistent team agent
 
-Create an agent in the user's existing Agents team, only when requested. This creates a roster profile and starts no work. Responsibilities derive capabilities through the same service as the Agents UI. When a team agent creates a teammate, the new agent inherits that creator's model seat (provider, model, effort, subscription account) and permission setup (ceiling, grant mode, grants, denies) and cannot exceed them. Read the returned agent and created flag: an existing name is adopted, never duplicated. Use society-switch-agent-model only if a different provider is requested. Design the agent before calling: turn the user's words into a complete brief — mission, 3-6 responsibilities, working rules naming the data sources, output format and boundaries — inferring sensible defaults instead of copying the request verbatim. Read readback.not_connected and tell the user which services to connect. A requested schedule is a separate society-create-routine call.
+Create an agent in the user's existing Agents team, only when requested. This creates a roster profile and starts no work. Responsibilities derive capabilities through the same service as the Agents UI. When a team agent creates a teammate, the new agent inherits that creator's model seat (provider, model, effort, subscription account) and permission setup (approval mode, ceiling, grant mode, grants, denies) and cannot exceed them. Read the returned agent and created flag: an existing name is adopted, never duplicated. Use society-switch-agent-model only if a different provider is requested. Design the agent before calling: turn the user's words into a complete brief — mission, 3-6 responsibilities, working rules naming the data sources, output format and boundaries — inferring sensible defaults instead of copying the request verbatim. Read readback.not_connected and tell the user which services to connect. A requested schedule is a separate society-create-routine call.
 
 - **Endpoint:** `POST /api/society/agents`
-- **Arguments:** `name` (string; required); `title` (string; optional); `description` (string; optional); `mission` (string; optional); `responsibilities` (array; optional); `working_rules` (array; optional); `output_format` (string; optional); `boundaries` (array; optional); `success_criteria` (string; optional); `tier` (one of: specialist, orchestrator; optional); `focus` (array; optional); `skills` (array; optional); `daily_budget_usd` (number; optional); `max_concurrent_runs` (integer; optional); `permission_ceiling` (one of: safe, monitor, ask; optional); `grant_mode` (one of: all, allowlist; optional); `grants` (array; optional); `denies` (array; optional)
+- **Arguments:** `name` (string; required); `title` (string; optional); `description` (string; optional); `mission` (string; optional); `responsibilities` (array; optional); `working_rules` (array; optional); `output_format` (string; optional); `boundaries` (array; optional); `success_criteria` (string; optional); `tier` (one of: specialist, orchestrator; optional); `focus` (array; optional); `skills` (array; optional); `approval_mode` (one of: bypass, ask, always_ask; optional); `daily_budget_usd` (number; optional); `max_concurrent_runs` (integer; optional); `permission_ceiling` (one of: safe, monitor, ask; optional); `grant_mode` (one of: all, allowlist; optional); `grants` (array; optional); `denies` (array; optional)
 - **Requires confirmation:** no
 - **Desktop UI section:** `agents`
 - **Voice example (EN):** "create an agent for researching suppliers"
@@ -26,7 +26,7 @@ Create an agent in the user's existing Agents team, only when requested. This cr
 Change an existing agent's responsibilities, skills, focus, budget or paused/active state as requested by the user. Resolve its real id with society_status first. Only send requested fields. Existing learned focus and approval rules survive prose edits. Report the returned stored agent.
 
 - **Endpoint:** `PATCH /api/society/agents/{agent_id}`
-- **Arguments:** `agent_id` (string; required); `title` (string; optional); `description` (string; optional); `mission` (string; optional); `responsibilities` (array; optional); `working_rules` (array; optional); `output_format` (string; optional); `boundaries` (array; optional); `success_criteria` (string; optional); `tier` (one of: specialist, orchestrator; optional); `focus` (array; optional); `skills` (array; optional); `daily_budget_usd` (number; optional); `max_concurrent_runs` (integer; optional); `permission_ceiling` (one of: safe, monitor, ask; optional); `grant_mode` (one of: all, allowlist; optional); `grants` (array; optional); `denies` (array; optional); `state` (one of: active, paused; optional)
+- **Arguments:** `agent_id` (string; required); `title` (string; optional); `description` (string; optional); `mission` (string; optional); `responsibilities` (array; optional); `working_rules` (array; optional); `output_format` (string; optional); `boundaries` (array; optional); `success_criteria` (string; optional); `tier` (one of: specialist, orchestrator; optional); `focus` (array; optional); `skills` (array; optional); `approval_mode` (one of: bypass, ask, always_ask; optional); `daily_budget_usd` (number; optional); `max_concurrent_runs` (integer; optional); `permission_ceiling` (one of: safe, monitor, ask; optional); `grant_mode` (one of: all, allowlist; optional); `grants` (array; optional); `denies` (array; optional); `state` (one of: active, paused; optional)
 - **Requires confirmation:** no
 - **Desktop UI section:** `agents`
 - **Voice example (EN):** "update Scout's responsibilities"
@@ -146,7 +146,7 @@ Switch the speech-to-text provider. Takes effect on the next voice-pipeline star
 Switch which realtime voice engine (speech-to-speech) is active, including subscription- and API-backed providers. Experimental transports require explicit acknowledgement.
 
 - **Endpoint:** `POST /api/realtime/switch`
-- **Arguments:** `provider` (one of: gemini-live, local-realtime, openai-live, vertex-live; required); `persist` (boolean; optional); `accept_experimental` (boolean; optional)
+- **Arguments:** `provider` (one of: gemini-live, local-realtime, openai-live, openai-live-subscription, vertex-live; required); `persist` (boolean; optional); `accept_experimental` (boolean; optional)
 - **Requires confirmation:** no
 - **Desktop UI section:** `apikeys`
 - **Voice example (EN):** "switch the realtime model to gemini"
@@ -196,7 +196,7 @@ List all configured providers and which ones are active.
 Test connectivity and authentication for one provider.
 
 - **Endpoint:** `POST /api/providers/{provider_id}/test`
-- **Arguments:** `provider_id` (one of: antigravity, cartesia, claude-api, claude-cli, codex, elevenlabs, faster-whisper, gemini, gemini-api, gemini-flash-tts, gemini-live, gemini-polish, grok, grok-build, grok-voice, groq-api, groq-polish, inworld, local-openai, local-realtime, nemotron-local, nvidia, ollama, ollama-polish, openai, openai-api, openai-live, openai-polish, openrouter, openrouter-polish, openrouter-stt, openrouter-tts, piper-local, vertex, vertex-live, vertex-stt, vertex-tts; required)
+- **Arguments:** `provider_id` (one of: antigravity, cartesia, claude-api, claude-cli, codex, elevenlabs, faster-whisper, gemini, gemini-api, gemini-flash-tts, gemini-live, gemini-polish, grok, grok-build, grok-voice, groq-api, groq-polish, inworld, local-openai, local-realtime, nemotron-local, nvidia, ollama, ollama-polish, openai, openai-api, openai-live, openai-live-subscription, openai-polish, openrouter, openrouter-polish, openrouter-stt, openrouter-tts, piper-local, vertex, vertex-live, vertex-stt, vertex-tts; required)
 - **Requires confirmation:** no
 - **Desktop UI section:** `apikeys`
 - **Voice example (EN):** "test the openai provider"

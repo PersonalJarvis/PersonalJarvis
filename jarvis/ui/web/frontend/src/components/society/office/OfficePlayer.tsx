@@ -48,6 +48,18 @@ export function ownsKeyboard(target: EventTarget | null): boolean {
   return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || !!target.closest("[role='dialog']");
 }
 
+/**
+ * Held movement keys stop counting the moment a modal (an arcade game, the
+ * elevator panel) takes the keyboard: the dialog swallows the keys pressed
+ * inside it, and the character must not keep walking behind it on a key that
+ * was still held when it opened. Returns true when it forgot something.
+ */
+export function forgetHeldKeysUnderDialog(pressed: Set<string>): boolean {
+  if (pressed.size === 0 || !ownsKeyboard(null)) return false;
+  pressed.clear();
+  return true;
+}
+
 /** Space on a focused button, tab or switch activates that control, never a jump. */
 function activatesControl(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && !!target.closest("button, a[href], [role='button'], [role='tab'], [role='switch'], [role='checkbox']");
@@ -81,12 +93,13 @@ function useMoveKeys(enabled: boolean, onInteract: () => void, onJump: () => voi
     // visibilitychange: the desktop WebView reports visible windows as hidden.)
     const release = () => { pressed.current.clear(); jumpHeld.current = false; };
     window.addEventListener("keydown", down);
-    window.addEventListener("keyup", up);
+    // Releases are heard in the capture phase, before any overlay that handles its own keys can swallow them.
+    window.addEventListener("keyup", up, true);
     window.addEventListener("blur", release);
     return () => {
       release();
       window.removeEventListener("keydown", down);
-      window.removeEventListener("keyup", up);
+      window.removeEventListener("keyup", up, true);
       window.removeEventListener("blur", release);
     };
   }, [enabled, onInteract, onJump]);
@@ -198,7 +211,8 @@ export function OfficePlayer({ layout, grid, look, name, awake, reduced }: {
       const free = isWalkable(grid, goal) ? null : nearestWalkable(grid, goal);
       player.path = findPath(grid, player, goal) ?? (free ? findPath(grid, player, free) : null) ?? [];
     }
-    // Keyboard movement, relative to where the camera looks.
+    // Keyboard movement, relative to where the camera looks; nothing while a dialog owns the keys.
+    if (forgetHeldKeysUnderDialog(pressed.current)) jumpHeld.current = false;
     let ix = 0, iz = 0;
     for (const code of pressed.current) { ix += MOVE_KEYS[code][0]; iz += MOVE_KEYS[code][1]; }
     const sprinting = isRunning(run.current, useOfficeSettings.getState().alwaysRun);

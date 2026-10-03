@@ -49,9 +49,8 @@ __all__ = [
 
 SURFACE: Final[str] = "society"
 
-#: Permission ceiling → the Jarvis-ladder stance the session runs in
-#: (``jarvis/agent_chat/permissions.py``): safe reads only, monitor may edit
-#: and runs commands after asking, ask asks for everything mutating.
+#: Legacy permission ceiling → the pre-migration Jarvis stance. Explicit
+#: approval modes instead come from the roster's own persisted choice.
 _CEILING_TO_MODE: Final[dict[str, str]] = {
     str(PermissionCeiling.SAFE): "plan",
     str(PermissionCeiling.MONITOR): "accept-edits",
@@ -101,15 +100,30 @@ def ensure_session(
     approvals, tools and memory, but its turns never land in the person's chat.
     """
     from jarvis.agent_chat.effort import default_effort
-    from jarvis.agent_chat.permissions import ladder_key, normalize_permission
+    from jarvis.agent_chat.permissions import (
+        ladder_key,
+        normalize_permission,
+        society_mode_supported,
+    )
     from jarvis.agent_chat.service import resolve_runner
 
     provider, model, effort = pair_for(cfg, agent)
+    runner = resolve_runner(provider, surface=SURFACE)
+    if agent.approval_mode is not None and not society_mode_supported(
+        runner, str(agent.approval_mode)
+    ):
+        raise PermissionError(
+            f"{runner} cannot provide an actionable approval for {agent.approval_mode}"
+        )
     session_id = conversation_session_id(agent.agent_id, counterpart)
     existing = svc.store.get_session(session_id)
     if existing is None:
-        ladder = ladder_key(SURFACE, resolve_runner(provider, surface=SURFACE))
-        mode = normalize_permission(ladder, _CEILING_TO_MODE[str(agent.permission_ceiling)])
+        ladder = ladder_key(SURFACE, runner)
+        if agent.approval_mode is None:
+            # A pre-migration row keeps the old Jarvis ladder, including Plan.
+            mode = normalize_permission("jarvis", _CEILING_TO_MODE[str(agent.permission_ceiling)])
+        else:
+            mode = normalize_permission(ladder, str(agent.approval_mode))
         return svc.store.create_session(
             provider=provider,
             model=model,
@@ -129,6 +143,8 @@ def ensure_session(
         svc.store.reseat_session(session_id, provider=provider, model=model or existing.model)
         existing = svc.store.get_session(session_id)
     updates: dict[str, str] = {}
+    if agent.approval_mode is not None and existing.permission_mode != str(agent.approval_mode):
+        updates["permission_mode"] = str(agent.approval_mode)
     if getattr(existing, "account_id", "") != agent.account_id:
         updates["account_id"] = agent.account_id
     if effort and existing.effort != effort:

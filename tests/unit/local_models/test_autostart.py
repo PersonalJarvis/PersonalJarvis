@@ -99,7 +99,7 @@ def test_the_default_is_on_even_without_an_ollama_card() -> None:
 
 @pytest.mark.asyncio
 async def test_run_once_starts_a_stopped_server_and_warms_the_chat_pick() -> None:
-    cfg = _cfg(chat="qwen3.5:4b")
+    cfg = _cfg(primary="ollama", chat="qwen3.5:4b")
     cfg.brain.providers["ollama"].models["qwen3.5:4b"] = OllamaModelOptions(keep_alive="2h")
     started: list[str] = []
     warmed: list[tuple[str, str, Any]] = []
@@ -129,13 +129,30 @@ async def test_run_once_only_warms_a_running_server() -> None:
         return True
 
     record = await autostart.run_once(
-        _cfg(chat="qwen3.5:4b"),
+        _cfg(primary="ollama", chat="qwen3.5:4b"),
         status=lambda: {"installed": True, "running": True},
         start=lambda: (_ for _ in ()).throw(AssertionError("must not start")),
         warm=_warm,
     )
     assert record["started"] is False and record["warmed"] == "qwen3.5:4b"
     assert warmed == [f"qwen3.5:4b:{autostart.DEFAULT_KEEP_ALIVE}"]
+
+
+@pytest.mark.asyncio
+async def test_local_voice_does_not_prewarm_an_unselected_chat_model() -> None:
+    warmed: list[str] = []
+
+    async def warm(_root: str, model: str, _keep_alive: Any) -> bool:
+        warmed.append(model)
+        return True
+
+    result = await autostart.run_once(
+        _cfg(realtime="local-realtime", chat="unused-large-chat-model"),
+        status=lambda: {"installed": True, "running": True},
+        warm=warm,
+    )
+    assert result["warmed"] == ""
+    assert warmed == []
 
 
 @pytest.mark.asyncio

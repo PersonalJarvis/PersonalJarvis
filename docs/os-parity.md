@@ -11,6 +11,110 @@ is not elevated. Linux refuses on Wayland and without a display, with the
 reason spoken to the user. Unit tests cover every branch with platform probes.
 A live run passed on Windows 11; macOS and Linux X11 live runs are unverified.
 
+## Windows clipboard read deadline (2026-10-02, T2)
+
+Windows clipboard reads now run in a disposable helper with a one-second
+communication timeout. This prevents a stalled delayed-rendering owner from
+holding dictation before the paste for Windows' 30-second render timeout.
+Timeout kills and reaps the reader before returning `None`, releasing its
+clipboard lock. Dictation then skips restoring unreadable previous content
+and keeps the new transcript available. Text travels only through a pipe.
+The private helper supports source and windowed/frozen entry points.
+
+Linux and macOS retain their existing clipboard commands and five-second
+timeouts; headless hosts still return unavailable without starting a helper.
+Tests cover helper termination, Unicode, empty/unavailable data, concurrent
+reads, private dispatch and the Windows windowed stdout pipe. A packaged
+installer and a live third-party stalled clipboard owner remain unverified.
+
+## Headless installer and control CLI (#303, #296, #297)
+
+Explicit headless installs and automatically detected Linux server installs
+skip optional agent-browser provisioning, including Chromium downloads and
+privileged Playwright system-library setup. The installer prints the optional
+setup command; desktop-profile provisioning keeps its existing behavior.
+Linux installs expose `jarvis` and `jarvisctl` through `~/.local/bin`, preserve
+unrelated commands, and show a PATH hint when needed. Other platforms do not
+create these Linux links. An absent OS credential store logs at INFO while
+retaining the owner-only file fallback; failures of a usable store still warn.
+Focused tests cover profile selection, repeat installs, PATH discovery and
+fresh control CLI processes using fake HTTP responses. They do not verify a
+complete installation or actual Chromium provisioning on a physical host.
+
+## Embedded Chrome menus and native input
+
+On Windows, the managed browser preview composites native menus and dialogs
+whose owner chain leads to the selected Chrome window. Mouse coordinates map
+back to the corresponding owned HWND, including popup offsets and DPI scaling.
+Hover, right/middle/double clicks and scrolling target that widget; keyboard
+input follows the owned focus. Offscreen positions from older builds recover
+onto a monitor without activating Chrome. Hooks and captures have bounded
+cleanup, and stale geometry rejects input.
+
+Manual website sign-in stays inside the embedded viewer. Vision-capable agents
+with unrestricted website access can use approved native window controls;
+domain-restricted agents keep page-only tools because a complete Chrome frame
+can expose unrelated tabs. Native OS file dialogs require manual control to
+preserve workspace file-access boundaries. Other operating systems retain the
+existing page/CDP view and input; no native Chrome-menu parity is claimed.
+Portable fake tests cover ownership, composition, input mapping and lifecycle.
+The installed Browser-Use runtime's tool schema/dispatch was checked without
+launching a browser. Real Chrome menus, authentication and visual acceptance
+still require an interactive Windows check.
+
+## Browser profile sharing and Chrome connection
+
+Profile assignments and extension pairing use portable SQLite and Python.
+The Chrome extension connects through authenticated loopback HTTP/WebSocket on
+Windows, macOS and Linux; no native host or Windows service is required.
+Opening a connected browser requires visible, unlocked Chrome with the
+extension installed. Without it, the app remains usable and reports the browser
+as disconnected instead of launching a fallback. The extension currently needs
+manual unpacked installation. Fake transport, registry and UI checks do not
+prove native Chrome behavior on these platforms, actual OS-reboot persistence,
+or real X publication. See [browser profiles](browser-profiles.md) for scope.
+
+## Remote agents retain Jarvis tools (2026-10-01, T3)
+
+Remote coding turns carry their Jarvis MCP tools over a reverse forward on
+the existing pinned SSH connection. Both listeners bind to loopback. The
+remote credential belongs to one active chat turn; the Control API key stays
+on the main computer. Session headers cannot change the owner, and stale
+requests cannot acquire the next turn's user context. The existing session
+catalog and ToolExecutor still enforce grants, approvals and cancellation.
+Routine execution chats retain their owner's computer placement.
+
+The transport uses portable AsyncSSH and asyncio/uvicorn, with no native OS
+imports or boot-time initialization. Windows remote launchers and POSIX argv
+receive the remote endpoint through their existing launch paths. Claude,
+Codex, Antigravity, Grok, OpenCode, Kimi and Cursor have MCP configuration
+adapters; other runners fail before starting model work. Project-discovered
+configurations are restored after the turn and cannot overlap in one
+workspace. Native files and society_shell remain remote; Jarvis's browser,
+memory and file-tool workspace remain on the main computer.
+
+Verification: real in-process SSH forwarding tests cover authentication,
+session isolation, expired and revoked credentials, connection refusal,
+cleanup, configuration adapters, and routine creation/readback through MCP
+with a real SQLite store and scheduler. Reopening the store preserves the
+calendar schedule. Existing Windows launcher tests cover the launch path.
+Native macOS/Linux hosts and all seven real vendor CLIs are not qualified
+by those tests; SSH servers must permit TCP forwarding. No browser is
+started by this transport.
+
+Live qualification on Windows: a resumed Claude subscription chat on a
+connected Windows computer discovered the Jarvis tools, created a temporary
+daily routine, read back its persisted ID and next run,
+deleted it and verified the empty routine list. The final CLI configuration
+uses an explicit HTTP transport type; omitting it hid the server from the
+actual Claude tool catalog despite successful protocol-level tests. Browser
+actions were not executed in this qualification.
+
+Protocol references: [AsyncSSH port forwarding](https://asyncssh.readthedocs.io/en/latest/),
+[OpenCode MCP](https://opencode.ai/docs/mcp-servers/),
+[Kimi MCP configuration](https://github.com/MoonshotAI/kimi-cli/blob/main/README.md),
+[Cursor MCP](https://docs.cursor.com/en/cli/mcp).
+
 ## Connected computers on Linux, macOS and Windows (2026-10-01, T3)
 
 This one is about the REMOTE side: the machine Jarvis connects to under
@@ -671,7 +775,7 @@ experiences today.
 |---|---|---|---|---|---|
 | P-29 | Low | Subscription voice | The dedicated ChatGPT-subscription voice login is an interactive browser flow, so a headless Linux host — and a graphical Linux desktop that ships no terminal emulator able to host the login for its full lifetime — can never CONNECT the profile there (an existing login still reports ready and calls work through the browser voice bridge) | `jarvis/codex_app_server.py::_login_required_state`, `_linux_login_terminal_missing`, `start_codex_subscription_login`, `jarvis/codex_auth.py::_LINUX_LOGIN_TERMINALS` | Both cases report the same `lifecycle_unavailable` truth on every surface (card, activation, voice-mode, Test), each with its own actionable reason — "run Jarvis on a desktop" or "install one of these terminals" — and never an enabled Connect button that can only produce an error toast |
 | P-24 | Medium | Dictation shortcut | The global dictation/call shortcut needs `pynput` on Linux/X11, and `pynput` hard-requires `evdev` — which is published **source-only** (verified on PyPI 2026-07-28: evdev 1.9.3 ships an sdist and no wheels) and compiles against the kernel headers. Putting it in `[full]` would break the one advertised install path on a stock `python:3.11-slim`, so it is the opt-in `[desktop-linux]` extra instead. Wayland is a separate, unfixable-by-install case: the compositor owns global shortcuts by design (the XDG `GlobalShortcuts` portal lets the *compositor* assign the keys, and no wlroots compositor implements it at all) | `pyproject.toml` (`desktop-linux`), `jarvis/platform/probes.py::has_hotkey`, `jarvis/trigger/backends/noop.py::explain_unavailable` | X11 without the extra: no global shortcut, and the log/UI now names the actual cause and the exact `pip install` that fixes it (it used to blame Wayland unconditionally). Wayland: no global shortcut at all — bind a compositor shortcut to `jarvis api dictation start`. On both, dictation still works from the Jarvis Bar, the Dictation view and the CLI, and voice still works via the wake word |
-| P-25 | Medium | Dictation insertion | Pasting the transcript into another application is blocked, silently, in three OS-specific situations: Windows UIPI when the foreground window is elevated and Jarvis is not (`SendInput` reports success and the input is discarded), macOS Secure Input while a password field is focused, and Wayland outright (no synthetic input). Detection exists for the first two; Wayland is refused up front. Two further silent failures are Windows-only in their FIX: a chord the target does not bind as "paste" (an xterm.js terminal in a Tauri/Electron app swallows Ctrl+V as `^V`), and a target that reads the clipboard late (an async WebView bridge on a busy machine) after the 120 ms restore timer had already put the previous clipboard back | `jarvis/dictation/insert.py::describe_target`, `_insert_windows_verified`, `jarvis/platform/clipboard_offer.py`, `jarvis/platform/input_isolation.py::windows_foreground_window_is_elevated`, `macos_secure_input_enabled` | All three blocks degrade to the SAME honest outcome instead of silence: the transcript is left on the clipboard, the result is reported as `clipboard_only`, and the bar plus the Dictation view say why and that Ctrl+V will paste it. **Windows** additionally offers the text with delayed rendering and watches who reads it: on a host without a clipboard watcher (no Remote Desktop client, clipboard history off — the default) a paste is proven by the target's read, silence cascades Ctrl+V → Ctrl+Shift+V → Shift+Insert → typing (line breaks as Shift+Enter), and the route is remembered per executable; on a host with a watcher the offer is blind, ONE chord goes out (never a guessed second paste) and the previous clipboard is restored after a 2 s grace only if the dictated text is still on it. **macOS / Linux X11**: plain chord + 120 ms timer restore, unchanged — no delayed-rendering equivalent exists there (NSPasteboard promises and X11 selections notify the owner too, but are a follow-up). macOS Secure Input detection is implemented but has not been verified on real hardware from this machine |
+| P-25 | Medium | Dictation insertion | Pasting the transcript into another application is blocked, silently, in three OS-specific situations: Windows UIPI when the foreground window is elevated and Jarvis is not (`SendInput` reports success and the input is discarded), macOS Secure Input while a password field is focused, and Wayland outright (no synthetic input). Detection exists for the first two; Wayland is refused up front. Two further silent failures are Windows-only in their FIX: a chord the target does not bind as "paste" (an xterm.js terminal in a Tauri/Electron app swallows Ctrl+V as `^V`), and a target that reads the clipboard late (an async WebView bridge on a busy machine) after the 120 ms restore timer had already put the previous clipboard back | `jarvis/dictation/insert.py::describe_target`, `_insert_windows_verified`, `jarvis/platform/clipboard_offer.py`, `jarvis/platform/input_isolation.py::windows_foreground_window_is_elevated`, `macos_secure_input_enabled` | All three blocks degrade to the SAME honest outcome instead of silence: the transcript is left on the clipboard, the result is reported as `clipboard_only`, and the bar plus the Dictation view say why and that Ctrl+V will paste it. **Windows** offers the text with delayed rendering and sends exactly one configured paste shortcut. Only a render requested by the captured target process confirms clipboard consumption; merely opening the clipboard or a watcher reading it is not confirmation. A missing acknowledgement never triggers another shortcut, character typing, or an executable-wide learned route. Unconfirmed delivery reports `paste_sent` and leaves the transcript on the clipboard for a late or manual paste, without a restore timer. Focus changes or held modifiers before key emission leave the text available as `clipboard_only`. Confirmed reads may restore the previous clipboard only while the offer still owns it. The explicit typing setting remains available. Regression tests cover delayed readers, watchers, focus changes, and offer shutdown; these checks do not establish compatibility with every third-party editor. **macOS / Linux X11**: plain chord + 120 ms timer restore, unchanged — no delayed-rendering equivalent exists there (NSPasteboard promises and X11 selections notify the owner too, but are a follow-up). macOS Secure Input detection is implemented but has not been verified on real hardware from this machine |
 | P-04 | Medium | CU typing | Linux desktop Unicode text input needs the system `xdotool` binary (pip cannot install it); the pyautogui fallback used on Linux drops non-ASCII chars (umlauts, CJK, emoji) without it | `jarvis/cu/actuate/posix.py::type_text`, `jarvis/plugins/tool/type_text.py` | With `xdotool` (installer provisions it since 2026-07-15): fine. Without, the drop is now reported HONESTLY (2026-07-23): an all-non-ASCII text fails with an actionable "install xdotool" error, and a mixed text types its ASCII portion and warns that the rest was dropped — no more silent success |
 | P-05 | Low | Wiki | Wiki search hard-fails (RuntimeError with actionable apt/pysqlite3 remediation) on distros whose system SQLite lacks FTS5 | `jarvis/memory/wiki/fts_index.py:279` | `python:3.11-slim` and macOS ship FTS5 — only exotic/old distros affected; message is honest. Decision 2026-07-16: kept as honest hard error — a pysqlite3 shim would rewire seven wiki modules for an exotic audience |
 | P-07 | Low | Audio | No macOS/Linux host-API preference exists (the Windows-name-driven tables are intentionally inert off Windows — documented in-code since 2026-07-16), and headset-name heuristics are Windows-centric | `jarvis/audio/player.py`, `jarvis/audio/capture.py` | Device auto-pick falls back to OS default order — works, less clever than on Windows |
@@ -1125,6 +1229,26 @@ voice-stage rendering were inspected. The fresh Linux backend installation
 passed all seven conversation contracts; physical macOS/Linux audio behavior
 is not inferred from these checks.
 
+
+## Managed browser sign-in (T2)
+
+The managed browser's explicit **Sign in** action uses installed regular Google
+Chrome on Windows with the existing Jarvis-owned persistent profile. It closes
+Playwright/CDP first, retains native window capture and person-controlled input,
+and restores agent automation only after explicit handover and clean Chrome
+shutdown. The selected Chrome executable remains pinned to that profile across
+restarts; missing binaries and profile downgrades fail closed.
+
+macOS and Linux keep their existing managed browser behavior. They do not expose
+this sign-in capability because the current native capture/input implementation
+is Windows-only. The module imports without Win32 dependencies on those systems;
+native libraries load only within Windows-specific calls. Headless boot does not
+launch Chrome. No background login or provider call is added.
+
+Focused tests cover the platform boundary, process arguments, executable/version
+checks, ownership, viewer loss, stale frames and failed transitions using fakes.
+Real provider sign-in and light/dark desktop acceptance remain separate checks;
+passing these tests does not prove that Google accepted an account login.
 
 ## Startup audio catch-up (T2)
 

@@ -425,6 +425,23 @@ def _remove_autostart() -> None:
         _console.print(f"    [bad]⚠ could not remove the autostart entry: {escape(str(exc))}[/]")
 
 
+def _remove_cli_commands(install_dir: Path) -> None:
+    """Take `jarvis` / `personal-jarvis` off the PATH again.
+
+    The links in ``~/.local/bin``, the shell-profile line and the Windows
+    per-user Path entry all live outside the install folder, so a folder
+    delete would leave dead commands behind.
+    """
+    try:
+        from jarvis.setup.cli_path import remove_commands
+
+        removed = remove_commands(install_dir)
+        if removed:
+            _console.print("    [ok]→ terminal commands removed.[/]")
+    except Exception as exc:  # noqa: BLE001 - never abort the uninstall on this
+        _console.print(f"    [bad]⚠ could not remove the terminal commands: {escape(str(exc))}[/]")
+
+
 def _remove_keys(keys: list[str]) -> int:
     deleted = 0
     for key in keys:
@@ -569,6 +586,7 @@ def run_uninstall(
     _stop_running_instances(plan.install_dir)
     _remove_desktop_registration()
     _remove_autostart()
+    _remove_cli_commands(plan.install_dir)
     if not keep_keys:
         _remove_keys(plan.keyring_keys)
     if not keep_folder:

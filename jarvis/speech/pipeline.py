@@ -139,10 +139,12 @@ from jarvis.speech.continuation_window import ContinuationWindow
 from jarvis.speech.echo_guard import SelfEchoGuard
 from jarvis.speech.hangup import (
     HANGUP_RE,
+    HangupConfirmation,
     contains_end_signal,
+    hangup_cancelled_reply,
+    hangup_confirmation_question,
     is_legacy_farewell,
     matched_hangup_pattern,
-    supports_semantic_hangup,
 )
 from jarvis.speech.pending_buffer import PendingPromptBuffer
 from jarvis.speech.persona import PhrasePicker, iter_all_start_ack
@@ -395,11 +397,17 @@ _READBACK_KINDS: frozenset[str] = frozenset(
 
 #: Readback sources that never speak outside a call (see ``_is_agent_reply``).
 #: A mission the user just asked for is not here: its answer may still punch
-#: through the hangup gate (AD-OE5/OE6). A coding pane or a Jarvis agent that
-#: finishes is not here either: since 2026-09-30 neither is spoken at all, only
-#: shown (pane badge and bell, the agent chat notice).
+#: through the hangup gate (AD-OE5/OE6). Explicit delegations wait for a call
+#: and a conversational pause; their results never open a call themselves.
+#: How often a live call may leave the same owed reply unvoiced (no answer
+#: started) before it waits for the next call instead.
+_LIVE_REPLY_MAX_ATTEMPTS = 3
+
 _HELD_FOR_CALL_SOURCES: frozenset[str] = frozenset(
     {
+        "society.lead",
+        "agentic_ide.readback",
+        "delegation.batch",
         "tasks.runner",
         "workflows.runner",
         "workflows.scheduler",
@@ -1399,10 +1407,14 @@ _DICTATION_TAIL_REREAD_BACK_S = 0.5
 
 # How long the release waits for the incremental polish worker to finish the
 # windows it already has — normally the last one, whose formatting started the
-# moment it was read. One configured polish budget plus a little: past that
-# the formatter is not answering and the whole-text pass (which has its own
-# ceiling and fails open to the raw text) takes over.
+# moment it was read. Past that the worker is retired and its completed prefix
+# is retained, leaving only unfinished text for the bounded final polish pass.
 _DICTATION_PREFIX_POLISH_WAIT_S = 3.0
+
+# Dictation notifications update UI state; they must not inherit the bus's
+# five-second observer timeout before a finished transcript can be delivered.
+_DICTATION_EVENT_TIMEOUT_S = 1.0
+_DICTATION_POLISH_CANCEL_WAIT_S = 0.25
 
 
 class _SessionInputBuffer:
@@ -2338,7 +2350,9 @@ class SpeechPipeline:
         # threadpool AND the overlay's Tk thread, so the compare-and-set that
         # decides "did it flip?" holds this lock. ``None`` = nothing broadcast
         # yet, so the first change is compared against the configured volume.
-        self._speaker_mute_lock = threading.Lock()
+        self._speaker_mute_lock = threading.RLock()
+        self._speaker_muted = False
+        self._speaker_output_revision = 0
         self._speaker_muted_last: bool | None = None
         # One paste at a time — two overlapping ones race over the clipboard
         # restore and the loser puts the wrong content back (see _on_paste_last).
@@ -2933,6 +2947,7 @@ class SpeechPipeline:
 
         self._state = PipelineState.IDLE
         self._call_event = asyncio.Event()
+        self._hangup_confirmation = HangupConfirmation()
         self._hangup_event = asyncio.Event()
         # Wake and session capture use the same physical input device. A wake
         # stream must close before the session stream opens, while frames heard
@@ -3432,26 +3447,17 @@ class SpeechPipeline:
             setter(_local_silence_window_ms(ms))
 
     def set_tts_volume(self, volume: float, *, source: str = "") -> None:
-        """Live-apply a new master TTS output volume (0.0–1.0) — no restart.
+        """Change playback volume without clearing the independent speaker mute.
 
-        Delegates to ``AudioPlayer.set_volume`` so a Settings change is audible
-        on the next spoken sub-block. No-op-safe when the player is absent
-        (headless / not yet started) — the value still persisted and applies on
-        the next start.
-
-        Also the ONE place speaker mute is decided (mute = volume 0): when the
-        change flips the voice between silent and audible it broadcasts
-        ``VoiceSpeakerMuteChanged`` so every surface (the pet's speaker disc,
-        the in-app speaker button) mirrors it. Callers run on the REST
-        threadpool and on the overlay's Tk thread, so the flip is decided under
-        a lock and the publish is marshalled onto the pipeline's loop — this
-        never blocks and never awaits.
+        Publish a complete output snapshot for native and browser sinks. The
+        lock serializes callers from the bar and REST threads; events are
+        delivered on the pipeline loop. No configuration is written here.
         """
         target = float(volume)
         lock = getattr(self, "_speaker_mute_lock", None)
         if lock is None:
             # Pipelines built via ``__new__`` in tests skip ``__init__``.
-            lock = self._speaker_mute_lock = threading.Lock()
+            lock = self._speaker_mute_lock = threading.RLock()
         with lock:
             last = getattr(self, "_speaker_muted_last", None)
             was_muted = self.get_tts_volume() <= 0.0 if last is None else last
@@ -3462,13 +3468,50 @@ class SpeechPipeline:
             setter = getattr(player, "set_volume", None)
             if callable(setter):
                 setter(target)
-            muted = target <= 0.0
+            muted = self.is_speaker_muted
+            mute_setter = getattr(player, "set_muted", None)
+            if callable(mute_setter):
+                mute_setter(muted or self.get_tts_volume() <= 0.0)
             self._speaker_muted_last = muted
             if muted != was_muted:
                 log.info(
                     "Speaker %s (source=%s)", "muted" if muted else "unmuted", source or "unknown"
                 )
-                self._publish_event_soon(VoiceSpeakerMuteChanged(muted=muted, source=source))
+            self._publish_speaker_state(source)
+
+    @property
+    def is_speaker_muted(self) -> bool:
+        return bool(getattr(self, "_speaker_muted", False))
+
+    def speaker_output_state(self) -> dict[str, Any]:
+        """The state seeded to new/reconnected audio outputs before playback."""
+        with self._speaker_mute_lock:
+            return {
+                "muted": self.is_speaker_muted,
+                "volume": self.get_tts_volume(),
+                "revision": getattr(self, "_speaker_output_revision", 0),
+            }
+
+    def _publish_speaker_state(self, source: str) -> None:
+        self._speaker_output_revision = getattr(self, "_speaker_output_revision", 0) + 1
+        self._publish_event_soon(VoiceSpeakerMuteChanged(
+            muted=self.is_speaker_muted, source=source,
+            volume=self.get_tts_volume(), revision=self._speaker_output_revision,
+        ))
+
+    def set_speaker_muted(self, muted: bool, *, source: str = "") -> bool:
+        """Mute output only; preserve microphone, work, session and volume."""
+        with self._speaker_mute_lock:
+            self._speaker_muted = bool(muted)
+            setter = getattr(getattr(self, "_player", None), "set_muted", None)
+            if callable(setter):
+                setter(self.is_speaker_muted or self.get_tts_volume() <= 0.0)
+            self._publish_speaker_state(source)
+            return self.is_speaker_muted
+
+    def toggle_speaker_mute(self, *, source: str = "") -> bool:
+        with self._speaker_mute_lock:
+            return self.set_speaker_muted(not self.is_speaker_muted, source=source)
 
     def get_tts_volume(self) -> float:
         """The master TTS output volume in effect right now (0.0–1.0).
@@ -3901,11 +3944,14 @@ class SpeechPipeline:
         ):
             self._last_answer_floor_monotonic = time.monotonic()
         self._turn_state = new_state
+        if new_state is TurnTakingState.LISTENING:
+            self._schedule_delegation_results()
         if new_state is TurnTakingState.IDLE:
-            retry = getattr(self, "_agent_reply_retry_task", None)
-            if retry is not None and retry is not asyncio.current_task():
-                retry.cancel()
-                await asyncio.gather(retry, return_exceptions=True)
+            for task_name in ("_agent_reply_retry_task", "_delegation_result_task"):
+                retry = getattr(self, task_name, None)
+                if retry is not None and retry is not asyncio.current_task():
+                    retry.cancel()
+                    await asyncio.gather(retry, return_exceptions=True)
         await self._transition(self._supervisor_state_for_turn(new_state))
         # Turn-boundary: the floor has cleared → flush any announcements that
         # were deferred while the user was speaking (AD-OE6 zero-silent-drop).
@@ -4583,6 +4629,7 @@ class SpeechPipeline:
         )
 
     async def _emit_wake(self, keyword: str, confidence: float = 0.0) -> None:
+        self._wake_detected_monotonic = time.monotonic()
         self._last_wake_keyword = keyword
         if self._bus is not None:
             try:
@@ -4594,7 +4641,7 @@ class SpeechPipeline:
                     )
                 )
             except Exception as exc:  # noqa: BLE001
-                log.warning("WakeWordDetected-Publish fehlgeschlagen: %s", exc)
+                log.warning("WakeWordDetected publish failed: %s", exc)
 
     async def _publish_event(self, event: Any) -> None:
         if self._bus is None:
@@ -4941,7 +4988,60 @@ class SpeechPipeline:
         """
         return event.source_layer in _HELD_FOR_CALL_SOURCES and event.kind in _READBACK_KINDS
 
+    @staticmethod
+    def _live_call() -> Any | None:
+        """The browser or native live call that owns the voice right now.
+
+        Such a call runs beside this pipeline (``jarvis.live``): the pipeline
+        never sees its turns, and its handle is not ``_active_realtime_handle``.
+        Owed agent replies and readbacks still have to reach it (live
+        2026-10-02: Scout's report waited in silence for the whole call).
+        """
+        from jarvis.live.runtime import active
+
+        return next(
+            (
+                session
+                for session in active()
+                if getattr(session, "is_active", False)
+                and SpeechPipeline._is_side_call(session)
+            ),
+            None,
+        )
+
+    @staticmethod
+    def _is_side_call(session: Any) -> bool:
+        """A live call this pipeline does not drive itself.
+
+        A desktop realtime call (``surface="desktop"``) is driven by
+        ``_active_realtime_session``, which settles its replies on
+        ``turn_complete``; only browser/native calls need the pause signals.
+        """
+        return getattr(session, "surface", "browser") != "desktop"
+
+    def _realtime_voice_handle(self) -> Any | None:
+        """The duplex session that speaks for Jarvis now, desktop or live call."""
+        if getattr(self, "_active_voice_mode", None) == "realtime":
+            handle = getattr(self, "_active_realtime_handle", None)
+            if handle is not None:
+                return handle
+        return self._live_call()
+
+    def _is_live_handle(self, session: Any) -> bool:
+        return session is not None and session is self._live_call()
+
+    def _agent_reply_floor_open(self) -> bool:
+        """Whether an owed reply may start now without talking over anyone."""
+        live = self._live_call()
+        if live is not None:
+            return bool(getattr(live, "ready_for_report", True))
+        return getattr(self, "_turn_state", TurnTakingState.IDLE) is TurnTakingState.LISTENING
+
     def _agent_reply_needs_session(self) -> bool:
+        if self._live_call() is not None:
+            # A live call is an open, available session of its own; its
+            # pauses decide the timing (``_agent_reply_floor_open``).
+            return bool(getattr(self, "_muted", False))
         hangup = getattr(self, "_hangup_event", None)
         return bool(
             getattr(self, "_muted", False)
@@ -4979,6 +5079,100 @@ class SpeechPipeline:
         if pending:
             pending.sort(key=lambda event: event.timestamp_ns)
 
+    def live_call_paused(self, session: Any) -> None:
+        """A live call reached a pause: settle what it voiced, offer the next.
+
+        Called by ``jarvis.live`` sessions, which run beside this pipeline and
+        own their own turn-taking. The pause is the live call's equivalent of
+        the desktop ``turn_complete`` (settle) plus ``LISTENING`` (offer).
+        """
+        self._call_on_runtime_loop(self._on_live_call_paused, session)
+
+    def live_call_ended(self, session: Any) -> None:
+        """A live call ended: a reply still on its way stays owed."""
+        self._call_on_runtime_loop(self._on_live_call_ended, session)
+
+    def _call_on_runtime_loop(self, callback: Any, *args: Any) -> None:
+        owner = getattr(self, "_runtime_loop", None)
+        try:
+            current = asyncio.get_running_loop()
+        except RuntimeError:  # Called from a thread without a loop: marshal below.
+            current = None
+        if owner is not None and owner.is_running() and current is not owner:
+            owner.call_soon_threadsafe(callback, *args)
+        else:
+            callback(*args)
+
+    def _on_live_call_paused(self, session: Any) -> None:
+        if not self._is_side_call(session):
+            return
+        take = getattr(session, "take_report_outcome", None)
+        outcome = take() if callable(take) else ""
+        inflight = getattr(self, "_agent_reply_inflight", None)
+        if outcome == "completed":
+            if inflight is not None:
+                self._forget_reply_attempts(inflight)
+            self._settle_agent_reply(completed=True)
+        elif outcome == "failed":
+            self._agent_reply_inflight = None
+            self._agent_reply_inflight_text = ""
+            if inflight is not None:
+                self._requeue_unvoiced_reply(inflight)
+        elif inflight is not None and not getattr(session, "report_pending", False):
+            # A reply without a report goes out as one relayed line; the
+            # call accepted it and is idle again, so it has been voiced.
+            self._settle_agent_reply(completed=True)
+        session_id = str(getattr(session, "session_id", "") or "")
+        if session_id and getattr(self, "_live_replies_restored_for", "") != session_id:
+            # A live call may start without this pipeline's own session
+            # start (a click in the window); replies a previous call left
+            # unfinished join this call's queue once.
+            self._live_replies_restored_for = session_id
+            self._restore_agent_replies()
+        self._schedule_delegation_results()
+        if getattr(self, "_deferred_announcements", None):
+            self._retry_agent_reply_after_boundary()
+
+    def _on_live_call_ended(self, session: Any) -> None:
+        if not self._is_side_call(session):
+            return
+        take = getattr(session, "take_report_outcome", None)
+        outcome = take() if callable(take) else ""
+        if getattr(self, "_agent_reply_inflight", None) is not None:
+            self._settle_agent_reply(completed=outcome == "completed")
+
+    def _forget_reply_attempts(self, event: AnnouncementRequested) -> None:
+        attempts = getattr(self, "_agent_reply_attempts", None)
+        if attempts:
+            attempts.pop((event.source_layer, event.trace_id, event.detail), None)
+
+    def _requeue_unvoiced_reply(self, event: AnnouncementRequested) -> None:
+        """A reply the live model never started stays first in line.
+
+        Bounded per reply: a call that keeps ignoring it hands it to the next
+        call instead of retrying forever. The chat notice holds it either way.
+        """
+        attempts = getattr(self, "_agent_reply_attempts", None)
+        if attempts is None:
+            attempts = self._agent_reply_attempts = {}
+        key = (event.source_layer, event.trace_id, event.detail)
+        attempts[key] = attempts.get(key, 0) + 1
+        if attempts[key] >= _LIVE_REPLY_MAX_ATTEMPTS:
+            attempts.pop(key, None)
+            retries = getattr(self, "_agent_reply_retries", None)
+            if retries is None:
+                retries = self._agent_reply_retries = []
+            if event not in retries:
+                retries.append(event)
+            log.warning("Agent reply was not voiced by the live call; retained for the next call")
+            return
+        pending = getattr(self, "_deferred_announcements", None)
+        if pending is None:
+            pending = self._deferred_announcements = []
+        if event not in pending:
+            pending.insert(0, event)
+        log.info("Agent reply was not voiced yet; offering it again at the next pause")
+
     def _retry_agent_reply_after_boundary(self) -> None:
         """Let the live wrapper finish resetting after the speaker drains."""
         previous = getattr(self, "_agent_reply_retry_task", None)
@@ -4998,12 +5192,16 @@ class SpeechPipeline:
             await asyncio.sleep(0.1)
             if (
                 self._agent_reply_needs_session()
-                or self._turn_state is not TurnTakingState.LISTENING
+                or not self._agent_reply_floor_open()
                 or getattr(self, "_agent_reply_inflight", None) is not None
             ):
                 return
+            # A live call has no turn boundary this pipeline sees, so its
+            # parked completion readbacks are offered at the same pauses.
+            live = self._live_call() is not None
             event = next((event for event in self._deferred_announcements
-                          if self._is_agent_reply(event)), None)
+                          if self._is_agent_reply(event)
+                          or (live and event.kind in _READBACK_KINDS)), None)
             if event is None:
                 return
             self._deferred_announcements.remove(event)
@@ -5015,6 +5213,13 @@ class SpeechPipeline:
             except Exception:
                 self._defer_agent_reply(event)
                 log.warning("Agent reply retry failed; retained for a later turn", exc_info=True)
+                return
+            if live and event in self._deferred_announcements:
+                # The live call refused it although it reported a pause (a
+                # failed send). Count it and wait for the next pause instead
+                # of retrying ten times a second.
+                self._deferred_announcements.remove(event)
+                self._requeue_unvoiced_reply(event)
                 return
 
     async def _on_announcement(self, event: AnnouncementRequested) -> None:
@@ -5048,8 +5253,23 @@ class SpeechPipeline:
                         "Realtime announcement context mirror failed",
                         exc_info=True,
                     )
+        from jarvis.core.delegation import RESULT_SOURCES, ResultInbox
+
+        if event.source_layer in RESULT_SOURCES:
+            inbox = getattr(self, "_delegation_inbox", None)
+            if inbox is None:
+                inbox = self._delegation_inbox = ResultInbox()
+            inbox.add(event)
+            self._schedule_delegation_results()
+            return
         if is_agent_reply:
             if event == getattr(self, "_agent_reply_inflight", None):
+                return
+            if (
+                event.source_layer == "delegation.batch"
+                and not self._agent_reply_floor_open()
+            ):
+                self._defer_agent_reply(event)
                 return
             if self._agent_reply_needs_session():
                 self._defer_agent_reply(event)
@@ -5462,6 +5682,8 @@ class SpeechPipeline:
                         chunks,
                         should_play=lambda: (
                             not self._agent_reply_needs_session()
+                            and (event.source_layer != "delegation.batch"
+                                 or self._turn_state is TurnTakingState.LISTENING)
                             if is_agent_reply
                             else getattr(self, "_turn_state", TurnTakingState.IDLE)
                             is not TurnTakingState.JARVIS_SPEAKING
@@ -5499,10 +5721,50 @@ class SpeechPipeline:
         only after the realtime lifecycle unwinds; until then, classic TTS must
         stay silent rather than becoming a second voice inside the same call.
         """
-        if getattr(self, "_active_voice_mode", None) != "realtime":
-            return False
-        session = getattr(self, "_active_realtime_handle", None)
-        return session is not None
+        return self._realtime_voice_handle() is not None
+
+    def _schedule_delegation_results(self) -> None:
+        """One coalescing task; a user's conversation always keeps the floor."""
+        inbox = getattr(self, "_delegation_inbox", None)
+        task = getattr(self, "_delegation_result_task", None)
+        if (
+            inbox is None or not inbox.pending
+            or (task is not None and not task.done())
+            or self._agent_reply_needs_session()
+            or not self._agent_reply_floor_open()
+            or getattr(self, "_agent_reply_inflight", None) is not None
+        ):
+            return
+        self._delegation_result_task = asyncio.create_task(
+            self._flush_delegation_results(), name="delegation-results"
+        )
+
+    async def _flush_delegation_results(self) -> None:
+        from jarvis.core.delegation import BATCH_WINDOW_S
+
+        event = None
+        try:
+            await asyncio.sleep(BATCH_WINDOW_S)
+            if (
+                self._agent_reply_needs_session()
+                or not self._agent_reply_floor_open()
+                or getattr(self, "_agent_reply_inflight", None) is not None
+            ):
+                return
+            event = self._delegation_inbox.take()
+            if event is not None:
+                await self._on_announcement(event)
+        except asyncio.CancelledError:
+            if event is not None:
+                self._defer_agent_reply(event)
+            raise
+        except Exception:
+            if event is not None:
+                self._defer_agent_reply(event)
+            log.warning("Delegation result delivery deferred", exc_info=True)
+        finally:
+            self._delegation_result_task = None
+            self._schedule_delegation_results()
 
     async def _deliver_announcement_via_realtime(
         self,
@@ -5517,9 +5779,7 @@ class SpeechPipeline:
         the accepted realtime handle still exists, ``_on_announcement`` drops
         or defers that output; only a fully unwound call may use classic TTS.
         """
-        if getattr(self, "_active_voice_mode", None) != "realtime":
-            return False
-        session = getattr(self, "_active_realtime_handle", None)
+        session = self._realtime_voice_handle()
         deliver = getattr(session, "deliver_announcement", None)
         if not callable(deliver):
             return False
@@ -5534,6 +5794,8 @@ class SpeechPipeline:
         # The raw report goes to the live model as data to reason over; only
         # sessions that understand it are handed the keyword.
         report = str(getattr(event, "report", None) or "").strip()
+        if not report and agent_reply and self._is_live_handle(session):
+            report = text
         extra: dict[str, Any] = {"report": report} if report else {}
         try:
             accepted = bool(
@@ -7622,6 +7884,10 @@ class SpeechPipeline:
         ``stop_player=False`` is used when the brain itself emitted the
         farewell ("Goodbye, Ruben.") — we let that final utterance play.
         """
+        confirmation = getattr(self, "_hangup_confirmation", None)
+        if confirmation is not None:
+            confirmation.reset()
+
         if not getattr(self, "_termination_producer", ""):
             self._termination_producer = "speech.pipeline._trigger_voice_hangup"
         if stop_player:
@@ -8803,10 +9069,16 @@ class SpeechPipeline:
             if not preserve_handoff_close:
                 self._external_hangup_pending.clear()
                 self._hangup_event.clear()
+                self._hangup_confirmation = HangupConfirmation()
                 # Forget a hard-hangup flag left by a no-op while truly idle.
                 # A close after handoff is real and retains the short wake lock.
                 self._explicit_hard_hangup = False
             self._state = PipelineState.ACTIVE
+            self._voice_start_monotonic = (
+                time.monotonic() if explicit_call
+                else getattr(self, "_wake_detected_monotonic", None) or time.monotonic()
+            )
+            self._wake_detected_monotonic = None
             # Reset per-session completeness signal state: a new session
             # starts "fresh" so the first INCOMPLETE gets an earcon, not a
             # spoken cue. (The spoken-cue path is for mid-conversation use.)
@@ -12024,6 +12296,8 @@ class SpeechPipeline:
         stt_models: list[str] = []
         detected_languages: list[str] = []
         stt_latency_ms = 0.0
+        warmup_wait_ms = 0.0
+        stt_queue_wait_ms = 0.0
         stt_calls = 0
         final_window_count = 0
         # Windows whose transcript stopped at a mid-recording pause and were
@@ -12097,6 +12371,7 @@ class SpeechPipeline:
         prefix_polish_windows = 0
         prefix_polish_deltas = 0
         prefix_polish_failed = False
+        prefix_polish_stopped = False
         prefix_polish_task: asyncio.Task[None] | None = None
         probe_task: asyncio.Task[None] | None = None
 
@@ -12204,7 +12479,7 @@ class SpeechPipeline:
             # ``stt_failures`` is appended to, never rebound, so it needs no
             # ``nonlocal`` — the list object itself is the shared state.
             nonlocal stt, stt_error, stt_error_detail, session_language
-            nonlocal stt_calls, stt_latency_ms
+            nonlocal stt_calls, stt_latency_ms, warmup_wait_ms, stt_queue_wait_ms
             ceiling = max(
                 float(getattr(self, "_stt_final_timeout_s", 8.0) or 8.0),
                 (len(pcm) / bytes_per_second)
@@ -12217,8 +12492,14 @@ class SpeechPipeline:
             # Startup/live-switch warm-up and this call share one native task.
             # Joining it avoids both an 11 s cold final decode and a concurrent
             # model call that would return TranscribeBusy (AP-24).
+            queued_at = time.perf_counter()
             async with stt_gate:
-                stt = await self._join_dictation_warmup(stt)
+                stt_queue_wait_ms += (time.perf_counter() - queued_at) * 1000.0
+                warmup_started = time.perf_counter()
+                try:
+                    stt = await self._join_dictation_warmup(stt)
+                finally:
+                    warmup_wait_ms += (time.perf_counter() - warmup_started) * 1000.0
                 if probe:
                     inference_active.set()
                 call_started = time.perf_counter()
@@ -12571,7 +12852,7 @@ class SpeechPipeline:
                         continue
                     last_published = live
                     try:
-                        await self._publish_event(
+                        await self._publish_dictation_event(
                             DictationTranscript(
                                 source_layer="speech.dictation",
                                 text=live,
@@ -12869,7 +13150,7 @@ class SpeechPipeline:
             nonlocal prefix_polish_deltas, prefix_polish_failed
             from jarvis.dictation.merge import merge_transcripts
 
-            while not prefix_polish_failed:
+            while not prefix_polish_failed and not prefix_polish_stopped:
                 reading = final_reads.get(prefix_polish_windows)
                 if reading is None:
                     return
@@ -12887,6 +13168,8 @@ class SpeechPipeline:
                 delta = merged[len(prefix_polish_raw) :].strip()
                 if delta:
                     piece, _status = await _polish_delta(delta, prefix_polish_text)
+                    if prefix_polish_stopped:
+                        return
                     if piece:
                         prefix_polish_text = " ".join(
                             part for part in (prefix_polish_text, piece) if part
@@ -12898,7 +13181,7 @@ class SpeechPipeline:
         def _kick_prefix_polish() -> None:
             """Start the formatting worker unless it is running or given up."""
             nonlocal prefix_polish_task
-            if prefix_polish_failed or not final_quality_pass:
+            if prefix_polish_failed or prefix_polish_stopped or not final_quality_pass:
                 return
             if not bool(getattr(cfg, "polish", True)) or bool(getattr(cfg, "translate", False)):
                 return
@@ -12911,10 +13194,11 @@ class SpeechPipeline:
         async def _settle_prefix_polish() -> None:
             """Let the worker finish the windows it already has — normally the
             last one, started the moment it was read — within one polish budget.
-            Past that the whole-text pass takes over rather than making the
-            user wait on a formatter that is not answering.
+            Past that, retain the completed prefix and retire its worker. The
+            finish path formats only the remaining tail instead of repeating
+            every completed window while the old formatter is still running.
             """
-            nonlocal prefix_polish_failed
+            nonlocal prefix_polish_failed, prefix_polish_stopped
             _kick_prefix_polish()
             task = prefix_polish_task
             if task is None:
@@ -12924,10 +13208,26 @@ class SpeechPipeline:
                     asyncio.shield(task), timeout=_DICTATION_PREFIX_POLISH_WAIT_S
                 )
             except TimeoutError:
-                prefix_polish_failed = True
+                prefix_polish_stopped = True
+                task.cancel()
+                done, _pending = await asyncio.wait(
+                    (task,), timeout=_DICTATION_POLISH_CANCEL_WAIT_S
+                )
+
+                def consume(done_task: asyncio.Task) -> None:
+                    if done_task.cancelled():
+                        return
+                    if done_task.exception() is not None:
+                        log.debug("Retired dictation formatter finished with an error")
+
+                if done:
+                    consume(task)
+                else:
+                    # No late result may mutate the captured prefix above.
+                    task.add_done_callback(consume)
                 log.info(
                     "incremental dictation polish did not finish within %.1fs; "
-                    "formatting the whole text instead.",
+                    "keeping its completed prefix and formatting the remaining tail.",
                     _DICTATION_PREFIX_POLISH_WAIT_S,
                 )
             except asyncio.CancelledError:
@@ -13377,8 +13677,9 @@ class SpeechPipeline:
             # sets an event and does not know when the stream actually stopped.
             # A hangup skips it: nothing will be transcribed, and
             # ``DictationCompleted`` follows immediately.
+            capture_closed_at = time.perf_counter()
             if not hung_up:
-                await self._publish_event(
+                await self._publish_dictation_event(
                     DictationTranscribing(source_layer="speech.dictation")
                 )
 
@@ -13494,6 +13795,10 @@ class SpeechPipeline:
                     f"final_windows:{final_window_count}",
                     f"final_windows_prefetched:{final_prefetched}",
                     f"release_wait_ms:{release_wait_ms}",
+                    f"warmup_wait_ms:{round(warmup_wait_ms)}",
+                    f"stt_queue_wait_ms:{round(stt_queue_wait_ms)}",
+                    "post_recording_wait_ms:"
+                    f"{round((time.perf_counter() - capture_closed_at) * 1000.0)}",
                     f"truncation_repairs:{truncation_repairs}",
                     f"tail_repairs:{tail_repairs}",
                     f"pause_trim_ms:{round(pause_trim_bytes * 1000 / bytes_per_second)}",
@@ -13720,6 +14025,26 @@ class SpeechPipeline:
             return ""
         return counts[0][0]
 
+    async def _publish_dictation_event(self, event: Any) -> bool:
+        """Deliver to healthy observers in order without waiting on a dead UI.
+
+        The bus fans out concurrently, so an unrelated stalled observer cannot
+        delay a healthy recipient. The bounded await still joins cancellation;
+        no publication task is left behind to reorder a later dictation.
+        """
+        try:
+            await asyncio.wait_for(
+                self._publish_event(event), timeout=_DICTATION_EVENT_TIMEOUT_S
+            )
+        except TimeoutError:
+            log.warning(
+                "Dictation event %s exceeded %.1fs; abandoning stalled observers.",
+                type(event).__name__,
+                _DICTATION_EVENT_TIMEOUT_S,
+            )
+            return False
+        return True
+
     async def _finish_dictation(
         self,
         *,
@@ -13794,6 +14119,7 @@ class SpeechPipeline:
         (``[dictation].keep_failed_audio``), which is what a later Restore
         transcribes again.
         """
+        finish_started = time.perf_counter()
         stt_error = normalize_stt_failure(stt_error)
         cleaned = raw_text
         removed_words = 0
@@ -14104,20 +14430,52 @@ class SpeechPipeline:
                 log.debug("dictation target resolution failed", exc_info=True)
                 resolved_target = "insert"
 
-        # Publish the final transcript before inserting: the app's own fields,
-        # the chat composer and the bar all listen for it, and they should
-        # update even if insertion fails.
-        try:
-            await self._publish_event(
-                DictationTranscript(
-                    source_layer="speech.dictation",
-                    text=cleaned,
-                    is_final=True,
-                    target=resolved_target,
+        formatting_ms = round((time.perf_counter() - finish_started) * 1000.0)
+        notification_ms = 0
+        insertion_ms = 0
+        final_notification_status = "complete"
+        insert_result = None
+
+        async def notify_final() -> None:
+            nonlocal notification_ms, final_notification_status
+            started = time.perf_counter()
+            try:
+                complete = await self._publish_dictation_event(
+                    DictationTranscript(
+                        source_layer="speech.dictation",
+                        text=cleaned,
+                        is_final=True,
+                        target=resolved_target,
+                    )
                 )
-            )
+                if not complete:
+                    final_notification_status = "observer_timeout"
+            except Exception:
+                final_notification_status = "failed"
+                log.warning("dictation final publish failed", exc_info=True)
+            finally:
+                notification_ms = round((time.perf_counter() - started) * 1000.0)
+
+        async def insert_external() -> None:
+            nonlocal insert_result, insertion_ms
+            started = time.perf_counter()
+            try:
+                insert_result = await asyncio.to_thread(self._insert_dictation, cleaned)
+            except Exception:
+                log.warning("dictation insertion failed", exc_info=True)
+            finally:
+                insertion_ms = round((time.perf_counter() - started) * 1000.0)
+
+        # Healthy UI clients receive the final text even if OS insertion fails.
+        # An external paste starts alongside notification: its destination must
+        # not drift while an unrelated UI observer is holding up the bus.
+        try:
+            if resolved_target == "insert" and cleaned.strip() and not hung_up:
+                await asyncio.gather(notify_final(), insert_external())
+            else:
+                await notify_final()
         except Exception as exc:  # noqa: BLE001
-            log.debug("dictation final publish failed: %s", exc)
+            log.warning("dictation final delivery failed: %s", exc)
 
         outcome_name = "chat"
         detail = ""
@@ -14142,10 +14500,15 @@ class SpeechPipeline:
                 # an unexplained empty result after the user clearly spoke.
                 detail = rejected_detail
         elif resolved_target == "insert":
-            insert_result = await asyncio.to_thread(self._insert_dictation, cleaned)
-            outcome_name = insert_result.status
-            detail = insert_result.detail
-            method = insert_result.method
+            if insert_result is None:
+                outcome_name = "failed"
+                detail = "The text could not be inserted."
+                if bool(getattr(cfg, "history_enabled", True)):
+                    detail += " It is available in dictation history."
+            else:
+                outcome_name = insert_result.status
+                detail = insert_result.detail
+                method = insert_result.method
 
         # A dictation that delivered SOME words and permanently lost others is
         # not a success, whichever way the surviving fragment was delivered.
@@ -14221,12 +14584,21 @@ class SpeechPipeline:
                 dropped_audio_s,
             )
 
+        delivery_audit = (
+            *stt_audit,
+            f"formatting_wait_ms:{formatting_ms}",
+            f"final_notification_wait_ms:{notification_ms}",
+            f"insertion_wait_ms:{insertion_ms}",
+            f"finish_wait_ms:{round((time.perf_counter() - finish_started) * 1000.0)}",
+            f"final_notification:{final_notification_status}",
+        )
+
         # Mark the turn closed BEFORE the publish attempt: this flag answers
         # "does the teardown still owe a terminal event", and a publish that
         # raised is not a reason to fire a second, contradictory completion.
         self._dictation_completion_published = True
         try:
-            await self._publish_event(
+            await self._publish_dictation_event(
                 DictationCompleted(
                     source_layer="speech.dictation",
                     text=cleaned,
@@ -14247,7 +14619,7 @@ class SpeechPipeline:
                     stt_latency_ms=max(0, int(stt_latency_ms)),
                     stt_calls=max(0, int(stt_calls)),
                     stt_errors=stt_errors,
-                    stt_audit=stt_audit,
+                    stt_audit=delivery_audit,
                     audio_sample_rate_hz=max(0, int(audio_sample_rate_hz)),
                     audio_rms=max(0.0, float(audio_rms)),
                     audio_clipping_ratio=max(0.0, float(audio_clipping_ratio)),
@@ -14278,7 +14650,7 @@ class SpeechPipeline:
             stt_latency_ms=max(0, int(stt_latency_ms)),
             stt_calls=max(0, int(stt_calls)),
             stt_errors=stt_errors,
-            stt_audit=stt_audit,
+            stt_audit=delivery_audit,
             audio_sample_rate_hz=max(0, int(audio_sample_rate_hz)),
             audio_rms=max(0.0, float(audio_rms)),
             audio_clipping_ratio=max(0.0, float(audio_clipping_ratio)),
@@ -15062,14 +15434,15 @@ class SpeechPipeline:
         # Brain. Sonst halluziniert das LLM ein zweites "Ja?" / "Sir?" ueber
         # den bereits abgespielten ACK. Rueckkehr zu LISTENING, User kann den
         # eigentlichen Command nachreichen.
-        if _is_wake_only(text):
+        pending_hangup = getattr(self, "_hangup_confirmation", None)
+        if _is_wake_only(text) and not (
+            pending_hangup is not None and pending_hangup.pending_turn is not None
+        ):
             log.info("🤫 Wake-only-Turn (%r) — skip Brain, weiter zuhören.", text)
             await self._set_turn_state(TurnTakingState.LISTENING)
             return True
 
-        # Hangup muss vor dem STT-Halluzinationsfilter laufen: kurze
-        # "Auflegen"-Turns werden von Whisper gelegentlich als "Vielen Dank"
-        # transkribiert, was sonst als Halluzination verworfen wuerde.
+        # Record the request candidate; only a separate confirmation may end it.
         hangup_match = HANGUP_RE.search(text)
         self._last_user_activity_monotonic = time.monotonic()
         self._termination_detail = {
@@ -15078,12 +15451,6 @@ class SpeechPipeline:
             "end_call_signal": None,
             "legacy_farewell_matched": None,
         }
-        if hangup_match:
-            self._termination_producer = "speech.pipeline._handle_utterance_turn.explicit_hangup"
-            log.info("Voice-Hangup via Regex (%r) - lege auf.", text)
-            self._trigger_voice_hangup()
-            return False
-
         # STT-Halluzinations-Guard: Whisper transkribiert bei Speaker-Leak /
         # leisem Mic manchmal Werbe-Outros, Copyright-Strings, YouTube-
         # Endcards. Diese Phrasen nie ans Brain — sonst ruft Gemini
@@ -15114,6 +15481,26 @@ class SpeechPipeline:
         # ("de"/"en"/"es") so the TTS voice-pin maps ({"de": "de-DE"}) stop
         # missing on name-shaped tags ("german").
         lang = self._output_language(getattr(transcript, "language", None), text)
+        confirmation = getattr(self, "_hangup_confirmation", None)
+        if confirmation is None:
+            confirmation = self._hangup_confirmation = HangupConfirmation()
+        voice_turn = object()
+        hangup_decision = confirmation.observe(text, voice_turn)
+        if hangup_decision == "confirmed":
+            self._termination_producer = "speech.pipeline.confirmed_voice_hangup"
+            self._trigger_voice_hangup()
+            return False
+        if hangup_decision in {"request", "cancelled"}:
+            question = (
+                hangup_confirmation_question(lang) if hangup_decision == "request"
+                else hangup_cancelled_reply(lang)
+            )
+            barged = await self._speak(question, language=lang, kind="clarify")
+            if (not barged and hangup_decision == "request"
+                    and not getattr(self, "_muted", False) and not self._hangup_event.is_set()):
+                confirmation.arm(voice_turn)
+            await self._set_turn_state(TurnTakingState.LISTENING)
+            return True
         log.info("👤 User [%s]: %s", lang, text)
 
         # Continuation recombine: attach this utterance to a just-dispatched one
@@ -15396,19 +15783,10 @@ class SpeechPipeline:
                 "end_call_signal": contains_end_signal(response),
                 "legacy_farewell_matched": is_legacy_farewell(normalized),
             })
-            is_hangup = requested_hangup and supports_semantic_hangup(text)
-            if requested_hangup and not is_hangup:
+            if requested_hangup:
                 log.warning(
-                    "Ignored streamed brain hangup signal: the user did not "
-                    "express conversation-closing intent."
+                    "Ignored streamed brain hangup signal: voice termination requires confirmation."
                 )
-            if is_hangup:
-                self._termination_producer = (
-                    "speech.pipeline._handle_utterance_turn.streamed_end_signal"
-                )
-                log.info("🔚 Voice-Hangup via Brain-Signal (streamed) — lege auf.")
-                self._trigger_voice_hangup(stop_player=False)
-                return False
             return await self._finish_after_response(barged=barged)
 
         try:
@@ -15479,11 +15857,9 @@ class SpeechPipeline:
             "end_call_signal": contains_end_signal(response),
             "legacy_farewell_matched": is_legacy_farewell(_normalized_raw),
         })
-        is_hangup = requested_hangup and supports_semantic_hangup(text)
-        if requested_hangup and not is_hangup:
+        if requested_hangup:
             log.warning(
-                "Ignored brain hangup signal: the user did not express "
-                "conversation-closing intent."
+                "Ignored brain hangup signal: voice termination requires confirmation."
             )
 
         # Phase-1-Output-Filter (Persona-Mandat): Tool-JSON, Stacktraces,
@@ -15524,11 +15900,6 @@ class SpeechPipeline:
         # Jarvis spricht — Orb-Mode wechselt zur Speak-Wellenform
         await self._set_turn_state(TurnTakingState.JARVIS_SPEAKING)
         barged = await self._speak(response, language=lang)
-        if is_hangup:
-            self._termination_producer = "speech.pipeline._handle_utterance_turn.end_signal"
-            log.info("🔚 Voice-Hangup via Brain-Signal — lege auf.")
-            self._trigger_voice_hangup(stop_player=False)
-            return False
         return await self._finish_after_response(barged=barged)
 
     async def _complete_or_buffer_context(

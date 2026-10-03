@@ -797,6 +797,13 @@ _AGENTS: dict[str, WorkspaceAgent] = {
         binary="codex",
         npm_package="@openai/codex",
         homepage="https://github.com/openai/codex",
+        # Codex's startup update box can exceed a narrow pane's width: its
+        # unbroken release URL widens the border after the content was wrapped
+        # (reproduced on 0.159.2 at 41 columns). Keep this extra startup UI out
+        # of embedded panes. A per-launch override leaves standalone Codex and
+        # the account's saved settings untouched; installation remains available
+        # through Jarvis's CLI controls.
+        launch_args=("-c", "check_for_update_on_startup=false"),
         trust=CODEX_TRUST,
         account=AccountSpec(env=(("CODEX_HOME", "{dir}"),), native_dir="~/.codex"),
         win_shim=WinShim(

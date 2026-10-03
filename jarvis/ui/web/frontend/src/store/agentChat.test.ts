@@ -352,3 +352,23 @@ it("opening a society catalog never runs paid provider health probes", async () 
   await createAgentChatStore("jarvis").getState().loadCatalog();
   expect(calls.some((call) => call.url.includes("provider-health"))).toBe(true);
 });
+
+it("unchanged session refreshes preserve list identity, while title/account changes update it", async () => {
+  const supplied = [session("one", "jarvis"), session("two", "jarvis")];
+  stubFetch(supplied);
+  try {
+    const store = createAgentChatStore("jarvis");
+    await store.getState().loadSessions();
+    const original = store.getState().sessions;
+    await store.getState().loadSessions();
+    expect(store.getState().sessions).toBe(original);
+    supplied[0] = { ...supplied[0], title: "Renamed", account_id: "another-seat" };
+    await store.getState().loadSessions();
+    const updated = store.getState().sessions;
+    expect(updated).not.toBe(original);
+    expect(updated[0]).toMatchObject({ title: "Renamed", account_id: "another-seat" });
+    expect(updated[1]).toBe(original[1]);
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});

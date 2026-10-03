@@ -1,0 +1,371 @@
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
+import { Terminal } from "@xterm/xterm";
+import type { IBufferRange } from "@xterm/xterm";
+import { installPromptSelectionBridge } from "./terminalPromptSelection";
+
+// These tests parse cells without rendering. xterm's colour fallback supports
+// a missing canvas context; jsdom otherwise logs its unimplemented method.
+const restoreCanvas = vi.hoisted(() => {
+  const original = HTMLCanvasElement.prototype.getContext;
+  HTMLCanvasElement.prototype.getContext = () => null;
+  return () => { HTMLCanvasElement.prototype.getContext = original; };
+});
+afterAll(restoreCanvas);
+
+const terminals: Terminal[] = [];
+afterEach(() => { terminals.splice(0).forEach((term) => term.dispose()); });
+
+/** Parse real terminal cells, with a fake selection/input transport. No browser. */
+async function setup(output = "› hello world", isMac = false, cols = 40) {
+  const terminal = new Terminal({ cols, rows: 10, allowProposedApi: true });
+  terminals.push(terminal);
+  const write = (text: string) => new Promise<void>((resolve) => terminal.write(text, resolve));
+  await write(output);
+  let selected: IBufferRange | undefined;
+  let onSelection = () => {};
+  let onRender = () => {};
+  let keyHandler = (_event: KeyboardEvent) => true;
+  const sent: string[] = [];
+  let listenerDisposed = false;
+  let handlerDisposed = false;
+  const cleanup = installPromptSelectionBridge({
+    cols,
+    buffer: terminal.buffer,
+    getSelectionPosition: () => selected,
+    select: (x, y, length) => {
+      const end = y * cols + x + length;
+      selected = { start: { x, y }, end: { x: end % cols, y: Math.floor(end / cols) } };
+      onSelection();
+    },
+    clearSelection: () => { selected = undefined; onSelection(); },
+    input: (data) => sent.push(data),
+    onSelectionChange: (listener) => {
+      onSelection = listener;
+      return { dispose: () => { listenerDisposed = true; onSelection = () => {}; } };
+    },
+    onRender: (listener) => {
+      onRender = listener;
+      return { dispose: () => { onRender = () => {}; } };
+    },
+  }, (handler) => {
+    keyHandler = handler;
+    return () => { handlerDisposed = true; keyHandler = () => true; };
+  }, isMac);
+  return {
+    write, sent, cleanup, renderFrame: () => onRender(),
+    selection: () => selected,
+    disposed: () => listenerDisposed && handlerDisposed,
+    select: (start: number, end: number, row = 0, endRow = row) => {
+      selected = { start: { x: start, y: row }, end: { x: end, y: endRow } };
+      onSelection();
+    },
+    press: (key: string, mods: KeyboardEventInit = {}, type = "keydown") => {
+      const event = new KeyboardEvent(type, { key, cancelable: true, ...mods });
+      return { passthrough: keyHandler(event), prevented: event.defaultPrevented };
+    },
+  };
+}
+
+describe("terminal prompt selection", () => {
+  it.each(["Backspace", "Delete"])("deletes the whole selected draft with one %s press", async (key) => {
+    const pane = await setup();
+    pane.select(2, 13);
+    expect(pane.press(key)).toEqual({ passthrough: false, prevented: true });
+    expect(pane.sent).toEqual(["\x7f".repeat(11)]);
+    expect(pane.selection()).toBeUndefined();
+    pane.press(key, {}, "keyup");
+    expect(pane.sent).toHaveLength(1);
+  });
+
+  it("recognises Claude Code's marker, which is followed by a no-break space", async () => {
+    const pane = await setup("❯ csdadsfasdf");
+    pane.select(2, 15); // a drag past the end of the draft
+    pane.press("Delete");
+    expect(pane.sent).toEqual(["\x7f".repeat(11)]);
+  });
+
+  it("deletes a middle selection while leaving the suffix in place", async () => {
+    const pane = await setup();
+    pane.select(2, 7);
+    pane.press("Delete");
+    expect(pane.sent).toEqual(["\x1b[D".repeat(6) + "\x7f".repeat(5)]);
+  });
+
+  it("moves right when the caret precedes the selected text", async () => {
+    const pane = await setup("❯ hello world\x1b[11D");
+    pane.select(8, 13);
+    pane.press("Backspace");
+    expect(pane.sent).toEqual(["\x1b[C".repeat(11) + "\x7f".repeat(5)]);
+  });
+
+  it.each([false, true])("selects only input using the platform select-all chord (mac=%s)", async (isMac) => {
+    const pane = await setup("old output\r\n› hello world", isMac);
+    expect(pane.press("a", isMac ? { metaKey: true } : { ctrlKey: true }).passthrough).toBe(false);
+    expect(pane.selection()).toEqual({ start: { x: 2, y: 1 }, end: { x: 13, y: 1 } });
+    pane.press("Backspace");
+    expect(pane.sent).toEqual(["\x7f".repeat(11)]);
+  });
+
+  it("excludes the prompt marker and terminal padding from a full-row drag", async () => {
+    const pane = await setup("  > hello     \x1b[5D");
+    pane.select(0, 39);
+    pane.press("Delete");
+    expect(pane.sent).toEqual(["\x7f".repeat(5)]);
+  });
+
+  it("handles an input line wrapped by the terminal", async () => {
+    const pane = await setup("› hello world", false, 10);
+    pane.select(2, 3, 0, 1);
+    pane.press("Backspace");
+    expect(pane.sent).toEqual(["\x7f".repeat(11)]);
+  });
+
+  describe("a draft the CLI wraps into indented rows itself", () => {
+    // Claude Code's layout, measured in a 40-column PTY: separate (not
+    // `isWrapped`) rows indented to the marker width, the space at each break
+    // undrawn yet still one arrow press away.
+    const words = Array.from({ length: 24 }, (_, i) => `w${String(i + 1).padStart(2, "0")}`);
+    const draft = words.join(" ");
+    const box = (below = "─".repeat(40)) => [
+      "─".repeat(40),
+      `❯ ${words.slice(0, 9).join(" ")}`,
+      `  ${words.slice(9, 18).join(" ")}`,
+      `  ${words.slice(18).join(" ")}`,
+      below,
+    ].join("\r\n");
+    const at = (word: string) => draft.indexOf(word);
+
+    it("deletes a selection spanning rows with one Backspace", async () => {
+      const pane = await setup(`${box()}\x1b[4;26H`);
+      pane.select(18, 21, 1, 2); // from "w05" through "w14"
+      pane.press("Backspace");
+      const end = at("w14") + 3;
+      expect(pane.sent).toEqual([
+        "\x1b[D".repeat(draft.length - end) + "\x7f".repeat(end - at("w05")),
+      ]);
+    });
+
+    it("selects the whole wrapped draft with select-all", async () => {
+      const pane = await setup(`${box()}\x1b[4;26H`);
+      pane.press("a", { ctrlKey: true });
+      expect(pane.selection()).toEqual({ start: { x: 2, y: 1 }, end: { x: 25, y: 3 } });
+      pane.press("Delete");
+      expect(pane.sent).toEqual(["\x7f".repeat(draft.length)]);
+    });
+
+    it("snaps a drag from a row's indent to its first letter", async () => {
+      const pane = await setup(`${box()}\x1b[4;26H`);
+      pane.select(0, 25, 2, 3); // indent of the second row to the end
+      pane.press("Backspace");
+      expect(pane.sent).toEqual(["\x7f".repeat(draft.length - at("w10"))]);
+    });
+
+    it("edits rows below the caret when the editor box closes under them", async () => {
+      const pane = await setup(`${box()}\x1b[2;11H`); // caret before "w03"
+      pane.select(2, 5, 3); // "w19"
+      pane.press("Delete");
+      const caret = at("w03");
+      expect(pane.sent).toEqual([
+        "\x1b[C".repeat(at("w19") + 3 - caret) + "\x7f".repeat(3),
+      ]);
+    });
+
+    it("never treats indented rows under the caret as draft unless the box closes", async () => {
+      const pane = await setup(`${box("  footer hint\r\nstatus: ready")}\x1b[2;11H`);
+      pane.select(2, 5, 3);
+      pane.press("Delete");
+      expect(pane.sent).toEqual([]);
+    });
+
+    it("never joins indented output that is not anchored to the marker row", async () => {
+      const pane = await setup("earlier output\r\n  indented result\r\n  more result");
+      pane.select(2, 10, 1); // output above the caret's line
+      pane.press("Backspace");
+      expect(pane.sent).toEqual([]);
+      expect(pane.selection()).toBeUndefined();
+    });
+  });
+
+  describe("an input line without a marker", () => {
+    it("edits a shell prompt line, leaving select-all to the shell", async () => {
+      const pane = await setup("PS C:\\work> git status");
+      expect(pane.press("a", { ctrlKey: true }).passthrough).toBe(true);
+      pane.select(12, 15); // "git"
+      pane.press("Backspace");
+      expect(pane.sent).toEqual(["\x1b[D".repeat(7) + "\x7f".repeat(3)]);
+    });
+
+    it("follows a shell line the terminal soft-wrapped", async () => {
+      const pane = await setup("PS C:\\> csdadsfasdf", false, 15);
+      pane.select(8, 4, 0, 1); // "csdadsfasdf", across the wrap
+      pane.press("Delete");
+      expect(pane.sent).toEqual(["\x7f".repeat(11)]);
+    });
+
+    it("leaves a box frame around the input out of the edit", async () => {
+      // OpenCode: the draft sits in a frame drawn with box characters.
+      const pane = await setup("  \u2503  csdadsfasdf    \u2503\x1b[17G");
+      pane.select(0, 25); // the whole row, frame included
+      pane.press("Delete");
+      expect(pane.sent).toEqual(["\x7f".repeat(11)]);
+    });
+
+    it("drops a highlight on output so the next press edits normally", async () => {
+      const pane = await setup("some output\r\nPS> abc");
+      pane.select(0, 4, 0);
+      expect(pane.press("Backspace").passthrough).toBe(false);
+      expect(pane.sent).toEqual([]);
+      expect(pane.selection()).toBeUndefined();
+      expect(pane.press("Backspace").passthrough).toBe(true);
+    });
+  });
+
+  it("handles select-all ending at the last terminal column", async () => {
+    const pane = await setup("› abcdefgh", false, 10);
+    pane.press("a", { ctrlKey: true });
+    pane.press("Delete");
+    expect(pane.sent).toEqual(["\x7f".repeat(8)]);
+  });
+
+  it("edits a prompt drawn in the alternate screen too", async () => {
+    const pane = await setup("\x1b[?1049h› hello");
+    pane.select(2, 7);
+    pane.press("Backspace");
+    expect(pane.sent).toEqual(["\x7f".repeat(5)]);
+  });
+
+  it("counts wide and combining characters as editing units, not cells or bytes", async () => {
+    const pane = await setup("› 界e\u0301z");
+    pane.select(2, 5);
+    pane.press("Delete");
+    expect(pane.sent).toEqual(["\x1b[D" + "\x7f\x7f"]);
+  });
+
+  it("does not split a wide character", async () => {
+    const pane = await setup("› 界z");
+    pane.select(3, 4);
+    expect(pane.press("Delete").passthrough).toBe(false);
+    expect(pane.sent).toEqual([]);
+  });
+
+  it("never edits the draft when output is selected", async () => {
+    const pane = await setup("earlier output\r\n› hello");
+    pane.select(0, 7);
+    expect(pane.press("Backspace").passthrough).toBe(false);
+    expect(pane.sent).toEqual([]);
+  });
+
+  it("rejects a selection made before a CLI redraw changed the draft", async () => {
+    const pane = await setup();
+    pane.select(2, 13);
+    await pane.write("\r\x1b[2K› new draft");
+    pane.renderFrame();
+    pane.press("Delete");
+    expect(pane.sent).toEqual([]);
+  });
+
+  it("keeps a mouse selection made while the CLI is painting another row", async () => {
+    const pane = await setup("status\r\n› dsadas");
+    // A synchronized TUI frame leaves the old prompt visible while the parser
+    // cursor is temporarily on a status row. Mouseup can happen in that gap.
+    await pane.write("\x1b[1;1HWorking");
+    pane.select(2, 8, 1);
+    await pane.write("\x1b[2;9H");
+    pane.renderFrame();
+    pane.press("Delete");
+    expect(pane.sent).toEqual(["\x7f".repeat(6)]);
+  });
+
+  it("defers Delete until an in-flight repaint restores the editor cursor", async () => {
+    const pane = await setup("status\r\n› dsadas");
+    pane.select(2, 8, 1);
+    await pane.write("\x1b[1;1HWorking");
+    expect(pane.press("Delete").passthrough).toBe(false);
+    expect(pane.sent).toEqual([]);
+    await pane.write("\x1b[2;9H");
+    pane.renderFrame();
+    expect(pane.sent).toEqual(["\x7f".repeat(6)]);
+    pane.cleanup();
+  });
+
+  it("does not apply deferred deletion to a changed draft", async () => {
+    const pane = await setup("status\r\n› dsadas");
+    pane.select(2, 8, 1);
+    await pane.write("\x1b[1;1HWorking");
+    pane.press("Delete");
+    await pane.write("\x1b[2;1H\x1b[2K› new text");
+    pane.renderFrame();
+    expect(pane.sent).toEqual([]);
+    pane.cleanup();
+  });
+
+  it.each(["selection", "key", "dispose"])("cancels deferred deletion after a later %s action", async (action) => {
+    const pane = await setup("status\r\n› dsadas");
+    pane.select(2, 8, 1);
+    await pane.write("\x1b[1;1HWorking");
+    pane.press("Delete");
+    if (action === "selection") pane.select(2, 4, 1);
+    if (action === "key") pane.press("ArrowLeft");
+    if (action === "dispose") pane.cleanup();
+    await pane.write("\x1b[2;9H");
+    pane.renderFrame();
+    expect(pane.sent).toEqual([]);
+    pane.cleanup();
+  });
+
+  it.each(["› [Pasted text 20 lines]", "› [Image #1]"])(
+    "leaves an unsupported editor alone: %s", async (output) => {
+      const pane = await setup(output);
+      expect(pane.press("a", { ctrlKey: true }).passthrough).toBe(true);
+      pane.select(2, 7);
+      pane.press("Delete");
+      expect(pane.sent).toEqual([]);
+    },
+  );
+
+  it("leaves ordinary editing, modified keys and IME composition to the CLI", async () => {
+    const pane = await setup();
+    expect(pane.press("Backspace").passthrough).toBe(true);
+    pane.select(2, 7);
+    for (const mods of [{ ctrlKey: true }, { altKey: true }, { metaKey: true }, { isComposing: true }]) {
+      expect(pane.press("Backspace", mods).passthrough).toBe(true);
+    }
+    expect(pane.press("Enter").passthrough).toBe(true);
+    expect(pane.sent).toEqual([]);
+    pane.cleanup();
+    expect(pane.disposed()).toBe(true);
+    expect(pane.press("Delete").passthrough).toBe(true);
+  });
+});
+
+describe("terminal prompt selection on a full scrollback", () => {
+  it("does not spin when the whole scrollback is one soft-wrapped line", async () => {
+    // Live 2026-10-02: a pane whose scrollback held nothing but one long
+    // wrapped line hung the whole window. xterm's getLine wraps around its
+    // ring past the last row, so a walk "down while wrapped" never ended.
+    const cols = 20;
+    const terminal = new Terminal({ cols, rows: 5, scrollback: 10, allowProposedApi: true });
+    terminals.push(terminal);
+    await new Promise<void>((resolve) => terminal.write("x".repeat(cols * 60), resolve));
+    const buffer = terminal.buffer.active;
+    expect(buffer.length).toBe(15);
+    expect(buffer.getLine(0)?.isWrapped).toBe(true);
+
+    let onRender = () => {};
+    const cleanup = installPromptSelectionBridge({
+      cols,
+      buffer: terminal.buffer,
+      getSelectionPosition: () => undefined,
+      select: () => {},
+      clearSelection: () => {},
+      input: () => {},
+      onSelectionChange: () => ({ dispose: () => {} }),
+      onRender: (listener) => {
+        onRender = listener;
+        return { dispose: () => {} };
+      },
+    }, () => () => {}, false);
+    onRender();
+    cleanup();
+  });
+});

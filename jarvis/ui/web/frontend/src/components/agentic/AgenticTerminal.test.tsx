@@ -6,6 +6,8 @@ const terminalHarness = vi.hoisted(() => ({
   host: { current: null as HTMLElement | null },
   observe: vi.fn(),
   fit: vi.fn(),
+  clearTextureAtlas: vi.fn(),
+  spacingAtOpen: [] as unknown[],
   /** What the terminal reports after a fit — a test moves it to grow the pane. */
   size: { cols: 80, rows: 24 },
   /** Every frame the pane hands its socket. Returns whether it went out. */
@@ -70,7 +72,7 @@ vi.mock("@xterm/xterm", () => ({
     }
     get buffer() {
       return {
-        active: { type: terminalHarness.bufferType, ...terminalHarness.viewport },
+        active: { type: terminalHarness.bufferType, ...terminalHarness.viewport, cursorX: 0, cursorY: 0, getLine: () => undefined },
       };
     }
     scrollLines(amount: number) {
@@ -107,6 +109,7 @@ vi.mock("@xterm/xterm", () => ({
     loadAddon() {}
     open(host: HTMLElement) {
       terminalHarness.open(host);
+      terminalHarness.spacingAtOpen.push(this.options.letterSpacing);
       terminalHarness.host.current = host;
     }
     focus() {
@@ -125,6 +128,9 @@ vi.mock("@xterm/xterm", () => ({
     getSelection() {
       return "";
     }
+    getSelectionPosition() { return undefined; }
+    onSelectionChange() { return { dispose() {} }; }
+    onRender() { return { dispose() {} }; }
     onData() {
       return { dispose() {} };
     }
@@ -150,7 +156,7 @@ vi.mock("@xterm/xterm", () => ({
       terminalHarness.resize(cols, rows);
     }
     dispose() {}
-    clearTextureAtlas() {}
+    clearTextureAtlas() { terminalHarness.clearTextureAtlas(this); }
   },
 }));
 
@@ -206,6 +212,7 @@ import {
   REBUILD_SETTLE_MAX_MS,
   REPAINT_WAIT_MAX_MS,
   RESIZE_PARSE_WAIT_MS,
+  RETURN_REPAINT_NUDGE_MS,
   UNMEASURED_SIZE,
 } from "./AgenticTerminal";
 import { FONT_WAIT_MS } from "@/lib/terminalFont";
@@ -717,7 +724,7 @@ describe("AgenticTerminal layout", () => {
     expect(region?.className).not.toContain("invisible");
   });
 
-  it("waits for a promised repaint rather than showing the broken tail", () => {
+  it.each(["\x1b[2", "\x1b[1;1H\x1b["])("waits for a promised repaint and recognizes split erases: %j", (eraseStart) => {
     // A replay the server marks as needing a repaint cannot rebuild the screen
     // by itself. A busy agent may answer the repaint request late (the server
     // repeats it after half a second), and revealing on quiet in between showed
@@ -749,7 +756,7 @@ describe("AgenticTerminal layout", () => {
 
     // The erase arrives split across two chunks; the quiet window follows it.
     act(() => {
-      terminalHarness.handlers.current?.onOutput?.("\x1b[2" as never);
+      terminalHarness.handlers.current?.onOutput?.(eraseStart as never);
       terminalHarness.handlers.current?.onOutput?.("Jthe repainted screen" as never);
     });
     expect(region?.className).toContain("invisible");
@@ -1571,6 +1578,44 @@ describe("pane refit", () => {
   });
 
   /*
+   * A workspace the IDE keeps warm is not rebuilt when the user switches back
+   * to it, so its panes never get the replay and repaint a fresh pane gets.
+   * Reported 2026-10-03: a Claude pane drawing for fewer rows than its tile,
+   * the prompt and status line halfway up with empty rows below. Coming back
+   * asks the agent for a whole new screen — one row short, then back.
+   */
+  it("asks the agent for a whole new screen when a kept-warm pane comes back", () => {
+    const view = render(pane(false, {}, true));
+    settle();
+    view.rerender(pane(false, {}, false));
+    settle();
+    terminalHarness.send.mockClear();
+
+    view.rerender(pane(false, {}, true));
+    act(() => {
+      vi.advanceTimersByTime(RETURN_REPAINT_NUDGE_MS + 10);
+    });
+
+    const frames = terminalHarness.send.mock.calls.map(([frame]) => frame);
+    const shorter = frames.findIndex((frame) => JSON.stringify(frame) === JSON.stringify({ t: "claim", cols: 80, rows: 23 }));
+    expect(shorter).toBeGreaterThanOrEqual(0);
+    expect(frames.slice(shorter + 1)).toContainEqual({ t: "claim", cols: 80, rows: 24 });
+  });
+
+  it("does not nudge a pane taking the stage for the first time", () => {
+    const view = render(pane(false, {}, false));
+    settle();
+    terminalHarness.send.mockClear();
+
+    view.rerender(pane(false, {}, true));
+    act(() => {
+      vi.advanceTimersByTime(RETURN_REPAINT_NUDGE_MS + 10);
+    });
+
+    expect(terminalHarness.send).not.toHaveBeenCalledWith(expect.objectContaining({ rows: 23 }));
+  });
+
+  /*
    * A pane open in two places — the desktop app and a tab some tool opened to
    * take a look — has two screens and ONE pseudo-terminal, and the server
    * hands the size to one of them. The other is told what the owner chose
@@ -2107,6 +2152,43 @@ describe("pane refit", () => {
       expect(claimsOn(0)).toEqual([{ t: "claim", cols: 80, rows: 24 }]);
     });
 
+    it.each(["light", "dark"] as const)("immediately gives a maximized %s pane the office viewer's size lead", (appearance) => {
+      const expanded = (maximized: boolean) => (
+        <AgenticTerminal key="grid" name="Dana" displayName="Claude Code" appearance={appearance} fontSize={13} maximized={maximized} />
+      );
+      const view = render(<>{expanded(false)}{office}</>);
+      open(0);
+      open(1);
+      settle();
+      displace(0);
+      clearSent();
+      terminalHarness.size = { cols: 160, rows: 60 };
+      const focused = document.activeElement;
+
+      view.rerender(<>{expanded(true)}{office}</>);
+
+      // No observer, animation frame, timer, or second click may be needed.
+      expect(claimsOn(0)).toEqual([{ t: "claim", cols: 160, rows: 60 }]);
+      expect(document.activeElement).toBe(focused);
+      expect(terminalHarness.sockets).toHaveLength(2);
+      settle();
+      expect(claimsOn(0)).toHaveLength(1);
+
+      // A passive gesture cannot return the size to the small office viewer.
+      displace(1);
+      clearSent();
+      fireEvent.pointerMove(document.body);
+      settle();
+      expect(claimsOn(1)).toEqual([]);
+
+      // Restoring also lands its geometry immediately, without reconnecting.
+      terminalHarness.size = { cols: 80, rows: 24 };
+      clearSent();
+      view.rerender(<>{expanded(false)}{office}</>);
+      expect(claimsOn(0)).toEqual([{ t: "claim", cols: 80, rows: 24 }]);
+      expect(terminalHarness.sockets).toHaveLength(2);
+    });
+
     it("gives the lead to the viewer the user presses", () => {
       const view = render(<>{grid}{office}</>);
       open(0);
@@ -2638,6 +2720,8 @@ describe("renaming a pane", () => {
 describe("terminal text size across a rebuild", () => {
   beforeEach(() => {
     terminalHarness.instances.length = 0;
+    terminalHarness.clearTextureAtlas.mockClear();
+    terminalHarness.spacingAtOpen.length = 0;
     globalThis.ResizeObserver = ResizeObserverHarness;
   });
 
@@ -2646,6 +2730,51 @@ describe("terminal text size across a rebuild", () => {
   });
 
   const newest = () => terminalHarness.instances[terminalHarness.instances.length - 1];
+
+  it.each(["light", "dark"] as const)("keeps the glyph cache warm when opening and restarting %s panes", (appearance) => {
+    const pane = (name: string, restartToken = 0) => (
+      <AgenticTerminal key={name} name={name} displayName="Codex" appearance={appearance} fontSize={13} restartToken={restartToken} />
+    );
+    const view = render(<>{pane("First")}</>);
+    expect(terminalHarness.clearTextureAtlas).not.toHaveBeenCalled();
+    const first = newest();
+
+    view.rerender(<>{pane("First")}{pane("Second")}</>);
+    expect(terminalHarness.instances).toHaveLength(2);
+    expect(terminalHarness.instances[0]).toBe(first);
+    expect(terminalHarness.clearTextureAtlas).not.toHaveBeenCalled();
+
+    view.rerender(<>{pane("First")}{pane("Second", 1)}</>);
+    expect(terminalHarness.instances).toHaveLength(3);
+    expect(terminalHarness.clearTextureAtlas).not.toHaveBeenCalled();
+  });
+
+  it("still refreshes glyphs on real theme and font changes without reconnecting", () => {
+    const view = render(<AgenticTerminal name="Dana" displayName="Codex" appearance="dark" fontSize={13} />);
+    const terminal = newest();
+    terminalHarness.clearTextureAtlas.mockClear();
+
+    view.rerender(<AgenticTerminal name="Dana" displayName="Codex" appearance="light" fontSize={13} />);
+    expect(terminalHarness.clearTextureAtlas).toHaveBeenCalledTimes(1);
+    expect(newest().options.theme).not.toBeUndefined();
+
+    view.rerender(<AgenticTerminal name="Dana" displayName="Codex" appearance="light" fontSize={18} />);
+    expect(terminalHarness.clearTextureAtlas).toHaveBeenCalledTimes(2);
+    expect(newest().options.fontSize).toBe(18);
+    expect(newest()).toBe(terminal);
+    expect(terminalHarness.instances).toHaveLength(1);
+  });
+
+  it("aligns fractional font cells before opening the renderer and measuring the first grid", () => {
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      font: "",
+      measureText: () => ({ width: 249.6 }),
+    } as unknown as CanvasRenderingContext2D);
+
+    render(<AgenticTerminal name="Dana" displayName="Codex" appearance="dark" fontSize={13} />);
+    expect(terminalHarness.spacingAtOpen).toEqual([1]);
+    expect(terminalHarness.clearTextureAtlas).not.toHaveBeenCalled();
+  });
 
   it("keeps the xterm canvas clear over the shared translucent pane shell", () => {
     render(

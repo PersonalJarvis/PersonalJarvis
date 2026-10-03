@@ -6,7 +6,7 @@ import { ThemeProvider } from "./hooks/useTheme";
 import { ViewErrorBoundary } from "./components/ViewErrorBoundary";
 import { AuthGate } from "./components/AuthGate";
 import { installPreloadRecovery } from "./lib/preloadRecovery";
-import { POLL_MS, installBundleWatch } from "./lib/bundleWatch";
+import { POLL_MS, bundleFingerprint, installBundleWatch } from "./lib/bundleWatch";
 import { reloadHeld, setReloadHold } from "./lib/reloadHold";
 import { useEventStore } from "./store/events";
 import { browserSafeReloadDeps, reloadWhenServable } from "./lib/safeReload";
@@ -55,6 +55,8 @@ useEventStore.subscribe((state) =>
     window.addEventListener(kind, noteInput, { capture: true, passive: true });
   }
   installBundleWatch({
+    // The server may already have changed before our first poll completes.
+    baseline: bundleFingerprint(document.head.innerHTML),
     fetchIndex: () =>
       fetch("/", {
         cache: "no-store",

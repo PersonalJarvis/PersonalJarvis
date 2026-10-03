@@ -26,6 +26,19 @@ def _explicit_provider_ids(cfg: Any) -> list[str]:
     """Configured primary/fallback ids, without ambient installed plugins."""
     realtime = getattr(getattr(cfg, "brain", None), "realtime", None)
     installed = set(list_plugins(_GROUP))
+    primary_id = str(getattr(realtime, "provider", "") or "").strip()
+    if primary_id:
+        if primary_id not in installed:
+            return []
+        try:
+            primary = load(_GROUP, primary_id, protocol=RealtimeProvider)
+        except Exception as exc:  # noqa: BLE001 - a broken selection stays unavailable
+            log.warning("Realtime primary %s could not load (%s)", primary_id, type(exc).__name__)
+            return []
+        if not bool(getattr(primary, "provider_fallback_allowed", True)):
+            # A pinned subscription owns its access choice even when old API
+            # fallback settings remain from the user's previous voice mode.
+            return [primary_id]
     ordered: list[str] = []
     for configured in (
         getattr(realtime, "provider", None),
@@ -103,7 +116,21 @@ def _identified_provider_candidates(
                 if credential_candidates
                 else None
             )
-            if api_key:
+            external_kind = getattr(provider_cls, "external_credentials_kind", "")
+            if external_kind == "chatgpt_oauth":
+                if provider_id not in explicit_ids:
+                    continue
+                from jarvis.live.recovery import connection_permit
+                from jarvis.live.subscription_auth import SubscriptionAuth
+
+                auth = SubscriptionAuth.from_runtime_config(cfg)
+                if not defer_external_login_probe and not auth.status_snapshot()["connected"]:
+                    continue
+                provider = provider_cls(
+                    credentials=auth.credentials, connection_permit=connection_permit,
+                )
+                provider.subscription_auth = auth
+            elif api_key:
                 provider = provider_cls(api_key=api_key)
             else:
                 external_login_ready = getattr(
@@ -266,6 +293,30 @@ def _realtime_is_the_configured_voice_mode(cfg: Any) -> bool:
     return getattr(getattr(cfg, "voice", None), "mode", "pipeline") == "realtime"
 
 
+def _warm_session_imports(provider: Any) -> None:
+    """Import the selected host adapter without constructing a session.
+
+    Cold orchestration imports can exceed a second. They belong in the gated
+    warm worker, not on the audio WebSocket loop after the user says the wake
+    word. Credentials, ledgers, tool catalogs and connections stay call-owned.
+    """
+    import importlib
+    import time
+
+    if getattr(provider, "client_managed_delegation", False):
+        module = "jarvis.live.subscription"
+    elif getattr(provider, "native_tool_orchestration", False):
+        module = "jarvis.live.native"
+    elif getattr(provider, "continuous_conversation", False):
+        module = "jarvis.live.session"
+    else:
+        return
+    started = time.monotonic()
+    importlib.import_module(module)
+    log.info("Realtime local session imports ready in %.1f ms.",
+             (time.monotonic() - started) * 1000)
+
+
 async def realtime_warm_selected_transports(cfg: Any) -> None:
     """Pre-open the primary transport and only explicitly safe fallbacks.
 
@@ -294,7 +345,10 @@ async def realtime_warm_selected_transports(cfg: Any) -> None:
             "voice mode."
         )
         return
-    for position, provider_id in enumerate(_explicit_provider_ids(cfg)):
+    # Selection itself loads the primary's capability class and may scan entry
+    # points. Keep that first import off the shared WebSocket loop as well.
+    selected = await asyncio.to_thread(_explicit_provider_ids, cfg)
+    for position, provider_id in enumerate(selected):
         try:
             # Importing a provider plugin is synchronous module work (189 ms
             # warm for openai-live, seconds on a cold boot disk); this runs as
@@ -311,6 +365,8 @@ async def realtime_warm_selected_transports(cfg: Any) -> None:
                     provider_id,
                 )
                 continue
+            if position == 0:
+                await asyncio.to_thread(_warm_session_imports, provider_cls)
             warm = getattr(provider_cls, "warm_transport", None)
             if callable(warm):
                 await warm(cfg)
@@ -454,6 +510,17 @@ def _warn_on_same_family_delegate_chain(
         log.debug("Realtime credential-family diagnostics failed.", exc_info=True)
 
 
+def realtime_webrtc_start_event_required(cfg: Any) -> bool:
+    """Select the media readiness contract without starting a provider session."""
+    for provider_id in _explicit_provider_ids(cfg)[:1]:
+        try:
+            provider = load(_GROUP, provider_id, protocol=RealtimeProvider)
+            return bool(getattr(provider, "webrtc_start_event_required", True))
+        except Exception:
+            log.warning("WebRTC readiness capability unavailable", exc_info=True)
+    return True
+
+
 def realtime_browser_audio(cfg: Any) -> bool:
     """Whether the selected engine needs browser echo-cancelled audio."""
     for provider_id in _explicit_provider_ids(cfg)[:1]:
@@ -490,6 +557,13 @@ def build_realtime_session(
             log.info("Realtime voice has no credential-ready provider; using pipeline mode.")
             return None
         primary_provider = providers[0]
+        if getattr(primary_provider, "client_managed_delegation", False):
+            from jarvis.live.subscription import SubscriptionLiveVoiceSession
+
+            return SubscriptionLiveVoiceSession(
+                session_id=session_id, send_binary=send_binary, send_json=send_json,
+                providers=providers, config=cfg, bus=bus, brain=brain, surface=surface,
+            )
         if getattr(primary_provider, "native_tool_orchestration", False):
             from jarvis.live.native import NativeLiveVoiceSession
 
@@ -498,11 +572,20 @@ def build_realtime_session(
                 providers=providers, config=cfg, bus=bus, brain=brain, surface=surface,
             )
         if getattr(primary_provider, "continuous_conversation", False):
+            import copy
+
             from jarvis.live.session import LiveVoiceSession
 
+            # A direct provider switch (including CLI) selects its own billing
+            # path even when the other Live profile was edited most recently.
+            live_config = cfg
+            profile = getattr(cfg, "live", None)
+            if profile is not None and getattr(profile, "auth_mode", "api_key") != "api_key":
+                live_config = copy.copy(cfg)
+                live_config.live = profile.model_copy(update={"auth_mode": "api_key"})
             return LiveVoiceSession(
                 session_id=session_id, send_binary=send_binary, send_json=send_json,
-                providers=providers, config=cfg, bus=bus, brain=brain, surface=surface,
+                providers=providers, config=live_config, bus=bus, brain=brain, surface=surface,
             )
         _warn_on_same_family_delegate_chain(
             cfg,

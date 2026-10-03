@@ -68,7 +68,7 @@ def profile_dir(data_dir: Path, agent_id: str) -> Path:
 
 
 def profile_has_logins(data_dir: Path, agent_id: str) -> bool:
-    """Whether a login session ever happened (Chromium wrote its cookie store)."""
+    """Legacy storage-presence check; this does not prove a website login."""
     folder = profile_dir(data_dir, agent_id)
     for candidate in ("Default/Cookies", "Default/Network/Cookies", "Cookies"):
         if (folder / candidate).is_file():
@@ -145,12 +145,13 @@ class BrowserJobs:
 
         self.live = LiveSessions(self._data_dir)
         self._python = python
-        self._runner = runner or install_mod.runner_path()
+        self._runner = runner or install_mod.runner_path().with_name("runner.py")
         self._installed = installed
         self._cdp_url = cdp_url
         self.live.cdp_url = cdp_url
         self._procs: dict[str, asyncio.subprocess.Process] = {}
         self._locks: dict[str, asyncio.Lock] = {}
+        self._login_sessions: dict[str, tuple[Any, str, str]] = {}
 
     # ------------------------------------------------------------ status
 
@@ -168,11 +169,34 @@ class BrowserJobs:
 
     def status_for(self, agent: AgentRecord) -> dict[str, Any]:
         session = self.live.sessions.get(agent.agent_id)
+        try:
+            binding = self.live.profiles.resolve(agent)
+        except ValueError as exc:
+            # The status exposes revoked identities so the user can choose again.
+            return {
+                "installed": True,
+                "mode": "unavailable",
+                "session_ready": False,
+                "running": False,
+                "logged_in_profile": None,
+                "error": str(exc),
+            }
+        chrome = binding.kind == "chrome"
         return {
-            "installed": self.is_installed(),
-            "mode": str(agent.browser_mode),
-            "profile_dir": str(profile_dir(self._data_dir, agent.agent_id)),
-            "logged_in_profile": profile_has_logins(self._data_dir, agent.agent_id),
+            "installed": chrome or self.is_installed(),
+            "mode": "chrome"
+            if chrome
+            else "own"
+            if binding.profile_id
+            else str(agent.browser_mode),
+            "profile_id": binding.profile_id,
+            "profile_name": binding.label,
+            "profile_dir": str(binding.path) if binding.path else None,
+            "logged_in_profile": None,
+            "authentication": "unknown",
+            "connected": self.live.chrome.connected(binding.profile_id)
+            if chrome
+            else bool(session and not session.closed),
             "running": self.running_for(agent.agent_id)
             or bool(session and session.run_lock.locked()),
             "session_ready": bool(session and not session.closed),
@@ -351,44 +375,75 @@ class BrowserJobs:
     async def login(
         self, agent: AgentRecord, *, start_url: str = "", wall_s: float = LOGIN_WALL_S
     ) -> dict[str, Any]:
-        """Open the profile headed for the person to sign in; returns when the
-        window is closed (runner exits), :meth:`end_login` is called, or the
-        wall time ends. Attach mode needs no login session."""
-        if str(agent.browser_mode) == "attach":
-            return {"ok": True, "skipped": "attach mode uses your own Chrome"}
+        """Hand the existing live session to the user, without a second runner."""
         async with self._lock(agent.agent_id):
-            proc = await self._spawn(agent.agent_id)
-            request = self._request_base(agent, headless=False)
-            request.update(
-                {
-                    "mode": "login",
-                    "start_url": start_url or "https://accounts.google.com/",
-                    "timeout_s": wall_s,
-                    "keep_alive": True,
-                }
-            )
+            session = None
+            owner = f"login:{agent.agent_id}"
             try:
-                await self._send(proc, request)
-                done = await self._read_lines(proc, wall_s=wall_s + 5, on_line=None)
+                session = await self.live.ensure(agent, window_view=True)
+                takeover: dict[str, Any] = {"enabled": True}
+                if session.state.get("login_available"):
+                    takeover["login"] = True
+                result = await self.live.control(session, owner, "takeover", takeover)
+                self._login_sessions[agent.agent_id] = (
+                    session, session.manual_epoch, session.generation
+                )
+                if start_url:
+                    navigation: dict[str, Any] = {"url": start_url}
+                    if session.state.get("login_available"):
+                        # The login transition replaces the surface. Only its new
+                        # generation may receive input into the native address bar.
+                        navigation["generation"] = result.get("generation")
+                        if not navigation["generation"]:
+                            raise RuntimeError("The sign-in window did not report its new surface")
+                    await self.live.control(session, owner, "navigate", navigation)
+                return {
+                    "ok": True,
+                    "manual": True,
+                    "logged_in_profile": None,
+                    "authentication": "unknown",
+                }
+            except (ValueError, RuntimeError) as exc:
+                raise BrowserUnavailable(FailureReason.TARGET_BUSY, str(exc)) from exc
             finally:
-                if proc.returncode is None:
-                    with contextlib.suppress(ProcessLookupError, OSError):
-                        proc.kill()
-                with contextlib.suppress(ProcessLookupError, OSError, TimeoutError):
-                    await asyncio.wait_for(proc.wait(), timeout=10)
-                self._procs.pop(agent.agent_id, None)
-            return {
-                "ok": bool(done and done.get("ok")),
-                "logged_in_profile": profile_has_logins(self._data_dir, agent.agent_id),
-            }
+                if session is not None and session.control_owner == owner:
+                    # The HTTP request prepares the window; its viewer must claim
+                    # its own lease. Releasing this lease never resumes automation.
+                    session.control_owner = None
 
     async def end_login(self, agent_id: str) -> bool:
-        """The person says they are done: tell the runner to close the window."""
-        proc = self._procs.get(agent_id)
-        if proc is None or proc.returncode is not None or proc.stdin is None:
-            return False
-        with contextlib.suppress(OSError, ConnectionError):
-            proc.stdin.write(b"quit\n")
-            await proc.stdin.drain()
-            proc.stdin.close()
-        return True
+        """Return the same signed-in browser to automation; never discard its profile."""
+        async with self._lock(agent_id):
+            session = self.live.sessions.get(agent_id)
+            prepared = self._login_sessions.get(agent_id)
+            if (
+                session is None
+                or session.closed
+                or prepared is None
+                or prepared[0] is not session
+                or session.control_owner is not None
+                or not (session.state.get("manual") or session.state.get("login_mode"))
+                or (session.manual_epoch, session.generation) != prepared[1:]
+            ):
+                return False
+            takeover: dict[str, Any] = {"enabled": False}
+            if session.state.get("login_available") or session.state.get("login_mode"):
+                takeover["login"] = False
+            try:
+                await self.live.control(
+                    session, f"login:{agent_id}", "takeover", takeover,
+                    expected_manual=prepared[1:],
+                )
+            except ValueError:
+                # A viewer can begin another cycle while this call waits for
+                # control_lock. Its stale API completion must not release it.
+                if (
+                    session.control_owner is not None
+                    or (session.manual_epoch, session.generation) != prepared[1:]
+                    or not (session.state.get("manual") or session.state.get("login_mode"))
+                ):
+                    return False
+                raise
+            self._login_sessions.pop(agent_id, None)
+            self.live.release_when_idle(session)
+            return True

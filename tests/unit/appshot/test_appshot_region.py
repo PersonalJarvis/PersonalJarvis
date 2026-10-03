@@ -251,7 +251,9 @@ def test_both_shortcuts_are_read_and_normalized() -> None:
         hotkey = "Left_Alt + Right_Alt"
         region_hotkey = " Alt+Win+A "
 
-    assert configured_hotkeys(Block()) == {"window": "alt+alt", "region": "alt+win+a"}
+    assert configured_hotkeys(Block()) == {
+        "window": "alt+alt", "region": "alt+win+a", "recording": "",
+    }
 
     class OldConfig:
         hotkey = "alt+alt"
@@ -306,7 +308,7 @@ async def test_the_same_key_for_both_arms_only_the_window(monkeypatch) -> None:
     assert shortcut.status_for("window").armed
     region_status = shortcut.status_for("region")
     assert not region_status.armed
-    assert "front window" in region_status.detail
+    assert "another AppShot action" in region_status.detail
     assert shortcut.armed_combos == [{"window": "ctrl+alt+a"}]
 
 
@@ -385,7 +387,7 @@ def test_one_key_for_both_shortcuts_is_refused_before_writing(client, monkeypatc
     response = client.put("/api/appshot/settings", json={"region_hotkey": "Alt+Alt"})
 
     assert response.status_code == 400
-    assert "two different shortcuts" in response.json()["detail"]
+    assert "different shortcut" in response.json()["detail"]
     assert writes == []
 
 

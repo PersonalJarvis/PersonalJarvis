@@ -619,6 +619,8 @@ class PetStripState:
 
     #: Jarvis's microphone is muted (``VoiceMuteChanged``).
     mic_muted: bool = False
+    #: The canonical bar uses the original pen and blue talk sphere.
+    jarvis_bar: bool = False
     #: The assistant's voice is muted for this session.
     speaker_muted: bool = False
     #: A conversation is running — the talk control and the phone hang up
@@ -836,6 +838,20 @@ def _glyph_phone(pen: _Pen, color: _Rgb, *, hangup: bool, shake: float = 0.0) ->
     pen.lines([turn(point) for point in _handset_outline()], color)
 
 
+def _glyph_compose(pen: _Pen, color: _Rgb) -> None:
+    """A square with a pencil writing into its corner — "new message"."""
+    pen.lines([(12, 3), (5, 3)], color)
+    pen.arc(5, 5, 2, 180, 270, color)
+    pen.lines([(3, 5), (3, 19)], color)
+    pen.arc(5, 19, 2, 90, 180, color)
+    pen.lines([(5, 21), (19, 21)], color)
+    pen.arc(19, 19, 2, 0, 90, color)
+    pen.lines([(21, 19), (21, 12)], color)
+    pen.lines(
+        [(18.4, 2.6), (21.4, 5.6), (12.4, 14.6), (8.6, 15.4), (9.4, 11.6), (18.4, 2.6)], color
+    )
+
+
 def _glyph_mic(pen: _Pen, color: _Rgb) -> None:
     pen.arc(12, 5, 3, 180, 360, color)
     pen.lines([(9, 5), (9, 12)], color)
@@ -867,7 +883,9 @@ def _draw_glyph(
     stroke: float,
     state: PetStripState,
 ) -> None:
-    if action == "bell":
+    if action == "compose":
+        _glyph_compose(_Pen(d, cx, cy, box, stroke), PET_ICON)
+    elif action == "bell":
         color = PET_ICON_MUTED if state.notify_off else PET_ICON
         _glyph_bell(
             _Pen(d, cx, cy, box, stroke),
@@ -1006,6 +1024,47 @@ def _stroke_mask(width: int, height: int) -> Image.Image:
     return mask
 
 
+PET_ORB_REST_SHARE = 0.80
+PET_ORB_PULSE_SHARE = 0.08
+PET_ORB_HIGHLIGHT = (169, 208, 255)
+PET_ORB_MID = (74, 124, 245)
+PET_ORB_RIM = (39, 71, 200)
+PET_ORB_SPECULAR = (230, 241, 255)
+
+def _draw_orb(
+    d: ImageDraw.ImageDraw,
+    cx: float,
+    cy: float,
+    radius: float,
+) -> None:
+    """A glossy sphere: concentric discs drifting toward a top-left light.
+
+    The outermost disc is the deep rim colour, the innermost the highlight; the
+    centres slide toward the light as they shrink, which reads as a lit ball.
+    PIL only — no numpy on this import path.
+    """
+    steps = max(8, int(radius))
+    lx, ly = cx - radius * 0.38, cy - radius * 0.40
+    for k in range(steps, 0, -1):
+        t = k / steps  # 1 at the rim, toward 0 at the light
+        r = radius * t
+        ox = lx + (cx - lx) * t
+        oy = ly + (cy - ly) * t
+        if t > 0.55:
+            color = _lerp(PET_ORB_MID, PET_ORB_RIM, (t - 0.55) / 0.45)
+        else:
+            color = _lerp(PET_ORB_HIGHLIGHT, PET_ORB_MID, t / 0.55)
+        d.ellipse([ox - r, oy - r, ox + r, oy + r], fill=color)
+    shine = radius * 0.16
+    sx, sy = cx - radius * 0.42, cy - radius * 0.46
+    d.ellipse([sx - shine, sy - shine * 0.8, sx + shine, sy + shine * 0.8], fill=PET_ORB_SPECULAR)
+
+def _orb_radius(state: PetStripState, pill_height: float) -> float:
+    pulse = (state.level / PET_LEVEL_STEPS) if state.active or state.motion == "voice" else 0.0
+    share = PET_ORB_REST_SHARE + PET_ORB_PULSE_SHARE * max(0.0, min(1.0, pulse))
+    return pill_height * share / 2.0
+
+
 def _draw_indicator(
     layer: Image.Image, cx: float, cy: float, pill_h: float, state: PetStripState
 ) -> None:
@@ -1056,12 +1115,13 @@ def _render_call_disc(state: PetStripState, diameter: int, scale: float) -> Imag
 
 def _render_pen_disc(state: PetStripState, diameter: int, scale: float) -> Image.Image:
     size = diameter * _SS
-    hovered = state.hovered == "bell"
+    action = "compose" if state.jarvis_bar else "bell"
+    hovered = state.hovered == action
     layer = Image.new("RGB", (size, size), PET_FILL_HOVER if hovered else PET_FILL)
     d = ImageDraw.Draw(layer)
     box = _spx(PET_SLOT, scale) * PET_ICON_BOX * _SS
     stroke = PET_ICON_STROKE * max(0.5, scale) * _SS
-    _draw_glyph("bell", d, size / 2.0, size / 2.0, box, stroke, state)
+    _draw_glyph(action, d, size / 2.0, size / 2.0, box, stroke, state)
     return layer.resize((diameter, diameter), Image.Resampling.LANCZOS)
 
 
@@ -1088,7 +1148,20 @@ def _render_pill(state: PetStripState, layout: PetStripLayout, scale: float) -> 
     for action, sx0, sx1 in layout.slots:
         cx = ((sx0 + sx1) / 2.0 - x0) * _SS
         if action == "orb":
-            _draw_indicator(layer, cx, cy, h_ss, state)
+            if state.jarvis_bar:
+                _draw_orb(d, cx, cy, _orb_radius(state, h_ss))
+                if state.motion == "think":
+                    radius = h_ss * 0.44
+                    start = state.phase * 360 / PET_THINK_PHASES
+                    d.arc(
+                        [cx - radius, cy - radius, cx + radius, cy + radius],
+                        start,
+                        start + 90,
+                        fill=PET_ORB_HIGHLIGHT,
+                        width=max(1, int(stroke)),
+                    )
+            else:
+                _draw_indicator(layer, cx, cy, h_ss, state)
         else:
             _draw_glyph(action, d, cx, cy, box, stroke, state)
     return layer.resize((width, height), Image.Resampling.LANCZOS)
@@ -1153,6 +1226,9 @@ def toggle_speaker_mute(source: str = "orb") -> bool | None:
     pipeline = get_speech_pipeline()
     if pipeline is None:
         return None
+    toggle = getattr(pipeline, "toggle_speaker_mute", None)
+    if callable(toggle):
+        return bool(toggle(source=source))
     setter = getattr(pipeline, "set_tts_volume", None)
     if not callable(setter):
         return None
@@ -1242,6 +1318,9 @@ def speaker_is_muted() -> bool:
     pipeline = get_speech_pipeline()
     if pipeline is None:
         return False
+    muted = getattr(pipeline, "is_speaker_muted", None)
+    if muted is not None:
+        return bool(muted)
     return _current_tts_volume(pipeline) <= 0.0
 
 

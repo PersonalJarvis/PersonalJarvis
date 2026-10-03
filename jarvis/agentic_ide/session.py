@@ -94,7 +94,7 @@ from . import (
     remote,
     resume_store,
 )
-from .activity import NO_READING, Reading, has_work_behind_it, observed
+from .activity import NO_READING, Reading, has_work_behind_it, observed, record_work_start
 from .agent_sessions import (
     ResumeHandle,
     can_fork,
@@ -1112,8 +1112,16 @@ class Terminal:
     # Movement in the shadow of this stamp is the pane being redrawn, not the
     # agent working — see `activity._resize_shadowed`.
     last_resize_at: float | None = None
+    # Resized while its agent was still loading, before it had taken the whole
+    # screen — so no repaint check could run for that size, and a CLI that was
+    # not listening yet may still be drawing for the size it was born with.
+    # Settled once the input line appears (see `_prompt_ready_then_settle`).
+    resized_while_booting: bool = False
     prompts_sent: int = 0
     last_prompt: str = ""
+    # Runtime-only ownership of a result requested through Jarvis, never a UI field.
+    delegation_result: Any = None
+    delegation_probe_at: float = 0.0
     # The current process's records are kept as a fallback if the local history
     # file cannot be written. The full durable history is loaded only when its
     # UI is opened, never in the workspace-state hot path.
@@ -1230,6 +1238,9 @@ class Terminal:
     activity: str = ""
     activity_at: float = 0.0
     activity_since: float = 0.0
+    # The task's start, independent of activity detection and app uptime.
+    work_started_at: float = 0.0
+    work_pty_id: str = ""
     # Monotonic identity for the process currently occupying this pane. The
     # notification watcher outlives PTYs, so it uses this to discard the old
     # process's screen fingerprint before interpreting a replacement process.
@@ -1514,6 +1525,8 @@ class Terminal:
             account=self.account,
             account_pinned=self.account_pinned,
             continuation_needed=self.resume_continuation_needed,
+            work_started_at=self.work_started_at,
+            work_pty_id=self.work_pty_id,
             model=self.model,
             effort=self.effort,
             permission_mode=self.permission_mode,
@@ -2641,8 +2654,34 @@ class Registry:
         term.last_output_at = time.time() if result.replay else None
         if await self._adopted_with_work(term):
             term.adopted_generation = term.process_generation
+        await self._recover_work_start(term)
         logger.info("Agentic IDE: {} re-joined its running agent after an app restart", term.name)
         return True
+
+    @staticmethod
+    async def _recover_work_start(term: Terminal) -> None:
+        """Reconstruct existing tasks off-loop, without sending the agent input."""
+        from .work_timing import recover_start
+
+        saved = term.work_started_at if term.work_pty_id == term.pty_id else 0.0
+        term.work_started_at = saved
+        term.work_pty_id = term.pty_id or ""
+        if term.resume is None:
+            return
+        generation = (term.process_generation, term.pty_id, term.last_submit_at)
+        try:
+            started = await asyncio.to_thread(
+                recover_start, term.agent, term.resume.id, account_home(term.agent, term.account)
+            )
+        except Exception as exc:  # noqa: BLE001 - unavailable timing must not break adoption
+            logger.warning("Agentic IDE: could not recover {}'s task clock: {}", term.name, exc)
+            return
+        if generation != (term.process_generation, term.pty_id, term.last_submit_at):
+            return  # A new process or submission owns the clock now.
+        if started is not None:
+            # The record also covers tasks started/finished while Jarvis was
+            # closed; a saved clock alone cannot know about those boundaries.
+            term.work_started_at = started if 0 < started <= time.time() else 0.0
 
     @staticmethod
     async def _adopted_with_work(term: Terminal) -> bool:
@@ -3175,6 +3214,8 @@ class Registry:
                 resume=entry.resume,
                 prompts_sent=entry.prompts_sent,
                 resume_continuation_needed=entry.continuation_needed,
+                work_started_at=entry.work_started_at,
+                work_pty_id=entry.work_pty_id,
                 account=account,
                 # The pin survives the restart only while the seat it vouches
                 # for does — a fallback onto the active account is not the
@@ -3767,6 +3808,35 @@ class Registry:
         )
         return term.name in ready
 
+    async def _prompt_ready_then_settle(self, session: Session, term: Terminal) -> bool:
+        """Wait for the input line, then repaint a pane resized while it loaded.
+
+        A fresh pane is spawned at the size its tile measured on mount, and the
+        grid settles a moment later — so its real size reaches the PTY while the
+        CLI is still booting. A CLI that is not listening for size changes yet
+        keeps drawing for the size it was born with: an interface narrower or
+        shorter than its pane, the input box floating mid-pane (reported
+        2026-09-29, four panes opened together). The repaint check cannot catch
+        this, because it only runs once the agent has taken the whole screen.
+        One nudge after the input line appears — when the CLI certainly listens
+        — makes it lay out for the size the pane really has.
+        """
+        generation = term.process_generation
+        ready = await self._prompt_ready(session, term)
+        if (
+            ready
+            and term.process_generation == generation
+            and term.resized_while_booting
+            and term.replay.holds_screen
+            and term.pty_cols
+            and term.pty_rows
+        ):
+            term.resized_while_booting = False
+            # Shielded: the slot's ceiling may cancel this wait, and a nudge
+            # cut between its two resizes leaves the PTY a row short.
+            await asyncio.shield(self._nudge_repaint(term, term.pty_cols, term.pty_rows))
+        return ready
+
     async def _acquire_agent_cold_start(self, term: Terminal) -> asyncio.Semaphore | None:
         """Take this CLI/account's boot slot when its registry entry needs one.
 
@@ -4181,6 +4251,7 @@ class Registry:
         # can inherit the previous PTY's settled-screen evidence.
         term.process_generation += 1
         term.idle_seen = False
+        term.resized_while_booting = False
         term.transcript.resize(cols, rows)
         # Readiness belongs to this process. Keeping the dead process's screen
         # here leaves old prompt sigils visible to the readiness probe and makes
@@ -4366,7 +4437,9 @@ class Registry:
         try:
             # One of a few starts at a time (see COLD_START_LIMIT), and the
             # slot stays taken until this pane's input line appears.
-            async with self._cold_start_slot(ready=lambda: self._prompt_ready(session, term)):
+            async with self._cold_start_slot(
+                ready=lambda: self._prompt_ready_then_settle(session, term)
+            ):
                 try:
                     identity = "pane:" + term.history_id
                     if term.stopping or self._locate(identity, session.id) != (session, term):
@@ -4450,6 +4523,8 @@ class Registry:
         term.activity = ""
         term.activity_at = 0.0
         term.activity_since = 0.0
+        term.work_started_at = 0.0
+        term.work_pty_id = ""
         # And this process has not stood still yet, whatever the previous one
         # did. Everything it is about to draw is a CLI painting itself, not an
         # agent working — see the field.
@@ -4713,6 +4788,7 @@ class Registry:
                 term.manual_submit_pending = True
                 self._schedule_manual_submit_confirmation(owner, term)
             else:
+                record_work_start(term, term.last_input_at)
                 term.last_submit_at = term.last_input_at
                 term.submit_generation = term.process_generation
             # And the pane's conversation may have just begun, which for most
@@ -4754,6 +4830,7 @@ class Registry:
                 term.manual_submit_pending = False
                 term.submitted = submitted
                 if submitted:
+                    record_work_start(term, time.time())
                     term.last_submit_at = time.time()
                     term.submit_generation = term.process_generation
                     self._lookup_after_conversation(owner, term)
@@ -4816,6 +4893,9 @@ class Registry:
         test, a script) simply goes unchecked.
         """
         if not term.replay.holds_screen:
+            # Either a line-mode CLI, or a full-screen one still loading. The
+            # second cannot be checked yet, so it is settled after boot.
+            term.resized_while_booting = True
             return
         try:
             loop = asyncio.get_running_loop()
@@ -6238,6 +6318,9 @@ class Registry:
             target.layout = layout_tree.evened(target.layout)
             self._renumber(target)
             await self._persist()
+            if not source.terminals:
+                await self._close_locked(source.id)
+                await self._persist()
             logger.info(
                 "Agentic IDE: moved terminal {} from workspace {} to {} as {}",
                 old_name,
@@ -6533,6 +6616,11 @@ class Registry:
             self._renumber(session)
             if resolved:
                 await self._persist()
+                if not session.terminals:
+                    # Save the empty pane list before closing so the previous
+                    # terminals cannot return through the workspace restore offer.
+                    await self._close_locked(session.id)
+                    await self._persist()
                 logger.info(
                     "Agentic IDE: closed terminals {}",
                     ", ".join(term.name for term in resolved),
@@ -6585,11 +6673,13 @@ class Registry:
         require_idle: bool = False,
         expected_input: str = "",
         allow_question: bool = False,
+        followup: dict[str, str] | None = None,
+        expected_location: tuple[str, str, str] | None = None,
     ) -> Terminal:
         """Serialize deliveries and pin the pane before the first await.
 
-        How the job ends is shown on the pane (status badge, bell entry), never
-        spoken: no pane result is read aloud (maintainer decision 2026-09-30).
+        Explicit Jarvis voice requests retain a result receipt. Direct pane input
+        and work supervised by another agent keep their existing reporting owner.
         """
         found = self.find_terminal(wanted, workspace_id)
         if found is None:
@@ -6615,7 +6705,12 @@ class Registry:
                     has_submission and activity != "waiting"
                 ):
                     raise SessionError("The selected coding agent is busy; nothing was sent.")
-            return await self._send_prompt_locked(
+            pending = None
+            if followup is not None and followup.get("reply_surface") in {"voice", "chat"}:
+                from .followthrough import prepare
+
+                pending = await prepare(term, text, typed, followup)
+            result = await self._send_prompt_locked(
                 identity,
                 text,
                 workspace_id=owner.id,
@@ -6623,7 +6718,13 @@ class Registry:
                 attachments=attachments,
                 expected_input=expected_input,
                 allow_question=allow_question,
+                pending_result=pending,
+                expected_location=expected_location,
             )
+            from .delegation_wait import track_submission
+
+            track_submission(self, owner, result)
+            return result
 
     @staticmethod
     def input_token(term: Terminal) -> str:
@@ -6641,6 +6742,8 @@ class Registry:
         attachments: Sequence[Any] = (),
         expected_input: str = "",
         allow_question: bool = False,
+        pending_result: Any = None,
+        expected_location: tuple[str, str, str] | None = None,
     ) -> Terminal:
         """Type ``text`` into a terminal, press Enter, and CONFIRM it was sent.
 
@@ -6749,6 +6852,10 @@ class Registry:
             or term.status != "live"
         ):
             raise SessionError("The selected terminal changed while waiting; nothing was sent.")
+        if expected_location is not None and expected_location != (
+            term.cwd(owner.folder), term.computer_id, term.remote_folder,
+        ):
+            raise SessionError("The image destination changed while waiting; nothing was sent.")
         if expected_input and (
             self.input_token(term) != expected_input
             or term.reading().activity
@@ -6790,11 +6897,15 @@ class Registry:
         # at its prompt" bell for work that never started. The moment the user
         # presses Enter on that box themselves, `write` stamps it for real.
         if submitted is not False:
+            record_work_start(term, term.last_prompt_at)
             term.last_submit_at = term.last_prompt_at
             term.submit_generation = term.process_generation
         term.manual_submit_pending = False
         term.manual_submit_token += 1
         term.submitted = submitted
+        from .followthrough import submitted as track_result
+
+        track_result(term, pending_result)
         term.sent_multiline = multiline and submitted is True
         from .prompt_receipts import receipts_for
 

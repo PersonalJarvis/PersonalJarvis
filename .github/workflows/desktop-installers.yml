@@ -52,12 +52,33 @@ jobs:
     if: github.ref_type == 'tag'
     permissions:
       contents: read
-      checks: read
+      actions: read
     uses: ./.github/workflows/release-gate.yml
+
+  prepare:
+    name: prepare immutable release
+    needs: admit
+    if: github.ref_type == 'tag' && needs.admit.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+      - name: Require an unpublished draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/ci/release_assets.py prepare --repo "$GITHUB_REPOSITORY" --tag "$GITHUB_REF_NAME"
+
 
   # ------------------------------------------------------------------ Windows
   windows:
-    needs: admit
+    needs: [admit, prepare]
     if: ${{ !failure() && !cancelled() }}
     name: Windows installer (x64)
     runs-on: windows-latest
@@ -65,12 +86,7 @@ jobs:
     env:
       # Exported here (not per step) so the `if:` guards below can read them.
       # An empty value means "this fork has no signing secrets" - not an error.
-      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-      AZURE_SIGNING_ENDPOINT: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
-      AZURE_CODE_SIGNING_ACCOUNT: ${{ secrets.AZURE_CODE_SIGNING_ACCOUNT }}
-      AZURE_CERTIFICATE_PROFILE: ${{ secrets.AZURE_CERTIFICATE_PROFILE }}
+      HAS_AZURE_SIGNING: ${{ github.ref_type == 'tag' && secrets.AZURE_CLIENT_ID != '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -132,7 +148,7 @@ jobs:
       # downloaded installer, so this signature is the one SmartScreen weighs;
       # files the installer then writes inherit no MOTW.
       - name: Sign the installer (Azure Trusted Signing)
-        if: env.AZURE_CLIENT_ID != ''
+        if: env.HAS_AZURE_SIGNING == 'true'
         # pin: azure/trusted-signing-action@v2.0.0 - pinned by commit SHA.
         uses: azure/trusted-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82
         with:
@@ -149,7 +165,7 @@ jobs:
           timestamp-digest: SHA256
 
       - name: Report the signing state honestly
-        if: env.AZURE_CLIENT_ID == ''
+        if: env.HAS_AZURE_SIGNING != 'true'
         shell: bash
         run: |
           echo "::notice::AZURE_* signing secrets are not configured - the installer is UNSIGNED."
@@ -164,11 +180,13 @@ jobs:
 
   # -------------------------------------------------------------------- macOS
   macos:
-    needs: admit
+    needs: [admit, prepare]
     if: ${{ !failure() && !cancelled() }}
     name: macOS installer (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
+    env:
+      HAS_APPLE_SIGNING: ${{ github.ref_type == 'tag' && secrets.APPLE_SIGNING_IDENTITY != '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -199,21 +217,63 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[desktop,dev]"
 
+      - name: Import the Developer ID certificate into a temporary keychain
+        if: env.HAS_APPLE_SIGNING == 'true'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          : "${APPLE_CERTIFICATE_P12_BASE64:?Signing requires the publisher certificate}"
+          : "${APPLE_CERTIFICATE_PASSWORD:?Signing requires the certificate password}"
+          keychain="$RUNNER_TEMP/jarvis-signing.keychain-db"
+          certificate="$RUNNER_TEMP/jarvis-signing.p12"
+          trap 'rm -f "$certificate"' EXIT
+          security list-keychains -d user | sed -e 's/^ *"//' -e 's/" *$//' > "$RUNNER_TEMP/jarvis-original-keychains.txt"
+          printf '%s' "$APPLE_CERTIFICATE_P12_BASE64" | /usr/bin/base64 -D > "$certificate"
+          password="$(openssl rand -hex 32)"
+          echo "::add-mask::$password"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$certificate" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain"
+          keychains=("$keychain")
+          while IFS= read -r original; do keychains+=("$original"); done < "$RUNNER_TEMP/jarvis-original-keychains.txt"
+          security list-keychains -d user -s "${keychains[@]}"
+
       # The script decides what to do with these: with them it codesigns with
       # the Developer ID identity and notarizes; without them it ad-hoc signs,
       # skips notarization and prints a one-line notice.
       - name: Build the DMG
         shell: bash
         env:
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ github.ref_type == 'tag' && secrets.APPLE_SIGNING_IDENTITY || '' }}
+          APPLE_ID: ${{ github.ref_type == 'tag' && secrets.APPLE_ID || '' }}
+          APPLE_TEAM_ID: ${{ github.ref_type == 'tag' && secrets.APPLE_TEAM_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ github.ref_type == 'tag' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
         run: |
           chmod +x packaging/macos/build.sh
           ./packaging/macos/build.sh
+
+      - name: Remove signing credentials even after a failed build
+        if: always() && env.HAS_APPLE_SIGNING == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          status=0
+          if [ -f "$RUNNER_TEMP/jarvis-original-keychains.txt" ]; then
+            keychains=()
+            while IFS= read -r original; do keychains+=("$original"); done < "$RUNNER_TEMP/jarvis-original-keychains.txt"
+            security list-keychains -d user -s "${keychains[@]}" || status=1
+          fi
+          if [ -f "$RUNNER_TEMP/jarvis-signing.keychain-db" ]; then
+            security delete-keychain "$RUNNER_TEMP/jarvis-signing.keychain-db" || status=1
+          fi
+          rm -f "$RUNNER_TEMP/jarvis-signing.p12" "$RUNNER_TEMP/jarvis-original-keychains.txt" || status=1
+          exit "$status"
 
       - name: Preserve native wheel diagnostics on build failure
         if: failure() && hashFiles('jarvis/assets/browser/wheels/*.whl') != ''
@@ -254,7 +314,7 @@ jobs:
 
   # -------------------------------------------------------------------- Linux
   linux:
-    needs: admit
+    needs: [admit, prepare]
     if: ${{ !failure() && !cancelled() }}
     name: Linux installer (x86_64)
     # 22.04, not latest: an AppImage inherits the glibc of the machine that
@@ -406,19 +466,11 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Attach the installers to the GitHub Release
+      - name: Upload verified installer assets without replacing published files
         if: github.ref_type == 'tag'
-        # pin: softprops/action-gh-release@v3.0.2 - same pin as sign-installer.yml.
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
-          # The release may already exist (sign-installer.yml runs on the same
-          # tag); this adds assets to it instead of replacing it.
-          fail_on_unmatched_files: true
-          files: |
-            installers/PersonalJarvis-Setup-x64.exe
-            installers/PersonalJarvis-macOS-arm64.dmg
-            installers/PersonalJarvis-macOS-x64.dmg
-            installers/PersonalJarvis-Linux-x86_64.AppImage
-            installers/installers-SHA256SUMS.txt
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python scripts/ci/release_assets.py upload
+          --repo "$GITHUB_REPOSITORY" --tag "$GITHUB_REF_NAME"
+          --directory installers --profile desktop

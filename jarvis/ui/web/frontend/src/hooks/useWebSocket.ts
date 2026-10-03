@@ -332,10 +332,12 @@ export function useWebSocket(): void {
         // The assistant's voice was muted or unmuted somewhere else (the
         // pet's speaker disc, another window); in-app speaker toggles follow.
         if (env.event_name === "VoiceSpeakerMuteChanged") {
-          const p = env.payload as { muted?: unknown };
+          const p = env.payload as { muted?: unknown; revision?: number };
           if (typeof p.muted === "boolean") {
             window.dispatchEvent(
-              new CustomEvent(SPEAKER_MUTE_EVENT, { detail: { muted: p.muted } }),
+              new CustomEvent(SPEAKER_MUTE_EVENT, { detail: {
+                muted: p.muted, ...(typeof p.revision === "number" ? { revision: p.revision } : {}),
+              } }),
             );
           }
         }

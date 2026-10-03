@@ -960,6 +960,9 @@ def _claude_events(session_id: str, home: Path | None, live: bool) -> list[dict[
             if mode == "plan":
                 log.permission_mode = "plan"
             continue
+        if kind == "system" and row.get("subtype") == "turn_duration":
+            log.close_turn(_ts_ms(row.get("timestamp")) or log.last_ms)
+            continue
         if kind not in ("user", "assistant"):
             continue
         message = row.get("message")
@@ -973,6 +976,11 @@ def _claude_events(session_id: str, home: Path | None, live: bool) -> list[dict[
             if row.get("isMeta"):
                 continue
             if isinstance(content, str):
+                if content in {
+                    "[Request interrupted by user]", "[Request interrupted by user for tool use]",
+                }:
+                    log.close_turn(ts, "cancelled")
+                    continue
                 log.user(_spoken(content), ts)
                 continue
             if not isinstance(content, list):
@@ -992,7 +1000,12 @@ def _claude_events(session_id: str, home: Path | None, live: bool) -> list[dict[
                 elif btype == "text":
                     spoken.append(str(block.get("text") or ""))
             if spoken:
-                log.user(_spoken("\n\n".join(spoken)), ts)
+                if any(text in {
+                    "[Request interrupted by user]", "[Request interrupted by user for tool use]",
+                } for text in spoken):
+                    log.close_turn(ts, "cancelled")
+                else:
+                    log.user(_spoken("\n\n".join(spoken)), ts)
             continue
 
         # assistant
@@ -1007,6 +1020,8 @@ def _claude_events(session_id: str, home: Path | None, live: bool) -> list[dict[
         if isinstance(content, str):
             log.text(content, row_id, ts)
             log.usage(mid, message.get("usage"), ts)
+            if message.get("stop_reason") == "end_turn":
+                log.close_turn(ts)
             continue
         if not isinstance(content, list):
             continue
@@ -1026,6 +1041,8 @@ def _claude_events(session_id: str, home: Path | None, live: bool) -> list[dict[
                     ts,
                 )
         log.usage(mid, message.get("usage"), ts)
+        if message.get("stop_reason") == "end_turn":
+            log.close_turn(ts)
     log.finish()
     return log
 
@@ -1076,7 +1093,9 @@ def _codex_events(session_id: str, home: Path | None, live: bool) -> list[dict[s
         if kind != "response_item":
             continue
         ptype = str(payload.get("type") or "")
-        item_id = str(payload.get("id") or payload.get("call_id") or f"row-{len(log.events)}")
+        # Tool items have different item IDs for the call and its output. Their
+        # shared call_id is the join key (also for custom/code-mode tools).
+        item_id = str(payload.get("call_id") or payload.get("id") or f"row-{len(log.events)}")
         if ptype == "message":
             role = str(payload.get("role") or "")
             content = payload.get("content")

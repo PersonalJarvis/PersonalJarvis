@@ -34,20 +34,18 @@ from typing import Any
 from PIL import Image
 
 from jarvis.ui.jarvisbar import interaction, renderer
-from jarvis.ui.jarvisbar.modes import DICTATION_MODES
 
 log = logging.getLogger("jarvis.ui.jarvisbar.qt")
 
 # Keep the visual contract identical to the established Tk bar.  These values
 # are local so importing the macOS surface never imports tkinter.
-BAR_ALPHA = 0.6
+BAR_ALPHA = 1.0
 AUDIBLE_LEVEL = 0.06
 AUDIBLE_HOLD_S = 0.5
 TARGET_FRAME_MS = 16
 UI_QUEUE_INTERVAL_MS = 20
 Z_ORDER_GUARD_INTERVAL_MS = 500
 HOVER_POLL_INTERVAL_MS = 32
-HOVER_HIT_SLOP_PX = 2
 DRAG_THRESHOLD_PX = 16
 MARGIN_PX = 12
 TASKBAR_GAP_PX = 8
@@ -437,6 +435,10 @@ class QtJarvisBarOverlay:
         # frozen dancing on the last forwarded level.
         self._last_level_rx_t = 0.0
         self._muted = False
+        self._speaker_muted = False
+        self._call_ring_started_t = 0.0
+        self._on_compose: Callable[[], None] | None = None
+        self._on_speaker_toggle: Callable[[], None] | None = None
         self._hovered = False
         # Mirror of ``[dictation].prompt_mode``: lights the idle pill's sparkle.
         self._prompt_mode = False
@@ -576,6 +578,40 @@ class QtJarvisBarOverlay:
         migrations (the bar stays put), on makes the next poll place it on the
         monitor under the mouse. Atomic bool write, like ``set_muted``."""
         self._follow_cursor = bool(enabled)
+
+    def _call_ring_phase(self) -> int:
+        from ui.orb.controls import PET_CALL_RING_PASSES, PET_RING_PHASES, PET_RING_STEP_S
+
+        started = getattr(self, "_call_ring_started_t", 0.0)
+        if not started:
+            return 0
+        phase = int((time.perf_counter() - started) / PET_RING_STEP_S) + 1
+        return phase if 0 < phase <= PET_RING_PHASES * PET_CALL_RING_PASSES else 0
+
+    def _hover_action(self) -> str | None:
+        if not self._hovered:
+            return None
+        try:
+            if self._window is None:
+                return None
+            local = self._window.mapFromGlobal(_qt().QtGui.QCursor.pos())
+            x, y = local.x(), local.y()
+            from ui.orb.controls import pet_hit_test
+
+            action = pet_hit_test(x, y, renderer.strip_scale())
+            return "compose" if action == "bell" else action
+        except Exception:  # no window yet, or teardown in progress
+            log.debug("bar hover unavailable", exc_info=True)
+            return None
+
+    def set_on_compose(self, callback: Callable[[], None] | None) -> None:
+        self._on_compose = callback
+
+    def set_on_speaker_toggle(self, callback: Callable[[], None] | None) -> None:
+        self._on_speaker_toggle = callback
+
+    def set_speaker_muted(self, muted: bool) -> None:
+        self._speaker_muted = bool(muted)
 
     def set_on_mute_toggle(self, callback: Callable[[], None] | None) -> None:
         self._on_mute_toggle = callback
@@ -767,6 +803,9 @@ class QtJarvisBarOverlay:
                 effective_mode,
                 self._hovered,
                 self._muted,
+                getattr(self, "_speaker_muted", False),
+                self._hover_action(),
+                self._call_ring_phase(),
                 drop_visual,
                 self._prompt_mode,
                 self._prompt_mode_paused,
@@ -793,6 +832,10 @@ class QtJarvisBarOverlay:
                 ),
                 hovered=self._hovered,
                 muted=self._muted,
+                speaker_muted=getattr(self, "_speaker_muted", False),
+                hovered_action=self._hover_action(),
+                call_ring=self._call_ring_phase(),
+                surface_mode=self._mode,
                 prompt_mode=self._prompt_mode,
                 prompt_mode_paused=self._prompt_mode_paused,
                 drop_state=drop_visual,
@@ -999,22 +1042,10 @@ class QtJarvisBarOverlay:
             return False
 
     def _point_in_hover_footprint_ui(self, point: Any) -> bool:
-        """Return whether ``point`` is inside the stable hovered pill bounds."""
-        pill_w, pill_h = renderer.target_pill_size(
-            self._mode,
-            hovered=True,
-            muted=self._muted,
-            prompt_mode=self._prompt_mode,
-        )
-        center_x = renderer.WIN_W / 2.0
-        center_y = renderer.pill_center_y(float(pill_h))
-        slop = HOVER_HIT_SLOP_PX
-        x = float(point.x())
-        y = float(point.y())
-        return (
-            center_x - pill_w / 2.0 - slop <= x < center_x + pill_w / 2.0 + slop
-            and center_y - pill_h / 2.0 - slop <= y < center_y + pill_h / 2.0 + slop
-        )
+        """Keep hover on the authored controls, excluding transparent gaps."""
+        from ui.orb.controls import pet_hit_test
+
+        return pet_hit_test(point.x(), point.y(), renderer.strip_scale()) is not None
 
     def _poll_hover_ui(self) -> None:
         if self._startup_gated or not self._desired_visible:
@@ -1196,16 +1227,7 @@ class QtJarvisBarOverlay:
             return
         try:
             old_win_w, old_win_h = renderer.WIN_W, renderer.WIN_H
-            old_ref = renderer.OPEN_W or 1
             renderer.apply_display_scale(self._screen_scale, user_size=user_scale)
-            # Snap the eased pill so it matches the new window immediately (no
-            # clip on shrink, no lag on grow) — see the Tk surface for the
-            # rationale.
-            r = self._renderer
-            if r is not None and old_ref:
-                ratio = renderer.OPEN_W / old_ref
-                r._st.pw *= ratio  # noqa: SLF001 — same-object render state
-                r._st.ph *= ratio  # noqa: SLF001
             # Re-anchor the PREFERRED location by its bottom-centre so the bar
             # grows upward; the Dock-safe reconcile then clamps the actual spot.
             pref = self._preferred_position or (self._x, self._y)
@@ -1354,7 +1376,9 @@ class QtJarvisBarOverlay:
         if drag is None:
             return True
         if not drag["moved"]:
-            self._dispatch_click_ui(float(event.position().x()), hovered=True)
+            self._dispatch_click_ui(
+                float(event.position().x()), click_y=float(event.position().y()), hovered=True
+            )
             return True
 
         preferred_geometry = self._screen_geometry_for_point_ui(
@@ -1465,28 +1489,32 @@ class QtJarvisBarOverlay:
         except Exception:  # noqa: BLE001 — a drop must never wedge the Qt loop
             log.debug("Qt bar drop handling failed", exc_info=True)
 
-    def _dispatch_click_ui(self, click_x: float, *, hovered: bool | None = None) -> str:
-        if time.monotonic() < self._hangup_click_block_until:
-            return "none"
+    def _dispatch_click_ui(
+        self, click_x: float, *, click_y: float | None = None, hovered: bool | None = None
+    ) -> str:
         if self._drop_active or time.monotonic() < self._drop_quiet_until:
             log.debug("Qt bar: ignoring click (a file drop is in flight)")
             return "none"
         is_hovered = self._hovered if hovered is None else bool(hovered)
-        # The dictation modes render on the active pill (dictate → "speak",
-        # dictate_transcribing → "think"), so their close-X sits where the
-        # active pill puts it.
-        active = self._mode in ("listen", "think", "speak") or (self._mode in DICTATION_MODES)
         action = interaction.resolve_click(
             click_x,
             renderer.WIN_W,
             self._mode,
             hovered=is_hovered,
-            # The idle pill is OPEN while its controls are up; the sparkle's
-            # hit-box tracks that pill, not the window.
-            pill_w=renderer.ACTIVE_W if active else renderer.OPEN_W,
             prompt_mode=self._prompt_mode,
+            y=click_y,
         )
-        if action == "mute":
+        if action in ("talk", "hangup", "dictation_stop") and (
+            time.monotonic() < self._hangup_click_block_until
+        ):
+            return "none"
+        if action == "talk":
+            self._call_ring_started_t = time.perf_counter()
+        if action == "compose":
+            self._invoke_callback(self._on_compose or self._on_show_window, "compose")
+        elif action == "speaker":
+            self._invoke_callback(self._on_speaker_toggle, "speaker-toggle")
+        elif action == "mute":
             callback = self._on_mute_toggle
             if callback is not None:
                 self._invoke_callback(callback, "mute-toggle")

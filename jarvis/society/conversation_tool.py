@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from jarvis.core.protocols import ToolResult
@@ -37,14 +38,16 @@ class ConversationRecallTool:
         service = self._runtime.chat_service()
         archive = self._runtime.conversations
         if service is not None:
-            archive.ingest(session, service.store.list_events(session))
+            events = await asyncio.to_thread(service.store.list_events, session)
+            await asyncio.to_thread(archive.ingest, session, events)
         limit = max(1, min(20, int(args.get("limit") or 5)))
         if str(args.get("query") or "").strip():
-            query = str(args["query"])
-            hits = archive.search(session, query, limit=limit, include_owned=True)
+            hits = await asyncio.to_thread(
+                archive.search, session, str(args["query"]), limit=limit, include_owned=True
+            )
             return ToolResult(True, {"hits": hits})
-        events = archive.read(
-            session, after_seq=max(0, int(args.get("after_seq") or 0)), limit=limit
+        events = await asyncio.to_thread(
+            archive.read, session, after_seq=max(0, int(args.get("after_seq") or 0)), limit=limit
         )
         return ToolResult(
             True, {"events": events, "next_after_seq": events[-1]["seq"] if events else None}

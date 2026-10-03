@@ -475,6 +475,8 @@ async def run_brain_turn(
     _note_skill_trigger(brain, text)
 
     if bridge is not None:
+        from jarvis.society.surface import requires_explicit_approval
+
         bridge.arm(
             ref,
             ChatGrant(
@@ -484,6 +486,11 @@ async def run_brain_turn(
                 always_allowed=always_allowed,
                 ask=handle.request_approval,
                 call_id_for=mirror.open_call_id,
+                force_ask=(
+                    lambda name, args: requires_explicit_approval(session.session_id, name, args)
+                )
+                if session.surface == "society"
+                else lambda _name, _args: False,
             ),
         )
 
@@ -558,12 +565,13 @@ async def _generate(
     session = handle.session
     history = brain_history_from_events(handle.history)
     output_language = getattr(handle, "output_language", "")
-    if session.surface == "society":
+    if session.surface == "society" and not handle.continuation:
         from jarvis.society.reply_preference import resolve_agent_reply_language
 
         output_language = await resolve_agent_reply_language(
             session.session_id, text, output_language
         )
+    handle.output_language = output_language
     kwargs: dict[str, Any] = {
         "use_history": False,
         "history_override": history,
@@ -580,6 +588,7 @@ async def _generate(
         kwargs["force_output_language"] = output_language
     secret = _agent_secret(get_jarvis_agent_secret, session.provider)
     overrides = {session.provider: secret} if secret else {}
+    pending_before = set(getattr(brain, "_ide_background_tasks", ()))
     # The task inherits the credential override through its context copy, so
     # the scoped brain instance resolves the Agents-tab key on first use.
     with override_provider_secrets(overrides):
@@ -610,7 +619,21 @@ async def _generate(
     try:
         done, _ = await asyncio.wait({task, waiter}, return_when=asyncio.FIRST_COMPLETED)
         if task in done:
-            return await task
+            result = await task
+            from jarvis.core.delegated_work import register_dispatch
+
+            for delivery in set(getattr(brain, "_ide_background_tasks", ())) - pending_before:
+                register_dispatch(delivery, ["Coding agent delivery"])
+            # Reuse the brain's authoritative decision while still holding its
+            # turn lock; do not detect language from an English result prompt.
+            if not handle.output_language:
+                pin = getattr(brain, "reply_language", "")
+                language = pin if pin in {"de", "en", "es"} else getattr(
+                    brain, "conversation_language", ""
+                )
+                if language in {"de", "en", "es"}:
+                    handle.output_language = language
+            return result
         task.cancel()
         try:
             await task

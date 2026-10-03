@@ -11,7 +11,7 @@ Streaming is first-class: every Brain/STT/TTS/Harness response is an
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol, runtime_checkable
 from uuid import UUID
@@ -273,6 +273,11 @@ class ContinuousVoiceStart:
 
     session: dict[str, Any]
     offer_sdp: str = ""
+    # Signalling may finish before the trusted control connection. Callers keep
+    # microphone output gated until open_session AND media readiness complete.
+    on_transport_ready: Callable[[str], Awaitable[None]] | None = None
+    # Local preparation milestones; no provider body, credential or SDP values.
+    on_startup_phase: Callable[[str], None] | None = None
 
 
 class ContinuousVoiceConnection(Protocol):

@@ -12,6 +12,7 @@ that is the responsibility of `BrainManager` (so we can switch between providers
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 from uuid import UUID, uuid4
@@ -146,6 +147,22 @@ class BrainDispatcher:
         # provider prompt cache stays warm. It is never stored in history
         # (the manager appends the clean user_text there).
         user_content = f"{turn_context}\n\n{user_text}" if turn_context else user_text
+        if images:
+            from jarvis.core.image_references import (
+                ImageReferenceError,
+                get_store,
+                instruction,
+                scope_for,
+            )
+
+            try:
+                refs = get_store().add_blocks(
+                    scope_for(self._tool_context, tid), images, source="turn",
+                )
+                user_content += "\n\n" + instruction(refs)
+            except ImageReferenceError as exc:
+                logging.getLogger(__name__).info("Visual handoff unavailable: %s", exc)
+                user_content += "\n\nVisual handoff unavailable: " + str(exc)
         messages.append(BrainMessage(role="user", content=user_content, images=images))
 
         if self._tools and self._executor is not None:

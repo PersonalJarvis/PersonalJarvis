@@ -14,6 +14,7 @@ import {
   type NavItem,
 } from "@/components/layout/navGroups";
 import { useEventStore } from "@/store/events";
+import { useSectionPrefetch } from "@/hooks/useSectionPrefetch";
 import { useVoiceReadiness } from "@/hooks/useVoiceReadiness";
 import { useVoiceMode } from "@/hooks/useVoiceMode";
 import { useSectionHealth } from "@/hooks/useProviders";
@@ -24,17 +25,18 @@ import { lazy, Suspense, useMemo, useState, type ReactNode } from "react";
 import { useT } from "@/i18n";
 import { RecentChats } from "@/components/home/RecentChats";
 import { useHomeStore } from "@/store/home";
-import { IdeProjectTree } from "@/components/agentic/IdeProjectTree";
+import { LazyIdeProjectTree } from "@/components/agentic/LazyIdeProjectTree";
 import { useIdeProjectsStore } from "@/store/ideProjects";
 import { SidebarSearchBar } from "@/components/layout/SidebarSearchBar";
 import { useQuickSwitchSettings } from "@/store/quickSwitchSettings";
 import { useAppInstance } from "@/hooks/useAppInstance";
-import { usePublishIdentity } from "@/components/marketplace/PublishIdentity";
+import { usePublishIdentity } from "@/hooks/usePublishIdentity";
 import { PetMark } from "@/components/pets/PetMark";
 import { MarketplaceIcon } from "@/components/icons/sectionIcons";
 import { startNewTextChat } from "@/lib/newChat";
 import { useUserName } from "@/hooks/useUserName";
 import { useAgentChatStore } from "@/store/agentChat";
+import { apiKeysHealthError } from "@/lib/apiKeysTab";
 
 // The person's most-used agents. The roster query and the agent faces live in
 // the society code, so they load on their own chunk, not in the sidebar's.
@@ -176,6 +178,8 @@ export function Sidebar({
   collapsed = false,
 }: SidebarProps = {}) {
   const t = useT();
+  const profilePrefetch = useSectionPrefetch("profile");
+  const marketplacePrefetch = useSectionPrefetch("marketplace");
   const active = useEventStore((s) => s.activeSection);
   const openVoiceThread = useEventStore((s) => s.activeKind === "voice" && Boolean(s.activeThreadId));
   const agentChatOpen = useHomeStore((s) => s.agentChatId !== null);
@@ -252,10 +256,7 @@ export function Sidebar({
   // amber "needs setup" state is intentionally NOT shown here: on a fresh install
   // every unconfigured section would light up and the bar would never be calm.
   const { health: sectionHealth } = useSectionHealth();
-  const apikeysHasError = useMemo(
-    () => Object.entries(sectionHealth).some(([section, health]) => section !== "computer-use" && health?.status === "error"),
-    [sectionHealth],
-  );
+  const apikeysHasError = useMemo(() => apiKeysHealthError(sectionHealth), [sectionHealth]);
   // The footer card IS the button that opens API Keys, so its dot carries that
   // page's verdict rather than a decorative grey mark. Three honest states:
   // something is failing, something has answered, or nothing has reported yet
@@ -556,7 +557,7 @@ export function Sidebar({
           {moreOpen && <ul id="sidebar-more" className="space-y-1">{moreItems.map((item) => renderRow(item))}</ul>}
         </nav>}
         {!railed && (onIdeSection
-          ? <IdeProjectTree />
+          ? <LazyIdeProjectTree />
           : <><Suspense fallback={null}><SidebarAgents /></Suspense><section className="mt-5 px-2 pb-3" aria-label={t("sidebar.recent_chats")}><RecentChats /></section></>)}
       </div>
 
@@ -568,7 +569,7 @@ export function Sidebar({
           needs care, must be visible without opening anything. */}
       <div className="shrink-0 border-t border-border px-2 py-1.5">
         <div className={cn("flex items-center gap-0.5", railed && "flex-col")}>
-          <button type="button" onClick={() => setActive("profile")} title={t("nav.profile")}
+          <button type="button" {...profilePrefetch} onClick={() => setActive("profile")} title={t("nav.profile")}
             data-testid="sidebar-profile-toggle"
             data-tour="settings"
             className={cn(rowClass, "min-w-0 flex-1", hubActive && "jarvis-nav-active bg-secondary text-foreground")}>
@@ -586,7 +587,7 @@ export function Sidebar({
           {/* The update lives here now, where Claude keeps its download icon:
               in sight on every screen, not among the window buttons. */}
           <Suspense fallback={null}><UpdateButton placement="sidebar" /></Suspense>
-          <button type="button" onClick={() => setActive("marketplace")} title={t("nav.marketplace")}
+          <button type="button" {...marketplacePrefetch} onClick={() => setActive("marketplace")} title={t("nav.marketplace")}
             aria-label={t("nav.marketplace")} data-testid="nav-row-marketplace"
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             <MarketplaceIcon aria-hidden strokeWidth={1.75} className="h-4 w-4" />
@@ -638,6 +639,7 @@ function NavRow({
   warnTitle?: string;
   onClick: () => void;
 }) {
+  const prefetch = useSectionPrefetch(item.id);
   const Icon = item.icon;
   const hint = alert ? alertTitle : warn ? warnTitle : undefined;
   /*
@@ -666,6 +668,7 @@ function NavRow({
         <button
           type="button"
           data-testid={`nav-row-${item.id}`}
+          {...prefetch}
           data-tour={`nav-${item.id}`}
           onClick={onClick}
           title={compact ? `${label}${hint ? ` — ${hint}` : ""}` : hint}

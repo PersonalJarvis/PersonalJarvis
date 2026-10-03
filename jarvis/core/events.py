@@ -1012,6 +1012,18 @@ class AnnouncementRequested(Event):
     report: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class DelegationResultReady(Event):
+    """A coding result addressed to one existing Jarvis text conversation."""
+
+    session_id: str = ""
+    request_id: str = ""
+    agent_name: str = ""
+    status: str = ""
+    text: str = ""
+    report: str = ""
+
+
 # Mission completion — bridged from the per-mission MissionBus to drive When-Then rules
 
 @dataclass(frozen=True, slots=True)
@@ -1158,15 +1170,14 @@ class VoiceInputHeld(Event):
 class VoiceSpeakerMuteChanged(Event):
     """Authoritative broadcast that the assistant's voice went silent or audible.
 
-    Speaker mute is TTS volume 0 for the running session (nothing is written
-    to ``jarvis.toml`` by a mute). Every writer — the orb/pet speaker disc, the
-    in-app speaker button through ``PUT /api/settings/tts-volume`` — ends in
-    ``SpeechPipeline.set_tts_volume``, and that one choke point publishes this
-    event whenever the muted-ness flips. Surfaces mirror it; none of them keeps
-    its own truth.
+    Session-only speaker mute is independent of microphone and volume. The
+    pipeline publishes a complete snapshot after either output setting changes.
+    Revision orders updates across UI threads and reconnecting playback sinks.
     """
     muted: bool = False
     source: str = ""
+    volume: float = 1.0
+    revision: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -1362,6 +1373,48 @@ class AppshotEditRequested(Event):
     """
 
     appshot_id: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class JarvisXItemCreated(Event):
+    """Jarvis X saved a new screenshot or recording to its library.
+
+    Metadata only; the file is served by ``/api/jarvisx/items/<id>/file``.
+    """
+
+    id: str = ""
+    #: ``image`` | ``video``.
+    kind: str = ""
+    #: ``region`` | ``window`` | ``fullscreen``.
+    mode: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class JarvisXItemUpdated(Event):
+    """A library item changed (an annotated copy was saved)."""
+
+    id: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class JarvisXItemDeleted(Event):
+    """A library item and its files were deleted."""
+
+    id: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class JarvisXRecordingChanged(Event):
+    """A Jarvis X screen recording started or stopped.
+
+    Published on start and on stop only (not per second); a UI that shows a
+    running timer counts ``elapsed_s`` forward itself.
+    """
+
+    recording: bool = False
+    #: ``region`` | ``fullscreen`` while recording, ``""`` once stopped.
+    mode: str = ""
+    elapsed_s: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
