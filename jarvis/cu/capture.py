@@ -82,7 +82,8 @@ class _CapturedPixels:
     data: bytes | bytearray | memoryview
 
 
-_RawCapture = tuple[tuple[int, int], bytes] | _CapturedPixels
+RawCapture = tuple[tuple[int, int], bytes] | _CapturedPixels
+_RawCapture = RawCapture
 
 
 def _capture_size(raw: _RawCapture) -> tuple[int, int]:
