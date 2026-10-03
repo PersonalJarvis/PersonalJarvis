@@ -118,6 +118,9 @@ async def test_focus_window_now_completes_the_visibility_dance(
         "jarvis.ui.desktop_app._bring_window_to_front_by_title",
         lambda _title: True,
     )
+    # A minimized window: the dance restores it. (The real probe would read
+    # whatever Jarvis window happens to be open on the test machine.)
+    monkeypatch.setattr("jarvis.ui.desktop_app.window_needs_restore", lambda _title: True)
 
     import asyncio
 
@@ -129,6 +132,28 @@ async def test_focus_window_now_completes_the_visibility_dance(
     assert overlay_restored == [True]
     assert [name for name, _ in window.calls] == ["show", "restore"]
     assert all(thread is not loop_thread for _, thread in window.calls)
+
+
+def test_focus_window_now_keeps_a_maximized_window_maximized(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Live 2026-10-03: a click on the appshot card shrank the maximized app,
+    because "bring it forward" also restored it — on Windows that means back
+    to the normal size. A window already on screen is only raised."""
+    app = DesktopApp.__new__(DesktopApp)
+    window = _RecordingWindow()
+    app._window = window  # noqa: SLF001
+    app._restore_overlay_for_visible_window = lambda: None  # type: ignore[method-assign]  # noqa: SLF001
+    monkeypatch.setattr("jarvis.ui.desktop_app._bring_window_to_front_by_title", lambda _t: True)
+    monkeypatch.setattr("jarvis.ui.desktop_app.window_needs_restore", lambda _title: False)
+
+    assert app._focus_window_now() == {"ok": True, "focused": True}  # noqa: SLF001
+    assert [name for name, _ in window.calls] == ["show"]
+
+    window.calls.clear()
+    app._reload_window_if_stale = lambda: None  # type: ignore[method-assign]  # noqa: SLF001
+    app._safe_window_show()  # noqa: SLF001  # the appshot card / overlay path
+    assert [name for name, _ in window.calls] == ["show"]
 
 
 def test_focus_window_now_without_window_reports_no_window() -> None:

@@ -665,7 +665,12 @@ def _force_foreground_hwnd(hwnd: int, user32: Any, kernel32: Any) -> bool:
     the supported recovery. Every attachment is detached in ``finally`` so a
     failed focus attempt cannot poison keyboard routing.
     """
-    user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+    # SW_RESTORE only for a minimized window: on a maximized one it means
+    # "back to the normal size", which shrank the app every time something
+    # merely asked to bring it forward (an appshot card click, 2026-10-03).
+    restore = _is_minimized(hwnd, user32)
+    if restore:
+        user32.ShowWindow(hwnd, 9)  # SW_RESTORE
     if user32.SetForegroundWindow(hwnd):
         user32.SetActiveWindow(hwnd)
         if user32.GetForegroundWindow() == hwnd:
@@ -688,7 +693,8 @@ def _force_foreground_hwnd(hwnd: int, user32: Any, kernel32: Any) -> bool:
         ):
             attached_target = bool(user32.AttachThreadInput(current_thread, target_thread, True))
         user32.BringWindowToTop(hwnd)
-        user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        if restore:
+            user32.ShowWindow(hwnd, 9)  # SW_RESTORE
         user32.SetForegroundWindow(hwnd)
         user32.SetActiveWindow(hwnd)
         if user32.GetForegroundWindow() == hwnd:
@@ -748,6 +754,45 @@ def _window_answers(hwnd: int, user32: Any, *, timeout_ms: int = _WINDOW_ANSWER_
         return True
 
 
+def _is_minimized(hwnd: int, user32: Any) -> bool:
+    """``IsIconic`` when the binding has it; an unknown state counts as minimized
+    so the old restore-everything behaviour is the fallback, never a no-op."""
+    probe = getattr(user32, "IsIconic", None)
+    if probe is None:
+        return True
+    try:
+        return bool(probe(hwnd))
+    except Exception:  # noqa: BLE001 - unreadable state: restore as before
+        return True
+
+
+def window_needs_restore(title: str) -> bool:
+    """Whether raising the window titled ``title`` must restore it first.
+
+    ``True`` for a minimized or hidden window, and wherever it cannot be told
+    (other OSes, no such window). ``False`` for a visible one — restoring
+    that would turn a maximized window back into its smaller normal size.
+    """
+    if sys.platform != "win32":
+        return True
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.FindWindowW.restype = wintypes.HWND
+        user32.IsIconic.argtypes = [wintypes.HWND]
+        user32.IsIconic.restype = wintypes.BOOL
+        user32.IsWindowVisible.argtypes = [wintypes.HWND]
+        user32.IsWindowVisible.restype = wintypes.BOOL
+        hwnd = user32.FindWindowW(None, title)
+        if not hwnd:
+            return True
+        return bool(user32.IsIconic(hwnd)) or not bool(user32.IsWindowVisible(hwnd))
+    except Exception:  # noqa: BLE001 - unknown state: restore as before
+        return True
+
+
 def _bring_window_to_front_by_title(title: str) -> bool:
     """Win32 fallback for hidden/minimized pywebview windows.
 
@@ -787,6 +832,8 @@ def _bring_window_to_front_by_title(title: str) -> bool:
         user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
         user32.IsIconic.argtypes = [wintypes.HWND]
         user32.IsIconic.restype = wintypes.BOOL
+        user32.IsWindowVisible.argtypes = [wintypes.HWND]
+        user32.IsWindowVisible.restype = wintypes.BOOL
         user32.MoveWindow.argtypes = [
             wintypes.HWND,
             ctypes.c_int,
@@ -840,10 +887,12 @@ def _bring_window_to_front_by_title(title: str) -> bool:
         offscreen_minimized = rect.left <= -30000 or rect.top <= -30000
 
         # Order matters: SHOW/RESTORE first, then move if needed, then
-        # Foreground+Active for keyboard focus.
-        user32.ShowWindow(hwnd, 1)  # SW_SHOWNORMAL
-        user32.ShowWindow(hwnd, 5)  # SW_SHOW
-        user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        # Foreground+Active for keyboard focus. A window that is already on
+        # screen keeps its state: SHOWNORMAL/RESTORE would un-maximize it.
+        if was_minimized or offscreen_minimized or not user32.IsWindowVisible(hwnd):
+            user32.ShowWindow(hwnd, 1)  # SW_SHOWNORMAL
+            user32.ShowWindow(hwnd, 5)  # SW_SHOW
+            user32.ShowWindow(hwnd, 9)  # SW_RESTORE
         if was_minimized or offscreen_minimized:
             width = max(900, min(1600, rect.right - rect.left))
             height = max(600, min(1000, rect.bottom - rect.top))
@@ -4885,8 +4934,10 @@ class DesktopApp:
                 self._ensure_main_window()
             if self._window is None:
                 return {"ok": False, "reason": "no_window"}
+        needs_restore = window_needs_restore(WINDOW_TITLE)
         self._window.show()
-        self._window.restore()
+        if needs_restore:
+            self._window.restore()
         self._window_visible = True
         focused = _bring_window_to_front_by_title(WINDOW_TITLE)
         # Restore the persistent bar if a prior minimise cleared it.
@@ -6186,8 +6237,12 @@ class DesktopApp:
                 self._ensure_main_window()
             return
         try:
+            # pywebview's restore() un-maximizes a visible window too; only a
+            # minimized or hidden one needs it.
+            needs_restore = window_needs_restore(WINDOW_TITLE)
             self._window.show()
-            self._window.restore()
+            if needs_restore:
+                self._window.restore()
             self._window_visible = True
             _bring_window_to_front_by_title(WINDOW_TITLE)
             self._reload_window_if_stale()
