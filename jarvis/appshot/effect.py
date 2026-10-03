@@ -54,12 +54,19 @@ def on_shutter(target: Any, size: tuple[int, int], rgb: bytes, monitors: list[di
         return
     # Before the capture's own border dismissal can quit the sidecar.
     controller.hold_for_snap()
-    task = asyncio.get_running_loop().create_task(
+    loop = asyncio.get_running_loop()
+    task = loop.create_task(
         _play(controller, tuple(target.bbox), size, rgb, monitors),
         name="appshot-effect",
     )
     _tasks.add(task)
     task.add_done_callback(_tasks.discard)
+    # The card that follows opens the editor: have its window loaded by then.
+    from jarvis.appshot.editor_window import prewarm_editor_window  # noqa: PLC0415
+
+    warm = loop.create_task(prewarm_editor_window(), name="appshot-editor-prewarm")
+    _tasks.add(warm)
+    warm.add_done_callback(_tasks.discard)
 
 
 async def _play(

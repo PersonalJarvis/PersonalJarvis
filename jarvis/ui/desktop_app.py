@@ -2743,7 +2743,8 @@ class DesktopApp:
             from jarvis.appshot.editor_window import EDITOR_VIEW, register_window_opener
 
             register_window_opener(
-                lambda query: self.open_detached_window(EDITOR_VIEW, query=query)
+                lambda query: self.open_detached_window(EDITOR_VIEW, query=query),
+                prewarm=self.prewarm_appshot_editor,
             )
         except Exception as exc:  # noqa: BLE001 - the page editor stays the fallback
             from loguru import logger as _alog
@@ -5160,7 +5161,7 @@ class DesktopApp:
 
         return resolve_theme(self._configured_theme())
 
-    def open_detached_window(self, view: str) -> dict[str, Any]:
+    def open_detached_window(self, view: str, query: str = "") -> dict[str, Any]:
         """Open ``view`` in its own solo window — MUST run on a worker thread.
 
         pywebview materializes runtime windows only from a thread whose name is
@@ -5172,11 +5173,26 @@ class DesktopApp:
         honest degrade on hosts whose webview backend cannot create runtime
         windows.
         """
-        fallback = f"/?view={view}&solo=1"
+        suffix = f"&{query}" if query else ""
+        fallback = f"/?view={view}&solo=1{suffix}"
         if view not in DETACHABLE_VIEWS:
             return {"ok": False, "reason": "unknown_view"}
         existing = self._detached_windows.get(view)
+        if existing is not None and view == "appshot-editor":
+            # The editor window is kept warm and hidden between uses: point it
+            # at the appshot in place and show it — no reload, no boot screen.
+            return self._show_warm_editor(existing, query, fallback)
         if existing is not None:
+            if query:
+                # Same window, new content: navigate it rather than open a
+                # second one (the title is the window's identity on Windows).
+                try:
+                    existing.load_url(f"{self._url()}{fallback}")
+                except Exception as exc:  # noqa: BLE001
+                    from loguru import logger
+
+                    logger.opt(exception=exc).warning("Detached '{}' could not navigate", view)
+                    return {"ok": False, "reason": f"{type(exc).__name__}: {exc}"}
             _bring_window_to_front_by_title(self._detached_title(view))
             return {"ok": True, "already_open": True, "view": view}
         if self._window is None and not self._detached_windows:
@@ -5220,6 +5236,73 @@ class DesktopApp:
         self._publish_detached_event_threadsafe(view, opened=True)
         return {"ok": True, "already_open": False, "view": view}
 
+    def _show_warm_editor(self, window: Any, query: str, fallback: str) -> dict[str, Any]:
+        """Show the kept-warm appshot editor on the appshot named in ``query``."""
+        shot_id = query.partition("appshot=")[2].split("&", 1)[0]
+        pointed = False
+        if shot_id:
+            try:
+                pointed = bool(
+                    window.evaluate_js(
+                        "typeof window.__jarvisOpenAppshot === 'function'"
+                        f" && window.__jarvisOpenAppshot({json.dumps(shot_id)})"
+                    )
+                )
+            except Exception:  # noqa: BLE001 - still loading: navigate instead
+                pointed = False
+        try:
+            if shot_id and not pointed:
+                # The page has not finished loading yet: load it on this shot.
+                window.load_url(f"{self._url()}{fallback}")
+            window.show()
+        except Exception as exc:  # noqa: BLE001
+            from loguru import logger
+
+            logger.opt(exception=exc).warning("The appshot editor window could not be shown")
+            return {"ok": False, "reason": f"{type(exc).__name__}: {exc}"}
+        _bring_window_to_front_by_title(self._detached_title("appshot-editor"))
+        return {"ok": True, "already_open": True, "view": "appshot-editor"}
+
+    def prewarm_appshot_editor(self) -> dict[str, Any]:
+        """Create the appshot editor window hidden, so its first click is instant.
+
+        Worker-thread only, like :meth:`open_detached_window`. Called when an
+        appshot is taken: by the time its corner card is clicked, the editor
+        page has loaded behind the scenes. A no-op when it already exists.
+        """
+        view = "appshot-editor"
+        if view in self._detached_windows:
+            return {"ok": True, "already_open": True}
+        if self._window is None:
+            return {"ok": False, "reason": "no_live_window"}
+        try:
+            import webview  # noqa: PLC0415 — [desktop] extra, never module-level
+
+            window = webview.create_window(
+                self._detached_title(view),
+                f"{self._url()}/?view={view}&solo=1",
+                width=1100,
+                height=750,
+                min_size=(800, 520),
+                resizable=True,
+                frameless=True,
+                easy_drag=False,
+                confirm_close=False,
+                hidden=True,
+                background_color=self._window_background(),
+                **TEXT_SELECTABLE,
+            )
+        except Exception as exc:  # noqa: BLE001 - opening on click still works
+            from loguru import logger
+
+            logger.opt(exception=exc).debug("The appshot editor could not be prepared")
+            return {"ok": False, "reason": f"{type(exc).__name__}: {exc}"}
+        self._detached_windows[view] = window
+        self._arm_window_frame(window)
+        window.events.loaded += lambda w=window, v=view: self._inject_into_secondary(w, v)
+        window.events.closed += lambda v=view: self._on_detached_closed(v)
+        return {"ok": True, "already_open": False}
+
     def close_detached_window(self, view: str) -> dict[str, Any]:
         """Close the detached window for ``view`` — worker-thread only.
 
@@ -5230,6 +5313,15 @@ class DesktopApp:
         window = self._detached_windows.get(view)
         if window is None:
             return {"ok": False, "reason": "not_detached"}
+        if view == "appshot-editor":
+            # Hidden, not destroyed: the next appshot opens it at once.
+            try:
+                window.hide()
+                return {"ok": True, "view": view, "hidden": True}
+            except Exception as exc:  # noqa: BLE001 - a window that will not hide is closed
+                from loguru import logger
+
+                logger.opt(exception=exc).debug("Appshot editor window would not hide; closing it")
         try:
             window.destroy()
         except Exception as exc:  # noqa: BLE001

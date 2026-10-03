@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useEventStore } from "@/store/events";
@@ -109,6 +109,25 @@ describe("the appshot editor window", () => {
     const from = flights[0] as number[];
     expect(Array.isArray(from) && from.length === 4).toBe(true);
     vi.restoreAllMocks();
+  });
+
+  it("waits hidden without an appshot and opens one in place when pointed at it", async () => {
+    window.history.replaceState(null, "", "/?view=appshot-editor&solo=1");
+    const closeWindow = vi.fn(async () => undefined);
+    render(<AppshotEditorWindow deps={{ returnCard: async () => undefined, closeWindow }} />);
+    expect(screen.queryByTestId("appshot-editor")).toBeNull();
+
+    await waitFor(() => expect(typeof window.__jarvisOpenAppshot).toBe("function"));
+    expect(window.__jarvisOpenAppshot!("../../etc")).toBe(false);
+    act(() => {
+      expect(window.__jarvisOpenAppshot!("a1b2c3d4")).toBe(true);
+    });
+    await screen.findByTestId("appshot-editor-canvas");
+
+    fireEvent.click(screen.getByTestId("appshot-editor-close"));
+    await waitFor(() => expect(closeWindow).toHaveBeenCalledTimes(1));
+    // Hidden again with nothing in it, ready for the next appshot.
+    await waitFor(() => expect(screen.queryByTestId("appshot-editor")).toBeNull());
   });
 
   it("still closes when the card cannot come back", async () => {

@@ -146,7 +146,7 @@ function renderApp(): void {
             resetKey="root"
             onRecover={() => window.location.reload()}
           >
-            <AuthGate>
+            <AuthGate quiet={isEditorWindow}>
               {isEditorWindow ? (
                 <React.Suspense fallback={null}>
                   <AppshotEditorWindow />

@@ -28,16 +28,34 @@ EDITOR_VIEW = "appshot-editor"
 _ID = re.compile(r"^[0-9a-f]{8,64}$")
 
 _opener: Callable[[str], dict[str, Any]] | None = None
+_prewarm: Callable[[], dict[str, Any]] | None = None
 
 
-def register_window_opener(opener: Callable[[str], dict[str, Any]] | None) -> None:
+def register_window_opener(
+    opener: Callable[[str], dict[str, Any]] | None,
+    *,
+    prewarm: Callable[[], dict[str, Any]] | None = None,
+) -> None:
     """Install (or, with ``None``, remove) the shell's window opener.
 
     ``opener(query)`` must open or re-point the ``appshot-editor`` window and
-    may block — it is always called from a worker thread.
+    may block — it is always called from a worker thread. ``prewarm()``
+    creates that window hidden ahead of time, so opening it is instant.
     """
-    global _opener
+    global _opener, _prewarm
     _opener = opener
+    _prewarm = prewarm if opener is not None else None
+
+
+async def prewarm_editor_window() -> None:
+    """Have the editor window loaded (hidden) before anyone clicks the card."""
+    prewarm = _prewarm
+    if prewarm is None:
+        return
+    try:
+        await asyncio.to_thread(prewarm)
+    except Exception:  # noqa: BLE001 - opening on click still works, just slower
+        log.debug("appshot: the editor window could not be prepared", exc_info=True)
 
 
 def can_open_window() -> bool:
@@ -60,4 +78,10 @@ async def open_editor_window(shot_id: str) -> bool:
     return ok
 
 
-__all__ = ["EDITOR_VIEW", "can_open_window", "open_editor_window", "register_window_opener"]
+__all__ = [
+    "EDITOR_VIEW",
+    "can_open_window",
+    "open_editor_window",
+    "prewarm_editor_window",
+    "register_window_opener",
+]
