@@ -103,7 +103,7 @@ describe("work trace", () => {
     // One quiet line for the stretch; the failure opens with it.
     fireEvent.click(screen.getByRole("button", { name: /^Read files/ }));
     fireEvent.click(screen.getByRole("button", { name: /^Read err\.ts.*Failed/ }));
-    expect(screen.getByText("Failed: Permission denied")).toBeTruthy();
+    expect(screen.getAllByText("Failed: Permission denied").length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "Approve" })).toBeTruthy();
   });
 

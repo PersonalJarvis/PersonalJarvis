@@ -1,5 +1,5 @@
 import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronRight, FilePlus2, FileText, FolderOpen, Globe, Image, Pencil, Search, SquareTerminal, Wrench } from "lucide-react";
+import { ChevronRight, FilePlus2, FileText, FolderOpen, Globe, Image, MessagesSquare, Pencil, Search, SquareTerminal, Wrench } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useT } from "@/i18n";
@@ -9,8 +9,9 @@ import { ToolChoiceIcon } from "./ToolChoiceChips";
 import type { ToolChoice } from "./toolChoices";
 import { toolIdentity, toolIdentityStyle } from "./toolIdentity";
 import { traceToolIdentity } from "./traceActivity";
+import type { TraceMessage } from "./turnMessages";
 import {
-  buildTimeline, readableOutput, summarize, traceDuration, tr,
+  buildTimeline, readableOutput, traceDuration, tr,
   type ActivityEntry, type Call, type ProseEntry, type Timeline,
 } from "./traceEntries";
 
@@ -158,22 +159,26 @@ function Chevron({ open }: { open: boolean }) {
 }
 
 function ActivityView({ entry, renderers }: { entry: ActivityEntry; renderers: TimelineRenderers }) {
-  const t = useT();
   const [open, setOpen] = useState(false);
-  const running = entry.calls.filter((call) => call.status === "running");
-  const settled = entry.calls.filter((call) => call.status !== "running");
-  if (entry.calls.length === 1) return <CallLine call={entry.calls[0]} renderers={renderers} />;
-  const lang = t("trace_report.locale");
+  // A stretch is always exactly ONE line, as in the Codex app. While a call
+  // runs, that line IS the running call; when it settles, the line becomes
+  // the summary again. Drawing the running call as an extra line made the
+  // whole chat grow and shrink by a line on every call (the bounce bug).
+  const current = [...entry.calls].reverse().find((call) => call.status === "running");
+  if (entry.calls.length === 1 || current) {
+    return <div className="min-w-0" data-trace-entry="activity">
+      <CallLine call={current ?? entry.calls[0]} renderers={renderers} />
+    </div>;
+  }
   return <div className="min-w-0" data-trace-entry="activity">
-    {settled.length ? <button type="button" className={lineButton} aria-expanded={open} onClick={() => setOpen(!open)}>
-      <StretchMark calls={settled} />
-      <span className="min-w-0 truncate">{settled.length === entry.calls.length ? entry.summary : summarize(settled, t, lang)}</span>
+    <button type="button" className={lineButton} aria-expanded={open} onClick={() => setOpen(!open)}>
+      <StretchMark calls={entry.calls} />
+      <span className="min-w-0 truncate">{entry.summary}</span>
       <Chevron open={open} />
-    </button> : null}
+    </button>
     {open ? <div className="mb-1 ml-[7px] min-w-0 border-l border-border pl-4">
-      {settled.map((call) => <CallLine key={call.id} call={call} renderers={renderers} />)}
+      {entry.calls.map((call) => <CallLine key={call.id} call={call} renderers={renderers} />)}
     </div> : null}
-    {running.map((call) => <CallLine key={call.id} call={call} renderers={renderers} />)}
   </div>;
 }
 
@@ -192,11 +197,13 @@ function CallLine({ call, renderers }: { call: Call; renderers: TimelineRenderer
       {call.added || call.removed ? <span className="shrink-0 font-mono text-xs tabular-nums">
         <span className="diff-count-add">+{call.added}</span>{" "}<span className="diff-count-del">−{call.removed}</span>
       </span> : null}
-      {problem || quiet ? <span className={cn("shrink-0", problem ? "text-destructive" : "text-muted-foreground")}>{tr(t, `state.${call.status}`)}</span> : null}
+      {/* Why it failed reads on the same line: a line of its own would come
+          and go with the call and make the chat jump. */}
+      {problem || quiet ? <span className={cn("min-w-0 truncate", problem ? "text-destructive" : "text-muted-foreground")}
+        title={call.reason || undefined}>{tr(t, `state.${call.status}`)}{problem && call.reason ? `: ${call.reason}` : ""}</span> : null}
       {!running ? <Chevron open={open} /> : null}
     </button>
     {/* Why a call failed reads without opening anything. */}
-    {problem && call.reason && !open ? <p data-trace-reason className="-mt-1 mb-1 truncate pl-[26px] text-[13px] leading-5 text-destructive" title={call.reason}>{call.reason}</p> : null}
     {open ? <div className="mb-2 ml-[7px] min-w-0 border-l border-border pl-4 pt-0.5"><CallDetails call={call} renderers={renderers} /></div> : null}
   </div>;
 }
@@ -226,5 +233,30 @@ function CallDetails({ call, renderers }: { call: Call; renderers: TimelineRende
     {why}
     {renderers.renderDetails(call.block)}
     {took}
+  </div>;
+}
+
+/**
+ * An agent's message inside the turn that asked for it: one quiet line —
+ * who, then the first words — that opens to the whole message. The full
+ * text never stands in the chat as a card of its own.
+ */
+export function TraceMessageLine({ message }: { message: TraceMessage }) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const preview = message.text.replace(/[`*_#>]/g, "").replace(/\s+/g, " ").trim();
+  return <div className="min-w-0" data-trace-entry="message" data-outgoing={message.outgoing ? "" : undefined}>
+    <button type="button" className={lineButton} aria-expanded={open} onClick={() => setOpen(!open)}>
+      <MessagesSquare aria-hidden className={glyph} strokeWidth={1.75} />
+      <span className="shrink-0 text-foreground-secondary">{message.outgoing ? `→ ${message.name}` : message.name}</span>
+      <span className="min-w-0 flex-1 basis-0 truncate text-muted-foreground/70">{preview}</span>
+      {message.failed ? <span className="shrink-0 text-destructive">{tr(t, "state.failed")}</span> : null}
+      <Chevron open={open} />
+    </button>
+    {open ? <div className="mb-2 ml-[7px] min-w-0 border-l border-border pl-4 pt-0.5">
+      <div className="prose max-h-96 max-w-none overflow-auto trace-text text-muted-foreground dark:prose-invert [overflow-wrap:anywhere] prose-p:my-1 prose-p:text-muted-foreground prose-li:text-muted-foreground prose-strong:text-foreground-secondary [&>:first-child]:mt-0">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.text}</ReactMarkdown>
+      </div>
+    </div> : null}
   </div>;
 }

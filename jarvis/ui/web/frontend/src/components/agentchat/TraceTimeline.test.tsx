@@ -44,3 +44,25 @@ it("draws nothing for a turn whose only step is the brain call", () => {
   render(<VoiceWorkTrace steps={[step({ id: "b", kind: "brain", labelKey: "thinking.step_brain", detail: "m" })]} durationMs={0} />);
   expect(screen.queryByTestId("conversation-work-fold")).toBeNull();
 });
+
+it("keeps a stretch at one line while its calls run, so the chat never jumps", async () => {
+  const { WorkTrace } = await import("./WorkTrace");
+  const call = (id: string, output: string | null) => ({
+    kind: "tool" as const, callId: id, name: "Bash", input: { command: `step ${id}` }, output,
+    isError: false, durationMs: output === null ? null : 100, approval: null, startedMs: 0,
+  });
+  const lines = () => document.querySelectorAll("[data-trace-entry='activity'] > *").length;
+  const { rerender } = render(<WorkTrace status="running" startedMs={0} durationMs={null} blocks={[call("a", null)]} />);
+  expect(lines()).toBe(1);
+  rerender(<WorkTrace status="running" startedMs={0} durationMs={null} blocks={[call("a", "ok"), call("b", null)]} />);
+  // The running call takes the stretch's one line; it is not added below it.
+  expect(lines()).toBe(1);
+  expect(document.querySelector(".trace-shimmer")?.textContent).toBe("step b");
+  rerender(<WorkTrace status="running" startedMs={0} durationMs={null} blocks={[call("a", "ok"), call("b", "ok")]} />);
+  expect(lines()).toBe(1);
+  expect(screen.getByRole("button", { name: /^Ran commands/ })).toBeTruthy();
+  // A failure says why on the same line.
+  rerender(<WorkTrace status="running" startedMs={0} durationMs={null} blocks={[{ ...call("a", "Exit code 1"), isError: true }]} />);
+  expect(lines()).toBe(1);
+  expect(screen.getByRole("button", { name: /step a.*Failed: Exit code 1/ })).toBeTruthy();
+});

@@ -61,11 +61,11 @@ it("keeps live and interrupted conversation tools in the left lane", () => {
     { kind: "text", id: "reply", text: "I will send the mail next." },
     live,
   ]} />);
-  // Like the Codex app, nothing folds: the model's words, the reply and the
-  // call that never returned all stay in view, in order.
+  // Like the Codex app, nothing folds: the model's words, the call that
+  // never returned and the reply all stay in view — the reply last.
   const text = screen.getByTestId("work-trace").textContent!;
-  expect(text.indexOf("Inspect archive.")).toBeLessThan(text.indexOf("I will send the mail next."));
-  expect(text.indexOf("I will send the mail next.")).toBeLessThan(text.indexOf("Searched for archive"));
+  expect(text.indexOf("Inspect archive.")).toBeLessThan(text.indexOf("Searched for archive"));
+  expect(text.indexOf("Searched for archive")).toBeLessThan(text.indexOf("I will send the mail next."));
   expect(text).toContain("Stopped");
   expect(container.querySelectorAll(".mx-auto")).toHaveLength(0);
   expect(screen.getByTestId("work-trace").className).toMatch(/self-start/);
@@ -83,7 +83,7 @@ it("keeps a failure in view beside the reply, its reason under its line", () => 
   // One quiet line for the stretch; it opens to the calls, and the failed
   // one says why under its own line.
   fireEvent.click(screen.getByRole("button", { name: /^Read files$/ }));
-  expect(screen.getByText("Upload failed")).toBeTruthy();
+  expect(screen.getByText(/: Upload failed/)).toBeTruthy();
   // The raw output stays one tap further, under the call.
   expect(screen.queryByText("Report contents")).toBeNull();
   fireEvent.click(screen.getAllByRole("button", { name: /^Read report\.csv/ })[0]);
@@ -97,7 +97,7 @@ it("keeps a pending approval actionable in the conversation style", () => {
     { ...base, callId: "approval", isError: false, output: null, approval: { approvalId: "ap", summary: "Send this message?", decision: null } },
   ]} onDecide={() => undefined} />);
   // The failed call says why on its own line; the approval needs a tap.
-  expect(screen.getByText("Delivery failed")).toBeTruthy();
+  expect(screen.getByText(/: Delivery failed/)).toBeTruthy();
   expect(screen.getByText("Send this message?")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Approve" })).toBeTruthy();
 });
@@ -114,7 +114,7 @@ it("shows agent message direction and truthful delivery state without preview cl
   expect(screen.getByRole("alert").textContent).toBe("Connection closed");
 });
 
-it("keeps work after the reply after it, without reordering the conversation", () => {
+it("keeps the reply last, even when work followed it", () => {
   const tool: ToolBlock = { kind: "tool", callId: "a", name: "read_file", input: { path: "report.csv" }, output: "Report contents", isError: false, durationMs: 100, approval: null, startedMs: 0 };
   const blocks = [tool, { ...tool, callId: "b", name: "write_file" }, { kind: "text" as const, id: "reply", text: "Your report is ready." }, { ...tool, callId: "error", isError: true, output: "Upload failed" }];
   const { rerender } = render(<WorkTrace conversation status="running" startedMs={0} durationMs={null} blocks={blocks} />);
@@ -123,10 +123,11 @@ it("keeps work after the reply after it, without reordering the conversation", (
   rerender(<WorkTrace conversation status="done" startedMs={0} durationMs={1000} blocks={blocks} />);
   const text = screen.getByTestId("work-trace").textContent ?? "";
   expect(text.indexOf("Read a file, created a file")).toBeLessThan(text.indexOf("Your report is ready."));
-  expect(text.indexOf("Your report is ready.")).toBeLessThan(text.indexOf("Read report.csv"));
+  // The call after the reply is drawn above it: nobody scrolls back up for the answer.
+  expect(text.indexOf("Read report.csv")).toBeLessThan(text.indexOf("Your report is ready."));
   expect(screen.getAllByText("Your report is ready.")).toHaveLength(1);
   // The call after the reply failed and says why without opening anything.
-  expect(screen.getByText("Upload failed")).toBeTruthy();
+  expect(screen.getByText(/: Upload failed/)).toBeTruthy();
   // Each stretch opens to its calls, and closes again.
   const stretch = screen.getByRole("button", { name: /^Read a file, created a file/ });
   fireEvent.click(stretch);

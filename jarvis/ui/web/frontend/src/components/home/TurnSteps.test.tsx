@@ -8,7 +8,7 @@ it("keeps brief voice errors visible", () => {
  expect(traceWorthShowing(steps, 20, false)).toBe(true);
  render(<TurnSteps steps={steps} durationMs={20} />);
  // A failed step says why under its own line.
- expect(screen.getByText("Connection lost")).toBeTruthy();
+ expect(screen.getByText(/Connection lost/)).toBeTruthy();
 });
 it("does not hide live work with no events", () => {
  const { rerender, container } = render(<TurnSteps steps={[]} />);
