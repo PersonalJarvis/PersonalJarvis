@@ -65,10 +65,13 @@ are the same as in the full editor below:
 Tools with looks (arrow, text, pixelate/blur, background) show them in a
 second row under the toolbar. Colours: eight presets. Size: keys 1-5, the
 size button or the mouse wheel (new text and step markers follow it). Ctrl+Z
-/ Ctrl+Y undo and redo. A marking that was just drawn, or picked with V,
-shows grips: lines and arrows at both ends, boxes and strokes at the corners,
-a step marker on its rim, and text at all four corners — dragging one scales
-the text, font size and all, from the opposite corner. A colour, size or
+/ Ctrl+Y undo and redo. Every marking shows its points right after it is
+drawn (the previous one loses them), and any drawing tool takes a drawn
+marking under the pointer again (pen and highlighter only its points; V also
+takes pixelate and spotlight boxes): lines and arrows have one at each end
+and one in the middle that bends them into a curve, boxes and strokes one at
+each corner, a step marker one on its rim, and text one at each corner —
+dragging that scales the text, font size and all, from the opposite corner. A colour, size or
 look chosen then changes that marking. Double-clicking a text (with V or T)
 edits it. Dragging an area handle resizes the area at any time; a press
 outside an unmarked area, or a right-click on it, starts a new selection.
