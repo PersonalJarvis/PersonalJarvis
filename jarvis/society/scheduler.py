@@ -181,7 +181,8 @@ class SocietyScheduler:
             if budget is not None:
                 try:
                     budget.assert_under_limit(room.trace_id)
-                except Exception:  # noqa: BLE001 — tracker owns its exception type
+                except Exception as exc:  # noqa: BLE001 — tracker owns its exception type
+                    log.info("society room %s budget gate refused dispatch: %s", room_id, exc)
                     await rooms.fail(room_id, reason=str(FailureReason.BUDGET_EXHAUSTED))
                     return
             if target.daily_budget_usd > 0:

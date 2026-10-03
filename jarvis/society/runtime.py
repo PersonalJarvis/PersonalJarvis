@@ -283,8 +283,12 @@ class SocietyRuntime:
         await self.roster.refresh()
         self._require_open_owner()
         self._started = True
-        self._delivery_task = asyncio.create_task(self._deliver_pending())
         set_current_runtime(self)
+        try:
+            await self.scheduler.drive_rooms()
+        except Exception:  # noqa: BLE001 — recovery failure must not abort Society startup
+            log.warning("society: initial room recovery failed", exc_info=True)
+        self._delivery_task = asyncio.create_task(self._deliver_pending())
         await self.coding_supervision.start()
         self._require_open_owner()
         self.background(self.recover_reviews())
