@@ -978,13 +978,16 @@ def main(argv: list[str] | None = None) -> int:
 
     step_models(full_profile=with_desktop, dry_run=args.dry_run)
 
-    browser_cmd = [str(venv_python()), "-m", "jarvis.society.browser.install"]
-    if sys.platform.startswith("linux"):
-        browser_cmd.append("--system-deps")
-    if args.dry_run:
-        note("managed browser: install and verify on first full installation")
+    if not with_desktop or args.headless:
+        note("Agent browser setup skipped (headless).")
     else:
-        run_noted(browser_cmd, label="preparing the agent browser", cwd=repo_root())
+        browser_cmd = [str(venv_python()), "-m", "jarvis.society.browser.install"]
+        if sys.platform.startswith("linux"):
+            browser_cmd.append("--system-deps")
+        if args.dry_run:
+            note("managed browser: install and verify on first full installation")
+        else:
+            run_noted(browser_cmd, label="preparing the agent browser", cwd=repo_root())
 
     phase("6/6", "Finish & launch")
     step_cli_links(dry_run=args.dry_run)

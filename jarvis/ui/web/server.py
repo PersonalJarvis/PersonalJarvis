@@ -98,7 +98,6 @@ class WebServer:
 
     def __init__(self, cfg: JarvisConfig, bus: EventBus | None = None) -> None:
         self.cfg = cfg
-        self._browser_prepare_task: asyncio.Task[None] | None = None
         self.bus = bus if bus is not None else get_default_bus()
         self._clients: dict[str, WebSocket] = {}
         self._client_send_locks: dict[str, asyncio.Lock] = {}
@@ -1048,9 +1047,6 @@ class WebServer:
             # browser can paint after the full FastAPI app has already taken
             # over, so the live app must accept the same POST as an idempotent
             # no-op instead of returning FastAPI's 405 Method Not Allowed.
-            from jarvis.society.browser.install import start_install
-            browser_data = Path(getattr(self.cfg.memory, "data_dir", None) or "data")
-            start_install(browser_data)
             return Response(status_code=204)
 
         @app.get("/api/config")
@@ -2886,18 +2882,9 @@ class WebServer:
         # transport for it.
         self._schedule_realtime_transport_warm()
         self._schedule_appshot_shortcut()
-        # Defer provisioning until the boot chain returns control to the server.
-        # Only the install is prepared here: a Chromium costs hundreds of MB,
-        # so an agent's browser launches when the agent first uses it or the
-        # person opens its view, never pre-warmed at boot.
-        async def prepare_browser() -> None:
-            from jarvis.society.browser import install
-            data_dir = Path(getattr(self.cfg.memory, "data_dir", None) or "data")
-            try:
-                install.start_install(data_dir)
-            except Exception:
-                logger.debug("Browser preparation deferred after failure", exc_info=True)
-        self._browser_prepare_task = asyncio.create_task(prepare_browser(), name="browser-prepare")
+        # Browser provisioning includes a Chromium probe and may need Linux
+        # system libraries. Leave it to explicit browser use/setup; boot and
+        # shell-paint acknowledgements must keep headless installations usable.
         # Existing Mars work recovers with zero clients. The deferred helper
         # performs its existence probe and runtime composition after boot yields.
         from .mars_routes import schedule_mars_resume
@@ -3845,10 +3832,6 @@ class WebServer:
             mars_shutdown_failure = type(exc).__name__
             logger.warning("Mars station cleanup incomplete ({})", mars_shutdown_failure)
         registry_bootstraps_stopped = await self._stop_registry_bootstraps()
-        if self._browser_prepare_task is not None:
-            self._browser_prepare_task.cancel()
-            await asyncio.gather(self._browser_prepare_task, return_exceptions=True)
-            self._browser_prepare_task = None
         society = getattr(self.app.state, "society", None)
         society_shutdown_failure: str | None = None
         if society is not None:
