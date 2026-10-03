@@ -1,1 +1,17 @@
-{}
+{
+  "society": {
+    "ledger": {
+      "title": "Registro Society",
+      "subtitle": "Cronologia persistente dal registro eventi della Society.",
+      "empty": "Nessun evento Society per ora.",
+      "error": "Impossibile caricare il registro Society.",
+      "time": "Ora",
+      "type": "Tipo",
+      "from": "Da",
+      "to": "A",
+      "detail": "Dettaglio",
+      "cost": "Costo",
+      "board": "Bacheca"
+    }
+  }
+}
