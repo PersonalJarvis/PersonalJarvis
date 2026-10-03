@@ -149,7 +149,15 @@ async def _control(live, session, owner, op, args):
         args = {"generation": session.state.get("generation", session.generation), **args}
     elif op == "takeover" and args.get("enabled") is False:
         args = {"login": False, **args}  # The test performs explicit owner handback.
-    return await live.control(session, owner, op, args)
+    try:
+        return await live.control(session, owner, op, args)
+    except RuntimeError as exc:
+        # Only disposable fixture traffic reaches this diagnostic. Preserve the
+        # worker's native exit status so a process crash cannot look like a UI timeout.
+        raise AssertionError(
+            f"{op}: {exc}; worker_exit={session.proc.returncode}; "
+            f"worker_stderr={session.stderr_tail[-5000:]}"
+        ) from exc
 
 
 async def test_live_pixels_change_between_tasks_and_sessions_stay_open(live, site):
