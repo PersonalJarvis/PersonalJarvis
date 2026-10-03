@@ -5103,7 +5103,8 @@ class DesktopApp:
                 height=750,
                 min_size=(800, 520),
                 resizable=True,
-                frameless=True,
+                # Cocoa owns the traffic lights and their native zoom/fullscreen behavior.
+                frameless=sys.platform != "darwin",
                 easy_drag=False,
                 confirm_close=False,
                 background_color=self._window_background(),
@@ -5274,7 +5275,8 @@ class DesktopApp:
             "height": 800,
             "min_size": (900, 600),
             "resizable": True,
-            "frameless": True,
+            # Keep Cocoa's real close/minimize/zoom controls on every main window.
+            "frameless": sys.platform != "darwin",
             "easy_drag": False,
             "confirm_close": False,
             "background_color": self._window_background(),

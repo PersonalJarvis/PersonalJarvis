@@ -1,5 +1,24 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
+## Native macOS window controls (2026-10-03, T2)
+
+Main, reopened main, and detached windows retain Cocoa's native title bar on
+macOS. The red, yellow, and green traffic lights belong to the operating system;
+the frontend renders no duplicate caption buttons. Native zoom/fullscreen no
+longer goes through the web-caption maximize/restore toggle, whose pywebview
+Cocoa restore operation only deminiaturizes. Existing close/background and
+detached-window lifecycle handling remains attached to the native window events.
+Windows and Linux retain their existing frameless web captions.
+
+Regression coverage checks all three platform configurations, reopened and
+detached window creation, the chrome API, and the existing close/background
+lifecycle. The macOS desktop lane runs these tests on Intel, Apple Silicon,
+and standalone Python alongside its dependency and application-bundle checks.
+These automated checks do not replace a physical Mac acceptance pass: verify
+red close, yellow minimize/Dock restore, green fullscreen/exit and Option-green
+zoom in light and dark appearance, including a detached view and a reopened
+main window. This Windows development host cannot qualify those native clicks.
+
 ## Current cryptography and SSH channel validation (2026-10-01, T3)
 
 Every architecture now requires cryptography >=50.0.2 and AsyncSSH >=2.24.0.

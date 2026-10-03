@@ -61,10 +61,12 @@ def _fake_webview(created: list[_FakeWindow], *, fail: bool = False) -> ModuleTy
     class WebViewException(Exception):
         pass
 
-    def create_window(title: str, url: str, **_kwargs: Any) -> _FakeWindow:
+    def create_window(title: str, url: str, **kwargs: Any) -> _FakeWindow:
         if fail:
             raise WebViewException("runtime window creation unsupported")
         window = _FakeWindow(title, url)
+        window.frameless = kwargs.get("frameless", False)
+        window.resizable = kwargs.get("resizable", True)
         created.append(window)
         return window
 
@@ -108,10 +110,12 @@ def _app(monkeypatch: pytest.MonkeyPatch | None = None) -> DesktopApp:
 # --- open_detached_window ----------------------------------------------------
 
 
-def test_open_detached_creates_titled_solo_window(monkeypatch) -> None:
+@pytest.mark.parametrize("platform", ["darwin", "win32", "linux"])
+def test_open_detached_creates_titled_solo_window(monkeypatch, platform) -> None:
     import sys
 
     app = _app(monkeypatch)
+    monkeypatch.setattr(sys, "platform", platform)
     created: list[_FakeWindow] = []
     monkeypatch.setitem(sys.modules, "webview", _fake_webview(created))
 
@@ -120,6 +124,8 @@ def test_open_detached_creates_titled_solo_window(monkeypatch) -> None:
     assert result == {"ok": True, "already_open": False, "view": "agentic-ide"}
     assert len(created) == 1
     window = created[0]
+    assert window.frameless is (platform != "darwin")
+    assert window.resizable is True
     # Distinct title: FindWindowW-exact focus and the icon setter key on it.
     assert window.title == f"{WINDOW_TITLE} — Agents"
     assert window.title != WINDOW_TITLE
@@ -311,10 +317,12 @@ def test_snapshot_lists_detached_views(monkeypatch) -> None:
 # --- _ensure_main_window -----------------------------------------------------
 
 
-def test_ensure_main_window_recreates_and_rehooks(monkeypatch) -> None:
+@pytest.mark.parametrize("platform", ["darwin", "win32", "linux"])
+def test_ensure_main_window_recreates_and_rehooks(monkeypatch, platform) -> None:
     import sys
 
     app = _app(monkeypatch)
+    monkeypatch.setattr(sys, "platform", platform)
     app._window = None
     created: list[_FakeWindow] = []
     monkeypatch.setitem(sys.modules, "webview", _fake_webview(created))
@@ -324,10 +332,30 @@ def test_ensure_main_window_recreates_and_rehooks(monkeypatch) -> None:
     assert len(created) == 1
     assert created[0].title == WINDOW_TITLE
     assert app._window is created[0]
+    assert created[0].frameless is (platform != "darwin")
+    assert created[0].resizable is True
     assert app._window_visible is True
     assert len(created[0].events.closing) == 1  # quit contract re-attached
     assert len(created[0].events.closed) == 1  # null-out re-attached
     assert len(created[0].events.loaded) == 2  # drop bridge and authenticated shell restore
+
+
+@pytest.mark.parametrize("platform", ["darwin", "win32", "linux"])
+def test_main_window_chrome_matches_native_frame(monkeypatch, platform) -> None:
+    import sys
+
+    app = _app(monkeypatch)
+    monkeypatch.setattr(sys, "platform", platform)
+    options = app._main_window_kwargs()
+    assert options["frameless"] is (platform != "darwin")
+    assert options["resizable"] is True
+    app._window.frameless = options["frameless"]
+    snapshot = app.window_chrome_snapshot()
+    assert snapshot["frameless"] is options["frameless"]
+    assert snapshot["controls"] == ("none" if platform == "darwin" else "trailing")
+
+    app._window = None
+    assert app.window_chrome_snapshot()["controls"] == "none"
 
 
 # --- native drop bridge --------------------------------------------------------
