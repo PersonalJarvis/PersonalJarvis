@@ -532,9 +532,13 @@ def test_disabled_computer_use_does_not_expose_its_primitives(monkeypatch):
     setting = SimpleNamespace(enabled=False)
     manager = SimpleNamespace(_tools={}, _config=SimpleNamespace(computer_use=setting))
     gateway = BrainSupervisorToolGateway(manager)
-    assert "click" not in {d.name for d in gateway.voice_catalog()}
+    assert not {"click", "computer"} & {d.name for d in gateway.voice_catalog()}
     setting.enabled = True
-    assert "click" in {d.name for d in gateway.voice_catalog()}
+    names = {d.name for d in gateway.voice_catalog()}
+    # ADR-0038: the live model operates the screen with ``computer``; raw
+    # screen-unit primitives are not offered beside it.
+    assert "computer" in names
+    assert "click" not in names
 
 
 def test_recovery_history_is_bounded_and_keeps_user_text_as_data():

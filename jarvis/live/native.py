@@ -17,6 +17,7 @@ from jarvis.core.agent_brief import AGENT_BRIEF_RULE
 from jarvis.core.paths import user_data_dir
 from jarvis.core.runtime_refs import get_supervisor_tool_gateway
 from jarvis.core.tool_budget import VOICE_TOOL_BUDGET_S
+from jarvis.cu.direct import COMPUTER_CONTROL_RULES
 from jarvis.live.product import PRODUCT_BRIEF
 from jarvis.live.runtime import claim, register, unregister
 from jarvis.live.session import LiveVoiceSession, _identity
@@ -38,7 +39,9 @@ _DUPLEX_REFUSAL_FALLBACK = "The selected voice engine cannot take a call right n
 # attribute so tests can pin it low.
 _TOOL_DEADLINE_S = VOICE_TOOL_BUDGET_S
 # Session built-ins of ``LiveTools``: always declared, whatever the budget.
-_SESSION_TOOLS = frozenset({"end_call", "discover_tools", "call_tool", "confirm_action"})
+_SESSION_TOOLS = frozenset(
+    {"end_call", "discover_tools", "call_tool", "confirm_action", "computer"}
+)
 # Under a declaration budget (a provider's ``tool_declaration_budget_tokens``
 # or ``[voice].realtime_tool_declaration_budget_tokens``, the smaller wins), at
 # most this many catalog tools are declared directly; every other tool stays
@@ -144,10 +147,9 @@ class NativeLiveVoiceSession(LiveVoiceSession):
                     + language_rule
                     + "Use your tools directly "
                     "for actions, private information and current facts. Use discover_tools and "
-                    "call_tool for any tool not declared directly. For computer control, capture "
-                    "screen_snapshot, inspect the image, call the desktop primitives, and verify "
-                    "the result with a new snapshot. Do not call a separate computer-use harness. "
-                    "When the user asks for an appshot, call take_appshot. "
+                    "call_tool for any tool not declared directly. "
+                    + COMPUTER_CONTROL_RULES
+                    + " When the user asks for an appshot, call take_appshot. "
                     "Request confirmation for pending approvals. Use confirm_action only after "
                     "explicit approval. A started job is not complete. Never invent tool results. "
                     "Use workspace-orchestrate for coding tasks: inspect and resolve project, "

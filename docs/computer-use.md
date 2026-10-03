@@ -6,6 +6,32 @@ This page documents the current routing model for desktop actions. The main
 goal is to keep simple local actions deterministic and fast, while preserving
 POAV Computer-Use and Jarvis-Agents for the work that actually needs them.
 
+## Live voice: the session's own model operates the screen (2026-10-03)
+
+ADR: [0038](adr/0038-live-reasoning-model-owns-computer-control.md). In a
+continuous voice session (GPT-Live with an API key or a ChatGPT subscription,
+Gemini Live, the local engine) the session's thinking model operates the
+computer itself through the `computer` tool. No Computer-Use mission and no
+second model is involved. Each call runs up to eight steps (screenshot, click,
+double/right/middle click, move, drag, scroll, type, key, wait) and returns a
+fresh screenshot with its `frame_id`, so the model checks every effect before
+the next step.
+
+Jarvis keeps the parts a model should not guess: coordinates are pixels of the
+latest screenshot and map through that frame's `CoordinateMapper`; a stale
+frame or a changed front window presses nothing. Before any capture or input
+`jarvis/cu/direct.py::readiness` names the blocker for the current OS:
+
+| OS | Checked before acting | Answer |
+| --- | --- | --- |
+| macOS | Screen Recording (looking); Accessibility + Input Control (input); Secure Input (typing) | `permission_required` / `secure_input` with the missing grant |
+| Windows | Secure desktop (UAC, lock screen); elevated front window vs. non-elevated Jarvis (UIPI) | `secure_desktop` / `elevated_window` |
+| Linux | Wayland session; no display | `wayland` / `headless` |
+| All | `[computer_use].enabled`; a running mission holds the desktop | `disabled` / `busy` |
+
+The yellow border and Escape work as for missions. Text chat, scheduled tasks
+and the CLI still use the mission engine described below.
+
 ## Engine v2 (default since 2026-07-02)
 
 The POAV Computer-Use engine was rebuilt from scratch as the modular package

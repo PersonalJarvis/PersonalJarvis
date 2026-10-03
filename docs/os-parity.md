@@ -1,5 +1,16 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
+## Live computer control by the session's own model (2026-10-03, T3)
+
+Voice sessions operate the screen through `computer` (ADR-0038). The same
+code runs on every OS through the existing capture and input backends; only
+the readiness check differs. macOS requires Screen Recording to look and
+Accessibility plus Input Control to act, and Secure Input blocks typing.
+Windows refuses on the secure desktop and against elevated windows when Jarvis
+is not elevated. Linux refuses on Wayland and without a display, with the
+reason spoken to the user. Unit tests cover every branch with platform probes.
+A live run passed on Windows 11; macOS and Linux X11 live runs are unverified.
+
 ## Connected computers on Linux, macOS and Windows (2026-10-01, T3)
 
 This one is about the REMOTE side: the machine Jarvis connects to under

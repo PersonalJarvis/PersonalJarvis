@@ -5,6 +5,7 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict, Field
 
 from jarvis.core.agent_brief import AGENT_BRIEF_RULE
+from jarvis.cu.direct import COMPUTER_CONTROL_RULES
 from jarvis.live.product import PRODUCT_BRIEF
 
 
@@ -69,7 +70,8 @@ class LiveConfig(BaseModel):
                 "count and the task as prompt; never an existing agent and never spawn_worker. "
                 + AGENT_BRIEF_RULE
                 + " "
-                "Computer-use tasks use the selected thinking model and the same credential. "
+                + COMPUTER_CONTROL_RULES
+                + " "
                 + self.backend_instructions
             ),
             "tools": [*tools, *([{"type": "web_search"}] if self.web_search else [])],
