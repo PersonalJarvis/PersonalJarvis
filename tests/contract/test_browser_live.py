@@ -135,7 +135,12 @@ def site():
 
 @pytest.fixture
 def live(tmp_path, monkeypatch):
-    monkeypatch.setenv("PYTHONFAULTHANDLER", "1")
+    worker_env = install.worker_env
+
+    def diagnostic_env(*args, **kwargs):
+        return {**worker_env(*args, **kwargs), "PYTHONFAULTHANDLER": "1"}
+
+    monkeypatch.setattr(install, "worker_env", diagnostic_env)
     python = Path(os.environ["JARVIS_BROWSER_TEST_PYTHON"])
     binary = Path(os.environ["JARVIS_BROWSER_TEST_EXECUTABLE"])
     monkeypatch.setattr(install, "is_installed", lambda _: True)
