@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from jarvis.society.companion import CompanionAppearance, validate_avatar_companion
+from jarvis.society.companion import CompanionAppearance, validate_avatar, validate_avatar_companion
 from jarvis.society.runtime import SocietyRuntime
 from jarvis.ui.web.society_routes import router
 
@@ -36,6 +36,41 @@ def test_legacy_and_imported_characters_survive_companion_validation():
     assert validate_avatar_companion(old) == old
     updated = validate_avatar_companion({**old, "companion": CASES["valid"][0]})
     assert {k: v for k, v in updated.items() if k != "companion"} == old
+
+
+def test_contract_figure_accepts_only_local_imported_models():
+    base = {
+        "contract": 1,
+        "archetype": "biped",
+        "base": "rogue",
+        "parts": {},
+    }
+    accepted = validate_avatar({**base, "model": "/api/society/figures/my-hero-deadbeef00.glb"})
+    assert accepted["model"].startswith("/api/society/figures/")
+
+    for model in (
+        "https://example.com/figure.glb",
+        "//example.com/figure.glb",
+        "/api/society/figures/../outside.glb",
+        "file:///tmp/figure.glb",
+    ):
+        with pytest.raises(ValidationError):
+            validate_avatar({**base, "model": model})
+
+
+def test_contract_figure_bounds_parts_and_palette():
+    base = {
+        "contract": 1,
+        "archetype": "biped",
+        "base": "rogue",
+        "parts": {},
+    }
+    with pytest.raises(ValidationError):
+        validate_avatar({**base, "parts": {"../head": "hat"}})
+    with pytest.raises(ValidationError):
+        validate_avatar({**base, "palette": {"not_a_cell": "#112233"}})
+    with pytest.raises(ValidationError):
+        validate_avatar({**base, "palette": {"primary": "red"}})
 
 
 def test_fresh_headless_create_edit_reload_without_inference_or_credentials(tmp_path):
@@ -70,6 +105,11 @@ def test_fresh_headless_create_edit_reload_without_inference_or_credentials(tmp_
             assert response.json()["agent"]["avatar"]["companion"]["enabled"] is False
             bad = client.patch(url, json={"avatar": {**avatar, "companion": CASES["invalid"][0]}})
             assert bad.status_code == 409
+            remote = client.patch(
+                url,
+                json={"avatar": {**avatar, "model": "https://example.com/tracker.glb"}},
+            )
+            assert remote.status_code == 409
         finally:
             client.portal.call(runtime.close)
     app, runtime = open_app()
