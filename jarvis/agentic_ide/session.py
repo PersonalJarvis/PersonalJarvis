@@ -94,7 +94,7 @@ from . import (
     remote,
     resume_store,
 )
-from .activity import NO_READING, Reading, has_work_behind_it, observed
+from .activity import NO_READING, Reading, has_work_behind_it, observed, record_work_start
 from .agent_sessions import (
     ResumeHandle,
     can_fork,
@@ -1238,6 +1238,9 @@ class Terminal:
     activity: str = ""
     activity_at: float = 0.0
     activity_since: float = 0.0
+    # The task's start, independent of activity detection and app uptime.
+    work_started_at: float = 0.0
+    work_pty_id: str = ""
     # Monotonic identity for the process currently occupying this pane. The
     # notification watcher outlives PTYs, so it uses this to discard the old
     # process's screen fingerprint before interpreting a replacement process.
@@ -1522,6 +1525,8 @@ class Terminal:
             account=self.account,
             account_pinned=self.account_pinned,
             continuation_needed=self.resume_continuation_needed,
+            work_started_at=self.work_started_at,
+            work_pty_id=self.work_pty_id,
             model=self.model,
             effort=self.effort,
             permission_mode=self.permission_mode,
@@ -2649,8 +2654,34 @@ class Registry:
         term.last_output_at = time.time() if result.replay else None
         if await self._adopted_with_work(term):
             term.adopted_generation = term.process_generation
+        await self._recover_work_start(term)
         logger.info("Agentic IDE: {} re-joined its running agent after an app restart", term.name)
         return True
+
+    @staticmethod
+    async def _recover_work_start(term: Terminal) -> None:
+        """Reconstruct existing tasks off-loop, without sending the agent input."""
+        from .work_timing import recover_start
+
+        saved = term.work_started_at if term.work_pty_id == term.pty_id else 0.0
+        term.work_started_at = saved
+        term.work_pty_id = term.pty_id or ""
+        if term.resume is None:
+            return
+        generation = (term.process_generation, term.pty_id, term.last_submit_at)
+        try:
+            started = await asyncio.to_thread(
+                recover_start, term.agent, term.resume.id, account_home(term.agent, term.account)
+            )
+        except Exception as exc:  # noqa: BLE001 - unavailable timing must not break adoption
+            logger.warning("Agentic IDE: could not recover {}'s task clock: {}", term.name, exc)
+            return
+        if generation != (term.process_generation, term.pty_id, term.last_submit_at):
+            return  # A new process or submission owns the clock now.
+        if started is not None:
+            # The record also covers tasks started/finished while Jarvis was
+            # closed; a saved clock alone cannot know about those boundaries.
+            term.work_started_at = started if 0 < started <= time.time() else 0.0
 
     @staticmethod
     async def _adopted_with_work(term: Terminal) -> bool:
@@ -3183,6 +3214,8 @@ class Registry:
                 resume=entry.resume,
                 prompts_sent=entry.prompts_sent,
                 resume_continuation_needed=entry.continuation_needed,
+                work_started_at=entry.work_started_at,
+                work_pty_id=entry.work_pty_id,
                 account=account,
                 # The pin survives the restart only while the seat it vouches
                 # for does — a fallback onto the active account is not the
@@ -4490,6 +4523,8 @@ class Registry:
         term.activity = ""
         term.activity_at = 0.0
         term.activity_since = 0.0
+        term.work_started_at = 0.0
+        term.work_pty_id = ""
         # And this process has not stood still yet, whatever the previous one
         # did. Everything it is about to draw is a CLI painting itself, not an
         # agent working — see the field.
@@ -4753,6 +4788,7 @@ class Registry:
                 term.manual_submit_pending = True
                 self._schedule_manual_submit_confirmation(owner, term)
             else:
+                record_work_start(term, term.last_input_at)
                 term.last_submit_at = term.last_input_at
                 term.submit_generation = term.process_generation
             # And the pane's conversation may have just begun, which for most
@@ -4794,6 +4830,7 @@ class Registry:
                 term.manual_submit_pending = False
                 term.submitted = submitted
                 if submitted:
+                    record_work_start(term, time.time())
                     term.last_submit_at = time.time()
                     term.submit_generation = term.process_generation
                     self._lookup_after_conversation(owner, term)
@@ -6846,6 +6883,7 @@ class Registry:
         # at its prompt" bell for work that never started. The moment the user
         # presses Enter on that box themselves, `write` stamps it for real.
         if submitted is not False:
+            record_work_start(term, term.last_prompt_at)
             term.last_submit_at = term.last_prompt_at
             term.submit_generation = term.process_generation
         term.manual_submit_pending = False

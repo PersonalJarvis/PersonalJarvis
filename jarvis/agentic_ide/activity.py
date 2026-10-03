@@ -524,6 +524,19 @@ def _submit_graced(term: Any, reading: Reading, moment: float) -> Reading:
     return Reading("working", float(getattr(term, "last_submit_at", 0.0) or 0.0))
 
 
+def record_work_start(term: Any, at: float) -> None:
+    """Time a delivered task, preserving the clock for input during ongoing work.
+
+    Called before replacing the submit stamp. Observer pauses, resizes and
+    permission answers are not new tasks; a new submission at a settled prompt
+    is. A process spawn clears this clock before accepting another instruction.
+    """
+    current = observed(term, now=at)
+    if current.activity not in {"working", "asking"} or not term.work_started_at:
+        term.work_started_at = at
+    term.work_pty_id = term.pty_id or ""
+
+
 def observed(term: Any, *, now: float | None = None) -> Reading:
     """What ``term`` is doing, for a caller with no history of its own.
 
@@ -546,7 +559,16 @@ def observed(term: Any, *, now: float | None = None) -> Reading:
         # can read as working here. Rare by construction — the sweep runs for
         # as long as any workspace is open.
         reading = Reading(read_activity(term, now=moment), 0.0)
-    return _submit_graced(term, reading, moment)
+    reading = _submit_graced(term, reading, moment)
+    if reading.activity == "working":
+        started = float(getattr(term, "work_started_at", 0.0) or 0.0)
+        if 0 < started <= moment:
+            return Reading("working", started)
+        if _adopted_with_work(term):
+            # An observer starting now cannot date a task it joined halfway
+            # through. Older/unsupported records may have no timestamp at all.
+            return Reading("working", 0.0)
+    return reading
 
 
 def has_work_behind_it(term: Any) -> bool:
