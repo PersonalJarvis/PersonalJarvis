@@ -10,6 +10,7 @@ class MeetingChatFake:
     def __init__(self, store: AgentChatStore) -> None:
         self.store = store
         self.sent = []
+        self.replies = {}
         self.cancelled = []
         self.busy = set()
         self.hold = False
@@ -38,7 +39,7 @@ class MeetingChatFake:
                 "assistant_text",
                 {
                     "turn_id": turn_id,
-                    "text": f"Contribution from {session_id}",
+                    "text": self.replies.get(session_id, f"Contribution from {session_id}"),
                 },
             ),
         )
