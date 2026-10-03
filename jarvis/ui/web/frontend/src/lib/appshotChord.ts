@@ -27,6 +27,12 @@ export function chordFromCodes(codes: Iterable<string>): ChordResult {
   const set = new Set(codes);
   set.delete("Escape");
   if (set.size === 0) return { problem: "empty" };
+  // Windows AltGr can emit an extra ControlLeft key event. The backend's
+  // both-Alt gesture watches the two Alt keys, so accept that exact sequence
+  // too. Keep Ctrl intact in ordinary shortcuts and other modifier pairs.
+  if (set.size === 3 && set.has("AltLeft") && set.has("AltRight") && set.has("ControlLeft")) {
+    return { combo: "alt+alt" };
+  }
   if (set.size === 2) {
     for (const [left, right, gesture] of GESTURES) {
       if (set.has(left) && set.has(right)) return { combo: gesture };
