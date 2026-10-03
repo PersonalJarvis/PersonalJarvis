@@ -135,6 +135,7 @@ def site():
 
 @pytest.fixture
 def live(tmp_path, monkeypatch):
+    monkeypatch.setenv("PYTHONFAULTHANDLER", "1")
     python = Path(os.environ["JARVIS_BROWSER_TEST_PYTHON"])
     binary = Path(os.environ["JARVIS_BROWSER_TEST_EXECUTABLE"])
     monkeypatch.setattr(install, "is_installed", lambda _: True)
@@ -154,6 +155,11 @@ async def _control(live, session, owner, op, args):
     except RuntimeError as exc:
         # Only disposable fixture traffic reaches this diagnostic. Preserve the
         # worker's native exit status so a process crash cannot look like a UI timeout.
+        try:
+            await asyncio.wait_for(session.proc.wait(), timeout=2)
+        except TimeoutError:
+            pass  # Preserve diagnostics even when inherited handles delay process reaping.
+        await asyncio.sleep(0.05)  # Let the independent stderr reader drain its last chunk.
         raise AssertionError(
             f"{op}: {exc}; worker_exit={session.proc.returncode}; "
             f"worker_stderr={session.stderr_tail[-5000:]}"
