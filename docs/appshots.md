@@ -34,7 +34,8 @@ selection, so nothing stays resident. It looks like macOS's area capture
   pixels. No lens, no boxed labels, no banner;
 - hovering lifts the window under the pointer out of the dim, and a click
   without a drag takes exactly that window;
-- a drag cuts the area out of a deeper dim with one thin border.
+- a drag clears the dim and tints the selected area a translucent grey
+  (like CleanShot X), with one thin border.
 
 The picker reports the rectangle as fractions of the screen it was drawn on;
 the app maps that back to capture pixels (`jarvis/appshot/region.py`), so

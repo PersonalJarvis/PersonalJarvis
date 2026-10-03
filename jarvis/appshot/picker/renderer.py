@@ -13,7 +13,8 @@ imports this module (AP-26). One frameless, always-on-top window per screen:
 - **Window snapping.** Hovering lifts the window under the pointer out of the
   dim (rectangles from the main process, top-most first); a click without a
   drag takes exactly that window.
-- **Drag to select.** The selection is cut out of a deeper dim with one thin
+- **Drag to select.** Like CleanShot X, the screen around the selection
+  clears and the selected area itself turns a translucent grey, with one thin
   border.
 
 Only the parts that change are repainted, so the numbers follow the pointer
@@ -45,10 +46,11 @@ from PySide6.QtWidgets import QApplication, QWidget
 from jarvis.appshot import picker as wire
 from jarvis.appshot.region import match_monitor, selection_fractions, snap_rects_on_screen
 
-#: A light veil before the drag (the picker is armed), a deeper one around
-#: the selection while dragging.
+#: A light veil before the drag (the picker is armed). While dragging the
+#: veil lifts and the selection itself takes a neutral grey tint instead, so
+#: the chosen area reads as "marked" on light and dark content alike.
 _DIM_IDLE = QColor(0, 0, 0, 55)
-_DIM_DRAG = QColor(0, 0, 0, 110)
+_SELECTION_TINT = QColor(128, 128, 132, 105)
 #: The selection border: a white hairline with a faint dark edge outside it,
 #: so it reads on light and dark content alike.
 _BORDER = QColor(255, 255, 255, 235)
@@ -196,7 +198,7 @@ class _SelectWindow(QWidget):
             self._start = event.position()
             self._end = event.position()
             self._owner.focus_on(self)
-            # The dim deepens for the drag: one full repaint.
+            # The veil lifts for the drag: one full repaint.
             self.update()
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
@@ -329,13 +331,17 @@ class _SelectWindow(QWidget):
         if self._frozen is not None:
             painter.drawPixmap(full, self._frozen, QRectF(self._frozen.rect()))
         hole = self._hole()
-        dim = QPainterPath()
-        dim.addRect(full)
-        if hole is not None:
-            cut = QPainterPath()
-            cut.addRect(hole)
-            dim = dim.subtracted(cut)
-        painter.fillPath(dim, _DIM_DRAG if self._selection() is not None else _DIM_IDLE)
+        if self._selection() is not None and hole is not None:
+            # Dragging: the surroundings stay clear, the selection turns grey.
+            painter.fillRect(hole, _SELECTION_TINT)
+        else:
+            dim = QPainterPath()
+            dim.addRect(full)
+            if hole is not None:
+                cut = QPainterPath()
+                cut.addRect(hole)
+                dim = dim.subtracted(cut)
+            painter.fillPath(dim, _DIM_IDLE)
         if hole is not None:
             self._paint_border(painter, hole)
         self._paint_numbers(painter)
