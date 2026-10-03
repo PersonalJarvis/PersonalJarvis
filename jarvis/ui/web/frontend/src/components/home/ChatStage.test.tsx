@@ -3,6 +3,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ChatStage } from "@/components/home/ChatStage";
+
+/** A finished, answered turn folds its work behind "Thought for …"; open every fold. */
+const openWork = () => {
+  for (const toggle of Array.from(document.querySelectorAll<HTMLElement>("[data-testid='conversation-work-fold'][data-open='false'] > button"))) fireEvent.click(toggle);
+};
 import { EMPTY_TIMELINE, reduceEvents } from "@/components/agentchat/reduce";
 import type { AgentChatCatalog, AgentChatEvent } from "@/lib/agentChatApi";
 import { AgentChatStoreProvider } from "@/components/agentchat/AgentChatStoreContext";
@@ -764,7 +769,8 @@ describe("ChatStage (agent chat)", () => {
     render(<ChatStage />);
 
     const trace = screen.getByTestId("work-trace");
-    // Like the Codex app, the finished turn keeps its work in view.
+    // The finished turn folds its work; one tap brings it back in order.
+    openWork();
     const text = trace.textContent!;
     expect(text.indexOf("First the port.")).toBeLessThan(text.indexOf("Get-NetTCPConnection"));
     expect(text.indexOf("Get-NetTCPConnection")).toBeLessThan(text.indexOf("It is listening."));
@@ -836,6 +842,7 @@ describe("ChatStage (agent chat)", () => {
     ]);
     useAgentChatStore.setState({ activeSessionId: "s9", timeline });
     render(<ChatStage />);
+    openWork();
     // The plugin the turn used shows on its line by its own logo.
     const stretch = screen.getByRole("button", { name: /^Ran a command, used GitHub/ });
     expect(stretch.querySelector("img, [data-logo]")).toBeTruthy();

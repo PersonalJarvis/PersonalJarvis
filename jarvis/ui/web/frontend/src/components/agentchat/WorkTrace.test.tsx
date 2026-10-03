@@ -15,6 +15,11 @@ const props = { startedMs: 1000, durationMs: 12000, status: "done" as TurnStatus
 const rows = { ...props, look: "classic" as const };
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
+/** A finished, answered turn folds its work behind "Thought for …"; open every fold. */
+const openWork = () => {
+  for (const toggle of Array.from(document.querySelectorAll<HTMLElement>("[data-testid='conversation-work-fold'][data-open='false'] > button"))) fireEvent.click(toggle);
+};
+
 describe("work trace", () => {
   it("summarizes integrations and mutations in first-use order with original logos", () => {
     const blocks = [tool("linear", {name:"mcp__codex_apps__linear_list_issues"}), tool("edit", {name:"apply_patch"}), tool("shell", {name:"exec_command"}), tool("again", {name:"linear/get_issue"})];
@@ -59,6 +64,7 @@ describe("work trace", () => {
   it("preserves reasoning, call, next step and final answer order", () => {
     const blocks = [thought, tool("a"), { kind: "text" as const, id: "next", text: "Next, check the tests." }, tool("b"), { kind: "text" as const, id: "final", text: "Everything is ready." }];
     render(<WorkTrace {...props} blocks={blocks} />);
+    openWork();
     const text = screen.getByTestId("work-trace").textContent!;
     expect(text.indexOf("Check the input")).toBeLessThan(text.indexOf("a.ts"));
     expect(text.indexOf("a.ts")).toBeLessThan(text.indexOf("Next, check"));
@@ -260,10 +266,10 @@ describe("rail look", () => {
     expect(screen.getByRole("status").className).toMatch(/border-t/);
   });
 
-  it("shows a plugin call by its own logo, with nothing folded", () => {
+  it("shows a plugin call by its own logo once the folded work opens", () => {
     const blocks = [tool("linear", { name: "mcp__codex_apps__linear_list_issues" }), reply("done", "Three issues are open.")];
     render(<WorkTrace {...props} conversation blocks={blocks} />);
-    expect(screen.queryByTestId("conversation-work-fold")).toBeNull();
+    openWork();
     const line = screen.getByRole("button", { name: /^Linear/ });
     expect(line.querySelector("img, [data-logo]")).toBeTruthy();
     expect(screen.getByText("Three issues are open.")).toBeTruthy();

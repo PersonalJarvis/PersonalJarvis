@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { WorkTrace } from "@/components/agentchat/WorkTrace";
 import type { NoticeItem, TimelineItem, TurnBlock, TurnItem } from "@/components/agentchat/reduce";
@@ -10,6 +10,11 @@ const notice = (id: string, kind = "memory_updated"): NoticeItem => ({
 });
 const user = (id: string): TimelineItem => ({ type: "user", id, text: "hi", attachments: [], tsMs: 1 } as unknown as TimelineItem);
 afterEach(cleanup);
+
+/** A finished, answered turn folds its work behind "Thought for …"; open every fold. */
+const openWork = () => {
+  for (const toggle of Array.from(document.querySelectorAll<HTMLElement>("[data-testid='conversation-work-fold'][data-open='false'] > button"))) fireEvent.click(toggle);
+};
 
 describe("memory receipts", () => {
   it("move into the nearest earlier turn and never stay below it", () => {
@@ -35,6 +40,9 @@ describe("memory receipts", () => {
       return [html.indexOf("Plan."), html.indexOf("MEMORY-STEP"), html.indexOf("Final reply.")];
     };
     const { rerender } = render(<WorkTrace conversation blocks={[thought, answer]} status="done" startedMs={1} durationMs={2000} extras={extras} />);
+    // Finished, the receipt folds with the rest of the work.
+    expect(screen.queryByText("MEMORY-STEP")).toBeNull();
+    openWork();
     expect(screen.getByText("MEMORY-STEP")).toBeTruthy();
     let [plan, memory, reply] = order();
     expect(memory).toBeGreaterThan(-1);

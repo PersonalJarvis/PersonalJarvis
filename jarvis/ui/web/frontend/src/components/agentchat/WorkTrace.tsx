@@ -503,8 +503,10 @@ function ActivityIcon({ blocks, live }: { blocks: TurnBlock[]; live: boolean }) 
 }
 
 /** Small chevron that hides finished work so the reply can stand alone. */
-function ConversationWorkFold({ durationMs, attention, children }: {
+function ConversationWorkFold({ durationMs, attention, children, expandInner = true }: {
   durationMs: number | null; attention?: ReactNode; children: ReactNode;
+  /** Classic rows open every inner disclosure with the fold; the rail keeps its one-line stretches. */
+  expandInner?: boolean;
 }) {
   const t = useT();
   const id = useId();
@@ -526,7 +528,7 @@ function ConversationWorkFold({ durationMs, attention, children }: {
         <ChevronRight aria-hidden className={cn("h-3 w-3 shrink-0 opacity-70 transition-transform group-hover/fold:opacity-100", open && "rotate-90")} />
         <span className="truncate">{label}</span>
       </button>
-      {open ? <div id={id}><FoldExpandContext.Provider value={seq}>{children}</FoldExpandContext.Provider></div> : attention}
+      {open ? <div id={id}><FoldExpandContext.Provider value={expandInner ? seq : 0}>{children}</FoldExpandContext.Provider></div> : attention}
     </div>
   );
 }
@@ -630,10 +632,10 @@ function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error
   const blocks = useMemo(() => withoutQuestionPolls(rawBlocks), [rawBlocks]);
   const live = status === "running";
   const elapsed = useClock(startedMs, live);
-  // A finished turn is split into its work and its answer. The classic look
-  // folds conversation work behind "Thought for …"; the rail look never folds
-  // — like the Codex app, the narration and one quiet line per stretch of
-  // calls stay in view above the answer (TraceTimeline).
+  // A finished turn is split into its work and its answer. Both looks fold
+  // the work behind "Thought for …" once the turn has answered (maintainer,
+  // 2026-10-03): the chat then reads as message and reply, and one tap
+  // brings the whole trace back.
   const split = useMemo(() => (conversation || rail) && !live ? splitConversationTurn(blocks) : null, [blocks, conversation, rail, live]);
   // A finished conversation turn shows the reply and nothing else. All work
   // — tools, thoughts, intermediate replies, failures, interruptions, and
@@ -710,7 +712,7 @@ function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error
     let extraAt = work.length;
     if (!split) while (extraAt > 0 && !work[extraAt - 1].rail) extraAt--;
     const extraItems: RailItem[] = (extras ?? []).map((extra) => ({ key: `extra:${extra.key}`, node: extra.node, rail: true }));
-    const items: RailItem[] = [
+    const workItems: RailItem[] = [
       ...work.slice(0, extraAt),
       ...extraItems,
       ...work.slice(extraAt),
@@ -718,8 +720,26 @@ function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error
       // reply, which is always the last thing the turn shows (maintainer,
       // 2026-10-03 — nobody should scroll back up to find the answer).
       ...timelineItems(afterAnswer, renderers),
-      ...(answerGroups ? traceGroupItems({ groups: answerGroups, ...groupProps }) : []),
     ];
+    const answerItems = answerGroups ? traceGroupItems({ groups: answerGroups, ...groupProps }) : [];
+    // A finished, answered turn folds its work; a pending approval or open
+    // question stays outside the fold, because it waits for the person.
+    const railFold = split && answerItems.length > 0 && workItems.length > 0;
+    if (railFold) {
+      const waiting = [...split.work, ...split.after].filter(isPendingApproval);
+      const items: RailItem[] = [...answerItems];
+      if (visibleError) items.push(errorItem(visibleError, "trace:error"));
+      items.push(statusItem);
+      return <div className={cn("min-w-0", conversation && "w-full max-w-[44rem] self-start", className)} data-testid="work-trace" data-look="rail" data-state={status} {...(conversation ? { "data-conversation": "" } : {})}>
+        <ConversationWorkFold durationMs={durationMs} expandInner={false} attention={waiting.length ? <Rail items={waiting.map((block) => ({
+          key: block.callId, rail: !block.question, node: <TraceTool block={block} status={status} onDecide={onDecide} />,
+        }))} /> : undefined}>
+          <Rail items={workItems} />
+        </ConversationWorkFold>
+        <Rail items={items} />
+      </div>;
+    }
+    const items: RailItem[] = [...workItems, ...answerItems];
     if (visibleError) items.push(errorItem(visibleError, "trace:error"));
     items.push(statusItem);
     return <div className={cn("min-w-0", conversation && "w-full max-w-[44rem] self-start", className)} data-testid="work-trace" data-look="rail" data-state={status} {...(conversation ? { "data-conversation": "" } : {})}>

@@ -3,6 +3,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { AgentChatEvent } from "@/lib/agentChatApi";
 import { AgentTimeline } from "./AgentTimeline";
 import { EMPTY_TIMELINE, reduceEvents } from "./reduce";
+
+/** A finished, answered turn folds its work behind "Thought for …"; open every fold. */
+const openWork = () => {
+  for (const toggle of Array.from(document.querySelectorAll<HTMLElement>("[data-testid='conversation-work-fold'][data-open='false'] > button"))) fireEvent.click(toggle);
+};
 import { attachTurnMessages } from "./turnMessages";
 
 let seq = 0;
@@ -47,6 +52,7 @@ describe("agent messages inside the turn that asked for them", () => {
   it("draws the answers as quiet trace lines and keeps Jarvis's reply last", () => {
     const { container } = render(<AgentTimeline items={reduceEvents(EMPTY_TIMELINE, auditTurn()).items} assistantName="Jarvis"
       providerLabel={(id) => id} onDecide={() => undefined} bubbles traceLook="rail" />);
+    openWork();
     // No full-text cards: one line per answer, inside the turn.
     const lines = Array.from(container.querySelectorAll<HTMLElement>("[data-trace-entry='message']"));
     expect(lines.map((line) => line.textContent)).toEqual([

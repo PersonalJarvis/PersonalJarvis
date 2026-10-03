@@ -8,6 +8,11 @@ import type { InternalMessageItem, ReasoningBlock, ToolBlock } from "@/component
 beforeAll(() => loadLocaleChunk("society"));
 afterEach(cleanup);
 
+/** A finished, answered turn folds its work behind "Thought for …"; open every fold. */
+const openWork = () => {
+  for (const toggle of Array.from(document.querySelectorAll<HTMLElement>("[data-testid='conversation-work-fold'][data-open='false'] > button"))) fireEvent.click(toggle);
+};
+
 const envelope = "Scheduled routine task-123. Follow your CURRENT standing instructions and permissions.\nUse your memory and conversation archive for prior results. For information watches, check sources and dates, remember last-seen items, and report only meaningful new findings.\n\n";
 
 it("folds only a full scheduler envelope, preserving ordinary user messages", () => {
@@ -61,8 +66,9 @@ it("keeps live and interrupted conversation tools in the left lane", () => {
     { kind: "text", id: "reply", text: "I will send the mail next." },
     live,
   ]} />);
-  // Like the Codex app, nothing folds: the model's words, the call that
-  // never returned and the reply all stay in view — the reply last.
+  // The stopped turn folds its work; opened, the model's words, the call
+  // that never returned and the reply read in order — the reply last.
+  openWork();
   const text = screen.getByTestId("work-trace").textContent!;
   expect(text.indexOf("Inspect archive.")).toBeLessThan(text.indexOf("Searched for archive"));
   expect(text.indexOf("Searched for archive")).toBeLessThan(text.indexOf("I will send the mail next."));
@@ -71,15 +77,16 @@ it("keeps live and interrupted conversation tools in the left lane", () => {
   expect(screen.getByTestId("work-trace").className).toMatch(/self-start/);
 });
 
-it("keeps a failure in view beside the reply, its reason under its line", () => {
+it("folds a failure with the work, its reason under its line once opened", () => {
   const tool: ToolBlock = { kind: "tool", callId: "a", name: "read_file", input: { path: "report.csv" }, output: "Report contents", isError: false, durationMs: 100, approval: null, startedMs: 0 };
   render(<WorkTrace conversation status="done" startedMs={0} durationMs={2000} blocks={[
     tool,
     { ...tool, callId: "error", isError: true, output: "Upload failed" },
     { kind: "text", id: "reply", text: "I could not finish." },
   ]} />);
-  expect(screen.queryByTestId("conversation-work-fold")).toBeNull();
   expect(screen.getByText("I could not finish.")).toBeTruthy();
+  expect(screen.queryByText(/: Upload failed/)).toBeNull();
+  openWork();
   // One quiet line for the stretch; it opens to the calls, and the failed
   // one says why under its own line.
   fireEvent.click(screen.getByRole("button", { name: /^Read files$/ }));
@@ -121,6 +128,9 @@ it("keeps the reply last, even when work followed it", () => {
   // While it runs, finished calls already read as their line.
   expect(screen.getByRole("button", { name: /^Read a file, created a file/ })).toBeTruthy();
   rerender(<WorkTrace conversation status="done" startedMs={0} durationMs={1000} blocks={blocks} />);
+  // Finished: only the reply shows until the work is opened.
+  expect(screen.queryByRole("button", { name: /^Read a file, created a file/ })).toBeNull();
+  openWork();
   const text = screen.getByTestId("work-trace").textContent ?? "";
   expect(text.indexOf("Read a file, created a file")).toBeLessThan(text.indexOf("Your report is ready."));
   // The call after the reply is drawn above it: nobody scrolls back up for the answer.
@@ -153,9 +163,29 @@ it("tells intermediate replies as narration once the turn completes", () => {
   const { container, rerender } = render(<WorkTrace conversation status="running" startedMs={0} durationMs={null} blocks={blocks} />);
   expect(screen.getByText("I will inspect the files first.")).toBeTruthy();
   rerender(<WorkTrace conversation status="done" startedMs={0} durationMs={4000} blocks={blocks} />);
+  openWork();
   // The words between calls read as narration, not as a second answer.
   const narration = container.querySelector("[data-trace-entry='narration']");
   expect(narration?.textContent).toContain("I will inspect the files first.");
   expect(screen.getByText("The report is ready.")).toBeTruthy();
+});
+
+it("folds a finished turn to the reply and opens the whole trace again", () => {
+  const tool: ToolBlock = { kind: "tool", callId: "a", name: "read_file", input: { path: "report.csv" }, output: "Report contents", isError: false, durationMs: 100, approval: null, startedMs: 0 };
+  const thought: ReasoningBlock = { kind: "reasoning", id: "r", text: "Check the report first.", live: false, durationMs: 2000, startedMs: 0 };
+  const blocks = [thought, tool, { kind: "text" as const, id: "final", text: "The report is ready." }];
+  const { rerender } = render(<WorkTrace conversation status="running" startedMs={0} durationMs={null} blocks={blocks} />);
+  // While the turn works, its work stays in view.
   expect(screen.queryByTestId("conversation-work-fold")).toBeNull();
+  rerender(<WorkTrace conversation status="done" startedMs={0} durationMs={65_000} blocks={blocks} />);
+  const toggle = screen.getByRole("button", { name: /^Thought for/ });
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  expect(screen.queryByText(/Check the report first/)).toBeNull();
+  expect(screen.getByText("The report is ready.")).toBeTruthy();
+  fireEvent.click(toggle);
+  expect(screen.getByText(/Check the report first/)).toBeTruthy();
+  const text = screen.getByTestId("work-trace").textContent!;
+  expect(text.indexOf("Check the report first")).toBeLessThan(text.indexOf("The report is ready."));
+  fireEvent.click(toggle);
+  expect(screen.queryByText(/Check the report first/)).toBeNull();
 });
