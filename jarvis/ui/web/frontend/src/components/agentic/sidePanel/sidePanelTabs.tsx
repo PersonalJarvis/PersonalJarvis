@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Bot, Building2, FileDiff, FolderTree, GitBranch, Library, type LucideIcon } from "lucide-react";
+import { Bot, Building2, FileDiff, Files, FolderTree, GitBranch, type LucideIcon } from "lucide-react";
 import type { SidePanelTabId } from "@/store/ideSidePanel";
 import { AgentsOverview } from "./AgentsOverview";
 import { ExplorerPanel } from "./explorer/ExplorerPanel";
@@ -51,7 +51,7 @@ export const SIDE_PANEL_TABS: readonly SidePanelTabDef[] = [
   {
     id: "skills",
     labelKey: "ide_side_panel.tabs.skills",
-    icon: Library,
+    icon: Files,
     render: () => <SkillsTab />,
   },
   {

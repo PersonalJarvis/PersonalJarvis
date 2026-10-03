@@ -9,7 +9,7 @@ export const STARTER_SKILLS: readonly IdeSkillDraft[] = [
   {
     title: "Plan before coding",
     hue: "violet",
-    icon: "brain",
+    icon: "plan",
     content: `# Plan before coding
 
 Before you change any file:
@@ -43,7 +43,7 @@ Bug:
   {
     title: "Code review checklist",
     hue: "amber",
-    icon: "shield",
+    icon: "review",
     content: `# Code review checklist
 
 Review the current diff. For each finding give file:line, what is wrong and a concrete fix.

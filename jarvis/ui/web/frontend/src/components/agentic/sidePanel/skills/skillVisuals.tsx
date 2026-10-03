@@ -1,18 +1,21 @@
 import type { CSSProperties } from "react";
 import {
   BookOpen,
-  Brain,
   Bug,
-  Code2,
+  ClipboardList,
+  CodeXml,
+  Database,
+  FileText,
   FlaskConical,
-  GitBranch,
+  Gauge,
+  GitPullRequest,
   ListChecks,
   Palette,
   Rocket,
+  ScanSearch,
   ShieldCheck,
-  Sparkles,
   SquareTerminal,
-  WandSparkles,
+  Wrench,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -47,52 +50,66 @@ export function skillStyle(hue: string): CSSProperties {
   return { "--skill": `var(${token})` } as CSSProperties;
 }
 
+/**
+ * Every glyph names a KIND OF WORK — plan, review, test, refactor — never a
+ * mood. No sparkles, wands or brains: a skill is a Markdown document the user
+ * wrote, and its mark says what the document is for. The fallback is that
+ * document itself.
+ */
 export const SKILL_ICON: Record<Exclude<SkillIcon, "auto">, LucideIcon> = {
-  sparkles: Sparkles,
-  code: Code2,
+  doc: FileText,
+  plan: ClipboardList,
+  code: CodeXml,
   bug: Bug,
-  book: BookOpen,
-  shield: ShieldCheck,
-  rocket: Rocket,
-  wand: WandSparkles,
-  brain: Brain,
   flask: FlaskConical,
-  palette: Palette,
-  terminal: SquareTerminal,
-  git: GitBranch,
+  review: ScanSearch,
+  shield: ShieldCheck,
+  refactor: Wrench,
+  book: BookOpen,
   list: ListChecks,
+  git: GitPullRequest,
+  terminal: SquareTerminal,
+  palette: Palette,
+  data: Database,
+  perf: Gauge,
+  rocket: Rocket,
 };
 
 /** Keywords that pick a glyph for a skill left on "auto", first match wins. */
 const AUTO_RULES: readonly [RegExp, Exclude<SkillIcon, "auto">][] = [
   [/\b(bug|fix|debug|error|crash|trace)/i, "bug"],
   [/\b(test|spec|qa|tdd|coverage)/i, "flask"],
-  [/\b(review|audit|secur|check|lint|verify)/i, "shield"],
+  [/\b(secur|auth|vulnerab|secret|permission)/i, "shield"],
+  [/\b(review|audit|check|lint|verify|inspect)/i, "review"],
   [/\b(git|commit|branch|merge|pull request|pr)\b/i, "git"],
+  [/\b(perf|speed|fast|slow|latency|optimi[sz])/i, "perf"],
+  [/\b(sql|database|schema|migration|query|data)\b/i, "data"],
   [/\b(design|ui|ux|style|css|colou?r|layout|visual)/i, "palette"],
   [/\b(deploy|release|ship|launch|publish)/i, "rocket"],
-  [/\b(refactor|clean|simplif|tidy|rename)/i, "wand"],
-  [/\b(plan|think|architect|brainstorm|idea|strategy)/i, "brain"],
+  [/\b(refactor|clean|simplif|tidy|rename)/i, "refactor"],
+  [/\b(plan|think|architect|brainstorm|idea|strategy|spec)/i, "plan"],
   [/\b(shell|cli|terminal|bash|command|script)/i, "terminal"],
   [/\b(todo|checklist|steps|list|workflow)/i, "list"],
-  [/\b(doc|readme|write|explain|blog|guide|prompt)/i, "book"],
+  [/\b(docs?|readme|explain|blog|guide|tutorial)\b/i, "book"],
   [/\b(code|function|api|implement|typescript|python)/i, "code"],
 ];
 
 /** The glyph a skill wears: its own choice, else one its words suggest. */
 export function skillIconFor(icon: string, title: string, description = ""): LucideIcon {
   if (icon !== "auto" && icon in SKILL_ICON) return SKILL_ICON[icon as Exclude<SkillIcon, "auto">];
-  const words = `${title} ${description}`;
-  const match = AUTO_RULES.find(([pattern]) => pattern.test(words));
-  return SKILL_ICON[match ? match[1] : "sparkles"];
+  // The title names the job; the description only breaks a tie the title left open.
+  const match =
+    AUTO_RULES.find(([pattern]) => pattern.test(title)) ??
+    AUTO_RULES.find(([pattern]) => pattern.test(description));
+  return SKILL_ICON[match ? match[1] : "doc"];
 }
 
 /**
- * The skill's seal: its glyph on a lit tile of its hue.
+ * The skill's mark: its glyph in its hue on a flat tile.
  *
- * Two soft layers of the hue (a wash and a brighter corner) with a hairline
- * rim of the same hue, so the tile reads as made of the colour rather than
- * painted on — and stays legible at 4 % dark and on white.
+ * Deliberately plain — one quiet wash of the hue and a hairline rim, no
+ * gradient, no glow: the colour tells skills apart, the glyph says what each
+ * one is for, and nothing else competes with the title beside it.
  */
 export function SkillSeal({ hue, icon, title, description, size = "md", className }: {
   hue: string;
@@ -103,22 +120,20 @@ export function SkillSeal({ hue, icon, title, description, size = "md", classNam
   className?: string;
 }) {
   const Icon = skillIconFor(icon, title, description);
-  const box = size === "lg" ? "h-12 w-12 rounded-xl" : size === "sm" ? "h-7 w-7 rounded-lg" : "h-9 w-9 rounded-[10px]";
-  const glyph = size === "lg" ? "h-6 w-6" : size === "sm" ? "h-3.5 w-3.5" : "h-[18px] w-[18px]";
+  const box = size === "lg" ? "h-11 w-11 rounded-lg" : size === "sm" ? "h-7 w-7 rounded-md" : "h-9 w-9 rounded-lg";
+  const glyph = size === "lg" ? "h-5 w-5" : size === "sm" ? "h-3.5 w-3.5" : "h-[18px] w-[18px]";
   return (
     <span
       aria-hidden
       style={skillStyle(hue)}
       className={cn(
-        "relative inline-flex shrink-0 items-center justify-center overflow-hidden text-[hsl(var(--skill))]",
-        "bg-[linear-gradient(135deg,hsl(var(--skill)/0.26),hsl(var(--skill)/0.08))]",
-        "shadow-[inset_0_0_0_1px_hsl(var(--skill)/0.32),inset_0_1px_0_0_hsl(var(--skill)/0.25)]",
+        "inline-flex shrink-0 items-center justify-center text-[hsl(var(--skill))]",
+        "bg-[hsl(var(--skill)/0.10)] ring-1 ring-inset ring-[hsl(var(--skill)/0.22)]",
         box,
         className,
       )}
     >
-      <span className="pointer-events-none absolute -right-2 -top-2 h-2/3 w-2/3 rounded-full bg-[hsl(var(--skill)/0.28)] blur-md" />
-      <Icon className={cn("relative", glyph)} strokeWidth={1.9} />
+      <Icon className={glyph} strokeWidth={1.75} />
     </span>
   );
 }

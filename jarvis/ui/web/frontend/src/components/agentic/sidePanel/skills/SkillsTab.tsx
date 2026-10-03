@@ -6,7 +6,6 @@ import {
   Clock3,
   FileUp,
   GripVertical,
-  Library,
   Loader2,
   MousePointerClick,
   Plus,
@@ -277,9 +276,6 @@ export function SkillsTab() {
     <div data-testid="ide-skills-tab" className="relative flex h-full min-h-0 flex-col" {...fileDrag}>
       <div className="shrink-0 space-y-3 px-3 pb-3 pt-3.5">
         <div className="flex items-start gap-2.5">
-          <span aria-hidden className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[linear-gradient(135deg,hsl(var(--accent)/0.22),hsl(var(--viz-reasoning)/0.18))] text-accent shadow-[inset_0_0_0_1px_hsl(var(--accent)/0.25)]">
-            <Library className="h-4 w-4" />
-          </span>
           <div className="min-w-0 flex-1">
             <h2 className="flex items-baseline gap-2 font-display text-base text-foreground-strong">
               {t("ide_side_panel.tabs.skills")}

@@ -54,22 +54,28 @@ HUES: tuple[str, ...] = (
 #: Glyph names the UI knows how to draw. Anything else falls back to "auto".
 ICONS: tuple[str, ...] = (
     "auto",
-    "sparkles",
+    "doc",
+    "plan",
     "code",
     "bug",
-    "book",
-    "shield",
-    "rocket",
-    "wand",
-    "brain",
     "flask",
-    "palette",
-    "terminal",
-    "git",
+    "review",
+    "shield",
+    "refactor",
+    "book",
     "list",
+    "git",
+    "terminal",
+    "palette",
+    "data",
+    "perf",
+    "rocket",
 )
 
-_FRONTMATTER_RE = re.compile(r"\A﻿?---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|\Z)", re.DOTALL)
+#: Glyphs an older library stored, mapped onto today's set when it is read.
+_LEGACY_ICONS: dict[str, str] = {"sparkles": "auto", "wand": "refactor", "brain": "plan"}
+
+_FRONTMATTER_RE = re.compile(r"\A\ufeff?---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|\Z)", re.DOTALL)
 _HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$")
 
 
@@ -194,6 +200,7 @@ class LibrarySkill:
             return None
         hue = str(raw.get("hue") or "")
         icon = str(raw.get("icon") or "auto")
+        icon = _LEGACY_ICONS.get(icon, icon)
         try:
             uses = max(0, int(raw.get("use_count") or 0))
         except (TypeError, ValueError):

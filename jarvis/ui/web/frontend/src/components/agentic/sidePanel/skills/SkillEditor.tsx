@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import { createPortal } from "react-dom";
-import { ClipboardPaste, CornerDownLeft, FileUp, Loader2, Sparkles, X } from "lucide-react";
+import { ClipboardPaste, CornerDownLeft, FileUp, Loader2, X } from "lucide-react";
 import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { robustPaste } from "@/lib/clipboard";
@@ -13,7 +13,6 @@ import {
   approxTokens,
   compactCount,
   lineCount,
-  skillIconFor,
   skillStyle,
   splitSkillFrontmatter,
 } from "./skillVisuals";
@@ -152,7 +151,6 @@ export function SkillEditor({ seed, onClose, onSave, onPaste, targetPane }: {
   };
 
   const words = content.trim() ? content.trim().split(/\s+/).length : 0;
-  const AutoIcon = skillIconFor("auto", effectiveTitle, description || derivedDescription);
 
   return createPortal(
     <div
@@ -188,9 +186,6 @@ export function SkillEditor({ seed, onClose, onSave, onPaste, targetPane }: {
         onDrop={dropFile}
         className="relative flex h-[min(820px,100%)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-border-strong bg-card shadow-float outline-none animate-in zoom-in-[0.98] duration-200 motion-reduce:animate-none"
       >
-        {/* The hue's light across the top edge: the dialog wears the skill. */}
-        <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-40 bg-[radial-gradient(120%_100%_at_0%_0%,hsl(var(--skill)/0.16),transparent_60%)]" />
-        <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-px bg-[linear-gradient(90deg,transparent,hsl(var(--skill)/0.7),transparent)]" />
 
         <header className="relative flex items-start gap-4 px-5 pb-4 pt-5">
           <SkillSeal hue={hue} icon={icon} title={effectiveTitle} description={description || derivedDescription} size="lg" />
@@ -251,8 +246,27 @@ export function SkillEditor({ seed, onClose, onSave, onPaste, targetPane }: {
           <div role="radiogroup" aria-label={t("ide_side_panel.skills.icon_label")} className="flex flex-wrap items-center gap-0.5">
             <span className="mr-1.5 text-xs text-muted-foreground">{t("ide_side_panel.skills.icon_label")}</span>
             {SKILL_ICONS.map((entry) => {
-              const Glyph = entry === "auto" ? AutoIcon : SKILL_ICON[entry];
               const selected = icon === entry;
+              if (entry === "auto") {
+                // A word, not a glyph: "pick one from my title" is a choice of rule.
+                return (
+                  <button
+                    key={entry}
+                    type="button"
+                    role="radio"
+                    aria-checked={selected}
+                    title={t("ide_side_panel.skills.icon.auto")}
+                    onClick={() => setIcon(entry)}
+                    className={cn(
+                      "mr-1 inline-flex h-7 items-center rounded-md px-2 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      selected ? "bg-[hsl(var(--skill)/0.14)] text-[hsl(var(--skill))]" : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+                    )}
+                  >
+                    {t("ide_side_panel.skills.icon_auto_short")}
+                  </button>
+                );
+              }
+              const Glyph = SKILL_ICON[entry];
               return (
                 <button
                   key={entry}
@@ -267,8 +281,7 @@ export function SkillEditor({ seed, onClose, onSave, onPaste, targetPane }: {
                     selected ? "bg-[hsl(var(--skill)/0.16)] text-[hsl(var(--skill))]" : "text-muted-foreground hover:bg-secondary hover:text-foreground",
                   )}
                 >
-                  <Glyph className="h-4 w-4" aria-hidden />
-                  {entry === "auto" && <Sparkles className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 text-[hsl(var(--skill))]" aria-hidden />}
+                  <Glyph className="h-4 w-4" strokeWidth={1.75} aria-hidden />
                 </button>
               );
             })}
@@ -413,7 +426,7 @@ export function SkillEditor({ seed, onClose, onSave, onPaste, targetPane }: {
               disabled={!canSave}
               onClick={() => void save()}
               title="Ctrl+Enter"
-              className="inline-flex h-8 items-center gap-1.5 rounded-md bg-[hsl(var(--skill))] px-3.5 text-sm font-medium text-background shadow-[0_6px_18px_-8px_hsl(var(--skill)/0.8)] transition-[filter,opacity] hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card disabled:opacity-40 disabled:shadow-none"
+              className="inline-flex h-8 items-center gap-1.5 rounded-md bg-[hsl(var(--skill))] px-3.5 text-sm font-medium text-background transition-[filter,opacity] hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card disabled:opacity-40"
             >
               {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}
               {editing ? t("ide_side_panel.skills.save_changes") : t("ide_side_panel.skills.save_new")}

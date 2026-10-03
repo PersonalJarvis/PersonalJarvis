@@ -1,6 +1,7 @@
 """REST route tests for the Agentic IDE skill library (saved Markdown prompts)."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -128,3 +129,23 @@ def test_derive_helpers_skip_fences_and_tables() -> None:
     text = "# Title\n\n```\ncode\n```\n| a | b |\n> Quoted *lead* line\n"
     assert derive_title(text) == "Title"
     assert derive_description(text) == "Quoted *lead* line"
+
+
+def test_retired_glyphs_are_read_as_their_successors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    path = skill_library_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    stored = [
+        {"id": f"s{i}", "title": icon, "content": "x", "icon": icon}
+        for i, icon in enumerate(["sparkles", "wand", "brain", "unknown"])
+    ]
+    path.write_text(json.dumps({"version": 1, "skills": stored}), encoding="utf-8")
+    icons = [skill.icon for skill in SkillLibrary().list_all()]
+    assert icons == ["auto", "refactor", "plan", "auto"]
+
+
+def test_bom_before_frontmatter_is_ignored() -> None:
+    assert derive_title("\ufeff---\nname: pr-review\n---\nbody") == "pr-review"

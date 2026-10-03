@@ -52,7 +52,10 @@ describe("how a skill looks", () => {
 
   it("picks a glyph from the words when left on auto", () => {
     expect(skillIconFor("auto", "Fix the login bug")).toBe(SKILL_ICON.bug);
-    expect(skillIconFor("auto", "Something else")).toBe(SKILL_ICON.sparkles);
+    expect(skillIconFor("auto", "Something else")).toBe(SKILL_ICON.doc);
+    expect(skillIconFor("auto", "Review the auth flow")).toBe(SKILL_ICON.shield);
+    expect(skillIconFor("auto", "Plan the migration")).toBe(SKILL_ICON.data);
+    expect(skillIconFor("auto", "Speed up the slow query", "Find out why and fix it")).toBe(SKILL_ICON.perf);
     expect(skillIconFor("rocket", "Fix the login bug")).toBe(SKILL_ICON.rocket);
   });
 

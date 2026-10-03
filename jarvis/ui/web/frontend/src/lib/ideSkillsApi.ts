@@ -6,9 +6,10 @@
 export const SKILL_HUES = ["blue", "violet", "teal", "amber", "rose", "green", "magenta", "slate"] as const;
 export type SkillHue = (typeof SKILL_HUES)[number];
 
-/** The glyphs a skill can wear; "auto" picks one from the title. */
+/** The glyphs a skill can wear; "auto" picks one from the title. Same order as the backend. */
 export const SKILL_ICONS = [
-  "auto", "sparkles", "code", "bug", "book", "shield", "rocket", "wand", "brain", "flask", "palette", "terminal", "git", "list",
+  "auto", "doc", "plan", "code", "bug", "flask", "review", "shield", "refactor", "book", "list", "git", "terminal",
+  "palette", "data", "perf", "rocket",
 ] as const;
 export type SkillIcon = (typeof SKILL_ICONS)[number];
 

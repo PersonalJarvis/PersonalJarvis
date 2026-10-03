@@ -166,18 +166,13 @@ export const SkillCard = memo(function SkillCard({
         className={cn(
           "group/skill relative flex cursor-grab select-none gap-3 overflow-hidden rounded-xl border bg-card/70 p-3 pl-2.5 outline-none",
           "transition-[border-color,box-shadow,opacity,transform] duration-200 ease-out motion-reduce:transition-none",
-          "hover:border-[hsl(var(--skill)/0.45)] hover:shadow-[0_8px_24px_-16px_hsl(var(--skill)/0.55)]",
+          "hover:border-[hsl(var(--skill)/0.45)]",
           "focus-visible:border-[hsl(var(--skill)/0.6)] focus-visible:ring-2 focus-visible:ring-ring",
           "active:cursor-grabbing",
           landed ? "border-[hsl(var(--skill)/0.7)] shadow-[0_0_0_3px_hsl(var(--skill)/0.18)]" : "border-border",
           carried && "scale-[0.98] opacity-40",
         )}
       >
-        {/* The hue's light, rising from the seal's corner on hover. */}
-        <span
-          aria-hidden
-          className="pointer-events-none absolute -left-10 -top-12 h-40 w-40 rounded-full bg-[radial-gradient(closest-side,hsl(var(--skill)/0.16),transparent)] opacity-60 transition-opacity duration-300 group-hover/skill:opacity-100"
-        />
         {/* The spine: a thin line of the hue down the leading edge. */}
         <span
           aria-hidden

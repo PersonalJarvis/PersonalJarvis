@@ -6277,6 +6277,7 @@
       "close": "Close",
       "colour_label": "Colour",
       "icon_label": "Icon",
+      "icon_auto_short": "Auto",
       "view_label": "View",
       "view_write": "Write",
       "view_preview": "Preview",
@@ -6306,20 +6307,23 @@
         "slate": "Slate"
       },
       "icon": {
-        "auto": "Automatic (from the title)",
-        "sparkles": "Sparkles",
+        "auto": "Automatic: chosen from the title",
+        "doc": "Document",
+        "plan": "Plan",
         "code": "Code",
-        "bug": "Bug",
-        "book": "Book",
-        "shield": "Shield",
-        "rocket": "Rocket",
-        "wand": "Wand",
-        "brain": "Brain",
-        "flask": "Flask",
-        "palette": "Palette",
-        "terminal": "Terminal",
+        "bug": "Bug fix",
+        "flask": "Tests",
+        "review": "Review",
+        "shield": "Security",
+        "refactor": "Refactor",
+        "book": "Docs",
+        "list": "Checklist",
         "git": "Git",
-        "list": "Checklist"
+        "terminal": "Shell",
+        "palette": "Design",
+        "data": "Data",
+        "perf": "Performance",
+        "rocket": "Release"
       }
     },
     "office": {

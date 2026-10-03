@@ -1,4 +1,4 @@
-import { ClipboardPaste, FileUp, Plus, Sparkles } from "lucide-react";
+import { ClipboardPaste, FileUp, ListPlus, Plus } from "lucide-react";
 import { useT } from "@/i18n";
 import { SkillSeal, skillStyle } from "./skillVisuals";
 
@@ -23,14 +23,14 @@ const HERO_CSS = `
 `;
 
 const FAN = [
-  { hue: "violet", icon: "brain", tilt: "-6deg", x: 0, y: 2, delay: "0s", title: "Plan" },
-  { hue: "amber", icon: "shield", tilt: "-1deg", x: 14, y: 38, delay: "-1.8s", title: "Review" },
+  { hue: "violet", icon: "plan", tilt: "-6deg", x: 0, y: 2, delay: "0s", title: "Plan" },
+  { hue: "amber", icon: "review", tilt: "-1deg", x: 14, y: 38, delay: "-1.8s", title: "Review" },
   { hue: "rose", icon: "bug", tilt: "5deg", x: 28, y: 74, delay: "-3.6s", title: "Fix" },
 ] as const;
 
 function MiniCard({ hue, icon, title }: { hue: string; icon: string; title: string }) {
   return (
-    <div style={skillStyle(hue)} className="flex w-[118px] items-center gap-2 rounded-lg border border-[hsl(var(--skill)/0.4)] bg-card p-1.5 shadow-[0_10px_24px_-14px_hsl(var(--skill)/0.7)]">
+    <div style={skillStyle(hue)} className="flex w-[118px] items-center gap-2 rounded-lg border border-[hsl(var(--skill)/0.4)] bg-card p-1.5">
       <SkillSeal hue={hue} icon={icon} title={title} size="sm" />
       <div className="min-w-0 flex-1 space-y-1">
         <div className="h-1.5 w-4/5 rounded-full bg-foreground/25" />
@@ -45,7 +45,6 @@ function HeroPicture() {
   return (
     <div aria-hidden className="relative mx-auto h-[150px] w-[268px]">
       <style>{HERO_CSS}</style>
-      <div className="absolute inset-0 rounded-[28px] bg-[radial-gradient(60%_70%_at_30%_30%,hsl(var(--accent)/0.12),transparent_70%)]" />
       {FAN.map((card) => (
         <div
           key={card.title}
@@ -130,7 +129,7 @@ export function SkillsHero({ onNew, onPaste, onImport, onExamples, addingExample
           onClick={onExamples}
           className="mt-1 inline-flex h-8 items-center justify-center gap-1.5 rounded-md text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
         >
-          <Sparkles className="h-3.5 w-3.5" aria-hidden />
+          <ListPlus className="h-3.5 w-3.5" aria-hidden />
           {t("ide_side_panel.skills.add_examples")}
         </button>
       </div>
