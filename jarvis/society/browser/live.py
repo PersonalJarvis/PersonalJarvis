@@ -21,6 +21,8 @@ from . import install
 log = logging.getLogger(__name__)
 RPC = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 MAX_LINE = 8 * 1024 * 1024
+_START_TIMEOUT_S = 90.0
+_IDLE_TIMEOUT_S = 300.0
 _FORCED_CLOSE_TIMEOUT_S = 2.0
 _BUSY = "This browser is busy or under manual control"
 _PAUSED = (
@@ -308,6 +310,9 @@ class LiveSessions:
         self.cdp_url = "http://127.0.0.1:9222"
         self.idle_tasks: dict[str, asyncio.Task] = {}
         self._closing_tasks: dict[str, asyncio.Task[None]] = {}
+        self._starts: set[asyncio.Task[LiveSession]] = set()
+        self._starting_sessions: dict[str, LiveSession] = {}
+        self._closed = False
         self.stopped_turns: dict[tuple[str, str], None] = {}
 
     def stop_turn(self, agent_id: str, trace_id: str) -> None:
@@ -331,33 +336,70 @@ class LiveSessions:
             old.cancel()
 
         async def expire() -> None:
-            await asyncio.sleep(300)
-            async with self.locks.setdefault(session.agent_id, asyncio.Lock()):
-                if (
-                    not session.subscribers
-                    and not session.run_lock.locked()
-                    and not session.control_owner
-                ):
-                    if self.sessions.get(session.agent_id) is session:
+            try:
+                await asyncio.sleep(_IDLE_TIMEOUT_S)
+                async with self.locks.setdefault(session.agent_id, asyncio.Lock()):
+                    if (
+                        not session.subscribers
+                        and not session.run_lock.locked()
+                        and not session.control_owner
+                        and not session.state.get("manual", False)
+                        and self.sessions.get(session.agent_id) is session
+                    ):
+                        closing = self._begin_close(session)
+                        await asyncio.shield(closing)
                         self.sessions.pop(session.agent_id, None)
-                        closing = asyncio.create_task(session.close())
-                        try:
-                            await asyncio.shield(closing)
-                        except asyncio.CancelledError:
-                            await closing
-                            raise
-            self.idle_tasks.pop(session.agent_id, None)
+                        if self._closing_tasks.get(session.agent_id) is closing:
+                            self._closing_tasks.pop(session.agent_id, None)
+            except Exception:
+                # Retain the session so a later ensure/shutdown can retry cleanup.
+                log.warning("Idle browser cleanup failed", exc_info=True)
+            finally:
+                if self.idle_tasks.get(session.agent_id) is asyncio.current_task():
+                    self.idle_tasks.pop(session.agent_id, None)
 
         self.idle_tasks[session.agent_id] = asyncio.create_task(expire())
 
     async def ensure(self, agent: Any, *, window_view: bool = False) -> LiveSession:
+        if self._closed:
+            raise RuntimeError("The browser service is shutting down")
+        starting = asyncio.create_task(self._ensure(agent, window_view=window_view))
+        self._starts.add(starting)
+        starting.add_done_callback(self._start_finished)
+        try:
+            return await asyncio.shield(starting)
+        except asyncio.CancelledError:
+            # A second cancellation must not interrupt the first one's cleanup.
+            if not starting.cancelling():
+                starting.cancel()
+            try:
+                await asyncio.shield(starting)
+            except asyncio.CancelledError:
+                pass  # Propagate the caller's cancellation after retaining startup ownership.
+            except Exception:
+                log.debug("Cancelled browser startup failed during cleanup", exc_info=True)
+            raise
+
+    def _start_finished(self, task: asyncio.Task[LiveSession]) -> None:
+        self._starts.discard(task)
+        if not task.cancelled() and (error := task.exception()) is not None:
+            log.debug("Browser startup failed: %s", type(error).__name__)
+
+    async def _ensure(self, agent: Any, *, window_view: bool = False) -> LiveSession:
         agent_id = agent.agent_id
         idle = self.idle_tasks.pop(agent_id, None)
         if idle:
             idle.cancel()
         async with self.locks.setdefault(agent_id, asyncio.Lock()):
+            closing = self._closing_tasks.get(agent_id)
+            if closing is not None and not closing.done():
+                await asyncio.shield(closing)
             old = self.sessions.get(agent_id)
-            if old and not old.closed:
+            if (
+                old
+                and not old.closed
+                and getattr(getattr(old, "proc", None), "returncode", None) is None
+            ):
                 upgrade = (
                     window_view
                     and os.name == "nt"
@@ -374,26 +416,19 @@ class LiveSessions:
             if not install.is_installed(self.data_dir):
                 await asyncio.to_thread(install.ensure_installed, self.data_dir)
             folder = (self.data_dir / "society" / agent_id).resolve()
-            tree = make_process_tree("agent-browser")
-            process_options: dict[str, Any] = {"start_new_session": True} if os.name != "nt" else {}
-            proc = await asyncio.create_subprocess_exec(
-                str(install.venv_python(self.data_dir)),
-                str(install.runner_path()),
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                limit=MAX_LINE,
-                env=install.worker_env(self.data_dir),
-                creationflags=NO_WINDOW_CREATIONFLAGS,
-                **process_options,
-            )
-            tree.assign(proc.pid)
-            session = LiveSession(agent_id, proc, tree)
-            session.readers = [
-                asyncio.create_task(session.read()),
-                asyncio.create_task(session.drain_stderr()),
-                asyncio.create_task(session.watch_exit()),
-            ]
+            spawning = asyncio.create_task(self._spawn_session(agent_id))
+            try:
+                session = await asyncio.shield(spawning)
+            except asyncio.CancelledError:
+                # Process creation can finish after cancellation. Acquire its handle
+                # before releasing the startup lock so it cannot become an orphan.
+                try:
+                    session = await asyncio.shield(spawning)
+                except Exception:
+                    log.debug("Cancelled browser process creation failed", exc_info=True)
+                else:
+                    await self._close_starting(session)
+                raise
             try:
                 result = await session.command(
                     "ensure",
@@ -410,9 +445,12 @@ class LiveSessions:
                         if str(getattr(agent, "browser_mode", "own")) == "attach"
                         else "",
                     },
-                    timeout=90,
+                    timeout=_START_TIMEOUT_S,
                 )
-                session.generation = result["generation"]
+                generation = result.get("generation") if isinstance(result, dict) else None
+                if not isinstance(generation, str) or not generation:
+                    raise RuntimeError("Browser startup returned an invalid readiness response")
+                session.generation = generation
                 session.state = {
                     "kind": "state",
                     "manual": False,
@@ -424,11 +462,66 @@ class LiveSessions:
                     "full_window": bool(result.get("full_window")),
                 }
                 self.sessions[agent_id] = session
+                self._starting_sessions.pop(agent_id, None)
                 self.release_when_idle(session)
                 return session
-            except BaseException:
-                await session.close()
+            except BaseException as exc:
+                await self._close_starting(session)
+                if isinstance(exc, TimeoutError):
+                    raise RuntimeError(
+                        "Browser startup timed out; its process was closed. "
+                        "Try the browser task again."
+                    ) from exc
                 raise
+
+    async def _spawn_session(self, agent_id: str) -> LiveSession:
+        tree = make_process_tree("agent-browser")
+        session = None
+        try:
+            options: dict[str, Any] = {"start_new_session": True} if os.name != "nt" else {}
+            proc = await asyncio.create_subprocess_exec(
+                str(install.venv_python(self.data_dir)),
+                str(install.runner_path()),
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                limit=MAX_LINE,
+                env=install.worker_env(self.data_dir),
+                creationflags=NO_WINDOW_CREATIONFLAGS,
+                **options,
+            )
+            session = LiveSession(agent_id, proc, tree)
+            self._starting_sessions[agent_id] = session
+            session.readers = [
+                asyncio.create_task(session.read()),
+                asyncio.create_task(session.drain_stderr()),
+                asyncio.create_task(session.watch_exit()),
+            ]
+            tree.assign(proc.pid)
+            return session
+        except BaseException:
+            if session is None:
+                tree.close()
+            else:
+                await self._close_starting(session)
+            raise
+
+    def _begin_close(self, session: LiveSession) -> asyncio.Task[None]:
+        task = self._closing_tasks.get(session.agent_id)
+        if task is None or task.done():
+            task = asyncio.create_task(session.close())
+            self._closing_tasks[session.agent_id] = task
+        return task
+
+    async def _close_starting(self, session: LiveSession) -> None:
+        closing = self._begin_close(session)
+        try:
+            await asyncio.shield(closing)
+        finally:
+            if closing.done() and not closing.cancelled() and closing.exception() is None:
+                self._starting_sessions.pop(session.agent_id, None)
+                if self._closing_tasks.get(session.agent_id) is closing:
+                    self._closing_tasks.pop(session.agent_id, None)
 
     async def subscribe(self, agent: Any) -> tuple[LiveSession, LiveUpdates]:
         session = await self.ensure(agent, window_view=True)
@@ -541,16 +634,27 @@ class LiveSessions:
                     self.release_when_idle(session)
 
     async def close(self) -> None:
+        self._closed = True
+        starts = set(self._starts)
+        for task in starts:
+            if not task.cancelling():
+                task.cancel()
+        try:
+            if starts:
+                _done, pending = await asyncio.wait(starts, timeout=9)
+                if pending:
+                    raise TimeoutError("browser startup cleanup incomplete")
+        finally:
+            await self._close_sessions()
+
+    async def _close_sessions(self) -> None:
         idle = list(self.idle_tasks.values())
         for task in idle:
             task.cancel()
-        sessions = list(self.sessions.items())
+        sessions = list({**self.sessions, **self._starting_sessions}.items())
         closing = []
-        for key, session in sessions:
-            task = self._closing_tasks.get(key)
-            if task is None or task.done():
-                task = asyncio.create_task(session.close())
-                self._closing_tasks[key] = task
+        for _key, session in sessions:
+            task = self._begin_close(session)
             closing.append(task)
         owned = set(idle) | set(closing)
         try:
@@ -584,5 +688,6 @@ class LiveSessions:
                     and all(job.done() for job in (*session.tasks, *session.readers))
                 ):
                     self.sessions.pop(key, None)
+                    self._starting_sessions.pop(key, None)
             if pending:
                 raise TimeoutError("browser sessions cleanup incomplete")
