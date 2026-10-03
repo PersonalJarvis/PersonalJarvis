@@ -248,6 +248,7 @@ jobs:
             tests/unit/society/test_seeds.py::test_runtime_seeds_only_the_lead_by_default \
             tests/unit/society/test_history_migration.py \
             tests/contract/test_agent_mcp_harmony.py \
+            tests/contract/test_society_frontend_migration.py \
             tests/contract/test_plugin_auth_standard.py \
             tests/contract/test_connector_auth.py \
             tests/contract/test_service_connectors.py \
