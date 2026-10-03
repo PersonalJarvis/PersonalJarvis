@@ -8,6 +8,7 @@ Endpoints (mounted by the WebServer in ``_build_app()``):
     GET    /api/appshot/latest           → metadata of the last appshot.
     GET    /api/appshot/latest/image     → its picture (never cached).
     PUT    /api/appshot/latest/image     → replace it with the editor's version.
+    POST   /api/appshot/clipboard        → copy the editor's PNG natively (desktop only).
     GET    /api/appshot/pending          → the appshot waiting for the next message.
     POST   /api/appshot/pending/claim    → hand that one to the chat composer.
     DELETE /api/appshot                  → forget every held appshot now.
@@ -243,6 +244,29 @@ def _png_size(data: bytes) -> tuple[int, int] | None:
             return int(image.width), int(image.height)
     except (UnidentifiedImageError, OSError):
         return None
+
+
+@router.post("/clipboard", openapi_extra={"x-jarvis-dangerous": True})
+async def copy_to_clipboard(request: Request) -> dict[str, Any]:
+    """Put the editor's PNG on the desktop clipboard natively.
+
+    The embedded WebView cannot be trusted to copy images itself (see
+    :mod:`jarvis.platform.clipboard_image`). Desktop only: on a browser or
+    headless server the clipboard would be the server's, so this 404s there
+    and the page keeps the browser's own clipboard.
+    """
+    if not bool(getattr(request.app.state, "native_file_actions", False)):
+        raise HTTPException(status_code=404, detail="native-clipboard-disabled")
+    body = await request.body()
+    if not body or len(body) > _MAX_EDIT_BYTES:
+        raise HTTPException(status_code=413, detail="The picture is empty or too large.")
+    from jarvis.platform.clipboard_image import is_png, write_png  # noqa: PLC0415
+
+    if not is_png(body):
+        raise HTTPException(status_code=400, detail="The picture is not a PNG.")
+    if not await asyncio.to_thread(write_png, body):
+        raise HTTPException(status_code=503, detail="native-clipboard-unavailable")
+    return {"copied": True}
 
 
 @router.get("/pending")
