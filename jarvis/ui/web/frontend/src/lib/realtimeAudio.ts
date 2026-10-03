@@ -644,6 +644,13 @@ export class RealtimeAudioClient {
   }
 
   private async open(): Promise<void> {
+    // A reused client starts a new source timeline. Keep the local render
+    // generation monotonic so callbacks from the old worklet stay obsolete.
+    this.timedOutput = false;
+    this.timedEpoch = 0;
+    this.lastTimedAudioEnd = -1;
+    this.flushPlayback();
+    setTimedSpeechSession("");
     this.intentionalClose = false;
     this.serverClosed = false;
     this.reconnecting = false;

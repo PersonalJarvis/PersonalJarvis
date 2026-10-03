@@ -187,6 +187,22 @@ describe("realtime audio client", () => {
     expect(readTimedSpeechPlayback("stale-wire")).toBeNull();
     socket.receive({ type: "audio_closed" });
     await client.disconnect();
+    const reconnecting = client.connect();
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(2));
+    const freshSocket = FakeWebSocket.instances[1];
+    freshSocket.open();
+    freshSocket.receive({ type: "audio_ready", webrtc_answer_sdp: "new-answer",
+      output_transport: "timed_pcm", output_sample_rate: 24000 });
+    await reconnecting;
+    freshSocket.receive({ type: "speech_timing", epoch: 0, line_id: "new-call", text: "New",
+      char_start: 0, char_end: 3, start_ms: 0, end_ms: 1000 });
+    freshSocket.receive({ type: "audio_timed", epoch: 0, start_ms: 0, end_ms: 1000,
+      sample_rate: 24000, audio: Buffer.from(new Int16Array(24000).buffer).toString("base64") });
+    expect(readTimedSpeechPlayback("new-call")?.chars).toBe(0);
+    const newPlayer = FakeAudioNode.instances.filter(node => node.name === "pcm-playback").at(-1)!;
+    expect(newPlayer.port.postMessage.mock.calls.some(([m]) => m.type === "pcm")).toBe(true);
+    freshSocket.receive({ type: "audio_closed" });
+    await client.disconnect();
   });
   it("uses audio-only subscription SDP and releases microphone audio only after the peer connects", async () => {
     installVoiceBrowserFakes();
