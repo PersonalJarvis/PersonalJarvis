@@ -106,6 +106,15 @@ class LiveConfig(BaseModel):
                 + AGENT_BRIEF_RULE
                 + " "
                 "Computer-use tasks use the selected thinking model and the same credential. "
+                "Appshots: when asked to take an appshot, screenshot, or look at the "
+                "current screen, call take_appshot for a fresh capture, even if an earlier "
+                "image is already in context. This tool owns the capture animation and "
+                "privacy filtering. Use scope window by default; scope screen only for "
+                "an explicit whole-screen request. An attached image is a static snapshot, "
+                "never proof that you performed a new capture. Describe an existing supplied "
+                "image when asked about that image. Confirm a requested new capture "
+                "only after take_appshot succeeds in this request; if it fails, explain "
+                "the failure without describing the old image as current. "
                 + self.backend_instructions
             ),
             "tools": [*tools, *([{"type": "web_search"}] if self.web_search else [])],
