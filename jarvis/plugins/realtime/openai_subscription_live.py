@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import random
 import re
 import time
@@ -182,7 +183,7 @@ def _session_config(session: dict) -> dict:
 
 
 class OpenAISubscriptionLiveConnection:
-    """One private control socket; RTP audio belongs solely to the browser."""
+    """One subscription sideband with timed audio and host-owned controls."""
 
     requires_close_ack = False
     usage_billed = False
@@ -230,12 +231,18 @@ class OpenAISubscriptionLiveConnection:
         text = payload.get("transcript" if done else "text", "")
         if not isinstance(text, str):
             raise SubscriptionLiveError("invalid_response")
+        timing = payload if done else event
+        start, end = timing.get("start_ms"), timing.get("end_ms")
+        timed = (
+            type(start) in (int, float) and type(end) in (int, float)
+            and math.isfinite(start) and math.isfinite(end) and 0 <= start < end
+        )
         turn = self._turns.setdefault(
             role,
             {
                 "id": str(uuid4()),
                 "text": "",
-                "start_ms": now,
+                "start_ms": start if timed else now,
             },
         )
         turn["text"] = text if done else turn["text"] + text
@@ -253,8 +260,9 @@ class OpenAISubscriptionLiveConnection:
             "snapshot": True,
             "is_final": done,
             "start_ms": turn["start_ms"],
-            "end_ms": now,
-            "timestamp_source": "local_receive_clock",
+            "end_ms": end if timed else now,
+            "timestamp_source": "source_audio" if timed else "local_receive_clock",
+            **({"fragment_start_ms": start, "fragment_end_ms": end} if timed else {}),
         }
         if done:
             del self._turns[role]
@@ -264,6 +272,16 @@ class OpenAISubscriptionLiveConnection:
         if self._already_seen(event):
             return {"type": "subscription.ignored"}
         kind = event.get("type")
+        if kind in {"session.output_audio.delta", "output_audio.delta"}:
+            audio = event.get("delta" if kind.startswith("session.") else "audio")
+            if not isinstance(audio, str) or len(audio) > _MAX_FRAME_BYTES:
+                raise SubscriptionLiveError("invalid_response")
+            # Playback is explicitly negotiated as PCM by the host. RTP is
+            # still the input transport but must not also drive the speaker.
+            return {
+                "type": "session.output_audio.delta", "delta": audio,
+                "start_ms": event.get("start_ms"), "end_ms": event.get("end_ms"),
+            }
         if kind in {"input_transcript.added", "output_transcript.added"}:
             return self._transcript(
                 event,
@@ -341,7 +359,6 @@ class OpenAISubscriptionLiveConnection:
                     "message": str(SubscriptionLiveError(code)),
                 },
             }
-        # In particular, never mirror output_audio.delta onto browser playback.
         return {"type": "subscription.ignored"}
 
     async def receive(self) -> dict:
@@ -434,6 +451,7 @@ class OpenAISubscriptionLiveProvider:
     """Additive subscription adapter; never searches for or falls back to a key."""
 
     name = "openai-live-subscription"
+    source_timed_audio = True
     credential_family = "openai-codex"
     credential_candidates: tuple = ()
     supports_realtime = True

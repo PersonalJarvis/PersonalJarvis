@@ -222,6 +222,10 @@ class LiveVoiceSession:
         self._resume_needs_input = False
         self._base_session_config: dict = {}
         self._using_webrtc = False
+        self._playback_epoch = 0
+        self._awaiting_output_clear = False
+        self._last_output_audio_end = 0.0
+        self._discard_audio_before = 0.0
         self._offer_request = ""
         self._offer_future: asyncio.Future | None = None
         self._past_voice_seconds = 0.0
@@ -500,8 +504,8 @@ class LiveVoiceSession:
             self._speaking = False
             self._thinking = False
             self.playback_active = False
-            await self._send_json({"type": "audio_clear"})
-            await self._emit_indicator({"type": "tts_cancel"})
+            epoch = await self._clear_playback(wait_for_provider=True)
+            await self._emit_indicator({"type": "tts_cancel", "epoch": epoch})
 
     async def _start(self, message: dict) -> None:
         self._adopt_desktop_session()
@@ -638,6 +642,8 @@ class LiveVoiceSession:
                     "requires_webrtc_answer": bool(offer),
                     "webrtc_answer_sdp": self._connection.answer_sdp,
                     "continuous": True,
+                    "output_transport": self._output_transport(),
+                    "session_id": self.session_id,
                     "input_muted": self._input_muted,
                 }
             )
@@ -646,6 +652,39 @@ class LiveVoiceSession:
                 await self._announce_start_failure(exc)
             await self.end(reason="error")
             raise
+
+    def _output_transport(self) -> str:
+        return "timed_pcm" if getattr(self._provider, "source_timed_audio", False) else "webrtc"
+
+    async def _clear_playback(self, *, wait_for_provider: bool = False) -> int:
+        self._playback_epoch += 1
+        epoch = self._playback_epoch
+        self._awaiting_output_clear = wait_for_provider
+        self._discard_audio_before = self._last_output_audio_end
+        await self._send_json({"type": "audio_clear", "epoch": epoch})
+        return epoch
+
+    async def _speech_timing(self, caption: Any, delta: str, start: object, end: object) -> None:
+        from jarvis.live.playback import (
+            SpeechTimingFrame,
+            playback_frame,
+            source_interval,
+            utf16_length,
+        )
+
+        if (self._output_transport() != "timed_pcm" or self._awaiting_output_clear
+                or not delta or not source_interval(start, end)
+                or not caption.text.endswith(delta)):
+            return
+        frame = playback_frame(SpeechTimingFrame,
+            epoch=self._playback_epoch,
+            line_id=f"live:{self.session_id}:{caption.segment_id}", text=caption.text,
+            char_start=utf16_length(caption.text[:-len(delta)]),
+            char_end=utf16_length(caption.text),
+            start_ms=self._timeline_offset + start, end_ms=self._timeline_offset + end,
+        )
+        if frame is not None:
+            await self._send_json(frame)
 
     async def _announce_start_failure(self, exc: Exception) -> None:
         """Say why the call ends instead of hanging up in silence.
@@ -879,13 +918,57 @@ class LiveVoiceSession:
                 }
             )
             if role == "assistant" and current:
+                await self._speech_timing(
+                    caption, delta, event.get("start_ms"), event.get("end_ms")
+                )
                 await self._note_thinking()
         elif kind == "session.output_audio.delta":
             # With WebRTC, only measured RTP playback owns the speaking
             # state. Sideband generation can lead playback or include silence.
-            if not self._connection.answer_sdp:
+            from jarvis.live.playback import AudioTimedFrame, playback_frame, source_interval
+
+            timed = source_interval(event.get("start_ms"), event.get("end_ms"))
+            if timed:
+                self._last_output_audio_end = max(
+                    self._last_output_audio_end, self._timeline_offset + event["end_ms"]
+                )
+            if self._awaiting_output_clear:
+                return
+            if self._output_transport() == "timed_pcm":
+                if timed:
+                    start = self._timeline_offset + event["start_ms"]
+                    end = self._timeline_offset + event["end_ms"]
+                    if end <= self._discard_audio_before:
+                        return
+                    audio = event["delta"]
+                    if start < self._discard_audio_before:
+                        # A reflected packet can straddle an interruption.
+                        # Drop only its cancelled prefix, using source samples.
+                        import math
+
+                        pcm = base64.b64decode(audio)
+                        skip = math.ceil(
+                            len(pcm) // 2 * (self._discard_audio_before - start) / (end - start)
+                        )
+                        if skip * 2 >= len(pcm):
+                            return
+                        start += (end - start) * skip / (len(pcm) // 2)
+                        audio = base64.b64encode(pcm[skip * 2:]).decode("ascii")
+                    frame = playback_frame(AudioTimedFrame,
+                        epoch=self._playback_epoch, audio=audio,
+                        start_ms=start, end_ms=end,
+                    )
+                    if frame is not None:
+                        await self._send_json(frame)
+                else:
+                    # Older wires can omit timing; audio must still be heard,
+                    # but reception must never be presented as a word position.
+                    await self._send_binary(base64.b64decode(event["delta"]))
+            elif not self._connection.answer_sdp:
                 await self._note_speaking()
                 await self._send_binary(base64.b64decode(event["delta"]))
+        elif kind == "output_audio_buffer.cleared":
+            await self._clear_playback()
         elif kind in {"session.usage.updated", "session.closed"}:
             self._wire_seconds = max(
                 self._wire_seconds, float(event.get("usage", {}).get("seconds", self._wire_seconds))
@@ -1163,6 +1246,7 @@ class LiveVoiceSession:
             for task in tuple(self._control_tasks):
                 task.cancel()
             await asyncio.gather(*self._control_tasks, return_exceptions=True)
+            await self._clear_playback()
             await self._send_json({"type": "reconnecting", "attempt": self._reconnect_attempts})
             await self._connection.close()
             delay = random.uniform(0.1, min(4.0, 2**self._reconnect_attempts))  # noqa: S311
@@ -1174,6 +1258,8 @@ class LiveVoiceSession:
             self._past_voice_seconds = self._voice_seconds
             self._wire_seconds = 0.0
             self._wire_epoch += 1
+            self._last_output_audio_end = 0.0
+            self._discard_audio_before = 0.0
             self._captions = {"user": "", "assistant": ""}
             self._resampler.reset()
             await self._open_replacement(history)
@@ -1223,6 +1309,8 @@ class LiveVoiceSession:
                 "webrtc_answer_sdp": self._connection.answer_sdp,
                 "continuous": True,
                 "reconnected": True,
+                "output_transport": self._output_transport(),
+                "session_id": self.session_id,
             }
         )
 
