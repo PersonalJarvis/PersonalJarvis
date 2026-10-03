@@ -13,6 +13,7 @@ import { useEventStore } from "@/store/events";
 import { AgentSwatch } from "../AgentSwatch";
 import type { SocietyAgent } from "../data";
 import { AgentMemoryFiles, LearnedInstructions } from "./AgentKnowledge";
+import { AgentAvatarEditor } from "./AgentAvatarEditor";
 
 const fieldClass = "w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60";
 
@@ -99,6 +100,7 @@ export function AgentProfileDialog({ agent, sample, onClose }: {
           <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
             <TabsList className="mx-6 mt-4 w-fit shrink-0" aria-label={t("society.profile_card.subtitle")}>
               <TabsTrigger value="profile">{t("society.profile_card.profile")}</TabsTrigger>
+              {!lead ? <TabsTrigger value="avatar">{t("society.companion.character")}</TabsTrigger> : null}
               <TabsTrigger value="memory">{t("society.profile_card.memory")}</TabsTrigger>
             </TabsList>
             <TabsContent value="profile" className="min-h-0 flex-1 overflow-y-auto px-6 pb-6">
@@ -120,6 +122,11 @@ export function AgentProfileDialog({ agent, sample, onClose }: {
                 <div><dt className="text-xs text-muted-foreground">{t("society.profile_card.location")}</dt><dd className="mt-1 break-all font-mono text-xs">{`society/${agent.agentId}/`}</dd></div>
               </dl>
             </TabsContent>
+            {!lead ? (
+              <TabsContent value="avatar" className="min-h-0 flex-1 overflow-y-auto px-6 pb-6">
+                <AgentAvatarEditor agent={agent} sample={sample} />
+              </TabsContent>
+            ) : null}
             <TabsContent value="memory" className="mt-3 min-h-0 flex-1 overflow-hidden"><AgentMemoryFiles agentId={agent.agentId} sample={sample} /></TabsContent>
           </Tabs>
           <footer className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-border px-6 py-4">
