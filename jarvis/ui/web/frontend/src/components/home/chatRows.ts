@@ -117,7 +117,9 @@ export function useChatRows({ poll = false }: { poll?: boolean } = {}): ChatRows
         const opened = openConversation("voice", row.id);
         if (stayOnVoice) {
           void opened.then((messages) => {
-            if (messages !== null) seedTranscript(transcriptFromMessages(messages));
+            const active = useEventStore.getState();
+            if (messages === null || active.activeKind !== "voice" || active.activeThreadId !== row.id) return;
+            seedTranscript(transcriptFromMessages(messages));
           });
         } else {
           void opened;
