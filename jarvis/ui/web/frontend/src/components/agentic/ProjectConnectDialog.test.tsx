@@ -111,7 +111,7 @@ describe("ProjectConnectDialog", () => {
     await screen.findByText("notes", { exact: true });
     fireEvent.click(screen.getByRole("button", { name: "New folder" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Name of the new folder" }), { target: { value: "research" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
     await waitFor(() => expect(api.createFolder).toHaveBeenCalledWith({ parent: null, name: "research" }));
     await waitFor(() => expect(api.fetchFolders).toHaveBeenCalledWith("/code/research", false));
     expect(onConnect).not.toHaveBeenCalled();

@@ -66,6 +66,9 @@ describe("Agentic IDE project flow", () => {
     fireEvent.click(screen.getByRole("button", { name: "Connect project" }));
     await waitFor(() => expect(openProject).toHaveBeenCalledWith("/code/app", undefined));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Connect project" })).toBeNull());
+    const setup = await screen.findByRole("dialog", { name: "New workspace" });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(setup.contains(document.activeElement)).toBe(true);
     expect(api.startIdeSession).not.toHaveBeenCalled();
   });
 

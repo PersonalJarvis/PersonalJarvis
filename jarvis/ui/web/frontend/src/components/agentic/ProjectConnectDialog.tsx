@@ -89,7 +89,7 @@ export function ProjectConnectDialog({ onClose, onConnect }: Props) {
         {choosing ? <>
           <fieldset disabled={busy} className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 disabled:opacity-60">
             <div ref={pickerRegion} className="flex min-h-0 flex-1 flex-col">
-              <FolderPicker selected={candidate} onSelect={(next) => { setCandidate(next); setError(null); }} />
+              <FolderPicker showSelection={false} selected={candidate} onSelect={(next) => { setCandidate(next); setError(null); }} />
             </div>
           </fieldset>
           <footer className="shrink-0 border-t border-border px-6 py-4 sm:px-7">
