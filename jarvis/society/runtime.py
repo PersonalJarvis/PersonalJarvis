@@ -1707,6 +1707,10 @@ class SocietyRuntime:
         halted = await self.scheduler.halt_all()
         await self._cancel_active_society_chats()
         await self.browser.close()
+        # The master stop also reclaims already-leased isolated desktops.
+        # Refusing NEW leases is not enough: an existing sandbox may still
+        # contain a live app/session and therefore must not outlive the stop.
+        await self._close_agent_screens()
         settled = 0
         for room in await self.rooms.list(state=RoomState.RUNNING):
             await self._settle_room_for_kill_switch(room)
