@@ -2464,7 +2464,7 @@ async def _verify_fail_justified(
 # The reactive loop re-decides the next single action from scratch each step,
 # so for a multi-step task ("play a song" = open -> search -> type -> select ->
 # play) it loses the thread, mashes the most obvious button, and the verifier
-# rubber-stamps it. Like Claude-in-Chrome, we make an ordered PLAN first and
+# rubber-stamps it. So we make an ordered PLAN first and
 # feed it into every executor turn as context, so the model knows the whole
 # task structure and which step it is on. The plan is GUIDANCE (the model still
 # grounds each click against the live screenshot); it is not a rigid macro.
@@ -4635,7 +4635,7 @@ async def _run_screenshot_loop(
 
         # Think. When a plan exists, feed it into the executor prompt so the
         # model knows the whole task structure and which step it is on
-        # (plan-first, like Claude-in-Chrome). Without a plan, the default
+        # (plan-first). Without a plan, the default
         # "emit ONE JSON action" message is used (stateless reactive path).
         plan_user_message: str | None = None
         if plan:

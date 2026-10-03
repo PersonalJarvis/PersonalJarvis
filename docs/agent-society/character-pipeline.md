@@ -250,7 +250,7 @@ out of a low-poly stack.
 
 | Clip | Loop | Archetypes | Used when |
 |---|---|---|---|
-| `idle` | yes | all | standing; the wander model's rest beats (Hermes constants, MASTERPLAN §2.7) |
+| `idle` | yes | all | standing; the wander model's rest beats (rest-biased, MASTERPLAN §2.7) |
 | `walk` | yes | all | moving at walking speed (`spirit`: glide) |
 | `run` | yes | biped, quadruped | moving to a purposeful checkpoint when the choreography queue is > 2 events deep |
 | `work` | yes | biped, spirit | at the desk, mission running (typing / conjuring) |
@@ -609,7 +609,7 @@ before the split and nothing is gained by moving them.
   whose terms grant commercial use of outputs (Tripo, xAI — re-read the terms at import time and
   record the date in `SOURCES.md`). Quaternius' Universal Base Characters (13 k triangles,
   realistic proportions) are the wrong style and budget and are NOT a candidate.
-- **Forbidden inputs:** Minecraft skins or any game's asset format/trademark (MASTERPLAN §7), Mixamo
+- **Forbidden inputs:** any game's skins, asset format or trademark (MASTERPLAN §7), Mixamo
   clips redistributed as files (Adobe's terms allow use inside a project, not redistribution of
   the raw clips — our repo is public), anything "found on Sketchfab" without a recorded license,
   any likeness of a real person without that person's consent.

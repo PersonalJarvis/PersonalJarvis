@@ -168,7 +168,7 @@ def _result_signals_failure(value: Any) -> bool:
     """Return whether a provider result explicitly reports non-execution.
 
     The mission tool broker returns structured ``success``/``status`` fields,
-    while Claude-style streams commonly use ``is_error`` and some adapters
+    while Anthropic-format streams commonly use ``is_error`` and some adapters
     serialize that mapping into the result's text content. All three shapes
     must override the preceding call frame: an attempted action is not proof
     that the action completed.

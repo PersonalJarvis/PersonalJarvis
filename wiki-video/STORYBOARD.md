@@ -9,9 +9,9 @@ Inter + JetBrains Mono. Content is sourced from the real code (see references pe
 
 1. **Intro — 0–240f (8.0 s).** Gigi ghost logo fades/springs in on charcoal; title
    "The Jarvis Wiki", subtitle "How your assistant remembers." One gold hairline.
-2. **The idea — 240–570f (11.0 s).** Karpathy's LLM-Wiki. "The assistant is the *editor*,
+2. **The idea — 240–570f (11.0 s).** A compiled wiki. "The assistant is the *editor*,
    the Markdown files are the codebase, Obsidian is the IDE." Compiled once & maintained —
-   not re-derived on every query. *(schema.md:13-17; ADR-0013)*
+   not re-derived on every query. *(schema.md:13-16; ADR-0013)*
 3. **Architecture — 570–930f (12.0 s).** Three-tier memory (short → mid → long, one-way flow)
    and the two-stage sleep-time curator: Conversation → Stage 1 Extractor (cheap, ADD-only) →
    SQLite journal → Stage 2 Consolidator (ADD / UPDATE / NOOP / INVALIDATE) → atomic write →

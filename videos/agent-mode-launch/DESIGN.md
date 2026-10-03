@@ -10,7 +10,7 @@ Canvas #0e0d0c; surface #191815; primary ink #f7f7f4; secondary ink #c2bdb0; acc
 
 ## Typography
 
-Inter 400/500/600 for all editorial text. Inter bold only for the two-word feature name. Main headlines 88–116px, supporting text 30–38px, indexed labels 22px. UI is enlarged through targeted crops. 96px horizontal safety margin. No serif imitation of the reference brand.
+Inter 400/500/600 for all editorial text. Inter bold only for the two-word feature name. Main headlines 88–116px, supporting text 30–38px, indexed labels 22px. UI is enlarged through targeted crops. 96px horizontal safety margin. No serif type.
 
 ## Motion
 
@@ -18,7 +18,7 @@ Native 60 fps. Functional camera reframes 0.55–0.8s with power3.inOut; arrival
 
 ## What NOT to Do
 
-- No copied reference audio, logos, or commercial footage in the final video.
+- No unlicensed audio, third-party logos, or commercial footage in the final video.
 - No invented application controls or live-performance claims.
 - No generic neon, particles, glass cards, or stock technology montage.
 - No redesign of the world, characters, or app.

@@ -14,8 +14,7 @@ for the shipped architecture ·
 > `github.com/PersonalJarvis/marketplace`. The rest of this document is the
 > preserved analysis that led there.
 
-The idea under analysis: a community-facing plugin marketplace (in the spirit
-of a hub like LobeHub) where **anyone** can publish a plugin for the Jarvis
+The idea under analysis: a community-facing plugin marketplace where **anyone** can publish a plugin for the Jarvis
 agent and the delegated agentic runs, **without that plugin's files ever
 living in this repository**. This document assesses how the idea fits the
 existing `jarvis/marketplace/` substrate, lays out the candidate distribution
@@ -149,7 +148,7 @@ Plugins published as `jarvis-plugin-*` packages; the app searches the feed.
   the *code* behind stdio servers, and the plausible future channel for the
   code-carrying tier (§2) if that tier ever opens.
 
-### Model D — Hosted registry service (what LobeHub actually runs)
+### Model D — Hosted registry service
 
 A web service with accounts, a publish API, search, ratings, stats, and a
 public storefront site.

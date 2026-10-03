@@ -90,8 +90,8 @@ import pytest as _pytest  # noqa: E402
         "ctrl+shift+space",
         "f3+f4",              # two-key chord, no modifier — still safe
         "ctrl+alt+m",
-        # Solo function keys: never hit while typing, the natural PTT keys
-        # (Discord-style). The old blanket "single key" rejection blocked these.
+        # Solo function keys: never hit while typing, the natural
+        # push-to-talk keys. The old blanket "single key" rejection blocked these.
         "f5",
         "f13",
         # Solo navigation-cluster keys: allowed deliberately (user choice) —

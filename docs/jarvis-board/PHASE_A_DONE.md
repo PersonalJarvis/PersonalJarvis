@@ -77,7 +77,7 @@ The plan records can be backfilled in Phase B or later, once the session/task se
 
 ### 3.5 The heatmap shows tasks per day, not "streak_level"
 
-The plan mentions a "GitHub-style contribution grid". The only pitfall here is Plan §0 ("no breaking streaks"). I render the intensity solely from `tasks_completed` — a cell with 0 is simply "less", not "you lost your streak". The streak badge (a small info label "5-day streak") disappears without fanfare when the user skips a day.
+The plan mentions a contribution grid (one cell per day). The only pitfall here is Plan §0 ("no breaking streaks"). I render the intensity solely from `tasks_completed` — a cell with 0 is simply "less", not "you lost your streak". The streak badge (a small info label "5-day streak") disappears without fanfare when the user skips a day.
 
 ## 4. Concrete plan constraints — how were they baked in?
 

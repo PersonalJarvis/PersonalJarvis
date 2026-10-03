@@ -8,8 +8,7 @@ monorepo but is not tied to Jarvis:
 - Embedded mode: Jarvis imports the package, mounts the router in
   its own FastAPI server, and shows a dashboard view.
 
-It is deliberately not an n8n clone — no drag-and-drop nodes, no graph.
-Instead:
+It deliberately has no drag-and-drop nodes and no graph. Instead:
 
 - **Jobs are YAML** — git-friendly, copy-pasteable, diffable.
 - **Timeline view** — all runs chronological instead of spatial.

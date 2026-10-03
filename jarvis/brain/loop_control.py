@@ -7,8 +7,8 @@ whoever owns the conversation. So they arrive as ONE optional object:
 
 * ``drain_steer`` — messages the person sent WHILE the turn ran. The loop
   folds them into the next round as user text, so a running job is redirected
-  instead of being restarted (Grok Bot: "send a new message to interrupt work
-  in progress").
+  instead of being restarted: a new message interrupts the work in
+  progress.
 * ``verify`` — the check that runs when the loop would otherwise finish: it
   judges the answer against the request and the log of tools that actually
   ran, and may send the turn back for one revision.

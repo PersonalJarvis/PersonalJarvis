@@ -264,7 +264,7 @@ export const TextScramble: React.FC<{
 };
 
 /**
- * TikTok-style word captions: words pop in one by one, the word being spoken is
+ * Word-by-word captions: words pop in one by one, the word being spoken is
  * highlighted amber. Timed evenly across [start, start+dur].
  */
 export const WordCaptions: React.FC<{

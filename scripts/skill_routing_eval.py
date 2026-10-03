@@ -1,13 +1,11 @@
 """Skill-routing eval (2026-06-24): does the router pick `run-skill` on a
-natural paraphrase, the way Claude Code does?
+natural paraphrase?
 
-Background — the "Claude-Code parity" change
-(docs/superpowers/specs/2026-06-24-skill-firing-claude-code-parity-design.md):
-the builtin skills already carry rich when_to_use fields, but the router used
-to almost never call `run-skill` on its own. The fix strengthened the router
-prompt stance + the AVAILABLE SKILLS framing so a plausibly-matching skill is
-the brain's first move. This script measures that behaviour against the LIVE
-router brain.
+Background — the prompt-judged skill invocation change: the builtin skills
+already carry rich when_to_use fields, but the router used to almost never
+call `run-skill` on its own. The fix strengthened the router prompt stance
++ the AVAILABLE SKILLS framing so a plausibly-matching skill is the brain's
+first move. This script measures that behaviour against the LIVE router brain.
 
 How it measures (zero side effects)
 -----------------------------------

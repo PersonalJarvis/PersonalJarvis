@@ -440,7 +440,7 @@ function ProgressRing({ percent, spinning }: { percent: number; spinning: boolea
 
 /**
  * The update entry point — at the foot of the sidebar since 2026-10-01
- * (`placement="sidebar"`), where the Claude app keeps its download icon; it
+ * (`placement="sidebar"`); it
  * used to sit in the title strip among the window buttons, where nobody saw
  * it. There it wears the signal hue so a waiting update is noticed.
  *
@@ -552,8 +552,8 @@ export function UpdateButton({ placement = "titlebar" }: { placement?: "titlebar
 
   const idle = !status?.managed || (!status.update_available && !status.pending_update);
   // In the title strip the button only exists while there is something to
-  // install. At the foot of the sidebar it always stands, like the Claude
-  // app's download icon: quiet with nothing waiting (a click says which
+  // install. At the foot of the sidebar it always stands as a download
+  // icon: quiet with nothing waiting (a click says which
   // version this is and can check now), blue with a dot once an update is in.
   if (idle && !inSidebar) return null;
   if (idle) {

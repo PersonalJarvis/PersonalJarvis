@@ -1,8 +1,6 @@
 """An agent's own shell: commands run in ITS workspace folder, nowhere else.
 
-Sandbox stance (maintainer decision 2026-09-02, after checking the field):
-Hermes Agent's default terminal backend is local and OpenClaw ships with its
-sandbox off, so the society does the same — a local shell with path
+Sandbox stance (maintainer decision 2026-09-02): a local shell with path
 containment and the existing risk tiers, no container by default. The
 ``ShellBackend`` protocol is the seam for an optional container backend
 later (capability-probed, one class); it is deliberately not built now.

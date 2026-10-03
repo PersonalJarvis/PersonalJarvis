@@ -139,13 +139,3 @@ two capability skips). See the
 [native macOS execution log](https://github.com/PersonalJarvis/PersonalJarvis/actions/runs/35435846490/job/105878237409).
 The final local Linux learning/continuity run passed all 51 tests.
 
-## Hermes reference
-
-Reference inspected: [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent),
-HEAD `44945d224c2ccd6e0a55f16223c7ab0dd39331bf` (2026-09-19), and its
-[persistent-memory documentation](https://hermes-agent.nousresearch.com/docs/user-guide/features/memory/).
-Relevant ideas are private profiles, concise persistent memory, source recall,
-and procedural skill reuse. Jarvis extends these ideas with per-owner concurrent
-review, failure learning, exact-source checks, correction retirement, replay-safe
-receipts and explicit reuse measurements. This implementation was independently
-written; no upstream source code was copied.

@@ -40,7 +40,7 @@ export const useAppZoomSupport = create<{ support: AppZoomSupport }>(() => ({
 }));
 
 /**
- * The Chrome-style bubble that names the new level after a zoom step. `seq`
+ * The bubble that names the new level after a zoom step. `seq`
  * changes on every step so the bubble restarts its hide timer.
  */
 export const useZoomIndicator = create<{ open: boolean; seq: number }>(() => ({
@@ -153,7 +153,7 @@ export function useAppZoom(): void {
       const { level: current, setLevel } = useAppZoomSettings.getState();
       const next = nextAppZoom(current, intent);
       if (next !== current) setLevel(next);
-      // Shown even at the ends of the range, like Chrome: the bubble is how
+      // Shown even at the ends of the range: the bubble is how
       // the user learns that 300 % is as far as it goes.
       showZoomIndicator();
     };

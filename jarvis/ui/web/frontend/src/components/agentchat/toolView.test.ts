@@ -93,7 +93,7 @@ describe("inputSummary", () => {
 });
 
 describe("token formatting", () => {
-  it("reads like the Claude CLI: 4.8k, 1.2M", () => {
+  it("reads compactly: 4.8k, 1.2M", () => {
     expect(formatTokens(219)).toBe("219");
     expect(formatTokens(4800)).toBe("4.8k");
     expect(formatTokens(12000)).toBe("12k");

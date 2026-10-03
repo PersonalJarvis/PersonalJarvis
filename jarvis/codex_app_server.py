@@ -3,7 +3,7 @@
 This module owns the local JSONL protocol, process lifecycle, and the dedicated
 Codex identity used by subscription voice. The user signs in directly inside a
 Jarvis-owned ``CODEX_HOME``; OAuth tokens are never copied, hard-linked, or
-borrowed from an ordinary Codex/IDE profile. Credentials are forced into that
+reused from an ordinary Codex/IDE profile. Credentials are forced into that
 profile's file store, and live ``account/read`` is the authoritative account and
 plan check.
 API-key environment variables are removed so a subscription request cannot

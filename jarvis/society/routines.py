@@ -1,6 +1,6 @@
 """Per-agent routines = tagged tasks in the existing Automations scheduler.
 
-No second scheduler (agent-definition §2, build plan wave 9): a routine is a
+No second scheduler (agent-definition §2): a routine is a
 ``TaskSpec`` with ``created_by="society"``, the tags ``society`` and
 ``agent:<agent_id>``, and a title prefixed ``[agent:<name>]``. It therefore
 appears in the Automations section automatically (finish-it-everywhere)

@@ -2,30 +2,6 @@
 
 The rejected first cut slowed a 30 fps recording to playback rates of 0.336–0.407. This supplies only about 10–12 distinct source images per output second. A 60/120 fps export of that same footage would repeat frames and retain the defect. Revision 2 removes the video layer and renders the original isolated product fixture at every output timestamp. The cursor is an independent vector object whose position is evaluated continuously; fast travel is separated from longer reading holds.
 
-## Reference motion inventory
-
-Dense inspection: six samples per second across short transition windows, rather than the previous three-second overview sampling.
-
-| Reference window | Observed treatment | Reconstruction for this film |
-| --- | --- | --- |
-| Debugging, 18–22s | Text/terminal plane breaks into small blocks while the camera lifts away into an abstract space. Pixels and source text overlap during the transition. | The actual request recedes into a brief card; its two clauses split into the specialists' task cards. Shared text maintains identity across the handoff. |
-| Debugging, roughly 22–37s | Several source clusters develop separately; moving trajectories connect a shared investigation. | Three named agents and two real task branches; SVG connections draw on and packets travel continuously along their paths. |
-| Debugging, roughly 37–49s | Dense arrays align, camera travels through them, then isolates one repeated finding. | Checklist rows assemble in stages and concentrate onto the unresolved welcome-email item. No unsupported data metric is invented. |
-| Ops review, 37–41s | A circular aperture occludes the surrounding workspace. Its contents change through vertical travel and focus changes; the aperture is larger than the source object. | Circular masked inspection of the checklist, expanding to reveal the complete briefing sheet. |
-| Ops review, 45–49s | Camera moves down the work axis; cards/slide sheets enter from different depths and align into an artifact. | Three evidence sheets slide into a single launch briefing, with staged row reveals and a held readable result. |
-| Both, interaction shots | Input close-up, purposeful cursor motion, short press feedback, then an immediate change of viewpoint. | Newly rendered vector pointer, measured actual control centers, 0.45–0.75s cubic-eased travel and a 0.14s press. |
-
-These describe observable motion. They do not identify the original authoring application or proprietary easing curves. Source files and the exact original motion implementation are unavailable.
-
-## Additional close inspection
-
-The overview frames hid several important treatments. Additional six-samples-per-second strips cover debugging 30–34s and 42–46s, and the ops-review 23–27s window:
-
-- **Camera push through a data field:** three distinct round clusters settle, then grow into the foreground until individual columns fill the image. This is a change of camera scale and depth, not simply opacity on a static dot background. Source: debugging 30–34s. For reconstruction, preserve the same indexed dots while changing camera projection and source layout; never regenerate random positions on each frame.
-- **Vertical reveal with accelerating information density:** a sparse table header gives way to aligned columns, then the camera travels into the records. Labels move out of the reading zone as the records take over. Source: debugging 42–46s. A staged data reveal followed by a camera move explains the hierarchy; revealing every column at the start would destroy the effect.
-- **Directional blur during a whip scroll:** the ops-review thread stretches into vertical streaks, then resolves into a different part of the same conversation. The frame is not uniformly blurred throughout the shot. Blur is strongest during fast travel and disappears for reading. Source: ops review 23–27s. This is distinct from a slow zoom or a crossfade.
-- **Document identity survives the camera change:** recognizable attachment chips remain coherent before and after the whip. Maintaining their identity is what makes a fast move readable.
-
 ## Practical effect recipes
 
 | Family | What actually moves | Reproduction rule | Common failure |
@@ -45,7 +21,7 @@ The overview frames hid several important treatments. Additional six-samples-per
 | Content-to-output morph | A persistent card/attachment | Match position, scale, radius and identity at the handoff | Two unrelated rectangles crossfading |
 | Logo resolve | Mark and type in a short sequence | Finish the useful result first; keep the last lockup stable | A long logo intro or an empty gap before the mark |
 
-Revision 2 applies the families that explain this product's real example: kinetic type, measured UI zooms, independent cursor movement, task splitting, traveling connections, circular inspection, drawn emphasis, document assembly, zoom-through and a short logo resolve. It does not copy the debugging film's task-specific particle data or pretend those graphics are product features.
+Revision 2 applies the families that explain this product's real example: kinetic type, measured UI zooms, independent cursor movement, task splitting, traveling connections, circular inspection, drawn emphasis, document assembly, zoom-through and a short logo resolve. Abstract graphics never pretend to be product features.
 
 ## Smoothness versus playback rate
 

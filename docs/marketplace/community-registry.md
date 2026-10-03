@@ -6,8 +6,8 @@
 **Skills for other agents:** [portable-skills.md](portable-skills.md)
 
 Anyone can publish plugins and skills for Personal Jarvis; every submission
-that passes automated checks is listed automatically — an open registry in
-the ClawHub spirit, with **zero maintainer infrastructure**: GitHub pull
+that passes automated checks is listed automatically — an open registry
+with **zero maintainer infrastructure**: GitHub pull
 requests are the upload API, Actions is the validation pipeline, and Pages
 is the CDN.
 

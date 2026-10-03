@@ -9,7 +9,7 @@ const step = (over: Partial<ThinkingStep>): ThinkingStep => ({
   id: "s", kind: "tool", labelKey: "thinking.step_tool", status: "done", startedTs: 1000, ...over,
 });
 
-it("reopens a stored voice turn as a Claude/Codex-style timeline", () => {
+it("reopens a stored voice turn as a prose-and-quiet-lines timeline", () => {
   const steps: ThinkingStep[] = [
     step({ id: "b", kind: "brain", labelKey: "thinking.step_brain", detail: "grok · grok-4.3", durationMs: 900 }),
     step({ id: "p", kind: "thought", labelKey: "thinking.step_thought", detail: "I'll check the **wiki** first." }),

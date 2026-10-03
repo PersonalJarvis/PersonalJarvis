@@ -118,8 +118,7 @@ closes when the whole line is done. The dialog says so while you type.
 
 ### Keyboard: the Key Menu
 
-Press **Ctrl+B** (also on a Mac), then one more key, the way tmux and herdr
-work. A bar at the bottom of the window turns on and says **PREFIX** with the
+Press **Ctrl+B** (also on a Mac), then one more key. A bar at the bottom of the window turns on and says **PREFIX** with the
 keys you can press next; `?` shows all of them, Esc or any other key goes
 back to typing. The chord is taken before the focused pane sees it, so it
 works while you type in an agent. To send Ctrl+B itself to the agent (Claude

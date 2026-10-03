@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make all 12 user-facing docs in the separate `personal-jarvis-webui` repo readable for non-developers — gentle Claude-Code-style jargon glossing — without losing any technical depth.
+**Goal:** Make all 12 user-facing docs in the separate `personal-jarvis-webui` repo readable for non-developers — gentle jargon glossing — without losing any technical depth.
 
 **Architecture:** Clone the separate `personal-jarvis-webui` repo into an isolated working dir, work on a dedicated branch, rewrite only the **body prose** of each `src/content/docs/*.md` per the five-rule glossing canon, keep `npm run build` green (frontmatter/MDX intact), then bring the push back to the maintainer for sign-off. No code, no CSS, no frontmatter, no new files.
 

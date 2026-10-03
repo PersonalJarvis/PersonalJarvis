@@ -4,8 +4,7 @@ Status: shipped 2026-08-14. Consumer half of the store; the publishing half
 lives in [publishing-plan.md](publishing-plan.md).
 
 Every installable community entry — plugin or skill — is offered the same
-three ways on its detail page, the pattern comparable stores (ClawHub,
-Smithery, LobeHub) converged on, adapted from the npm world to a Python app:
+three ways on its detail page:
 
 | Surface  | Line                                                          | Who types it |
 | -------- | ------------------------------------------------------------- | ------------ |

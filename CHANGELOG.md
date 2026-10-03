@@ -16,7 +16,7 @@ versioning per [SemVer](https://semver.org/).
 ### Added
 
 - An editor for appshots, opened from the corner card
-- Draw traces the way the Codex app does
+- Draw traces as plain prose with one quiet line per stretch of calls
 - Change floors with the elevator doors and a real button panel
 - A clickable, draggable appshot card in the screen corner
 - Make the area picker's magnifier a round lens
@@ -29,13 +29,13 @@ versioning per [SemVer](https://semver.org/).
 - Bring back the quiet session counts in the project tree
 - Drop the workspace pane limit and the 4x4 grid bound
 - Drop the running marks from the project tree
-- Restyle the project tree as a quiet Codex-style folder list
+- Restyle the project tree as a quiet folder list
 - Arcade floor with ten playable retro cabinets
 - The SOUL.md section shows the assistant's whole profile
 - Drag a stack of side-by-side seams as one line from a seam's ends
 - Record the appshot shortcuts and default the area to both Shift keys
-- Give the area picker ShareX's region-capture look
-- Draw turns as a Claude/Codex-style timeline
+- Freeze and dim the screen in the area picker, with window snapping and a pixel magnifier
+- Draw turns as a timeline of the model's prose and one quiet line per call
 - Select an area of the screen on its own shortcut
 - Tell a finished turn's work as a written report
 - Jarvis follows the person as their chosen pet, in 3D
@@ -148,7 +148,7 @@ versioning per [SemVer](https://semver.org/).
 
 ### Added
 
-- A quiet, Claude-style front page: one greeting, one composer, and a voice mode that lives inside the chat with a flowing aurora glow.
+- A quiet front page: one greeting, one composer, and a voice mode that lives inside the chat with a flowing aurora glow.
 - Open any agent's chat on the front page from the sidebar; `@` in the Jarvis chat names your agents and connected plugins.
 - Reasoning traces drawn as a threaded rail, with a wider, calmer column for agent chats.
 - A restyled sidebar with search, your most-used agents, every recent chat, and the update button in its footer.
@@ -941,7 +941,7 @@ hand, published with the digests to check them against.
 ### Added
 
 - **Grok Build in the Open-beside menu.** The official `grok` CLI is now a
-  workspace terminal like Claude Code and Codex: pick it when splitting a
+  workspace terminal beside Claude Code and Codex: pick it when splitting a
   pane, resume the same conversation, and sign in through SuperGrok or
   X Premium+. The xAI API-key card stays a separate thing.
 
@@ -1697,7 +1697,7 @@ a long list of voice, realtime, Agentic IDE and launcher fixes.
   network no longer explodes and re-settles on each change;
   `prefers-reduced-motion` gets the still layout.
 
-- **Run visualization draws a run as an n8n-style workflow.** Every card
+- **Run visualization draws a run as a node-graph workflow.** Every card
   carries a category — trigger, reasoning, command, file, search, web,
   integration, agent, result, deliverable — with its own glyph and per-theme
   hue; parallel workers branch into lanes that merge at the result.
@@ -2193,7 +2193,7 @@ macOS fixes.
   model supplies only labels; the app draws the markup itself, so nothing
   model-written is ever served as HTML. The tool is offered only on turns
   that actually ask for a picture.
-- A Visualization section. Every run is drawn as an n8n-style node graph,
+- A Visualization section. Every run is drawn as a node graph,
   a live run's timeline follows the mission while it works, and a run's
   gallery page leads with its mission map.
 - Wallpapers, properly: bring your own picture, mark favourites, and give
@@ -3441,7 +3441,7 @@ First consolidated release of the **Jarvis Board**: Phase A through D.
 
 ### Not in Release
 
-- **Phase E (Public Aggregator / Strava-style segments)**: deliberately
+- **Phase E (Public Aggregator / public leaderboard segments)**: deliberately
   not built. Plan §0 requires ≥ 2 months of Phase-D burn-in first,
   so that anti-cheat mechanisms can be designed evidence-based.
   First Phase-E decision: ~ 2026-06-25.

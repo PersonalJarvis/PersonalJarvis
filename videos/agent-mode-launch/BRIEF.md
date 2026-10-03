@@ -12,7 +12,7 @@ length: 85s
 
 # Agent Mode launch film
 
-Create a finished approximately 85-second HyperFrames video using the two supplied YouTube films as structural references. The user explicitly selected HyperFrames, their own branding, real use cases, faithful digital product replicas, background music, and a YouTube-ready deliverable. Production and rendering are within the requested task.
+Create a finished approximately 85-second HyperFrames video. The user explicitly selected HyperFrames, their own branding, real use cases, faithful digital product replicas, background music, and a YouTube-ready deliverable. Production and rendering are within the requested task.
 
 ## Direction
 
@@ -20,7 +20,7 @@ One launch briefing runs from request to team handoff, direct specialist instruc
 
 ## Defaults
 
-English matches the references and remains unchanged in the revision. 1920x1080, native 60 fps. Music-led, no narrator, following the visually driven references. Use a separate licensed instrumental and include attribution in the upload copy. No publishing to YouTube is requested.
+English, unchanged in the revision. 1920x1080, native 60 fps. Music-led and visually driven, no narrator. Use a separate licensed instrumental and include attribution in the upload copy. No publishing to YouTube is requested.
 
 ## Assets
 

@@ -41,7 +41,7 @@ export const S2Idea: React.FC = () => {
   return (
     <AbsoluteFill style={{ justifyContent: "center", alignItems: "center" }}>
       <div style={{ width: "100%", maxWidth: 1240 }}>
-        <Eyebrow delay={2}>The idea — Karpathy's LLM Wiki</Eyebrow>
+        <Eyebrow delay={2}>The idea — a wiki the assistant compiles</Eyebrow>
         <div style={{ height: 24 }} />
         <Headline size={TYPE.h1} delay={8}>
           Your assistant <Gold>edits its own memory.</Gold>

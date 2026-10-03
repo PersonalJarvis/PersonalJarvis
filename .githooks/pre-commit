@@ -66,6 +66,23 @@ if [ -f "$lang" ]; then
     fi
 fi
 
+# --- DESIGN-REFERENCE gate (FAIL-CLOSED on a confirmed hit) ------------------
+# Public text describes our features directly and never names another product
+# as their template (AGENTS.md, "Public product descriptions"). Checks only the
+# STAGED additions; rc 1 = confirmed hit, any other rc fails OPEN (CI runs the
+# whole-tree scan as the backstop).
+designref="scripts/ci/check_design_references.py"
+if [ -f "$designref" ]; then
+    "$PY" "$designref" --staged </dev/null
+    if [ "$?" -eq 1 ]; then
+        echo ""
+        echo "pre-commit BLOCKED: DESIGN-REFERENCE gate - staged text names another"
+        echo "  product as our design template. Describe the feature directly, or mark"
+        echo "  a license header / factual integration line with 'design-ref-allow'."
+        exit 1
+    fi
+fi
+
 # --- DIST CONSISTENCY gate (FAIL-CLOSED on a confirmed broken bundle) ---------
 # The shipped frontend bundle (jarvis/ui/web/dist/) must be self-consistent IN
 # GIT: a commit that rewrites dist/index.html to freshly-hashed chunks while

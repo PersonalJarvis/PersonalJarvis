@@ -18,7 +18,7 @@ const THINKING_TIMEOUT_MS = 60_000;
  * the model that will answer (click to change it) and send.
  *
  * Restyled 2026-08-23 for the new front page (maintainer sketch): one
- * rounded card in the Claude layout. The behaviour is unchanged — same send
+ * rounded card. The behaviour is unchanged — same send
  * path, same thread routing, same dictation mirror; only the frame moved.
  */
 export function ChatInput() {

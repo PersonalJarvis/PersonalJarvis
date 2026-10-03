@@ -74,9 +74,7 @@ fi
 # 1-3, installer.py continues with 4-6 — keep the numbering in sync there.
 # Connected-journey look (maintainer request 2026-07-16, visuals only): every
 # line hangs off one continuous dim │ gutter, phases are gold ◆ diamonds,
-# ┌ opens the journey and installer.py's outro └ closes it — the visual
-# grammar of the widely-loved clack-style wizards, recolored to the brand
-# gold. The glyphs live ONLY in these helpers (and their installer.py /
+# ┌ opens the journey and installer.py's outro └ closes it. The glyphs live ONLY in these helpers (and their installer.py /
 # install.ps1 twins) so the three surfaces stay in visual lockstep.
 GUT="${DIM}│${RST}"
 phase() {

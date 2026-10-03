@@ -23,8 +23,7 @@ Build | Plan switch next to the permission pill.
 
 The **Jarvis surface** (the front page's chat — Jarvis with a keyboard, see
 ``jarvis.agent_chat.store.SURFACES``) shows ONE ladder whatever answers:
-``ask`` / ``accept-edits`` / ``bypass`` plus ``plan``, the three stances
-Claude Code's own modes express, in Claude Code's words (maintainer,
+``ask`` / ``accept-edits`` / ``bypass`` plus ``plan`` (maintainer,
 2026-08-25). A CLI seat folds them onto its vendor spelling through
 :func:`normalize_permission`; the brain runner reads them as stances (see
 ``jarvis.agent_chat.approval_bridge``). ``bypass`` never overrides the

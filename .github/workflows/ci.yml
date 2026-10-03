@@ -1,7 +1,7 @@
 # CI orchestrator — the ONE pipeline every change goes through.
 #
-# Rebuilt 2026-09-28 after the Hermes Agent pipeline (NousResearch/hermes-agent),
-# adapted to this repo. What changed and why — measured on the old file:
+# Rebuilt 2026-09-28 as a sharded, change-classified pipeline. What changed
+# and why — measured on the old file:
 #
 #   * The test suite ran as ONE pytest process for 75-95 min on a 4-core runner
 #     and hit the job timeout on most runs; one wedged test ate the budget.

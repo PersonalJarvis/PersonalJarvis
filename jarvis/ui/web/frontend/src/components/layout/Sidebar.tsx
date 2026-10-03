@@ -125,7 +125,7 @@ export interface SidebarProps {
 }
 
 /** Width the sidebar was designed at, and the one a double-click restores.
- *  240 since 2026-09-02 (v4 redesign): the Cursor / Grok column. The
+ *  240 since 2026-09-02 (v4 redesign): a narrow column. The
  *  navigation is a single 14 px list now, so it fits; the Agentic IDE's
  *  chat list, which drove the older 400, is still one drag away and the
  *  dragged width is remembered. */
@@ -342,7 +342,7 @@ export function Sidebar({
   // Lit while any hub section is on screen — the profile button IS the hub's
   // entry point now, so it carries the "you are here" state for all of them.
   const hubActive = (SETTINGS_HUB_IDS as readonly string[]).includes(active);
-  // Rows read like the Claude app's column: regular weight, light ink at
+  // Rows: regular weight, light ink at
   // rest (muted grey made every entry look disabled), the icon in the same
   // ink, a lift on hover. Section labels and tail rows stay muted.
   const rowClass = "flex min-h-8 w-full items-center gap-3 rounded-lg px-3 text-base text-foreground transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
@@ -402,8 +402,7 @@ export function Sidebar({
             )}
             <PetMark size={railed ? 36 : 20} reactive />
           </span>}
-          {/* One quiet row, like the workspace switcher in Linear or Cursor:
-              mark, name, status dot. It used to be a two-line identity card
+          {/* One quiet row: mark, name, status dot. It used to be a two-line identity card
               whose second line said "Ready" for as long as nothing was wrong,
               which is almost always — the one word that carries no news took
               the loudest spot in the column. The dot says "fine" on its own
@@ -587,8 +586,7 @@ export function Sidebar({
             </span>
             {!railed && <span data-testid="sidebar-profile-name" className="min-w-0 flex-1 truncate text-left">{footerName}</span>}
           </button>
-          {/* The update lives here now, where Claude keeps its download icon:
-              in sight on every screen, not among the window buttons. */}
+          {/* The update lives here now: in sight on every screen, not among the window buttons. */}
           <Suspense fallback={null}><UpdateButton placement="sidebar" /></Suspense>
           <button type="button" {...marketplacePrefetch} onClick={() => setActive("marketplace")} title={t("nav.marketplace")}
             aria-label={t("nav.marketplace")} data-testid="nav-row-marketplace"

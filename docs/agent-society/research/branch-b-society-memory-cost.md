@@ -201,16 +201,16 @@ The synthesis: the incident is a real-world proof that our chosen substrate (sha
 
 **State of the art, 2026 (verified):**
 
-- **LangGraph** — graph of nodes/edges, the most production-hardened (checkpointing, rollback, LangSmith observability); overtook CrewAI in stars. Best mental model for our orchestrator: a graph with durable checkpoints = our event log + state machine.
+- **LangGraph** — graph of nodes/edges, the most production-hardened (checkpointing, rollback, LangSmith observability); overtook CrewAI in stars.
 - **AutoGen / AG2** — conversation-centric (group debate, consensus). Good for a "council" of agents; expensive if used naively (verbose chat) — a caution, not a template.
-- **CrewAI** — role-based "crews" with process types; lowest barrier. Its role/crew abstraction is the closest match to "user creates specialized agents."
+- **CrewAI** — role-based "crews" with process types; lowest barrier.
 - **OpenAI Agents SDK** — explicit handoffs + built-in tracing/guardrails (the productionized successor to the experimental **Swarm**).
-- **Claude Agent SDK** — **subagents** (a *hierarchy* with one Claude on top, each child with its own context) and, from **February 2026, Agent Teams** (a *flat* group of Claude instances coordinating through **shared state**, self-distributing with no central router). Jarvis's own fan-out is the subagent model; the society's peer agents resemble Agent Teams — both patterns are validated by Anthropic's own product direction.
+- **Claude Agent SDK** — **subagents** (a *hierarchy* with one Claude on top, each child with its own context) and, from **February 2026, Agent Teams** (a *flat* group of Claude instances coordinating through **shared state**, self-distributing with no central router).
 - **Generative Agents / "Smallville"** (Stanford, Park et al., arXiv 2304.03442) — 25 agents with a **memory stream + reflection + planning** loop; the origin of believable autonomous agents and the reason our agents need durable memory, not just a prompt.
 - **Project Sid / Altera** (arXiv 2411.00114) — 1,000+ agents in Minecraft forming professions, laws, culture and currency via the **PIANO** architecture (Parallel Information Aggregation via Neural Orchestration: many concurrent cognitive streams kept coherent). Directly relevant to the maintainer's "society living in a game world."
 - **OASIS / CAMEL** (arXiv 2411.11581) — social simulation up to **1M agents** with a clean module split (Environment Server, RecSys, Time Engine, Agent Module). Proves the *projection* pattern: the world is a server, agents are modules, time is a tick engine.
 
-**Which pattern fits us:** an **orchestrator-worker hierarchy with a shared blackboard** (LangGraph-style durable state + Claude-subagent-style bounded fan-out), *not* a market and *not* a free-form debate club. At 3–15 agents, centralized command with a shared knowledge index is cheapest and safest.
+**Which pattern fits us:** an **orchestrator-worker hierarchy with a shared blackboard** (durable checkpointed state + bounded fan-out), *not* a market and *not* a free-form debate club. At 3–15 agents, centralized command with a shared knowledge index is cheapest and safest.
 
 **The 3D game world is a projection of the society event log — not a second source of truth.** This is the cleanest architecture and it falls straight out of event sourcing: the world-view subscribes to the bus (exactly as `JarvisAgentRegistry` already builds a live tree from bus events) and renders state. "An agent walks to a checkpoint" = a worker transitions mission state; "an agent lives/idles" = a heartbeat with no LLM cost; "two agents talk" = an addressed `QUERY/ANSWER` pair on the board; the "model card" (rotating 3D figure + specs) reads straight from the `society_agents` row and the live `AgentNode` (which already carries provider, model, cost, tokens, tool-call history — `registry.py:84-109`). Building the world as a *view* means the simulation can never desync from what the agents actually did, and the retro-pixel UI layer stays entirely decoupled from orchestration.
 

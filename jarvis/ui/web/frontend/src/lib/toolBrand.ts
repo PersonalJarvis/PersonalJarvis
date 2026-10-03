@@ -2,8 +2,8 @@
  * Tool name → brand mark, for the reasoning steps of a turn.
  *
  * A tool step only knows the tool's registry name ("gmail_search",
- * "plugin-gmail", "google_calendar_list", "run_shell"). The turn view wants
- * what the Claude app shows for a tool call: the service's mark in a small
+ * "plugin-gmail", "google_calendar_list", "run_shell"). For a tool call the
+ * turn view wants the service's mark in a small
  * tile and a readable label. This module is the pure mapping — no React, no
  * store — so the rule ("which brand does this tool belong to?") is unit-
  * testable on its own and identical wherever a tool name is rendered.

@@ -1,7 +1,7 @@
 """Binding an agent to its one canonical chat, and delivering board messages
 into it.
 
-Identity chain (agent-definition §2, build plan decision b): roster row →
+Identity chain (agent-definition §2): roster row →
 session id ``society:<agent_id>`` (a pure function; no pointer column) →
 ``ensure_session`` mirrors the row's provider / model / effort onto the
 session at bind time and re-seats it when the card changes (transcript

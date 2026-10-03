@@ -83,7 +83,7 @@ def untagged_modules() -> list[str]:
     """Route module stems with >=1 ``APIRouter(...)`` that lacks ``tags=``.
 
     An untagged router is grouped under ``default`` in the dynamic
-    ``jarvis api <tag> <op>`` tree, which breaks the gcloud-style command
+    ``jarvis api <tag> <op>`` tree, which breaks the per-domain command
     grouping. Every router must declare ``tags=["<domain>"]`` so its operations
     land in a clean ``jarvis api <tag>`` group.
     """
@@ -117,7 +117,7 @@ def main() -> int:
             print(f"  - jarvis/ui/web/{stem}.py  (an APIRouter(...) has no tags=[...])")
         print(
             "\nAn untagged router is grouped under `default` in the dynamic "
-            "`jarvis api <tag> <op>` tree, breaking gcloud-style grouping. Add "
+            "`jarvis api <tag> <op>` tree, breaking per-domain grouping. Add "
             'tags=["<domain>"] to the APIRouter(...) call.'
         )
         status = 1

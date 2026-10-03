@@ -43,24 +43,24 @@ Three concrete gaps, in order of how much they hurt:
 
 ---
 
-## 2. What ClawHub does, and what we take from it
+## 2. Design choices for the publish screen
 
-ClawHub's "Add a skill or plugin" screen makes four choices visible:
+A publish screen could make four choices visible:
 
-| ClawHub | Take it? |
+| Choice | Take it? |
 |---|---|
 | Publisher context first (personal account or org), changeable later | **Yes** — but personal-only in v1 (see §7, D3) |
 | A `Skill` / `Plugin` toggle before anything else | **No** — see §3, this is the split we are removing |
 | Source type: **Code plugin** (`package.json` + manifest, executable) | **No** — executable community code stays out of scope |
 | Source type: **Bundle plugin** (`.zip` / `.tgz` archive upload) | **Partly** — accept a folder or zip as *input*, but the bytes land in git, not in blob storage |
 
-The important divergence: ClawHub asks the author to classify their work
-**up front**, then validates. We invert it — **the folder is the
+The author is never asked to classify their work **up front** before
+validation. Instead, **the folder is the
 classification**. The author submits an Agent Plugins directory; what is
 inside it decides what kind of card it becomes. Fewer wrong turns, and it
 matches the spec, where components are optional and additive.
 
-The second divergence: ClawHub hosts archives. We keep Model A1 — *the
+Archives are never hosted. We keep Model A1 — *the
 reviewed bytes are the shipped bytes*. A submission's files live in the
 registry repo, so there is no archive to fetch at install time, no hash to
 verify, no second host to trust, and delisting is a `git revert`.
@@ -101,8 +101,7 @@ submissions/<name>/
 ```
 
 Within the plugin shape, what the author puts in decides the rest — the
-store labels it, the author never sub-classifies it (this is where ClawHub
-asks up front and we do not):
+store labels it, the author never sub-classifies it:
 
 | Shape | Contains | Carries code? | Community |
 |---|---|---|---|
@@ -131,8 +130,8 @@ intact — all four enforced in `agent_plugins_loader.py` as of 2026-08-14:
 **Why the bundle shape is worth having.** A bundle written for us runs
 unchanged in ChatGPT, Cursor, Copilot, Kiro, and VS Code, and theirs run
 here — they read `skills/` and `mcp.json` and ignore our extension
-namespace, exactly as the spec intends. ClawHub's hard split gives that up
-on the plugin side; we keep the friendly two-door upload AND the portable
+namespace, exactly as the spec intends. A hard skill/plugin split would give
+that up on the plugin side; we keep the friendly two-door upload AND the portable
 package underneath.
 
 **Back-compat is free.** `CommunityIndex` is already `extra="allow"`, so the
@@ -167,7 +166,7 @@ command", and every later surface calls the same validator underneath.
 
 ### Path 2 — Plugins → **Publish** (in-app)
 
-The ClawHub screen, rebuilt inside the desktop app: publisher line, a form
+A publish screen inside the desktop app: publisher line, a form
 for the six fields, drag a folder or zip onto it, live validation with the
 real rule set, a diff-style preview of what the store card will look like,
 then one button that runs the same `gh` flow. For contributors who do not
@@ -250,7 +249,7 @@ path-traversal and size caps, which is a trust change, not a format one.
 
 ## 7. Open decisions for the maintainer
 
-**D1 — Org publishing.** ClawHub lets you publish as an org. Our gate
+**D1 — Org publishing.** Our gate
 compares `publisher` to the PR author, so an org login would never
 auto-merge. Supporting it means an extra membership check in the gate.
 *Recommended:* personal logins in v1, org support in a later wave — it is a

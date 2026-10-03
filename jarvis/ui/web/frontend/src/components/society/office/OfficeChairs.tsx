@@ -2,13 +2,11 @@
  * The office's chairs, built once as merged geometry so every copy costs a
  * handful of draw calls however much detail a chair carries.
  *
- * - The desk task chair is an ergonomic mesh chair in the Aeron / Gesture
- *   class: a sculpted seat with a waterfall front edge, a curved mesh back in
+ * - The desk task chair is an ergonomic mesh chair: a sculpted seat with a waterfall front edge, a curved mesh back in
  *   a black frame with a lumbar pad, T-arms with soft pads, a gas lift in its
  *   sleeve and a polished five-star base on twin-wheel casters. It is exported
  *   as a part list (`TASK_CHAIR_PARTS`) that `DeskInstances` instances per desk.
- * - The meeting chair is a soft-pad conference chair after the Eames
- *   Aluminium Group: stitched leather pads slung between polished side rails
+ * - The meeting chair is a soft-pad conference chair: stitched leather pads slung between polished side rails
  *   on a four-star base.
  *
  * Both keep the seat top where the seated pose expects it (0.52 m at a desk,

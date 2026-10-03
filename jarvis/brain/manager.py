@@ -6266,8 +6266,8 @@ class BrainManager:
         CLEAR top candidate that cannot dispatch anything, the hint now carries
         the skill's full rendered instructions in a conditional frame — the
         model only has to decide "is this what the user meant", not decide AND
-        remember to call a tool (mirrors Claude Code loading a skill's whole
-        instruction body once selected). The decision explicitly stays with
+        remember to call a tool (the skill's whole instruction body is loaded
+        once it is selected). The decision explicitly stays with
         the model: a wrong candidate is ignored, never executed, so a skill is
         still only ever used when it serves the request.
 

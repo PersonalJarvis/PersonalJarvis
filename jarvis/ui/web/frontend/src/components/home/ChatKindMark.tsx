@@ -7,7 +7,7 @@ import type { ChatRow } from "@/components/home/chatRows";
  * The small mark in front of a history row that says what kind of chat it is:
  * an open ring for a typed chat, sound bars for a voice chat — the same bars
  * the composer's voice button wears. Both sit in one 14 px box in the same
- * muted tone, the way the Claude app marks its chat and code sessions, so the
+ * muted tone, so the
  * column reads as one list with two clearly different kinds in it.
  */
 export function ChatKindMark({

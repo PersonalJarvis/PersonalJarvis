@@ -111,8 +111,7 @@ def venv_python() -> Path:
 # ---------------------------------------------------------------- presentation
 # Connected-journey look (maintainer request 2026-07-16, visuals only): every
 # line hangs off one continuous dim │ gutter, phases are gold ◆ diamonds, and
-# the flow closes with a └ outro — the clack-style wizard grammar, recolored
-# to the brand gold. Twins: the phase/ok/note/err helpers in install.sh and
+# the flow closes with a └ outro. Twins: the phase/ok/note/err helpers in install.sh and
 # install.ps1; keep the three surfaces in visual lockstep.
 GUTTER = "[muted]│[/]"
 
@@ -491,8 +490,8 @@ def verify_models(*, full_profile: bool = False) -> None:
         # markup=False: the report text contains literal '[full]' / quotes that
         # must NOT be parsed as rich markup.
         style = "ok" if line.startswith("✓") else ("bad" if line.startswith("✗") else "muted")
-        # The whole line (gutter included) takes the state color — clack
-        # colors its side bar by state the same way.
+        # The whole line (gutter included) takes the state color, so the side
+        # bar reads the state at a glance.
         console.print(f"│     {line}", style=style, markup=False)
     if not produced:
         note("could not verify the voice models - they will be checked on first launch")
@@ -865,7 +864,7 @@ def step_cli_links(*, dry_run: bool) -> None:
 
 
 def step_summary(*, no_launch: bool, update: bool, headless: bool) -> None:
-    """The finale: a clack-style note box HANGING off the journey gutter.
+    """The finale: a note box HANGING off the journey gutter.
 
     ``◇  Title ──╮`` header, deep-gold borders, ``├──╯`` foot — the left rail
     runs THROUGH the box and on to step_launch's ``└`` outro, so the journey

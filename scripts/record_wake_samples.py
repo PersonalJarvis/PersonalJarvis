@@ -4,7 +4,7 @@ Prompts you to say your wake phrase N times, records ~2 s each from the default
 microphone, and saves 16 kHz mono WAVs to ``data/wake_samples/<slug>/``. Those
 real recordings are then mixed into the training set (heavily weighted) so the
 custom openWakeWord model fires reliably on YOUR voice — the guaranteed path to
-"Hey Google" reliability for a custom word.
+first-try reliability for a custom word.
 
 ## Why it shows you a meter
 

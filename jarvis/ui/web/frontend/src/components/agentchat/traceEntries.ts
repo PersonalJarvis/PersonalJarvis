@@ -1,7 +1,7 @@
 /**
- * A turn's work in the shape the Codex app draws it.
+ * A turn's work as a timeline of prose and quiet lines.
  *
- * Codex reads like a conversation, not a log: what the model says between
+ * The trace reads like a conversation, not a log: what the model says between
  * its calls is ordinary prose at full contrast, and each stretch of calls in
  * between collapses to ONE quiet line that says what was done — "Ran
  * commands, searched the web" — with the stretch's real mark in front (the

@@ -16,8 +16,8 @@ import {
 } from "./traceEntries";
 
 /**
- * The renderer of a turn's timeline (model: traceEntries.ts), drawn the way
- * the Codex app draws its work: no thread, no bullets, no numbered rings.
+ * The renderer of a turn's timeline (model: traceEntries.ts), drawn with
+ * no thread, no bullets and no numbered rings.
  * The model's words are prose; each stretch of calls is one quiet line with
  * the stretch's real mark — a plugin's logo, a CLI vendor's logo, else one
  * plain glyph — that opens to the single calls, and a call opens to what it

@@ -5,31 +5,31 @@ refines §3.1 (roster), §3.2 (runners), §4.2 (model card), §6 (safety) and an
 the build plan left open: how an agent gets its hands (plugins, CLIs, MCPs, skills), how it knows
 the Jarvis ecosystem, and how the Obsidian wiki becomes the society's shared memory.
 
-The reference product is Grok Bot (§1). The whole thing is built in-house (MASTERPLAN §10.7).
+The whole thing is built in-house (MASTERPLAN §10.7).
 
 ---
 
-## 1. Grok Bot, analyzed (docs.x.ai, 2026-09-01)
+## 1. Product shape
 
-What xAI ships, in one table, with our verdict per row.
+The floor every agent stands on, with what we build on top of it.
 
-| Grok Bot | What it means | Ours |
-|---|---|---|
-| A Bot = one persistent, named teammate with **name, title, description**; the description holds *durable operating rules*, the chat holds one-off instructions | Three fields, no wizard. "Focused Bots build more useful context than one catch-all Bot." | **Adopt** exactly: `name`, `title` (job line), `description` (standing instructions = the agent's own AGENTS.md). |
-| Bots **message each other**, share context in threads / group chats, `@mention`, **pass ownership**; xAI recommends "message one owner Bot" rather than parallel threads | Coordinator-over-specialists; noisy group chats are a known failure ("repeat each other, start unnecessary loops") | **Adopt the shape, harden the mechanism:** owner = our `orchestrator` tier; typed envelopes instead of prose; rooms capped 2–6 / ≤3 rounds / ≤10 messages. |
-| A **handoff** records: output path, what was completed, evidence used, what remains unresolved, which Bot owns the next step | The one durable coordination artifact | **Adopt as the `RESULT` payload schema** (§4.3). |
-| **Skills** = reusable procedure (steps, decision rules, expected output, safety boundaries), invoked with `/`, created from chat, manually, or by *teaching* (recorded browser demo → draft skill) | Their self-improvement loop | We already have `SKILL.md` skills with `draft` lifecycle (AP-15), `/` typeahead, `create-skill` + `run-skill`. **Adopt** per-agent skill enablement; teach-by-demo = M6 stretch. |
-| **Routines** = one Bot + schedule or event trigger; results post into the Bot's chat; 50 per Bot, 20 run records kept; "test the skill on a real one-time task first" | Automations | Our Automations scheduler already does schedules, event triggers, approvals. **Adopt** `[agent:<name>]` routines with results into the canonical chat. |
-| **Connectors / Plugins / MCP servers** are account-wide ("not isolated to one Bot"); prefer a connector over clicking through a website | Capability surface is shared, bots differ by role | **Adopt with a twist:** the capability catalog is global, but each agent has a *grant* (all / allow-list) and a *focus* (§3.2). |
-| One **shared cloud computer** per account; every Bot has its own screen; "do not use separate Bots as a security boundary" | Cheap handoff via shared files/logins | **Do differently:** local-first. Files = the agent's workspace dir; screens = `agent_screen` leases (M6); security boundary = the risk tiers + per-agent grant, not the bot. |
-| **Memory**: stable preferences, role context, summaries of prior work; "context and memory are not the same as a database"; durable work goes to `/workspace` or external systems | Memory is per bot, sharing is by files/messages | **Do differently:** the Obsidian wiki is the shared memory (§5); per-agent memory is a wiki page, not a hidden store. |
-| **Approvals**: Auto-review rules `Require Approval` (always stop) vs `Always Allow` (only if nothing else objects); Require wins; high-risk classes: sending, publishing, purchases, deleting, permissions, production changes, legal terms; "Allow once / Deny"; approval binds to the exact action | Model-based review complementing least privilege | We have `safe / monitor / ask / block` with blacklist > whitelist. **Adopt** per-agent *Require-approval rules* on top of the ceiling (§3.4) and the "binds to the exact action" wording. |
-| **No model picker**, no local models, cloud only, Linux desktop unsupported | Their biggest gap | **Our edge:** provider + model + effort per agent from the existing catalog, local models included, every OS. |
-| 50 Bots + group chats per account; duplicate a Bot copies profile/skills/routines but not memory; hide ≠ pause; share = config only, "strip secrets" | Housekeeping rules | **Adopt** duplicate/hide/archive semantics; sharing = M6 marketplace item with the same "no secrets" rule. |
-| First run: asks which tools you use, then suggests teammates ("Piper — product performance investigator") | Onboarding by tool inventory | **Adopt:** seed agents proposed from *connected* capabilities (a Gmail agent only if the Gmail plugin is connected). |
+| Area | Our design |
+|---|---|
+| **Identity** | One persistent, named teammate with `name`, `title` (job line) and `description` (standing instructions = the agent's own AGENTS.md); the chat holds one-off instructions. Three fields, no wizard; focused agents over one catch-all. |
+| **Coordination** | Coordinator over specialists: the owner is our `orchestrator` tier; typed envelopes instead of prose; rooms capped 2–6 / ≤3 rounds / ≤10 messages so group talk cannot loop. |
+| **Handoff** | One durable record — output path, what was completed, evidence used, what remains unresolved, who owns the next step — as the `RESULT` payload schema (§4.3). |
+| **Skills** | `SKILL.md` skills with the `draft` lifecycle (AP-15), `/` typeahead, `create-skill` + `run-skill`; per-agent skill enablement; teach-by-demonstration = M6 stretch. |
+| **Routines** | `[agent:<name>]` routines in the Automations scheduler (schedules, event triggers, approvals) with results posted into the canonical chat. |
+| **Capabilities** | The capability catalog is global, but each agent has a *grant* (all / allow-list) and a *focus* (§3.2). |
+| **Computer** | Local-first: files = the agent's workspace dir; screens = `agent_screen` leases (M6); the security boundary is the risk tiers + per-agent grant, never the agent itself. |
+| **Memory** | The Obsidian wiki is the shared memory (§5); per-agent memory is a wiki page, not a hidden store. |
+| **Approvals** | `safe / monitor / ask / block` with blacklist > whitelist, plus per-agent *require-approval rules* on top of the ceiling (§3.4); an approval binds to the exact action. |
+| **Brain** | Provider + model + effort per agent from the existing catalog, local models included, every OS. |
+| **Housekeeping** | Duplicate / hide / archive semantics (§6); sharing = M6 marketplace item that never carries secrets. |
+| **Onboarding** | Seed agents proposed from *connected* capabilities (a Gmail agent only if the Gmail plugin is connected). |
 
-Net: Grok Bot's product shape is the right floor. What we add is per-agent models, local-first,
-structural safety, the wiki as shared memory, and the world.
+On top of that floor: per-agent models, local-first, structural safety, the wiki as shared
+memory, and the world.
 
 ---
 
@@ -68,8 +68,8 @@ card; nothing hidden drives behavior.
   runner it resolves to on this box (`subscription: true|false`) and the accounts stored for
   its CLI; models, efforts and permission ladders come from
   `GET /api/agent-chat/catalog?surface=society`.
-- **The creator lists only connected seats** (maintainer, 2026-09-02, after Grok Bot's "New
-  Bot" sheet): the catalog joined with the Agents tab's credential truth (the same
+- **The creator lists only connected seats** (maintainer, 2026-09-02): the catalog joined
+  with the Agents tab's credential truth (the same
   `joinProviderOptions` join the chat's composer uses), grouped subscription → API key → local,
   with a login picker only when a CLI has more than one signed-in account, the model (a keyed
   row's live list, Ollama's installed models) and the effort. A provider that is not connected
@@ -78,12 +78,8 @@ card; nothing hidden drives behavior.
   are the whole sheet; ceiling and budget sit under "More". No tool picking at creation:
   `grant_mode = all`, and what the agent reaches for first is settled in its own chat
   afterwards (`components/society/create/CreateAgentDialog.tsx`, `brainPicker.ts`).
-- Reference check (2026-09-02): Hermes Agent switches with `hermes model` / `/model provider:name`
-  and offers Codex/ChatGPT device-code OAuth, xAI SuperGrok OAuth and Claude OAuth (Max only);
-  OpenClaw selects `agents.entries.*.model` as `provider/model`, reuses `claude -p` for the
-  Claude plan, ChatGPT OAuth for OpenAI, and keeps an ordered fallback chain. We match the
-  shape — per-agent provider/model/account, switch any time — through the seats the app
-  already runs, and keep fallbacks global (AP-21/22).
+- Per-agent provider/model/account, switchable any time, runs through the seats the app
+  already drives; fallbacks stay global (AP-21/22).
 
 **Capabilities** (§3)
 - `grant_mode`: `all` (default — everything the global tiers allow) or `allowlist`.
@@ -102,7 +98,7 @@ card; nothing hidden drives behavior.
 
 **Safety & economy** (§3.4)
 - `permission_ceiling` (`safe | monitor | ask`; block is block, never a bypass).
-- `approval_rules` JSON: Grok-style rules — `require_approval: [patterns]`,
+- `approval_rules` JSON: `require_approval: [patterns]`,
   `always_allow: [patterns]`; require wins; patterns are capability ids or `capability:verb`
   (`plugin:gmail:send`). Global blacklist and `always_confirm_tiers` sit above all of it.
 - `daily_budget_usd`, `max_concurrent_runs` (default 1 for specialists, 3 for orchestrators).
@@ -196,7 +192,7 @@ read-only view over them — `jarvis/society/capabilities.py` — that returns t
 
 | tool | what | gate |
 |---|---|---|
-| `society_shell` | commands in the agent's OWN workspace folder (`data/society/<id>/workspace`), path containment, output cap, timeout — local by decision (Hermes' default backend is local, OpenClaw's sandbox is off by default); `ShellBackend` is the seam for a later Docker backend | destructive class → `ask`; `approvals.decide` on `core:shell` |
+| `society_shell` | commands in the agent's OWN workspace folder (`data/society/<id>/workspace`), path containment, output cap, timeout — local by decision; `ShellBackend` is the seam for a later Docker backend | destructive class → `ask`; `approvals.decide` on `core:shell` |
 | `Read/Write/Edit/Ls/Glob/Grep` | the chat's folder tools, wrapped so every path stays inside the workspace | folder tiers |
 | `society_browser` | one browser-use run in the agent's persistent Chromium profile (or its attached Chrome), out of process in a managed venv (`jarvis/society/browser/`), capped steps and time, results and cost on the board | send/buy/delete/publish wording → `ask`; `approvals.decide` on `core:browser`; `browser_allowed_domains` |
 | `society_run_skill` | loads one of the agent's learned skills as instructions | monitor |
@@ -240,8 +236,7 @@ derived focus as chips the user can add to / remove; a wrong guess is a one-clic
 
 A "Gmail agent" therefore: keeps every tool (so it can still look something up in the wiki or
 the calendar), gets Gmail listed first and briefed as its primary hand, and its description
-tells it what it owns. That is the Grok behavior ("the description stores durable rules") on top
-of our tiers.
+tells it what it owns: the description stores durable rules, on top of our tiers.
 
 ### 3.3 Prompt assembly — how the agent knows the ecosystem
 
@@ -350,7 +345,7 @@ Gmail agent stood on the island. The team card (`jarvis/society/lead_card.py`) i
 "lang": "de" }` — text is for humans, `refs` are what the receiver opens. Every envelope carries
 `trace_id`; a reply carries `parent_event_id`.
 
-### 4.3 Handoff = `RESULT` payload (Grok's record, made mandatory)
+### 4.3 Handoff = `RESULT` payload (mandatory record)
 ```
 { "type": "RESULT", "status": "done | partial | blocked",
   "output": ["file:...", "wiki:..."],          # where the work is
@@ -413,7 +408,7 @@ vault cannot: taint state, curation cursors, FTS over agent notes — derived, r
 
 ---
 
-## 6. Lifecycle & housekeeping (Grok parity)
+## 6. Lifecycle & housekeeping
 
 - **Create**: three fields + Advanced (brain, grants, ceiling, budget, avatar). The agent
   introduces itself as the first chat message, in the turn language, naming its focus tools.
@@ -442,14 +437,15 @@ vault cannot: taint state, curation cursors, FTS over agent notes — derived, r
 | Agent knows the whole Jarvis ecosystem | ecosystem card + roster line in the prompt (§3.3) |
 | Wiki as shared memory | §5, namespaced writes, reviewed promotion |
 | Context exchange between agents | `refs` in envelopes, `RESULT` handoff record (§4.2–4.3) |
-| Per-agent approval rules like Grok | `approval_rules` under the ceiling (§3.4) |
+| Per-agent approval rules | `approval_rules` under the ceiling (§3.4) |
 | Onboarding | seed proposals from connected capabilities (§6) |
 
 ---
 
 ## 8. Roadmap — where this lands in the build plan
 
-Maps onto [`build-plan-m1-m2.md`](build-plan-m1-m2.md); new items are marked **+**.
+Maps onto the M1/M2 build waves (landed, see `jarvis/society/README.md`); new items are marked
+**+**.
 
 | Wave | Adds from this document |
 |---|---|

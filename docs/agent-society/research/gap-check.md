@@ -8,15 +8,15 @@ NOT READY FOR PLANNING — one reconciliation pass required first. The reports a
 
 ## Contradictions between the branches (9)
 
-1. Inter-agent protocol: Report A adopts Hermes' single prose send path (message_agent-equivalent, natural-language messages with sender prefix, rendered as chat threads); Report B calls the opposite 'the single most important design decision' — typed enum events (ASSIGN/CLAIM/RESULT/QUERY/ANSWER/HOLD/VETO/DIGEST) on a blackboard, explicitly 'not a chat'. The plan must pick one, or explicitly define typed-envelope-with-prose-payload and say which surface renders what.
+1. Inter-agent protocol: Report A adopts a single prose send path (message_agent-equivalent, natural-language messages with sender prefix, rendered as chat threads); Report B calls the opposite 'the single most important design decision' — typed enum events (ASSIGN/CLAIM/RESULT/QUERY/ANSWER/HOLD/VETO/DIGEST) on a blackboard, explicitly 'not a chat'. The plan must pick one, or explicitly define typed-envelope-with-prose-payload and say which surface renders what.
 2. Group discussions: A adopts hard-bounded natural-language group rooms (2–6 members, <=3 rounds, <=10 messages) as THE consumer-token-budget mechanism and builds the world's meeting-table moment on them; B rejects conversation-centric coordination as the expensive anti-pattern ('not a free-form debate club') and ships no group mechanism at all.
 3. What an agent IS at runtime: A = a persistent agent_chat session per agent (a long-lived conversation engine reusing service.py/runners); B = a durable roster row whose work is done by ephemeral SubagentFanoutRunner workers that are TTL-reaped after 60 s. These imply different RAM footprints, token profiles, and persistence stories — both cannot be the primary definition.
-4. Where agent identity/config persists: A extends jarvis/core/config.py with an [agents.*] schema plus Hermes-style agent-account directories (jarvis/agent_accounts.py); B creates a society_agents table in a new data/society.db. Two sources of truth for the same model-card data (model/provider pin, tool grants, permission ceiling, avatar).
+4. Where agent identity/config persists: A extends jarvis/core/config.py with an [agents.*] schema plus per-agent account directories (jarvis/agent_accounts.py); B creates a society_agents table in a new data/society.db. Two sources of truth for the same model-card data (model/provider pin, tool grants, permission ceiling, avatar).
 5. Hierarchy and the AP-5/AP-14 no-spawn wall: A says the society is flat specialists under Jarvis and 'the society cannot chain-react' because no society agent can spawn; B's middle tier (orchestrator/kontrollierer agents) explicitly delegates to sub-agents, i.e. some society members DO dispatch workers. The plan must state which tiers may dispatch and where the structural wall sits, because the safety claim differs between the reports.
 6. World data feed: A says the world's data spine is the existing three-source merge (/api/sub-agents/tree + /api/missions + /api/outputs); B says the world is a pure projection of the new society_events log. Two competing single-sources-of-truth for the same view.
 7. Spatial truth: B persists world_x/world_y in the backend roster and claims the world 'can never desync' because it is a projection; A runs idle wander purely client-side for zero cost. Unresolved: who owns position, whether it survives restart, and whether two open app windows (live + dev instance exist today) show the same world.
 8. Idle cost promise: A states idle costs zero tokens — an LLM call happens only on a message, routine, or mission, 'never to look alive' — and calls this the most important cheap-to-run decision; B's idle model includes ~150 LLM housekeeping/digest/compaction calls per day (~$0.45–0.68/day cloud-assisted). Decide: strictly LLM-free idle, or curation-at-idle with a budget.
-9. Approval surfacing: A routes approvals as cards into each agent's canonical chat via agent_chat/approval_bridge.py (Grok pattern); B queues unattended ask-tier actions in a central review surface with expiry. One UX must win, or the plan must define queue-as-data with chat-cards-as-projection.
+9. Approval surfacing: A routes approvals as cards into each agent's canonical chat via agent_chat/approval_bridge.py; B queues unattended ask-tier actions in a central review surface with expiry. One UX must win, or the plan must define queue-as-data with chat-cards-as-projection.
 
 ## Gaps (what both reports missed)
 
@@ -62,7 +62,7 @@ One agent reads a hostile web page or email; its RESULT is curated into shared k
 
 ### Migration path and information architecture for the existing views
 
-A marks both AgentsView ('Agent-Team' placeholder) and JarvisAgentsView as REPLACE without deciding which sidebar slot the society occupies, what happens to deep links, whether rollout is flagged/staged, how existing missions/outputs history appears in the new section, and whether first-run seeds starter agents (Grok ships a featured coordinator). The finish-it-everywhere rule also demands [agent:*] routines surface in the Automations view — named by A but not planned.
+A marks both AgentsView ('Agent-Team' placeholder) and JarvisAgentsView as REPLACE without deciding which sidebar slot the society occupies, what happens to deep links, whether rollout is flagged/staged, how existing missions/outputs history appears in the new section, and whether first-run seeds starter agents (for example a featured coordinator). The finish-it-everywhere rule also demands [agent:*] routines surface in the Automations view — named by A but not planned.
 
 ### World/environment asset pipeline effort
 
@@ -70,7 +70,7 @@ Characters are solved (skin format + skinview3d), the environment is not: nobody
 
 ### Avatar/asset licensing and content moderation
 
-A covers code licenses (Hermes MIT, skinview3d MIT) but not asset licenses: user-uploaded and community-catalog skins are routinely copyrighted characters (community 'Minecraft skins', petdex-style catalogs are unvetted), so the Marketplace plan needs license terms, IP screening or the existing report-then-delist precedent, and caution about marketing a 'Minecraft look' (trademark). Hermes attribution mechanics (NOTICE file when copying substantial code) also need a defined home.
+A covers code licenses (skinview3d MIT) but not asset licenses: user-uploaded and community-catalog skins are routinely copyrighted characters (community skin and pet catalogs are unvetted), so the Marketplace plan needs license terms, IP screening or the existing report-then-delist precedent, and caution about game trademarks in marketing copy. Attribution mechanics (a NOTICE entry when copying substantial third-party code) also need a defined home.
 
 ### State-sync protocol specification
 
@@ -78,7 +78,7 @@ Neither report specifies the transport contract: which WebSocket carries society
 
 ### App-closed semantics and availability expectations
 
-Local-first inverts Grok's headline promise ('closing the app does not stop work'): here a closed app or sleeping laptop freezes the society and its routines. Missed-schedule catch-up policy and honest UX copy setting that expectation are product decisions neither report makes.
+Local-first means a closed app or sleeping laptop freezes the society and its routines. Missed-schedule catch-up policy and honest UX copy setting that expectation are product decisions neither report makes.
 
 ### Boot budget and bundle discipline
 
@@ -94,7 +94,7 @@ B asserts arXiv 2606.12683 is 'the paper the maintainer means' (an inference) an
 
 ### Per-agent secrets
 
-Hermes profiles carry a per-profile .env; copying that pattern violates AP-2/AP-12 (secrets only via get_secret/keyring, never in files or accepted via voice/chat). Per-agent credentials and provider keys need an explicit keyring-scoped design nobody wrote down.
+A per-agent .env file would violate AP-2/AP-12 (secrets only via get_secret/keyring, never in files or accepted via voice/chat). Per-agent credentials and provider keys need an explicit keyring-scoped design nobody wrote down.
 
 ### Notifications, attention routing, and approval expiry
 

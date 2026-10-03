@@ -291,12 +291,12 @@ turn the power cut interrupted (measured: killed at step 26 of 30, resumed to
 every OS; it depends only on login autostart, which is on by default on
 Windows, macOS and Linux (and a no-op on a headless host).
 
-Which conversation a Claude pane is on is tracked the way Herdr tracks it: each
+Which conversation a Claude pane is on is tracked by a hook: each
 pane is launched with `--settings` adding a `SessionStart` hook
 (`jarvis/agentic_ide/claude_session_hook.py`, stdlib only, forward-slash
 command that runs under bash or cmd) that records every conversation start,
 including `/clear`, `/resume` and compaction, so a reboot resumes the current
-one rather than the launch id (herdrdev/herdr#4059). Verified live on Windows
+one rather than the launch id. Verified live on Windows
 with Claude Code 2.1.283; POSIX runs the same script through `sys.executable`.
 
 "Rebooted" is measured, not guessed: the host records the machine's boot time

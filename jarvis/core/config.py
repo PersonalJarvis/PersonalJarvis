@@ -1257,7 +1257,7 @@ class BrainRoutingConfig(BaseModel):
         return normalize_force_spawn_mode(v)
 
     # Intelligent router (2026-06-21 user mandate "Jarvis must choose wisely among
-    # ALL tools, like Claude Code"). When the ACTIVE talker cannot emit tool_calls
+    # ALL tools"). When the ACTIVE talker cannot emit tool_calls
     # at runtime (the subscription-CLI brains — Antigravity over the Google login,
     # Codex over the ChatGPT login — drop ALL tools), a tool-capable provider
     # (the deep_brain / router, e.g. Gemini) leads every SUBSTANTIVE turn and the

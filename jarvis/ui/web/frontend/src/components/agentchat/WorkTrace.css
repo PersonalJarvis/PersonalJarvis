@@ -31,8 +31,8 @@
   position: relative;
   min-width: 0;
 }
-/* Since 2026-10-02 the rail draws no thread: traces read like the Codex app,
-   prose and quiet lines with nothing joining them. */
+/* Since 2026-10-02 the rail draws no thread: traces read as prose and
+   quiet lines with nothing joining them. */
 .trace-rail > .trace-step::before,
 .trace-rail > .trace-step::after {
   display: none;
@@ -97,8 +97,8 @@
   animation: trace-node-pulse 1.6s ease-in-out infinite;
 }
 
-/* The words of the step that is working: a slow light sweep over muted ink,
-   the way the Claude app marks "Thinking". */
+/* The words of the step that is working: a slow light sweep over muted ink
+   marks "Thinking". */
 .trace-shimmer {
   background-image: linear-gradient(
     90deg,

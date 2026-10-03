@@ -20,8 +20,8 @@ import {
  * The sidebar block is a shortcut to what you touched last; this is the
  * archive: every voice session and every agent chat, searchable, grouped by
  * day like a mail client, opening on the same click path as the sidebar
- * (components/home/chatRows). Modelled on the recents dialog desktop chat
- * apps use — one field, one list, Escape closes — because a second full
+ * (components/home/chatRows). It is a dialog — one field, one list, Escape
+ * closes — because a second full
  * SECTION for the same data would be one more place to keep in sync.
  *
  * The list is whatever the two pollers already hold, so opening the dialog

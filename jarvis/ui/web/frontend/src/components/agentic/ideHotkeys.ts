@@ -95,8 +95,7 @@ export const RESERVED_ROOT_KEYS = new Set(["e", "f", "m", "n", "p", "q", "r", "v
 
 /**
  * The letter each known agent prefers. Claude and Codex both start with C, so
- * Codex takes the X of its name — the same split its own docs and most
- * launchers use. A CLI added later falls through to the first free letter of
+ * Codex takes the X of its name. A CLI added later falls through to the first free letter of
  * its own name (see `assignAgentKeys`).
  */
 const PREFERRED_AGENT_KEYS: Record<string, string> = {

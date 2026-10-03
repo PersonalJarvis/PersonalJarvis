@@ -3,8 +3,8 @@ import { useEffect, useRef, useState } from "react";
 import { voiceOutputLevelRef } from "@/lib/voiceOutputLevel";
 
 /**
- * How far into the current answer the voice has got — the Claude app's
- * "words not yet spoken are grey" effect for voice mode.
+ * How far into the current answer the voice has got — the "words not yet
+ * spoken are grey" effect for voice mode.
  *
  * No voice path reports a playback position per word, so this is an
  * estimate made where the sound is: while the assistant is speaking and the

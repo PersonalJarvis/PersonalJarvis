@@ -30,7 +30,7 @@ type Group = { id: string; blocks: TurnBlock[]; family: string | null };
  * quiet vertical line: each thought or tool call is a node on it, the live
  * step shimmers, and the turn's state line closes the thread. "classic" is
  * the earlier row list, kept only for the Agentic IDE, whose coding panes
- * mirror Claude Code and Codex and were left as they are on purpose.
+ * were left as they are on purpose.
  */
 export type TraceLook = "rail" | "classic";
 const TraceLookContext = createContext<TraceLook>("rail");
@@ -661,8 +661,8 @@ function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error
   const blocks = useMemo(() => withoutQuestionPolls(rawBlocks), [rawBlocks]);
   const live = status === "running";
   const elapsed = useClock(startedMs, live);
-  // The rail look folds every finished turn, conversation or not, the way
-  // Claude and Codex do: "Worked for …" opens the turn's timeline
+  // The rail look folds every finished turn, conversation or not:
+  // "Worked for …" opens the turn's timeline
   // (TraceTimeline), the reply stands alone. The classic look folds
   // conversation turns only, as before.
   const split = useMemo(() => (conversation || rail) && !live ? splitConversationTurn(blocks) : null, [blocks, conversation, rail, live]);

@@ -11,33 +11,32 @@ document succeeds [`world-art-direction.md`](world-art-direction.md) for everyth
 [`MASTERPLAN.md`](MASTERPLAN.md) (§2 decisions stay untouched: the world is a projection of the
 society event stream, idle is LLM-free, dispatch is the scheduler's privilege).
 
-The maintainer's brief, in one line: *"Roblox-style but really modern, a Clash-of-Clans-grade
-village; the app's marketplaces and hubs become real 3D shops the figures walk to when they use
-skills; a hub where new agents walk out; everything steerable; the most professional level you can
-picture."*
+The maintainer's brief, in one line: a really modern, top-grade game village; the app's
+marketplaces and hubs become real 3D shops the figures walk to when they use skills; a hub where
+new agents walk out; everything steerable; the most professional level you can picture.
 
 ---
 
 ## 1. Where V1 stands, and the gap to the target
 
 V1 (commit `a70e24853`) proves the pipeline end to end: deterministic island, village ring, four
-quarters, walkers, navigation, minimap, lazy chunk, WebGL discipline. Held against a Clash of Clans
-village or a polished Roblox experience, the gap is not the layout — it is **material and light**:
+quarters, walkers, navigation, minimap, lazy chunk, WebGL discipline. Held against a polished,
+modern game village, the gap is not the layout — it is **material and light**:
 
-| What the eye reads | V1 today | CoC / modern Roblox | Fix category |
+| What the eye reads | V1 today | Target | Fix category |
 |---|---|---|---|
 | Surfaces | flat Lambert, one colour per face | soft gradient shading, ambient occlusion in every corner, rim light on edges | lighting + baked AO (§3) |
-| Shadows | none | soft contact shadows under every object — THE depth cue of the CoC look | shadow map + blob decals (§3) |
+| Shadows | none | soft contact shadows under every object — THE depth cue of the target look | shadow map + blob decals (§3) |
 | Edges | sharp box edges | bevelled, rounded — light catches the bevel | kit geometry with bevels (§4) |
 | Buildings | primitives (boxes, half-cylinders) | authored models with silhouette, trims, signs, props | the World Kit (§4) |
 | Ground | two-shade checker tiles | painted ground with worn paths, grass tufts, flower decals, stone rims | ground atlas + decals (§3) |
 | Water | scrolling pixel texture | depth tint, foam line along the shore, specular sparkle | shader + shoreline mask (§3) |
 | Life | 3 walkers, no props | banners, smoke, lanterns glowing, birds, carts, particles when something happens | props + effects (§5) |
-| Pixel grain | 2 px, everywhere | none (CoC) or a soft film look | make the grain optional (§9-1) |
+| Pixel grain | 2 px, everywhere | none, or a soft film look | make the grain optional (§9-1) |
 | Interaction | click a figure | hover glow, click a building → it opens, cards, follow-cam, steering | §6 |
 
-The pixel pass was the right first move (it also carries the GPU budget), but the reference the
-maintainer now names is **clean and smooth**, not pixelated. The medicine for WebView2 stays the
+The pixel pass was the right first move (it also carries the GPU budget), but the look the
+maintainer now asks for is **clean and smooth**, not pixelated. The medicine for WebView2 stays the
 same — render at a reduced internal resolution — the *look* changes from "nearest-filtered retro" to
 "soft, stylised, well-lit".
 
@@ -47,7 +46,7 @@ same — render at a reduced internal resolution — the *look* changes from "ne
 house). Roofs overhang. Nothing thin (pillars ≥ 0.5 m, rails ≥ 0.15 m) — thin things flicker.
 Proportions slightly toy-like: doors a bit too big, windows a bit too round, trees a bit too round.
 
-**Colour:** the V1 palette is right in hue (`worldPalette.ts`), wrong in *range*. CoC uses one
+**Colour:** the V1 palette is right in hue (`worldPalette.ts`), wrong in *range*. The target uses one
 saturated hue per material with a strong light/shadow ramp (≈ 25 % lightness span) and a warm key
 light / cool ambient split. Rule: every material gets three stops — lit, mid, shade — baked into the
 kit's palette atlas; the sun adds the fourth (specular/rim) at runtime.
@@ -57,8 +56,8 @@ north-east, where the camera looks from), sky-blue ambient from above, green bou
 Emissives (glass, lamps, holograms, the beacon) get a small bloom. Evening mode later shifts the
 sun to orange and turns the lamps on — the same scene, two moods.
 
-**Camera:** 50° pitch, 45° yaw, orthographic, five zoom steps — the CoC camera within a few
-degrees, and what makes shadows and rooflines read. Those two angles are the **starting** view,
+**Camera:** 50° pitch, 45° yaw, orthographic, five zoom steps — the angles that make shadows
+and rooflines read. Those two angles are the **starting** view,
 not the only one: a right-button drag orbits the island (yaw all the way round, so any building
 can be seen from behind; pitch between 20° and 80°), Q / E step a quarter turn, and the HUD
 compass points at north and clicks back to the designed view. Nothing about the island moves
@@ -88,7 +87,7 @@ All of this is three r0.185 + R3F v8, already shipped; no new engine.
    (Blender bake at build time, §4); the terrain gets a cheap analytic AO — tiles adjacent to a
    higher step or a building footprint darken 10–15 % in `terrainGeometry.ts`. GTAO at half-res
    stays an opt-in "high" setting; on the iGPU it costs more than it gives.
-4. **Materials:** `MeshToonMaterial` with a 4-step gradient map for kit and figures (the CoC ramp),
+4. **Materials:** `MeshToonMaterial` with a 4-step gradient map for kit and figures (the §2 ramp),
    `MeshLambertMaterial` for terrain, `MeshBasicMaterial` for emissives. Still no PBR: the
    palette atlas carries the colour, the ramp carries the light.
 5. **Ground:** replace the two-shade checker with a **ground atlas** (256×256, 8 tiles: grass ×3,
@@ -101,7 +100,7 @@ All of this is three r0.185 + R3F v8, already shipped; no new engine.
    noise layers for sparkle, no reflection. One plane, one draw call.
 7. **Sky:** a vertical gradient (`SKY.clear` top → warm haze at the horizon) as the clear colour is
    enough in orthographic; clouds as a few large soft sprites drifting over the island at height
-   60 m casting *fake* shadows (dark soft decals moving on the ground) — a signature CoC touch,
+   60 m casting *fake* shadows (dark soft decals moving on the ground) — a signature touch,
    nearly free.
 8. **Effects, all sprite-based and pooled:** chimney smoke puffs, sparks at the workshop when a
    run is hot, a soft glow pulse on a building when it receives an event, confetti burst on
@@ -265,7 +264,7 @@ like a game you steer.
 
 | Slice | Delivers | Proof |
 |---|---|---|
-| **M3a Look** (this week) | composer with resolution scale + bloom + optional grain; sun shadows following the view; toon ramp; analytic terrain AO; ground atlas + decals; shore-foam water; sky gradient + cloud shadows | the V1 screenshots re-taken: same island, CoC-grade light |
+| **M3a Look** (this week) | composer with resolution scale + bloom + optional grain; sun shadows following the view; toon ramp; analytic terrain AO; ground atlas + decals; shore-foam water; sky gradient + cloud shadows | the V1 screenshots re-taken: same island, game-grade light |
 | **M3b Kit** | `build_world_kit.py`, contract, validator, atlas; first 10 modules; 6 buildings rebuilt from the kit (hub, house ×3 variants, workshop, archive) | validator green; the village rebuilt without one primitive box |
 | **M3c Market** | the hub table of §5 in `islandLayout.BUILDINGS`; Foundry, Forge, Docks, Relay, Cantina, Bazaar, Clock Tower, Gallery, Vault, Counting House, Model Foundry; one house per agent; building click → drawer; live signals from the section APIs that already exist | every sidebar hub has a roof; clicking it opens the drawer |
 | **M3d Life** | checkpoint vocabulary + derivation rule in the bridge (T3: joins the five-layer parity set); choreography queue; bubbles; steering gestures → `ASSIGN`; effects; follow-cam; first-run fly-in | a real mission plays out: the agent leaves home, works at the Docks, carries the result to the Gallery, sleeps |
@@ -276,8 +275,8 @@ are.
 
 ## 9. Decisions (1–4 taken by the maintainer on 2026-09-02, the recommended option each time; 5–6 default until revisited)
 
-1. **Pixel grain — Recommended: off by default, kept as a setting.** The named references (Roblox,
-   Clash of Clans) are smooth; the grain then serves as a look option and as the low-GPU fallback.
+1. **Pixel grain — Recommended: off by default, kept as a setting.** The target look is
+   smooth; the grain then serves as a look option and as the low-GPU fallback.
    Runner-up: keep grain 2 as the identity — cheaper, but it caps the fidelity every other item
    here buys.
 2. **One house per agent on the ring — Recommended: yes.** It gives the comic-village ring its

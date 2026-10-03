@@ -379,7 +379,7 @@ describe("Sidebar assistant name header", () => {
     const bar = screen.getByTestId("sidebar-search") as HTMLInputElement;
     fireEvent.change(bar, { target: { value: "agen" } });
     expect(bar.value).toBe("agen");
-    // Typing here never opens the Spotlight window in the middle.
+    // Typing here never opens the switcher window in the middle.
     expect(useQuickSwitcher.getState().open).toBe(false);
   });
 

@@ -13,9 +13,8 @@ Build a first-class **Jarvis CLI**: a command-line interface that drives Jarvis
 itself, exposing every action a user can perform in the WebUI as a CLI command.
 It is usable by the maintainer, by Jarvis's own Jarvis-Agents, and — the primary
 driver — by **external coding agents (Claude Code, Codex)** that need to control
-a running Jarvis programmatically. This is the same relationship `gcloud` / `aws`
-/ `az` have with their cloud platforms: a CLI that surfaces the full capability
-plane of a service.
+a running Jarvis programmatically: a CLI that surfaces the full capability
+plane of the service.
 
 The CLI is a **thin HTTP client over the existing REST API**, with two layers:
 
@@ -372,8 +371,7 @@ maintainer's chosen "skill + hard gate" option.
 
 ## 10. Documentation
 
-- `docs/jarvis-cli.md` — hand-written guide: concepts, the gcloud/aws analogy,
-  install, auth & discovery, the safety model, scripting/JSON output, and a
+- `docs/jarvis-cli.md` — hand-written guide: concepts, install, auth & discovery, the safety model, scripting/JSON output, and a
   dedicated **"Driving Jarvis from a Claude Code / Codex session"** section
   (PATH, token auto-discovery, `--json` for machine parsing, `--dry-run`,
   `--yes`).

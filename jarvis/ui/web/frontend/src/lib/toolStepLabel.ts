@@ -2,8 +2,8 @@
  * Tool call → the line a person reads in the reasoning trace.
  *
  * A tool step knows the registry name and the arguments of the call
- * ("wiki-recall" + {query}), nothing more. The trace wants what the Claude
- * desktop app shows: a sentence in the product's own words — "Looking in
+ * ("wiki-recall" + {query}), nothing more. The trace wants a sentence in
+ * the product's own words — "Looking in
  * Wiki · Urlaub 2026", "Creating artifact · Sales deck", "Running skill ·
  * daily-brief" — with the feature's own mark in front of it, or the
  * service's brand logo when the tool belongs to Gmail, Spotify, an MCP

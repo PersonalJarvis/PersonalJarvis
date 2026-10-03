@@ -1,7 +1,6 @@
 /**
- * The bubble that names the zoom level after a zoom step, the way Chrome shows
- * one under its address bar: the percentage, a minus and a plus, and a way
- * back to 100 %.
+ * The bubble that names the zoom level after a zoom step: the percentage, a
+ * minus and a plus, and a way back to 100 %.
  *
  * It hides itself after a moment, but not while the pointer rests on it or a
  * keyboard user is inside it — a bubble that vanishes under the cursor on the
@@ -19,7 +18,7 @@ import { APP_ZOOM_LEVELS, nextAppZoom } from "@/lib/appZoom";
 import { cn } from "@/lib/utils";
 import { useAppZoomSettings } from "@/store/appZoomSettings";
 
-/** Chrome keeps its bubble up for about this long after the last step. */
+/** How long the bubble stays up after the last step. */
 export const ZOOM_INDICATOR_MS = 2000;
 
 const ICON_BUTTON =

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Ship `jarvisctl`, a cross-platform Python control CLI (the `gcloud`/`kubectl` for Personal Jarvis) that drives every task and the whole UI of a running Jarvis instance over its REST API, is extensible so new server features become reachable with zero CLI work, and that Jarvis itself can invoke to control itself.
+**Goal:** Ship `jarvisctl`, a cross-platform Python control CLI for Personal Jarvis that drives every task and the whole UI of a running Jarvis instance over its REST API, is extensible so new server features become reachable with zero CLI work, and that Jarvis itself can invoke to control itself.
 
 **Architecture:** A thin HTTP client (`httpx`) against the running FastAPI server, authenticated with the existing Bearer control key (`jarvis.core.control_key`). Two overlapping command layers: (1) **hand-veneered** Typer commands for core domains (`auth`, `system`, `tasks`) with first-class UX; (2) a **runtime-dynamic auto-layer** that fetches `/api/openapi.json`, caches it cross-platform, and synthesizes one Click command per live endpoint under `jarvisctl api …`, so any newly added route is reachable the instant it exists. Self-control is achieved by registering `jarvisctl` in the existing external-CLI catalog so the brain's `cli_<name>` loader exposes it to workers — never as a router-spawn tool (AP-5/AP-14).
 
@@ -1941,9 +1941,9 @@ git commit -m "feat(cli): register jarvisctl in catalog for brain self-control"
 ````markdown
 # jarvisctl — Jarvis Control CLI
 
-`jarvisctl` drives a **running** Personal Jarvis instance from the terminal,
-the way `gcloud` drives Google Cloud. It is a thin HTTP client over the REST
-API and works on Windows, macOS, and Linux.
+`jarvisctl` drives a **running** Personal Jarvis instance from the terminal.
+It is a thin HTTP client over the REST API and works on Windows, macOS, and
+Linux.
 
 ## Install
 It ships with Jarvis. Activate the console script once:

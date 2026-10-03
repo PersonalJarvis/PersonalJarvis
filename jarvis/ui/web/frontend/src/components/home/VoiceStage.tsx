@@ -19,8 +19,7 @@ import { TurnSteps, traceWorthShowing } from "@/components/home/TurnSteps";
 import { traceModel } from "@/lib/thinkingSteps";
 
 /**
- * The voice stage — the front page's chat, spoken (2026-10-01, after the
- * Claude app's voice mode).
+ * The voice stage — the front page's chat, spoken (2026-10-01).
  *
  * It looks like the chat it lives in, not like a separate page: the same
  * column, your words in soft bubbles on the right (italic, because they were
@@ -49,7 +48,7 @@ import { traceModel } from "@/lib/thinkingSteps";
  * steps render between your words and the answer — live while the turn runs,
  * folded afterwards (components/home/TurnSteps).
  *
- * Scrolling follows the Claude app, through the rule every conversation
+ * Scrolling follows the rule every conversation
  * surface here shares (hooks/useStickToBottom): new output pulls the view
  * along ONLY while the view is already at the end; scrolled up to read
  * something, you keep your place while the conversation goes on below, and a

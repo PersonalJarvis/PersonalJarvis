@@ -1,4 +1,4 @@
-"""Knowledge-Wiki package (Karpathy-style structured markdown vault).
+"""Knowledge-Wiki package (LLM-maintained structured markdown vault).
 
 The runtime vault lives under ``wiki/obsidian-vault/`` (gitignored — it is
 personal data). The canonical schema, README, and seed index live as

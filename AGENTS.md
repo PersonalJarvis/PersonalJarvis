@@ -97,7 +97,9 @@ Describe our features and interactions directly. Do not present another product
 as a design reference or say our UI or behavior is inspired by, modeled on,
 copied from, or made to match it. Preserve required copyright, license and
 attribution notices and factual dependency, integration and compatibility
-references; this rule never authorizes concealing code provenance.
+references; this rule never authorizes concealing code provenance. Competitor
+research stays out of the repo. `scripts/ci/check_design_references.py` checks
+staged lines at commit time and the whole tree in CI.
 
 **Proportionality.** The agent owns the validation plan and chooses the smallest
 set of checks that can detect a plausible regression from the diff. State the

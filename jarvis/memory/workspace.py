@@ -1,7 +1,6 @@
 """Workspace layout for the persistent user-profile system.
 
-Inspired by the external `openclaw` worker CLI (`~/.openclaw/<agentId>/workspace/`), adapted for
-Jarvis: we use `data/workspace/` relative to the project root so that
+The files live in `data/workspace/` relative to the project root so that
 development and production share the same layout and the files can be
 versioned (or deliberately .gitignored).
 

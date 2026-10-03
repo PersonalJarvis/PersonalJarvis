@@ -39,7 +39,7 @@ import { FolderCode } from "lucide-react";
  * kind clears the other (components/home/chatRows), so the two can never both
  * claim the stage and leave a click looking like it did nothing.
  *
- * Scrolling follows the Claude app: when the person sends, their message
+ * Scrolling: when the person sends, their message
  * is brought to the TOP of the scroll area and the answer grows below it —
  * the eye stays where the new turn begins instead of chasing the bottom.
  * A spacer under the last turn makes that possible even when the turn is
@@ -201,7 +201,7 @@ function ChatStageContent() {
   // chat is coding sessions and never shows a spoken thread.
   if (surface === "jarvis" && voiceThreadId && !activeSessionId) return <VoiceThreadStage />;
 
-  // The front page opens the way the Codex app does: the greeting alone in
+  // The front page opens with the greeting alone in
   // the middle of the page, the composer already where it will stay — at the
   // bottom — so the first send moves nothing.
   if (!hasContent && isJarvis) {
@@ -241,8 +241,8 @@ function ChatStageContent() {
             providerLabel={providerLabel}
             onDecide={onDecide}
             bubbles={isJarvis}
-            // The Agentic IDE mirrors Claude Code and Codex, whose own traces
-            // the maintainer kept; every other surface draws the rail.
+            // The Agentic IDE keeps the classic trace on purpose; every
+            // other surface draws the rail.
             traceLook={isJarvis ? "rail" : "classic"}
             traceCompanion={isJarvis}
           />

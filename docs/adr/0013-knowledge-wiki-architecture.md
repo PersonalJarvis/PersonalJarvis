@@ -19,8 +19,7 @@ two failure modes that are now observable in practice:
    With more than ~50 entries the LLM starts dropping or paraphrasing
    older content. There is no append-only audit trail.
 
-Andrej Karpathy's *LLM Wiki* pattern (public gist `442a6bf`, April 2026)
-addresses exactly this. Core idea: the LLM is not a retriever, it is a
+A compiled-wiki pattern addresses exactly this. Core idea: the LLM is not a retriever, it is a
 **wiki editor**. Knowledge is compiled once into a structured vault of
 markdown pages with cross-references, and updates touch 10-15 pages per
 ingest rather than rewriting one file wholesale. Read happens via FTS5
@@ -47,7 +46,7 @@ the same vault layout.
 | Mid-term | last 3-5 sessions | `data/workspace/sessions/*.md` (this vault) | system-prompt injector |
 | Long-term | permanent | `data/workspace/{entities,concepts,projects}/*.md` (this vault) | `wiki-recall` tool + system-prompt injector |
 
-The long-term tier is structured per the Karpathy contract documented
+The long-term tier is structured per the wiki contract documented
 in [`data/workspace/schema.md`](../../data/workspace/schema.md):
 
 - **Entity pages** for concrete things (one file per Person, Tool,
@@ -106,9 +105,9 @@ voice path must never block on them).
   — the failure modes are inherent to the unstructured-rewrite pattern,
   not to file count.
 - **Move to a vector-DB-only memory.** Rejected — opaque to the user,
-  unmaintainable when a fact is wrong, and Karpathy's explicit
-  anti-pattern: "the LLM rediscovers knowledge from scratch on every
-  query."
+  unmaintainable when a fact is wrong, and the exact failure this
+  design avoids: the LLM rediscovers knowledge from scratch on every
+  query.
 - **Hosted SaaS memory (mem0, MemGPT cloud, etc.).** Rejected — the
   user's whole point is that Personal Jarvis is local, private, and
   portable. SaaS lock-in is a non-starter.
@@ -118,8 +117,6 @@ voice path must never block on them).
 
 ## References
 
-- Karpathy, A. (April 2026). "LLM Wiki: Technical Architecture Summary."
-  GitHub Gist `442a6bf555914893e9891c11519de94f`.
 - [`data/workspace/schema.md`](../../data/workspace/schema.md) — the
   maintenance contract this ADR commits to.
 - `JARVIS_AWARENESS_PLAN.md` — the L1+L2 short-term tier this vault
