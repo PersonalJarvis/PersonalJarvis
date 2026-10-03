@@ -1,10 +1,17 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { reduceLiveReply, useHomeStore } from "@/store/home";
 import { useEventStore } from "@/store/events";
+import { useAgentChatStore } from "@/store/agentChat";
 
 describe("voice conversation boundaries", () => {
-  beforeEach(() => useHomeStore.getState().resetTranscript());
+  beforeEach(() => {
+    useHomeStore.getState().resetTranscript();
+    useHomeStore.setState({ continuedVoiceId: null, freshVoicePending: false, voiceSwitchStopping: false, voiceSelectionPending: false });
+    useEventStore.setState({ activeKind: "voice", activeThreadId: null });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ providers: [], sessions: [] }))));
+  });
+  afterEach(() => vi.unstubAllGlobals());
 
   it.each(["hotkey", "voice_pattern", "client_stop", "idle_timeout"])("starts a fresh lane after %s", (hangup_reason) => {
     const home = useHomeStore.getState();
@@ -34,6 +41,54 @@ describe("voice conversation boundaries", () => {
     home.ingest("VoiceSessionEnded", { hangup_reason: "realtime_fallback" }, 4);
     home.ingest("VoiceSessionEnded", { hangup_reason: "desktop_fallback" }, 5);
     expect(useHomeStore.getState().transcript.map((line) => line.text)).toEqual(["Keep this turn"]);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it.each(["hotkey", "voice_pattern", "client_stop", "idle_timeout"])("leaves a continued archive after %s and unbinds the next wake", (hangup_reason) => {
+    const home = useHomeStore.getState();
+    home.setContinuedVoiceId("archive");
+    useEventStore.setState({ activeKind: "voice", activeThreadId: "archive" });
+    home.seedTranscript([{ id: "old", who: "user", text: "Saved conversation", ts: 1 }]);
+    home.ingest("VoiceSessionStarted", { session_id: "call" }, 2);
+    home.ingest("VoiceSessionEnded", { session_id: "call", hangup_reason }, 3);
+    expect(useHomeStore.getState().continuedVoiceId).toBeNull();
+    expect(useHomeStore.getState().freshVoicePending).toBe(true);
+    expect(useEventStore.getState().activeThreadId).toBeNull();
+    expect(useHomeStore.getState().transcript).toEqual([]);
+    expect(fetch).toHaveBeenCalledWith("/api/agent-chat/voice-chat", expect.objectContaining({
+      method: "PUT", body: JSON.stringify({ session_id: null, voice_session_id: null }),
+    }));
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith("/resume"))).toBe(false);
+    home.ingest("VoiceTranscriptUpdated", { session_id: "call", segment_id: "late", role: "assistant", text: "Late final", revision: 2 }, 4);
+    home.ingest("SpeechSpoken", { text: "Late spoken reply", spoken_kind: "reply" }, 4);
+    home.ingest("AssistantTextDelta", { channel: "voice", text: "Late snapshot" }, 4);
+    expect(useHomeStore.getState().transcript).toEqual([]);
+    expect(useHomeStore.getState().liveReply).toBe("");
+    home.ingest("VoiceSessionStarted", { session_id: "next-call" }, 5);
+    home.ingest("TranscriptFinal", { transcript: { text: "Fresh question" } }, 6);
+    expect(useHomeStore.getState().transcript.map(line => line.text)).toEqual(["Fresh question"]);
+  });
+
+  it("clears the selected typed timeline when its voice call ends without deleting history", () => {
+    const session = { session_id: "typed" };
+    useAgentChatStore.setState({ activeSessionId: session.session_id });
+    useEventStore.setState({ activeKind: "text", activeThreadId: "typed" });
+    useHomeStore.getState().ingest("VoiceSessionEnded", { hangup_reason: "hotkey" }, 1);
+    expect(useAgentChatStore.getState().activeSessionId).toBeNull();
+    expect(useAgentChatStore.getState().timeline.items).toEqual([]);
+    expect(useEventStore.getState().activeThreadId).toBeNull();
+    expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
+  });
+
+  it("preserves an explicit archive switch while the previous call is stopping", () => {
+    useEventStore.setState({ activeKind: "voice", activeThreadId: "chosen" });
+    useHomeStore.setState({ continuedVoiceId: "chosen", voiceSwitchStopping: true, voiceSelectionPending: true });
+    useHomeStore.getState().ingest("VoiceSessionEnded", { hangup_reason: "hotkey" }, 1);
+    expect(useEventStore.getState().activeThreadId).toBe("chosen");
+    expect(useHomeStore.getState().continuedVoiceId).toBe("chosen");
+    expect(useHomeStore.getState().freshVoicePending).toBe(false);
+    expect(useHomeStore.getState().voiceSelectionPending).toBe(true);
+    expect(fetch).not.toHaveBeenCalled();
   });
 });
 

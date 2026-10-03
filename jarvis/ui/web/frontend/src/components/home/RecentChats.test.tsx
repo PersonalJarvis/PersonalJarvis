@@ -49,7 +49,8 @@ describe("RecentChats", () => {
       messages: [],
       activeSection: "board",
     });
-    useHomeStore.setState({ surface: "voice", transcript: [] });
+    useHomeStore.setState({ surface: "voice", transcript: [], liveSessionId: null, continuedVoiceId: null, freshVoicePending: false, voiceSwitchStopping: false });
+    useEventStore.setState({ voiceState: "idle" });
     useAgentChatStore.setState({
       sessions: [
         {
@@ -132,6 +133,44 @@ describe("RecentChats", () => {
     )).toBe(true);
     expect(screen.getAllByTitle("Spoken thread")).toHaveLength(1);
     await flush();
+  });
+
+  it("deselects an ended archive and only continues it after another explicit click", async () => {
+    render(<RecentChats />);
+    fireEvent.click(screen.getByTitle("Spoken thread"));
+    await flush();
+    act(() => {
+      useHomeStore.getState().ingest("VoiceSessionStarted", { session_id: "call" }, 1);
+      useHomeStore.getState().ingest("VoiceSessionEnded", { session_id: "call", hangup_reason: "hotkey" }, 2);
+    });
+    await flush();
+    expect(useEventStore.getState().activeThreadId).toBeNull();
+    expect(useHomeStore.getState().continuedVoiceId).toBeNull();
+    expect(useHomeStore.getState().transcript).toEqual([]);
+    expect(screen.getByTitle("Spoken thread")).toBeTruthy();
+    fireEvent.click(screen.getByTitle("Spoken thread"));
+    await flush();
+    expect(useEventStore.getState().activeThreadId).toBe("v1");
+    expect(useHomeStore.getState().continuedVoiceId).toBe("v1");
+    expect(useHomeStore.getState().transcript.map(line => line.text)).toEqual(["hello", "Hi there."]);
+    expect(useAgentChatStore.getState().newChat).toHaveBeenLastCalledWith({ voiceSessionId: "v1" });
+  });
+
+  it("does not reseed the blank lane when an archive response arrives after hangup", async () => {
+    render(<RecentChats />);
+    let finish!: (response: Response) => void;
+    vi.mocked(fetch).mockImplementation(async (url) => String(url).endsWith("/resume")
+      ? new Promise<Response>(resolve => { finish = resolve; })
+      : new Response(JSON.stringify(CONVERSATIONS)));
+    fireEvent.click(screen.getByTitle("Spoken thread"));
+    await flush();
+    await act(async () => {
+      useHomeStore.getState().ingest("VoiceSessionEnded", { hangup_reason: "hotkey" }, 2);
+      finish(new Response(JSON.stringify(DETAIL)));
+    });
+    expect(useHomeStore.getState().freshVoicePending).toBe(true);
+    expect(useHomeStore.getState().transcript).toEqual([]);
+    expect(useEventStore.getState().activeThreadId).toBeNull();
   });
 
   it("opens an agent chat on the chat surface even from the voice stage", async () => {
