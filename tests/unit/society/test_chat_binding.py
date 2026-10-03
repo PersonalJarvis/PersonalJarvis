@@ -716,13 +716,17 @@ class FakeTurnService(FakeService):
         *,
         status: str = "ok",
         turn_id: str | None = None,
+        cost_usd: float | None = None,
     ) -> None:
         from jarvis.agent_chat.events import make_event
 
         owned_turn = turn_id or f"turn-{len(self.sent)}"
+        terminal = {"turn_id": owned_turn, "status": status}
+        if cost_usd is not None:
+            terminal["cost_usd"] = cost_usd
         rows = [
             make_event("assistant_text", {"turn_id": owned_turn, "text": text}),
-            make_event("turn_finished", {"turn_id": owned_turn, "status": status}),
+            make_event("turn_finished", terminal),
         ]
         for event in rows:
             stored = self.store.append_event(session_id, event)
@@ -880,6 +884,7 @@ async def test_live_room_completion_reenters_voice_announcement_path(tmp_path: P
                 session_id,
                 f"finding {turn_number}",
                 turn_id=f"turn-{turn_number}",
+                cost_usd=turn_number / 100,
             )
 
         for _ in range(200):
@@ -902,7 +907,9 @@ async def test_live_room_completion_reenters_voice_announcement_path(tmp_path: P
 
         assert settled.settle_reason == "round_cap"
         events = await rt.store.events_for_trace(room.trace_id)
-        assert [event.msg_type for event in events].count(MsgType.SAY) == 6
+        says = [event for event in events if event.msg_type is MsgType.SAY]
+        assert len(says) == 6
+        assert sum(event.cost_usd for event in says) == pytest.approx(0.21)
         assert events[-1].msg_type is MsgType.ROOM_SETTLE
         announcement = announcements[-1]
         attention = [
@@ -991,7 +998,10 @@ async def test_room_recovery_consumes_terminal_without_replaying_owner(tmp_path:
     )
     chat_store.append_event(
         "society:scout",
-        make_event("turn_finished", {"turn_id": "turn-recover", "status": "done"}),
+        make_event(
+            "turn_finished",
+            {"turn_id": "turn-recover", "status": "done", "cost_usd": 0.37},
+        ),
     )
 
     svc = FakeTurnService(chat_store)
@@ -1019,6 +1029,7 @@ async def test_room_recovery_consumes_terminal_without_replaying_owner(tmp_path:
         assert len(says) == 1
         assert says[0].from_agent == "scout"
         assert says[0].text == "Recovered contribution."
+        assert says[0].cost_usd == pytest.approx(0.37)
     finally:
         await rt.close()
         chat_store.close()

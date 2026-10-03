@@ -92,6 +92,8 @@ class WorldFeed:
     # ------------------------------------------------------------ the feed
 
     async def _on_envelope(self, env: SocietyEnvelope) -> None:
+        if env.msg_type is MsgType.SAY and env.payload.get("silent") is True:
+            return
         if env.msg_type in VISIBLE_TYPES:
             await self._announce(self._message_event(env))
         elif env.msg_type in ROOM_TYPES:

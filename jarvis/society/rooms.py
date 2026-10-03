@@ -456,7 +456,10 @@ class Rooms:
         cost_usd: float,
     ) -> list[SocietyEnvelope]:
         events: list[SocietyEnvelope] = []
-        if text:
+        if text or cost_usd > 0:
+            payload = {"room_id": room.room_id, "round": room.round, "text": text}
+            if not text:
+                payload["silent"] = True
             events.append(
                 SocietyEnvelope(
                     msg_type=MsgType.SAY,
@@ -464,9 +467,10 @@ class Rooms:
                     to_agent=None,
                     trace_id=room.trace_id,
                     cost_usd=cost_usd,
-                    payload={"room_id": room.room_id, "round": room.round, "text": text},
+                    payload=payload,
                 )
             )
+        if text:
             room.message_count += 1
             room.spoke_this_round = True
         room.turned.append(member)

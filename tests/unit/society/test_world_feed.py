@@ -145,6 +145,27 @@ async def test_a_room_opens_speaks_and_settles(rt):
 # ------------------------------------------------------------- resilience
 
 
+async def test_silent_room_cost_does_not_create_world_bubble(rt):
+    runtime, pushed = rt
+    room = await runtime.rooms.open(
+        opened_by="jarvis", members=["scout", "archivist"], topic="Plan quietly"
+    )
+    await runtime.rooms.claim_turn(room.room_id, "claim-cost")
+    await runtime.rooms.complete_claim(
+        room.room_id,
+        "claim-cost",
+        "",
+        cost_usd=0.11,
+    )
+
+    assert _messages(pushed) == []
+    events = await runtime.store.events_for_trace(room.trace_id)
+    silent = [event for event in events if event.msg_type is MsgType.SAY]
+    assert len(silent) == 1
+    assert silent[0].payload["silent"] is True
+    assert silent[0].cost_usd == pytest.approx(0.11)
+
+
 async def test_attaching_twice_subscribes_once(rt):
     runtime, pushed = rt
     before = runtime.store.bus.active_subs

@@ -1184,7 +1184,16 @@ class SocietyRuntime:
                 log.debug("society room %s was terminal before failed turn landed", room_id)
             return
         try:
-            room = await self.rooms.complete_claim(room_id, claim_id, final_text)
+            cost_usd = max(0.0, float(payload.get("cost_usd") or 0.0))
+        except (TypeError, ValueError):
+            cost_usd = 0.0
+        try:
+            room = await self.rooms.complete_claim(
+                room_id,
+                claim_id,
+                final_text,
+                cost_usd=cost_usd,
+            )
         except RoomError:
             log.debug("society room %s claim was already terminalized", room_id)
             return
