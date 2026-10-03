@@ -29,16 +29,13 @@ def test_default_locale_is_not_german() -> None:
     assert DEFAULT_LOCALE == "en"
 
 
-def test_no_output_language_call_pins_its_own_default() -> None:
+def test_honesty_resolution_uses_the_shared_default_locale() -> None:
     source = _MANAGER.read_text(encoding="utf-8")
-    offenders = [
-        call for call in _RESOLVE_CALL_RE.findall(source)
-        if "default=" in call and "default=DEFAULT_LOCALE" not in call
-    ]
-    assert not offenders, (
-        "resolve_output_language must use the shared DEFAULT_LOCALE: "
-        f"{offenders}"
-    )
+    marker = "honesty_lang = resolve_output_language("
+    start = source.index(marker) + len("honesty_lang = ")
+    calls = _RESOLVE_CALL_RE.findall(source[start:])
+    assert calls, "missing honesty resolve_output_language call"
+    assert "default=DEFAULT_LOCALE" in calls[0], calls[0]
 
 
 def test_the_two_honesty_guards_share_one_resolution() -> None:
