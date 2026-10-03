@@ -86,6 +86,7 @@ def _accepts_keyword(callable_obj: Any, name: str) -> bool:
     try:
         params = inspect.signature(callable_obj).parameters
     except (TypeError, ValueError):
+        log.debug("society: could not inspect chat send signature", exc_info=True)
         return False
     if name in params:
         return True
