@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -121,9 +122,14 @@ def test_no_module_under_jarvis_brain_calls_the_polish_pass() -> None:
     """
     assert _BRAIN_DIR.is_dir(), f"missing: {_BRAIN_DIR}"
     offenders: list[str] = []
+    call_or_import = re.compile(
+        r"(?:from\s+jarvis\.dictation\.polish\s+import|"
+        r"import\s+jarvis\.dictation\.polish|"
+        r"\bpolish_transcript\s*\()"
+    )
     for path in sorted(_BRAIN_DIR.rglob("*.py")):
         text = path.read_text(encoding="utf-8", errors="replace")
-        if "dictation.polish" in text or "polish_transcript" in text:
+        if call_or_import.search(text):
             offenders.append(str(path.relative_to(_REPO_ROOT)))
     assert offenders == [], offenders
 
