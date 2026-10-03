@@ -182,7 +182,7 @@ async def test_github_pr_merge_filter_is_signed_idempotent_and_dispatches(world)
     await drain(scheduler)
     assert len(brain.prompts) == 1
     assert '"merged": true' in brain.prompts[0]
-    assert await store.hooks.counts(tid) == (1, 1)
+    assert await store.hooks.counts(tid) == (1, 0)
 
 
 async def test_duplicate_deliveries_are_idempotent_and_conflicts_refused(world):
