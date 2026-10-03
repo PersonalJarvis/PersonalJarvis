@@ -307,6 +307,10 @@ async def create_agent(body: CreateAgentBody, request: Request) -> dict[str, Any
         )
     except RosterError as exc:
         raise _typed_error(exc) from exc
+    progression = getattr(request.app.state, "progression", None)
+    if created and progression is not None:
+        # Growing the team levels the person up (jarvis/progression).
+        await progression.note_agent_hired(agent.agent_id)
     return {
         "agent": agent.to_dict(),
         "created": created,
