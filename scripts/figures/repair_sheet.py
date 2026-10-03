@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from collections import Counter
 from collections.abc import Iterable
@@ -171,6 +172,9 @@ def repair_sheet(
     min_face_contrast: float = 24.0,
 ) -> bytes:
     """Return a contract-sized repaired PNG or raise ValueError."""
+    if not math.isfinite(min_face_contrast) or min_face_contrast < 0:
+        raise ValueError("minimum face contrast must be a finite non-negative number")
+
     palette_rgb = [_parse_hex(value) for value in palette]
     if len(palette_rgb) != CELL_COUNT:
         raise ValueError(f"recipe palette must contain exactly {CELL_COUNT} colours")
