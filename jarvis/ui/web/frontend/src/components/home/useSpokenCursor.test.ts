@@ -13,6 +13,25 @@ afterEach(() => {
 });
 
 describe("playback-confirmed spoken cursor", () => {
+  it("preserves heard prefixes when captions grow ahead of metadata or are truncated", () => {
+    setTimedSpeechSession("growing");
+    publishTimedSpeechPlayback("live:growing:answer", "One two", 3);
+    const { result, rerender } = renderHook(({ text }) => useSpokenCursor(text, true, "live:growing:answer"), {
+      initialProps: { text: "One two" },
+    });
+    expect(result.current).toBe(3);
+    rerender({ text: "One two three" });
+    expect(result.current).toBe(3);
+    act(() => publishTimedSpeechPlayback("live:growing:answer", "One two three", 7));
+    expect(result.current).toBe(7);
+    rerender({ text: "One two" });
+    expect(result.current).toBe(7);
+    rerender({ text: "Different words" });
+    expect(result.current).toBe(0);
+    act(() => publishTimedSpeechPlayback("live:growing:unicode", "A😀", 3));
+    const unicode = renderHook(() => useSpokenCursor("A😎", true, "live:growing:unicode"));
+    expect(unicode.result.current).toBe(1);
+  });
   it("keeps a new bus caption grey before the audio socket's metadata arrives", () => {
     setTimedSpeechSession("current");
     const { result } = renderHook(() => useSpokenCursor("New caption", true, "live:current:new"));
