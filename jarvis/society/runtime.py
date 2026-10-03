@@ -1124,7 +1124,12 @@ class SocietyRuntime:
         """Append one envelope on behalf of ``from_agent`` (REST, user, tests)."""
         body = dict(payload or {})
         body["text"] = text
-        return await self.store.append_and_publish(
+        from jarvis.core.protocols import current_chat_turn
+
+        turn = current_chat_turn.get()
+        if turn is not None and turn.direct_user:
+            body["reply_session_id"] = turn.session_id
+        envelope = await self.store.append_and_publish(
             SocietyEnvelope(
                 msg_type=msg_type,
                 from_agent=from_agent,
@@ -1134,6 +1139,10 @@ class SocietyRuntime:
                 parent_event_id=parent_event_id,
             )
         )
+        from .delegation_wait import track_request
+
+        await track_request(self, envelope)
+        return envelope
 
     @property
     def lead_id(self) -> str:

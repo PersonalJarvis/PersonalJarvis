@@ -960,6 +960,9 @@ def _claude_events(session_id: str, home: Path | None, live: bool) -> list[dict[
             if mode == "plan":
                 log.permission_mode = "plan"
             continue
+        if kind == "system" and row.get("subtype") == "turn_duration":
+            log.close_turn(_ts_ms(row.get("timestamp")) or log.last_ms)
+            continue
         if kind not in ("user", "assistant"):
             continue
         message = row.get("message")
@@ -1007,6 +1010,8 @@ def _claude_events(session_id: str, home: Path | None, live: bool) -> list[dict[
         if isinstance(content, str):
             log.text(content, row_id, ts)
             log.usage(mid, message.get("usage"), ts)
+            if message.get("stop_reason") == "end_turn":
+                log.close_turn(ts)
             continue
         if not isinstance(content, list):
             continue
@@ -1026,6 +1031,8 @@ def _claude_events(session_id: str, home: Path | None, live: bool) -> list[dict[
                     ts,
                 )
         log.usage(mid, message.get("usage"), ts)
+        if message.get("stop_reason") == "end_turn":
+            log.close_turn(ts)
     log.finish()
     return log
 

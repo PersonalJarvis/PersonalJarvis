@@ -200,7 +200,7 @@ def messages_from_events(
             internal[str(payload.get("message_id"))] = payload
             continue
         if kind == "notice" and payload.get("kind") in {
-            "society_result", "society_message", "coding_result",
+            "society_result", "society_message", "coding_result", "delegation_report",
         }:
             flush()
             material = str(payload.get("report") or payload.get("text") or "")

@@ -6665,7 +6665,7 @@ class Registry:
                 from .followthrough import prepare
 
                 pending = await prepare(term, text, typed, followup)
-            return await self._send_prompt_locked(
+            result = await self._send_prompt_locked(
                 identity,
                 text,
                 workspace_id=owner.id,
@@ -6675,6 +6675,10 @@ class Registry:
                 allow_question=allow_question,
                 pending_result=pending,
             )
+            from .delegation_wait import track_submission
+
+            track_submission(self, owner, result)
+            return result
 
     @staticmethod
     def input_token(term: Terminal) -> str:

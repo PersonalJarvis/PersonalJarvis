@@ -816,15 +816,15 @@ class AgentChatService:
                 if completion is not None else handle
             )
 
-            async def run_attempt(run_prompt: str) -> None:
+            async def run_attempt(active_handle: TurnHandle, run_prompt: str) -> None:
                 if control_runner is not None:
-                    vendor = await control_runner(run_handle, text)
+                    vendor = await control_runner(active_handle, text)
                     if vendor:
                         self.store.update_session(session_id, vendor_session=vendor)
                 elif runner == "brain":
                     async with self._brain_lock:
                         await run_brain_turn(
-                            run_handle,
+                            active_handle,
                             run_prompt,
                             bridge=self._bridge_for(bus),
                             always_allowed=self.always_allowed(session_id),
@@ -842,7 +842,7 @@ class AgentChatService:
                     # a surface that combines the two keeps working.
                     as_jarvis = kit.brain_runner and kit.cli_seats
                     vendor = await run_cli_turn(
-                        run_handle,
+                        active_handle,
                         run_prompt + selection_briefing(selected),
                         runner,
                         identity=as_jarvis,
@@ -852,7 +852,7 @@ class AgentChatService:
                     if vendor and vendor != session.vendor_session:
                         self.store.update_session(session_id, vendor_session=vendor)
                 elif runner == "api" and supports_api_runner(session.provider):
-                    await run_api_turn(run_handle, run_prompt)
+                    await run_api_turn(active_handle, run_prompt)
                 else:
                     await self._emit(
                         session_id,
@@ -874,7 +874,15 @@ class AgentChatService:
             try:
                 run_prompt = prompt
                 for _ in range(MAX_ASKS_PER_TURN + 2):
-                    await run_attempt(run_prompt)
+                    if (
+                        origin.direct_user and session.surface in ("jarvis", "society")
+                        and control_runner is None and not native_goal
+                    ):
+                        from jarvis.agent_chat.delegation_wait import run_with_delegates
+
+                        await run_with_delegates(self, run_handle, run_prompt, run_attempt)
+                    else:
+                        await run_attempt(run_handle, run_prompt)
                     if completion is None:
                         break
                     continuation = await completion.next_prompt()

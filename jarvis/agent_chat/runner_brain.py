@@ -570,12 +570,20 @@ async def _generate(
     session = handle.session
     history = brain_history_from_events(handle.history)
     output_language = getattr(handle, "output_language", "")
-    if session.surface == "society":
+    if session.surface == "society" and not handle.continuation:
         from jarvis.society.reply_preference import resolve_agent_reply_language
 
         output_language = await resolve_agent_reply_language(
             session.session_id, text, output_language
         )
+    if not output_language:
+        from jarvis.core.turn_language import resolve_output_language
+
+        output_language = resolve_output_language(
+            getattr(brain, "_reply_language", "auto"), "unknown", text,
+        )
+    # Keep this turn's decision across the English evidence-continuation prompt.
+    handle.output_language = output_language
     kwargs: dict[str, Any] = {
         "use_history": False,
         "history_override": history,
