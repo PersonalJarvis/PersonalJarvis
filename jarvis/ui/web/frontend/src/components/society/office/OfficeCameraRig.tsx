@@ -15,7 +15,7 @@ import { OrbitControls } from "@react-three/drei";
 import { useFrame, useThree } from "@react-three/fiber";
 import { MOUSE, Vector3, type PerspectiveCamera } from "three";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
-import { cameraHome, CAMERA_LIMITS, DRAG_CLICK_PX, HOME_PITCH_RAD, HOME_YAW_RAD, wheelZoomSpeed } from "./officeCamera";
+import { cameraHome, CAMERA_LIMITS, depthNear, DRAG_CLICK_PX, HOME_PITCH_RAD, HOME_YAW_RAD, wheelZoomSpeed } from "./officeCamera";
 import { seatOf, type OfficeLayout } from "./officeLayout";
 import { useLeadSeat } from "./leadSeat";
 import { cameraView, officeSession, player, useOfficeStore } from "./officeStore";
@@ -206,6 +206,17 @@ export function OfficeCameraRig({ layout, overview }: { layout: OfficeLayout; ov
       el.removeEventListener("wheel", wheel, true);
     };
   }, [connected, gl]);
+
+  // The near plane follows the zoom, or coplanar layers (oak over slab) fight in bands when zoomed out.
+  useFrame(() => {
+    const c = controls.current;
+    const lens = camera as PerspectiveCamera;
+    if (!c || !lens.isPerspectiveCamera) return;
+    const near = depthNear(camera.position.distanceTo(c.target));
+    if (Math.abs(near - lens.near) < lens.near * 0.05) return;
+    lens.near = near;
+    lens.updateProjectionMatrix();
+  });
 
   useFrame((_, rawDt) => {
     const c = controls.current;
