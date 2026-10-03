@@ -257,16 +257,17 @@ async def _scoped_tool_for_session(session_id: str, capability: str) -> Tool | N
     except Exception:  # noqa: BLE001 — a missing chat provenance must not offer a tool
         log.warning("society: scoped chat lookup failed for %s", session_id, exc_info=True)
         return None
-    if session is None:
+    if session is None or str(getattr(session, "session_id", "") or "") != session_id:
         return None
+    surface = str(getattr(session, "surface", "") or "")
     agent_id = agent_id_of(session_id)
     if agent_id is None:
-        if str(session.surface) != "jarvis":
+        if surface != "jarvis":
             return None
         from .roster import LEAD_AGENT_ID
 
         agent_id = LEAD_AGENT_ID
-    elif str(session.surface) != SURFACE:
+    elif surface != SURFACE:
         return None
     agent = await rt.roster.get(agent_id)
     if agent is None or str(agent.state) != "active":
