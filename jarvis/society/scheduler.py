@@ -32,24 +32,27 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Any, Final
+from uuid import uuid4
 
 from .delivery import DeliveryBusy
 from .events import SCHEDULER_ACTOR as _SCHEDULER
 from .events import USER_ACTOR as _USER
-from .events import MsgType, SocietyEnvelope, Tier
+from .events import MsgType, RoomState, SocietyEnvelope, Tier, now_ms
 from .failure_reasons import FailureReason, classify_error, retry_action
+from .rooms import Room, RoomError, Rooms
 from .roster import AgentRecord, AgentState, Roster
 from .store import SocietyStore, day_start_ms
 
 log = logging.getLogger(__name__)
 
-__all__ = ["DispatchHook", "DeliverHook", "SocietyScheduler", "validate_result"]
+__all__ = ["DispatchHook", "DeliverHook", "RoomTurnHook", "SocietyScheduler", "validate_result"]
 
 #: ``dispatch(target, assign_envelope) -> run_id`` — starts real work under
 #: the target's identity and returns the mission/run id it started.
 DispatchHook = Callable[[AgentRecord, SocietyEnvelope], Awaitable[str]]
 #: ``deliver(target, envelope)`` — wakes the target's canonical chat.
 DeliverHook = Callable[[AgentRecord, SocietyEnvelope], Awaitable[None]]
+RoomTurnHook = Callable[[AgentRecord, Room, str], Awaitable[str]]
 
 MAX_DEPTH: Final[int] = 2
 DEFAULT_TRACE_MESSAGE_CAP: Final[int] = 24
@@ -83,6 +86,8 @@ class SocietyScheduler:
         *,
         dispatch: DispatchHook | None = None,
         deliver: DeliverHook | None = None,
+        rooms: Rooms | None = None,
+        room_turn: RoomTurnHook | None = None,
         budget_tracker: Any | None = None,
         budget_tracker_getter: Callable[[], Any | None] | None = None,
         trace_message_cap: int = DEFAULT_TRACE_MESSAGE_CAP,
@@ -91,6 +96,8 @@ class SocietyScheduler:
         self._roster = roster
         self._dispatch = dispatch
         self._deliver = deliver
+        self._rooms = rooms
+        self._room_turn = room_turn
         self._budget = budget_tracker
         self._budget_getter = budget_tracker_getter
         self._trace_cap = trace_message_cap
@@ -130,6 +137,84 @@ class SocietyScheduler:
         self._running.clear()
         return count
 
+    async def drive_rooms(self) -> None:
+        """Resume every running room. Safe to call repeatedly from recovery."""
+        if self._rooms is None or self._room_turn is None:
+            return
+        for room in await self._rooms.list(state=RoomState.RUNNING):
+            await self.drive_room(room.room_id)
+
+    async def drive_room(self, room_id: str) -> None:
+        """Advance one bounded room by at most one canonical-chat turn."""
+        rooms = self._rooms
+        dispatch = self._room_turn
+        if rooms is None or dispatch is None:
+            return
+        room = await rooms.get(room_id)
+        if room is None or room.state is not RoomState.RUNNING:
+            return
+        if await self._store.kill_switch():
+            await rooms.settle(room_id, reason="kill_switch")
+            return
+
+        prefix = f"room:{room_id}:"
+        if room.inflight_claim_id and any(run_id.startswith(prefix) for run_id in self._running):
+            return
+
+        target_id = room.inflight_member or room.next_speaker
+        if not target_id:
+            await rooms.fail(room_id, reason=str(FailureReason.INTERNAL_ERROR))
+            return
+        target = await self._roster.resolve(target_id)
+        if target is None or target.state is AgentState.ARCHIVED:
+            await rooms.fail(room_id, reason=str(FailureReason.TARGET_UNKNOWN))
+            return
+        if target.state is AgentState.PAUSED:
+            await rooms.fail(room_id, reason=str(FailureReason.TARGET_PAUSED))
+            return
+
+        if not room.inflight_claim_id:
+            if await self._store.count_in_trace(room.trace_id) > self._trace_cap:
+                await rooms.fail(room_id, reason=str(FailureReason.MESSAGE_CAP))
+                return
+            budget = self._budget_getter() if self._budget_getter is not None else self._budget
+            if budget is not None:
+                try:
+                    budget.assert_under_limit(room.trace_id)
+                except Exception:  # noqa: BLE001 — tracker owns its exception type
+                    await rooms.fail(room_id, reason=str(FailureReason.BUDGET_EXHAUSTED))
+                    return
+            if target.daily_budget_usd > 0:
+                spent = await self._store.cost_since(target.agent_id, day_start_ms(now_ms()))
+                if spent >= target.daily_budget_usd:
+                    await rooms.fail(room_id, reason=str(FailureReason.BUDGET_EXHAUSTED))
+                    return
+            if self.active_runs(target.agent_id) >= target.max_concurrent_runs:
+                return
+
+        had_claim = bool(room.inflight_claim_id)
+        claim_id = room.inflight_claim_id or f"room-turn:{uuid4().hex}"
+        if not had_claim:
+            try:
+                room = await rooms.claim_turn(room_id, claim_id)
+            except RoomError:
+                return
+        try:
+            run_id = await dispatch(target, room, claim_id)
+        except DeliveryBusy:
+            if not had_claim:
+                try:
+                    await rooms.release_claim(room_id, claim_id)
+                except RoomError:
+                    log.debug("society room %s claim moved while releasing busy turn", room_id)
+            return
+        except Exception as exc:  # noqa: BLE001 — failed room turns are terminal and typed
+            log.warning("society room %s dispatch failed", room_id, exc_info=True)
+            await rooms.fail(room_id, reason=str(classify_error(exc)))
+            return
+        if run_id:
+            self._running[run_id] = target.agent_id
+
     # ------------------------------------------------------------ handler
 
     async def on_envelope(self, env: SocietyEnvelope) -> None:
@@ -137,6 +222,11 @@ class SocietyScheduler:
             return
         if env.msg_type is MsgType.ASSIGN:
             await self._on_assign(env)
+        elif (
+            env.msg_type in (MsgType.ROOM_OPEN, MsgType.SAY)
+            and isinstance(env.payload.get("room_id"), str)
+        ):
+            await self.drive_room(str(env.payload["room_id"]))
         elif env.msg_type is MsgType.RESULT:
             await self._on_result(env)
         elif env.msg_type in _DELIVERED and env.to_agent and env.to_agent != _USER:

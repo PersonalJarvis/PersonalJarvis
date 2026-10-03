@@ -960,7 +960,7 @@ async def list_rooms(request: Request) -> dict[str, Any]:
     return {"rooms": [r.to_dict() for r in await rt.rooms.list()]}
 
 
-@router.post("/rooms")
+@router.post("/rooms", openapi_extra={"x-jarvis-dangerous": True})
 async def open_room(body: OpenRoomBody, request: Request) -> dict[str, Any]:
     rt = await _runtime(request)
     for member in body.members:

@@ -36,13 +36,13 @@ from .capabilities import CapabilityKind, CapabilityRow, build_catalog
 from .checkpoints import CheckpointEngine
 from .communication import reply_policy, should_report
 from .conversation import ConversationArchive
-from .delivery import IncomingMessage, incoming_context
+from .delivery import DeliveryBusy, IncomingMessage, incoming_context
 from .events import MsgType, QuestState, RoomState, SocietyEnvelope, Tier
 from .focus import derive_approval_rules, derive_focus
 from .learning import AgentSkills, LearningPass, TurnDigest, default_creator_factory
 from .memory import SocietyMemory
 from .quests import Quests
-from .rooms import Rooms
+from .rooms import Room, RoomError, Rooms
 from .roster import LEAD_AGENT_ID, AgentRecord, Roster
 from .scheduler import DeliverHook, SocietyScheduler
 from .seeds import seed_first_run
@@ -161,6 +161,8 @@ class SocietyRuntime:
             self.roster,
             dispatch=self._dispatch,
             deliver=deliver,
+            rooms=self.rooms,
+            room_turn=self._dispatch_room_turn,
             budget_tracker_getter=self._get_budget,
         )
         self.bridge = MissionBridge(
@@ -410,6 +412,10 @@ class SocietyRuntime:
                 await self.scheduler.drain_deliveries()
             except Exception:  # noqa: BLE001 — one failed pass must not lose the queue
                 log.warning("society: delivery recovery failed", exc_info=True)
+            try:
+                await self.scheduler.drive_rooms()
+            except Exception:  # noqa: BLE001 — one bad room must not stop recovery
+                log.warning("society: room recovery failed", exc_info=True)
             await asyncio.sleep(1.0)
 
     @property
@@ -787,6 +793,239 @@ class SocietyRuntime:
         self._watchers.add(watcher)
         watcher.add_done_callback(self._watchers.discard)
         return run_id
+
+    async def _room_prompt(self, room: Room, target: AgentRecord) -> str:
+        events = await self.store.events_for_trace(room.trace_id)
+        transcript: list[str] = []
+        used = 0
+        for event in reversed(events):
+            if event.msg_type is not MsgType.SAY:
+                continue
+            text = event.text.strip()
+            if not text:
+                continue
+            line = f"{event.from_agent}: {text[:1200]}"
+            if used + len(line) > 6000:
+                break
+            transcript.append(line)
+            used += len(line)
+        transcript.reverse()
+        lines = [
+            f"[bounded room {room.room_id}; round {room.round}]",
+            f"Topic: {room.topic[:1500] or '(none)'}",
+            "Members: " + ", ".join(room.members),
+        ]
+        if transcript:
+            lines += ["Transcript:", *transcript]
+        lines += [
+            f"It is your turn as {target.name}. Contribute once to the room topic.",
+            "Keep the contribution concise. An empty final response means you pass this turn.",
+            "Do not create another orchestrator or spawn a recursive agent loop.",
+        ]
+        return "\n".join(lines)
+
+    async def _dispatch_room_turn(self, target: AgentRecord, room: Room, claim_id: str) -> str:
+        """Start or recover one canonical-chat turn owned by a durable room claim."""
+        svc = self._get_chat()
+        if svc is None:
+            raise DeliveryBusy("agent chat service unavailable")
+        from .chat_binding import ensure_session
+
+        session = ensure_session(svc, self._get_cfg(), target)
+        receipt = svc.store.incoming_message(session.session_id, claim_id)
+        turn_id = ""
+        queue = None
+        if receipt is not None:
+            status = str(receipt.get("status") or "")
+            if status == "failed":
+                raise RuntimeError(str(receipt.get("error") or "room turn delivery failed"))
+            if status == "delivered":
+                turn_id = str(receipt.get("turn_id") or "")
+                if not turn_id:
+                    raise RuntimeError("delivered room turn has no turn id")
+                await self.rooms.bind_turn(room.room_id, claim_id, turn_id)
+                terminal = await asyncio.to_thread(
+                    svc.store.turn_terminal, session.session_id, turn_id
+                )
+                run_id = f"room:{room.room_id}:{turn_id}"
+                if terminal is not None:
+                    events = await asyncio.to_thread(svc.store.list_events, session.session_id)
+                    await self._finish_room_turn(
+                        room.room_id,
+                        claim_id,
+                        run_id,
+                        turn_id,
+                        events,
+                        terminal,
+                    )
+                    return ""
+                if not svc.is_running(session.session_id):
+                    await self.rooms.fail(room.room_id, reason="orphaned_turn")
+                    return ""
+                queue = svc.subscribe(session.session_id)
+
+        if not turn_id:
+            if svc.is_running(session.session_id):
+                raise DeliveryBusy(f"target busy: {target.name} is running a turn")
+            prompt = await self._room_prompt(room, target)
+            incoming = IncomingMessage(
+                message_id=claim_id,
+                sender_id=room.opened_by,
+                sender_name=room.opened_by,
+                sender_kind=(
+                    "jarvis"
+                    if room.opened_by == LEAD_AGENT_ID
+                    else "user"
+                    if room.opened_by == "user"
+                    else "agent"
+                ),
+                text=room.topic,
+                prompt=prompt,
+                trace_id=room.trace_id,
+            )
+            queue = svc.subscribe(session.session_id)
+            token = incoming_context.set(incoming)
+            try:
+                turn_id = await svc.send(
+                    session.session_id,
+                    prompt,
+                    incoming=incoming,
+                    **(
+                        {"direct_user": False}
+                        if getattr(svc, "supports_turn_completion", False)
+                        else {}
+                    ),
+                )
+            except Exception:
+                svc.unsubscribe(session.session_id, queue)
+                raise
+            finally:
+                incoming_context.reset(token)
+            try:
+                await self.rooms.bind_turn(room.room_id, claim_id, turn_id)
+            except RoomError:
+                try:
+                    await svc.cancel(session.session_id, expected_turn_id=turn_id)
+                except Exception:  # noqa: BLE001 — room state is already authoritative
+                    log.warning("society room turn could not be cancelled after lost claim", exc_info=True)
+                raise
+
+        run_id = f"room:{room.room_id}:{turn_id}"
+        watcher = asyncio.create_task(
+            self._watch_room_turn(
+                svc,
+                session.session_id,
+                queue,
+                turn_id,
+                run_id,
+                room.room_id,
+                claim_id,
+            )
+        )
+        self._watchers.add(watcher)
+        watcher.add_done_callback(self._watchers.discard)
+        return run_id
+
+    async def _watch_room_turn(
+        self,
+        svc: Any,
+        session_id: str,
+        queue: Any,
+        turn_id: str,
+        run_id: str,
+        room_id: str,
+        claim_id: str,
+    ) -> None:
+        last_seq = 0
+        read_failures = 0
+        collected: list[dict[str, Any]] = []
+        terminal: dict[str, Any] | None = None
+        try:
+            while terminal is None:
+                try:
+                    events = [
+                        await asyncio.wait_for(queue.get(), timeout=_WATCH_EVENT_POLL_SECONDS)
+                    ]
+                except TimeoutError:
+                    try:
+                        events = await asyncio.to_thread(
+                            svc.store.list_events, session_id, after_seq=last_seq
+                        )
+                    except Exception:  # noqa: BLE001 — bounded recovery becomes a room failure
+                        read_failures += 1
+                        log.warning(
+                            "society: room turn recovery failed for %s (%s/3)",
+                            run_id,
+                            read_failures,
+                            exc_info=True,
+                        )
+                        if read_failures < 3:
+                            continue
+                        await self.rooms.fail(room_id, reason="turn_recovery_failed")
+                        return
+                else:
+                    read_failures = 0
+                for event in events:
+                    seq = int(event.get("seq") or 0)
+                    if seq and seq <= last_seq:
+                        continue
+                    last_seq = max(last_seq, seq)
+                    payload = event.get("payload") or {}
+                    if payload.get("turn_id") not in (None, turn_id):
+                        continue
+                    collected.append(event)
+                    if event.get("kind") == "turn_finished":
+                        terminal = event
+                        break
+        except asyncio.CancelledError:
+            return
+        finally:
+            svc.unsubscribe(session_id, queue)
+        await self._finish_room_turn(
+            room_id,
+            claim_id,
+            run_id,
+            turn_id,
+            collected,
+            terminal,
+        )
+
+    async def _finish_room_turn(
+        self,
+        room_id: str,
+        claim_id: str,
+        run_id: str,
+        turn_id: str,
+        events: list[dict[str, Any]],
+        terminal: dict[str, Any],
+    ) -> None:
+        self.scheduler.note_run_ended(run_id)
+        final_text = ""
+        error = ""
+        for event in events:
+            payload = event.get("payload") or {}
+            if payload.get("turn_id") not in (None, turn_id):
+                continue
+            if event.get("kind") == "assistant_text":
+                final_text = str(payload.get("text") or final_text)
+            elif event.get("kind") == "error":
+                error = str(payload.get("message") or error)
+        payload = terminal.get("payload") or {}
+        status = str(payload.get("status") or "done")
+        if status not in ("ok", "done", "completed"):
+            error = str(payload.get("error") or error or status)
+            try:
+                await self.rooms.fail(room_id, reason=error[:500] or "turn_failed")
+            except RoomError:
+                log.debug("society room %s was terminal before failed turn landed", room_id)
+            return
+        try:
+            room = await self.rooms.complete_claim(room_id, claim_id, final_text)
+        except RoomError:
+            log.debug("society room %s claim was already terminalized", room_id)
+            return
+        if room.state is RoomState.RUNNING:
+            await self.scheduler.drive_room(room_id)
 
     async def _watch_turn(
         self,

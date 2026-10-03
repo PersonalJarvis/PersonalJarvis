@@ -6,8 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from jarvis.society.events import MsgType, SocietyEnvelope, Tier
+from jarvis.society.events import MsgType, RoomState, SocietyEnvelope, Tier
 from jarvis.society.failure_reasons import FailureReason
+from jarvis.society.rooms import Rooms
 from jarvis.society.roster import AgentRecord, Roster
 from jarvis.society.scheduler import SocietyScheduler, validate_result
 from jarvis.society.store import SocietyStore
@@ -33,6 +34,15 @@ class FakeDeliverer:
 
     async def __call__(self, target: AgentRecord, env: SocietyEnvelope) -> None:
         self.delivered.append((target.agent_id, env.msg_type))
+
+
+class FakeRoomTurn:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, str]] = []
+
+    async def __call__(self, target, room, claim_id: str) -> str:
+        self.calls.append((target.agent_id, room.room_id, claim_id))
+        return f"room:{room.room_id}:turn-1"
 
 
 class FakeBudget:
@@ -91,6 +101,86 @@ async def test_lead_assign_dispatches_and_claims(world):
     types = [e.msg_type for e in await store.events_for_trace("t1")]
     assert types == [MsgType.ASSIGN, MsgType.CLAIM]
     assert scheduler.running == {"run-1": "scout"}
+
+
+async def test_room_open_is_driven_by_the_same_scheduler(tmp_path: Path):
+    store = SocietyStore(tmp_path / "rooms.db")
+    await store.open()
+    roster = Roster(store)
+    await roster.create(name="Jarvis", tier=Tier.LEAD)
+    await roster.create(name="Scout")
+    await roster.create(name="Archivist")
+    rooms = Rooms(store)
+    room_turn = FakeRoomTurn()
+    scheduler = SocietyScheduler(
+        store,
+        roster,
+        rooms=rooms,
+        room_turn=room_turn,
+        budget_tracker=FakeBudget(),
+    ).attach()
+    try:
+        opened = await rooms.open(opened_by="jarvis", members=["scout", "archivist"])
+        loaded = await rooms.get(opened.room_id)
+        assert loaded is not None
+        assert loaded.inflight_member == "scout"
+        assert loaded.inflight_claim_id
+        assert room_turn.calls == [("scout", opened.room_id, loaded.inflight_claim_id)]
+        assert scheduler.running == {f"room:{opened.room_id}:turn-1": "scout"}
+    finally:
+        scheduler.detach()
+        await store.close()
+
+
+async def test_room_open_honors_kill_switch(tmp_path: Path):
+    store = SocietyStore(tmp_path / "room-kill.db")
+    await store.open()
+    roster = Roster(store)
+    await roster.create(name="Jarvis", tier=Tier.LEAD)
+    await roster.create(name="Scout")
+    await roster.create(name="Archivist")
+    rooms = Rooms(store)
+    room_turn = FakeRoomTurn()
+    scheduler = SocietyScheduler(store, roster, rooms=rooms, room_turn=room_turn).attach()
+    try:
+        await store.set_kill_switch(True)
+        opened = await rooms.open(opened_by="jarvis", members=["scout", "archivist"])
+        loaded = await rooms.get(opened.room_id)
+        assert loaded is not None
+        assert loaded.state is RoomState.SETTLED
+        assert loaded.settle_reason == "kill_switch"
+        assert room_turn.calls == []
+    finally:
+        scheduler.detach()
+        await store.close()
+
+
+async def test_room_open_honors_global_budget(tmp_path: Path):
+    store = SocietyStore(tmp_path / "room-budget.db")
+    await store.open()
+    roster = Roster(store)
+    await roster.create(name="Jarvis", tier=Tier.LEAD)
+    await roster.create(name="Scout")
+    await roster.create(name="Archivist")
+    rooms = Rooms(store)
+    room_turn = FakeRoomTurn()
+    scheduler = SocietyScheduler(
+        store,
+        roster,
+        rooms=rooms,
+        room_turn=room_turn,
+        budget_tracker=FakeBudget(exceeded=True),
+    ).attach()
+    try:
+        opened = await rooms.open(opened_by="jarvis", members=["scout", "archivist"])
+        loaded = await rooms.get(opened.room_id)
+        assert loaded is not None
+        assert loaded.state is RoomState.FAILED
+        assert loaded.settle_reason == str(FailureReason.BUDGET_EXHAUSTED)
+        assert room_turn.calls == []
+    finally:
+        scheduler.detach()
+        await store.close()
 
 
 async def test_specialist_cannot_assign(world):
