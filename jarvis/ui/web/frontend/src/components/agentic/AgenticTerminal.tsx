@@ -2501,8 +2501,13 @@ export function AgenticTerminal({
    * the pane filled the window and its agent kept drawing into the top-left
    * corner of it (2026-08-25).
    */
-  useEffect(() => {
+  useLayoutEffect(() => {
     const refit = () => (claimResizeRef.current ?? resizeRef.current)?.();
+    // The office preview may still lead this same PTY. Maximizing explicitly
+    // hands its size to the grid, before paint, without moving keyboard focus.
+    // Later settling passes only refit: they must not undo a newer pane click.
+    if (maximized && document.hasFocus()) takeOwnershipRef.current?.();
+    else refit();
     const frame = requestAnimationFrame(refit);
     const timers = [
       window.setTimeout(refit, 120),

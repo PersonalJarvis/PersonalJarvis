@@ -2113,6 +2113,43 @@ describe("pane refit", () => {
       expect(claimsOn(0)).toEqual([{ t: "claim", cols: 80, rows: 24 }]);
     });
 
+    it.each(["light", "dark"] as const)("immediately gives a maximized %s pane the office viewer's size lead", (appearance) => {
+      const expanded = (maximized: boolean) => (
+        <AgenticTerminal key="grid" name="Dana" displayName="Claude Code" appearance={appearance} fontSize={13} maximized={maximized} />
+      );
+      const view = render(<>{expanded(false)}{office}</>);
+      open(0);
+      open(1);
+      settle();
+      displace(0);
+      clearSent();
+      terminalHarness.size = { cols: 160, rows: 60 };
+      const focused = document.activeElement;
+
+      view.rerender(<>{expanded(true)}{office}</>);
+
+      // No observer, animation frame, timer, or second click may be needed.
+      expect(claimsOn(0)).toEqual([{ t: "claim", cols: 160, rows: 60 }]);
+      expect(document.activeElement).toBe(focused);
+      expect(terminalHarness.sockets).toHaveLength(2);
+      settle();
+      expect(claimsOn(0)).toHaveLength(1);
+
+      // A passive gesture cannot return the size to the small office viewer.
+      displace(1);
+      clearSent();
+      fireEvent.pointerMove(document.body);
+      settle();
+      expect(claimsOn(1)).toEqual([]);
+
+      // Restoring also lands its geometry immediately, without reconnecting.
+      terminalHarness.size = { cols: 80, rows: 24 };
+      clearSent();
+      view.rerender(<>{expanded(false)}{office}</>);
+      expect(claimsOn(0)).toEqual([{ t: "claim", cols: 80, rows: 24 }]);
+      expect(terminalHarness.sockets).toHaveLength(2);
+    });
+
     it("gives the lead to the viewer the user presses", () => {
       const view = render(<>{grid}{office}</>);
       open(0);
