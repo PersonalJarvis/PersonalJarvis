@@ -66,19 +66,17 @@ def _state(role: str, current: str, **extra) -> ollama_roles.RoleState:
 def test_resident_payload_adds_up_what_the_jobs_load_at_once() -> None:
     chat = _model("qwen3.8-16gb:latest", 7.8, "completion", "tools", params="26.9B")
     voice = _model("ornith:9b", 5.2, "completion", "tools", params="9.0B")
-    embed = _model("bge-m3:latest", 1.1, "embedding", params="566.70M")
     running = {"qwen3.8-16gb:latest": _running("qwen3.8-16gb:latest", 8.8, ctx=32768)}
     states = [
         _state("chat", "qwen3.8-16gb:latest"),
         _state("voice", "ornith:9b", context_tokens=32768, context_source="manual"),
         _state("tools_screen", "qwen3.8-16gb:latest"),
         _state("deep", "qwen3.8-16gb:latest"),
-        _state("embedding", "bge-m3:latest"),
         _state("ack", "qwen3.8-16gb:latest"),
     ]
     resident = ollama_overview.resident_payload(
         states,
-        [chat, voice, embed],
+        [chat, voice],
         running,
         ollama_roles.Machine(memory_gb=32.0, accelerator_gb=15.9),
         voice_reserve_gb=4.0,
