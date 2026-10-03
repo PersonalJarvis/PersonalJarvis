@@ -271,6 +271,7 @@ class SubscriptionLiveVoiceSession(LiveVoiceSession):
             )
             return
         if kind == "output_audio_buffer.cleared":
+            await self._clear_playback()
             # Match native voice: a report the user interrupted was heard.
             self._report_finished(delivered=True)
             self._notify_pause()
@@ -353,7 +354,17 @@ class SubscriptionLiveVoiceSession(LiveVoiceSession):
                 "end_ms": end,
             }
         )
+        if role == "assistant" and event.get("timestamp_source") == "source_audio":
+            await self._speech_timing(
+                caption, str(event.get("delta") or ""),
+                event.get("fragment_start_ms"), event.get("fragment_end_ms"),
+            )
         if event.get("is_final"):
+            if role == "assistant" and self._awaiting_output_clear:
+                # Subscription transports also signal cancellation by ending
+                # the old turn. Do not wait forever for an optional clear event.
+                self._last_output_audio_end = max(self._last_output_audio_end, end)
+                await self._clear_playback()
             self._transcript.finish(role)
             self._notify_pause()
 
