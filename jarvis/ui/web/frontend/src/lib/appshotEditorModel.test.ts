@@ -61,7 +61,7 @@ describe("appshot editor model", () => {
 });
 
 describe("tools and keys", () => {
-  it("uses CleanShot X's one-letter keys, each once", () => {
+  it("assigns a unique one-letter shortcut to each tool", () => {
     const keys = TOOL_KEYS.map((entry) => entry.key);
     expect(new Set(keys).size).toBe(keys.length);
     expect(toolForKey("V")).toBe("move");
@@ -286,6 +286,12 @@ describe("grips", () => {
     expect(reshape(pen, "se", { x: 20, y: 20 }).points[1]).toEqual({ x: 20, y: 20 });
     const text = withId({ kind: "text", at: { x: 0, y: 0 }, text: "Hi", color: "#fff", size: 20, style: "plain" as const });
     expect(reshape(text, "se", { x: 0, y: 50 }, () => 20).size).toBe(40);
+    // Text has a grip on every corner; the opposite corner stays put.
+    expect(handles(text, () => 20).map((h) => h.id)).toEqual(["nw", "ne", "sw", "se"]);
+    const shrunk = reshape(text, "nw", { x: 0, y: 12.5 }, (_line, size) => size);
+    expect(shrunk.size).toBe(10);
+    const box = bounds(shrunk, (_line, size) => size);
+    expect([box.x + box.w, box.y + box.h]).toEqual([20, 25]);
     const badge = withId({ kind: "counter", at: { x: 0, y: 0 }, n: 1, color: "#f00", size: 12 });
     expect(reshape(badge, "size", { x: 30, y: 0 }).size).toBe(30);
   });

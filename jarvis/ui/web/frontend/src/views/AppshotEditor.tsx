@@ -84,10 +84,10 @@ import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
 
 /**
- * The appshot editor — annotate a capture the way CleanShot X's annotate tool
- * does: select/move, arrow, line, rectangle, filled rectangle, ellipse, draw,
+ * The appshot editor — annotate a capture with select/move, arrow, line,
+ * rectangle, filled rectangle, ellipse, draw,
  * highlighter, text (three styles), counter, spotlight, pixelate/blur, crop
- * (free or fixed ratio) and a background frame, with undo/redo and CleanShot's
+ * (free or fixed ratio) and a background frame, with undo/redo and
  * one-letter keys. The result can be copied, saved, or put back in place of
  * the appshot so the next message carries the edited picture.
  *
@@ -96,14 +96,17 @@ import { useEventStore } from "@/store/events";
  * Downloads through the backend because the desktop WebView drops browser
  * downloads. In a plain browser both fall back to the browser's own paths.
  *
- * The layout follows CleanShot X's editor window: a floating rounded window
- * over a dimmed app, the tools as pills along the top with colour and size
- * beside them, "Save" and "Done" at the top right, and a bottom bar with the
- * zoom, a "Drag me" handle (a real file drag into any app, where the desktop
- * shell has the native drag bridge) and the copy action.
+ * The editor uses a floating rounded window over a dimmed app: one tool tray
+ * of rounded-square buttons along the top (the active tool in the accent
+ * colour), colour and size beside it, "Save", "Done" and close at the top
+ * right, and a bottom bar with the zoom, a "Drag me" handle (a real file drag
+ * into any app, where the desktop shell has the native drag bridge) and the
+ * copy action. Its tools, keys and looks match the area picker's in-place
+ * toolbar (``jarvis/appshot/picker``); the mouse wheel steps the size there
+ * and here, and Enter finishes in both.
  */
 
-/** Toolbar order, as in CleanShot X: selection, shapes, text, effects, ink. */
+/** Toolbar order: selection, shapes, text, effects, ink. */
 const TOOL_ORDER: readonly Tool[] = [
   "move",
   "rect",
@@ -780,7 +783,7 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
       } else if (mod && key === "s") {
         event.preventDefault();
         void save();
-      } else if (mod && event.key === "Enter") {
+      } else if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault();
         void use();
       } else if ((event.key === "Delete" || event.key === "Backspace") && selectedId !== null) {
@@ -890,10 +893,9 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
           onClick={() => chooseTool(name)}
           data-testid={`appshot-editor-tool-${name}`}
           className={cn(
-            "flex h-7 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors",
+            "flex h-7 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors",
             "hover:bg-foreground/10 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-border-strong",
-            (name === "crop" || name === "background") && "bg-foreground/10",
-            tool === name && "bg-foreground/20 text-foreground",
+            tool === name && "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground",
           )}
         >
           {name === "filled" ? (
@@ -925,30 +927,20 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
         data-testid="appshot-editor"
         data-variant={variant}
       >
-        {/* Top bar: close · crop and background · tools · colour and size · Save, Done. */}
+        {/* Top bar: one tool tray (tools · crop and background) · colour and size · Save, Done, close. */}
         <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3">
-          <QuickTooltip content={`${label("close")} (Esc)`} side="bottom">
-            <button
-              type="button"
-              onClick={requestClose}
-              aria-label={label("close")}
-              data-testid="appshot-editor-close"
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-foreground/10 text-muted-foreground transition-colors hover:bg-destructive hover:text-destructive-foreground"
-            >
-              <X className="h-3.5 w-3.5" aria-hidden />
-            </button>
-          </QuickTooltip>
-          <div className="flex shrink-0 items-center gap-1">
+          <div
+            className="flex min-w-0 items-center gap-0.5 overflow-x-auto rounded-xl border border-border bg-foreground/[0.04] p-0.5"
+            role="toolbar"
+            aria-label={label("tools")}
+          >
+            {TOOL_ORDER.map(toolButton)}
+            <div className="mx-0.5 h-5 w-px shrink-0 bg-border" aria-hidden />
             {toolButton("crop")}
             {toolButton("background")}
           </div>
-          <div className="h-5 w-px shrink-0 bg-border" aria-hidden />
-          <div className="flex min-w-0 items-center gap-0.5 overflow-x-auto" role="toolbar" aria-label={label("tools")}>
-            {TOOL_ORDER.map(toolButton)}
-          </div>
-          <div className="h-5 w-px shrink-0 bg-border" aria-hidden />
 
-          {/* Colour (a menu) and size (a slider), like CleanShot's style controls. */}
+          {/* Colour (a menu) and size (a slider). */}
           <div className="relative shrink-0" data-editor-menu>
             <QuickTooltip content={label("color")} side="bottom">
               <button
@@ -957,9 +949,9 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
                 aria-expanded={menu === "style"}
                 onClick={() => setMenu(menu === "style" ? "" : "style")}
                 data-testid="appshot-editor-style"
-                className="flex h-7 items-center gap-1 rounded-full bg-foreground/10 pl-1.5 pr-1 transition-colors hover:bg-foreground/15"
+                className="flex h-7 items-center gap-1 rounded-lg border border-border bg-foreground/[0.04] pl-1.5 pr-1 transition-colors hover:bg-foreground/10"
               >
-                <span className="h-4 w-4 rounded-full border border-border-strong" style={{ backgroundColor: color }} />
+                <span className="h-4 w-4 rounded-md border border-border-strong" style={{ backgroundColor: color }} />
                 <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
               </button>
             </QuickTooltip>
@@ -1035,8 +1027,8 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
                     aria-pressed={arrowStyle === style}
                     onClick={() => setArrowStyle(style)}
                     className={cn(
-                      "flex h-7 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground",
-                      arrowStyle === style && "bg-foreground/20 text-foreground",
+                      "flex h-7 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground",
+                      arrowStyle === style && "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground",
                     )}
                   >
                     <ArrowStyleIcon style={style} />
@@ -1055,7 +1047,7 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
                 onClick={() => void save()}
                 disabled={!image || busy !== ""}
                 data-testid="appshot-editor-save"
-                className="flex h-7 items-center gap-1.5 rounded-full bg-foreground/10 px-3 text-[13px] font-medium text-foreground transition-colors hover:bg-foreground/15 disabled:opacity-50"
+                className="flex h-7 items-center gap-1.5 rounded-lg border border-border px-3 text-[13px] font-medium text-foreground transition-colors hover:bg-foreground/10 disabled:opacity-50"
               >
                 {busy === "save" && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}
                 {label("save")}
@@ -1067,10 +1059,22 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
                 onClick={() => void use()}
                 disabled={!image || busy !== ""}
                 data-testid="appshot-editor-apply"
-                className="flex h-7 items-center gap-1.5 rounded-full bg-primary px-3.5 text-[13px] font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+                className="flex h-7 items-center gap-1.5 rounded-lg bg-primary px-3.5 text-[13px] font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
               >
                 {busy === "apply" && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}
                 {label("done")}
+              </button>
+            </QuickTooltip>
+            <div className="mx-0.5 h-5 w-px shrink-0 bg-border" aria-hidden />
+            <QuickTooltip content={`${label("close")} (Esc)`} side="bottom">
+              <button
+                type="button"
+                onClick={requestClose}
+                aria-label={label("close")}
+                data-testid="appshot-editor-close"
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-destructive hover:text-destructive-foreground"
+              >
+                <X className="h-4 w-4" aria-hidden />
               </button>
             </QuickTooltip>
           </div>
@@ -1197,6 +1201,13 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
                     onPointerCancel={() => setGesture(null)}
                     onPointerLeave={() => setHoverCursor(null)}
                     onDoubleClick={onDoubleClick}
+                    onWheel={(event) => {
+                      // At "fit" nothing scrolls, so the wheel steps the size.
+                      if (zoom !== "fit" || event.ctrlKey || event.deltaY === 0) return;
+                      setWidthIndex((index) =>
+                        Math.max(0, Math.min(STROKE_LEVELS.length - 1, index + (event.deltaY < 0 ? 1 : -1))),
+                      );
+                    }}
                     data-testid="appshot-editor-canvas"
                   />
                   {typing && textScreen && (
@@ -1245,7 +1256,7 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
                 aria-expanded={menu === "zoom"}
                 onClick={() => setMenu(menu === "zoom" ? "" : "zoom")}
                 data-testid="appshot-editor-zoom"
-                className="flex h-7 items-center gap-1 rounded-full bg-foreground/10 px-2.5 text-[13px] font-medium tabular-nums transition-colors hover:bg-foreground/15"
+                className="flex h-7 items-center gap-1 rounded-lg border border-border px-2.5 text-[13px] font-medium tabular-nums transition-colors hover:bg-foreground/10"
               >
                 {zoomLabel}
                 <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
@@ -1294,7 +1305,7 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
                   onDragStart={(event) => event.preventDefault()}
                   disabled={!image}
                   data-testid="appshot-editor-drag"
-                  className="flex h-7 cursor-grab select-none items-center gap-1.5 rounded-full bg-foreground/10 px-3 text-[13px] font-medium text-foreground transition-colors hover:bg-foreground/15 active:cursor-grabbing disabled:opacity-50"
+                  className="flex h-7 cursor-grab select-none items-center gap-1.5 rounded-lg border border-border px-3 text-[13px] font-medium text-foreground transition-colors hover:bg-foreground/10 active:cursor-grabbing disabled:opacity-50"
                 >
                   {dragging ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <GripVertical className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />}
                   {label("drag_me")}
@@ -1364,7 +1375,7 @@ function ArrowStyleIcon({ style }: { style: ArrowStyle }) {
 }
 
 const ROUND_ICON =
-  "flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground disabled:pointer-events-none disabled:opacity-40";
+  "flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground disabled:pointer-events-none disabled:opacity-40";
 
 function Segmented({
   label,

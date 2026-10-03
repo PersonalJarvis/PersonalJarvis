@@ -4,10 +4,10 @@
  * around the result. Pure data + one renderer, so the on-screen canvas and
  * the exported PNG are painted by the same code.
  *
- * The tool set and its one-letter keys follow CleanShot X's annotate tool
+ * Each annotation tool has a one-letter shortcut
  * (V move, A arrow, L line, R rectangle, F filled rectangle, E ellipse,
  * D draw, M highlighter, T text, C counter, H spotlight, P redact, K crop,
- * B background), so anyone who knows it can work here without looking.
+ * B background) for quick access while editing.
  *
  * A crop is an annotation too: the last one sets the visible part of the
  * picture, and undo brings the rest back.
@@ -44,7 +44,7 @@ export interface Rect {
 export type TextStyle = "plain" | "label" | "outline";
 export type RedactMode = "pixelate" | "blur";
 /**
- * ``tapered``: CleanShot X's arrow — a filled shape that starts as a fine
+ * ``tapered``: a filled arrow shape that starts as a fine
  * point and swells towards a swept-back head. ``classic``: line plus head.
  * ``double``: a head at both ends.
  */
@@ -338,8 +338,8 @@ export function translate<T extends Draft>(op: T, dx: number, dy: number): T {
 
 /**
  * A grip on a selected annotation. Lines and arrows have one at each end
- * (``from``, ``to``); boxes and strokes one at each corner; text a corner
- * that scales its size; a counter one on its rim (``size``).
+ * (``from``, ``to``); boxes, strokes and text one at each corner (text
+ * scales its size with them); a counter one on its rim (``size``).
  */
 export type HandleId = "from" | "to" | "nw" | "ne" | "sw" | "se" | "size";
 
@@ -375,8 +375,6 @@ export function handles(op: Draft, measure?: MeasureText): Handle[] {
       return [];
     case "counter":
       return [{ id: "size", at: { x: op.at.x + op.size, y: op.at.y } }];
-    case "text":
-      return [{ id: "se", at: corner(bounds(op, measure), "se") }];
     default: {
       const box = bounds(op, measure);
       return (["nw", "ne", "sw", "se"] as const).map((id) => ({ id, at: corner(box, id) }));
@@ -402,7 +400,8 @@ export function handleAt(op: Draft, p: Point, radius: number, measure?: MeasureT
  * ``original`` with grip ``handle`` dragged to ``p``. Always computed from
  * the shape as it was when the drag began, so a long drag never drifts.
  * An arrow's end follows the pointer; a box keeps the opposite corner
- * fixed; a stroke scales from it; text grows with its corner; a counter's
+ * fixed; a stroke scales from it; text grows or shrinks from it, font size
+ * and all; a counter's
  * badge grows with its rim.
  */
 export function reshape<T extends Draft>(original: T, handle: HandleId, p: Point, measure?: MeasureText): T {
@@ -418,9 +417,17 @@ export function reshape<T extends Draft>(original: T, handle: HandleId, p: Point
     case "counter":
       return { ...op, size: Math.max(8, Math.hypot(p.x - op.at.x, p.y - op.at.y)) } as T;
     case "text": {
+      // Any corner scales the text; the opposite corner stays where it was.
+      if (handle === "from" || handle === "to" || handle === "size") return original;
       const box = bounds(op, measure);
-      const factor = Math.max(0.25, (p.y - box.y) / Math.max(1, box.h));
-      return { ...op, size: Math.max(8, Math.round(op.size * factor)) } as T;
+      const anchor = corner(box, OPPOSITE[handle]);
+      const factor = Math.max(0.1, Math.abs(p.y - anchor.y) / Math.max(1, box.h));
+      const sized = { ...op, size: Math.max(8, Math.round(op.size * factor)) };
+      const grown = bounds({ ...sized, at: { x: 0, y: 0 } }, measure);
+      const pad = sized.style === "label" ? sized.size * 0.4 : 0;
+      const left = handle === "ne" || handle === "se" ? anchor.x : anchor.x - grown.w;
+      const top = handle === "sw" || handle === "se" ? anchor.y : anchor.y - grown.h;
+      return { ...sized, at: { x: left + pad, y: top + pad } } as T;
     }
     case "pen":
     case "highlight": {
@@ -590,7 +597,7 @@ export function contrastOn(hex: string): string {
  *
  * Measured along the arrow: a fine tail point, a shaft that widens to the
  * neck, and a head whose barbs sweep back past the neck — the concave base
- * that makes CleanShot X's arrow read as one confident stroke. Everything
+ * that joins the shaft and head into one continuous shape. Everything
  * scales with the stroke width; a short arrow keeps its head in proportion.
  * Empty for an arrow too short to draw.
  */
