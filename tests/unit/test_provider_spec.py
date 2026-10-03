@@ -222,13 +222,15 @@ def test_gemini_offers_both_aistudio_and_vertex() -> None:
         assert alt.dashboard_url and "cloud.google.com" in alt.dashboard_url
 
 
-def test_non_gemini_providers_have_no_alt_credential() -> None:
-    """Only the Gemini family carries the AI-Studio-vs-Vertex split today (the
-    brain, the Flash-TTS voice, and the Gemini Live realtime provider all bill
-    the same Google account); every other provider keeps a single credential
-    path (alt_credential is None)."""
+def test_only_google_provider_families_have_alt_credentials() -> None:
+    """Only Google provider cards expose alternate credential paths.
+
+    Gemini-family cards offer AI Studio vs Vertex, while the dedicated Vertex
+    card offers an express key vs a normal Google Cloud project/ADC path.
+    Every non-Google provider keeps one credential path.
+    """
     for spec in PROVIDERS:
-        if spec.id in ("gemini", "gemini-flash-tts", "gemini-live"):
+        if spec.id in ("gemini", "gemini-flash-tts", "gemini-live", "vertex"):
             continue
         assert spec.alt_credential is None, f"{spec.id}: unexpected alt_credential"
 
