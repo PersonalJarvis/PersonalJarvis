@@ -210,6 +210,36 @@ describe("AppshotEditorHost", () => {
     expect(steps()).toBe(3);
   });
 
+  it("keeps pen and counter drawing over what is already there", async () => {
+    render(<AppshotEditorHost />);
+    act(() => useAppshotEditor.getState().open("shot-1"));
+    const canvas = await screen.findByTestId("appshot-editor-canvas");
+    const undo = () => screen.getByTestId("appshot-editor-undo") as HTMLButtonElement;
+    const stroke = (id: number, from: [number, number], to: [number, number]) => {
+      fireEvent.pointerDown(canvas, { button: 0, clientX: from[0], clientY: from[1], pointerId: id });
+      fireEvent.pointerMove(canvas, { clientX: to[0], clientY: to[1], pointerId: id });
+      fireEvent.pointerUp(canvas, { clientX: to[0], clientY: to[1], pointerId: id });
+    };
+
+    // Two pen strokes, the second starting right on the first.
+    fireEvent.keyDown(window, { key: "d" });
+    stroke(1, [20, 20], [120, 20]);
+    stroke(2, [120, 20], [120, 90]);
+    // Two counters right beside each other.
+    fireEvent.keyDown(window, { key: "c" });
+    stroke(3, [60, 60], [60, 60]);
+    stroke(4, [64, 62], [64, 62]);
+
+    // Four new marks; nothing was moved or reshaped instead.
+    await waitFor(() => expect(undo().disabled).toBe(false));
+    let n = 0;
+    while (!undo().disabled && n < 10) {
+      fireEvent.keyDown(window, { key: "z", ctrlKey: true });
+      n += 1;
+    }
+    expect(n).toBe(4);
+  });
+
   it("says when the appshot is gone instead of showing an empty editor", async () => {
     vi.stubGlobal("Image", BrokenImage);
     render(<AppshotEditorHost />);
