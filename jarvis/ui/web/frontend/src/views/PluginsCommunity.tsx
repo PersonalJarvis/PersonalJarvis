@@ -40,6 +40,8 @@ export interface CommunityPluginWire {
   version?: string | null;
   published_at?: string | null;
   source_url?: string | null;
+  /** The registry's own pick; the storefront shelves these first. */
+  featured?: boolean;
   // Present only when valid — the converted PluginSpec fields.
   id?: string;
   display_name?: string;
@@ -68,6 +70,7 @@ export interface CommunitySkillWire {
   publisher?: string | null;
   version?: string | null;
   categories: string[];
+  published_at?: string | null;
   source_url?: string | null;
   raw_url?: string | null;
   installed: boolean;

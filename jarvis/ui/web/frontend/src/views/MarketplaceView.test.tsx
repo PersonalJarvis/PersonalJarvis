@@ -335,6 +335,86 @@ describe("MarketplaceView", () => {
     expect(screen.getByText("WXYZ")).toBeTruthy();
   });
 
+  it("never prints a leaked YAML marker as a description", async () => {
+    installFetchMock({
+      skills: [{ ...INDEX.skills[0], name: "humanizer", title: "Humanizer", description: "|" }],
+    });
+    renderView();
+
+    expect(await screen.findByText("Humanizer")).toBeTruthy();
+    expect(screen.queryByText("|")).toBeNull();
+    expect(screen.getByText("No description yet.")).toBeTruthy();
+  });
+
+  it("counts what the search leaves, not the whole index", async () => {
+    installFetchMock();
+    renderView();
+    await screen.findByText("Sentry");
+
+    fireEvent.change(screen.getByLabelText(/Search plugins/i), {
+      target: { value: "crisp bullets" },
+    });
+
+    expect(screen.getByRole("button", { name: /Plugins 0/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Skills 1/ })).toBeTruthy();
+  });
+
+  it("points an empty search at the built-in catalog", async () => {
+    installFetchMock();
+    renderView();
+    await screen.findByText("Sentry");
+
+    fireEvent.change(screen.getByLabelText(/Search plugins/i), {
+      target: { value: "notion" },
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Browse built-in plugins" }));
+
+    await waitFor(() => {
+      expect(useEventStore.getState().activeSection).toBe("plugins");
+    });
+  });
+
+  it("offers the update when the installed plugin is older than the published one", async () => {
+    installFetchMock({
+      plugins: [
+        { ...INDEX.plugins[0], installed: true, installed_version: "0.9.0", version: "1.0.0" },
+      ],
+    });
+    renderView();
+
+    fireEvent.click(await screen.findByText("Sentry"));
+
+    expect(await screen.findByRole("button", { name: "Update to v1.0.0" })).toBeTruthy();
+    expect(screen.getByText("You have v0.9.0")).toBeTruthy();
+  });
+
+  it("opens an installed entry's home section from its sheet", async () => {
+    installFetchMock({
+      skills: [{ ...INDEX.skills[0], installed: true }],
+    });
+    renderView();
+
+    fireEvent.click(await screen.findByText("Three Bullet Brief"));
+    expect(screen.queryByRole("button", { name: "Install" })).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: /Open in Skills/ }));
+
+    await waitFor(() => {
+      expect(useEventStore.getState().activeSection).toBe("skills");
+    });
+  });
+
+  it("hides the publish promise when publishing is switched off", async () => {
+    identity = { enabled: false, signed_in: false };
+    installFetchMock();
+    renderView();
+
+    // The identity answers after the index; wait for the hero to settle on it.
+    await waitFor(() => {
+      expect(screen.getByTestId("marketplace-hero").textContent).not.toMatch(/sign in with GitHub/i);
+    });
+    expect(screen.queryByTestId("hero-publish")).toBeNull();
+  });
+
   it("filters to the signed-in account's own publications", async () => {
     identity = {
       enabled: true,
