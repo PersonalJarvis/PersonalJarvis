@@ -1552,6 +1552,11 @@ and restores agent automation only after explicit handover and clean Chrome
 shutdown. The selected Chrome executable remains pinned to that profile across
 restarts; missing binaries and profile downgrades fail closed.
 
+The Windows browser worker retains one COM MTA usage cookie across capture
+sessions and releases it when the worker exits. This prevents the capture
+library's cached WinRT factories from outliving their apartment during manual
+handover. Each window still stops its capture and event threads on close.
+
 macOS and Linux keep their existing managed browser behavior. They do not expose
 this sign-in capability because the current native capture/input implementation
 is Windows-only. The module imports without Win32 dependencies on those systems;
