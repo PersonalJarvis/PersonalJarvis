@@ -417,7 +417,7 @@ class _SelectWindow(QWidget):
 class Picker(QObject):
     """Owns the per-screen windows and reports exactly one result."""
 
-    def __init__(self, app: QApplication, hint: str) -> None:
+    def __init__(self, app: QApplication, hint: str = "") -> None:
         super().__init__()
         self._app = app
         self.hint = hint
@@ -439,7 +439,7 @@ class Picker(QObject):
         screens = QGuiApplication.screens()
         # Freeze every screen BEFORE any overlay window exists.
         frozen = {id(s): self._grab(s) for s in screens}
-        self._windows = [_SelectWindow(s, frozen[id(s)], self) for s in screens]
+        self._windows = [self.make_window(s, frozen[id(s)]) for s in screens]
         cursor_screen = QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
         self.hint_window = next(
             (w for w in self._windows if w.screen_ref is cursor_screen),
@@ -454,6 +454,10 @@ class Picker(QObject):
         self._ants.start()
         self._app.processEvents()
         _emit({"event": wire.EVENT_READY})
+
+    def make_window(self, screen, frozen: QPixmap | None) -> _SelectWindow:
+        """Allow capture modes to provide their own selection completion behavior."""
+        return _SelectWindow(screen, frozen, self)
 
     @staticmethod
     def _grab(screen) -> QPixmap | None:

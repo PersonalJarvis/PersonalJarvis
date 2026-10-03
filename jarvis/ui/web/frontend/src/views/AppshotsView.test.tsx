@@ -228,6 +228,14 @@ describe("AppshotsView shortcut recorder", () => {
     await waitFor(() => expect(puts()).toEqual([{ hotkey: "ctrl+shift+s" }]));
   });
 
+  it("saves the actual letter rather than the US keyboard position", async () => {
+    render(<AppshotsView />);
+    fireEvent.click(await screen.findByTestId("appshots-hotkey-change"));
+    fireEvent.keyDown(window, { code: "KeyY", key: "z" });
+    fireEvent.keyUp(window, { code: "KeyY", key: "z" });
+    await waitFor(() => expect(puts()).toEqual([{ hotkey: "z" }]));
+  });
+
   it("Esc cancels without saving, and a lone modifier explains itself", async () => {
     render(<AppshotsView />);
     const change = await screen.findByTestId("appshots-hotkey-change");

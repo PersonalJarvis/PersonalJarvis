@@ -2703,6 +2703,9 @@ class AppshotConfig(BaseModel):
     #: collides with no app or OS shortcut.
     region_hotkey: str = "shift+shift"
 
+    #: One shortcut selects a recording area; pressing it again stops and saves.
+    recording_hotkey: str = "ctrl+shift+9"
+
     #: Where a shortcut appshot goes. ``auto``: into the running voice call,
     #: otherwise onto the next message. ``message``: always onto the next
     #: message. ``voice``: only into a running voice call.
