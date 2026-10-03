@@ -161,6 +161,40 @@ async def test_copy_from_the_card_uses_the_native_clipboard(monkeypatch) -> None
     assert copied == [_png()]
 
 
+@pytest.mark.parametrize(
+    ("ui_text", "status", "expected"),
+    [
+        ("  Invoice 42\nTotal 9 EUR ", "Text copied", ["Invoice 42\nTotal 9 EUR"]),
+        ("", "No text found", []),
+    ],
+)
+async def test_copy_text_puts_the_on_screen_text_on_the_clipboard(
+    monkeypatch, ui_text: str, status: str, expected: list[str]
+) -> None:
+    import dataclasses
+
+    from jarvis.appshot import store as store_module
+    from jarvis.platform import clipboard
+
+    store = AppshotStore()
+    store.remember(dataclasses.replace(_shot(), ui_text=ui_text), keep_s=60)
+    monkeypatch.setattr(store_module, "_STORE", store)
+    copied: list[str] = []
+    monkeypatch.setattr(clipboard, "write_text", lambda text: copied.append(text) or True)
+    monkeypatch.setattr(
+        "jarvis.core.config.load_config", lambda: SimpleNamespace(ui=SimpleNamespace(language="en"))
+    )
+
+    assert await card_actions.run_card_action("copy_text") == status
+    assert copied == expected
+
+
+def test_the_sidecar_hands_every_card_action_to_the_main_process() -> None:
+    from jarvis.cu.indicator import protocol
+
+    assert {"copy", "save", "copy_text"} == protocol.CARD_ACTIONS
+
+
 async def test_a_card_action_without_a_held_appshot_says_so(monkeypatch) -> None:
     from jarvis.appshot import store as store_module
 

@@ -405,13 +405,13 @@ class CUIndicatorController:
             asyncio.get_running_loop().create_task(self._open_editor(), name="appshot-card-open")
         elif event == protocol.EVENT_CARD_ACTION:
             action = str(payload.get("action", ""))
-            if action in ("copy", "save"):
+            if action in protocol.CARD_ACTIONS:
                 asyncio.get_running_loop().create_task(
                     self._card_action(action), name="appshot-card-action"
                 )
 
     async def _card_action(self, action: str) -> None:
-        """Copy or save from the card's hover buttons, then tell the card how it went."""
+        """Copy, save or copy text from the card, then tell the card how it went."""
         from jarvis.appshot.card_actions import run_card_action  # noqa: PLC0415
 
         status = await run_card_action(action)

@@ -1,13 +1,16 @@
 """What the corner card can do besides opening the editor.
 
-The card (a PySide6 window in the indicator sidecar) shows Copy and Save on
-hover. The sidecar only reports the press; the work happens here in the main
-process, on the held appshot itself:
+The card (a PySide6 window in the indicator sidecar) shows Copy, Save and
+Copy text on hover. The sidecar only reports the press; the work happens here
+in the main process, on the held appshot itself:
 
 * **Copy** goes through :mod:`jarvis.platform.clipboard_image`, which owns the
   clipboard natively on every OS. A Qt clipboard in the sidecar would lose the
   picture on Linux the moment the sidecar quits.
 * **Save** writes a PNG into ``~/Downloads``, like every other save in the app.
+* **Copy text** puts the appshot's scrubbed on-screen text (``ui_text``) on
+  the clipboard — CleanShot's upload chip, swapped for what an assistant app
+  reads off the screen anyway.
 
 And when the editor closes, :func:`return_to_corner` slides the (edited)
 appshot back into the corner, so it stays at hand — CleanShot X's Quick Access
@@ -33,30 +36,45 @@ _LABELS: dict[str, dict[str, str]] = {
         "copy": "Copy",
         "save": "Save",
         "close": "Close",
+        "pin": "Keep on screen",
+        "unpin": "Unpin",
+        "copy_text": "Copy text",
         "copied": "Copied",
         "saved": "Saved to Downloads",
         "failed": "That did not work",
         "gone": "No longer kept",
+        "text_copied": "Text copied",
+        "no_text": "No text found",
     },
     "de": {
         "edit": "Bearbeiten",  # i18n-allow: product UI string
         "copy": "Kopieren",  # i18n-allow: product UI string
         "save": "Speichern",  # i18n-allow: product UI string
         "close": "Schließen",  # i18n-allow: product UI string
+        "pin": "Am Bildschirm halten",  # i18n-allow: product UI string
+        "unpin": "Nicht mehr halten",  # i18n-allow: product UI string
+        "copy_text": "Text kopieren",  # i18n-allow: product UI string
         "copied": "Kopiert",  # i18n-allow: product UI string
         "saved": "In Downloads gespeichert",  # i18n-allow: product UI string
         "failed": "Das hat nicht geklappt",  # i18n-allow: product UI string
         "gone": "Nicht mehr aufbewahrt",  # i18n-allow: product UI string
+        "text_copied": "Text kopiert",  # i18n-allow: product UI string
+        "no_text": "Kein Text gefunden",  # i18n-allow: product UI string
     },
     "es": {
         "edit": "Editar",  # i18n-allow: product UI string
         "copy": "Copiar",  # i18n-allow: product UI string
         "save": "Guardar",  # i18n-allow: product UI string
         "close": "Cerrar",  # i18n-allow: product UI string
+        "pin": "Mantener en pantalla",  # i18n-allow: product UI string
+        "unpin": "Dejar de fijar",  # i18n-allow: product UI string
+        "copy_text": "Copiar texto",  # i18n-allow: product UI string
         "copied": "Copiado",  # i18n-allow: product UI string
         "saved": "Guardado en Descargas",  # i18n-allow: product UI string
         "failed": "No ha funcionado",  # i18n-allow: product UI string
         "gone": "Ya no se conserva",  # i18n-allow: product UI string
+        "text_copied": "Texto copiado",  # i18n-allow: product UI string
+        "no_text": "No se encontró texto",  # i18n-allow: product UI string
     },
 }
 
@@ -104,7 +122,7 @@ def save_to_downloads(png: bytes, *, folder: Path | None = None, now: float | No
 
 
 async def run_card_action(action: str) -> str:
-    """Do ``copy`` or ``save`` on the held appshot; the card's status line."""
+    """Do ``copy``, ``save`` or ``copy_text`` on the held appshot; the card's status line."""
     from jarvis.appshot.store import get_store  # noqa: PLC0415
     from jarvis.core.config import load_config  # noqa: PLC0415
 
@@ -114,6 +132,14 @@ async def run_card_action(action: str) -> str:
     if shot is None:
         return labels["gone"]
     try:
+        if action == "copy_text":
+            text = (shot.ui_text or "").strip()
+            if not text:
+                return labels["no_text"]
+            from jarvis.platform.clipboard import write_text  # noqa: PLC0415
+
+            ok = await asyncio.to_thread(write_text, text)
+            return labels["text_copied"] if ok else labels["failed"]
         png = await asyncio.to_thread(as_png, shot.image)
         if action == "copy":
             from jarvis.platform.clipboard_image import write_png  # noqa: PLC0415

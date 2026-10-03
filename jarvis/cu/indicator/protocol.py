@@ -62,8 +62,10 @@ ALL_COMMANDS = frozenset(
 
 EVENT_CARD = "card"
 EVENT_SNAP_OPEN = "snap_open"
-#: A hover button on the card was pressed (``action``: ``copy`` | ``save``).
+#: A hover button on the card was pressed (``action``: one of ``CARD_ACTIONS``).
 EVENT_CARD_ACTION = "card_action"
+#: What the main process does for the card; pin and close stay in the sidecar.
+CARD_ACTIONS = frozenset({"copy", "save", "copy_text"})
 ALL_EVENTS = frozenset({EVENT_CARD, EVENT_SNAP_OPEN, EVENT_CARD_ACTION})
 
 #: Sidecar exit code when no usable GUI stack exists (PySide6 missing or

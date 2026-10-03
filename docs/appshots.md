@@ -59,11 +59,16 @@ screen and rests there as a card — CleanShot X's Quick Access Overlay. How
 long is `[appshot].card_seconds` (Settings → Appshots → *Corner card*: 3, 6,
 10 or 30 seconds, or until you close it); the pointer on it keeps it.
 
-- **Hover** dims the picture and shows **Close** (top left), **Edit** (top
-  right) and **Copy** / **Save** in the middle. Copy puts the picture on the
-  clipboard and Save writes it to Downloads — both done by the main process
-  (`jarvis/appshot/card_actions.py`), so the clipboard survives the overlay
-  quitting on Linux; the card shows the result for a moment.
+- **Hover** frosts the picture and shows **Copy** and **Save** stacked in
+  the middle, plus four round chips in the corners: **Pin** (top left),
+  **Close** (top right), **Edit** (bottom left) and **Copy text** (bottom
+  right). The chip under the pointer names itself along the bottom edge.
+  Copy puts the picture on the clipboard, Save writes it to Downloads and
+  Copy text copies the on-screen text the appshot read (where the screen had
+  any) — all done by the main process (`jarvis/appshot/card_actions.py`), so
+  the clipboard survives the overlay quitting on Linux; the card shows the
+  result for a moment. **Pin** keeps the card until you close it, whatever
+  *Corner card* says; a pinned card shows the pin even without the pointer.
 - **Click** (or Edit) opens the **appshot editor in a window of its own** in
   front of you; the app behind keeps its size and what it shows. Without a
   desktop shell (a browser, a headless host) the editor opens over the app's

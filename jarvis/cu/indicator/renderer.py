@@ -54,6 +54,7 @@ from PySide6.QtGui import (
     QPainterPath,
     QPen,
     QPixmap,
+    QPolygonF,
 )
 from PySide6.QtWidgets import QApplication, QWidget
 
@@ -223,9 +224,10 @@ _CARD_OUT_MS = 240
 _CARD_DRAG_SLOP = 6
 #: How long a status line ("Copied") stays on the card.
 _CARD_STATUS_MS = 1600
-#: Hover buttons: the Copy / Save pills and the round Close / Edit chips.
-_CARD_BUTTON_H = 28.0
-_CARD_ROUND = 26.0
+#: Hover buttons: the stacked Copy / Save pills and the white corner chips.
+_CARD_BUTTON_H = 30.0
+_CARD_ROUND = 28.0
+_CARD_INSET = 8.0
 #: Drag files older than this are removed the next time one is written.
 _DRAG_FILE_MAX_AGE_S = 3600
 
@@ -561,16 +563,21 @@ _CARD_LABELS = {
     "copy": "Copy",
     "save": "Save",
     "close": "Close",
+    "pin": "Keep on screen",
+    "unpin": "Unpin",
+    "copy_text": "Copy text",
 }
 
 
 class _CardWindow(QWidget):
     """The resting thumbnail, CleanShot X's Quick Access Overlay in small.
 
-    Hover shows Close (top-left), Edit (top-right) and Copy / Save in the
-    middle; a click anywhere else edits, a drag shares the picture, a
-    right-click dismisses it. ``rest_ms`` is how long it stays untouched —
-    ``0`` keeps it until the user closes it.
+    Hover frosts the picture and shows Copy / Save stacked in the middle and
+    four white chips in the corners: Pin (top-left, keeps the card until it is
+    closed), Close (top-right), Edit (bottom-left) and Copy text (bottom-right,
+    the on-screen text the appshot read). A click anywhere else edits, a drag
+    shares the picture, a right-click dismisses it. ``rest_ms`` is how long it
+    stays untouched — ``0`` keeps it until the user closes it.
     """
 
     _PAD = 12  # transparent margin that holds the soft shadow
@@ -610,6 +617,8 @@ class _CardWindow(QWidget):
         self._labels = {**_CARD_LABELS, **(labels or {})}
         self._hover = False
         self._hot = ""  # the hover button under the pointer
+        self._pinned = False  # pinned = stays until the user closes it
+        self._frost: QImage | None = None  # blurred thumbnail behind the buttons
         self._press: QPointF | None = None
         self._press_button = ""
         self._leaving = False
@@ -645,7 +654,7 @@ class _CardWindow(QWidget):
         self._arm_dismiss(self._rest_ms)
 
     def _arm_dismiss(self, ms: int) -> None:
-        if self._rest_ms > 0 and not self._leaving:
+        if self._rest_ms > 0 and not self._leaving and not self._pinned:
             self._dismiss.start(ms)
 
     # -- lifecycle -----------------------------------------------------------
@@ -743,7 +752,11 @@ class _CardWindow(QWidget):
             return  # pressed a button, let go elsewhere: nothing
         if pressed == "close":
             self.leave()
-        elif pressed in ("copy", "save"):
+        elif pressed == "pin":
+            self._pinned = not self._pinned
+            self._dismiss.stop()  # the pointer is on the card; leaving re-arms it
+            self.update()
+        elif pressed in ("copy", "save", "copy_text"):
             if self._owner.card_image is not None:
                 self._owner.card_action(pressed)
         else:  # "edit" or the picture itself
@@ -793,28 +806,32 @@ class _CardWindow(QWidget):
     def _buttons(self) -> dict[str, QRectF]:
         """Hit areas of the hover buttons, in widget coordinates."""
         rect = self._card_area()
-        font = _card_font()
-        metrics = QFontMetricsF(font)
-        h = _CARD_BUTTON_H
+        d, inset = _CARD_ROUND, _CARD_INSET
+        left, right = rect.left() + inset, rect.right() - inset - d
+        top, bottom = rect.top() + inset, rect.bottom() - inset - d
         buttons: dict[str, QRectF] = {
-            "close": QRectF(rect.left() + 8, rect.top() + 8, _CARD_ROUND, _CARD_ROUND),
+            "pin": QRectF(left, top, d, d),
+            "close": QRectF(right, top, d, d),
+            "edit": QRectF(left, bottom, d, d),
         }
-        edit_w = metrics.horizontalAdvance(self._labels["edit"]) + 22.0
-        buttons["edit"] = QRectF(rect.right() - 8 - edit_w, rect.top() + 8, edit_w, _CARD_ROUND)
         if self._owner is not None and self._owner.card_image is not None:
-            widths = [metrics.horizontalAdvance(self._labels[k]) + 28.0 for k in ("copy", "save")]
-            width = max(widths + [86.0])
-            gap = 8.0
-            if width * 2 + gap <= rect.width() - 24:
+            # Only with a kept, finished appshot — the same rule as the drag.
+            buttons["copy_text"] = QRectF(right, bottom, d, d)
+            metrics = QFontMetricsF(_pill_font())
+            h, gap = _CARD_BUTTON_H, 8.0
+            widths = [metrics.horizontalAdvance(self._labels[k]) + 36.0 for k in ("copy", "save")]
+            width = max(widths + [88.0])
+            if rect.height() >= 2 * h + gap + 2 * inset:
+                # Stacked in the middle, like CleanShot's overlay.
+                x = rect.center().x() - width / 2
+                y = rect.center().y() - h - gap / 2
+                buttons["copy"] = QRectF(x, y, width, h)
+                buttons["save"] = QRectF(x, y + h + gap, width, h)
+            else:  # a very flat card: side by side
+                x = rect.center().x() - width - gap / 2
                 y = rect.center().y() - h / 2
-                left = rect.center().x() - width - gap / 2
-                buttons["copy"] = QRectF(left, y, width, h)
-                buttons["save"] = QRectF(left + width + gap, y, width, h)
-            else:
-                top = rect.center().y() - h - gap / 2
-                left = rect.center().x() - width / 2
-                buttons["copy"] = QRectF(left, top, width, h)
-                buttons["save"] = QRectF(left, top + h + gap, width, h)
+                buttons["copy"] = QRectF(x, y, width, h)
+                buttons["save"] = QRectF(x + width + gap, y, width, h)
         return buttons
 
     def _button_at(self, pos: QPointF) -> str:
@@ -842,10 +859,14 @@ class _CardWindow(QWidget):
             self._paint_scrim(painter, rect, 150)
             self._paint_centered(painter, rect, self._status)
         elif self._hover:
-            self._paint_scrim(painter, rect, 105)
-            self._paint_buttons(painter)
-            if self._hint:
-                self._paint_hint(painter, rect)
+            self._paint_frost(painter, rect)
+            buttons = self._buttons()
+            self._paint_buttons(painter, buttons)
+            self._paint_caption(painter, rect, buttons)
+        elif self._pinned:
+            # Pinned and at rest: the pin stays visible, so the card explains
+            # why it does not go away.
+            self._paint_chip(painter, "pin", self._buttons()["pin"])
         painter.end()
 
     def _paint_scrim(self, painter: QPainter, rect: QRectF, alpha: int) -> None:
@@ -856,33 +877,120 @@ class _CardWindow(QWidget):
         painter.fillRect(rect, QColor(0, 0, 0, alpha))
         painter.restore()
 
-    def _paint_buttons(self, painter: QPainter) -> None:
-        font = _card_font()
-        painter.setFont(font)
-        for name, area in self._buttons().items():
-            hot = name == self._hot
-            painter.setPen(Qt.PenStyle.NoPen)
-            if name in ("copy", "save"):
-                # Light pills on the dimmed picture, like CleanShot's overlay.
-                painter.setBrush(QColor(255, 255, 255, 255 if hot else 228))
-                painter.drawRoundedRect(area, area.height() / 2, area.height() / 2)
-                painter.setPen(QColor(20, 20, 22))
-                painter.drawText(area, Qt.AlignmentFlag.AlignCenter, self._labels[name])
+    def _frosted(self) -> QImage:
+        """The thumbnail blurred like frosted glass (cached).
+
+        Shrinking in steps and growing back with smooth scaling is a cheap,
+        dependency-free blur that is plenty for a 320 px card.
+        """
+        if self._frost is None:
+            image = self._thumb
+            size = image.size()
+            for div in (4, 16):
+                image = image.scaled(
+                    max(1, size.width() // div),
+                    max(1, size.height() // div),
+                    Qt.AspectRatioMode.IgnoreAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            for div in (4, 1):
+                image = image.scaled(
+                    max(1, size.width() // div),
+                    max(1, size.height() // div),
+                    Qt.AspectRatioMode.IgnoreAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            self._frost = image
+        return self._frost
+
+    def _paint_frost(self, painter: QPainter, rect: QRectF) -> None:
+        clip = QPainterPath()
+        clip.addRoundedRect(rect, _SNAP_RADIUS, _SNAP_RADIUS)
+        painter.save()
+        painter.setClipPath(clip)
+        if not self._thumb.isNull():
+            painter.drawImage(rect, self._frosted())
+        # A soft dark veil, then a faint light one: frosted, not black.
+        painter.fillRect(rect, QColor(18, 16, 26, 92))
+        painter.fillRect(rect, QColor(255, 255, 255, 18))
+        painter.restore()
+        pen = QPen(QColor(255, 255, 255, 150))
+        pen.setWidthF(1.2)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRoundedRect(rect.adjusted(0.6, 0.6, -0.6, -0.6), _SNAP_RADIUS, _SNAP_RADIUS)
+
+    def _paint_buttons(self, painter: QPainter, buttons: dict[str, QRectF]) -> None:
+        painter.setFont(_pill_font())
+        for name, area in buttons.items():
+            if name not in ("copy", "save"):
+                self._paint_chip(painter, name, area)
                 continue
-            painter.setBrush(QColor(28, 28, 30, 240 if hot else 200))
-            painter.drawRoundedRect(area, area.height() / 2, area.height() / 2)
-            if name == "close":
-                pen = QPen(QColor(255, 255, 255, 235))
-                pen.setWidthF(1.6)
-                pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-                painter.setPen(pen)
-                c = area.center()
-                d = area.width() * 0.2
-                painter.drawLine(QPointF(c.x() - d, c.y() - d), QPointF(c.x() + d, c.y() + d))
-                painter.drawLine(QPointF(c.x() - d, c.y() + d), QPointF(c.x() + d, c.y() - d))
-            else:
-                painter.setPen(QColor(255, 255, 255, 240))
-                painter.drawText(area, Qt.AlignmentFlag.AlignCenter, self._labels[name])
+            hot = name == self._hot
+            # Light pills on the frosted picture, like CleanShot's overlay.
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(0, 0, 0, 34))
+            radius = area.height() / 2
+            painter.drawRoundedRect(area.translated(0, 1.5), radius, radius)
+            painter.setBrush(QColor(255, 255, 255, 250) if hot else QColor(238, 238, 240, 238))
+            painter.drawRoundedRect(area, radius, radius)
+            painter.setPen(QColor(20, 20, 22))
+            painter.drawText(area, Qt.AlignmentFlag.AlignCenter, self._labels[name])
+
+    def _paint_chip(self, painter: QPainter, name: str, area: QRectF) -> None:
+        """A round white corner chip with a dark icon; a set pin is inverted."""
+        hot = name == self._hot and self._hover
+        inverted = name == "pin" and self._pinned
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(0, 0, 0, 40))
+        painter.drawEllipse(area.translated(0, 1.2))
+        if inverted:
+            # A thin light ring keeps the dark chip visible on a dark picture.
+            ring = QPen(QColor(255, 255, 255, 120))
+            ring.setWidthF(1.0)
+            painter.setPen(ring)
+            painter.setBrush(QColor(22, 22, 26, 250 if hot else 232))
+            icon = QColor(255, 255, 255)
+        else:
+            painter.setBrush(QColor(255, 255, 255, 252) if hot else QColor(240, 240, 242, 240))
+            icon = QColor(18, 18, 20)
+        painter.drawEllipse(area)
+        _paint_icon(painter, name, area, icon)
+
+    def _paint_caption(self, painter: QPainter, rect: QRectF, buttons: dict[str, QRectF]) -> None:
+        """What the chip under the pointer does, else the card's hint.
+
+        Sits between the two bottom chips, and only where it clears the pills.
+        """
+        if self._hot in ("pin", "close", "edit", "copy_text"):
+            key = "unpin" if self._hot == "pin" and self._pinned else self._hot
+            text = self._labels.get(key, "")
+        else:
+            text = self._hint
+        if not text:
+            return
+        font = QFont()
+        font.setPointSizeF(8.5)
+        font.setWeight(QFont.Weight.Medium)
+        metrics = QFontMetricsF(font)
+        h = metrics.height() + 6.0
+        side = _CARD_INSET + _CARD_ROUND + 6.0
+        band = QRectF(
+            rect.left() + side,
+            rect.bottom() - _CARD_INSET - _CARD_ROUND / 2 - h / 2,
+            rect.width() - 2 * side,
+            h,
+        )
+        pills = [buttons[k] for k in ("copy", "save") if k in buttons]
+        if band.width() <= 0 or any(p.bottom() + 2 > band.top() for p in pills):
+            return
+        painter.setFont(font)
+        painter.setPen(QColor(255, 255, 255, 225))
+        painter.drawText(
+            band,
+            Qt.AlignmentFlag.AlignCenter,
+            metrics.elidedText(text, Qt.TextElideMode.ElideRight, band.width()),
+        )
 
     def _paint_centered(self, painter: QPainter, rect: QRectF, text: str) -> None:
         font = _card_font()
@@ -891,23 +999,79 @@ class _CardWindow(QWidget):
         painter.setPen(QColor(255, 255, 255, 245))
         painter.drawText(rect, Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, text)
 
-    def _paint_hint(self, painter: QPainter, rect: QRectF) -> None:
-        font = QFont()
-        font.setPointSizeF(8.5)
-        font.setWeight(QFont.Weight.Medium)
-        metrics = QFontMetricsF(font)
-        h = metrics.height() + 10.0
-        band = QRectF(rect.x(), rect.bottom() - h, rect.width(), h)
-        painter.setFont(font)
-        painter.setPen(QColor(255, 255, 255, 200))
-        painter.drawText(band, Qt.AlignmentFlag.AlignCenter, self._hint)
-
 
 def _card_font() -> QFont:
     font = QFont()
     font.setPointSizeF(9.0)
     font.setWeight(QFont.Weight.DemiBold)
     return font
+
+
+def _pill_font() -> QFont:
+    font = QFont()
+    font.setPointSizeF(10.5)
+    font.setWeight(QFont.Weight.DemiBold)
+    return font
+
+
+def _poly(*points: tuple[float, float]) -> QPolygonF:
+    return QPolygonF([QPointF(x, y) for x, y in points])
+
+
+def _paint_icon(painter: QPainter, name: str, area: QRectF, color: QColor) -> None:
+    """Draw a corner-chip icon on a 28-unit grid centred in ``area``.
+
+    Drawn with paths instead of an icon font, so it looks the same on every
+    OS and needs no asset.
+    """
+    painter.save()
+    painter.translate(area.center())
+    scale = area.width() / 28.0
+    painter.scale(scale, scale)
+    pen = QPen(color)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    if name == "close":
+        pen.setWidthF(2.3)
+        painter.setPen(pen)
+        painter.drawLine(QPointF(-4.8, -4.8), QPointF(4.8, 4.8))
+        painter.drawLine(QPointF(-4.8, 4.8), QPointF(4.8, -4.8))
+    elif name == "pin":
+        # An upright push pin, tilted so the head points top-right.
+        painter.rotate(45.0)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(color)
+        painter.drawRoundedRect(QRectF(-4.6, -9.0, 9.2, 2.8), 1.2, 1.2)
+        painter.drawPolygon(_poly((-2.9, -6.6), (2.9, -6.6), (3.3, -1.2), (-3.3, -1.2)))
+        painter.drawPolygon(_poly((-3.3, -1.4), (3.3, -1.4), (6.2, 2.2), (-6.2, 2.2)))
+        pen.setWidthF(1.7)
+        painter.setPen(pen)
+        painter.drawLine(QPointF(0.0, 2.2), QPointF(0.0, 9.0))
+    elif name == "edit":
+        # A pencil, tip bottom-left.
+        painter.rotate(45.0)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(color)
+        painter.drawRoundedRect(QRectF(-2.9, -9.6, 5.8, 3.0), 1.2, 1.2)
+        painter.drawRect(QRectF(-2.9, -5.4, 5.8, 8.6))
+        painter.drawPolygon(_poly((-2.9, 4.4), (2.9, 4.4), (0.0, 9.4)))
+    elif name == "copy_text":
+        # A "T" inside scan corners: the text the appshot read.
+        pen.setWidthF(1.7)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        e, k = 7.0, 3.2
+        for sx, sy in ((-1, -1), (1, -1), (-1, 1), (1, 1)):
+            corner = QPainterPath()
+            corner.moveTo(sx * e, sy * (e - k))
+            corner.lineTo(sx * e, sy * e)
+            corner.lineTo(sx * (e - k), sy * e)
+            painter.drawPath(corner)
+        pen.setWidthF(2.0)
+        painter.setPen(pen)
+        painter.drawLine(QPointF(-3.2, -3.0), QPointF(3.2, -3.0))
+        painter.drawLine(QPointF(0.0, -3.0), QPointF(0.0, 3.6))
+    painter.restore()
 
 
 class Renderer(QObject):
