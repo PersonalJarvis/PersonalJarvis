@@ -239,6 +239,29 @@ def _lerp(a: float, b: float, t: float) -> float:
     return a + (b - a) * t
 
 
+def _flight_origin(raw: object):
+    """``(screen, rect as fractions of it)`` for a flight start, or ``None``.
+
+    ``raw`` is ``[x, y, w, h]`` in global logical pixels — where the editor
+    showed the picture. Anything unusable means "no flight".
+    """
+    if not isinstance(raw, list) or len(raw) != 4:
+        return None
+    try:
+        x, y, w, h = (float(v) for v in raw)
+    except (TypeError, ValueError):
+        return None
+    if w < 8 or h < 8:
+        return None
+    centre = QPointF(x + w / 2.0, y + h / 2.0).toPoint()
+    screen = QGuiApplication.screenAt(centre) or QGuiApplication.primaryScreen()
+    if screen is None:
+        return None
+    g = screen.geometry()
+    gw, gh = max(1.0, float(g.width())), max(1.0, float(g.height()))
+    return screen, [(x - g.x()) / gw, (y - g.y()) / gh, w / gw, h / gh]
+
+
 def _match_screen(monitor: list[float]):
     """The QScreen that best matches a capture-coordinate monitor rect.
 
@@ -286,7 +309,16 @@ def _paint_card(painter: QPainter, rect: QRectF, thumb: QImage, radius: float, r
 class _SnapWindow(QWidget):
     """One monitor-sized, click-through canvas for the flash and the flight."""
 
-    def __init__(self, screen, rect_frac: list[float], thumb: QImage, on_landed, on_done) -> None:
+    def __init__(
+        self,
+        screen,
+        rect_frac: list[float],
+        thumb: QImage,
+        on_landed,
+        on_done,
+        *,
+        flash: bool = True,
+    ) -> None:
         super().__init__(None)
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
@@ -309,6 +341,9 @@ class _SnapWindow(QWidget):
         self._thumb = thumb
         self._on_landed = on_landed
         self._on_done = on_done
+        # No flash when the picture is not a fresh capture (back from the
+        # editor): only the flight into the corner.
+        self._flash = flash
         w, h = float(screen.geometry().width()), float(screen.geometry().height())
         fx, fy, fw, fh = (max(0.0, min(1.0, float(v))) for v in rect_frac)
         self._src = QRectF(fx * w, fy * h, max(1.0, fw * w), max(1.0, fh * h))
@@ -395,7 +430,7 @@ class _SnapWindow(QWidget):
             _paint_card(painter, rect, self._thumb, _SNAP_RADIUS * fly, fly)
 
         flash = 1.0 - _ease_out_cubic(t / _SNAP_FLASH_MS)
-        if flash > 0.0:
+        if self._flash and flash > 0.0:
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor(255, 255, 255, int(225 * flash)))
             painter.drawRect(self._src)
@@ -1060,6 +1095,17 @@ class Renderer(QObject):
         self.card_image = None
         self._card_hint = str(payload.get("hint", "") or "")
         self._take_card_options(payload)
+        origin = _flight_origin(payload.get("from"))
+        if origin is not None:
+            # Saved in the editor: the picture flies from the editor into
+            # the corner, the same flight as after the shutter.
+            fly_screen, frac = origin
+            win = _SnapWindow(
+                fly_screen, frac, thumb, self._snap_landed, self._snap_done, flash=False
+            )
+            self._snaps.append(win)
+            win.start()
+            return
         self._new_card(_card_rect(screen, thumb), thumb).start(slide_in=True)
 
     def card_action(self, action: str) -> None:

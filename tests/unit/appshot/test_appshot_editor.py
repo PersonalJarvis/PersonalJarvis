@@ -243,3 +243,57 @@ def test_drag_route_returns_a_path_on_the_desktop_only(
 
     app.state.native_file_actions = False
     assert client.post("/api/appshot/drag-file", content=_png()).status_code == 404
+
+
+# -- saved in the editor: the picture flies back into the corner ---------------
+
+
+def test_the_card_route_hands_the_flight_start_through(monkeypatch: pytest.MonkeyPatch) -> None:
+    from jarvis.appshot import card_actions
+    from jarvis.ui.web.appshot_routes import router
+
+    seen: list = []
+
+    async def fake_return(fly_from=None):
+        seen.append(fly_from)
+        return True
+
+    monkeypatch.setattr(card_actions, "return_to_corner", fake_return)
+    app = FastAPI()
+    app.include_router(router)
+    client = TestClient(app)
+
+    saved = client.post("/api/appshot/latest/card", json={"fly_from": [100, 80, 640, 400]})
+    closed = client.post("/api/appshot/latest/card")
+
+    assert saved.json() == {"shown": True} and closed.json() == {"shown": True}
+    assert seen == [[100.0, 80.0, 640.0, 400.0], None]
+    assert client.post("/api/appshot/latest/card", json={"fly_from": [1, 2]}).status_code == 422
+
+
+async def test_the_card_command_carries_the_flight_start(monkeypatch: pytest.MonkeyPatch) -> None:
+    from jarvis.cu.indicator import protocol
+    from jarvis.cu.indicator.controller import CUIndicatorController
+
+    class _Proc:
+        @staticmethod
+        def poll() -> None:
+            return None
+
+    controller = CUIndicatorController(bus=None)
+    sent: list[tuple[str, dict]] = []
+    monkeypatch.setattr(controller, "_border_capability", lambda: (True, ""))
+    monkeypatch.setattr(controller, "_spawn_sidecar", lambda: setattr(controller, "_proc", _Proc()))
+    monkeypatch.setattr(
+        controller,
+        "_send_and_wait",
+        lambda cmd, _timeout, **fields: sent.append((cmd, fields)) or True,
+    )
+
+    flight = [1.0, 2.0, 300.0, 200.0]
+    assert await controller.show_card(thumb_b64="t", image_b64="", fly_from=flight)
+    assert await controller.show_card(thumb_b64="t", image_b64="")
+
+    cards = [fields for cmd, fields in sent if cmd == protocol.CMD_CARD]
+    assert cards[0]["from"] == [1.0, 2.0, 300.0, 200.0]
+    assert "from" not in cards[1], "a plain close slides in, it does not fly"

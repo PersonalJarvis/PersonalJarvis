@@ -19,6 +19,14 @@ const AppshotEditor = lazy(() =>
  * the editor. Escape and outside presses are left to the editor itself, which
  * cancels a stroke or asks before discarding edits.
  */
+function returnToCorner(flyFrom: [number, number, number, number]) {
+  void fetch("/api/appshot/latest/card", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ fly_from: flyFrom }),
+  }).catch(() => undefined);
+}
+
 export function AppshotEditorHost() {
   const openId = useAppshotEditor((s) => s.openId);
   const close = useAppshotEditor((s) => s.close);
@@ -38,7 +46,16 @@ export function AppshotEditorHost() {
           <Dialog.Title className="sr-only">Appshot editor</Dialog.Title>
           {openId !== null && (
             <Suspense fallback={<div className="h-full w-full bg-background" />}>
-              <AppshotEditor key={openId} appshotId={openId} onClose={close} onApplied={applied} />
+              <AppshotEditor
+                key={openId}
+                appshotId={openId}
+                onClose={(exit) => {
+                  // Saved or used: the picture flies back into the corner card.
+                  if (exit?.flyFrom) returnToCorner(exit.flyFrom);
+                  close();
+                }}
+                onApplied={applied}
+              />
             </Suspense>
           )}
         </Dialog.Content>

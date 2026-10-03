@@ -258,16 +258,24 @@ async def open_editor(body: OpenEditorRequest) -> dict[str, Any]:
     return {"window": await open_editor_window(body.id)}
 
 
-@router.post("/latest/card")
-async def return_card() -> dict[str, Any]:
-    """Slide the held (edited) appshot back into the corner card.
+class ReturnCardRequest(BaseModel):
+    #: Where the editor showed the picture, ``[x, y, w, h]`` in global
+    #: logical pixels: the saved picture flies from there into the corner.
+    fly_from: list[float] | None = Field(default=None, min_length=4, max_length=4)
 
-    The editor window calls this when it closes, so the picture stays at
-    hand like after the shutter. ``shown: false`` where no overlay can run.
+
+@router.post("/latest/card")
+async def return_card(body: ReturnCardRequest | None = None) -> dict[str, Any]:
+    """Bring the held (edited) appshot back into the corner card.
+
+    The editor calls this when it closes, so the picture stays at hand
+    like after the shutter; after a save it flies there from the editor.
+    ``shown: false`` where no overlay can run.
     """
     from jarvis.appshot.card_actions import return_to_corner  # noqa: PLC0415
 
-    return {"shown": await return_to_corner()}
+    fly_from = body.fly_from if body is not None else None
+    return {"shown": await return_to_corner(fly_from)}
 
 
 def _png_size(data: bytes) -> tuple[int, int] | None:

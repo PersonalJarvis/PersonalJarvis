@@ -68,6 +68,49 @@ describe("the appshot editor window", () => {
     await waitFor(() => expect(order).toEqual(["card", "close"]));
   });
 
+  it("after Save the edited picture becomes the appshot and flies back to the corner", async () => {
+    const proxy: ProxyHandler<object> = {
+      get: (_t, key) =>
+        key === "measureText" ? () => ({ width: 10 }) : new Proxy(() => undefined, { ...proxy, apply: () => new Proxy({}, proxy) }),
+      set: () => true,
+    };
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(() => new Proxy({}, proxy) as never);
+    vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation((done: BlobCallback) =>
+      done(new Blob(["png"], { type: "image/png" })),
+    );
+    vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: () => "blob:x", revokeObjectURL: () => undefined }));
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push(`${init?.method ?? "GET"} ${url}`);
+        return json({ native_file_actions: false, platform: "linux" });
+      }),
+    );
+    const flights: unknown[] = [];
+    const closeWindow = vi.fn(async () => undefined);
+    render(
+      <AppshotEditorWindow
+        deps={{
+          returnCard: async (flyFrom) => {
+            flights.push(flyFrom);
+          },
+          closeWindow,
+        }}
+      />,
+    );
+    await screen.findByTestId("appshot-editor-canvas");
+
+    fireEvent.click(screen.getByTestId("appshot-editor-save"));
+
+    await waitFor(() => expect(closeWindow).toHaveBeenCalledTimes(1));
+    expect(calls).toContain("PUT /api/appshot/latest/image?id=a1b2c3d4");
+    expect(flights).toHaveLength(1);
+    const from = flights[0] as number[];
+    expect(Array.isArray(from) && from.length === 4).toBe(true);
+    vi.restoreAllMocks();
+  });
+
   it("still closes when the card cannot come back", async () => {
     const closeWindow = vi.fn(async () => undefined);
     render(<AppshotEditorWindow deps={{ returnCard: () => Promise.reject(new Error("no overlay")), closeWindow }} />);

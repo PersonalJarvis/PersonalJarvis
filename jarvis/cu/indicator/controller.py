@@ -332,6 +332,7 @@ class CUIndicatorController:
         hint: str = "",
         rest_ms: int = 6000,
         labels: dict[str, str] | None = None,
+        fly_from: list[float] | None = None,
     ) -> bool:
         """Put a picture straight back into the corner card — no flash, no flight.
 
@@ -359,6 +360,7 @@ class CUIndicatorController:
                 hint=hint,
                 rest_ms=int(rest_ms),
                 labels=dict(labels or {}),
+                **({"from": list(fly_from)} if fly_from else {}),
             )
             if shown and image_b64:
                 await asyncio.to_thread(

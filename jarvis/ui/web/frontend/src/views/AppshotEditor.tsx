@@ -178,9 +178,19 @@ interface Typing {
   replaceId: number | null;
 }
 
+/**
+ * How the editor ended when it ended with a result (Save or Done): where the
+ * picture was on screen, ``[x, y, w, h]`` in global logical pixels, so it can
+ * fly from there back into the corner card.
+ */
+export interface EditorExit {
+  flyFrom?: [number, number, number, number];
+}
+
 export interface AppshotEditorProps {
   appshotId: string;
-  onClose: () => void;
+  /** Closed; ``exit`` is set when it closed with a saved or used picture. */
+  onClose: (exit?: EditorExit) => void;
   /** The edited picture replaced the held appshot (and went to the assistant). */
   onApplied?: () => void;
   /**
@@ -551,20 +561,42 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
     }
   }, [native, pushToast, render, t]);
 
+  /** Where the picture is on screen right now, for the flight back to the corner. */
+  const flyFrom = useCallback((): EditorExit["flyFrom"] => {
+    const canvas = canvasRef.current;
+    if (!canvas) return undefined;
+    const r = canvas.getBoundingClientRect();
+    // A framed window adds its title bar and borders above/around the page.
+    const chromeX = Math.max(0, (window.outerWidth - window.innerWidth) / 2);
+    const chromeY = Math.max(0, window.outerHeight - window.innerHeight - chromeX);
+    return [window.screenX + chromeX + r.left, window.screenY + chromeY + r.top, r.width, r.height];
+  }, []);
+
   const save = useCallback(async () => {
     setBusy("save");
+    let saved = false;
     try {
       const blob = await render();
       const filename = `appshot-${stamp()}.png`;
       const path = await saveOrDownload({ filename, blob, native });
       setDirty(false);
+      saved = true;
       if (path) pushToast("success", fill(t("appshot_editor.saved_to"), { 0: path }), { filePath: path, filename });
+      // The saved state is the appshot from now on: the corner card, a drag
+      // and the next message all carry the edit. A gone appshot only skips this.
+      await fetch(`/api/appshot/latest/image?id=${encodeURIComponent(appshotId)}`, {
+        method: "PUT",
+        headers: { "content-type": "image/png" },
+        body: blob,
+      }).catch(() => undefined);
     } catch (error) {
       pushToast("error", fill(t("appshot_editor.save_failed"), { 0: (error as Error).message }));
     } finally {
       setBusy("");
     }
-  }, [native, pushToast, render, t]);
+    // Saved: back into the corner, flying from where the picture is now.
+    if (saved) onClose({ flyFrom: flyFrom() });
+  }, [appshotId, flyFrom, native, onClose, pushToast, render, t]);
 
   const use = useCallback(async () => {
     setBusy("apply");
@@ -591,13 +623,13 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
       );
       setDirty(false);
       onApplied?.();
-      onClose();
+      onClose({ flyFrom: flyFrom() });
     } catch (error) {
       pushToast("error", fill(t("appshot_editor.apply_failed"), { 0: (error as Error).message }));
     } finally {
       setBusy("");
     }
-  }, [appshotId, assistantName, onApplied, onClose, pushToast, render, t]);
+  }, [appshotId, assistantName, flyFrom, onApplied, onClose, pushToast, render, t]);
 
   const requestClose = useCallback(() => {
     if (dirty && ops.length > 0) setConfirmDiscard(true);
@@ -992,7 +1024,7 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
             {load === "failed" ? (
               <div className="flex max-w-sm flex-col items-center gap-3 text-center" data-testid="appshot-editor-failed">
                 <p className="text-base text-muted-foreground">{label("gone")}</p>
-                <Button type="button" variant="secondary" size="sm" onClick={onClose}>
+                <Button type="button" variant="secondary" size="sm" onClick={() => onClose()}>
                   {label("close")}
                 </Button>
               </div>
@@ -1161,7 +1193,7 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
                 <Button type="button" variant="secondary" size="sm" autoFocus onClick={() => setConfirmDiscard(false)}>
                   {label("discard_keep")}
                 </Button>
-                <Button type="button" variant="destructive" size="sm" onClick={onClose} data-testid="appshot-editor-discard-confirm">
+                <Button type="button" variant="destructive" size="sm" onClick={() => onClose()} data-testid="appshot-editor-discard-confirm">
                   {label("discard_confirm")}
                 </Button>
               </div>

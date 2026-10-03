@@ -1,16 +1,18 @@
 import { useCallback, useRef } from "react";
 
 import { ToastLayer } from "@/components/ToastLayer";
-import { AppshotEditor } from "@/views/AppshotEditor";
+import { AppshotEditor, type EditorExit } from "@/views/AppshotEditor";
 
 /**
  * The appshot editor as its own desktop window (`?view=appshot-editor&solo=1
  * &appshot=<id>`), opened by a click on the corner card — CleanShot X's
  * editor window. Nothing of the app is loaded around it.
  *
- * When it closes — Done or Close — the appshot slides back into the screen
- * corner (`POST /api/appshot/latest/card`), so it stays at hand, and then the
- * window closes itself through the shell (`POST /api/window/reattach`).
+ * When it closes the appshot goes back into the screen corner
+ * (`POST /api/appshot/latest/card`), so it stays at hand — after Save or Done
+ * it flies there from where the editor showed it, after Close it slides in —
+ * and then the window closes itself through the shell
+ * (`POST /api/window/reattach`).
  */
 
 export const APPSHOT_EDITOR_VIEW = "appshot-editor";
@@ -27,12 +29,17 @@ export function isAppshotEditorWindow(search: string): boolean {
 }
 
 export interface EditorWindowDeps {
-  returnCard: () => Promise<unknown>;
+  returnCard: (flyFrom?: EditorExit["flyFrom"]) => Promise<unknown>;
   closeWindow: () => Promise<unknown>;
 }
 
 const browserDeps: EditorWindowDeps = {
-  returnCard: () => fetch("/api/appshot/latest/card", { method: "POST" }),
+  returnCard: (flyFrom) =>
+    fetch("/api/appshot/latest/card", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(flyFrom ? { fly_from: flyFrom } : {}),
+    }),
   closeWindow: () =>
     fetch("/api/window/reattach", {
       method: "POST",
@@ -45,13 +52,13 @@ export function AppshotEditorWindow({ deps = browserDeps }: { deps?: EditorWindo
   const appshotId = appshotIdFromUrl(window.location.search);
   const closing = useRef(false);
 
-  const close = useCallback(() => {
+  const close = useCallback((exit?: EditorExit) => {
     if (closing.current) return;
     closing.current = true;
     // Back into the corner first: the window must not take the card's
     // request down with it.
     void deps
-      .returnCard()
+      .returnCard(exit?.flyFrom)
       .catch(() => undefined)
       .finally(() => {
         void deps.closeWindow().catch(() => undefined);

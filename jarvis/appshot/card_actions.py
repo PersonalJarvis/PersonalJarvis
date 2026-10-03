@@ -130,8 +130,13 @@ async def run_card_action(action: str) -> str:
     return labels["failed"]
 
 
-async def return_to_corner() -> bool:
-    """Slide the held appshot back into the corner card. ``False`` = not shown."""
+async def return_to_corner(fly_from: list[float] | None = None) -> bool:
+    """Bring the held appshot back into the corner card. ``False`` = not shown.
+
+    ``fly_from`` (``[x, y, w, h]``, global logical pixels) is where the
+    editor showed the picture: it then flies from there into the corner,
+    like after the shutter. Without it the card slides in from the edge.
+    """
     try:
         from jarvis.appshot.effect import card_hint, thumbnail_from_image  # noqa: PLC0415
         from jarvis.appshot.store import get_store  # noqa: PLC0415
@@ -154,6 +159,7 @@ async def return_to_corner() -> bool:
                 hint=card_hint(config),
                 rest_ms=card_rest_ms(config),
                 labels=card_labels(config),
+                fly_from=fly_from,
             )
         )
     except Exception:  # noqa: BLE001 - the card is a convenience, never a failure
