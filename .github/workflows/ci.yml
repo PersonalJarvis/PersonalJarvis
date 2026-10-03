@@ -249,6 +249,7 @@ jobs:
             tests/unit/society/test_history_migration.py \
             tests/contract/test_agent_mcp_harmony.py \
             tests/contract/test_society_frontend_migration.py \
+            tests/contract/test_society_german_locale.py \
             tests/unit/costs/test_cost_read_model.py::test_society_chat_is_a_distinct_cost_surface \
             tests/contract/test_plugin_auth_standard.py \
             tests/contract/test_connector_auth.py \
