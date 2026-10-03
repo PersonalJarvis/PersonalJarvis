@@ -5,6 +5,7 @@ import { LevelMeter } from "./levelMeter";
 import { MediaActivity, type MediaLevels } from "./mediaLevels";
 import { requestConnect } from "./connectBudget";
 import { mintWsTicket } from "./ws";
+import { beginSpeechPlayback, clearSpeechPlayback, spokenWordEnd, updateSpeechPlayback } from "./speechPlayback";
 import pcmWorkletUrl from "./pcm-worklet.ts?worker&url";
 
 export function buildAudioSocketUrl(ticket?: string | null): string {
@@ -278,6 +279,7 @@ export class BrowserSpeechFallback {
   private generation = 0;
   private active = false;
   private finishCancelled: (() => void) | null = null;
+  private playbackId: number | null = null;
 
   constructor(
     private readonly synthesis: SpeechSynthesisSurface | null =
@@ -311,19 +313,47 @@ export class BrowserSpeechFallback {
 
     const generation = ++this.generation;
     const utterance = this.createUtterance(text);
+    const playbackId = beginSpeechPlayback(text);
+    this.playbackId = playbackId;
     let settled = false;
+    let playing = false;
     const finish = (outcome: BrowserSpeechOutcome) => {
       if (settled || generation !== this.generation) return;
       settled = true;
       this.active = false;
       this.finishCancelled = null;
+      if (outcome === "ended" && utterance.volume > 0) {
+        updateSpeechPlayback(playbackId, "ended", text.length);
+      } else {
+        updateSpeechPlayback(playbackId, "cancelled");
+      }
       handlers.onFinish(outcome);
     };
     this.finishCancelled = () => finish("cancelled");
     if (language) utterance.lang = language;
     utterance.volume = Math.max(0, Math.min(1, Number.isFinite(volume) ? volume : 1));
     utterance.onstart = () => {
-      if (generation === this.generation) handlers.onStart?.();
+      if (settled || generation !== this.generation) return;
+      playing = true;
+      updateSpeechPlayback(playbackId, "playing");
+      handlers.onStart?.();
+    };
+    // These boundaries come from the speech engine's playback, so changing
+    // rate, pausing or waiting in its queue needs no timer or tempo estimate.
+    utterance.onboundary = (event) => {
+      if (!playing || settled || generation !== this.generation || utterance.volume <= 0) return;
+      if (event.name !== "word") return;
+      updateSpeechPlayback(playbackId, "playing", spokenWordEnd(text, event.charIndex));
+    };
+    utterance.onpause = () => {
+      if (settled || generation !== this.generation) return;
+      playing = false;
+      updateSpeechPlayback(playbackId, "paused");
+    };
+    utterance.onresume = () => {
+      if (settled || generation !== this.generation) return;
+      playing = true;
+      updateSpeechPlayback(playbackId, "playing");
     };
     utterance.onend = () => finish("ended");
     utterance.onerror = () => finish("error");
@@ -342,6 +372,8 @@ export class BrowserSpeechFallback {
     if (notify) this.finishCancelled?.();
     this.finishCancelled = null;
     this.generation += 1;
+    if (this.playbackId !== null) updateSpeechPlayback(this.playbackId, "cancelled");
+    this.playbackId = null;
     if (!wasActive) return;
     this.active = false;
     try {
@@ -550,6 +582,7 @@ export class RealtimeAudioClient {
 
   private observeRemoteAudio(stream: MediaStream): void {
     if (!this.ctx) return;
+    clearSpeechPlayback();
     // A suspended context measures only zeros: the assistant would talk
     // while the bar keeps showing listening. The call started from a user
     // gesture, so resuming here is allowed and makes the tap truthful.
@@ -1068,6 +1101,7 @@ export class RealtimeAudioClient {
     // subscription WebRTC peer intentionally does not play remote RTP; Codex's
     // documented sideband PCM therefore keeps Jarvis's scrub gate in the path.
     this.browserSpeech.cancel();
+    clearSpeechPlayback();
     if (!this.playbackResampler) this.setOutputRate(24_000);
     const converted = this.playbackResampler?.process(pcm) ?? pcm;
     if (converted.byteLength === 0) return;
