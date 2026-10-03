@@ -39,6 +39,7 @@ curator stages tainted knowledge behind the existing wiki review gate, group del
 voice acknowledgement/status and completion announcements, room cost is durable/visible, and
 ROOM_OPEN/ROOM_SETTLE project into the world. The blocking CI contract runs the German voice
 exit test plus curator review/denial invariants.
+ **M5 hardening evidence (2026-10-03):** the legacy Agents deep link is pinned to the Society surface and Ledger, production remains Jarvis-only with capability-driven teammate proposals, Society spend is pinned to the canonical cost surface, the German Society locale is key/placeholder-parity guarded, AP-4 Society enum parity is blocking, the boot budget remains blocking, and the Ledger has an explicit accessible table contract. Qualification is intentionally still open: GitHub Actions is currently creating pull-request runs with `startup_failure` before any job starts, so no post-change green CI claim is made until runners execute these guards.
 
 The research behind every claim here lives in [`research/`](research/):
 [Branch A — product & UI](research/branch-a-product-ui.md) (Hermes Agent, Grok Bot, 3D stack,
