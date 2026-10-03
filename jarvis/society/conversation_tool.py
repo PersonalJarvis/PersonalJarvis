@@ -56,6 +56,8 @@ class ConversationRecallTool:
 
 
 class RoutineListTool:
+    read_only = True
+
     name = "society_routines"
     risk_tier = "safe"
     description = (

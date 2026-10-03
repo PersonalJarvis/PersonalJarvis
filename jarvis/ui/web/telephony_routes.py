@@ -781,10 +781,14 @@ async def media_socket(ws: WebSocket) -> None:
                 continue
 
             if event == "start":
+                if call_sid:
+                    # A socket owns one authenticated identity for its lifetime.
+                    await ws.close(code=1008, reason="duplicate start")
+                    break
                 start = data.get("start", {})
                 stream_sid = start.get("streamSid", "") or data.get("streamSid", "")
                 custom = start.get("customParameters", {}) or {}
-                call_sid = custom.get("call_sid", "") or start.get("callSid", "")
+                requested_call_sid = custom.get("call_sid", "") or start.get("callSid", "")
                 secret = custom.get("secret", "")
                 language = custom.get("language", "") or (
                     getattr(twilio, "language_code", "de-DE") if twilio else "de-DE"
@@ -797,21 +801,24 @@ async def media_socket(ws: WebSocket) -> None:
                 # Validate the per-call WS secret unless skipped for tests.
                 skip = bool(getattr(state, "telephony_skip_signature", False))
                 if not skip:
-                    pending = mgr.consume_pending(call_sid, secret)
+                    pending = mgr.consume_pending(requested_call_sid, secret)
                     if pending is None or not constant_time_equals(
                         pending.secret if pending else "", secret
                     ):
-                        log.warning("telephony: media socket secret mismatch for %s", call_sid)
-                        record_status = CALL_FAILED
+                        log.warning("telephony: media socket secret mismatch")
                         await ws.close(code=1008, reason="bad secret")
                         break
                     from_number = pending.from_number
                     to_number = pending.to_number
                 else:
-                    pending = mgr.peek_pending(call_sid)
+                    pending = mgr.peek_pending(requested_call_sid)
                     from_number = pending.from_number if pending else custom.get("from", "")
                     to_number = pending.to_number if pending else custom.get("to", "")
 
+                if not requested_call_sid or mgr.active_session(requested_call_sid) is not None:
+                    await ws.close(code=1008, reason="call already active or missing")
+                    break
+                call_sid = requested_call_sid
                 session = _build_session(
                     state=state,
                     cfg=cfg,
@@ -875,7 +882,9 @@ async def media_socket(ws: WebSocket) -> None:
             await session.end(reason="socket_closed", status=record_status)
             record_status = session.status
         if call_sid:
-            mgr.unregister_active(call_sid)
+            # Only remove the session this socket registered, never a replacement.
+            if session is not None and mgr.active_session(call_sid) is session:
+                mgr.unregister_active(call_sid)
             duration = session.duration_s if session is not None else time.time() - started_at
             turns = session.turns if session is not None else 0
             from_number = getattr(session, "from_number", "") if session else ""

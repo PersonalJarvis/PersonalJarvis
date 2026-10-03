@@ -156,6 +156,22 @@ def federation_feed(
     ``server_now`` of their last pull and pass it in as ``since`` on the
     next one, so the backend only has to serialize the diffs.
     """
+    return _federation_feed(request, sort, since, viewer_pubkey=auth.viewer_pubkey)
+
+
+@fed_router.get("/public-feed", response_model=FeedResponse)
+def public_federation_feed(
+    request: Request,
+    sort: str = Query("interesting", pattern=r"^(interesting|latest)$"),
+    since: str | None = Query(None),
+) -> FeedResponse:
+    """Anonymous background synchronization of public activity only."""
+    return _federation_feed(request, sort, since, viewer_pubkey="")
+
+
+def _federation_feed(
+    request: Request, sort: str, since: str | None, *, viewer_pubkey: str,
+) -> FeedResponse:
     since_dt = None
     if since is not None:
         try:
@@ -167,8 +183,10 @@ def federation_feed(
 
     with get_db(request) as session:
         owner = get_owner_identity(session)
-        is_owner = (auth.viewer_pubkey == owner.pubkey)
-        is_friend = is_owner or _is_friend(session, owner.pubkey, auth.viewer_pubkey)
+        is_owner = bool(viewer_pubkey) and viewer_pubkey == owner.pubkey
+        is_friend = is_owner or (
+            bool(viewer_pubkey) and _is_friend(session, owner.pubkey, viewer_pubkey)
+        )
 
         # SQL filter — Plan §D ALGORITHM TRANSPARENT BY DESIGN
         clauses = [ActivityItem.visibility == "public"]
@@ -192,7 +210,7 @@ def federation_feed(
             _item_to_dto(
                 it,
                 owner_display=owner.display_name,
-                viewer_pubkey=auth.viewer_pubkey,
+                viewer_pubkey=viewer_pubkey,
                 counts=_count_reactions(session, it.id),
                 session=session,
             )

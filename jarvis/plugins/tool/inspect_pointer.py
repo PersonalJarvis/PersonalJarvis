@@ -26,6 +26,8 @@ ResolveFn = Callable[[], Awaitable[PointerContext]]
 class InspectPointerTool:
     """Read the accessibility element currently under the mouse cursor."""
 
+    read_only = True
+
     name: str = "inspect-pointer"
     risk_tier: str = "safe"
     description: str = (

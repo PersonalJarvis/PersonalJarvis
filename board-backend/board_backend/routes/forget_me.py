@@ -60,6 +60,9 @@ def forget_me(
 
         session.commit()
 
+    puller = getattr(request.app.state, "federation_puller", None)
+    if puller is not None:
+        puller.friends_changed()
     return ForgetMeAck(
         deleted_friendship=deleted_friendship,
         deleted_activities=deleted_activities,

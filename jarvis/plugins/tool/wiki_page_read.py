@@ -73,6 +73,8 @@ def _frontmatter_declares_meta(content: str) -> bool:
 class WikiPageReadTool:
     """Router-tier full-page reader for the long-term Obsidian wiki vault."""
 
+    read_only = True
+
     name: str = "wiki-page-read"
     description: str = (
         "Read a single page from the user's long-term Obsidian wiki, in full. "
