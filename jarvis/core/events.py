@@ -947,7 +947,8 @@ class TerminalClosed(Event):
 class TerminalCommandExecuted(Event):
     """Audit event — emitted on Enter key press (\\r).
 
-    Heuristic: a line buffer is maintained per session, flushed on \\r or \\n.
+    Heuristic: a line buffer is maintained per session, flushed on \\r or \
+.
     For TUI apps (vim, htop) this may occasionally contain garbage — sufficient
     for pure audit tracking nonetheless.
     """
@@ -2319,7 +2320,26 @@ class SocietyRoomChanged(Event):
     max_rounds: int = 0
     max_messages: int = 0
     society_trace: str = ""
-\n\n@dataclass(frozen=True, slots=True)\nclass SocietyAttentionChanged(Event):\n    """A user-facing Society item became worth attention.\n\n    This is deliberately not an AnnouncementRequested: the WebSocket uses\n    it for app-wide toasts and the Agents badge, while TTS remains owned by\n    the explicit voice reply path. Chat notices stay durable in agent-chat;\n    this event is the live cross-window receipt.\n    """\n\n    kind: str = ""  # "result" | "room" | "approval"\n    status: str = ""\n    count: int = 1\n    agent_ids: tuple[str, ...] = ()\n    text: str = ""\n    society_trace: str = ""\n    request_id: str = ""\n
+
+
+@dataclass(frozen=True, slots=True)
+class SocietyAttentionChanged(Event):
+    """A user-facing Society item became worth attention.
+
+    This is deliberately not an AnnouncementRequested: the WebSocket uses
+    it for app-wide toasts and the Agents badge, while TTS remains owned by
+    the explicit voice reply path. Chat notices stay durable in agent-chat;
+    this event is the live cross-window receipt.
+    """
+
+    kind: str = ""  # "result" | "room" | "approval"
+    status: str = ""
+    count: int = 1
+    agent_ids: tuple[str, ...] = ()
+    text: str = ""
+    society_trace: str = ""
+    request_id: str = ""
+
 
 # ----------------------------------------------------------------------
 # Visible-Feedback Contract (ADR-0016)
