@@ -687,7 +687,8 @@ class ScreenContextService:
     @staticmethod
     def _permission_feature(verdict: IntentVerdict) -> str:
         """The permission-episode feature of one capture: an appshot says so in its evidence."""
-        return "appshot" if "appshot" in verdict.evidence else "screen_context"
+        appshot_evidence = {"appshot", "appshot-region", "appshot-screen"}
+        return "appshot" if appshot_evidence.intersection(verdict.evidence) else "screen_context"
 
     async def _ask_for_capture_permission(
         self, verdict: IntentVerdict, trace_id: UUID | None

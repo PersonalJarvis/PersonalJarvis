@@ -272,6 +272,9 @@ async def _reload_with(monkeypatch, hotkey: str, region_hotkey: str) -> AppshotS
     import jarvis.platform.probes as probes
 
     class Cfg:
+        class screen_context:  # noqa: N801
+            enabled = True
+
         class appshot:  # noqa: N801
             pass
 
@@ -283,7 +286,10 @@ async def _reload_with(monkeypatch, hotkey: str, region_hotkey: str) -> AppshotS
     armed: list[dict] = []
 
     async def run_combos(self, combos):
+        from types import SimpleNamespace
+
         armed.append(dict(combos))
+        self._trigger = SimpleNamespace(armed=True, needs_input_monitoring=False)
 
     monkeypatch.setattr(hotkey_module.AppshotShortcut, "_run_combos", run_combos)
     shortcut = AppshotShortcut(bus=object())
@@ -396,6 +402,10 @@ def test_one_key_for_both_shortcuts_is_refused_before_writing(client, monkeypatc
 
 @pytest.fixture
 def picker_host(monkeypatch):
+    from jarvis.platform import screen_access
+    from tests.fakes.fake_permission_service import FakePermissionService
+
+    monkeypatch.setattr(screen_access, "permission_gate", lambda: FakePermissionService())
     monkeypatch.setattr(region, "picker_capability", lambda: (True, ""))
     monkeypatch.setattr(region, "_SETTLE_S", 0.0)
     region._picking = False
@@ -458,6 +468,9 @@ async def test_overlapping_reloads_leave_exactly_one_listener(monkeypatch) -> No
     import jarvis.platform.probes as probes
 
     class Cfg:
+        class screen_context:  # noqa: N801
+            enabled = True
+
         class appshot:  # noqa: N801
             hotkey = "ctrl+alt+a"
             region_hotkey = "alt+win+a"
@@ -596,6 +609,9 @@ async def test_two_gestures_arm_two_watchers(monkeypatch) -> None:
     import jarvis.core.instance as instance_module
 
     class Cfg:
+        class screen_context:  # noqa: N801
+            enabled = True
+
         class appshot:  # noqa: N801
             hotkey = "alt+alt"
             region_hotkey = "shift+shift"

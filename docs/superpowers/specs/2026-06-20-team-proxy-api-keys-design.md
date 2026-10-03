@@ -13,9 +13,9 @@ Today every Jarvis install holds its own provider credentials per machine
 (`get_secret`: Windows Credential Manager → ENV → `.env`). That is the
 "solo / local key" model.
 
-This feature adds a **second, team-shareable mode** modelled on the
-"Serverlink" pattern: one set of real vendor keys lives **server-side** on a
-small hosted proxy; each Jarvis client stores only a **proxy URL + a per-user
+This feature adds a **second, team-shareable mode**: one set of real vendor
+keys lives **server-side** on a small hosted proxy; each Jarvis client stores
+only a **proxy URL + a per-user
 token** and never sees a real vendor key. The proxy swaps the per-user token
 for the real key, forwards to the vendor, and records usage.
 

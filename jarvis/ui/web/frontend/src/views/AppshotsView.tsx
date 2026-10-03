@@ -522,7 +522,9 @@ export function AppshotsView() {
                       ? t("appshots.try_counting").replace("{0}", String(countdown))
                       : picking
                         ? t("appshots.try_picking")
-                        : t("appshots.try_hint")
+                        : !settings.readiness.capture
+                          ? settings.readiness.capture_detail
+                          : t("appshots.try_hint")
                   }
                   control={
                     <div className="flex items-center gap-2">
@@ -532,7 +534,8 @@ export function AppshotsView() {
                           variant="secondary"
                           size="sm"
                           disabled={
-                            disabled || picking || !settings.readiness.region || countdown !== null
+                            disabled || picking || !settings.readiness.capture ||
+                            !settings.readiness.region || countdown !== null
                           }
                           onClick={() => void tryRegion()}
                           data-testid="appshots-try-region"
@@ -545,7 +548,7 @@ export function AppshotsView() {
                         type="button"
                         variant="secondary"
                         size="sm"
-                        disabled={disabled || picking || countdown !== null}
+                        disabled={disabled || picking || !settings.readiness.capture || countdown !== null}
                         onClick={() => void tryIt()}
                         data-testid="appshots-try"
                       >

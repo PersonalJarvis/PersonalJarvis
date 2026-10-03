@@ -67,13 +67,25 @@ def _capability() -> dict[str, Any]:
 
     from jarvis.appshot.region import picker_capability  # noqa: PLC0415
     from jarvis.cu.indicator.controller import screen_indicator_capability  # noqa: PLC0415
+    from jarvis.platform.probes import display_present, is_wayland
 
     capture_ok = importlib.util.find_spec("mss") is not None
+    capture_detail = "" if capture_ok else "The screen-capture package is not installed."
+    if not display_present():
+        capture_ok = False
+        capture_detail = "Screen capture needs an interactive desktop session."
+    elif is_wayland():
+        capture_ok = False
+        capture_detail = "Appshot capture is not supported on Wayland yet. Use an X11 session."
+    # This is backend support, not a permission preflight. A Mac without a
+    # grant must retain its capture button so first use can ask the OS.
     effect_ok, effect_reason = screen_indicator_capability()
     region_ok, region_reason = picker_capability()
+    if not capture_ok:
+        region_ok, region_reason = False, capture_detail
     return {
         "capture": capture_ok,
-        "capture_detail": "" if capture_ok else "The screen-capture package is not installed.",
+        "capture_detail": capture_detail,
         "effect": effect_ok,
         "effect_detail": effect_reason,
         "region": region_ok,
@@ -124,6 +136,7 @@ async def put_settings(request: Request, patch: SettingsPatch) -> dict[str, Any]
         get_shortcut,
         is_gesture,
         normalize_hotkey,
+        request_saved_shortcut_access,
     )
     from jarvis.core.config import load_config  # noqa: PLC0415
     from jarvis.core.config_writer import (  # noqa: PLC0415
@@ -145,8 +158,12 @@ async def put_settings(request: Request, patch: SettingsPatch) -> dict[str, Any]
             verdict = validate_hotkey(changes[key])
             if not verdict.ok:
                 raise HTTPException(status_code=400, detail=verdict.reason or "Invalid shortcut.")
-    if any(key in changes for key in ("hotkey", "region_hotkey", "recording_hotkey")):
-        current = configured_hotkeys((await asyncio.to_thread(load_config)).appshot)
+    key_change = any(key in changes for key in ("hotkey", "region_hotkey", "recording_hotkey"))
+    listener_change = enabled is not None or key_change
+    previous = await asyncio.to_thread(load_config) if listener_change else None
+    if previous is not None:
+        current = configured_hotkeys(previous.appshot)
+    if key_change:
         window = changes.get("hotkey", current["window"])
         region = changes.get("region_hotkey", current["region"])
         recording = changes.get("recording_hotkey", current["recording"])
@@ -173,10 +190,19 @@ async def put_settings(request: Request, patch: SettingsPatch) -> dict[str, Any]
         from jarvis.screen_context.turn import reset_service  # noqa: PLC0415
 
         reset_service()
+    if previous is not None:
+        updated = {
+            "window": changes.get("hotkey", current["window"]),
+            "region": changes.get("region_hotkey", current["region"]),
+            "recording": changes.get("recording_hotkey", current["recording"]),
+        }
+        await request_saved_shortcut_access(
+            current, updated,
+            was_enabled=previous.screen_context.enabled,
+            enabled=previous.screen_context.enabled if enabled is None else enabled,
+        )
     shortcut = get_shortcut()
-    if shortcut is not None and any(
-        key in changes for key in ("hotkey", "region_hotkey", "recording_hotkey")
-    ):
+    if shortcut is not None and listener_change:
         await shortcut.reload()
     return await asyncio.to_thread(_settings_payload)
 
