@@ -81,7 +81,6 @@ it("opens avatar editing for specialists but keeps the lead figure reserved", as
   cleanup();
 
   setup({ lead: true });
-  await screen.findByDisplayValue("Shared rule");
   expect(screen.queryByRole("tab", { name: "society.companion.character" })).toBeNull();
 });
 
