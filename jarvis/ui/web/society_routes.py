@@ -400,6 +400,8 @@ async def patch_agent(agent_id: str, body: PatchAgentBody, request: Request) -> 
         has_rules = any(agent.approval_rules.get(k) for k in ("require_approval", "always_allow"))
         if "approval_rules" not in fields and not has_rules and derived_rules["require_approval"]:
             fields["approval_rules"] = derived_rules
+    if str(fields.get("state") or "") in ("paused", "archived"):
+        await rt.close_agent_screen(agent.agent_id)
     try:
         updated = await rt.roster.update(agent.agent_id, fields)
     except RosterError as exc:
@@ -423,6 +425,10 @@ async def patch_agent(agent_id: str, body: PatchAgentBody, request: Request) -> 
     return {"agent": _agent_row(updated, request), "readback": _capability_readback(rt, updated)}
 
 
+class AgentScreenBody(BaseModel):
+    purpose: str = Field(default="", max_length=200)
+
+
 @router.post("/agents/{agent_id}/chat")
 async def bind_agent_chat(agent_id: str, request: Request) -> dict[str, Any]:
     """The agent's canonical chat (``society:<agent_id>``), created or re-seated
@@ -444,12 +450,65 @@ async def bind_agent_chat(agent_id: str, request: Request) -> dict[str, Any]:
     return {"session": session.to_dict(), "agent_id": agent.agent_id}
 
 
+@router.get("/agents/{agent_id}/screen")
+async def agent_screen_status(agent_id: str, request: Request) -> dict[str, Any]:
+    """Read isolated-screen capability and lease metadata; never returns pixels."""
+    rt = await _runtime(request)
+    try:
+        status = await rt.agent_screen_status(agent_id)
+    except KeyError as exc:
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)}) from exc
+    return {"screen": status}
+
+
+@router.post(
+    "/agents/{agent_id}/screen",
+    openapi_extra={"x-jarvis-dangerous": True},
+)
+async def open_agent_screen(
+    agent_id: str, body: AgentScreenBody, request: Request
+) -> dict[str, Any]:
+    """Lease one isolated session for the agent; never falls back to the user's desktop."""
+    rt = await _runtime(request)
+    from jarvis.agent_screen.protocol import AgentScreenUnavailable
+
+    try:
+        screen = await rt.open_agent_screen(agent_id, purpose=body.purpose)
+    except KeyError as exc:
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)}) from exc
+    except PermissionError as exc:
+        raise HTTPException(
+            409,
+            {"reason": str(FailureReason.BLOCKED_BY_POLICY), "detail": str(exc)},
+        ) from exc
+    except AgentScreenUnavailable as exc:
+        raise HTTPException(
+            503,
+            {"reason": "agent_screen_unavailable", "detail": str(exc)},
+        ) from exc
+    return {"screen": screen}
+
+
+@router.delete(
+    "/agents/{agent_id}/screen",
+    openapi_extra={"x-jarvis-dangerous": True},
+)
+async def close_agent_screen(agent_id: str, request: Request) -> dict[str, Any]:
+    """Release this Society runtime's isolated screen lease for the agent."""
+    rt = await _runtime(request)
+    agent = await rt.roster.resolve(agent_id)
+    if agent is None:
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
+    return {"closed": await rt.close_agent_screen(agent.agent_id)}
+
+
 @router.delete("/agents/{agent_id}")
 async def archive_agent(agent_id: str, request: Request) -> dict[str, Any]:
     rt = await _runtime(request)
     agent = await rt.roster.resolve(agent_id)
     if agent is None:
         raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
+    await rt.close_agent_screen(agent.agent_id)
     try:
         archived = await rt.roster.archive(agent.agent_id)
     except RosterError as exc:
@@ -570,6 +629,7 @@ async def kill_agent(agent_id: str, request: Request) -> dict[str, Any]:
     agent = await rt.roster.resolve(agent_id)
     if agent is None:
         raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
+    await rt.close_agent_screen(agent.agent_id)
     dropped = 0
     manager = rt._get_manager()  # noqa: SLF001 — the route is the runtime's operator
     for run_id, owner in list(rt.scheduler.running.items()):

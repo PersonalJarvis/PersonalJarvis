@@ -44,7 +44,7 @@ from .learning import AgentSkills, LearningPass, TurnDigest, default_creator_fac
 from .memory import SocietyMemory
 from .quests import Quests
 from .rooms import Room, RoomError, Rooms
-from .roster import LEAD_AGENT_ID, AgentRecord, Roster
+from .roster import LEAD_AGENT_ID, AgentRecord, AgentState, Roster
 from .scheduler import DeliverHook, SocietyScheduler
 from .seeds import seed_first_run
 from .store import SocietyStore
@@ -140,6 +140,7 @@ class SocietyRuntime:
         event_publish: Callable[[Any], Any] | None = None,
         app_bus: Any = None,
         task_services: Callable[[], tuple[Any, Any]] | None = None,
+        agent_screen_manager: Callable[[], Any | None] | None = None,
         # ``(catalog plugin ids, usable plugin ids)``; ``None`` treats every
         # loaded plugin as connected (tests, headless boxes without keyring).
         plugin_state: Callable[[], tuple[Iterable[str], Iterable[str]]] | None = None,
@@ -161,6 +162,7 @@ class SocietyRuntime:
         self._deliver = deliver
         self._get_chat = chat_service or (lambda: None)
         self._get_cfg = cfg or (lambda: None)
+        self._get_agent_screen_manager = agent_screen_manager
         self.task_services = task_services or (lambda: (None, None))
         self._seed_starter_team = seed_starter_team
         self._watchers: set[asyncio.Task[None]] = set()
@@ -211,6 +213,8 @@ class SocietyRuntime:
             notify=self._notify_chat,
         )
         self._start_lock = asyncio.Lock()
+        self._agent_screen_lock = asyncio.Lock()
+        self._agent_screen_leases: dict[str, tuple[Any, Any]] = {}
         self._delivery_task: asyncio.Task[None] | None = None
         self._delivery_unsubscribe: Callable[[], None] | None = None
         self._lead_incoming_unsubscribe: Callable[[], None] | None = None
@@ -510,6 +514,117 @@ class SocietyRuntime:
                 log.warning("society: room recovery failed", exc_info=True)
             await asyncio.sleep(1.0)
 
+    def _screen_manager(self) -> Any | None:
+        getter = self._get_agent_screen_manager
+        if getter is not None:
+            return getter()
+        from jarvis.agent_screen.manager import get_agent_screen_manager
+
+        return get_agent_screen_manager()
+
+    @staticmethod
+    def _screen_metadata(lease: Any) -> dict[str, Any]:
+        session = lease.session
+        return {
+            "screen_id": str(session.screen_id),
+            "kind": str(session.kind),
+            "owner": str(lease.owner),
+            "purpose": str(getattr(session, "purpose", "") or ""),
+            "isolated": bool(session.isolated),
+            "hidden": bool(getattr(session, "hidden", True)),
+        }
+
+    async def agent_screen_status(self, agent_id: str) -> dict[str, Any]:
+        """Non-sensitive screen capability/status for one Society agent."""
+        agent = await self.roster.resolve(agent_id)
+        if agent is None:
+            raise KeyError(agent_id)
+        async with self._agent_screen_lock:
+            entry = self._agent_screen_leases.get(agent.agent_id)
+            if entry is not None:
+                manager, lease = entry
+                alive = await asyncio.to_thread(lease.session.alive)
+                if alive:
+                    return {
+                        "available": True,
+                        "blocked_reason": None,
+                        "active": self._screen_metadata(lease),
+                    }
+                self._agent_screen_leases.pop(agent.agent_id, None)
+                await manager.release(lease)
+            manager = self._screen_manager()
+            if manager is None:
+                return {
+                    "available": False,
+                    "blocked_reason": "agent screen manager unavailable",
+                    "active": None,
+                }
+            provider, reason = await asyncio.to_thread(manager.select_provider)
+            return {
+                "available": provider is not None,
+                "blocked_reason": reason or None,
+                "active": None,
+            }
+
+    async def open_agent_screen(self, agent_id: str, *, purpose: str = "") -> dict[str, Any]:
+        """Lease one isolated screen for an active agent; never falls back to the user's desktop."""
+        from jarvis.agent_screen.protocol import AgentScreenUnavailable
+
+        agent = await self.roster.resolve(agent_id)
+        if agent is None:
+            raise KeyError(agent_id)
+        if await self.store.kill_switch():
+            raise PermissionError("the society kill switch is engaged")
+        if agent.state is not AgentState.ACTIVE:
+            raise PermissionError(f"agent {agent.agent_id!r} is {agent.state}")
+        async with self._agent_screen_lock:
+            entry = self._agent_screen_leases.get(agent.agent_id)
+            if entry is not None:
+                manager, lease = entry
+                if await asyncio.to_thread(lease.session.alive):
+                    return self._screen_metadata(lease)
+                self._agent_screen_leases.pop(agent.agent_id, None)
+                await manager.release(lease)
+            manager = self._screen_manager()
+            if manager is None:
+                raise AgentScreenUnavailable("agent screen manager unavailable")
+            lease = await manager.acquire(
+                f"society:{agent.agent_id}",
+                purpose=(purpose.strip()[:200] or f"{agent.name} isolated screen"),
+                require_isolated=True,
+            )
+            if not lease.session.isolated:
+                # The manager already enforces this; keep the Society boundary explicit too.
+                await manager.release(lease)
+                raise AgentScreenUnavailable("the acquired agent screen is not isolated")
+            self._agent_screen_leases[agent.agent_id] = (manager, lease)
+            return self._screen_metadata(lease)
+
+    async def close_agent_screen(self, agent_id: str) -> bool:
+        """Release this runtime's lease for one agent, if any."""
+        async with self._agent_screen_lock:
+            entry = self._agent_screen_leases.pop(agent_id, None)
+            if entry is None:
+                return False
+            manager, lease = entry
+            await manager.release(lease)
+            return True
+
+    async def _close_agent_screens(self) -> None:
+        """Best-effort teardown; shutdown must not orphan an isolated session."""
+        async with self._agent_screen_lock:
+            entries = list(self._agent_screen_leases.values())
+            self._agent_screen_leases.clear()
+        for manager, lease in entries:
+            try:
+                await manager.release(lease)
+            except Exception:  # noqa: BLE001 — continue reaping every other screen
+                log.warning(
+                    "society: failed to release agent screen %s",
+                    getattr(lease, "screen_id", "?"),
+                    exc_info=True,
+                )
+
     @property
     def data_dir(self) -> Path:
         return self._data_dir
@@ -539,6 +654,7 @@ class SocietyRuntime:
         async with AsyncExitStack() as cleanup:
             cleanup.callback(clear_runtime)
             cleanup.push_async_callback(self.store.close)
+            cleanup.push_async_callback(self._close_agent_screens)
             cleanup.push_async_callback(asyncio.to_thread, self.conversations.close)
             for release in (
                 self.world_feed.detach,
