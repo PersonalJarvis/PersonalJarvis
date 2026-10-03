@@ -10,7 +10,7 @@ text — and hands it to the conversation as context. Settings live under
 | Trigger | What happens |
 |---|---|
 | **Window shortcut** — both Alt keys at once by default (both Option keys on a Mac) | The front window is captured and delivered per **Appshot destination**. |
-| **Area shortcut** — both Shift keys at once by default | Every screen dims; drag a rectangle and exactly that part is captured and delivered the same way. Esc or a right-click cancels and sends nothing. |
+| **Area shortcut** — both Shift keys at once by default | Every screen dims; drag a rectangle, mark it up right there with the toolbar that docks under it, and Enter captures exactly that part with your markings and delivers it the same way. Esc or a right-click cancels and sends nothing. |
 | **Voice or chat** — "take an appshot", "mach einen Appshot", "haz un appshot" | The turn that asked captures the front window and answers with it. Only an explicit request for the whole screen ("an appshot of my full screen") captures the monitor the cursor is on instead — the live model's `take_appshot` passes `scope: "screen"` for it. |
 | **Try it** buttons on the Appshots page | "Take appshot in 3 s" waits three seconds so you can switch windows; "Select area" opens the area picker at once. Both then behave like the shortcuts. |
 
@@ -37,13 +37,61 @@ selection, so nothing stays resident. It looks like macOS's area capture
 - a drag clears the dim and tints the selected area a translucent grey
   (like CleanShot X), with one thin border.
 
+### Marking up before the shot
+
+Letting go of the drag (or clicking a window) does not take the shot yet. The
+area stays on screen with eight resize handles, its size in pixels above its
+corner, and a toolbar docked under it (above it, or inside it, when there is
+no room). Everything drawn here is what
+the assistant sees, so it can be pointed at directly:
+
+| Key | Tool | |
+|---|---|---|
+| V | Select and move | Click a marking to pick it, drag to move it, Delete removes it |
+| R | Rectangle | Shift = square |
+| E | Ellipse | Shift = circle |
+| A | Arrow (default) | Tapered arrow; Shift snaps to 45 degrees |
+| L | Line | Shift snaps to 45 degrees |
+| P | Pen | Free stroke |
+| H | Highlighter | Wide translucent stroke |
+| T | Text | Click, type; Enter finishes, Shift+Enter is a new line, Ctrl+V pastes |
+| N | Numbered step | Each click places the next number |
+| B | Blur | Hides what is under the box |
+| X | Pixelate | Hides what is under the box |
+
+Colours: eight presets (keys 1-8). Line width: the width button or the mouse
+wheel (text and step markers scale with it). Ctrl+Z / Ctrl+Y undo and redo;
+picking a marking with V and then a colour or width changes that marking.
+Dragging a handle resizes the area at any time; a press outside an unmarked
+area, or a right-click on it, starts a new selection.
+
+Finishing:
+
+| Key / button | Result |
+|---|---|
+| Enter / check button | Take the appshot with the markings and deliver it |
+| Ctrl+C / Copy | The same, and the finished picture goes to the clipboard |
+| Ctrl+S / Save | The same, and a PNG goes to `~/Downloads` |
+| Ctrl+E / Editor | The same, and the full appshot editor opens on it |
+| Esc / cross | Cancel; nothing is captured |
+
+The capture itself is unchanged: after the overlay closes, Screen Context
+grabs the area (denylist, redaction and all), and only that finished picture
+gets the markings (`jarvis/appshot/markup.py`) — blur and pixelate on the
+capture's own pixels first, then the drawn markings as a transparent layer
+stretched to the capture's size. The markings never show anything the
+privacy filter removed. A marked appshot carries the same note as an editor
+edit (the markings are the user's), and the corner card's thumbnail shows
+them too. While the toolbar is up the global Esc stops cancelling, so Esc can
+end a text box without throwing the selection away.
+
 The picker reports the rectangle as fractions of the screen it was drawn on;
 the app maps that back to capture pixels (`jarvis/appshot/region.py`), so
 mixed-DPI setups capture exactly what was outlined. A selection stays on one
 screen. The window list for snapping is read before the overlay appears and
 skips minimized and (on Windows) cloaked windows; where no list is available
-(Wayland) only dragging works. The picker gives up after two minutes without
-a selection.
+(Wayland) only dragging works. The picker gives up after fifteen minutes
+without a result.
 
 A selected area is about pixels, not about the window in front: unlike a window
 appshot it is not voided when focus moves while the picker closes. Its privacy
@@ -305,7 +353,8 @@ original any-order behaviour.
 |---|---|---|---|---|
 | Both-Alt shortcut | `GetAsyncKeyState` (AltGr counts as right Alt) | `CGEventSourceKeyState`, needs the Input Monitoring grant | `XQueryKeymap` via python-xlib | Unavailable, reason shown on the page; voice and the button still work where capture works |
 | Other shortcuts (incl. the area shortcut) | Shared hotkey backends (`jarvis/trigger/backends`) | same | same | same as above |
-| Area picker | PySide6 overlay; a global Esc also cancels because Windows may not hand it keyboard focus until the first click | PySide6 overlay | PySide6 overlay | Unavailable, reason shown on the page; the window appshot still works |
+| Area picker and its marking toolbar | PySide6 overlay; a global Esc also cancels until an area is chosen, because Windows may not hand it keyboard focus until the first click | PySide6 overlay | PySide6 overlay | Unavailable, reason shown on the page; the window appshot still works |
+| Burning the markings into the appshot | Pillow, in the main process (`jarvis/appshot/markup.py`) | same | same | same (no display needed) |
 | Flash + thumbnail | PySide6 overlay, excluded from capture | PySide6 overlay | PySide6 overlay | No overlay; the appshot is still taken where capture works |
 | Capture | Screen Context engine | Needs Screen Recording | X11 | Honest refusal |
 
