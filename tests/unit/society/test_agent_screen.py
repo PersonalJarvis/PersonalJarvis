@@ -133,6 +133,26 @@ async def test_agent_screen_respects_kill_switch_and_paused_state(tmp_path):
         await rt.close()
 
 
+async def test_kill_switch_releases_existing_agent_screen(tmp_path):
+    manager = FakeScreenManager()
+    rt = await _runtime(tmp_path, manager)
+    try:
+        agent, _ = await rt.roster.create(name="Scout")
+        await rt.open_agent_screen(agent.agent_id, purpose="active work")
+        assert manager.release_calls == []
+
+        result = await rt.engage_kill_switch()
+
+        assert result["engaged"] is True
+        assert manager.release_calls == ["screen-1"]
+        status = await rt.agent_screen_status(agent.agent_id)
+        assert status["active"] is None
+        with pytest.raises(PermissionError, match="kill switch"):
+            await rt.open_agent_screen(agent.agent_id)
+    finally:
+        await rt.close()
+
+
 async def test_society_rejects_non_isolated_screen_even_if_manager_regresses(tmp_path):
     manager = FakeScreenManager(isolated=False)
     rt = await _runtime(tmp_path, manager)
