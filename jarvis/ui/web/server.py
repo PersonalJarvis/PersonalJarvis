@@ -485,6 +485,7 @@ class WebServer:
         from .friends_routes import router as friends_router
         from .frontier_routes import router as frontier_router
         from .grok_build_routes import router as grok_build_router
+        from .ide_skills_routes import router as ide_skills_router
         from .live_routes import router as live_router
         from .local_models_assistant_routes import (
             router as local_models_assistant_router,
@@ -654,6 +655,8 @@ class WebServer:
         # the focused coding mode.
         # Before the IDE router, so its /{…} paths never shadow /git/….
         app.include_router(agentic_ide_git_router)
+        # The Skills tab's library of saved Markdown prompts (/api/agentic-ide/skills/*).
+        app.include_router(ide_skills_router)
         app.include_router(agentic_ide_router)
         # The pane-activity sweep has no bus of its own (the registry is a plain
         # holder by design); this is the one place that holds one, so the sweep
