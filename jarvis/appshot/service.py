@@ -27,9 +27,10 @@ Scope = Literal["window", "region"]
 
 #: Trusted framing in front of the untrusted screen evidence block.
 _APPSHOT_PREAMBLE = (
-    "APPSHOT: the user deliberately captured their front window to give you "
-    "context. Use it for their request. If they only asked you to take an "
-    "appshot, confirm it in one short sentence and ask what they want to know."
+    "APPSHOT: a captured snapshot of the user's front window, supplied as context. "
+    "It shows the window at capture time, not a live view. Use it when asked about "
+    "this image. A request to take another appshot requires a fresh successful "
+    "take_appshot call; this earlier image is not evidence of a new capture."
 )
 
 

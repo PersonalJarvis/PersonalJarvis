@@ -34,6 +34,30 @@ class SubscriptionGateway:
         return True
 
 
+class AppshotSubscriptionGateway(SubscriptionGateway):
+    """A newly requested capture returns a different image, or an explicit refusal."""
+
+    def __init__(self, *, refused=False):
+        super().__init__()
+        self.refused = refused
+
+    def catalog(self):
+        from jarvis.plugins.tool.appshot import AppshotTool
+
+        return (*super().catalog(), SupervisorToolDescriptor(
+            AppshotTool.name, AppshotTool.description, AppshotTool.schema, "monitor",
+        ))
+
+    async def execute(self, name, args, request):
+        self.calls.append((name, args, operation_model.get()))
+        if self.refused:
+            return ToolResult(False, None, "Blocked by the privacy filter.")
+        return ToolResult(True, {
+            "description": "A newly captured window",
+            "_image": {"mime": "image/png", "data": "TkVX"},
+        })
+
+
 class SubscriptionConnection:
     session_id = "rtc_fake"
     answer_sdp = "answer"

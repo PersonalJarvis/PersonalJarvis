@@ -23,9 +23,10 @@ SCOPES = ("window", "screen")
 #: Trusted framing in front of the untrusted screen evidence of a full-screen
 #: appshot (the window appshot carries the service's own preamble).
 _SCREEN_PREAMBLE = (
-    "APPSHOT: the user deliberately asked for their whole screen to give you "
-    "context. Use it for their request. If they only asked you to take an "
-    "appshot, confirm it in one short sentence and ask what they want to know."
+    "APPSHOT: a captured snapshot of the user's whole screen, supplied as context. "
+    "It shows the screen at capture time, not a live view. Use it when asked about "
+    "this image. A request to take another appshot requires a fresh successful "
+    "take_appshot call; this earlier image is not evidence of a new capture."
 )
 
 

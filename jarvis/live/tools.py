@@ -44,6 +44,7 @@ _RECENT_SEGMENTS = 4
 _REQUEST_TEXT_CHARS = 1200
 # Declared before every other tool so the size budget never drops them.
 _PRIORITY_TOOLS = frozenset({"workspace-orchestrate", "find-app-action", "run-app-action"})
+_DIRECT_TOOLS = frozenset({"take_appshot"})
 _APPROVAL_NEXT_STEP = (
     "Ask the user to approve this action. After an explicit yes, call confirm_action "
     "directly (not through call_tool) with this approval_id. A yes is never a hang-up."
@@ -160,6 +161,17 @@ class LiveTools:
                 ["approval_id"],
             ),
         ]
+        # Capture must remain directly available with a deferred catalog: it
+        # owns privacy filtering, the shutter effect and the capture receipt.
+        for descriptor in self.catalog():
+            if descriptor.name not in _DIRECT_TOOLS:
+                continue
+            definitions.append({
+                "type": "function",
+                "name": descriptor.name,
+                "description": descriptor.description,
+                "parameters": descriptor.input_schema,
+            })
         if defer_catalog:
             definitions[1]["description"] = (
                 "Find tools by intent using a few English keywords, or an exact canonical name. "
@@ -181,6 +193,8 @@ class LiveTools:
         # or brief a coding agent (live 2026-10-01).
         ordered = sorted(self.catalog(), key=lambda d: (d.name not in _PRIORITY_TOOLS, d.name))
         for descriptor in ordered:
+            if descriptor.name in _DIRECT_TOOLS:
+                continue
             alias = "jarvis_" + hashlib.sha256(descriptor.name.encode()).hexdigest()[:20]
             definition = {
                 "type": "function",

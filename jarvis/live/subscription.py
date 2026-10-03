@@ -471,14 +471,23 @@ class SubscriptionLiveVoiceSession(LiveVoiceSession):
             if not latest:
                 return
             request_item = {"role": "user", "content": [{"type": "input_text", "text": latest}]}
-            items.append(request_item)
             history_prefix = [request_item]
             if not application_event:
                 if self._pending_images:
                     self._image_context = self._pending_images
                     self._pending_images = []
                 if self._image_context:
-                    items.append({"role": "user", "content": self._image_context})
+                    items.append({"role": "user", "content": [
+                        {
+                            "type": "input_text",
+                            "text": "[Earlier screen snapshot, not a new capture for the "
+                            "request below. A new appshot request requires take_appshot.]",
+                        },
+                        *self._image_context,
+                    ]})
+            # Put the actual request after retained image context. A previous
+            # appshot's framing must not override a request for a fresh capture.
+            items.append(request_item)
             backend = self._config.live.backend_config(
                 language=self._language,
                 tools=self._tools.declarations(defer_catalog=True),
