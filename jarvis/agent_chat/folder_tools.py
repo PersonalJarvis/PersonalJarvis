@@ -54,6 +54,7 @@ class FolderTool:
         self.description: str = str(spec.get("description") or self.name)
         self.schema: dict[str, Any] = dict(spec.get("input_schema") or {"type": "object"})
         self.risk_tier: RiskTier = risk_tier
+        self.read_only = self.name in folder.READ_ONLY_TOOLS
         self._cwd = cwd
 
     @property
@@ -96,21 +97,13 @@ def folder_tools(cwd: Path, *, stance: str = "ask") -> dict[str, Tool]:
 def plan_filter(tools: dict[str, Tool]) -> dict[str, Tool]:
     """Plan mode's tool surface: whatever only reads.
 
-    Keeps a tool whose static tier is ``safe`` — reads, lookups, recall —
-    and drops everything that acts (``monitor`` and up). A tool with a
-    per-call tier hook (``risk_tier_for_args``) is treated by its static
-    tier: a mixed tool whose default is a read stays, one whose default is
-    an action goes.
+    Only tools with an explicit read capability are offered. Mixed tools
+    declare an argument-aware capability, which the executor checks again
+    for the actual call. Risk tiers and display summaries grant no authority.
     """
     from jarvis.core.tool_read_only import allows_read
 
-    return {
-        name: tool
-        for name, tool in tools.items()
-        if allows_read(tool)
-        or name not in FOLDER_RISK_TIERS
-        and callable(getattr(tool, "describe_args", None))
-    }
+    return {name: tool for name, tool in tools.items() if allows_read(tool)}
 
 
 __all__ = ["FOLDER_RISK_TIERS", "PLAN_STANCE", "FolderTool", "folder_tools", "plan_filter"]

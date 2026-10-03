@@ -7,7 +7,9 @@ via ``httpx.ASGITransport``.
 
 from __future__ import annotations
 
+import gzip
 import json
+import zlib
 
 import httpx
 import pytest
@@ -75,6 +77,68 @@ def client_for(app) -> httpx.AsyncClient:
     return httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://proxy"
     )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("encoding", ["gzip", "deflate"])
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_compressed_response_is_decoded_and_metered(encoding, streaming) -> None:
+    payload = json.dumps({"model": "test", "usage": {
+        "prompt_tokens": 5, "completion_tokens": 7, "total_tokens": 12,
+    }}).encode()
+    body = b"data: " + payload + b"\n\ndata: [DONE]\n\n" if streaming else payload
+    compressed = gzip.compress(body) if encoding == "gzip" else zlib.compress(body)
+    responses = []
+
+    def upstream(_request):
+        assert _request.headers["accept-encoding"] == "gzip, deflate"
+        response = stream_response(200, compressed, chunk_size=7, headers={
+            "content-type": "text/event-stream" if streaming else "application/json",
+            "content-encoding": encoding,
+            "content-length": str(len(compressed)),
+        })
+        responses.append(response)
+        return response
+
+    app, tokens, usage = build_harness(upstream)
+    issued = tokens.issue("compression-test")
+    async with app.state.upstream, client_for(app) as client:
+        response = await client.post("/p/openai/chat/completions", headers={
+            "authorization": f"Bearer {issued.plaintext}",
+            "accept-encoding": "br, zstd",
+        })
+    assert response.status_code == 200
+    assert response.content == body
+    assert "content-encoding" not in response.headers
+    assert "content-length" not in response.headers
+    assert responses[0].is_closed
+    assert usage.recent()[0]["prompt_tokens"] == 5
+    assert usage.recent()[0]["completion_tokens"] == 7
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("encoding", ["br", "zstd", "gzip, br"])
+async def test_unnegotiated_encoding_is_rejected_without_forwarding_garbage(encoding):
+    responses = []
+
+    def upstream(request):
+        assert request.headers["accept-encoding"] == "gzip, deflate"
+        response = stream_response(200, b"unsupported-compressed-fixture", headers={
+            "content-type": "application/json", "content-encoding": encoding,
+        })
+        responses.append(response)
+        return response
+
+    app, tokens, usage = build_harness(upstream)
+    issued = tokens.issue("encoding-test")
+    async with app.state.upstream, client_for(app) as client:
+        response = await client.post("/p/openai/chat/completions", headers={
+            "authorization": f"Bearer {issued.plaintext}", "accept-encoding": encoding,
+        })
+    assert response.status_code == 502
+    assert response.json()["error"] == "unsupported_encoding"
+    assert responses[0].is_closed
+    assert usage.recent() == []
 
 
 # --------------------------------------------------------------------------

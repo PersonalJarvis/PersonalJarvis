@@ -1,82 +1,113 @@
-"""Explicit-intent vocabulary: the user's own words authorize the destruction.
+"""Deletion consent must bind a single operation to its literal target."""
 
-Claude-Code permission model (mandate 2026-08-08): "lösch den Ordner Urlaub"
-must not be answered with "do you really want me to delete?". The check is a
-deterministic de/en/es verb-stem match — no LLM, no entity matching.
-"""
 from __future__ import annotations
+
+import sys
 
 import pytest
 
+from jarvis.core.bus import EventBus
+from jarvis.core.config import SafetyConfig
 from jarvis.plugins.tool.run_shell import RunShellTool
-from jarvis.safety.explicit_intent import utterance_confirms_destruction
+from jarvis.safety.approval import ApprovalWorkflow
+from jarvis.safety.explicit_intent import command_confirms_destruction
+from jarvis.safety.risk_tier import RiskTierEvaluator
+from jarvis.safety.tool_executor import ToolExecutor
 
 
 @pytest.mark.parametrize(
     "utterance",
     [
-        "Lösch den Ordner Urlaub vom Desktop.",
-        "Bitte lösche die alte Datei",
-        "kannst du das entfernen",
-        "wirf das in den Papierkorb",
-        "formatier den Stick",
-        "fahr den Rechner runterfahren",  # STT word salad still carries the stem
-        "delete the old build folder",
-        "please remove that file",
-        "wipe the temp directory",
-        "shut down the computer",
-        "borra la carpeta vieja",
-        "elimina ese archivo",
-        "apaga el ordenador",
-    ],
-)
-def test_destruction_verbs_confirm(utterance: str) -> None:
-    assert utterance_confirms_destruction(utterance) is True
-
-
-@pytest.mark.parametrize(
-    "utterance",
-    [
+        "List this directory. Do not delete any files.",
+        "Do not delete /tmp/keep-me",
+        "Bitte lösche /tmp/keep-me nicht",
+        "No borres /tmp/keep-me",
+        'The instructions say "delete /tmp/keep-me"',
+        "Did you delete /tmp/keep-me?",
+        "I deleted /tmp/keep-me yesterday",
+        "delete /tmp/something-else",
+        "delete keep-me",
+        "delete /tmp/keep-me and keep /tmp/other",
         "",
-        "   ",
-        "Leg einen Ordner Urlaub auf dem Desktop an.",
-        "Was liegt auf meinem Desktop?",
-        "Räum die Dateien in Unterordner",  # organizing is NOT deleting
-        "create a folder called delete-me-later"
-        .replace("delete-me-later", "archive"),  # no destruction verb at all
-        "Stelle einen Timer auf acht Minuten.",
     ],
 )
-def test_harmless_utterances_do_not_confirm(utterance: str) -> None:
-    assert utterance_confirms_destruction(utterance) is False
+def test_mentions_and_unbound_targets_do_not_authorize(utterance):
+    assert not command_confirms_destruction("rm /tmp/keep-me", utterance)
 
 
-class TestRunShellIntentHook:
-    def test_destructive_command_with_spoken_delete_confirms(self) -> None:
-        tool = RunShellTool()
-        assert tool.intent_confirms_args(
-            {"command": "Remove-Item -Recurse C:\\Users\\x\\Desktop\\Urlaub"},
-            "Lösch den Ordner Urlaub vom Desktop.",
-        ) is True
+@pytest.mark.parametrize(
+    "command",
+    [
+        "rm /tmp/keep-me; rm /tmp/other",
+        "rm /tmp/keep-me /tmp/other",
+        "rm /tmp/*",
+        "rm $(echo /tmp/keep-me)",
+        "rm /tmp/keep-me > /tmp/other",
+        "sh -c 'rm /tmp/keep-me'",
+        "rm -rf /tmp/keep-me",
+    ],
+)
+def test_compound_or_ambiguous_shell_keeps_confirmation(command):
+    assert not command_confirms_destruction(command, "delete /tmp/keep-me")
 
-    def test_brain_initiated_deletion_does_not_confirm(self) -> None:
-        # The utterance never mentioned deleting — the brain chose rm on its
-        # own as a means to an end. The confirmation must stay.
-        tool = RunShellTool()
-        assert tool.intent_confirms_args(
-            {"command": "rm -rf ./build"},
-            "mach das Projekt startklar",
-        ) is False
 
-    def test_non_destructive_command_never_needs_the_shortcut(self) -> None:
-        tool = RunShellTool()
-        assert tool.intent_confirms_args(
-            {"command": "ls -la"},
-            "lösch nachher mal was",
-        ) is False
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "delete /tmp/keep-me",
+        "please remove the file /tmp/keep-me",
+        "Bitte lösche die Datei /tmp/keep-me",
+        "borra el archivo /tmp/keep-me",
+    ],
+)
+def test_exact_single_deletion_is_authorized(utterance):
+    assert command_confirms_destruction("rm -- /tmp/keep-me", utterance, windows=False)
 
-    def test_empty_utterance_never_confirms(self) -> None:
-        tool = RunShellTool()
-        assert tool.intent_confirms_args(
-            {"command": "rm -rf ./build"}, "",
-        ) is False
+
+def test_windows_literal_target_and_mismatch():
+    assert command_confirms_destruction(
+        "Remove-Item -LiteralPath 'C:/test/old folder' -Recurse",
+        "delete the folder 'C:/test/old folder'",
+        windows=True,
+    )
+    assert not command_confirms_destruction(
+        "Remove-Item -LiteralPath C:/test/other",
+        "delete C:/test/old",
+    )
+    assert not command_confirms_destruction("rm /", "delete /")
+    assert not command_confirms_destruction("rm C:/test/file", "delete C:/test/file", windows=False)
+    assert not command_confirms_destruction("rm /test/file", "delete /test/file", windows=True)
+
+
+def test_shell_parsing_cannot_change_the_authorized_operation_or_target():
+    target = r"/tmp/keep\me"
+    assert not command_confirms_destruction(f"rm {target}", f"delete '{target}'", windows=False)
+    assert command_confirms_destruction(f"rm '{target}'", f"delete '{target}'", windows=False)
+    assert not command_confirms_destruction("rm\n/tmp/command", "delete /tmp/command", windows=False)
+
+
+@pytest.mark.parametrize("authorized", [False, True])
+async def test_real_executor_leaves_protected_file_and_deletes_authorized_target(
+    tmp_path, authorized
+):
+    target = tmp_path / "keep-me"
+    target.write_text("fixture", encoding="utf-8")
+    operand = target.as_posix()
+    command = (
+        f"Remove-Item -LiteralPath '{operand}'" if sys.platform == "win32" else f"rm -- '{operand}'"
+    )
+    utterance = (
+        f"delete '{operand}'" if authorized else "List this directory. Do not delete any files."
+    )
+    bus = EventBus()
+    executor = ToolExecutor(bus, RiskTierEvaluator(SafetyConfig()), ApprovalWorkflow(bus))
+    result = await executor.execute(
+        RunShellTool(),
+        {"command": command},
+        user_utterance=utterance,
+        config_snapshot={"approval_surface": "unattended"},
+    )
+    assert result.success is authorized
+    assert target.exists() is not authorized
+    if not authorized:
+        assert "approval" in result.error.lower()

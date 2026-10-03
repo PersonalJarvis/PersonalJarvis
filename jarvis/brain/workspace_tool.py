@@ -183,6 +183,9 @@ class WorkspaceOrchestrationTool:
         reads = {"inspect", "resolve", "context", "observe"}
         return "safe" if args.get("action") in reads else "monitor"
 
+    def read_only_for_args(self, args: dict) -> bool:
+        return args.get("action") in {"inspect", "resolve", "context", "observe"}
+
     def describe_args(self, args: dict) -> dict:
         return {
             "level": "read" if self.risk_tier_for_args(args) == "safe" else "modify",

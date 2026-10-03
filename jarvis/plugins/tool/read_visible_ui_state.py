@@ -18,6 +18,8 @@ from jarvis.core.protocols import ExecutionContext, ToolResult
 
 
 class ReadVisibleUIStateTool:
+    read_only = True
+
     name: str = "read_visible_ui_state"
     risk_tier: str = "safe"
     description: str = (

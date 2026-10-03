@@ -23,6 +23,8 @@ class _Spec:
     def __init__(self, plugin_id: str, auth: object = None) -> None:
         self.id = plugin_id
         self.auth = auth
+        self.source = "seed"
+        self.oauth_client_family = None
 
 
 class _Catalog:

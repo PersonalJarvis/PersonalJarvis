@@ -54,6 +54,8 @@ def _in_area(entries: list[Any], area: str) -> list[Any]:
 class FindAppActionTool:
     """Search every action of the Jarvis app by keywords."""
 
+    read_only = True
+
     name: str = "find-app-action"
     risk_tier: str = "safe"
     description: str = (

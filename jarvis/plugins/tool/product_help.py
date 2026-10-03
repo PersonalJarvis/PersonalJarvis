@@ -59,6 +59,8 @@ def _guide(doc: Any) -> dict[str, Any]:
 
 
 class ProductHelpTool:
+    read_only = True
+
     name = "product_help"
     description = (
         "Read Personal Jarvis's built-in user guide: what a feature does, how to set it up, "
