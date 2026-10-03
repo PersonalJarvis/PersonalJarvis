@@ -588,10 +588,8 @@ class SocietyStore:
                 stored.append(await self._insert_event(conn, event))
             await conn.execute("COMMIT")
         except BaseException:
-            try:
-                await conn.execute("ROLLBACK")
-            except Exception:
-                pass
+            if conn.in_transaction:
+                await conn.rollback()
             raise
         finally:
             await conn.close()
@@ -657,10 +655,8 @@ class SocietyStore:
                 stored.append(await self._insert_event(conn, event))
             await conn.execute("COMMIT")
         except BaseException:
-            try:
-                await conn.execute("ROLLBACK")
-            except Exception:
-                pass
+            if conn.in_transaction:
+                await conn.rollback()
             raise
         finally:
             await conn.close()
