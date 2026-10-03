@@ -8,6 +8,7 @@ from jarvis.core.delegated_work import DelegatedWork, register_delegated_work
 
 from .communication import reply_policy
 from .events import MsgType, SocietyEnvelope
+from .roster import conversation_session_id
 
 
 async def result_for(store: Any, request: SocietyEnvelope) -> dict[str, Any] | None:
@@ -55,10 +56,35 @@ async def track_request(runtime: Any, request: SocietyEnvelope) -> None:
     if reply_policy(request) != "always":
         return
     target = await runtime.roster.get(request.to_agent)
+
+    async def probe() -> dict[str, Any] | None:
+        result = await result_for(runtime.store, request)
+        if result is not None:
+            return result
+        service = runtime.chat_service()
+        if service is None or request.to_agent is None:
+            return None
+        claims = await runtime.store.events_for_trace(request.trace_id)
+        turn_ids = {
+            str(row.payload.get("run_id", ""))[5:]
+            for row in claims
+            if row.msg_type is MsgType.CLAIM
+            and row.parent_event_id == request.event_id
+            and row.from_agent == request.to_agent
+            and str(row.payload.get("run_id", "")).startswith("turn:")
+        }
+        session_id = conversation_session_id(request.to_agent, request.from_agent)
+        progress = [
+            row
+            for row in service.store.list_events(session_id, tail=64)
+            if row.get("payload", {}).get("turn_id") in turn_ids
+        ]
+        return {"status": "running", "progress": str(progress[-1]["seq"])} if progress else None
+
     register_delegated_work(
         DelegatedWork(
             key="society:" + request.event_id,
             name=target.name if target else str(request.to_agent),
-            probe=lambda: result_for(runtime.store, request),
+            probe=probe,
         )
     )

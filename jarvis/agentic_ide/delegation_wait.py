@@ -65,7 +65,14 @@ def _read(term: Any, identity: tuple) -> dict[str, Any] | None:
         }:
             return {"status": "needs_input", "report": str(call.get("input") or "")}
     if not own or own[-1]["kind"] != "turn_finished":
-        return None
+        return (
+            {
+                "status": "running",
+                "progress": str(own[-1].get("ts_ms")) + ":" + str(own[-1].get("seq")),
+            }
+            if own
+            else None
+        )
     finish = own[-1]["payload"]
     status = finish.get("status")
     report = next(

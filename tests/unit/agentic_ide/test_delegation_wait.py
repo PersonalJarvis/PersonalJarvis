@@ -67,7 +67,7 @@ def assistant(at=102):
 def test_idle_or_assistant_prose_without_end_marker_is_not_completion(recorded):
     term, write = recorded
     write(user(), assistant())
-    assert delegation_wait._read(term, (1, 100)) is None
+    assert delegation_wait._read(term, (1, 100))["status"] == "running"
     write(user(), assistant(), codex("event_msg", {"type": "task_complete"}, 103))
     result = delegation_wait._read(term, (1, 100))
     assert result["status"] == "completed"

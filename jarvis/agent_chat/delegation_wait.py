@@ -21,7 +21,7 @@ from .events import make_event
 log = logging.getLogger(__name__)
 POLL_SECONDS = 2.0
 PROBE_TIMEOUT_SECONDS = 5.0
-WAIT_TIMEOUT_SECONDS = 30 * 60.0
+WAIT_TIMEOUT_SECONDS = 30 * 60.0  # No new evidence, not a limit on active work.
 MAX_WAVES = 8
 
 
@@ -36,6 +36,7 @@ class DelegationWait:
         self.cost: float | None = None
         self.started = time.monotonic()
         self.failures: dict[str, int] = {}
+        self.progress: dict[str, str] = {}
 
     def add(self, work: DelegatedWork) -> None:
         if work.key not in self.work:
@@ -70,6 +71,12 @@ class DelegationWait:
                 if failures >= 3
                 else None
             )
+        if result is not None and result.get("status") == "running":
+            progress = str(result.get("progress") or "")
+            if progress and self.progress.get(work.key) != progress:
+                self.progress[work.key] = progress
+                self.deadlines[work.key] = time.monotonic() + WAIT_TIMEOUT_SECONDS
+            result = None
         if result is None and time.monotonic() >= self.deadlines[work.key]:
             result = {
                 "status": "timed_out",
@@ -85,7 +92,6 @@ class DelegationWait:
         if not pending:
             return []
         tid = self.handle.turn_id
-        await self.handle.emit(make_event("reasoning_started", {"turn_id": tid}))
         rows: list[dict[str, Any]] = []
         while pending:
             if self.handle.cancel.is_set():
@@ -93,7 +99,7 @@ class DelegationWait:
             names = ", ".join(work.name for work in pending.values())
             await self.handle.emit(
                 make_event(
-                    "reasoning_delta",
+                    "reasoning",
                     {
                         "turn_id": tid,
                         "text": f"Waiting for agents ({len(pending)}): {names}.\n",

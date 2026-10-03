@@ -89,6 +89,10 @@ async def test_six_delegates_finish_one_original_turn_after_all_reports(
     await asyncio.sleep(0.02)
     assert svc.is_running(session.session_id)
     assert len(prompts) == 1
+    assert any(
+        e["kind"] == "reasoning" and "Waiting for agents" in e["payload"].get("text", "")
+        for e in store.list_events(session.session_id)
+    )  # A reconnected UI can reconstruct the actual wait from persisted events.
     assert not any(e["kind"] == "turn_finished" for e in store.list_events(session.session_id))
     assert not svc._brain_lock.locked()
     ready[5] = True
@@ -198,6 +202,21 @@ async def test_deadline_is_unresolved_not_success(monkeypatch):
 
     gate.add(DelegatedWork("one", "A", probe))
     assert (await gate.collect())[0]["status"] == "timed_out"
+
+
+async def test_active_progress_renews_only_that_jobs_idle_deadline():
+    gate = delegation_wait.DelegationWait(handle([]))
+
+    async def probe():
+        return {"status": "running", "progress": "new-event"}
+
+    work = DelegatedWork("one", "A", probe)
+    gate.add(work)
+    gate.deadlines["one"] = 0
+    assert await gate._probe(work) is None
+    assert gate.deadlines["one"] > 0
+    gate.deadlines["one"] = 0
+    assert (await gate._probe(work))["status"] == "timed_out"
 
 
 async def test_delayed_coding_dispatch_registers_jobs_before_wait_can_finish(monkeypatch):
