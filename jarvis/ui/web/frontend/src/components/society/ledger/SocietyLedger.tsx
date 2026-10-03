@@ -28,7 +28,21 @@ export function ledgerCost(costUsd: number): string {
 
 export function ledgerTotalCost(costUsd: number): string {
   if (!(costUsd > 0)) return "$0.00";
-  return costUsd < 0.01 ? `$${costUsd.toFixed(4)}` : `$${costUsd.toFixed(2)}`;
+  return costUsd < 0.01 ? `${costUsd.toFixed(4)}` : `${costUsd.toFixed(2)}`;
+}
+
+/**
+ * Row-level display cost. Migrated pre-Society missions deliberately keep
+ * cost_usd at zero so they cannot affect current budgets; their historical
+ * spend survives only as provenance in the payload and is still useful in the
+ * Ledger row.
+ */
+export function ledgerEventCost(event: SocietyEnvelope): number {
+  if (Number.isFinite(event.cost_usd) && event.cost_usd > 0) return event.cost_usd;
+  const historical = event.payload?.historic_cost_usd;
+  return typeof historical === "number" && Number.isFinite(historical) && historical > 0
+    ? historical
+    : 0;
 }
 
 function detail(event: SocietyEnvelope): string {
@@ -117,7 +131,7 @@ export function SocietyLedger() {
                       <span className="line-clamp-2">{detail(event) || "—"}</span>
                     </td>
                     <td className="whitespace-nowrap px-2 py-2 text-right font-mono text-foreground">
-                      {ledgerCost(event.cost_usd)}
+                      {ledgerCost(ledgerEventCost(event))}
                     </td>
                   </tr>
                 ))}
