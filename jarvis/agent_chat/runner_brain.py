@@ -576,13 +576,6 @@ async def _generate(
         output_language = await resolve_agent_reply_language(
             session.session_id, text, output_language
         )
-    if not output_language:
-        from jarvis.core.turn_language import resolve_output_language
-
-        output_language = resolve_output_language(
-            getattr(brain, "_reply_language", "auto"), "unknown", text,
-        )
-    # Keep this turn's decision across the English evidence-continuation prompt.
     handle.output_language = output_language
     kwargs: dict[str, Any] = {
         "use_history": False,
@@ -600,6 +593,7 @@ async def _generate(
         kwargs["force_output_language"] = output_language
     secret = _agent_secret(get_jarvis_agent_secret, session.provider)
     overrides = {session.provider: secret} if secret else {}
+    pending_before = set(getattr(brain, "_ide_background_tasks", ()))
     # The task inherits the credential override through its context copy, so
     # the scoped brain instance resolves the Agents-tab key on first use.
     with override_provider_secrets(overrides):
@@ -630,7 +624,21 @@ async def _generate(
     try:
         done, _ = await asyncio.wait({task, waiter}, return_when=asyncio.FIRST_COMPLETED)
         if task in done:
-            return await task
+            result = await task
+            from jarvis.core.delegated_work import register_dispatch
+
+            for delivery in set(getattr(brain, "_ide_background_tasks", ())) - pending_before:
+                register_dispatch(delivery, ["Coding agent delivery"])
+            # Reuse the brain's authoritative decision while still holding its
+            # turn lock; do not detect language from an English result prompt.
+            if not handle.output_language:
+                pin = getattr(brain, "reply_language", "")
+                language = pin if pin in {"de", "en", "es"} else getattr(
+                    brain, "conversation_language", ""
+                )
+                if language in {"de", "en", "es"}:
+                    handle.output_language = language
+            return result
         task.cancel()
         try:
             await task

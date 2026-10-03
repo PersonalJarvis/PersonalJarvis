@@ -16,11 +16,17 @@ from jarvis.core.delegated_work import (
     DelegatedWork,
     collect_delegated_work,
     register_delegated_work,
+    register_dispatch,
 )
 from jarvis.core.protocols import ChatTurn, current_chat_turn
 
 
-async def test_six_delegates_finish_one_original_turn_after_all_reports(tmp_path, monkeypatch):
+@pytest.mark.parametrize("runner_kind", ["brain", "claude-cli"])
+async def test_six_delegates_finish_one_original_turn_after_all_reports(
+    tmp_path,
+    monkeypatch,
+    runner_kind,
+):
     monkeypatch.setattr(delegation_wait, "POLL_SECONDS", 0.001)
     store = AgentChatStore(tmp_path / "chat.db")
     svc = AgentChatService(store)
@@ -31,7 +37,7 @@ async def test_six_delegates_finish_one_original_turn_after_all_reports(tmp_path
     registered = asyncio.Event()
     prompts = []
 
-    async def runner(handle, prompt, **kwargs):
+    async def runner(handle, prompt, *args, **kwargs):
         prompts.append((handle, prompt))
         if len(prompts) == 1:
             for index in range(6):
@@ -47,6 +53,9 @@ async def test_six_delegates_finish_one_original_turn_after_all_reports(tmp_path
             assert all(f"Finding {i}" in prompt for i in range(6))
             assert handle.session.provider == "openai"
             assert handle.turn_id == prompts[0][0].turn_id
+            assert handle.continuation
+            if runner_kind == "claude-cli":
+                assert handle.session.vendor_session == "same-vendor-session"
         await handle.emit(
             make_event(
                 "assistant_text",
@@ -67,8 +76,12 @@ async def test_six_delegates_finish_one_original_turn_after_all_reports(tmp_path
                 },
             )
         )
+        if runner_kind == "claude-cli":
+            return "same-vendor-session"
 
     monkeypatch.setattr(service_mod, "run_brain_turn", runner)
+    monkeypatch.setattr(service_mod, "run_cli_turn", runner)
+    monkeypatch.setattr(service_mod, "resolve_runner", lambda *a, **kw: runner_kind)
     await svc.send(session.session_id, "Audit all six agents and report back.")
     task = svc._running[session.session_id].task
     await asyncio.wait_for(registered.wait(), 2)
@@ -185,3 +198,35 @@ async def test_deadline_is_unresolved_not_success(monkeypatch):
 
     gate.add(DelegatedWork("one", "A", probe))
     assert (await gate.collect())[0]["status"] == "timed_out"
+
+
+async def test_delayed_coding_dispatch_registers_jobs_before_wait_can_finish(monkeypatch):
+    monkeypatch.setattr(delegation_wait, "POLL_SECONDS", 0.001)
+    gate = delegation_wait.DelegationWait(handle([]))
+    token = current_chat_turn.set(ChatTurn("chat", "turn", "code", True, "trace"))
+    dispatched = asyncio.Event()
+    finished = False
+
+    async def dispatch():
+        await asyncio.sleep(0.01)
+
+        async def probe():
+            return {"status": "completed", "report": "Coding report"} if finished else None
+
+        assert register_delegated_work(DelegatedWork("coding", "Coder", probe))
+        dispatched.set()
+
+    try:
+        with collect_delegated_work(gate.add):
+            task = asyncio.create_task(dispatch())
+            register_dispatch(task, ["Coder"])
+            wait = asyncio.create_task(gate.collect())
+            await dispatched.wait()
+            await asyncio.sleep(0.01)
+            assert not wait.done()
+            finished = True
+            rows = await asyncio.wait_for(wait, 1)
+            assert [r["status"] for r in rows] == ["dispatched", "completed"]
+            await task
+    finally:
+        current_chat_turn.reset(token)

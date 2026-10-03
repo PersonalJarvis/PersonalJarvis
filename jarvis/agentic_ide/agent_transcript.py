@@ -976,6 +976,11 @@ def _claude_events(session_id: str, home: Path | None, live: bool) -> list[dict[
             if row.get("isMeta"):
                 continue
             if isinstance(content, str):
+                if content in {
+                    "[Request interrupted by user]", "[Request interrupted by user for tool use]",
+                }:
+                    log.close_turn(ts, "cancelled")
+                    continue
                 log.user(_spoken(content), ts)
                 continue
             if not isinstance(content, list):
@@ -995,7 +1000,12 @@ def _claude_events(session_id: str, home: Path | None, live: bool) -> list[dict[
                 elif btype == "text":
                     spoken.append(str(block.get("text") or ""))
             if spoken:
-                log.user(_spoken("\n\n".join(spoken)), ts)
+                if any(text in {
+                    "[Request interrupted by user]", "[Request interrupted by user for tool use]",
+                } for text in spoken):
+                    log.close_turn(ts, "cancelled")
+                else:
+                    log.user(_spoken("\n\n".join(spoken)), ts)
             continue
 
         # assistant

@@ -139,6 +139,10 @@ class DelegationWait:
                     )
                     self.delivered.add(key)
                     changed = True
+                # A reserved launch can register its actual jobs after the first scan.
+                pending.update(
+                    {key: work for key, work in self.work.items() if key not in self.delivered}
+                )
                 if changed or not pending:
                     break
                 try:
@@ -193,6 +197,7 @@ async def run_with_delegates(service: Any, handle: Any, prompt: str, run_attempt
                 "Do not merely say the agents were started or promise a later response. "
                 "Do not resend completed assignments. "
                 "Ask for user input only for a concrete blocker. "
+                "Treat dispatched as delivery only, never task completion. "
                 "Preserve the original response language.\nDelegated results:\n"
                 + json.dumps(rows, ensure_ascii=False)
                 + "\nOriginal user request:\n"

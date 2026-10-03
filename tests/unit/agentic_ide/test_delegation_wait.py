@@ -128,3 +128,39 @@ async def test_new_submission_during_wait_is_unverified_and_closing_is_terminal(
     assert (await accepted[0].probe())["status"] == "superseded"
     registry.find_terminal = lambda *args: None
     assert (await accepted[0].probe())["status"] == "stopped"
+
+
+def test_claude_interruption_is_not_completed_by_timing_record(recorded):
+    term, write = recorded
+    term.agent = "claude"
+    write(
+        {"type": "user", "timestamp": stamp(101), "message": {"content": term.last_prompt}},
+        {"type": "assistant", "timestamp": stamp(102), "message": {"content": "Starting"}},
+        {
+            "type": "user",
+            "timestamp": stamp(103),
+            "message": {
+                "content": "[Request interrupted by user]",
+            },
+        },
+        {"type": "system", "subtype": "turn_duration", "timestamp": stamp(104)},
+    )
+    assert delegation_wait._read(term, (1, 100))["status"] == "cancelled"
+
+
+def test_coding_question_is_returned_as_input_needed(recorded):
+    term, write = recorded
+    write(
+        user(),
+        codex(
+            "response_item",
+            {
+                "type": "function_call",
+                "call_id": "ask1",
+                "name": "request_user_input",
+                "arguments": json.dumps({"question": "Which project?"}),
+            },
+            102,
+        ),
+    )
+    assert delegation_wait._read(term, (1, 100))["status"] == "needs_input"

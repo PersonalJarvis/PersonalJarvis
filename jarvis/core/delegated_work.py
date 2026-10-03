@@ -7,6 +7,7 @@ read existing evidence only; they must not dispatch work or call a model.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -49,3 +50,24 @@ def register_delegated_work(work: DelegatedWork) -> bool:
         return False
     accept(work)
     return True
+
+
+def register_dispatch(task: asyncio.Task, names: list[str]) -> None:
+    """Reserve the wait before a delayed coding launch can outlive its caller."""
+
+    async def probe() -> dict[str, Any] | None:
+        if not task.done():
+            return None
+        if task.cancelled():
+            return {"status": "cancelled", "report": "Coding task delivery was cancelled."}
+        if task.exception() is not None:
+            return {"status": "failed", "report": "Coding task delivery failed."}
+        return {
+            "status": "dispatched",
+            "report": (
+                "The delivery attempt ended. Only the individual agent reports prove "
+                "completion; agents without a report remain unverified."
+            ),
+        }
+
+    register_delegated_work(DelegatedWork(f"dispatch:{id(task)}", ", ".join(names), probe))
