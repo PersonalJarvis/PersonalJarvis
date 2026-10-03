@@ -1068,11 +1068,9 @@ async def download_output_artifact(
     target = _resolve_artifact_target(request, slug, path)
     media_type, _ = mimetypes.guess_type(target.name)
     headers = {"X-Content-Type-Options": "nosniff"}
-    # HTML and SVG are active document formats when rendered inline in the app
-    # origin. Apply the same no-script CSP used by the /view route so a
-    # worker-authored artifact cannot execute code against the app.
-    active_document_types = {"text/html", "image/svg+xml"}
-    if disposition == "inline" and media_type in active_document_types:
+    # Every worker-controlled inline document gets the same opaque, no-script
+    # response policy. MIME allowlists miss XML/XHTML and future active formats.
+    if disposition == "inline":
         headers["Content-Security-Policy"] = VIEW_HEADER_CSP
     return FileResponse(
         target,
@@ -1090,13 +1088,14 @@ async def download_output_artifact(
 # the page's own scripts never ran. FileResponse sends headers only for HEAD.
 @router.api_route("/{slug}/files/{path:path}/page", methods=["GET", "HEAD"])
 async def serve_artifact_page(slug: str, path: str, request: Request) -> FileResponse:
-    """Serve an HTML deliverable as an ARTIFACT PAGE — scripts allowed, network shut.
+    """Serve an interactive artifact page for an explicit user action.
 
     The Artifacts section frames the file from here inside an iframe with
     ``sandbox="allow-scripts"`` (no ``allow-same-origin``): the page's own
     JavaScript runs, so a dashboard filters and a chart draws, while the
     opaque origin plus :data:`ARTIFACT_PAGE_CSP` keep it from reaching the
-    app, the network or the user's files. Only ``.html``/``.htm`` are served
+    app's origin or the user's files. Self-navigation can access the network.
+    Only ``.html``/``.htm`` are served
     this way; everything else keeps the inline-download path and its
     no-script policy.
     """

@@ -8,20 +8,17 @@
  * renders by default and a Rendered / Source switch in its header shows the
  * markup for whoever wants it.
  *
- * Safety is the artifact page's model, mirrored for inline markup:
+ * Automatic previews are inert; interactive HTML requires a deliberate click:
  * - SVG is drawn through an `<img>` from a data: URL — a browser never runs
  *   script or fetches anything for an SVG-as-image.
- * - HTML runs in an `<iframe srcdoc>` with `sandbox="allow-scripts"` and NO
- *   `allow-same-origin`, so it lives in an opaque origin that cannot reach the
- *   app's cookies, storage or API; a Content-Security-Policy stamped into the
- *   document (`INLINE_HTML_CSP`, the verbatim twin of `ARTIFACT_PAGE_CSP` in
- *   `jarvis/ui/web/artifact_view.py`) shuts every way out — no network, no
- *   forms, no navigation. The frame grows to its content through a
- *   `postMessage` the injected reporter sends; the parent trusts a message
- *   only from that frame's own window, and only up to a ceiling.
+ * - Static HTML is sanitized to remove scripts, navigation and refresh, then
+ *   framed with scripts disabled and an early restrictive CSP.
+ * - Interactive HTML keeps an opaque sandbox but can navigate its own frame
+ *   to the network. The user sees that limitation before enabling scripts.
  */
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Check, Copy } from "lucide-react";
+import DOMPurify from "dompurify";
 
 import { cn } from "@/lib/utils";
 import { robustCopy } from "@/lib/clipboard";
@@ -36,6 +33,8 @@ export const INLINE_HTML_CSP =
   "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; " +
   "img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; " +
   "form-action 'none'; frame-src 'none'; base-uri 'none';";
+
+export const STATIC_HTML_CSP = INLINE_HTML_CSP.replace("script-src 'unsafe-inline'", "script-src 'none'");
 
 /** The message type the injected reporter posts with the document's height. */
 export const INLINE_HTML_SIZE_MESSAGE = "jarvis-inline-html-size";
@@ -73,7 +72,20 @@ function reporterScript(token: string): string {
  * page on the app's card surface so a bare `<div>` or `<svg>` reads in both
  * palettes. Exported for the tests.
  */
-export function wrapInlineHtml(html: string, theme: Theme, token: string): string {
+export function wrapInlineHtml(html: string, theme: Theme, token: string, interactive = false): string {
+  if (!interactive) {
+    const clean = DOMPurify.sanitize(html, {
+      FORCE_BODY: true,
+      FORBID_TAGS: ["script", "meta", "base", "link", "iframe", "object", "embed", "form"],
+      FORBID_ATTR: ["href", "xlink:href", "action", "formaction", "srcdoc", "ping", "target"],
+    });
+    const skin = FRAGMENT_SKIN[theme];
+    return `<!doctype html><html data-theme="${theme}"><head><meta charset="utf-8">` +
+      `<meta http-equiv="Content-Security-Policy" content="${STATIC_HTML_CSP}">` +
+      `<style>:root{color-scheme:${theme}}body{margin:0;padding:12px;background:${skin.bg};` +
+      `color:${skin.ink};font:14px/1.5 system-ui}img,svg{max-width:100%}</style>` +
+      `</head><body>${clean}</body></html>`;
+  }
   const script = reporterScript(token);
   if (/<html[\s>]/i.test(html)) {
     let doc = html;
@@ -112,13 +124,23 @@ export function svgDataUrl(svg: string): string {
 }
 
 /** The sandboxed frame an inline HTML snippet runs in, sized to its content. */
-export function InlineHtmlFrame({ html, title }: { html: string; title: string }) {
+export function InlineHtmlFrame({ html, title, interactiveSrc, className, testId = "inline-html-frame" }: {
+  html: string;
+  title: string;
+  interactiveSrc?: string;
+  className?: string;
+  testId?: string;
+}) {
+  const t = useT();
   const theme = useThemeValue();
+  const [acceptedHtml, setAcceptedHtml] = useState<string | null>(null);
+  const interactive = acceptedHtml === html;
   const token = useId();
   const ref = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(MIN_FRAME_PX * 2);
 
   useEffect(() => {
+    if (!interactive) return;
     const onMessage = (event: MessageEvent) => {
       const frame = ref.current;
       if (!frame || event.source !== frame.contentWindow) return;
@@ -137,22 +159,32 @@ export function InlineHtmlFrame({ html, title }: { html: string; title: string }
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [token]);
+  }, [token, interactive]);
 
-  const doc = useMemo(() => wrapInlineHtml(html, theme, token), [html, theme, token]);
+  const doc = useMemo(() => wrapInlineHtml(html, theme, token, interactive), [html, theme, token, interactive]);
 
   return (
+    <div className={cn("flex flex-col", className)}>
+      {!interactive && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2 text-xs text-muted-foreground">
+          <span>{t("outputs_view.fence_static_notice")}</span>
+          <button type="button" className="rounded border border-border px-2 py-1 text-foreground hover:bg-muted"
+            onClick={() => setAcceptedHtml(html)}>{t("outputs_view.fence_enable_interactive")}</button>
+        </div>
+      )}
     <iframe
       ref={ref}
-      key={theme}
+      key={`${theme}-${interactive}`}
       title={title}
-      srcDoc={doc}
-      sandbox="allow-scripts"
+      src={interactive ? interactiveSrc : undefined}
+      srcDoc={interactive && interactiveSrc ? undefined : doc}
+      sandbox={interactive ? "allow-scripts" : ""}
       referrerPolicy="no-referrer"
-      style={{ height }}
-      className="block w-full border-0 bg-transparent"
-      data-testid="inline-html-frame"
+      style={{ height: className ? "100%" : interactive ? height : 384 }}
+      className="block min-h-0 w-full border-0 bg-transparent"
+      data-testid={testId}
     />
+    </div>
   );
 }
 

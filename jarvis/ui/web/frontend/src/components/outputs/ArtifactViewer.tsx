@@ -9,10 +9,8 @@
  * to a full-window reader. Opening the file in a real app / the browser keeps
  * the existing opener model (chooser, remembered preference, reveal).
  *
- * Security model for HTML: the page is framed from the `/page` endpoint with
- * `sandbox="allow-scripts"` and WITHOUT `allow-same-origin`. Its own scripts
- * run (a chart draws, tabs switch) while the opaque origin plus the server's
- * CSP keep it away from the app's cookies, storage, API and the network.
+ * HTML previews start inert. Enabling interactive HTML requires a click and
+ * retains an opaque sandbox; the notice explains possible network navigation.
  */
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -65,6 +63,7 @@ import {
 import { CodeBlock } from "@/components/docs/CodeBlock";
 import { OpenWithDialog } from "@/components/OpenWithDialog";
 import { MarkdownProse, resolveSiblingPath } from "@/components/outputs/MarkdownProse";
+import { InlineHtmlFrame } from "@/components/outputs/RenderedFence";
 
 // Re-exported: the resolver moved to MarkdownProse when the output page
 // started sharing the renderer; callers and tests keep importing it here.
@@ -601,26 +600,24 @@ function ArtifactBody({
 }
 
 /**
- * The running HTML page. Framed from `/page` (scripts run, network shut) when
- * the backend serves it; an older backend without that route still shows the
- * page through the inline download (styles and data-URL images render, scripts
- * do not) instead of a blank 404 frame. Either way the frame never gets
- * `allow-same-origin`. The page follows the APP's theme, not the OS's, through
- * the same `?theme=` query the Artifacts stage appends. Drawn full-height in
- * the Files reader and, through `className`, as a block on the output page.
+ * An inert preview shared by the stage, output cards and Files reader. The
+ * complete interactive page is loaded only after the user's explicit click.
  */
 export function HtmlPage({
   slug,
   path,
   className = "h-full w-full",
+  testId = "artifact-html-page",
 }: {
   slug: string;
   path: string;
   className?: string;
+  testId?: string;
 }) {
   const t = useT();
   const theme = useThemeValue();
   const pageUrl = artifactPageUrl(slug, path);
+  const full = useArtifactFile(slug, path);
   const probe = useQuery<boolean>({
     queryKey: ["output-artifact-page-available", slug, path],
     queryFn: async () => {
@@ -637,7 +634,7 @@ export function HtmlPage({
     staleTime: 60_000,
     retry: false,
   });
-  if (probe.isLoading) {
+  if (probe.isLoading || full.isLoading) {
     return (
       <div className="flex items-center gap-2 p-4 text-xs text-muted-foreground">
         <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
@@ -645,16 +642,17 @@ export function HtmlPage({
       </div>
     );
   }
-  const src = probe.data ? `${pageUrl}?theme=${theme}` : artifactInlineUrl(slug, path);
+  if (full.isError) {
+    return <p className="p-4 text-sm text-muted-foreground">{t("visualization.render_failed")}</p>;
+  }
   return (
-    <iframe
-      key={`${src}`}
+    <InlineHtmlFrame
+      key={`${slug}:${path}`}
+      html={full.data?.text ?? ""}
       title={deliverableDisplayPath(path)}
-      src={src}
-      sandbox="allow-scripts"
-      referrerPolicy="no-referrer"
-      data-testid="artifact-html-page"
-      className={cn("border-0 bg-white", className)}
+      interactiveSrc={probe.data ? `${pageUrl}?theme=${theme}` : artifactInlineUrl(slug, path)}
+      testId={testId}
+      className={className}
     />
   );
 }

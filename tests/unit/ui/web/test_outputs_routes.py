@@ -1193,6 +1193,12 @@ def test_download_sets_attachment_disposition(app):
     ("filename", "content"),
     [
         ("page.html", "<p>x</p>"),
+        ("page.htm", "<p>x</p>"),
+        ("page.xhtml", '<html xmlns="http://www.w3.org/1999/xhtml"><script>bad()</script></html>'),
+        ("page.xht", '<html xmlns="http://www.w3.org/1999/xhtml"><script>bad()</script></html>'),
+        ("page.xml", '<html xmlns="http://www.w3.org/1999/xhtml"><script>bad()</script></html>'),
+        ("page.pdf", "%PDF-1.4"),
+        ("page.unknown", "<script>bad()</script>"),
         ("image.svg", "<svg><script>bad()</script></svg>"),
     ],
 )
@@ -1205,6 +1211,10 @@ def test_download_inline_active_document_has_csp(app, filename, content):
     assert r.status_code == 200
     assert r.headers["content-disposition"].startswith("inline")
     assert "default-src 'none'" in r.headers["content-security-policy"]
+    assert "sandbox;" in r.headers["content-security-policy"]
+    attachment = client.get(f"/api/outputs/{slug}/files/{rel}/download")
+    assert attachment.headers["content-disposition"].startswith("attachment")
+    assert attachment.content == r.content
 
 
 def test_download_blocks_non_deliverable(app):

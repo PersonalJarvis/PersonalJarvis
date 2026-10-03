@@ -35,8 +35,10 @@ VIEW_HEADER_CSP = VIEW_CSP + " sandbox;"
 # The artifact-page CSP (``/files/{path}/page`` in outputs_routes): an artifact
 # is a self-contained page a worker wrote to be LOOKED AT and used — tabs,
 # filters, a chart drawn on canvas — so inline scripts run. What stays shut is
-# every way out: no network of any kind (no fetch, no remote script, font,
-# image or frame), no forms posting anywhere, no navigation. The script runs in
+# subresource access: no fetch, remote script, font, image or frame, and no forms.
+# This does NOT prevent navigation of the document itself. Automatic frontend
+# previews are inert; enabling the interactive page is an explicit user action.
+# The script runs in
 # an opaque origin that cannot reach the app's cookies, storage or API — the
 # same model Claude artifacts use. The frontend frames the page with
 # ``sandbox="allow-scripts"``, but "Open in browser" loads the same URL as a
