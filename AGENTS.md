@@ -91,6 +91,14 @@ the install base, and "works on my machine" is the defect. (AP-23)
   German in files you touch. Runtime output language is decided ONCE per turn by
   `jarvis/core/turn_language.py`; no layer re-derives it, all locales are equal.
 
+**Public product descriptions.** Treat tracked documentation, source comments,
+docstrings, test descriptions, video copy, and commit/PR/release text as public.
+Describe our features and interactions directly. Do not present another product
+as a design reference or say our UI or behavior is inspired by, modeled on,
+copied from, or made to match it. Preserve required copyright, license and
+attribution notices and factual dependency, integration and compatibility
+references; this rule never authorizes concealing code provenance.
+
 **Proportionality.** The agent owns the validation plan and chooses the smallest
 set of checks that can detect a plausible regression from the diff. State the
 scope, what was run, and what remains unverified in the PR. Use these tiers as

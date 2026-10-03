@@ -15,9 +15,10 @@ tags: [docs, writing, accessibility, privacy]
 ---
 
 This is the binding writing standard for reader-facing pages in
-`docs/product/`. It is inspired by the progressive, task-focused structure of
-the [Claude Platform documentation](https://platform.claude.com/docs/en/home),
-but it uses Personal Jarvis terminology, behavior, and renderer capabilities.
+`docs/product/`. Use a progressive, task-focused structure with Personal Jarvis
+terminology, behavior, and renderer capabilities. Describe features directly,
+without naming other products as design references. Preserve required license
+and attribution notices and factual integration or compatibility information.
 
 The reader should understand what a feature does, why it matters, how to use
 it, how it connects to the rest of Jarvis, and what to do when it does not

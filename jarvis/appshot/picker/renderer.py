@@ -1,4 +1,4 @@
-"""PySide6 area picker for region appshots, modelled on ShareX's region capture.
+"""PySide6 area picker for region appshots.
 
 Runs ONLY inside ``python -m jarvis.appshot.picker``; the main process never
 imports this module (AP-26). One frameless, always-on-top window per screen:
