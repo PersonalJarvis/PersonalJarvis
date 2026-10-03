@@ -5,7 +5,7 @@ import { resetConnectBudgetForTests } from "@/lib/connectBudget";
 
 const value: SessionGitHubStatus = {
   repo: "owner/repo", branch: "feature/a", url: "https://github.com/owner/repo/tree/feature/a",
-  published: true, available: true, reason: "", fetched_at: 1, state: "open", number: 1,
+  owned: true, published: true, available: true, reason: "", fetched_at: 1, state: "open", number: 1,
   ci_stale: false, ci: { state: "none", url: "", total: 0, passed: 0, failed: 0, pending: 0, running: 0, names: [], commit: "" },
 };
 

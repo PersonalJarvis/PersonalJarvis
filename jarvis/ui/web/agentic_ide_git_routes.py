@@ -30,7 +30,8 @@ from pydantic import BaseModel, Field
 
 from jarvis.agentic_ide import git_ops, git_overview, github_link, github_status
 from jarvis.agentic_ide.git_ops import GitError, PrepareMode
-from jarvis.agentic_ide.session import get_registry
+from jarvis.agentic_ide.session import account_home, get_registry
+from jarvis.agentic_ide.session_branches import PaneBranchRecord
 
 router = APIRouter(prefix="/api/agentic-ide/git", tags=["agentic-ide-git"])
 
@@ -100,12 +101,20 @@ def session_github_status(workspace_id: str = Query(..., min_length=1)) -> dict:
     session = get_registry().get(workspace_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Workspace not found.")
-    folders = {
-        pane.name: pane.cwd(session.folder)
+    records = [
+        PaneBranchRecord(
+            pane=pane.name,
+            history_id=pane.history_id,
+            folder=pane.cwd(session.folder),
+            agent=pane.agent,
+            session_id=pane.resume.id if pane.resume else "",
+            home=account_home(pane.agent, pane.account),
+            created_branch=pane.branch,
+        )
         for pane in session.terminals
         if not pane.computer_id
-    }
-    return {"panes": github_status.statuses(folders)}
+    ]
+    return {"panes": github_status.statuses(records)}
 
 
 class BindingRequest(BaseModel):

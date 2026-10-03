@@ -1076,7 +1076,9 @@ def _codex_events(session_id: str, home: Path | None, live: bool) -> list[dict[s
         if kind != "response_item":
             continue
         ptype = str(payload.get("type") or "")
-        item_id = str(payload.get("id") or payload.get("call_id") or f"row-{len(log.events)}")
+        # Tool items have different item IDs for the call and its output. Their
+        # shared call_id is the join key (also for custom/code-mode tools).
+        item_id = str(payload.get("call_id") or payload.get("id") or f"row-{len(log.events)}")
         if ptype == "message":
             role = str(payload.get("role") or "")
             content = payload.get("content")

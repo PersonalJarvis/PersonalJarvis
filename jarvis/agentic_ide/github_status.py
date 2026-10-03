@@ -20,9 +20,12 @@ from urllib.parse import quote, urlsplit
 from loguru import logger
 
 from jarvis.agentic_ide import git_overview, github_link
+from jarvis.agentic_ide.github_checks import CheckStatus, checks
+from jarvis.agentic_ide.session_branches import PaneBranchRecord, owned_branch
 
 _QUERY = """
-query($owner: String!, $name: String!, $branch: String!, $ref: String!) {
+query($owner: String!, $name: String!, $branch: String!, $ref: String!, $prIds: [ID!]!) {
+  nodes(ids: $prIds) { ... on PullRequest { ...PR } }
   repository(owner: $owner, name: $name) {
     ref(qualifiedName: $ref) {
       target { ... on Commit { oid statusCheckRollup { ...Rollup } } }
@@ -32,15 +35,20 @@ query($owner: String!, $name: String!, $branch: String!, $ref: String!) {
     }
     pullRequests(headRefName: $branch, first: 20,
                  orderBy: {field: UPDATED_AT, direction: DESC}) { nodes { ...PR } }
+    openPullRequests: pullRequests(headRefName: $branch, states: [OPEN], first: 20,
+                 orderBy: {field: UPDATED_AT, direction: DESC}) { nodes { ...PR } }
   }
 }
 fragment PR on PullRequest {
-  number url title state isDraft isInMergeQueue headRefName headRefOid
+  id number url title state isDraft isInMergeQueue headRefName headRefOid createdAt
+  locked mergeable mergeStateStatus reviewDecision
   headRepository { nameWithOwner }
   commits(last: 1) { nodes { commit { oid statusCheckRollup { ...Rollup } } } }
 }
 fragment Rollup on StatusCheckRollup {
-  state contexts(first: 100) { totalCount nodes {
+  state contexts(first: 100) {
+    totalCount checkRunCountsByState { state count } statusContextCountsByState { state count }
+    nodes {
     __typename
     ... on CheckRun { name status conclusion detailsUrl checkSuite { workflowRun { url } } }
     ... on StatusContext { context state targetUrl }
@@ -54,6 +62,7 @@ class Checkout:
     repo: str
     branch: str
     head: str
+    created_at: float = 0
 
 
 def _git(folder: Path, *args: str) -> str:
@@ -77,24 +86,23 @@ def _repository(url: str) -> str:
     return repo if github_link.REPO_RE.fullmatch(repo) else ""
 
 
-def checkout(folder: str | Path) -> Checkout | None:
-    """Resolve HEAD and its configured upstream; never trust a pane's old label."""
+def checkout(folder: str | Path, branch: str = "", created_at: float = 0) -> Checkout | None:
+    """Resolve the owned branch's remote; never follow a shared checkout's HEAD."""
     path = Path(folder)
     if not path.is_dir():
         return None
-    branch = _git(path, "symbolic-ref", "--quiet", "--short", "HEAD")
     if not branch:
         return None
     fields = _git(
         path,
         "for-each-ref",
         "--count=1",
-        "--format=%(objectname)%09%(upstream:remotename)%09%(upstream:remoteref)",
+        "--format=%(objectname)%09%(upstream:remotename)%09%(upstream:remoteref)%09%(refname)",
         f"refs/heads/{branch}",
     ).split("\t")
-    if not fields or not fields[0]:
-        return None
-    head, upstream, ref = (fields + ["", ""])[:3]
+    head, upstream, ref, full_ref = (fields + ["", "", ""])[:4]
+    if full_ref != f"refs/heads/{branch}":
+        head = upstream = ref = ""
     # A configured push remote takes precedence in triangular fork workflows.
     push = _git(path, "config", "--get", f"branch.{branch}.pushRemote")
     push = push or _git(path, "config", "--get", "remote.pushDefault")
@@ -105,8 +113,10 @@ def checkout(folder: str | Path) -> Checkout | None:
     repo = _repository(url)
     if not repo:
         return None
-    remote_branch = ref.removeprefix("refs/heads/") if ref and not push else branch
-    return Checkout(repo, remote_branch, head)
+    remote_branch = (
+        ref.removeprefix("refs/heads/") if ref and (not push or push == upstream) else branch
+    )
+    return Checkout(repo, remote_branch, head, created_at)
 
 
 @dataclass(slots=True)
@@ -115,14 +125,18 @@ class BranchStatus:
     branch: str
     url: str
     published: bool = False
+    owned: bool = True
     available: bool = True
     reason: str = ""
     fetched_at: float = 0
     # branch | draft | open | queued | merged | closed
     state: str = "branch"
     number: int | None = None
-    ci: git_overview.CiStatus = field(default_factory=git_overview.CiStatus)
+    ci: CheckStatus = field(default_factory=CheckStatus)
     ci_stale: bool = False
+    merge_status: str = ""
+    review: str = ""
+    locked: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -134,6 +148,7 @@ class _Snapshot:
     payload: dict[str, Any] = field(default_factory=dict)
     fetched_at: float = 0
     reason: str = ""
+    pr_ids: list[str] = field(default_factory=list)
 
 
 @lru_cache(maxsize=256)
@@ -157,11 +172,16 @@ def _snapshot(target: Checkout, token: str) -> _Snapshot:
                     "name": name,
                     "branch": target.branch,
                     "ref": f"refs/heads/{target.branch}",
+                    "prIds": cached.pr_ids,
                 },
             )
             if not isinstance((payload.get("data") or {}).get("repository"), dict):
                 raise github_link.GitHubError("GitHub did not return this repository.")
             cached.payload = payload
+            candidates = _pull_requests(payload)
+            matching = [pr for pr in candidates if pr.get("id") and _same_branch(pr, target)]
+            matching.sort(key=lambda pr: (pr.get("state") != "OPEN", -int(pr.get("number") or 0)))
+            cached.pr_ids = [str(matching[0]["id"])] if matching else cached.pr_ids
             cached.reason = ""
         except github_link.GitHubError as exc:
             # Retain only identity evidence on failure. The UI suppresses all
@@ -169,6 +189,33 @@ def _snapshot(target: Checkout, token: str) -> _Snapshot:
             cached.reason = str(exc)
         cached.fetched_at = time.time()
         return cached
+
+
+def _pull_requests(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    repo = (payload.get("data") or {}).get("repository") or {}
+    ref = repo.get("ref") or {}
+    prs = list((ref.get("associatedPullRequests") or {}).get("nodes") or [])
+    prs += (repo.get("pullRequests") or {}).get("nodes") or []
+    prs += (repo.get("openPullRequests") or {}).get("nodes") or []
+    prs += (payload.get("data") or {}).get("nodes") or []
+    return [pr for pr in prs if isinstance(pr, dict)]
+
+
+def _same_branch(pr: dict[str, Any], target: Checkout) -> bool:
+    from datetime import datetime
+
+    owner = (pr.get("headRepository") or {}).get("nameWithOwner", "")
+    if owner.casefold() != target.repo.casefold() or pr.get("headRefName") != target.branch:
+        return False
+    if target.created_at and pr.get("createdAt"):
+        try:
+            created = datetime.fromisoformat(pr["createdAt"].replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            logger.debug("Session GitHub status: malformed pull request creation time")
+            return False
+        if created < target.created_at - 5:
+            return False
+    return True
 
 
 def parse_status(target: Checkout, payload: dict[str, Any], fetched_at: float) -> BranchStatus:
@@ -183,18 +230,14 @@ def parse_status(target: Checkout, payload: dict[str, Any], fetched_at: float) -
     tip = ref.get("target") or {}
     oid = str(tip.get("oid") or "")
     status.published = bool(oid)
-    prs = list((ref.get("associatedPullRequests") or {}).get("nodes") or [])
-    prs += (repo.get("pullRequests") or {}).get("nodes") or []
+    prs = _pull_requests(payload)
     relevant = []
     for pr in prs:
-        if not isinstance(pr, dict) or pr.get("headRefName") != target.branch:
-            continue
-        owner = (pr.get("headRepository") or {}).get("nameWithOwner", "")
-        if owner.casefold() != target.repo.casefold():
+        if not _same_branch(pr, target):
             continue
         live = pr.get("state") == "OPEN"
         # A reused branch must not inherit a historical merge/close verdict.
-        if live or (pr.get("headRefOid") == target.head and (not oid or oid == target.head)):
+        if live or (not oid or pr.get("headRefOid") == oid):
             relevant.append(pr)
     relevant.sort(key=lambda pr: (pr.get("state") != "OPEN", -int(pr.get("number") or 0)))
     pr = relevant[0] if relevant else None
@@ -204,6 +247,9 @@ def parse_status(target: Checkout, payload: dict[str, Any], fetched_at: float) -
         status.state = git_overview._pr_state(pr)
         status.number = int(pr["number"])
         status.url = str(pr["url"])
+        status.merge_status = str(pr.get("mergeStateStatus") or "UNKNOWN").lower()
+        status.review = str(pr.get("reviewDecision") or "").lower()
+        status.locked = bool(pr.get("locked"))
         commits = (pr.get("commits") or {}).get("nodes") or []
         commit = (commits[-1].get("commit") or {}) if commits else {}
         # PR checks are usable only for the current remote tip (or a deleted
@@ -211,31 +257,7 @@ def parse_status(target: Checkout, payload: dict[str, Any], fetched_at: float) -
         if not oid or commit.get("oid") == oid:
             oid = str(commit.get("oid") or oid)
             rollup = commit.get("statusCheckRollup") or rollup
-    status.ci = git_overview.ci_from_rollup(rollup, oid)
-    nodes = ((rollup or {}).get("contexts") or {}).get("nodes") or []
-    conclusions = {
-        str(node.get("conclusion") or "").upper()
-        for node in nodes
-        if node.get("__typename") == "CheckRun"
-    }
-    complete_page = ((rollup or {}).get("contexts") or {}).get("totalCount", 0) == len(nodes)
-    if (
-        nodes
-        and complete_page
-        and all(
-            node.get("__typename") == "CheckRun" and node.get("status") == "COMPLETED"
-            for node in nodes
-        )
-    ):
-        if (
-            conclusions <= {"SUCCESS", "NEUTRAL", "SKIPPED", "CANCELLED"}
-            and "CANCELLED" in conclusions
-        ):
-            status.ci.state = "cancelled"
-        elif conclusions == {"SKIPPED"}:
-            status.ci.state = "skipped"
-        elif conclusions <= {"NEUTRAL", "SKIPPED"}:
-            status.ci.state = "neutral"
+    status.ci = checks(rollup, oid)
     status.ci_stale = bool(oid and target.head != oid)
     if status.ci.state != "none" and not status.ci.url:
         status.ci.url = (
@@ -246,16 +268,25 @@ def parse_status(target: Checkout, payload: dict[str, Any], fetched_at: float) -
     return status
 
 
-def statuses(folders: dict[str, str]) -> dict[str, dict[str, Any] | None]:
+def statuses(records: list[PaneBranchRecord] | dict[str, str]) -> dict[str, dict[str, Any] | None]:
     """One result per pane; share local reads and GitHub requests across panes."""
     result: dict[str, dict[str, Any] | None] = {}
-    targets: dict[str, Checkout | None] = {}
+    # Old route versions supplied only folders: those carry no ownership proof.
+    if isinstance(records, dict):
+        return {pane: None for pane in records}
+    targets: dict[tuple[str, str, float], Checkout | None] = {}
     credential: github_link.Credential | None = None
     credential_read = False
-    for pane, folder in folders.items():
-        if folder not in targets:
-            targets[folder] = checkout(folder)
-        target = targets[folder]
+    for record in records:
+        pane = record.pane
+        owned = owned_branch(record)
+        if owned is None:
+            result[pane] = None
+            continue
+        key = (owned.folder, owned.branch, owned.created_at)
+        if key not in targets:
+            targets[key] = checkout(*key)
+        target = targets[key]
         if target is None:
             result[pane] = None
             continue

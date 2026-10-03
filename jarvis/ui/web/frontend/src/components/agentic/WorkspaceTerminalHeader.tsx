@@ -272,8 +272,8 @@ export function WorkspaceTerminalHeader({
         </span>}
       </button> : renameForm}
       <span id={dragHintId} className="sr-only">Drag to reorder, or focus this title and press Alt with an arrow key.</span>
+      <SessionGitHubBadge workspaceId={githubStatusEnabled ? workspaceId : undefined} name={name} appearance={appearance} />
       <div data-header-control="true" className="flex shrink-0 items-center gap-0.5">
-        <SessionGitHubBadge workspaceId={githubStatusEnabled ? workspaceId : undefined} name={name} appearance={appearance} />
         {moreButton}
         {maximizeButton}
         {onFork && <button type="button" data-testid={`pane-fork-${name}`} aria-label={`Fork ${name}`} title={`Fork ${name}`}

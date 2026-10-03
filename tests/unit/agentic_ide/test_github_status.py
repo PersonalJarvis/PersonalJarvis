@@ -127,12 +127,36 @@ def test_unpushed_local_commits_are_explicit():
     assert value.ci_stale and value.ci.commit == OTHER[:12]
 
 
+def test_remote_merge_remains_true_when_local_work_has_advanced():
+    value = status.parse_status(TARGET, payload(pr(state="MERGED", head=OTHER), head=OTHER), 1)
+    assert value.state == "merged" and value.ci.commit == OTHER[:12]
+
+
+def test_historical_pr_before_this_session_created_the_branch_is_ignored():
+    target = status.Checkout(TARGET.repo, TARGET.branch, HEAD, created_at=1_800_000_000)
+    value = status.parse_status(
+        target, payload(pr(state="MERGED", createdAt="2020-01-01T00:00:00Z")), 1
+    )
+    assert value.state == "branch" and value.number is None
+
+
+def test_deleted_fork_branch_uses_its_remembered_pull_request():
+    data = payload(head="")
+    data["data"]["nodes"] = [pr(state="MERGED", url="https://github.com/upstream/repo/pull/1")]
+    value = status.parse_status(TARGET, data, 1)
+    assert value.published and value.state == "merged"
+
+
+def test_folder_only_requests_are_not_evidence_of_session_ownership():
+    assert status.statuses({"t1": "workspace-on-main"}) == {"t1": None}
+
+
 @pytest.mark.parametrize(
     "conclusion, phase, rollup_state, expected",
     [
         ("SUCCESS", "COMPLETED", "SUCCESS", "success"),
         ("FAILURE", "COMPLETED", "FAILURE", "failure"),
-        ("TIMED_OUT", "COMPLETED", "FAILURE", "failure"),
+        ("TIMED_OUT", "COMPLETED", "FAILURE", "timed_out"),
         ("CANCELLED", "COMPLETED", "FAILURE", "cancelled"),
         ("SKIPPED", "COMPLETED", "SUCCESS", "skipped"),
         ("NEUTRAL", "COMPLETED", "SUCCESS", "neutral"),
@@ -157,14 +181,14 @@ def test_checkout_reads_worktree_head_and_custom_upstream(monkeypatch, tmp_path)
         if args[0] == "symbolic-ref":
             return "local-name"
         if args[0] == "for-each-ref":
-            return f"{HEAD}\tcompany\trefs/heads/feature/test"
+            return f"{HEAD}\tcompany\trefs/heads/feature/test\trefs/heads/local-name"
         if args[0] == "remote":
             assert args[-1] == "company"
             return "git@github.com:owner/repo.git"
         return ""
 
     monkeypatch.setattr(status, "_git", git)
-    assert status.checkout(tmp_path) == TARGET
+    assert status.checkout(tmp_path, "local-name") == TARGET
 
 
 def test_detached_head_never_gets_branch_status(monkeypatch, tmp_path):
@@ -176,7 +200,7 @@ def test_multiple_panes_share_requests_and_errors_are_unknown(monkeypatch):
     status._slot.cache_clear()
     reads, requests = [], []
 
-    def local(folder):
+    def local(folder, branch, created_at):
         reads.append(folder)
         return TARGET
 
@@ -188,15 +212,21 @@ def test_multiple_panes_share_requests_and_errors_are_unknown(monkeypatch):
 
     monkeypatch.setattr(status, "checkout", local)
     monkeypatch.setattr(
+        status,
+        "owned_branch",
+        lambda record: SimpleNamespace(folder="worktree", branch=TARGET.branch, created_at=0),
+    )
+    monkeypatch.setattr(
         github_link, "credential", lambda: github_link.Credential("test-token", "gh")
     )
     monkeypatch.setattr(github_link, "graphql", graphql)
-    panes = status.statuses({"t1": "worktree", "t2": "worktree"})
+    records = [status.PaneBranchRecord(pane, pane, "worktree") for pane in ("t1", "t2")]
+    panes = status.statuses(records)
     assert len(reads) == len(requests) == 1
     assert panes["t1"] == panes["t2"]
     cached = status._snapshot(TARGET, "test-token")
     cached.fetched_at = 0
-    failed = status.statuses({"t1": "worktree"})["t1"]
+    failed = status.statuses(records[:1])["t1"]
     assert failed["published"] and not failed["available"]
 
 
@@ -206,7 +236,16 @@ def test_route_uses_pane_cwd_and_excludes_remote_computers(monkeypatch):
     from jarvis.ui.web import agentic_ide_git_routes as routes
 
     calls = []
-    pane = SimpleNamespace(name="t1", computer_id="", cwd=lambda _: "fork-folder")
+    pane = SimpleNamespace(
+        name="t1",
+        computer_id="",
+        cwd=lambda _: "fork-folder",
+        history_id="history",
+        agent="codex",
+        account="",
+        resume=None,
+        branch="owned",
+    )
     remote = SimpleNamespace(name="t2", computer_id="server")
     session = SimpleNamespace(folder="workspace", terminals=[pane, remote])
     monkeypatch.setattr(
@@ -216,7 +255,8 @@ def test_route_uses_pane_cwd_and_excludes_remote_computers(monkeypatch):
     )
     monkeypatch.setattr(status, "statuses", lambda folders: calls.append(folders) or {})
     assert routes.session_github_status("w") == {"panes": {}}
-    assert calls == [{"t1": "fork-folder"}]
+    assert calls[0][0].folder == "fork-folder"
+    assert calls[0][0].created_branch == "owned"
     with pytest.raises(HTTPException) as error:
         routes.session_github_status("missing")
     assert error.value.status_code == 404

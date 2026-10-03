@@ -7,14 +7,22 @@ export interface SessionGitHubStatus {
   branch: string;
   url: string;
   published: boolean;
+  owned: boolean;
   available: boolean;
   reason: string;
   fetched_at: number;
   state: "branch" | PullRequestState;
   number: number | null;
-  ci: Omit<CiStatus, "state"> & { state: CiStatus["state"] | "cancelled" | "neutral" | "skipped" };
+  ci: Omit<CiStatus, "state"> & { state: SessionCiState; states?: SessionCiState[] };
   ci_stale: boolean;
+  merge_status?: string;
+  review?: string;
+  locked?: boolean;
 }
+
+export type SessionCiState = CiStatus["state"] | "cancelled" | "neutral" | "skipped"
+  | "action_required" | "timed_out" | "startup_failure" | "stale" | "unknown"
+  | "waiting" | "requested" | "expected" | "error";
 
 type Panes = Record<string, SessionGitHubStatus | null>;
 type Entry = {
@@ -59,7 +67,7 @@ function start(workspaceId: string): Entry {
       // an unknown status. Never borrow identity across a checkout change.
       entry.panes = Object.fromEntries(Object.entries(data.panes).map(([name, status]) => {
         const previous = entry.panes[name];
-        if (status && !status.available && previous?.published
+        if (status?.owned && !status.available && previous?.owned && previous.published
           && status.repo === previous.repo && status.branch === previous.branch) {
           return [name, { ...status, published: true }];
         }
