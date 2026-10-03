@@ -6,6 +6,9 @@ import { playListeningCue } from "./listeningCue";
 import { MediaActivity, type MediaLevels } from "./mediaLevels";
 import { requestConnect } from "./connectBudget";
 import { mintWsTicket } from "./ws";
+import { beginSpeechPlayback, clearSpeechPlayback, setTimedSpeechSession, spokenWordEnd, updateSpeechPlayback } from "./speechPlayback";
+import { audibleContextTime, DevicePlaybackTimeline, type AudioInterval, type RenderedAudioInterval } from "./playbackTimeline";
+import { TimedAudioFrame, TimedTextFrame, TimedSpeechTracker } from "./timedSpeech";
 import pcmWorkletUrl from "./pcm-worklet.ts?worker&url";
 
 export function buildAudioSocketUrl(ticket?: string | null): string {
@@ -279,6 +282,7 @@ export class BrowserSpeechFallback {
   private generation = 0;
   private active = false;
   private finishCancelled: (() => void) | null = null;
+  private playbackId: number | null = null;
 
   constructor(
     private readonly synthesis: SpeechSynthesisSurface | null =
@@ -312,19 +316,47 @@ export class BrowserSpeechFallback {
 
     const generation = ++this.generation;
     const utterance = this.createUtterance(text);
+    const playbackId = beginSpeechPlayback(text);
+    this.playbackId = playbackId;
     let settled = false;
+    let playing = false;
     const finish = (outcome: BrowserSpeechOutcome) => {
       if (settled || generation !== this.generation) return;
       settled = true;
       this.active = false;
       this.finishCancelled = null;
+      if (outcome === "ended" && utterance.volume > 0) {
+        updateSpeechPlayback(playbackId, "ended", text.length);
+      } else {
+        updateSpeechPlayback(playbackId, "cancelled");
+      }
       handlers.onFinish(outcome);
     };
     this.finishCancelled = () => finish("cancelled");
     if (language) utterance.lang = language;
     utterance.volume = Math.max(0, Math.min(1, Number.isFinite(volume) ? volume : 1));
     utterance.onstart = () => {
-      if (generation === this.generation) handlers.onStart?.();
+      if (settled || generation !== this.generation) return;
+      playing = true;
+      updateSpeechPlayback(playbackId, "playing");
+      handlers.onStart?.();
+    };
+    // These boundaries come from the speech engine's playback, so changing
+    // rate, pausing or waiting in its queue needs no timer or tempo estimate.
+    utterance.onboundary = (event) => {
+      if (!playing || settled || generation !== this.generation || utterance.volume <= 0) return;
+      if (event.name !== "word") return;
+      updateSpeechPlayback(playbackId, "playing", spokenWordEnd(text, event.charIndex));
+    };
+    utterance.onpause = () => {
+      if (settled || generation !== this.generation) return;
+      playing = false;
+      updateSpeechPlayback(playbackId, "paused");
+    };
+    utterance.onresume = () => {
+      if (settled || generation !== this.generation) return;
+      playing = true;
+      updateSpeechPlayback(playbackId, "playing");
     };
     utterance.onend = () => finish("ended");
     utterance.onerror = () => finish("error");
@@ -343,6 +375,8 @@ export class BrowserSpeechFallback {
     if (notify) this.finishCancelled?.();
     this.finishCancelled = null;
     this.generation += 1;
+    if (this.playbackId !== null) updateSpeechPlayback(this.playbackId, "cancelled");
+    this.playbackId = null;
     if (!wasActive) return;
     this.active = false;
     try {
@@ -467,6 +501,43 @@ export class RealtimeAudioClient {
   private outputRevision = -1;
   private listeningCueConsumed = false;
   private stopListeningCue: (() => void) | null = null;
+  private timedOutput = false;
+  private timedEpoch = 0;
+  private playbackGeneration = 0;
+  private lastTimedAudioEnd = -1;
+  private readonly deviceTimeline = new DevicePlaybackTimeline();
+  private readonly speechTimeline = new TimedSpeechTracker();
+
+  private flushPlayback(): void {
+    this.playbackGeneration += 1;
+    this.deviceTimeline.clear();
+    this.speechTimeline.clear();
+    this.playbackNode?.port.postMessage({ type: "flush", generation: this.playbackGeneration });
+  }
+
+  private selectOutputTransport(value: unknown, session: unknown): void {
+    if (value !== "timed_pcm" && value !== "webrtc") return;
+    this.timedOutput = value === "timed_pcm";
+    if (typeof session === "string") setTimedSpeechSession(this.timedOutput ? session : "");
+    // One speaker only. The peer still carries microphone input; timed PCM
+    // owns output and its source-to-device clock instead of parallel RTP.
+    this.webRtcTransport.setOutputState(this.outputMuted || this.timedOutput, this.outputVolume);
+    if (this.timedOutput) {
+      this.remoteMeter?.disconnect();
+      if (this.remoteMeter) this.remoteMeter.port.onmessage = null;
+      this.remoteSource?.disconnect();
+    }
+  }
+
+  private acceptPlaybackEpoch(epoch: number): boolean {
+    if (!Number.isSafeInteger(epoch) || epoch < 0) return false;
+    if (epoch < this.timedEpoch) return false;
+    if (epoch > this.timedEpoch) {
+      this.flushPlayback();
+      this.timedEpoch = epoch;
+    }
+    return true;
+  }
 
   private applyOutputState(muted: unknown, volume: unknown, revision: unknown): void {
     if (typeof muted !== "boolean") return;
@@ -479,8 +550,11 @@ export class RealtimeAudioClient {
     if (typeof volume === "number" && Number.isFinite(volume)) {
       this.outputVolume = Math.max(0, Math.min(1, volume));
     }
-    this.webRtcTransport.setOutputState(effectiveMuted, this.outputVolume);
-    this.playbackNode?.port.postMessage({ type: "output_state", muted: effectiveMuted, volume: this.outputVolume });
+    this.webRtcTransport.setOutputState(effectiveMuted || this.timedOutput, this.outputVolume);
+    if (changed) this.flushPlayback();
+    this.playbackNode?.port.postMessage({
+      type: "output_state", muted: effectiveMuted, volume: this.outputVolume, generation: this.playbackGeneration,
+    });
     if (changed) {
       this.browserSpeech.cancel(true);
       this.playbackResampler?.reset();
@@ -553,7 +627,8 @@ export class RealtimeAudioClient {
   }
 
   private observeRemoteAudio(stream: MediaStream): void {
-    if (!this.ctx) return;
+    if (!this.ctx || this.timedOutput) return;
+    clearSpeechPlayback();
     // A suspended context measures only zeros: the assistant would talk
     // while the bar keeps showing listening. The call started from a user
     // gesture, so resuming here is allowed and makes the tap truthful.
@@ -683,7 +758,15 @@ export class RealtimeAudioClient {
       this.playbackNode.port.onmessage = (event: MessageEvent) => {
         // RTP is measured by pcm-level. The unused PCM queue produces zeros
         // and must not erase the real output meter thirty times per second.
-        if (this.options.browserAudio && this.options.requiresWebRtcOffer) return;
+        if (this.options.browserAudio && this.options.requiresWebRtcOffer && !this.timedOutput) return;
+        if (event.data?.type === "playback") {
+          if (!this.ctx || this.outputMuted || event.data.generation !== this.playbackGeneration) return;
+          this.deviceTimeline.rendered(event.data.spans as RenderedAudioInterval[]);
+          if (this.ctx.state !== "suspended" && this.ctx.state !== "closed") {
+            this.speechTimeline.played(this.deviceTimeline.advance(audibleContextTime(this.ctx)));
+          }
+          return;
+        }
         const data = event.data as { type?: string; rms?: number } | null;
         if (data && data.type === "level" && typeof data.rms === "number") {
           const live = performance.now() - this.lastPcmAt <= OUTPUT_TAP_TTL_MS;
@@ -818,6 +901,8 @@ export class RealtimeAudioClient {
       socket.onerror = () => fail(new Error("Realtime voice socket failed"));
       socket.onclose = (event) => {
         this.ready = false;
+        this.flushPlayback();
+        setTimedSpeechSession("");
         this.startupNode?.port.postMessage({ type: "suspend" });
         this.stopInput();
         this.webRtcTransport.close();
@@ -839,13 +924,44 @@ export class RealtimeAudioClient {
           return;
         }
         const type = typeof message.type === "string" ? message.type : "unknown";
-        if (type === "transcript" && typeof message.text === "string") {
+        if (type === "audio_timed") {
+          const parsed = TimedAudioFrame.safeParse(message);
+          if (!parsed.success || !this.timedOutput || !this.acceptPlaybackEpoch(parsed.data.epoch)) return;
+          const frame = parsed.data;
+          // A sideband reattach can repeat a reflected frame. Replaying it
+          // would move audio backward even though the transcript is revisioned.
+          if (frame.end_ms <= this.lastTimedAudioEnd) return;
+          try {
+            const raw = atob(frame.audio);
+            if (raw.length % 2) throw new Error("Invalid PCM16 length");
+            const bytes = Uint8Array.from(raw, char => char.charCodeAt(0));
+            const overlap = Math.max(0, this.lastTimedAudioEnd - frame.start_ms);
+            const skip = Math.min(bytes.length / 2, Math.ceil(
+              bytes.length / 2 * overlap / (frame.end_ms - frame.start_ms),
+            ));
+            const startMs = frame.start_ms + (frame.end_ms - frame.start_ms) * skip / (bytes.length / 2);
+            this.lastTimedAudioEnd = frame.end_ms;
+            if (skip * 2 < bytes.length) {
+              this.handleAudio(bytes.buffer.slice(skip * 2), { startMs, endMs: frame.end_ms });
+            }
+          } catch {
+            console.warn("Invalid timed voice audio was discarded");
+          }
+          return;
+        } else if (type === "speech_timing") {
+          const parsed = TimedTextFrame.safeParse(message);
+          if (parsed.success && this.timedOutput && this.acceptPlaybackEpoch(parsed.data.epoch)) {
+            this.speechTimeline.text(parsed.data);
+          }
+          return;
+        } else if (type === "transcript" && typeof message.text === "string") {
           this.cb.onTranscript?.(
             message.text,
             Boolean(message.is_final),
             typeof message.role === "string" ? message.role : "user",
           );
         } else if (type === "reconnecting") {
+          this.lastTimedAudioEnd = -1;
           this.earlyAnswer = null;
           this.reconnecting = true;
           this.ready = false;
@@ -856,7 +972,7 @@ export class RealtimeAudioClient {
           this.cb.onPlaybackState?.(false);
           this.startupPreroll = [];
           this.startupPrerollBytes = 0;
-          this.playbackNode?.port.postMessage({ type: "flush" });
+          this.flushPlayback();
         } else if (type === "reconnect_offer") {
           void this.webRtcTransport.createOffer(this.rtcInput?.stream ?? this.stream ?? undefined, this.options.webRtcStartEventRequired, this.options.startBudgetMs).then(sdp => {
             if (sdp && socket.readyState === WebSocket.OPEN && !this.intentionalClose) {
@@ -879,10 +995,11 @@ export class RealtimeAudioClient {
           this.serverClosed = true;
           this.finalized?.();
         } else if (type === "tts_cancel" || type === "audio_clear") {
+          if (typeof message.epoch === "number" && !this.acceptPlaybackEpoch(message.epoch)) return;
           this.browserSpeech.cancel();
           this.playbackResampler?.reset();
-          this.playbackNode?.port.postMessage({ type: "flush" });
-          if (this.options.browserAudio && !this.options.requiresWebRtcOffer) {
+          this.flushPlayback();
+          if (this.options.browserAudio && (!this.options.requiresWebRtcOffer || this.timedOutput)) {
             this.outputActivity.reset();
             this.outputLevel = 0;
             this.cb.onPlaybackState?.(false);
@@ -896,6 +1013,7 @@ export class RealtimeAudioClient {
           }
           return;
         } else if (type === "audio_transport") {
+          this.selectOutputTransport(message.output_transport, message.session_id);
           this.applyOutputState(message.output_muted, message.output_volume, message.output_revision);
           // SDP alone is not readiness. ICE/DTLS may overlap the server's
           // sideband attach, while pcm-startup continues to output silence.
@@ -914,6 +1032,7 @@ export class RealtimeAudioClient {
           });
           return;
         } else if (type === "audio_ready") {
+          this.selectOutputTransport(message.output_transport, message.session_id);
           // The local control channel can already relay levels while RTP
           // finishes its handshake. Native and browser bars share this input.
           this.controlReady = true;
@@ -1077,16 +1196,16 @@ export class RealtimeAudioClient {
     this.playbackResampler = new StreamingPcm16Resampler(providerRate, contextRate);
   }
 
-  private handleAudio(pcm: ArrayBuffer): void {
+  private handleAudio(pcm: ArrayBuffer, timing?: AudioInterval): void {
     if (this.outputMuted) return;
-    // This is authoritative for both API and subscription providers. The
-    // subscription WebRTC peer intentionally does not play remote RTP; Codex's
-    // documented sideband PCM therefore keeps Jarvis's scrub gate in the path.
+    // Timed sessions mute the peer's RTP element before negotiation. Only
+    // this worklet owns their audible output and its source-time mapping.
     this.browserSpeech.cancel();
+    clearSpeechPlayback();
     if (!this.playbackResampler) this.setOutputRate(24_000);
     const converted = this.playbackResampler?.process(pcm) ?? pcm;
     if (converted.byteLength === 0) return;
-    this.playbackNode?.port.postMessage({ type: "pcm", data: converted }, [converted]);
+    this.playbackNode?.port.postMessage({ type: "pcm", data: converted, ...timing }, [converted]);
     this.lastPcmAt = performance.now();
     if (!this.options.browserAudio) this.cb.onAudio?.();
   }
@@ -1101,7 +1220,7 @@ export class RealtimeAudioClient {
     }
 
     this.playbackResampler?.reset();
-    this.playbackNode?.port.postMessage({ type: "flush" });
+    this.flushPlayback();
     // Passed through verbatim from the backend's single turn-language
     // resolver. No default is substituted here: inventing one would be a
     // second language decision in a layer that has no business making it.

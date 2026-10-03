@@ -19,42 +19,10 @@ import { TurnSteps, traceWorthShowing } from "@/components/home/TurnSteps";
 import { traceModel } from "@/lib/thinkingSteps";
 
 /**
- * The voice stage — the front page's chat, spoken (2026-10-01, after the
- * Claude app's voice mode).
- *
- * It looks like the chat it lives in, not like a separate page: the same
- * column, your words in soft bubbles on the right (italic, because they were
- * heard rather than typed), the answers as plain text on the left, and at
- * the bottom a composer-shaped card (components/home/VoiceComposer) that
- * says what is happening and carries Start / Stop. Behind it a soft light
- * rises from the bottom edge and breathes with the voices
- * (components/home/VoiceGlow) — and keeps moving while the assistant
- * thinks, so a silent turn never looks dead; while it thinks or speaks, the
- * user's pet thinks or talks under the last line. While the answer is being spoken, the
- * words not yet said stay grey and light up as the voice reaches them
- * (components/home/useSpokenCursor — an estimate from the playback level,
- * since no voice path reports a per-word position). `onExit`, where the host page has a typed
- * half, puts the way back to the keyboard into the composer.
- *
- * Empty, it is one centred column: the greeting and the voice composer.
- * Once anything has been said the page becomes a document: the whole
- * conversation scrolls in its own viewport and the composer docks to the
- * bottom. WHOLE, not a window onto the
- * last few turns — until 2026-08-24 the lane rendered only the last 8 lines,
- * so anything that scrolled off was gone from the DOM and could not be
- * scrolled back to. The lane reads the home store's transcript
- * (lib/homeTranscript: heard words, the turn's reasoning steps, spoken
- * answers and typed turns merged into one list) plus the live, not-yet-final
- * transcription, so what you are saying appears while you say it. A turn's
- * steps render between your words and the answer — live while the turn runs,
- * folded afterwards (components/home/TurnSteps).
- *
- * Scrolling follows the Claude app, through the rule every conversation
- * surface here shares (hooks/useStickToBottom): new output pulls the view
- * along ONLY while the view is already at the end; scrolled up to read
- * something, you keep your place while the conversation goes on below, and a
- * button over the bar takes you back. Nothing yanks the page out from under
- * someone mid-sentence.
+ * The live voice conversation shares the chat column and scroll behavior.
+ * Speaker captions and tool steps remain visible for the whole conversation.
+ * Players that report word boundaries can highlight their current position;
+ * unaligned streams render ordinary text without pretending to know it.
  */
 export function VoiceStage({ onExit }: { onExit?: () => void } = {}) {
   const t = useT();
@@ -90,16 +58,11 @@ export function VoiceStage({ onExit }: { onExit?: () => void } = {}) {
   const hasLines = lines.length > 0 || Boolean(liveLine) || Boolean(liveAnswer);
   // The answer the voice is saying right now: the growing snapshot, or —
   // once its final line has landed while the audio still plays — that line.
-  const speaking = active && voiceState === "speaking";
   const lastIsAnswer = !liveAnswer && lastLine?.who === "assistant";
   // A live work trace already shows the pet on its live line — also while
   // the answer streams in under it — so a second pet below would say the
   // same thing twice.
   const traceShowsPet = lines.some((m) => m.who === "steps" && m.live);
-  const spoken = useSpokenCursor(
-    liveAnswer || (lastIsAnswer ? lastLine.text : ""),
-    speaking,
-  );
 
   const { rootRef, contentRef, atEnd, jumpToEnd, follow } = useStickToBottom();
   useLayoutEffect(follow, [follow, lines, liveLine, liveAnswer]);
@@ -152,14 +115,15 @@ export function VoiceStage({ onExit }: { onExit?: () => void } = {}) {
                 key={m.id}
                 who={m.who === "user" ? t("home.transcript_you") : assistantName}
                 text={m.text}
+                lineId={m.id}
                 user={m.who === "user"}
-                spoken={lastIsAnswer && i === lines.length - 1 ? spoken : null}
+                playbackEligible={active && lastIsAnswer && i === lines.length - 1}
               />
             ),
           )}
           {liveLine && <TranscriptLine who={t("home.transcript_you")} text={liveLine} user live />}
           {liveAnswer && (
-            <TranscriptLine who={assistantName} text={liveAnswer} user={false} live spoken={spoken} />
+            <TranscriptLine who={assistantName} text={liveAnswer} user={false} live playbackEligible={active} />
           )}
           {active && (voiceState === "thinking" || voiceState === "speaking") && !traceShowsPet && (
             <div className="pl-0.5" data-testid="voice-turn-indicator" aria-hidden>
@@ -188,19 +152,22 @@ export function VoiceStage({ onExit }: { onExit?: () => void } = {}) {
  * the rest grey. The speaker's name stays for screen readers only — the side
  * says who spoke.
  */
-function TranscriptLine({
+export function TranscriptLine({
   who,
   text,
   user,
   live = false,
-  spoken = null,
+  playbackEligible = false,
+  lineId = "",
 }: {
   who: string;
   text: string;
   user: boolean;
   live?: boolean;
-  spoken?: number | null;
+  playbackEligible?: boolean;
+  lineId?: string;
 }) {
+  const spoken = useSpokenCursor(text, !user && playbackEligible, lineId);
   const reading = !user && spoken !== null;
   return (
     <div
@@ -219,7 +186,7 @@ function TranscriptLine({
         {reading ? (
           <>
             <span data-testid="spoken-part">{text.slice(0, spoken)}</span>
-            <span className="text-muted-foreground transition-colors" data-testid="unspoken-part">
+            <span className="text-muted-foreground" data-testid="unspoken-part">
               {text.slice(spoken)}
             </span>
           </>
