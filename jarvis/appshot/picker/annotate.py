@@ -244,8 +244,58 @@ def qt_measure(text: str, size: float) -> float:
 # --------------------------------------------------------------------------
 
 
-def tapered_arrow_outline(start: mm.Point, end: mm.Point, width: float) -> list[mm.Point]:
+def _curved_outline(start: mm.Point, end: mm.Point, width: float, bend: mm.Point) -> list[mm.Point]:
+    """The tapered arrow along a curve: the same profile, following the bend."""
+    path = mm.segment_path(mm.Shape(mm.ARROW, points=[start, end], bend=bend), steps=48)
+    lengths = [0.0]
+    for a, b in zip(path, path[1:], strict=False):
+        lengths.append(lengths[-1] + math.hypot(b[0] - a[0], b[1] - a[1]))
+    length = lengths[-1]
+    if length < 2:
+        return []
+    head = min(max(12.0, width * 4.6 + 6.0), length * 0.62)
+    barb = head * 0.56
+    neck_at = length - head * 0.7
+    tail = max(0.6, width * 0.14)
+    neck = max(1.4, width * 0.78)
+
+    def normal(i: int) -> tuple[float, float]:
+        a = path[max(0, i - 1)]
+        b = path[min(len(path) - 1, i + 1)]
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        span = math.hypot(dx, dy) or 1.0
+        return (-dy / span, dx / span)
+
+    left: list[mm.Point] = []
+    right: list[mm.Point] = []
+    for i, (point, along) in enumerate(zip(path, lengths, strict=False)):
+        if along > neck_at:
+            break
+        half = tail + (neck - tail) * (along / max(1.0, neck_at))
+        nx, ny = normal(i)
+        left.append((point[0] + nx * half, point[1] + ny * half))
+        right.append((point[0] - nx * half, point[1] - ny * half))
+    # The head points along the curve's last stretch.
+    tx, ty = end[0] - bend[0], end[1] - bend[1]
+    span = math.hypot(tx, ty) or 1.0
+    ux, uy = tx / span, ty / span
+    nx, ny = -uy, ux
+    base = (end[0] - ux * head, end[1] - uy * head)
+    return [
+        *left,
+        (base[0] + nx * barb, base[1] + ny * barb),
+        end,
+        (base[0] - nx * barb, base[1] - ny * barb),
+        *reversed(right),
+    ]
+
+
+def tapered_arrow_outline(
+    start: mm.Point, end: mm.Point, width: float, bend: mm.Point | None = None
+) -> list[mm.Point]:
     """The tapered arrow, tail to tip and back (``taperedArrowOutline`` in TS)."""
+    if bend is not None:
+        return _curved_outline(start, end, width, bend)
     dx, dy = end[0] - start[0], end[1] - start[1]
     length = math.hypot(dx, dy)
     if length < 2:
@@ -293,7 +343,7 @@ def _soft_shadow(painter: QPainter, path: QPainterPath, blur: float, dy: float, 
 
 
 def _tapered_arrow(painter: QPainter, shape: mm.Shape, colour: QColor) -> None:
-    outline = tapered_arrow_outline(shape.points[0], shape.points[-1], shape.width)
+    outline = tapered_arrow_outline(shape.points[0], shape.points[-1], shape.width, shape.bend)
     if not outline:
         return
     path = QPainterPath()
@@ -307,8 +357,46 @@ def _tapered_arrow(painter: QPainter, shape: mm.Shape, colour: QColor) -> None:
     painter.drawPath(path)
 
 
+def _classic_head(painter: QPainter, tip: mm.Point, toward: mm.Point, shape: mm.Shape) -> None:
+    """A filled head at ``tip``, pointing away from ``toward``."""
+    colour = _qcolor(shape.color)
+    angle = math.atan2(tip[1] - toward[1], tip[0] - toward[0])
+    head = max(10.0, shape.width * 4.0)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(colour)
+    painter.drawPolygon(
+        _polygon(
+            [
+                tip,
+                (tip[0] - math.cos(angle - 0.45) * head, tip[1] - math.sin(angle - 0.45) * head),
+                (tip[0] - math.cos(angle + 0.45) * head, tip[1] - math.sin(angle + 0.45) * head),
+            ]
+        )
+    )
+
+
+def _segment_qpath(shape: mm.Shape) -> QPainterPath:
+    start, end = shape.points[0], shape.points[-1]
+    path = QPainterPath(QPointF(*start))
+    if shape.bend is None:
+        path.lineTo(QPointF(*end))
+    else:
+        path.quadTo(QPointF(*shape.bend), QPointF(*end))
+    return path
+
+
 def _classic_arrow(painter: QPainter, start: mm.Point, end: mm.Point, shape: mm.Shape) -> None:
     colour = _qcolor(shape.color)
+    if shape.bend is not None:
+        pen = QPen(colour, shape.width)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(_segment_qpath(shape))
+        _classic_head(painter, end, shape.bend, shape)
+        if shape.style == "double":
+            _classic_head(painter, start, shape.bend, shape)
+        return
     angle = math.atan2(end[1] - start[1], end[0] - start[0])
     head = max(10.0, shape.width * 4.0)
     back = (end[0] - math.cos(angle) * head * 0.8, end[1] - math.sin(angle) * head * 0.8)
@@ -393,10 +481,11 @@ def paint_shape(
         pen = QPen(colour, shape.width)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         painter.setPen(pen)
-        painter.drawLine(QPointF(*shape.points[0]), QPointF(*shape.points[-1]))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(_segment_qpath(shape))
     elif kind == mm.ARROW:
         start, end = shape.points[0], shape.points[-1]
-        if shape.style == "classic":
+        if shape.style == "classic" or (shape.style == "double" and shape.bend is not None):
             _classic_arrow(painter, start, end, shape)
         elif shape.style == "double":
             _classic_arrow(painter, start, end, shape)
@@ -539,10 +628,11 @@ def paint_selection_frame(painter: QPainter, sel: QRectF) -> None:
 
 
 def paint_picked(painter: QPainter, shape: mm.Shape) -> None:
-    """The selected marking: a dashed frame (not for lines) and its grips."""
+    """The selected marking's points, plus a dashed frame where the points alone
+    would float (text, strokes)."""
     painter.save()
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    if shape.kind not in mm.SEGMENT_KINDS:
+    if shape.kind == mm.TEXT or shape.kind in mm.STROKE_KINDS:
         box = _qrect(mm.bounds(shape, qt_measure)).adjusted(-6, -6, 6, 6)
         painter.setBrush(Qt.BrushStyle.NoBrush)
         dark = QPen(QColor(0, 0, 0, 150), 1.5, Qt.PenStyle.DashLine)
@@ -1147,8 +1237,16 @@ class Toolbar(QFrame):
                 button.setToolTip(self._labels.get(kind, value))
             button.clicked.connect(lambda _c=False, g=group, v=value: self.option_chosen.emit(g, v))
             self._options.addWidget(button)
+            # Shown now, not on the layout's queued show: a hidden button does
+            # not count when the bar measures itself, and the new looks then
+            # pile up on top of each other and the colours.
+            button.show()
             self._option_buttons.append(button)
         self._optsep.setVisible(bool(self._option_buttons))
+        layout = self.layout()
+        if layout is not None:
+            layout.invalidate()
+            layout.activate()
         self.adjustSize()
 
 

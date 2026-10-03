@@ -169,8 +169,24 @@ def test_grips_follow_the_full_editor_rules() -> None:
     assert [name for name, _ in mm.grips(counter)] == ["size"]
     assert mm.reshape(counter, "size", (30, 40)).size == 50
     assert mm.grab_scope(mm.MOVE) == "any"
-    assert mm.grab_scope(mm.RECT) == "selected"
-    assert mm.grab_scope(mm.PEN) == "none"
+    assert mm.grab_scope(mm.RECT) == "shapes"
+    assert mm.grab_scope(mm.COUNTER) == "shapes"
+    assert mm.grab_scope(mm.PEN) == "grips"
+    assert mm.grab_scope(mm.BACKGROUND) == "none"
+
+
+def test_the_middle_grip_bends_an_arrow_and_straightens_it_again() -> None:
+    arrow = mm.Shape(mm.ARROW, width=3, points=[(0, 0), (100, 0)])
+    assert [name for name, _ in mm.grips(arrow)] == ["from", "mid", "to"]
+    curved = mm.reshape(arrow, "mid", (50, 40))
+    # The curve's middle runs through the pointer.
+    assert curved.bend == (50, 80)
+    assert mm.segment_middle(curved) == (50, 40)
+    assert mm.hit(curved, (50, 40)) and not mm.hit(curved, (50, 2))
+    assert mm.bounds(curved)[3] == 40
+    moved = mm.translated(curved, 10, 5)
+    assert moved.bend == (60, 85)
+    assert mm.reshape(curved, "mid", (51, 1)).bend is None
 
 
 def test_areas_are_only_picked_when_nothing_on_them_is_hit() -> None:

@@ -588,7 +588,7 @@ class _SelectWindow(QWidget):
         self._commit_typing()
         m = self._markup
         m.tool = kind
-        if mm.grab_scope(kind) != "any":
+        if mm.grab_scope(kind) == "none":
             m.selected = None
         if kind == mm.BACKGROUND and m.background is None:
             m.background = dict(mm.DEFAULT_BACKGROUND)
@@ -743,11 +743,12 @@ class _SelectWindow(QWidget):
             return
         shape.text = shape.text.rstrip()
         if mm.is_meaningful(shape):
-            if index is not None:
-                m.shapes.insert(min(index, len(m.shapes)), shape)
-            else:
-                m.shapes.append(shape)
+            at = min(index, len(m.shapes)) if index is not None else len(m.shapes)
+            m.shapes.insert(at, shape)
+            # A finished text shows its points, like every fresh marking.
+            m.selected = at
             self._commit()
+            self._sync_options()
         elif index is not None:
             self._commit()  # emptied: the text is gone
         self.update()
@@ -762,12 +763,12 @@ class _SelectWindow(QWidget):
         """The marking a press at ``point`` would move with the current tool."""
         m = self._markup
         scope = mm.grab_scope(m.tool)
-        if scope == "none":
+        if scope in ("none", "grips"):
             return None
-        index = mm.shape_at(m.shapes, point, annotate.qt_measure, areas=m.tool == mm.MOVE)
+        index = mm.shape_at(m.shapes, point, annotate.qt_measure, areas=scope == "any")
         if index is None or (m.tool == mm.TEXT and m.shapes[index].kind == mm.TEXT):
             return None
-        return index if scope == "any" or index == m.selected else None
+        return index
 
     def _markup_key(self, event) -> None:  # noqa: C901 - one key table
         m = self._markup
@@ -899,6 +900,7 @@ class _SelectWindow(QWidget):
                     number=mm.next_counter(m.shapes),
                 )
             )
+            m.selected = len(m.shapes) - 1
             self._commit()
         elif m.tool in mm.STROKE_KINDS:
             m.drawing = mm.Shape(m.tool, color=m.color, width=m.width, points=[point])
@@ -964,11 +966,10 @@ class _SelectWindow(QWidget):
         if shape is not None and mm.is_meaningful(shape):
             m.shapes.append(shape)
             self._commit()
-            # A fresh shape is selected at once, so its grips are right there;
-            # ink is not, or its box would catch the next stroke beside it.
-            if mm.grab_scope(m.tool) != "none":
-                m.selected = len(m.shapes) - 1
-                self._sync_options()
+            # Every fresh marking shows its points at once (the previous one
+            # loses them), so it can be moved and reshaped right away.
+            m.selected = len(m.shapes) - 1
+            self._sync_options()
         self._update_markup_area()
 
     def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802

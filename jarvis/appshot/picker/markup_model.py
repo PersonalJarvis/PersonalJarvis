@@ -110,6 +110,8 @@ HANDLE_GRAB_PX = 8.0
 MIN_SELECTION_PX = 8.0
 #: The smallest text and counter a grip can shrink them to (px).
 MIN_TEXT_PX = 8.0
+#: A bend grip dropped this close to the straight line straightens it again.
+STRAIGHT_SNAP_PX = 4.0
 
 
 @dataclass(slots=True)
@@ -119,7 +121,8 @@ class Shape:
     box kinds and segments: ``[start, end]``; strokes: the whole path; text:
     ``[top-left]``; counter: ``[centre]``. ``size`` is the text height or the
     counter's radius; ``style`` the arrow or text look; ``mode`` pixelate or
-    blur for a redaction.
+    blur for a redaction. ``bend`` is the control point of a curved arrow or
+    line (a quadratic curve from start to end); ``None`` keeps it straight.
     """
 
     kind: str
@@ -131,6 +134,7 @@ class Shape:
     size: float = 0.0
     style: str = ""
     mode: str = ""
+    bend: Point | None = None
 
     def copy(self) -> Shape:
         return replace(self, points=list(self.points))
@@ -158,15 +162,20 @@ def counter_size(width: float) -> float:
 def grab_scope(tool: str) -> str:
     """What a press with ``tool`` may take hold of instead of drawing.
 
-    ``any``: the select tool picks up every marking; ``selected``: a shape
-    tool reshapes or moves only the marking it has selected (the one it just
-    drew); ``none``: pen, highlighter and counter always draw.
+    ``any``: the select tool picks up every marking, areas included;
+    ``shapes``: every other drawing tool picks up any marking under the
+    pointer (not areas — they cover what is drawn in them), so anything
+    drawn can be moved and reshaped again at once; ``grips``: pen and
+    highlighter only take the selected marking's points, so writing over
+    earlier ink never drags it along; ``none``: the background switch.
     """
     if tool == MOVE:
         return "any"
-    if tool in (PEN, HIGHLIGHT, COUNTER, BACKGROUND):
+    if tool in (PEN, HIGHLIGHT):
+        return "grips"
+    if tool == BACKGROUND:
         return "none"
-    return "selected"
+    return "shapes"
 
 
 # --------------------------------------------------------------------------
@@ -197,6 +206,31 @@ def constrain(kind: str, start: Point, end: Point) -> Point:
     return end
 
 
+def curve_at(start: Point, bend: Point, end: Point, t: float) -> Point:
+    """The point at ``t`` on the quadratic curve start - bend - end."""
+    u = 1.0 - t
+    return (
+        u * u * start[0] + 2 * u * t * bend[0] + t * t * end[0],
+        u * u * start[1] + 2 * u * t * bend[1] + t * t * end[1],
+    )
+
+
+def segment_path(shape: Shape, steps: int = 32) -> list[Point]:
+    """An arrow's or line's path as points: the two ends, or the sampled curve."""
+    start, end = shape.points[0], shape.points[-1]
+    if shape.bend is None:
+        return [start, end]
+    return [curve_at(start, shape.bend, end, i / steps) for i in range(steps + 1)]
+
+
+def segment_middle(shape: Shape) -> Point:
+    """Where the bend grip sits: the middle of the line or of the curve."""
+    start, end = shape.points[0], shape.points[-1]
+    if shape.bend is None:
+        return ((start[0] + end[0]) / 2, (start[1] + end[1]) / 2)
+    return curve_at(start, shape.bend, end, 0.5)
+
+
 def label_pad(shape: Shape) -> float:
     return shape.size * 0.4 if shape.kind == TEXT and shape.style == "label" else 0.0
 
@@ -220,8 +254,9 @@ def bounds(shape: Shape, measure: Measure = rough_measure) -> Box:
         r = shape.size
         x, y = shape.points[0]
         return (x - r, y - r, 2 * r, 2 * r)
-    xs = [p[0] for p in shape.points]
-    ys = [p[1] for p in shape.points]
+    pts = segment_path(shape) if shape.kind in SEGMENT_KINDS else shape.points
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
     return (min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
 
 
@@ -251,7 +286,7 @@ def hit(shape: Shape, p: Point, slop: float = 6.0, measure: Measure = rough_meas
         return False
     if shape.kind in SEGMENT_KINDS or shape.kind in STROKE_KINDS:
         reach = slop + (shape.width * 2.0 if shape.kind == HIGHLIGHT else shape.width)
-        pts = shape.points
+        pts = segment_path(shape) if shape.kind in SEGMENT_KINDS else shape.points
         if len(pts) == 1:
             return math.hypot(p[0] - pts[0][0], p[1] - pts[0][1]) <= reach
         pairs = zip(pts, pts[1:], strict=False)
@@ -294,6 +329,8 @@ def shape_at(
 def translated(shape: Shape, dx: float, dy: float) -> Shape:
     moved = shape.copy()
     moved.points = [(x + dx, y + dy) for x, y in shape.points]
+    if shape.bend is not None:
+        moved.bend = (shape.bend[0] + dx, shape.bend[1] + dy)
     return moved
 
 
@@ -334,13 +371,18 @@ def _corner(box: Box, name: str) -> Point:
 def grips(shape: Shape, measure: Measure = rough_measure) -> list[tuple[str, Point]]:
     """The grips a selected marking shows.
 
-    Lines and arrows one at each end; boxes, strokes and text one at each
-    corner (text scales with them); a counter one on its rim.
+    Lines and arrows one at each end and one in the middle that bends them;
+    boxes, strokes and text one at each corner (text scales with them); a
+    counter one on its rim.
     """
     if not shape.points:
         return []
     if shape.kind in SEGMENT_KINDS:
-        return [("from", shape.points[0]), ("to", shape.points[-1])]
+        return [
+            ("from", shape.points[0]),
+            ("mid", segment_middle(shape)),
+            ("to", shape.points[-1]),
+        ]
     if shape.kind == COUNTER:
         x, y = shape.points[0]
         return [("size", (x + shape.size, y))]
@@ -364,9 +406,11 @@ def reshape(original: Shape, grip: str, p: Point, measure: Measure = rough_measu
     """``original`` with ``grip`` dragged to ``p``.
 
     Always computed from the marking as it was when the drag began, so a long
-    drag never drifts. An arrow's end follows the pointer; a box keeps the
-    opposite corner fixed; a stroke scales from it; text grows or shrinks
-    from the opposite corner, font size and all; a counter grows with its rim.
+    drag never drifts. An arrow's end follows the pointer and its middle grip
+    bends it into a curve through the pointer (back to straight when dropped
+    on the straight line); a box keeps the opposite corner fixed; a stroke
+    scales from it; text grows or shrinks from the opposite corner, font size
+    and all; a counter grows with its rim.
     """
     shape = original.copy()
     if shape.kind in SEGMENT_KINDS:
@@ -374,6 +418,14 @@ def reshape(original: Shape, grip: str, p: Point, measure: Measure = rough_measu
             shape.points[0] = p
         elif grip == "to":
             shape.points[-1] = p
+        elif grip == "mid":
+            start, end = shape.points[0], shape.points[-1]
+            middle = ((start[0] + end[0]) / 2, (start[1] + end[1]) / 2)
+            if math.hypot(p[0] - middle[0], p[1] - middle[1]) < STRAIGHT_SNAP_PX:
+                shape.bend = None
+            else:
+                # The curve's middle lands on the pointer.
+                shape.bend = (2 * p[0] - middle[0], 2 * p[1] - middle[1])
         return shape
     if shape.kind == COUNTER:
         x, y = shape.points[0]
@@ -595,6 +647,7 @@ __all__ = [
     "clip_to",
     "constrain",
     "counter_size",
+    "curve_at",
     "frame_padding",
     "grab_scope",
     "grip_at",
@@ -610,6 +663,8 @@ __all__ = [
     "reshape",
     "resize",
     "rough_measure",
+    "segment_middle",
+    "segment_path",
     "shape_at",
     "text_size",
     "toolbar_origin",
