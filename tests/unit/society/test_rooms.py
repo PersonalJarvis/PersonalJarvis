@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -65,6 +66,25 @@ async def test_turn_order_is_enforced(rooms):
     room = await service.say(room.room_id, "a", "hello")
     assert room.next_speaker == "b"
     assert room.message_count == 1
+
+
+async def test_concurrent_replies_cannot_consume_the_same_turn(rooms):
+    service, store = rooms
+    room = await service.open(opened_by="jarvis", members=["a", "b"])
+
+    results = await asyncio.gather(
+        service.say(room.room_id, "a", "first"),
+        service.say(room.room_id, "a", "duplicate"),
+        return_exceptions=True,
+    )
+
+    assert sum(isinstance(result, RoomError) for result in results) == 1
+    loaded = await service.get(room.room_id)
+    assert loaded is not None
+    assert loaded.next_speaker == "b"
+    assert loaded.message_count == 1
+    events = await store.events_for_trace(room.trace_id)
+    assert sum(event.msg_type is MsgType.SAY for event in events) == 1
 
 
 async def test_round_cap_settles(rooms):
